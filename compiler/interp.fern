@@ -1213,7 +1213,7 @@ function reads_nothing(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function cellify_captures(env: Env, st: ast.Stmt, reassigned: string[]): Env {
+function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
   let out: Env = cellify_env(env, stmt_lambda_writes(st));
   if (reassigned.len() == 0) {
     return out;
@@ -1230,7 +1230,7 @@ function cellify_captures(env: Env, st: ast.Stmt, reassigned: string[]): Env {
   if (hit.len() == 0) {
     return out;
   }
-  return cellify_env(out, hit);
+  return cellify_env(Env { ...out }, hit);
 }
 
 function stmt_lambda_writes(st: ast.Stmt): string[] {
@@ -1288,7 +1288,7 @@ function (e: Env) raw_value(name: string): Option[Value] {
   return match (e.outer) { Some(parent) => parent.raw_value(name), None => None };
 }
 
-function cellify_env(e: Env, names: string[]): Env {
+function cellify_env(own e: Env, names: string[]): Env {
   let out: Env = e;
   let i: i32 = 0;
   while (i < names.len()) {
@@ -3387,7 +3387,7 @@ function dir_change_method(d: Dir, name: string, entry: string, args: Value[]): 
   return void_result_value(d.chown(entry, arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
 }
 
-function (e: Env) update(name: string, v: Value): Env {
+function (own e: Env) update(name: string, v: Value): Env {
   let i: i32 = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
@@ -3395,7 +3395,7 @@ function (e: Env) update(name: string, v: Value): Env {
     }
     i = i - 1;
   }
-  return match (e.outer) { Some(parent) => Env { ...e, outer: Some(parent.update(name, v)) }, None => e };
+  return match (e.outer) { Some(parent) => Env { ...e, outer: Some(Env { ...parent }.update(name, v)) }, None => e };
 }
 
 function is_sat_op_name(op: string): boolean {
@@ -4787,7 +4787,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
 function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value {
   if let ast.ExprLambda(lm) = c.callee {
     if (c.args.len() == 0 && lm.params.len() == 0 && (lm.origin == parser.ORIGIN_BLOCK || lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR)) {
-      let step = eval_value_body(lm.body, env, expect);
+      let step = eval_value_body(lm.body, Env { ...env }, expect);
       if (step.sig == 0 || step.sig == 1 && is_err(step.ret)) {
         return step.ret;
       }
@@ -5521,7 +5521,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
     j = j + 1;
   }
-  let step: StepResult = eval_block(fd.body, env);
+  let step: StepResult = eval_block(fd.body, Env { ...env });
   if (step.sig != 1) {
     return v_void();
   }
@@ -6068,7 +6068,7 @@ function call_declared_method(recv: Value, recv_static: string, name: string, ar
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
         j = j + 1;
       }
-      let step: StepResult = eval_block(fd.body, env);
+      let step: StepResult = eval_block(fd.body, Env { ...env });
       if (step.sig != 1) {
         return v_void();
       }
@@ -7687,7 +7687,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
         j = j + 1;
       }
-      let step: StepResult = eval_block(fd.body, env);
+      let step: StepResult = eval_block(fd.body, Env { ...env });
       if (step.sig != 1) {
         return v_void();
       }
@@ -7913,7 +7913,7 @@ function step_stop(env: Env, v: Value): StepResult {
   return StepResult { env: env, ret: v, sig: 1 };
 }
 
-function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult {
+function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepResult {
   if (body.len() == 0) {
     return step_stop(env, v_err("value expression has no terminal value"));
   }
@@ -7921,7 +7921,7 @@ function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult
   let assigned = body_assign_names(body, []);
   for i in 0..body.len() - 1 {
     cur = cellify_captures(cur, body[i], assigned);
-    let step = eval_stmt(body[i], cur);
+    let step = eval_stmt(body[i], Env { ...cur });
     if (step.sig != 0) {
       return step;
     }
@@ -7958,12 +7958,12 @@ function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult
         }
       }
       if (yes) {
-        return eval_value_body(branch.then_body, cur, expect);
+        return eval_value_body(branch.then_body, Env { ...cur }, expect);
       }
-      return eval_value_body(branch.else_body, cur, expect);
+      return eval_value_body(branch.else_body, Env { ...cur }, expect);
     },
     ast.StmtMatch(m) => {
-      return eval_match_stmt_mode(m, cur, true, expect);
+      return eval_match_stmt_mode(m, Env { ...cur }, true, expect);
     },
     _ => {
       return step_stop(cur, v_err("value expression has no terminal value"));
@@ -7973,14 +7973,14 @@ function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult
 }
 
 @noinline
-function eval_while_stmt(w: ast.StmtWhile, env: Env): StepResult {
-  let cur: Env = env;
+function eval_while_stmt(w: ast.StmtWhile, own env: Env): StepResult {
   let base: i32 = env.depth;
+  let cur: Env = env;
   let scoped = body_binds(w.body);
   while (true) {
     let cv: Value = eval_expr(w.cond, cur);
     if (is_err(cv)) {
-      return step_stop(env, cv);
+      return step_stop(cur, cv);
     }
     match (cv) {
       VBool(b) => {
@@ -7989,22 +7989,22 @@ function eval_while_stmt(w: ast.StmtWhile, env: Env): StepResult {
         }
       },
       _ => {
-        return step_stop(env, v_err("while cond not bool"));
+        return step_stop(cur, v_err("while cond not bool"));
       }
     }
-    let step: StepResult = eval_block(w.body, scope_env(cur, scoped));
+    let step: StepResult = eval_block(w.body, scope_env(Env { ...cur }, scoped));
     if (step.sig == 2) {
-      return step_none(trim_env(step.env, base));
+      return step_none(trim_env(Env { ...step.env }, base));
     }
     if (step.sig == 3) {
-      cur = trim_env(step.env, base);
+      cur = trim_env(Env { ...step.env }, base);
       continue;
     }
     if (step.sig == 1) {
       return step;
     }
     if (step.sig > 3) {
-      return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
+      return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig - 2 };
     }
     cur = trim_env(step.env, base);
   }
@@ -8012,7 +8012,7 @@ function eval_while_stmt(w: ast.StmtWhile, env: Env): StepResult {
 }
 
 @noinline
-function eval_match_stmt(m: ast.StmtMatch, env: Env): StepResult {
+function eval_match_stmt(m: ast.StmtMatch, own env: Env): StepResult {
   return eval_match_stmt_mode(m, env, false, "");
 }
 
@@ -8048,7 +8048,7 @@ function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scr
   return "";
 }
 
-function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, expect: string): StepResult {
+function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolean, expect: string): StepResult {
   let sv: Value = eval_expr(m.scrutinee, env);
   if (is_err(sv)) {
     return step_stop(env, sv);
@@ -8122,7 +8122,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
     }
     if (matched) {
       let base: i32 = env.depth;
-      let bodyEnv: Env = scope_env(env, bind_names.len() > 0 || body_binds(arm.body));
+      let bodyEnv: Env = scope_env(Env { ...env }, bind_names.len() > 0 || body_binds(arm.body));
       let bk: i32 = 0;
       while (bk < bind_names.len()) {
         bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
@@ -8144,8 +8144,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
         }
       }
       if (pass) {
-        let step: StepResult = if (value_form) { eval_value_body(arm.body, bodyEnv, expect) } else { eval_block(arm.body, bodyEnv) };
-        return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
+        let step: StepResult = if (value_form) { eval_value_body(arm.body, Env { ...bodyEnv }, expect) } else { eval_block(arm.body, bodyEnv) };
+        return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig };
       }
     }
     i = i + 1;
@@ -8154,7 +8154,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
 }
 
 @noinline
-function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
+function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let iv: Value = eval_expr(f.iter, env);
   if (is_err(iv)) {
     return step_stop(env, iv);
@@ -8185,13 +8185,13 @@ function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
   let cur: Env = env;
   let i: i32 = 0;
   while (i < elems.len()) {
-    let iter_env: Env = bind_element(scope_env(cur, true), f.var_name, elems[i], elem_ty);
-    let step: StepResult = eval_block(f.body, iter_env);
+    let iter_env: Env = bind_element(scope_env(Env { ...cur }, true), f.var_name, elems[i], elem_ty);
+    let step: StepResult = eval_block(f.body, Env { ...iter_env });
     if (step.sig == 2) {
-      return step_none(trim_env(step.env, base));
+      return step_none(trim_env(Env { ...step.env }, base));
     }
     if (step.sig == 3) {
-      cur = trim_env(step.env, base);
+      cur = trim_env(Env { ...step.env }, base);
       i = i + 1;
       continue;
     }
@@ -8199,7 +8199,7 @@ function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
       return step;
     }
     if (step.sig > 3) {
-      return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
+      return StepResult { env: trim_env(Env { ...step.env }, base), ret: step.ret, sig: step.sig - 2 };
     }
     cur = trim_env(step.env, base);
     i = i + 1;
@@ -8207,7 +8207,7 @@ function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
   return step_none(cur);
 }
 
-function eval_stmt(st: ast.Stmt, env: Env): StepResult {
+function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
   match (st) {
     ast.StmtDefer(d) => {
       return eval_stmt(d.action, env);
@@ -8296,7 +8296,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
   return step_stop(env, v_err("unhandled Stmt variant"));
 }
 
-function eval_assign_stmt(a: ast.StmtAssign, env: Env): StepResult {
+function eval_assign_stmt(a: ast.StmtAssign, own env: Env): StepResult {
   if (in_place_array_write(a, env)) {
     return write_array_in_place(a, env);
   }
@@ -8363,7 +8363,7 @@ function array_write_chain(e: ast.Expr, target: string): ast.ExprCall[] {
   return inner.append(c);
 }
 
-function write_array_in_place(a: ast.StmtAssign, env: Env): StepResult {
+function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
   let calls: ast.ExprCall[] = array_write_chain(a.value, a.target);
   let names: string[] = [];
   let args: Value[][] = [];
@@ -8438,7 +8438,7 @@ function bind_element(env: Env, header: string, elem: Value, elem_ty: string): E
   return env.bind_decl(header, elem, elem_ty);
 }
 
-function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
+function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult {
   let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "", builtin: false };
   let subject: ast.Expr = held;
   if (!receiver_has_method(env.funcs, iv, "next")) {
@@ -8448,7 +8448,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
     subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   }
   let base: i32 = env.depth;
-  let step: StepResult = eval_stmt(parser.iterator_loop(f, subject, 0), scope_env(env, true).bind("$for_subject", iv));
+  let step: StepResult = eval_stmt(parser.iterator_loop(f, subject, 0), Env { ...scope_env(env, true).bind("$for_subject", iv) });
   return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
 }
 
@@ -8475,14 +8475,14 @@ function stmt_binds(st: ast.Stmt): boolean {
   return match (st) { ast.StmtVar(_) => true, ast.StmtDefer(d) => stmt_binds(d.action), _ => false };
 }
 
-function scope_env(e: Env, needed: boolean): Env {
+function scope_env(own e: Env, needed: boolean): Env {
   if (!needed) {
     return e;
   }
   return Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] };
 }
 
-function trim_env(e: Env, base: i32): Env {
+function trim_env(own e: Env, base: i32): Env {
   let out = e;
   while (out.depth > base) {
     match (out.outer) {
@@ -8527,7 +8527,7 @@ function flattened_env(e: Env): Env {
   return Env { ...e, outer: None, depth: 0, names: names, values: values, types: types };
 }
 
-function eval_block(body: ast.Stmt[], env: Env): StepResult {
+function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   let cur: Env = env;
   let reassigned: string[] = body_assign_names(body, []);
   let i: i32 = 0;
@@ -8685,7 +8685,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
         _ => {}
       }
     }
-    let r: StepResult = eval_stmt(body[k], env);
+    let r: StepResult = eval_stmt(body[k], Env { ...env });
     env = r.env;
     if (r.sig != 0 && is_err(r.ret)) {
       return (Session { ...s, env: session_env(env) }, true, r.ret);
