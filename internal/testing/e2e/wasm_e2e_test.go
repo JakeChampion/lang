@@ -2888,7 +2888,7 @@ function main(): i32 {
 
 func TestWASMGenericStructMethod(t *testing.T) {
 	src := `struct Box[T] { value: T }
-pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
+pub function (b: Box[T]) unwrap(): T { return b.value; }
 function main(): i32 {
     let b: Box[i32] = Box { value: 42 };
     return b.unwrap();
@@ -2900,7 +2900,7 @@ function main(): i32 {
 
 func TestWASMGenericStructMethodWide(t *testing.T) {
 	src := `struct Box[T] { value: T }
-pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
+pub function (b: Box[T]) unwrap(): T { return b.value; }
 function main(): i32 {
     let b: Box[i64] = Box { value: 1000000000000i64 };
     let v: i64 = b.unwrap();
@@ -2914,7 +2914,7 @@ function main(): i32 {
 
 func TestWASMGenericStructMethodString(t *testing.T) {
 	src := `struct Box[T] { value: T }
-pub function [T] (b: Box[T]) unwrap(): T { return b.value; }
+pub function (b: Box[T]) unwrap(): T { return b.value; }
 function main(): i32 {
     let b: Box[string] = Box { value: "hello" };
     return (b.unwrap()).len();
@@ -2926,8 +2926,8 @@ function main(): i32 {
 
 func TestWASMGenericStructMethodMultipleTypeParams(t *testing.T) {
 	src := `struct Pair[A, B] { a: A, b: B }
-pub function [A, B] (p: Pair[A, B]) first(): A { return p.a; }
-pub function [A, B] (p: Pair[A, B]) second(): B { return p.b; }
+pub function (p: Pair[A, B]) first(): A { return p.a; }
+pub function (p: Pair[A, B]) second(): B { return p.b; }
 function main(): i32 {
     let p: Pair[i32, string] = Pair { a: 42, b: "hello" };
     return p.first() + (p.second()).len();
@@ -2939,7 +2939,7 @@ function main(): i32 {
 
 func TestWASMGenericMethodReturnsBoxOfT(t *testing.T) {
 	src := `struct Box[T] { value: T }
-pub function [T] (b: Box[T]) replace(v: T): Box[T] {
+pub function (b: Box[T]) replace(v: T): Box[T] {
     return Box { value: v };
 }
 function main(): i32 {

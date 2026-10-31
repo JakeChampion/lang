@@ -534,7 +534,7 @@ pub function (v: PVec[T]) to_array(): T[] {
   return acc;
 }
 
-pub function (v: PVec[T]) fold[T, A](init: A, f: (A, T) => A): A {
+pub function (v: PVec[T]) fold[A](init: A, f: (A, T) => A): A {
   let a: A = __pv_fold(v.root, init, f);
   let i: i32 = 0;
   while (i < v.tail.len()) {
@@ -553,7 +553,7 @@ pub function (v: PVec[T]) for_each(f: (T) => void): void {
   }
 }
 
-pub function (v: PVec[T]) map[T, U](f: (T) => U): PVec[U] {
+pub function (v: PVec[T]) map[U](f: (T) => U): PVec[U] {
   let out: PVec[U] = new();
   let xs: T[] = v.to_array();
   let i: i32 = 0;

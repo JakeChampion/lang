@@ -36,7 +36,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function new[T](): Set[T]>>
 
-<<5 pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean>>
+<<5 pub function (s: Set[T: cmp.Eq]) is_disjoint(other: Set[T]): boolean>>
 ```
 
 ### `module introduction`
@@ -81,7 +81,7 @@ pub function of[T: cmp.Eq](xs: T[]): Set[T] {
   return s;
 }
 
-pub function (s: Set[T]) contains[T: cmp.Eq](x: T): boolean {
+pub function (s: Set[T: cmp.Eq]) contains(x: T): boolean {
   let i: i32 = 0;
   while (i < s.xs.len()) {
     if (s.xs[i].eq(x)) {
@@ -100,7 +100,7 @@ pub function (s: Set[T]) is_empty(): boolean {
   return s.xs.len() == 0;
 }
 
-pub function (s: Set[T]) insert[T: cmp.Eq](x: T): Set[T] {
+pub function (s: Set[T: cmp.Eq]) insert(x: T): Set[T] {
   if (s.contains(x)) {
     return s;
   }
@@ -114,7 +114,7 @@ pub function (s: Set[T]) insert[T: cmp.Eq](x: T): Set[T] {
   return Set { xs: ys };
 }
 
-pub function (s: Set[T]) remove[T: cmp.Eq](x: T): Set[T] {
+pub function (s: Set[T: cmp.Eq]) remove(x: T): Set[T] {
   if (!s.contains(x)) {
     return s;
   }
@@ -143,7 +143,7 @@ pub function (s: Set[T]) to_array(): T[] {
   return ys;
 }
 
-pub function (s: Set[T]) union[T: cmp.Eq](other: Set[T]): Set[T] {
+pub function (s: Set[T: cmp.Eq]) union(other: Set[T]): Set[T] {
   let out: Set[T] = s;
   let i: i32 = 0;
   while (i < other.xs.len()) {
@@ -153,7 +153,7 @@ pub function (s: Set[T]) union[T: cmp.Eq](other: Set[T]): Set[T] {
   return out;
 }
 
-pub function (s: Set[T]) intersection[T: cmp.Eq](other: Set[T]): Set[T] {
+pub function (s: Set[T: cmp.Eq]) intersection(other: Set[T]): Set[T] {
   let ys: T[] = [];
   let i: i32 = 0;
   while (i < s.xs.len()) {
@@ -165,7 +165,7 @@ pub function (s: Set[T]) intersection[T: cmp.Eq](other: Set[T]): Set[T] {
   return Set { xs: ys };
 }
 
-pub function (s: Set[T]) difference[T: cmp.Eq](other: Set[T]): Set[T] {
+pub function (s: Set[T: cmp.Eq]) difference(other: Set[T]): Set[T] {
   let ys: T[] = [];
   let i: i32 = 0;
   while (i < s.xs.len()) {
@@ -177,7 +177,7 @@ pub function (s: Set[T]) difference[T: cmp.Eq](other: Set[T]): Set[T] {
   return Set { xs: ys };
 }
 
-pub function (s: Set[T]) is_subset[T: cmp.Eq](other: Set[T]): boolean {
+pub function (s: Set[T: cmp.Eq]) is_subset(other: Set[T]): boolean {
   let i: i32 = 0;
   while (i < s.xs.len()) {
     if (!other.contains(s.xs[i])) {
@@ -188,23 +188,23 @@ pub function (s: Set[T]) is_subset[T: cmp.Eq](other: Set[T]): boolean {
   return true;
 }
 
-pub function (s: Set[T]) equals[T: cmp.Eq](other: Set[T]): boolean {
+pub function (s: Set[T: cmp.Eq]) equals(other: Set[T]): boolean {
   if (s.xs.len() != other.xs.len()) {
     return false;
   }
   return s.is_subset(other);
 }
 
-pub function (s: Set[T]) is_superset[T: cmp.Eq](other: Set[T]): boolean {
+pub function (s: Set[T: cmp.Eq]) is_superset(other: Set[T]): boolean {
   return other.is_subset(s);
 }
 ```
 
-### `5 pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean`
+### `5 pub function (s: Set[T: cmp.Eq]) is_disjoint(other: Set[T]): boolean`
 
 ```fern
-<<5 pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean>>=
-pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean {
+<<5 pub function (s: Set[T: cmp.Eq]) is_disjoint(other: Set[T]): boolean>>=
+pub function (s: Set[T: cmp.Eq]) is_disjoint(other: Set[T]): boolean {
   let i: i32 = 0;
   while (i < s.xs.len()) {
     if (other.contains(s.xs[i])) {
@@ -215,7 +215,7 @@ pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean {
   return true;
 }
 
-pub function (s: Set[T]) symmetric_difference[T: cmp.Eq](other: Set[T]): Set[T] {
+pub function (s: Set[T: cmp.Eq]) symmetric_difference(other: Set[T]): Set[T] {
   let ys: T[] = [];
   let i: i32 = 0;
   while (i < s.xs.len()) {
@@ -246,7 +246,7 @@ pub function (s: Set[T]) filter(pred: (T) => boolean): Set[T] {
   return Set { xs: ys };
 }
 
-pub function (s: Set[T]) fold[T, A](init: A, f: (A, T) => A): A {
+pub function (s: Set[T]) fold[A](init: A, f: (A, T) => A): A {
   let acc: A = init;
   let i: i32 = 0;
   while (i < s.xs.len()) {

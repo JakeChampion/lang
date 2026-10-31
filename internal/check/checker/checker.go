@@ -8310,6 +8310,31 @@ func (c *checker) receiverDeclares(name, tp string) bool {
 	return typeMentionsParam(fn.Params[0].Type, tp)
 }
 
+// receiverArgParam names the type parameter that argument i of a method's
+// receiver type spells: B for i == 1 in `(p: Pair[A, B])`.
+func receiverArgParam(fn *ast.FuncDecl, i int) (string, bool) {
+	if len(fn.Params) == 0 {
+		return "", false
+	}
+	var arg ast.Type
+	switch r := fn.Params[0].Type.(type) {
+	case ast.StructType:
+		if i < len(r.Args) {
+			arg = r.Args[i]
+		}
+	case ast.ArrayType:
+		if i == 0 {
+			arg = r.Elem
+		}
+	case ast.SliceType:
+		if i == 0 {
+			arg = r.Elem
+		}
+	}
+	pt, ok := arg.(ast.ParamType)
+	return pt.Name, ok
+}
+
 func elemDispatchable(elem ast.Type) bool {
 	switch elem.(type) {
 	case ast.ArrayType, ast.SliceType:
@@ -13776,6 +13801,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		callExpected := c.expectedType
 		c.expectedType = nil
 		var writtenTypeArgs []ast.Type
+		recvTypeArgs := false
 		c.retagIndexAsTypeArgs(n, s)
 		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 {
 			switch id.Name {
@@ -14153,15 +14179,15 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					recvIsArg0 = true
 					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
 						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
-						n.TypeArgs = st.Args
+						n.TypeArgs, recvTypeArgs = st.Args, true
 					}
 					if at, ok := tt.(ast.ArrayType); ok {
 						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
-						n.TypeArgs = []ast.Type{at.Elem}
+						n.TypeArgs, recvTypeArgs = []ast.Type{at.Elem}, true
 					}
 					if sl, ok := tt.(ast.SliceType); ok {
 						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
-						n.TypeArgs = []ast.Type{sl.Elem}
+						n.TypeArgs, recvTypeArgs = []ast.Type{sl.Elem}, true
 					}
 				} else if builtin, ok := builtinScalarMethod(typeName, fa.Field); ok {
 					n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt}
@@ -14280,7 +14306,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						c.constArgDiags(fn, written, n.P, s)
 					}
 					for i, ta := range recvArgs {
-						if i < len(fn.TypeParams) && c.receiverDeclares(id.Name, fn.TypeParams[i]) {
+						if recvTypeArgs {
+							if tp, ok := receiverArgParam(fn, i); ok {
+								sub[tp] = ta
+							}
+						} else if i < len(fn.TypeParams) && c.receiverDeclares(id.Name, fn.TypeParams[i]) {
 							sub[fn.TypeParams[i]] = ta
 						}
 					}

@@ -50,7 +50,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 pub function (m: PMap[K, V]) len(): i32>>
 
-<<11 pub function (m: PMap[K, V]) merge[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V]>>
+<<11 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) merge(other: PMap[K, V]): PMap[K, V]>>
 ```
 
 ### `module introduction`
@@ -653,15 +653,15 @@ pub function (m: PMap[K, V]) is_empty(): boolean {
   return node_size(m) == 0;
 }
 
-pub function (m: PMap[K, V]) insert[K: cmp.Hash + cmp.Eq, V](k: K, v: V): PMap[K, V] {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) insert(k: K, v: V): PMap[K, V] {
   return node_insert(m, node_mix(k.hash()), 0, k, v);
 }
 
-pub function (m: PMap[K, V]) remove[K: cmp.Hash + cmp.Eq, V](k: K): PMap[K, V] {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) remove(k: K): PMap[K, V] {
   return node_remove(m, node_mix(k.hash()), 0, k);
 }
 
-pub function (m: PMap[K, V]) get[K: cmp.Hash + cmp.Eq, V](k: K): Option[V] {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) get(k: K): Option[V] {
   match (node_find(m, node_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return Some(lv);
@@ -678,7 +678,7 @@ pub function (m: PMap[K, V]) get[K: cmp.Hash + cmp.Eq, V](k: K): Option[V] {
   }
 }
 
-pub function (m: PMap[K, V]) get_or[K: cmp.Hash + cmp.Eq, V](k: K, fallback: V): V {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) get_or(k: K, fallback: V): V {
   match (node_find(m, node_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return lv;
@@ -695,7 +695,7 @@ pub function (m: PMap[K, V]) get_or[K: cmp.Hash + cmp.Eq, V](k: K, fallback: V):
   }
 }
 
-pub function (m: PMap[K, V]) contains[K: cmp.Hash + cmp.Eq, V](k: K): boolean {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) contains(k: K): boolean {
   match (node_find(m, node_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return true;
@@ -712,7 +712,7 @@ pub function (m: PMap[K, V]) contains[K: cmp.Hash + cmp.Eq, V](k: K): boolean {
   }
 }
 
-pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, init: V, f: (V) => V): PMap[K, V] {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) update(k: K, init: V, f: (V) => V): PMap[K, V] {
   let h: i32 = node_mix(k.hash());
   match (node_find(m, h, k)) {
     Leaf(lh, lk, lv) => {
@@ -742,7 +742,7 @@ pub function (m: PMap[K, V]) iter(): iter.ArrayIter[(K, V)] {
   return iter.of(acc);
 }
 
-pub function (m: PMap[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
+pub function (m: PMap[K, V]) fold[A](init: A, f: (A, K, V) => A): A {
   return node_fold(m, init, f);
 }
 
@@ -750,11 +750,11 @@ pub function (m: PMap[K, V]) for_each(f: (K, V) => void): void {
   node_for_each(m, f);
 }
 
-pub function (m: PMap[K, V]) map_values[K, V, W](f: (V) => W): PMap[K, W] {
+pub function (m: PMap[K, V]) map_values[W](f: (V) => W): PMap[K, W] {
   return node_map_values(m, f);
 }
 
-pub function (m: PMap[K, V]) filter[K: cmp.Hash + cmp.Eq, V](pred: (K, V) => boolean): PMap[K, V] {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) filter(pred: (K, V) => boolean): PMap[K, V] {
   let out: PMap[K, V] = new();
   let ks: K[] = m.keys();
   let vs: V[] = m.values();
@@ -769,11 +769,11 @@ pub function (m: PMap[K, V]) filter[K: cmp.Hash + cmp.Eq, V](pred: (K, V) => boo
 }
 ```
 
-### `11 pub function (m: PMap[K, V]) merge[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V]`
+### `11 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) merge(other: PMap[K, V]): PMap[K, V]`
 
 ```fern
-<<11 pub function (m: PMap[K, V]) merge[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V]>>=
-pub function (m: PMap[K, V]) merge[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
+<<11 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) merge(other: PMap[K, V]): PMap[K, V]>>=
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) merge(other: PMap[K, V]): PMap[K, V] {
   if (m.len() >= other.len()) {
     let out: PMap[K, V] = m;
     let ks: K[] = other.keys();
@@ -810,7 +810,7 @@ pub function (m: PMap[K, V]) entries(): (K, V)[] {
   return out;
 }
 
-pub function (m: PMap[K, V]) intersection[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) intersection(other: PMap[K, V]): PMap[K, V] {
   let out: PMap[K, V] = new();
   let ks: K[] = m.keys();
   let vs: V[] = m.values();
@@ -824,7 +824,7 @@ pub function (m: PMap[K, V]) intersection[K: cmp.Hash + cmp.Eq, V](other: PMap[K
   return out;
 }
 
-pub function (m: PMap[K, V]) difference[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
+pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) difference(other: PMap[K, V]): PMap[K, V] {
   let out: PMap[K, V] = m;
   let ks: K[] = other.keys();
   let i: i32 = 0;

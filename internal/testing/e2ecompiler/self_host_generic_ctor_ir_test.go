@@ -168,7 +168,7 @@ struct M[K, V] { root: Tree[K, V] }
 function mv[K, V, W](t: Tree[K, V], f: (V) => W): Tree[K, W] {
     match (t) { Leaf => { return Leaf; }, Node(k, v) => { return Node(k, f(v)); } }
 }
-pub function (m: M[K, V]) map_values[K, V, W](f: (V) => W): M[K, W] { return M { root: mv(m.root, f) }; }
+pub function (m: M[K, V]) map_values[W](f: (V) => W): M[K, W] { return M { root: mv(m.root, f) }; }
 function main(): i32 {
     let m: M[i32, i32] = M { root: Node(1, 20) };
     let n: M[i32, i32] = m.map_values((v: i32) => v + 22);
