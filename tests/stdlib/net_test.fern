@@ -4,12 +4,18 @@ import "std/net";
 function kind(text: string): string {
   match (net.ip_parse(text)) {
     Ok(a) => {
+      if (net.is_global_ipv4(text) != (a.is_v4() && a.is_global())) {
+        return "disagree";
+      }
       if (a.is_global()) {
         return "global";
       }
       return "special";
     },
     Err(_) => {
+      if (net.is_global_ipv4(text)) {
+        return "disagree";
+      }
       return "unparsed";
     }
   }
@@ -99,6 +105,9 @@ function quad(text: string): string {
     Err(_) => {}
   }
   if (parsed != net.is_ipv4(text)) {
+    return said + "!";
+  }
+  if (!parsed && net.is_global_ipv4(text)) {
     return said + "!";
   }
   return said;

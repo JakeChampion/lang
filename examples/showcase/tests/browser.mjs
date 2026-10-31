@@ -16,7 +16,7 @@ const a = await context.newPage(),
   b = await context.newPage();
 await a.goto(base + "/");
 await a.getByRole("button", { name: "Make something", exact: true }).click();
-assert.equal(await a.locator(".example:visible").count(), 12);
+assert.equal(await a.locator(".example:visible").count(), 13);
 await a.getByRole("button", { name: "All twenty-two", exact: true }).click();
 assert.equal(await a.locator(".example:visible").count(), 22);
 console.log("gallery filters OK");
