@@ -59,7 +59,7 @@ function read_size(): i32 {
   return 65536;
 }
 
-function sum_reader(r: Reader, sysv: boolean, owned: boolean): Tally {
+function sum_reader(own r: Reader, sysv: boolean, owned: boolean): Tally {
   let c: Ctx = ctx_new(sysv);
   while (true) {
     match (r.read_chunk_bytes(read_size())) {

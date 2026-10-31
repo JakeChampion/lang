@@ -61,7 +61,7 @@ function main(): i32 {
  match (w.write_bytes("".as_bytes())) { Err(_) => { return 26; }, Ok(_) => {} }
  match (w.write_some_bytes(view[2:2])) { Ok(n) => { if (n != 0) { return 27; } }, Err(_) => { return 28; } }
  let closed = stderr();
- match (closed.close()) { Err(_) => { return 9; }, Ok(_) => { } }
+ unsafe { match (closed.close_unchecked()) { Err(_) => { return 9; }, Ok(_) => { } } }
  match (closed.write_bytes(small)) { Err(_) => { }, Ok(_) => { return 10; } }
  match (closed.write_bytes([])) { Err(_) => { }, Ok(_) => { return 11; } }
  match (closed.write_some_bytes(small)) { Err(_) => { }, Ok(_) => { return 12; } }

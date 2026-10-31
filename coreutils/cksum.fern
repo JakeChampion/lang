@@ -189,7 +189,7 @@ function plain_raw(sel: i32, p: Plain): u8[] {
 
 struct PlainSum { fields: string, raw: u8[], err: Option[IoError], failed: boolean }
 
-function plain_reader(r: Reader, sel: i32, owned: boolean): PlainSum {
+function plain_reader(own r: Reader, sel: i32, owned: boolean): PlainSum {
   let p: Plain = plain_new(sel);
   while (true) {
     match (r.read_chunk_bytes(65536)) {

@@ -1,0 +1,16 @@
+// spec: RH-31
+// A call that moves a field out cannot read the same field in another
+// argument. The other argument would still read the value the call takes.
+
+struct Handle { fd: i32 }
+
+struct Out { out: Handle }
+
+function both(own h: Handle, g: Handle): i32 {
+  return h.fd + g.fd;
+}
+
+function main(): i32 {
+  let one: Out = Out { out: Handle { fd: 3 } };
+  return both(one.out, one.out);
+}
