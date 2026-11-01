@@ -3,7 +3,6 @@ package e2ecompiler
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -41,9 +40,6 @@ var ratchetLineRe = regexp.MustCompile(`^tree (\S+) worst (\S*) (\d+) excess (\d
 
 func TestSelfHostRepoComplexityRatchet(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("the ratchet driver reads the checkout's paths, which an emulated run does not see")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/lint_ratchet_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/lint_ratchet_run.fern", "lint_ratchet_run")
@@ -51,7 +47,7 @@ func TestSelfHostRepoComplexityRatchet(t *testing.T) {
 	for _, tr := range ratchetTrees {
 		dirs = append(dirs, tr.dir)
 	}
-	cmd := exec.Command(bin, dirs...)
+	cmd := runX86_64Bin(runner, bin, dirs...)
 	cmd.Dir = e2eharness.RepoPath()
 	out, err := cmd.Output()
 	if err != nil {
@@ -137,9 +133,6 @@ func TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression(t *testing.T) {
 
 func TestSelfHostRatchetIncludesLiterateSources(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("the ratchet driver reads native paths")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/lint_ratchet_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/lint_ratchet_run.fern", "lint_ratchet_run")
@@ -149,7 +142,7 @@ func TestSelfHostRatchetIncludesLiterateSources(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(input, "complex.fern.md"), []byte(document), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := exec.Command(bin, input).CombinedOutput(); err != nil || !strings.Contains(string(output), " worst complex 12 excess 2\n") {
+	if output, err := runX86_64Bin(runner, bin, input).CombinedOutput(); err != nil || !strings.Contains(string(output), " worst complex 12 excess 2\n") {
 		t.Fatalf("literate complexity: %v\n%s", err, output)
 	}
 }
