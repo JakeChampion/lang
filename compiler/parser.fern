@@ -12761,7 +12761,7 @@ pub function register_array_method_generics(mod: Module): Module {
         j = j + 1;
       }
       out = out.append(FuncDecl {
-        bound_modules: [], is_unsafe: fd.is_unsafe,
+        bound_modules: bound_modules_for(fd, tps), is_unsafe: fd.is_unsafe,
         stdlib: fd.stdlib, no_inline: false, always_inline: false,
         name: prefix + fd.name,
         receiver_name: "", receiver_type: "", receiver_own: false,
@@ -13088,7 +13088,7 @@ pub function register_struct_method_generics(mod: Module): Module {
         j = j + 1;
       }
       out = out.append(FuncDecl {
-        bound_modules: [], is_unsafe: fd.is_unsafe,
+        bound_modules: bound_modules_for(fd, tps), is_unsafe: fd.is_unsafe,
         stdlib: fd.stdlib, no_inline: false, always_inline: false,
         name: smm_name(strip_struct_base(fd.receiver_type), fd.name),
         receiver_name: "", receiver_type: "", receiver_own: false,
@@ -13106,6 +13106,22 @@ pub function register_struct_method_generics(mod: Module): Module {
     i = i + 1;
   }
   return Module { ...mod, funcs: out };
+}
+
+function bound_modules_for(fd: FuncDecl, params: string[]): string[] {
+  if (fd.bound_modules.len() == 0) {
+    return [];
+  }
+  let out: string[] = [];
+  for param in params {
+    let at: i32 = util.index_of_str(fd.type_params, param);
+    let module: string = fd.module;
+    if (at >= 0 && at < fd.bound_modules.len()) {
+      module = fd.bound_modules[at];
+    }
+    out = out.append(module);
+  }
+  return out;
 }
 
 function declared_bound(fd: FuncDecl, name: string): string {

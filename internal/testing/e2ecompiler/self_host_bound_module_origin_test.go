@@ -25,9 +25,9 @@ func TestSelfHostBoundModuleOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			for name, source := range map[string]string{
-				"witness.fern":  "pub trait Witness { function get(self: Self): i32; }\n",
+				"witness.fern":  "pub trait Witness { function get(self: Self): i32; }\npub struct Item { value: i32 }\nimpl Witness for Item { function get(self: Self): i32 { return self.value; } }\n",
 				"defaults.fern": "import \"./witness\" as inside;\npub trait Default { function read[U: " + tc.methodQualifier + ".Witness](self: Self, other: U): i32 { return other.get(); } }\n",
-				"main.fern":     "import \"./defaults\";\nimport \"./witness\" as outside;\nstruct Box[T] { value: T }\nimpl[T: " + tc.implQualifier + ".Witness] defaults.Default for Box[T] {}\nfunction main(): i32 { return 0; }\n",
+				"main.fern":     "import \"./defaults\";\nimport \"./witness\" as outside;\nstruct Box[T] { value: T }\nimpl[T: " + tc.implQualifier + ".Witness] defaults.Default for Box[T] {}\nfunction main(): i32 { let box: Box[outside.Item] = Box { value: outside.Item { value: 1 } }; return box.read(outside.Item { value: 2 }) - 2; }\n",
 			} {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
 					t.Fatal(err)
