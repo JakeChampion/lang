@@ -3277,7 +3277,7 @@ function args_move(ins: SInst, resolved: i32[]): boolean {
 
 function term_moves(t: STerm, resolved: i32[]): boolean {
   if (t.kind_tag == 1) {
-    return resolved[t.value] != t.value;
+    return t.value >= 0 && resolved[t.value] != t.value;
   }
   if (t.kind_tag == 3) {
     return resolved[t.cond] != t.cond;
