@@ -327,12 +327,18 @@ function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
-  return freelist_push_classed(capw_class(s, words), ptr, words, tmp);
+  return freelist_push_classed(capw_class(s, words), ptr, words, tmp, "");
 }
 
-function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
+// Pushes ptr on the free list of its class. With `twice` set, a block that is
+// already the head of the list jumps to that label instead.
+function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, tmp: string, twice: string): asmcore.EmitState {
   s = s.write("    leaq __fern_freelist(%rip), %r8\n");
   s = s.write("    movq (%r8," + words + ",8), " + tmp + "\n");
+  if (twice != "") {
+    s = s.write("    cmpq " + ptr + ", " + tmp + "\n");
+    s = s.write("    je " + twice + "\n");
+  }
   s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
   s = s.write("    movq " + ptr + ", (%r8," + words + ",8)\n");
   return s;
@@ -2807,6 +2813,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
   s = abort_trap(s, "__fern_free_range_abort", ".Lmsg_free_range", aborts.free_range(), 134);
+  s = abort_trap(s, "__fern_double_free_abort", ".Lmsg_double_free", aborts.double_free(), 134);
   s = s.need("__fern_alloc_size_abort.c");
   if (s.has_need("str_grow") || s.has_need("buf")) {
     s = s.need("__fern_slice_abort.c");
@@ -2910,10 +2917,14 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rdx, %rax\n");
   s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
   s = s.write("    movq (%rdx,%rax,8), %rcx\n");
+  s = s.write("    cmpq %r8, %rcx\n");
+  s = s.write("    je .Llpush_double\n");
   s = s.write("    movq %rcx, (%r8)\n");
   s = s.write("    movq %r8, (%rdx,%rax,8)\n");
   s = s.write(".Llpush_ret:\n");
   s = s.write("    ret\n");
+  s = s.write(".Llpush_double:\n");
+  s = s.write("    pushq (%rsp)\n    pushq %rbp\n    movq %rsp, %rbp\n    jmp __fern_double_free_abort\n");
   s = s.write("__fern_capw:\n");
   s = s.write("    pushq %rax\n");
   s = s.write("    pushq %rcx\n");
@@ -2964,7 +2975,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jae .Lrawfree_large\n");
   s = hev_free(s, "%rdi", "%rcx");
   if (!s.rc_free_debug) {
-    s = freelist_push(s, "%rdi", "%rcx", "%rdx");
+    s = freelist_push_classed(capw_class(s, "%rcx"), "%rdi", "%rcx", "%rdx", ".Lrawfree_double");
   } else {
     s = quar_push(s, "%rdi", "%rcx", 0);
   }
@@ -2981,6 +2992,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   s = s.write(".Lrawfree_bad:\n");
   s = s.write("    pushq (%rsp)\n    pushq %rbp\n    movq %rsp, %rbp\n    jmp __fern_free_range_abort\n");
+  s = s.write(".Lrawfree_double:\n");
+  s = s.write("    pushq (%rsp)\n    pushq %rbp\n    movq %rsp, %rbp\n    jmp __fern_double_free_abort\n");
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("__fn___fern_arr_dec.r:\n");
@@ -3000,7 +3013,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rdx", "%rcx");
   if (!s.rc_free_debug) {
     s = s.write(".Larrdec_push:\n");
-    s = freelist_push_classed(s, "%rdx", "%rcx", "%rdi");
+    s = freelist_push_classed(s, "%rdx", "%rcx", "%rdi", "");
   } else {
     s = quar_push(s, "%rdx", "%rcx", 8);
   }
@@ -3121,7 +3134,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rcx", "%rdx");
   if (!s.rc_free_debug) {
     s = s.write(".Lstrfree_fused_push:\n");
-    s = freelist_push_classed(s, "%rcx", "%rdx", "%rsi");
+    s = freelist_push_classed(s, "%rcx", "%rdx", "%rsi", "");
   } else {
     s = s.write("    jmp .Lstrfree_quar\n");
   }
