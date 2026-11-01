@@ -1901,11 +1901,18 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
 
 function retainable_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
   let k: i32 = defs[w].kind_tag;
-  if (k != ssasem.array_get() && k != ssasem.record_get() && k != ssasem.tuple_get()) {
+  if (k != ssasem.array_get() && k != ssasem.record_get() && k != ssasem.tuple_get() && !boxed_payload_read(f, defs, w)) {
     return false;
   }
   let t: typeinfo.Type = f.values[w];
   return ssasem.reference(t) && !ssasem.is_view(t);
+}
+
+// A member union lays the member in the union's own box, so a count on that
+// read would count the union.
+function boxed_payload_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
+  let d: ssa.SInst = defs[w];
+  return d.kind_tag == ssasem.variant_get() && d.args.len() == 1 && d.args[0] >= 0 && !member_union(f, f.values[d.args[0]]);
 }
 
 function retainable_reads(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
