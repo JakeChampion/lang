@@ -222,7 +222,13 @@ reads (`units_of`):
   the read (or a read anchored to it) is consumed later, is retained at the
   read and released at its own death, and its chain to the source is cut, so
   the source moves instead of being retained. A read only borrowed to its
-  death stays a borrow. The holds are found twice. The second pass counts a
+  death stays a borrow. An argument of the call that consumes the source
+  counts as in hand. A payload lent beside the root it was read from is
+  therefore held, and the root moves. Without the hold, `lent_owners` pins
+  the root with a retain around the call, and the callee's updates find it
+  shared. A hold takes an array, record or tuple read, or a payload read
+  whose member has its own box (`retainable_read`). A member union's payload
+  shares the union's box, so it is not held. The holds are found twice. The second pass counts a
   read in hand only through its own uses. It also counts the reads anchored
   to it that the first pass did not hold. Thus a list read only to reach a held
   element is not held itself. A read that is a take already has its unit and is
