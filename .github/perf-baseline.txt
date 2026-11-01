@@ -168,7 +168,8 @@ x86_64/array_index.text	1140
 x86_64/array_index.ir	16315371
 x86_64/array_scale_f64.text	1342
 x86_64/array_scale_f64.ir	21309613
-x86_64/array_with.ir	37759160
+# 2026-11-01 (#13981): CI41256013281 (perf-x86_64) reports map_int.text and map_probe_chain.text 1.14% higher, as main 31cdefec emits, and array_with.ir and record_update.ir 4.34% lower.
+x86_64/array_with.ir	36120760
 x86_64/array_with.text	1295
 x86_64/ascii_scan.text	1444
 x86_64/ascii_scan.ir	37315742
@@ -191,9 +192,9 @@ x86_64/http_hello.text	17921
 x86_64/http_hello.ir	22672408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	8478
+x86_64/map_int.text	8575
 x86_64/map_int.ir	24563319
-x86_64/map_probe_chain.text	8482
+x86_64/map_probe_chain.text	8579
 x86_64/map_probe_chain.ir	241010587
 x86_64/map_string.text	9591
 x86_64/map_string.ir	53037751	2
@@ -203,7 +204,7 @@ x86_64/pmap_insert.text	3145
 x86_64/pmap_insert.ir	53294866
 x86_64/pvec_with.text	3048
 x86_64/pvec_with.ir	55174232
-x86_64/record_update.ir	37759160
+x86_64/record_update.ir	36120760
 x86_64/record_update.text	1386
 x86_64/sort_inplace.text	1497
 x86_64/sort_inplace.ir	36583718

@@ -205,12 +205,13 @@ selfhost/arm64-linux/enum_match.emit	1316
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/arm64-linux/http_hello.emit	19090
 selfhost/arm64-linux/int_loop.emit	330
-selfhost/arm64-linux/map_int.emit	8504
-selfhost/arm64-linux/map_probe_chain.emit	8514
+# 2026-11-01 (#13981): CI41256013281 (perf-x86_64) reports the map, ordmap_insert and pvec_with emit sizes below. The map rows match what main 31cdefec emits.
+selfhost/arm64-linux/map_int.emit	8612
+selfhost/arm64-linux/map_probe_chain.emit	8622
 selfhost/arm64-linux/map_string.emit	9790
-selfhost/arm64-linux/ordmap_insert.emit	6141
+selfhost/arm64-linux/ordmap_insert.emit	6058
 selfhost/arm64-linux/pmap_insert.emit	3433
-selfhost/arm64-linux/pvec_with.emit	3393
+selfhost/arm64-linux/pvec_with.emit	3310
 selfhost/arm64-linux/record_update.emit	1608
 selfhost/arm64-linux/sort_inplace.emit	1686
 selfhost/arm64-linux/sort_ints.emit	2175
@@ -245,7 +246,7 @@ selfhost/wasm32-wasi/map_probe_chain.emit	13329
 selfhost/wasm32-wasi/map_string.emit	14126
 selfhost/wasm32-wasi/ordmap_insert.emit	6746
 selfhost/wasm32-wasi/pmap_insert.emit	3368
-selfhost/wasm32-wasi/pvec_with.emit	2843
+selfhost/wasm32-wasi/pvec_with.emit	2806
 selfhost/wasm32-wasi/record_update.emit	525
 selfhost/wasm32-wasi/sort_inplace.emit	996
 selfhost/wasm32-wasi/sort_ints.emit	2058
@@ -275,12 +276,12 @@ selfhost/x86-64-linux/enum_match.emit	1099
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	17921
 selfhost/x86-64-linux/int_loop.emit	250
-selfhost/x86-64-linux/map_int.emit	8478
-selfhost/x86-64-linux/map_probe_chain.emit	8482
+selfhost/x86-64-linux/map_int.emit	8575
+selfhost/x86-64-linux/map_probe_chain.emit	8579
 selfhost/x86-64-linux/map_string.emit	9591
-selfhost/x86-64-linux/ordmap_insert.emit	5739
+selfhost/x86-64-linux/ordmap_insert.emit	5664
 selfhost/x86-64-linux/pmap_insert.emit	3145
-selfhost/x86-64-linux/pvec_with.emit	3123
+selfhost/x86-64-linux/pvec_with.emit	3048
 selfhost/x86-64-linux/record_update.emit	1386
 selfhost/x86-64-linux/sort_inplace.emit	1497
 selfhost/x86-64-linux/sort_ints.emit	1964
