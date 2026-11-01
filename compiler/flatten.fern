@@ -323,13 +323,13 @@ function enum_viewers(closures: i32[][], entry_closure: i32[], pfxs: string[]): 
   return out;
 }
 
-function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportGraph, ids: string[], pfxs: string[]): parser.ModuleSight[] {
+function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportGraph, ids: string[], pfxs: string[], rx: ReexportTable): parser.ModuleSight[] {
   let out: parser.ModuleSight[] = [];
   for i in 0..imports.len() {
     let reaches: string[] = prefixes_at(import_closure(imports[i].mod, g, ids, pfxs), pfxs);
-    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches });
+    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches, reexport_keys: rx.keys, reexport_targets: rx.targets });
   }
-  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
+  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs), reexport_keys: rx.keys, reexport_targets: rx.targets });
 }
 
 function import_path_list(mod: parser.Module): string[] {
@@ -1249,7 +1249,11 @@ function canon_trait(d: string, ctx: RewriteCtx): string {
     return d;
   }
   let name: string = slice_unchecked(d, dot + 1, d.len()) + "";
-  let origin: string = lookup_reexport(ctx.modprefixes[k] + "__" + name, ctx);
+  return canonical_imported_trait(ctx.modprefixes[k], name, ctx.reexport_keys, ctx.reexport_targets);
+}
+
+pub function canonical_imported_trait(prefix: string, name: string, keys: string[], targets: string[]): string {
+  let origin: string = follow_reexports(prefix + "__" + name, keys, targets);
   return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
 }
 
@@ -1898,7 +1902,7 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     trait_decls: trait_decls,
     inferred_consts: inferred,
     todo_sites: e.todo_sites,
-    sights: module_sights(entry, imports, graph, ids, pfxs),
+    sights: module_sights(entry, imports, graph, ids, pfxs, rx),
   };
   return parser.lower_stream_signatures(parser.route_inherited_defaults(parser.resolve_dyn_traits(parser.settle_module(parser.rewrite_assoc_const_reads(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)))))));
 }
