@@ -1,0 +1,76 @@
+{
+  "source_commit": "f752dc444b7644883c1918dfa4fb6527a91dce34",
+  "source_tree": "a9acd1b5476c81b0e9dd5d7f821d9ac5a96f8c12",
+  "parents": [
+    "397de2afe7494e3bf62e4df32197370bc6c1ff93",
+    "39268caf25c8e94a87e0df377e727c1b7046ee4f",
+    "29672818649c028bb8774c3b2d2852a0e3fde428"
+  ],
+  "earlier_test_tree": "edb99e4b6f97f31adb1c9ab86bf65ee28f336c19",
+  "tree_difference": "Only the generic interpreter fixture gains its required core/ops import. Production source is identical between these two trees.",
+  "candidate_blobs": {
+    "compiler/interp.fern": "10df08a82404c1cb5c9e91e7ac66b532b7544b50",
+    "compiler/interpheap.fern": "5fab4109e191132149b172333c422f79dd56fae2",
+    "compiler/semsource.fern": "e9704189f8611eea0a443af55b4f6c6b8eb123c0",
+    "compiler/ssaunits.fern": "426f71f7941c654b539f021cf7e6ecf63fdb10ef"
+  },
+  "producer": {
+    "host": "arm64-darwin",
+    "sha256": "44d1b6af78ad81751da80b9f8634bd9156fdc813e927b3356e3e0801370cf6bd"
+  },
+  "tests": {
+    "earlier_test_tree": {
+      "darwin_heap_and_identity": {
+        "elapsed_seconds": 74.853,
+        "passed_roots": 2,
+        "skipped_roots": 4,
+        "skip_reason": "The existing x86-only tests require QEMU on Darwin.",
+        "log_sha256": "00810b7d7dbb740298bacec31af235d85fd4e9cb95bd2ccefef21c62de36cf5a"
+      },
+      "linux_arm_with_qemu": {
+        "elapsed_seconds": 132.953,
+        "passed_roots": 5,
+        "skipped_roots": 0,
+        "coverage": ["composite cells", "E057 cycle refusal", "self-built x86 interpreter", "scalar captures", "scalar array cells", "scalar cell values"],
+        "log_sha256": "e1fe191f2396d43ed70fd790fd631c226fc1a433a605be687d9c91e4962de7eb"
+      },
+      "unit_rest": {
+        "result": "pass",
+        "cmd_fern_elapsed_seconds": 279.740,
+        "log_sha256": "8ae5cdbdbbe2f170bd52e50fe4d48527c625e69807576106c74b695ce3e43bca"
+      }
+    },
+    "source_tree": {
+      "generic_interpreter": {
+        "passed_roots": 3,
+        "skipped_roots": 0,
+        "elapsed_seconds": 45.360,
+        "log_sha256": "3bf808a4d8e43a358b723be1120e921123163e09da835ea2360236ca35e0b1db"
+      },
+      "lint_fast": {
+        "result": "pass",
+        "log_sha256": "a7cbddaa529cbc890df98b54e0a5d8fd1da6e1302a77c6fc941495761dc0b813"
+      }
+    }
+  },
+  "compiler_image": {
+    "target": "x86-64-linux",
+    "bytes": 15747376,
+    "sha256": "cdeeaa746da4b6b262ae50c4e904acee4f649cac18b1e2882a2e80ee6ad13844",
+    "baseline_bytes": 15881456,
+    "measured_driver_rows": 1,
+    "total_baselined_driver_rows": 11,
+    "strict_slice_comparison": "pass",
+    "verified_functions": 8419,
+    "modelled_functions": 8419,
+    "skipped_functions": 0
+  },
+  "selfhost_static_metrics": {
+    "measured_rows": 117,
+    "strict_comparison": "pass",
+    "baseline_changed": false,
+    "log_sha256": "252af3919cf3b37a4b1619a5ad0b4ed41297b7dbf5915cb9e3fad3e8a8ed8380"
+  },
+  "timing_scope": "Test completion under concurrent jobs. This record makes no native x86 performance claim.",
+  "publication": "Private preparation. Full current-head CI and PR feedback remain required before merge."
+}
