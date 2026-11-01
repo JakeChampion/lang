@@ -1,3 +1,5 @@
+# 2026-11-01: PR #13988 run 41278389389, perf-aarch64. A method that only direct calls reach joins the
+# once set: pvec_with.ir -9.61%, pvec_with.text -12.34%, ordmap_insert.text +3.69%, and five smaller rows.
 # 2026-10-31: Unreferenced typed drop helpers no longer reach emission.
 # All 78 native text rows measured from the primary compiler. Pins only decrease.
 # 2026-10-31: PR #13910, measured by CI job 124561576307.
@@ -488,12 +490,12 @@ aarch64/map_probe_chain.ir	233221143
 aarch64/map_string.text	9599
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
-aarch64/ordmap_insert.text	5873
+aarch64/ordmap_insert.text	6090
 aarch64/ordmap_insert.ir	98457462
-aarch64/pmap_insert.text	3242
+aarch64/pmap_insert.text	3194
 aarch64/pmap_insert.ir	63996220
-aarch64/pvec_with.text	3202
-aarch64/pvec_with.ir	59221804
+aarch64/pvec_with.text	2807
+aarch64/pvec_with.ir	53529221
 aarch64/record_update.text	1513
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1686
@@ -507,9 +509,9 @@ aarch64/string_build.text	2361
 aarch64/string_build.ir	47221466
 aarch64/string_count_byte.text	1445
 aarch64/string_count_byte.ir	295207223
-aarch64/string_find_byte.text	1901
+aarch64/string_find_byte.text	1865
 aarch64/string_find_byte.ir	55921279
-aarch64/string_rfind_byte.text	2024
+aarch64/string_rfind_byte.text	1989
 aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2565
 aarch64/string_scan.ir	59787692
@@ -519,9 +521,9 @@ aarch64/struct_drop.text	2671
 aarch64/struct_drop.ir	222380901
 aarch64/tokenize.text	1388
 aarch64/tokenize.ir	38350109
-aarch64/utf8_ingest_unchecked.text	8656
+aarch64/utf8_ingest_unchecked.text	8383
 aarch64/utf8_ingest_unchecked.ir	2689511
-aarch64/utf8_ingest_validated.text	9261
+aarch64/utf8_ingest_validated.text	9014
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
