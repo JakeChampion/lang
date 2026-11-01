@@ -50,8 +50,12 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 				t.Fatalf("%s: no $build in the WAT", tc.name)
 			}
 			build, _, _ := strings.Cut(ws[at:], "\n  (func ")
-			if !strings.Contains(build, "call $__sem_release_Acc") {
-				t.Fatalf("%s: $build releases no superseded Acc\n--- WAT ---\n%s", tc.name, wat)
+			// The superseded Acc dies on the back edge. Its box is either released
+			// or, when the plan donates it, dropped to its fields and rebuilt in place.
+			released := strings.Contains(build, "call $__sem_release_Acc")
+			reused := strings.Contains(build, "call $__sem_drop_Acc") && strings.Contains(build, "call $__fern_alloc_reuse")
+			if !released && !reused {
+				t.Fatalf("%s: $build neither releases nor reuses the superseded Acc\n--- WAT ---\n%s", tc.name, wat)
 			}
 			watPath := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
