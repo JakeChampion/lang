@@ -23941,8 +23941,9 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         }
       }
     }
-    if (!known && !derive_import_unloaded(mod, parser.impl_trait_key(im))) {
-      out = out.append(dg_at("E021", "unknown trait \"" + parser.impl_trait_key(im) + "\" in impl", im.line, im.col));
+    let written: string = util.base_type_name(im.trait_ref);
+    if (!known && !derive_import_unloaded(mod, written)) {
+      out = out.append(dg_at("E021", "unknown trait \"" + written + "\" in impl", im.line, im.col));
     }
   }
   return out;
