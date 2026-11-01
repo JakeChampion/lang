@@ -47,7 +47,7 @@ The compiler built by the stage-1 compiler reads 22,303,712 bytes against
 The perf lanes measure `ordmap_insert.text` at -3.4% on x86-64 and -3.6% on
 arm64 under the one-block rule. `pmap_insert.text` reads +2.4% and +1.5%.
 Compiling `checker.fern`, the stage-2 compilers of main and of this change
-both allocate 36,126,077 boxes, and the stage-1 compilers cross the shared
+both allocate 36,126,077 boxes. The stage-1 compilers cross the shared
 cliff 346,430 and 346,414 times. The rule costs the compiler nothing.
 
 The rc-log entry of 2026-10-30 predicted 1.9% on `cat -n` and 1.3% on `nl`
