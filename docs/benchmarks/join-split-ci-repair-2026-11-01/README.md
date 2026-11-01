@@ -42,3 +42,23 @@ The corrected compiler removes one unconditional jump, from 63 to 62.
 The numeric SSA merge chain retains 21 labels and six moves.
 The scanner excludes the adjacent kernel tail and retains the eight-move limit.
 No compiler source or benchmark limit changes accompany this correction.
+
+The `combined` directory records the integration with main after PR 14008.
+The compiler inputs and Go test sources match the earlier private proof.
+All 1,245 compiler and standard library inputs retain their recorded hashes.
+The owner also supplies the separately validated semantic snapshot correction.
+The original proof retains its original parents and scope.
+`combined/integration.json` binds that proof to the actual main commit.
+
+The combined selection has 27 passing roots and one documented TCO wrapper skip.
+The unchanged TCO fixture also executes directly on all four targets.
+All 39 ARM64 benchmark observations match the previous compiler.
+The strict ARM64 report and the original performance limits pass.
+The size reports retain the same documented advisories and comparison policies.
+
+`combined/snapshot.diff` contains the complete semantic graph snapshot correction.
+The map fixture removes one empty forwarding block.
+The tuple match sends each constant-payload predecessor directly to its selected arm.
+The fixture and print driver remain unchanged.
+The independent print driver produces the exact new snapshot.
+Fresh full current-head CI remains mandatory before merge.

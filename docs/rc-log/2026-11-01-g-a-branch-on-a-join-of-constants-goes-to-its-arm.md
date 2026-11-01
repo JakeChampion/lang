@@ -161,3 +161,20 @@ For equal-length chains, the scanner checks the larger move count.
 
 The compiler source, original program, runtime result, and performance limits remain unchanged.
 Fresh full CI remains necessary before merge.
+
+## Semantic graph snapshot and main integration
+
+The semantic print fixture still expected two older graph shapes.
+The map case contains an empty forwarding block that the pass removes.
+The tuple match contains the payload phi and constant tag phi that the pass splits.
+Its two predecessors now reach their selected arms directly.
+The selected result phi reads the original payload from its predecessor.
+
+The snapshot correction contains only those two graph changes.
+The owner supplies that correction in a separate commit.
+The complete fixture and print driver remain unchanged.
+An independent primary-compiler build of that driver produces the exact corrected snapshot.
+
+All compiler inputs, Go test sources, and performance baselines match the earlier combined proof.
+The owner supplies the separately validated snapshot correction.
+The combined evidence resides in `docs/benchmarks/join-split-ci-repair-2026-11-01/combined`.

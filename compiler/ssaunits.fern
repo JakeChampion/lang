@@ -4166,10 +4166,10 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
   return at >= 0 && c.last[at] > pos;
 }
 
-pub struct Carry { from: i32[], drop_at: i32[], held: i32[], to: i32[], build_at: i32[], donor: i32[], exit_from: i32[], exit_to: i32[], dropped: i32[], null_from: i32[], null_to: i32[], nulled: i32[] }
+pub struct Carry { from: i32[], drop_at: i32[], held: i32[], edge_from: i32[], edge_to: i32[], edge_held: i32[], to: i32[], build_at: i32[], donor: i32[], exit_from: i32[], exit_to: i32[], dropped: i32[], null_from: i32[], null_to: i32[], nulled: i32[] }
 
 function no_carry(): Carry {
-  return Carry { from: [], drop_at: [], held: [], to: [], build_at: [], donor: [], exit_from: [], exit_to: [], dropped: [], null_from: [], null_to: [], nulled: [] };
+  return Carry { from: [], drop_at: [], held: [], edge_from: [], edge_to: [], edge_held: [], to: [], build_at: [], donor: [], exit_from: [], exit_to: [], dropped: [], null_from: [], null_to: [], nulled: [] };
 }
 
 function first_claim_of(f: ssasem.Func, p: Plan, b: ssa.SBlock, slots: i32): i32 {
@@ -4220,17 +4220,23 @@ function route_marks(n: i32): RouteMarks {
   return RouteMarks { seen: seen, way: way, stamp: 0 };
 }
 
-function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, slots: i32, d: i32): Searched {
+function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks, slots: i32, d: i32): Searched {
+  let sources: i32[] = h.blocks;
   let ahead: i32 = m.stamp + 1;
   let seen: i32[] = m.seen;
   let way: i32[] = m.way;
   let builds: i32[] = [];
   let work: i32[] = [];
-  for id in sources {
-    let term: ssa.STerm = f.graph.blocks[g.at[id]].term;
-    for which in 0..successor_count(f.graph.blocks[g.at[id]]) {
-      let s: i32 = ssa.successor_id(term, which);
-      work = work.append(s);
+  for si in 0..sources.len() {
+    let id: i32 = sources[si];
+    if (h.edges[si] >= 0) {
+      work = work.append(h.edges[si]);
+    } else {
+      let term: ssa.STerm = f.graph.blocks[g.at[id]].term;
+      for which in 0..successor_count(f.graph.blocks[g.at[id]]) {
+        let s: i32 = ssa.successor_id(term, which);
+        work = work.append(s);
+      }
     }
   }
   let next: i32 = 0;
@@ -4310,25 +4316,49 @@ function null_edge(f: ssasem.Func, g: RouteGraph, sources: i32[], id: i32, slots
     && donor_slots(f, g.reads, f.graph.blocks[k], d) != slots;
 }
 
-struct Dying { at: i32[], values: i32[] }
+// edges[i] is the successor the value dies on the edge into, or -1 when it dies at the instruction at[i].
+struct Dying { at: i32[], values: i32[], edges: i32[] }
 
 // The values dying in a block that no construction of their own slot count after them can take.
+// A value dying on an edge is listed when the block the edge enters claims its slot count.
 function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr: VariantReads, b: ssa.SBlock): Dying {
   let claims: Claims = block_claims(f, p, b);
-  let out: Dying = Dying { at: [], values: [] };
+  let at: i32[] = [];
+  let values: i32[] = [];
+  let edges: i32[] = [];
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     if (b.insts[pos].kind_tag != 6 && b.insts[pos].kind_tag != 8) {
       for d in step_of(p, idx, b.id, pos, 0 - 1).drops {
         if (d != b.insts[pos].result && (d >= links.len() || links[d] < 0) && !static_box(p, d)
           && !claimed_from(claims, donor_slots(f, vr, b, d), pos)) {
-          out = Dying { at: out.at.append(pos), values: out.values.append(d) };
+          at = at.append(pos);
+          values = values.append(d);
+          edges = edges.append(0 - 1);
         }
       }
     }
     pos = pos + 1;
   }
-  return out;
+  for which in 0..successor_count(b) {
+    let target: i32 = ssa.successor_id(b.term, which);
+    let si: i32 = step_at(p, idx, b.id, edge_point(), target);
+    if (si >= 0) {
+      for d in p.steps[si].drops {
+        let slots: i32 = donor_slots(f, vr, b, d);
+        if (slots >= 0 && (d >= links.len() || links[d] < 0) && !static_box(p, d)
+          && first_claim_of(f, p, f.graph.blocks[vr.at[target]], slots) >= 0) {
+          at = at.append(b.insts.len());
+          values = values.append(d);
+          edges = edges.append(target);
+        }
+      }
+    }
+  }
+  if (values.len() == 0) {
+    return Dying { at: [], values: [], edges: [] };
+  }
+  return Dying { at: at, values: values, edges: edges };
 }
 
 function claimed_from(c: Claims, slots: i32, pos: i32): boolean {
@@ -4336,15 +4366,15 @@ function claimed_from(c: Claims, slots: i32, pos: i32): boolean {
   return at >= 0 && c.last[at] >= pos;
 }
 
-struct Holds { blocks: i32[], at: i32[], slots: i32 }
+struct Holds { blocks: i32[], at: i32[], edges: i32[], slots: i32 }
 
-function holds_of(f: ssasem.Func, vr: VariantReads, dying: Dying[], holding: boolean[], first: i32, d: i32, at0: i32, slots: i32): Holds {
-  let h: Holds = Holds { blocks: [f.graph.blocks[first].id], at: [at0], slots: slots };
+function holds_of(f: ssasem.Func, vr: VariantReads, dying: Dying[], holding: boolean[], first: i32, d: i32, i0: i32, slots: i32): Holds {
+  let h: Holds = Holds { blocks: [f.graph.blocks[first].id], at: [dying[first].at[i0]], edges: [dying[first].edges[i0]], slots: slots };
   let bj: i32 = first + 1;
   while (bj < dying.len()) {
     let j: i32 = util.index_of_i32(dying[bj].values, d);
     if (!holding[bj] && j >= 0 && can_hold(f.graph.blocks[bj]) && donor_slots(f, vr, f.graph.blocks[bj], d) == slots) {
-      h = Holds { ...h, blocks: h.blocks.append(f.graph.blocks[bj].id), at: h.at.append(dying[bj].at[j]) };
+      h = Holds { ...h, blocks: h.blocks.append(f.graph.blocks[bj].id), at: h.at.append(dying[bj].at[j]), edges: h.edges.append(dying[bj].edges[j]) };
     }
     bj = bj + 1;
   }
@@ -4377,10 +4407,10 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
       let d: i32 = dying[bi].values[i];
       let slots: i32 = donor_slots(f, g.reads, b, d);
       if (slots >= 0) {
-        let h: Holds = holds_of(f, g.reads, dying, holding, bi, d, dying[bi].at[i], slots);
+        let h: Holds = holds_of(f, g.reads, dying, holding, bi, d, i, slots);
         if (h.blocks.len() > 1 || util.index_of_i32(tried, slots) < 0) {
           tried = tried.append(slots);
-          let found: Searched = carry_routes(f, g, h.blocks, marks, slots, d);
+          let found: Searched = carry_routes(f, g, h, marks, slots, d);
           marks = found.marks;
           let before: i32 = c.to.len();
           c = served_by(f, p, idx, g, c, h, found.routes, d);
@@ -4425,12 +4455,17 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
     c = Carry { ...c, to: c.to.append(targets[k]), build_at: c.build_at.append(builds[k]), donor: c.donor.append(d) };
     k = k + 1;
   }
+  let leaving: i32[] = [];
   k = 0;
   while (k < h.blocks.len()) {
-    c = Carry { ...c, from: c.from.append(h.blocks[k]), drop_at: c.drop_at.append(h.at[k]), held: c.held.append(d) };
+    if (h.edges[k] < 0) {
+      c = Carry { ...c, from: c.from.append(h.blocks[k]), drop_at: c.drop_at.append(h.at[k]), held: c.held.append(d) };
+      leaving = leaving.append(h.blocks[k]);
+    } else if (util.index_of_i32(targets, h.edges[k]) >= 0 || util.index_of_i32(inside, h.edges[k]) >= 0) {
+      c = Carry { ...c, edge_from: c.edge_from.append(h.blocks[k]), edge_to: c.edge_to.append(h.edges[k]), edge_held: c.edge_held.append(d) };
+    }
     k = k + 1;
   }
-  let leaving: i32[] = h.blocks;
   for id in inside {
     if (util.index_of_i32(leaving, id) < 0) {
       leaving = leaving.append(id);
@@ -4495,6 +4530,16 @@ pub function carry_exits(c: Carry, from: i32, to: i32): i32[] {
 pub function carry_held_for(c: Carry, b: i32, pos: i32): boolean {
   let into: i32 = util.index_of_i32(c.to, b);
   return into >= 0 && c.build_at[into] == pos;
+}
+
+// The value whose box the edge from `from` to `to` holds instead of dropping.
+pub function carry_held_edge(c: Carry, from: i32, to: i32): i32 {
+  for i in 0..c.edge_from.len() {
+    if (c.edge_from[i] == from && c.edge_to[i] == to) {
+      return c.edge_held[i];
+    }
+  }
+  return 0 - 1;
 }
 
 pub function carry_held(c: Carry, b: i32, pos: i32): i32 {
@@ -5450,6 +5495,10 @@ function tokens_over(c: Carry, from: i32, to: i32, out: i32[]): i32[] {
   for d in carry_nulls(c, from, to) {
     over = with_token(over, d);
   }
+  let held: i32 = carry_held_edge(c, from, to);
+  if (held >= 0) {
+    over = with_token(over, held);
+  }
   return over;
 }
 
@@ -5470,6 +5519,17 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reach
       return "a carried token is taken from a value not dying there";
     }
     i = i + 1;
+  }
+  for edge in 0..c.edge_from.len() {
+    let k: i32 = at[c.edge_from[edge]];
+    if (k < 0 || !reachable[k]) {
+      return "a token is held on an edge out of an unreachable block";
+    }
+    let b: ssa.SBlock = f.graph.blocks[k];
+    let st: i32 = find_step(b, idx, edge_point(), c.edge_to[edge]);
+    if (st < 0 || util.index_of_i32(p.steps[st].drops, c.edge_held[edge]) < 0 || static_box(p, c.edge_held[edge])) {
+      return "a carried token is taken from a value not dying on that edge";
+    }
   }
   let entry: i32[][] = [];
   let known: boolean[] = [];

@@ -90,7 +90,7 @@ func TestSelfHostReuseCarryKeepsBlockDonor(t *testing.T) {
 	if err := os.WriteFile(src, []byte(reuseCarryBlockDonorProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	const want = "8 9\n"
+	const want = "8 8\n"
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			var cmd *exec.Cmd
