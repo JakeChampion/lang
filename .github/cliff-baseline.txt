@@ -1,5 +1,5 @@
-# 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method whose body is one block joins the once set:
-# checker.cliff_count +2.96%, checker.cliff_bytes +1.06%.
+# 2026-11-01: #13988 retains the original main limits. CI 41287852525
+# reports 353,840 crossings and 46,919,432 bytes. Keep this cost visible against original main.
 # 2026-10-31: PR #13910, measured by CI job 124561576376.
 # 2026-10-31: PR #13923, measured by CI job 124561596792.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
@@ -139,5 +139,5 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	46919432
-x86_64/checker.cliff_count	353840
+x86_64/checker.cliff_bytes	46426872
+x86_64/checker.cliff_count	343679

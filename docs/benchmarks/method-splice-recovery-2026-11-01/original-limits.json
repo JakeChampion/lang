@@ -1,0 +1,103 @@
+{
+  "date": "2026-11-01",
+  "pull_request": 13988,
+  "owner_parent": "3166f2768613392f15fd4459d4d5aecfb4ccdbd6",
+  "ci_run": 41287852525,
+  "ci_pr_head": "b9b3ffe3499876cfe4c64bc71a64ad245e68f9e1",
+  "ci_checkout": "bef4891b6b9a0de1d861b1bfc61e289051cf3a73",
+  "ci_base": "9fa1ccbc072369fa4bb345cb9d1574e0beddb5b7",
+  "local_compiler_source": "b9b3ffe3499876cfe4c64bc71a64ad245e68f9e1",
+  "local_compiler_sha256": "ed31d73c9b286c215d209c8db69e155cfd8ede99ae406397da42f29ca0b64d84",
+  "compiler_bench_stdlib_unchanged_through_owner_parent": true,
+  "local_and_ci_static_reports_identical": true,
+  "reason": "Keep the original main limits. Preserve the owner's measured decreases and keep compiler churn costs visible.",
+  "reports": [
+    {
+      "path": "/tmp/fern-13988-b9-native-x86/perf-report.txt",
+      "rows": 78,
+      "sha256": "cc938cde9c84c57881991cd85db2b9f79b8620367550f9703dd3f14dd00d4e53"
+    },
+    {
+      "path": "/tmp/fern-13988-b9-perf-arm/perf-report.txt",
+      "rows": 78,
+      "sha256": "1d3de056b7549c34e409b81e0a8f64c29a84260a786f80165b00a79a44927482"
+    },
+    {
+      "path": "/tmp/fern-13988-b9-static.txt",
+      "rows": 117,
+      "sha256": "5055c35c939ffd61043e1eb256423420cd8f0544e21bbf3dda800c8787eb8156"
+    },
+    {
+      "path": "/tmp/fern-13988-b9-perf-x86/profile-costs-report.txt",
+      "rows": 180,
+      "sha256": "48d5db21274c1e67ae89287ae631b4a70802bc0b41ca5c85a4e88355a6a825a0"
+    },
+    {
+      "path": "/tmp/fern-13988-b9-perf-x86/alloc-report.txt",
+      "rows": 2,
+      "sha256": "5152b95c54ae664f441d361baa5d98edcc4d9336b9c820d7ee9aefb6e657e2b1"
+    },
+    {
+      "path": "/tmp/fern-13988-b9-perf-x86/cliff-report.txt",
+      "rows": 2,
+      "sha256": "855fb7ed458c80c0b7fc9d860d896d94d2d728ac1633abaec0072cb9c1c5060b"
+    }
+  ],
+  "restored_gates": [
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "x86_64/pvec_with.ir",
+      "owner_pin": 55494169,
+      "restored_main_pin": 55174232,
+      "measured": 55494169
+    },
+    {
+      "file": ".github/perf-baseline.txt",
+      "metric": "aarch64/pvec_with.ir",
+      "owner_pin": 59369743,
+      "restored_main_pin": 59221804,
+      "measured": 59369743
+    },
+    {
+      "file": ".github/alloc-baseline.txt",
+      "metric": "x86_64/checker.allocs",
+      "owner_pin": 36537877,
+      "restored_main_pin": 36037176,
+      "measured": 36537877
+    },
+    {
+      "file": ".github/alloc-baseline.txt",
+      "metric": "x86_64/checker.frees",
+      "owner_pin": 36537877,
+      "restored_main_pin": 36037176,
+      "measured": 36537877
+    },
+    {
+      "file": ".github/cliff-baseline.txt",
+      "metric": "x86_64/checker.cliff_bytes",
+      "owner_pin": 46919432,
+      "restored_main_pin": 46426872,
+      "measured": 46919432
+    },
+    {
+      "file": ".github/cliff-baseline.txt",
+      "metric": "x86_64/checker.cliff_count",
+      "owner_pin": 353840,
+      "restored_main_pin": 343679,
+      "measured": 353840
+    }
+  ],
+  "validation": {
+    "native_x86_strict": "pass",
+    "native_arm_strict": "pass",
+    "static_117_strict": "pass",
+    "profile_costs_strict": "pass",
+    "allocation_existing_hard_budget_percent": 10,
+    "allocation_gate": "pass with existing advisory findings",
+    "cliff_existing_policy": "advisory",
+    "cliff_gate": "pass with existing advisory findings",
+    "tolerances_changed": false,
+    "any_pin_above_original_main": false,
+    "publication_head_full_ci": "pending"
+  }
+}
