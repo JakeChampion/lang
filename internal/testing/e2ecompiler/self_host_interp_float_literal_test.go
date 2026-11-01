@@ -2,9 +2,11 @@ package e2ecompiler
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
-	"time"
 )
 
 // The parser stores a float literal's bits once. An integer literal that the
@@ -23,16 +25,19 @@ func TestSelfHostInterpFloatLiteral(t *testing.T) {
 	native := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern", "drivers/interp_float_cache_run.fern")
 
 	var driverBin string
+	var cacheBin string
 	var runner []string
 	if native {
 		driverBin = buildSelfHostBinArm64Darwin(t, dir, "drivers/interp_run.fern", "interp_run")
+		cacheBin = buildSelfHostBinArm64Darwin(t, dir, "drivers/interp_float_cache_run.fern", "interp_float_cache_run")
 	} else {
 		gcc, r := x86_64Tooling(t)
 		runner = r
 		driverBin = buildSelfHostBin(t, gcc, dir, "drivers/interp_run.fern", "interp_run")
+		cacheBin = buildSelfHostBin(t, gcc, dir, "drivers/interp_float_cache_run.fern", "interp_float_cache_run")
 	}
 	interpBin := buildLangBinForInterp(t)
 
@@ -48,18 +53,52 @@ func TestSelfHostInterpFloatLiteral(t *testing.T) {
 		})
 	}
 
-	// A 17-digit literal takes the parser's exact slow path. Evaluated once
-	// per iteration, it must cost about as much as an integer literal.
-	loop := func(lit string) time.Duration {
+	// Different text must not replace the bits that the parser cached.
+	// A control interpreter that parses the text again returns zero here.
+	for _, literal := range []string{"1.0", "1.6666666666666602e-01"} {
+		t.Run("cached-bits/"+literal, func(t *testing.T) {
+			if got := runDriverExit(t, runner, cacheBin, []byte("return "+literal+";\n")); got != 7 {
+				t.Fatalf("cached-bit probe exited %d, want 7", got)
+			}
+		})
+	}
+
+	// Keep the repeated-evaluation workload without a wall-clock gate.
+	loop := func(lit string) {
 		src := fmt.Sprintf("function main(): i32 {\n  let s: f64 = 0.0;\n  let i = 0;\n  while (i < 20000) { s = s + %s; i = i + 1; }\n  if (s <= 0.0) { return 1; }\n  return 7;\n}\n", lit)
-		start := time.Now()
 		if got := runDriverExit(t, runner, driverBin, []byte(src)); got != 7 {
 			t.Fatalf("loop over %s exited %d, want 7", lit, got)
 		}
-		return time.Since(start)
 	}
-	short, long := loop("1.0"), loop("1.6666666666666602e-01")
-	if long > 3*short {
-		t.Errorf("20000 evaluations of a 17-digit literal took %v and of 1.0 took %v: the literal is parsed on each evaluation", long, short)
-	}
+	loop("1.0")
+	loop("1.6666666666666602e-01")
+
+	t.Run("reparse-control", func(t *testing.T) {
+		// Change only the temporary interpreter copy. The same probe must fail.
+		path := filepath.Join(dir, "interp.fern")
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const cached = "v_float(f64_from_bits(n.bits))"
+		if strings.Count(string(src), cached) != 1 {
+			t.Fatal("expected one cached float evaluation in the interpreter")
+		}
+		control := strings.Replace(string(src), cached, "v_float(f64_from_bits(util.parse_f64_bits(n.text)))", 1)
+		if err := os.WriteFile(path, []byte(control), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var controlBin string
+		if native {
+			controlBin = buildSelfHostBinArm64Darwin(t, dir, "drivers/interp_float_cache_run.fern", "interp_float_reparse_control")
+		} else {
+			gcc, _ := x86_64Tooling(t)
+			controlBin = buildSelfHostBin(t, gcc, dir, "drivers/interp_float_cache_run.fern", "interp_float_reparse_control")
+		}
+		for _, literal := range []string{"1.0", "1.6666666666666602e-01"} {
+			if got := runDriverExit(t, runner, controlBin, []byte("return "+literal+";\n")); got != 3 {
+				t.Fatalf("reparse control for %s exited %d, want cached-bit mismatch 3", literal, got)
+			}
+		}
+	})
 }
