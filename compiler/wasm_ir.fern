@@ -5047,10 +5047,7 @@ function emit_str_op_wat(o: ir.Op): string {
 }
 
 function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
-  let fn_name: string = fd.name;
-  if (fd.receiver_type.len() > 0) {
-    fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
-  }
+  let fn_name: string = parser.decl_key(fd);
   let body = ircore.body_for_emit(fn_name, r);
   return emit_function_ir_named(ns, body, fn_name, result_wat(body, fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
 }
