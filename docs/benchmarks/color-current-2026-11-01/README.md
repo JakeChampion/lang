@@ -4,13 +4,13 @@ The original implementation head CI `40189125104` ended as cancelled.
 The later image-lane pass recorded in the issue did not establish full-main success.
 This follow-up retains those limits and requires fresh full CI before merge.
 
-The runtime source is integrated main `7f483e0509b17d1d35162be6f4bdb68c1baaad97`.
+The runtime source is integrated main `81a77c83f690fcc514c573660eeb4354131d6d07`.
 The frozen Fern compiler has SHA256
 `84d7ad1e43e563e338d970ab4fc0fb00ef6d530a6037f477666ded9b220f0151`.
 Its own stages two and three are byte-identical.
-Its compiler and standard-library sources match PR #14006 at
-`ea5d1abe85e461c57c66843acad0291fe24ea21c`.
-The PR requires full CI and merge before this qualification can proceed.
+Its compiler and standard-library sources match merged PR #14006.
+That PR's final head `a0f612ff2ca21ec6b47124346207f2c036f33746` passes all
+95 non-Netlify checks: 70 successes and 25 legitimate skips.
 
 No production code, fixture, numerical tolerance, image limit, or performance
 baseline changes in this qualification. Dependency #13211 is complete.
