@@ -36,6 +36,12 @@ block, and no element read of the array sits there. No block the first read
 dominates spends the parent, except the re-read's own block. Keeping the
 first read alive to that block therefore holds nothing.
 
+The exception uses a separate index of `with` destinations. The ordinary
+growth index also includes append, concat and truncate. Those operations
+keep their existing re-read behavior. Using the growth index for this
+exception increased compiler copies on the fixed checker workload, even
+though the emitted checker assembly did not change.
+
 Two wider forms were measured and rejected. The first kept the first read
 for any descendant spent in a dominator. It cost 3 allocations a request on
 the HTTP/3 server, in `h3q.Conn.__readable` and others. There the

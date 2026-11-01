@@ -1,0 +1,155 @@
+{
+  "base_commit": "33ea53e0deb39c94bc9c38c5cc8c01e41d22329b",
+  "source_file": "compiler/semsink.fern",
+  "source_sha256": "7b82924ffb8623c4444d3e732e5e8c8a624ce5582d57fc2b6dc434e451ec0442",
+  "scope": "Retain the first read only for array with destinations. Preserve existing append, concat, truncate, method eligibility and phi rules.",
+  "fixed_input": {
+    "subject": "/tmp/fern-checker-current-pr-input/new/compiler/checker.fern",
+    "subject_sha256": "5abdc293691157514d6a039116a9eed3f68fbeba58290e98d6d9a8bba0721e4a",
+    "stdlib": "/Users/jakechampion/codex/lang-13990-join-take/internal/stdlib",
+    "target": "x86-64-linux",
+    "emit": "asm",
+    "environment": {
+      "FERN_RC_CERTIFY": "0",
+      "FERN_CLIFF_REPORT": "1"
+    }
+  },
+  "heap_baseline": {
+    "engine": "base",
+    "compiler_sha256": "b1d916b34db473c7af135e086acbb72531c79ee49d5c2953de697a4efe97e3d2",
+    "allocs": 36174828,
+    "frees": 36174828,
+    "live_bytes": 0,
+    "cliff_count": 346949,
+    "cliff_bytes": 46175984,
+    "output_sha256": "fadf4a6268c5b777b75809068fbdfc5d4e1702a32c5804ae8ac5279afbd5842d"
+  },
+  "merged_rule": {
+    "engine": "guarded",
+    "compiler_sha256": "f6478c0a8f01abdd24e908a9812ee2cb8b2d10127572362750e27abfc8ba8bc2",
+    "allocs": 36182632,
+    "frees": 36182632,
+    "live_bytes": 0,
+    "cliff_count": 351741,
+    "cliff_bytes": 62458560,
+    "output_sha256": "fadf4a6268c5b777b75809068fbdfc5d4e1702a32c5804ae8ac5279afbd5842d"
+  },
+  "with_only_rule": {
+    "engine": "guarded",
+    "compiler_sha256": "5f162e19749898f742b0d8adb9235614e7e7e3c956517e97959024efd7b779ac",
+    "allocs": 36175780,
+    "frees": 36175780,
+    "live_bytes": 0,
+    "cliff_count": 346954,
+    "cliff_bytes": 46176024,
+    "output_sha256": "fadf4a6268c5b777b75809068fbdfc5d4e1702a32c5804ae8ac5279afbd5842d"
+  },
+  "bootstrap": {
+    "stage1_equals_stage2": true,
+    "stage2_equals_stage3": true,
+    "bytes": 17332481,
+    "sha256": "ed765f71669c60a41766716f12a815bb018b64b99547ac0a988444e78e4df39d"
+  },
+  "direct_x86_image": {
+    "bytes": 15767952,
+    "sha256": "b9a2510952b7ed73b35de2f8cd39b0e37a5277890a067a09176d69784475d1b9",
+    "verified_functions": 8422,
+    "modelled_functions": 8422,
+    "skipped_functions": 0,
+    "size_gate_coverage": "1 of 11 driver rows"
+  },
+  "static_report": {
+    "rows": 117,
+    "sha256": "5055c35c939ffd61043e1eb256423420cd8f0544e21bbf3dda800c8787eb8156"
+  },
+  "unchanged_strict_gates": [
+    "allocation",
+    "append-cliff bytes and count",
+    "self-host static emission",
+    "direct compiler image size"
+  ],
+  "validation": {
+    "native_paired_regression_seconds": 33.877,
+    "paired_forms": [
+      "free-spliced",
+      "free-call",
+      "method-inline",
+      "method-noinline"
+    ],
+    "native_paired_targets": [
+      "arm64-darwin",
+      "wasm32-wasi"
+    ],
+    "linux_roots": [
+      "TestSelfHostCompositeCells",
+      "TestSelfHostDropFinalizersRunOnceIRArm64",
+      "TestSelfHostDropFinalizersRunOnceWasmIR",
+      "TestSelfHostGenericDropCensus",
+      "TestSelfHostImportedGenericDrop",
+      "TestSelfHostInterpScopeFrames",
+      "TestSelfHostInterpreterHeap",
+      "TestSelfHostInterpManagedArrayIdentity",
+      "TestSelfHostInterpManagedSocketIdentity",
+      "TestSelfHostInterpManagedReactorIdentity",
+      "TestSelfHostKeptReadPastUpdate",
+      "TestSelfHostSecondTakeNeedsItsSource",
+      "TestSelfHostArrayElementTakeAcrossSplicedJoin"
+    ],
+    "linux_seconds": 125.815,
+    "linux_skips": 0,
+    "unit_rest_cmd_fern_seconds": 451.024,
+    "lint_fast": "pass",
+    "check_sources": "pass, including 85 drivers"
+  },
+  "limits": [
+    "Full project validation runs in CI.",
+    "The one-block default method gate remains. Issue 13990 stays open.",
+    "Storage failures and the failing original compiler-cache namespace are retained. The successful Linux retry uses a fresh cache namespace."
+  ],
+  "logs": {
+    "final-cost": {
+      "path": "/tmp/fern-13994-final-cost.log",
+      "sha256": "7f77f7475f2551adfa594bc624aefdd1fcdf36a4b1b6b14da9812ef91137f303"
+    },
+    "final-alloc-gate": {
+      "path": "/tmp/fern-13994-final-alloc-gate.log",
+      "sha256": "7267da0d9291d7b2db23608fbf295e6138efaa53e8c5336d3632b71ba1f79ba2"
+    },
+    "final-cliff-gate": {
+      "path": "/tmp/fern-13994-final-cliff-gate.log",
+      "sha256": "e64c8b5a4937b864a7ed1d1757c83ec395d1616ee291d8d6db9cec91f4f77f58"
+    },
+    "update-only-lint": {
+      "path": "/tmp/fern-13994-update-only-lint.log",
+      "sha256": "1900175dffdda93e18ce8db93771c72e32d2da1b48bdf4c8a26ffbee23baeb52"
+    },
+    "update-only-check-sources": {
+      "path": "/tmp/fern-13994-update-only-check-sources.log",
+      "sha256": "255821f8e852a373777d4db851bba8961062a6f144d558c4dacf0f4127234cf7"
+    },
+    "update-only-distcheck": {
+      "path": "/tmp/fern-13994-update-only-distcheck.log",
+      "sha256": "4086207294ae385c806a90675cfa74443bf8e913af9b137930cb88dd48dcdfd8"
+    },
+    "update-only-portable-native-retry": {
+      "path": "/tmp/fern-13994-update-only-portable-native-retry.log",
+      "sha256": "67846e242a948c71b5736c3425f2b330dfcaf680fd159a7163c9dac9bd72b0aa"
+    },
+    "update-only-static-gate-retry": {
+      "path": "/tmp/fern-13994-update-only-static-gate-retry.log",
+      "sha256": "837792964d6ea84e1a4f9fbad292fc90aede37bfc268a858b5fe98c2a78fe1de"
+    },
+    "update-only-size-gate": {
+      "path": "/tmp/fern-13994-update-only-size-gate.log",
+      "sha256": "9ae8107767d7d7c4549cd0fa73bd5d919820d0f3a780f43ea89587cf057d1b44"
+    },
+    "update-only-unit-rest-retry": {
+      "path": "/tmp/fern-13994-update-only-unit-rest-retry.log",
+      "sha256": "5787f5da17779a8a9653e8495cedd46c35955a919d7053583a8ec1e948a035ef"
+    },
+    "clean-cache-validation": {
+      "path": "/tmp/fern-13994-clean-cache-validation.log",
+      "sha256": "4ad3778edf25503ce1ed4c085b0b3429795509284ae0fdcffdbaf5c263504d64"
+    }
+  }
+}
