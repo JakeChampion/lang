@@ -1,6 +1,9 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // retire takes the fields of a record that outlives the run, because an
 // element of its list is read after it. lock ends a run where its donor
@@ -86,10 +89,14 @@ function main(): i32 {
 func TestSelfHostTestedTakeShapeX86_64(t *testing.T) {
 	emit, run := x86ShapeHarness(t)
 	asm := emit(t, testedTakeSrc)
-	for fn, want := range map[string]int{"retire": 10, "lock": 4} {
+	// Split-phi folding lets the final update reuse Tab after the join.
+	for fn, want := range map[string]int{"retire": 9, "lock": 4} {
 		if got := rcIsUniqueSites(fnText(t, asm, fn)); got != want {
 			t.Errorf("%s: %d uniqueness tests, want %d", fn, got, want)
 		}
+	}
+	if got := strings.Count(fnText(t, asm, "retire"), "call __fern_arr_box"); got != 0 {
+		t.Errorf("retire: %d fresh box sites, want 0", got)
 	}
 	if got := run(t, "tested", asm); got != 0 {
 		t.Errorf("exit = %d, want 0 (bit 1: unique table, 2: shared table, 4: shared env, 8: fresh env)", got)

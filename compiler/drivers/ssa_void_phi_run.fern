@@ -1,0 +1,51 @@
+import "../ssa";
+
+function jump(target: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 };
+}
+
+function returned(value: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: value };
+}
+
+function graph(value: i32, trivial: boolean): ssa.SFunc {
+  let entry: ssa.SBlock = ssa.SBlock {
+    id: 0, preds: [], insts: [
+      ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 7, str: "" },
+      ssa.SInst { kind_tag: 2, result: 1, args: [], imm: 1, str: "" },
+      ssa.SInst { kind_tag: 1, result: 3, args: [], imm: 9, str: "" },
+    ],
+    term: ssa.STerm { kind_tag: 3, cond: 1, target: 0, t: 1, f: 2, value: 0 },
+  };
+  let left: ssa.SBlock = ssa.SBlock { id: 1, preds: [0], insts: [], term: jump(3) };
+  let right: ssa.SBlock = ssa.SBlock { id: 2, preds: [0], insts: [], term: jump(3) };
+  let other: i32 = if (trivial) { 0 } else { 3 };
+  let join: ssa.SBlock = ssa.SBlock {
+    id: 3, preds: [1, 2], insts: [
+      ssa.SInst { kind_tag: 8, result: 2, args: [0, other], imm: 0, str: "" },
+      ssa.SInst { kind_tag: 11, result: 0 - 1, args: [2], imm: 0, str: "observe" },
+    ],
+    term: returned(value),
+  };
+  return ssa.SFunc { name: "void_phi", nparams: 0, nvals: 4, blocks: [entry, left, right, join], entry: 0, takes_env: false };
+}
+
+function main(): i32 {
+  let folded: ssa.Formed = ssa.prune_trivial_phis(graph(0 - 1, true));
+  let join: ssa.SBlock = folded.f.blocks[3];
+  if (folded.repl.len() != 4 || folded.repl[2] != 0 || join.insts.len() != 1 || join.insts[0].args[0] != 0) {
+    return 1;
+  }
+  if (join.term.kind_tag != 1 || join.term.value != 0 - 1) {
+    return 2;
+  }
+  let returning: ssa.Formed = ssa.prune_trivial_phis(graph(2, true));
+  if (returning.f.blocks[3].term.value != 0) {
+    return 3;
+  }
+  let unchanged: ssa.Formed = ssa.prune_trivial_phis(graph(0 - 1, false));
+  if (unchanged.repl.len() != 0 || unchanged.f.blocks[3].insts.len() != 2 || unchanged.f.blocks[3].term.value != 0 - 1) {
+    return 4;
+  }
+  return 0;
+}

@@ -1,4 +1,5 @@
 import "./ssa";
+import "./ssadeps";
 import "./sourcepos";
 import "./util";
 import "./ssasem";
@@ -2193,6 +2194,9 @@ function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
     rewritten = rewritten || changed;
     round = round + 1;
   }
+  if (rewritten) {
+    f = ssasem.Func { ...f, graph: ssa.prune_trivial_phis(f.graph).f };
+  }
   return Rewrite { f: f, changed: rewritten };
 }
 
@@ -2687,17 +2691,122 @@ function drop_unread(f: ssasem.Func): Rewrite {
   if (!any_unread(f, built, reads)) {
     return Rewrite { f: f, changed: false };
   }
+  let gone: boolean[] = unread_closure(f, built, reads);
+  let defs: Defs = defs_of(g);
+  let dom: ssadeps.Dom = ssadeps.dominates(g);
   let blocks: ssa.SBlock[] = [];
+  let bi: i32 = 0;
   for b in g.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      if (!unread_build(f, built, reads, ins)) {
-        insts = insts.append(ins);
+      if (!(ins.result >= 0 && ins.result < g.nvals && gone[ins.result])) {
+        insts = insts.append(rebased(f, defs, dom, gone, bi, ins));
       }
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+    bi = bi + 1;
   }
   return Rewrite { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, changed: true };
+}
+
+// The unread constructions, copies and phis, and those read only by them.
+// A chain of record updates read only through one another goes in one
+// round, so the update that survives it finds its root below.
+function unread_closure(f: ssasem.Func, built: typeinfo.Type[], reads0: i32[]): boolean[] {
+  let g: ssa.SFunc = f.graph;
+  let gone: boolean[] = __alloc_bool(g.nvals);
+  let reads: i32[] = reads0;
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for b in g.blocks {
+      for ins in b.insts {
+        if (ins.result >= 0 && ins.result < g.nvals && !gone[ins.result] && unread_build(f, built, reads, ins)) {
+          gone = gone.with(ins.result, true);
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      reads = read_counts_outside(f, gone);
+    }
+  }
+  return gone;
+}
+
+// read_counts without the reads the gone instructions make.
+function read_counts_outside(f: ssasem.Func, gone: boolean[]): i32[] {
+  let g: ssa.SFunc = f.graph;
+  let reads: i32[] = __alloc_i32(g.nvals);
+  for b in g.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result < gone.len() && gone[ins.result]) {
+        continue;
+      }
+      for a in ins.args {
+        reads = counted(reads, a);
+      }
+    }
+    if (b.term.kind_tag == 1) {
+      reads = counted(reads, b.term.value);
+    }
+    if (b.term.kind_tag == 3) {
+      reads = counted(reads, b.term.cond);
+    }
+  }
+  return reads;
+}
+
+// An update whose donor is dropped keeps the box the donor's chain would have
+// reused: its base becomes the value at the root of that chain, when every
+// path reaches the same root and the root is in scope. Otherwise the update
+// has no base and builds a fresh box.
+function rebased(f: ssasem.Func, defs: Defs, dom: ssadeps.Dom, gone: boolean[], bi: i32, ins: ssa.SInst): ssa.SInst {
+  let base: i32 = ssasem.update_base(ins);
+  if (base < 0 || base >= gone.len() || !gone[base]) {
+    return ins;
+  }
+  let root: i32 = donor_root(defs, gone, base, 0);
+  if (root < 0 || !semtypes.equal(f.values[root], f.values[ins.result]) || !in_scope(defs, dom, root, bi)) {
+    return ssa.SInst { ...ins, imm: 0 };
+  }
+  return ssa.SInst { ...ins, imm: root + 1 };
+}
+
+function in_scope(defs: Defs, dom: ssadeps.Dom, v: i32, bi: i32): boolean {
+  return defs.blocks[v] >= 0 && ssadeps.dom_holds(dom, bi, defs.blocks[v]);
+}
+
+function donor_root(defs: Defs, gone: boolean[], v: i32, depth: i32): i32 {
+  if (v < 0 || v >= gone.len() || depth > 64) {
+    return 0 - 1;
+  }
+  if (!gone[v]) {
+    return v;
+  }
+  let d: ssa.SInst = def_inst(defs, v);
+  if (builds(d.kind_tag)) {
+    let b: i32 = ssasem.update_base(d);
+    if (b < 0) {
+      return 0 - 1;
+    }
+    return donor_root(defs, gone, b, depth + 1);
+  }
+  if (d.kind_tag == 7 && d.args.len() == 1) {
+    return donor_root(defs, gone, d.args[0], depth + 1);
+  }
+  if (d.kind_tag != 8) {
+    return 0 - 1;
+  }
+  let root: i32 = 0 - 1;
+  for a in d.args {
+    let x: i32 = donor_root(defs, gone, a, depth + 1);
+    if (x < 0 || root >= 0 && x != root) {
+      return 0 - 1;
+    }
+    root = x;
+  }
+  return root;
 }
 
 function has_static_closure(g: ssa.SFunc): boolean {
