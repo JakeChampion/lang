@@ -1,0 +1,643 @@
+{
+  "issue": 13212,
+  "status": "local qualification complete; fresh full CI pending",
+  "production_changed": false,
+  "original_head_ci": {
+    "run": 40189125104,
+    "conclusion": "cancelled"
+  },
+  "runner_identities": {
+    "host": "Darwin arm64",
+    "docker_image": "sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+    "qemu": "7.2.22",
+    "wasmtime": "46.0.1",
+    "wasmtime_sha256": "b57b3eaf89ff90bf8d5fff35f4cadc6a559b7297cf6802f0477392e164061f81"
+  },
+  "targets": [
+    {
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "arm64-darwin",
+      "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
+      "source_sha256": {
+        "fern-image/experiments/essentials.fern": "6ba6278afc697ae226001299ac096644fe5874191efce4969a1277063bf17940",
+        "fern-image/tests/pixels_test.fern": "d8c98d28c8e1c03e5e4573f6837a8dfc9e6ff6f891de08aeac95cbbca675baea",
+        "fern-image/tests/color_test.fern": "fcb54d79b6007d2f4ba68cf813c8e54e7f62ca6050b5fd58dab3325d3115658a",
+        "fern-image/packages/color/color.fern": "7875e940d95015f53bf6eb93cc40d10c1090b404b6e17eaec4d714c89b6c7a47",
+        "fern-image/packages/pixels/pixels.fern": "62bc9f993b4836709f74ee8950af8f610cfc5dfaf3692dc153a0071c13308fb0",
+        "fern-image/docs/color.md": "1c1eb903c414e16013163411d0602f2fbad6d80ab71df465392ef044dc07272f"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/essentials.fern",
+          "tests": 1,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-darwin",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-native/essentials",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "/private/tmp/fern-13212-current-native/essentials"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
+            "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n"
+          },
+          "binary_sha256": "7bc108d325f7463c6306b276e50811bc919dfaa3f21e092e268f31fb0c3062e4",
+          "allocs": 13,
+          "frees": 13,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/pixels_test.fern",
+          "tests": 7,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-darwin",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-native/pixels_test",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "/private/tmp/fern-13212-current-native/pixels_test"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=177 frees=177 live_bytes=0\n"
+          },
+          "binary_sha256": "e0a57c6436c07bae73988cf8203be01710128badf6569d05569c8d837973a989",
+          "allocs": 177,
+          "frees": 177,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/color_test.fern",
+          "tests": 6,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-darwin",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-native/color_test",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "/private/tmp/fern-13212-current-native/color_test"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
+            "stderr": "leakcheck: allocs=416 frees=416 live_bytes=0\n"
+          },
+          "binary_sha256": "8799841099534d9f2ecf326c7d8f6bdfa0a17e9fb4264168c50074ef33bf5911",
+          "allocs": 416,
+          "frees": 416,
+          "live_bytes": 0
+        }
+      ]
+    },
+    {
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "arm64-linux",
+      "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
+      "source_sha256": {
+        "fern-image/experiments/essentials.fern": "6ba6278afc697ae226001299ac096644fe5874191efce4969a1277063bf17940",
+        "fern-image/tests/pixels_test.fern": "d8c98d28c8e1c03e5e4573f6837a8dfc9e6ff6f891de08aeac95cbbca675baea",
+        "fern-image/tests/color_test.fern": "fcb54d79b6007d2f4ba68cf813c8e54e7f62ca6050b5fd58dab3325d3115658a",
+        "fern-image/packages/color/color.fern": "7875e940d95015f53bf6eb93cc40d10c1090b404b6e17eaec4d714c89b6c7a47",
+        "fern-image/packages/pixels/pixels.fern": "62bc9f993b4836709f74ee8950af8f610cfc5dfaf3692dc153a0071c13308fb0",
+        "fern-image/docs/color.md": "1c1eb903c414e16013163411d0602f2fbad6d80ab71df465392ef044dc07272f"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/essentials.fern",
+          "tests": 1,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-arm64/essentials",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
+              "fern-devbox:latest",
+              "/private/tmp/fern-13212-current-arm64/essentials"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
+            "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n"
+          },
+          "binary_sha256": "08bb186984fda68e5efdd0f24b08506a1cf691afd85dfe826465558367255e0d",
+          "allocs": 13,
+          "frees": 13,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/pixels_test.fern",
+          "tests": 7,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-arm64/pixels_test",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
+              "fern-devbox:latest",
+              "/private/tmp/fern-13212-current-arm64/pixels_test"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=177 frees=177 live_bytes=0\n"
+          },
+          "binary_sha256": "473c2dcd17587fea54bb84fa0d47b5b99ef25f97a8458ad0e3b98324fdb71144",
+          "allocs": 177,
+          "frees": 177,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/color_test.fern",
+          "tests": 6,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-arm64/color_test",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
+              "fern-devbox:latest",
+              "/private/tmp/fern-13212-current-arm64/color_test"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
+            "stderr": "leakcheck: allocs=416 frees=416 live_bytes=0\n"
+          },
+          "binary_sha256": "20f888be5d1048f7679d19fd7f0f485ec4bc008feb9257fdf5d1a51d32743c5b",
+          "allocs": 416,
+          "frees": 416,
+          "live_bytes": 0
+        }
+      ]
+    },
+    {
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "x86-64-linux",
+      "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
+      "source_sha256": {
+        "fern-image/experiments/essentials.fern": "6ba6278afc697ae226001299ac096644fe5874191efce4969a1277063bf17940",
+        "fern-image/tests/pixels_test.fern": "d8c98d28c8e1c03e5e4573f6837a8dfc9e6ff6f891de08aeac95cbbca675baea",
+        "fern-image/tests/color_test.fern": "fcb54d79b6007d2f4ba68cf813c8e54e7f62ca6050b5fd58dab3325d3115658a",
+        "fern-image/packages/color/color.fern": "7875e940d95015f53bf6eb93cc40d10c1090b404b6e17eaec4d714c89b6c7a47",
+        "fern-image/packages/pixels/pixels.fern": "62bc9f993b4836709f74ee8950af8f610cfc5dfaf3692dc153a0071c13308fb0",
+        "fern-image/docs/color.md": "1c1eb903c414e16013163411d0602f2fbad6d80ab71df465392ef044dc07272f"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/essentials.fern",
+          "tests": 1,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "x86-64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-x86/essentials",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
+              "fern-devbox:latest",
+              "qemu-x86_64",
+              "/private/tmp/fern-13212-current-x86/essentials"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
+            "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n"
+          },
+          "binary_sha256": "e5841bd734884be028fedcfd37e85d018de312c3ca97c505a7f06026542d2ae4",
+          "allocs": 13,
+          "frees": 13,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/pixels_test.fern",
+          "tests": 7,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "x86-64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-x86/pixels_test",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
+              "fern-devbox:latest",
+              "qemu-x86_64",
+              "/private/tmp/fern-13212-current-x86/pixels_test"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=177 frees=177 live_bytes=0\n"
+          },
+          "binary_sha256": "e4e3b694e58f10e517333256ea28b23ff8d9cf39c55911d78091b2c49c403a77",
+          "allocs": 177,
+          "frees": 177,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/color_test.fern",
+          "tests": 6,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "x86-64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-x86/color_test",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
+              "fern-devbox:latest",
+              "qemu-x86_64",
+              "/private/tmp/fern-13212-current-x86/color_test"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
+            "stderr": "leakcheck: allocs=416 frees=416 live_bytes=0\n"
+          },
+          "binary_sha256": "a20728ef33c144cd87e385fcf98d73d24c036e75c0794ff60cd7c677003f389f",
+          "allocs": 416,
+          "frees": 416,
+          "live_bytes": 0
+        }
+      ]
+    },
+    {
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "wasm32-wasi",
+      "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
+      "source_sha256": {
+        "fern-image/experiments/essentials.fern": "6ba6278afc697ae226001299ac096644fe5874191efce4969a1277063bf17940",
+        "fern-image/tests/pixels_test.fern": "d8c98d28c8e1c03e5e4573f6837a8dfc9e6ff6f891de08aeac95cbbca675baea",
+        "fern-image/tests/color_test.fern": "fcb54d79b6007d2f4ba68cf813c8e54e7f62ca6050b5fd58dab3325d3115658a",
+        "fern-image/packages/color/color.fern": "7875e940d95015f53bf6eb93cc40d10c1090b404b6e17eaec4d714c89b6c7a47",
+        "fern-image/packages/pixels/pixels.fern": "62bc9f993b4836709f74ee8950af8f610cfc5dfaf3692dc153a0071c13308fb0",
+        "fern-image/docs/color.md": "1c1eb903c414e16013163411d0602f2fbad6d80ab71df465392ef044dc07272f"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/essentials.fern",
+          "tests": 1,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "wasm32-wasi",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-wasm/essentials.wasm",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors\n"
+          },
+          "run": {
+            "command": [
+              "/Users/jakechampion/.wasmtime/bin/wasmtime",
+              "run",
+              "/private/tmp/fern-13212-current-wasm/essentials.wasm"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
+            "stderr": "leakcheck: allocs=28 frees=28 live_bytes=0\n"
+          },
+          "binary_sha256": "c44e7fccd61442a885149f2b61d4bc8fdc071bd995bfc3b1a0e7832a3605f5b8",
+          "allocs": 28,
+          "frees": 28,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/pixels_test.fern",
+          "tests": 7,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "wasm32-wasi",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-wasm/pixels_test.wasm",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors\n"
+          },
+          "run": {
+            "command": [
+              "/Users/jakechampion/.wasmtime/bin/wasmtime",
+              "run",
+              "/private/tmp/fern-13212-current-wasm/pixels_test.wasm"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=210 frees=210 live_bytes=0\n"
+          },
+          "binary_sha256": "2e8fdeec56f5d6676b29cfc423e2763da5d005395e0f5c624dcdca4dc174a5e3",
+          "allocs": 210,
+          "frees": 210,
+          "live_bytes": 0
+        },
+        {
+          "source": "fern-image/tests/color_test.fern",
+          "tests": 6,
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "build": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "wasm32-wasi",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-13212-current-wasm/color_test.wasm",
+              "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
+              "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors\n"
+          },
+          "run": {
+            "command": [
+              "/Users/jakechampion/.wasmtime/bin/wasmtime",
+              "run",
+              "/private/tmp/fern-13212-current-wasm/color_test.wasm"
+            ],
+            "exit_code": 0,
+            "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
+            "stderr": "leakcheck: allocs=446 frees=446 live_bytes=0\n"
+          },
+          "binary_sha256": "e5dd1f0796194cbc02c2df45137303bc14a2dfbfdd0516a5f7901dac8a6a2777",
+          "allocs": 446,
+          "frees": 446,
+          "live_bytes": 0
+        }
+      ]
+    }
+  ],
+  "lint_fast": {
+    "result": "pass",
+    "log_sha256": "79d6b00e36510ac9d45ff4afa6af0d7fce1b31b51936e1fbde0b050852f27e46"
+  },
+  "previous_qualification_commit": "df468ea1c93895ce2085e1695ff76fcd3bd442c6",
+  "compiler_source_matches_merged_main": true
+}
