@@ -474,14 +474,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 0 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 1 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 2 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 3 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 4 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 5 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 6 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 8, shard: 7 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 0 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 1 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 2 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 3 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 4 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 5 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 6 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 7 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 8 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
@@ -608,7 +609,7 @@ jobs:
           merge-multiple: true
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=8 aarch64=2
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=9 aarch64=2
       - name: why did a shard leave no outcome
         if: failure() && steps.verify.outcome == 'failure'
         env:
