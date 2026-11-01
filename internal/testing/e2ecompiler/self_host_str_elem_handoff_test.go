@@ -8,7 +8,7 @@ import (
 const strElemHandoffSrc = `struct Sc { names: string[], types: i32[] }
 struct FB { scope: Sc, valid: boolean }
 
-function (s: Sc) bind(name: string, t: i32): Sc {
+@noinline function (s: Sc) bind(name: string, t: i32): Sc {
   let ns: string[] = s.names.append(name);
   let ts: i32[] = s.types.append(t);
   return Sc { names: ns, types: ts };
