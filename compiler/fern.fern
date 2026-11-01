@@ -951,7 +951,7 @@ function export_entry(f: parser.FuncDecl): string {
       stack = stack + 8;
     }
   }
-  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n" + asm_ir.busy_take_x86();
+  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n" + asm_ir.busy_take_x86();
   let i: i32 = f.params.len() - 1;
   while (i >= 0) {
     out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
@@ -963,7 +963,7 @@ function export_entry(f: parser.FuncDecl): string {
   } else if (f.ret_type == "f32") {
     out = out + "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n";
   }
-  return out + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+  return out + "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
 }
 
 function export_arg(src: string, t: string): string {
@@ -1005,7 +1005,7 @@ function export_entry_arm64(f: parser.FuncDecl): string {
     }
   }
   let n: i32 = f.params.len();
-  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + asm_arm64_ir.busy_take_arm64();
+  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n" + asm_arm64_ir.busy_take_arm64();
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
@@ -1020,7 +1020,7 @@ function export_entry_arm64(f: parser.FuncDecl): string {
   } else if (f.ret_type == "f32") {
     out = out + "    fmov d0, x0\n    fcvt s0, d0\n";
   }
-  return out + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
+  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
 }
 
 function export_arg_arm64(src: string, t: string): string {

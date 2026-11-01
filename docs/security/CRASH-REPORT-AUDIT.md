@@ -49,10 +49,10 @@ It also stops at a frame pointer below the stack pointer, or not 8-byte aligned,
 It now also stops at a frame pointer at or above the application stack's top.
 
 The top is the stack pointer after the startup switch, stored in `__fern_stack_top`.
-In a shared object, which runs on its caller's stack, the global stays zero and the upper bound is off.
-The overflow handler clears it before its report.
-That report's first frame is the record the handler builds on the alternate signal stack.
-The kernel can map that stack above the application stack.
+A shared object runs on its caller's stack. Each export wrapper stores its own frame address there on entry, so the walk ends at the wrapper.
+The first frame of a walk is the reporter's own record and is not checked against the top.
+The overflow handler builds that record on the alternate signal stack, which the kernel can map above the application stack.
+It leaves the faulting stack pointer in `__fern_bt_floor`, and the walk takes that as the lower bound of the frames after the first.
 Under `-harden` on arm64 the walk strips the pointer authentication code from each return address before it prints it.
 
 ## What the tests pin
@@ -66,6 +66,8 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 | Stack overflow, a deep control, and an unrelated fault | `TestSelfHostStackOverflow` |
 | A guard the kernel refuses stops startup before `main` | `TestSelfHostStackGuardDenial` (`docs/security/STACK-GUARD.md`) |
 | A frame pointer above the stack top ends the walk, and the report keeps its cause line and status 134 | `TestSelfHostAbortBacktraceCorruptFrame`, on x86-64 and arm64 under QEMU |
+| An abort in a shared object prints the Fern frames and stops at the export wrapper | `TestSharedLibX86AbortBacktrace`, `TestArm64SharedLibAbortBacktrace` |
+| An overflow report walks past the handler's record into the application stack | `TestSelfHostStackOverflow` requires two frames or more |
 | The sanitizer's use-after-free report carries a backtrace | `TestSelfHostSanitizeReportCarriesBacktrace` |
 
 ## Gaps
@@ -73,7 +75,6 @@ Under `-harden` on arm64 the walk strips the pointer authentication code from ea
 | Gap | Consequence |
 |---|---|
 | A corrupt frame pointer inside the stack range | The walk prints whatever the frame holds, up to 64 lines, and stops at the first failed check; it cannot fault, because every address it reads is inside the mapped stack |
-| A corrupt frame pointer in a shared object, or in a stack overflow report | The upper bound is off, so a pointer above the stack faults inside the walk, and the process ends with a bare `SIGSEGV` after the cause line |
 | A frame the backend turned into a tail jump, or an x86-64 function that needs no frame pointer | The walk cannot see it; `docs/security/ABI-AUDIT.md` records both rules |
 | Page probes and canaries | Not started; `docs/security/STACK-GUARD.md` records the remaining SEC-015 work |
 | `SIGBUS` and `SIGILL` | No handler is installed; the kernel's default action ends the process with no cause line |
@@ -92,6 +93,12 @@ The corrupt-frame test shows the old outcome against the previous compiler and t
 Against the previous compiler, the patched build on each target ended by signal with no exit status, and both controls passed.
 With this change, both patched builds exit 134 with the cause line and `backtrace:`.
 The walk prints at most the one frame below the corrupt pointer.
+
+The walk had no upper bound in a shared object, and the overflow handler dropped the bound for its report.
+A corrupt frame pointer above the stack then faulted inside the walk.
+Each export wrapper now records its frame as the stack top on entry.
+The handler keeps the top and leaves the faulting stack pointer as the floor of the frames after its record.
+The walk checks the top on every frame after the first, so a report ends at the wrapper or at the stack top.
 
 ## Commands
 

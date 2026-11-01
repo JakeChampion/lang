@@ -1022,19 +1022,24 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jb .Lbt_done\n");
   s = s.write("    testq $7, %rbx\n");
   s = s.write("    jnz .Lbt_done\n");
-  s = s.write("    movq __fern_stack_top(%rip), %rax\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lbt_top_ok\n");
-  s = s.write("    cmpq %rax, %rbx\n");
-  s = s.write("    jae .Lbt_done\n");
-  s = s.write(".Lbt_top_ok:\n");
   s = s.write("    movq 8(%rbx), %rsi\n");
   s = s.write("    cmpq $0x10000, %rsi\n");
   s = s.write("    jb .Lbt_done\n");
   s = s.write("    call .Lbt_hex\n");
   s = s.write("    movq %rbx, %r13\n");
+  s = s.write("    movq __fern_bt_floor(%rip), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lbt_floor_kept\n");
+  s = s.write("    movq %rax, %r13\n");
+  s = s.write("    movq $0, __fern_bt_floor(%rip)\n");
+  s = s.write(".Lbt_floor_kept:\n");
   s = s.write("    movq (%rbx), %rbx\n");
   s = s.write("    decl %r14d\n");
+  s = s.write("    movq __fern_stack_top(%rip), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lbt_loop\n");
+  s = s.write("    cmpq %rax, %rbx\n");
+  s = s.write("    jae .Lbt_done\n");
   s = s.write("    jmp .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
   s = s.write("    movq %r15, %rdi\n");
@@ -2595,7 +2600,7 @@ function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_report(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .bss\n    .align 8\n    .globl __fern_stack_top\n__fern_stack_top: .quad 0\n");
+  s = s.write("    .section .bss\n    .align 8\n    .globl __fern_stack_top\n__fern_stack_top: .quad 0\n    .globl __fern_bt_floor\n__fern_bt_floor: .quad 0\n");
   if (s.harden) {
     s = s.write("    .globl __fern_canary\n__fern_canary: .quad 0\n__fern_rng_state: .quad 0\n");
   }
@@ -11259,7 +11264,7 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // A fault inside the guard of the runtime's own stack is an overflow. On
   // the kernel's stack, kept when that mapping failed, a fault within 1 MiB
   // of the stack pointer counts as one.
-  s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    movq __fern_stack_top(%rip), %rcx\n    testq %rcx, %rcx\n    jz .Lfern_segv_near_sp\n    subq $1073741808, %rcx\n    subq %rcx, %rax\n    cmpq $1048576, %rax\n    jb .Lfern_segv_overflow\n    jmp .Lfern_segv_other\n.Lfern_segv_near_sp:\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n.Lfern_segv_overflow:\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    movq $0, __fern_stack_top(%rip)\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
+  s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    movq __fern_stack_top(%rip), %rcx\n    testq %rcx, %rcx\n    jz .Lfern_segv_near_sp\n    subq $1073741808, %rcx\n    subq %rcx, %rax\n    cmpq $1048576, %rax\n    jb .Lfern_segv_overflow\n    jmp .Lfern_segv_other\n.Lfern_segv_near_sp:\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n.Lfern_segv_overflow:\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    movq 160(%rdx), %rax\n    movq %rax, __fern_bt_floor(%rip)\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
   s = emit_segv_install(s);
   s = s.write("    addq $32, %rsp\n    ret\n.Lfern_segv_restorer:\n    movl $15, %eax\n");
   return s.syscall(15);
