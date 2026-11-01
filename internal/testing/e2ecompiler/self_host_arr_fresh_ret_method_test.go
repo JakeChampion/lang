@@ -10,7 +10,7 @@ import (
 )
 
 const arrFreshMethProlog = "struct H { v: i32 }\n" +
-	"function (h: H) mkm(): i32[] { return [h.v, h.v + 1]; }\n"
+	"@noinline function (h: H) mkm(): i32[] { return [h.v, h.v + 1]; }\n"
 
 const arrFreshMethMain = "\nfunction main(): i32 { let hh: H = H { v: 5 }; let t: i32 = 0; let i: i32 = 0; " +
 	"while (i < 100) { BODY i = i + 1; } " +
@@ -51,7 +51,7 @@ func arrFreshMethCases() []arrFreshMethCase {
 		{
 			name: "method_derived_from_field",
 			src: "struct G { xs: i32[] }\n" +
-				"function (g: G) copy(): i32[] { return [g.xs[0], g.xs[1]]; }\n" +
+				"@noinline function (g: G) copy(): i32[] { return [g.xs[0], g.xs[1]]; }\n" +
 				"function main(): i32 { let gg: G = G { xs: [1, 2, 3] }; let t: i32 = 0; let i: i32 = 0; " +
 				"while (i < 100) { t = t + gg.copy().len(); i = i + 1; } " +
 				"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }",
@@ -101,7 +101,7 @@ func TestSelfHostArrFreshRetMethodRefusedX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	src := "struct H { xs: i32[] }\n" +
-		"function (h: H) get(): i32[] { return h.xs; }\n" +
+		"@noinline function (h: H) get(): i32[] { return h.xs; }\n" +
 		"function main(): i32 { let hh: H = H { xs: [1, 2, 3] }; let t: i32 = 0; let i: i32 = 0; " +
 		"while (i < 100) { t = t + hh.get().len(); i = i + 1; } " +
 		"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
