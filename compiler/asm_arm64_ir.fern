@@ -5124,11 +5124,7 @@ function emit_ssa_function(r: irtables.Lowered, selected: physicalbody.Selected,
 }
 
 pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
-  let label_name: string = fd.name;
-  if (fd.receiver_type.len() > 0) {
-    label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
-  }
-  return emit_function_via_ir_named(r, selected, pre, label_name, false, s, vgate);
+  return emit_function_via_ir_named(r, selected, pre, parser.decl_key(fd), false, s, vgate);
 }
 
 pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
@@ -11635,10 +11631,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
       continue;
     }
     if (globl_defs) {
-      let gname: string = mod.funcs[fi].name;
-      if (mod.funcs[fi].receiver_type.len() > 0) {
-        gname = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
-      }
+      let gname: string = parser.decl_key(mod.funcs[fi]);
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n.globl __fn_" + asmcore.sanitize_label(gname) + ".k\n");
     }
     s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), s.prelift(unit.pre, fi, r), mod.funcs[fi], s, vgate);

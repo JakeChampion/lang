@@ -866,10 +866,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
 }
 
 function clo_owner_name(fd: parser.FuncDecl): string {
-  if (fd.receiver_type.len() > 0) {
-    return util.base_type_name(fd.receiver_type) + "." + fd.name;
-  }
-  return fd.name;
+  return parser.decl_key(fd);
 }
 
 struct InlineCloRes { expr: ast.Expr, funcs: parser.FuncDecl[], counter: i32 }

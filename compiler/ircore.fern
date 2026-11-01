@@ -202,7 +202,7 @@ function defined_reg(mod: parser.Module, extra: irtables.LowerResult[]): irtable
   for fd in mod.funcs {
     rows = rows.append(fd.name);
     if (fd.receiver_type.len() > 0) {
-      rows = rows.append(util.base_type_name(fd.receiver_type) + "." + fd.name);
+      rows = rows.append(parser.decl_key(fd));
     }
   }
   for x in extra {
@@ -470,11 +470,7 @@ pub function produced(bodies: irtables.LowerResult[], i: i32, fd: parser.FuncDec
   if (i < bodies.len() && bodies[i].ok) {
     return bodies[i];
   }
-  let name: string = fd.name;
-  if (fd.receiver_type.len() > 0) {
-    name = util.base_type_name(fd.receiver_type) + "." + fd.name;
-  }
-  eprint("error: internal: no typed body for " + name + " — every declaration the emit reads is produced by the typed lowering or refused before it");
+  eprint("error: internal: no typed body for " + parser.decl_key(fd) + " — every declaration the emit reads is produced by the typed lowering or refused before it");
   exit(3);
   return bodies[0];
 }
@@ -584,7 +580,7 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
 }
 
 function owner_key(fd: parser.FuncDecl): string {
-  return parser.receiver_base(fd.receiver_type) + "." + fd.name;
+  return parser.decl_key(fd);
 }
 
 function declared_owners(g: Gated, parts: parser.Module[]): i32[] {
@@ -856,10 +852,7 @@ pub function body_for_emit(name: string, r: irtables.LowerResult): irtables.Lowe
 }
 
 function inline_label(fd: parser.FuncDecl): string {
-  if (fd.receiver_type.len() > 0) {
-    return util.base_type_name(fd.receiver_type) + "." + fd.name;
-  }
-  return fd.name;
+  return parser.decl_key(fd);
 }
 
 function inline_leaf(fd: parser.FuncDecl, r: irtables.LowerResult): boolean {

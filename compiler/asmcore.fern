@@ -213,11 +213,7 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
   let fi: i32 = lo;
   while (fi < hi) {
     if (cache.len() == 0 || !cache[fi].superseded) {
-      let name: string = mod.funcs[fi].name;
-      if (mod.funcs[fi].receiver_type.len() > 0) {
-        name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
-      }
-      out = out.append(sanitize_label(name));
+      out = out.append(sanitize_label(parser.decl_key(mod.funcs[fi])));
     }
     fi = fi + 1;
   }
@@ -247,10 +243,7 @@ pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtable
     if (inside && !cache[fi].superseded && cache[fi].ok) {
       let name: string = cache[fi].name;
       if (fi < mod.funcs.len()) {
-        name = mod.funcs[fi].name;
-        if (mod.funcs[fi].receiver_type.len() > 0) {
-          name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
-        }
+        name = parser.decl_key(mod.funcs[fi]);
       }
       let mask: string = float_mask_of(cache[fi]);
       if (mask != "") {
@@ -340,10 +333,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
     if (inside && !cache[fi].superseded && cache[fi].ok && cache[fi].ops.len() <= 160) {
       let name: string = cache[fi].name;
       if (fi < mod.funcs.len()) {
-        name = mod.funcs[fi].name;
-        if (mod.funcs[fi].receiver_type.len() > 0) {
-          name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
-        }
+        name = parser.decl_key(mod.funcs[fi]);
       }
       if let Ok(lifted) = ssa_lift.lift_with_lanes(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops, false, cache[fi].v128_slots) {
         let f: ssa.Formed = ssa.register_form(lifted.func);
