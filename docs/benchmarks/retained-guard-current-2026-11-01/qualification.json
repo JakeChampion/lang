@@ -192,6 +192,18 @@
     "fern-13717-runner-lint-fast.log": {
       "path": "/tmp/fern-13717-runner-lint-fast.log",
       "sha256": "c47a2aae8cd7236d0b3b3dd1d7d6b8c0369693c8cf1b1852aef3ba5c059764bf"
+    },
+    "fern-13717-current-ratchet.log": {
+      "path": "/tmp/fern-13717-current-ratchet.log",
+      "sha256": "5687844d808616cc5e54cb0d02aa074c64810c84ec691d516d763adb2ae8964c"
+    },
+    "fern-13717-current-complexity.log": {
+      "path": "/tmp/fern-13717-current-complexity.log",
+      "sha256": "b52de7eb6782c95a535c05838ac4a8bd888cfe130175888389cdd0ec9085c250"
+    },
+    "fern-13717-current-lint.log": {
+      "path": "/tmp/fern-13717-current-lint.log",
+      "sha256": "09304785e67ef6e182fbfcaf67a1a258373f6e8792d0e36215381fba6187126f"
     }
   },
   "base_commit": "2fa9f40ab202cb7fea3f071652a732e9402038e1",
@@ -222,5 +234,28 @@
       }
     ],
     "qualification": "original native execution path passes; new runner path qualifies separately on ARM Linux/QEMU"
+  },
+  "integration": {
+    "main_commit": "de2ec359a22078e3bfe23402b6766b51def8d665",
+    "main_tree": "54717869e9559bf6800f455d1fbb43db1a9d9d28",
+    "proof_and_driver_hashes_unchanged": 9,
+    "qualified_current_compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+    "stock_complexity": {
+      "roots": 3,
+      "skips": 0,
+      "seconds": 10.539
+    },
+    "measured_complexity": {
+      "compiler": {
+        "worst": 232,
+        "excess": 18185
+      },
+      "stdlib": {
+        "worst": 68,
+        "excess": 821
+      }
+    },
+    "limits_and_tolerances_unchanged": true,
+    "lint_fast": "pass"
   }
 }

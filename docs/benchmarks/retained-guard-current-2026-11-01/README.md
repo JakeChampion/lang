@@ -2,6 +2,10 @@
 
 This record tracks the remaining acceptance for issue #13717 on main commit
 `2fa9f40ab202cb7fea3f071652a732e9402038e1`.
+Integration at main `de2ec359a22078e3bfe23402b6766b51def8d665` preserves all
+nine recorded proof and driver source hashes. Its three stock complexity
+roots pass again in 10.539 seconds with zero skips. Compiler complexity stays
+232/18,185; library complexity is 68/821, within the original limits.
 It adds evidence for existing proof repairs and lets the complexity gates
 use the existing x86 runner. It changes no model, emitter, runtime
 instruction, assertion, domain, baseline, or tolerance.
