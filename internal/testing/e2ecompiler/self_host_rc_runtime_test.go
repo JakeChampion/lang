@@ -411,7 +411,7 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 
 	t.Run("emits-struct-array-field-drop", func(t *testing.T) {
 		asm := cli.emit(t, "x86-64-linux",
-			"struct E { v: i32 } struct H { es: E[] } function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let h = H { es: [E { v: id([1])[0] }] }; h = H { es: [E { v: id([2])[0] }] }; return h.es[0].v; }")
+			"struct E { v: i32 } struct H { es: E[] } function id(xs: i32[]): i32[] { return xs; } @noinline function boxed(h: H): H[] { return [h]; } function main(): i32 { let h = boxed(H { es: [E { v: id([1])[0] }] })[0]; h = boxed(H { es: [E { v: id([2])[0] }] })[0]; return h.es[0].v; }")
 		body := asmFuncBody(t, asm, "__fn___sem_drop_H")
 		if n := strings.Count(body, "call __fn___fern_arr_dec"); n < 2 {
 			t.Errorf("expected H's drop to release each element and then the buffer (__fern_arr_dec at least twice), got %d:\n%s", n, body)
