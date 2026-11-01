@@ -113,6 +113,13 @@ Ok word after its arms meet keeps its join. The program exits 42 on every
 host target. `TestSelfHostConstantJoinSplitCensus` runs it under the leak
 check and the sanitizer.
 
+`TestSelfHostSSASelectsAreConditionalMoves` pinned a conditional move in
+`tagged` and `phi_tag`, which match on the variant an inlined `probe`
+returns. Each payload is read in one arm, so the join splits and each arm
+goes straight to its own return or update. The two now pin that no
+conditional move is left. `tag_kept` reads the tag twice, so its join stays,
+and it pins the select on a tag phi instead.
+
 ## Next lead
 
 The None arm of `kept_failure` retains the `Option` it reads out of the
