@@ -47,7 +47,7 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 
 pub struct TodoSite { line: i32, col: i32 }
 
-pub struct ModuleSight { module: string, imports: string[], direct: string[], reaches: string[] }
+pub struct ModuleSight { module: string, imports: string[], qualifiers: string[], direct: string[], reaches: string[] }
 
 // How near module decl is to module from: 0 for the same module, 1 for a
 // direct import, 2 for the rest of the import closure, 3 when not visible.

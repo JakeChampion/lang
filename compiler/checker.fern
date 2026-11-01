@@ -23838,6 +23838,28 @@ function e021_supertrait_impl(mod: parser.Module, spelling: string, self: string
   return false;
 }
 
+function e021_impl_qualifier_visible(mod: parser.Module, im: parser.ImplInfo): boolean {
+  let dot: i32 = util.index_of_sub(im.trait_spelling, ".");
+  if (dot < 0) {
+    return true;
+  }
+  let qual: string = slice_unchecked(im.trait_spelling, 0, dot) + "";
+  if (mod.sights.len() > 0) {
+    for sight in mod.sights {
+      if (sight.module == im.module) {
+        return util.has_str(sight.qualifiers, qual);
+      }
+    }
+    return false;
+  }
+  for imported in mod.imports {
+    if (parser.import_qualifier(imported) == qual) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function e021_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for req in mod.trait_reqs {
@@ -23854,6 +23876,10 @@ function e021_diags(mod: parser.Module): util.Diag[] {
   }
   let own_vec: boolean = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
   for im in mod.impls {
+    if (!e021_impl_qualifier_visible(mod, im)) {
+      out = out.append(dg_at("E021", "unknown trait \"" + im.trait_spelling + "\" in impl", im.line, im.col));
+      continue;
+    }
     let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
     if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
       out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
