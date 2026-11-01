@@ -64,12 +64,19 @@ func TestSelfHostSSAMergeChainMovesNothing(t *testing.T) {
 		t.Fatal("__fn_f not in the listing")
 	}
 	lines := strings.Split(fn, "\n")
-	label := regexp.MustCompile(`^\.L\w+:$`)
+	// A merge block's label is the function's block number. A helper's
+	// return label, such as an append's, belongs to the arm before the chain,
+	// and so do the moves before the chain's first label: a jump to the
+	// physical fallthrough is not emitted, so nothing separates them.
+	label := regexp.MustCompile(`^\.Lssa_f_\d+:$`)
 	mov := regexp.MustCompile(`^\s*movq `)
 	labels, moves, bestLabels, bestMoves := 0, 0, 0, 0
 	for _, line := range lines {
 		switch {
 		case label.MatchString(line):
+			if labels == 0 {
+				moves = 0
+			}
 			labels++
 		case mov.MatchString(line):
 			moves++
