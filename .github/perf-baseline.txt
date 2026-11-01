@@ -1,3 +1,5 @@
+# 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice: pvec_with.ir -9.50%,
+# pvec_with.text -12.84%, ordmap_insert.text +3.56%, ordmap_insert.ir +1.10%, and five smaller rows.
 # 2026-11-01: PR #13988 run 41278389389, perf-aarch64. A method that only direct calls reach joins the
 # once set: pvec_with.ir -9.61%, pvec_with.text -12.34%, ordmap_insert.text +3.69%, and five smaller rows.
 # 2026-10-31: Unreferenced typed drop helpers no longer reach emission.
@@ -202,12 +204,12 @@ x86_64/map_probe_chain.text	8482
 x86_64/map_probe_chain.ir	241010587
 x86_64/map_string.text	9419
 x86_64/map_string.ir	53037751	2
-x86_64/ordmap_insert.text	5498
-x86_64/ordmap_insert.ir	82943055
-x86_64/pmap_insert.text	2973
+x86_64/ordmap_insert.text	5694
+x86_64/ordmap_insert.ir	83855643
+x86_64/pmap_insert.text	2904
 x86_64/pmap_insert.ir	53294866
-x86_64/pvec_with.text	2951
-x86_64/pvec_with.ir	55174232
+x86_64/pvec_with.text	2572
+x86_64/pvec_with.ir	49930870
 x86_64/record_update.ir	36120760
 x86_64/record_update.text	1296
 x86_64/sort_inplace.text	1497
@@ -220,9 +222,9 @@ x86_64/string_build.text	1991
 x86_64/string_build.ir	43427016
 x86_64/string_count_byte.text	1180
 x86_64/string_count_byte.ir	135589355
-x86_64/string_find_byte.text	1591
+x86_64/string_find_byte.text	1553
 x86_64/string_find_byte.ir	43687425
-x86_64/string_rfind_byte.text	1762
+x86_64/string_rfind_byte.text	1722
 x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2239
 x86_64/string_scan.ir	52670002
@@ -232,9 +234,9 @@ x86_64/struct_drop.text	2413
 x86_64/struct_drop.ir	205020598
 x86_64/tokenize.text	1198
 x86_64/tokenize.ir	37860093
-x86_64/utf8_ingest_unchecked.text	8244
+x86_64/utf8_ingest_unchecked.text	8012
 x86_64/utf8_ingest_unchecked.ir	2207993
-x86_64/utf8_ingest_validated.text	8897
+x86_64/utf8_ingest_validated.text	8655
 x86_64/utf8_ingest_validated.ir	5262594
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
