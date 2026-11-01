@@ -2,7 +2,6 @@ import "./ast";
 import "./util";
 import "./lexer";
 import "./parser";
-import "./flatten";
 import "./astwalk";
 import "./typeinfo";
 import "./decltypes";
@@ -3281,7 +3280,7 @@ function declared_bound_trait_req(mod: parser.Module, base: string, module: stri
       if (sight.module == module) {
         let qi: i32 = util.index_of_str(sight.qualifiers, q);
         if (qi >= 0 && qi < sight.direct.len()) {
-          let canonical: string = flatten.canonical_imported_trait(sight.direct[qi], name, sight.reexport_keys, sight.reexport_targets);
+          let canonical: string = decltypes.canonical_imported_trait(sight.direct[qi], name, sight.reexport_keys, sight.reexport_targets);
           return derive_trait_idx(canonical, mod.trait_reqs);
         }
       }
