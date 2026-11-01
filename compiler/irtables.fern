@@ -1200,10 +1200,7 @@ pub function fn_sig_index(funcs: parser.FuncDecl[], decls: parser.FuncDecl[], bo
 }
 
 function sig_name(fn: parser.FuncDecl): string {
-  if (fn.receiver_type.len() > 0) {
-    return util.base_type_name(fn.receiver_type) + "." + fn.name;
-  }
-  return fn.name;
+  return parser.decl_key(fn);
 }
 
 pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): string[] {
