@@ -1,3 +1,6 @@
+# 2026-11-01: PR #14009 run 41350917312, perf-x86_64. A branch on a join of constants goes to its arm,
+# and __fern_buf_push takes a direct path: enum_match.emit -9% to -15% on the three targets, http_hello.emit
+# -3.6% on wasm and +1.2% to +1.35% on the native targets, and smaller moves on four rows.
 # 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method joins the once set only when its body is
 # one block: ordmap_insert.emit -2.9% to -3.6%, pvec_with and utf8_ingest return to their values before
 # the splice, and pmap_insert.emit +1.5% to +2.4%.
@@ -208,9 +211,9 @@ selfhost/arm64-linux/call_overhead.emit	388
 selfhost/arm64-linux/closure_call.emit	1149
 selfhost/arm64-linux/deflate_decode.emit	13839
 selfhost/arm64-linux/deflate_encode.emit	7910
-selfhost/arm64-linux/enum_match.emit	1227
+selfhost/arm64-linux/enum_match.emit	1112
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	15945
+selfhost/arm64-linux/http_hello.emit	16160
 selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -224,8 +227,8 @@ selfhost/arm64-linux/sort_ints.emit	2175
 selfhost/arm64-linux/sort_strings.emit	3594
 selfhost/arm64-linux/string_build.emit	2361
 selfhost/arm64-linux/string_count_byte.emit	1445
-selfhost/arm64-linux/string_find_byte.emit	1865
-selfhost/arm64-linux/string_rfind_byte.emit	1989
+selfhost/arm64-linux/string_find_byte.emit	1843
+selfhost/arm64-linux/string_rfind_byte.emit	1965
 selfhost/arm64-linux/string_scan.emit	2565
 selfhost/arm64-linux/string_slice.emit	1132
 selfhost/arm64-linux/struct_drop.emit	2671
@@ -242,10 +245,10 @@ selfhost/wasm32-wasi/byte_copy_with.emit	569
 selfhost/wasm32-wasi/call_overhead.emit	115
 selfhost/wasm32-wasi/closure_call.emit	487
 selfhost/wasm32-wasi/deflate_decode.emit	19608
-selfhost/wasm32-wasi/deflate_encode.emit	11300
-selfhost/wasm32-wasi/enum_match.emit	622
+selfhost/wasm32-wasi/deflate_encode.emit	11561
+selfhost/wasm32-wasi/enum_match.emit	528
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	18896
+selfhost/wasm32-wasi/http_hello.emit	18209
 selfhost/wasm32-wasi/int_loop.emit	69
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
@@ -259,8 +262,8 @@ selfhost/wasm32-wasi/sort_ints.emit	2058
 selfhost/wasm32-wasi/sort_strings.emit	3375
 selfhost/wasm32-wasi/string_build.emit	1275
 selfhost/wasm32-wasi/string_count_byte.emit	527
-selfhost/wasm32-wasi/string_find_byte.emit	1736
-selfhost/wasm32-wasi/string_rfind_byte.emit	1751
+selfhost/wasm32-wasi/string_find_byte.emit	1696
+selfhost/wasm32-wasi/string_rfind_byte.emit	1717
 selfhost/wasm32-wasi/string_scan.emit	1413
 selfhost/wasm32-wasi/string_slice.emit	526
 selfhost/wasm32-wasi/struct_drop.emit	1637
@@ -278,9 +281,9 @@ selfhost/x86-64-linux/call_overhead.emit	305
 selfhost/x86-64-linux/closure_call.emit	916
 selfhost/x86-64-linux/deflate_decode.emit	12993
 selfhost/x86-64-linux/deflate_encode.emit	7275
-selfhost/x86-64-linux/enum_match.emit	1017
+selfhost/x86-64-linux/enum_match.emit	886
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15029
+selfhost/x86-64-linux/http_hello.emit	15210
 selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
@@ -294,8 +297,8 @@ selfhost/x86-64-linux/sort_ints.emit	1964
 selfhost/x86-64-linux/sort_strings.emit	3230
 selfhost/x86-64-linux/string_build.emit	1991
 selfhost/x86-64-linux/string_count_byte.emit	1180
-selfhost/x86-64-linux/string_find_byte.emit	1553
-selfhost/x86-64-linux/string_rfind_byte.emit	1722
+selfhost/x86-64-linux/string_find_byte.emit	1535
+selfhost/x86-64-linux/string_rfind_byte.emit	1699
 selfhost/x86-64-linux/string_scan.emit	2239
 selfhost/x86-64-linux/string_slice.emit	895
 selfhost/x86-64-linux/struct_drop.emit	2413
@@ -318,4 +321,4 @@ selfhost/arm64-linux/perceus_rbtree.emit	3158
 selfhost/wasm32-wasi/perceus_rbtree.emit	3564
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	2976
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3251
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3898
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3840

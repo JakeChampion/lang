@@ -1,3 +1,5 @@
+# 2026-11-01: PR #14009 run 41350917312, perf-x86_64. The same two changes: enum_match.ir -40.1%,
+# http_hello.ir -2.6%, three .text rows shrink and http_hello.text +1.20%.
 # 2026-11-01: PR #14009 run 41350917312, perf-aarch64. A branch on a join of constants goes to its arm,
 # and __fern_buf_push takes a direct path: enum_match.ir -39.3%, http_hello.ir -2.4%, three .text rows
 # shrink, http_hello.text +1.35% and perceus_rbtree_ck.ir +1.25%.
@@ -198,11 +200,11 @@ x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12993
 x86_64/deflate_encode.ir	42207169
 x86_64/deflate_encode.text	7275
-x86_64/enum_match.text	1017
-x86_64/enum_match.ir	48825092
+x86_64/enum_match.text	886
+x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15029
-x86_64/http_hello.ir	22672408
+x86_64/http_hello.text	15210
+x86_64/http_hello.ir	22076408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8478
@@ -229,9 +231,9 @@ x86_64/string_build.text	1991
 x86_64/string_build.ir	43427016
 x86_64/string_count_byte.text	1180
 x86_64/string_count_byte.ir	135589355
-x86_64/string_find_byte.text	1553
+x86_64/string_find_byte.text	1535
 x86_64/string_find_byte.ir	43687425
-x86_64/string_rfind_byte.text	1722
+x86_64/string_rfind_byte.text	1699
 x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2239
 x86_64/string_scan.ir	52670002

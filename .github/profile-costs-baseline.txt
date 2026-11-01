@@ -1,3 +1,6 @@
+# 2026-11-01: PR #14009 run 41350917312, perf-x86_64. A branch on a join of constants goes to its arm,
+# and __fern_buf_push takes a direct path: enum_match.*.ir -40% to -49%, deflate_decode.*.ir -1.9% to
+# -13.4%, http_hello.*.ir -1.8% to -2.6%, and http_hello.*.emit +1.2% to +1.35% on the native targets.
 # 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method joins the once set only when its body is
 # one block: http_hello.minimal gives back part of the splice's gain, +3.7% to +8.3% against the rows above.
 # 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice moves 43 rows,
@@ -55,22 +58,22 @@ profile/arm64-linux/deflate_decode.minimal.emit	12137
 profile/arm64-linux/deflate_decode.safe.bytes	71184
 profile/arm64-linux/deflate_decode.safe.emit	13837
 profile/arm64-linux/enum_match.diagnostic.bytes	71512
-profile/arm64-linux/enum_match.diagnostic.emit	1650
+profile/arm64-linux/enum_match.diagnostic.emit	1553
 profile/arm64-linux/enum_match.hardened.bytes	66304
-profile/arm64-linux/enum_match.hardened.emit	1387
+profile/arm64-linux/enum_match.hardened.emit	1258
 profile/arm64-linux/enum_match.minimal.bytes	66304
-profile/arm64-linux/enum_match.minimal.emit	1095
+profile/arm64-linux/enum_match.minimal.emit	1028
 profile/arm64-linux/enum_match.safe.bytes	66304
-profile/arm64-linux/enum_match.safe.emit	1227
+profile/arm64-linux/enum_match.safe.emit	1112
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
 profile/arm64-linux/http_hello.diagnostic.bytes	129120
 profile/arm64-linux/http_hello.diagnostic.emit	15921
 profile/arm64-linux/http_hello.hardened.bytes	140472
-profile/arm64-linux/http_hello.hardened.emit	16995
+profile/arm64-linux/http_hello.hardened.emit	17210
 profile/arm64-linux/http_hello.minimal.bytes	74936
 profile/arm64-linux/http_hello.minimal.emit	13042
 profile/arm64-linux/http_hello.safe.bytes	74680
-profile/arm64-linux/http_hello.safe.emit	15945
+profile/arm64-linux/http_hello.safe.emit	16160
 profile/arm64-linux/int_loop.diagnostic.bytes	67768
 profile/arm64-linux/int_loop.diagnostic.emit	502
 profile/arm64-linux/int_loop.hardened.bytes	65792
@@ -133,40 +136,40 @@ profile/x86-64-linux/closure_call.safe.emit	916
 profile/x86-64-linux/closure_call.safe.ir	41178167
 profile/x86-64-linux/deflate_decode.diagnostic.bytes	113808
 profile/x86-64-linux/deflate_decode.diagnostic.emit	12871
-profile/x86-64-linux/deflate_decode.diagnostic.ir	46682910
+profile/x86-64-linux/deflate_decode.diagnostic.ir	40446586
 profile/x86-64-linux/deflate_decode.hardened.bytes	58912
 profile/x86-64-linux/deflate_decode.hardened.emit	13380
-profile/x86-64-linux/deflate_decode.hardened.ir	34763444
+profile/x86-64-linux/deflate_decode.hardened.ir	33976309
 profile/x86-64-linux/deflate_decode.minimal.bytes	49280
 profile/x86-64-linux/deflate_decode.minimal.emit	11433
-profile/x86-64-linux/deflate_decode.minimal.ir	43446703
+profile/x86-64-linux/deflate_decode.minimal.ir	42610464
 profile/x86-64-linux/deflate_decode.safe.bytes	53376
 profile/x86-64-linux/deflate_decode.safe.emit	12992
-profile/x86-64-linux/deflate_decode.safe.ir	34703269
+profile/x86-64-linux/deflate_decode.safe.ir	33828175
 profile/x86-64-linux/enum_match.diagnostic.bytes	12448
-profile/x86-64-linux/enum_match.diagnostic.emit	1332
-profile/x86-64-linux/enum_match.diagnostic.ir	54900221
+profile/x86-64-linux/enum_match.diagnostic.emit	1231
+profile/x86-64-linux/enum_match.diagnostic.ir	29250209
 profile/x86-64-linux/enum_match.hardened.bytes	8304
-profile/x86-64-linux/enum_match.hardened.emit	1169
-profile/x86-64-linux/enum_match.hardened.ir	48825151
+profile/x86-64-linux/enum_match.hardened.emit	1033
+profile/x86-64-linux/enum_match.hardened.ir	29250116
 profile/x86-64-linux/enum_match.minimal.bytes	4128
-profile/x86-64-linux/enum_match.minimal.emit	889
-profile/x86-64-linux/enum_match.minimal.ir	57825092
-profile/x86-64-linux/enum_match.safe.bytes	8240
-profile/x86-64-linux/enum_match.safe.emit	1017
-profile/x86-64-linux/enum_match.safe.ir	48825092
+profile/x86-64-linux/enum_match.minimal.emit	806
+profile/x86-64-linux/enum_match.minimal.ir	29250077
+profile/x86-64-linux/enum_match.safe.bytes	4128
+profile/x86-64-linux/enum_match.safe.emit	886
+profile/x86-64-linux/enum_match.safe.ir	29250077
 profile/x86-64-linux/http_hello.diagnostic.bytes	117208
 profile/x86-64-linux/http_hello.diagnostic.emit	14732
-profile/x86-64-linux/http_hello.diagnostic.ir	35644340
+profile/x86-64-linux/http_hello.diagnostic.ir	34992340
 profile/x86-64-linux/http_hello.hardened.bytes	71504
-profile/x86-64-linux/http_hello.hardened.emit	15298
-profile/x86-64-linux/http_hello.hardened.ir	25664871
+profile/x86-64-linux/http_hello.hardened.emit	15479
+profile/x86-64-linux/http_hello.hardened.ir	25070827
 profile/x86-64-linux/http_hello.minimal.bytes	56240
 profile/x86-64-linux/http_hello.minimal.emit	12647
-profile/x86-64-linux/http_hello.minimal.ir	24060401
+profile/x86-64-linux/http_hello.minimal.ir	23588401
 profile/x86-64-linux/http_hello.safe.bytes	64432
-profile/x86-64-linux/http_hello.safe.emit	15029
-profile/x86-64-linux/http_hello.safe.ir	22672408
+profile/x86-64-linux/http_hello.safe.emit	15210
+profile/x86-64-linux/http_hello.safe.ir	22076408
 profile/x86-64-linux/int_loop.diagnostic.bytes	6320
 profile/x86-64-linux/int_loop.diagnostic.emit	473
 profile/x86-64-linux/int_loop.diagnostic.ir	12000209
