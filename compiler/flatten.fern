@@ -2,6 +2,7 @@ import "./ast";
 import "./util";
 import "./lexer";
 import "./parser";
+import "./decltypes";
 import "./astwalk";
 import "./platforms";
 
@@ -122,30 +123,7 @@ function resolve_prefix(qualifier: string, ctx: RewriteCtx): string {
 }
 
 function lookup_reexport(mangled: string, ctx: RewriteCtx): string {
-  return follow_reexports(mangled, ctx.reexport_keys, ctx.reexport_targets);
-}
-
-function follow_reexports(mangled: string, keys: string[], targets: string[]): string {
-  let cur: string = mangled;
-  let steps: i32 = 0;
-  while (steps < keys.len() + 1) {
-    let i: i32 = 0;
-    let hit: boolean = false;
-    while (i < keys.len()) {
-      if (keys[i] == cur) {
-        cur = targets[i];
-        hit = true;
-        i = keys.len();
-      } else {
-        i = i + 1;
-      }
-    }
-    if (!hit) {
-      return cur;
-    }
-    steps = steps + 1;
-  }
-  return cur;
+  return decltypes.follow_reexports(mangled, ctx.reexport_keys, ctx.reexport_targets);
 }
 
 struct IvarMatch { mangled: string, ambiguous: boolean }
@@ -1253,8 +1231,7 @@ function canon_trait(d: string, ctx: RewriteCtx): string {
 }
 
 pub function canonical_imported_trait(prefix: string, name: string, keys: string[], targets: string[]): string {
-  let origin: string = follow_reexports(prefix + "__" + name, keys, targets);
-  return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
+  return decltypes.canonical_imported_trait(prefix, name, keys, targets);
 }
 
 function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
@@ -1758,7 +1735,7 @@ pub function qualified_name(q: Qualifiers, alias: string, name: string): string 
   if (i < 0) {
     return "";
   }
-  return follow_reexports(q.prefixes[i] + "__" + name, q.reexport_keys, q.reexport_targets);
+  return decltypes.follow_reexports(q.prefixes[i] + "__" + name, q.reexport_keys, q.reexport_targets);
 }
 
 pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {

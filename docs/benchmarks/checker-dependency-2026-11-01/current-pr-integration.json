@@ -1,0 +1,153 @@
+{
+  "source_commit": "f0da5e108116932079fc433caa551b854254f091",
+  "source_tree": "1cd00706b8f78e711b90c578b273166dfc7354e7",
+  "parents": [
+    "1702e84936caa141a4800e295701e3e129ac08a2",
+    "b7f4989a9b85549f519c07985a040e19432da50f"
+  ],
+  "main_commit": "9fa1ccbc072369fa4bb345cb9d1574e0beddb5b7",
+  "baseline_engine": "Use the candidate compiler tree with checker.fern, decltypes.fern and flatten.fern restored from main_commit.",
+  "candidate_engine": "Use the source tree without restoration.",
+  "producer_sha256": "6aca32ccbc0e925fb773f97fb599af2c27bf6a4b1991da1945710011be8ec8e6",
+  "scope": "Native arm64-darwin host. Emit x86-64-linux assembly. Equal-length frozen input roots and one output path remove path length as a factor. No native x86 timing claim.",
+  "environment": {
+    "FERN_LEAKCHECK": "1 at compiler build",
+    "FERN_RC_CERTIFY": "0 during measurement",
+    "FERN_CLIFF_REPORT": "1"
+  },
+  "rows": [
+    {
+      "engine": "main",
+      "subject": "main",
+      "binary_sha256": "d2417354518bbb2a4016078a8e3d6599a1164849631b94633bad7c555deaa648",
+      "output_sha256": "fadf4a6268c5b777b75809068fbdfc5d4e1702a32c5804ae8ac5279afbd5842d",
+      "allocs": 36536299,
+      "frees": 36536299,
+      "live_bytes": 0,
+      "cliff_count": 353840,
+      "cliff_bytes": 46919432,
+      "seconds": 9.064,
+      "exit_code": 0,
+      "command": [
+        "/tmp/fern-checker-current-pr-base-lc",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-checker-current-pr-cost-output.s",
+        "/tmp/fern-checker-current-pr-input/old/compiler/checker.fern",
+        "/Users/jakechampion/codex/lang-checker-dependency-cost/internal/stdlib"
+      ],
+      "log": "/tmp/fern-checker-current-pr-cost-main-main.log"
+    },
+    {
+      "engine": "main",
+      "subject": "shared",
+      "binary_sha256": "d2417354518bbb2a4016078a8e3d6599a1164849631b94633bad7c555deaa648",
+      "output_sha256": "fadf4a6268c5b777b75809068fbdfc5d4e1702a32c5804ae8ac5279afbd5842d",
+      "allocs": 36174828,
+      "frees": 36174828,
+      "live_bytes": 0,
+      "cliff_count": 346949,
+      "cliff_bytes": 46175984,
+      "seconds": 10.343,
+      "exit_code": 0,
+      "command": [
+        "/tmp/fern-checker-current-pr-base-lc",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-checker-current-pr-cost-output.s",
+        "/tmp/fern-checker-current-pr-input/new/compiler/checker.fern",
+        "/Users/jakechampion/codex/lang-checker-dependency-cost/internal/stdlib"
+      ],
+      "log": "/tmp/fern-checker-current-pr-cost-main-shared.log"
+    },
+    {
+      "engine": "shared",
+      "subject": "main",
+      "binary_sha256": "d49f5c32db5512b73b6e2acfb5c212766ee95f056086aa7726edc7931cfe3ffa",
+      "output_sha256": "fadf4a6268c5b777b75809068fbdfc5d4e1702a32c5804ae8ac5279afbd5842d",
+      "allocs": 36536299,
+      "frees": 36536299,
+      "live_bytes": 0,
+      "cliff_count": 353840,
+      "cliff_bytes": 46919432,
+      "seconds": 9.205,
+      "exit_code": 0,
+      "command": [
+        "/tmp/fern-checker-current-pr-shared-lc",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-checker-current-pr-cost-output.s",
+        "/tmp/fern-checker-current-pr-input/old/compiler/checker.fern",
+        "/Users/jakechampion/codex/lang-checker-dependency-cost/internal/stdlib"
+      ],
+      "log": "/tmp/fern-checker-current-pr-cost-shared-main.log"
+    },
+    {
+      "engine": "shared",
+      "subject": "shared",
+      "binary_sha256": "d49f5c32db5512b73b6e2acfb5c212766ee95f056086aa7726edc7931cfe3ffa",
+      "output_sha256": "fadf4a6268c5b777b75809068fbdfc5d4e1702a32c5804ae8ac5279afbd5842d",
+      "allocs": 36174828,
+      "frees": 36174828,
+      "live_bytes": 0,
+      "cliff_count": 346949,
+      "cliff_bytes": 46175984,
+      "seconds": 8.36,
+      "exit_code": 0,
+      "command": [
+        "/tmp/fern-checker-current-pr-shared-lc",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-checker-current-pr-cost-output.s",
+        "/tmp/fern-checker-current-pr-input/new/compiler/checker.fern",
+        "/Users/jakechampion/codex/lang-checker-dependency-cost/internal/stdlib"
+      ],
+      "log": "/tmp/fern-checker-current-pr-cost-shared-shared.log"
+    }
+  ],
+  "interpretation": "Both engines give identical counts on each fixed input. All four assembly outputs are byte-identical. The decrease comes from the checker input graph.",
+  "tests": {
+    "module_trait_reexport": {
+      "result": "pass",
+      "elapsed_seconds": 46.329,
+      "roots": 5,
+      "log_sha256": "1b6b3673610a1f05e67e9427c6a712cf5f279938638592f3dd64144c5a5cf82f"
+    },
+    "lint_fast": {
+      "result": "pass",
+      "log_sha256": "31c2ba46d2fbad51db5557b0caded8898bcaf35f21185516ffc35d6e69fb65c4"
+    },
+    "unit_rest": {
+      "result": "pass",
+      "cmd_fern_elapsed_seconds": 220.726,
+      "log_sha256": "45b0d42d7a09d754f0ca769ceba727c74b9619c991189461ece0ab6a225f66fb"
+    },
+    "bootstrap": {
+      "result": "pass",
+      "target": "arm64-darwin",
+      "stage2_bytes": 17299297,
+      "stage3_bytes": 17299297,
+      "stage2_stage3_sha256": "30f49318da7e35eeb44cdfe62ab5cbfb6befc141e54915df94f7743aac8d5104",
+      "stage1_difference": "The stage0 pin predates a code generator change."
+    }
+  },
+  "strict_comparisons": {
+    "allocation": "pass",
+    "cliff": "pass",
+    "tolerance_percent": 1
+  },
+  "baseline_changed": false,
+  "publication": "Private preparation for issue #13991. Wait for PR #13988 to merge, then require current-head full CI and feedback before merge."
+}

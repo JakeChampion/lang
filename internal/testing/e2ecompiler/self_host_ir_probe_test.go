@@ -50,7 +50,7 @@ func irProbeCases() []irProbeCase {
 		},
 		{
 			name:        "method-receiver-lowers",
-			src:         "struct P { x: i32 }\nfunction (p: P) get(): i32 { return p.x; }\nfunction main(): i32 { let p = P { x: 7 }; return p.get(); }",
+			src:         "struct P { x: i32 }\n@noinline function (p: P) get(): i32 { return p.x; }\nfunction main(): i32 { let p = P { x: 7 }; return p.get(); }",
 			wantVerdict: "module: IR",
 			wantLines:   []string{"P.get: ir", "main: ir"},
 		},
