@@ -7,6 +7,8 @@ import "std/utf8" as utf8;
 import "std/option";
 import "std/result";
 import "std/string";
+import "std/peg";
+import "core/map";
 
 function nested(depth: i32): string {
   let s: string = "";
@@ -21,6 +23,41 @@ function nested(depth: i32): string {
     i = i + 1;
   }
   return s;
+}
+
+function parens(depth: i32): string {
+  let s: string = "";
+  for i in 0..depth {
+    s = s + "(";
+  }
+  s = s + "x";
+  for i in 0..depth {
+    s = s + ")";
+  }
+  return s;
+}
+
+// A rule reference nested deeper than 2048 fails the match instead of
+// growing the stack without bound.
+function test_peg_depth_limit(): test.TestOutcome {
+  let rules: Map[string, peg.Pattern] = map_new(2);
+  rules = rules.insert("e", PChoice([PSeq([PLit("("), PRef("e"), PLit(")")]), PLit("x")]));
+  let Ok(g) = peg.grammar(rules, "e") else {
+    return test.fail("grammar should build");
+  };
+  match (peg.parse(g, parens(2000))) {
+    Ok(_) => {},
+    Err(e) => {
+      return test.fail("2000 levels refused: " + e.message());
+    }
+  }
+  match (peg.parse(g, parens(2100))) {
+    Ok(_) => {
+      return test.fail("2100 levels accepted");
+    },
+    Err(_) => {}
+  }
+  return test.pass();
 }
 
 function test_json_depth_limit(): test.TestOutcome {
@@ -146,6 +183,7 @@ function utf8_never_crashes(input: u8[]): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.new("std parse limits");
   r = r.it("json depth limit", test_json_depth_limit);
+  r = r.it("peg depth limit", test_peg_depth_limit);
   r = r.it("invalid utf8 is refused", test_invalid_utf8_is_refused);
   r = r.it("number parse is bounded", test_number_parse_is_bounded);
   r = r.it("format width is bounded", test_format_width_is_bounded);
