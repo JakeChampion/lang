@@ -1,0 +1,847 @@
+{
+  "issue": 13221,
+  "status": "formatted fixture requalified; fresh full CI pending",
+  "production_changed": false,
+  "original_ci": {
+    "head": {
+      "run": 40189191231,
+      "conclusion": "cancelled"
+    },
+    "merge": {
+      "run": 40191116448,
+      "conclusion": "cancelled"
+    }
+  },
+  "runner_identities": {
+    "host": "Darwin arm64",
+    "docker_image": "sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+    "qemu": "7.2.22",
+    "wasmtime": "46.0.1",
+    "wasmtime_sha256": "b57b3eaf89ff90bf8d5fff35f4cadc6a559b7297cf6802f0477392e164061f81"
+  },
+  "targets": [
+    {
+      "source_head": "d803f219d5da3f5dc5ab8d92b63ac9362ca5fff4",
+      "compiler": "/private/tmp/fern-13999-271-fixed-point",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "arm64-darwin",
+      "runner": [],
+      "source_sha256": {
+        "fern-image/experiments/zlib.fern": "7dc283381b2343efbf7db79c69e954e2e3477f4e1beec0743353af9b81f21c8b",
+        "fern-image/tests/png_compression_test.fern": "4652ccf22cf1865e988839fd5306d89322a52288c7ec970a3d4a254f7f0159d1",
+        "fern-image/tests/png_test.fern": "5e4c225aebe324d176463ca4319746d8be03db20d50bd81e4d7898962d680020",
+        "fern-image/packages/codecs/png/compression.fern": "d5959d38d254cfb48dfea520176f495b7c8eac470cbaf96767c40acfaaf99d80",
+        "fern-image/packages/codecs/png/png.fern": "29c4167bd2c03e70318cdd189ea101b42426c011e1ebc1064e278d4a6d8ad74e",
+        "fern-image/tests/fixtures/png.fern": "7843407a9465a1db3cbe32e569690b46ceb5709ae0754737bd6fa963a924d1de",
+        "internal/stdlib/std/deflate.fern.md": "a33627c22d3a9d8428d6bf1d1e57bfc39106198cc7557bd28512bd80128b7414"
+      },
+      "reference": {
+        "zlib_version": "1.2.12",
+        "zlib_runtime_version": "1.2.12",
+        "stored": {
+          "bytes": 44,
+          "sha256": "8db3f528b1dd32ec60059132edc169dd3b288dd4335d607ae000ba9be6d56005",
+          "decoded_bytes": 33,
+          "block_type": 0
+        },
+        "fixed": {
+          "bytes": 77,
+          "sha256": "f556e8f67ae47cbd0d59633c91ecf053b46f5b1c4b0f3ff8dbece4e265e44c2b",
+          "decoded_bytes": 4224,
+          "block_type": 1
+        },
+        "dynamic": {
+          "bytes": 73,
+          "sha256": "adb4fdc100b4d31f7bbea49483cd6ede4f4144a3ad612f57ff03a3d8431ce9b2",
+          "decoded_bytes": 4224,
+          "block_type": 2
+        },
+        "strict_frame_sha256": "fbe552485a7be795db6093f95c6f2c4e5c3c9ff85a85c585f40c616e4d205820"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/zlib.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.242501333123073,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-darwin",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-native/zlib",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.4863099998328835,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "5e2189b373b244749d0a511c3ad23d44aced7f94eb66924be4ed3fb11f118364",
+          "run": {
+            "command": [
+              "/private/tmp/fern-14001-native/zlib"
+            ],
+            "exit_code": 0,
+            "seconds": 0.16868987493216991,
+            "stdout": "TAP version 13\n# Suite: native PNG compression audit\nok 1 - stored, fixed and dynamic zlib goldens\nok 2 - exact decompression limit\nok 3 - checksum, truncation and header rejection\n1..3\n# tests 3\n# pass 3\n# fail 0\n",
+            "stderr": "leakcheck: allocs=432 frees=432 live_bytes=0\n"
+          },
+          "tests": 3,
+          "census": {
+            "allocs": 432,
+            "frees": 432,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_compression_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.257130666868761,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-darwin",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-native/png_compression_test",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.5061704169493169,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "60990b1165b1c7ad6a32bb92b0a202515a115aa8b4dc7fdd908ab1f586c07dd2",
+          "run": {
+            "command": [
+              "/private/tmp/fern-14001-native/png_compression_test"
+            ],
+            "exit_code": 0,
+            "seconds": 0.20752933411858976,
+            "stdout": "TAP version 13\n# Suite: strict PNG compression framing\nok 1 - exact output limit and invalid budgets\nok 2 - window, method, dictionary and header check\nok 3 - trailing bytes, second stream and checksum\nok 4 - every truncated prefix fails\n1..4\n# tests 4\n# pass 4\n# fail 0\n",
+            "stderr": "leakcheck: allocs=48 frees=48 live_bytes=0\n"
+          },
+          "tests": 4,
+          "census": {
+            "allocs": 48,
+            "frees": 48,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.4335525420028716,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-darwin",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-native/png_test",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.5533360000699759,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "7959422ad076ad68254de83e992d110b900ed2c010cee9e0e196243da34ff177",
+          "run": {
+            "command": [
+              "/private/tmp/fern-14001-native/png_test"
+            ],
+            "exit_code": 0,
+            "seconds": 0.15413970896042883,
+            "stdout": "TAP version 13\n# Suite: PNG RGB8/RGBA8\nok 1 - independent goldens for all five scanline filters\nok 2 - native codec round trips and encoder output limit\nok 3 - malformed chunks and unsupported modes\nok 4 - pixel and filtered output budgets\nok 5 - every truncated prefix fails\nok 6 - transparency, profiles, animation and short scanlines\nok 7 - chunk count CPU-work guard\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=2104 frees=2104 live_bytes=0\n"
+          },
+          "tests": 7,
+          "census": {
+            "allocs": 2104,
+            "frees": 2104,
+            "live_bytes": 0
+          }
+        }
+      ]
+    },
+    {
+      "source_head": "d803f219d5da3f5dc5ab8d92b63ac9362ca5fff4",
+      "compiler": "/private/tmp/fern-13999-271-fixed-point",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "arm64-linux",
+      "runner": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/private/tmp/fern-14001-arm64:/private/tmp/fern-14001-arm64",
+        "fern-devbox:latest"
+      ],
+      "source_sha256": {
+        "fern-image/experiments/zlib.fern": "7dc283381b2343efbf7db79c69e954e2e3477f4e1beec0743353af9b81f21c8b",
+        "fern-image/tests/png_compression_test.fern": "4652ccf22cf1865e988839fd5306d89322a52288c7ec970a3d4a254f7f0159d1",
+        "fern-image/tests/png_test.fern": "5e4c225aebe324d176463ca4319746d8be03db20d50bd81e4d7898962d680020",
+        "fern-image/packages/codecs/png/compression.fern": "d5959d38d254cfb48dfea520176f495b7c8eac470cbaf96767c40acfaaf99d80",
+        "fern-image/packages/codecs/png/png.fern": "29c4167bd2c03e70318cdd189ea101b42426c011e1ebc1064e278d4a6d8ad74e",
+        "fern-image/tests/fixtures/png.fern": "7843407a9465a1db3cbe32e569690b46ceb5709ae0754737bd6fa963a924d1de",
+        "internal/stdlib/std/deflate.fern.md": "a33627c22d3a9d8428d6bf1d1e57bfc39106198cc7557bd28512bd80128b7414"
+      },
+      "reference": {
+        "zlib_version": "1.2.12",
+        "zlib_runtime_version": "1.2.12",
+        "stored": {
+          "bytes": 44,
+          "sha256": "8db3f528b1dd32ec60059132edc169dd3b288dd4335d607ae000ba9be6d56005",
+          "decoded_bytes": 33,
+          "block_type": 0
+        },
+        "fixed": {
+          "bytes": 77,
+          "sha256": "f556e8f67ae47cbd0d59633c91ecf053b46f5b1c4b0f3ff8dbece4e265e44c2b",
+          "decoded_bytes": 4224,
+          "block_type": 1
+        },
+        "dynamic": {
+          "bytes": 73,
+          "sha256": "adb4fdc100b4d31f7bbea49483cd6ede4f4144a3ad612f57ff03a3d8431ce9b2",
+          "decoded_bytes": 4224,
+          "block_type": 2
+        },
+        "strict_frame_sha256": "fbe552485a7be795db6093f95c6f2c4e5c3c9ff85a85c585f40c616e4d205820"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/zlib.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.2364890419412404,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-arm64/zlib",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.4855845000129193,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "f8574d2bc413278feab68913e7894a1461c8002e527e8e709f0d2d4d0598ef6d",
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-14001-arm64:/private/tmp/fern-14001-arm64",
+              "fern-devbox:latest",
+              "/private/tmp/fern-14001-arm64/zlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.0099472501315176,
+            "stdout": "TAP version 13\n# Suite: native PNG compression audit\nok 1 - stored, fixed and dynamic zlib goldens\nok 2 - exact decompression limit\nok 3 - checksum, truncation and header rejection\n1..3\n# tests 3\n# pass 3\n# fail 0\n",
+            "stderr": "leakcheck: allocs=432 frees=432 live_bytes=0\n"
+          },
+          "tests": 3,
+          "census": {
+            "allocs": 432,
+            "frees": 432,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_compression_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.1693775409366935,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-arm64/png_compression_test",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.497008082922548,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "1f7f6bf4796057f570166f2a69808d0d824f4aec065dac8eef424473c8fbe695",
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-14001-arm64:/private/tmp/fern-14001-arm64",
+              "fern-devbox:latest",
+              "/private/tmp/fern-14001-arm64/png_compression_test"
+            ],
+            "exit_code": 0,
+            "seconds": 0.48798483284190297,
+            "stdout": "TAP version 13\n# Suite: strict PNG compression framing\nok 1 - exact output limit and invalid budgets\nok 2 - window, method, dictionary and header check\nok 3 - trailing bytes, second stream and checksum\nok 4 - every truncated prefix fails\n1..4\n# tests 4\n# pass 4\n# fail 0\n",
+            "stderr": "leakcheck: allocs=48 frees=48 live_bytes=0\n"
+          },
+          "tests": 4,
+          "census": {
+            "allocs": 48,
+            "frees": 48,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.0838960418477654,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "arm64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-arm64/png_test",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.4804818339180201,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "67847682b467d3b61e3c63e900022be62c15f04f7c1dd46df9fba0427f625dce",
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-14001-arm64:/private/tmp/fern-14001-arm64",
+              "fern-devbox:latest",
+              "/private/tmp/fern-14001-arm64/png_test"
+            ],
+            "exit_code": 0,
+            "seconds": 0.24365858314558864,
+            "stdout": "TAP version 13\n# Suite: PNG RGB8/RGBA8\nok 1 - independent goldens for all five scanline filters\nok 2 - native codec round trips and encoder output limit\nok 3 - malformed chunks and unsupported modes\nok 4 - pixel and filtered output budgets\nok 5 - every truncated prefix fails\nok 6 - transparency, profiles, animation and short scanlines\nok 7 - chunk count CPU-work guard\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=2104 frees=2104 live_bytes=0\n"
+          },
+          "tests": 7,
+          "census": {
+            "allocs": 2104,
+            "frees": 2104,
+            "live_bytes": 0
+          }
+        }
+      ]
+    },
+    {
+      "source_head": "d803f219d5da3f5dc5ab8d92b63ac9362ca5fff4",
+      "compiler": "/private/tmp/fern-13999-271-fixed-point",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "x86-64-linux",
+      "runner": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/private/tmp/fern-14001-x86:/private/tmp/fern-14001-x86",
+        "fern-devbox:latest",
+        "qemu-x86_64"
+      ],
+      "source_sha256": {
+        "fern-image/experiments/zlib.fern": "7dc283381b2343efbf7db79c69e954e2e3477f4e1beec0743353af9b81f21c8b",
+        "fern-image/tests/png_compression_test.fern": "4652ccf22cf1865e988839fd5306d89322a52288c7ec970a3d4a254f7f0159d1",
+        "fern-image/tests/png_test.fern": "5e4c225aebe324d176463ca4319746d8be03db20d50bd81e4d7898962d680020",
+        "fern-image/packages/codecs/png/compression.fern": "d5959d38d254cfb48dfea520176f495b7c8eac470cbaf96767c40acfaaf99d80",
+        "fern-image/packages/codecs/png/png.fern": "29c4167bd2c03e70318cdd189ea101b42426c011e1ebc1064e278d4a6d8ad74e",
+        "fern-image/tests/fixtures/png.fern": "7843407a9465a1db3cbe32e569690b46ceb5709ae0754737bd6fa963a924d1de",
+        "internal/stdlib/std/deflate.fern.md": "a33627c22d3a9d8428d6bf1d1e57bfc39106198cc7557bd28512bd80128b7414"
+      },
+      "reference": {
+        "zlib_version": "1.2.12",
+        "zlib_runtime_version": "1.2.12",
+        "stored": {
+          "bytes": 44,
+          "sha256": "8db3f528b1dd32ec60059132edc169dd3b288dd4335d607ae000ba9be6d56005",
+          "decoded_bytes": 33,
+          "block_type": 0
+        },
+        "fixed": {
+          "bytes": 77,
+          "sha256": "f556e8f67ae47cbd0d59633c91ecf053b46f5b1c4b0f3ff8dbece4e265e44c2b",
+          "decoded_bytes": 4224,
+          "block_type": 1
+        },
+        "dynamic": {
+          "bytes": 73,
+          "sha256": "adb4fdc100b4d31f7bbea49483cd6ede4f4144a3ad612f57ff03a3d8431ce9b2",
+          "decoded_bytes": 4224,
+          "block_type": 2
+        },
+        "strict_frame_sha256": "fbe552485a7be795db6093f95c6f2c4e5c3c9ff85a85c585f40c616e4d205820"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/zlib.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.2411959159653634,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "x86-64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-x86/zlib",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.459111083066091,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "ea8ea1bee092d3d44bbfeb2c8455d077c37614b766571c262fbc588c7d534d07",
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-14001-x86:/private/tmp/fern-14001-x86",
+              "fern-devbox:latest",
+              "qemu-x86_64",
+              "/private/tmp/fern-14001-x86/zlib"
+            ],
+            "exit_code": 0,
+            "seconds": 0.9816087500657886,
+            "stdout": "TAP version 13\n# Suite: native PNG compression audit\nok 1 - stored, fixed and dynamic zlib goldens\nok 2 - exact decompression limit\nok 3 - checksum, truncation and header rejection\n1..3\n# tests 3\n# pass 3\n# fail 0\n",
+            "stderr": "leakcheck: allocs=432 frees=432 live_bytes=0\n"
+          },
+          "tests": 3,
+          "census": {
+            "allocs": 432,
+            "frees": 432,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_compression_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.154786208178848,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "x86-64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-x86/png_compression_test",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.484038416063413,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "58b12498d0c127734f9efdb4a10068e34ba2d27b53db5a33da6a32ca947b2cd5",
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-14001-x86:/private/tmp/fern-14001-x86",
+              "fern-devbox:latest",
+              "qemu-x86_64",
+              "/private/tmp/fern-14001-x86/png_compression_test"
+            ],
+            "exit_code": 0,
+            "seconds": 0.4644331249874085,
+            "stdout": "TAP version 13\n# Suite: strict PNG compression framing\nok 1 - exact output limit and invalid budgets\nok 2 - window, method, dictionary and header check\nok 3 - trailing bytes, second stream and checksum\nok 4 - every truncated prefix fails\n1..4\n# tests 4\n# pass 4\n# fail 0\n",
+            "stderr": "leakcheck: allocs=48 frees=48 live_bytes=0\n"
+          },
+          "tests": 4,
+          "census": {
+            "allocs": 48,
+            "frees": 48,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.102758208056912,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "x86-64-linux",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-x86/png_test",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.480247292201966,
+            "stdout": "",
+            "stderr": ""
+          },
+          "binary_sha256": "55a2e202d50047b13b5943c9c8175237d7df37108c18f33ace676f8827acc635",
+          "run": {
+            "command": [
+              "docker",
+              "run",
+              "--rm",
+              "--pull=never",
+              "-v",
+              "/private/tmp/fern-14001-x86:/private/tmp/fern-14001-x86",
+              "fern-devbox:latest",
+              "qemu-x86_64",
+              "/private/tmp/fern-14001-x86/png_test"
+            ],
+            "exit_code": 0,
+            "seconds": 0.3018157910555601,
+            "stdout": "TAP version 13\n# Suite: PNG RGB8/RGBA8\nok 1 - independent goldens for all five scanline filters\nok 2 - native codec round trips and encoder output limit\nok 3 - malformed chunks and unsupported modes\nok 4 - pixel and filtered output budgets\nok 5 - every truncated prefix fails\nok 6 - transparency, profiles, animation and short scanlines\nok 7 - chunk count CPU-work guard\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=2104 frees=2104 live_bytes=0\n"
+          },
+          "tests": 7,
+          "census": {
+            "allocs": 2104,
+            "frees": 2104,
+            "live_bytes": 0
+          }
+        }
+      ]
+    },
+    {
+      "source_head": "d803f219d5da3f5dc5ab8d92b63ac9362ca5fff4",
+      "compiler": "/private/tmp/fern-13999-271-fixed-point",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "target": "wasm32-wasi",
+      "runner": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run"
+      ],
+      "source_sha256": {
+        "fern-image/experiments/zlib.fern": "7dc283381b2343efbf7db79c69e954e2e3477f4e1beec0743353af9b81f21c8b",
+        "fern-image/tests/png_compression_test.fern": "4652ccf22cf1865e988839fd5306d89322a52288c7ec970a3d4a254f7f0159d1",
+        "fern-image/tests/png_test.fern": "5e4c225aebe324d176463ca4319746d8be03db20d50bd81e4d7898962d680020",
+        "fern-image/packages/codecs/png/compression.fern": "d5959d38d254cfb48dfea520176f495b7c8eac470cbaf96767c40acfaaf99d80",
+        "fern-image/packages/codecs/png/png.fern": "29c4167bd2c03e70318cdd189ea101b42426c011e1ebc1064e278d4a6d8ad74e",
+        "fern-image/tests/fixtures/png.fern": "7843407a9465a1db3cbe32e569690b46ceb5709ae0754737bd6fa963a924d1de",
+        "internal/stdlib/std/deflate.fern.md": "a33627c22d3a9d8428d6bf1d1e57bfc39106198cc7557bd28512bd80128b7414"
+      },
+      "reference": {
+        "zlib_version": "1.2.12",
+        "zlib_runtime_version": "1.2.12",
+        "stored": {
+          "bytes": 44,
+          "sha256": "8db3f528b1dd32ec60059132edc169dd3b288dd4335d607ae000ba9be6d56005",
+          "decoded_bytes": 33,
+          "block_type": 0
+        },
+        "fixed": {
+          "bytes": 77,
+          "sha256": "f556e8f67ae47cbd0d59633c91ecf053b46f5b1c4b0f3ff8dbece4e265e44c2b",
+          "decoded_bytes": 4224,
+          "block_type": 1
+        },
+        "dynamic": {
+          "bytes": 73,
+          "sha256": "adb4fdc100b4d31f7bbea49483cd6ede4f4144a3ad612f57ff03a3d8431ce9b2",
+          "decoded_bytes": 4224,
+          "block_type": 2
+        },
+        "strict_frame_sha256": "fbe552485a7be795db6093f95c6f2c4e5c3c9ff85a85c585f40c616e4d205820"
+      },
+      "cases": [
+        {
+          "source": "fern-image/experiments/zlib.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.2378300838172436,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "wasm32-wasi",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-wasm/zlib.wasm",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/experiments/zlib.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.4878717081155628,
+            "stdout": "",
+            "stderr": "fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors\n"
+          },
+          "binary_sha256": "d3456197930a6fc494be83fd9e7152372803b200dfd6b3ac63ae879e530f9d07",
+          "run": {
+            "command": [
+              "/Users/jakechampion/.wasmtime/bin/wasmtime",
+              "run",
+              "/private/tmp/fern-14001-wasm/zlib.wasm"
+            ],
+            "exit_code": 0,
+            "seconds": 0.29421970900148153,
+            "stdout": "TAP version 13\n# Suite: native PNG compression audit\nok 1 - stored, fixed and dynamic zlib goldens\nok 2 - exact decompression limit\nok 3 - checksum, truncation and header rejection\n1..3\n# tests 3\n# pass 3\n# fail 0\n",
+            "stderr": "leakcheck: allocs=453 frees=453 live_bytes=0\n"
+          },
+          "tests": 3,
+          "census": {
+            "allocs": 453,
+            "frees": 453,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_compression_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.2385688750073314,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "wasm32-wasi",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-wasm/png_compression_test.wasm",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_compression_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.6242172080092132,
+            "stdout": "",
+            "stderr": "fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors\n"
+          },
+          "binary_sha256": "84326edc9c140cc50a750bfabe776f25a9974fa9dbefc5b6ee1c0b7bf771ad68",
+          "run": {
+            "command": [
+              "/Users/jakechampion/.wasmtime/bin/wasmtime",
+              "run",
+              "/private/tmp/fern-14001-wasm/png_compression_test.wasm"
+            ],
+            "exit_code": 0,
+            "seconds": 0.06947675021365285,
+            "stdout": "TAP version 13\n# Suite: strict PNG compression framing\nok 1 - exact output limit and invalid budgets\nok 2 - window, method, dictionary and header check\nok 3 - trailing bytes, second stream and checksum\nok 4 - every truncated prefix fails\n1..4\n# tests 4\n# pass 4\n# fail 0\n",
+            "stderr": "leakcheck: allocs=72 frees=72 live_bytes=0\n"
+          },
+          "tests": 4,
+          "census": {
+            "allocs": 72,
+            "frees": 72,
+            "live_bytes": 0
+          }
+        },
+        {
+          "source": "fern-image/tests/png_test.fern",
+          "check": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-check",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 2.392482708906755,
+            "stdout": "",
+            "stderr": ""
+          },
+          "compile": {
+            "command": [
+              "/private/tmp/fern-13999-271-fixed-point",
+              "-target",
+              "wasm32-wasi",
+              "-sanitize",
+              "-o",
+              "/private/tmp/fern-14001-wasm/png_test.wasm",
+              "/Users/jakechampion/codex/lang-compression-qualification/fern-image/tests/png_test.fern",
+              "/Users/jakechampion/codex/lang-compression-qualification/internal/stdlib"
+            ],
+            "exit_code": 0,
+            "seconds": 1.5866289159748703,
+            "stdout": "",
+            "stderr": "fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors\n"
+          },
+          "binary_sha256": "9febeb19711de5e2f07574e33343329f9f00c854a3e3ca4ab85db41b0a8166e5",
+          "run": {
+            "command": [
+              "/Users/jakechampion/.wasmtime/bin/wasmtime",
+              "run",
+              "/private/tmp/fern-14001-wasm/png_test.wasm"
+            ],
+            "exit_code": 0,
+            "seconds": 0.011494291946291924,
+            "stdout": "TAP version 13\n# Suite: PNG RGB8/RGBA8\nok 1 - independent goldens for all five scanline filters\nok 2 - native codec round trips and encoder output limit\nok 3 - malformed chunks and unsupported modes\nok 4 - pixel and filtered output budgets\nok 5 - every truncated prefix fails\nok 6 - transparency, profiles, animation and short scanlines\nok 7 - chunk count CPU-work guard\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
+            "stderr": "leakcheck: allocs=2270 frees=2270 live_bytes=0\n"
+          },
+          "tests": 7,
+          "census": {
+            "allocs": 2270,
+            "frees": 2270,
+            "live_bytes": 0
+          }
+        }
+      ]
+    }
+  ],
+  "historical_record": {
+    "path": "qualification-before-format.json",
+    "sha256": "d18b31eea618e34063133750e9010a8b24b928694fef4d4beb3ceb1d62cda844",
+    "limits": "Initial source/producer, including earlier full Wasm script. Preserve as observed; current canonical fixture has a separate fresh four-target qualification."
+  },
+  "formatting_correction": {
+    "failed_run": 41331661566,
+    "failed_job": 124922882197,
+    "log_sha256": "cd967c455f22072d9e7d1aae31a0b679e0d351c0328a5355e619a4057dec0691",
+    "cause": "Local formatter discovery omitted the untracked fixture. CI caught canonical layout and empty-variant pattern spelling. Assertions and runtime contracts unchanged.",
+    "new_compiler_source": "271b78c31633e7306bfc91bfac0f47e1e7f00c82",
+    "integrated_main": "7ea3a2ad73378c33631492f61c1f66d81ee620d8"
+  },
+  "local_checks": {
+    "current_lint_fast": {
+      "result": "pass",
+      "log_sha256": "daa4f90a8e7709a7ec3775905b4533edc5c815e80421b33cd90d5c6cc29db30c"
+    },
+    "explicit_fixture_formatter": {
+      "command": "./bin/fern -fmt -d fern-image/tests/png_compression_test.fern",
+      "exit_code": 0
+    },
+    "compiler_source_matches_merged_main": true
+  }
+}
