@@ -108,11 +108,68 @@ func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
+	const tail = `
+function main(): i32 {
+    let x: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x % 83;
+}`
+
+	check := func(t *testing.T, name, body string, want int, wantFrees int64) {
+		t.Helper()
+		asm := hevCompile(t, runner, driverBin, body+tail, []string{"FERN_LEAKCHECK=1"})
+		progBin := buildBin(t, gcc, dir, "bssh_"+name, asm)
+		stderr, exit := hevRun(t, runner, progBin)
+		if exit != want {
+			t.Fatalf("exited %d, want %d — a wrong answer or a crash here means a "+
+				"block-scoped box was freed at function exit while something else still "+
+				"held it (use-after-free), not merely that it leaked", exit, want)
+		}
+		summary := ""
+		for _, line := range strings.Split(stderr, "\n") {
+			if strings.HasPrefix(line, "leakcheck: ") {
+				summary = line
+			}
+		}
+		var allocs, frees, live int64
+		if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+			t.Fatalf("parse %q: %v", summary, err)
+		}
+		assertBalancedCensus(t, stderr)
+		if frees != wantFrees {
+			t.Errorf("frees=%d, want exactly %d (allocs=%d live=%d)", frees, wantFrees, allocs, live)
+		}
+
+		ufAsm := hevCompile(t, runner, driverBin, body+`
+function main(): i32 {
+    let x: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    if (x == 999999) { return 90; }
+    return __rc_underflow_count();
+}`, nil)
+		ufBin := buildBin(t, gcc, dir, "bsshu_"+name, ufAsm)
+		_, ufExit := hevRun(t, runner, ufBin)
+		if ufExit != 0 {
+			t.Errorf("__rc_underflow_count() == %d, want 0 — a box released twice", ufExit)
+		}
+		safeAsm := hevCompile(t, runner, driverBin, body+tail, []string{"FERN_SANITIZE=1", "FERN_LEAKCHECK=1"})
+		safeBin := buildBin(t, gcc, dir, "bsshs_"+name, safeAsm)
+		safeStderr, safeExit := hevRun(t, runner, safeBin)
+		if safeExit != want || forArrStructSanitizerFault(safeStderr, true) {
+			t.Fatalf("sanitize: exit=%d, want %d\n%s", safeExit, want, safeStderr)
+		}
+		assertBalancedCensus(t, safeStderr)
+
+	}
+
 	for _, tc := range []struct {
-		name      string
-		body      string
-		want      int
-		wantFrees int64
+		name              string
+		body              string
+		want              int
+		wantFrees         int64
+		wantSnapshotFrees int64
 	}{
 		{
 			name: "boxes_escape_into_an_outer_container",
@@ -150,8 +207,9 @@ function round(r: i32): i32 {
     }
     return acc + held.xs[1] + r;
 }`,
-			want:      57,
-			wantFrees: 900,
+			want:              57,
+			wantFrees:         500,
+			wantSnapshotFrees: 900,
 		},
 		{
 			name: "returned_from_inside_the_block",
@@ -189,8 +247,9 @@ function round(r: i32): i32 {
     }
     return acc + held.xs[1] + r;
 }`,
-			want:      57,
-			wantFrees: 900,
+			want:              57,
+			wantFrees:         500,
+			wantSnapshotFrees: 900,
 		},
 		{
 			name: "field_extracted_out_of_the_block",
@@ -213,50 +272,29 @@ function round(r: i32): i32 {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tail := `
-function main(): i32 {
-    let x: i32 = 0;
-    let r: i32 = 0;
-    while (r < 100) { x = x + round(r); r = r + 1; }
-    return x % 83;
-}`
-			asm := hevCompile(t, runner, driverBin, tc.body+tail, []string{"FERN_LEAKCHECK=1"})
-			progBin := buildBin(t, gcc, dir, "bssh_"+tc.name, asm)
-			stderr, exit := hevRun(t, runner, progBin)
-			if exit != tc.want {
-				t.Fatalf("exited %d, want %d — a wrong answer or a crash here means a "+
-					"block-scoped box was freed at function exit while something else still "+
-					"held it (use-after-free), not merely that it leaked", exit, tc.want)
+			check(t, tc.name, tc.body, tc.want, tc.wantFrees)
+		})
+		if tc.wantSnapshotFrees == 0 {
+			continue
+		}
+		t.Run(tc.name+"_prior_snapshot", func(t *testing.T) {
+			const snapshot = `@noinline
+function snapshot(s: S, n: i32, first: i32, last: i32, size: i32): boolean {
+    return s.n == n && s.xs.len() == size && s.xs[0] == first && s.xs[size - 1] == last;
+}
+`
+			const checks = `        if (i == 0) {
+            if (!snapshot(prior, r, 0, 0, 1)) { exit(91); }
+        } else {
+            if (!snapshot(prior, i - 1, i - 1, i, 2)) { exit(92); }
+        }
+`
+			if strings.Count(tc.body, "        let s: S =") != 1 || strings.Count(tc.body, "        acc = acc + s.n;") != 1 {
+				t.Fatal("the snapshot control needs one construction and one later read")
 			}
-			summary := ""
-			for _, line := range strings.Split(stderr, "\n") {
-				if strings.HasPrefix(line, "leakcheck: ") {
-					summary = line
-				}
-			}
-			var allocs, frees, live int64
-			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-				t.Fatalf("parse %q: %v", summary, err)
-			}
-			if frees != tc.wantFrees {
-				t.Errorf("frees=%d, want exactly %d (allocs=%d live=%d) — a HIGHER count is "+
-					"a value released under a live reference; a lower one means this probe "+
-					"stopped exercising the path it was written for", frees, tc.wantFrees, allocs, live)
-			}
-
-			ufAsm := hevCompile(t, runner, driverBin, tc.body+`
-function main(): i32 {
-    let x: i32 = 0;
-    let r: i32 = 0;
-    while (r < 100) { x = x + round(r); r = r + 1; }
-    if (x == 999999) { return 90; }
-    return __rc_underflow_count();
-}`, nil)
-			ufBin := buildBin(t, gcc, dir, "bsshu_"+tc.name, ufAsm)
-			_, ufExit := hevRun(t, runner, ufBin)
-			if ufExit != 0 {
-				t.Errorf("__rc_underflow_count() == %d, want 0 — a box released twice", ufExit)
-			}
+			body := strings.Replace(tc.body, "        let s: S =", "        let prior: S = held;\n        let s: S =", 1)
+			body = snapshot + strings.Replace(body, "        acc = acc + s.n;", checks+"        acc = acc + s.n;", 1)
+			check(t, tc.name+"_snapshot", body, tc.want, tc.wantSnapshotFrees)
 		})
 	}
 }
