@@ -1,0 +1,2 @@
+x86_64/checker.allocs	36152186
+x86_64/checker.frees	36152186
