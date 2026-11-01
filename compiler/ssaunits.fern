@@ -4227,8 +4227,7 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks
   let way: i32[] = m.way;
   let builds: i32[] = [];
   let work: i32[] = [];
-  let si: i32 = 0;
-  while (si < sources.len()) {
+  for si in 0..sources.len() {
     let id: i32 = sources[si];
     if (h.edges[si] >= 0) {
       work = work.append(h.edges[si]);
@@ -4239,7 +4238,6 @@ function carry_routes(f: ssasem.Func, g: RouteGraph, h: Holds, own m: RouteMarks
         work = work.append(s);
       }
     }
-    si = si + 1;
   }
   let next: i32 = 0;
   while (next < work.len()) {
@@ -4342,8 +4340,7 @@ function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr
     }
     pos = pos + 1;
   }
-  let which: i32 = 0;
-  while (which < successor_count(b)) {
+  for which in 0..successor_count(b) {
     let target: i32 = ssa.successor_id(b.term, which);
     let si: i32 = step_at(p, idx, b.id, edge_point(), target);
     if (si >= 0) {
@@ -4357,7 +4354,6 @@ function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr
         }
       }
     }
-    which = which + 1;
   }
   if (values.len() == 0) {
     return Dying { at: [], values: [], edges: [] };
@@ -4538,12 +4534,10 @@ pub function carry_held_for(c: Carry, b: i32, pos: i32): boolean {
 
 // The value whose box the edge from `from` to `to` holds instead of dropping.
 pub function carry_held_edge(c: Carry, from: i32, to: i32): i32 {
-  let i: i32 = 0;
-  while (i < c.edge_from.len()) {
+  for i in 0..c.edge_from.len() {
     if (c.edge_from[i] == from && c.edge_to[i] == to) {
       return c.edge_held[i];
     }
-    i = i + 1;
   }
   return 0 - 1;
 }
@@ -5526,18 +5520,16 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reach
     }
     i = i + 1;
   }
-  i = 0;
-  while (i < c.edge_from.len()) {
-    let k: i32 = at[c.edge_from[i]];
+  for edge in 0..c.edge_from.len() {
+    let k: i32 = at[c.edge_from[edge]];
     if (k < 0 || !reachable[k]) {
       return "a token is held on an edge out of an unreachable block";
     }
     let b: ssa.SBlock = f.graph.blocks[k];
-    let st: i32 = find_step(b, idx, edge_point(), c.edge_to[i]);
-    if (st < 0 || util.index_of_i32(p.steps[st].drops, c.edge_held[i]) < 0 || static_box(p, c.edge_held[i])) {
+    let st: i32 = find_step(b, idx, edge_point(), c.edge_to[edge]);
+    if (st < 0 || util.index_of_i32(p.steps[st].drops, c.edge_held[edge]) < 0 || static_box(p, c.edge_held[edge])) {
       return "a carried token is taken from a value not dying on that edge";
     }
-    i = i + 1;
   }
   let entry: i32[][] = [];
   let known: boolean[] = [];

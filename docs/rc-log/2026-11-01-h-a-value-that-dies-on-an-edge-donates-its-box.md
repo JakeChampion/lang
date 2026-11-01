@@ -73,3 +73,14 @@ The dying lists were rebuilt as locals and returned in one record. A record
 built from locals is not a constant, and the one for an empty block cost one
 allocation a block, 45,000 on `checker.fern`. The empty block returns the
 constant record again.
+
+## Source-census correction
+
+The initial CI run at `21269681fb` fails the source census: 5,209 manual
+increment sites exceed the unchanged ceiling of 5,205. Four new index loops
+now use ranges over their fixed inputs. The route work queue still uses
+its original loop because the queue can grow during the search.
+
+The local census passes without a baseline change. All eight focused edge,
+carry, split, shared-donor, tested-take and certification roots pass on Linux
+without skips. Fresh full CI remains mandatory before merge.
