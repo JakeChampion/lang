@@ -310,7 +310,10 @@ for every plan ownership inference tries):
   of its own slot count may be **carried** to a construction in a later block (`Carry`): the
   blocks holding it, the constructions it is handed to, the edges leaving
   its ways that free it, and the edges on which it arrives null because the
-  donor died there as a box of another count. A construction that reads a
+  donor died there as a box of another count. A value the plan drops on an
+  edge dies in the block the edge leaves, on that edge: its routes start at
+  the edge's target, and the edge holds the box in place of the drop
+  (`Carry.edge_from`, `carry_held_edge`). A construction that reads a
   field back from its donor at the same slot, a record's, a declared
   variant's or a struct-union member's, **keeps** the field in place
   (`Keeps`), and every other take

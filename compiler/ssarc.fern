@@ -1449,7 +1449,7 @@ function successors(t: ssa.STerm): i32[] {
   return [];
 }
 
-function edge(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32, dest_at: i32): irtables.LowerState {
+function edge(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32, dest_at: i32, held: i32, known: Option[semrecords.Field[]]): irtables.LowerState {
   let step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
   let dest: ssa.SBlock = f.graph.blocks[dest_at];
   r = supplies(r, f, p, owed_on_entry(step, dest, links), false, [], []);
@@ -1461,6 +1461,10 @@ function edge(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, idx:
     if (ins.kind_tag == 8) {
       r = emit(r, ir.op_load_local(ins.args[pi]));
     }
+  }
+  if (held >= 0) {
+    r = hold_token(r, f, held, known);
+    step = ssaunits.Step { ...step, drops: without(step.drops, held) };
   }
   r = drops(r, step, f, p, links);
   let i: i32 = dest.insts.len() - 1;
@@ -6170,7 +6174,12 @@ function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], posit
   for gone in ssaunits.carry_nulls(e.carry, from, target) {
     e = Emit { ...e, r: zero_local(e.r, gone) };
   }
-  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target, e.at[target]) };
+  let held: i32 = ssaunits.carry_held_edge(e.carry, from, target);
+  let known: Option[semrecords.Field[]] = None;
+  if (held >= 0) {
+    known = known_fields(f, p, f.graph.blocks[e.at[from]], held);
+  }
+  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target, e.at[target], held, known) };
   let dest: i32 = e.ranks[target];
   if (dest == position + 1) {
     return e;
