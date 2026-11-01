@@ -5668,16 +5668,15 @@ function word_mask(w: i32): u64 {
   return (1u64 << w as u64) - 1u64;
 }
 
-pub function derive_magic_s(d: i64, w: i32): MagicS {
-  let mask: u64 = word_mask(w);
-  let ad: u64 = d as u64 & mask;
+pub function derive_magic_s(d: i64): MagicS {
+  let ad: u64 = d as u64;
   if (d < 0i64) {
-    ad = (0i64 - d) as u64 & mask;
+    ad = (0i64 - d) as u64;
   }
-  let two: u64 = 1u64 << (w - 1) as u64;
-  let t: u64 = two + ((d as u64 & mask) >> (w - 1) as u64);
+  let two: u64 = 1u64 << 63u64;
+  let t: u64 = two + (d as u64 >> 63u64);
   let anc: u64 = t - 1u64 - t % ad;
-  let p: i32 = w - 1;
+  let p: i32 = 63;
   let q1: u64 = two / anc;
   let r1: u64 = two - q1 * anc;
   let q2: u64 = two / ad;
@@ -5685,16 +5684,16 @@ pub function derive_magic_s(d: i64, w: i32): MagicS {
   let searching: boolean = true;
   while (searching) {
     p = p + 1;
-    q1 = q1 * 2u64 & mask;
-    r1 = r1 * 2u64 & mask;
+    q1 = q1 * 2u64;
+    r1 = r1 * 2u64;
     if (r1 >= anc) {
-      q1 = q1 + 1u64 & mask;
+      q1 = q1 + 1u64;
       r1 = r1 - anc;
     }
-    q2 = q2 * 2u64 & mask;
-    r2 = r2 * 2u64 & mask;
+    q2 = q2 * 2u64;
+    r2 = r2 * 2u64;
     if (r2 >= ad) {
-      q2 = q2 + 1u64 & mask;
+      q2 = q2 + 1u64;
       r2 = r2 - ad;
     }
     let delta: u64 = ad - r2;
@@ -5702,15 +5701,37 @@ pub function derive_magic_s(d: i64, w: i32): MagicS {
       searching = false;
     }
   }
-  let mu: u64 = q2 + 1u64 & mask;
+  let mu: u64 = q2 + 1u64;
   if (d < 0i64) {
-    mu = 0u64 - mu & mask;
+    mu = 0u64 - mu;
   }
   let m: i64 = mu as i64;
-  if (w < 64 && mu >= two) {
-    m = mu as i64 - (mask as i64 + 1i64);
+  return MagicS { m: m, s: p - 64, add: d > 0i64 && m < 0i64, sub: d < 0i64 && m > 0i64 };
+}
+
+// A signed 32-bit divisor d (|d| >= 3, not a power of two) as one 64-bit
+// multiply: with t = x * m on the sign-extended dividend, the quotient is
+// (t >> s) plus the sign bit of t. |m| < 2^32, so t cannot overflow.
+// Lemire, Bartlett and Kaser, "Integer division by constants: optimal bounds".
+pub struct MagicS32 {
+  m: i64,
+  s: i32,
+}
+
+pub function derive_magic_s32(d: i64): MagicS32 {
+  let ad: i64 = d;
+  if (d < 0i64) {
+    ad = 0i64 - d;
   }
-  return MagicS { m: m, s: p - w, add: d > 0i64 && m < 0i64, sub: d < 0i64 && m > 0i64 };
+  let s: i32 = 31;
+  while (1i64 << s - 31 < ad) {
+    s = s + 1;
+  }
+  let c: i64 = (1i64 << s) / ad + 1i64;
+  if (d < 0i64) {
+    c = 0i64 - c;
+  }
+  return MagicS32 { m: c, s: s };
 }
 
 pub function pow2_shift_i64(mag: i64): i32 {

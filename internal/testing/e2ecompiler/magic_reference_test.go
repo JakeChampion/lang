@@ -3,10 +3,8 @@ package e2ecompiler
 import "math/bits"
 
 type magicS32 struct {
-	M   int32
-	S   uint
-	Add bool
-	Sub bool
+	M int64
+	S uint
 }
 
 type magicS64 struct {
@@ -16,27 +14,32 @@ type magicS64 struct {
 	Sub bool
 }
 
+// deriveMagicS32 is the one-multiply form for a signed 32-bit divisor:
+// s = 31 + ceil(log2 |d|), m = sign(d) * (floor(2^s / |d|) + 1).
 func deriveMagicS32(d int32) magicS32 {
-	m, s, add, sub := deriveMagicSW[int32, uint32](d)
-	return magicS32{M: m, S: s, Add: add, Sub: sub}
+	ad := int64(d)
+	if ad < 0 {
+		ad = -ad
+	}
+	s := uint(31 + bits.Len64(uint64(ad-1)))
+	m := int64(1)<<s/ad + 1
+	if d < 0 {
+		m = -m
+	}
+	return magicS32{M: m, S: s}
 }
 
 func deriveMagicS64(d int64) magicS64 {
-	m, s, add, sub := deriveMagicSW[int64, uint64](d)
-	return magicS64{M: m, S: s, Add: add, Sub: sub}
-}
-
-func deriveMagicSW[S ~int32 | ~int64, U ~uint32 | ~uint64](d S) (m S, sh uint, add, sub bool) {
-	w := uint(bits.OnesCount64(uint64(^U(0))))
-	ad := U(d)
+	ad := uint64(d)
 	if d < 0 {
-		ad = U(-d)
+		ad = uint64(-d)
 	}
-	two := U(1) << (w - 1)
-	t := two + U(d)>>(w-1)
+	const w = 64
+	two := uint64(1) << (w - 1)
+	t := two + uint64(d)>>(w-1)
 	anc := t - 1 - t%ad
 
-	p := w - 1
+	p := uint(w - 1)
 	q1, r1 := two/anc, two-(two/anc)*anc
 	q2, r2 := two/ad, two-(two/ad)*ad
 	for {
@@ -55,11 +58,11 @@ func deriveMagicSW[S ~int32 | ~int64, U ~uint32 | ~uint64](d S) (m S, sh uint, a
 		}
 	}
 
-	m = S(q2 + 1)
+	m := int64(q2 + 1)
 	if d < 0 {
 		m = -m
 	}
-	return m, p - w, d > 0 && m < 0, d < 0 && m > 0
+	return magicS64{M: m, S: p - w, Add: d > 0 && m < 0, Sub: d < 0 && m > 0}
 }
 
 type magicU32 struct {

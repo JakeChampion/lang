@@ -2,16 +2,12 @@ package e2ecompiler
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestSelfHostIRStrengthPeephole(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("ir_strength_run driver runs natively; skipping under an exec runner")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/ir_strength_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_strength_run.fern", "ir_strength_run")
@@ -180,7 +176,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"ds_copies: const_i32 0 ; return\n" +
 		"ds_read_again: const_i32 7 ; store_local 0 ; load_local 0 ; return\n"
 
-	cmd := exec.Command(bin)
+	cmd := runX86_64Bin(runner, bin)
 	out, _ := cmd.Output()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("ir_strength_run did not exit normally")
@@ -197,7 +193,7 @@ func magicParityLines() string {
 	var b strings.Builder
 	for _, d := range []int32{3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5} {
 		mg := deriveMagicS32(d)
-		fmt.Fprintf(&b, "magic_s %d: m=%d s=%d add=%v sub=%v\n", d, mg.M, mg.S, mg.Add, mg.Sub)
+		fmt.Fprintf(&b, "magic_s32 %d: m=%d s=%d\n", d, mg.M, mg.S)
 	}
 	for _, d := range []uint32{3, 7, 97, 641, 1000000, 2147483649, 2863311531, 4294967291, 4294967295, 10, 100, 5, 4093} {
 		mg := deriveMagicU32(d)
