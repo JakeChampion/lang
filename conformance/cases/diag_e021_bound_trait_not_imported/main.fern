@@ -1,0 +1,11 @@
+// std/num imports core/ops, but this program does not, so ops.Add is not
+// visible in the bound.
+import "std/num" as num;
+
+function twice[T: ops.Add](x: T): T {
+  return x.add(x);
+}
+
+function main(): i32 {
+  return twice(2) - 4;
+}

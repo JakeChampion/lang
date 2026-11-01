@@ -2173,10 +2173,15 @@ function (s: Scope) trait_providers(name: string, recv_type: string): MethodSig[
 function trait_visible_from(s: Scope, tname: string, from: string): boolean {
   for tr in s.trait_reqs {
     if (tr.trait_name == tname || method_simple_name(tr.trait_name) == method_simple_name(tname)) {
-      return tr.module.len() == 0 || tr.module == from || util.has_str(tr.visible_from, from);
+      return trait_req_visible(tr, from);
     }
   }
   return true;
+}
+
+// A trait is visible from a module that declares it or imports its module.
+function trait_req_visible(tr: parser.TraitReq, from: string): boolean {
+  return tr.module.len() == 0 || tr.module == from || util.has_str(tr.visible_from, from);
 }
 
 function ambiguous_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Scope): util.Diag[] {
@@ -3256,11 +3261,13 @@ function bound_trait_req(base: string, module: string, reqs: parser.TraitReq[]):
   let found: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < reqs.len()) {
-    if (reqs[i].trait_name == name && reqs[i].module == want) {
-      return i;
-    }
-    if (found < 0 && reqs[i].trait_name == name && q.len() > 0 && reqs[i].module.len() > 0) {
-      found = i;
+    if (reqs[i].trait_name == name && trait_req_visible(reqs[i], module)) {
+      if (reqs[i].module == want) {
+        return i;
+      }
+      if (found < 0 && q.len() > 0 && reqs[i].module.len() > 0) {
+        found = i;
+      }
     }
     i = i + 1;
   }
@@ -17883,6 +17890,24 @@ function impl_trait_spelling(mod: parser.Module, fd: parser.FuncDecl): string {
   return fd.impl_trait;
 }
 
+function impl_trait_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let imports: string[] = import_paths_of(mod);
+  for im in mod.impls {
+    if (im.trait_name.len() == 0) {
+      continue;
+    }
+    let base: string = im.trait_name;
+    if (im.trait_module.len() > 0) {
+      base = im.trait_module + "." + im.trait_name;
+    }
+    if (!bound_import_unloaded(base, imports, mod.trait_reqs) && bound_trait_req(base, im.module, mod.trait_reqs) < 0) {
+      out = out.append(dg_at("E021", "unknown trait \"" + util.demangle(bound_trait_display(base, im.module, mod.trait_reqs)) + "\" in impl", im.line, im.col));
+    }
+  }
+  return out;
+}
+
 function orphan_impl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for im in mod.impls {
@@ -25400,7 +25425,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   }
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {
-    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
+    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(util.append_diags(impl_trait_diags(mod), orphan_impl_diags(mod)), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
   }
   let leading: util.Diag[] = util.append_diags(fda_diags, decl_diags);
   leading = util.append_diags(leading, signature_diags);

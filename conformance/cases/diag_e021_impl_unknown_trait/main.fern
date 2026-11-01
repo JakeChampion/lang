@@ -1,0 +1,12 @@
+// An impl names a trait that no module declares.
+struct V2 { x: i32 }
+
+impl Nope for V2 {
+  function f(self: Self): i32 {
+    return self.x;
+  }
+}
+
+function main(): i32 {
+  return 0;
+}
