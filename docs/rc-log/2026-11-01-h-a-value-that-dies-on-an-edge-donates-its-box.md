@@ -84,3 +84,24 @@ its original loop because the queue can grow during the search.
 The local census passes without a baseline change. All eight focused edge,
 carry, split, shared-donor, tested-take and certification roots pass on Linux
 without skips. Fresh full CI remains mandatory before merge.
+
+## Box-lifetime regression controls
+
+Two existing block-scope programs now report 500 balanced allocations instead
+of 900. The five original fixture bodies remain byte-for-byte unchanged.
+The expected free counts decrease only for the two programs that replace
+the outer local. All other exact counts remain unchanged.
+
+Two new controls retain the previous record across each replacement. An opaque
+callee reads its scalar and array fields after the replacement. Both controls
+still require exactly 900 frees. All seven hazard cases also check a nonzero
+balanced census, zero live bytes, zero RC underflows, and sanitizer execution.
+
+The stabilized compiler runs both original programs and both controls on
+ARM64 Darwin, ARM64 Linux, x86 Linux, and Wasm. All sixteen processes balance
+with zero live bytes. Every original reports 500 events, and every control
+reports 900. Wasm supplies a leak census only. Four focused Linux roots pass
+without skips.
+
+No performance baseline or compiler rule changes accompany
+this test correction. Full current-head CI remains mandatory before merge.
