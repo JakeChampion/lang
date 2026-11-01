@@ -1,0 +1,261 @@
+{
+  "issue": 13717,
+  "qualification_state": "local target, source, runtime and stock complexity gates pass; final-head CI and normal merge pending",
+  "compiler_models_emitters_or_runtime_changed": false,
+  "baselines_or_tolerances_changed": false,
+  "stock_matrix": {
+    "seconds": 1385.449,
+    "roots": [
+      [
+        "TestSelfHostRetainedNativeBodies",
+        "1088.83s"
+      ],
+      [
+        "TestSelfHostRetainedWideHelperControls",
+        "296.61s"
+      ]
+    ],
+    "target_cases": [
+      [
+        "TestSelfHostRetainedNativeBodies/ssaretained_run/arm64-linux",
+        "118.08s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux",
+        "151.69s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaretained_run/wasm32-wasi",
+        "160.37s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/arm64-linux",
+        "104.64s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/x86-64-linux",
+        "117.18s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/wasm32-wasi",
+        "151.30s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaallocationguards_run/arm64-linux",
+        "90.11s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux",
+        "84.48s"
+      ],
+      [
+        "TestSelfHostRetainedNativeBodies/ssaallocationguards_run/wasm32-wasi",
+        "110.04s"
+      ],
+      [
+        "TestSelfHostRetainedWideHelperControls/x86-64-linux",
+        "83.14s"
+      ],
+      [
+        "TestSelfHostRetainedWideHelperControls/arm64-linux",
+        "96.06s"
+      ],
+      [
+        "TestSelfHostRetainedWideHelperControls/wasm32-wasi",
+        "116.55s"
+      ]
+    ],
+    "skips": 0,
+    "checks": [
+      "FERN_STRICT_IR=1",
+      "FERN_SANITIZE=1",
+      "FERN_LEAKCHECK=1",
+      "allocations nonzero",
+      "allocations equal frees",
+      "live bytes zero"
+    ]
+  },
+  "pilot": {
+    "package_seconds": 157.793,
+    "target": "ssaretainedmachines_run/arm64-linux",
+    "skips": 0
+  },
+  "independent_native_run": {
+    "compiler_sha256": "32ccbf71e6d0b4495f9ebffba8784ad224e7409f37a2d63dbc0611dd4ffb14b2",
+    "assembly_sha256": "4010e42990f1f3b4f1362c31769fb69a9e572b8ad5b92ed078c545c51c443309",
+    "binary_sha256": "3b6c4acc5dd00d55a27e7fb61d65a9a8a03c9f62f4005a4ed03546a208c2407a",
+    "allocations": 49915964,
+    "frees": 49915964,
+    "live_bytes": 0
+  },
+  "source_audit": {
+    "native_pass_nodes": 218,
+    "native_skips": 1,
+    "skip_reason": "apt-based Linux host required",
+    "linux_missing_test": "TestDisableChromeAptKeepsUbuntuTargets",
+    "linux_missing_test_result": "pass; zero skips"
+  },
+  "source_runtime_gate": "pass, five runtime sets and 85 standalone drivers",
+  "lint_fast": "pass",
+  "complexity": {
+    "original_tolerance": 0.05,
+    "compiler": {
+      "worst": 232,
+      "ceiling": 221,
+      "excess": 18185,
+      "excess_ceiling": 17447
+    },
+    "stdlib": {
+      "worst": 68,
+      "ceiling": 68,
+      "excess": 820,
+      "excess_ceiling": 803
+    },
+    "native_driver_and_original_formula": "pass",
+    "stock_amd64_emulation_attempt": "FAIL: compiler-dependent roots SIGILL; tolerance unit root passes",
+    "stock_runner_check": {
+      "seconds": 9.019,
+      "roots": 3,
+      "skips": 0,
+      "tooling_required": true,
+      "limits_and_assertions_unchanged": true
+    }
+  },
+  "sources": {
+    "compiler/drivers/ssaretained_run.fern": "ccbdc2c03830b07cdd1eec34f42857236d1dcdd5ea7259d7de3a8dd03a025066",
+    "compiler/drivers/ssaretainedmachines_run.fern": "2d6d8396b07ad1a52c9dcf19a637058e1c1c3b9ca5ca035f380869f16d667a5b",
+    "compiler/drivers/ssaallocationguards_run.fern": "357e66d7c084a0a8115d1842dfb85ccac67a1bd55c4b1f33a3ba1c13035927cc",
+    "compiler/drivers/ssaretainedwidecontrols_run.fern": "aff67be9a8bedec5c5c22a0d10f92ebb527fa0d3e2716f6e30dc19f6521b51a6",
+    "compiler/ssaarrayboxmachine.fern": "f2781319f216a900420445a2747fd068ae6486c3ab0d27e54431daebdd69ec19",
+    "compiler/ssaallocatorfirstmachine.fern": "613e6f13b7c9d96dca23fe93bfcdb181d75ce919b357d0bbe657e4d150d47f1b",
+    "compiler/ssacapacityisa.fern": "f1171d3e597a6456c11ca16e212592c52e0c515c9933857ff2fcc9ffc2468a9e",
+    "compiler/ssalargepushwidemachine.fern": "9ac1f9c78d743da71729d57c0f3bddb0da23c0df6cdec357310becf908988ed5",
+    "compiler/ssalargepushwideranges.fern": "9b801e75db64667996c32689159d7d20de036bb8225eba22a15aa038cd0e35ea"
+  },
+  "logs": {
+    "native-pilot": {
+      "path": "/tmp/fern-13717-native-pilot.log",
+      "sha256": "80fa4aba187782a3642e161d66ff5cb27369dea4e4ca877475df16c8b93a5671"
+    },
+    "direct-native": {
+      "path": "/tmp/fern-13717-direct-native.log",
+      "sha256": "030f4e8f02ee66a23a0155d41f448b71029ef3c1e137e4fc05fb4c1417ccf0f1"
+    },
+    "native-build": {
+      "path": "/tmp/fern-13717-native-build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "full-targets": {
+      "path": "/tmp/fern-13717-full-targets.log",
+      "sha256": "5b8361c829f98d5d2e159dbc4d4eaa6ae35e3a6372262dd8e7ac14b6dccefa96"
+    },
+    "sourcelint": {
+      "path": "/tmp/fern-13717-sourcelint.log",
+      "sha256": "e8121ea2a258dbe3c5f3d6b2e7e097fbeee25f2fad7a5d2f9cc1dafb52f2a0fd"
+    },
+    "sourcelint-linux-apt": {
+      "path": "/tmp/fern-13717-sourcelint-linux-apt.log",
+      "sha256": "b1775cd0c374e9369a2378798a8649cd09ef6864a9a22a5e438a6fe0d681e60a"
+    },
+    "complexity": {
+      "path": "/tmp/fern-13717-complexity.log",
+      "sha256": "fb4227b07fc6b36f09dd3f4a885358776affb9baed0d8d9d848bf4fb5a1ceea1"
+    },
+    "stock-complexity": {
+      "path": "/tmp/fern-13717-stock-complexity.log",
+      "sha256": "01cd2f6ad69d626832e328ab1c34a696b839f29b65edba3455fb1280fd92c2b9"
+    },
+    "lint-fast": {
+      "path": "/tmp/fern-13717-lint-fast.log",
+      "sha256": "2f2cbaeb3874dadc9fed06c2b42e8dac5c3d2f7a545d93b5043ddbdd107f9edf"
+    },
+    "check-sources": {
+      "path": "/tmp/fern-13717-check-sources.log",
+      "sha256": "4fe22b1ad98d00a8484099239277713b0d3fa1818c9e990f397c7a0dabe86064"
+    },
+    "ratchet-runner": {
+      "path": "/tmp/fern-13717-ratchet-runner.log",
+      "sha256": "0f70fe68ab3ac216678a29a71566fb48178d841ffc7c42cf7c18e59000e1f3df"
+    },
+    "fern-13997-89d-job-124883618452.log": {
+      "path": "/tmp/fern-13997-89d-job-124883618452.log",
+      "sha256": "9737f3de28c53a07536773ce21ecf7d7f1ee74cf2a947e432836ae37831e7c0c"
+    },
+    "fern-13997-89d-job-124883618453.log": {
+      "path": "/tmp/fern-13997-89d-job-124883618453.log",
+      "sha256": "9b21f4709e5e9de5b420ef692e258f973eaf11bae2b82348cc34a04042530d00"
+    },
+    "fern-13997-89d-job-124883618462.log": {
+      "path": "/tmp/fern-13997-89d-job-124883618462.log",
+      "sha256": "e3bcefb528f3b121c16913f30153e56037140a0653f4c6a5e6441e43911c6336"
+    },
+    "fern-13717-runner-lint-fast.log": {
+      "path": "/tmp/fern-13717-runner-lint-fast.log",
+      "sha256": "c47a2aae8cd7236d0b3b3dd1d7d6b8c0369693c8cf1b1852aef3ba5c059764bf"
+    },
+    "fern-13717-current-ratchet.log": {
+      "path": "/tmp/fern-13717-current-ratchet.log",
+      "sha256": "5687844d808616cc5e54cb0d02aa074c64810c84ec691d516d763adb2ae8964c"
+    },
+    "fern-13717-current-complexity.log": {
+      "path": "/tmp/fern-13717-current-complexity.log",
+      "sha256": "b52de7eb6782c95a535c05838ac4a8bd888cfe130175888389cdd0ec9085c250"
+    },
+    "fern-13717-current-lint.log": {
+      "path": "/tmp/fern-13717-current-lint.log",
+      "sha256": "09304785e67ef6e182fbfcaf67a1a258373f6e8792d0e36215381fba6187126f"
+    }
+  },
+  "base_commit": "2fa9f40ab202cb7fea3f071652a732e9402038e1",
+  "base_tree": "fac4feec27ec1c68bb8bbfcc7b395bf62f331325",
+  "test_runner_repair": {
+    "file": "internal/testing/e2ecompiler/self_host_lint_ratchet_test.go",
+    "sha256": "7420a042d5edb2f317b371d7085a477522649b06e901f412e9594de3dd1b7812",
+    "change": "route both drivers through existing RunX86_64Bin; remove runner-only skips"
+  },
+  "native_x86_ci_before_runner_repair": {
+    "run": 41317969464,
+    "head": "89d7670549eb7fc4a1bf140c41c3e17e42f04320",
+    "jobs": [
+      {
+        "id": 124883618452,
+        "root": "TestSelfHostRepoComplexityRatchet",
+        "result": "pass"
+      },
+      {
+        "id": 124883618453,
+        "root": "TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression",
+        "result": "pass"
+      },
+      {
+        "id": 124883618462,
+        "root": "TestSelfHostRatchetIncludesLiterateSources",
+        "result": "pass"
+      }
+    ],
+    "qualification": "original native execution path passes; new runner path qualifies separately on ARM Linux/QEMU"
+  },
+  "integration": {
+    "main_commit": "de2ec359a22078e3bfe23402b6766b51def8d665",
+    "main_tree": "54717869e9559bf6800f455d1fbb43db1a9d9d28",
+    "proof_and_driver_hashes_unchanged": 9,
+    "qualified_current_compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+    "stock_complexity": {
+      "roots": 3,
+      "skips": 0,
+      "seconds": 10.539
+    },
+    "measured_complexity": {
+      "compiler": {
+        "worst": 232,
+        "excess": 18185
+      },
+      "stdlib": {
+        "worst": 68,
+        "excess": 821
+      }
+    },
+    "limits_and_tolerances_unchanged": true,
+    "lint_fast": "pass"
+  }
+}

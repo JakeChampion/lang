@@ -84,14 +84,17 @@ env:
   # failure-annotation step names the failed tests from.
   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
   ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith|TestSelfHostWholeCompilerArm64SingleProcessEmit"
-  # OWN_JOB_TESTS: the stdlib suites, each 800 to 1,400 seconds, half or more
-  # of a shard worker's budget, so no weight could place one without crowding
-  # its worker (#6667). They RUN in CI, in a job of their own each; excluded
+  # OWN_JOB_TESTS run outside the general shards. The stdlib suites take
+  # 800 to 1,400 seconds, half or more of a worker's budget, so no weight
+  # could place one without crowding its worker (#6667). They have their own
+  # jobs and are excluded
   # from shard selection by the same regex as the two lists above. A test
-  # under about three minutes belongs in the shards with a weight row, not
-  # here: the whole-compiler proofs (fixpoints, stage 2, the semantic and wasm
+  # under about three minutes normally belongs in the shards with a weight
+  # row: the whole-compiler proofs (fixpoints, stage 2, the semantic and wasm
   # self-builds) measure 50 to 165 seconds each and ride the shards.
-  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests"
+  # Gather's server and 512-participant client need CPU time together. Its
+  # unchanged throughput assertions run in cli after the compiler workers.
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests|TestSelfHostGatherConcurrency"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -160,6 +163,15 @@ jobs:
           cd internal/testing/e2ecompiler
           "$RUNNER_TEMP/ci-test-workers" -binary "$BIN" -output "$RUNNER_TEMP/cli-results" -format standard-verbose \
             -weights "$WEIGHTS" -workers 4 -timeout 18m -run "^($ISOLATED_DRIVER_TESTS)\$"
+      - name: 512-participant concurrency gate (without compiler workers)
+        run: |
+          set -euo pipefail
+          node --version
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostGatherConcurrency$' -test.v -test.timeout 5m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$RUNNER_TEMP"/cli-results/worker-*.jsonl "$GOTESTSUM_JSONFILE"
