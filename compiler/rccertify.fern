@@ -1542,8 +1542,8 @@ function store_key(w: Walk, st: ssa.SInst): i32 {
 }
 
 function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb: i32, sp: i32): boolean {
-  let no_phis: i32[] = [];
-  let marks: boolean[] = slot_blocks(w, w.root[ld.args[0]], no_phis);
+  let base: i32 = w.root[ld.args[0]];
+  let marks: boolean[] = slot_blocks(w, base, w.carried[base]);
   if (lb == sb && sp > lp && !(marks[lb] && event_in(w, ld, lb, lp + 1, sp))) {
     return false;
   }
@@ -1602,7 +1602,12 @@ function stores_back(w: Walk, st: Stores, k: i32, ld: ssa.SInst): boolean {
 
 function same_slot_load(w: Walk, other: ssa.SInst, ld: ssa.SInst): boolean {
   return other.result != ld.result && is_load(other) && other.kind_tag == ld.kind_tag
-    && other.args.len() > 0 && w.root[other.args[0]] == w.root[ld.args[0]] && load_key(w, other) == load_key(w, ld);
+    && other.args.len() > 0 && same_load_box(w, w.root[ld.args[0]], w.root[other.args[0]]) && load_key(w, other) == load_key(w, ld);
+}
+
+function same_load_box(w: Walk, base: i32, other: i32): boolean {
+  // A token walk can prove that a joined parent still names this box.
+  return other == base || util.index_of_i32(w.carried[base], other) >= 0;
 }
 
 struct Touch { touched: boolean[] }

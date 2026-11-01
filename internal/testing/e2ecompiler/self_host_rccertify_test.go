@@ -68,6 +68,18 @@ function one_block(nparams: i32, nvals: i32, insts: ssa.SInst[], term: ssa.STerm
 }
 
 function pick(name: string): Case {
+    if (name == "reused-parent-phi-keeps-its-payload") {
+        let c = pick("shell-slot-read-through-a-reused-parent-phi");
+        let blocks: ssa.SBlock[] = [];
+        for b in c.f.blocks {
+            let insts: ssa.SInst[] = [];
+            for x in b.insts {
+                if (x.result != 14) { insts = insts.append(x); }
+            }
+            blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+        }
+        return Case { ...c, f: ssa.SFunc { ...c.f, blocks: blocks } };
+    }
     if (name == "sparse-unused-terminator-field") {
         // A branch's inactive value field must not turn the unused retain
         // result into a use when the first defined ID is compacted to zero.
@@ -147,6 +159,39 @@ function pick(name: string): Case {
     if (name == "shell-payload-kept") {
         let insts: ssa.SInst[] = [param(0), counted_load(1, 0, 8), inst(40, 2, [1], 8, ""), inst(11, 3, [0], 2, "__fern_rc_dec"), const_int(4, 0)];
         return Case { f: one_block(1, 5, insts, ret(4)), modes: [counted], returns_unit: false };
+    }
+    if (name == "shell-slot-read-through-a-reused-parent-phi") {
+        let b0 = block(0, [], [param(0), param(1), counted_load(2, 0, 8), call(3, "__fern_rc_inc", [2])], brif(1, 1, 2));
+        let b1 = block(1, [0], [call(4, "__fern_rc_is_unique", [0]), const_int(5, 0)], brif(4, 3, 4));
+        let b2 = block(2, [0], [call(6, "__fern_rc_dec", [2])], br(6));
+        let b3 = block(3, [1], [], br(5));
+        let b4 = block(4, [1], [call(7, "__sem_release_T", [0])], br(5));
+        let b5 = block(5, [3, 4], [inst(8, 8, [0, 5], 0, ""), inst(9, 16, [8, 5], 0, "eq")], brif(16, 7, 8));
+        let b7 = block(7, [5], [], br(9));
+        let b8 = block(8, [5], [], br(9));
+        let b9 = block(9, [7, 8], [const_int(9, 2), call(10, "__fern_alloc_reuse", [8, 9]), store(10, 8, 2)], br(6));
+        let b6 = block(6, [2, 9], [inst(8, 11, [0, 10], 0, ""), counted_load(12, 11, 8), inst(11, 13, [11], 2, "__fern_rc_dec"), call(14, "__fern_rc_dec", [12]), const_int(15, 0)], ret(15));
+        return Case { f: func(2, 17, [b0, b1, b2, b3, b4, b5, b7, b8, b9, b6]), modes: [counted, value], returns_unit: false };
+    }
+    if (name == "shell-slot-read-again-through-a-carrying-phi") {
+        // A loop reads a slot off its box, then reads it again on each arm: on
+        // one off the box under its token before the reuse, on the other off
+        // the phi that joins the reused box with the box itself, where a null
+        // store takes it before that box is reused in turn. The take follows
+        // the later read, whichever name the box has there; the first read
+        // only borrowed (#13989).
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(3, 1)], br(1));
+        let b1: ssa.SBlock = block(1, [0, 8], [inst(8, 20, [0, 17], 0, ""), counted_load(1, 20, 8), inst(40, 2, [1], 8, "")], brif(3, 2, 7));
+        let b2: ssa.SBlock = block(2, [1], [call(4, "__fern_rc_is_unique", [20]), const_int(5, 0)], brif(4, 3, 4));
+        let b3: ssa.SBlock = block(3, [2], [], br(5));
+        let b4: ssa.SBlock = block(4, [2], [], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [inst(8, 6, [20, 5], 0, ""), counted_load(7, 20, 8), inst(9, 8, [6, 5], 0, "eq")], brif(8, 6, 9));
+        let b6: ssa.SBlock = block(6, [5], [call(9, "__fern_rc_inc", [7]), call(10, "__fern_rc_dec", [20])], br(9));
+        let b7: ssa.SBlock = block(7, [1], [], br(8));
+        let b8: ssa.SBlock = block(8, [9, 7], [inst(8, 13, [12, 20], 0, ""), counted_load(14, 13, 8), const_int(15, 0), store(13, 8, 15), const_int(16, 2), call(17, "__fern_alloc_reuse", [13, 16]), store(17, 8, 14)], brif(3, 1, 10));
+        let b9: ssa.SBlock = block(9, [5, 6], [const_int(11, 2), call(12, "__fern_alloc_reuse", [6, 11]), store(12, 8, 7)], br(8));
+        let b10: ssa.SBlock = block(10, [8], [], ret(17));
+        return Case { f: func(1, 21, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10]), modes: [counted], returns_unit: true };
     }
     if (name == "null-guarded-release") {
         // A counted parameter that may be null is released only where it is
@@ -531,6 +576,9 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"shared-child-released", []string{"spent without a unit of v1"}, 0, ""},
 		{"shell-slot-read-twice", nil, 0, ""},
 		{"shell-payload-kept", []string{"of v1"}, 0, ""},
+		{"shell-slot-read-through-a-reused-parent-phi", nil, 0, ""},
+		{"reused-parent-phi-keeps-its-payload", []string{"of v12"}, 0, ""},
+		{"shell-slot-read-again-through-a-carrying-phi", nil, 0, ""},
 		{"null-guarded-release", nil, 0, ""},
 		{"take-from-a-dominating-load", nil, 0, ""},
 		{"take-for-the-load-read-after", nil, 0, ""},

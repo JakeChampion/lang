@@ -1,3 +1,8 @@
+# 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method joins the once set only when its body is
+# one block: ordmap_insert.emit -2.9% to -3.6%, pvec_with and utf8_ingest return to their values before
+# the splice, and pmap_insert.emit +1.5% to +2.4%.
+# 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice moves 20 rows:
+# pvec_with.emit -10.7% to -12.8%, ordmap_insert.emit +3.0% to +3.7%, and smaller moves on five programs.
 # 2026-10-31: Unreferenced typed drop helpers no longer reach emission.
 # Complete 117-row measurement: docs/benchmarks/typed-helper-reach-2026-10-31/static.json. Pins only decrease.
 # 2026-10-31: PR #13910, measured by CI job 124561576376.
@@ -219,8 +224,8 @@ selfhost/arm64-linux/sort_ints.emit	2175
 selfhost/arm64-linux/sort_strings.emit	3594
 selfhost/arm64-linux/string_build.emit	2361
 selfhost/arm64-linux/string_count_byte.emit	1445
-selfhost/arm64-linux/string_find_byte.emit	1901
-selfhost/arm64-linux/string_rfind_byte.emit	2024
+selfhost/arm64-linux/string_find_byte.emit	1865
+selfhost/arm64-linux/string_rfind_byte.emit	1989
 selfhost/arm64-linux/string_scan.emit	2565
 selfhost/arm64-linux/string_slice.emit	1132
 selfhost/arm64-linux/struct_drop.emit	2671
@@ -254,8 +259,8 @@ selfhost/wasm32-wasi/sort_ints.emit	2058
 selfhost/wasm32-wasi/sort_strings.emit	3375
 selfhost/wasm32-wasi/string_build.emit	1275
 selfhost/wasm32-wasi/string_count_byte.emit	527
-selfhost/wasm32-wasi/string_find_byte.emit	1784
-selfhost/wasm32-wasi/string_rfind_byte.emit	1799
+selfhost/wasm32-wasi/string_find_byte.emit	1736
+selfhost/wasm32-wasi/string_rfind_byte.emit	1751
 selfhost/wasm32-wasi/string_scan.emit	1413
 selfhost/wasm32-wasi/string_slice.emit	526
 selfhost/wasm32-wasi/struct_drop.emit	1637
@@ -289,8 +294,8 @@ selfhost/x86-64-linux/sort_ints.emit	1964
 selfhost/x86-64-linux/sort_strings.emit	3230
 selfhost/x86-64-linux/string_build.emit	1991
 selfhost/x86-64-linux/string_count_byte.emit	1180
-selfhost/x86-64-linux/string_find_byte.emit	1591
-selfhost/x86-64-linux/string_rfind_byte.emit	1762
+selfhost/x86-64-linux/string_find_byte.emit	1553
+selfhost/x86-64-linux/string_rfind_byte.emit	1722
 selfhost/x86-64-linux/string_scan.emit	2239
 selfhost/x86-64-linux/string_slice.emit	895
 selfhost/x86-64-linux/struct_drop.emit	2413

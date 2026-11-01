@@ -25,7 +25,7 @@ function main(): i32 {
 }`},
 		{"nested-update-from-other-instantiation", `
 struct Box[T] { item: T, count: i32 }
-function (b: Box[T]) replace(other: Box[i64]): (Box[i64], Box[T]) {
+@noinline function (b: Box[T]) replace(other: Box[i64]): (Box[i64], Box[T]) {
     return (Box { ...other, count: 9 }, Box { ...b, count: 7 });
 }
 function main(): i32 {

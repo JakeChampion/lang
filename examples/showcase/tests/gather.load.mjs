@@ -119,7 +119,7 @@ try {
   );
   assert.ok(
     latencies.length >= total * seconds * 5,
-    "input acknowledgements must continue under fanout load",
+    `input acknowledgements must continue under fanout load: ${latencies.length} received, ${total * seconds * 5} required`,
   );
   assert.ok(
     peers[0].latest.score > 0,

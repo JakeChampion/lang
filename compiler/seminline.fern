@@ -852,8 +852,8 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
 
 struct Scalars { out: Inlined, modes: i32[][] }
 
-function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled: boolean[], modes: i32[][]): Scalars {
-  let s: sempair.Scalarized = sempair.scalar_params(prev.funcs, names, rewrite, uncalled, modes);
+function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[], modes: i32[][]): Scalars {
+  let s: sempair.Scalarized = sempair.scalar_params(prev.funcs, names, rewrite, unnamed, modes);
   let funcs: ssasem.Func[] = s.funcs;
   let rewritten: boolean[] = prev.rewritten;
   for i in 0..funcs.len() {
@@ -878,8 +878,8 @@ function fields_all(prev: Inlined, names: string[], rewrite: boolean[]): Inlined
   return Inlined { ...prev, funcs: funcs, rewritten: rewritten, laid: l.records };
 }
 
-function paired_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled: boolean[]): Inlined {
-  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, uncalled);
+function paired_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[]): Inlined {
+  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, unnamed);
   let funcs: ssasem.Func[] = p.funcs;
   let rewritten: boolean[] = prev.rewritten;
   let i: i32 = 0;
