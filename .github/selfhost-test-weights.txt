@@ -1406,7 +1406,6 @@ TestSelfHostFunctionalUpdateX86_64 3
 TestSelfHostGateFieldThroughStructField 3
 TestSelfHostGateFieldThroughVariantPayload 4
 TestSelfHostGateOptionContracts 60
-TestSelfHostGatherConcurrency 305
 TestSelfHostGenEnumOfGenStructIRX86_64 3
 TestSelfHostGenEnumOfGenStructWasmIR 4
 TestSelfHostGenEnumPayloadGenEnumIRX86_64 3
