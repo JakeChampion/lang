@@ -1,0 +1,52 @@
+import "std/test";
+import "std/stream";
+
+// ByteStream.read_line gives Ok(Some(line)) for a line, Ok(None) at the end
+// of input, and Err for a line that is not UTF-8.
+
+function lines(s: ByteStream): string {
+  let cur: ByteStream = s;
+  let out: string = "";
+  for _ in 0..10 {
+    let (line, next) = cur.read_line();
+    cur = next;
+    match (line) {
+      Ok(Some(l)) => {
+        out = out + "[" + l + "]";
+      },
+      Ok(None()) => {
+        return out + " end";
+      },
+      Err(_) => {
+        out = out + "[not UTF-8]";
+      }
+    }
+  }
+  return out + " no end";
+}
+
+function test_lines_and_end(): test.TestOutcome {
+  return test.assert_eq(lines(stream.from_string("unix\nwindows\r\nlast")), "[unix][windows][last] end");
+}
+
+function test_last_line_loses_its_cr(): test.TestOutcome {
+  return test.assert_eq(lines(stream.from_string("a\r\nb\r")), "[a][b] end");
+}
+
+function test_empty_stream_is_end(): test.TestOutcome {
+  return test.assert_eq(lines(stream.from_string("")), " end");
+}
+
+function test_bad_utf8_is_an_error_and_reading_goes_on(): test.TestOutcome {
+  let bytes: u8[] = [97 as u8, 255 as u8, 10 as u8, 98 as u8];
+  return test.assert_eq(lines(stream.from_bytes(bytes)), "[not UTF-8][b] end");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("ByteStream.read_line");
+  r = r.it("lines, then the end", test_lines_and_end);
+  r = r.it("the last line loses its CR", test_last_line_loses_its_cr);
+  r = r.it("an empty stream is the end", test_empty_stream_is_end);
+  r = r.it("bad UTF-8 is an error, and reading goes on", test_bad_utf8_is_an_error_and_reading_goes_on);
+  return r.finish();
+}
