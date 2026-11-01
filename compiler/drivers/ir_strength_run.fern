@@ -537,9 +537,9 @@ function main(): i32 {
   let mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
   let mi: i32 = 0;
   while (mi < mds.len()) {
-    let ms: ir.MagicS = ir.derive_magic_s(mds[mi] as i64, 32);
-    out = out + "magic_s " + util.i32_to_string(mds[mi]) + ": m=" + util.i64_to_string(ms.m)
-      + " s=" + util.i32_to_string(ms.s) + " add=" + bool_word(ms.add) + " sub=" + bool_word(ms.sub) + "\n";
+    let ms: ir.MagicS32 = ir.derive_magic_s32(mds[mi] as i64);
+    out = out + "magic_s32 " + util.i32_to_string(mds[mi]) + ": m=" + util.i64_to_string(ms.m)
+      + " s=" + util.i32_to_string(ms.s) + "\n";
     mi = mi + 1;
   }
   let mus: u32[] = [3u32, 7u32, 97u32, 641u32, 1000000u32, 2147483649u32, 2863311531u32, 4294967291u32, 4294967295u32, 10u32, 100u32, 5u32, 4093u32];
@@ -553,7 +553,7 @@ function main(): i32 {
   let mds64: i64[] = [3i64, 7i64, -7i64, 10i64, 100i64, 641i64, -1000000007i64, 1000000000000i64, 6148914691236517205i64, -6148914691236517205i64, 9223372036854775807i64, -9223372036854775807i64];
   mi = 0;
   while (mi < mds64.len()) {
-    let ms64: ir.MagicS = ir.derive_magic_s(mds64[mi], 64);
+    let ms64: ir.MagicS = ir.derive_magic_s(mds64[mi]);
     out = out + "magic_s64 " + util.i64_to_string(mds64[mi]) + ": m=" + util.i64_to_string(ms64.m)
       + " s=" + util.i32_to_string(ms64.s) + " add=" + bool_word(ms64.add) + " sub=" + bool_word(ms64.sub) + "\n";
     mi = mi + 1;

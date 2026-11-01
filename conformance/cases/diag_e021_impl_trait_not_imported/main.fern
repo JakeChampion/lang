@@ -1,0 +1,19 @@
+// An impl names a trait through a module the program does not import.
+// core/cmp is loaded for the built-in comparisons, but a program sees only
+// what it imports, so `cmp.Eq` is unknown here.
+struct Box { v: i32 }
+
+impl cmp.Eq for Box {
+  function eq(self: Self, other: Self): boolean {
+    return self.v == other.v;
+  }
+}
+
+function main(): i32 {
+  let a: Box = Box { v: 1 };
+  let b: Box = Box { v: 1 };
+  if (a == b) {
+    return 0;
+  }
+  return 1;
+}

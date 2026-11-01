@@ -47,7 +47,7 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 
 pub struct TodoSite { line: i32, col: i32 }
 
-pub struct ModuleSight { module: string, imports: string[], direct: string[], reaches: string[] }
+pub struct ModuleSight { module: string, imports: string[], qualifiers: string[], direct: string[], reaches: string[] }
 
 // How near module decl is to module from: 0 for the same module, 1 for a
 // direct import, 2 for the rest of the import closure, 3 when not visible.
@@ -9086,13 +9086,14 @@ pub function import_qualifier(im: Import): string {
 }
 
 pub function std_qualifier(mod: Module, name: string): string {
-  let want: string = "std/" + name;
+  return module_qualifier(mod, "std/" + name);
+}
+
+// The qualifier mod uses for its import of want, or "" when it does not import it.
+pub function module_qualifier(mod: Module, want: string): string {
   for imp in mod.imports {
     if (library_path_is(imp.path, want)) {
-      if (imp.alias.len() > 0) {
-        return imp.alias;
-      }
-      return name;
+      return import_qualifier(imp);
     }
   }
   return "";

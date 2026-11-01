@@ -4317,8 +4317,10 @@ function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): 
       s = s + "    shr" + x + " $1, " + r.a + "\n    add" + x + " " + r.d + ", " + r.a + "\n";
       s = s + "    shr" + x + " $" + util.i32_to_string(mu.s - 1) + ", " + r.a + "\n";
     }
+  } else if (r.bits == 32) {
+    s = ir_div_s32_quotient(d);
   } else {
-    let ms: ir.MagicS = ir.derive_magic_s(d, r.bits);
+    let ms: ir.MagicS = ir.derive_magic_s(d);
     s = s + load + util.i64_to_string(ms.m) + ", " + r.a + "\n    imul" + x + " " + r.c + "\n";
     if (ms.add) {
       s = s + "    add" + x + " " + r.c + ", " + r.d + "\n";
@@ -4341,6 +4343,28 @@ function ir_div_const_magic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): 
     s = s + "    sub" + x + " " + r.a + ", " + r.c + "\n    mov" + x + " " + r.c + ", " + r.a + "\n";
   }
   return s;
+}
+
+// The quotient of %eax by a signed 32-bit divisor, left in %eax with the
+// dividend kept in %ecx. The rounding term (the sign bit of x * d) is made
+// beside the multiply, so it is not on the dependency chain.
+function ir_div_s32_quotient(d: i64): string {
+  let mg: ir.MagicS32 = ir.derive_magic_s32(d);
+  let s: string = "    movslq %eax, %rcx\n";
+  if (d > 0i64) {
+    s = s + "    movl %ecx, %edx\n    shrl $31, %edx\n";
+  } else {
+    s = s + "    movq %rcx, %rdx\n    negq %rdx\n    shrq $63, %rdx\n";
+  }
+  if (mg.m >= 0i64) {
+    s = s + "    movl $" + util.i64_to_string((mg.m as i32) as i64) + ", %eax\n";
+  } else if (mg.m >= -2147483648i64) {
+    s = s + "    movq $" + util.i64_to_string(mg.m) + ", %rax\n";
+  } else {
+    s = s + "    movabsq $" + util.i64_to_string(mg.m) + ", %rax\n";
+  }
+  s = s + "    imulq %rcx, %rax\n    sarq $" + util.i32_to_string(mg.s) + ", %rax\n";
+  return s + "    addl %edx, %eax\n";
 }
 
 function ir_div_const_generic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): string {

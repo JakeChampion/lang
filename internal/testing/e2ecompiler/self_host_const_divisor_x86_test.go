@@ -46,6 +46,7 @@ func TestSelfHostConstDivisorShapesX86_64(t *testing.T) {
 
 	const src = `@noinline function m4093(x: i32): i32 { return x % 4093; }
 @noinline function d7(x: i32): i32 { return x / 7; }
+@noinline function dn7(x: i32): i32 { return x / -7; }
 @noinline function d8(x: i32): i32 { return x / 8; }
 @noinline function m8(x: i32): i32 { return x % 8; }
 @noinline function d3u(x: u32): u32 { return x / 3u32; }
@@ -64,7 +65,7 @@ func TestSelfHostConstDivisorShapesX86_64(t *testing.T) {
 @noinline function dmxyuw(x: u64, y: u64): u64 { return x / y + x % y; }
 @noinline function dmxyb(x: i32, y: i32): i32 { let r: i32 = x % y; if (r > 3) { return x / y; } return r; }
 function main(): i32 {
-  return m4093(9000) + d7(50) + d8(-17) + m8(-17) + (d3u(20u32) as i32) + (m7u(20u32) as i32) + dxy(9, 2)
+  return m4093(9000) + d7(50) + dn7(50) + d8(-17) + m8(-17) + (d3u(20u32) as i32) + (m7u(20u32) as i32) + dxy(9, 2)
     + (mxyu(9u32, 2u32) as i32) + (m97w(200i64) as i32) + (d8w(-9i64) as i32) + (mbig(5i64) as i32) + dneg1(5)
     + (d10uw(70u64) as i32) + (mtw(5i64) as i32) + (d100uw(700u64) as i32) + (m14u(30u32) as i32) + (dm100uw(705u64) as i32)
     + (dmxyuw(705u64, 9u64) as i32) + dmxyb(705, 9);
@@ -73,12 +74,14 @@ function main(): i32 {
 	asm := selfHostX86Emit(t, runner, driverBin, src)
 
 	guards := []string{"testq %rcx", "testl %ecx", "cmpq $-1", "cmpl $-1", "movslq", "jz ", "je "}
+	recipGuards := []string{"testq %rcx", "testl %ecx", "cmpq $-1", "cmpl $-1", "jz ", "je "}
 	cases := []struct {
 		fn          string
 		want, avoid []string
 	}{
-		{"m4093", []string{"movl %eax, %ecx", "movl $-2145909631, %eax", "imull %ecx", "addl %ecx, %edx", "sarl $11, %edx", "imull $4093, %eax, %eax", "cltq"}, append([]string{"idiv"}, guards...)},
-		{"d7", []string{"movl $-1840700269, %eax", "imull %ecx", "shrl $31, %edx"}, append([]string{"idiv", "imull $7"}, guards...)},
+		{"m4093", []string{"movslq %eax, %rcx", "movl $-2145909631, %eax", "imulq %rcx, %rax", "sarq $43, %rax", "addl %edx, %eax", "imull $4093, %eax, %eax", "subl %eax, %ecx", "cltq"}, append([]string{"idiv", "imull %ecx", "addl %ecx, %edx"}, recipGuards...)},
+		{"d7", []string{"movslq %eax, %rcx", "movl %ecx, %edx", "shrl $31, %edx", "movl $-1840700269, %eax", "imulq %rcx, %rax", "sarq $34, %rax", "addl %edx, %eax"}, append([]string{"idiv", "imull", "addl %ecx, %edx"}, recipGuards...)},
+		{"dn7", []string{"movslq %eax, %rcx", "negq %rdx", "shrq $63, %rdx", "movabsq $-2454267027, %rax", "imulq %rcx, %rax", "sarq $34, %rax", "addl %edx, %eax"}, append([]string{"idiv", "imull", "subl %ecx, %edx"}, recipGuards...)},
 		{"d8", []string{"sarl $31, %ecx", "shrl $29, %ecx", "addl %eax, %ecx", "sarl $3, %eax"}, append([]string{"idiv", "imul"}, guards...)},
 		{"m8", []string{"andl $-8, %ecx", "subl %ecx, %eax"}, append([]string{"idiv"}, guards...)},
 		{"d3u", []string{"movl $-1431655765, %eax", "mull %ecx", "shrl $1, %edx"}, append([]string{"div ", "divl", "divq"}, guards...)},
@@ -129,6 +132,7 @@ var constDivisorOracleCases = []struct {
 	{"neg-by-pow2", `function main(): i32 { let xs: i32[] = [-17]; let x: i32 = xs[0]; return (x / 8 + 10) * 10 + (x % 8 + 5); }`},
 	{"int-min-by-pow2", `function main(): i32 { let xs: i32[] = [-2147483648]; let x: i32 = xs[0]; if (x / 1024 == -2097152 && x % 1024 == 0 && x / -1024 == 2097152) { return 5; } return 9; }`},
 	{"reciprocal", `function main(): i32 { let xs: i32[] = [9000, -9000, -2147483648, 2147483647]; let h: i32 = 0; let i: i32 = 0; while (i < 4) { let x: i32 = xs[i]; h = h * 31 + x / 4093 + x % 4093 + x / -7 + x % -7 + x / 3; i = i + 1; } if (h < 0) { h = 0 - h; } return h % 200; }`},
+	{"i32-one-multiply", `function main(): i32 { let ds: i32[] = [3, -3, 5, 7, -7, 60, 365, 641, -641, 1000, -1000, 4093, 1000000007, 1073741825, -715827883, 2147483647, -2147483647]; let xs: i32[] = [-2147483648, -2147483647, -1000000007, -4093, -4092, -7, -6, -1, 0, 1, 6, 7, 4092, 4093, 1000000007, 2147483646, 2147483647]; let bad: i32 = 0; let i: i32 = 0; while (i < 17) { let x: i32 = xs[i]; if (x / 3 != x / ds[0] || x % 3 != x % ds[0]) { bad = bad + 1; } if (x / -3 != x / ds[1] || x % -3 != x % ds[1]) { bad = bad + 1; } if (x / 5 != x / ds[2] || x % 5 != x % ds[2]) { bad = bad + 1; } if (x / 7 != x / ds[3] || x % 7 != x % ds[3]) { bad = bad + 1; } if (x / -7 != x / ds[4] || x % -7 != x % ds[4]) { bad = bad + 1; } if (x / 60 != x / ds[5] || x % 60 != x % ds[5]) { bad = bad + 1; } if (x / 365 != x / ds[6] || x % 365 != x % ds[6]) { bad = bad + 1; } if (x / 641 != x / ds[7] || x % 641 != x % ds[7]) { bad = bad + 1; } if (x / -641 != x / ds[8] || x % -641 != x % ds[8]) { bad = bad + 1; } if (x / 1000 != x / ds[9] || x % 1000 != x % ds[9]) { bad = bad + 1; } if (x / -1000 != x / ds[10] || x % -1000 != x % ds[10]) { bad = bad + 1; } if (x / 4093 != x / ds[11] || x % 4093 != x % ds[11]) { bad = bad + 1; } if (x / 1000000007 != x / ds[12] || x % 1000000007 != x % ds[12]) { bad = bad + 1; } if (x / 1073741825 != x / ds[13] || x % 1073741825 != x % ds[13]) { bad = bad + 1; } if (x / -715827883 != x / ds[14] || x % -715827883 != x % ds[14]) { bad = bad + 1; } if (x / 2147483647 != x / ds[15] || x % 2147483647 != x % ds[15]) { bad = bad + 1; } if (x / -2147483647 != x / ds[16] || x % -2147483647 != x % ds[16]) { bad = bad + 1; } i = i + 1; } return bad; }`},
 	{"u32-highbit", `function main(): i32 { let us: u32[] = [3000000000u32, 4294967295u32]; let h: u32 = 0u32; let i: i32 = 0; while (i < 2) { let u: u32 = us[i]; h = h * 31u32 + u / 7u32 + u % 7u32 + u / 3u32 + u % 3u32 + u / 1024u32 + u % 1024u32; i = i + 1; } return (h % 200u32) as i32; }`},
 	{"i64-wide", `function main(): i32 { let ws: i64[] = [-9223372036854775808i64, -7i64, 1099511627783i64]; let h: i64 = 0i64; let i: i32 = 0; while (i < 3) { let w: i64 = ws[i]; h = h * 31i64 + w / 97i64 + w % 97i64 + w / 1099511627776i64 + w % 1099511627776i64 + w / -1099511627776i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
 	{"u64-reciprocal", `function main(): i32 { let us: u64[] = [18446744073709551615u64, 9223372036854775808u64, 12345678901234567u64]; let h: u64 = 0u64; let i: i32 = 0; while (i < 3) { let u: u64 = us[i]; h = h * 31u64 + u / 7u64 + u % 7u64 + u / 10u64 + u % 10u64 + u / 100u64; i = i + 1; } return (h % 200u64) as i32; }`},
