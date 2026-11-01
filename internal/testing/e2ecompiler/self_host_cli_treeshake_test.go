@@ -223,8 +223,8 @@ func TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64(t *testing.T) {
 	const src = `import "core/ops";
 
 struct V { n: i32 }
-impl ops.Add for V { function add(self: Self, o: Self): Self { return V { n: self.n + o.n }; } }
-impl ops.Neg for V { function neg(self: Self): V { return V { n: 0 - self.n }; } }
+impl ops.Add for V { @noinline function add(self: Self, o: Self): Self { return V { n: self.n + o.n }; } }
+impl ops.Neg for V { @noinline function neg(self: Self): V { return V { n: 0 - self.n }; } }
 
 function main(): i32 {
     let a: V = V { n: 3 };
