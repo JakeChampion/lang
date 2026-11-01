@@ -60,6 +60,7 @@ value dies on that edge, and the token enters the target on every path.
 - `TestSelfHostSemanticSplitOff`: `gate_rounds` allocates 300 boxes against
   350. The `Gate` the `if` reassigns dies on the edge into the `if`, and the
   `Gate` built there takes its box.
+
 - `TestSelfHostFieldReclaimWasm`: the `Acc` that `build` replaces each round
   dies on the back edge and is dropped to its fields, and the next `Acc` is
   built in its box. The test accepts that shape beside the release call.
