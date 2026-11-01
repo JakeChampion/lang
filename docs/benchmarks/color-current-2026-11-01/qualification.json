@@ -15,8 +15,8 @@
   },
   "targets": [
     {
-      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
-      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "source_head": "0d7312c05fd304f8bee59680dcd544e0650d4f13",
+      "compiler_sha256": "84d7ad1e43e563e338d970ab4fc0fb00ef6d530a6037f477666ded9b220f0151",
       "target": "arm64-darwin",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -33,7 +33,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -44,12 +44,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "arm64-darwin",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-native/essentials",
+              "/private/tmp/fern-13212-84d-native/essentials",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -59,7 +59,7 @@
           },
           "run": {
             "command": [
-              "/private/tmp/fern-13212-current-native/essentials"
+              "/private/tmp/fern-13212-84d-native/essentials"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -75,7 +75,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -86,12 +86,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "arm64-darwin",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-native/pixels_test",
+              "/private/tmp/fern-13212-84d-native/pixels_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -101,7 +101,7 @@
           },
           "run": {
             "command": [
-              "/private/tmp/fern-13212-current-native/pixels_test"
+              "/private/tmp/fern-13212-84d-native/pixels_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -117,7 +117,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -128,12 +128,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "arm64-darwin",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-native/color_test",
+              "/private/tmp/fern-13212-84d-native/color_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -143,7 +143,7 @@
           },
           "run": {
             "command": [
-              "/private/tmp/fern-13212-current-native/color_test"
+              "/private/tmp/fern-13212-84d-native/color_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -157,8 +157,8 @@
       ]
     },
     {
-      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
-      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "source_head": "0d7312c05fd304f8bee59680dcd544e0650d4f13",
+      "compiler_sha256": "84d7ad1e43e563e338d970ab4fc0fb00ef6d530a6037f477666ded9b220f0151",
       "target": "arm64-linux",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -175,7 +175,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -186,12 +186,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "arm64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-arm64/essentials",
+              "/private/tmp/fern-13212-84d-arm64/essentials",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -206,9 +206,9 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
+              "/private/tmp/fern-13212-84d-arm64:/private/tmp/fern-13212-84d-arm64",
               "fern-devbox:latest",
-              "/private/tmp/fern-13212-current-arm64/essentials"
+              "/private/tmp/fern-13212-84d-arm64/essentials"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -224,7 +224,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -235,12 +235,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "arm64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-arm64/pixels_test",
+              "/private/tmp/fern-13212-84d-arm64/pixels_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -255,9 +255,9 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
+              "/private/tmp/fern-13212-84d-arm64:/private/tmp/fern-13212-84d-arm64",
               "fern-devbox:latest",
-              "/private/tmp/fern-13212-current-arm64/pixels_test"
+              "/private/tmp/fern-13212-84d-arm64/pixels_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -273,7 +273,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -284,12 +284,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "arm64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-arm64/color_test",
+              "/private/tmp/fern-13212-84d-arm64/color_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -304,9 +304,9 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
+              "/private/tmp/fern-13212-84d-arm64:/private/tmp/fern-13212-84d-arm64",
               "fern-devbox:latest",
-              "/private/tmp/fern-13212-current-arm64/color_test"
+              "/private/tmp/fern-13212-84d-arm64/color_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -320,8 +320,8 @@
       ]
     },
     {
-      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
-      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "source_head": "0d7312c05fd304f8bee59680dcd544e0650d4f13",
+      "compiler_sha256": "84d7ad1e43e563e338d970ab4fc0fb00ef6d530a6037f477666ded9b220f0151",
       "target": "x86-64-linux",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -338,7 +338,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -349,12 +349,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "x86-64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-x86/essentials",
+              "/private/tmp/fern-13212-84d-x86/essentials",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -369,10 +369,10 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
+              "/private/tmp/fern-13212-84d-x86:/private/tmp/fern-13212-84d-x86",
               "fern-devbox:latest",
               "qemu-x86_64",
-              "/private/tmp/fern-13212-current-x86/essentials"
+              "/private/tmp/fern-13212-84d-x86/essentials"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -388,7 +388,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -399,12 +399,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "x86-64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-x86/pixels_test",
+              "/private/tmp/fern-13212-84d-x86/pixels_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -419,10 +419,10 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
+              "/private/tmp/fern-13212-84d-x86:/private/tmp/fern-13212-84d-x86",
               "fern-devbox:latest",
               "qemu-x86_64",
-              "/private/tmp/fern-13212-current-x86/pixels_test"
+              "/private/tmp/fern-13212-84d-x86/pixels_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -438,7 +438,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -449,12 +449,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "x86-64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-x86/color_test",
+              "/private/tmp/fern-13212-84d-x86/color_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -469,10 +469,10 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
+              "/private/tmp/fern-13212-84d-x86:/private/tmp/fern-13212-84d-x86",
               "fern-devbox:latest",
               "qemu-x86_64",
-              "/private/tmp/fern-13212-current-x86/color_test"
+              "/private/tmp/fern-13212-84d-x86/color_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -486,8 +486,8 @@
       ]
     },
     {
-      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
-      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
+      "source_head": "0d7312c05fd304f8bee59680dcd544e0650d4f13",
+      "compiler_sha256": "84d7ad1e43e563e338d970ab4fc0fb00ef6d530a6037f477666ded9b220f0151",
       "target": "wasm32-wasi",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -504,7 +504,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -515,12 +515,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "wasm32-wasi",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-wasm/essentials.wasm",
+              "/private/tmp/fern-13212-84d-wasm/essentials.wasm",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -532,7 +532,7 @@
             "command": [
               "/Users/jakechampion/.wasmtime/bin/wasmtime",
               "run",
-              "/private/tmp/fern-13212-current-wasm/essentials.wasm"
+              "/private/tmp/fern-13212-84d-wasm/essentials.wasm"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -548,7 +548,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -559,12 +559,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "wasm32-wasi",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-wasm/pixels_test.wasm",
+              "/private/tmp/fern-13212-84d-wasm/pixels_test.wasm",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -576,7 +576,7 @@
             "command": [
               "/Users/jakechampion/.wasmtime/bin/wasmtime",
               "run",
-              "/private/tmp/fern-13212-current-wasm/pixels_test.wasm"
+              "/private/tmp/fern-13212-84d-wasm/pixels_test.wasm"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -592,7 +592,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -603,12 +603,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13999-271-fixed-point",
+              "/private/tmp/fern-14006-stage3",
               "-target",
               "wasm32-wasi",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-current-wasm/color_test.wasm",
+              "/private/tmp/fern-13212-84d-wasm/color_test.wasm",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -620,7 +620,7 @@
             "command": [
               "/Users/jakechampion/.wasmtime/bin/wasmtime",
               "run",
-              "/private/tmp/fern-13212-current-wasm/color_test.wasm"
+              "/private/tmp/fern-13212-84d-wasm/color_test.wasm"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -636,8 +636,224 @@
   ],
   "lint_fast": {
     "result": "pass",
-    "log_sha256": "79d6b00e36510ac9d45ff4afa6af0d7fce1b31b51936e1fbde0b050852f27e46"
+    "log_sha256": "5f4752b306cf23438c02e966287aee1849bb7e10ae4a61b7dbf839d5fff1e885"
   },
   "previous_qualification_commit": "df468ea1c93895ce2085e1695ff76fcd3bd442c6",
-  "compiler_source_matches_merged_main": true
+  "compiler_source_matches_merged_main": false,
+  "previous_qualification_record": {
+    "path": "docs/benchmarks/color-current-2026-11-01/qualification-16e.json",
+    "sha256": "c497c1b908d1d14bdb57d307eac739c15ebe15569d92f69702c80995198514b6",
+    "commit": "60453c40ab737570b503a8daa7c9b090858c341e"
+  },
+  "compiler_source": {
+    "pull_request": 14006,
+    "head": "ea5d1abe85e461c57c66843acad0291fe24ea21c",
+    "merge_pending": true,
+    "fixed_point_bytes": 17315969,
+    "source_sha256": {
+      "compiler/aborts.fern": "ff5c9c5c44a885406505d01646b63833b569a192bfbdfb1260b2b0fe9d85675b",
+      "compiler/aesref.fern": "456b29a0f4c580c5ff426cb4792606de0c7397dbbae2a675d02dd250f4eeb8db",
+      "compiler/ambient.fern": "89426e1ff638cd86d20c7d86645ce1dfce96bdaeb728d839de8ddcf23154cd16",
+      "compiler/arm64_native.fern": "6ddd4ae128dae916104f3542ab6c5d1daccf0120854009b4702a29cc2fe6ddf4",
+      "compiler/asm_arm64_ir.fern": "f4cdcc6955d00bbcb52ddc0dd5fc0a3c738866043a1d1cf62606ebaa106f35b0",
+      "compiler/asm_ir.fern": "09766170a7167527f621f8766265986e3db11b8f70ab26ff24332b77c793e4f7",
+      "compiler/asmcore.fern": "f0dfbeb15b069db95c3c72c3a87a515f2d392e2a42c851a3dec8fb2998abedcf",
+      "compiler/ast.fern": "0f630355389d86581f2409d51a579f6cac919768a47af7d66b37b9e1199d4dc5",
+      "compiler/astwalk.fern": "5c8a6d1e48db8d42963792e722c2d19fae85af690b56735251377ac5d946827b",
+      "compiler/builtins.fern": "cef920100fa0d538471b6f47277667f86490d690e868807884bf681a1e92b13a",
+      "compiler/byteconst.fern": "a395976f92f1b0da9131f20f8f8e51c4e9ba6dc95de083f00e59ed75bc55343b",
+      "compiler/callsubst.fern": "ef55a649e02a50d99919d23a6a031296919380242d9f95c13bacd2a1f3599be0",
+      "compiler/caps.fern": "df3c72ad388557fa514e868b12ac3d6669fff0d4f0d8e9c5227d097a793451bf",
+      "compiler/capturebox.fern": "b9fa7ee4fae149d226af4dac9adb55e3c11d0aef61b826f4081361806ee70de0",
+      "compiler/captureflow.fern": "f7d47dda5ee5ad724d2e6dde8055007b71fcf8092a0924b54bb0ecff378fb789",
+      "compiler/capvocab.fern": "5eb8573abc32a1ba36b1828ece2c1a22f230172d1231163d8f7b4caa74a1357e",
+      "compiler/checker.fern": "4442fc0c5f37d6575a993ace990fafc2c1b414bcc787352d02eee8cbe3ad7392",
+      "compiler/consteval.fern": "b9ddd5cc00dcab4b3ba42a4778421ab9c810db6577576e1151522ff985da6e67",
+      "compiler/constfold.fern": "abfe78636618d7d7df7a312b258aaec96cb1a20b35644acc15e778a6dea2c33b",
+      "compiler/cover.fern": "67fb79865d445d2f63ad613ac4ac91364e9873cfe7d4f2b8649e665e86da2dbc",
+      "compiler/coverreport.fern": "572008777d674cbf9fc9d657355af7abf7d4c24a4d2542194ba28f0246210c04",
+      "compiler/decltypes.fern": "cbc1aa357a50f657d6a96c7735ad3f64e96057688e5bf44b3478901e12d3d286",
+      "compiler/docprintable.fern": "25e8a17f09176506d60a12ba4bd83f6d9ec85be9167f3b4111b1ddfb513e5592",
+      "compiler/docsummary.fern": "c601c8b5747f3c0ce295afd1f54022abdedf541c4bfe4a9b82e0798439b77156",
+      "compiler/effects.fern": "dcc645fbcf2b689ac53b2ff3a51ab2d913948fd8573a22d2a6cc8ac30fd40632",
+      "compiler/elf.fern": "8274e45d1c4bbcd746cd6a4ec701f12448e4359bdca00af2b889296b7f1111df",
+      "compiler/embed.fern": "454acad2d5d2e46fab384bbd198ffef87eecb9d5f27564213f22c50852b6f424",
+      "compiler/emitforms.fern": "c9e6b5f91a23792cdac506bd18dd8db401691ff79bd910a083bdad0786b661ca",
+      "compiler/fern.fern": "e3acdeed92aec0c8252255db48c5de6fb50e1afdef3600a0a03fa6cebd132e66",
+      "compiler/fern_main.fern": "d585b20d28de6895a3af7d00ab5f0559f2ce619a5f4eef177ac46a4f1bd4358b",
+      "compiler/fern_toml.fern": "c1c6b1806cbc621869df65986a18fb6a2477a55a14c66d1535f982470ad9bdb1",
+      "compiler/ferndoc.fern": "52b6683f441507d7ea658e13d1e0df921e79da47f8aa33d13f7669f3be633111",
+      "compiler/flatten.fern": "1deb3c3fb74394d3a174a62935632817e020e1ece5e4b64ad81c415bc2159b96",
+      "compiler/interp.fern": "8a4120c2bc0070e86c1535591e183b9b0cdef4901662344936dc47f9ecac7cf9",
+      "compiler/interpheap.fern": "29078eb858500d70918dc2bcac59f7a0cad9b35224c113ea62d7858d010280ba",
+      "compiler/ir.fern": "a02270187859dcd4335324d916d79a51e25c7be99f9dd833ebff1acc24795830",
+      "compiler/ircore.fern": "7e0c72ee68ef79792c3d9415746240ecddb58dfc2b655a5dea4f160a003ce0f0",
+      "compiler/irfipverify.fern": "7ae8da54ccbbcd707b331322beb43dd60871b1722c9892b1ebc8213ac2bb121a",
+      "compiler/irtables.fern": "d225444d1bb4b6ffe580cbd739599c7b40738fde2b6d577c7e238ebe1576481b",
+      "compiler/irverify.fern": "b03ef28f167f5a6c0df081fc13273cf4bbbf144e44f553f9fe0d1814ecef8755",
+      "compiler/irverifygate.fern": "cece4772ea9b6c63a071d2ab7612dc99d8c99f67fc5b7d4cd628917240e2f1cb",
+      "compiler/irverifyrc.fern": "865f4ad95aa5af97adfeabb3093c5db86b0e85817bda13e529dc2c95624e8739",
+      "compiler/irverifystack.fern": "e64f6d7c687f40e2dc80fe17915a882772870c5a0a99c7c7395d21428b36ab10",
+      "compiler/keyhelpers.fern": "65a38b74eeedda9da3001121a6eefc14378d0a52e9e02b6d5773211dd206176b",
+      "compiler/lexer.fern": "a79cede43eff40cb2ef0812e1da70d02fa1533f27a6984cc9c6ce27cef9ce6c2",
+      "compiler/lexical.fern": "592a81394a152e2d2c16cd9fa5d5ff60f72a37439fe2cee108abeb8b3f8f5680",
+      "compiler/lift.fern": "3329a06814dab9d0e8c8c74fd9d08221b9aee529dd1f65c6c127382ba4dbd21a",
+      "compiler/lint.fern": "0bb4563552c33cba8305e2b4446ebf446e6fa26bf936a243095a044c58382672",
+      "compiler/literate.fern": "6d23f78ff08819d0582b4bbba839c51157b2bc65cc40dfe7c65af5d732783f10",
+      "compiler/lsp.fern": "02a672b00e7d717ae7eab1e396bcc3d470564aa0d2cf317cab8c6daf9395bdd6",
+      "compiler/lspassist.fern": "ecafaf2a11bdf438973f57be4f52200051503a44b3b06a02f0091ea7b9de4300",
+      "compiler/lspquery.fern": "2e8094f1184ff75c168125241af03c4d394c95d359570434e026d808c8add969",
+      "compiler/lsprefs.fern": "6fe2181f52b8c5144ed17262d3dc8321d2f4ec783d28f0b33d05266c75e8e3f3",
+      "compiler/lsptokens.fern": "461f30f144f7352097d38c83031132d640328b85d802fb738fed63a10b85893f",
+      "compiler/modloader.fern": "9cfee47cb48573be2ab6c74df9b8a1f4020a19854eda4c139ccedbb54f9e351d",
+      "compiler/mvs.fern": "d45684ae23618693ce8b516738843d44b82d7076dfe4271ba555e5389df9226d",
+      "compiler/optbisect.fern": "32fac81cc3d35f9e600ae039c2f312bb16258e6976407cf218e1b9d6696cb1b1",
+      "compiler/ownership.fern": "c09cb9749dad09bef5445729bedf6e0e8a29ed2d82de95be71200bdccd804cdd",
+      "compiler/parser.fern": "96005848b998f96064012180a684c432fcc7a85e8f7dcb5e12623e18dc2e4d6f",
+      "compiler/physicalbody.fern": "b597fb46845851132f43f0c383a73a96f46d852009c97fe330d0b4200c80abd6",
+      "compiler/pkgfetch.fern": "e8692f9a31cef91628fa55ae25e342389feab929e9cc8fc35e0aa4328f921e2c",
+      "compiler/pkggrants.fern": "04ee7c7bcf5144505b4d6e7af39ac0a33bccd24d7ec89ae54396eac0531191fd",
+      "compiler/pkgversion.fern": "6e3e6d6d8bcf5e2c8716a0133026390010275392b74854ec5b2075adfe818e79",
+      "compiler/platforms.fern": "fcfde87b62d2dbea433f7737af0e8b955120b2c9228b4fef5d0f0f01299b7bf2",
+      "compiler/playground_run.fern": "9b1bede68df4616596b765b16b8e898ccc6bd9fffddb54931245ebe32a1fb185",
+      "compiler/printer.fern": "f5307bdcafbb96cadb874197b1d1432ced07c8c898b75f634e51a8f5232a6d80",
+      "compiler/rcccompact.fern": "fc7fabb021459b0585f7275e743b46c5338740470bb19b50160b93a100576653",
+      "compiler/rccertify.fern": "1c4de59313471ae3bd986e5e12ded57a1cf5af6bad80b2ce954dc3c8eb0762ab",
+      "compiler/rcmemo.fern": "e216fdf8a5b837470ccf284bac55ef2929ab022ba6990fa58e319f4a48b8ddb6",
+      "compiler/rcsigs.fern": "34513bc0357f9ee4e7f15c3ef79ccb1f581e9df4136b17527a46635fcb27b15b",
+      "compiler/rtbundle.fern": "308f9971423c9380b6eea2481e2dff7ba85a18af1b3f69acce21b70fceda5cce",
+      "compiler/rtbytecopy.fern": "459f3cb2cbdf3ec1dc1032a6a47f0adb264744542009f3313fb638bccdbafc45",
+      "compiler/rtmodule.fern": "c987308f6e4aa84e145ee958f38070828339dfb305573fc84345cb195a4e9aec",
+      "compiler/rtprofile.fern": "41516322288232ccea6ed8d7c3954a10b2606d6fd92134b031583d38bd6603b5",
+      "compiler/rttemplates.fern": "5374bf51f5cea4ff88ca9a57396496fbdf29c233b63aa8bab4912feda7b94957",
+      "compiler/rtwasm.fern": "c3493b1a1e2c309b6e5f7bc1e1c257d485ade8762b7335647760c6246fd90edf",
+      "compiler/semarrayreport.fern": "86b3644f85558d94e55721a01a98a8075c88d7e699fe452027154f869b89e119",
+      "compiler/sembytecopy.fern": "7154ca1886071a55adddbbb7a2d98a89374076890f45664f3e83252a72433f07",
+      "compiler/semcse.fern": "e8836db88c586708684204875cafbf9556334629b90dcce5a9b927c9c5ad22a1",
+      "compiler/semdead.fern": "30f4c73902ecc662bc6d5feee2f0027554b90b532cafbf33fb62891d0f737404",
+      "compiler/semfuse.fern": "52456c6d608da361a0db7bb0da045689eb6c08676d3e72d13129268801211b33",
+      "compiler/semhelperreach.fern": "e71ed9a9dc540ab673087940c5e7d0faadd68860a42c1437cc27a4ff2e8e374b",
+      "compiler/semhoist.fern": "93d6c8d383c9dcc6bd8c49993059a46ecadd4e798c46af4c4e55a2f8676d96bc",
+      "compiler/seminline.fern": "fd2df339b024eeeee19fc134fe1d5c47b0e6d376cc81f9aca0ce27dd7744061f",
+      "compiler/semlatehold.fern": "dbdf4fd72624f7e2bbf6f60ab5c36beb72180f1000dc557949474baa9ef2e2fd",
+      "compiler/semlower.fern": "56ca6533e35e9f956b51c7148c36d878e02ef5fb261f4442c6d27a93a866dc11",
+      "compiler/semndarray.fern": "c536bdb17c81ec1ec7e8ae617c98e1686d392f219dc419a310bbcf4960c47ed8",
+      "compiler/semndlayout.fern": "58ceb635b91dbbd89c42d9c51672a739541d6051eda0851b66ee5882b48b6234",
+      "compiler/semndprune.fern": "c09285ebad8fd65f810ae6fe13914bd6baee867d2fc8f3ced2d57588e2cc8b3e",
+      "compiler/semoption.fern": "290cf5dc2f9ad443ed8173be598fb3a9128d7015ef011e6cddc42de49ec860cd",
+      "compiler/sempair.fern": "319fa6ce83beca1f90d77996d12784ed3715e12c9b3871f218b54b6ca57178a9",
+      "compiler/semreach.fern": "915b0fa407991bf78ebcb3b1935897160a69631a0063deb5eb3c3ddf8fcbe36e",
+      "compiler/semrecords.fern": "0cf544e37a75a0d3c711f55a1f823883044a8a974facbbf1ef58ab0b164b1a03",
+      "compiler/semscalarreturn.fern": "7a9ed2c08120d95e4c643def722cbf6b04393f1fd35ce4dce6c993f34d55f6ee",
+      "compiler/semsink.fern": "5aad4057a820fca90d1552ef96ae7ae57ae3abd5d00675ad3a8914232d523cb3",
+      "compiler/semsource.fern": "7d6e3092c0f053ab3f7f89efd9308412293c1829219789bdb1590c0a2a780ac1",
+      "compiler/semspecial.fern": "63daa938e7458e21ef4ebbfabf4f76ba8754f3d288ae92d2ba0c3263feed3a6d",
+      "compiler/semthread.fern": "75776daba95969f9d9090a6eb117e0f59b2e9ccdd49f1a21346058df5c102506",
+      "compiler/semtypes.fern": "0db2177eacecaf39ba55b05e6fbc1ba318a0a60c73dd607a75dbf3e4dcac9a10",
+      "compiler/semunique.fern": "598be37d50d0d3c295faddbb1252cf6b6dd9ce14cd477b86c42953c9e0509d1c",
+      "compiler/semunroll.fern": "1551ed1e49f3c2c4eff351346f8a28ba01d8b29b9056857a65f6db59d9e3ac53",
+      "compiler/sourcepos.fern": "abe62f55d517dff0d0826ae1feaca2b296fac5c42c4948668ee4acf471b32020",
+      "compiler/ssa.fern": "c4456d4c0ff0aadee586c5e63fbac650ba930760a9bd786e8346290ebd9690cb",
+      "compiler/ssa_lift.fern": "843d2145fc594a00331b1611ca4249f181fabf1fe297f8d14f7a68b4e3647db8",
+      "compiler/ssaallocationchain.fern": "f323abd804ab48497b03d751c8c43730ad546efbbe58b8adfe4646a95815957e",
+      "compiler/ssaallocatorfirstmachine.fern": "613e6f13b7c9d96dca23fe93bfcdb181d75ce919b357d0bbe657e4d150d47f1b",
+      "compiler/ssaallocatorinitisa.fern": "bc173fb24f08c5362697dff0167664fb1c324bdc537475acdf141f805e4814ac",
+      "compiler/ssaallocatormachine.fern": "f6f4198dec7d9e3f8066b55705cbe60b5435d3d22a704797e43a9ee22e09b8be",
+      "compiler/ssaarrayboxmachine.fern": "f2781319f216a900420445a2747fd068ae6486c3ab0d27e54431daebdd69ec19",
+      "compiler/ssaarrayrelease.fern": "7ce3a8f45c04d39a048a8713cf3c385e01e2f9f0d4c61d9e973ea537c3726924",
+      "compiler/ssabounds.fern": "68eb5bf270da5fbac8f25a4a914c5a0d82a297825a3b3d0d7aaaed4379b7f941",
+      "compiler/ssaboxstringmachine.fern": "b493cbd3a4ca0651dff6943a2c2a0eecd063f1cf81825e6c99b4f0ee3913feee",
+      "compiler/ssabytes.fern": "a064ef2918748518a496b53c6729ff977517ef88dbbab44af69afbbac7568ec8",
+      "compiler/ssacapacityisa.fern": "f1171d3e597a6456c11ca16e212592c52e0c515c9933857ff2fcc9ffc2468a9e",
+      "compiler/ssacapacitymachine.fern": "15b2c822ea1ebc263577ca5c83093908e59fd2be59ae68646e1b3cc34d56b525",
+      "compiler/ssacapacityvalue.fern": "28e16aefde526b130020f02b3a9d9811a655f0bc7363426de6042846c1670800",
+      "compiler/ssaconstructorbound.fern": "4f8aab74d7647869a0132517c120e57edada3e3286eb6c3d2480d007702a9c6c",
+      "compiler/ssaconstructormachine.fern": "72569145ee172dead61bbe39cc3ee5d52a5edeeb2bce46f348d8493b5fea7a15",
+      "compiler/ssacredit.fern": "1d53611cce83333a40fa34816dd5481e92f0751c067ac07a4d7ae27a1c381e64",
+      "compiler/ssacreditabi.fern": "4f812a0ee7f64f0fdd93eb90660346fb7f1acff2275f1ef89b5c189838b0b335",
+      "compiler/ssacreditbound.fern": "cc7e08f5a1101504524359f9306519bfa258c54d6a634eb30d8fe797e3e81c40",
+      "compiler/ssacreditcontinuation.fern": "44877140175e49356abd508644a8a76c7a253d89dd8825c8e0ecfc73f4ab7026",
+      "compiler/ssacreditemitted.fern": "cefd411148d3b30b010f3c303949f11cd4564fa4019842d5208a1100a6d14085",
+      "compiler/ssacreditextract.fern": "bd6a08954d5335765ff342dd5427d19c9bffba36e14298f1e2460d94cfcbf79f",
+      "compiler/ssacreditflowgraph.fern": "b091759a50eea3a05e0ea972524dfa4d9bc5fffa6d92b5da2a47982e03da7df1",
+      "compiler/ssacreditguard.fern": "9361acaad75ef47902e5a7b5c898454ac92e6c703791b1ea6da4247bab4c0840",
+      "compiler/ssacredithelper.fern": "4225cf33b513409e943cc121fbff645352a97acca4ee6dae645b5edac444cad0",
+      "compiler/ssacreditincoming.fern": "a08f9e71e421b7f1add35feac029c9c7d0a6a22bcd7aae6523c380e5da2eaaf4",
+      "compiler/ssacreditorigin.fern": "19e7eead4bc686fcdf58c2ca040978c761990e2cace079b5a668c3aeaffd6a6b",
+      "compiler/ssacreditoriginflow.fern": "6825c6c7ffa62254d3796f44c813e5197c80c68c9c311a4644ae9672a32bac98",
+      "compiler/ssacreditphi.fern": "801d8292a1be97a0381f56f0c5322bc2a344e89b61bc26ef527d64e4525b14d3",
+      "compiler/ssacreditreplace.fern": "13294f22c505033a7cd918a82675774bb4c2f4d44a28e1ce6d95d27dcd6fd48e",
+      "compiler/ssacreditreuse.fern": "5a47b80fd0afcac100e2f18c48447e59f9a807cc7de5b256c695535085eb3139",
+      "compiler/ssacreditscalar.fern": "09dad961600832226e037879dd29bcdb5ebe08df8afdcb06b6b8b02fbed549e1",
+      "compiler/ssacreditselected.fern": "a24ca9ba4839ec68e1829e2de7f1d08736d3c2106ac381b3fb95247305ec0def",
+      "compiler/ssacredittext.fern": "6e5c48b14db9b4dccad6f6e2ad72e3f3de31f76c3dd238df4be93e35b6e16aff",
+      "compiler/ssadecrementcount.fern": "765c64f591db71d5c9a7129c065b7b0a606be1c97b0519520bb6c9f2e401721c",
+      "compiler/ssadecrementguards.fern": "28fa3af594225a01ed435d5c88b517990f0c202fb9b5814a44c589874e9a581a",
+      "compiler/ssadecrementisa.fern": "d75a8a098aac797dc57d39ea7bf3f743096b8f1f517e91b5d243f24198990382",
+      "compiler/ssadecrementmachine.fern": "a7ba96285710b480a8ceb3b2881e8b7d3a3daa9c8e7de3f7b11516c14948b0f5",
+      "compiler/ssadecrementmemory.fern": "f46f64e4c227fdda3ac7b6fee1961ba4c8ae0a1579c8327f588e727cbe8f96db",
+      "compiler/ssadecrementtext.fern": "0010ebb17a0bd9cc8987e4c876b2a978af3edda5ea05809725f2206b71345d6e",
+      "compiler/ssadeps.fern": "55fb83352919379e77213221edcdfb0dae44a349d6f2c57052eed2445d8c0485",
+      "compiler/ssafixed.fern": "a84ccb4ce1b150b04782aa7f4a57ed4d930908b3703fa00fef15b1cbe87e0d5c",
+      "compiler/ssafusedstringmachine.fern": "9e801e1e8e53457402905a60e98da25e99f121cac887648e5b9a4dd0f069bf49",
+      "compiler/ssainlineunique.fern": "523b6f04bb3937ee47933d9db72dd1f156f24086fd539edd70322d17ce160f9c",
+      "compiler/ssainlineuniqueflow.fern": "a8871117cea44d783fbe5bfee5cc9a5a2331d286ab082e27aeb66aa7932d2e00",
+      "compiler/ssainlineuniqueisa.fern": "0f6c8603b7b91a4193ced5c6a909f8501a7c5590113cc1883cca5ef86948c6ef",
+      "compiler/ssalargearraymachine.fern": "208fc8e2c3451a2415f66af344e3633f3d14e0bbb274877d887b478b29be7d54",
+      "compiler/ssalargearrayvalue.fern": "a8fda4ca9ae517cd62c703bdb4bbead61d3c76f90e58a92864d8db1c636d151f",
+      "compiler/ssalargefreewideclasses.fern": "8ed28288132fec51f5c4699f2a0240a1385713d198b7a00ba469c22cb5739511",
+      "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+      "compiler/ssalargepushwideisa.fern": "94ff49024e6f5d7aeb749886508a5b7b4facdd15d88dacc03ea3e6ad83048a60",
+      "compiler/ssalargepushwidemachine.fern": "9ac1f9c78d743da71729d57c0f3bddb0da23c0df6cdec357310becf908988ed5",
+      "compiler/ssalargepushwideranges.fern": "9b801e75db64667996c32689159d7d20de036bb8225eba22a15aa038cd0e35ea",
+      "compiler/ssalargepushwidevalue.fern": "ca68452e4f548f11e402a67233a526d766c4f851e7281c6b5fc12c02e75ecf46",
+      "compiler/ssalayout.fern": "e547c8656b0899deca8959c3c152184d3aac99f9c4abcf883a4037bfd8afa64c",
+      "compiler/ssalive.fern": "02aad0d8c66acf2129f89e68ba70137a816e200467827c3ff23f19b1f2ec6f12",
+      "compiler/ssaprepare.fern": "7459b269ac842a243f7a8efff149fb051e0d960d25dce934e28a6232cbe905f7",
+      "compiler/ssaproofnames.fern": "4758875d8a629d33351c71c0abe22073e0798fe9eab1498f1fb895386d4f7d7a",
+      "compiler/ssaquotient.fern": "50ac0e4ecdbeafdf370747bde08a0220ef002d11312003fe94429d49aa070c5a",
+      "compiler/ssarc.fern": "1550acf9bcfa1057d5853228556936fbf29e0408e083a7dad5e5d7ba250265ba",
+      "compiler/ssaruntimeunique.fern": "692d05ac1de727cbe9c4ecf93255afbc3b8ceed1ae5d81acdbff037d211eb0e1",
+      "compiler/ssaruntimeuniqueflow.fern": "246e4de1484cd4d2c9fcb2110efbf4248c80a7f8f79946707da7841d08e48e0d",
+      "compiler/ssasem.fern": "e588a64374606d8138090d2b69f6c22a9d1597939fc5486f3540d13bf8e3df70",
+      "compiler/ssaseparatestringmachine.fern": "ade46aef94796c75c770f4b7948f8f0ef75a87c86a0bd4b5f42cd2b8f908dd61",
+      "compiler/ssasmallarraymachine.fern": "e05a894344c26198d492f6992790d504ba0da0d94190d72248b1d7ec4b7ee080",
+      "compiler/ssasmallcallerflow.fern": "fcb92b31e4dd51a3b51168421ff469176c35aa7b1955f8ab64c71c49b80cd368",
+      "compiler/ssasmallcallermachine.fern": "080fb1ce790c7bb1698bd3ee8c722ea64e119a56356960294740c78cbcb07684",
+      "compiler/ssasmallheap.fern": "165ca9e87d48380371e99cb3858e89736e2716677512b418b88168ec5362b08e",
+      "compiler/ssastringrelease.fern": "4be32c329598f6228ede710823a2cbafd0c08e02c71869e45fc5ec4ab5458a3a",
+      "compiler/ssastringvalue.fern": "bb74e0f95963c68a5a9a71fa8e16af1477196b55a5ebb2f06e6914f66be83cc2",
+      "compiler/ssauniquecaller.fern": "0d5f62d4031cbf0114bf8dbf071107da4500ea3c60e5456b23ed1c9c32d1c7c6",
+      "compiler/ssauniquemeaning.fern": "dc4600d45b1c0aa7826b2f6214df28612f62882b7d4eeba7ba2bde6fe6007ad5",
+      "compiler/ssauniqueunit.fern": "f4e2779f3a04e7b180822043ab71c657c9b461f1c1e63332a57e417194e71b1e",
+      "compiler/ssaunits.fern": "d3d8ebfc0a131749eaf9a2159b38a446c750b4d4b94a0f5afad833e7f2fc9f89",
+      "compiler/stdlib_methods.fern": "929c64cc47fec983b819342536114d05b7428ddd622a94706745287e4d88cfba",
+      "compiler/suspend.fern": "7b7f5bb5287ffff1516a9dfcb83fe7d7cd0580e59d48028375e6962ea12a0a00",
+      "compiler/treeshake.fern": "bb9196c005cfc5deae5afe08ee9c6ca84e75d9a9f593399ba9659ad9fb257bb4",
+      "compiler/typeinfo.fern": "c94f5ffc21d4f506b5e89d4f1856e245dde96fb90b7ab41e61bdab8e5954d1ce",
+      "compiler/util.fern": "a36e5e62205050c16101006b0bcd1fd80c35c45a26fffc79bb7b5895289771a9",
+      "compiler/visibility.fern": "a5fb43a2f5d53e663145ec746f3e0fa5790731cdffe1f7664e3931872808caa9",
+      "compiler/wasm_abort.fern": "61f20c632e4067424d813b5083dc135402aa8e39049a96d4c613f396c069307e",
+      "compiler/wasm_aes.fern": "0dc2818fe0d53bc11c2dbbd7015421a87c5aa80787c52b4c1cd1d3069754c620",
+      "compiler/wasm_ir.fern": "0c820e58ce04e490515540a981dde773ab9bf70a0eccb63c132eed9bbe2ca166",
+      "compiler/wasmlocals.fern": "e73fedeffcf55f9e8dc427df93a0cb4fb0cf25eb8f0049bb0ee321a361e1b319",
+      "compiler/watbin.fern": "3440fb10d030ddd573bb6b763c484f1b33b702487f8f26c2f05bb06775e8c2eb",
+      "compiler/weave.fern": "89ebe338d9dfa75ddfdce623cc0ea413ce8fd6762151b5ff33f1fd76fbbbbd28",
+      "compiler/wit_compose.fern": "e5221d9fd851bdddf103a16b67270506bc3b270054eee8f4017c53925e913ddb",
+      "compiler/wit_decode.fern": "7410612b272323503790f15e368398d981ebeb54c5683e9b866a249544f8dc66",
+      "compiler/wit_fern_world.fern": "0f79fd468a19c32348944da21cfe348e98914ce7ab510069c36ec4337bcb599b",
+      "compiler/wit_proxy_world.fern": "9670fb1c3674de32c501305a94ea959089ca3d13ed7a5c7de750d26b60ffea4d",
+      "compiler/x86_native.fern": "4e227c19192408489707cf91e0ea3684db5366ad7a95a9959f83f0148f88c0ba",
+      "internal/stdlib/core/_test_empty.fern": "516cc80cf6a235647bf2da7ab78d8cbce5396b036d960fb627229e83d057be9e",
+      "internal/stdlib/std/_test_empty.fern": "ed96a4ccd0a30a9cebe9c1a384074817a4273901524e818e443f6e54d12a3cc3",
+      "internal/stdlib/std/brotli/dictionary.fern": "22f9c518c13fdc330dd8fc1d0317ec20d257797b68a8ce1d017f727168050f65",
+      "internal/stdlib/std/publicsuffix.fern": "fad3a36da5f060a4e945ffeaa1a3845a4fc6bbdfcb098388371232c0f5cf1e44",
+      "internal/stdlib/std/tls/mozilla.fern": "e2600dc5588379819f61cf16e70ead1f7aba47154a1d227f8b10b9230f1bc059",
+      "internal/stdlib/std/unicode.fern": "ced4ace829eaed7a0236d1451a4ef6687e56bc020fb643e854783ef645bc3711"
+    }
+  },
+  "format": {
+    "result": "pass",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
 }

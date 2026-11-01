@@ -4,10 +4,14 @@ The original implementation head CI `40189125104` ended as cancelled.
 The later image-lane pass recorded in the issue did not establish full-main success.
 This follow-up retains those limits and requires fresh full CI before merge.
 
-The runtime source is integrated main `7ea3a2ad73378c33631492f61c1f66d81ee620d8`.
+The runtime source is integrated main `7f483e0509b17d1d35162be6f4bdb68c1baaad97`.
 The frozen Fern compiler has SHA256
-`16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa`.
+`84d7ad1e43e563e338d970ab4fc0fb00ef6d530a6037f477666ded9b220f0151`.
 Its own stages two and three are byte-identical.
+Its compiler and standard-library sources match PR #14006 at
+`ea5d1abe85e461c57c66843acad0291fe24ea21c`.
+The PR requires full CI and merge before this qualification can proceed.
+
 No production code, fixture, numerical tolerance, image limit, or performance
 baseline changes in this qualification. Dependency #13211 is complete.
 
@@ -36,7 +40,7 @@ The tests retain explicit linear-light compositing, transparent-color rules,
 channel order, grayscale, padding, source isolation, and alpha preservation.
 They reject malformed public storage, invalid budgets, and nonopaque
 backgrounds. Integer byte premultiplication loses information at low alpha.
-the API does not promise a one-byte round-trip bound.
+The API does not promise a one-byte round-trip bound.
 
 Image conversion validates the source and allocates a complete destination.
 Caller limits and the hard 67,108,864-byte image ceiling apply to each image.
@@ -45,13 +49,15 @@ Those logical limits do not cap aggregate process memory, transient peaks,
 or physical RSS. This qualification makes no new memory or performance claim.
 
 [qualification.json](qualification.json) records every command, program output,
-source/compiler/binary hash, and census. Reproduce the native pilot from the
+source/compiler/binary hash, and census.
+[qualification-16e.json](qualification-16e.json) preserves the previous producer's complete record.
+Reproduce the native pilot from the
 repository root:
 
 ```sh
 uv run --no-project docs/benchmarks/color-current-2026-11-01/qualify.py \
-  --compiler /tmp/fern-13999-271-fixed-point --target arm64-darwin \
-  --work /tmp/fern-13212-current-native
+  --compiler /tmp/fern-14006-stage3 --target arm64-darwin \
+  --work /tmp/fern-13212-84d-native
 ```
 
 The same collector accepts `--target` and `--runner` for the other recorded
