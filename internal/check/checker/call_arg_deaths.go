@@ -392,35 +392,31 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			}
 		}
 	}
-	ast.Walk(body, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Match:
-			moveSite(x, x.Tag)
-		case *ast.MatchExpr:
-			moveSite(x, x.Tag)
-		case *ast.Var:
-			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
-				moveSite(x, x.Init)
-			}
-		}
-		return true
-	})
 	// A match on a local or a field path at its last use takes its payloads,
-	// so each name an arm binds is a fresh local.
+	// so each name an arm binds is a fresh local. One walk in source order
+	// decides a match before the matches inside its arms, so a name an outer
+	// match binds is admitted when an inner match on it is decided.
 	ast.Walk(body, func(n ast.Node) bool {
 		var tag ast.Expr
 		var arms [][]string
 		switch x := n.(type) {
 		case *ast.Match:
+			moveSite(x, x.Tag)
 			tag = x.Tag
 			for _, arm := range x.Arms {
 				arms = append(arms, arm.Bindings)
 			}
 		case *ast.MatchExpr:
+			moveSite(x, x.Tag)
 			tag = x.Tag
 			for _, arm := range x.Arms {
 				arms = append(arms, arm.Bindings)
 			}
+		case *ast.Var:
+			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
+				moveSite(x, x.Init)
+			}
+			return true
 		default:
 			return true
 		}
@@ -1530,6 +1526,16 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	if repeats {
 		return true
 	}
+	if m, ok := c.(*ast.Match); ok && st == c {
+		live, settled := matchTagLive(info, m, aid.Name)
+		if live {
+			return true
+		}
+		if settled {
+			return false
+		}
+		return liveFrom(info, frames, len(frames)-1, aid.Name)
+	}
 	later := false
 	ast.Walk(st, func(m ast.Node) bool {
 		if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
@@ -1541,6 +1547,111 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 		return true
 	}
 	return liveFrom(info, frames, len(frames)-1, aid.Name)
+}
+
+// matchTagLive reports whether the value a match takes from the local name is
+// read inside the match. An arm that binds nothing leaves the local whole, so
+// its reads are not reads of the taken value. settled reports that every arm
+// that binds a payload gives the local a new value or leaves the statement
+// before its body ends, so the statements after the match do not read the
+// taken value.
+func matchTagLive(info *Info, m *ast.Match, name string) (live, settled bool) {
+	settled = true
+	for _, arm := range m.Arms {
+		if len(arm.Binders()) == 0 {
+			continue
+		}
+		if arm.Guard != nil && StmtReferencesName(arm.Guard, name) {
+			return true, false
+		}
+		if arm.Body == nil {
+			settled = false
+			continue
+		}
+		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name)
+		if armLive {
+			return true, false
+		}
+		if !armSettled {
+			settled = false
+		}
+	}
+	return false, settled
+}
+
+// stmtsSettle walks a statement list that follows a take of name. live
+// reports a read of name before a whole assignment to it. settled reports
+// that every path through the list assigns name whole or leaves the list
+// early, so the statements after it do not read the taken value.
+func stmtsSettle(info *Info, stmts []ast.Stmt, name string) (live, settled bool) {
+	for _, st := range stmts {
+		if assignsWhole(st, name) {
+			return false, true
+		}
+		switch x := st.(type) {
+		case *ast.Match:
+			if StmtReferencesName(x.Tag, name) {
+				return true, false
+			}
+			allSettled := true
+			for _, arm := range x.Arms {
+				if arm.Guard != nil && StmtReferencesName(arm.Guard, name) {
+					return true, false
+				}
+				if arm.Body == nil {
+					allSettled = false
+					continue
+				}
+				armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name)
+				if armLive {
+					return true, false
+				}
+				if !armSettled {
+					allSettled = false
+				}
+			}
+			if allSettled && len(x.Arms) > 0 {
+				return false, true
+			}
+			continue
+		case *ast.If:
+			if StmtReferencesName(x.Cond, name) {
+				return true, false
+			}
+			branches := [][]ast.Stmt{blockStmts(x.Then)}
+			if x.Else != nil {
+				branches = append(branches, blockStmts(x.Else))
+			}
+			allSettled := x.Else != nil
+			for _, b := range branches {
+				bLive, bSettled := stmtsSettle(info, b, name)
+				if bLive {
+					return true, false
+				}
+				if !bSettled {
+					allSettled = false
+				}
+			}
+			if allSettled {
+				return false, true
+			}
+			continue
+		}
+		if StmtReferencesName(st, name) {
+			return true, false
+		}
+		if divergesStmt(info, st) || neverReturns(info, st) {
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func blockStmts(st ast.Stmt) []ast.Stmt {
+	if b, ok := st.(*ast.Block); ok {
+		return b.Stmts
+	}
+	return []ast.Stmt{st}
 }
 
 func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {

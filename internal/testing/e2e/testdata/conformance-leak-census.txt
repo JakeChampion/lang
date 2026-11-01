@@ -627,11 +627,13 @@ own_consuming_match                                  0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
+own_loop_takes_and_rebinds_each_round                0
 own_param_array_move                                 0
 own_param_assign_target                              0
 own_param_branch_transfer                            0
 own_param_last_use_local                             0
 own_param_payloadless_variant                        0
+own_param_rebound_on_every_branch                    0
 own_parameter_compared_then_moved                    0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0

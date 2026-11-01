@@ -10439,6 +10439,52 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return n
 	}
+	// settleBranches makes moved the union of the branches that run on to
+	// the next statement, so a branch that gives a name a new value clears
+	// its move. When no branch runs on, moved stays as it is.
+	settleBranches := func(moved movedSet, branches []movedSet, continues []bool) {
+		var joined movedSet
+		for i, b := range branches {
+			if !continues[i] {
+				continue
+			}
+			if joined == nil {
+				joined = cloneMoved(b)
+			} else {
+				joinInto(joined, b, false)
+			}
+		}
+		if joined == nil {
+			return
+		}
+		for k := range moved {
+			delete(moved, k)
+		}
+		for k, v := range joined {
+			moved[k] = v
+		}
+	}
+	// restoreTag gives an arm that binds nothing the scrutinee as it was
+	// before the match: the pattern did not take its payload.
+	restoreTag := func(armMoved, whole movedSet, tag ast.Expr) {
+		key := ""
+		switch t := tag.(type) {
+		case *ast.Ident:
+			key = t.Name
+		case *ast.FieldAccess:
+			if id, ok := t.Target.(*ast.Ident); ok {
+				key = id.Name + "." + t.Field
+			}
+		}
+		if key == "" {
+			return
+		}
+		if at, had := whole[key]; had {
+			armMoved[key] = at
+		} else {
+			delete(armMoved, key)
+		}
+	}
 	joinGuardInto := func(dst, guard movedSet, bindings []string) {
 		guard = cloneMoved(guard)
 		for _, name := range bindings {
@@ -10489,6 +10535,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	var recordExprUses func(e ast.Expr, moved movedSet)
 	walkMatchExpr := func(m *ast.MatchExpr, moved movedSet) {
 		scrutOwned := c.isOwnedScrutinee(m.Tag, isOwnedExpr)
+		whole := cloneMoved(moved)
 		if id, ok := m.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(m.Arms) {
 			prev, had := moved[id.Name]
 			recordExprUses(m.Tag, moved)
@@ -10500,9 +10547,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		} else {
 			recordExprUses(m.Tag, moved)
 		}
-		baseline, joined := cloneMoved(moved), cloneMoved(moved)
+		baseline := cloneMoved(moved)
+		var branches []movedSet
+		var continues []bool
 		for _, arm := range m.Arms {
 			armMoved := cloneMoved(baseline)
+			if len(arm.Binders()) == 0 {
+				restoreTag(armMoved, whole, m.Tag)
+			}
 			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(m.Tag))
 			recordExprUses(arm.Guard, armMoved)
 			if arm.Guard != nil {
@@ -10510,17 +10562,17 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			recordExprUses(arm.Body, armMoved)
 			unbindArm(added, lent, armMoved)
-			joinInto(joined, armMoved, c.ownedExprDiverges(arm.Body))
+			branches = append(branches, armMoved)
+			continues = append(continues, !c.ownedExprDiverges(arm.Body))
 		}
-		joinInto(moved, joined, false)
+		settleBranches(moved, branches, continues)
 	}
 	walkIfExpr := func(x *ast.IfExpr, moved movedSet) {
 		recordExprUses(x.Cond, moved)
 		thenMoved, elseMoved := cloneMoved(moved), cloneMoved(moved)
 		recordExprUses(x.Then, thenMoved)
 		recordExprUses(x.Else, elseMoved)
-		joinInto(moved, thenMoved, c.ownedExprDiverges(x.Then))
-		joinInto(moved, elseMoved, c.ownedExprDiverges(x.Else))
+		settleBranches(moved, []movedSet{thenMoved, elseMoved}, []bool{!c.ownedExprDiverges(x.Then), !c.ownedExprDiverges(x.Else)})
 	}
 	recordExprUses = func(e ast.Expr, moved movedSet) {
 		if e == nil {
@@ -10811,8 +10863,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if x.Else != nil {
 				walkStmt(x.Else, elseMoved)
 			}
-			joinInto(moved, thenMoved, c.stmtLeaves(x.Then, c.info.NoReturn))
-			joinInto(moved, elseMoved, x.Else != nil && c.stmtLeaves(x.Else, c.info.NoReturn))
+			settleBranches(moved, []movedSet{thenMoved, elseMoved}, []bool{!c.stmtLeaves(x.Then, c.info.NoReturn), x.Else == nil || !c.stmtLeaves(x.Else, c.info.NoReturn)})
 		case *ast.While:
 			recordExprUses(x.Cond, moved)
 			loopBody(x.Body, nil, moved)
@@ -10826,6 +10877,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			loopBody(x.Body, x.Step, moved)
 		case *ast.Match:
 			scrutOwned := c.isOwnedScrutinee(x.Tag, isOwnedExpr)
+			whole := cloneMoved(moved)
 			if id, ok := x.Tag.(*ast.Ident); ok && !ast.MatchTakesPointerPayload(x.Arms) {
 				prev, had := moved[id.Name]
 				recordExprUses(x.Tag, moved)
@@ -10837,9 +10889,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			} else {
 				recordExprUses(x.Tag, moved)
 			}
-			baseline, joined := cloneMoved(moved), cloneMoved(moved)
+			baseline := cloneMoved(moved)
+			var branches []movedSet
+			var continues []bool
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(baseline)
+				if len(arm.Binders()) == 0 {
+					restoreTag(armMoved, whole, x.Tag)
+				}
 				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(x.Tag))
 				recordExprUses(arm.Guard, armMoved)
 				if arm.Guard != nil {
@@ -10849,9 +10906,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
 				unbindArm(added, lent, armMoved)
-				joinInto(joined, armMoved, arm.Body != nil && c.blockLeaves(arm.Body, c.info.NoReturn))
+				branches = append(branches, armMoved)
+				continues = append(continues, !(arm.Body != nil && c.blockLeaves(arm.Body, c.info.NoReturn)))
 			}
-			joinInto(moved, joined, false)
+			settleBranches(moved, branches, continues)
 		default:
 			ast.Walk(st, func(n ast.Node) bool {
 				if fd, ok := n.(*ast.FuncDecl); ok {

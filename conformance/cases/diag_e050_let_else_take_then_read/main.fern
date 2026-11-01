@@ -1,0 +1,22 @@
+// The arm of a let-else that binds a payload has taken the scrutinee, so a
+// later read of the own parameter is a use after move. Only the else arm,
+// whose pattern did not match, sees the parameter whole.
+struct A { items: Writer[], n: i32 }
+struct B { w: Writer }
+type V = A | B;
+
+function eat(own v: V): i32 {
+  return 0;
+}
+
+function take_then_read(own cur: V): i32 {
+  let A(av) = cur else {
+    return eat(cur);
+  };
+  let n: i32 = av.n;
+  return n + eat(cur);
+}
+
+function main(): i32 {
+  return take_then_read(A { items: [], n: 1 });
+}

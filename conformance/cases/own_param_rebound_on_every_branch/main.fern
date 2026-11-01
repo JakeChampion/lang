@@ -1,0 +1,23 @@
+// An own parameter consumed before an if statement is whole again after it
+// when every branch that runs on gives it a new value.
+struct H { n: i32 }
+
+function eat(own h: H): i32 {
+  return h.n;
+}
+
+function twice(own h: H, flag: boolean, own other: H): i32 {
+  let first: i32 = eat(h);
+  if (flag) {
+    h = other;
+  } else {
+    h = H { n: 100 };
+  }
+  return first + eat(h);
+}
+
+function main(): i32 {
+  print(f"{twice(H { n: 1 }, true, H { n: 10 })}");
+  print(f"{twice(H { n: 1 }, false, H { n: 10 })}");
+  return 0;
+}
