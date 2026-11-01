@@ -15,8 +15,8 @@
   },
   "targets": [
     {
-      "source_head": "de2ec359a22078e3bfe23402b6766b51def8d665",
-      "compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
       "target": "arm64-darwin",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -33,7 +33,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -44,12 +44,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "arm64-darwin",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-native/essentials",
+              "/private/tmp/fern-13212-current-native/essentials",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -59,7 +59,7 @@
           },
           "run": {
             "command": [
-              "/private/tmp/fern-13212-native/essentials"
+              "/private/tmp/fern-13212-current-native/essentials"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -75,7 +75,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -86,12 +86,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "arm64-darwin",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-native/pixels_test",
+              "/private/tmp/fern-13212-current-native/pixels_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -101,7 +101,7 @@
           },
           "run": {
             "command": [
-              "/private/tmp/fern-13212-native/pixels_test"
+              "/private/tmp/fern-13212-current-native/pixels_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -117,7 +117,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -128,12 +128,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "arm64-darwin",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-native/color_test",
+              "/private/tmp/fern-13212-current-native/color_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -143,7 +143,7 @@
           },
           "run": {
             "command": [
-              "/private/tmp/fern-13212-native/color_test"
+              "/private/tmp/fern-13212-current-native/color_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -157,8 +157,8 @@
       ]
     },
     {
-      "source_head": "de2ec359a22078e3bfe23402b6766b51def8d665",
-      "compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
       "target": "arm64-linux",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -175,7 +175,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -186,12 +186,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "arm64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-arm64/essentials",
+              "/private/tmp/fern-13212-current-arm64/essentials",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -206,9 +206,9 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-arm64:/private/tmp/fern-13212-arm64",
+              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
               "fern-devbox:latest",
-              "/private/tmp/fern-13212-arm64/essentials"
+              "/private/tmp/fern-13212-current-arm64/essentials"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -224,7 +224,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -235,12 +235,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "arm64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-arm64/pixels_test",
+              "/private/tmp/fern-13212-current-arm64/pixels_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -255,9 +255,9 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-arm64:/private/tmp/fern-13212-arm64",
+              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
               "fern-devbox:latest",
-              "/private/tmp/fern-13212-arm64/pixels_test"
+              "/private/tmp/fern-13212-current-arm64/pixels_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -273,7 +273,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -284,12 +284,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "arm64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-arm64/color_test",
+              "/private/tmp/fern-13212-current-arm64/color_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -304,9 +304,9 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-arm64:/private/tmp/fern-13212-arm64",
+              "/private/tmp/fern-13212-current-arm64:/private/tmp/fern-13212-current-arm64",
               "fern-devbox:latest",
-              "/private/tmp/fern-13212-arm64/color_test"
+              "/private/tmp/fern-13212-current-arm64/color_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -320,8 +320,8 @@
       ]
     },
     {
-      "source_head": "de2ec359a22078e3bfe23402b6766b51def8d665",
-      "compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
       "target": "x86-64-linux",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -338,7 +338,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -349,12 +349,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "x86-64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-x86/essentials",
+              "/private/tmp/fern-13212-current-x86/essentials",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -369,10 +369,10 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-x86:/private/tmp/fern-13212-x86",
+              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
               "fern-devbox:latest",
               "qemu-x86_64",
-              "/private/tmp/fern-13212-x86/essentials"
+              "/private/tmp/fern-13212-current-x86/essentials"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -388,7 +388,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -399,12 +399,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "x86-64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-x86/pixels_test",
+              "/private/tmp/fern-13212-current-x86/pixels_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -419,10 +419,10 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-x86:/private/tmp/fern-13212-x86",
+              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
               "fern-devbox:latest",
               "qemu-x86_64",
-              "/private/tmp/fern-13212-x86/pixels_test"
+              "/private/tmp/fern-13212-current-x86/pixels_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -438,7 +438,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -449,12 +449,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "x86-64-linux",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-x86/color_test",
+              "/private/tmp/fern-13212-current-x86/color_test",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -469,10 +469,10 @@
               "--rm",
               "--pull=never",
               "-v",
-              "/private/tmp/fern-13212-x86:/private/tmp/fern-13212-x86",
+              "/private/tmp/fern-13212-current-x86:/private/tmp/fern-13212-current-x86",
               "fern-devbox:latest",
               "qemu-x86_64",
-              "/private/tmp/fern-13212-x86/color_test"
+              "/private/tmp/fern-13212-current-x86/color_test"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -486,8 +486,8 @@
       ]
     },
     {
-      "source_head": "de2ec359a22078e3bfe23402b6766b51def8d665",
-      "compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+      "source_head": "395e30d1c1da116c67e2c6378c5b93b1604a4bf6",
+      "compiler_sha256": "16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa",
       "target": "wasm32-wasi",
       "collector_sha256": "a1bba8d2a4a06c20ab5f101efba329dbf2dd5bbb92e5facf5e6d1baaabe5324e",
       "source_sha256": {
@@ -504,7 +504,7 @@
           "tests": 1,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -515,12 +515,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "wasm32-wasi",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-wasm/essentials.wasm",
+              "/private/tmp/fern-13212-current-wasm/essentials.wasm",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/experiments/essentials.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -532,7 +532,7 @@
             "command": [
               "/Users/jakechampion/.wasmtime/bin/wasmtime",
               "run",
-              "/private/tmp/fern-13212-wasm/essentials.wasm"
+              "/private/tmp/fern-13212-current-wasm/essentials.wasm"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: image essentials\nok 1 - checked arithmetic, zero bytes, copy-on-write and slices\n1..1\n# tests 1\n# pass 1\n# fail 0\n",
@@ -548,7 +548,7 @@
           "tests": 7,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -559,12 +559,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "wasm32-wasi",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-wasm/pixels_test.wasm",
+              "/private/tmp/fern-13212-current-wasm/pixels_test.wasm",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/pixels_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -576,7 +576,7 @@
             "command": [
               "/Users/jakechampion/.wasmtime/bin/wasmtime",
               "run",
-              "/private/tmp/fern-13212-wasm/pixels_test.wasm"
+              "/private/tmp/fern-13212-current-wasm/pixels_test.wasm"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: pixels M0\nok 1 - invalid dimensions and strides\nok 2 - row, pixel count and allocation overflow\nok 3 - pixel, byte and hard allocation limits\nok 4 - RGB8/RGBA8 layout, padding and alias isolation\nok 5 - read and write bounds\nok 6 - untrusted public representation\nok 7 - RGB rejects nonopaque alpha\n1..7\n# tests 7\n# pass 7\n# fail 0\n",
@@ -592,7 +592,7 @@
           "tests": 6,
           "check": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-check",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
@@ -603,12 +603,12 @@
           },
           "build": {
             "command": [
-              "/private/tmp/fern-13998-fixed-point",
+              "/private/tmp/fern-13999-271-fixed-point",
               "-target",
               "wasm32-wasi",
               "-sanitize",
               "-o",
-              "/private/tmp/fern-13212-wasm/color_test.wasm",
+              "/private/tmp/fern-13212-current-wasm/color_test.wasm",
               "/Users/jakechampion/codex/lang-color-qualification/fern-image/tests/color_test.fern",
               "/Users/jakechampion/codex/lang-color-qualification/internal/stdlib"
             ],
@@ -620,7 +620,7 @@
             "command": [
               "/Users/jakechampion/.wasmtime/bin/wasmtime",
               "run",
-              "/private/tmp/fern-13212-wasm/color_test.wasm"
+              "/private/tmp/fern-13212-current-wasm/color_test.wasm"
             ],
             "exit_code": 0,
             "stdout": "TAP version 13\n# Suite: color M1\nok 1 - sRGB thresholds and exhaustive byte round trips\nok 2 - premultiply, unpremultiply, zero alpha and saturation\nok 3 - linear source over and transparent pixels\nok 4 - linear luminance and channel operations\nok 5 - whole-image conversion, padding, and alpha preservation\nok 6 - image conversion rejects unsafe storage, budgets, and background\n1..6\n# tests 6\n# pass 6\n# fail 0\n",
@@ -637,5 +637,7 @@
   "lint_fast": {
     "result": "pass",
     "log_sha256": "79d6b00e36510ac9d45ff4afa6af0d7fce1b31b51936e1fbde0b050852f27e46"
-  }
+  },
+  "previous_qualification_commit": "df468ea1c93895ce2085e1695ff76fcd3bd442c6",
+  "compiler_source_matches_merged_main": true
 }

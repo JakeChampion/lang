@@ -4,9 +4,9 @@ The original implementation head CI `40189125104` ended as cancelled.
 The later image-lane pass recorded in the issue did not establish full-main success.
 This follow-up retains those limits and requires fresh full CI before merge.
 
-The source is integrated main `de2ec359a22078e3bfe23402b6766b51def8d665`.
+The runtime source is integrated main `7ea3a2ad73378c33631492f61c1f66d81ee620d8`.
 The frozen Fern compiler has SHA256
-`81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da`.
+`16e3b37f335e08c99d673eb3d987cdcc5dde4d5046453ac2b63be49b0fabd1fa`.
 Its own stages two and three are byte-identical.
 No production code, fixture, numerical tolerance, image limit, or performance
 baseline changes in this qualification. Dependency #13211 is complete.
@@ -50,8 +50,8 @@ repository root:
 
 ```sh
 uv run --no-project docs/benchmarks/color-current-2026-11-01/qualify.py \
-  --compiler /tmp/fern-13998-fixed-point --target arm64-darwin \
-  --work /tmp/fern-13212-native
+  --compiler /tmp/fern-13999-271-fixed-point --target arm64-darwin \
+  --work /tmp/fern-13212-current-native
 ```
 
 The same collector accepts `--target` and `--runner` for the other recorded
