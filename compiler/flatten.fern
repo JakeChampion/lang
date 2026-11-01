@@ -327,9 +327,9 @@ function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportG
   let out: parser.ModuleSight[] = [];
   for i in 0..imports.len() {
     let reaches: string[] = prefixes_at(import_closure(imports[i].mod, g, ids, pfxs), pfxs);
-    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches });
+    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches });
   }
-  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
+  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
 }
 
 function import_path_list(mod: parser.Module): string[] {
