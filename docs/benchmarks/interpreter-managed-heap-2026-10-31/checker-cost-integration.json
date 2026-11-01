@@ -43,8 +43,23 @@
       }
     },
     "linux": {
-      "result": "pending",
-      "reason": "Docker Desktop remains unavailable. Fresh Linux and reactor validation require Docker or CI."
+      "result": "pass",
+      "host": "arm64-linux",
+      "container_image": "fern-devbox:latest",
+      "go_version": "1.27.3",
+      "wasmtime_version": "46.0.1",
+      "elapsed_seconds": 171.673,
+      "roots": 14,
+      "skips": 0,
+      "scope": "Bound module and trait identities, composite cells, native and WASI finalizers, interpreter heap, array/socket/reactor identity, mutable captures, and scalar cells. The original array identity suite includes the self-built x86 interpreter through QEMU.",
+      "log_sha256": "86aa38a0e0bbc1a2461b3e3e1784d9acf2b4ff6f213bb324c3b5adaebc9f1a94",
+      "reactor_pilot": {
+        "elapsed_seconds": 31.261,
+        "modes": 4,
+        "skips": 0,
+        "log_sha256": "b22a5bae938576bd3eb8917995e994d1166c32eb8b154ec3c93ac81439262d09"
+      },
+      "recovery": "Docker Desktop required a force-stop after graceful restart timed out. A fresh Linux container then passed a file write/read probe. No data reset or volume deletion."
     }
   },
   "bootstrap": {
