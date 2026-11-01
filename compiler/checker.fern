@@ -3261,13 +3261,11 @@ function bound_trait_req(base: string, module: string, reqs: parser.TraitReq[]):
   let found: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < reqs.len()) {
-    if (reqs[i].trait_name == name && trait_req_visible(reqs[i], module)) {
-      if (reqs[i].module == want) {
-        return i;
-      }
-      if (found < 0 && q.len() > 0 && reqs[i].module.len() > 0) {
-        found = i;
-      }
+    if (reqs[i].trait_name == name && reqs[i].module == want) {
+      return i;
+    }
+    if (found < 0 && reqs[i].trait_name == name && q.len() > 0 && reqs[i].module.len() > 0) {
+      found = i;
     }
     i = i + 1;
   }
