@@ -212,7 +212,7 @@ x86_64/ordmap_insert.ir	82611593
 x86_64/pmap_insert.text	2973
 x86_64/pmap_insert.ir	53294866
 x86_64/pvec_with.text	2951
-x86_64/pvec_with.ir	55494169
+x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	36120760
 x86_64/record_update.text	1296
 x86_64/sort_inplace.text	1497
@@ -500,7 +500,7 @@ aarch64/ordmap_insert.ir	98457462
 aarch64/pmap_insert.text	3242
 aarch64/pmap_insert.ir	63996220
 aarch64/pvec_with.text	3202
-aarch64/pvec_with.ir	59369743
+aarch64/pvec_with.ir	59221804
 aarch64/record_update.text	1513
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1686
@@ -552,3 +552,5 @@ aarch64/perceus_rbtree.text	3158
 aarch64/perceus_rbtree.ir	59717393
 aarch64/perceus_rbtree_ck.text	3251
 aarch64/perceus_rbtree_ck.ir	59058355
+# 2026-11-01: #13988 keeps the original main pvec instruction gates.
+# Fresh measurements remain within their unchanged 1% tolerance.
