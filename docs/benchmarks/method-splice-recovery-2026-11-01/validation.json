@@ -1,0 +1,141 @@
+{
+  "date": "2026-11-01",
+  "pull_request": 13988,
+  "issue": 13989,
+  "owner_base": "bb4faa916d08fde3e1dd1408d80a117def8ee4c5",
+  "source_commit": "fd4c3702cc8bb3a55524b81a553d033da7f215ea",
+  "source_tree": "eaacbe7aec4e0aa102fed44199bfdba226b75957",
+  "source_blobs": {
+    "compiler/rccertify.fern": "ba22e27be271e6d6380ab323ea2f2902eeb9ff12",
+    "compiler/ssaunits.fern": "4f96871d6616630a623a152dc6b8f8d5105124e8",
+    "internal/testing/e2ecompiler/self_host_cli_test.go": "48c6dfa645f1b10320b823d523437392e2c65030",
+    "internal/testing/e2ecompiler/self_host_rccertify_test.go": "d123db116d45ab719615a2453a66385a6cdb57cc",
+    "internal/testing/e2ecompiler/self_host_rccertify_token_join_test.go": "3aacb68c4762f113939eb4b35fcfcc9c5dd56cb1",
+    "internal/testing/e2ecompiler/self_host_ssa_units_test.go": "5577fbd4d58385f6e0a4c16e0b095044b4c3277f",
+    ".github/perf-baseline.txt": "94d4a7c2e0d1988bd1654ddb68cf7cf40e6fe89a",
+    ".github/perf-baseline-selfhost.txt": "5683e7fe3c6d893256902525d1e5f0545fca6ba0"
+  },
+  "changes": [
+    "Propagate an incoming phi value's own unit instead of its parent's unit.",
+    "Recognize later payload reads through proven carried-parent aliases.",
+    "Keep symbol and ownership fixtures observable after method inlining.",
+    "Restore prior OrdMap gates and retain other measured decreases."
+  ],
+  "validation": {
+    "focused_linux_arm_with_qemu_x86": {
+      "seconds": 62.804,
+      "certifier_cases": 53,
+      "read_word_owner_executions": 96,
+      "skips": 0,
+      "sanitizer_controls": true
+    },
+    "ownership_inference": {
+      "seconds": 13.982,
+      "targets": [
+        "x86-64-linux",
+        "arm64-linux",
+        "wasm32-wasi"
+      ],
+      "oracle": "interpreter",
+      "strict_ir": true,
+      "sanitize": true,
+      "leakcheck": true,
+      "allocation_caps": "unchanged"
+    },
+    "planner_cases": {
+      "existing_cases": 81,
+      "existing_suite_seconds": 101.622,
+      "new_borrowed_projection_case_seconds": 1.503
+    },
+    "h3_runtime": {
+      "seconds": 185.995,
+      "roots": [
+        "TestServeH3FileX86_64",
+        "TestServeH3PeerLimitX86_64",
+        "TestServeH3SocketX86_64"
+      ],
+      "runner": "QEMU x86 on native Linux ARM",
+      "skips": 0
+    },
+    "unit_rest_cmd_fern_seconds": 286.092,
+    "lint_fast": "pass",
+    "final_go_vet_and_gofmt": "pass",
+    "static": {
+      "rows": 117,
+      "strict": true,
+      "report_sha256": "36788ebd3a6481258239a3def79624d9ac2ad9756d739d74fb60af914407fadf"
+    },
+    "ordmap": {
+      "static_main_gates": {
+        "x86-64-linux": 5498,
+        "arm64-linux": 5873,
+        "wasm32-wasi": 6680
+      },
+      "static_after": {
+        "x86-64-linux": 5452,
+        "arm64-linux": 5841,
+        "wasm32-wasi": 6681
+      },
+      "native_arm_instructions": 97987298,
+      "native_arm_instruction_gate": 98457462,
+      "checksum_exit": 11,
+      "timing_claim": false,
+      "x86_dynamic_instructions": "pending CI"
+    },
+    "stage2_image": {
+      "producer_sha256": "3b2eae35818540f0a3a81d2853aecdc2f348a03acbae3641c0ddeaa64228fb41",
+      "bytes": 15734448,
+      "sha256": "3f90ceefc5ced5d2e5b0b4426b790571afc4478572d3bb1006ea8a072784aa12",
+      "verifier_seen": 8314,
+      "verifier_modelled": 8314,
+      "verifier_skips": 0,
+      "direct_elf_writer": true,
+      "baseline": 15881456,
+      "strict_gate": "pass",
+      "coverage": "1 of 11 driver slices"
+    },
+    "map_runtime": {
+      "targets": [
+        "x86-64-linux",
+        "arm64-linux",
+        "wasm32-wasi"
+      ],
+      "stdout": "matches fixture"
+    },
+    "collision_runtime": {
+      "target": "wasm32-wasi",
+      "exit": 56,
+      "entry_provider_definitions": 1
+    },
+    "issue_reproduction": {
+      "source": "scripts/net-quic-interop.d/client.fern",
+      "target": "x86-64-linux",
+      "rc_certify": true,
+      "result": "build passes"
+    },
+    "pending": [
+      "Full current-head CI and feedback review.",
+      "The separate eight-program interop certification and H3 mux checks."
+    ]
+  },
+  "logs": {
+    "/tmp/fern-13988-recovery-linux-final.log": "1c370be2878ff145156002b05d415c3c0c5b632168e4513ca6f9c490e7909685",
+    "/tmp/fern-13988-recovery-ownership.log": "28aff759533c5e7e65b95d0183844d3a3e335bea24a78eb5ae4ba295b8d8d546",
+    "/tmp/fern-13988-recovery-h3.log": "95ffa4403c5d5c2cc468026e04f7061bed6ea8334ca28fae08614a7b226c8c48",
+    "/tmp/fern-13988-recovery-unit-rest.log": "9f3a34d434f5e3bcd8374ac5c34553be2b3cba9b081a463fc172ae99557722f9",
+    "/tmp/fern-13988-recovery-lint.log": "b8c7de93177b601111ffd323a022eeeb28e78443ce7a18ce142201c819e8e611",
+    "/tmp/fern-13988-final-go-vet4.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/fern-13988-recovery-static.log": "a0cd3859addb2c50d125a38cd0eca865bb17a694b335d7b307eb13f12366cbab",
+    "/tmp/fern-13988-recovery-stage2.log": "a5564fb2d25bfd8780e02a049ec1104bebbb6d51c5d460b1497fc3fdd73c3587",
+    "/tmp/fern-13988-recovery-image-gate.log": "f7a8cff39f6becca1bf3aa33e5e43559e292843d1ce0d27684bcb3693a02cfd5",
+    "/tmp/fern-13988-final-runtime.log": "3a7433647dc257777b4fe85e26f705a52ba030d1f7d847c7dd6ce9474b54b37b",
+    "/tmp/fern-13988-token-join-observable.log": "858c2b6d55be7ab0f69b34621d03f423ef500a13c13044e3212de379702d397c",
+    "/tmp/fern-13988-quic-client-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "limits": [
+    "The initial focused run failed only because the closure fixture no longer allocated. The corrected fixture passes all three targets with its original nonzero allocation requirement.",
+    "The raw carried-parent cases provide coverage. The actual H3 client provides the reproduced failure and successful repair.",
+    "A GCC-linked assembly experiment is not the baselined direct-writer compiler image.",
+    "No network feature changes or baseline allowance increases."
+  ]
+}
