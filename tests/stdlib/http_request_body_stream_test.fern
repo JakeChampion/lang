@@ -2,7 +2,6 @@ import "std/test";
 import "std/http";
 import "std/stream";
 import "std/result";
-import "std/utf8" as utf8;
 
 function body_text(req: HttpRequest): string {
   match (req.body_text()) {
@@ -105,11 +104,14 @@ function test_read_line_walks_the_body(): test.TestOutcome {
     let (line, next) = s.read_line();
     s = next;
     match (line) {
-      Some(l) => {
+      Ok(Some(l)) => {
         seen = seen + "[" + l + "]";
       },
-      None => {
+      Ok(None()) => {
         n = 4;
+      },
+      Err(_) => {
+        return test.fail("read_line refused valid UTF-8");
       }
     }
     n = n + 1;
@@ -157,20 +159,18 @@ function test_bodyless_request_reads_empty(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
-function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
-  let fffd: string = utf8.encode(65533 as char);
+function test_ill_formed_line_is_refused(): test.TestOutcome {
   let raw: string = string_from_bytes_unchecked([97 as u8, 255 as u8, 10 as u8, 98 as u8]);
   let req: HttpRequest = parsed(raw);
   let (line, rest) = req.body_stream().read_line();
   match (line) {
-    Some(l) => {
-      if (l != "a" + fffd) {
-        return test.fail("read_line: " + l);
-      }
+    Ok(Some(l)) => {
+      return test.fail("read_line accepted ill-formed bytes: " + l);
     },
-    None => {
-      return test.fail("read_line: None");
-    }
+    Ok(None()) => {
+      return test.fail("read_line: end of input");
+    },
+    Err(_) => {}
   }
   let (tail, done) = rest.read_all_string();
   match (tail) {
@@ -207,11 +207,14 @@ function test_sourced_read_line_spans_chunks(): test.TestOutcome {
     let (line, next) = s.read_line();
     s = next;
     match (line) {
-      Some(l) => {
+      Ok(Some(l)) => {
         seen = seen + "[" + l + "]";
       },
-      None => {
+      Ok(None()) => {
         n = 5;
+      },
+      Err(_) => {
+        return test.fail("read_line refused valid UTF-8");
       }
     }
     n = n + 1;
@@ -391,7 +394,7 @@ function main(): i32 {
   r = r.it("body_len ignores a partial walk", test_body_len_ignores_a_partial_walk);
   r = r.it("body_bytes matches body_len", test_body_bytes_matches_body_len);
   r = r.it("a bodyless request reads empty", test_bodyless_request_reads_empty);
-  r = r.it("ill-formed bytes read as U+FFFD", test_ill_formed_bytes_read_as_replacement);
+  r = r.it("read_line refuses an ill-formed line", test_ill_formed_line_is_refused);
   r = r.it("a sourced stream reads every chunk", test_sourced_read_all_joins_the_chunks);
   r = r.it("read_line spans a chunk boundary", test_sourced_read_line_spans_chunks);
   r = r.it("read_n spans a chunk boundary", test_sourced_read_n_spans_chunks);

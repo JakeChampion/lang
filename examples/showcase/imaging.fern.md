@@ -132,7 +132,7 @@ pub function tone(rgba: u8[], width: i32, height: i32, effect: i32): u8[] {
   let output = source;
   for y in 0..height {
     for x in 0..width {
-      let Ok(pixel) = pixels.read_pixel(source, x, y) else {
+      let Ok(pixel) = pixels.read_pixel(output, x, y) else {
         return [];
       };
       let Ok(next) = pixels.write_pixel(output, x, y, color.grayscale(pixel)) else {

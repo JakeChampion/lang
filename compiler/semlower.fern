@@ -23,6 +23,7 @@ import "./typeinfo";
 import "./util";
 import "./semarrayreport";
 import "./semndprune";
+import "./semhelperreach";
 import "./rtmodule";
 import "./keyhelpers";
 import "std/envflag";
@@ -645,14 +646,16 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let merged = ssarc.merge_helpers_mapped(collected_bodies(instances), selected.rows);
   let extra_origins = util.append_all(instance_origins, physicalbody.select_origins(selected.origins, merged.helper_indices));
   let kept = semndprune.unused_adapter_mapped(mod, bodies, merged.bodies);
+  let kept_origins = physicalbody.select_origins(extra_origins, kept.extra_indices);
+  let reached = semhelperreach.select(kept.result.bodies, kept.result.extra, kept_origins);
   let declarations: string[] = [];
   let i = 0;
   while (i < bodies.len()) {
     declarations = declarations.append(built.names[i]);
     i = i + 1;
   }
-  let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(extra_origins, kept.extra_indices) };
-  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records, refused: ircore.fip_claim_diags(mod.funcs, kept.result.bodies) };
+  let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(kept_origins, reached.indices) };
+  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: reached.bodies, contracts: contract_rows(built.contracts, r), physical_contracts: selected.producers[0].contracts, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records, refused: ircore.fip_claim_diags(mod.funcs, kept.result.bodies) };
 }
 
 function physical_contracts(built: semsource.Built): ssasem.Contract[] {

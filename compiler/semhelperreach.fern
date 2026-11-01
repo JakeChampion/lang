@@ -1,0 +1,81 @@
+import "./ir";
+import "./irtables";
+import "./physicalbody";
+import "./util";
+
+pub struct Kept { bodies: irtables.LowerResult[], indices: i32[] }
+
+struct Marked { live: boolean[], queue: i32[] }
+
+function mark(own m: Marked, at: i32): Marked {
+  if (at < 0 || m.live[at]) {
+    return m;
+  }
+  return Marked { live: m.live.with(at, true), queue: m.queue.append(at) };
+}
+
+function references(body: irtables.LowerResult, names: util.NameIndex, labels: string[], own m: Marked): Marked {
+  if (!body.ok || body.superseded) {
+    return m;
+  }
+  for op in body.ops {
+    if (op.str == "") {
+      continue;
+    }
+    m = mark(m, names.find(op.str));
+    if (op.kind_tag == ir.K_CONST_STRUCT) {
+      m = mark(m, names.find(ir.const_struct_fn_body(op.str)));
+    }
+    // Constants can nest function values. Dynamic dispatch stores several names.
+    if (op.kind_tag == ir.K_CONST_STRUCT || op.kind_tag == ir.K_DYN_DISPATCH) {
+      let i = 0;
+      while (i < labels.len()) {
+        if (!m.live[i] && labels[i] != "" && util.contains(op.str, labels[i])) {
+          m = mark(m, i);
+        }
+        i = i + 1;
+      }
+    }
+  }
+  return m;
+}
+
+// Only typed drop helpers are candidates. All other extra bodies remain roots.
+pub function select(declarations: irtables.LowerResult[], extra: irtables.LowerResult[], origins: physicalbody.Origin[]): Kept {
+  let labels: string[] = [];
+  let m = Marked { live: [], queue: [] };
+  for body in extra {
+    labels = labels.append(body.name);
+    m = Marked { ...m, live: m.live.append(false) };
+  }
+  let names = util.name_index(labels);
+  let i = 0;
+  while (i < extra.len()) {
+    let typed = false;
+    if (i < origins.len()) {
+      typed = match (origins[i].helper) { Some(_) => true, None => false };
+    }
+    if (!typed || !extra[i].ok || extra[i].superseded || names.find(labels[i]) != i) {
+      m = mark(m, i);
+    }
+    i = i + 1;
+  }
+  for body in declarations {
+    m = references(body, names, labels, m);
+  }
+  let at = 0;
+  while (at < m.queue.len()) {
+    let body = extra[m.queue[at]];
+    m = references(body, names, labels, m);
+    at = at + 1;
+  }
+  let kept = Kept { bodies: [], indices: [] };
+  i = 0;
+  while (i < extra.len()) {
+    if (m.live[i]) {
+      kept = Kept { bodies: kept.bodies.append(extra[i]), indices: kept.indices.append(i) };
+    }
+    i = i + 1;
+  }
+  return kept;
+}

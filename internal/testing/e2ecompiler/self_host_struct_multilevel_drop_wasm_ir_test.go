@@ -22,8 +22,9 @@ func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
+@noinline function boxed(a: A): A[] { return [a]; }
 function mk(): i32 {
-    let a: A = A { b: B { c: C { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, bt: 2 }, at: 7 };
+    let a: A = boxed(A { b: B { c: C { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, bt: 2 }, at: 7 })[0];
     return a.b.c.items[0] + a.b.c.items[15] + a.b.bt + a.at;
 }
 function main(): i32 {

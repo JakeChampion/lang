@@ -186,10 +186,10 @@ pub function (s: ByteStream) read_some(): (u8[], ByteStream) {
   return (out, ByteStream { ...cur, pos: pos });
 }
 
-pub function (s: ByteStream) read_line(): (Option[string], ByteStream) {
+pub function (s: ByteStream) read_line(): (Result[Option[string], utf8.Utf8Error], ByteStream) {
   let cur: ByteStream = __fill(s);
   if (cur.pos >= cur.data.len()) {
-    return (None, cur);
+    return (Ok(None), cur);
   }
   let line_bytes: u8[] = [];
   while (true) {
@@ -198,16 +198,21 @@ pub function (s: ByteStream) read_line(): (Option[string], ByteStream) {
       let b: i32 = cur.data[pos] as i32;
       pos = pos + 1;
       if (b == 10) {
-        return (Some(utf8.from_bytes_lossy(__without_cr(line_bytes))), ByteStream { ...cur, pos: pos });
+        return (__line_text(line_bytes), ByteStream { ...cur, pos: pos });
       }
       line_bytes = line_bytes.append(b as u8);
     }
     cur = __fill(ByteStream { ...cur, pos: pos });
     if (cur.pos >= cur.data.len()) {
-      return (Some(utf8.from_bytes_lossy(line_bytes)), cur);
+      return (__line_text(line_bytes), cur);
     }
   }
-  return (None, cur);
+  return (Ok(None), cur);
+}
+
+function __line_text(line: u8[]): Result[Option[string], utf8.Utf8Error] {
+  let text: string = utf8.from_bytes(__without_cr(line))?;
+  return Ok(Some(text));
 }
 ```
 

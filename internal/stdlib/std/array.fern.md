@@ -1229,6 +1229,7 @@ pub function (xs: T[]) is_empty(): boolean {
   return is_empty(xs);
 }
 
+// The first element, or None when the array is empty.
 pub function (xs: T[]) first(): Option[T] {
   return first(xs);
 }

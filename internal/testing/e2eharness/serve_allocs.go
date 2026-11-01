@@ -363,7 +363,7 @@ function main(): i32 {
   let out: u8[][] = closed.datagrams();
   closed = closed.sent();
   for d in out {
-    let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
+    let r: Result[i32, net.NetError] = net.send_to(k.sock, d, k.peer);
   }
   return 0;
 }

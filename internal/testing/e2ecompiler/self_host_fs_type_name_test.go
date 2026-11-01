@@ -27,7 +27,7 @@ function exercise(): void {
   for i in 0..32 {
     match (statfs("/dev")) {
       Ok(fs) => {
-        let alias: FsStat = fs;
+        let alias: FsStat = FsStat { ...fs };
         let values: FsStat[] = [fs, alias];
         assert(values[0].fs_type_name == %[3]q);
         assert(values[1].fs_type_name == %[3]q);

@@ -11,16 +11,17 @@ import (
 
 const interpScopeContractHook = `pub function contract_scope_frames(): i32 {
   let root = new_env().bind_decl("outer", v_int(7), "i32").bind_decl("wide", v_wide(9000000000i64, false), "i64");
-  let first = scope_env(root, true).bind_decl("local", v_int(2), "i32");
-  let second = scope_env(first, true).bind_decl("outer", VString { v: "shadow" }, "string");
+  let first = scope_env(Env { ...root }, true).bind_decl("local", v_int(2), "i32");
+  let second = scope_env(Env { ...first }, true).bind_decl("outer", VString { v: "shadow" }, "string");
   if (second.decl_type("outer") != "string" || second.decl_type("wide") != "i64" || !second.binds_name("local")) { return 1; }
-  let changed = second.update("wide", v_wide(11i64, false)).update("local", v_int(9));
-  let one = trim_env(changed, first.depth);
-  let all = trim_env(changed, root.depth);
+  let wide = Env { ...second }.update("wide", v_wide(11i64, false));
+  let changed = Env { ...wide }.update("local", v_int(9));
+  let one = trim_env(Env { ...changed }, first.depth);
+  let all = trim_env(Env { ...changed }, root.depth);
   if (value_text(one.lookup("outer")) != "7" || value_text(one.lookup("local")) != "9" || value_text(all.lookup("wide")) != "11") { return 2; }
   if (all.binds_name("local") || all.decl_type("local") != "" || value_text(root.lookup("wide")) != "9000000000" || value_text(first.lookup("local")) != "2") { return 3; }
-  let boxed = cellify_env(root, ["outer"]);
-  let nested = scope_env(boxed, true).bind("inner", v_int(3));
+  let boxed = cellify_env(Env { ...root }, ["outer"]);
+  let nested = scope_env(Env { ...boxed }, true).bind("inner", v_int(3));
   let raw = match (nested.raw_value("outer")) { Some(v) => v, None => { exit(4); } };
   if (!is_cell(raw) || !cell_slot_set(raw, v_int(13))) { return 5; }
   if (value_text(boxed.lookup("outer")) != "13" || value_text(trim_env(nested, boxed.depth).lookup("outer")) != "13" || value_text(root.lookup("outer")) != "7") { return 6; }
@@ -29,7 +30,7 @@ const interpScopeContractHook = `pub function contract_scope_frames(): i32 {
   if (value_text(witness.lookup("witness")) != "17" || __heap_alloc_count() <= witness_before) { return 7; }
   let large = new_env();
   for i in 0..2000 { large = large.bind("slot_" + util.i32_to_string(i), v_int(i)); }
-  let child = scope_env(scope_env(large, true).bind("a", v_int(3)), true).bind("b", v_int(5));
+  let child = scope_env(Env { ...scope_env(Env { ...large }, true).bind("a", v_int(3)) }, true).bind("b", v_int(5));
   let before = __heap_alloc_count();
   let popped = trim_env(child, large.depth);
   let after = __heap_alloc_count();

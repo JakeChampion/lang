@@ -12,16 +12,23 @@ import (
 func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
-	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
+	src := `function port_str(n: i32): string {
+    let s: string = "";
+    let v: i32 = n;
+    while (v > 0) {
+        let d: i32 = v % 10;
+        s = slice_unchecked("0123456789", d, d + 1) + s;
+        v = v / 10;
+    }
+    return s;
+}
 
-	src := fmt.Sprintf(`function main(): i32 {
-    let fd: i32 = tcp_listen(%d);
+function main(): i32 {
+    let fd: i32 = tcp_listen(0);
     if (fd < 0) { return 91; }
+    let port: i32 = tcp_local_port(fd);
+    if (port <= 0) { return 98; }
+    print(port_str(port));
     let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
     let none: u8[] = [];
@@ -37,7 +44,7 @@ func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
     tcp_close(c);
     tcp_close(fd);
     return 42;
-}`, port)
+}`
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "server.fern")
@@ -45,33 +52,28 @@ func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, srcPath, "FERN_STRICT_IR=1"))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
 	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
 
+	port := readAnnouncedPortWithin(t, stdout, 10*time.Second)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	payload := []byte{0x00, 0xFF, 0x80, 0x0A, 0x41}
-	deadline := time.Now().Add(10 * time.Second)
-	sent := false
-	for time.Now().Before(deadline) {
-		conn, derr := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if derr != nil {
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-		if _, werr := conn.Write(payload); werr != nil {
-			conn.Close()
-			t.Fatalf("write payload: %v", werr)
-		}
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("dial the announced port %d: %v", port, err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := conn.Write(payload); err != nil {
 		conn.Close()
-		sent = true
-		break
+		t.Fatalf("write payload: %v", err)
 	}
-	if !sent {
-		t.Fatal("could not connect to server within deadline")
-	}
+	conn.Close()
 
 	_ = cmd.Wait()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
