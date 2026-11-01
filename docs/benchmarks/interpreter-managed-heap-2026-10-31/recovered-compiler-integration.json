@@ -1,0 +1,82 @@
+{
+  "source_commit": "e2c08b93c7ceb9d098d706456f43350c614811dd",
+  "source_tree": "0e9f65a8829ac884112a0eb0a249f704c9b49b31",
+  "parents": [
+    "332f9672441067fe9d2eba81aabb2c6a9b3ad9a4",
+    "9fa1ccbc072369fa4bb345cb9d1574e0beddb5b7",
+    "283051accb1634a58204a16666c7ca9a5d35a940"
+  ],
+  "candidate_blobs": {
+    "compiler/interp.fern": "13c760e23e37a4babd9f1f17c07b66c9d1dc575d",
+    "compiler/interpheap.fern": "5fab4109e191132149b172333c422f79dd56fae2"
+  },
+  "integration": "Preserve the managed heap and bounded reclamation. Include main's bound-module identity and lifecycle checks, plus PR #13988's single-block method rule and original performance limits.",
+  "producer": {
+    "host": "arm64-darwin",
+    "sha256": "f16f04900a4af22f24f7ba9ec744817915d73cc68ba6c5dec8f6f85cda38a0b1"
+  },
+  "tests": {
+    "native": {
+      "result": "pass",
+      "elapsed_seconds": 48.657,
+      "roots": [
+        "BoundModuleOrigin",
+        "BoundTraitModuleIdentity",
+        "InterpreterHeap",
+        "InterpManagedArrayIdentity",
+        "InterpManagedSocketIdentity"
+      ],
+      "log_sha256": "41c42156a00ebdbb7a6701e98559b59464c56c2fc76bdbbabb63df33690a0a64"
+    },
+    "checker_package": {
+      "result": "pass",
+      "elapsed_seconds": 10.412,
+      "log_sha256": "298217e2df76071d1cf56ad7147bf49825ee91478c47a3b414851f0169982e87"
+    },
+    "unit_rest": {
+      "result": "pass",
+      "cmd_fern_elapsed_seconds": 204.892,
+      "log_sha256": "7648ef5e0958329f22666a458a1e6c1729bf4a502867c677200b54b37875e926"
+    },
+    "lint_fast": {
+      "result": "pass",
+      "log_sha256": "01055b1c41a0221b22d53de899174907d3bce248f4625aa938c73c92fa4ed471"
+    },
+    "constraints": {
+      "E057": "Nested cell rejects with E057.",
+      "E082": "Captured view rejects with E082."
+    },
+    "linux": {
+      "result": "pending",
+      "reason": "Docker Desktop reports a read-only internal file system. Fresh Linux and reactor validation still require Docker or CI."
+    }
+  },
+  "bootstrap": {
+    "result": "pass",
+    "target": "arm64-darwin",
+    "stage2_bytes": 17332481,
+    "stage3_bytes": 17332481,
+    "stage2_stage3_sha256": "33c2954d6d7d8009514c4cd466e128e094a39c1712d3fd257084abf25e724309",
+    "stage1_difference": "The stage0 pin predates a code generator change.",
+    "log_sha256": "fa00c94cefe7d3c366529f665c90cbbe6d32320939e330c00728c5606dd0cba6"
+  },
+  "compiler_image": {
+    "target": "x86-64-linux",
+    "bytes": 15784336,
+    "sha256": "75b48824b3dc598161555f4881435c8c4c6766fada824d7bd0e6cc4d3ff85154",
+    "baseline_bytes": 15881456,
+    "measured_driver_rows": 1,
+    "total_baselined_driver_rows": 11,
+    "strict_slice_comparison": "pass",
+    "verified_functions": 8428,
+    "modelled_functions": 8428,
+    "skipped_functions": 0
+  },
+  "selfhost_static_metrics": {
+    "measured_rows": 117,
+    "strict_comparison": "pass",
+    "report_sha256": "5055c35c939ffd61043e1eb256423420cd8f0544e21bbf3dda800c8787eb8156",
+    "baseline_changed": false
+  },
+  "publication": "Private preparation. Wait for PR #13988 to merge before publication. Current-head full CI and feedback remain required."
+}
