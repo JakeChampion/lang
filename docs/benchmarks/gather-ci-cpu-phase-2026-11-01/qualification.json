@@ -1,0 +1,217 @@
+{
+  "main_source": "2fa9f40ab202cb7fea3f071652a732e9402038e1",
+  "original_pr_head": "6c4763bbddd494a18c965ad3d54cad791f78ad4b",
+  "integrated_main": "5abd69d3b461c98d064ad868a48e17b8335cd2f7",
+  "original_ci": {
+    "run": 41318514563,
+    "failed_job": 124884811835,
+    "acknowledgements": 11674,
+    "required": 12800,
+    "participants": 512,
+    "seconds": 5
+  },
+  "passing_main_ci": {
+    "run": 41317969464,
+    "job": 124883618546,
+    "acknowledgements": 31970
+  },
+  "server_controls": {
+    "fixed_point_main_compiler_sha256": "32ccbf71e6d0b4495f9ebffba8784ad224e7409f37a2d63dbc0611dd4ffb14b2",
+    "fixed_point_pr_compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+    "x86_assembly_main_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+    "x86_assembly_pr_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+    "stock_main_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+    "stock_pr_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+    "stock_proof": "same stock CLI emit helper as the test; no load assertions changed"
+  },
+  "node_image_digest": "sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da",
+  "native_arm_controls": [
+    {
+      "participants": 32,
+      "seconds": 5,
+      "cpus": "2",
+      "target": "native arm64-linux",
+      "image": "node:22.23.4-bookworm-slim",
+      "binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "base_binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "base_x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "load_source_sha256": "e551a1fdd456b55ef5999991d50b397ffb7eb839458a6d2751fbcb90a2ccd0c3",
+      "limits": "An ARM Linux CPU-quota control, not an x86 CI timing claim.",
+      "container": "2132a0a62d913a2a98692f95581c92e4bf357200a318bbec35a963999e80fed9",
+      "node_version": "v22.23.4",
+      "ready_exit": 0,
+      "exit": 0,
+      "stdout": "{\"participants\":32,\"seconds\":5,\"acknowledgements\":3008,\"ack_median_ms\":1.74,\"ack_p95_ms\":2.99,\"snapshots_per_second\":9.6,\"received_mib\":1.1,\"server_rss_mib\":14.11,\"rss_increase_mib\":0.06,\"team_score\":42}\ncapacity, live state, movement, collection, fanout, acknowledgements, and seat cleanup OK\n",
+      "stderr": "",
+      "observed_seconds": 5.200943415984511,
+      "server_log": "",
+      "stop": 0
+    },
+    {
+      "participants": 512,
+      "seconds": 5,
+      "cpus": "2",
+      "target": "native arm64-linux",
+      "image": "node:22.23.4-bookworm-slim",
+      "binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "base_binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "base_x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "load_source_sha256": "e551a1fdd456b55ef5999991d50b397ffb7eb839458a6d2751fbcb90a2ccd0c3",
+      "limits": "An ARM Linux CPU-quota control, not an x86 CI timing claim.",
+      "container": "b0cf60bf204cba1b476d12b8de5a8b6db2e46889d34d0ec484e5099f10cd3a84",
+      "node_version": "v22.23.4",
+      "ready_exit": 0,
+      "exit": 0,
+      "stdout": "{\"participants\":512,\"seconds\":5,\"acknowledgements\":47104,\"ack_median_ms\":5.15,\"ack_p95_ms\":14.15,\"snapshots_per_second\":9.71,\"received_mib\":151.58,\"server_rss_mib\":20.11,\"rss_increase_mib\":6.06,\"team_score\":169}\ncapacity, live state, movement, collection, fanout, acknowledgements, and seat cleanup OK\n",
+      "stderr": "",
+      "observed_seconds": 5.325039708055556,
+      "server_log": "",
+      "stop": 0
+    },
+    {
+      "participants": 512,
+      "seconds": 5,
+      "cpus": "1",
+      "target": "native arm64-linux",
+      "image": "node:22.23.4-bookworm-slim",
+      "binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "base_binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "base_x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "load_source_sha256": "e551a1fdd456b55ef5999991d50b397ffb7eb839458a6d2751fbcb90a2ccd0c3",
+      "limits": "An ARM Linux CPU-quota control, not an x86 CI timing claim.",
+      "container": "e49fa46c59f5dcf57016a113e46dd7cbefe4059ad8d5954b6d019674e8570df6",
+      "node_version": "v22.23.4",
+      "ready_exit": 0,
+      "exit": 0,
+      "stdout": "{\"participants\":512,\"seconds\":5,\"acknowledgements\":41472,\"ack_median_ms\":4.15,\"ack_p95_ms\":27.71,\"snapshots_per_second\":10.06,\"received_mib\":156.78,\"server_rss_mib\":20.11,\"rss_increase_mib\":6.06,\"team_score\":168}\ncapacity, live state, movement, collection, fanout, acknowledgements, and seat cleanup OK\n",
+      "stderr": "",
+      "observed_seconds": 5.471905417041853,
+      "server_log": "",
+      "stop": 0
+    },
+    {
+      "participants": 512,
+      "seconds": 5,
+      "cpus": "0.25",
+      "target": "native arm64-linux",
+      "image": "node:22.23.4-bookworm-slim",
+      "binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "base_binary_sha256": "9e052bb2b0a6ee08c6a09cb91dc7489d268696af83033644b04f1f73d3ac2485",
+      "x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "base_x86_assembly_sha256": "1f7d988f5a3595b12601fea18b56892bc4f4d8190e512f3d7738f75905ff45db",
+      "load_source_sha256": "e551a1fdd456b55ef5999991d50b397ffb7eb839458a6d2751fbcb90a2ccd0c3",
+      "limits": "An ARM Linux CPU-quota control, not an x86 CI timing claim.",
+      "container": "536b675f57c7547127a004d3886f3e7cbcff8b3bbbe8da554db10983af7c8cda",
+      "node_version": "v22.23.4",
+      "ready_exit": 0,
+      "exit": 1,
+      "stdout": "",
+      "stderr": "node:internal/modules/run_main:123\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: input acknowledgements must continue under fanout load: 12714 received, 12800 required\n    at file:///work/examples/showcase/tests/gather.load.mjs:120:10\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '==',\n  diff: 'simple'\n}\n\nNode.js v22.23.4\n",
+      "observed_seconds": 9.676157500129193,
+      "server_log": "",
+      "stop": 0
+    }
+  ],
+  "load_script_sha256": "e551a1fdd456b55ef5999991d50b397ffb7eb839458a6d2751fbcb90a2ccd0c3",
+  "go_test_sha256": "1e158a652d07fc97c0acfb51e2706a307649db9297044709221deb02376f16ef",
+  "test_assertions_changed": false,
+  "performance_baselines_changed": false,
+  "limits": "CPU sensitivity control on native ARM Linux; not a measurement of the x86 CI CPU share. Final-head native CI remains pending.",
+  "logs": {
+    "fern-13998-shard8-failed.log": {
+      "path": "/tmp/fern-13998-shard8-failed.log",
+      "sha256": "e2b6b87d24c1a028048fa9d8dc17188a6703f2d7b78ed60fda5366d3e34d8af0"
+    },
+    "fern-13997-89d-job-124883618546.log": {
+      "path": "/tmp/fern-13997-89d-job-124883618546.log",
+      "sha256": "41e7a9b9cbd5be9cfbc5fa636b7aa74da750f2f39e21e635c1526030a8c5fe48"
+    },
+    "fern-13998-stock-base-server.log": {
+      "path": "/tmp/fern-13998-stock-base-server.log",
+      "sha256": "5a832642535f02385efda4ff0858b8e8ba97ea5a6e2e43e710ca2bac5266621d"
+    },
+    "fern-13998-stock-candidate-server.log": {
+      "path": "/tmp/fern-13998-stock-candidate-server.log",
+      "sha256": "61d7435d8f8ac21186ef14cff8f3911ed5ebb22f66610c58b3e16b340dcfa250"
+    },
+    "fern-13998-integrated-main-server.s": {
+      "path": "/tmp/fern-13998-integrated-main-server.s",
+      "sha256": "1328100531e6f1a30a6d19bc27c1e612bc5d78530d83968eab60c546c5655da1"
+    },
+    "fern-13998-integrated-pr-server.s": {
+      "path": "/tmp/fern-13998-integrated-pr-server.s",
+      "sha256": "1328100531e6f1a30a6d19bc27c1e612bc5d78530d83968eab60c546c5655da1"
+    },
+    "fern-13998-integrated-compiler": {
+      "path": "/tmp/fern-13998-integrated-compiler",
+      "sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da"
+    },
+    "fern-13998-gather-sourcelint.log": {
+      "path": "/tmp/fern-13998-gather-sourcelint.log",
+      "sha256": "b109c83964782b456b46a9f3f29337c5cfa284fc0fc366e515f9d0e107a8f039"
+    },
+    "fern-13998-gather-sourcelint-linux-apt.log": {
+      "path": "/tmp/fern-13998-gather-sourcelint-linux-apt.log",
+      "sha256": "e85f711a4767b585486839976944c71b29172f99cd5497d7b6536a7afa054f64"
+    },
+    "fern-13998-gather-lint.log": {
+      "path": "/tmp/fern-13998-gather-lint.log",
+      "sha256": "9e78d9254a20a54f23bfdecb1852c8e77b08bea1026766b1a27ff9b124ed4cf7"
+    },
+    "fern-13998-gather-selection.log": {
+      "path": "/tmp/fern-13998-gather-selection.log",
+      "sha256": "4f71458fd6f9febf14e13b80f342cb2c50f8598a37562e1ab61e91d50c52c353"
+    },
+    "fern-13998-gather-actionlint.log": {
+      "path": "/tmp/fern-13998-gather-actionlint.log",
+      "sha256": "a0f3a11bf1b2dc7c4e9934f25eb8e18de76b4b6c24f7a730327ba1a5c2571cc7"
+    },
+    "fern-13998-integrated-check-sources.log": {
+      "path": "/tmp/fern-13998-integrated-check-sources.log",
+      "sha256": "70c095187ba73cdf257ffad99249751a528a57023602d43dcd3ef98b14664d1a"
+    },
+    "fern-13998-stock-server-proof_test.go": {
+      "path": "/tmp/fern-13998-stock-server-proof_test.go",
+      "sha256": "8c4bf80a7ee8e0252a59bcb9e7e991722da67e85db0cf4848108d8ad1a05be5c"
+    },
+    "fern-13998-stock-server-overlay.json": {
+      "path": "/tmp/fern-13998-stock-server-overlay.json",
+      "sha256": "eb11c81599c66f1b36a393ff596e9264553eb5fb20591b7dcce14e6389afba3d"
+    }
+  },
+  "integration": {
+    "main": "5abd69d3b461c98d064ad868a48e17b8335cd2f7",
+    "owner_head": "6c4763bbddd494a18c965ad3d54cad791f78ad4b",
+    "tree_before_ci_repair": "54717869e9559bf6800f455d1fbb43db1a9d9d28",
+    "raw_compiler_sha256": "81c6afbe815b3253a2be588ffb70cdc7aed37d567ba4f30585d91b60f42447da",
+    "equals_qualified_owner_fixed_point": true,
+    "x86_main_server_assembly_sha256": "1328100531e6f1a30a6d19bc27c1e612bc5d78530d83968eab60c546c5655da1",
+    "x86_owner_server_assembly_sha256": "1328100531e6f1a30a6d19bc27c1e612bc5d78530d83968eab60c546c5655da1"
+  },
+  "validation": {
+    "source_audit_pass_nodes": 218,
+    "source_audit_native_platform_skips": 1,
+    "missing_apt_case_linux": "pass, zero skips",
+    "lint_fast": "pass",
+    "actionlint": "pass",
+    "selection_guards": "all three pass",
+    "source_runtime_gate": "pass, five runtime sets and 85 drivers",
+    "final_native_ci": "pending"
+  },
+  "original_pr_result": {
+    "merged": true,
+    "merge_commit": "de2ec359a22078e3bfe23402b6766b51def8d665",
+    "merged_at": "2026-11-01T16:17:48Z",
+    "merged_by": "PR owner",
+    "ci_attempt": 2,
+    "non_netlify_checks": {
+      "success": 71,
+      "skipped": 25
+    },
+    "load_retry_acknowledgements": 31820,
+    "load_retry_job": 124897984742
+  }
+}
