@@ -96,6 +96,11 @@ function main(): i32 {
 
 func readAnnouncedPort(t *testing.T, stdout io.Reader) int {
 	t.Helper()
+	return readAnnouncedPortWithin(t, stdout, 20*time.Second)
+}
+
+func readAnnouncedPortWithin(t *testing.T, stdout io.Reader, timeout time.Duration) int {
+	t.Helper()
 	type result struct {
 		line string
 		err  error
@@ -115,7 +120,7 @@ func readAnnouncedPort(t *testing.T, stdout io.Reader) int {
 			t.Fatalf("server announced %q, want a port", r.line)
 		}
 		return port
-	case <-time.After(20 * time.Second):
+	case <-time.After(timeout):
 		t.Fatal("server never announced a port")
 		return 0
 	}
