@@ -515,7 +515,7 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
   if (!read_above_for(rd, rd.spent, bi, v, v) || child_used_above(rd, rd.grown, bi, v, 0) || child_live_out(rd, bi, v, 0)) {
     return false;
   }
-  if (child_grown_in(rd, bi, v, 0) && child_used_above(rd, rd.spent, bi, v, 0) && !parent_spent_elsewhere(rd, bi, v)) {
+  if (child_grown_in(rd, bi, v, 0) && child_spent_between(rd, bi, v, 0)) {
     return false;
   }
   return rd.strict.len() == 0 || !read_above_for(rd, rd.strict, bi, v, v);
@@ -554,13 +554,21 @@ function read_in(rd: Reads, bi: i32, x: i32): boolean {
   return false;
 }
 
-function parent_spent_elsewhere(rd: Reads, bi: i32, v: i32): boolean {
-  let p: i32 = rd.par[v];
-  if (p < 0 || p >= rd.spent.len()) {
-    return true;
+// A descendant of the first read is spent in a block the first read
+// dominates, and is not live into bi.
+function child_spent_between(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return false;
   }
-  for s in rd.spent[p] {
-    if (s != bi && s != rd.at[v] && ssadeps.dom_holds(rd.dom, rd.at[v], s)) {
+  for c in rd.kids[rd.first[v]] {
+    if (!ssalive.live_in_has(rd.flow, bi, c)) {
+      for s in rd.spent[c] {
+        if (s != bi && ssadeps.dom_holds(rd.dom, s, rd.at[v])) {
+          return true;
+        }
+      }
+    }
+    if (child_spent_between(rd, bi, c, depth + 1)) {
       return true;
     }
   }
