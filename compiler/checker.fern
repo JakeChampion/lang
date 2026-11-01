@@ -17890,24 +17890,6 @@ function impl_trait_spelling(mod: parser.Module, fd: parser.FuncDecl): string {
   return fd.impl_trait;
 }
 
-function impl_trait_diags(mod: parser.Module): util.Diag[] {
-  let out: util.Diag[] = [];
-  let imports: string[] = import_paths_of(mod);
-  for im in mod.impls {
-    if (im.trait_name.len() == 0) {
-      continue;
-    }
-    let base: string = im.trait_name;
-    if (im.trait_module.len() > 0) {
-      base = im.trait_module + "." + im.trait_name;
-    }
-    if (!bound_import_unloaded(base, imports, mod.trait_reqs) && bound_trait_req(base, im.module, mod.trait_reqs) < 0) {
-      out = out.append(dg_at("E021", "unknown trait \"" + util.demangle(bound_trait_display(base, im.module, mod.trait_reqs)) + "\" in impl", im.line, im.col));
-    }
-  }
-  return out;
-}
-
 function orphan_impl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for im in mod.impls {
@@ -23863,6 +23845,28 @@ function e021_supertrait_impl(mod: parser.Module, spelling: string, self: string
   return false;
 }
 
+function e021_impl_qualifier_visible(mod: parser.Module, im: parser.ImplInfo): boolean {
+  let dot: i32 = util.index_of_sub(im.trait_spelling, ".");
+  if (dot < 0) {
+    return true;
+  }
+  let qual: string = slice_unchecked(im.trait_spelling, 0, dot) + "";
+  if (mod.sights.len() > 0) {
+    for sight in mod.sights {
+      if (sight.module == im.module) {
+        return util.has_str(sight.qualifiers, qual);
+      }
+    }
+    return false;
+  }
+  for imported in mod.imports {
+    if (parser.import_qualifier(imported) == qual) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function e021_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for req in mod.trait_reqs {
@@ -23879,13 +23883,19 @@ function e021_diags(mod: parser.Module): util.Diag[] {
   }
   let own_vec: boolean = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
   for im in mod.impls {
+    if (!e021_impl_qualifier_visible(mod, im)) {
+      out = out.append(dg_at("E021", "unknown trait \"" + im.trait_spelling + "\" in impl", im.line, im.col));
+      continue;
+    }
     let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
     if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
       out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
       continue;
     }
+    let known: boolean = false;
     for trait_req in mod.trait_reqs {
       if (trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
+        known = true;
         let sup: string[] = trait_req.supertraits;
         for parent in sup {
           let elem: string = e021_req_spelling(parent, im, trait_req.type_params, mod.impls);
@@ -23937,6 +23947,10 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           }
         }
       }
+    }
+    let written: string = util.base_type_name(im.trait_ref);
+    if (!known && !derive_import_unloaded(mod, written)) {
+      out = out.append(dg_at("E021", "unknown trait \"" + written + "\" in impl", im.line, im.col));
     }
   }
   return out;
@@ -25425,7 +25439,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   }
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {
-    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(util.append_diags(impl_trait_diags(mod), orphan_impl_diags(mod)), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
+    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
   }
   let leading: util.Diag[] = util.append_diags(fda_diags, decl_diags);
   leading = util.append_diags(leading, signature_diags);
