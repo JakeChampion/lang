@@ -15,17 +15,19 @@ var tokenJoinSrcs = []struct {
 	env  []string
 	src  string
 }{
+	// Keep the closure payload behind a call and read its returned value.
+	// This case must retain counted storage to exercise the token join.
 	{"closure-payload", nil, `function id[T](x: T): T { return x; }
 function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 enum E0 { __E0_V0(boolean, boolean), __E0_V1, __E0_V2(i32, (i32) => i32) }
 struct G0[T] { v: T, n: i32 }
-function (g: G0[T]) get(): T { return g.v; }
+@noinline function (g: G0[T]) get(): T { return g.v; }
 function (g: G0[T]) bump(k: i32): G0[T] { return G0 { ...g, n: ((g.n * 3i32) + k) }; }
 enum GO0[T] { __G0_Nil, __G0_Has(T, i32) }
 function (o: GO0[T]) or(d: T): T { match (o) { __G0_Has(x, _) => { return x; }, __G0_Nil => { return d; } } }
 function (o: GO0[T]) count(): i32 { match (o) { __G0_Has(_, k) => { return k; }, __G0_Nil => { return 0i32; } } }
 function gmk0[T](v: T, n: i32): G0[T] { return G0 { v: v, n: n }; }
-function main(): i32 { let v0: E0 = pick(false, (__E0_V0((235i64 != 808i64), (861i32 != 589i32))), (__E0_V2(628i32, ((__lam_x1: i32) => __lam_x1)))); let __gen_x0: Result[i32, i32] = Ok(740i32); let __gen_a0: G0[Result[i32, i32]] = gmk0(__gen_x0, 569i32); let __gen_b0: G0[Result[i32, i32]] = __gen_a0.bump((match (v0) { __E0_V0(__dv0_0_0, __dv0_0_1) => 752i32, __E0_V1 => 55i32, __E0_V2(__dv0_2_0, __dv0_2_1) => 425i32 })); let __gen_o0: GO0[Result[i32, i32]] = __G0_Nil; if (id(true)) { __gen_o0 = __G0_Has(__gen_b0.get(), __gen_a0.n); } let __gen_e0: Result[i32, i32] = __gen_o0.or(__gen_a0.get()); let __gen_r0: i32 = 0i32; return (__gen_r0 & 255i32); }
+function main(): i32 { let v0: E0 = pick(false, (__E0_V0((235i64 != 808i64), (861i32 != 589i32))), (__E0_V2(628i32, ((__lam_x1: i32) => __lam_x1)))); let __gen_x0: Result[i32, i32] = Ok(740i32); let __gen_a0: G0[Result[i32, i32]] = gmk0(__gen_x0, 569i32); let __gen_b0: G0[Result[i32, i32]] = __gen_a0.bump((match (v0) { __E0_V0(__dv0_0_0, __dv0_0_1) => 752i32, __E0_V1 => 55i32, __E0_V2(__dv0_2_0, __dv0_2_1) => 425i32 })); let __gen_o0: GO0[Result[i32, i32]] = __G0_Nil; if (id(true)) { __gen_o0 = __G0_Has(__gen_b0.get(), __gen_a0.n); } let __gen_e0: Result[i32, i32] = __gen_o0.or(__gen_a0.get()); let __gen_r0: i32 = match (__gen_e0) { Ok(value) => value - 740i32, Err(value) => value }; return (__gen_r0 & 255i32); }
 `},
 	{"string-payload", []string{"FERN_SEM_REUSE=", "FERN_SEM_INLINE="}, `enum E1 { __E1_V0(boolean, boolean), __E1_V1(string, i64), __E1_V2(boolean, i32) }
 struct G0[T] { v: T, n: i32 }

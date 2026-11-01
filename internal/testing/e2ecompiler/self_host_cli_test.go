@@ -279,7 +279,7 @@ function main(): i32 {
 trait MyAdd { function add(self: Self, o: Self): Self; }
 @noinline function kept(x: i32): i32 { return x; }
 
-impl MyAdd for i32 { function add(self: Self, o: Self): Self { return kept(self + o + 1); } }
+impl MyAdd for i32 { @noinline function add(self: Self, o: Self): Self { return kept(self + o + 1); } }
 
 function sum[T: ops.Add](a: T, b: T): T { return a.add(b); }
 function mine[T: MyAdd](a: T, b: T): T { return a.add(b); }
