@@ -34,3 +34,16 @@ Both now run on a Linux ARM host with QEMU, where the old guards skipped.
 An AMD64 container attempt fails in stage0 with an illegal instruction
 under host emulation. It supplies no semantic result.
 Current-head CI must supply native x86 coverage before merge.
+
+The later integration preserves the owner's `ccdca92680` changes
+and public `parser.module_qualifier`. `owner-merge.json` records
+the fresh compiler hash and all 117 static rows for that source.
+All rows pass strict comparison, and the four native map counts remain
+the same. The compiler image remains 15,718,000 bytes, with all 8,355
+functions modelled and zero skips.
+
+That generated compiler builds a two-function program under QEMU.
+The program returns the expected 42.
+Both lane qualifiers, all numeric reducer targets and both TCP port
+regressions pass after the merge. The TCP tests let the server announce
+its bound port before the client connects. All byte and EOF checks remain.
