@@ -3672,11 +3672,16 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
       a = a - 1;
     }
     s = s.write("    ldr x8, [sp], #16\n");
-    if (s.profile > 0 && imm.konst[ins.args[0]] && imm.value[ins.args[0]] == 94i64) {
+    let nr: i32 = ins.args[0];
+    if (s.profile > 0 && imm.konst[nr] && imm.value[nr] == 94i64) {
       s = s.write(profile_exit_asm(s.profile));
       s = s.write("    mov x8, #94\n");
     }
-    s = s.write("    svc #0\n");
+    if (imm.konst[nr]) {
+      s = s.svc(imm.value[nr] as i32);
+    } else {
+      s = s.raw_svc("__" + ins.str);
+    }
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   if (ins.str == "exit") {
@@ -3685,7 +3690,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
       s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
     s = s.write(profile_exit_asm(s.profile));
-    s = s.write("    mov x8, #94\n    svc #0\n    mov x0, #0\n");
+    s = s.write("    mov x8, #94\n").svc(94).write("    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
   s = s.need("heap");
@@ -6127,7 +6132,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
     dfi = dfi + 1;
   }
   s = s.write(profile_exit_asm(s.profile));
-  s = s.write("    mov x8, #94\n    mov x0, #134\n    svc #0\n");
+  s = s.write("    mov x0, #134\n    mov x8, #94\n").svc(94);
   s = s.write(dend + ":\n");
   return s;
 }
@@ -6241,6 +6246,9 @@ function emit_vdso_scan(s: asmcore.EmitState): asmcore.EmitState {
 function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write("_start:\n");
   s = emit_ir_reloc(s, darwin);
+  if (!darwin && asmcore.sandbox_on()) {
+    s = s.write("    bl __fern_seccomp_install\n");
+  }
   if (darwin) {
     if (s.has_need("args")) {
       s = s.write("    adrp x3, __fern_argc\n");
@@ -6309,13 +6317,13 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   }
   s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(94);
   return s;
 }
 
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
-  s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n    svc #0\n    cbnz x0, .Lfern_stack_guard_failed\n");
+  s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n").svc(226).write("    cbnz x0, .Lfern_stack_guard_failed\n");
   s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n.Lfern_stack_kept:\n");
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
   if (darwin) {
@@ -6329,7 +6337,7 @@ function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
   } else {
     s = s.write("    stp x0, xzr, [sp]\n    str x9, [sp, #16]\n");
   }
-  s = s.write("    mov x0, sp\n    mov x1, #0\n    mov x8, #132\n    svc #0\n");
+  s = s.write("    mov x0, sp\n    mov x1, #0\n    mov x8, #132\n").svc(132);
   if (!darwin) {
     s = s.write("    cbnz x0, .Lfern_signal_stack_failed\n");
   }
@@ -6351,7 +6359,7 @@ function emit_stack_map(s: asmcore.EmitState, size: string, darwin: boolean): as
   if (darwin) {
     flags = "    mov x3, #0x1002\n";
   }
-  return s.write("    mov x0, #0\n" + size + "    mov x2, #3\n" + flags + "    mov x4, #0\n    sub x4, x4, #1\n    mov x5, #0\n    mov x8, #222\n    svc #0\n");
+  return s.write("    mov x0, #0\n" + size + "    mov x2, #3\n" + flags + "    mov x4, #0\n    sub x4, x4, #1\n    mov x5, #0\n    mov x8, #222\n").svc(222);
 }
 
 // A runtime entry point the kernel or a trampoline reaches. It is not a
@@ -6386,12 +6394,15 @@ function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitStat
 }
 
 function emit_segv_install(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  let install: string = "    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n    mov x8, #134\n    svc #0\n";
-  s = s.write("    mov x0, #11\n" + install);
+  s = emit_sigaction(s, 11);
   if (darwin) {
-    s = s.write("    mov x0, #10\n" + install);
+    s = emit_sigaction(s, 10);
   }
   return s;
+}
+
+function emit_sigaction(s: asmcore.EmitState, signo: i32): asmcore.EmitState {
+  return s.write("    mov x0, #" + util.i32_to_string(signo) + "\n    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n    mov x8, #134\n").svc(134);
 }
 
 function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -6440,7 +6451,7 @@ function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_canary_init(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    adrp x0, __fern_canary\n    add x0, x0, :lo12:__fern_canary\n    mov x1, #16\n    mov x2, #0\n    mov x8, #278\n    svc #0\n");
+  s = s.write("    adrp x0, __fern_canary\n    add x0, x0, :lo12:__fern_canary\n    mov x1, #16\n    mov x2, #0\n    mov x8, #278\n").svc(278);
   s = s.write("    cmp x0, #16\n    b.ne .Lfern_canary_read_failed\n");
   s = s.write(quar_addr("x0", "__fern_rng_state"));
   return s.write("    ldr x1, [x0]\n    orr x1, x1, #1\n    str x1, [x0]\n");
@@ -6448,8 +6459,8 @@ function emit_canary_init(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_startup_failure(s: asmcore.EmitState, label: string, msg: string): asmcore.EmitState {
   s = s.write("    .section .rodata\n" + label + "_msg:\n    .ascii \"" + msg + "\\n\"\n    .text\n" + label + ":\n");
-  s = s.write("    adrp x1, " + label + "_msg\n    add x1, x1, :lo12:" + label + "_msg\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #2\n    mov x8, #64\n    svc #0\n");
-  return s.write("    mov x0, #134\n    mov x8, #94\n    svc #0\n");
+  s = s.write("    adrp x1, " + label + "_msg\n    add x1, x1, :lo12:" + label + "_msg\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #2\n    mov x8, #64\n").svc(64);
+  return s.write("    mov x0, #134\n    mov x8, #94\n").svc(94);
 }
 
 pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
@@ -6926,7 +6937,7 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Llc_write:\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(64);
   s = s.write("    ret\n");
   s = s.write(".Llc_wrnum:\n");
   s = s.write("    sub sp, sp, #48\n");
@@ -6955,7 +6966,7 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x1, x3\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(64);
   s = s.write("    add sp, sp, #48\n");
   s = s.write("    ret\n");
   return s;
@@ -7112,8 +7123,8 @@ function emit_san_waf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x2, #67\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
-  return s.write(san_report_exit(s));
+  s = s.svc(64);
+  return san_report_exit(s);
 }
 
 // Under -harden a free list hands out one of its first eight blocks, chosen
@@ -7181,7 +7192,7 @@ function emit_guard_bump(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x1, #4096\n");
   s = s.write("    mov x2, #0\n");
   s = s.write("    mov x8, #226\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(226);
   s = s.write("    ldp x8, x9, [sp], #16\n");
   s = s.write("    ldp x1, x2, [sp], #16\n");
   s = s.write("    mov x0, x2\n");
@@ -7460,16 +7471,16 @@ function emit_san_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x2, #46\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
-  s = s.write(san_report_exit(s));
+  s = s.svc(64);
+  s = san_report_exit(s);
   return s;
 }
 
-function san_report_exit(s: asmcore.EmitState): string {
+function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
   if (s.backtrace) {
-    return "    mov x19, #124\n    b __fern_bt_exit\n";
+    return s.write("    mov x19, #124\n    b __fern_bt_exit\n");
   }
-  return profile_exit_asm(s.profile) + "    mov x0, #124\n    mov x8, #94\n    svc #0\n";
+  return s.write(profile_exit_asm(s.profile) + "    mov x0, #124\n    mov x8, #94\n").svc(94);
 }
 
 function bt_strip_signature(s: asmcore.EmitState): asmcore.EmitState {
@@ -7490,7 +7501,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x2, #11\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(64);
   s = s.write("    mov x20, x29\n");
   s = s.write("    mov x21, #64\n");
   s = s.write("    mov x22, sp\n");
@@ -7520,7 +7531,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, x19\n");
   s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(94);
   s = s.write(".Lbt_hex:\n");
   s = s.write("    sub sp, sp, #32\n");
   s = s.write("    mov w2, #32\n");
@@ -7552,7 +7563,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x1, sp\n");
   s = s.write("    mov x2, #21\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(64);
   s = s.write("    add sp, sp, #32\n");
   s = s.write("    ret\n");
   return s;
@@ -7572,8 +7583,8 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x2, #61\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
-  return s.write(san_report_exit(s));
+  s = s.svc(64);
+  return san_report_exit(s);
 }
 
 function high_heap_probe_on(): boolean {
@@ -8132,7 +8143,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x19, x0\n");
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(64);
   if (s.backtrace) {
     s = s.write("    b __fern_bt_exit\n");
     s = s.write(".size __fern_report, .-__fern_report\n");
@@ -8141,7 +8152,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, x19\n");
   s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(94);
   return s.write(".size __fern_report, .-__fern_report\n");
 }
 
@@ -8316,7 +8327,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    sub x4, x4, #1\n");
   s = s.write("    mov x5, #0\n");
   s = s.write("    mov x8, #222\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(222);
   s = s.write("    cmn x0, #0\n");
   s = s.write("    b.mi .Lalloc_map_fail\n");
   s = s.write("    adrp x1, __fern_heap_ptr\n");
@@ -9619,30 +9630,30 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x1, #0\n");
   s = s.write("    mov x2, #0\n");
   s = s.write("    mov x8, #24\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(24);
   s = s.write("    ldr w0, [sp, #108]\n");
   s = s.write("    mov x1, #1\n");
   s = s.write("    mov x2, #0\n");
   s = s.write("    mov x8, #24\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(24);
   s = s.write("    ldr w0, [sp, #116]\n");
   s = s.write("    mov x1, #2\n");
   s = s.write("    mov x2, #0\n");
   s = s.write("    mov x8, #24\n");
-  s = s.write("    svc #0\n");
-  s = s.write("    ldr w0, [sp, #96]\n  mov x8, #57\n  svc #0\n");
-  s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n  svc #0\n");
-  s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n  svc #0\n");
-  s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n  svc #0\n");
-  s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n  svc #0\n");
-  s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n  svc #0\n");
+  s = s.svc(24);
+  s = s.write("    ldr w0, [sp, #96]\n  mov x8, #57\n").svc(57);
+  s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n").svc(57);
+  s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n").svc(57);
+  s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n").svc(57);
+  s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n").svc(57);
+  s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n").svc(57);
   s = s.write("    mov x0, x23\n");
   s = s.write("    mov x1, x24\n");
   s = s.write("    adrp x9, __fern_envp\n");
   s = s.write("    add x9, x9, :lo12:__fern_envp\n");
   s = s.write("    ldr x2, [x9]\n");
   s = s.write("    mov x8, #221\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(221);
   s = s.write("    mov x26, x0\n");
   s = s.write("    mov x22, #0\n");
   s = s.write(".Lsp_clen:\n");
@@ -9678,7 +9689,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x9, x9, :lo12:__fern_envp\n");
   s = s.write("    ldr x2, [x9]\n");
   s = s.write("    mov x8, #221\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(221);
   s = s.write("    add x0, x22, #10\n");
   s = s.write("    bl __fern_alloc\n");
   s = s.write("    mov x25, x0\n");
@@ -9710,7 +9721,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x9, x9, :lo12:__fern_envp\n");
   s = s.write("    ldr x2, [x9]\n");
   s = s.write("    mov x8, #221\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(221);
   s = s.write("    sub sp, sp, #48\n");
   s = s.write("    str x23, [sp]\n");
   s = s.write("    str x22, [sp, #16]\n");
@@ -9718,17 +9729,17 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    bl __fn___fern_sp_exec_failed\n");
   s = s.write(".Lsp_parent:\n");
   s = s.write("    mov x22, x0\n");
-  s = s.write("    ldr w0, [sp, #96]\n   mov x8, #57\n  svc #0\n");
-  s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n  svc #0\n");
-  s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n  svc #0\n");
+  s = s.write("    ldr w0, [sp, #96]\n   mov x8, #57\n").svc(57);
+  s = s.write("    ldr w0, [sp, #108]\n  mov x8, #57\n").svc(57);
+  s = s.write("    ldr w0, [sp, #116]\n  mov x8, #57\n").svc(57);
   s = s.write("    ldr x2, [x21, #8]\n");
   s = s.write("    cbz x2, .Lsp_close_in\n");
   s = s.write("    ldr w0, [sp, #100]\n");
   s = s.write("    ldr x1, [x21]\n");
   s = s.write("    mov x8, #64\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(64);
   s = s.write(".Lsp_close_in:\n");
-  s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n  svc #0\n");
+  s = s.write("    ldr w0, [sp, #100]\n  mov x8, #57\n").svc(57);
   s = s.write("    mov x0, #65536\n");
   s = s.write("    bl __fern_alloc\n");
   s = s.write("    mov x25, x0\n");
@@ -9741,13 +9752,13 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr w0, [sp, #104]\n");
   s = s.write("    add x1, x25, x26\n");
   s = s.write("    mov x8, #63\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(63);
   s = s.write("    cmp x0, #0\n");
   s = s.write("    b.le .Lsp_rdo_d\n");
   s = s.write("    add x26, x26, x0\n");
   s = s.write("    b .Lsp_rdo\n");
   s = s.write(".Lsp_rdo_d:\n");
-  s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n  svc #0\n");
+  s = s.write("    ldr w0, [sp, #104]\n  mov x8, #57\n").svc(57);
   s = s.write("    mov x0, #65536\n");
   s = s.write("    bl __fern_alloc\n");
   s = s.write("    mov x27, x0\n");
@@ -9760,19 +9771,19 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr w0, [sp, #112]\n");
   s = s.write("    add x1, x27, x28\n");
   s = s.write("    mov x8, #63\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(63);
   s = s.write("    cmp x0, #0\n");
   s = s.write("    b.le .Lsp_rde_d\n");
   s = s.write("    add x28, x28, x0\n");
   s = s.write("    b .Lsp_rde\n");
   s = s.write(".Lsp_rde_d:\n");
-  s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n  svc #0\n");
+  s = s.write("    ldr w0, [sp, #112]\n  mov x8, #57\n").svc(57);
   s = s.write("    mov x0, x22\n");
   s = s.write("    add x1, sp, #120\n");
   s = s.write("    mov x2, #0\n");
   s = s.write("    mov x3, #0\n");
   s = s.write("    mov x8, #260\n");
-  s = s.write("    svc #0\n");
+  s = s.svc(260);
   s = s.write("    ldr w9, [sp, #120]\n");
   s = s.write("    and w10, w9, #127\n");
   s = s.write("    cbnz w10, .Lsp_signaled\n");
@@ -10703,7 +10714,7 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
       s = s.write("    mov x19, x1\n    mov x20, x4\n    mov x21, x5\n    mov x16, x0\n    mov x0, x2\n    mov x1, x3\n    mov x2, x4\n    blr x16\n");
       s = s.write("    mov x0, x20\n    mov x1, x19\n    mov x2, x21\n    mov x16, #184\n    svc #0x80\n    brk #1\n");
     } else {
-      s = s.write("    mov x8, #139\n    svc #0\n");
+      s = s.write("    mov x8, #139\n").svc(139);
     }
   }
   if (s.has_need("signal_taken")) {
@@ -11475,7 +11486,7 @@ function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
     return s;
   }
   s = profile_frame(s, "__fern_profile_alloc");
-  s = s.write("    stp x0, x1, [sp, #-16]!\n    stp x2, x3, [sp, #-16]!\n    stp x4, x5, [sp, #-16]!\n    stp x6, x7, [sp, #-16]!\n    stp x8, x9, [sp, #-16]!\n    stp x10, x11, [sp, #-16]!\n    stp x12, x13, [sp, #-16]!\n    stp x14, x15, [sp, #-16]!\n    stp x16, x17, [sp, #-16]!\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_alloc_return\n    add x15, x12, #144\n    mov x13, #1\n    ldaddal x13, x13, [x15]\n    add x13, x13, #1\n    and x13, x13, #63\n    cbnz x13, .Lprofile_alloc_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_alloc_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n    mov x13, xzr\n    casal x13, x14, [x15]\n    cbnz x13, .Lprofile_alloc_drop\n    ldr x13, [x29]\n    ldr x0, [x13, #8]\n    sub x0, x0, #1\n    ldr x9, [x13]\n    add x10, x29, #16\n    mov x11, x12\n    ldr x12, [sp, #128]\n    lsl x12, x12, #6\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_alloc_unlock\n    bl .Lprofile_drop\n.Lprofile_alloc_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_alloc_return\n.Lprofile_alloc_drop:\n    bl .Lprofile_drop\n.Lprofile_alloc_return:\n    ldp x16, x17, [sp], #16\n    ldp x14, x15, [sp], #16\n    ldp x12, x13, [sp], #16\n    ldp x10, x11, [sp], #16\n    ldp x8, x9, [sp], #16\n    ldp x6, x7, [sp], #16\n    ldp x4, x5, [sp], #16\n    ldp x2, x3, [sp], #16\n    ldp x0, x1, [sp], #16\n");
+  s = s.write("    stp x0, x1, [sp, #-16]!\n    stp x2, x3, [sp, #-16]!\n    stp x4, x5, [sp, #-16]!\n    stp x6, x7, [sp, #-16]!\n    stp x8, x9, [sp, #-16]!\n    stp x10, x11, [sp, #-16]!\n    stp x12, x13, [sp, #-16]!\n    stp x14, x15, [sp, #-16]!\n    stp x16, x17, [sp, #-16]!\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_alloc_return\n    add x15, x12, #144\n    mov x13, #1\n    ldaddal x13, x13, [x15]\n    add x13, x13, #1\n    and x13, x13, #63\n    cbnz x13, .Lprofile_alloc_return\n    mov x8, #172\n").svc(172).write("    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_alloc_return\n    mov x8, #178\n").svc(178).write("    mov x14, x0\n    add x15, x12, #40\n    mov x13, xzr\n    casal x13, x14, [x15]\n    cbnz x13, .Lprofile_alloc_drop\n    ldr x13, [x29]\n    ldr x0, [x13, #8]\n    sub x0, x0, #1\n    ldr x9, [x13]\n    add x10, x29, #16\n    mov x11, x12\n    ldr x12, [sp, #128]\n    lsl x12, x12, #6\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_alloc_unlock\n    bl .Lprofile_drop\n.Lprofile_alloc_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_alloc_return\n.Lprofile_alloc_drop:\n    bl .Lprofile_drop\n.Lprofile_alloc_return:\n    ldp x16, x17, [sp], #16\n    ldp x14, x15, [sp], #16\n    ldp x12, x13, [sp], #16\n    ldp x10, x11, [sp], #16\n    ldp x8, x9, [sp], #16\n    ldp x6, x7, [sp], #16\n    ldp x4, x5, [sp], #16\n    ldp x2, x3, [sp], #16\n    ldp x0, x1, [sp], #16\n");
   return profile_return(s);
 }
 
@@ -11491,11 +11502,11 @@ function emit_profile_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Em
   s = s.write(".Lprofile_timer: .quad 0, 10000, 0, 10000\n    .text\n");
   s = emit_runtime("__fern_profile_start __fern_profile_sample __fern_profile_finish", s);
   s = profile_frame(s, "__fern_profile_signal");
-  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_signal_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_signal_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n    mov x13, xzr\n    casal x13, x14, [x15]\n    cbnz x13, .Lprofile_busy\n" + profile_interrupted_state(darwin) + "    mov x11, x12\n    mov x12, #1\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_signal_unlock\n    bl .Lprofile_drop\n.Lprofile_signal_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_signal_return\n.Lprofile_busy:\n    bl .Lprofile_drop\n.Lprofile_signal_return:\n");
+  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #24]\n    cbz x13, .Lprofile_signal_return\n    mov x8, #172\n").svc(172).write("    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_signal_return\n    mov x8, #178\n").svc(178).write("    mov x14, x0\n    add x15, x12, #40\n    mov x13, xzr\n    casal x13, x14, [x15]\n    cbnz x13, .Lprofile_busy\n" + profile_interrupted_state(darwin) + "    mov x11, x12\n    mov x12, #1\n    bl __fn___fern_profile_sample.r\n    cbz x0, .Lprofile_signal_unlock\n    bl .Lprofile_drop\n.Lprofile_signal_unlock:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #40\n    stlr xzr, [x15]\n    b .Lprofile_signal_return\n.Lprofile_busy:\n    bl .Lprofile_drop\n.Lprofile_signal_return:\n");
   s = profile_return(s);
   s = s.write(".Lprofile_drop:\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    add x15, x12, #8\n    mov x13, #1\n    ldaddal x13, x13, [x15]\n    ret\n");
   s = profile_frame(s, "__fern_profile_flush");
-  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_return\n    mov x8, #172\n    svc #0\n    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_flush_return\n    mov x8, #178\n    svc #0\n    mov x14, x0\n    add x15, x12, #40\n.Lprofile_flush_lock:\n    mov x13, xzr\n    casal x13, x14, [x15]\n    cbz x13, .Lprofile_flush_owned\n    cmp x13, x14\n    b.eq .Lprofile_flush_reentrant\n    yield\n    b .Lprofile_flush_lock\n.Lprofile_flush_reentrant:\n    ldr x13, [x12, #32]\n    cmp x13, #1\n    b.eq .Lprofile_flush_return\n.Lprofile_flush_owned:\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_unlock\n    str xzr, [x12, #24]\n    mov x13, #1\n    str x13, [x12, #32]\n    mov x0, x12\n    bl __fn___fern_profile_finish.r\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    mov x13, #2\n    str x13, [x12, #32]\n.Lprofile_flush_unlock:\n    add x15, x12, #40\n    stlr xzr, [x15]\n.Lprofile_flush_return:\n");
+  s = s.write("    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_return\n    mov x8, #172\n").svc(172).write("    ldr x13, [x12, #128]\n    cmp x0, x13\n    b.ne .Lprofile_flush_return\n    mov x8, #178\n").svc(178).write("    mov x14, x0\n    add x15, x12, #40\n.Lprofile_flush_lock:\n    mov x13, xzr\n    casal x13, x14, [x15]\n    cbz x13, .Lprofile_flush_owned\n    cmp x13, x14\n    b.eq .Lprofile_flush_reentrant\n    yield\n    b .Lprofile_flush_lock\n.Lprofile_flush_reentrant:\n    ldr x13, [x12, #32]\n    cmp x13, #1\n    b.eq .Lprofile_flush_return\n.Lprofile_flush_owned:\n    ldr x13, [x12, #32]\n    cmp x13, #2\n    b.eq .Lprofile_flush_unlock\n    str xzr, [x12, #24]\n    mov x13, #1\n    str x13, [x12, #32]\n    mov x0, x12\n    bl __fn___fern_profile_finish.r\n    adrp x12, .Lprofile_ring\n    add x12, x12, :lo12:.Lprofile_ring\n    mov x13, #2\n    str x13, [x12, #32]\n.Lprofile_flush_unlock:\n    add x15, x12, #40\n    stlr xzr, [x15]\n.Lprofile_flush_return:\n");
   s = profile_return(s);
   if (darwin) {
     s = emit_profile_trampoline(s);
@@ -11581,12 +11592,34 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
 }
 
 function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
+  if (darwin && asmcore.sandbox_on()) {
+    eprint("fern: FERN_SANDBOX=1 has no sandbox on arm64-darwin; the seccomp filter is a Linux kernel feature");
+    exit(1);
+    return "";
+  }
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod.funcs);
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
+  if (asmcore.sandbox_on()) {
+    s = emit_seccomp_install(s);
+  }
   irverifygate.close_memo(s.memo);
   return s.take_text();
+}
+
+// The filter admits the numbers the emitted program contains. The installer
+// itself is not on the list: after it runs the program needs neither call.
+function emit_seccomp_install(s: asmcore.EmitState): asmcore.EmitState {
+  let allowed: i32[] = asmcore.seccomp_allowlist(s);
+  s = s.write("    .text\n__fern_seccomp_install:\n");
+  s = s.write("    mov x0, #38\n    mov x1, #1\n    mov x2, #0\n    mov x3, #0\n    mov x4, #0\n    mov x8, #167\n").svc(167);
+  s = s.write("    sub sp, sp, #16\n    mov x0, #" + util.i32_to_string(allowed.len() + 6) + "\n    str x0, [sp]\n");
+  s = s.write("    adrp x0, .Lseccomp_filter\n    add x0, x0, :lo12:.Lseccomp_filter\n    str x0, [sp, #8]\n");
+  s = s.write("    mov x0, #1\n    mov x1, #0\n    mov x2, sp\n    mov x8, #277\n").svc(277);
+  s = s.write("    add sp, sp, #16\n    ret\n");
+  s = asmcore.emit_seccomp_filter(s, "0xC00000B7", allowed);
+  return s.write("    .text\n");
 }
 
 pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, sw: asmcore.Switches): string {
@@ -11601,6 +11634,11 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   let derrs: util.Diag[] = asmcore.display_errs_module(mod, s);
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));
+    exit(1);
+    return ssaprepare.Output { text: "", bodies: [] };
+  }
+  if (globl_defs && asmcore.sandbox_on()) {
+    eprint("fern: FERN_SANDBOX=1 needs the whole-program emit; a per-module unit cannot see its siblings' syscalls");
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
   }
@@ -11650,6 +11688,9 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   }
   if (is_entry) {
     s = emit_ir_runtime_settled(s, false);
+    if (asmcore.sandbox_on()) {
+      s = emit_seccomp_install(s);
+    }
   } else {
     s = emit_rodata_pools_arm64(s, false);
   }

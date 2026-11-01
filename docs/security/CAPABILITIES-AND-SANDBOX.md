@@ -44,6 +44,6 @@ The compiler reads sources and writes an image, so a sandbox for build scripts h
 
 - The vocabulary is coarse. `net` is every host and every port, and `fs` is every path.
 - A grant is static. A program cannot attenuate a capability at run time or hand a dependency a single file.
-- The sandbox filters by system call number alone, and only on x86-64-linux.
+- The sandbox filters by system call number alone, on x86-64-linux and arm64-linux.
 - A foreign function reached through `__c_call` is outside the vocabulary. The raw builtins are the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md).
 - A resource quota exists for the arena and the descriptor count. There is no CPU time or child process quota.
