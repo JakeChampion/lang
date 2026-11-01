@@ -2,16 +2,12 @@ package e2ecompiler
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 )
 
 func TestSelfHostIRStrengthPeephole(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("ir_strength_run driver runs natively; skipping under an exec runner")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/ir_strength_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_strength_run.fern", "ir_strength_run")
@@ -180,7 +176,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"ds_copies: const_i32 0 ; return\n" +
 		"ds_read_again: const_i32 7 ; store_local 0 ; load_local 0 ; return\n"
 
-	cmd := exec.Command(bin)
+	cmd := runX86_64Bin(runner, bin)
 	out, _ := cmd.Output()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("ir_strength_run did not exit normally")

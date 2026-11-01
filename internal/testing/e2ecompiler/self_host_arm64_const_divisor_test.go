@@ -12,14 +12,9 @@ func TestSelfHostConstDivisorArm64(t *testing.T) {
 	if _, err := exec.LookPath("qemu-aarch64"); err != nil {
 		t.Skip("qemu-aarch64 not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("self-host CLI driver runs only natively (argv paths)")
-	}
+	h := selfHostCLIForHost(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	dir := t.TempDir()
 
 	compile := func(t *testing.T, name, src string, args ...string) string {
 		t.Helper()
@@ -28,7 +23,7 @@ func TestSelfHostConstDivisorArm64(t *testing.T) {
 			t.Fatalf("write src: %v", err)
 		}
 		outPath := filepath.Join(dir, name+".out")
-		cmd := exec.Command(fernBin, append(append([]string{"-target", "arm64-linux"}, args...), "-o", outPath, srcPath)...)
+		cmd := exec.Command(h.cli, append(append([]string{"-target", "arm64-linux"}, args...), "-o", outPath, srcPath, h.stdlib)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("compile %s: %v\n%s", name, err, out)
 		}
