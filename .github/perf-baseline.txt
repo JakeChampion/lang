@@ -1,3 +1,6 @@
+# 2026-11-01: PR #14009 run 41350917312, perf-aarch64. A branch on a join of constants goes to its arm,
+# and __fern_buf_push takes a direct path: enum_match.ir -39.3%, http_hello.ir -2.4%, three .text rows
+# shrink, http_hello.text +1.35% and perceus_rbtree_ck.ir +1.25%.
 # 2026-11-01: PR #13988 run 41287852525, perf-x86_64 and perf-aarch64. A method joins the once set only
 # when its body is one block: ordmap_insert.text -3.4% to -3.6%, pvec_with and utf8_ingest return to
 # their values before the splice, and pmap_insert.text +1.5% to +2.4%.
@@ -481,12 +484,12 @@ aarch64/deflate_decode.ir	35961899
 aarch64/deflate_decode.text	13839
 aarch64/deflate_encode.ir	44105319
 aarch64/deflate_encode.text	7910
-aarch64/enum_match.text	1227
-aarch64/enum_match.ir	41175104
+aarch64/enum_match.text	1112
+aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	15945
+aarch64/http_hello.text	16160
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
-aarch64/http_hello.ir	24448615
+aarch64/http_hello.ir	23864615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
 # 2026-11-01 (#13981): Helper reachability restores the original map limits. The division integration passes all 117 static rows.
@@ -516,9 +519,9 @@ aarch64/string_build.text	2361
 aarch64/string_build.ir	47221466
 aarch64/string_count_byte.text	1445
 aarch64/string_count_byte.ir	295207223
-aarch64/string_find_byte.text	1865
+aarch64/string_find_byte.text	1843
 aarch64/string_find_byte.ir	55921279
-aarch64/string_rfind_byte.text	1989
+aarch64/string_rfind_byte.text	1965
 aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2565
 aarch64/string_scan.ir	59787692
@@ -553,6 +556,6 @@ aarch64/perceus_nqueens.ir	106638432
 aarch64/perceus_rbtree.text	3158
 aarch64/perceus_rbtree.ir	59717393
 aarch64/perceus_rbtree_ck.text	3251
-aarch64/perceus_rbtree_ck.ir	59058355
+aarch64/perceus_rbtree_ck.ir	59797238
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
