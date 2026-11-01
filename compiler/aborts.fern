@@ -46,6 +46,10 @@ pub function free_range(): string {
   return "fern: release of memory outside the heap";
 }
 
+pub function double_free(): string {
+  return "fern: release of memory that is already free";
+}
+
 pub function busy(): string {
   return "fern: two threads entered this shared object at once";
 }

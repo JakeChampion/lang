@@ -1548,7 +1548,7 @@ function ssa_operand_sep(c: u8): boolean {
 }
 
 function leaf_aborts(): string[] {
-  return ["__fern_oob_abort", "__fern_str_oob_abort", "__fern_slice_abort", "__fern_alloc_size_abort"];
+  return ["__fern_oob_abort", "__fern_str_oob_abort", "__fern_slice_abort", "__fern_alloc_size_abort", "__fern_double_free_abort"];
 }
 
 function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -7665,31 +7665,44 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
 }
 
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string): asmcore.EmitState {
+  return freelist_push_classed(capw_class(s, words), ptr, words, base, tmp, "");
+}
+
+function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
   let l: asmcore.LabelOut = asmcore.fresh_label(s);
   s = l.state.write("    cmp " + words + ", #256\n");
   s = s.write("    b.ls " + l.name + "\n");
   s = s.write("    stp " + words + ", x30, [sp, #-16]!\n");
   s = s.write("    bl __fern_capw\n");
   s = s.write("    ldp " + words + ", x30, [sp], #16\n");
-  s = s.write(l.name + ":\n");
-  return freelist_push_classed(s, ptr, words, base, tmp);
+  return s.write(l.name + ":\n");
 }
 
-function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string): asmcore.EmitState {
+// Pushes ptr on the free list of its class. With `twice` set, a block that is
+// already the head of the list branches to that label instead.
+function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string, twice: string): asmcore.EmitState {
   s = s.write("    adrp " + base + ", __fern_freelist\n");
   s = s.write("    add " + base + ", " + base + ", :lo12:__fern_freelist\n");
   s = s.write("    ldr " + tmp + ", [" + base + ", " + words + ", lsl #3]\n");
+  if (twice != "") {
+    s = s.write("    cmp " + tmp + ", " + ptr + "\n");
+    s = s.write("    b.eq " + twice + "\n");
+  }
   s = s.write("    str " + tmp + ", [" + ptr + "]\n");
   s = s.write("    str " + ptr + ", [" + base + ", " + words + ", lsl #3]\n");
   return s;
 }
 
-function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string): asmcore.EmitState {
+// Frees the block at ptr of words words. With `raw` the block is a raw release,
+// and a block that is already the head of its list aborts as a double free.
+function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: string, raw: boolean): asmcore.EmitState {
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp " + words + ", x9\n");
   s = s.write("    b.hs ." + lbl + "_large\n");
   s = lc_bump_free_words(s, words, "x3", "x10");
-  if (!s.rc_free_debug) {
+  if (!s.rc_free_debug && raw) {
+    s = freelist_push_classed(capw_class(s, words), ptr, words, "x3", "x10", "__fern_double_free_abort");
+  } else if (!s.rc_free_debug) {
     s = freelist_push(s, ptr, words, "x3", "x10");
   } else {
     s = quar_push(s, ptr, words, 16);
@@ -8377,6 +8390,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
   s = abort_trap(s, "__fern_free_range_abort", ".Lmsg_free_range", aborts.free_range(), 134);
+  s = abort_trap(s, "__fern_double_free_abort", ".Lmsg_double_free", aborts.double_free(), 134);
   for name in leaf_aborts() {
     s = s.write(name + "_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b " + name + "\n");
   }
@@ -8532,7 +8546,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr x6, [x19, #16]\n");
     s = s.write("    add x6, x6, #7\n");
     s = s.write("    lsr x6, x6, #3\n");
-    s = buf_block_free(s, "x5", "x6", "Lbufres_old");
+    s = buf_block_free(s, "x5", "x6", "Lbufres_old", false);
     s = s.write(".Lbufres_store:\n");
     s = s.write("    str x22, [x19]\n");
     s = s.write("    str x21, [x19, #16]\n");
@@ -8701,11 +8715,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr x6, [x19, #16]\n");
     s = s.write("    add x6, x6, #7\n");
     s = s.write("    lsr x6, x6, #3\n");
-    s = buf_block_free(s, "x5", "x6", "Lbuffree_data");
+    s = buf_block_free(s, "x5", "x6", "Lbuffree_data", false);
     s = s.write(".Lbuffree_ctl:\n");
     s = s.write("    mov x5, x19\n");
     s = s.write("    mov x6, #4\n");
-    s = buf_block_free(s, "x5", "x6", "Lbuffree_ctlblk");
+    s = buf_block_free(s, "x5", "x6", "Lbuffree_ctlblk", false);
     s = s.write(".Lbuffree_ret:\n");
     s = s.write("    ldp x19, x20, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
@@ -9276,6 +9290,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    adrp x3, __fern_large_freelist\n");
   s = s.write("    add x3, x3, :lo12:__fern_large_freelist\n");
   s = s.write("    ldr x4, [x3, x2, lsl #3]\n");
+  s = s.write("    cmp x4, x1\n");
+  s = s.write("    b.eq __fern_double_free_abort_leaf\n");
   s = s.write("    str x4, [x1]\n");
   s = s.write("    str x1, [x3, x2, lsl #3]\n");
   s = s.write(".Llpush_ret:\n");
@@ -9298,7 +9314,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = s.write(quarantine_rc("[x0]", "w9", s.rc_free_debug));
   }
-  s = buf_block_free(s, "x0", "x5", "Lrawfree_b");
+  s = buf_block_free(s, "x0", "x5", "Lrawfree_b", true);
   s = s.write(".Lrawfree_done:\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
@@ -9323,7 +9339,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = lc_bump_free_words(s, "x1", "x3", "x9");
   if (!s.rc_free_debug) {
     s = s.write(".Larrdec_push:\n");
-    s = freelist_push_classed(s, "x2", "x1", "x3", "x9");
+    s = freelist_push_classed(s, "x2", "x1", "x3", "x9", "");
   } else {
     s = quar_push(s, "x2", "x1", 8);
   }
@@ -9446,7 +9462,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = lc_bump_free_words(s, "x2", "x3", "x10");
   if (!s.rc_free_debug) {
     s = s.write(".Lstrfree_fused_push:\n");
-    s = freelist_push_classed(s, "x1", "x2", "x3", "x10");
+    s = freelist_push_classed(s, "x1", "x2", "x3", "x10", "");
   } else {
     s = s.write("    b .Lstrfree_quar\n");
   }

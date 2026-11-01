@@ -31,6 +31,8 @@ var abortReportCases = []struct{ name, src, cause string }{
 	{"buf_push_range_inverted", bufPushRangeSrc("args().len() + 2", "1"), "fern: slice range out of bounds"},
 	{"map_snapshot_key_past_end", mapSnapshotPastEndSrc("0"), "fern: array index out of range"},
 	{"map_snapshot_value_past_end", mapSnapshotPastEndSrc("1"), "fern: array index out of range"},
+	{"raw_double_free", `function main(): i32 { unsafe { let p: usize = __alloc(64); __free(p, 64); __free(p, 64); return 0; } }`, "fern: release of memory that is already free"},
+	{"raw_double_free_large", `function main(): i32 { unsafe { let p: usize = __alloc(1048576); __free(p, 1048576); __free(p, 1048576); return 0; } }`, "fern: release of memory that is already free"},
 }
 
 func mapSnapshotPastEndSrc(field string) string {

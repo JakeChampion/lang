@@ -46,6 +46,14 @@ An unmapped address ended the program by signal, and a mapped one gave the calle
 `__free` now compares the address with the arena bounds and aborts with `fern: release of memory outside the heap`, status 134.
 `TestSelfHostRawFreeOutsideHeap` pins the abort and the control on both targets.
 
+A raw block has no count. A second `__free` of it linked the block to itself, and the next two allocations of its class returned one address.
+`__free` now compares the block with the head of its free list before the push, on the small lists and on the large lists.
+A block that is the head aborts with `fern: release of memory that is already free`, status 134.
+
+The check costs one load and one compare on the raw free path. The typed releases keep their count and do not pay it.
+`TestSelfHostRawDoubleFree` pins the abort and a control that frees two blocks of one class in turn, on both targets.
+Under `-sanitize` the raw free quarantines the block instead, and a second raw free quarantines it again without a report. The leak census then shows one more free than allocations. The detectors cover reference-counted misuse only ([SANITIZER-AUDIT.md](SANITIZER-AUDIT.md)).
+
 A write through a dangling raw pointer to the header word of a freed box forges the free list link.
 The next allocation of that class takes the freed box, and the one after it returns the forged address.
 A probe that wrote a non-address there ended by signal at that allocation.
@@ -73,6 +81,7 @@ It is a `-harden` design of its own and is not in this record.
 | A representable large allocation succeeds | `TestLargeButRepresentableAllocationStillWorks` |
 | The arena's exit statuses and their lockstep on both backends | `TestArenaExhaustedExitCodeIsNot137`, `TestArenaExhaustedExitCodeSelfHostLockstep`, `TestX86_64ArenaCheckpoint`, `TestArm64ArenaCheckpoint` |
 | A freed large block is a donor for the next request of its class | `TestSelfHostAllocReuseLargeDonor` |
+| A second raw free of the same block in a row aborts, small and large, on both backends | `TestSelfHostRawDoubleFree`, `TestSelfHostAbortReports*` (`raw_double_free`, `raw_double_free_large`) |
 | A freed block above one gigabyte is reused, on both backends | `TestSelfHostAllocReuseAboveOneGigabyte` |
 | A request whose bump wraps the address space aborts with the size cause, on both backends; the probe calls the allocator from patched assembly, because no checked entry passes such a size | `TestSelfHostAllocRefusesWrappedBump` |
 | Every rc corpus case reclaims everything on three targets | `TestX86_64RcCorpusLeakGate`, `TestArm64RcCorpusLeakGate`, `TestWASMRcCorpusLeakGate` |
@@ -83,7 +92,7 @@ It is a `-harden` design of its own and is not in this record.
 | Gap | Consequence |
 |---|---|
 | Free list link inside the freed block | A raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address; `-sanitize` quarantines freed blocks and detects the touch, the release build does not (SEC-023) |
-| A raw double free | `__free` twice on one block links it to itself, because a raw block has no count to read; the typed release helpers count the second release instead (SEC-023) |
+| A raw double free with another free of the same class between the two | `__free` compares the block with the head of its list, so the second free of the same block in a row aborts. A free of another block of the class between them moves the head, and the second free then links the block twice (SEC-023) |
 | No zeroing on free | A secret stays in the arena until the block is reused and zero-filled. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
 | Alignment above 8 bytes | No entry takes an alignment; lane values and SIMD kernels use unaligned loads and stores by design |
