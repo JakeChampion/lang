@@ -12,13 +12,7 @@ function rejects(input: [u8], limit: i32, expected: compression.CompressionError
 }
 
 function same_error(a: compression.CompressionError, b: compression.CompressionError): boolean {
-  return match (a) {
-    compression.CompressionError.Limit() => match (b) { compression.CompressionError.Limit() => true, _ => false },
-    compression.CompressionError.Header() => match (b) { compression.CompressionError.Header() => true, _ => false },
-    compression.CompressionError.Trailing() => match (b) { compression.CompressionError.Trailing() => true, _ => false },
-    compression.CompressionError.Checksum() => match (b) { compression.CompressionError.Checksum() => true, _ => false },
-    _ => false
-  };
+  return match (a) { compression.CompressionError.Limit => match (b) { compression.CompressionError.Limit => true, _ => false }, compression.CompressionError.Header => match (b) { compression.CompressionError.Header => true, _ => false }, compression.CompressionError.Trailing => match (b) { compression.CompressionError.Trailing => true, _ => false }, compression.CompressionError.Checksum => match (b) { compression.CompressionError.Checksum => true, _ => false }, _ => false };
 }
 
 function exact_limit(): test.TestOutcome {
@@ -53,7 +47,9 @@ function truncations(): test.TestOutcome {
   let input: u8[] = frame();
   for end in 0..input.len() {
     match (compression.decode(input[:end], 1)) {
-      Ok(_) => { return test.fail("accepted truncated frame"); },
+      Ok(_) => {
+        return test.fail("accepted truncated frame");
+      },
       Err(_) => {}
     }
   }
