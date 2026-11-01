@@ -8329,7 +8329,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let rewrite: boolean[] = [];
   let unnamed: boolean[] = [];
   let always: boolean[] = [];
-  let arms: util.NameIndex = util.name_index(dispatched_arms(all));
+  let late: util.NameIndex = util.name_index(late_named(all));
   let keys: util.NameIndex = decl_keys(mod.funcs);
   let lowered: util.NameIndex = lowered_names();
   let sw: optbisect.Switches = optbisect.switches();
@@ -8342,7 +8342,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     modes = modes.append(p.modes);
     rewrite = rewrite.append(usable);
     inlinable = inlinable.append(usable && d >= 0 && inlinable_decl(mod.funcs[d]) && !lowered.has(names[i]) && optbisect.allowed_by(sw, "inline", names[i]));
-    unnamed = unnamed.append(outside_uncalled(p, names[i], i, mod, arms));
+    unnamed = unnamed.append(outside_uncalled(p, names[i], i, mod, late));
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i = i + 1;
   }
@@ -8540,10 +8540,10 @@ function unnamed(all: Produced[], names: string[], spliced: boolean[], mod: pars
   let candidates: string[] = [];
   let at: i32[] = [];
   let out: boolean[] = [];
-  let arms: util.NameIndex = util.name_index(dispatched_arms(all));
+  let late: util.NameIndex = util.name_index(late_named(all));
   let i: i32 = 0;
   while (i < all.len()) {
-    let candidate: boolean = i < spliced.len() && spliced[i] && outside_uncalled(all[i], names[i], i, mod, arms);
+    let candidate: boolean = i < spliced.len() && spliced[i] && outside_uncalled(all[i], names[i], i, mod, late);
     if (candidate) {
       candidates = candidates.append(names[i]);
       at = at.append(i);
@@ -8604,13 +8604,13 @@ function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module):
 }
 
 // A body that only direct calls reach: a private free function, or a method
-// that no export, interface, dyn arm, derive or Drop names. Such a body may
-// be spliced into its one caller and dropped.
-function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module, arms: util.NameIndex): boolean {
+// that no export, interface, dyn arm, map key closure, derive or Drop names.
+// Such a body may be spliced into its one caller and dropped.
+function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module, late: util.NameIndex): boolean {
   if (outside_unnamed(p, name, i, mod)) {
     return true;
   }
-  if (p.template || p.bodyless || !p.ok || i >= mod.funcs.len() || arms.has(name)) {
+  if (p.template || p.bodyless || !p.ok || i >= mod.funcs.len() || late.has(name)) {
     return false;
   }
   let fd: parser.FuncDecl = mod.funcs[i];
@@ -8921,6 +8921,30 @@ function arm_receiver_implements(impls: parser.ImplInfo[], n: string, traits: st
     at = at + 1;
   }
   return at + 1 < n.len() && implements_traits(impls, slice_unchecked(n, 0, at) + "", traits);
+}
+
+// The names that the lowering calls after the splice plan is decided: the
+// arms of each dyn call, and the eq and hash methods of each keyed map key,
+// which the key closures of ssarc call by name.
+function late_named(all: Produced[]): string[] {
+  let out: string[] = dispatched_arms(all);
+  for p in all {
+    if (!p.ok) {
+      continue;
+    }
+    for t in p.func.values {
+      if (!ssasem.is_map(t) || !ssasem.keyed_map_key(ssasem.map_key(t))) {
+        continue;
+      }
+      for which in ["eq", "hash"] {
+        let callee: string = ssasem.keyed_map_key_fn(ssasem.map_key(t), which);
+        if (util.index_of_str(out, callee) < 0) {
+          out = out.append(callee);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function dispatched_arms(all: Produced[]): string[] {
