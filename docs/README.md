@@ -93,7 +93,8 @@ which ones.
 | `BARE-METAL-PLAN.md` | [plan] | Scope below the OS (guest libraries, drivers, kernels, an OS in Fern), why the interrupt/RC memory model gates it, and the order of work; nothing built. |
 | `MULTICORE-RESEARCH.md` | [research] | Survey of parallelism: share-nothing workers with per-worker heaps, given non-atomic refcounts (#5366). |
 | `PERFORMANCE-RESEARCH.md` | [research] | Survey of compiler and runtime performance techniques from Zig, Rust, OCaml, APL, LuaJIT, SBCL and others. |
-| `PLATFORM-RESEARCH.md` | [research] | Survey of the handler/host seam for edge functions: capabilities, request lifecycle, one handler to many targets (#4414). |
+| `PLATFORM-RESEARCH.md` | [research] | Historical survey of the handler and host interfaces, with platform proposals tracked in #4414. |
+| `PLATFORM-IMPLEMENTATION-STATUS.md` | [tracker] | Current handler, init, mock and target registry baseline, with remaining platform acceptance criteria (#4414). |
 | `ADVERSARIAL-REVIEW-2026-06.md` | [record] | A June 2026 adversarial review hunting correctness, soundness and backend-parity bugs; all 17 findings fixed, each with a regression test. |
 | `ARRAY-PIPELINE-BASELINE-2026-09.md` | [record] | Pre-fusion measurements of the array pipeline programs (#9728), and what array fusion (#9731) changed in allocations and instructions. |
 | `CODEGEN-QUALITY-AUDIT-2026-09.md` | [record] | A September 2026 audit of emitted machine code: 42.6% wasted instructions; Tier A of its fixes landed. |

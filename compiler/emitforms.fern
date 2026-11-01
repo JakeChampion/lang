@@ -25,8 +25,13 @@ pub function http_entry_refused(entry: parser.Module, target: string): util.Diag
     return none;
   }
   let i: i32 = 0;
+  let found: boolean = false;
+  let hook: i32 = -1;
   while (i < entry.funcs.len()) {
     let fd: parser.FuncDecl = entry.funcs[i];
+    if (fd.receiver_type.len() == 0 && (fd.name == "init" || fd.name == "shutdown") && hook < 0) {
+      hook = i;
+    }
     if (fd.name == "handle" && fd.receiver_type.len() == 0) {
       let at: util.Diag = util.Diag { ...none, code: "E075", line: fd.line, col: fd.col };
       if (fd.params.len() == 3) {
@@ -35,9 +40,16 @@ pub function http_entry_refused(entry: parser.Module, target: string): util.Diag
       if (fd.params.len() != 2) {
         return util.Diag { ...at, message: "a wasi:http handler takes `(req, plat)`; this `handle` takes " + util.i32_to_string(fd.params.len()) + " parameter(s)" };
       }
-      return none;
+      found = true;
     }
     i = i + 1;
+  }
+  if (found) {
+    if (hook >= 0) {
+      let fd: parser.FuncDecl = entry.funcs[hook];
+      return util.Diag { ...none, code: "E075", line: fd.line, col: fd.col, message: "a wasi:http proxy does not run `" + fd.name + "`; its entry point is `handle(req, plat)`" };
+    }
+    return none;
   }
   return util.Diag { ...none, message: "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse` for the host to call" };
 }

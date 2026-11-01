@@ -556,6 +556,8 @@ func targetSupervises(target string) bool {
 
 const WasiHTTPStatefulHandler = "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target"
 
+const WasiHTTPLifecycleHook = "a wasi:http proxy does not run `%s`; its entry point is `handle(req, plat)`"
+
 const HandlerNeedsServe = "a top-level `handle` requires `std/serve`: add `import \"std/serve\";`"
 
 func wasiHTTPHandlerShape(n int) string {
@@ -2819,6 +2821,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	wasiRefused := wasiHTTP && h != nil && h.Receiver == nil && len(h.Params) != 2
 	if wasiRefused {
 		c.errfCode(h.P, "E075", "%s", wasiHTTPHandlerShape(len(h.Params)))
+	}
+	if wasiHTTP && h != nil && h.Receiver == nil && !wasiRefused {
+		for _, fn := range prog.Funcs {
+			if fn.Receiver == nil && (fn.Name == "init" || fn.Name == "shutdown") {
+				c.errfCode(fn.P, "E075", WasiHTTPLifecycleHook, fn.Name)
+				wasiRefused = true
+				break
+			}
+		}
 	}
 	if hasHandleDecl(prog) && !hasMainDecl(prog) && !wasiRefused {
 		if !wasiHTTP && !handlerImportsServe(prog) {

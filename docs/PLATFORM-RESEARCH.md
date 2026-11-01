@@ -1,6 +1,9 @@
 # Platform research — the handler / host seam for edge functions
 
-Status: [research] survey of the handler/host seam for edge targets; tracked in #4414.
+Status: [research] historical survey and proposals, tracked in #4414.
+
+[Current implementation status](PLATFORM-IMPLEMENTATION-STATUS.md) records the present interfaces and remaining acceptance criteria.
+The sections below preserve the original design study, with its historical source paths and migration proposals.
 
 This study names historical or proposed source paths. The reference documentation identifies current files.
 
