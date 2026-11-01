@@ -60,6 +60,9 @@ value dies on that edge, and the token enters the target on every path.
 - `TestSelfHostSemanticSplitOff`: `gate_rounds` allocates 300 boxes against
   350. The `Gate` the `if` reassigns dies on the edge into the `if`, and the
   `Gate` built there takes its box.
+- `TestSelfHostFieldReclaimWasm`: the `Acc` that `build` replaces each round
+  dies on the back edge and is dropped to its fields, and the next `Acc` is
+  built in its box. The test accepts that shape beside the release call.
 - In the default configuration the serial probe of #13990 reads 46.7 a
   request against 46.8, and the mux probe 28.6 against 28.8.
 - The instrumented compiler allocates 36,115,367 boxes on `checker.fern`
