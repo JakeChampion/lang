@@ -3298,8 +3298,12 @@ function bound_decl_diags(mod: parser.Module): util.Diag[] {
   for fd in mod.funcs {
     let i: i32 = 0;
     while (i < fd.type_params.len() && i < fd.bound_traits.len()) {
+      let module: string = fd.module;
+      if (i < fd.bound_modules.len()) {
+        module = fd.bound_modules[i];
+      }
       for entry in parser.split_plus_bounds(fd.bound_traits[i]) {
-        out = util.append_diags(out, bound_entry_decl_diags(entry, fd, fd.type_params[i], imports, mod.trait_reqs));
+        out = util.append_diags(out, bound_entry_decl_diags(mod, entry, fd, module, fd.type_params[i], imports, mod.trait_reqs));
       }
       i = i + 1;
     }
@@ -3307,14 +3311,17 @@ function bound_decl_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-function bound_entry_decl_diags(entry: string, fd: parser.FuncDecl, tp: string, imports: string[], reqs: parser.TraitReq[]): util.Diag[] {
+function bound_entry_decl_diags(mod: parser.Module, entry: string, fd: parser.FuncDecl, module: string, tp: string, imports: string[], reqs: parser.TraitReq[]): util.Diag[] {
   let none: util.Diag[] = [];
   let bref: parser.TypeRef = parser.parse_type_ref(entry);
+  if (!e021_source_qualifier_visible(mod, module, bref.base)) {
+    return [dg_at("E021", "unknown trait \"" + bref.base + "\" in bound on type parameter " + tp, fd.line, fd.col)];
+  }
   if (bound_import_unloaded(bref.base, imports, reqs)) {
     return none;
   }
-  let display: string = bound_trait_display(bref.base, fd.module, reqs);
-  let idx: i32 = bound_trait_req(bref.base, fd.module, reqs);
+  let display: string = bound_trait_display(bref.base, module, reqs);
+  let idx: i32 = bound_trait_req(bref.base, module, reqs);
   if (idx < 0) {
     return [dg_at("E021", "unknown trait \"" + util.demangle(display) + "\" in bound on type parameter " + tp, fd.line, fd.col)];
   }
@@ -17892,16 +17899,22 @@ function impl_trait_spelling(mod: parser.Module, fd: parser.FuncDecl): string {
 
 function impl_trait_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
-  let imports: string[] = import_paths_of(mod);
   for im in mod.impls {
     if (im.trait_name.len() == 0) {
       continue;
     }
-    let base: string = im.trait_name;
-    if (im.trait_module.len() > 0) {
-      base = im.trait_module + "." + im.trait_name;
+    if (!e021_source_qualifier_visible(mod, im.module, im.trait_spelling)) {
+      out = out.append(dg_at("E021", "unknown trait \"" + im.trait_spelling + "\" in impl", im.line, im.col));
+      continue;
     }
-    if (!bound_import_unloaded(base, imports, mod.trait_reqs) && bound_trait_req(base, im.module, mod.trait_reqs) < 0) {
+    let base: string = util.base_type_name(im.trait_ref);
+    let known: boolean = false;
+    for tr in mod.trait_reqs {
+      if (tr.trait_name == im.trait_name && tr.module == im.trait_module && trait_req_visible(tr, im.module)) {
+        known = true;
+      }
+    }
+    if (!known && !derive_import_unloaded(mod, base)) {
       out = out.append(dg_at("E021", "unknown trait \"" + util.demangle(bound_trait_display(base, im.module, mod.trait_reqs)) + "\" in impl", im.line, im.col));
     }
   }
@@ -23863,6 +23876,28 @@ function e021_supertrait_impl(mod: parser.Module, spelling: string, self: string
   return false;
 }
 
+function e021_source_qualifier_visible(mod: parser.Module, module: string, spelling: string): boolean {
+  let dot: i32 = util.index_of_sub(spelling, ".");
+  if (dot < 0) {
+    return true;
+  }
+  let qual: string = slice_unchecked(spelling, 0, dot) + "";
+  if (mod.sights.len() > 0) {
+    for sight in mod.sights {
+      if (sight.module == module) {
+        return util.has_str(sight.qualifiers, qual);
+      }
+    }
+    return false;
+  }
+  for imported in mod.imports {
+    if (parser.import_qualifier(imported) == qual) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function e021_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for req in mod.trait_reqs {
@@ -23879,6 +23914,9 @@ function e021_diags(mod: parser.Module): util.Diag[] {
   }
   let own_vec: boolean = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
   for im in mod.impls {
+    if (!e021_source_qualifier_visible(mod, im.module, im.trait_spelling)) {
+      continue;
+    }
     let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
     if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
       out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));

@@ -327,9 +327,9 @@ function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportG
   let out: parser.ModuleSight[] = [];
   for i in 0..imports.len() {
     let reaches: string[] = prefixes_at(import_closure(imports[i].mod, g, ids, pfxs), pfxs);
-    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches });
+    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), qualifiers: mod_names(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches });
   }
-  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
+  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), qualifiers: mod_names(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
 }
 
 function import_path_list(mod: parser.Module): string[] {
@@ -516,7 +516,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   let status: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "exit_code"), args: [serve], line: 0, col: 0, type_args: [], ty: "" };
   body = body.append(ast.StmtReturn { value: status, line: 0, col: 0 });
   let main: parser.FuncDecl = parser.FuncDecl {
-    is_unsafe: false,
+    bound_modules: [], is_unsafe: false,
     stdlib: "", no_inline: false, always_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],
     params: [], ret_type: "i32", body: body, line: 0, col: 0,
@@ -1336,7 +1336,15 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
       reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets,
     };
-    funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, tctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, tctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, tctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, tctx), body: rewrite_block(fd.body, bctx), module: ctx.prefix });
+    let bound_modules: string[] = [];
+    for module in fd.bound_modules {
+      if (module.len() == 0) {
+        bound_modules = bound_modules.append(ctx.prefix);
+      } else {
+        bound_modules = bound_modules.append(module);
+      }
+    }
+    funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, tctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, tctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, tctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, tctx), body: rewrite_block(fd.body, bctx), module: ctx.prefix, bound_modules: bound_modules });
     i = i + 1;
   }
   let structs: parser.StructDecl[] = [];
