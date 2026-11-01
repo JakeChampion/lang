@@ -1,0 +1,51 @@
+{
+  "base_commit": "2fa9f40ab202cb7fea3f071652a732e9402038e1",
+  "initial_pr_head": "cb78b5239f0877f596dff96eb3f2bac37121a0ef",
+  "initial_ci_run": 41315869975,
+  "initial_ci_result": "two performance failures, remainder cancelled",
+  "encoder_source_sha256": "a33627c22d3a9d8428d6bf1d1e57bfc39106198cc7557bd28512bd80128b7414",
+  "linux": {
+    "root_count": 9,
+    "skips": 0,
+    "packages": [
+      ["github.com/jakechampion/lang/internal/testing/e2ecompiler", "162.281s"],
+      ["github.com/jakechampion/lang/internal/testing/e2e", "27.656s"]
+    ]
+  },
+  "lint_fast": "pass",
+  "stream_comparison": "all 64 benchmark output hashes and eight PNG records match initial candidate",
+  "arm64_callgrind": {
+    "initial_encode": 44732361,
+    "final_encode": 43923960,
+    "initial_encode_reproduces_ci": true,
+    "final_decode": 35961899,
+    "encode_baseline_unchanged": 44105319,
+    "decode_baseline_before": 36429262,
+    "decode_baseline_after": 35961899,
+    "final_encode_binary_sha256": "ddbed12a1551f883bc61df6092a1ef5aff2011916508dae060bd1b2cf6c6760f",
+    "final_decode_binary_sha256": "d8b81f2f74f699dac80b966f4eea6991c9b22f6da9cdf09a24c663c924f23276",
+    "static_encode_instructions": 7955,
+    "static_decode_instructions": 13884
+  },
+  "x86_callgrind": "local emulated attempt rejected a BMI2 instruction; partial counts excluded, native CI pending",
+  "performance_ceiling_increased": false,
+  "tolerances_changed": false,
+  "logs": {
+    "linux": {
+      "path": "/tmp/fern-13347-fill-linux.log",
+      "sha256": "37e4b20e87e28f47f4f462f02f0efed4ca875ce9e6cfc2cc28fb42e4f2a3f232"
+    },
+    "lint": {
+      "path": "/tmp/fern-13347-fill-lint.log",
+      "sha256": "06f9a5744221b35368bb84de5a424c2fb7a214565fa28aa5c8fc09c1637f7b0a"
+    },
+    "repro_pilot": {
+      "path": "/tmp/fern-13347-fill-repro-pilot.log",
+      "sha256": "8ab0a117b17f25850f651f65e4d420902f6bc5432701516544c53ae2d0ce4c00"
+    },
+    "repro_full": {
+      "path": "/tmp/fern-13347-fill-repro-full.log",
+      "sha256": "936f63a311c04aaecfea136cb3dad96b386f9cb86e93dd8c13b8708e95b31ec8"
+    }
+  }
+}

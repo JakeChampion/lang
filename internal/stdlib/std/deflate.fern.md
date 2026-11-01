@@ -1860,10 +1860,10 @@ function __fast_tokens(input: [u8]): i32[] {
 }
 
 function __filled(n: i32, v: i32): i32[] {
-  let out: i32[] = [];
+  let out: i32[] = __alloc_i32(cmp.max(n, 0));
   let i: i32 = 0;
   while (i < n) {
-    out = out.append(v);
+    out = out.with(i, v);
     i = i + 1;
   }
   return out;

@@ -475,7 +475,8 @@ aarch64/call_overhead.ir	11250826
 aarch64/closure_call.text	1149
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
-aarch64/deflate_decode.ir	36429262
+# 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
+aarch64/deflate_decode.ir	35961899
 aarch64/deflate_decode.text	13839
 aarch64/deflate_encode.ir	44105319
 aarch64/deflate_encode.text	7910
