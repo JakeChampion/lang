@@ -66,7 +66,11 @@ a branch the path to it already decided straight to the side it takes: a
 branch on a constant (the done flag a nested pattern's arms test), and a
 variant test an earlier test on the same value, or the same payload of one,
 settled. A match whose first arm failed on a payload goes straight to the arm
-that payload picks, without testing the scrutinee's variant again.
+that payload picks, without testing the scrutinee's variant again. It also
+splits a join whose branch reads a phi of constants, which is the shape of a
+match on a two-word call result. Each predecessor jumps to the arm its
+constant picks, and a payload phi an arm reads becomes a value of that arm
+(`docs/rc-log/2026-11-01-g-a-branch-on-a-join-of-constants-goes-to-its-arm.md`).
 `semsink.fern` re-reads,
 in a block where a projection's parent dies, the counted projections the
 block uses that a dominating block read (a record, tuple or payload field,
