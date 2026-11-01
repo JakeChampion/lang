@@ -1,0 +1,69 @@
+{
+  "source_commit": "f456a2d360349a3298109ce52ab5d6a5aeba50cb",
+  "source_tree": "133c8dfc32d1464f05c19e571fbc3e265f7163f2",
+  "parents": [
+    "7e5e4c52f7f232a453a6c0b1f099cbae6421350e",
+    "81cf3e410c7fc82d36956b7363451733e946868a"
+  ],
+  "compiler_pr_heads": {
+    "13984": "81cf3e410c7fc82d36956b7363451733e946868a",
+    "13985": "62951d68bc555c96ea21a0ef0c0e727cf6e3d4a6"
+  },
+  "candidate_blobs": {
+    "compiler/interp.fern": "13c760e23e37a4babd9f1f17c07b66c9d1dc575d",
+    "compiler/interpheap.fern": "5fab4109e191132149b172333c422f79dd56fae2",
+    "compiler/semsource.fern": "e9704189f8611eea0a443af55b4f6c6b8eb123c0",
+    "compiler/ssaunits.fern": "426f71f7941c654b539f021cf7e6ecf63fdb10ef"
+  },
+  "producer": {
+    "host": "arm64-darwin",
+    "sha256": "9d791e97ae687db44c6233446801f967b749409a961707d277c631ec70d79836"
+  },
+  "tests": {
+    "darwin": {
+      "result": "pass",
+      "elapsed_seconds": 206.082,
+      "passed_roots": 4,
+      "skipped_roots": 0,
+      "log": "/tmp/fern-13187-owner-reexport-focused.log",
+      "log_sha256": "f5f5392be0cc9e93917fcedecf09aa4b4d5e306818927d05f9cd20f812b3c8d6"
+    },
+    "linux_arm_with_qemu": {
+      "result": "pass",
+      "elapsed_seconds": 325.578,
+      "passed_roots": 10,
+      "skipped_roots": 0,
+      "log": "/tmp/fern-13187-owner-reexport-linux-arm.log",
+      "log_sha256": "4425a1e358892cebc2ed21eda8a2214adc96dc0e5deaff4716482344fbc55491"
+    },
+    "unit_rest": {
+      "result": "pass",
+      "cmd_fern_elapsed_seconds": 419.323,
+      "log_sha256": "72d03af60fa4e73281e1406df6f231aca00214b2e471104ace6af74545c69350"
+    },
+    "lint_fast": {
+      "result": "pass",
+      "log_sha256": "2ee144d598b61bfeed2d13b78fe18fc30ffe13014f10aae28a6c1384173fde71"
+    }
+  },
+  "compiler_image": {
+    "target": "x86-64-linux",
+    "bytes": 15763760,
+    "sha256": "12e365b9aa69422bb942640f1512d68267a157a1d9e11f24ee9987ec2f096f6c",
+    "baseline_bytes": 15881456,
+    "measured_driver_rows": 1,
+    "total_baselined_driver_rows": 11,
+    "strict_slice_comparison": "pass",
+    "verified_functions": 8425,
+    "modelled_functions": 8425,
+    "skipped_functions": 0
+  },
+  "selfhost_static_metrics": {
+    "measured_rows": 117,
+    "strict_comparison": "pass",
+    "baseline_changed": false,
+    "log_sha256": "252af3919cf3b37a4b1619a5ad0b4ed41297b7dbf5915cb9e3fad3e8a8ed8380"
+  },
+  "timing_scope": "Test completion under concurrent jobs. This record makes no native x86 performance claim.",
+  "publication": "Private preparation with pending compiler PRs. Public CI and feedback gates remain required."
+}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -175,6 +176,80 @@ function main(): i32 {
     return 0;
 }
 `, "p 2\niter 10\ndrop 10\niter 11\nend\ndrop 2\ndrop 11"},
+	{"cell-backed-root-lifetime", `import "core/mem";
+
+struct State { roots: i32, drops: i32 }
+struct Heap { state: Cell[State] }
+struct Root { state: Cell[State], key: i32 }
+
+impl mem.Drop for Root {
+  @noinline function drop(self: Self): void {
+    let state = self.state.get();
+    self.state.set(State { roots: state.roots - 1, drops: state.drops + 1 });
+  }
+}
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("root lease check failed");
+    exit(1);
+  }
+}
+
+function root(h: Heap): Root {
+  let state = h.state.get();
+  h.state.set(State { ...state, roots: state.roots + 1 });
+  return Root { state: h.state, key: 7 };
+}
+
+@noinline function observe(h: Heap, roots: Root[]): i32 {
+  require(h.state.get().roots == 1);
+  return roots[0].key;
+}
+
+@noinline function aliases(h: Heap): void {
+  let first = root(h);
+  let second = first;
+  let values = [first, second];
+  require(observe(h, values) == 7);
+}
+
+@noinline function escaped(h: Heap): Root {
+  return root(h);
+}
+
+@noinline function returned(h: Heap): void {
+  let kept = escaped(h);
+  require(observe(h, [kept]) == 7);
+}
+
+@noinline function temporary(h: Heap): void {
+  require(observe(h, [root(h)]) == 7);
+}
+
+@noinline function captured(h: Heap): void {
+  let kept = root(h);
+  let read = (): i32 => {
+    require(h.state.get().roots == 1);
+    return kept.key;
+  };
+  require(read() == 7);
+}
+
+function main(): i32 {
+  let h = Heap { state: cell_new(State { roots: 0, drops: 0 }) };
+  aliases(h);
+  require(h.state.get().roots == 0 && h.state.get().drops == 1);
+  returned(h);
+  require(h.state.get().roots == 0 && h.state.get().drops == 2);
+  temporary(h);
+  require(h.state.get().roots == 0 && h.state.get().drops == 3);
+  captured(h);
+  require(h.state.get().roots == 0 && h.state.get().drops == 4);
+  print("root leases pass");
+  return 0;
+}
+`, "root leases pass"},
 }
 
 var dropOrderCases = []dropCase{
@@ -389,6 +464,39 @@ func TestSelfHostDropFinalizersRunOnceIRArm64(t *testing.T) {
 	cli := newStrictCLI(t)
 	runDropCases(t, func(t *testing.T, src string) (int, string) {
 		return runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", src))
+	})
+}
+
+func TestSelfHostDropFinalizersRunOnceIRArm64Darwin(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("requires an ARM64 Darwin host")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driver := buildSelfHostBinArm64Darwin(t, dir, "fern.fern", "fern")
+	stdlib := e2eharness.SelfHostStdlibRoot(t)
+	runDropCases(t, func(t *testing.T, src string) (int, string) {
+		proj := t.TempDir()
+		entry := filepath.Join(proj, "main.fern")
+		if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(proj, "main")
+		compile := exec.Command(driver, "-target", "arm64-darwin", "-sanitize", "-o", bin, entry, stdlib)
+		compile.Env = childEnv("FERN_IR_VERIFY=1", "FERN_STRICT_IR=1")
+		if out, err := compile.CombinedOutput(); err != nil {
+			t.Fatalf("compile finalizer case: %v\n%s", err, out)
+		}
+		run := exec.Command(bin)
+		run.Env = childEnv("FERN_LEAKCHECK=1")
+		var stderr bytes.Buffer
+		run.Stderr = &stderr
+		out, err := run.Output()
+		if err != nil {
+			t.Fatalf("run finalizer case: %v\nstdout: %s\nstderr: %s", err, out, stderr.String())
+		}
+		assertBalancedCensus(t, stderr.String())
+		return run.ProcessState.ExitCode(), string(out)
 	})
 }
 

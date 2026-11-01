@@ -1,0 +1,64 @@
+{
+  "source_commit": "7e1edc2299518bac4369fc8bd8858f39446086b8",
+  "source_tree": "93819294e7d1f2b8d2b3981d12d445ec2c6d90f9",
+  "parents": [
+    "a151095344737a83885d6938fcaf9e890318fdf2",
+    "3f387e5e48ba75e23db8d96f9fd879090dbaebb0",
+    "62951d68bc555c96ea21a0ef0c0e727cf6e3d4a6"
+  ],
+  "candidate_blobs": {
+    "compiler/interp.fern": "13c760e23e37a4babd9f1f17c07b66c9d1dc575d",
+    "compiler/interpheap.fern": "5fab4109e191132149b172333c422f79dd56fae2",
+    "compiler/semsource.fern": "e9704189f8611eea0a443af55b4f6c6b8eb123c0",
+    "compiler/ssaunits.fern": "426f71f7941c654b539f021cf7e6ecf63fdb10ef"
+  },
+  "producer": {
+    "host": "arm64-darwin",
+    "sha256": "f96ab464b1323cb995684bd79dd5d67b9e1bfe5460fa54081f9db425e831bdcd"
+  },
+  "tests": {
+    "darwin": {
+      "elapsed_seconds": 185.876,
+      "passed_roots": 4,
+      "skipped_roots": 0,
+      "coverage": ["bound declaration origins", "heap reclamation", "array identity", "socket identity"],
+      "log_sha256": "6534311524e95b2f2a40bd79152c8be9035131e7a8b051d7c0d949b1734d8f76"
+    },
+    "linux_arm_with_qemu": {
+      "elapsed_seconds": 352.999,
+      "passed_roots": 10,
+      "skipped_roots": 0,
+      "coverage": ["composite cells", "E057 cycle refusal", "self-built x86 interpreter", "ARM finalizers", "WASI finalizers", "heap reclamation", "array identity", "reactor identity", "mutable captures", "scalar cells"],
+      "log_sha256": "49a3fe07ec8fd854a2e1d6417ba7ddc4f7629bf864912d76105fb42f57a47d60"
+    },
+    "unit_rest": {
+      "result": "pass",
+      "cmd_fern_elapsed_seconds": 491.354,
+      "log_sha256": "cadedd9ac550980f1283ac9e40a09ff84356337b608fa33d763474599f71ed12"
+    },
+    "lint_fast": {
+      "result": "pass",
+      "log_sha256": "17fd74aad82d2797e6b82ea2462c7013efa63b6d98978d1bf1457429a84caf0e"
+    }
+  },
+  "compiler_image": {
+    "target": "x86-64-linux",
+    "bytes": 15763760,
+    "sha256": "cbed4689c3f5fba5d7bf325ea668d35e25611f1153c87c4f8d3d06be15b22780",
+    "baseline_bytes": 15881456,
+    "measured_driver_rows": 1,
+    "total_baselined_driver_rows": 11,
+    "strict_slice_comparison": "pass",
+    "verified_functions": 8426,
+    "modelled_functions": 8426,
+    "skipped_functions": 0
+  },
+  "selfhost_static_metrics": {
+    "measured_rows": 117,
+    "strict_comparison": "pass",
+    "baseline_changed": false,
+    "log_sha256": "252af3919cf3b37a4b1619a5ad0b4ed41297b7dbf5915cb9e3fad3e8a8ed8380"
+  },
+  "timing_scope": "Test completion under concurrent jobs. This record makes no native x86 performance claim.",
+  "publication": "Private preparation with two pending compiler PR heads. Public CI and feedback gates remain required."
+}

@@ -1,0 +1,93 @@
+{
+  "source_commit": "c17d5dee876d7c7c27c7ace7ee0505642614e80d",
+  "source_tree": "1a9e8d09e1d302ff30b61d0be2552d2b7e1734e1",
+  "parents": [
+    "26e4c21e650f8fc8c7f114e8857abcd738be8736",
+    "80b9a401c29f2d908daee538deff7a92cc6af581"
+  ],
+  "candidate_blobs": {
+    "compiler/interp.fern": "13c760e23e37a4babd9f1f17c07b66c9d1dc575d",
+    "compiler/interpheap.fern": "5fab4109e191132149b172333c422f79dd56fae2"
+  },
+  "scope": "Integrate the prepared checker dependency correction and current method-recovery PR. The managed heap implementation remains unchanged.",
+  "producer": {
+    "host": "arm64-darwin",
+    "sha256": "9777c0d8e461dbc1284901c13efcd2b6af9b5ebf16fa2958d49e0e0a4485706c"
+  },
+  "tests": {
+    "native_heap_module_identity": {
+      "result": "pass",
+      "elapsed_seconds": 83.101,
+      "roots": 5,
+      "log_sha256": "35f9d95f9413f1b550e02663afc8dda71f8a9bcc2ebee7594efbc3560cfc4363"
+    },
+    "lint_fast": {
+      "result": "pass",
+      "log_sha256": "404c27ec2148509d294d888259385213f468a9dafba9d9d9d6bdd5e37c101101"
+    },
+    "unit_rest": {
+      "result": "pass",
+      "cmd_fern_elapsed_seconds": 235.475,
+      "log_sha256": "d8725265fd9e7ff4632bed6a05f18830af7a27d1e2ad6b03b8a24b867205454c"
+    },
+    "constraints": {
+      "E057": {
+        "result": "reject",
+        "exit_code": 1,
+        "diagnostic": "error[E057]"
+      },
+      "E082": {
+        "result": "reject",
+        "exit_code": 1,
+        "diagnostic": "error[E082]"
+      }
+    },
+    "linux": {
+      "result": "pass",
+      "host": "arm64-linux",
+      "container_image": "fern-devbox:latest",
+      "go_version": "1.27.3",
+      "wasmtime_version": "46.0.1",
+      "elapsed_seconds": 171.673,
+      "roots": 14,
+      "skips": 0,
+      "scope": "Bound module and trait identities, composite cells, native and WASI finalizers, interpreter heap, array/socket/reactor identity, mutable captures, and scalar cells. The original array identity suite includes the self-built x86 interpreter through QEMU.",
+      "log_sha256": "86aa38a0e0bbc1a2461b3e3e1784d9acf2b4ff6f213bb324c3b5adaebc9f1a94",
+      "reactor_pilot": {
+        "elapsed_seconds": 31.261,
+        "modes": 4,
+        "skips": 0,
+        "log_sha256": "b22a5bae938576bd3eb8917995e994d1166c32eb8b154ec3c93ac81439262d09"
+      },
+      "recovery": "Docker Desktop required a force-stop after graceful restart timed out. A fresh Linux container then passed a file write/read probe. No data reset or volume deletion."
+    }
+  },
+  "bootstrap": {
+    "result": "pass",
+    "target": "arm64-darwin",
+    "stage2_bytes": 17332481,
+    "stage3_bytes": 17332481,
+    "stage2_stage3_sha256": "984dcb0d28df5c8eea12cd6fe7b8772ec376ec908414f24151fbbdb13008cab4",
+    "stage1_difference": "The stage0 pin predates a code generator change.",
+    "log_sha256": "a697c7b9805d8e7cd1fe2f86f9858223b5588074319efc5e65acb17902e82ad5"
+  },
+  "compiler_image": {
+    "target": "x86-64-linux",
+    "bytes": 15763856,
+    "sha256": "e71e830b83b035e023519cd27634fc34902cb391a581c10b861c6d76761ea5f9",
+    "baseline_bytes": 15881456,
+    "strict_slice_comparison": "pass",
+    "measured_driver_rows": 1,
+    "total_baselined_driver_rows": 11,
+    "verified_functions": 8421,
+    "modelled_functions": 8421,
+    "skipped_functions": 0
+  },
+  "selfhost_static_metrics": {
+    "measured_rows": 117,
+    "strict_comparison": "pass",
+    "report_sha256": "5055c35c939ffd61043e1eb256423420cd8f0544e21bbf3dda800c8787eb8156",
+    "baseline_changed": false
+  },
+  "publication": "Private preparation. Wait for PR #13988 and the issue #13991 correction to merge before this issue #13187 PR. Require current-head full CI and feedback before merge."
+}

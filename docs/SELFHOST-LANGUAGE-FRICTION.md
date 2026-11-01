@@ -19,6 +19,10 @@ feature surface the language actually has (`docs/FEATURE-AUDIT.md`), plus
 counted rows are pinned by a test rather than re-grepped — see §1's method note.
 The probes are in §7.
 
+Methods in trait and implementation blocks count as method declarations.
+They do not count as nested functions. Named functions inside a method body
+still count as nested functions.
+
 ---
 
 ## 0. The diagnosis in one paragraph
