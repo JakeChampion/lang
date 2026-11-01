@@ -480,10 +480,10 @@ aarch64/http_hello.text	15945
 aarch64/http_hello.ir	24448615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
-# 2026-11-01 (#13981): CI41256013281 measures map_int.text and map_probe_chain.text 1.27% higher. main 31cdefec emits the same counts, so #13981 does not move them.
-aarch64/map_int.text	8612
+# 2026-11-01 (#13981): Helper reachability restores the original map limits. The division integration passes all 117 static rows.
+aarch64/map_int.text	8504
 aarch64/map_int.ir	23869629
-aarch64/map_probe_chain.text	8622
+aarch64/map_probe_chain.text	8514
 aarch64/map_probe_chain.ir	233221143
 aarch64/map_string.text	9599
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
