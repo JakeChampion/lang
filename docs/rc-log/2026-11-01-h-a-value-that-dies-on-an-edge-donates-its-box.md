@@ -57,6 +57,9 @@ value dies on that edge, and the token enters the target on every path.
   before. The sanitized run is balanced on all three targets.
 - `TestSelfHostReuseCarryKeepsBlockDonor`: 200 reads allocate 8 boxes
   against 9, balanced on both compilers.
+- `TestSelfHostSemanticSplitOff`: `gate_rounds` allocates 300 boxes against
+  350. The `Gate` the `if` reassigns dies on the edge into the `if`, and the
+  `Gate` built there takes its box.
 - In the default configuration the serial probe of #13990 reads 46.7 a
   request against 46.8, and the mux probe 28.6 against 28.8.
 - The instrumented compiler allocates 36,115,367 boxes on `checker.fern`
