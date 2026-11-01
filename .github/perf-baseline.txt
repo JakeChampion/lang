@@ -1,5 +1,7 @@
-# 2026-11-01: Keep the prior OrdMap gates after the borrow-phi repair.
-# Other lowered pins retain PR #13988's measured decreases. No allowance increases.
+# 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice: pvec_with.ir -9.50%,
+# pvec_with.text -12.84%, ordmap_insert.text +3.56%, ordmap_insert.ir +1.10%, and five smaller rows.
+# 2026-11-01: PR #13988 run 41278389389, perf-aarch64. A method that only direct calls reach joins the
+# once set: pvec_with.ir -9.61%, pvec_with.text -12.34%, ordmap_insert.text +3.69%, and five smaller rows.
 # 2026-10-31: Unreferenced typed drop helpers no longer reach emission.
 # All 78 native text rows measured from the primary compiler. Pins only decrease.
 # 2026-10-31: PR #13910, measured by CI job 124561576307.
@@ -202,8 +204,8 @@ x86_64/map_probe_chain.text	8482
 x86_64/map_probe_chain.ir	241010587
 x86_64/map_string.text	9419
 x86_64/map_string.ir	53037751	2
-x86_64/ordmap_insert.text	5498
-x86_64/ordmap_insert.ir	82943055
+x86_64/ordmap_insert.text	5694
+x86_64/ordmap_insert.ir	83855643
 x86_64/pmap_insert.text	2904
 x86_64/pmap_insert.ir	53294866
 x86_64/pvec_with.text	2572
@@ -490,7 +492,7 @@ aarch64/map_probe_chain.ir	233221143
 aarch64/map_string.text	9599
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
-aarch64/ordmap_insert.text	5873
+aarch64/ordmap_insert.text	6090
 aarch64/ordmap_insert.ir	98457462
 aarch64/pmap_insert.text	3194
 aarch64/pmap_insert.ir	63996220

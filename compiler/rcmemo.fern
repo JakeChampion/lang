@@ -8,7 +8,7 @@ import "std/envflag";
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32, stamp: string }
 
 function version(): string {
-  return "11";
+  return "12";
 }
 
 function keep(): i32 {
