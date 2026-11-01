@@ -161,6 +161,53 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 20},
+	{"element-take-returns-through-a-spliced-join", `import "std/array";
+enum RBody { Text(string), Bytes(u8[]) }
+struct Resp { status: i32, body: RBody }
+struct Conn { n: i64, date: string, log: u8[] }
+struct Q { conns: Conn[], k: i32 }
+struct Conns { quic: Q, date: string, serial: i32 }
+function (r: Resp) body_bytes(): u8[] {
+    match (r.body) {
+        Text(s) => { return s.bytes(); },
+        Bytes(b) => { return b; }
+    }
+}
+@noinline
+function (c: Conn) with_date(d: string): Conn {
+    if (d == c.date) { return c; }
+    return Conn { ...c, date: d };
+}
+@noinline
+function (c: Conn) __respond_with(id: i64, bytes: [u8]): Conn {
+    return Conn { ...c, n: c.n + id + bytes.len() as i64, log: c.log.append(bytes.len() as u8) };
+}
+function respond(c: Conn, id: i64, resp: Resp): Conn {
+    match (resp.body) {
+        Text(s) => { return c.__respond_with(id, s.as_bytes()); },
+        _ => { return c.__respond_with(id, resp.body_bytes()); }
+    }
+}
+@noinline
+function h3_respond(own c: Conns, i: i32, id: i64, resp: Resp): Conns {
+    if (i < 0) { return c; }
+    let q: Q = c.quic;
+    return Conns { ...c, quic: Q { ...q, conns: q.conns.with(i, respond(q.conns[i].with_date(c.date), id, resp)) } };
+}
+function main(): i32 {
+    let conns: Conn[] = [];
+    for i in 0..4 {
+        conns = conns.append(Conn { n: i as i64, date: "", log: [] });
+    }
+    let c: Conns = Conns { quic: Q { conns: conns, k: 0 }, date: "today", serial: 7 };
+    for round in 0..1000 {
+        let body: RBody = if (round % 2 == 0) { Text("hello") } else { Bytes([1 as u8, 2 as u8]) };
+        c = h3_respond(c, round % 4, round as i64, Resp { status: 200, body: body });
+    }
+    if (c.quic.conns[0].n != 125750 || c.quic.conns[1].log.len() != 250 || c.quic.conns[3].date != "today" || c.serial != 7) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 1100},
 	{"element-take-through-a-reused-donor", `import "std/array";
 struct Req { buf: u8[], fin: boolean }
 struct St { reqs: Req[], n: i32 }
