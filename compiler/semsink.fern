@@ -175,7 +175,7 @@ function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
   if (lent) {
     strict = spent_by(f, false, t.parent, deps, pos);
   }
-  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps), first: t.first };
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps, t.first), first: t.first };
 }
 
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
@@ -222,13 +222,16 @@ function grown_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
   return grown;
 }
 
-function updated_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
+// A with on any read of a slot counts for the slot's first read, which the
+// kept-read rule asks about.
+function updated_by(g: ssa.SFunc, deps: i32[][], first: i32[]): i32[][] {
   let updated: i32[][] = deps;
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (ins.kind_tag == ssasem.with() && ins.args.len() == 3 && ins.args[0] >= 0 && ins.args[0] < updated.len()) {
-        updated = updated.with(ins.args[0], updated[ins.args[0]].append(bi));
+        let x: i32 = first[ins.args[0]];
+        updated = updated.with(x, updated[x].append(bi));
       }
     }
     bi = bi + 1;
