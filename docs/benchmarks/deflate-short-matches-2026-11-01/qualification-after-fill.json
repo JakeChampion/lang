@@ -27,7 +27,20 @@
     "static_encode_instructions": 7955,
     "static_decode_instructions": 13884
   },
-  "x86_callgrind": "local emulated attempt rejected a BMI2 instruction; partial counts excluded, native CI pending",
+  "x86_callgrind": {
+    "native_ci_run": 41317429107,
+    "native_ci_job": 124880373112,
+    "encode": 42207169,
+    "decode": 33837238,
+    "encode_baseline_before": 43182612,
+    "decode_baseline_before": 34703269,
+    "encode_baseline_after": 42207169,
+    "decode_baseline_after": 33837238,
+    "local_attempt": "emulation rejected BMI2; partial counts excluded",
+    "ci_gate": "improvements beyond one-percent tolerance require lower baselines"
+  },
+  "arm64_native_ci_job": 124880373092,
+  "arm64_native_ci": "pass; reproduces both local instruction counts exactly",
   "performance_ceiling_increased": false,
   "tolerances_changed": false,
   "logs": {

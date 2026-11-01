@@ -27,7 +27,7 @@ The first head failed both instruction-count gates: 44,732,361 ARM64 instruction
 
 The correction allocates each filled integer table once and writes every element by index. It preserves empty results for nonpositive lengths. All 64 benchmark streams and all PNG outputs remain byte-identical to the initial candidate. ARM64 Callgrind reproduces the original CI count exactly, then measures 43,923,960 encode instructions and 35,961,899 decode instructions after the correction. The decode baseline decreases from 36,429,262 to the measured count so that its improvement becomes the new ceiling. The encode baseline stays unchanged.
 
-The local x86 Callgrind attempt rejects a BMI2 instruction under emulation, so its partial counts are not qualification evidence. Native x86 CI must qualify that target. Production emitters and benchmark inputs remain unchanged.
+The local x86 Callgrind attempt rejects a BMI2 instruction under emulation, so its partial counts are not qualification evidence. Native x86 CI run `41317429107` measures 42,207,169 encode instructions and 33,837,238 decode instructions. Both improve beyond the existing one-percent tolerance, so their baselines decrease to retain those gains. ARM64 CI passes and reproduces both local counts exactly. Production emitters and benchmark inputs remain unchanged.
 
 Use the existing `scripts/deflate-bench` setup for the pinned corpus and C reference. The pilot uses one corpus file; the full run changes only `--corpus-limit` to 12:
 

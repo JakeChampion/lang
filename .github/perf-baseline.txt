@@ -190,9 +190,10 @@ x86_64/call_overhead.text	305
 x86_64/call_overhead.ir	8250814
 x86_64/closure_call.text	916
 x86_64/closure_call.ir	41178167
-x86_64/deflate_decode.ir	34703269
+# 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
+x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12993
-x86_64/deflate_encode.ir	43182612
+x86_64/deflate_encode.ir	42207169
 x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	1017
 x86_64/enum_match.ir	48825092
