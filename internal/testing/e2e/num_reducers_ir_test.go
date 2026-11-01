@@ -74,8 +74,8 @@ func TestNativeNumReducersArm64(t *testing.T) {
 }
 
 func TestNativeNumReducersModule(t *testing.T) {
-	src := `import "std/num" as num;
-import "core/ops";
+	src := `import "core/ops";
+import "std/num" as num;
 struct V2 { x: i32, y: i32 }
 impl ops.Add for V2 { function add(self: Self, o: Self): Self { return V2 { x: self.x + o.x, y: self.y + o.y }; } }
 function main(): i32 {
