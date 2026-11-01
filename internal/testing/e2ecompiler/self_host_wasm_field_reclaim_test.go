@@ -40,7 +40,7 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			wat := runCaptureEnv(t, runner, driverBin, []byte(tc.src), []string{"FERN_STRICT_IR=1", "FERN_LEAKCHECK=1"})
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}
@@ -67,14 +67,22 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 			}
 			args = append(args, "--dir", dir, watPath)
 			cmd := exec.Command("wasmtime", args...)
-			_, _ = cmd.Output()
+			out, err := cmd.CombinedOutput()
+			if cmd.ProcessState == nil {
+				t.Fatalf("%s: start wasmtime: %v\n%s", tc.name, err, out)
+			}
 			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
 				detail := ""
 				if tc.capped {
 					detail = " (a trap means the consume-rebind intermediates leaked past the " + cap + "-byte cap — the rebind did not reclaim)"
 				}
-				t.Errorf("%s: wasm exited %d, want %d%s\n--- WAT ---\n%s", tc.name, code, tc.exit, detail, wat)
+				t.Fatalf("%s: wasm exited %d, want %d%s\n%s\n--- WAT ---\n%s", tc.name, code, tc.exit, detail, out, wat)
 			}
+			allocs, frees, live := leakSummaryOf(t, tc.name, string(out))
+			if allocs == 0 || allocs != frees || live != 0 {
+				t.Fatalf("%s: allocs=%d frees=%d live_bytes=%d, want nonzero balance and zero live bytes", tc.name, allocs, frees, live)
+			}
+			t.Logf("allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
 		})
 	}
 }
