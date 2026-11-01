@@ -1,0 +1,16 @@
+// std/num imports core/ops, but this program does not, so ops.Add is not
+// visible here.
+import "std/num" as num;
+
+struct V2 { x: i32 }
+
+impl ops.Add for V2 {
+  function add(self: Self, o: Self): Self {
+    return V2 { x: self.x + o.x };
+  }
+}
+
+function main(): i32 {
+  let v: V2 = num.sum_with([V2 { x: 1 }], V2 { x: 0 });
+  return v.x;
+}

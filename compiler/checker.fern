@@ -2,6 +2,7 @@ import "./ast";
 import "./util";
 import "./lexer";
 import "./parser";
+import "./flatten";
 import "./astwalk";
 import "./typeinfo";
 import "./decltypes";
@@ -2173,10 +2174,15 @@ function (s: Scope) trait_providers(name: string, recv_type: string): MethodSig[
 function trait_visible_from(s: Scope, tname: string, from: string): boolean {
   for tr in s.trait_reqs {
     if (tr.trait_name == tname || method_simple_name(tr.trait_name) == method_simple_name(tname)) {
-      return tr.module.len() == 0 || tr.module == from || util.has_str(tr.visible_from, from);
+      return trait_req_visible(tr, from);
     }
   }
   return true;
+}
+
+// A trait is visible from a module that declares it or imports its module.
+function trait_req_visible(tr: parser.TraitReq, from: string): boolean {
+  return tr.module.len() == 0 || tr.module == from || util.has_str(tr.visible_from, from);
 }
 
 function ambiguous_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Scope): util.Diag[] {
@@ -3267,6 +3273,23 @@ function bound_trait_req(base: string, module: string, reqs: parser.TraitReq[]):
   return found;
 }
 
+function declared_bound_trait_req(mod: parser.Module, base: string, module: string): i32 {
+  let name: string = parser.derive_simple_name(base);
+  let q: string = spelling_qualifier(base, name);
+  if (q.len() > 0) {
+    for sight in mod.sights {
+      if (sight.module == module) {
+        let qi: i32 = util.index_of_str(sight.qualifiers, q);
+        if (qi >= 0 && qi < sight.direct.len()) {
+          let canonical: string = flatten.canonical_imported_trait(sight.direct[qi], name, sight.reexport_keys, sight.reexport_targets);
+          return derive_trait_idx(canonical, mod.trait_reqs);
+        }
+      }
+    }
+  }
+  return bound_trait_req(base, module, mod.trait_reqs);
+}
+
 function bound_import_unloaded(base: string, imports: string[], reqs: parser.TraitReq[]): boolean {
   let q: string = spelling_qualifier(base, parser.derive_simple_name(base));
   if (q.len() == 0) {
@@ -3291,8 +3314,12 @@ function bound_decl_diags(mod: parser.Module): util.Diag[] {
   for fd in mod.funcs {
     let i: i32 = 0;
     while (i < fd.type_params.len() && i < fd.bound_traits.len()) {
+      let module: string = fd.module;
+      if (i < fd.bound_modules.len()) {
+        module = fd.bound_modules[i];
+      }
       for entry in parser.split_plus_bounds(fd.bound_traits[i]) {
-        out = util.append_diags(out, bound_entry_decl_diags(entry, fd, fd.type_params[i], imports, mod.trait_reqs));
+        out = util.append_diags(out, bound_entry_decl_diags(mod, entry, fd, module, fd.type_params[i], imports, mod.trait_reqs));
       }
       i = i + 1;
     }
@@ -3300,14 +3327,20 @@ function bound_decl_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-function bound_entry_decl_diags(entry: string, fd: parser.FuncDecl, tp: string, imports: string[], reqs: parser.TraitReq[]): util.Diag[] {
+function bound_entry_decl_diags(mod: parser.Module, entry: string, fd: parser.FuncDecl, module: string, tp: string, imports: string[], reqs: parser.TraitReq[]): util.Diag[] {
   let none: util.Diag[] = [];
   let bref: parser.TypeRef = parser.parse_type_ref(entry);
+  if (!e021_source_qualifier_visible(mod, module, bref.base)) {
+    return [dg_at("E021", "unknown trait \"" + bref.base + "\" in bound on type parameter " + tp, fd.line, fd.col)];
+  }
   if (bound_import_unloaded(bref.base, imports, reqs)) {
     return none;
   }
-  let display: string = bound_trait_display(bref.base, fd.module, reqs);
-  let idx: i32 = bound_trait_req(bref.base, fd.module, reqs);
+  let display: string = bound_trait_display(bref.base, module, reqs);
+  if (spelling_qualifier(bref.base, parser.derive_simple_name(bref.base)).len() > 0) {
+    display = bref.base;
+  }
+  let idx: i32 = declared_bound_trait_req(mod, bref.base, module);
   if (idx < 0) {
     return [dg_at("E021", "unknown trait \"" + util.demangle(display) + "\" in bound on type parameter " + tp, fd.line, fd.col)];
   }
@@ -24034,15 +24067,15 @@ function e021_supertrait_impl(mod: parser.Module, spelling: string, self: string
   return false;
 }
 
-function e021_impl_qualifier_visible(mod: parser.Module, im: parser.ImplInfo): boolean {
-  let dot: i32 = util.index_of_sub(im.trait_spelling, ".");
+function e021_source_qualifier_visible(mod: parser.Module, module: string, spelling: string): boolean {
+  let dot: i32 = util.index_of_sub(spelling, ".");
   if (dot < 0) {
     return true;
   }
-  let qual: string = slice_unchecked(im.trait_spelling, 0, dot) + "";
+  let qual: string = slice_unchecked(spelling, 0, dot) + "";
   if (mod.sights.len() > 0) {
     for sight in mod.sights {
-      if (sight.module == im.module) {
+      if (sight.module == module) {
         return util.has_str(sight.qualifiers, qual);
       }
     }
@@ -24072,7 +24105,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
   }
   let own_vec: boolean = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
   for im in mod.impls {
-    if (!e021_impl_qualifier_visible(mod, im)) {
+    if (!e021_source_qualifier_visible(mod, im.module, im.trait_spelling)) {
       out = out.append(dg_at("E021", "unknown trait \"" + im.trait_spelling + "\" in impl", im.line, im.col));
       continue;
     }
