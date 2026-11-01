@@ -70,3 +70,21 @@ every other case the update has no base.
 With every method spliced, the serial probe reads 1 a request above the
 one-block rule. The bisect of #13990 names `streams.Stream.__acked_send` and
 `streams.Stream.__sent` at half each.
+
+## Void-return correction
+
+The first CI run at `7063559dbc` aborts during fractal, showcase and multicall
+compilation. Semantic SSA uses return value `-1` for a void return.
+`ssa.term_moves` used that sentinel as an index after the split pass pruned
+a trivial phi. It now preserves a return without a value.
+
+The new SSA driver checks phi removal, argument substitution, both void and
+valued returns, and a nontrivial phi. The old code exits 134 on this driver.
+The correction passes on ARM64 Darwin, native ARM64 Linux, x86 Linux through
+QEMU, and Wasm. All four process censuses have nonzero balanced allocations
+and zero live bytes. The Wasm sanitizer supplies a leak census only.
+
+Fractal, showcase and multicall compile again. All 15 focused split,
+ownership and certification tests pass with zero skips. The corrected
+compiler reproduces itself byte for byte. Lint passes. Fresh full CI,
+with the original performance limits, remains a prerequisite for merge.
