@@ -113,6 +113,46 @@ jobs:
           ./true
           if ./false; then echo "::error::false(1) succeeded"; exit 1; fi
 
+      # The release intends the safe profile on the matrix target. Each
+      # shipped binary's build manifest says what it was built as, so a
+      # binary built for another target or with a profile flag on cannot be
+      # published (docs/security/RELEASE-CHECKLIST.md).
+      - name: Check both manifests against the intended profile
+        run: |
+          set -euo pipefail
+          for bin in dist/fern/fern dist/coreutils/fern-coreutils; do
+            manifest="$(dist/fern/fern -manifest "$bin")"
+            for line in "target: ${{ matrix.target }}" "harden: no" "pie: no" "sanitize: no" "size: no" "shared: no"; do
+              if ! grep -qx -- "$line" <<<"$manifest"; then
+                echo "::error::$bin manifest lacks '$line':"
+                echo "$manifest"
+                exit 1
+              fi
+            done
+          done
+
+      # The security smoke matrix compiles the bounds and compile-fail cases
+      # with the compiler that is about to ship, on both native Linux targets,
+      # and inspects each image's segments. It needs the arm64 emulator and
+      # runs on the x86-64 build alone, where the matrix is defined.
+      - name: qemu-aarch64 (the security smoke matrix executes arm64 output)
+        if: matrix.target == 'x86-64-linux'
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-gcc: "false"
+
+      - name: Security smoke matrix on the shipped compiler
+        if: matrix.target == 'x86-64-linux'
+        run: python3 scripts/security-smoke --compiler dist/fern/fern --report build/security-smoke.json
+
+      - name: Upload the security smoke report
+        if: matrix.target == 'x86-64-linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-smoke-report
+          path: build/security-smoke.json
+
       - name: Package archives
         run: |
           set -euo pipefail

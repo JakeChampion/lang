@@ -18,7 +18,8 @@ Before a release is announced, each item below has evidence. The evidence is a C
 | The adversarial index and the guarantees name live tests | `TestAdversarialSuiteIndexNamesLiveTests`, `TestSecurityClaimsNameLiveGates` | `.github/workflows/test-e2e-other.yml` |
 | The fuzz smoke targets pass from their seeds | `FuzzSelfHostManifest`, `FuzzSelfHostIRVerify`, `FuzzSelfHostX86Assembler`, `FuzzSelfHostArm64Assembler` | `.github/workflows/fuzz-diff.yml` |
 | The profile costs are within their baselines | the perf lane's profile-costs comparison | `.github/workflows/perf.yml`, `.github/profile-costs-baseline.txt` |
-| The released `fern` reports its own manifest | `fern -manifest` on the released binary prints `target:` and `profile:` | the release job's smoke step |
+| Both shipped binaries were built for the matrix target with the safe profile | `fern -manifest` on `fern` and on `fern-coreutils` names the target and reads `harden: no`, `pie: no`, `sanitize: no`, `size: no` and `shared: no` | the manifest step of the build job in `.github/workflows/release.yml` |
+| The security smoke matrix passes on the shipped linux-x86_64 compiler | `scripts/security-smoke` compiles the bounds and compile-fail cases on both native Linux targets, inspects each image, and writes the `security-smoke-report` artifact | the build job in `.github/workflows/release.yml` |
 | The archive hashes match their sidecars | `shasum -a 256 -c` over the downloaded archives | the release page |
 | The macOS binaries are notarized | the `macos-sign` action's notarization step | `.github/workflows/release.yml` |
 
@@ -29,6 +30,6 @@ A gate that was skipped is red, not green: a `SKIP` in a suite is a missing depe
 
 ## Not yet in place
 
-- No gate compares a release binary's manifest with the profile the release intended.
-- No signature covers the Linux archives. The SHA-256 sidecar sits next to the archive it describes.
-- The release workflow does not run the security smoke script (`scripts/security-smoke`) on the artifacts.
+- The signed packslip lists the `fern` archives alone. The coreutils archives have the SHA-256 sidecar and no signature.
+- The security smoke matrix runs on the linux-x86_64 build alone. The arm64 rows of that run are emulated.
+- The release is the profile the Makefile builds. No gate reads a profile from the release notes or the tag.
