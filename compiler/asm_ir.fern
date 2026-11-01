@@ -3710,7 +3710,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq (%rsi), %rsi\n");
     s = s.write("    movq (%rdi), %rdi\n");
     s = s.write("    addq %rax, %rdi\n");
-    s = buf_copy_tail(s, ".Lbufpush");
+    s = s.write("    jmp .Lbufrange_tail\n");
     s = s.write(".Lbufpush_grow:\n");
     s = s.write("    xorl %edx, %edx\n");
     s = s.write("    jmp .Lbufrange_grow\n");
@@ -3734,6 +3734,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq %rdx, %rsi\n");
     s = s.write("    movq (%rdi), %rdi\n");
     s = s.write("    addq %rax, %rdi\n");
+    s = s.write(".Lbufrange_tail:\n");
     s = buf_copy_tail(s, ".Lbufrange");
     s = s.write(".Lbufrange_grow:\n");
     s = s.write("    pushq %rdi\n");
@@ -6690,8 +6691,12 @@ function ssa_forward(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], id: i32): i32 {
 }
 
 // A jump to the next block falls through, even when that block only jumps on.
+function ssa_same_fallthrough(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], to: i32, next: i32): boolean {
+  return to == next || ssa_forward(f, fr, reg_of, to) == ssa_forward(f, fr, reg_of, next);
+}
+
 function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
-  if (to == next) {
+  if (ssa_same_fallthrough(f, fr, reg_of, to, next)) {
     return s;
   }
   return ssa_jump(fr, lp, ssa_forward(f, fr, reg_of, to), next, s);
@@ -9266,7 +9271,7 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     s = sn.state;
     fl = sn.lab;
   }
-  if (!stub && t.f == next && !ssa_edge_moves(f, fr, reg_of, blk.id, t.t)) {
+  if (!stub && ssa_same_fallthrough(f, fr, reg_of, t.f, next) && !ssa_edge_moves(f, fr, reg_of, blk.id, t.t)) {
     let tl: asmcore.Lab = ssa_blab(fr, lp, ssa_forward(f, fr, reg_of, t.t));
     if (fu.n > 0 && fu.tag == 0) {
       return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, tl);

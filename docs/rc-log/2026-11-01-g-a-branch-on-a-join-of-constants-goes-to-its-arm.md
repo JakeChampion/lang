@@ -125,3 +125,21 @@ and it pins the select on a tag phi instead.
 The None arm of `kept_failure` retains the `Option` it reads out of the
 writer's cell and releases it after the tag test. The pair is 14 of the 27
 instructions `gnu.settle` still retires a line.
+
+## Performance-gate correction
+
+The first full report exceeds the original tree-instruction and native HTTP
+size limits. The follow-up restores all ten raised limits across the three
+baseline files. No tolerance increases accompany the repair.
+
+Boolean-only joins retain the existing later SSA pass and its register layout.
+Direct and ranged buffer entry points share their copy body. The native
+emitters also recognize the same destination through empty fallthrough blocks.
+The original phi-move guards remain in force.
+
+The corrected ARM64 tree returns to 58,725,558 instructions. HTTP emits
+16,096 ARM64 lines and 15,141 x86 lines, within the original limits.
+The complete local records reside in
+`docs/benchmarks/join-split-ci-repair-2026-11-01/`. They include runtime controls,
+all 117 emitted-size rows, 144 profile-size rows, and the strict ARM64 report.
+Fresh full CI remains necessary before merge.

@@ -1,3 +1,5 @@
+# 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
+# Source corrections must pass those limits. Improved rows keep their measured lower pins.
 # 2026-11-01: PR #14009 run 41350917312, perf-x86_64. A branch on a join of constants goes to its arm,
 # and __fern_buf_push takes a direct path: enum_match.emit -9% to -15% on the three targets, http_hello.emit
 # -3.6% on wasm and +1.2% to +1.35% on the native targets, and smaller moves on four rows.
@@ -204,7 +206,7 @@ selfhost/arm64-linux/array_append.emit	1354
 selfhost/arm64-linux/array_index.emit	1352
 selfhost/arm64-linux/array_scale_f64.emit	1453
 selfhost/arm64-linux/array_with.emit	1508
-selfhost/arm64-linux/ascii_scan.emit	1671
+selfhost/arm64-linux/ascii_scan.emit	1653
 selfhost/arm64-linux/byte_copy_append.emit	1478
 selfhost/arm64-linux/byte_copy_with.emit	1424
 selfhost/arm64-linux/call_overhead.emit	388
@@ -213,7 +215,7 @@ selfhost/arm64-linux/deflate_decode.emit	13839
 selfhost/arm64-linux/deflate_encode.emit	7910
 selfhost/arm64-linux/enum_match.emit	1112
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	16160
+selfhost/arm64-linux/http_hello.emit	15945
 selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -245,7 +247,7 @@ selfhost/wasm32-wasi/byte_copy_with.emit	569
 selfhost/wasm32-wasi/call_overhead.emit	115
 selfhost/wasm32-wasi/closure_call.emit	487
 selfhost/wasm32-wasi/deflate_decode.emit	19608
-selfhost/wasm32-wasi/deflate_encode.emit	11561
+selfhost/wasm32-wasi/deflate_encode.emit	11300
 selfhost/wasm32-wasi/enum_match.emit	528
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/wasm32-wasi/http_hello.emit	18209
@@ -274,7 +276,7 @@ selfhost/x86-64-linux/array_append.emit	1139
 selfhost/x86-64-linux/array_index.emit	1140
 selfhost/x86-64-linux/array_scale_f64.emit	1267
 selfhost/x86-64-linux/array_with.emit	1295
-selfhost/x86-64-linux/ascii_scan.emit	1369
+selfhost/x86-64-linux/ascii_scan.emit	1352
 selfhost/x86-64-linux/byte_copy_append.emit	1245
 selfhost/x86-64-linux/byte_copy_with.emit	1202
 selfhost/x86-64-linux/call_overhead.emit	305
@@ -283,7 +285,7 @@ selfhost/x86-64-linux/deflate_decode.emit	12993
 selfhost/x86-64-linux/deflate_encode.emit	7275
 selfhost/x86-64-linux/enum_match.emit	886
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15210
+selfhost/x86-64-linux/http_hello.emit	15029
 selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482

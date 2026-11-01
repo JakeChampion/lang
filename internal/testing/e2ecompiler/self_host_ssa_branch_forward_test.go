@@ -45,6 +45,9 @@ function main(): i32 {
 			for _, b := range jumpsToJumps(string(assembly)) {
 				t.Errorf("branch to a block that only jumps on: %s", b)
 			}
+			for _, b := range jumpsToFallthrough(string(assembly)) {
+				t.Errorf("branch to its physical fallthrough: %s", b)
+			}
 		})
 	}
 }
@@ -81,6 +84,52 @@ func jumpsToJumps(assembly string) []string {
 		}
 	}
 	return bad
+}
+
+func jumpsToFallthrough(assembly string) []string {
+	lines := strings.Split(assembly, "\n")
+	var bad []string
+	for i, line := range lines {
+		if !blockJump.MatchString(line) {
+			continue
+		}
+		target := blockBranch.FindStringSubmatch(line)[1]
+		for _, next := range lines[i+1:] {
+			if label := ssaLabel.FindStringSubmatch(next); label != nil {
+				if label[1] == target {
+					bad = append(bad, strings.TrimSpace(line))
+					break
+				}
+				continue
+			}
+			code := strings.TrimSpace(next)
+			if code == "" || strings.HasPrefix(code, ".cfi_") {
+				continue
+			}
+			break
+		}
+	}
+	return bad
+}
+
+func TestSSABranchForwardingFallthrough(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"next-label", "    b .Lssa_f_1\n.Lssa_f_1:\n", 1},
+		{"alias-label", "    jmp .Lssa_f_1\n.Lssa_f_2:\n.Lssa_f_1:\n", 1},
+		{"cfi", "    b .Lssa_f_1\n    .cfi_remember_state\n.Lssa_f_1:\n", 1},
+		{"phi-move", "    b .Lssa_f_1\n.Lssa_f_2:\n    mov x0, x1\n.Lssa_f_1:\n", 0},
+		{"literal-pool", "    b .Lssa_f_1\n    .ltorg\n.Lssa_f_1:\n", 0},
+		{"conditional", "    b.eq .Lssa_f_1\n.Lssa_f_1:\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := jumpsToFallthrough(tc.body); len(got) != tc.want {
+				t.Fatalf("fallthrough branches = %v, want %d", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestSSABranchForwardingLiteralPool(t *testing.T) {

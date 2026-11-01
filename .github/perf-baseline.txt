@@ -1,3 +1,5 @@
+# 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
+# Source corrections must pass those limits. Improved rows keep their measured lower pins.
 # 2026-11-01: PR #14009 run 41350917312, perf-x86_64. The same two changes: enum_match.ir -40.1%,
 # http_hello.ir -2.6%, three .text rows shrink and http_hello.text +1.20%.
 # 2026-11-01: PR #14009 run 41350917312, perf-aarch64. A branch on a join of constants goes to its arm,
@@ -185,7 +187,7 @@ x86_64/array_scale_f64.ir	21309613
 # 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
 x86_64/array_with.ir	36120760
 x86_64/array_with.text	1295
-x86_64/ascii_scan.text	1369
+x86_64/ascii_scan.text	1352
 x86_64/ascii_scan.ir	37315742
 x86_64/byte_copy_append.text	1245
 x86_64/byte_copy_append.ir	13442091
@@ -203,7 +205,7 @@ x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15210
+x86_64/http_hello.text	15029
 x86_64/http_hello.ir	22076408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
@@ -470,7 +472,7 @@ aarch64/array_scale_f64.text	1453
 aarch64/array_scale_f64.ir	25340945
 aarch64/array_with.text	1508
 aarch64/array_with.ir	34494442
-aarch64/ascii_scan.text	1671
+aarch64/ascii_scan.text	1653
 aarch64/ascii_scan.ir	68639570
 aarch64/byte_copy_append.text	1478
 aarch64/byte_copy_append.ir	31926661
@@ -489,7 +491,7 @@ aarch64/deflate_encode.text	7910
 aarch64/enum_match.text	1112
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16160
+aarch64/http_hello.text	15945
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23864615
 aarch64/int_loop.text	330
@@ -558,6 +560,6 @@ aarch64/perceus_nqueens.ir	106638432
 aarch64/perceus_rbtree.text	3158
 aarch64/perceus_rbtree.ir	59717393
 aarch64/perceus_rbtree_ck.text	3251
-aarch64/perceus_rbtree_ck.ir	59797238
+aarch64/perceus_rbtree_ck.ir	59058355
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.

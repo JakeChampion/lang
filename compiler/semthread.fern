@@ -632,6 +632,17 @@ function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], 
   if (cond.kind_tag != 8 || cond.args.len() != jb.preds.len()) {
     return none;
   }
+  // The later SSA pass handles joins that carry only the branch value.
+  // Preserve its register layout when no payload needs this earlier split.
+  let payload: boolean = false;
+  for ins in jb.insts {
+    if (ins.kind_tag == 8 && ins.result != cond.result && ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
+      payload = true;
+    }
+  }
+  if (!payload) {
+    return none;
+  }
   let picks: i32[] = [];
   for a in cond.args {
     let d: ssa.SInst = through_copies(defs, a);

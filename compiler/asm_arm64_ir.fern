@@ -2449,8 +2449,12 @@ function ssa_forward(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], id: i32): i32 {
 }
 
 // A jump to the next block falls through, even when that block only jumps on.
+function ssa_same_fallthrough(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], to: i32, next: i32): boolean {
+  return to == next || ssa_forward(f, fr, reg_of, to) == ssa_forward(f, fr, reg_of, next);
+}
+
 function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
-  if (to == next) {
+  if (ssa_same_fallthrough(f, fr, reg_of, to, next)) {
     return s;
   }
   return ssa_jump(fr, lp, ssa_forward(f, fr, reg_of, to), next, s);
@@ -4632,7 +4636,7 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     s = sn.state;
     fl = sn.lab;
   }
-  if (!stub && t.f == next && !ssa_edge_moves(f, fr, reg_of, blk.id, t.t)) {
+  if (!stub && ssa_same_fallthrough(f, fr, reg_of, t.f, next) && !ssa_edge_moves(f, fr, reg_of, blk.id, t.t)) {
     let tl: asmcore.Lab = ssa_blab(fr, lp, ssa_forward(f, fr, reg_of, t.t));
     if (fu.n > 0 && fu.tag == 0) {
       return ssa_cbz(s, false, tr, tl);
@@ -8530,7 +8534,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".type __fern_buf_push, %function\n");
     s = s.write("__fern_buf_push:\n");
     s = s.write("    ldrsw x3, [x1, #8]\n");
-    s = s.write("    cbz x3, .Lbufpush_done\n");
+    s = s.write("    cbz x3, .Lbufrange_done\n");
     s = s.write("    ldr x4, [x0, #8]\n");
     s = s.write("    add x5, x4, x3\n");
     s = s.write("    ldr x6, [x0, #16]\n");
@@ -8541,8 +8545,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr x6, [x0]\n");
     s = s.write("    add x6, x6, x4\n");
     s = s.write("    mov x2, x3\n");
-    s = arm64_copy_bytes(s, CopyRegs { dst: "x6", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufpush_loop_w", ".Lbufpush_loop_t", ".Lbufpush_loop_b", ".Lbufpush_done");
-    s = s.write("    ret\n");
+    s = s.write("    b .Lbufrange_tail\n");
     s = s.write(".Lbufpush_grow:\n");
     s = s.write("    mov x2, #0\n");
     s = s.write("    b .Lbufrange_grow\n");
@@ -8577,6 +8580,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr x6, [x0]\n");
     s = s.write("    add x6, x6, x4\n");
     s = s.write("    mov x2, x3\n");
+    s = s.write(".Lbufrange_tail:\n");
     s = arm64_copy_bytes(s, CopyRegs { dst: "x6", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufrange_loop_w", ".Lbufrange_loop_t", ".Lbufrange_loop_b", ".Lbufrange_done");
     s = s.write("    ret\n");
     s = s.write(".Lbufrange_grow:\n");
