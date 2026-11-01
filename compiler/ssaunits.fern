@@ -720,6 +720,8 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
       }
     }
   }
+  // A projection borrows from its parent. Only a counted incoming value
+  // gives the phi a unit. The parent's unit remains with the parent.
   let grown: boolean = true;
   while (grown) {
     grown = false;
@@ -729,7 +731,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[], defs: ssa.SInst[]): boo
           continue;
         }
         for a in ins.args {
-          if (a >= 0 && out[lent_root(f, defs, a)]) {
+          if (a >= 0 && out[a]) {
             out = out.with(ins.result, true);
             grown = true;
           }
