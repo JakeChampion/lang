@@ -1773,13 +1773,14 @@ function __put_header(w: __Bits, h: __Header): __Bits {
   return w;
 }
 
-// The chains link positions with the same four-byte hash, as libdeflate's
-// do, and a second table holds the last position of each three-byte hash.
+// Both hashes have bounded chains. Each ring entry stores the four-byte
+// link in its low word and the three-byte link in its high word. Heads
+// refer only to positions whose ring entries have already been written.
 function __tokens(input: [u8], window: i32): i32[] {
   let n: i32 = input.len();
   let head3: i32[] = __filled(32768, 0 - 1);
   let head4: i32[] = __filled(65536, 0 - 1);
-  let prev: i32[] = __filled(window, 0 - 1);
+  let prev: i64[] = __alloc_i64(window);
   let out: i32[] = [];
   let held: (i32, i32) = (0 - 1, 0);
   let skip: i32 = 0;
@@ -1795,7 +1796,7 @@ function __tokens(input: [u8], window: i32): i32[] {
       c4 = head4[h4];
       head3 = head3.with(h3, pos);
       head4 = head4.with(h4, pos);
-      prev = prev.with(pos & window - 1, c4);
+      prev = prev.with(pos & window - 1, c3 as i64 << 32 | (c4 as u32) as i64);
     }
     let cur: (i32, i32) = (0, 0);
     if (pos >= skip && held.0 < 65) {
@@ -1859,10 +1860,10 @@ function __fast_tokens(input: [u8]): i32[] {
 }
 
 function __filled(n: i32, v: i32): i32[] {
-  let out: i32[] = [];
+  let out: i32[] = __alloc_i32(cmp.max(n, 0));
   let i: i32 = 0;
   while (i < n) {
-    out = out.append(v);
+    out = out.with(i, v);
     i = i + 1;
   }
   return out;
@@ -1882,11 +1883,11 @@ function __common(input: [u8], from: i32, pos: i32): i32 {
 
 // The longest match at pos, longer than a held match of 3 or more bytes. A
 // search visits at most 35 candidates and stops at a match of 65 bytes. The
-// search for the lazy step visits half as many. A match of 3 bytes further
-// back than 8192 costs more than its literals.
-// The three-byte shortcut also stays inside the requested window.
+// search for the lazy step visits half as many. Three-byte matches use
+// the requested window. If the newest three-byte hash entry is a collision
+// and no longer match exists, its chain supplies an earlier matching entry.
 @inline
-function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], window: i32, held: i32): (i32, i32) {
+function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i64[], window: i32, held: i32): (i32, i32) {
   let max: i32 = cmp.min(258, input.len() - pos);
   let nice: i32 = cmp.min(65, max);
   if (max < 4 || held >= nice) {
@@ -1899,7 +1900,7 @@ function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], windo
   if (held >= 3) {
     best_len = held;
     depth = 17;
-  } else if (c3 >= 0 && pos - c3 <= 8192 && pos - c3 <= window && (__le32(input, c3) ^ first) << 8 == 0u32) {
+  } else if (c3 >= 0 && pos - c3 <= window && (__le32(input, c3) ^ first) << 8 == 0u32) {
     best_len = 3;
     best_dist = pos - c3;
   }
@@ -1914,10 +1915,28 @@ function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], windo
         }
       }
     }
-    cand = prev[cand & window - 1];
+    cand = prev[cand & window - 1] as i32;
     depth = depth - 1;
   }
+  if (best_len < 3) {
+    let distance: i32 = __short_match(input, pos, c3, prev, window, first);
+    if (distance > 0) {
+      return (3, distance);
+    }
+  }
   return (best_len, best_dist);
+}
+
+function __short_match(input: [u8], pos: i32, cand: i32, prev: i64[], window: i32, first: u32): i32 {
+  let depth: i32 = 35;
+  while (cand >= 0 && pos - cand < window && depth > 0) {
+    if ((__le32(input, cand) ^ first) << 8 == 0u32) {
+      return pos - cand;
+    }
+    cand = (prev[cand & window - 1] >> 32) as i32;
+    depth = depth - 1;
+  }
+  return 0;
 }
 
 // The length of the match past its first four bytes, eight bytes at a time.

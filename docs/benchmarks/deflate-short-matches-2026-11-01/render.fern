@@ -1,0 +1,30 @@
+import "../../../examples/fractal/fractal";
+import "std/i32";
+import "std/i64";
+import "std/result";
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() != 5) {
+    return 1;
+  }
+  let z: i32 = i32.parse_i32(argv[1]).unwrap_or(-1);
+  let x: i64 = i64.parse_i64(argv[2]).unwrap_or(-1);
+  let y: i64 = i64.parse_i64(argv[3]).unwrap_or(-1);
+  match (fractal.render_reference(z, x, y)) {
+    Ok(tile) => {
+      match (write_file_bytes(argv[4], tile.png)) {
+        Ok(_) => {
+          return 0;
+        },
+        Err(_) => {
+          return 2;
+        }
+      }
+    },
+    Err(_) => {
+      return 3;
+    }
+  }
+  return 4;
+}

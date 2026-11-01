@@ -190,9 +190,10 @@ x86_64/call_overhead.text	305
 x86_64/call_overhead.ir	8250814
 x86_64/closure_call.text	916
 x86_64/closure_call.ir	41178167
-x86_64/deflate_decode.ir	34703269
+# 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
+x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12993
-x86_64/deflate_encode.ir	43182612
+x86_64/deflate_encode.ir	42207169
 x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	1017
 x86_64/enum_match.ir	48825092
@@ -475,7 +476,8 @@ aarch64/call_overhead.ir	11250826
 aarch64/closure_call.text	1149
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
-aarch64/deflate_decode.ir	36429262
+# 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
+aarch64/deflate_decode.ir	35961899
 aarch64/deflate_decode.text	13839
 aarch64/deflate_encode.ir	44105319
 aarch64/deflate_encode.text	7910

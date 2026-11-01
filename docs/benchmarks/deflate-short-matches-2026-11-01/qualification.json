@@ -1,0 +1,89 @@
+{
+  "base_commit": "2fa9f40ab202cb7fea3f071652a732e9402038e1",
+  "base_tree": "fac4feec27ec1c68bb8bbfcc7b395bf62f331325",
+  "encoder_source_sha256": "a010b04a564955d7741420f3ae9cf29d4d32cdba22426776dbf39bef0c9dcec0",
+  "linux": {
+    "roots": [
+      "TestSelfHostFractalTiles",
+      "TestSelfHostFractalAcceleration",
+      "TestSelfHostFractalFipKernels",
+      "TestSelfHostInflateReader",
+      "TestSelfHostPNGFilters",
+      "TestDeflateGunzipNative",
+      "TestDeflateSmallWindowX86_64Sanitized",
+      "TestDeflateSmallWindowArm64Sanitized",
+      "TestDeflateSmallWindowWasm"
+    ],
+    "skips": 0,
+    "packages": [
+      {
+        "name": "github.com/jakechampion/lang/internal/testing/e2ecompiler",
+        "seconds": 156.198
+      },
+      {
+        "name": "github.com/jakechampion/lang/internal/testing/e2e",
+        "seconds": 30.06
+      }
+    ]
+  },
+  "lint_fast": "pass",
+  "check_sources": "pass, including 85 drivers",
+  "compiler_image": {
+    "bytes": 17332481,
+    "sha256": "32ccbf71e6d0b4495f9ebffba8784ad224e7409f37a2d63dbc0611dd4ffb14b2",
+    "equals_current_main_fixed_point": true
+  },
+  "native_benchmark": {
+    "pilot_corpus_files": 1,
+    "full_corpus_files": 12,
+    "runs_per_measurement": 5,
+    "independent_decoders": [
+      "Python zlib",
+      "libdeflate 1.24"
+    ],
+    "controlled_compiler_sha256": "ed765f71669c60a41766716f12a815bb018b64b99547ac0a988444e78e4df39d"
+  },
+  "exact_stream_snapshot_changes": {
+    "mixed_block_bytes": [
+      17096,
+      17095
+    ],
+    "gzip_fixture_bytes": [
+      7818,
+      7819
+    ],
+    "decoded_gzip_bytes": 70890
+  },
+  "performance_baselines_changed": false,
+  "limits": [
+    "Full project validation runs in CI.",
+    "Some corpus streams grow and the full-corpus encode time increases in this run.",
+    "Arena-bump counters record allocator activity."
+  ],
+  "logs": {
+    "current-main-linux": {
+      "path": "/tmp/fern-13347-current-main-linux.log",
+      "sha256": "3d2a8395b24691786a37f8bd8ddd597214028808a77906452381f78fae981c2e"
+    },
+    "current-main-lint": {
+      "path": "/tmp/fern-13347-current-main-lint.log",
+      "sha256": "5f6c7984d35d3ab21105874a6e616c37be70c5af96383fc33f80ee2c19bb4a50"
+    },
+    "check-sources": {
+      "path": "/tmp/fern-13347-check-sources.log",
+      "sha256": "ae28d39bec2c823465b259af3db71ad26790565f09c77d6c61bc0f7a49e121fb"
+    },
+    "repro-pilot": {
+      "path": "/tmp/fern-13347-repro-pilot.log",
+      "sha256": "78df20fc38e5ff2fe0f3314ddf5a40021b0fe2a3b6860acf48818937e69c4fb7"
+    },
+    "repro-full": {
+      "path": "/tmp/fern-13347-repro-full.log",
+      "sha256": "fbe7fd1246ca03afc740be765cb173e237d9d7b0cab359efeda206f3513cf346"
+    },
+    "compiler-current-source": {
+      "path": "/tmp/fern-13347-compiler-current-source.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

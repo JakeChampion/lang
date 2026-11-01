@@ -1,0 +1,24 @@
+import "std/deflate";
+import "std/result";
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() != 4) {
+    return 1;
+  }
+  let Ok(input) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let mark: i64 = __heap_alloc_count();
+  let start: i64 = __heap_bump_bytes();
+  let output: u8[] = if (argv[2] == "gzip") { deflate.gzip(input) } else { deflate.deflate(input) };
+  let events: i64 = __heap_alloc_count() - mark;
+  let bump: i64 = __heap_bump_bytes() - start;
+  print(output.len());
+  print(events);
+  print(bump);
+  let Ok(_) = write_file_bytes(argv[3], output) else {
+    return 3;
+  };
+  return 0;
+}

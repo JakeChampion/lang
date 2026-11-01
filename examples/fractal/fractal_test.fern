@@ -55,13 +55,13 @@ function main(): i32 {
   runner = runner.it("coordinate bounds", test_coordinates);
   runner = runner.it("iteration limits", test_iteration_limits);
   runner = runner.it("big-endian binary fields", test_binary_fields);
-  runner = runner.it("whole set", (): test.TestOutcome => check_tile(0, 0, 0, 522386, 24123, 2916611563 as u32));
-  runner = runner.it("mixed interior and exterior", (): test.TestOutcome => check_tile(2, 1, 1, 1091322, 31684, 3758448978 as u32));
+  runner = runner.it("whole set", (): test.TestOutcome => check_tile(0, 0, 0, 522386, 23640, 1877535968 as u32));
+  runner = runner.it("mixed interior and exterior", (): test.TestOutcome => check_tile(2, 1, 1, 1091322, 30679, 3331141515 as u32));
   runner = runner.it("cardioid interior", (): test.TestOutcome => check_tile(8, 152, 128, 0, 270, 4160868373 as u32));
-  runner = runner.it("boundary detail", (): test.TestOutcome => check_tile(14, 7193, 7652, 8861566, 82706, 124660481 as u32));
+  runner = runner.it("boundary detail", (): test.TestOutcome => check_tile(14, 7193, 7652, 8861566, 77300, 1501827189 as u32));
   runner = runner.it("maximum zoom origin", (): test.TestOutcome => check_tile(42, 0, 0, 262144, 725, 757427088 as u32));
   runner = runner.it("maximum zoom last tile", (): test.TestOutcome => check_tile(42, 4398046511103, 4398046511103, 262144, 725, 757427088 as u32));
-  runner = runner.it("deep boundary", (): test.TestOutcome => check_tile(38, 120695873044, 128379946314, 138872102, 95792, 905504498 as u32));
+  runner = runner.it("deep boundary", (): test.TestOutcome => check_tile(38, 120695873044, 128379946314, 138872102, 90509, 414715854 as u32));
   runner = runner.it("period-three interior", (): test.TestOutcome => check_tile(20, 195329, 524288, 7340032, 270, 4160868373 as u32));
   return runner.finish();
 }
