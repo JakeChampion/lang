@@ -88,3 +88,22 @@ Fractal, showcase and multicall compile again. All 15 focused split,
 ownership and certification tests pass with zero skips. The corrected
 compiler reproduces itself byte for byte. Lint passes. Fresh full CI,
 with the original performance limits, remains a prerequisite for merge.
+
+## Tested-take shape correction
+
+CI at `ea5d1abe85` fails the exact assembly count in
+`TestSelfHostTestedTakeShapeX86_64`: `retire` has 9 uniqueness sites, versus
+the expected 10. Its execution and balanced heap census still pass.
+The split-phi correction lets the final `Tab` update reuse its donor after
+the join. The former assembly has one fresh box site and one reuse site.
+The corrected assembly has no fresh box site and two reuse sites.
+
+The test now requires exactly 9 uniqueness sites and no fresh box site in
+`retire`. Its `lock` count stays exactly 4. Unique and shared execution and
+the heap census remain mandatory. Native ARM64 Darwin runs of the unchanged
+fixture report 631 balanced events with the main compiler and 431 with the
+corrected compiler. Both finish with zero live bytes.
+
+The unchanged fixture also passes native ARM64 Linux, x86 Linux through QEMU,
+and Wasm with 431 balanced events and zero live bytes on each target.
+These finite controls do not establish a general allocation or timing bound.
