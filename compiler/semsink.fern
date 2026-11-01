@@ -501,7 +501,56 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
   if (!read_above_for(rd, rd.spent, bi, v, v) || child_used_above(rd, rd.grown, bi, v, 0) || child_live_out(rd, bi, v, 0)) {
     return false;
   }
+  if (child_grown_in(rd, bi, v, 0) && child_used_above(rd, rd.spent, bi, v, 0) && !parent_spent_elsewhere(rd, bi, v)) {
+    return false;
+  }
   return rd.strict.len() == 0 || !read_above_for(rd, rd.strict, bi, v, v);
+}
+
+// An element read off the first read in a dominator, spent there, and
+// stored back by a `with` on that array in the re-read's block: the plan
+// takes the element out of its slot only when the array it stores back into
+// is the array it read, so the first read stays. An array read again in the
+// re-read's block gets its element there, and the re-read serves it. It
+// costs nothing to keep the first read when no block between it and the
+// re-read spends its parent. A spend in a block the first read does not
+// dominate is on no path between them.
+function child_grown_in(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return false;
+  }
+  let x: i32 = rd.first[v];
+  if (util.index_of_i32(rd.grown[x], bi) >= 0) {
+    return !read_in(rd, bi, x);
+  }
+  for c in rd.kids[x] {
+    if (child_grown_in(rd, bi, c, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function read_in(rd: Reads, bi: i32, x: i32): boolean {
+  for c in rd.kids[x] {
+    if (rd.at[c] == bi) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parent_spent_elsewhere(rd: Reads, bi: i32, v: i32): boolean {
+  let p: i32 = rd.par[v];
+  if (p < 0 || p >= rd.spent.len()) {
+    return true;
+  }
+  for s in rd.spent[p] {
+    if (s != bi && s != rd.at[v] && ssadeps.dom_holds(rd.dom, rd.at[v], s)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function child_used_above(rd: Reads, by: i32[][], bi: i32, v: i32, depth: i32): boolean {
