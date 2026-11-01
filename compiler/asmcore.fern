@@ -154,7 +154,15 @@ pub function (s: EmitState) syscall(nr: i32): EmitState {
   if (s.profile > 0 && nr == 231) {
     s = s.write("    pushq %rax\n    pushq %rdi\n    call __fern_profile_flush\n    popq %rdi\n    popq %rax\n");
   }
-  let t: EmitState = s.write("    syscall\n");
+  return record_syscall(s.write("    syscall\n"), nr);
+}
+
+// The arm64 form of `syscall`: the site has already put the number in x8.
+pub function (s: EmitState) svc(nr: i32): EmitState {
+  return record_syscall(s.write("    svc #0\n"), nr);
+}
+
+function record_syscall(t: EmitState, nr: i32): EmitState {
   let at: i32 = 0;
   while (at < t.syscalls.len() && t.syscalls[at] < nr) {
     at = at + 1;
@@ -178,11 +186,54 @@ pub function (s: EmitState) syscall(nr: i32): EmitState {
 }
 
 pub function (s: EmitState) raw_syscall(callee: string): EmitState {
-  let t: EmitState = s.write("    syscall\n");
+  return mark_raw_syscall(s.write("    syscall\n"), callee);
+}
+
+pub function (s: EmitState) raw_svc(callee: string): EmitState {
+  return mark_raw_syscall(s.write("    svc #0\n"), callee);
+}
+
+function mark_raw_syscall(t: EmitState, callee: string): EmitState {
   if (t.raw_syscall != "") {
     return t;
   }
   return EmitState { ...t, raw_syscall: callee };
+}
+
+// The numbers the seccomp filter admits. A program that passes a number at run
+// time is refused here, because no allowlist can cover it.
+pub function seccomp_allowlist(s: EmitState): i32[] {
+  if (s.raw_syscall != "") {
+    eprint("fern: " + s.raw_syscall + " passes the syscall number at run time, which the seccomp sandbox cannot allowlist; FERN_SANDBOX=1 refuses the program");
+    exit(1);
+    return [];
+  }
+  if (s.syscalls.len() > 255) {
+    eprint("internal error: the seccomp allowlist has " + util.i32_to_string(s.syscalls.len()) + " syscalls; the u8 jump offset caps it at 255");
+    exit(3);
+    return [];
+  }
+  return s.syscalls;
+}
+
+// The BPF program at `.Lseccomp_filter`. A call from another architecture or
+// with a number outside `allowed` kills the process.
+pub function emit_seccomp_filter(s: EmitState, arch: string, allowed: i32[]): EmitState {
+  s = s.write("    .section .rodata\n    .balign 8\n.Lseccomp_filter:\n");
+  s = bpf_insn(s, 32, 0, "4");
+  s = bpf_insn(s, 21, 1, arch);
+  s = bpf_insn(s, 6, 0, "0x80000000");
+  s = bpf_insn(s, 32, 0, "0");
+  let n: i32 = allowed.len();
+  for i in 0..n {
+    s = bpf_insn(s, 21, n - i, util.i32_to_string(allowed[i]));
+  }
+  s = bpf_insn(s, 6, 0, "0x80000000");
+  return bpf_insn(s, 6, 0, "0x7FFF0000");
+}
+
+function bpf_insn(s: EmitState, code: i32, jt: i32, k: string): EmitState {
+  return s.write("    .long " + util.i32_to_string(code + jt * 65536) + ", " + k + "\n");
 }
 
 pub function (s: EmitState) has_named(name: string): boolean {

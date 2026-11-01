@@ -11122,41 +11122,15 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
 }
 
 function emit_seccomp_install(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.raw_syscall != "") {
-    eprint("fern: " + s.raw_syscall + " passes the syscall number at run time, which the seccomp sandbox cannot allowlist; FERN_SANDBOX=1 refuses the program");
-    exit(1);
-    return s;
-  }
-  let allowed: i32[] = s.syscalls;
-  let n: i32 = allowed.len();
-  if (n > 255) {
-    eprint("internal error: the seccomp allowlist has " + util.i32_to_string(n) + " syscalls; the u8 jump offset caps it at 255");
-    exit(3);
-    return s;
-  }
+  let allowed: i32[] = asmcore.seccomp_allowlist(s);
   s = s.write("    .section .text\n__fern_seccomp_install:\n");
   s = s.write("    movq $38, %rdi\n    movq $1, %rsi\n    movq $0, %rdx\n    movq $0, %r10\n    movq $0, %r8\n    movq $157, %rax\n").syscall(157);
-  s = s.write("    subq $16, %rsp\n    movq $" + util.i32_to_string(n + 6) + ", %rax\n    movq %rax, (%rsp)\n");
+  s = s.write("    subq $16, %rsp\n    movq $" + util.i32_to_string(allowed.len() + 6) + ", %rax\n    movq %rax, (%rsp)\n");
   s = s.write("    leaq .Lseccomp_filter(%rip), %rax\n    movq %rax, 8(%rsp)\n");
   s = s.write("    movq $1, %rdi\n    movq $0, %rsi\n    movq %rsp, %rdx\n    movq $317, %rax\n").syscall(317);
   s = s.write("    addq $16, %rsp\n    ret\n");
-  s = s.write("    .section .rodata\n    .align 8\n.Lseccomp_filter:\n");
-  s = bpf_insn(s, 32, 0, "4");
-  s = bpf_insn(s, 21, 1, "0xC000003E");
-  s = bpf_insn(s, 6, 0, "0x80000000");
-  s = bpf_insn(s, 32, 0, "0");
-  let i: i32 = 0;
-  while (i < n) {
-    s = bpf_insn(s, 21, n - i, util.i32_to_string(allowed[i]));
-    i = i + 1;
-  }
-  s = bpf_insn(s, 6, 0, "0x80000000");
-  s = bpf_insn(s, 6, 0, "0x7FFF0000");
+  s = asmcore.emit_seccomp_filter(s, "0xC000003E", allowed);
   return s.write("    .section .text\n");
-}
-
-function bpf_insn(s: asmcore.EmitState, code: i32, jt: i32, k: string): asmcore.EmitState {
-  return s.write("    .long " + util.i32_to_string(code + jt * 65536) + ", " + k + "\n");
 }
 
 function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
