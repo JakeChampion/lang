@@ -123,3 +123,31 @@ pub function fn_param_from_var(v: ast.StmtVar): ast.ParamDecl {
   }
   return fn_param_from_spelling(v.name, v.type_name);
 }
+
+pub function follow_reexports(mangled: string, keys: string[], targets: string[]): string {
+  let cur: string = mangled;
+  let steps: i32 = 0;
+  while (steps < keys.len() + 1) {
+    let i: i32 = 0;
+    let hit: boolean = false;
+    while (i < keys.len()) {
+      if (keys[i] == cur) {
+        cur = targets[i];
+        hit = true;
+        i = keys.len();
+      } else {
+        i = i + 1;
+      }
+    }
+    if (!hit) {
+      return cur;
+    }
+    steps = steps + 1;
+  }
+  return cur;
+}
+
+pub function canonical_imported_trait(prefix: string, name: string, keys: string[], targets: string[]): string {
+  let origin: string = follow_reexports(prefix + "__" + name, keys, targets);
+  return slice_unchecked(origin, 0, origin.len() - name.len() - 2) + "." + name;
+}
