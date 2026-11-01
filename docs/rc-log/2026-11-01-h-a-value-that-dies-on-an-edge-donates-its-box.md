@@ -112,3 +112,23 @@ without skips.
 
 No performance baseline or compiler rule changes accompany
 this test correction. Full current-head CI remains mandatory before merge.
+
+## Wasm field-reclaim controls
+
+The field-reclaim test expected a call to the complete record release helper.
+The edge carry instead drops the old fields and reuses the record box.
+The shape check now requires a complete release or both field drop and box reuse.
+
+Both original programs remain byte-for-byte unchanged.
+The two-million-round program retains its 16,777,216-byte memory cap.
+The shared snapshot still checks all three original array elements.
+Both programs now also require nonzero balanced allocation counts and zero live bytes.
+
+The previous compiler reports 4,000,000 and 10,000 balanced events.
+The stabilized edge compiler reports 2,000,001 and 5,001.
+All four processes have zero live bytes, and both capped runs complete.
+The actual Linux test passes without skips.
+These Wasm results supply a leak census, not native sanitizer coverage.
+
+The correction changes no compiler rule or performance baseline.
+Fresh full CI remains mandatory before merge.
