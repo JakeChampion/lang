@@ -143,3 +143,21 @@ The complete local records reside in
 `docs/benchmarks/join-split-ci-repair-2026-11-01/`. They include runtime controls,
 all 117 emitted-size rows, 144 profile-size rows, and the strict ARM64 report.
 Fresh full CI remains necessary before merge.
+
+## Merge-chain scan boundary
+
+The fallthrough correction removes one jump before the long merge chain.
+The old test scanner then includes seven moves from the adjacent append kernel.
+It reports thirteen moves instead of six.
+The complete function still contains exactly 492 moves with either compiler.
+Its unconditional jump count decreases from 63 to 62.
+
+The scanner now counts numeric SSA block labels and their moves.
+It excludes a kernel tail before the first SSA block.
+The unchanged program still has 21 labels and six moves in its merge chain.
+The minimum of fifteen labels and the maximum of eight moves remain unchanged.
+Controls preserve the count of additional moves inside the chain.
+For equal-length chains, the scanner checks the larger move count.
+
+The compiler source, original program, runtime result, and performance limits remain unchanged.
+Fresh full CI remains necessary before merge.

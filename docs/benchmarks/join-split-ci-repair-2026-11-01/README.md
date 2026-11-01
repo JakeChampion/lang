@@ -35,3 +35,10 @@ Own compiler stages two, three and four match byte for byte.
 Full current-head CI remains the merge gate, including native x86 dynamic
 measurements. The self-host size and profile comparators retain their existing
 advisory policy. The native benchmark comparator retains its strict policy.
+
+`merge-chain.json` records a later test-scan correction.
+Both compilers emit 492 moves in the unchanged function.
+The corrected compiler removes one unconditional jump, from 63 to 62.
+The numeric SSA merge chain retains 21 labels and six moves.
+The scanner excludes the adjacent kernel tail and retains the eight-move limit.
+No compiler source or benchmark limit changes accompany this correction.

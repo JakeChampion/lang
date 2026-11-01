@@ -11,10 +11,14 @@
     "internal/testing/e2ecompiler/self_host_ssa_join_homes_test.go": "8055d6cf990e4752cde6d722b5ff906cb6e47653155b487937d94de558528d5f",
     "internal/testing/e2ecompiler/self_host_ssa_void_phi_test.go": "9e65aea119011c51c0e2d31e00a3c72d56060b40f81c47b66adb34aeb724c624",
     "internal/testing/e2ecompiler/self_host_buf_push_kernels_ir_test.go": "c15e3a02c9f47cc958283b6133294f1273c64dd222c6aa6e452928765e8080a6",
-    "internal/testing/e2ecompiler/self_host_bool_join_branch_test.go": "db4d140b5041f35f0b4b23784293ea8f2754c85b8c8d020dcc4064f383cfbc6e"
+    "internal/testing/e2ecompiler/self_host_bool_join_branch_test.go": "db4d140b5041f35f0b4b23784293ea8f2754c85b8c8d020dcc4064f383cfbc6e",
+    "internal/testing/e2ecompiler/self_host_ssa_merge_chain_test.go": "13144316fa213ab655af3f683209e0aa6c1bed6711090054ea9bfba93f7ebc9c"
   },
   "collectors_sha256": {
     "/tmp/fern-14009-complete-perf.py": "c85e2ae54267abcee5dadd3c4b04bd403d3c3a67e1c5f6df9e67129579f74035",
-    "/tmp/fern-14009-runtime-matrix.py": "5b0784dcc5fb650d2bc7b8ac03fa251f3e1dfc1febc6940904a3d8c7a4859c07"
+    "/tmp/fern-14009-runtime-matrix.py": "5b0784dcc5fb650d2bc7b8ac03fa251f3e1dfc1febc6940904a3d8c7a4859c07",
+    "/tmp/fern-14009-merge-chain-probe.py": "f9fc1b5d04642665c651355f9864898bf09ff8ec307c902329fcab5b6def828f",
+    "/tmp/fern-14009-merge-chain-record.py": "35ec7044b7a3f0de379ee3b4ab7d17fde7d34abd3cd3801edc6712e1f9cfa3a1",
+    "/tmp/fern-14009-finalize-merge-chain.py": "e57ef933d82804c9a554ae1fca8c5fd276173f0ae541727369bf51e7c773bd3c"
   }
 }
