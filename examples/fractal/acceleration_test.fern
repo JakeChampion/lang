@@ -135,7 +135,7 @@ function test_output_paths(): test.TestOutcome {
   }
   match (fractal.render_exact(14, 7193, 7652)) {
     Ok(tile) => {
-      if (crc32.new().update(tile.png).finish() != 124660481 as u32) {
+      if (crc32.new().update(tile.png).finish() != 1501827189 as u32) {
         return test.fail("direct lane-refill tile PNG differs");
       }
     },
