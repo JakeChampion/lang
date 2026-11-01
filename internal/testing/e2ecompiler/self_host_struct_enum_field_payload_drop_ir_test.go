@@ -11,8 +11,9 @@ import (
 const (
 	churnEnumFieldFresh = `enum V { A(i32[]), B }
 struct S { v: V, n: i32 }
+@noinline function boxed(s: S): S[] { return [s]; }
 function mk(i: i32): i32 {
-    let s: S = S { v: A([9, 8, 7]), n: i };
+    let s: S = boxed(S { v: A([9, 8, 7]), n: i })[0];
     let got: i32 = 0;
     match (s.v) { A(p) => { got = p[0]; }, _ => {} }
     return got;

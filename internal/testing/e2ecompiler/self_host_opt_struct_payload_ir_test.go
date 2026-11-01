@@ -8,25 +8,26 @@ import (
 	"testing"
 )
 
+// Keep payload records in opaque arrays so each case exercises a boxed payload.
 var optStructPayloadIRCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
 	{"option-some-struct",
-		`struct Point { x: i32, y: i32 } function pick(n: i32): Option[Point] { if (n > 0) { return Some(Point { x: 3, y: 4 }); } return None; } function useit(n: i32): i32 { match (pick(n)) { Some(p) => { return p.x + p.y; }, None => { return 99; } } return 0; } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; return useit(1) + pad; }`,
+		`struct Point { x: i32, y: i32 } @noinline function boxed(p: Point): Point[] { return [p]; } @noinline function pick(n: i32): Option[Point] { if (n > 0) { return Some(boxed(Point { x: 3, y: 4 })[0]); } return None; } function useit(n: i32): i32 { match (pick(n)) { Some(p) => { return p.x + p.y; }, None => { return 99; } } return 0; } function main(): i32 { return useit(1); }`,
 		7},
 	{"option-none-with-struct-payload",
-		`struct Point { x: i32, y: i32 } function pick(n: i32): Option[Point] { if (n > 0) { return Some(Point { x: 3, y: 4 }); } return None; } function useit(n: i32): i32 { match (pick(n)) { Some(p) => { return p.x + p.y; }, None => { return 99; } } return 0; } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; return useit(0) + pad; }`,
+		`struct Point { x: i32, y: i32 } @noinline function boxed(p: Point): Point[] { return [p]; } @noinline function pick(n: i32): Option[Point] { if (n > 0) { return Some(boxed(Point { x: 3, y: 4 })[0]); } return None; } function useit(n: i32): i32 { match (pick(n)) { Some(p) => { return p.x + p.y; }, None => { return 99; } } return 0; } function main(): i32 { return useit(0); }`,
 		99},
 	{"result-ok-struct",
-		`struct Pair { a: i32, b: i32 } function get(n: i32): Result[Pair, i32] { if (n > 0) { return Ok(Pair { a: 10, b: 5 }); } return Err(7); } function useit(n: i32): i32 { match (get(n)) { Ok(p) => { return p.a + p.b; }, Err(e) => { return e; } } return 0; } function main(): i32 { let t: Pair = Pair { a: 1, b: 1 }; let pad: i32 = t.a - t.b; return useit(1) + pad; }`,
+		`struct Pair { a: i32, b: i32 } @noinline function boxed(p: Pair): Pair[] { return [p]; } @noinline function get(n: i32): Result[Pair, i32] { if (n > 0) { return Ok(boxed(Pair { a: 10, b: 5 })[0]); } return Err(7); } function useit(n: i32): i32 { match (get(n)) { Ok(p) => { return p.a + p.b; }, Err(e) => { return e; } } return 0; } function main(): i32 { return useit(1); }`,
 		15},
 	{"result-err-struct",
-		`struct Efield { code: i32 } function run(n: i32): Result[i32, Efield] { if (n > 0) { return Ok(n); } return Err(Efield { code: 42 }); } function useit(n: i32): i32 { match (run(n)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } return 0; } function main(): i32 { let t: Efield = Efield { code: 0 }; let pad: i32 = t.code; return useit(0) + pad; }`,
+		`struct Efield { code: i32 } @noinline function boxed(e: Efield): Efield[] { return [e]; } @noinline function run(n: i32): Result[i32, Efield] { if (n > 0) { return Ok(n); } return Err(boxed(Efield { code: 42 })[0]); } function useit(n: i32): i32 { match (run(n)) { Ok(v) => { return v; }, Err(e) => { return e.code; } } return 0; } function main(): i32 { return useit(0); }`,
 		42},
 	{"option-struct-payload-guard",
-		`struct Point { x: i32, y: i32 } function pick(n: i32): Option[Point] { if (n > 0) { return Some(Point { x: n, y: 0 }); } return None; } function useit(n: i32): i32 { match (pick(n)) { Some(p) when p.x > 3 => { return p.x; }, Some(p) => { return 1; }, None => { return 2; } } return 0; } function main(): i32 { let t: Point = Point { x: 1, y: 1 }; let pad: i32 = t.x - t.y; return useit(5) + pad; }`,
+		`struct Point { x: i32, y: i32 } @noinline function boxed(p: Point): Point[] { return [p]; } @noinline function pick(n: i32): Option[Point] { if (n > 0) { return Some(boxed(Point { x: n, y: 0 })[0]); } return None; } function useit(n: i32): i32 { match (pick(n)) { Some(p) when p.x > 3 => { return p.x; }, Some(p) => { return 1; }, None => { return 2; } } return 0; } function main(): i32 { return useit(5); }`,
 		5},
 }
 
@@ -49,7 +50,7 @@ func TestSelfHostOptStructPayloadIRX86_64(t *testing.T) {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
 			if bytes.Count(asm, []byte("call __fn___fern_arr_dec")) == 0 {
-				t.Fatalf("%s: no struct free emitted — the Option/Result struct-payload IR path was NOT exercised", tc.name)
+				t.Fatalf("%s: no struct free emitted: the Option/Result struct-payload IR path did not execute", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
 			var cmd *exec.Cmd

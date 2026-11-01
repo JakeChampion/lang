@@ -21,8 +21,9 @@ func TestSelfHostF64I64StructFieldIRX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	prog := `struct V { fs: f64[], is: i64[], n: i32 }
+@noinline function boxed(v: V): V[] { return [v]; }
 function use_v(): i32 {
-    let v: V = V { fs: [1.5, 2.5], is: [10, 20], n: 7 };
+    let v: V = boxed(V { fs: [1.5, 2.5], is: [10, 20], n: 7 })[0];
     let sum: i32 = 0;
     if (v.fs[0] < v.fs[1]) { sum = sum + 1; }
     if (v.is[1] > v.is[0]) { sum = sum + 10; }
@@ -34,7 +35,7 @@ function main(): i32 { return use_v(); }`
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
 	if frees := bytes.Count(asm, []byte("call __fn___fern_arr_dec")); frees < 3 {
-		t.Errorf("found %d __fern_arr_dec calls, want >= 3 (fs + is + box) — f64[]/i64[] struct fields not admitted/deep-dropped (module likely bailed to AST)", frees)
+		t.Errorf("found %d __fern_arr_dec calls, want >= 3 (fs + is + box): f64[]/i64[] struct fields did not deep-drop", frees)
 	}
 	progBin := buildBin(t, gcc, dir, "f64i64_field", string(asm))
 	var cmd *exec.Cmd
