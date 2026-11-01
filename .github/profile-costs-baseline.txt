@@ -1,3 +1,5 @@
+# 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method joins the once set only when its body is
+# one block: http_hello.minimal gives back part of the splice's gain, +3.7% to +8.3% against the rows above.
 # 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice moves 43 rows,
 # http_hello.*.emit by -11% to -19% and enum_match.*.emit by -4% to -8%; no row grew.
 # 2026-10-31: PR #13910, measured by CI job 124561576376.
@@ -66,7 +68,7 @@ profile/arm64-linux/http_hello.diagnostic.emit	15921
 profile/arm64-linux/http_hello.hardened.bytes	140472
 profile/arm64-linux/http_hello.hardened.emit	16995
 profile/arm64-linux/http_hello.minimal.bytes	74936
-profile/arm64-linux/http_hello.minimal.emit	12307
+profile/arm64-linux/http_hello.minimal.emit	13042
 profile/arm64-linux/http_hello.safe.bytes	74680
 profile/arm64-linux/http_hello.safe.emit	15945
 profile/arm64-linux/int_loop.diagnostic.bytes	67768
@@ -159,9 +161,9 @@ profile/x86-64-linux/http_hello.diagnostic.ir	35644340
 profile/x86-64-linux/http_hello.hardened.bytes	71504
 profile/x86-64-linux/http_hello.hardened.emit	15298
 profile/x86-64-linux/http_hello.hardened.ir	25664871
-profile/x86-64-linux/http_hello.minimal.bytes	51936
-profile/x86-64-linux/http_hello.minimal.emit	11975
-profile/x86-64-linux/http_hello.minimal.ir	23192359
+profile/x86-64-linux/http_hello.minimal.bytes	56240
+profile/x86-64-linux/http_hello.minimal.emit	12647
+profile/x86-64-linux/http_hello.minimal.ir	24060401
 profile/x86-64-linux/http_hello.safe.bytes	64432
 profile/x86-64-linux/http_hello.safe.emit	15029
 profile/x86-64-linux/http_hello.safe.ir	22672408

@@ -1,3 +1,6 @@
+# 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method joins the once set only when its body is
+# one block: ordmap_insert.emit -2.9% to -3.6%, pvec_with and utf8_ingest return to their values before
+# the splice, and pmap_insert.emit +1.5% to +2.4%.
 # 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice moves 20 rows:
 # pvec_with.emit -10.7% to -12.8%, ordmap_insert.emit +3.0% to +3.7%, and smaller moves on five programs.
 # 2026-10-31: Unreferenced typed drop helpers no longer reach emission.
@@ -212,9 +215,9 @@ selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
 selfhost/arm64-linux/map_string.emit	9599
-selfhost/arm64-linux/ordmap_insert.emit	6090
-selfhost/arm64-linux/pmap_insert.emit	3194
-selfhost/arm64-linux/pvec_with.emit	2807
+selfhost/arm64-linux/ordmap_insert.emit	5873
+selfhost/arm64-linux/pmap_insert.emit	3242
+selfhost/arm64-linux/pvec_with.emit	3202
 selfhost/arm64-linux/record_update.emit	1513
 selfhost/arm64-linux/sort_inplace.emit	1686
 selfhost/arm64-linux/sort_ints.emit	2175
@@ -227,8 +230,8 @@ selfhost/arm64-linux/string_scan.emit	2565
 selfhost/arm64-linux/string_slice.emit	1132
 selfhost/arm64-linux/struct_drop.emit	2671
 selfhost/arm64-linux/tokenize.emit	1388
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	8383
-selfhost/arm64-linux/utf8_ingest_validated.emit	9014
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	8656
+selfhost/arm64-linux/utf8_ingest_validated.emit	9261
 selfhost/wasm32-wasi/array_append.emit	443
 selfhost/wasm32-wasi/array_index.emit	448
 selfhost/wasm32-wasi/array_scale_f64.emit	503
@@ -247,9 +250,9 @@ selfhost/wasm32-wasi/int_loop.emit	69
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
 selfhost/wasm32-wasi/map_string.emit	14123
-selfhost/wasm32-wasi/ordmap_insert.emit	6879
+selfhost/wasm32-wasi/ordmap_insert.emit	6680
 selfhost/wasm32-wasi/pmap_insert.emit	3296
-selfhost/wasm32-wasi/pvec_with.emit	2467
+selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	493
 selfhost/wasm32-wasi/sort_inplace.emit	996
 selfhost/wasm32-wasi/sort_ints.emit	2058
@@ -262,8 +265,8 @@ selfhost/wasm32-wasi/string_scan.emit	1413
 selfhost/wasm32-wasi/string_slice.emit	526
 selfhost/wasm32-wasi/struct_drop.emit	1637
 selfhost/wasm32-wasi/tokenize.emit	875
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8699
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	9661
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9209
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	10171
 selfhost/x86-64-linux/array_append.emit	1139
 selfhost/x86-64-linux/array_index.emit	1140
 selfhost/x86-64-linux/array_scale_f64.emit	1267
@@ -282,9 +285,9 @@ selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
 selfhost/x86-64-linux/map_string.emit	9419
-selfhost/x86-64-linux/ordmap_insert.emit	5694
-selfhost/x86-64-linux/pmap_insert.emit	2904
-selfhost/x86-64-linux/pvec_with.emit	2572
+selfhost/x86-64-linux/ordmap_insert.emit	5498
+selfhost/x86-64-linux/pmap_insert.emit	2973
+selfhost/x86-64-linux/pvec_with.emit	2951
 selfhost/x86-64-linux/record_update.emit	1296
 selfhost/x86-64-linux/sort_inplace.emit	1497
 selfhost/x86-64-linux/sort_ints.emit	1964
@@ -297,8 +300,8 @@ selfhost/x86-64-linux/string_scan.emit	2239
 selfhost/x86-64-linux/string_slice.emit	895
 selfhost/x86-64-linux/struct_drop.emit	2413
 selfhost/x86-64-linux/tokenize.emit	1198
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8012
-selfhost/x86-64-linux/utf8_ingest_validated.emit	8655
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8244
+selfhost/x86-64-linux/utf8_ingest_validated.emit	8897
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1915

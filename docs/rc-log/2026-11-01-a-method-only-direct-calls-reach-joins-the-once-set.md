@@ -44,6 +44,12 @@ The compiler built by the stage-1 compiler reads 22,303,712 bytes against
 102,464 bytes and `uniq` from 86,496 to 90,592. The compiler grew to
 22,336,368 bytes.
 
+The perf lanes measure `ordmap_insert.text` at -3.4% on x86-64 and -3.6% on
+arm64 under the one-block rule. `pmap_insert.text` reads +2.4% and +1.5%.
+Compiling `checker.fern`, the compiler allocates 1.39% more boxes and its
+appends cross the shared cliff 2.96% more often. Those two rows are the
+cost of the rule as it stands, and #13990 is where they are owed a cause.
+
 The rc-log entry of 2026-10-30 predicted 1.9% on `cat -n` and 1.3% on `nl`
 with a tiny limit of 8. The tiny limit stays at 4.
 
