@@ -18316,6 +18316,54 @@ function ow_moved_join(dst: MovedEntry[], branch: MovedEntry[], diverges: boolea
   return out;
 }
 
+// The moved set after a statement with branches: the union of the branches
+// that run on to the next statement, so a branch that gives a name a new value
+// clears its move. When no branch runs on, the set before the branches stays.
+function ow_settle(before: MovedEntry[], branches: MovedEntry[][], runs_on: boolean[]): MovedEntry[] {
+  let out: MovedEntry[] = before;
+  let any: boolean = false;
+  let i: i32 = 0;
+  while (i < branches.len()) {
+    if (runs_on[i]) {
+      if (any) {
+        out = ow_moved_join(out, branches[i], false);
+      } else {
+        out = branches[i];
+        any = true;
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// An arm that binds nothing sees the scrutinee as it was before the match:
+// the pattern did not take its payload.
+function ow_restore_tag(after: MovedEntry[], whole: MovedEntry[], tag: ast.Expr): MovedEntry[] {
+  let key: string = "";
+  match (tag) {
+    ast.ExprIdent(id) => {
+      key = id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(q) = fa.obj {
+        key = q.name + "." + fa.field;
+      }
+    },
+    _ => {}
+  }
+  if (key.len() == 0) {
+    return after;
+  }
+  let out: MovedEntry[] = ow_moved_del(after, key);
+  for elem in whole {
+    if (elem.mname == key) {
+      out = out.append(elem);
+    }
+  }
+  return out;
+}
+
 function ow_is_owned(ctx: OwnCtx, name: string): boolean {
   return util.has_str(ctx.owned, name);
 }
@@ -19263,10 +19311,151 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
   if (lu_never_returns(fx.noret, st)) {
     return false;
   }
-  if (lu_loop_holds_call(st, call) || lu_later_in(st, aid)) {
+  if (lu_loop_holds_call(st, call)) {
+    return true;
+  }
+  if let ast.StmtMatch(m) = st {
+    if (lu_same_ident(m.scrutinee, aid)) {
+      let r: i32 = lu_match_tag_live(fx, m, aid.name);
+      if (r == LU_LIVE) {
+        return true;
+      }
+      if (r == LU_SETTLED) {
+        return false;
+      }
+      return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
+    }
+  }
+  if (lu_later_in(st, aid)) {
     return true;
   }
   return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
+}
+
+const LU_CONTINUES: i32 = 0;
+
+const LU_LIVE: i32 = 1;
+
+const LU_SETTLED: i32 = 2;
+
+function lu_same_ident(e: ast.Expr, aid: ast.ExprIdent): boolean {
+  if let ast.ExprIdent(id) = e {
+    return id.name == aid.name && id.line == aid.line && id.col == aid.col;
+  }
+  return false;
+}
+
+// The value a match takes from the local name, as seen from inside the match.
+// An arm that binds nothing leaves the local whole, so its reads are not reads
+// of the taken value. LU_LIVE: an arm that binds a payload reads the taken
+// value. LU_SETTLED: every such arm gives the local a new value or leaves the
+// statement, so the statements after the match do not read the taken value.
+function lu_match_tag_live(fx: LuFn, m: ast.StmtMatch, name: string): i32 {
+  let settled: boolean = true;
+  for arm in m.arms {
+    if (astwalk.pattern_binders(arm.pattern, []).len() == 0) {
+      continue;
+    }
+    if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
+      return LU_LIVE;
+    }
+    let r: i32 = lu_stmts_settle(fx, arm.body, name);
+    if (r == LU_LIVE) {
+      return LU_LIVE;
+    }
+    if (r != LU_SETTLED) {
+      settled = false;
+    }
+  }
+  if (settled) {
+    return LU_SETTLED;
+  }
+  return LU_CONTINUES;
+}
+
+// A statement list that follows a take of name. LU_LIVE: a read of name
+// before a whole assignment to it. LU_SETTLED: every path assigns name whole
+// or leaves the list early. LU_CONTINUES: a path reaches the end with the
+// taken value still in name.
+function lu_stmts_settle(fx: LuFn, stmts: ast.Stmt[], name: string): i32 {
+  for st in stmts {
+    if (lu_assigns_whole(st, name)) {
+      return LU_SETTLED;
+    }
+    let r: i32 = lu_branch_settle(fx, st, name);
+    if (r == LU_LIVE || r == LU_SETTLED) {
+      return r;
+    }
+    if (r == LU_CONTINUES) {
+      continue;
+    }
+    if (lu_mentions(st, name) > 0) {
+      return LU_LIVE;
+    }
+    let one: ast.Stmt[] = [st];
+    if (block_diverges(one, false) || lu_never_returns(fx.noret, st)) {
+      return LU_SETTLED;
+    }
+  }
+  return LU_CONTINUES;
+}
+
+const LU_NOT_BRANCH: i32 = 3;
+
+// A match or an if statement settles when each of its paths settles, and is
+// live when one path reads name. Any other statement is LU_NOT_BRANCH.
+function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
+  match (st) {
+    ast.StmtMatch(m) => {
+      if (astwalk.count_ident_expr(m.scrutinee, name) > 0) {
+        return LU_LIVE;
+      }
+      let settled: boolean = m.arms.len() > 0;
+      for arm in m.arms {
+        if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
+          return LU_LIVE;
+        }
+        let r: i32 = lu_stmts_settle(fx, arm.body, name);
+        if (r == LU_LIVE) {
+          return LU_LIVE;
+        }
+        if (r != LU_SETTLED) {
+          settled = false;
+        }
+      }
+      if (settled) {
+        return LU_SETTLED;
+      }
+      return LU_CONTINUES;
+    },
+    ast.StmtIf(f) => {
+      if (astwalk.count_ident_expr(f.cond, name) > 0) {
+        return LU_LIVE;
+      }
+      let rt: i32 = lu_stmts_settle(fx, f.then_body, name);
+      if (rt == LU_LIVE) {
+        return LU_LIVE;
+      }
+      if (f.origin == "block" || f.origin == "unsafe") {
+        return rt;
+      }
+      if (f.else_body.len() == 0) {
+        return LU_CONTINUES;
+      }
+      let re: i32 = lu_stmts_settle(fx, f.else_body, name);
+      if (re == LU_LIVE) {
+        return LU_LIVE;
+      }
+      if (rt == LU_SETTLED && re == LU_SETTLED) {
+        return LU_SETTLED;
+      }
+      return LU_CONTINUES;
+    },
+    _ => {
+      return LU_NOT_BRANCH;
+    }
+  }
+  return LU_NOT_BRANCH;
 }
 
 // A statement that calls a function which never returns.
@@ -20593,8 +20782,9 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let rc: OwnWalk = ru_expr(f.cond, moved, ctx);
       let rt: OwnWalk = ow_stmts(f.then_body, rc.moved, ctx);
       let re: OwnWalk = ow_stmts(f.else_body, rc.moved, ctx);
-      let m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, ow_block_diverges(f.then_body, util.has_str(ctx.bound, "exit"), ctx.noret));
-      m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && ow_block_diverges(f.else_body, util.has_str(ctx.bound, "exit"), ctx.noret));
+      let then_on: boolean = !ow_block_diverges(f.then_body, util.has_str(ctx.bound, "exit"), ctx.noret);
+      let else_on: boolean = f.else_body.len() == 0 || !ow_block_diverges(f.else_body, util.has_str(ctx.bound, "exit"), ctx.noret);
+      let m: MovedEntry[] = ow_settle(rc.moved, [rt.moved, re.moved], [then_on, else_on]);
       return OwnWalk { moved: m, diags: util.append_diags(util.append_diags(rc.diags, rt.diags), re.diags) };
     },
     ast.StmtWhile(w) => {
@@ -20628,7 +20818,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
           rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
         }
       }
-      let mv: MovedEntry[] = rs.moved;
+      let branches: MovedEntry[][] = [];
+      let runs_on: boolean[] = [];
       let d: util.Diag[] = rs.diags;
       let taken: boolean = ow_takes_scrutinee(m.scrutinee, ctx);
       for arm in m.arms {
@@ -20641,7 +20832,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         } else {
           actx = ow_arm_lent_ctx(actx, arm.pattern);
         }
-        let ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
+        let start: MovedEntry[] = rs.moved;
+        if (astwalk.pattern_binders(arm.pattern, []).len() == 0) {
+          start = ow_restore_tag(rs.moved, moved, m.scrutinee);
+        }
+        let ra: OwnWalk = ow_stmts(arm.body, start, actx);
         d = util.append_diags(d, ra.diags);
         let arm_moved: MovedEntry[] = ra.moved;
         for name in actx.owned {
@@ -20649,9 +20844,10 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
             arm_moved = ow_unmove(arm_moved, rs.moved, name);
           }
         }
-        mv = ow_moved_join(mv, arm_moved, ow_block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern), ctx.noret));
+        branches = branches.append(arm_moved);
+        runs_on = runs_on.append(!ow_block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern), ctx.noret));
       }
-      return OwnWalk { moved: mv, diags: d };
+      return OwnWalk { moved: ow_settle(rs.moved, branches, runs_on), diags: d };
     },
     ast.StmtDefer(dd) => {
       let one: ast.Stmt[] = [dd.action];

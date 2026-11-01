@@ -1,0 +1,63 @@
+// A loop may take a value out of a local each round when it gives the local
+// a new value before the next round. The else arm of a let-else reads the
+// local whole: its pattern did not take the payload. (#13936)
+struct A { items: Writer[], n: i32 }
+struct B { w: Writer }
+type V = A | B;
+
+function step(own a: A, k: i32): Option[V] {
+  return Some(A { ...a, n: a.n + k });
+}
+
+function chained(own a: A, ks: i32[]): V {
+  let found: Option[V] = step(a, 0);
+  let Some(cur) = found else {
+    return B { w: stdout() };
+  };
+  let i: i32 = 0;
+  while (i < ks.len()) {
+    let A(av) = cur else {
+      return cur;
+    };
+    let Some(out) = step(av, ks[i]) else {
+      return B { w: stdout() };
+    };
+    cur = out;
+    i = i + 1;
+  }
+  return cur;
+}
+
+function rounds(own cur: V, ks: i32[]): V {
+  let i: i32 = 0;
+  while (i < ks.len()) {
+    let A(av) = cur else {
+      return cur;
+    };
+    let Some(out) = step(av, ks[i]) else {
+      return B { w: stdout() };
+    };
+    cur = out;
+    i = i + 1;
+  }
+  return cur;
+}
+
+function main(): i32 {
+  let r: V = rounds(A { items: [], n: 1 }, [1, 2, 3]);
+  let A(ra) = r else {
+    return 1;
+  };
+  print(f"{ra.n}");
+  let c: V = chained(A { items: [], n: 1 }, [10, 20]);
+  let A(ca) = c else {
+    return 2;
+  };
+  print(f"{ca.n}");
+  let b: V = rounds(B { w: stdout() }, [1]);
+  let B(bb) = b else {
+    return 3;
+  };
+  print("kept");
+  return 0;
+}
