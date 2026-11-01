@@ -13,10 +13,21 @@ import (
 
 func TestSelfHostStackOverflow(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	const runaway = "function f(n: i32): i32 {\n  return 1 + f(n - 1);\n}\nfunction main(): i32 {\n  return f(1);\n}\n"
+	// The recursion keeps twelve values live across the call, so x86-64 gives
+	// it a frame pointer and the walk sees every level. A leaner recursion
+	// keeps %rsp fixed there and shows the handler's record alone.
+	const runaway = "function f(n: i32): i32 {\n" +
+		"  let a: i32 = n + 1;\n  let b: i32 = n + 2;\n  let c: i32 = n + 3;\n  let d: i32 = n + 4;\n" +
+		"  let e: i32 = n + 5;\n  let g: i32 = n + 6;\n  let h: i32 = n + 7;\n  let i: i32 = n + 8;\n" +
+		"  let j: i32 = n + 9;\n  let k: i32 = n + 10;\n  let l: i32 = n + 11;\n  let m: i32 = n + 12;\n" +
+		"  let r: i32 = f(n - 1);\n  return r + a + b + c + d + e + g + h + i + j + k + l + m;\n}\n" +
+		"function main(): i32 {\n  return f(1);\n}\n"
 	const deep = "import \"std/i32\";\nfunction f(n: i32): i32 {\n  if (n == 0) {\n    return 0;\n  }\n  return 1 + f(n - 1);\n}\nfunction main(): i32 {\n  print(f(1000000).to_string());\n  return 0;\n}\n"
 	const wild = "function main(): i32 {\n  unsafe { return __load_i32(8 as usize); }\n}\n"
-	report := regexp.MustCompile(`^fern: stack overflow\nbacktrace:\n(  0x[0-9a-f]{16}\n)+$`)
+	// The first frame is the record the handler builds on the alternate signal
+	// stack, and the frames after it are the recursion on the application stack.
+	// A report with one frame means the walk stopped at the stack boundary.
+	report := regexp.MustCompile(`^fern: stack overflow\nbacktrace:\n(  0x[0-9a-f]{16}\n){2,}$`)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			t.Run("runaway-recursion", func(t *testing.T) {

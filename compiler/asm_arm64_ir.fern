@@ -6421,7 +6421,7 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   // of the stack pointer counts as one.
   let guard: string = "    adrp x14, __fern_stack_top\n    add x14, x14, :lo12:__fern_stack_top\n    ldr x14, [x14]\n    cbz x14, .Lfern_segv_near_sp\n    mov x15, #1\n    lsl x15, x15, #30\n    sub x14, x14, x15\n    add x14, x14, #16\n    sub x15, x9, x14\n    mov x16, #1\n    lsl x16, x16, #20\n    cmp x15, x16\n    b.lo .Lfern_segv_overflow\n    b .Lfern_segv_other\n.Lfern_segv_near_sp:\n";
   s = s.write("__fern_segv:\n" + landing_pad(s) + addr + guard + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n.Lfern_segv_overflow:\n" + frame);
-  s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n    adrp x10, __fern_stack_top\n    add x10, x10, :lo12:__fern_stack_top\n    str xzr, [x10]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
+  s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n" + ctx + "    adrp x9, __fern_bt_floor\n    add x9, x9, :lo12:__fern_bt_floor\n    str x10, [x9]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
   let tramp: string = "xzr";
   if (darwin) {
     s = s.write(".Lfern_segv_other:\n    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n");
@@ -7511,21 +7511,27 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    and x23, x20, #7\n");
   s = s.write("    cbnz x23, .Lbt_done\n");
-  s = s.write("    adrp x24, __fern_stack_top\n");
-  s = s.write("    add x24, x24, :lo12:__fern_stack_top\n");
-  s = s.write("    ldr x24, [x24]\n");
-  s = s.write("    cbz x24, .Lbt_top_ok\n");
-  s = s.write("    cmp x20, x24\n");
-  s = s.write("    b.hs .Lbt_done\n");
-  s = s.write(".Lbt_top_ok:\n");
   s = s.write("    ldr x1, [x20, #8]\n");
   s = bt_strip_signature(s);
   s = s.write("    cmp x1, #16, lsl #12\n");
   s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    bl .Lbt_hex\n");
   s = s.write("    mov x22, x20\n");
+  s = s.write("    adrp x24, __fern_bt_floor\n");
+  s = s.write("    add x24, x24, :lo12:__fern_bt_floor\n");
+  s = s.write("    ldr x23, [x24]\n");
+  s = s.write("    cbz x23, .Lbt_floor_kept\n");
+  s = s.write("    mov x22, x23\n");
+  s = s.write("    str xzr, [x24]\n");
+  s = s.write(".Lbt_floor_kept:\n");
   s = s.write("    ldr x20, [x20]\n");
   s = s.write("    sub x21, x21, #1\n");
+  s = s.write("    adrp x24, __fern_stack_top\n");
+  s = s.write("    add x24, x24, :lo12:__fern_stack_top\n");
+  s = s.write("    ldr x24, [x24]\n");
+  s = s.write("    cbz x24, .Lbt_loop\n");
+  s = s.write("    cmp x20, x24\n");
+  s = s.write("    b.hs .Lbt_done\n");
   s = s.write("    b .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
   s = s.write("    mov x0, x19\n");
@@ -8144,6 +8150,8 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .align 3\n");
   s = s.write("    .globl __fern_stack_top\n");
   s = s.write("__fern_stack_top: .quad 0\n");
+  s = s.write("    .align 3\n");
+  s = s.write("__fern_bt_floor: .quad 0\n");
   if (s.harden) {
     s = s.write("    .globl __fern_canary\n");
     s = s.write("__fern_canary: .quad 0\n");

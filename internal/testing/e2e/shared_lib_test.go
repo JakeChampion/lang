@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1263,6 +1265,99 @@ func TestArm64SelfHostSharedAndroid(t *testing.T) {
 	if !bytes.Contains(so, []byte("answer\x00")) {
 		t.Errorf(".dynstr does not contain the export name")
 	}
+}
+
+// An abort inside a shared object walks the Fern frames and stops at the
+// export wrapper, whose frame is the stack top the wrapper records on entry.
+// The loader prints the address of its main, and no frame may fall inside it.
+const sharedAbortDepth = 3
+
+func sharedAbortBacktraceCheck(t *testing.T, target, cc, runner string, env []string) {
+	t.Helper()
+	src := `function boom(n: i32): i32 { if (n == 0) { let xs: i32[] = [1]; return xs[n + 5]; } return boom(n - 1) + 1; }
+function main(): i32 { return 0; }`
+	so := selfHostShared(t, target, src, "boom")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+int main(int c, char**v){
+  printf("%lx\n",(unsigned long)(void*)&main); fflush(stdout);
+  void*h=dlopen(v[1],RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  int(*boom)(int)=(int(*)(int))dlsym(h,"boom"); if(!boom)return 101;
+  return boom(` + strconv.Itoa(sharedAbortDepth) + `);
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(cc, "-O0", cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("%s loader: %v\n%s", cc, err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	if runner != "" {
+		cmd = exec.Command(runner, ld, soPath)
+	}
+	cmd.Env = append(os.Environ(), env...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 134 {
+		t.Fatalf("exit %d, want 134 from the report path\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	hostMain, err := strconv.ParseUint(strings.TrimSpace(stdout.String()), 16, 64)
+	if err != nil {
+		t.Fatalf("the loader did not print the address of its main: %q", stdout.String())
+	}
+	const head = "fern: array index out of range\nbacktrace:\n"
+	if !strings.HasPrefix(stderr.String(), head) {
+		t.Fatalf("stderr does not open with the cause line and the backtrace header:\n%s", stderr.String())
+	}
+	frames := abortFrameRe.FindAllStringSubmatch(stderr.String(), -1)
+	if len(frames) == 0 {
+		t.Fatalf("no frame under the backtrace header:\n%s", stderr.String())
+	}
+	for _, m := range frames {
+		addr, err := strconv.ParseUint(m[1], 16, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if addr >= hostMain && addr < hostMain+4096 {
+			t.Errorf("frame %#x is inside the host's main at %#x: the walk did not stop at the export wrapper\n%s", addr, hostMain, stderr.String())
+		}
+	}
+	// arm64 keeps a frame record in every function, so every boom activation
+	// up to the one the wrapper called is a frame. x86-64 omits the frame
+	// pointer where it needs none, so the count there is a lower bound.
+	if target == "arm64-linux" && len(frames) != sharedAbortDepth+1 {
+		t.Errorf("%d frames, want %d: one per boom activation, and none past the export wrapper\n%s", len(frames), sharedAbortDepth+1, stderr.String())
+	}
+}
+
+var abortFrameRe = regexp.MustCompile(`(?m)^  0x([0-9a-f]{16})$`)
+
+func TestSharedLibX86AbortBacktrace(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	sharedAbortBacktraceCheck(t, "x86-64-linux", gcc, "", nil)
+}
+
+func TestArm64SharedLibAbortBacktrace(t *testing.T) {
+	gcc, qemu := e2eharness.Arm64Tooling(t)
+	var env []string
+	if qemu != "" {
+		env = []string{"QEMU_LD_PREFIX=/usr/aarch64-linux-gnu"}
+	}
+	sharedAbortBacktraceCheck(t, "arm64-linux", gcc, qemu, env)
 }
 
 func TestSelfHostSharedRefusals(t *testing.T) {
