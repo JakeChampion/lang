@@ -10,12 +10,16 @@ function main(): i32 {
   while (!done) {
     let (line, next) = cur.read_line();
     match (line) {
-      Some(l) => {
+      Ok(Some(l)) => {
         print(l);
         cur = next;
       },
-      None => {
+      Ok(None()) => {
         print("EOF");
+        done = true;
+      },
+      Err(_) => {
+        print("not UTF-8");
         done = true;
       }
     }
