@@ -9086,14 +9086,15 @@ pub function import_qualifier(im: Import): string {
 }
 
 pub function std_qualifier(mod: Module, name: string): string {
-  let want: string = "std/" + name;
+  return module_qualifier(mod, "std/" + name);
+}
+
+// The qualifier mod uses for its import of want, or "" when it does not import it.
+pub function module_qualifier(mod: Module, want: string): string {
   for imp in mod.imports {
     let p: string = util.without_fern_ext(imp.path);
     if (p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want) {
-      if (imp.alias.len() > 0) {
-        return imp.alias;
-      }
-      return name;
+      return import_qualifier(imp);
     }
   }
   return "";
@@ -13540,8 +13541,12 @@ function lane_bound_spellings(mod: Module): string[] {
     }
     if (im.trait_module.len() == 0) {
       out = out.append(im.impl_type + " " + im.trait_name);
-    } else if (im.trait_module == "num" || im.trait_module == "simd") {
-      let q: string = std_qualifier(mod, im.trait_module);
+    } else if (im.trait_module == "ops" || im.trait_module == "simd") {
+      let path: string = "std/simd";
+      if (im.trait_module == "ops") {
+        path = "core/ops";
+      }
+      let q: string = module_qualifier(mod, path);
       if (q.len() > 0) {
         out = out.append(im.impl_type + " " + q + "." + im.trait_name);
       }
