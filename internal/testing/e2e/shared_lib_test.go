@@ -358,13 +358,55 @@ func TestSharedLibX86CCallFFI(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
+	sharedCCallFFICheck(t, "x86-64-linux", gcc, "", nil, ccallFFIX86Callees)
+}
+
+func TestArm64SharedLibCCallFFI(t *testing.T) {
+	gcc, qemu := e2eharness.Arm64Tooling(t)
+	var env []string
+	if qemu != "" {
+		env = []string{"QEMU_LD_PREFIX=/usr/aarch64-linux-gnu"}
+	}
+	sharedCCallFFICheck(t, "arm64-linux", gcc, qemu, env, ccallFFIArm64Callees)
+}
+
+// The two callees the platform decides: one reports whether the shim entered
+// it with the platform's stack alignment, and one clobbers every register the
+// platform lets a callee clobber.
+const ccallFFIX86Callees = `/* The frame address is the entry stack pointer less the return address
+   and the saved frame pointer, so it is 16-byte aligned exactly when the
+   caller entered with the System V alignment. */
+static long aligned(void){ return (((uintptr_t)__builtin_frame_address(0)) & 15) == 0; }
+/* Every caller-saved register the ABI lets a callee clobber. */
+static long clobber(void){
+  __asm__ volatile("" ::: "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11",
+    "xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7","xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15","memory");
+  return 7;
+}
+`
+
+const ccallFFIArm64Callees = `/* AAPCS64 keeps sp 16-byte aligned at every public interface, and the frame
+   record the callee builds sits at that sp. */
+static long aligned(void){ return (((uintptr_t)__builtin_frame_address(0)) & 15) == 0; }
+/* Every caller-saved register the ABI lets a callee clobber: the argument and
+   scratch registers, the intra-procedure-call registers, and the vector
+   registers outside the callee-saved v8 to v15. */
+static long clobber(void){
+  __asm__ volatile("" ::: "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11","x12","x13","x14","x15","x16","x17",
+    "v0","v1","v2","v3","v4","v5","v6","v7","v16","v17","v18","v19","v20","v21","v22","v23","v24","v25","v26","v27","v28","v29","v30","v31","memory");
+  return 7;
+}
+`
+
+func sharedCCallFFICheck(t *testing.T, target, cc, runner string, env []string, callees string) {
+	t.Helper()
 	src := `function run0(env: usize, cls: usize, cb: usize): i32 { unsafe { return __c_call0(cb) as i32; } }
 function run1(env: usize, cls: usize, cb: usize, x: usize): i32 { unsafe { return __c_call1(cb, x) as i32; } }
 function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { unsafe { return __c_call4(cb, a, b, c, d) as i32; } }
 function run_live(env: usize, cls: usize, cb: usize): i32 { unsafe { let a: i32 = 35; let b: i32 = __c_call0(cb) as i32; return a + b; } }
 function main(): i32 { return 0; }`
 	exps := []string{"run0", "run1", "run4", "run_live"}
-	so := selfHostSharedX86(t, src, exps...)
+	so := selfHostShared(t, target, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
 	if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -376,17 +418,7 @@ function main(): i32 { return 0; }`
 static long forty_two(void){ return 42; }
 static long dbl(long x){ return x*2; }
 static long sum4(long a, long b, long c, long d){ return a+b+c+d; }
-/* The frame address is the entry stack pointer less the return address
-   and the saved frame pointer, so it is 16-byte aligned exactly when the
-   caller entered with the System V alignment. */
-static long aligned(void){ return (((uintptr_t)__builtin_frame_address(0)) & 15) == 0; }
-/* Every caller-saved register the ABI lets a callee clobber. */
-static long clobber(void){
-  __asm__ volatile("" ::: "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11",
-    "xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7","xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15","memory");
-  return 7;
-}
-int main(int c, char**v){
+` + callees + `int main(int c, char**v){
   void*h=dlopen(v[1],RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   int(*r0)(long,long,long)=(int(*)(long,long,long))dlsym(h,"run0"); if(!r0)return 101;
   int(*r1)(long,long,long,long)=(int(*)(long,long,long,long))dlsym(h,"run1"); if(!r1)return 102;
@@ -409,13 +441,17 @@ int main(int c, char**v){
 		t.Fatal(err)
 	}
 	ld := filepath.Join(dir, "loader")
-	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
-		t.Fatalf("gcc loader: %v\n%s", err, out)
+	if out, err := exec.Command(cc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("%s loader: %v\n%s", cc, err, out)
 	}
 	cmd := exec.Command(ld, soPath)
+	if runner != "" {
+		cmd = exec.Command(runner, ld, soPath)
+	}
+	cmd.Env = append(os.Environ(), env...)
 	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Fatalf("FFI callbacks via __c_call = exit %d, want 42 (out=%q)", code, out)
+		t.Fatalf("FFI callbacks via __c_call on %s = exit %d, want 42 (out=%q)", target, code, out)
 	}
 }
 
