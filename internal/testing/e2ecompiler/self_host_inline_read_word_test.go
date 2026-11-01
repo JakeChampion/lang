@@ -282,7 +282,7 @@ function main(): i32 {
   if (row == 1) { external = func("external_word", [arr], [arr, word_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(1, 1, [], 7, "")], 1)], word_type(), []); }
   let wrapper = func("wrapper", [arr], [arr, word_type(), int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "external_word"), op(ssasem.call(), 2, [1], 0, "use_word")], 2)], int_type(), [contract, consume]);
   let entry = func("entry", [arr], [arr, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "wrapper")], 1)], int_type(), [wrap]);
-  let out = seminline.inline_leaves([external, wrapper, entry], ["external_word", "wrapper", "entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, false, false], [false, true, false], false, seminline.own_roots(3));
+  let out = seminline.inline_leaves([external, wrapper, entry], ["external_word", "wrapper", "entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, true, false], false, seminline.own_roots(3));
   let calls: i32 = 0;
   for b in out.funcs[2].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "wrapper") { calls = calls + 1; } } }
   if (row == 0 && calls != 1) { print("opaque wrapper inlined"); return 77; }
@@ -298,7 +298,7 @@ function main(): i32 {
  let kernel = func("__count_below_u64", [], [], [], index, []);
  let wrapper = func("scan_wrapper", [words], [words, word, index, index], [block([op(ssasem.param(), 0, [], 0, ""), op(1, 1, [], 7, ""), op(ssasem.call(), 2, [0, 1], 0, "__count_below_u64"), op(ssasem.call(), 3, [2], 0, "use_index")], 3)], index, [scan, use_index]);
  let entry = func("scan_entry", [words], [words, index], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "scan_wrapper")], 1)], index, [wrapped]);
- let out = seminline.inline_leaves([kernel, wrapper, entry], ["__count_below_u64", "scan_wrapper", "scan_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, false, false], [false, true, false], false, seminline.own_roots(3));
+ let out = seminline.inline_leaves([kernel, wrapper, entry], ["__count_below_u64", "scan_wrapper", "scan_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, true, false], false, seminline.own_roots(3));
  for b in out.funcs[2].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "scan_wrapper") { print("copied index blocked"); return 79; } } }
  let bytes: typeinfo.Type = typeinfo.TypeArray { elem: byte_type(), view: false };
  let get_bytes = ssasem.Contract { name: "external_bytes", params: [bytes], modes: [ssasem.borrow_mode()], result: bytes };
@@ -307,7 +307,7 @@ function main(): i32 {
  let opaque_bytes = func("external_bytes", [], [], [], bytes, []);
  let bytes_wrapper = func("bytes_wrapper", [bytes], [bytes, bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "external_bytes"), op(ssasem.call(), 2, [1], 0, "use_bytes")], 2)], int_type(), [get_bytes, use_bytes]);
  let bytes_entry = func("bytes_entry", [bytes], [bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "bytes_wrapper")], 1)], int_type(), [wrap_bytes]);
- let bytes_out = seminline.inline_leaves([opaque_bytes, bytes_wrapper, bytes_entry], ["external_bytes", "bytes_wrapper", "bytes_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, false, false], [false, true, false], false, seminline.own_roots(3));
+ let bytes_out = seminline.inline_leaves([opaque_bytes, bytes_wrapper, bytes_entry], ["external_bytes", "bytes_wrapper", "bytes_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, true, false], false, seminline.own_roots(3));
  for b in bytes_out.funcs[2].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "bytes_wrapper") { print("managed bytes blocked"); return 80; } } }
  let loaded: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
  let load_name: string = ssabytes.word_name(4);
@@ -317,7 +317,7 @@ function main(): i32 {
  let word_load = func(load_name, [], [], [], loaded, []);
  let word_wrapper = func("word_wrapper", [bytes], [bytes, int_type(), loaded, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(1, 1, [], 0, ""), op(ssasem.call(), 2, [0, 1], 0, load_name), op(ssasem.call(), 3, [2], 0, "use_loaded")], 3)], int_type(), [load, use_loaded]);
  let word_entry = func("word_entry", [bytes], [bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "word_wrapper")], 1)], int_type(), [wrap_loaded]);
- let word_out = seminline.inline_leaves([word_load, word_wrapper, word_entry], [load_name, "word_wrapper", "word_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, false, false], [false, true, false], false, seminline.own_roots(3));
+ let word_out = seminline.inline_leaves([word_load, word_wrapper, word_entry], [load_name, "word_wrapper", "word_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, true, false], false, seminline.own_roots(3));
  for b in word_out.funcs[2].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "word_wrapper") { print("copied byte word blocked"); return 81; } } }
  let row_load: i32 = 0;
  while (row_load < 6) {
@@ -346,7 +346,7 @@ function main(): i32 {
   if (row_load == 4) { getter = ssasem.Func { ...getter, shadows: ["__load_i32"] }; }
   let wrapper = func("load_wrapper", [owner], [owner, int_type(), int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "load_value"), op(ssasem.call(), 2, [1], 0, "use_loaded")], 2)], int_type(), [get, consume_load]);
   let entry = func("load_entry", [owner], [owner, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "load_wrapper")], 1)], int_type(), [wrap]);
-  let out = seminline.inline_leaves([getter, wrapper, entry], ["load_value", "load_wrapper", "load_entry"], [[mode], [mode], [mode]], [false, true, false], [false, true, true], [false, true, false], [false, false, false], [false, true, false], false, seminline.own_roots(3));
+  let out = seminline.inline_leaves([getter, wrapper, entry], ["load_value", "load_wrapper", "load_entry"], [[mode], [mode], [mode]], [false, true, false], [false, true, true], [false, true, false], [false, true, false], false, seminline.own_roots(3));
   let calls: i32 = 0;
   for b in out.funcs[2].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "load_wrapper") { calls = calls + 1; } } }
   if ((row_load == 0 || row_load == 2) && calls != 0) { print("managed numeric load blocked"); return 82; }
@@ -354,7 +354,7 @@ function main(): i32 {
   row_load = row_load + 1;
  }
  let shadowed_scan_wrapper = ssasem.Func { ...wrapper, shadows: ["__count_below_u64"] };
- let shadowed_out = seminline.inline_leaves([kernel, shadowed_scan_wrapper, entry], ["__count_below_u64", "scan_wrapper", "scan_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, false, false], [false, true, false], false, seminline.own_roots(3));
+ let shadowed_out = seminline.inline_leaves([kernel, shadowed_scan_wrapper, entry], ["__count_below_u64", "scan_wrapper", "scan_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, true, false], false, seminline.own_roots(3));
  let shadowed_calls: i32 = 0;
  for b in shadowed_out.funcs[2].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "scan_wrapper") { shadowed_calls = shadowed_calls + 1; } } }
  if (shadowed_calls != 1) { print("shadowed builtin escaped"); return 84; }
@@ -366,7 +366,7 @@ function main(): i32 {
  let consumer_wrapper = func("shadow_consumer_wrapper", [bytes], [bytes, wide, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "external_u64"), op(ssasem.call(), 2, [1], 0, "__clz64")], 2)], int_type(), [wide_get, shadow_consume]);
  consumer_wrapper = ssasem.Func { ...consumer_wrapper, shadows: ["__clz64"] };
  let consumer_entry = func("shadow_consumer_entry", [bytes], [bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "shadow_consumer_wrapper")], 1)], int_type(), [shadow_wrap]);
- let consumer_out = seminline.inline_leaves([wide_getter, consumer_wrapper, consumer_entry], ["external_u64", "shadow_consumer_wrapper", "shadow_consumer_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, false, false], [false, true, false], false, seminline.own_roots(3));
+ let consumer_out = seminline.inline_leaves([wide_getter, consumer_wrapper, consumer_entry], ["external_u64", "shadow_consumer_wrapper", "shadow_consumer_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, true, false], [false, true, true], [false, true, false], [false, true, false], false, seminline.own_roots(3));
  let consumer_calls: i32 = 0;
  for b in consumer_out.funcs[2].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "shadow_consumer_wrapper") { consumer_calls = consumer_calls + 1; } } }
  if (consumer_calls != 1) { print("shadowed scalar consumer escaped"); return 85; }
@@ -381,7 +381,7 @@ function main(): i32 {
   let wrap_contract = ssasem.Contract { name: "copy_wrapper", params: [bytes], modes: [ssasem.borrow_mode()], result: int_type() };
   let wrapped = func("copy_wrapper", [bytes], [bytes, wide, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "external_u64"), op(ssasem.call(), 2, [1], 0, "copy_value")], 2)], int_type(), [wide_get, data_contract]);
   let entry = func("copy_entry", [bytes], [bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "copy_wrapper")], 1)], int_type(), [wrap_contract]);
-  let out = seminline.inline_leaves([wide_getter, data, wrapped, entry], ["external_u64", "copy_value", "copy_wrapper", "copy_entry"], [[], [ssasem.value_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, true, false], [false, false, true, true], [false, false, true, false], [false, false, false, false], [false, false, true, false], false, seminline.own_roots(4));
+  let out = seminline.inline_leaves([wide_getter, data, wrapped, entry], ["external_u64", "copy_value", "copy_wrapper", "copy_entry"], [[], [ssasem.value_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, true, false], [false, false, true, true], [false, false, true, false], [false, false, true, false], false, seminline.own_roots(4));
   let calls: i32 = 0;
   for b in out.funcs[3].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "copy_wrapper") { calls = calls + 1; } } }
   if (calls != consumer_case) { print("copied consumer admission"); return 86; }
@@ -401,7 +401,7 @@ function main(): i32 {
   let wrap_contract = ssasem.Contract { name: "indirect_wrapper", params: [bytes], modes: [ssasem.borrow_mode()], result: int_type() };
   let wrapper = func("indirect_wrapper", [bytes], [bytes, fn_type, wide, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.closure_new(), 1, captures, 0, "callback_value"), op(ssasem.call_value(), 2, [1, 0], 0, ""), op(ssasem.call(), 3, [2], 0, "use_indirect_word")], 3)], int_type(), [callback_contract, use_contract]);
   let entry = func("indirect_entry", [bytes], [bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "indirect_wrapper")], 1)], int_type(), [wrap_contract]);
-  let out = seminline.inline_leaves([wide_getter, callback, wrapper, entry], ["external_u64", "callback_value", "indirect_wrapper", "indirect_entry"], [[], [ssasem.borrow_mode(), ssasem.borrow_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, true, false], [false, false, true, true], [false, false, true, false], [false, false, false, false], [false, false, true, false], false, seminline.own_roots(4));
+  let out = seminline.inline_leaves([wide_getter, callback, wrapper, entry], ["external_u64", "callback_value", "indirect_wrapper", "indirect_entry"], [[], [ssasem.borrow_mode(), ssasem.borrow_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, true, false], [false, false, true, true], [false, false, true, false], [false, false, true, false], false, seminline.own_roots(4));
   let calls: i32 = 0;
   for b in out.funcs[3].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "indirect_wrapper") { calls = calls + 1; } } }
   if (calls != if (indirect_case == 0) { 0 } else { 1 }) { print("known indirect return summary"); return 87; }
@@ -421,7 +421,7 @@ function main(): i32 {
   let wrap_contract = ssasem.Contract { name: "selected_wrapper", params: [bytes], modes: [ssasem.borrow_mode()], result: int_type() };
   let wrapper = func("selected_wrapper", [bytes], [bytes, values, wide, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "external_values"), op(ssasem.call(), 2, [1], 0, "select_value"), op(ssasem.call(), 3, [2], 0, "use_selected")], 3)], int_type(), [get_contract, select_contract, use_contract]);
   let entry = func("selected_entry", [bytes], [bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "selected_wrapper")], 1)], int_type(), [wrap_contract]);
-  let out = seminline.inline_leaves([external, selected, wrapper, entry], ["external_values", "select_value", "selected_wrapper", "selected_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, true, false], [false, false, true, true], [false, false, true, false], [false, false, false, false], [false, false, true, false], false, seminline.own_roots(4));
+  let out = seminline.inline_leaves([external, selected, wrapper, entry], ["external_values", "select_value", "selected_wrapper", "selected_entry"], [[], [ssasem.borrow_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, true, false], [false, false, true, true], [false, false, true, false], [false, false, true, false], false, seminline.own_roots(4));
   let calls: i32 = 0;
   for b in out.funcs[3].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "selected_wrapper") { calls = calls + 1; } } }
   if (calls != dependency_case) { print("return argument dependency"); return 88; }
@@ -433,7 +433,7 @@ function main(): i32 {
  let alias_contract = ssasem.Contract { name: "alias_wrapper", params: [bytes], modes: [ssasem.borrow_mode()], result: int_type() };
  let alias_wrapper = func("alias_wrapper", [bytes], [bytes, wide, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "external_u64"), op(ssasem.call(), 2, [1], 0, "clashing_consumer")], 2)], int_type(), [wide_get, actual_contract]);
  let alias_entry = func("alias_entry", [bytes], [bytes, int_type()], [block([op(ssasem.param(), 0, [], 0, ""), op(ssasem.call(), 1, [0], 0, "alias_wrapper")], 1)], int_type(), [alias_contract]);
- let alias_out = seminline.inline_leaves([wide_getter, actual, method, alias_wrapper, alias_entry], ["external_u64", "clashing_consumer", "Other.clashing_consumer", "alias_wrapper", "alias_entry"], [[], [], [ssasem.value_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, false, true, false], [false, false, false, true, true], [false, false, false, true, false], [false, false, false, false, false], [false, false, false, true, false], false, seminline.own_roots(5));
+ let alias_out = seminline.inline_leaves([wide_getter, actual, method, alias_wrapper, alias_entry], ["external_u64", "clashing_consumer", "Other.clashing_consumer", "alias_wrapper", "alias_entry"], [[], [], [ssasem.value_mode()], [ssasem.borrow_mode()], [ssasem.borrow_mode()]], [false, false, false, true, false], [false, false, false, true, true], [false, false, false, true, false], [false, false, false, true, false], false, seminline.own_roots(5));
  let alias_calls: i32 = 0;
  for b in alias_out.funcs[4].graph.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.call() && ins.str == "alias_wrapper") { alias_calls = alias_calls + 1; } } }
  if (alias_calls != 1) { print("qualified consumer alias"); return 89; }

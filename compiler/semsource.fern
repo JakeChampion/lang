@@ -8328,7 +8328,6 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let inlinable: boolean[] = [];
   let rewrite: boolean[] = [];
   let unnamed: boolean[] = [];
-  let uncalled: boolean[] = [];
   let always: boolean[] = [];
   let arms: util.NameIndex = util.name_index(dispatched_arms(all));
   let keys: util.NameIndex = decl_keys(mod.funcs);
@@ -8343,12 +8342,11 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     modes = modes.append(p.modes);
     rewrite = rewrite.append(usable);
     inlinable = inlinable.append(usable && d >= 0 && inlinable_decl(mod.funcs[d]) && !lowered.has(names[i]) && optbisect.allowed_by(sw, "inline", names[i]));
-    unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
-    uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, arms));
+    unnamed = unnamed.append(outside_uncalled(p, names[i], i, mod, arms));
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size, roots);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, always, size, roots);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
@@ -8542,9 +8540,10 @@ function unnamed(all: Produced[], names: string[], spliced: boolean[], mod: pars
   let candidates: string[] = [];
   let at: i32[] = [];
   let out: boolean[] = [];
+  let arms: util.NameIndex = util.name_index(dispatched_arms(all));
   let i: i32 = 0;
   while (i < all.len()) {
-    let candidate: boolean = i < spliced.len() && spliced[i] && outside_unnamed(all[i], names[i], i, mod);
+    let candidate: boolean = i < spliced.len() && spliced[i] && outside_uncalled(all[i], names[i], i, mod, arms);
     if (candidate) {
       candidates = candidates.append(names[i]);
       at = at.append(i);
@@ -8604,6 +8603,9 @@ function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module):
   return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);
 }
 
+// A body that only direct calls reach: a private free function, or a method
+// that no export, interface, dyn arm, derive or Drop names. Such a body may
+// be spliced into its one caller and dropped.
 function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module, arms: util.NameIndex): boolean {
   if (outside_unnamed(p, name, i, mod)) {
     return true;

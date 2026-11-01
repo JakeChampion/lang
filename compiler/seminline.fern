@@ -74,7 +74,7 @@ pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolea
 struct Rewrite { f: ssasem.Func, changed: boolean }
 
 // roots[i] is the function that funcs0[i] is a copy of, or i.
-pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], always: boolean[], size: boolean, roots: i32[]): Inlined {
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], always: boolean[], size: boolean, roots: i32[]): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts_by_root(funcs0, ix, roots);
   let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, always, size);
@@ -82,9 +82,9 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let rounds: Inlined = done.out;
   sp = grown_leaves(rounds, done.sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
-  let scalars: Scalars = scalar_all(rounds, names, rewrite, uncalled, modes);
+  let scalars: Scalars = scalar_all(rounds, names, rewrite, unnamed, modes);
   let laid: Inlined = fields_all(scalars.out, names, rewrite);
-  let out: Inlined = scrutinee_reads_all(split_all(paired_all(laid, names, rewrite, uncalled), rewrite, scalars.modes));
+  let out: Inlined = scrutinee_reads_all(split_all(paired_all(laid, names, rewrite, unnamed), rewrite, scalars.modes));
   dump_wanted(out.funcs);
   return Inlined { ...out, modes: scalars.modes, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
@@ -852,8 +852,8 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
 
 struct Scalars { out: Inlined, modes: i32[][] }
 
-function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled: boolean[], modes: i32[][]): Scalars {
-  let s: sempair.Scalarized = sempair.scalar_params(prev.funcs, names, rewrite, uncalled, modes);
+function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[], modes: i32[][]): Scalars {
+  let s: sempair.Scalarized = sempair.scalar_params(prev.funcs, names, rewrite, unnamed, modes);
   let funcs: ssasem.Func[] = s.funcs;
   let rewritten: boolean[] = prev.rewritten;
   for i in 0..funcs.len() {
@@ -878,8 +878,8 @@ function fields_all(prev: Inlined, names: string[], rewrite: boolean[]): Inlined
   return Inlined { ...prev, funcs: funcs, rewritten: rewritten, laid: l.records };
 }
 
-function paired_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled: boolean[]): Inlined {
-  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, uncalled);
+function paired_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[]): Inlined {
+  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, unnamed);
   let funcs: ssasem.Func[] = p.funcs;
   let rewritten: boolean[] = prev.rewritten;
   let i: i32 = 0;
@@ -1063,12 +1063,12 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     return funcs;
   }
   let ix: util.NameIndex = util.name_index(names);
-  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
   let callbacks: boolean[] = [];
   for ci in 0..candidates.len() {
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
   }
-  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
   return splice_closures(funcs, candidates, ix, inlinable, rewrite);
 }
 
