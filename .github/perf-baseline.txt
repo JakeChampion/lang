@@ -1,3 +1,5 @@
+# 2026-11-01: main at 31cdefec4. CI run 41238190930, perf-x86_64. map_int.text and
+# map_probe_chain.text grew 1.14% after #13963 moved the operator traits into core/ops.
 # 2026-10-31: PR #13910, measured by CI job 124561576307.
 # 2026-10-31: PR #13910, measured by CI job 124561576376.
 # 2026-10-31: PR #13923, measured by CI job 124561596792.
@@ -191,9 +193,9 @@ x86_64/http_hello.text	17921
 x86_64/http_hello.ir	22672408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	8478
+x86_64/map_int.text	8575
 x86_64/map_int.ir	24563319
-x86_64/map_probe_chain.text	8482
+x86_64/map_probe_chain.text	8579
 x86_64/map_probe_chain.ir	241010587
 x86_64/map_string.text	9591
 x86_64/map_string.ir	53037751	2

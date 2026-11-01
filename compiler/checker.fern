@@ -23859,8 +23859,10 @@ function e021_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
       continue;
     }
+    let known: boolean = false;
     for trait_req in mod.trait_reqs {
       if (trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
+        known = true;
         let sup: string[] = trait_req.supertraits;
         for parent in sup {
           let elem: string = e021_req_spelling(parent, im, trait_req.type_params, mod.impls);
@@ -23912,6 +23914,9 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           }
         }
       }
+    }
+    if (!known && !derive_import_unloaded(mod, parser.impl_trait_key(im))) {
+      out = out.append(dg_at("E021", "unknown trait \"" + parser.impl_trait_key(im) + "\" in impl", im.line, im.col));
     }
   }
   return out;
