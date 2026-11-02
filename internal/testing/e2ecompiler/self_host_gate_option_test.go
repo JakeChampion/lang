@@ -9,10 +9,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-func TestSelfHostGateOptionContracts(t *testing.T) {
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ircore.fern")
-	source := `import "./ircore";
+func gateOptionSource() string {
+	return `import "./ircore";
 import "./physicalbody";
 import "./semrecords";
 ` + strings.Split(lowerResultAlignmentProg, "function main(): i32 {")[0] + `
@@ -65,7 +63,12 @@ function main(): i32 {
   return 0;
 }
 `
-	writeResolveProject(t, dir, map[string]string{"gate_option_contract.fern": source})
+}
+
+func TestSelfHostGateOptionContracts(t *testing.T) {
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "ircore.fern")
+	writeResolveProject(t, dir, map[string]string{"gate_option_contract.fern": gateOptionSource()})
 	cases := []struct {
 		name    string
 		mode    string
