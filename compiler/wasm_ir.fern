@@ -1415,7 +1415,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       }
       return n;
     }
-    if (n[0] == 64) {
+    if (n[0] == 64 || n == "free") {
       i = i + 1;
       continue;
     }

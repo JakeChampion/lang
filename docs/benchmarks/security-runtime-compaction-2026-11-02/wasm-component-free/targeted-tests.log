@@ -1,0 +1,69 @@
+mise go@1.27.3         [1/3] install
+mise go@1.27.3         [1/3] download go1.27.3.linux-arm64.tar.gz
+mise go@1.27.3         [2/3] checksum go1.27.3.linux-arm64.tar.gz
+mise go@1.27.3         [3/3] extract go1.27.3.linux-arm64.tar.gz
+mise go@1.27.3         [3/3] go version
+mise go@1.27.3         [3/3] go version go1.27.3 linux/arm64
+mise go@1.27.3       ✓ installed
+=== RUN   TestWasmMapBoxedInsert
+--- PASS: TestWasmMapBoxedInsert (27.77s)
+=== RUN   TestWASMSimPlatform
+--- PASS: TestWASMSimPlatform (33.84s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	61.619s
+=== RUN   TestSelfHostAbortsTrapWasm
+=== RUN   TestSelfHostAbortsTrapWasm/array_oob
+=== RUN   TestSelfHostAbortsTrapWasm/string_slice_oob
+=== RUN   TestSelfHostAbortsTrapWasm/string_index_oob
+=== RUN   TestSelfHostAbortsTrapWasm/string_index_oob_runtime
+=== RUN   TestSelfHostAbortsTrapWasm/alloc_size_negative
+=== RUN   TestSelfHostAbortsTrapWasm/slice_range_oob
+=== RUN   TestSelfHostAbortsTrapWasm/byte_slice_range_oob
+=== RUN   TestSelfHostAbortsTrapWasm/wide_slice_range_oob
+=== RUN   TestSelfHostAbortsTrapWasm/byte_view_negative_oob
+=== RUN   TestSelfHostAbortsTrapWasm/byte_view_past_end_oob
+=== RUN   TestSelfHostAbortsTrapWasm/buf_push_range_past_end
+=== RUN   TestSelfHostAbortsTrapWasm/buf_push_range_negative
+=== RUN   TestSelfHostAbortsTrapWasm/buf_push_range_inverted
+=== RUN   TestSelfHostAbortsTrapWasm/map_snapshot_key_past_end
+=== RUN   TestSelfHostAbortsTrapWasm/map_snapshot_value_past_end
+=== RUN   TestSelfHostAbortsTrapWasm/raw_double_free
+=== RUN   TestSelfHostAbortsTrapWasm/raw_free_outside_heap
+=== RUN   TestSelfHostAbortsTrapWasm/raw_double_free_large
+--- PASS: TestSelfHostAbortsTrapWasm (36.02s)
+    --- PASS: TestSelfHostAbortsTrapWasm/array_oob (0.34s)
+    --- PASS: TestSelfHostAbortsTrapWasm/string_slice_oob (0.36s)
+    --- PASS: TestSelfHostAbortsTrapWasm/string_index_oob (0.33s)
+    --- PASS: TestSelfHostAbortsTrapWasm/string_index_oob_runtime (0.37s)
+    --- PASS: TestSelfHostAbortsTrapWasm/alloc_size_negative (0.30s)
+    --- PASS: TestSelfHostAbortsTrapWasm/slice_range_oob (0.36s)
+    --- PASS: TestSelfHostAbortsTrapWasm/byte_slice_range_oob (0.36s)
+    --- PASS: TestSelfHostAbortsTrapWasm/wide_slice_range_oob (0.35s)
+    --- PASS: TestSelfHostAbortsTrapWasm/byte_view_negative_oob (0.41s)
+    --- PASS: TestSelfHostAbortsTrapWasm/byte_view_past_end_oob (0.37s)
+    --- PASS: TestSelfHostAbortsTrapWasm/buf_push_range_past_end (0.34s)
+    --- PASS: TestSelfHostAbortsTrapWasm/buf_push_range_negative (0.35s)
+    --- PASS: TestSelfHostAbortsTrapWasm/buf_push_range_inverted (0.36s)
+    --- PASS: TestSelfHostAbortsTrapWasm/map_snapshot_key_past_end (1.28s)
+    --- PASS: TestSelfHostAbortsTrapWasm/map_snapshot_value_past_end (1.32s)
+    --- PASS: TestSelfHostAbortsTrapWasm/raw_double_free (0.26s)
+    --- PASS: TestSelfHostAbortsTrapWasm/raw_free_outside_heap (0.25s)
+    --- PASS: TestSelfHostAbortsTrapWasm/raw_double_free_large (0.28s)
+=== RUN   TestSelfHostWasmHostScratchFreed
+=== RUN   TestSelfHostWasmHostScratchFreed/zero-allocation
+=== RUN   TestSelfHostWasmHostScratchFreed/args
+=== RUN   TestSelfHostWasmHostScratchFreed/environ
+=== RUN   TestSelfHostWasmHostScratchFreed/env
+--- PASS: TestSelfHostWasmHostScratchFreed (2.12s)
+    --- PASS: TestSelfHostWasmHostScratchFreed/zero-allocation (0.27s)
+    --- PASS: TestSelfHostWasmHostScratchFreed/args (0.34s)
+    --- PASS: TestSelfHostWasmHostScratchFreed/environ (0.35s)
+    --- PASS: TestSelfHostWasmHostScratchFreed/env (0.37s)
+=== RUN   TestSelfHostWasmRawFreeHeapCursor
+=== RUN   TestSelfHostWasmRawFreeHeapCursor/nonempty-at-cursor
+=== RUN   TestSelfHostWasmRawFreeHeapCursor/empty-above-cursor
+--- PASS: TestSelfHostWasmRawFreeHeapCursor (1.33s)
+    --- PASS: TestSelfHostWasmRawFreeHeapCursor/nonempty-at-cursor (0.27s)
+    --- PASS: TestSelfHostWasmRawFreeHeapCursor/empty-above-cursor (0.29s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	39.481s
