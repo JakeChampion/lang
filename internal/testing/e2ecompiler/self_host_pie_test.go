@@ -160,12 +160,13 @@ func TestSelfHostPIE(t *testing.T) {
 		machine elf.Machine
 	}{{"x86-64-linux", elf.EM_X86_64}, {"arm64-linux", elf.EM_AARCH64}} {
 		t.Run(tc.target, func(t *testing.T) {
-			runner := e2eharness.X86_64Runner(t)
+			var runner []string
 			if tc.target == "arm64-linux" {
-				runner = nil
 				if qemu := e2eharness.Arm64Runner(t); qemu != "" {
 					runner = []string{qemu}
 				}
+			} else {
+				runner = e2eharness.X86_64Runner(t)
 			}
 			bin := filepath.Join(dir, "pie-"+tc.target)
 			if errout, code := compile(t, bin, "-pie", "-target", tc.target); code != 0 {
