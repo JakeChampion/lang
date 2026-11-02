@@ -1497,6 +1497,10 @@ pub function op_buf_push_decimal(): Op {
   return op0(485);
 }
 
+pub function op_buf_push_base64(): Op {
+  return op0(487);
+}
+
 pub function op_buf_len(): Op {
   return op0(295);
 }
@@ -3412,6 +3416,9 @@ function kind_id_len15(name: string): i32 {
   if (name == "count_below_u64") {
     return 482;
   }
+  if (name == "buf_push_base64") {
+    return 487;
+  }
   if (name == "lsetxattr_bytes") {
     return 377;
   }
@@ -4206,6 +4213,9 @@ function kind_name_4(id: i32): string {
   if (id == 485) {
     return "buf_push_decimal";
   }
+  if (id == 487) {
+    return "buf_push_base64";
+  }
   if (id == 304) {
     return "open_reader_with";
   }
@@ -4973,6 +4983,9 @@ function pops3(t: i32): boolean {
 }
 
 function pops_buf(t: i32): i32 {
+  if (t == 487) {
+    return 5;
+  }
   if (t == 351) {
     return 4;
   }

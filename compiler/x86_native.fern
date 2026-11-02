@@ -3727,18 +3727,14 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     }
     return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true, false);
   }
-  if (mnem == "vpbroadcastb" || mnem == "vbroadcastsd") {
+  if (mnem == "vpbroadcastb" || mnem == "vpbroadcastd" || mnem == "vbroadcastsd") {
     let bd: i32 = x86_gas_ymm(dst);
     let bx: i32 = x86_gas_xmm(src);
     if (bd < 0 || bx < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    let bop: i32 = 120;
-    if (mnem == "vbroadcastsd") {
-      bop = 25;
-    }
     x86_push_arr(a.code, x86_vex([], bd >= 8, false, bx >= 8, 2, false, 0, true, 1));
-    buf_push_byte(a.code, bop);
+    buf_push_byte(a.code, x86_broadcast_op(mnem));
     buf_push_byte(a.code, x86_modrm(3, bd, bx));
     return a;
   }
@@ -3757,6 +3753,17 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
   buf_push_byte(a.code, 215);
   buf_push_byte(a.code, x86_modrm(3, rd, ys));
   return a;
+}
+
+// The 0F38 opcode of each broadcast from an xmm register.
+function x86_broadcast_op(mnem: string): i32 {
+  if (mnem == "vbroadcastsd") {
+    return 25;
+  }
+  if (mnem == "vpbroadcastd") {
+    return 88;
+  }
+  return 120;
 }
 
 function x86_gas_vex_move(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
@@ -3788,8 +3795,14 @@ function x86_vex_store_delta(mnem: string): i32 {
 }
 
 function x86_gas_is_vex_two(mnem: string): boolean {
-  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vbroadcastsd" || mnem == "vbroadcasti128" || mnem == "vpmovmskb" || mnem == "vmovmskpd" || mnem == "vmovq";
+  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vpbroadcastd" || mnem == "vbroadcastsd" || mnem == "vbroadcasti128" || mnem == "vpmovmskb" || mnem == "vmovmskpd" || mnem == "vmovq";
 }
+
+// The opcode of each VEX three-operand integer and FMA instruction: 256 plus
+// the 0F opcode, or 512 plus the 0F38 opcode.
+const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq"];
+
+const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567];
 
 function x86_vex_three_op(mnem: string): i32 {
   if (mnem.len() >= 4 && mnem[0] == b'v') {
@@ -3803,50 +3816,12 @@ function x86_vex_three_op(mnem: string): i32 {
       }
     }
   }
-  match (mnem) {
-    "vfmadd213ps" => {
-      return 512 + 168;
-    },
-    "vfmadd213pd" => {
-      return 512 + 168;
-    },
-    "vpcmpeqb" => {
-      return 256 + 116;
-    },
-    "vmulpd" => {
-      return 256 + 89;
-    },
-    "vpsubusb" => {
-      return 256 + 216;
-    },
-    "vpminub" => {
-      return 256 + 218;
-    },
-    "vpand" => {
-      return 256 + 219;
-    },
-    "vpaddusb" => {
-      return 256 + 220;
-    },
-    "vpor" => {
-      return 256 + 235;
-    },
-    "vpxor" => {
-      return 256 + 239;
-    },
-    "vpsubb" => {
-      return 256 + 248;
-    },
-    "vpshufb" => {
-      return 512;
-    },
-    "vpcmpgtq" => {
-      return 512 + 55;
-    },
-    _ => {
-      return 0 - 1;
+  for k in 0..VEX_THREE_NAMES.len() {
+    if (VEX_THREE_NAMES[k] == mnem) {
+      return VEX_THREE_OPS[k];
     }
   }
+  return 0 - 1;
 }
 
 function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {

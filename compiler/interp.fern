@@ -6256,7 +6256,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
 }
 
 function is_buf_builtin(name: string): boolean {
-  if (name == "buf_push_bytes_range") {
+  if (name == "buf_push_bytes_range" || name == "buf_push_base64") {
     return true;
   }
   if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") {
@@ -6910,6 +6910,51 @@ function call_buf_push_bytes_range(h: usize, args: Value[]): Value {
   }
 }
 
+// Four alphabet characters for each whole group of three bytes in a[lo..hi).
+function call_buf_push_base64(h: usize, args: Value[]): Value {
+  if (args.len() != 5) {
+    return v_err("buf_push_base64: expected 5 args (b, bytes, lo, hi, alphabet)");
+  }
+  if (!is_int_like(args[2]) || !is_int_like(args[3])) {
+    return v_err("buf_push_base64: bounds must be integers");
+  }
+  match (args[1]) {
+    VArr(a) => {
+      match (args[4]) {
+        VArr(t) => {
+          let lo: i32 = int_arg_i32(args[2]);
+          let hi: i32 = int_arg_i32(args[3]);
+          if (lo < 0) {
+            lo = 0;
+          }
+          if (hi > arr_len(a)) {
+            hi = arr_len(a);
+          }
+          if (hi > lo) {
+            for g in 0..(hi - lo) / 3 {
+              push_base64_group(h, a, t, lo + g * 3);
+            }
+          }
+          return v_void();
+        },
+        _ => {
+          return v_err("buf_push_base64: expected an alphabet array");
+        }
+      }
+    },
+    _ => {
+      return v_err("buf_push_base64: expected byte array");
+    }
+  }
+}
+
+function push_base64_group(h: usize, a: VArr, t: VArr, at: i32): void {
+  let v: i32 = (vint_bits(arr_at(a, at)) & 255) << 16 | (vint_bits(arr_at(a, at + 1)) & 255) << 8 | vint_bits(arr_at(a, at + 2)) & 255;
+  for shift in [18, 12, 6, 0] {
+    buf_push_byte(h, vint_bits(arr_at(t, v >> shift & 63)) & 255);
+  }
+}
+
 function call_buf_push_range(h: usize, args: Value[]): Value {
   if (args.len() != 4) {
     return v_err("buf_push_range: expected 4 args (b, s, lo, hi)");
@@ -7185,6 +7230,9 @@ function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): V
   }
   if (name == "buf_push_bytes_range") {
     return call_buf_push_bytes_range(h, args);
+  }
+  if (name == "buf_push_base64") {
+    return call_buf_push_base64(h, args);
   }
   if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return call_buf_push_table(name, h, args);

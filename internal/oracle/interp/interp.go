@@ -603,6 +603,7 @@ func New() *Interp {
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
 	i.Builtins["buf_push_decimal"] = &Builtin{Fn: builtinBufPushDecimal}
+	i.Builtins["buf_push_base64"] = &Builtin{Fn: builtinBufPushBase64}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
 	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
 	i.Builtins["buf_take_bytes"] = &Builtin{Fn: builtinBufTakeBytes}
@@ -5360,6 +5361,41 @@ func builtinBufPushBytesRange(i *Interp, args []Value) (Value, error) {
 			return nil, fmt.Errorf("buf_push_bytes_range: element %d is %T", at, a.Elems()[at])
 		}
 		b = append(b, byte(n))
+	}
+	i.bufs[h] = b
+	return Void{}, nil
+}
+
+// builtinBufPushBase64 appends four alphabet characters for each whole group
+// of three bytes in bytes[lo..hi).
+func builtinBufPushBase64(i *Interp, args []Value) (Value, error) {
+	if len(args) != 5 {
+		return nil, fmt.Errorf("buf_push_base64: expected 5 args, got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_base64", args[0])
+	if err != nil {
+		return nil, err
+	}
+	a, ok := args[1].(Array)
+	t, tok := args[4].(Array)
+	if !ok || !tok {
+		return nil, fmt.Errorf("buf_push_base64: expected byte arrays, got %T and %T", args[1], args[4])
+	}
+	lo, lok := args[2].(Number)
+	hi, hik := args[3].(Number)
+	if !lok || !hik {
+		return nil, fmt.Errorf("buf_push_base64: bounds must be numbers")
+	}
+	low, high := max(int64(lo), 0), min(int64(hi), int64(len(a.Elems())))
+	byteAt := func(arr Array, at int64) byte {
+		n, _ := arr.Elems()[at].(Number)
+		return byte(n)
+	}
+	for at := low; at+3 <= high; at += 3 {
+		v := uint32(byteAt(a, at))<<16 | uint32(byteAt(a, at+1))<<8 | uint32(byteAt(a, at+2))
+		for _, shift := range []uint{18, 12, 6, 0} {
+			b = append(b, byteAt(t, int64(v>>shift&63)))
+		}
 	}
 	i.bufs[h] = b
 	return Void{}, nil

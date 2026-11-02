@@ -2072,6 +2072,51 @@ function emit_buf_mapped_avx2(s: asmcore.EmitState, lm: string): asmcore.EmitSta
   return s.write("    jae " + lm + "_len\n");
 }
 
+// __fern_buf_push_base64(h, src, lo, hi, alpha) appends four characters of
+// the 64-byte alphabet for each whole group of three bytes in src[lo..hi). A
+// round loads 32 bytes at src - 4, so 24 input bytes sit in the two lanes as
+// the shuffle expects, and the multiplies take the 6-bit fields apart. Four
+// table lookups map the fields to the alphabet. A tail encodes one group at
+// a time.
+function emit_buf_push_base64(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_buf_push_base64:\n");
+  s = s.write("    movslq %edx, %rdx\n    movslq %ecx, %rcx\n    xorl %eax, %eax\n    testq %rdx, %rdx\n    cmovsq %rax, %rdx\n");
+  s = s.write("    movq (%rsi), %rax\n    cmpq %rax, %rcx\n    cmovgq %rax, %rcx\n    subq %rdx, %rcx\n    jle .Lb64_done\n");
+  s = s.write("    movl %ecx, %eax\n    movl $2863311531, %r9d\n    imulq %r9, %rax\n    shrq $33, %rax\n    testq %rax, %rax\n    jz .Lb64_done\n");
+  s = s.write("    leaq (%rax,%rax,2), %r10\n    shlq $2, %rax\n    movq 8(%rdi), %r11\n    leaq (%r11,%rax), %r9\n    cmpq 16(%rdi), %r9\n    ja .Lb64_grow\n");
+  s = s.write(".Lb64_fits:\n    movq %r9, 8(%rdi)\n    movq (%rdi), %rdi\n    addq %r11, %rdi\n    leaq 8(%rsi,%rdx), %rsi\n");
+  s = s.write("    cmpq $28, %r10\n    jb .Lb64_tail\n");
+  s = s.write("    vbroadcasti128 8(%r8), %ymm8\n    vbroadcasti128 24(%r8), %ymm9\n    vbroadcasti128 40(%r8), %ymm10\n    vbroadcasti128 56(%r8), %ymm11\n");
+  s = s.write("    vmovdqu .Lb64_shuffle(%rip), %ymm12\n");
+  s = s.write("    movl $264305664, %eax\n    movd %eax, %xmm13\n    vpbroadcastd %xmm13, %ymm13\n");
+  s = s.write("    movl $67108928, %eax\n    movd %eax, %xmm14\n    vpbroadcastd %xmm14, %ymm14\n");
+  s = s.write("    movl $4129776, %eax\n    movd %eax, %xmm15\n    vpbroadcastd %xmm15, %ymm15\n");
+  s = s.write("    movl $16777232, %eax\n    movd %eax, %xmm7\n    vpbroadcastd %xmm7, %ymm7\n");
+  s = s.write("    movl $16, %eax\n    movd %eax, %xmm6\n    vpbroadcastb %xmm6, %ymm6\n");
+  s = s.write("    movl $112, %eax\n    movd %eax, %xmm5\n    vpbroadcastb %xmm5, %ymm5\n");
+  s = s.write(".Lb64_vec:\n    vmovdqu -4(%rsi), %ymm0\n    vpshufb %ymm12, %ymm0, %ymm0\n");
+  s = s.write("    vpand %ymm13, %ymm0, %ymm1\n    vpmulhuw %ymm14, %ymm1, %ymm1\n    vpand %ymm15, %ymm0, %ymm2\n    vpmullw %ymm7, %ymm2, %ymm2\n    vpor %ymm2, %ymm1, %ymm0\n");
+  s = s.write("    vpaddusb %ymm5, %ymm0, %ymm1\n    vpshufb %ymm1, %ymm8, %ymm3\n");
+  s = s.write("    vpsubb %ymm6, %ymm0, %ymm0\n    vpaddusb %ymm5, %ymm0, %ymm1\n    vpshufb %ymm1, %ymm9, %ymm4\n    vpor %ymm4, %ymm3, %ymm3\n");
+  s = s.write("    vpsubb %ymm6, %ymm0, %ymm0\n    vpaddusb %ymm5, %ymm0, %ymm1\n    vpshufb %ymm1, %ymm10, %ymm4\n    vpor %ymm4, %ymm3, %ymm3\n");
+  s = s.write("    vpsubb %ymm6, %ymm0, %ymm0\n    vpaddusb %ymm5, %ymm0, %ymm1\n    vpshufb %ymm1, %ymm11, %ymm4\n    vpor %ymm4, %ymm3, %ymm3\n");
+  s = s.write("    vmovdqu %ymm3, (%rdi)\n    addq $24, %rsi\n    addq $32, %rdi\n    subq $24, %r10\n    cmpq $28, %r10\n    jae .Lb64_vec\n    vzeroupper\n");
+  s = s.write(".Lb64_tail:\n    testq %r10, %r10\n    jz .Lb64_done\n");
+  s = s.write(".Lb64_one:\n    movzbl (%rsi), %eax\n    movzbl 1(%rsi), %ecx\n    movzbl 2(%rsi), %edx\n    shll $16, %eax\n    shll $8, %ecx\n    orl %ecx, %eax\n    orl %edx, %eax\n");
+  s = s.write("    movl %eax, %ecx\n    shrl $18, %ecx\n    movzbl 8(%r8,%rcx), %ecx\n    movb %cl, (%rdi)\n");
+  s = s.write("    movl %eax, %ecx\n    shrl $12, %ecx\n    andl $63, %ecx\n    movzbl 8(%r8,%rcx), %ecx\n    movb %cl, 1(%rdi)\n");
+  s = s.write("    movl %eax, %ecx\n    shrl $6, %ecx\n    andl $63, %ecx\n    movzbl 8(%r8,%rcx), %ecx\n    movb %cl, 2(%rdi)\n");
+  s = s.write("    andl $63, %eax\n    movzbl 8(%r8,%rax), %eax\n    movb %al, 3(%rdi)\n");
+  s = s.write("    addq $3, %rsi\n    addq $4, %rdi\n    subq $3, %r10\n    jnz .Lb64_one\n");
+  s = s.write(".Lb64_done:\n    xorl %eax, %eax\n    ret\n");
+  s = s.write(".Lb64_grow:\n    pushq %rdi\n    pushq %rsi\n    pushq %rdx\n    pushq %r8\n    pushq %r10\n    pushq %rax\n    subq $8, %rsp\n    movq %r9, %rsi\n    call __fern_buf_reserve\n");
+  s = s.write("    addq $8, %rsp\n    popq %rax\n    popq %r10\n    popq %r8\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    movq 8(%rdi), %r11\n    leaq (%r11,%rax), %r9\n    jmp .Lb64_fits\n");
+  s = s.write("    .section .rodata\n.Lb64_shuffle:\n");
+  s = s.write("    .byte 5, 4, 6, 5, 8, 7, 9, 8, 11, 10, 12, 11, 14, 13, 15, 14\n");
+  s = s.write("    .byte 1, 0, 2, 1, 4, 3, 5, 4, 7, 6, 8, 7, 10, 9, 11, 10\n");
+  return s.write("    .section .text\n");
+}
+
 // __fern_buf_push_decimal(h, n) appends the decimal digits of the u64 n. It
 // writes them back to front into a stack scratch, two at a time from a table
 // of digit pairs, and divides by 100 with a multiply.
@@ -3824,6 +3869,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lbufu64_fits\n");
     if (s.has_need("buf_decimal")) {
       s = emit_buf_push_decimal(s);
+    }
+    if (s.has_need("buf_base64")) {
+      s = emit_buf_push_base64(s);
     }
     s = s.write("__fern_buf_len:\n");
     s = s.write("    movq 8(%rdi), %rax\n");
@@ -8240,32 +8288,24 @@ function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32)
 }
 
 function ssa_arg_regs(): string[] {
-  return ["%rdi", "%rsi", "%rdx", "%rcx"];
+  return ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];
+}
+
+// The allocator index of each argument register of a runtime buffer call:
+// rdi, rsi, rdx, rcx and r8.
+function ssa_buf_arg_reg(a: i32): i32 {
+  return [2, 1, 7, 6, 3][a];
 }
 
 function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
-  let i: i32 = 2;
-  while (i < ins.args.len()) {
-    s = ssa_load(reg_of, ins.args[i], ssa_arg_regs()[i], s);
-    i = i + 1;
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  for a in 0..ins.args.len() {
+    srcs = srcs.append(reg_of[ins.args[a]]);
+    dsts = dsts.append(ssa_buf_arg_reg(a));
   }
-  if (ins.args.len() == 1) {
-    s = ssa_load(reg_of, ins.args[0], "%rdi", s);
-  }
-  if (ins.args.len() >= 2) {
-    let h0: string = ssa_home_name(reg_of, ins.args[0]);
-    let h1: string = ssa_home_name(reg_of, ins.args[1]);
-    if (h0 == "%rsi" && h1 == "%rdi") {
-      s = s.write("    xchgq %rdi, %rsi\n");
-    } else if (h1 == "%rdi") {
-      s = ssa_load(reg_of, ins.args[1], "%rsi", s);
-      s = ssa_load(reg_of, ins.args[0], "%rdi", s);
-    } else {
-      s = ssa_load(reg_of, ins.args[0], "%rdi", s);
-      s = ssa_load(reg_of, ins.args[1], "%rsi", s);
-    }
-  }
+  s = ssa_parallel_moves(srcs, dsts, s);
   s = ssa_call_sym(s, sym);
   s = s.need("heap");
   s = s.need("buf");
@@ -8281,6 +8321,8 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.need("buf_push_bytes_range_u8");
   } else if (sym == "__fern_buf_push_decimal") {
     s = s.need("buf_decimal");
+  } else if (sym == "__fern_buf_push_base64") {
+    s = s.need("buf_base64");
   } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
     if (util.str_has_suffix(sym, "_u8")) {
       s = s.need("buf_bytes_u8");
@@ -10625,7 +10667,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.write("    call __fn___fern_sleep_ms\n    addq $8, %rsp\n    pushq %rax\n");
@@ -10653,6 +10695,9 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (o.kind_tag == 485) {
     s = s.need("buf_decimal");
+  }
+  if (o.kind_tag == 487) {
+    s = s.need("buf_base64");
   }
   let k: i32 = asmcore.buf_arity(o.kind_tag);
   while (k > 0) {
