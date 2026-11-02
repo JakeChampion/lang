@@ -6447,7 +6447,7 @@ function cfi_check_arm64(s: asmcore.EmitState, reg: string, sig: i32): asmcore.E
   let same: asmcore.LabelOut = asmcore.fresh_label(s);
   s = same.state;
   let lo: string = util.i32_to_string(sig & 65535);
-  let hi: string = util.i32_to_string((sig >> 16) & 65535);
+  let hi: string = util.i32_to_string(sig >> 16 & 65535);
   return s.write("    ldur w16, [" + reg + ", #-4]\n    movz w17, #" + lo + "\n    movk w17, #" + hi + ", lsl #16\n    cmp w16, w17\n    b.eq " + same.name + "\n    b __fern_cfi_sig_fail\n" + same.name + ":\n");
 }
 
@@ -6932,9 +6932,7 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add sp, sp, #16\n");
     s = s.write(".Llc_args_done:\n");
   }
-  if (s.rc_free_debug && s.has_need("heap")) {
-    s = quar_scan_at_exit(s);
-  }
+  s = quar_scan_at_exit(s);
   s = s.write("    adrp x1, .Llc_a\n");
   s = s.write("    add x1, x1, :lo12:.Llc_a\n");
   s = s.write("    mov x2, #18\n");
@@ -7069,6 +7067,9 @@ function quar_payload(s: asmcore.EmitState, name: string, body: string): asmcore
 // At exit every block still in the quarantine gets the eviction's check, so
 // a write after free is reported whether or not the budget evicted it.
 function quar_scan_at_exit(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.rc_free_debug || !s.has_need("heap")) {
+    return s;
+  }
   s = s.write(quar_addr("x12", "__fern_quar_head") + "    ldr x0, [x12]\n.Lquar_end_loop:\n    cbz x0, .Lquar_end_done\n");
   s = s.write(rc_poison_into("w9") + "    ldr w11, [x0]\n    cmp w11, w9\n    b.ne .Lquar_end_size0\n    ldr x1, [x0, #8]\n    b .Lquar_end_scan\n");
   s = s.write(".Lquar_end_size0:\n    ldr w11, [x0, #8]\n    cmp w11, w9\n    b.ne __fern_san_abort_waf\n    ldr x1, [x0]\n.Lquar_end_scan:\n");
@@ -7273,6 +7274,15 @@ function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
 // The key of a free block's link under -harden: the process canary mixed
 // with the block's page, so a link copied from another block fails too.
 // The key lands in `into`.
+// Under -harden, XORs the key of `block` into the link in `link`, with x16
+// as scratch.
+function freelist_encode(s: asmcore.EmitState, block: string, link: string): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  return s.write(freelist_key(block, "x16") + "    eor " + link + ", " + link + ", x16\n");
+}
+
 function freelist_key(block: string, into: string): string {
   return quar_addr(into, "__fern_canary") + "    ldr " + into + ", [" + into + "]\n    eor " + into + ", " + into + ", " + block + ", lsr #12\n";
 }
@@ -7824,10 +7834,7 @@ function freelist_push_slot(s: asmcore.EmitState, ptr: string, base: string, slo
     s = s.write("    cmp " + tmp + ", " + ptr + "\n");
     s = s.write("    b.eq " + twice + "\n");
   }
-  if (s.harden) {
-    s = s.write(freelist_key(ptr, "x16"));
-    s = s.write("    eor " + tmp + ", " + tmp + ", x16\n");
-  }
+  s = freelist_encode(s, ptr, tmp);
   s = s.write("    str " + tmp + ", [" + ptr + "]\n");
   return s.write("    str " + ptr + ", [" + slot + "]\n");
 }
@@ -9437,10 +9444,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x4, [x3, x2, lsl #3]\n");
   s = s.write("    cmp x4, x1\n");
   s = s.write("    b.eq __fern_double_free_abort_leaf\n");
-  if (s.harden) {
-    s = s.write(freelist_key("x1", "x16"));
-    s = s.write("    eor x4, x4, x16\n");
-  }
+  s = freelist_encode(s, "x1", "x4");
   s = s.write("    str x4, [x1]\n");
   s = s.write("    str x1, [x3, x2, lsl #3]\n");
   s = s.write(".Llpush_ret:\n");

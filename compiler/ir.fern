@@ -1917,10 +1917,8 @@ pub function op_call_indirect_sig(argc: i32, sig: string, cfi: i32): Op {
 // call, and never a landing pad or the compare the BTI control patches.
 pub function cfi_sig_hash(tag: string): i32 {
   let h: i32 = 0 - 2128831035;
-  let i: i32 = 0;
-  while (i < tag.len()) {
-    h = (h ^ (tag[i] as i32)) * 16777619;
-    i = i + 1;
+  for i in 0..tag.len() {
+    h = (h ^ tag[i] as i32) * 16777619;
   }
   if (h == 0) {
     return 1;
