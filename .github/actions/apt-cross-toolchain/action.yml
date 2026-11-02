@@ -1,6 +1,6 @@
 name: Install the aarch64 cross toolchain
 description: >
-  Installs gcc-aarch64-linux-gnu and a qemu-aarch64 user-mode emulator
+  Installs gcc-aarch64-linux-gnu, its libc headers, and a qemu-aarch64 user-mode emulator
   (or, with cross-gcc false, the emulator alone), the way every
   arm64-touching lane needs them.
 
@@ -81,7 +81,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/apt-cross-cache
-        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-${{ inputs.qemu-package }}
+        key: apt-cross-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-${{ inputs.qemu-package }}
 
     - name: aarch64 cross toolchain + ${{ inputs.qemu-package }}
       shell: bash
@@ -94,13 +94,14 @@ runs:
 
         PACKAGES="$QEMU_PKG"
         if [ "$WANT_GCC" = "true" ]; then
-          PACKAGES="gcc-aarch64-linux-gnu $PACKAGES"
+          PACKAGES="gcc-aarch64-linux-gnu libc6-dev-arm64-cross $PACKAGES"
         fi
 
         toolchain_present() {
           if [ "$WANT_GCC" = "true" ]; then
             command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 || return 1
             command -v aarch64-linux-gnu-as >/dev/null 2>&1 || return 1
+            aarch64-linux-gnu-gcc -x c -fsyntax-only -include dlfcn.h - </dev/null >/dev/null 2>&1 || return 1
           fi
           # The unit lane looks up qemu-aarch64, while other lanes request
           # the static executable. An installed sibling is not a cache hit
@@ -182,7 +183,7 @@ runs:
         # binaries absent would otherwise surface much later as a pile
         # of confusing test skips or failures.
         if ! toolchain_present; then
-          echo "::error::requested cross-toolchain executables are still missing after installation ($PACKAGES)"
+          echo "::error::the requested cross compiler, libc headers or emulator is missing after installation ($PACKAGES)"
           exit 1
         fi
         if [ "$WANT_GCC" = "true" ]; then
