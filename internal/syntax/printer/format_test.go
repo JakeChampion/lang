@@ -484,6 +484,13 @@ pub function add(env: usize, cls: usize, a: i64, b: i32): i64 { return a + b as 
 	}
 }
 
+func TestFormatCallbackAttr(t *testing.T) {
+	got := formatSrc(t, `@callback("compare") function compare_entry(): usize;`)
+	if !strings.Contains(got, "@callback(\"compare\")\nfunction compare_entry(): usize;") {
+		t.Errorf("@callback not preserved:\n%s", got)
+	}
+}
+
 func TestFormatExportAttr(t *testing.T) {
 	got := formatSrc(t, `@export("wasi:cli/run@0.2.0", "run")
 function run(): i32 { return 0; }

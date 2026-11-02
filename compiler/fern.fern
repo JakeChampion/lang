@@ -1034,11 +1034,75 @@ function got_label(stub: string): string {
   return "__fern_got" + slice_unchecked(stub, "__fern_import".len(), stub.len());
 }
 
+function is_callback(f: parser.FuncDecl): boolean {
+  return f.import_iface == parser.CALLBACK_IFACE;
+}
+
+// The functions that @callback declarations give to C. Each one gets a C
+// entry, and no dynamic symbol.
+function callback_targets(m: parser.Module): string[] {
+  let out: string[] = [];
+  for f in m.funcs {
+    if (is_callback(f) && !util.has_str(out, f.import_wit)) {
+      out = out.append(f.import_wit);
+    }
+  }
+  return out;
+}
+
+function callback_refusal(m: parser.Module, target: string, shared: boolean): string {
+  for f in m.funcs {
+    if (is_callback(f)) {
+      let what: string = "@callback " + f.name + ": ";
+      if (!(shared && is_native_target(target))) {
+        return what + "a callback needs -shared and a native target";
+      }
+      if (f.params.len() > 0 || f.ret_type != "usize") {
+        return what + "the declaration takes no parameters and returns usize";
+      }
+      let k: i32 = export_func_index(m, f.import_wit);
+      if (k < 0) {
+        return what + "the program has no top-level function " + f.import_wit;
+      }
+      if (m.funcs[k].all_type_params.len() > 0) {
+        return what + "a generic function has no single body to give to C";
+      }
+    }
+  }
+  return "";
+}
+
+// The C entries of a shared object: its exports, then the callback targets
+// that are not exports.
+function entry_names(merged: parser.Module, roots: string[]): string[] {
+  let out: string[] = roots;
+  for t in callback_targets(merged) {
+    if (!util.has_str(out, t)) {
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
+// The body of callback declaration `f`: it returns the address of the C
+// entry of its target.
+function callback_entry(f: parser.FuncDecl, arm64: boolean): string {
+  let entry: string = "__fern_export_" + f.import_wit;
+  if (arm64) {
+    return "__fn_" + f.name + ":\n    adrp x0, " + entry + "\n    add x0, x0, :lo12:" + entry + "\n    ret\n";
+  }
+  return "__fn_" + f.name + ":\n    leaq " + entry + "(%rip), %rax\n    ret\n";
+}
+
 // Each import stub's slot, and the stub's body, which returns the slot's
-// contents: the address that the dynamic loader writes there.
+// contents: the address that the dynamic loader writes there. Then the body
+// of each callback declaration.
 function import_entries(merged: parser.Module, arm64: boolean): string {
   let out: string = "";
   for f in merged.funcs {
+    if (is_callback(f)) {
+      out = out + callback_entry(f, arm64);
+    }
     if (is_c_library(f.import_iface)) {
       let got: string = got_label(f.name);
       if (arm64) {
@@ -1269,6 +1333,10 @@ function jni_method(f: parser.FuncDecl, class: string, decl: string): (JniMethod
 // or the first refusal of either.
 function native_bindings(m: parser.Module, target: string, shared: boolean, java_dir: string): (parser.Module, JniMethod[], string) {
   let none: JniMethod[] = [];
+  let callback_bad: string = callback_refusal(m, target, shared);
+  if (callback_bad.len() > 0) {
+    return (m, none, callback_bad);
+  }
   let import_bad: string = native_import_refusal(m, target, shared);
   if (import_bad.len() > 0) {
     return (m, none, import_bad);
@@ -1501,7 +1569,7 @@ function shared_exports(merged: parser.Module, shared: boolean, export_list: str
   if (bad.len() > 0) {
     return (merged, roots, bad);
   }
-  for name in roots {
+  for name in entry_names(merged, roots) {
     merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: name, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
   }
   return (merged, roots, "");
@@ -6346,7 +6414,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + import_entries(merged, true) + out_asm;
+      out_asm = export_entries(merged, entry_names(merged, shared_roots), true) + import_entries(merged, true) + out_asm;
     }
     out_asm = out_asm + bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
@@ -6368,7 +6436,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + import_entries(merged, true) + out_asm;
+      out_asm = export_entries(merged, entry_names(merged, shared_roots), true) + import_entries(merged, true) + out_asm;
     }
     if (!emit_text && shared) {
       out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged);
@@ -6463,7 +6531,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared && out_asm.len() > 0) {
-      out_asm = export_entries(merged, shared_roots, false) + import_entries(merged, false) + out_asm;
+      out_asm = export_entries(merged, entry_names(merged, shared_roots), false) + import_entries(merged, false) + out_asm;
     }
     if (!emit_text && shared) {
       out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", merged);

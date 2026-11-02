@@ -625,8 +625,12 @@ func (p *parser) parseProgram() *ast.Program {
 			fn.InlineHint = inlineHint
 			if importIface != "" {
 				if fn.Body != nil {
+					attr := "@import"
+					if importIface == ast.CallbackIface {
+						attr = "@callback"
+					}
 					p.errors = append(p.errors, p.errorf(fn.P,
-						"@import function %q must be body-less (end with `;`)", fn.Name))
+						"%s function %q must be body-less (end with `;`)", attr, fn.Name))
 				}
 				fn.ImportIface = importIface
 				fn.ImportWITName = importWIT
@@ -1182,8 +1186,14 @@ func (p *parser) parseAttribute() (declAttr, error) {
 			return declAttr{name: attr, jniClass: iface, jniDecl: name}, nil
 		}
 		return declAttr{name: attr, exportIface: iface, exportWIT: name}, nil
+	case "callback":
+		target, err := p.parseCallbackArg()
+		if err != nil {
+			return declAttr{}, err
+		}
+		return declAttr{name: attr, importIface: ast.CallbackIface, importWIT: target}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @callback, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
@@ -1213,8 +1223,25 @@ func attrMisplaced(name string) string {
 		return "@export only applies to a function declaration"
 	case "jni":
 		return "@jni only applies to a function declaration"
+	case "callback":
+		return "@callback only applies to a function declaration"
 	}
 	return "@inline / @noinline only applies to a function declaration"
+}
+
+// parseCallbackArg reads ("f"), the function of a @callback declaration.
+func (p *parser) parseCallbackArg() (string, error) {
+	if _, err := p.expect(lexer.Punct, "("); err != nil {
+		return "", err
+	}
+	t, err := p.expect(lexer.String, "")
+	if err != nil {
+		return "", err
+	}
+	if _, err := p.expect(lexer.Punct, ")"); err != nil {
+		return "", err
+	}
+	return t.Text, nil
 }
 
 func (p *parser) parseIfaceNamePair() (iface, name string, err error) {

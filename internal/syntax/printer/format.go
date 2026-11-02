@@ -838,7 +838,12 @@ func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
 }
 
 func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
-	if fn.ImportIface != "" {
+	if fn.ImportIface == ast.CallbackIface {
+		f.indent(depth)
+		f.b.WriteString("@callback(\"")
+		f.b.WriteString(fn.ImportWITName)
+		f.b.WriteString("\")\n")
+	} else if fn.ImportIface != "" {
 		f.indent(depth)
 		f.b.WriteString("@import(\"")
 		f.b.WriteString(fn.ImportIface)

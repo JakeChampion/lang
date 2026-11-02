@@ -2828,11 +2828,20 @@ function print_resource_decl(rd: parser.ResourceDecl): string {
   return out + "resource " + rd.name + ";\n";
 }
 
+// The @import or @callback line of a body-less function.
+function import_attr(fd: parser.FuncDecl): string {
+  if (fd.import_iface == parser.CALLBACK_IFACE) {
+    return "@callback(" + quote_string(fd.import_wit) + ")\n";
+  }
+  if (fd.import_iface.len() > 0) {
+    return "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
+  }
+  return "";
+}
+
 function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_never: boolean, f: Fmt): (string, Fmt) {
   let out: string = "";
-  if (fd.import_iface.len() > 0) {
-    out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
-  }
+  out = out + import_attr(fd);
   if (has_inline_hint) {
     if (inline_never) {
       out = out + "@noinline\n";

@@ -63,6 +63,12 @@ To call a C function of an NDK library, such as `liblog.so` or
 `libandroid.so`, declare it with `@import("liblog.so", "__android_log_write")`
 on a function with no body. The library loads with the `.so`.
 
+To give C a pointer to a Fern function, as a C callback, declare
+`@callback("on_input") function on_input_entry(): usize;` with no body. The
+declaration returns the address of the C entry of `on_input`. The entry takes
+and returns the C types of the parameters and the result of `on_input`, as an
+`-export` entry does. The entry is not a dynamic symbol.
+
 To **invoke** a Java method, resolve a `jmethodID` with `jni.get_method_id`.
 Pack the arguments with `jni.jvalues`. Then call `jni.call_int_method_a`,
 `call_object_method_a` or another method of the fixed-arity

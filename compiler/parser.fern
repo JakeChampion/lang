@@ -274,6 +274,10 @@ pub function is_cast_op(op: string): boolean {
 
 pub const BARE_RETURN: string = "bare-return";
 
+// The import interface of a @callback("f") declaration. The compiler gives
+// the declaration a body that returns the address of the C entry of f.
+pub const CALLBACK_IFACE: string = "fern:callback";
+
 pub const REPORTED: string = "reported";
 
 pub function bare_return(e: ast.Expr): boolean {
@@ -23569,13 +23573,43 @@ function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (name == "derive") {
     return parse_derive_args(p);
   }
-  if (util.has_str(["import", "export", "jni"], name)) {
-    return parse_wit_pair(name, p);
+  if (util.has_str(["import", "export", "jni", "callback"], name)) {
+    return parse_binding_args(name, p);
   }
   if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline") {
     return (DeclAttr { ...no_decl_attr(), name: name }, [], p);
   }
-  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @must_consume, @try, @inline, and @noinline are supported)")], p);
+  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @must_consume, @try, @inline, and @noinline are supported)")], p);
+}
+
+function parse_binding_args(name: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
+  if (name == "callback") {
+    return parse_callback_arg(p);
+  }
+  return parse_wit_pair(name, p);
+}
+
+// @callback("f"): the name of the function whose C entry address the
+// declaration returns.
+function parse_callback_arg(p: Par): (DeclAttr, ast.Stmt[], Par) {
+  if (p.peek_punct() != "(") {
+    return (no_decl_attr(), expected_here(p, "\"(\""), p);
+  }
+  p = p.advance();
+  let target: string = "";
+  match (p.peek()) {
+    lexer.TokString(s) => {
+      target = s.value;
+    },
+    _ => {
+      return (no_decl_attr(), expected_here(p, "a string literal"), p);
+    }
+  }
+  p = p.advance();
+  if (p.peek_punct() != ")") {
+    return (no_decl_attr(), expected_here(p, "\")\""), p);
+  }
+  return (DeclAttr { ...no_decl_attr(), name: "callback", iface: CALLBACK_IFACE, wit: target }, [], p.advance());
 }
 
 function parse_derive_args(p: Par): (DeclAttr, ast.Stmt[], Par) {
@@ -23669,6 +23703,9 @@ function attr_misplaced(name: string): string {
   }
   if (name == "jni") {
     return "@jni only applies to a function declaration";
+  }
+  if (name == "callback") {
+    return "@callback only applies to a function declaration";
   }
   return "@inline / @noinline only applies to a function declaration";
 }
@@ -25587,7 +25624,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: attr.name == "noinline" });
       }
       let fr_pub: FuncDecl = FuncDecl { ...fr_func, is_pub: decl_pub, is_package: decl_package, no_inline: attr.name == "noinline", always_inline: attr.name == "inline" };
-      if (attr.name == "import") {
+      if (attr.name == "import" || attr.name == "callback") {
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
       }
       exports = with_attr_export(exports, attr, fr_func);
@@ -25888,12 +25925,21 @@ pub function merge_module(into: Module, from: Module): Module {
   return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
+// A callback names a function of its own module, so the target takes the
+// module's prefix too.
+function callback_target(fd: FuncDecl, prefix: string): string {
+  if (fd.import_iface == CALLBACK_IFACE) {
+    return prefix + "." + fd.import_wit;
+  }
+  return fd.import_wit;
+}
+
 pub function merge_module_prefixed(into: Module, from: Module, prefix: string): Module {
   let nfuncs: FuncDecl[] = into.funcs;
   let fi: i32 = 0;
   while (fi < from.funcs.len()) {
     let fd: FuncDecl = from.funcs[fi];
-    nfuncs = nfuncs.append(FuncDecl { ...fd, name: prefix + "." + fd.name, is_pub: true });
+    nfuncs = nfuncs.append(FuncDecl { ...fd, name: prefix + "." + fd.name, import_wit: callback_target(fd, prefix), is_pub: true });
     fi = fi + 1;
   }
   let nstructs: StructDecl[] = into.structs;
