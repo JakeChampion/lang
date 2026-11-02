@@ -208,32 +208,78 @@ pub function seccomp_allowlist(s: EmitState): i32[] {
     exit(1);
     return [];
   }
-  if (s.syscalls.len() > 255) {
-    eprint("internal error: the seccomp allowlist has " + util.i32_to_string(s.syscalls.len()) + " syscalls; the u8 jump offset caps it at 255");
+  if (s.syscalls.len() > 252) {
+    eprint("internal error: the seccomp allowlist has " + util.i32_to_string(s.syscalls.len()) + " syscalls; the u8 jump offset caps it at 252");
     exit(3);
     return [];
   }
   return s.syscalls;
 }
 
+// The system calls that take a protection word as their third argument:
+// mmap, mprotect and pkey_mprotect. No runtime path asks for an executable
+// mapping, so the filter kills a request with PROT_EXEC.
+pub function mapping_calls(target: string): i32[] {
+  if (target == "arm64-linux" || target == "arm64-android") {
+    return [222, 226, 288];
+  }
+  return [9, 10, 329];
+}
+
 // The BPF program at `.Lseccomp_filter`. A call from another architecture or
-// with a number outside `allowed` kills the process.
+// with a number outside `allowed` kills the process. An allowed mapping call
+// goes through the check block after the kill: its protection word must not
+// carry PROT_EXEC.
 pub function emit_seccomp_filter(s: EmitState, arch: string, allowed: i32[]): EmitState {
   s = s.write("    .section .rodata\n    .balign 8\n.Lseccomp_filter:\n");
   s = bpf_insn(s, 32, 0, "4");
   s = bpf_insn(s, 21, 1, arch);
   s = bpf_insn(s, 6, 0, "0x80000000");
   s = bpf_insn(s, 32, 0, "0");
+  let mapping: i32[] = mapping_calls(s.build_target);
+  let checked: boolean = mapping_checked(s, allowed);
   let n: i32 = allowed.len();
   for i in 0..n {
-    s = bpf_insn(s, 21, n - i, util.i32_to_string(allowed[i]));
+    let to_allow: i32 = if (checked) { n - i + 3 } else { n - i };
+    let jt: i32 = if (checked && util.index_of_i32(mapping, allowed[i]) >= 0) { n - i } else { to_allow };
+    s = bpf_insn(s, 21, jt, util.i32_to_string(allowed[i]));
   }
   s = bpf_insn(s, 6, 0, "0x80000000");
+  if (checked) {
+    s = bpf_insn(s, 32, 0, "32");
+    s = bpf_jump(s, 69, 0, 1, "4");
+    s = bpf_insn(s, 6, 0, "0x80000000");
+  }
   return bpf_insn(s, 6, 0, "0x7FFF0000");
 }
 
+// Whether the list holds a mapping call, so the filter carries the check block.
+function mapping_checked(s: EmitState, allowed: i32[]): boolean {
+  let mapping: i32[] = mapping_calls(s.build_target);
+  for nr in allowed {
+    if (util.index_of_i32(mapping, nr) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The instruction count of the filter the installer hands to the kernel:
+// four for the architecture and number loads, one per allowed call, the kill,
+// the ALLOW, and three more for the protection check when it is present.
+pub function seccomp_filter_len(s: EmitState, allowed: i32[]): i32 {
+  if (mapping_checked(s, allowed)) {
+    return allowed.len() + 9;
+  }
+  return allowed.len() + 6;
+}
+
 function bpf_insn(s: EmitState, code: i32, jt: i32, k: string): EmitState {
-  return s.write("    .long " + util.i32_to_string(code + jt * 65536) + ", " + k + "\n");
+  return bpf_jump(s, code, jt, 0, k);
+}
+
+function bpf_jump(s: EmitState, code: i32, jt: i32, jf: i32, k: string): EmitState {
+  return s.write("    .long " + util.i32_to_string(code + jt * 65536 + jf * 16777216) + ", " + k + "\n");
 }
 
 pub function (s: EmitState) has_named(name: string): boolean {
