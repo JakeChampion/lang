@@ -191,6 +191,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"raw-data-is-private", `function main(): i32 { let x = __raw_data("a"); return 0; }`, []string{"E001"}},
 		{"raw-store-is-private", `function main(): i32 { __raw_store8(0 as usize, 0, 0); return 0; }`, []string{"E001"}},
 		{"raw-syscall-is-private", `function main(): i32 { __syscall0(0); return 0; }`, []string{"E001"}},
+		{"unknown-raw-name", `function main(): i32 { return __no_such_thing(1); }`, []string{"E001"}},
 		{"generic-array-result-unbound", `function mk[T](): T[] { return []; } function main(): i32 { let z = mk(); return 0; }`, []string{"E040"}},
 		{"generic-array-result-destination", `function mk[T](): T[] { return []; } function main(): i32 { let z: i32[] = mk(); return z.len(); }`, nil},
 		{"generic-array-result-return", `function mk[T](): T[] { return []; } function f(): i32[] { return mk(); } function main(): i32 { return f().len(); }`, nil},

@@ -8,12 +8,12 @@ The position-independent image is described in [PIE.md](PIE.md), and the `.note.
 
 | Image | Segments | Stack |
 |---|---|---|
-| x86-64-linux and arm64-linux executable | code and unwind tables read-execute, constants, globals and BSS read-write | `PT_GNU_STACK` without execute |
-| the same with `-pie` | the same at base 0, loaded at a random base | the same |
+| x86-64-linux and arm64-linux executable | code and unwind tables read-execute, constant boxes and address tables in a separate read-only load segment, globals and BSS read-write | `PT_GNU_STACK` without execute |
+| the same with `-pie` | code read-execute, data read-write at load time, constants read-only after relocation under `PT_GNU_RELRO` | the same |
 | arm64-linux with `-harden` | the same plus `PT_GNU_PROPERTY` asking for BTI | the same |
 | x86-64-linux and arm64-linux `-shared` | code read-execute, data read-write, the dynamic tables read-write under `PT_GNU_RELRO`, `PT_DYNAMIC` | `PT_GNU_STACK` without execute |
 
-Every variant of an executable (`-pie`, `-harden`, `-g`, `-sanitize`, `-backtrace` and their combinations) keeps the first row's shape.
+These final permissions also hold with `-harden`, `-g`, `-sanitize`, `-backtrace` and their combinations. PIE uses the relocation row.
 `-harden` stores its stubs in the code segment, so the allowed indirect targets are read-only ([CFI.md](CFI.md)).
 
 ## Change in this record
@@ -30,20 +30,45 @@ Both shared objects now carry `PT_GNU_RELRO` over the dynamic tables. Those are 
 The dynamic loader applies the relocations and then maps that page range read-only.
 The range is page-aligned, because the loader rounds its end down to a page and protects nothing otherwise.
 
-## Where RELRO does not apply
+## RELRO in the executables
 
 A Fern executable has no dynamic loader, no global offset table and no procedure linkage table.
-The only words a loader-like step patches are the absolute addresses the `-pie` startup loop relocates.
-They lie in the read-write data segment with the mutable globals, and they stay writable after the loop.
-The equivalent of RELRO for them is a separate segment that the startup loop maps read-only after the relocation.
-The constant string boxes in that set carry a reference count that the runtime writes. The design has to settle how a static box is counted before it moves the tables.
+The words a loader-like step patches are the absolute addresses the `-pie` startup loop relocates: the string boxes, the constant aggregates and the address tables.
+The emitters place them in `.data.rel.ro`. The assembler puts that section at the front of the data segment.
+
+The data bytes follow the code in the file at a 16-byte boundary. Each load segment has the same offset within a page in the file and in memory.
+
+For a fixed-address image, the kernel maps the constant region read-only from the start. No protection syscall or auxiliary-vector scan is needed.
+A virtual gap separates the read-only and writable load segments. Its size is the target's load alignment, so their virtual pages cannot overlap on any supported page size.
+The file omits that gap. A write through a writable file-page alias creates a private copy and cannot change the separate read-only mapping.
+
+PIE and Android images still relocate their constants at startup. `PT_GNU_RELRO` names the region.
+The driver inserts padding after it to end on a 4096-byte boundary. After relocation, `_start` reads `AT_PAGESZ` and rounds both ends down to that page size.
+It then calls `mprotect` with read permission on the pages between them.
+
+A failed call ends the process with `fern: protection of the constant data failed`, status 134.
+The region is empty in a `-shared` object, on Darwin and on the freestanding targets. There the emitters keep the constants in `.data`.
+
+The constant boxes carry a negative reference count. The count paths skip a negative count, so the runtime never writes a constant box, and the read-only mapping holds.
+
+The array literals of bytes and scalars stay in `.data`. `reactor_wait` and `tcp_recv_into` write into their array argument in place, and a literal argument is the shared constant itself ([#14013](https://github.com/JakeChampion/lang/issues/14013)).
+Those literals hold no address. They join the region when the builtins own their argument first.
+
+The shared empty allocation stays writable until those mutators own their arguments too.
+The decoder also returns an empty array before it resets a zero-capacity buffer's length, so zero or negative output limits need no length write.
 
 ## Verification
 
-`TestSelfHostImagePermissions` builds seven variants on both targets, reads the program headers, runs the program, and runs two probes.
+`TestSelfHostImagePermissions` builds seven variants on both targets, reads the program headers, runs the program, and runs three probes.
+It requires `PT_GNU_RELRO` to match the read-only load segment in a fixed-address image.
+It also checks that the read-only and writable virtual pages cannot overlap at the target's load alignment.
+For PIE, the region must lead the writable data segment and end on a 4096-byte boundary inside its file bytes.
+Empty-image controls check every variant too.
+
 The first probe finds its own executable mapping in `/proc/self/maps` and stores a byte into it.
-The second patches the image's entry point to the data segment and writes an exit system call over its first bytes.
-Both must end with `SIGSEGV`, natively on x86-64 and under QEMU on arm64.
+The second finds the read-only mapping of its data segment and stores a byte into it.
+The third patches the image's entry point to the data segment and writes an exit system call over its first bytes.
+All three must end with `SIGSEGV`, natively on x86-64 and under QEMU on arm64.
 
 `TestSharedObjectLayout` builds a shared object for each target. It requires a read-execute code segment first, no writable executable segment, a non-executable stack and `PT_DYNAMIC`. It also requires a page-aligned `PT_GNU_RELRO` that covers the dynamic section inside a non-executable load segment.
 The dlopen tests of `internal/testing/e2e` load the x86-64 object through glibc and call its exports.
@@ -55,7 +80,8 @@ go test ./internal/testing/e2e -run 'TestSharedObjectLayout|TestSharedLibX86|Tes
 
 ## Remaining limits
 
-- The relocated words of a `-pie` executable stay writable, as described above.
+- The array literals of bytes and scalars and the shared empty allocation stay writable until [#14013](https://github.com/JakeChampion/lang/issues/14013) lands.
+- PIE and Android protection rounds the length down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages can protect fewer pages than a kernel with 4 KiB pages. Fixed-address images have a separate read-only load segment on each supported page size.
 - The arm64-android image has no `PT_GNU_PROPERTY`, and the Darwin image is Mach-O with its own rules.
 - QEMU user mode enforces page permissions through the host, so the arm64 probes are emulated evidence.
 - A `-shared` object has no `PT_GNU_PROPERTY`, so a BTI host does not guard its pages.

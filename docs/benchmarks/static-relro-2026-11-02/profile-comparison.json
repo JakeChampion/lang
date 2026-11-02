@@ -1,0 +1,57 @@
+{
+  "scope": "All 144 static profile metrics. Native x86 dynamic profile counts remain CI validation.",
+  "command": [
+    "/Users/jakechampion/codex/lang-pr-14019-validation/scripts/ci-check-perf",
+    "/tmp/fern-14019-final-perf-profile/accepted-static-limits.txt",
+    "/tmp/fern-14019-final-perf-profile/static-report.txt"
+  ],
+  "exit_code": 0,
+  "baseline_sha256": "74e6b2dd2cc6e2165891e8535e89d0655940fd2197140debf91c52abb35c8fc3",
+  "changed": [
+    {
+      "metric": "profile/arm64-linux/deflate_decode.minimal.emit",
+      "baseline": 12238,
+      "measured": 12261
+    },
+    {
+      "metric": "profile/x86-64-linux/array_append.hardened.bytes",
+      "baseline": 6016,
+      "measured": 6064
+    },
+    {
+      "metric": "profile/x86-64-linux/closure_call.hardened.bytes",
+      "baseline": 5248,
+      "measured": 5296
+    },
+    {
+      "metric": "profile/x86-64-linux/deflate_decode.hardened.bytes",
+      "baseline": 56352,
+      "measured": 56400
+    },
+    {
+      "metric": "profile/x86-64-linux/http_hello.hardened.bytes",
+      "baseline": 70704,
+      "measured": 70736
+    },
+    {
+      "metric": "profile/x86-64-linux/map_string.diagnostic.bytes",
+      "baseline": 133696,
+      "measured": 133712
+    },
+    {
+      "metric": "profile/x86-64-linux/map_string.hardened.bytes",
+      "baseline": 43520,
+      "measured": 43552
+    },
+    {
+      "metric": "profile/x86-64-linux/map_string.minimal.bytes",
+      "baseline": 36288,
+      "measured": 36304
+    },
+    {
+      "metric": "profile/x86-64-linux/map_string.safe.bytes",
+      "baseline": 37536,
+      "measured": 37552
+    }
+  ]
+}

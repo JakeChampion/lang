@@ -919,6 +919,11 @@ pub struct X86Asm {
   text: u8[],
   rodata: i32[],
   ro: i32[],
+  relro: i32[],
+  relro_pad: i32,
+  rfix_offs: i32[],
+  rfix_names: string[],
+  rfix_idx: i32[],
   ro_base: i32,
   code_end: i32,
   bss_size: i32,
@@ -979,12 +984,12 @@ function x86_empty_buckets(): i32[] {
 }
 
 function x86_asm_new(): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 function x86_filled(n: i32, v: i32): i32[] {
@@ -1084,15 +1089,58 @@ function x86_rodata_label_at(own a: X86Asm, name: string, idx: i32, sec: i32): X
   return x86_place_label(a, idx, sec, off);
 }
 
+// Sections 0 to 4 are text, .data, .bss, .rodata and .data.rel.ro.
+function x86_section_kind(line: string): i32 {
+  if (x86_str_contains(line, ".rodata")) {
+    return 3;
+  }
+  if (x86_str_contains(line, ".bss")) {
+    return 2;
+  }
+  if (x86_str_contains(line, ".data.rel.ro")) {
+    return 4;
+  }
+  if (x86_str_contains(line, ".data")) {
+    return 1;
+  }
+  return 0;
+}
+
+// The sections whose bytes the data directives fill.
+function x86_data_like(section: i32): boolean {
+  return section == 1 || section == 3 || section == 4;
+}
+
+function x86_quad_sym_at(own a: X86Asm, section: i32, name: string, idx: i32): X86Asm {
+  if (section == 3) {
+    return X86Asm { ...a, unknown: a.unknown.append(".quad " + name + " in .rodata") };
+  }
+  if (section == 4) {
+    return x86_relro_quad_sym_at(a, name, idx);
+  }
+  return x86_rodata_quad_sym_at(a, name, idx);
+}
+
+// The active buffer is `rodata`: .data in sections 0 to 2, read-only data in
+// section 3, and the read-only-after-start data in section 4. A switch parks
+// the active buffer in its home and loads the home of the next section.
 function x86_enter_section(own a: X86Asm, from: i32, to: i32): X86Asm {
-  let leaving: boolean = from == 3;
-  let entering: boolean = to == 3;
-  if (leaving == entering) {
+  if (from == to) {
     return a;
   }
+  a = x86_section_swap(a, from);
+  return x86_section_swap(a, to);
+}
+
+function x86_section_swap(own a: X86Asm, sec: i32): X86Asm {
   let active: i32[] = a.rodata;
-  let parked: i32[] = a.ro;
-  return X86Asm { ...a, rodata: parked, ro: active };
+  if (sec == 3) {
+    return X86Asm { ...a, rodata: a.ro, ro: active };
+  }
+  if (sec == 4) {
+    return X86Asm { ...a, rodata: a.relro, relro: active };
+  }
+  return a;
 }
 
 function x86_rodata_quad(own a: X86Asm, v: i64): X86Asm {
@@ -1158,7 +1206,7 @@ function x86_final_off_at(a: X86Asm, i: i32, padded_text: i32, bss_base: i32): i
   if (i < 0 || a.lab_secs[i] < 0) {
     return 0 - 1;
   }
-  if (a.lab_secs[i] == 1) {
+  if (a.lab_secs[i] == 1 || a.lab_secs[i] == 4) {
     return padded_text + a.lab_offs[i];
   }
   if (a.lab_secs[i] == 2) {
@@ -1432,6 +1480,79 @@ function x86_rodata_quad_sym_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   return X86Asm { ...a, dfix_idx: a.dfix_idx.append(idx) };
 }
 
+function x86_relro_quad_sym_at(own a: X86Asm, name: string, idx: i32): X86Asm {
+  let off: i32 = a.rodata.len();
+  a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, 0) };
+  a = X86Asm { ...a, rfix_offs: a.rfix_offs.append(off) };
+  a = X86Asm { ...a, rfix_names: a.rfix_names.append(name) };
+  return X86Asm { ...a, rfix_idx: a.rfix_idx.append(idx) };
+}
+
+// Zero bytes after the read-only region, so that it ends on a page at the
+// address the image writer gives the segment. Every .data label and word
+// moves behind them.
+pub function x86_relro_gap(own a: X86Asm, gap: i32): X86Asm {
+  if (gap == 0 || a.relro_pad == 0) {
+    return a;
+  }
+  let at: i32 = a.relro_pad;
+  let data: i32[] = [];
+  for i in 0..at {
+    data = data.append(a.rodata[i]);
+  }
+  for i in 0..gap {
+    data = data.append(0);
+  }
+  for i in at..a.rodata.len() {
+    data = data.append(a.rodata[i]);
+  }
+  let dfix_offs: i32[] = a.dfix_offs;
+  for i in 0..dfix_offs.len() {
+    if (dfix_offs[i] >= at) {
+      dfix_offs = dfix_offs.with(i, dfix_offs[i] + gap);
+    }
+  }
+  let offs: i32[] = a.lab_offs;
+  for i in 0..offs.len() {
+    if (a.lab_secs[i] == 1 && offs[i] >= at) {
+      offs = offs.with(i, offs[i] + gap);
+    }
+  }
+  return X86Asm { ...a, rodata: data, relro_pad: at + gap, dfix_offs: dfix_offs, lab_offs: offs };
+}
+
+// The read-only region leads the data segment. Every .data label and word
+// moves behind it. A label of the region keeps section 4, so a later gap
+// after the region moves the .data labels alone.
+function x86_fold_relro(own a: X86Asm): X86Asm {
+  if (a.relro.len() == 0) {
+    return a;
+  }
+  let pad: i32 = (a.relro.len() + 15) / 16 * 16;
+  let data: i32[] = a.relro;
+  while (data.len() < pad) {
+    data = data.append(0);
+  }
+  for b in a.rodata {
+    data = data.append(b);
+  }
+  let dfix_offs: i32[] = a.rfix_offs;
+  let dfix_names: string[] = a.rfix_names;
+  let dfix_idx: i32[] = a.rfix_idx;
+  for i in 0..a.dfix_offs.len() {
+    dfix_offs = dfix_offs.append(a.dfix_offs[i] + pad);
+    dfix_names = dfix_names.append(a.dfix_names[i]);
+    dfix_idx = dfix_idx.append(a.dfix_idx[i]);
+  }
+  let offs: i32[] = a.lab_offs;
+  for i in 0..offs.len() {
+    if (a.lab_secs[i] == 1) {
+      offs = offs.with(i, offs[i] + pad);
+    }
+  }
+  return X86Asm { ...a, rodata: data, relro: [], relro_pad: pad, dfix_offs: dfix_offs, dfix_names: dfix_names, dfix_idx: dfix_idx, rfix_offs: [], rfix_names: [], rfix_idx: [], lab_offs: offs };
+}
+
 function x86_unwind_hdr_len(a: X86Asm): i32 {
   return cfi_eh_frame_hdr_len(a.cfi);
 }
@@ -1551,7 +1672,7 @@ function x86_patch(own a: X86Asm): X86Asm {
   while (a.rodata.len() % 16 != 0) {
     a = X86Asm { ...a, rodata: a.rodata.append(0) };
   }
-  a = x86_fold_ro(a);
+  a = x86_fold_relro(x86_fold_ro(a));
   let padded_text: i32 = x86_data_base(a, a.text.len());
   let bss_base: i32 = padded_text + a.rodata.len();
   let code: u8[] = a.text;
@@ -5812,7 +5933,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     }
     return a;
   }
-  if (section == 1 || section == 3) {
+  if (x86_data_like(section)) {
     while (a.rodata.len() % align != 0) {
       a = X86Asm { ...a, rodata: a.rodata.append(0) };
     }
@@ -5896,7 +6017,7 @@ pub function x86_gas_assemble_words_unlinked(src: string, words: u8[]): X86Asm {
   if (x86_plan_long(plan)) {
     a = x86_relax_apply(a, plan);
   }
-  return x86_fold_ro(a);
+  return x86_fold_relro(x86_fold_ro(a));
 }
 
 pub function x86_code_len(a: X86Asm): i32 {
@@ -7011,7 +7132,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
     let lbl: string = pline.label;
     let line: string = pline.body;
     if (lbl.len() > 0) {
-      if (section == 1 || section == 3) {
+      if (x86_data_like(section)) {
         a = x86_rodata_label_at(a, lbl, pline.def_idx, section);
       } else if (section == 2) {
         a = x86_bss_label_at(a, lbl, pline.def_idx);
@@ -7040,14 +7161,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
           }
         }
       } else if (x86_str_starts_with(line, ".section")) {
-        let to: i32 = 0;
-        if (x86_str_contains(line, ".rodata")) {
-          to = 3;
-        } else if (x86_str_contains(line, ".bss")) {
-          to = 2;
-        } else if (x86_str_contains(line, ".data")) {
-          to = 1;
-        }
+        let to: i32 = x86_section_kind(line);
         a = x86_enter_section(a, section, to);
         section = to;
       } else if (line == ".text") {
@@ -7070,11 +7184,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
             if (qvals.len() == 1) {
               qref = pline.ref_idx;
             }
-            if (section == 3) {
-              a = X86Asm { ...a, unknown: a.unknown.append(".quad " + qvals[qi] + " in .rodata") };
-            } else {
-              a = x86_rodata_quad_sym_at(a, qvals[qi], qref);
-            }
+            a = x86_quad_sym_at(a, section, qvals[qi], qref);
           } else {
             a = x86_rodata_quad(a, x86_gas_atoi64(qvals[qi]));
           }
@@ -7095,7 +7205,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
         let zn: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, x86_str_indexof(line, " "), line.len())));
         if (section == 2) {
           a = x86_bss_skip(a, zn);
-        } else if (section == 1 || section == 3) {
+        } else if (x86_data_like(section)) {
           a = x86_rodata_zero(a, zn);
         }
       } else if (x86_str_starts_with(line, ".byte")) {

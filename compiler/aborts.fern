@@ -42,6 +42,10 @@ pub function cfi(): string {
   return "fern: indirect call to an address that is not a function";
 }
 
+pub function relro(): string {
+  return "fern: protection of the constant data failed";
+}
+
 pub function free_range(): string {
   return "fern: release of memory outside the heap";
 }

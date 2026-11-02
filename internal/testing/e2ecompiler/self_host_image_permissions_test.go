@@ -13,8 +13,9 @@ import (
 
 // Every image variant must keep code and data apart: one read-execute load
 // segment, writable segments that are not executable, and a non-executable
-// stack. A write into the code mapping and a jump into the data mapping
-// must both fault.
+// stack. The constant data leads the data segment under PT_GNU_RELRO, ends
+// on a page, and the startup maps it read-only. A write into the code mapping, a write into
+// the read-only data mapping and a jump into the data mapping must all fault.
 const imagePermSrc = `import "std/string";
 
 @noinline
@@ -22,7 +23,8 @@ function twice(x: i32): i32 { return x * 2; }
 
 function main(): i32 {
   let f: (i32) => i32 = twice;
-  print("ok " + f(21).to_string());
+  let zeroes: i32[] = [0, 0, 0, 0];
+  print("ok " + f(21 + zeroes[args().len() - 1]).to_string());
   return 0;
 }
 `
@@ -57,6 +59,11 @@ function main(): i32 {
   }
 }
 `
+
+// The program finds the read-only mapping of its own data segment and stores
+// a byte into it. The code mapping is the only other read-only mapping of the
+// image, and it is executable.
+var relroWriteSrc = strings.NewReplacer(` r-xp `, ` r--p `, "code-write", "relro-write").Replace(codeWriteSrc)
 
 func TestSelfHostImagePermissions(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -97,7 +104,9 @@ func TestSelfHostImagePermissions(t *testing.T) {
 				return path
 			}
 			mainSrc := write("main.fern", imagePermSrc)
+			emptySrc := write("empty.fern", "function main(): i32 { return 0; }\n")
 			probeSrc := write("probe.fern", codeWriteSrc)
+			relroSrc := write("relro.fern", relroWriteSrc)
 			compile := func(src, out string, flags ...string) {
 				t.Helper()
 				args := append(append([]string{}, flags...), "-target", tc.target, "-o", out, src, cli.stdlib)
@@ -133,6 +142,22 @@ func TestSelfHostImagePermissions(t *testing.T) {
 			}
 			for _, v := range variants {
 				t.Run(v.name, func(t *testing.T) {
+					empty := filepath.Join(dir, v.name+"-empty")
+					compile(emptySrc, empty, v.flags...)
+					// A -sanitize build prints its leak census at exit; an empty program's census is balanced.
+					if out, c := run(empty); (out != "" && out != "leakcheck: allocs=0 frees=0 live_bytes=0\n") || c.ProcessState.ExitCode() != 0 {
+						t.Fatalf("empty image printed %q with %v", out, c.ProcessState)
+					}
+					emptyImage, err := elf.Open(empty)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, p := range emptyImage.Progs {
+						if p.Type == elf.PT_GNU_RELRO && p.Memsz != 0 {
+							t.Errorf("empty image has %d bytes of constant data", p.Memsz)
+						}
+					}
+					emptyImage.Close()
 					bin := filepath.Join(dir, v.name)
 					compile(mainSrc, bin, v.flags...)
 					if out, c := run(bin); !strings.HasPrefix(out, "ok 42\n") || c.ProcessState.ExitCode() != 0 {
@@ -146,10 +171,12 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					if f.Machine != tc.machine {
 						t.Fatalf("machine %v, want %v", f.Machine, tc.machine)
 					}
-					var code, data *elf.Prog
+					var code, data, relro, readonly *elf.Prog
 					stack := false
 					for _, p := range f.Progs {
 						switch p.Type {
+						case elf.PT_GNU_RELRO:
+							relro = p
 						case elf.PT_GNU_STACK:
 							stack = true
 							if p.Flags&elf.PF_X != 0 {
@@ -168,6 +195,9 @@ func TestSelfHostImagePermissions(t *testing.T) {
 							if p.Flags&elf.PF_W != 0 && data == nil {
 								data = p
 							}
+							if p.Flags == elf.PF_R {
+								readonly = p
+							}
 						}
 					}
 					if !stack {
@@ -179,6 +209,20 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					if code.Vaddr+code.Memsz > data.Vaddr {
 						t.Errorf("code [%#x,%#x) overlaps data at %#x", code.Vaddr, code.Vaddr+code.Memsz, data.Vaddr)
 					}
+					if relro == nil {
+						t.Fatal("no PT_GNU_RELRO")
+					}
+					if f.Type == elf.ET_EXEC {
+						if readonly == nil || relro.Memsz == 0 || relro.Vaddr != readonly.Vaddr || relro.Memsz != readonly.Filesz {
+							t.Fatalf("constant data has no matching read-only load segment: %v", readonly)
+						}
+						pageEnd := (readonly.Vaddr + readonly.Memsz + data.Align - 1) & ^(data.Align - 1)
+						if pageEnd > data.Vaddr & ^(data.Align-1) {
+							t.Error("read-only and writable virtual pages overlap")
+						}
+					} else if relro.Vaddr != data.Vaddr || relro.Memsz == 0 || (relro.Vaddr+relro.Memsz)%4096 != 0 || relro.Vaddr+relro.Memsz > data.Vaddr+data.Filesz {
+						t.Errorf("PT_GNU_RELRO [%#x,%#x) does not lead the data segment [%#x,%#x) and end on a page", relro.Vaddr, relro.Vaddr+relro.Memsz, data.Vaddr, data.Vaddr+data.Filesz)
+					}
 
 					probe := filepath.Join(dir, "code-write-"+v.name)
 					compile(probeSrc, probe, v.flags...)
@@ -186,6 +230,13 @@ func TestSelfHostImagePermissions(t *testing.T) {
 						t.Fatal(err)
 					}
 					expectSegv("write into code", filepath.Join(dir, v.name+"-code-write"))
+
+					relroProbe := filepath.Join(dir, "relro-write-"+v.name)
+					compile(relroSrc, relroProbe, v.flags...)
+					if err := os.Rename(relroProbe, filepath.Join(dir, v.name+"-relro-write")); err != nil {
+						t.Fatal(err)
+					}
+					expectSegv("write into the read-only data", filepath.Join(dir, v.name+"-relro-write"))
 
 					image, err := os.ReadFile(bin)
 					if err != nil {
