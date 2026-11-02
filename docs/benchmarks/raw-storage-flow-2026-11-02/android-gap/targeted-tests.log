@@ -1,0 +1,56 @@
+=== RUN   TestArm64AndroidCLI
+--- PASS: TestArm64AndroidCLI (1.67s)
+=== RUN   TestLinuxOnlyWrappersBuildEverywhere
+--- PASS: TestLinuxOnlyWrappersBuildEverywhere (2.78s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	4.462s
+=== RUN   TestSelfHostConstAggregateArm64PIE
+    self_host_const_aggregate_arm64_pie_test.go:16: self-host CLI driver runs only natively (argv paths)
+--- SKIP: TestSelfHostConstAggregateArm64PIE (0.00s)
+=== RUN   TestSelfHostImagePermissions
+=== RUN   TestSelfHostImagePermissions/x86-64-linux
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/plain
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/pie
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/harden
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/harden-pie
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/debug
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/sanitize
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/backtrace
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/pie-64k
+    self_host_image_permissions_test.go:172: large-page control uses the ARM64 target
+=== RUN   TestSelfHostImagePermissions/arm64-linux
+=== RUN   TestSelfHostImagePermissions/arm64-linux/plain
+=== RUN   TestSelfHostImagePermissions/arm64-linux/pie
+=== RUN   TestSelfHostImagePermissions/arm64-linux/harden
+=== RUN   TestSelfHostImagePermissions/arm64-linux/harden-pie
+=== RUN   TestSelfHostImagePermissions/arm64-linux/debug
+=== RUN   TestSelfHostImagePermissions/arm64-linux/sanitize
+=== RUN   TestSelfHostImagePermissions/arm64-linux/backtrace
+=== RUN   TestSelfHostImagePermissions/arm64-linux/pie-64k
+=== RUN   TestSelfHostImagePermissions/arm64-android
+=== RUN   TestSelfHostImagePermissions/arm64-android/plain
+=== RUN   TestSelfHostImagePermissions/arm64-android/pie-64k
+--- PASS: TestSelfHostImagePermissions (37.10s)
+    --- PASS: TestSelfHostImagePermissions/x86-64-linux (3.93s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/plain (0.63s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/pie (0.56s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/harden (0.55s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/harden-pie (0.54s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/debug (0.55s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/sanitize (0.52s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/backtrace (0.56s)
+        --- SKIP: TestSelfHostImagePermissions/x86-64-linux/pie-64k (0.00s)
+    --- PASS: TestSelfHostImagePermissions/arm64-linux (3.04s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/plain (0.33s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/pie (0.35s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/harden (0.36s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/harden-pie (0.35s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/debug (0.35s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/sanitize (0.36s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/backtrace (0.31s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/pie-64k (0.63s)
+    --- PASS: TestSelfHostImagePermissions/arm64-android (0.47s)
+        --- PASS: TestSelfHostImagePermissions/arm64-android/plain (0.29s)
+        --- PASS: TestSelfHostImagePermissions/arm64-android/pie-64k (0.17s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	37.108s

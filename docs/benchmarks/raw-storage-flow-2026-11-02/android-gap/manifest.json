@@ -1,0 +1,82 @@
+{
+  "README.md": {
+    "sha256": "beb8fd4e765e7b352aa169d3541a3b7342a0d22f516df5a227add9bfe7201d05",
+    "bytes": 2478
+  },
+  "android-fixtures.log.gz": {
+    "sha256": "7c1acd56507a306c61c3d67620bc544bb9dd04560693167dd71e1115fc82c3a1",
+    "bytes": 23729
+  },
+  "ci-android-fixtures-before.log.gz": {
+    "sha256": "0068dfaef05e16e1812eef9fa7f8dce9a4864efd309bbe31a4637f9913c77813",
+    "bytes": 128627
+  },
+  "ci-arm-shard0-before.log.gz": {
+    "sha256": "8f74a3218d82f8a977c26b899f06d16121cc2553fa69d81882921852c7a914d7",
+    "bytes": 14590
+  },
+  "ci-other-before.log.gz": {
+    "sha256": "892c78959805f5f9791eb989fe1321056dba1ceca91becc12d3a24c8a5697cc1",
+    "bytes": 17606
+  },
+  "ci-x86-cli-before.log.gz": {
+    "sha256": "ff2517db8c2b6baba3ca412a1280c0723a0d8282e0d581aae85b9bf739c3a2f9",
+    "bytes": 26621
+  },
+  "collect-outputs.py": {
+    "sha256": "e4579608b865de024a030cb7cd700618f7ea1e85c8b4b111f9bad17fe091d21e",
+    "bytes": 2260
+  },
+  "complexity.log": {
+    "sha256": "69fb31496ddf380d1e722c2db3e9ff0ff0dc769acda49f1298d67ab171b1cdde",
+    "bytes": 712
+  },
+  "final-go-vet.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "fixed-point.json": {
+    "sha256": "16a95366225b38d87a9b4f43e9132bfed81cc4f430ef36b874dbab8c0fb361cd",
+    "bytes": 180751
+  },
+  "fixed-point.log": {
+    "sha256": "82802ff4f092f1259c4ffaf4f59b3b1f8e2cf3289f25fa60767e1e9f474bf974",
+    "bytes": 363
+  },
+  "maps-4k.log.gz": {
+    "sha256": "fe9c088a59a8ef041cddf6adfbd1c93e01afded43268d8628f43297bd0684e5b",
+    "bytes": 189
+  },
+  "maps-64k.log.gz": {
+    "sha256": "5575ebcc6bace8e97911c2836a178caf284c8dc8a84ef8b437ee57ce18c85066",
+    "bytes": 112
+  },
+  "output-comparison.json.gz": {
+    "sha256": "9256b74deb3de1358dbaac3c7eb13180fa56e9f4f578db6add775283f6cab54c",
+    "bytes": 68189
+  },
+  "output-pilot.json.gz": {
+    "sha256": "58246e7028d8002233674bdced9aabc41813841d9d3ab5b9277f233c2a45a9be",
+    "bytes": 59170
+  },
+  "permission-fixture-v1.log.gz": {
+    "sha256": "a923c9c35dc5e3eeeac0dad0191706c86f6d78b914e4c7e7f853f5495918d945",
+    "bytes": 761
+  },
+  "permission-fixture-v2.log.gz": {
+    "sha256": "07d2f1fd8e02e6db628adfd48764d95e0fac150c009c4f9ff688bd7b355a4220",
+    "bytes": 723
+  },
+  "source-binding.json": {
+    "sha256": "07f9f2e505725f19677f35561aa15b8a8b45a98f8d05a0a303883eab09d64df6",
+    "bytes": 1253
+  },
+  "source-lint.log": {
+    "sha256": "be338afcd91707a951fb4c11bb84028883d92a1cdb0101242e168c971ea1311b",
+    "bytes": 4940
+  },
+  "targeted-tests.log": {
+    "sha256": "f5bbbd18d4fbc11c857413cac4a9df180bc827cf635ced85122f78f555d23fa5",
+    "bytes": 3457
+  }
+}

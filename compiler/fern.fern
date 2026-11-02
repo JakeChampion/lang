@@ -778,7 +778,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   let pa: arm64_native.Arm64Asm = p.asm;
   let tv: i64 = elf.elf_text_vaddr_pie() as i64;
   let dv: i64 = elf.elf_data_vaddr_pie(pa.text.len()) as i64;
-  let gap: i32 = elf.elf_relro_gap(dv as i32, p.relro_pad, elf.elf_relro_page());
+  let gap: i32 = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
   p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
