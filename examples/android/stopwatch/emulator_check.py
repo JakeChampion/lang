@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Drives the stopwatch APK on a running Android device or emulator.
 
-Usage: emulator_check.py APK OUT_DIR
+Usage: emulator_check.py APK OUT_DIR [REPORT]
 
 It installs the APK, starts the app and reads the view tree with
 uiautomator. It requires the clock and the stopwatch at the centre of the
 screen, a tap to start the stopwatch, a long tap to reset it, and a
 settings screen with the rows of the Fern settings table. It fails on a
 crash in logcat. OUT_DIR gets the screenshots, the view trees and logcat.
+
+REPORT is tests/android/report.fern built for the device. The check runs it
+and requires its std/log record at priority W and its abort at priority F
+in logcat, with the tag "fern".
 """
 
 import re
@@ -26,6 +30,10 @@ BOUNDS = re.compile(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]")
 # The content may sit a few pixels off the exact centre: integer halves and
 # the text padding.
 CENTRE_SLACK = 8
+REPORT_LINES = (
+    re.compile(r" W fern\s*: \[WARN\] about to index past the end$"),
+    re.compile(r" F fern\s*: fern: array index out of range$"),
+)
 
 failures = []
 
@@ -110,7 +118,41 @@ def check_centred(root):
     return stopwatch
 
 
-def main(apk, out):
+def check_report(report, out):
+    adb("logcat", "-c")
+    adb("push", report, "/data/local/tmp/fern-report")
+    adb("shell", "chmod", "755", "/data/local/tmp/fern-report")
+    status = subprocess.run(["adb", "shell", "/data/local/tmp/fern-report"], capture_output=True, text=True).returncode
+    if status != 134:
+        fail(f"the report program exited {status}, not 134")
+    time.sleep(1)
+    log = adb("logcat", "-d", "-s", "fern")
+    save(out, "logcat-report.txt", log)
+    lines = log.splitlines()
+    for want in REPORT_LINES:
+        if not any(want.search(line) for line in lines):
+            fail(f"logcat has no line that matches {want.pattern!r}")
+
+
+def scroll_to(out, name, want):
+    """Scrolls the screen down until it shows the text `want`."""
+    seen = []
+    for step in range(6):
+        root = tree(out, f"{name}-{step}")
+        found = texts(root)
+        if want in found:
+            return True
+        if found == seen:
+            break
+        seen = found
+        x1, y1, x2, y2 = bounds(root.find("node"))
+        x, top, bottom = (x1 + x2) // 2, y1 + (y2 - y1) // 4, y1 + 3 * (y2 - y1) // 4
+        adb("shell", "input", "swipe", str(x), str(bottom), str(x), str(top), "300")
+        time.sleep(1)
+    return False
+
+
+def main(apk, out, report=None):
     subprocess.run(["mkdir", "-p", out], check=True)
     adb("install", "-r", apk)
     adb("logcat", "-c")
@@ -161,9 +203,9 @@ def main(apk, out):
             time.sleep(2)
             root = tree(out, "6-settings")
             screenshot(out, "6-settings")
-            for want in ("Show the clock", "Show seconds", "Beep interval"):
-                if want not in texts(root):
-                    fail(f"the settings screen has no {want!r} row; it shows {texts(root)}")
+            for want in ("Show the clock", "Show seconds", "Beep interval", "Screen burn-in protection"):
+                if not scroll_to(out, "7-settings", want):
+                    fail(f"the settings screen has no {want!r} row")
             adb("shell", "input", "keyevent", "KEYCODE_BACK")
             time.sleep(1)
 
@@ -174,6 +216,8 @@ def main(apk, out):
     for line in log.splitlines():
         if CRASH.search(line):
             fail("logcat: " + line)
+    if report is not None:
+        check_report(report, out)
 
     if failures:
         print(f"{len(failures)} check(s) failed", flush=True)
@@ -183,4 +227,4 @@ def main(apk, out):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], sys.argv[2]))
+    sys.exit(main(*sys.argv[1:4]))
