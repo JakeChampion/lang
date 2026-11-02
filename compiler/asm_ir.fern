@@ -247,12 +247,15 @@ function emit_san_waf_abort(s: asmcore.EmitState): asmcore.EmitState {
 
 // Under -harden a free list hands out one of its first eight blocks, chosen
 // by a xorshift step over the seed read at startup: %rdi is the address of
-// the list head, %rax the block taken, or zero when the list is empty.
+// the list head, %rax the block taken, or zero when the list is empty. The
+// link inside a free block is encoded with the block's key (freelist_key),
+// and a decoded link must be aligned and inside the arena.
 function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_freelist_take:\n");
   s = s.write("    pushq %rcx\n");
   s = s.write("    pushq %rdx\n");
   s = s.write("    pushq %rsi\n");
+  s = s.write("    pushq %r8\n");
   s = s.write("    movq __fern_rng_state(%rip), %rcx\n");
   s = s.write("    movq %rcx, %rdx\n    shlq $13, %rdx\n    xorq %rdx, %rcx\n");
   s = s.write("    movq %rcx, %rdx\n    shrq $7, %rdx\n    xorq %rdx, %rcx\n");
@@ -266,21 +269,47 @@ function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lfltake_walk:\n");
   s = s.write("    testl %ecx, %ecx\n");
   s = s.write("    jz .Lfltake_unlink\n");
-  s = s.write("    movq (%rax), %rdx\n");
-  s = s.write("    testq %rdx, %rdx\n");
+  s = s.write("    call .Lfltake_next\n");
+  s = s.write("    testq %r8, %r8\n");
   s = s.write("    jz .Lfltake_unlink\n");
   s = s.write("    movq %rax, %rsi\n");
-  s = s.write("    movq %rdx, %rax\n");
+  s = s.write("    movq %r8, %rax\n");
   s = s.write("    decl %ecx\n");
   s = s.write("    jmp .Lfltake_walk\n");
   s = s.write(".Lfltake_unlink:\n");
-  s = s.write("    movq (%rax), %rdx\n");
-  s = s.write("    movq %rdx, (%rsi)\n");
+  s = s.write("    call .Lfltake_next\n");
+  s = s.write("    cmpq %rdi, %rsi\n");
+  s = s.write("    je .Lfltake_store\n");
+  s = s.write(freelist_key("%rsi", "%rdx"));
+  s = s.write("    xorq %rdx, %r8\n");
+  s = s.write(".Lfltake_store:\n");
+  s = s.write("    movq %r8, (%rsi)\n");
   s = s.write(".Lfltake_done:\n");
+  s = s.write("    popq %r8\n");
   s = s.write("    popq %rsi\n");
   s = s.write("    popq %rdx\n");
   s = s.write("    popq %rcx\n");
+  s = s.write("    ret\n");
+  s = s.write(".Lfltake_next:\n");
+  s = s.write(freelist_key("%rax", "%r8"));
+  s = s.write("    xorq (%rax), %r8\n");
+  s = s.write("    testq %r8, %r8\n");
+  s = s.write("    jz .Lfltake_next_ok\n");
+  s = s.write("    testb $7, %r8b\n");
+  s = s.write("    jnz __fern_free_link_abort\n");
+  s = s.write("    cmpq __fern_heap_base(%rip), %r8\n");
+  s = s.write("    jb __fern_free_link_abort\n");
+  s = s.write("    cmpq __fern_heap_end(%rip), %r8\n");
+  s = s.write("    jae __fern_free_link_abort\n");
+  s = s.write(".Lfltake_next_ok:\n");
   return s.write("    ret\n");
+}
+
+// The key of a free block's link under -harden: the process canary mixed
+// with the block's page, so a link copied from another block fails too.
+// The key lands in `into`.
+function freelist_key(block: string, into: string): string {
+  return "    movq " + block + ", " + into + "\n    shrq $12, " + into + "\n    xorq __fern_canary(%rip), " + into + "\n";
 }
 
 // Takes the head of the free list whose slot address is in %rdi into %rax,
@@ -333,15 +362,26 @@ function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: st
 // Pushes ptr on the free list of its class. With `twice` set, a block that is
 // already the head of the list jumps to that label instead.
 function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, tmp: string, twice: string): asmcore.EmitState {
+  return freelist_push_slot(s, ptr, "(%r8," + words + ",8)", tmp, twice);
+}
+
+// Pushes ptr on the free list whose head is `slot`, an operand over the
+// list table in %r8.
+function freelist_push_slot(s: asmcore.EmitState, ptr: string, slot: string, tmp: string, twice: string): asmcore.EmitState {
   s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-  s = s.write("    movq (%r8," + words + ",8), " + tmp + "\n");
+  s = s.write("    movq " + slot + ", " + tmp + "\n");
   if (twice != "") {
     s = s.write("    cmpq " + ptr + ", " + tmp + "\n");
     s = s.write("    je " + twice + "\n");
   }
+  if (s.harden) {
+    s = s.write("    pushq %r9\n");
+    s = s.write(freelist_key(ptr, "%r9"));
+    s = s.write("    xorq %r9, " + tmp + "\n");
+    s = s.write("    popq %r9\n");
+  }
   s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
-  s = s.write("    movq " + ptr + ", (%r8," + words + ",8)\n");
-  return s;
+  return s.write("    movq " + ptr + ", " + slot + "\n");
 }
 
 function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
@@ -2821,6 +2861,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
   s = abort_trap(s, "__fern_free_range_abort", ".Lmsg_free_range", aborts.free_range(), 134);
   s = abort_trap(s, "__fern_double_free_abort", ".Lmsg_double_free", aborts.double_free(), 134);
+  if (s.harden) {
+    s = abort_trap(s, "__fern_free_link_abort", ".Lmsg_free_link", aborts.free_link(), 134);
+  }
   s = s.need("__fern_alloc_size_abort.c");
   if (s.has_need("str_grow") || s.has_need("buf")) {
     s = s.need("__fern_slice_abort.c");
@@ -2926,6 +2969,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq (%rdx,%rax,8), %rcx\n");
   s = s.write("    cmpq %r8, %rcx\n");
   s = s.write("    je .Lrawfree_double\n");
+  if (s.harden) {
+    s = s.write("    pushq %rsi\n");
+    s = s.write(freelist_key("%r8", "%rsi"));
+    s = s.write("    xorq %rsi, %rcx\n");
+    s = s.write("    popq %rsi\n");
+  }
   s = s.write("    movq %rcx, (%r8)\n");
   s = s.write("    movq %r8, (%rdx,%rax,8)\n");
   s = s.write(".Llpush_ret:\n");
@@ -3098,10 +3147,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq -8(%rax), %rdx\n");
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq 24(%r8), %rsi\n");
-    s = s.write("    movq %rsi, (%rdx)\n");
-    s = s.write("    movq %rdx, 24(%r8)\n");
+    s = freelist_push_slot(s, "%rdx", "24(%r8)", "%rsi", "");
   } else {
     s = quar_push(s, "%rdx", "$3", 0);
   }
@@ -3199,10 +3245,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq 24(%r8), %rsi\n");
-    s = s.write("    movq %rsi, (%rdx)\n");
-    s = s.write("    movq %rdx, 24(%r8)\n");
+    s = freelist_push_slot(s, "%rdx", "24(%r8)", "%rsi", "");
   } else {
     s = quar_push(s, "%rdx", "$3", 0);
   }
