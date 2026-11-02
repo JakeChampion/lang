@@ -10,6 +10,7 @@ Parameter effects propagate to callers, and result demands propagate to callees.
 Indirect calls and mutable cell stores expose storage conservatively.
 The plan cache compares parameter flags and the complete result-demand set.
 Canonical function keys identify method results.
+
 Fresh boxes preserve write visibility through existing aliases.
 Read-only controls retain constant storage.
 

@@ -1,7 +1,7 @@
 {
   "README.md": {
-    "sha256": "88ae9b75410863face91eee793c8aafe9cf92f25e8c45f58756ad8b6e334a49c",
-    "bytes": 2033
+    "sha256": "0b6a3555afcc90d60160b8317ca4a29aa57a19b4d56dbc22eb90322c1bad077e",
+    "bytes": 2034
   },
   "arm-gate.log": {
     "sha256": "dd19aed4edb8f1cb43baf41e2b4d52778c6aca07b1097d0f3483d6e1aaebad3d",
@@ -54,6 +54,10 @@
   "go-remaining.log.gz": {
     "sha256": "7ad710059b28fc2af1c7711358b4b91cc4fbcc3991c8ca9bf6d6f455713a1e51",
     "bytes": 1063
+  },
+  "main-adoption.json": {
+    "sha256": "c7ef73fe54f6c2bb36ec040e140a78a62b96d6791d5780b5b2388a5accf403e8",
+    "bytes": 454
   },
   "native-fixture.log.gz": {
     "sha256": "f60325432e6b83cfa6fd12308beb74efd80f6865fb1b45226f1751b561ead55f",
