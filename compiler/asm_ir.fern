@@ -458,8 +458,10 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// The shared empty array stays writable until #14013 lands: `__arr_set_len`
+// stores the length into the box that `__alloc_u8(0)` answers.
 function empty_array_block(s: asmcore.EmitState, label: string): string {
-  return asmcore.const_data_section(s) + "    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .section .text\n";
+  return "    .section .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .section .text\n";
 }
 
 function apo_grow(s: asmcore.EmitState): asmcore.EmitState {

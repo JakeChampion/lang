@@ -45,7 +45,8 @@ The region is empty in a `-shared` object, on Darwin and on the freestanding tar
 The constant boxes carry a negative reference count. The count paths skip a negative count, so the runtime never writes a constant box, and the read-only mapping holds.
 
 The array literals of bytes and scalars stay in `.data`. `reactor_wait` and `tcp_recv_into` write into their array argument in place, and a literal argument is the shared constant itself ([#14013](https://github.com/JakeChampion/lang/issues/14013)).
-Those literals hold no address. They join the region when the builtins own their argument first.
+The shared empty array that `__alloc_u8(0)` answers stays in `.data` for the same reason: `__arr_set_len` stores the length into it.
+Those blocks hold no address. They join the region when the builtins own their argument first.
 
 ## Verification
 
@@ -66,7 +67,7 @@ go test ./internal/testing/e2e -run 'TestSharedObjectLayout|TestSharedLibX86|Tes
 
 ## Remaining limits
 
-- The array literals of bytes and scalars stay writable until [#14013](https://github.com/JakeChampion/lang/issues/14013) lands.
+- The array literals of bytes and scalars and the shared empty array stay writable until [#14013](https://github.com/JakeChampion/lang/issues/14013) lands.
 - The protected length is rounded down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages protects fewer pages than a kernel with 4 KiB pages.
 - The arm64-android image has no `PT_GNU_PROPERTY`, and the Darwin image is Mach-O with its own rules.
 - QEMU user mode enforces page permissions through the host, so the arm64 probes are emulated evidence.
