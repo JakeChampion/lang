@@ -35,7 +35,7 @@ It also prints the base of its own text mapping from `/proc/self/maps`.
 
 - The headers must say `ET_DYN` with the first load at virtual address 0. They must carry no interpreter and no dynamic segment, a non-executable stack, and no segment that is both writable and executable.
 - The program must print the same lines as the static build and a text base that is not the static `0x400000`.
-- On x86-64 a second run must print another base when `randomize_va_space` is not 0, which pins the kernel's randomization.
+- On a native host a second run must print another base when `randomize_va_space` is not 0, which pins the kernel's randomization. The x86-64 lanes and the native arm64 shards run this step, and an emulated run logs that it does not.
 - The `-g` image must carry the function symbols.
 - The refusals for `-shared`, `wasm32-wasi` and `arm64-darwin` must exit 2 with their reason.
 

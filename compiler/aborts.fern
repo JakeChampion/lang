@@ -42,6 +42,10 @@ pub function cfi(): string {
   return "fern: indirect call to an address that is not a function";
 }
 
+pub function cfi_sig(): string {
+  return "fern: indirect call to a function of another signature";
+}
+
 pub function relro(): string {
   return "fern: protection of the constant data failed";
 }
@@ -52,6 +56,10 @@ pub function free_range(): string {
 
 pub function double_free(): string {
   return "fern: release of memory that is already free";
+}
+
+pub function free_link(): string {
+  return "fern: corrupt free list link";
 }
 
 pub function alloc_size(): string {

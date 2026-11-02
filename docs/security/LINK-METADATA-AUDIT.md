@@ -20,14 +20,14 @@ The image layouts are in [IMAGE-PERMISSIONS.md](IMAGE-PERMISSIONS.md), and the h
 - `TestSelfHostUnwindData` pins the unwind tables of both targets, and `TestSelfHostMachOPlacesEhFrame` the Darwin placement.
 - `TestSelfHostAbortBacktrace*` and `TestSelfHostAbortBacktraceCorruptFrame` walk frames through hardened calls, and the arm64 walk strips the signature before it prints a return address.
 - `TestSelfHostHardenArm64` requires the property note in the in-process image and in the image gcc links from the emitted text.
+- Its `mixed-link` subtest links the emitted text with a C object. The note stays with an object built with `-mbranch-protection=standard` and goes with one built with `-mbranch-protection=none`. Both images run.
 - `TestSelfHostImagePermissions` and `TestSharedObjectLayout` pin every program header.
 
 The emitted text linked with gcc keeps the property only when every input carries it.
-An `-emit asm` build linked with a C object built without BTI drops the note, which is the linker's rule, and `docs/HARDENING.md` records it.
+An `-emit asm` build linked with a C object built without BTI drops the note with no warning. That is the linker's rule, and `docs/HARDENING.md` records it.
 
 ## Remaining limits
 
 - A shared object carries no property note, so a BTI host does not guard its pages.
 - The arm64-android image carries no property note.
-- The runtime's hand-written frames store an unsigned return address on arm64.
-- There is no test that links the emitted text with an incompatible object and inspects the dropped note.
+- A link with an unprotected C object drops BTI with no warning. The `mixed-link` subtest pins the rule, and the link command must check the result itself.

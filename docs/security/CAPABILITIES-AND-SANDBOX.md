@@ -15,7 +15,7 @@ Grants attenuate.
 A governed dependency can grant its own dependencies at most what it holds, and an amplifying grant is a manifest error at load time.
 
 The sandbox is a run-time rule about a process.
-`FERN_SANDBOX=1` installs a seccomp allowlist of the system call numbers the program contains, after `no_new_privs`, and a denied call ends the process with `SIGSYS`.
+`FERN_SANDBOX=1` installs a seccomp allowlist of the system call numbers the program contains, after `no_new_privs`, and a denied call ends the process with `SIGSYS`. The filter also kills a request for an executable mapping.
 `-heap-limit` bounds the arena, `rlimit_nofile` reads the descriptor ceiling, and `setuid`, `setgid` and `setgroups` drop privilege.
 
 The two compose.

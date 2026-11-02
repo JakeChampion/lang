@@ -79,8 +79,10 @@ pub function op_const_str(s: string): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
 }
 
-pub function op_const_func(table_idx: i32, name: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 6, i32_imm: table_idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+// The address of function `name`, with `cfi` the signature word its stub
+// carries under -harden (`cfi_sig_hash`).
+pub function op_const_func(cfi: i32, name: string): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: 6, i32_imm: cfi, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 pub function op_load_local(idx: i32): Op {
@@ -1752,8 +1754,9 @@ pub function const_struct_ref(word: string): string {
   return slice_unchecked(word, 1, word.len() - 1) + "";
 }
 
-pub function op_const_closure(body: string): Op {
-  return op_const_struct("&fn:" + body, 0, "");
+// A constant closure whose stub carries the signature word `cfi` under -harden.
+pub function op_const_closure(body: string, cfi: i32): Op {
+  return op_const_struct("&fn:" + body + "#" + util.i32_to_string(cfi), 0, "");
 }
 
 pub function op_const_bytes(values: string): Op {
@@ -1789,7 +1792,28 @@ pub function const_struct_fn_body(packed: string): string {
   if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "&fn:") {
     return "";
   }
-  return slice_unchecked(t, 4, t.len()) + "";
+  return slice_unchecked(t, 4, const_struct_fn_hash_at(t)) + "";
+}
+
+// The signature word of a constant closure.
+pub function const_struct_fn_sig(packed: string): i32 {
+  let t: string = const_struct_type(packed);
+  let at: i32 = const_struct_fn_hash_at(t);
+  if (at >= t.len()) {
+    return 0;
+  }
+  return util.lit_to_i32(slice_unchecked(t, at + 1, t.len()) + "");
+}
+
+function const_struct_fn_hash_at(t: string): i32 {
+  let i: i32 = t.len();
+  while (i > 4 && t[i - 1] != b'#') {
+    i = i - 1;
+  }
+  if (i > 4) {
+    return i - 1;
+  }
+  return t.len();
 }
 
 pub function op_struct_get(field_index: i32, width: i32): Op {
@@ -1881,8 +1905,28 @@ pub function op_call_indirect(argc: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
-pub function op_call_indirect_sig(argc: i32, sig: string): Op {
-  return Op { source: 0, decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
+// `sig` is the width tag the wasm backend types the call with, and `cfi` is
+// the signature word a hardened native call compares with the callee's stub
+// (`cfi_sig_hash`). A raw call carries neither.
+pub function op_call_indirect_sig(argc: i32, sig: string, cfi: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: 150, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
+}
+
+// The 32-bit FNV-1a hash of a function's full width tag, the word a hardened
+// stub carries ahead of its landing pad. It is never 0, which marks a raw
+// call, and never a landing pad or the compare the BTI control patches.
+pub function cfi_sig_hash(tag: string): i32 {
+  let h: i32 = 0 - 2128831035;
+  for i in 0..tag.len() {
+    h = (h ^ tag[i] as i32) * 16777619;
+  }
+  if (h == 0) {
+    return 1;
+  }
+  if (h == 0 - 721214369 || h == 0 - 98693133 || h == 1796276767 || h == 1796211231) {
+    return h ^ 1;
+  }
+  return h;
 }
 
 pub function op_block(blocktype: i32): Op {

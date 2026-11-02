@@ -65,9 +65,10 @@ Real, and the reason this is opt-in:
   use-after-free detectable — a recycled block would overwrite its own
   poison — so a release accounts the block and queues it instead of pushing
   it onto a freelist. The queue holds 64 MiB of released blocks, or the
-  budget `-quarantine SIZE` gives (`0` for no bound). A release past the
-  budget evicts the oldest block to its freelist after a second look at its
-  poison: a block written after its release reports
+  budget `-quarantine SIZE` gives (`0` for no bound). Past the budget, a
+  release evicts the oldest block after a check of its poison and of its
+  payload, which the release fills with poison. A block written after its
+  release reports
   `fern-sanitizer: write-after-free` with exit 124. A loop that churns 200
   rows through one recycled block instead bumps 200 blocks' worth of arena,
   up to the budget. `TestSelfHostSanitizeQuarantineGrowth` pins the growth,

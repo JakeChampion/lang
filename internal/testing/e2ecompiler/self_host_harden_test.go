@@ -129,6 +129,23 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if bytes.Count(img, sign) == 0 || bytes.Count(img, auth) < bytes.Count(img, sign) {
 			t.Fatalf("the -harden image has %d paciasp and %d autiasp, want every framed function to sign and each of its exits to authenticate", bytes.Count(img, sign), bytes.Count(img, auth))
 		}
+		if authenticated {
+			// PACIASP is also a BTI target, so the control keeps a pad in its place.
+			unsigned := bytes.ReplaceAll(img, sign, pad)
+			unsignedBin := filepath.Join(dir, "direct-unsigned")
+			if err := os.WriteFile(unsignedBin, unsigned, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			expectHardenSignal(t, qemu, unsignedBin, syscall.SIGSEGV, syscall.SIGILL)
+			unauthenticated := filepath.Join(dir, "direct-unauthenticated")
+			if err := os.WriteFile(unauthenticated, bytes.ReplaceAll(unsigned, auth, binary.LittleEndian.AppendUint32(nil, 0xd503201f)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if out := runHardened(t, qemu, unauthenticated); out != hardenWant {
+				t.Fatalf("the direct-image PAC control without authentication printed %q, want %q", out, hardenWant)
+			}
+			t.Logf("direct-image PAC fault control passed (%s)", mode)
+		}
 		if !enforced {
 			t.Log("this host does not enforce BTI; the pads are not proved load-bearing here")
 			return
@@ -178,6 +195,9 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if out := runHardened(t, qemu, linked); out != hardenWant {
 			t.Errorf("printed %q, want %q", out, hardenWant)
 		}
+		if !bytes.Contains(text, []byte("__fern_alloc:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n")) {
+			t.Fatal("the -harden text does not sign the return address of the hand-written __fern_alloc frame")
+		}
 		if enforced {
 			var kept []string
 			for _, line := range strings.Split(string(text), "\n") {
@@ -215,6 +235,41 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			t.Fatalf("the PAC control without authentication printed %q, want %q", out, hardenWant)
 		}
 		t.Logf("PAC fault control passed (%s)", mode)
+		// The runtime frame control removes one signature only, the one of
+		// the hand-written __fern_alloc frame, and keeps its authentication.
+		unsignedRuntime := strings.Replace(string(text), "__fern_alloc:\n    paciasp\n", "__fern_alloc:\n", 1)
+		expectHardenSignal(t, qemu, link("unsigned-runtime", []byte(unsignedRuntime)), syscall.SIGSEGV, syscall.SIGILL)
+		t.Logf("PAC runtime frame control passed (%s)", mode)
+	})
+
+	t.Run("mixed-link", func(t *testing.T) {
+		// The linker keeps the BTI property only when every input carries it,
+		// so a C object built without branch protection drops it silently.
+		asm := filepath.Join(dir, "mixed.s")
+		compile(asm, "-harden", "-emit", "asm")
+		csrc := filepath.Join(dir, "helper.c")
+		if err := os.WriteFile(csrc, []byte("int fern_c_helper(int x) { return x + 1; }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			name, protection string
+			note             bool
+		}{{"protected", "standard", true}, {"unprotected", "none", false}} {
+			obj := filepath.Join(dir, tc.name+".o")
+			if msg, err := exec.Command(armgcc, "-c", "-O2", "-mbranch-protection="+tc.protection, "-o", obj, csrc).CombinedOutput(); err != nil {
+				t.Fatalf("compile the %s helper: %v\n%s", tc.name, err, msg)
+			}
+			bin := filepath.Join(dir, "mixed-"+tc.name)
+			if msg, err := exec.Command(armgcc, "-nostdlib", "-static", "-o", bin, asm, obj).CombinedOutput(); err != nil {
+				t.Fatalf("link with the %s helper: %v\n%s", tc.name, err, msg)
+			}
+			if got := btiNote(t, bin); got != tc.note {
+				t.Errorf("linked with the %s helper, the image asks for BTI: %t, want %t", tc.name, got, tc.note)
+			}
+			if out := runHardened(t, qemu, bin); out != hardenWant {
+				t.Errorf("linked with the %s helper, printed %q, want %q", tc.name, out, hardenWant)
+			}
+		}
 	})
 
 	t.Run("backtrace", func(t *testing.T) {

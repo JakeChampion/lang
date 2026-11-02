@@ -36,7 +36,10 @@ QEMU establishes emulated behaviour only.
 | A read through a released box | `TestX86_64SanitizeUseAfterFreeReported`, `TestArm64SanitizeUseAfterFreeReported`, `TestX86_64SanitizeMapHandleUseAfterFree`, `TestArm64SanitizeMapHandleUseAfterFree` | `-sanitize` report, exit 134 | x86, arm64 |
 | A second release of one box | `TestX86_64SanitizeDoubleFreeReported`, `TestArm64SanitizeDoubleFreeReported`, `TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64` | `-sanitize` report; the release build counts and continues | x86, arm64 |
 | A released block reused before the sanitizer can see it | `TestX86_64SanitizeQuarantinesFreedBlocks`, `TestArm64SanitizeQuarantinesFreedBlocks`, `TestSelfHostSanitizeBoxFreeIsQuarantined`, `TestSelfHostUafQuarantineAsmContractX86_64`, `TestSelfHostUafQuarantineAsmContractArm64`, `TestSelfHostSanitizeQuarantineGrowth` | the block stays quarantined; the growth is pinned | x86, arm64 |
+| A raw write into the payload of a released block | `TestSelfHostQuarantinePolicy` | `fern-sanitizer: write-after-free`, exit 124 under `-sanitize` | x86, arm64 |
+| A raw read through a dangling pointer | `TestSelfHostQuarantinePolicy` | the poison pattern, not the stale bytes, under `-sanitize` | x86, arm64 |
 | A raw free of an address outside the arena | `TestSelfHostRawFreeOutsideHeap` | abort with the out-of-heap cause | x86, arm64 |
+| A forged free list link in a released block | `TestSelfHostFreeListLinkForgery` | abort with the corrupt-link cause under `-harden`; the control recycles twelve blocks | x86, arm64 |
 | A secret left in a released block | `TestSelfHostEraseZeroesStorage` | `crypto.erase` zeroes it; the control reads it back | x86, arm64 |
 | A leak at exit | `TestX86_64SanitizeLeakVerdict`, `TestArm64SanitizeLeakVerdict`, `TestSelfHostWasmSanitizeLeakVerdict` | `-sanitize` verdict | x86, arm64, wasm |
 | A handle closed twice or used after its close or transfer | `conformance/cases/diag_e051_handle_closed_twice`, `conformance/cases/diag_e051_handle_read_after_close`, `conformance/cases/diag_e051_handle_used_after_transfer` | `E051` | both checkers |
@@ -50,6 +53,7 @@ QEMU establishes emulated behaviour only.
 | A frame larger than the guard | `TestSelfHostFrameProbes` | the probe loop reaches the guard; overflow report | x86, arm64 |
 | A write past a frame box into the saved registers | `TestSelfHostStackCanary` | `fern: stack canary mismatch`, exit 134 under `-harden` | x86, arm64 |
 | A forged function pointer | `TestSelfHostForwardEdgeCFI` | `fern: indirect call to an address that is not a function`, exit 134 under `-harden` | x86, arm64 |
+| A function pointer forged to a function of another signature | `TestSelfHostForwardEdgeCFI` | `fern: indirect call to a function of another signature`, exit 134 under `-harden` | x86, arm64 |
 | A branch to the middle of a function on a BTI core | `TestSelfHostHardenArm64` | `SIGILL`; unverified on a host without BTI | arm64 |
 | An overwritten return address | `TestSelfHostShadowStack`, `TestSelfHostHardenArm64` | `SIGSEGV` where the shadow stack or PAC is active; the test logs unverified elsewhere | x86, arm64 |
 | A corrupted frame pointer during a report | `TestSelfHostAbortBacktraceCorruptFrame` | the walk stops; exit 134 with the cause | x86, arm64 |
@@ -100,6 +104,7 @@ QEMU establishes emulated behaviour only.
 | Attack | Test or case | Outcome | Hosts |
 |---|---|---|---|
 | A system call outside the allowlist | `TestSeccompFilterDenies`, `TestSeccompFilterIsLoadedAtRuntime` | `SIGSYS` | x86, native arm64 |
+| An executable mapping request from a sandboxed process | `TestSeccompDeniesExecutableMapping` | `SIGSYS`; a read-write request passes | x86, native arm64 |
 | A setuid helper run from a sandboxed process | `TestSeccompNoNewPrivsBlocksSetuidEscalation` | the helper keeps the caller's user | x86, native arm64 |
 | A program that allocates past its quota | `TestSelfHostHeapLimit` | exit 125 with the heap exhausted cause | x86, arm64 |
 

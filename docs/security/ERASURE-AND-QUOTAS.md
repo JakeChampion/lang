@@ -65,5 +65,5 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 
 - `erase` exists for `u8[]` alone. A secret held in another element type, in a string, or in a struct field has no erasure call.
 - A quota per allocation site, per package, or per request is not defined. The arena quota is one number per executable.
-- The sanitizer's quarantine keeps every released block for the life of the process, so under `-sanitize` an erased block stays mapped. That is SEC-024.
+- The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
 - The Go oracle and the self-host interpreter run `erase` on their own heaps and ignore `-heap-limit`, which is a compile flag of the native backends.
