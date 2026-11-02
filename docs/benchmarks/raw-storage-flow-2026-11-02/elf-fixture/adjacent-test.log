@@ -1,0 +1,7 @@
+=== RUN   TestSelfHostELFSymtab
+    self_host_elf_symtab_test.go:16: emitted binary is executed directly; skipping under an exec runner
+--- SKIP: TestSelfHostELFSymtab (0.00s)
+=== RUN   TestSelfHostELF
+--- PASS: TestSelfHostELF (2.48s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	2.494s

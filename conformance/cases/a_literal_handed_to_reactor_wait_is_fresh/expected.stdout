@@ -1,0 +1,18 @@
+watch: 0
+round 0 before: 0 0
+send: 1
+round 0 after: 1 fd true readable true
+drain: 1
+round 1 before: 0 0
+send: 1
+round 1 after: 1 fd true readable true
+drain: 1
+call 0 before: 0 0
+send: 1
+call 0 after: 1 fd true readable true
+drain: 1
+call 1 before: 0 0
+send: 1
+call 1 after: 1 fd true readable true
+drain: 1
+close: 0 0 0 0

@@ -57,8 +57,11 @@ function main(): i32 {
     sent = tcp_send_bytes(c, "B".bytes());
     n = tcp_recv_into(s, b);
     print(f"receive into the source: {sent} {n} {b[0]} {d[0]} {e[0]} {e[2]}");
-    __arr_set_len(b, 3);
-    print(f"regrow past a shared append: {b[2]} {e[2]}");
+    let reserved: u8[] = [b[0], b[1], 0u8];
+    __arr_set_len(reserved, 2);
+    let appended: u8[] = reserved.append(4u8);
+    __arr_set_len(reserved, 3);
+    print(f"regrow past a shared append: {reserved[2]} {appended[2]}");
     print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)}");
     return 0;
   }

@@ -1,0 +1,10 @@
+{
+  "scope": "ELF self-test input and diagnostic repair only. No production input changes.",
+  "parent": "af9b0b3b18fb994be4c65c50dab4a0c48211453c",
+  "compiler_inputs_unchanged": true,
+  "compiler_qualification": "../android-gap/fixed-point.json",
+  "compiler_qualification_sha256": "16a95366225b38d87a9b4f43e9132bfed81cc4f430ef36b874dbab8c0fb361cd",
+  "compiler_sha256": "fd5b67c5cab98a6d6ee1f48ba773b2bb9abcb600c3f43eeb5aee163defd434a4",
+  "test_source_sha256": "7c1ae20edfead24abc117820262937b2a93cedfc33f5e82ad54e175f94dacc18",
+  "docker_image": "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e"
+}

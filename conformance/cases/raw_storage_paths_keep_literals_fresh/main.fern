@@ -1,0 +1,140 @@
+struct Holder { bytes: u8[] }
+
+enum Packet { Bytes(u8[]), Empty }
+
+@noinline
+function buffer(): u8[] {
+  return [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+}
+
+@noinline
+function other_buffer(): u8[] {
+  return [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+}
+
+@noinline
+function chain(): u8[] {
+  return buffer();
+}
+
+@noinline
+function choose(n: i32): () => u8[] {
+  if (n == 0) {
+    return buffer;
+  }
+  return other_buffer;
+}
+
+@noinline
+function put(value: Cell[u8[]]): void {
+  value.set([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+}
+
+@noinline
+function put_argument(value: Cell[u8[]], bytes: u8[]): void {
+  value.set(bytes);
+}
+
+@noinline
+function (h: Holder) buffer(): u8[] {
+  return h.bytes;
+}
+
+@noinline
+function written(fd: i32, bytes: u8[]): boolean {
+  let held = bytes;
+  let view = bytes[0:1];
+  if (held[0] != 0u8 || view[0] != 0u8) {
+    return false;
+  }
+  let n = tcp_addr_into(fd, false, bytes);
+  return n == 19 && bytes[0] != 0u8 && held[0] == bytes[0] && view[0] == bytes[0];
+}
+
+@noinline
+function other_written(fd: i32, bytes: u8[]): boolean {
+  return written(fd, bytes);
+}
+
+@noinline
+function choose_writer(n: i32): (i32, u8[]) => boolean {
+  if (n == 0) {
+    return written;
+  }
+  return other_written;
+}
+
+@noinline
+function check(fd: i32, mode: string): boolean {
+  if (mode == "record" || mode == "method") {
+    let h = Holder { bytes: [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8] };
+    let bytes = if (mode == "method") { h.buffer() } else { h.bytes };
+    return written(fd, bytes) && h.bytes[0] != 0u8;
+  }
+  if (mode == "tuple") {
+    let pair = ([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8], 7);
+    return written(fd, pair.0) && pair.0[0] != 0u8 && pair.1 == 7;
+  }
+  if (mode == "variant") {
+    let packet = Packet.Bytes([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+    if let Packet.Bytes(bytes) = packet {
+      return written(fd, bytes);
+    }
+    return false;
+  }
+  if (mode == "array") {
+    let rows: u8[][] = [[0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]];
+    return written(fd, rows[0]) && rows[0][0] != 0u8;
+  }
+  if (mode == "return") {
+    return written(fd, buffer());
+  }
+  if (mode == "chain") {
+    return written(fd, chain());
+  }
+  if (mode == "indirect-return") {
+    let make = choose(fd);
+    return written(fd, make());
+  }
+  if (mode == "cell") {
+    let value = cell_new([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+    return written(fd, value.get()) && value.get()[0] != 0u8;
+  }
+  if (mode == "cell-set" || mode == "cell-argument") {
+    let value = cell_new(__alloc_u8(19));
+    if (mode == "cell-set") {
+      put(value);
+    } else {
+      put_argument(value, [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+    }
+    return written(fd, value.get()) && value.get()[0] != 0u8;
+  }
+  let bytes: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+  if (mode == "closure") {
+    let run = () => written(fd, bytes);
+    return run() && bytes[0] != 0u8;
+  }
+  let run = choose_writer(fd);
+  return run(fd, bytes) && bytes[0] != 0u8;
+}
+
+function main(): i32 {
+  let fd = tcp_listen(0);
+  if (fd < 0) {
+    return 1;
+  }
+  let modes = ["record", "method", "tuple", "variant", "array", "return", "chain", "indirect-return", "cell", "cell-set", "cell-argument", "closure", "indirect-argument"];
+  for mode in modes {
+    if (args().len() == 2 && args()[1] != mode) {
+      continue;
+    }
+    for iteration in 0..2 {
+      if (!check(fd, mode)) {
+        return 2;
+      }
+    }
+  }
+  tcp_close(fd);
+  print("ok");
+  return 0;
+}

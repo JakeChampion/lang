@@ -1,0 +1,9 @@
+{
+  "scope": "PIE structural assertions only. Production inputs remain unchanged.",
+  "parent": "34a8236fe35060d2ec59b5c4f0b323d52783d6db",
+  "compiler_qualification": "../android-gap/fixed-point.json",
+  "compiler_qualification_sha256": "16a95366225b38d87a9b4f43e9132bfed81cc4f430ef36b874dbab8c0fb361cd",
+  "compiler_sha256": "fd5b67c5cab98a6d6ee1f48ba773b2bb9abcb600c3f43eeb5aee163defd434a4",
+  "test_source_sha256": "943624f62d75c8c833754c9aab023a62b9d971a63e75f8b659ccf8bc21422d8e",
+  "docker_image": "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e"
+}

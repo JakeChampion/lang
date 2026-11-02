@@ -370,6 +370,25 @@ pub function holds_no_argument(name: string): boolean {
   return name == "__arr_set_len" || name == "__str_bytes" || name == "__ct_secret" || name == "__ct_public";
 }
 
+// The positions of the array arguments a builtin reaches raw: the arrays it
+// writes in place, or the array whose storage it hands out as a pointer. An
+// empty list names a builtin that reaches no argument raw.
+pub function raw_array_args(name: string): i32[] {
+  if (name == "__arr_set_len" || name == "__raw_arr_ptr") {
+    return [0];
+  }
+  if (name == "reactor_wait" || name == "ring_wait" || name == "tcp_recv_into") {
+    return [1];
+  }
+  if (name == "ring_recv" || name == "tcp_addr_into") {
+    return [2];
+  }
+  if (name == "udp_recvfrom") {
+    return [1, 2];
+  }
+  return [];
+}
+
 pub function scalar_primitive(name: string): boolean {
   return name == "__mulhi_u64" || name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64"
     || name == "__ctz64" || name == "__popcount64" || name == "__sqrt_f64" || name == "__floor_f64" || name == "__ceil_f64"

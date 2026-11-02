@@ -1,0 +1,6 @@
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| x86_64/checker.cliff_count | 347.1k | 343.7k | +0.99% |
+| x86_64/checker.cliff_bytes | 46.2M | 46.4M | -0.48% |
+Every metric is within tolerance of its baseline.

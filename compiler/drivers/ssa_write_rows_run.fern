@@ -1,0 +1,126 @@
+import "../ssa";
+import "../ssasem";
+import "../ssaunits";
+import "../semrecords";
+import "../typeinfo";
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function fixture(name: string, callee: string, slot: i32): ssasem.Func {
+  let size: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+  let array: typeinfo.Type = typeinfo.TypeArray { elem: size, view: false };
+  let arguments: i32[] = [0, 1];
+  if (callee == "__raw_arr_ptr") {
+    arguments = [slot];
+  }
+  let insts: ssa.SInst[] = [
+    ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" },
+    ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" },
+    ssa.SInst { kind_tag: ssasem.call(), result: 2, args: arguments, imm: 0, str: callee },
+  ];
+  return ssasem.Func {
+    graph: ssa.SFunc { name: name, nparams: 2, nvals: 3, entry: 0, takes_env: false, blocks: [
+      ssa.SBlock { id: 0, preds: [], insts: insts, term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } },
+    ] },
+    values: [array, array, size], params: [array, array], result: size,
+    records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [],
+    map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false,
+  };
+}
+
+function chain(reverse: boolean, slot: i32): void {
+  let keys: string[] = ["first", "second", "third", "leaf"];
+  let funcs: ssasem.Func[] = [fixture("first", "second", slot), fixture("second", "third", slot), fixture("third", "leaf", slot), fixture("leaf", "__raw_arr_ptr", slot)];
+  if (reverse) {
+    keys = [keys[3], keys[2], keys[1], keys[0]];
+    funcs = [funcs[3], funcs[2], funcs[1], funcs[0]];
+  }
+  let rows = ssaunits.write_rows(keys, funcs);
+  for name in keys {
+    let at = rows.rows.find(name);
+    require(at >= 0, 10);
+    require(rows.params[at].len() == 2 && rows.params[at][slot] && !rows.params[at][1 - slot], 11);
+  }
+}
+
+function returned_storage(): void {
+  let base = fixture("make", "ignored", 0);
+  let size = base.result;
+  let array = base.params[0];
+  let literal = ssasem.Func {
+    ...base, params: [], values: [size, array], result: array,
+    graph: ssa.SFunc { name: "make", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [
+      ssa.SBlock {
+        id: 0, preds: [], insts: [
+          ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "" },
+          ssa.SInst { kind_tag: ssasem.array_new(), result: 1, args: [0, 0], imm: 0, str: "" },
+        ],
+        term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 },
+      },
+    ] },
+  };
+  let caller = ssasem.Func {
+    ...base, params: [], values: [array, size],
+    graph: ssa.SFunc { name: "caller", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [
+      ssa.SBlock {
+        id: 0, preds: [], insts: [
+          ssa.SInst { kind_tag: ssasem.call(), result: 0, args: [], imm: 0, str: "make" },
+          ssa.SInst { kind_tag: ssasem.call(), result: 1, args: [0], imm: 0, str: "__raw_arr_ptr" },
+        ],
+        term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 },
+      },
+    ] },
+  };
+  let names: string[] = ["caller", "make"];
+  let writes = ssaunits.write_rows(names, [caller, literal]);
+  require(writes.results.has("make"), 40);
+  let view = ssaunits.SchemaView { ...ssaunits.no_view(), writes: writes, raw_result: true };
+  let raw = ssaunits.plan(literal, [], view);
+  require(raw.ok && raw.constants[1] == "", 41);
+  let cached = ssaunits.SchemaView { ...view, raw_known: true, raw_values: writes.raw[writes.inputs.find("make")] };
+  let cached_plan = ssaunits.plan(literal, [], cached);
+  require(cached_plan.ok && cached_plan.constants[1] == "", 45);
+  let read_block = caller.graph.blocks[0];
+  let length = ssa.SInst { kind_tag: ssasem.length(), result: 1, args: [0], imm: 0, str: "" };
+  let reader = ssasem.Func { ...caller, graph: ssa.SFunc { ...caller.graph, blocks: [ssa.SBlock { ...read_block, insts: read_block.insts.with(1, length) }] } };
+  let pure = ssaunits.write_rows(names, [reader, literal]);
+  require(!pure.results.has("make"), 42);
+  let pooled = ssaunits.plan(literal, [], ssaunits.no_view());
+  require(pooled.ok && pooled.constants[1] != "", 43);
+  let pure_cached = ssaunits.SchemaView { ...ssaunits.no_view(), raw_known: true, raw_values: pure.raw[pure.inputs.find("make")] };
+  require(ssaunits.plan(literal, [], pure_cached).constants[1] != "", 46);
+  require(!ssaunits.write_rows_agree(pure, writes, []), 44);
+}
+
+function main(): i32 {
+  let none: string[] = [];
+  let empty = util.name_index(none);
+  let extended = empty.added("next");
+  require(!empty.has("next") && extended.has("next") && !extended.has("missing"), 47);
+  chain(false, 0);
+  chain(true, 0);
+  chain(false, 1);
+  chain(true, 1);
+  returned_storage();
+  let names: string[] = ["callee"];
+  let first = ssaunits.WriteRows { ...ssaunits.no_writes(), rows: util.name_index(names), params: [[true, false]] };
+  let second = ssaunits.WriteRows { ...ssaunits.no_writes(), rows: util.name_index(names), params: [[false, true]] };
+  require(!ssaunits.write_rows_agree(first, second, names), 20);
+  require(ssaunits.write_rows_agree(first, first, names), 21);
+  let unrelated: string[] = ["other"];
+  require(ssaunits.write_rows_agree(first, second, unrelated), 22);
+  let cells: string[] = ["Cell[u8[]]"];
+  let cell_demand = ssaunits.WriteRows { ...first, cells: util.name_index(cells) };
+  require(!ssaunits.write_rows_agree(first, cell_demand, unrelated), 23);
+  require(ssasem.raw_array_args("tcp_addr_into")[0] == 2, 30);
+  require(ssasem.raw_array_args("ring_wait")[0] == 1, 31);
+  let udp = ssasem.raw_array_args("udp_recvfrom");
+  require(udp.len() == 2 && udp[0] == 1 && udp[1] == 2, 32);
+  require(ssasem.raw_array_args("tcp_send_bytes").len() == 0, 33);
+  return 0;
+}

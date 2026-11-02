@@ -1,0 +1,2 @@
+retained native body controls passed
+leakcheck: allocs=161606336 frees=161606336 live_bytes=0

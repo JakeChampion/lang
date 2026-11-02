@@ -1,0 +1,17 @@
+struct Holder { bytes: u8[] }
+
+@noinline
+function address(fd: i32, h: Holder): i32 {
+  return tcp_addr_into(fd, false, h.bytes);
+}
+
+function main(): i32 {
+  let fd = tcp_listen(0);
+  if (fd < 0) { return 1; }
+  let h = Holder { bytes: [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8] };
+  let n = address(fd, h);
+  tcp_close(fd);
+  print(n.to_string());
+  if (n != 19 || h.bytes[0] == 0u8) { return 2; }
+  return 0;
+}

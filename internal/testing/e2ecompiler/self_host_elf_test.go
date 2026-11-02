@@ -32,13 +32,20 @@ func TestSelfHostELF(t *testing.T) {
 		t.Fatalf("write wat: %v", err)
 	}
 	cmd := exec.Command("wasmtime", "run", watPath)
-	_ = cmd.Run()
+	out, runErr := cmd.CombinedOutput()
+	if cmd.ProcessState == nil {
+		t.Fatalf("elf self-test did not start: %v\n%s", runErr, out)
+	}
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("elf self-test failed at check %d\n--- WAT ---\n%s", code, wat)
+		t.Errorf("elf self-test exited %d: %v\n%s\n--- WAT ---\n%s", code, runErr, out, wat)
 	}
 }
 
 const elfSelfTestMain = `
+function test_u32(bytes: u8[], at: i32): i32 {
+    return bytes[at] as i32 | bytes[at + 1] as i32 << 8 | bytes[at + 2] as i32 << 16 | bytes[at + 3] as i32 << 24;
+}
+
 function main(): i32 {
     // arm64 R+X executable from one instruction (movz x0,#0: 00 00 80 d2).
     let text: i32[] = [0, 0, 128, 210];
@@ -188,10 +195,18 @@ function main(): i32 {
     if (b7[56] != 5 || b7[176] != 0 || b7[232] != 82 || b7[236] != 4 || b7[288] != 81 || b7[292] != 6) { return 61; }
     // Data blob at file offset 368.
     if (b7[368] != 7 || b7[375] != 7) { return 52; }
-    // The region matches the writable segment's file offset and address.
-    let b9: u8[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0, 8);
+    // The compact image omits the virtual gap between constants and globals.
+    let gap = elf_executable_relro_gap(d3.len(), elf_page_align());
+    let protected = d3.len() + gap;
+    let d9 = elf_cat(elf_pad_to(d3, protected), d3);
+    let b9: u8[] = elf_image_pie(t3, d9, elf_em_aarch64(), 0, 0, protected);
     if (b9[240] != b7[128] || b9[241] != b7[129] || b9[248] != b7[136] || b9[249] != b7[137] || b9[250] != b7[138] || b9[251] != b7[139]) { return 64; }
-    if (b9[264] != 8 || b9[265] != 0 || b9[272] != 8 || b9[273] != 0 || b9[280] != 1) { return 65; }
+    let constant_addr = test_u32(b9, 136);
+    let mapped = protected - (constant_addr + protected) % 4096;
+    if (test_u32(b9, 264) != mapped || test_u32(b9, 272) != mapped || b9[280] != 1) { return 65; }
+    if (gap != 65536 || b9.len() != 384 || b9[120] != 1 || b9[124] != 6 || test_u32(b9, 152) != 8 || test_u32(b9, 160) != mapped) { return 66; }
+    if (b9[176] != 1 || b9[180] != 6 || test_u32(b9, 184) != test_u32(b9, 128) + 8 || test_u32(b9, 192) != constant_addr + protected) { return 67; }
+    if (test_u32(b9, 208) != 8 || test_u32(b9, 216) != 8 || b9[368] != 7 || b9[375] != 7 || b9[376] != 7 || b9[383] != 7) { return 68; }
     return 0;
 }
 `

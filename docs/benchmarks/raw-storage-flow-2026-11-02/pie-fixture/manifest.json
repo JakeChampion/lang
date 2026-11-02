@@ -1,0 +1,22 @@
+{
+  "README.md": {
+    "sha256": "ff62994c1c82576b3b14e9adbe66b96ec2cd4e2a9312fc66266800f2fb188d76",
+    "bytes": 1041
+  },
+  "ci-before.log.gz": {
+    "sha256": "c003a69d04d752a2cfbbf4e8a7204d2cc47f95f4e4949a6fec8c7cb9fea636bd",
+    "bytes": 147796
+  },
+  "final-tests.log": {
+    "sha256": "12e2138231ddf6669cb65283ad3058e9f39c9a90c5554c68d66850731baf9699",
+    "bytes": 600
+  },
+  "go-vet.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "source-binding.json": {
+    "sha256": "6e7ddbc8907ee835d8e41534740377e19be143d9b058885d8e926cd489f4d011",
+    "bytes": 593
+  }
+}

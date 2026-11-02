@@ -1,3 +1,6 @@
+# 2026-11-02: PR14024 keeps PIE gaps out of the file and aligns constant headers to eight bytes.
+# Lower only the 23 measured static image limits. No tolerance changes.
+# Record: docs/benchmarks/raw-storage-flow-2026-11-02/current-main-costs/.
 # 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
 # Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
@@ -43,13 +46,13 @@
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-27: first measurement, from scripts/profile-costs on the follow-on branch of #13677 at the profile-costs commit.
 # Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, valgrind 3.22.0. Rows are deterministic; the default tolerance applies.
-profile/arm64-linux/array_append.diagnostic.bytes	13920
+profile/arm64-linux/array_append.diagnostic.bytes	13368
 profile/arm64-linux/array_append.diagnostic.emit	1710
-profile/arm64-linux/array_append.hardened.bytes	7672
+profile/arm64-linux/array_append.hardened.bytes	7208
 profile/arm64-linux/array_append.hardened.emit	1566
-profile/arm64-linux/array_append.minimal.bytes	6328
+profile/arm64-linux/array_append.minimal.bytes	5848
 profile/arm64-linux/array_append.minimal.emit	1265
-profile/arm64-linux/array_append.safe.bytes	6680
+profile/arm64-linux/array_append.safe.bytes	6200
 profile/arm64-linux/array_append.safe.emit	1357
 profile/arm64-linux/call_overhead.diagnostic.bytes	5416
 profile/arm64-linux/call_overhead.diagnostic.emit	565
@@ -59,34 +62,34 @@ profile/arm64-linux/call_overhead.minimal.bytes	1976
 profile/arm64-linux/call_overhead.minimal.emit	329
 profile/arm64-linux/call_overhead.safe.bytes	2232
 profile/arm64-linux/call_overhead.safe.emit	390
-profile/arm64-linux/closure_call.diagnostic.bytes	13608
+profile/arm64-linux/closure_call.diagnostic.bytes	13312
 profile/arm64-linux/closure_call.diagnostic.emit	1586
-profile/arm64-linux/closure_call.hardened.bytes	6616
+profile/arm64-linux/closure_call.hardened.bytes	6408
 profile/arm64-linux/closure_call.hardened.emit	1364
-profile/arm64-linux/closure_call.minimal.bytes	5320
+profile/arm64-linux/closure_call.minimal.bytes	5096
 profile/arm64-linux/closure_call.minimal.emit	1069
-profile/arm64-linux/closure_call.safe.bytes	5640
+profile/arm64-linux/closure_call.safe.bytes	5416
 profile/arm64-linux/closure_call.safe.emit	1153
 profile/arm64-linux/deflate_decode.diagnostic.bytes	119984
 profile/arm64-linux/deflate_decode.diagnostic.emit	13857
-profile/arm64-linux/deflate_decode.hardened.bytes	67736
+profile/arm64-linux/deflate_decode.hardened.bytes	64536
 profile/arm64-linux/deflate_decode.hardened.emit	15056
-profile/arm64-linux/deflate_decode.minimal.bytes	54472
+profile/arm64-linux/deflate_decode.minimal.bytes	53656
 profile/arm64-linux/deflate_decode.minimal.emit	12238
-profile/arm64-linux/deflate_decode.safe.bytes	60280
+profile/arm64-linux/deflate_decode.safe.bytes	59432
 profile/arm64-linux/deflate_decode.safe.emit	13748
-profile/arm64-linux/enum_match.diagnostic.bytes	13104
+profile/arm64-linux/enum_match.diagnostic.bytes	12576
 profile/arm64-linux/enum_match.diagnostic.emit	1555
-profile/arm64-linux/enum_match.hardened.bytes	8456
+profile/arm64-linux/enum_match.hardened.bytes	6216
 profile/arm64-linux/enum_match.hardened.emit	1310
-profile/arm64-linux/enum_match.minimal.bytes	5432
+profile/arm64-linux/enum_match.minimal.bytes	4968
 profile/arm64-linux/enum_match.minimal.emit	1034
-profile/arm64-linux/enum_match.safe.bytes	5736
+profile/arm64-linux/enum_match.safe.bytes	5272
 profile/arm64-linux/enum_match.safe.emit	1116
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
 profile/arm64-linux/http_hello.diagnostic.bytes	124872
 profile/arm64-linux/http_hello.diagnostic.emit	15794
-profile/arm64-linux/http_hello.hardened.bytes	80576
+profile/arm64-linux/http_hello.hardened.bytes	77896
 profile/arm64-linux/http_hello.hardened.emit	17196
 profile/arm64-linux/http_hello.minimal.bytes	60896
 profile/arm64-linux/http_hello.minimal.emit	12863
@@ -102,11 +105,11 @@ profile/arm64-linux/int_loop.safe.bytes	1992
 profile/arm64-linux/int_loop.safe.emit	332
 profile/arm64-linux/map_string.diagnostic.bytes	140872
 profile/arm64-linux/map_string.diagnostic.emit	10799
-profile/arm64-linux/map_string.hardened.bytes	50544
+profile/arm64-linux/map_string.hardened.bytes	49416
 profile/arm64-linux/map_string.hardened.emit	11251
-profile/arm64-linux/map_string.minimal.bytes	42240
+profile/arm64-linux/map_string.minimal.bytes	41464
 profile/arm64-linux/map_string.minimal.emit	9318
-profile/arm64-linux/map_string.safe.bytes	43760
+profile/arm64-linux/map_string.safe.bytes	42984
 profile/arm64-linux/map_string.safe.emit	9591
 profile/arm64-linux/startup.diagnostic.bytes	4408
 profile/arm64-linux/startup.diagnostic.emit	483
@@ -155,7 +158,7 @@ profile/x86-64-linux/closure_call.safe.ir	41178167
 profile/x86-64-linux/deflate_decode.diagnostic.bytes	110752
 profile/x86-64-linux/deflate_decode.diagnostic.emit	12865
 profile/x86-64-linux/deflate_decode.diagnostic.ir	40445213
-profile/x86-64-linux/deflate_decode.hardened.bytes	56352
+profile/x86-64-linux/deflate_decode.hardened.bytes	55600
 profile/x86-64-linux/deflate_decode.hardened.emit	13388
 profile/x86-64-linux/deflate_decode.hardened.ir	33974700
 profile/x86-64-linux/deflate_decode.minimal.bytes	46688
@@ -167,7 +170,7 @@ profile/x86-64-linux/deflate_decode.safe.ir	33826804
 profile/x86-64-linux/enum_match.diagnostic.bytes	10256
 profile/x86-64-linux/enum_match.diagnostic.emit	1236
 profile/x86-64-linux/enum_match.diagnostic.ir	29250209
-profile/x86-64-linux/enum_match.hardened.bytes	8256
+profile/x86-64-linux/enum_match.hardened.bytes	5152
 profile/x86-64-linux/enum_match.hardened.emit	1086
 profile/x86-64-linux/enum_match.hardened.ir	29250116
 profile/x86-64-linux/enum_match.minimal.bytes	4016
@@ -179,7 +182,7 @@ profile/x86-64-linux/enum_match.safe.ir	29250077
 profile/x86-64-linux/http_hello.diagnostic.bytes	113272
 profile/x86-64-linux/http_hello.diagnostic.emit	14755
 profile/x86-64-linux/http_hello.diagnostic.ir	34992340
-profile/x86-64-linux/http_hello.hardened.bytes	70704
+profile/x86-64-linux/http_hello.hardened.bytes	69136
 profile/x86-64-linux/http_hello.hardened.emit	15471
 profile/x86-64-linux/http_hello.hardened.ir	25070827
 profile/x86-64-linux/http_hello.minimal.bytes	53408
@@ -203,7 +206,7 @@ profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	133696
 profile/x86-64-linux/map_string.diagnostic.emit	10871
 profile/x86-64-linux/map_string.diagnostic.ir	58790275
-profile/x86-64-linux/map_string.hardened.bytes	43520
+profile/x86-64-linux/map_string.hardened.bytes	41936
 profile/x86-64-linux/map_string.hardened.emit	9927
 profile/x86-64-linux/map_string.hardened.ir	54107043
 profile/x86-64-linux/map_string.minimal.bytes	36288

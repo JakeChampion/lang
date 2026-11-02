@@ -1,0 +1,38 @@
+{
+  "README.md": {
+    "sha256": "53843a53c383d0534b9104d4189232761322b72c25b23c52132f11cf0a91d3fe",
+    "bytes": 1407
+  },
+  "adjacent-test.log": {
+    "sha256": "89165dd937d64318f57f299c05e29cfde0c588f67e26e15a66d06958b0e02a5c",
+    "bytes": 311
+  },
+  "ci-before.log.gz": {
+    "sha256": "a8dc44c0f3a151cf5f65444fedd9b7f953a067eb79f67150d16d3a6859b3c429",
+    "bytes": 646515
+  },
+  "final-test.log": {
+    "sha256": "290a831595a77484fe97107e42982d8c8e0eb6650e07394efbde372150654460",
+    "bytes": 135
+  },
+  "go-vet.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "local-before.log.gz": {
+    "sha256": "3042b89d5caa2adccdb6ab2812ecd754abe8240f6d13ca43dfb6095a047f7f82",
+    "bytes": 41363
+  },
+  "original-diagnostic.json": {
+    "sha256": "cfa261ab06b7bb950e0fc6ab0c1d62d27247cc42e305ef7e521c477b1af2395a",
+    "bytes": 527
+  },
+  "original.stderr": {
+    "sha256": "d952bf27fcee4523baaab9f80ca150db1713bf1caa37d70ad9a806115731b4ae",
+    "bytes": 35
+  },
+  "source-binding.json": {
+    "sha256": "ba816ea1c0851afa0894e93091e3e6250f66b87fc9adcb3c15f24072230e8282",
+    "bytes": 639
+  }
+}

@@ -1,0 +1,4 @@
+=== RUN   TestSelfHostELF
+--- PASS: TestSelfHostELF (1.99s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.999s

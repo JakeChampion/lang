@@ -1,0 +1,2 @@
+x86_64/checker.cliff_count	347070
+x86_64/checker.cliff_bytes	46205120

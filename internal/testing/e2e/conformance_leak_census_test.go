@@ -24,6 +24,28 @@ type censusRow struct {
 	unpaired int
 }
 
+func TestRawStoragePathsLeakCensusX86_64(t *testing.T) {
+	_, runner := x86_64Tooling(t)
+	bin, err := buildTracedX86_64(t, filepath.Join(conformanceCases, "raw_storage_paths_keep_literals_fresh", "main.fern"), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, exit := runSplit(t, runX86_64Bin(runner, bin))
+	if exit != 0 || stdout != "ok\n" {
+		t.Fatalf("raw storage: exit %d, stdout %q, stderr %s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "rctrace a ") {
+		t.Fatal("raw storage has no allocation trace")
+	}
+	n, top, err := pairRcTrace(stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("raw storage: %d unpaired allocations: %s", n, top)
+	}
+}
+
 func TestConformanceLeakCensusX86_64(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles and runs the whole conformance corpus; not a -short test")

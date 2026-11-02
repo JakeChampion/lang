@@ -483,7 +483,11 @@ pointer that flows through the program points past the header.
 - The count word is a signed 32-bit integer. A count below zero marks an
   **immortal** box (a literal, a static empty array, a `.rodata` closure
   cell): every retain, release and uniqueness test skips it, so a reuse never
-  hands back read-only memory. `__fern_rc_is_unique(p)` is 1 only for a live
+  hands back read-only memory. A literal that reaches a raw write is a fresh
+  heap box instead. The storage proof crosses containers, cells, parameters
+  and call results (`ssarawflow.reached`, `ssaunits.write_rows`). Each literal
+  evaluation gets its own box, and existing aliases observe the write.
+  `__fern_rc_is_unique(p)` is 1 only for a live
   heap box with count exactly 1; null and anything below the low-address
   guard answer 0, so it is safe on a slot that may hold a scalar.
 - Releases free at the last count through a size-classed freelist
