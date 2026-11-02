@@ -473,7 +473,9 @@ pointer that flows through the program points past the header.
 - The count word is a signed 32-bit integer. A count below zero marks an
   **immortal** box (a literal, a static empty array, a `.rodata` closure
   cell): every retain, release and uniqueness test skips it, so a reuse never
-  hands back read-only memory. `__fern_rc_is_unique(p)` is 1 only for a live
+  hands back read-only memory. A literal that a builtin writes in place, or
+  that reaches such a builtin through a callee's parameter, is a heap box
+  instead (`ssaunits.raw_reached`). `__fern_rc_is_unique(p)` is 1 only for a live
   heap box with count exactly 1; null and anything below the low-address
   guard answer 0, so it is safe on a slot that may hold a scalar.
 - Releases free at the last count through a size-classed freelist

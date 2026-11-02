@@ -5202,7 +5202,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
   } else if (o.kind_tag == 91) {
-    s = s.write("    ldr x0, [sp], #16\n    ldur w0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
+    s = s.write("    ldr x0, [sp], #16\n    ldursw x0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {
     s = emit_str_op(o, s);
   } else if (o.kind_tag == 185) {
@@ -7429,10 +7429,9 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// Length setters can write the shared empty array. Keep it writable with
-// other scalar arrays until #14013 requires their callers to own them.
+// The shared empty array is a constant box: a length setter skips it.
 function empty_array_block(s: asmcore.EmitState, label: string): string {
-  return "    .section .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .text\n";
+  return asmcore.const_data_section(s) + "    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .text\n";
 }
 
 function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {

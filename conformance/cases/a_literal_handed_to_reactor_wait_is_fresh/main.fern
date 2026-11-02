@@ -1,0 +1,37 @@
+// A builtin that writes into an array argument in place never writes the
+// constant behind a literal (#14013). Each evaluation of the literal is a
+// fresh array, so a second evaluation reads zeros after reactor_wait wrote
+// into the first, directly and through a callee's parameter.
+import "std/string";
+
+function watch(r: i32, events: i32[]): i32 {
+  return reactor_wait(r, events, 1000);
+}
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: i32 = tcp_accept(ls);
+  let r: i32 = reactor_new();
+  print(f"watch: {reactor_ctl(r, 1, s, 1)}");
+  let buf: u8[] = __alloc_u8(4);
+  for round in 0..2 {
+    let events: i32[] = [0, 0, 0, 0];
+    print(f"round {round} before: {events[0]} {events[1]}");
+    print(f"send: {tcp_send_bytes(c, "A".bytes())}");
+    let got: i32 = reactor_wait(r, events, 1000);
+    print(f"round {round} after: {got} fd {events[0] == s} readable {(events[1] & 1) == 1}");
+    print(f"drain: {tcp_recv_into(s, buf)}");
+  }
+  for round in 0..2 {
+    let events: i32[] = [0, 0, 0, 0];
+    print(f"call {round} before: {events[0]} {events[1]}");
+    print(f"send: {tcp_send_bytes(c, "B".bytes())}");
+    let got: i32 = watch(r, events);
+    print(f"call {round} after: {got} fd {events[0] == s} readable {(events[1] & 1) == 1}");
+    print(f"drain: {tcp_recv_into(s, buf)}");
+  }
+  print(f"close: {tcp_close(c)} {tcp_close(s)} {tcp_close(ls)} {reactor_ctl(r, 3, 0, 0)}");
+  return 0;
+}

@@ -242,11 +242,17 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if data.Filesz < uint64(len(tc.exit)) {
-						t.Fatalf("data segment holds %d file bytes, fewer than the %d-byte probe", data.Filesz, len(tc.exit))
+					// A plain program has no writable file bytes, so the probe
+					// then executes from the read-only data segment instead.
+					target := data
+					if target.Filesz < uint64(len(tc.exit)) && readonly != nil {
+						target = readonly
 					}
-					copy(image[data.Off:], tc.exit)
-					binary.LittleEndian.PutUint64(image[24:32], data.Vaddr)
+					if target.Filesz < uint64(len(tc.exit)) {
+						t.Fatalf("data segment holds %d file bytes, fewer than the %d-byte probe", target.Filesz, len(tc.exit))
+					}
+					copy(image[target.Off:], tc.exit)
+					binary.LittleEndian.PutUint64(image[24:32], target.Vaddr)
 					nx := filepath.Join(dir, v.name+"-execute-data")
 					if err := os.WriteFile(nx, image, 0o755); err != nil {
 						t.Fatal(err)

@@ -505,11 +505,11 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   return mode_error(c.params, c.modes);
 }
 
-pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[] }
+pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[], writes: WriteRows }
 
 pub function no_view(): SchemaView {
   let none: boolean[] = [];
-  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none };
+  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none, writes: no_writes() };
 }
 
 pub function view_fits(v: SchemaView, f: ssasem.Func): boolean {
@@ -1055,7 +1055,7 @@ function text_lens(f: ssasem.Func): i32[] {
   return out;
 }
 
-function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
+function constants(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): string[] {
   let out: string[] = [];
   let i: i32 = 0;
   while (i < f.graph.nvals) {
@@ -1063,7 +1063,7 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
     i = i + 1;
   }
   let raw: boolean[] = __alloc_bool(f.graph.nvals);
-  for v in raw_reached(f, defs) {
+  for v in raw_reached(f, defs, writes) {
     raw = raw.with(v, true);
   }
   let again: boolean = true;
@@ -1174,17 +1174,21 @@ function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): 
   return d.result;
 }
 
-function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
+// The values a raw access reaches: an array cast to a pointer, the array a
+// builtin writes in place or hands out as a pointer, and an argument to a
+// callee that writes the matching parameter. Copies and phis carry the reach
+// back to the construction, so a literal on such a path is a heap box.
+function raw_reached(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): i32[] {
   let work: i32[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.args.len() == 0) {
-        continue;
-      }
-      let raw: boolean = ins.kind_tag == ssasem.cast() && is_array(f.values[ins.args[0]]);
-      raw = raw || ins.kind_tag == ssasem.call() && (ins.str == "__arr_set_len" || ins.str == "__raw_arr_ptr");
-      if (raw) {
+      if (ins.kind_tag == ssasem.cast() && ins.args.len() > 0 && is_array(f.values[ins.args[0]])) {
         work = work.append(ins.args[0]);
+      }
+      if (ins.kind_tag == ssasem.call()) {
+        for k in raw_args(writes, ins) {
+          work = work.append(ins.args[k]);
+        }
       }
     }
   }
@@ -1207,6 +1211,117 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
     }
   }
   return out;
+}
+
+// The argument positions a call reaches raw.
+function raw_args(writes: WriteRows, ins: ssa.SInst): i32[] {
+  let out: i32[] = [];
+  let k: i32 = ssasem.raw_array_arg(ins.str);
+  if (k >= 0) {
+    if (k < ins.args.len()) {
+      out = out.append(k);
+    }
+    return out;
+  }
+  let row: i32 = writes.rows.find(ins.str);
+  if (row < 0) {
+    return out;
+  }
+  let flags: boolean[] = writes.params[row];
+  for i in 0..ins.args.len() {
+    if (i < flags.len() && flags[i]) {
+      out = out.append(i);
+    }
+  }
+  return out;
+}
+
+// WriteRows names the functions that reach a parameter raw, with one flag
+// per parameter. A caller treats an argument in a flagged position as the
+// builtin write itself would.
+pub struct WriteRows { rows: util.NameIndex, params: boolean[][] }
+
+pub function no_writes(): WriteRows {
+  let none: string[] = [];
+  return WriteRows { rows: util.name_index(none), params: [] };
+}
+
+// The rows grow to a fixed point: a parameter handed to a callee's flagged
+// parameter is flagged in turn. Only a function with an array parameter can
+// hold a row, and after the first round only a caller of a row that grew
+// can change.
+pub function write_rows(keys: string[], funcs: ssasem.Func[]): WriteRows {
+  let none: ssa.SInst[] = [];
+  let defs: ssa.SInst[][] = [];
+  let check: boolean[] = __alloc_bool(keys.len());
+  for i in 0..funcs.len() {
+    let has: boolean = has_array_param(funcs[i]);
+    check = check.with(i, has);
+    defs = defs.append(if (has) { definitions(funcs[i]) } else { none });
+  }
+  let out: WriteRows = no_writes();
+  let grew: boolean = true;
+  while (grew) {
+    grew = false;
+    let added: string[] = [];
+    for i in 0..funcs.len() {
+      if (!check[i]) {
+        continue;
+      }
+      let flags: boolean[] = written_params(funcs[i], defs[i], out);
+      let row: i32 = out.rows.find(keys[i]);
+      if (row < 0 && count_true(flags) > 0) {
+        out = WriteRows { rows: out.rows.added(keys[i]), params: out.params.append(flags) };
+      } else if (row >= 0 && count_true(flags) > count_true(out.params[row])) {
+        out = WriteRows { ...out, params: out.params.with(row, flags) };
+      } else {
+        continue;
+      }
+      added = added.append(keys[i]);
+      grew = true;
+    }
+    let ix: util.NameIndex = util.name_index(added);
+    for i in 0..funcs.len() {
+      check = check.with(i, check[i] && calls_any(funcs[i], ix));
+    }
+  }
+  return out;
+}
+
+function has_array_param(f: ssasem.Func): boolean {
+  for t in f.params {
+    if (is_array(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function written_params(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): boolean[] {
+  let out: boolean[] = __alloc_bool(f.graph.nparams);
+  for v in raw_reached(f, defs, writes) {
+    if (v < f.graph.nparams && is_array(f.values[v])) {
+      out = out.with(v, true);
+    }
+  }
+  return out;
+}
+
+pub function write_rows_agree(a: WriteRows, b: WriteRows, callees: string[]): boolean {
+  for callee in callees {
+    if (count_true(written_row(a, callee)) != count_true(written_row(b, callee))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function written_row(rows: WriteRows, name: string): boolean[] {
+  let i: i32 = rows.rows.find(name);
+  if (i < 0) {
+    return [];
+  }
+  return rows.params[i];
 }
 
 struct Construction { ok: boolean, fields: semrecords.Field[] }
@@ -2977,7 +3092,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   if (why != "") {
     return bad(why);
   }
-  let consts: string[] = constants(f, defs);
+  let consts: string[] = constants(f, defs, view.writes);
   return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
 }
 

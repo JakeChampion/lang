@@ -51,11 +51,10 @@ The region is empty in a `-shared` object, on Darwin and on the freestanding tar
 
 The constant boxes carry a negative reference count. The count paths skip a negative count, so the runtime never writes a constant box, and the read-only mapping holds.
 
-The array literals of bytes and scalars stay in `.data`. `reactor_wait` and `tcp_recv_into` write into their array argument in place, and a literal argument is the shared constant itself ([#14013](https://github.com/JakeChampion/lang/issues/14013)).
-Those literals hold no address. They join the region when the builtins own their argument first.
-
-The shared empty allocation stays writable until those mutators own their arguments too.
-The decoder also returns an empty array before it resets a zero-capacity buffer's length, so zero or negative output limits need no length write.
+A builtin that writes into an array argument in place never reaches a constant. `reactor_wait`, `tcp_recv_into`, `ring_recv` and `__arr_set_len` are those builtins.
+The unit plan builds a literal on such a path as a heap box, through a callee's parameter as well (`ssaunits.raw_reached`, [#14013](https://github.com/JakeChampion/lang/issues/14013)).
+The length setter skips a box with a negative count, so the shared empty array stays a constant that no code writes.
+The array literals and the empty array are in the region with the other constants.
 
 ## Verification
 
@@ -67,8 +66,11 @@ Empty-image controls check every variant too.
 
 The first probe finds its own executable mapping in `/proc/self/maps` and stores a byte into it.
 The second finds the read-only mapping of its data segment and stores a byte into it.
-The third patches the image's entry point to the data segment and writes an exit system call over its first bytes.
+The third patches the image's entry point to a data segment and writes an exit system call over its first bytes. It takes the writable segment, or the read-only one when the writable segment has no file bytes.
 All three must end with `SIGSEGV`, natively on x86-64 and under QEMU on arm64.
+
+`TestSelfHostWrittenLiteralImage` runs a program that hands a literal to `reactor_wait`, directly and through a callee, and sets the length of the empty array.
+It must exit 0 on a fixed-address image and on a PIE image. `TestSelfHostWrittenLiteralIsHeapX86_64` pins the plan: such a literal is a heap box, and a literal a callee only reads stays a constant.
 
 `TestSharedObjectLayout` builds a shared object for each target. It requires a read-execute code segment first, no writable executable segment, a non-executable stack and `PT_DYNAMIC`. It also requires a page-aligned `PT_GNU_RELRO` that covers the dynamic section inside a non-executable load segment.
 The dlopen tests of `internal/testing/e2e` load the x86-64 object through glibc and call its exports.
@@ -80,7 +82,6 @@ go test ./internal/testing/e2e -run 'TestSharedObjectLayout|TestSharedLibX86|Tes
 
 ## Remaining limits
 
-- The array literals of bytes and scalars and the shared empty allocation stay writable until [#14013](https://github.com/JakeChampion/lang/issues/14013) lands.
 - PIE and Android protection rounds the length down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages can protect fewer pages than a kernel with 4 KiB pages. Fixed-address images have a separate read-only load segment on each supported page size.
 - The arm64-android image has no `PT_GNU_PROPERTY`, and the Darwin image is Mach-O with its own rules.
 - QEMU user mode enforces page permissions through the host, so the arm64 probes are emulated evidence.

@@ -1617,14 +1617,14 @@ struct SchemaSeen {
 
 struct ViewStep { seen: SchemaSeen, view: ssaunits.SchemaView }
 
-pub function schema_views(funcs: ssasem.Func[]): ssaunits.SchemaView[] {
+pub function schema_views(funcs: ssasem.Func[], writes: ssaunits.WriteRows): ssaunits.SchemaView[] {
   let none: string[] = [];
   let seen: SchemaSeen = SchemaSeen { recs: [], rec_names: util.name_index(none), rec_unit: [], rec_walk: [], enums: [], enum_names: util.name_index(none), enum_unit: [], enum_walk: [] };
   let out: ssaunits.SchemaView[] = [];
   for f in funcs {
     let step: ViewStep = view_of(f, seen);
     seen = step.seen;
-    out = out.append(step.view);
+    out = out.append(ssaunits.SchemaView { ...step.view, writes: writes });
   }
   return out;
 }
@@ -5761,14 +5761,22 @@ function str_bytes(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerSt
   return emit(r, ir.op_str_data());
 }
 
+// The length store skips a constant box: the shared empty array is the one
+// constant a length setter can reach, and its length is already zero.
 function arr_set_len(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerState {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_arr_rc());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("ge_s", 0, false));
+  r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_raw_store_ptr());
   r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_store_local(ins.args[0]));
   return emit(r, ir.op_const_i32(0));
