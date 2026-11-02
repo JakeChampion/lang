@@ -114,7 +114,7 @@ runs:
             command -v aarch64-linux-gnu-as >/dev/null 2>&1 || return 1
           fi
           if [ "$WANT_LIBC" = "true" ]; then
-            [ -f /usr/aarch64-linux-gnu/include/stdio.h ] || return 1
+            aarch64-linux-gnu-gcc -x c -fsyntax-only -include dlfcn.h - </dev/null >/dev/null 2>&1 || return 1
           fi
           # The unit lane looks up qemu-aarch64, while other lanes request
           # the static executable. An installed sibling is not a cache hit
@@ -196,7 +196,7 @@ runs:
         # binaries absent would otherwise surface much later as a pile
         # of confusing test skips or failures.
         if ! toolchain_present; then
-          echo "::error::requested cross-toolchain executables are still missing after installation ($PACKAGES)"
+          echo "::error::the requested cross compiler, libc headers or emulator is missing after installation ($PACKAGES)"
           exit 1
         fi
         if [ "$WANT_GCC" = "true" ]; then

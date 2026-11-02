@@ -12,10 +12,13 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-func TestRingAndKTLSRefusedOffLinux(t *testing.T) {
-	for _, c := range []struct{ builtin, capability, src string }{
-		{"ring_new", "uring", `function main(): i32 { if (ring_new(8) < 0 as i64) { return 1; } return 0; }`},
-		{"tcp_ktls", "ktls", `function main(): i32 { let b: u8[] = []; return tcp_ktls(3, 1, 0, b); }`},
+func TestRingAndKTLSTargetCapabilities(t *testing.T) {
+	for _, c := range []struct {
+		builtin, capability, src string
+		androidAllowed           bool
+	}{
+		{"ring_new", "uring", `function main(): i32 { if (ring_new(8) < 0 as i64) { return 1; } return 0; }`, false},
+		{"tcp_ktls", "ktls", `function main(): i32 { let b: u8[] = []; return tcp_ktls(3, 1, 0, b); }`, true},
 	} {
 		prog, err := parser.Parse(c.src)
 		if err != nil {
@@ -30,9 +33,19 @@ func TestRingAndKTLSRefusedOffLinux(t *testing.T) {
 				t.Errorf("%s: violations %v, want %s refused on the %s capability", target, vs, c.builtin, c.capability)
 			}
 		}
-		for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android"} {
+		for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 			if vs := platforms.Enforce(prog, target); len(vs) != 0 {
 				t.Errorf("%s refused %s: %v", target, c.builtin, vs)
+			}
+		}
+		for _, target := range []string{"arm64-android", "x86-64-android"} {
+			vs := platforms.Enforce(prog, target)
+			if c.androidAllowed {
+				if len(vs) != 0 {
+					t.Errorf("%s refused %s: %v", target, c.builtin, vs)
+				}
+			} else if len(vs) != 1 || vs[0].Builtin != c.builtin || vs[0].Capability != c.capability {
+				t.Errorf("%s: violations %v, want %s refused on the %s capability", target, vs, c.builtin, c.capability)
 			}
 		}
 	}
@@ -52,7 +65,7 @@ func TestPollablesRefusedOffWasi(t *testing.T) {
 		if _, err := checker.Check(prog); err != nil {
 			t.Fatalf("check: %v", err)
 		}
-		for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android", "arm64-darwin", "arm64-freestanding", "x86-64-freestanding"} {
+		for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android", "x86-64-android", "arm64-darwin", "arm64-freestanding", "x86-64-freestanding"} {
 			vs := platforms.Enforce(prog, target)
 			if len(vs) == 0 || vs[0].Builtin != c.builtin || vs[0].Capability != c.capability {
 				t.Errorf("%s: violations %v, want %s refused on the %s capability", target, vs, c.builtin, c.capability)
@@ -86,7 +99,7 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	host := map[string]string{"linux/amd64": "x86-64-linux", "linux/arm64": "arm64-linux", "darwin/arm64": "arm64-darwin"}[runtime.GOOS+"/"+runtime.GOARCH]
-	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android", "arm64-darwin", "wasm32-wasi"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android", "x86-64-android", "arm64-darwin", "wasm32-wasi"} {
 		out := filepath.Join(dir, "prog-"+target)
 		if o, err := exec.Command(bin, "-target", target, "-o", out, src).CombinedOutput(); err != nil {
 			t.Errorf("%s: build failed: %v\n%s", target, err, o)
@@ -121,7 +134,7 @@ function main(): i32 {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android", "arm64-darwin", "wasm32-wasi"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-android", "x86-64-android", "arm64-darwin", "wasm32-wasi"} {
 		out := filepath.Join(dir, "prog-"+target)
 		if o, err := exec.Command(bin, "-target", target, "-o", out, src).CombinedOutput(); err != nil {
 			t.Errorf("%s: build failed: %v\n%s", target, err, o)
