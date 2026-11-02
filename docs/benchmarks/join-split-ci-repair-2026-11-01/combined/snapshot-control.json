@@ -1,0 +1,22 @@
+{
+  "compiler_sha256": "b2d7c00db7dbdd9fd0df3687501de4394373fdd8b7780e5fdaf990ed882d9374",
+  "source_file_sha256": "b04af57c19a62e31cfd10d29b7a82bd08b5ea864d099195e9f3550f1b4d26eb0",
+  "driver_sha256": "97893af376c8efca43fa6b793441731a7943f26816da4fd926dd2b351ebac81e",
+  "fixture_sha256": "37f97f8006efd515e705da1b0a35e3df48dd2f6e0cbf000d7fd4b0bdad0f45a9",
+  "old_golden_sha256": "93965f8e9007a26d51ee643168456aa8f7fc7e1639b9d1b945a39f70d48d1847",
+  "new_golden_sha256": "7cf12c7009b2d32d2ebc1831cfe8e5b375d867338de9b14d451c761bdae01a79",
+  "build_command": [
+    "/tmp/fern-14009-edge-combined/stage4",
+    "-target",
+    "arm64-darwin",
+    "-o",
+    "/tmp/fern-14009-source-print-control/driver",
+    "/tmp/fern-14009-source-print-control/compiler/semsource_print.fern",
+    "/Users/jakechampion/codex/lang-pr-14009-validation/internal/stdlib"
+  ],
+  "run_command": [
+    "/tmp/fern-14009-source-print-control/driver",
+    "/tmp/fern-14009-source-print-control/program.fern"
+  ],
+  "diff": "--- before\n+++ after\n@@ -2876,8 +2876,6 @@\n     v20 = record_get 0 v19\n     br b1\n   b3:\n-    br b4\n-  b4:\n     br b1\n   b1:\n     v21 = phi v20 v15\n@@ -3254,20 +3252,14 @@\n     v10 = const_bool 1\n     v11 = const_int 10\n     v12 = binary * v6 v11\n-    br b6\n+    br b10\n   b5:\n-    br b6\n-  b6:\n-    v13 = phi v12 v3\n-    v14 = phi v10 v7\n-    brif v14 b9 b8\n+    br b8\n   b8:\n     v15 = const_bool 1\n     br b10\n-  b9:\n-    br b10\n   b10:\n-    v16 = phi v5 v13\n+    v16 = phi v5 v12\n     br b3\n   b3:\n     v18 = phi v16\n"
+}

@@ -1,0 +1,40 @@
+{
+  "scope": "Actual main integration. The prior private qualification retains its original parents and scope. All compiler, standard library, test Go sources, and performance baselines match that proof.",
+  "parents": [
+    "e8032eacea0c46a3435d7841a3ded2040f8695d6",
+    "4b649c7305835e1ecf2c38262f74075bea21c6fd"
+  ],
+  "qualified_private_tree": "db2187fa639c4048852344085ab564b0834435cf",
+  "integrated_tree_before_evidence": "16ff06a0c8c19a1abab6d498270b31b7750b497e",
+  "delta_from_private_tree": "Only the separately validated semantic print snapshot. The owner supplies that exact correction in e8032eacea0c46a3435d7841a3ded2040f8695d6.",
+  "private_proof_sha256": "6a8cb70441e66effae896721dd5572d3cfea17a5fe513e611843046a832f6d47",
+  "compiler_sha256": "b2d7c00db7dbdd9fd0df3687501de4394373fdd8b7780e5fdaf990ed882d9374",
+  "compiler_source_count": 1245,
+  "golden": {
+    "path": "internal/testing/e2ecompiler/testdata/semsource_print.golden",
+    "before": "93965f8e9007a26d51ee643168456aa8f7fc7e1639b9d1b945a39f70d48d1847",
+    "after": "7cf12c7009b2d32d2ebc1831cfe8e5b375d867338de9b14d451c761bdae01a79",
+    "changes": "Two graph changes only: one empty forwarding block in keyed_recs, and the constant-payload join in tm_line. Fixture and driver remain unchanged."
+  },
+  "records_sha256": {
+    "local-qualification.json": "6a8cb70441e66effae896721dd5572d3cfea17a5fe513e611843046a832f6d47",
+    "runtime.json": "588c0d421e9f4c3fd51de17f4cf1b05230a0a25a1f317eda2aa46294fca3ac3f",
+    "native-arm.txt": "7e1fa580dc8821b2311480bc1b8315787ce69059815af183c481de536a27d49b",
+    "emitted-size.txt": "a937afcdb64b9dc51f08a7b79e186595d99c2409efe23977b41ab8d6037cd085",
+    "profiles.txt": "1ed18a427ac0312ba3127df31b946ff2be7282c382749eabca9fba4ff451ff94",
+    "snapshot-control.json": "b2df5693336ec92c1aef49fc9faa0cc9f06aa0f56b35b833527dbda0cf49b0c5",
+    "snapshot.diff": "467eabca3cfe47ef0a5c9c6d81b98543cddf4b4d8b740b900165f5ac3ac64fac"
+  },
+  "merge_gate": "Fresh full current-head non-Netlify CI, reviews, inline threads, conversation feedback, and branch protection.",
+  "snapshot_validation": {
+    "roots": [
+      "TestSelfHostConstantJoinSplit",
+      "TestSelfHostConstantJoinSplitCensus",
+      "TestSelfHostSemanticSourcePrint"
+    ],
+    "seconds": 61.549,
+    "skips": 0,
+    "log_sha256": "beae5908fb81fc7cb7e82829decde6d9ff75e0aeaf65eaff95dab9472b19fad8",
+    "red_log_sha256": "54f285415b3f5d2534289a8d56a47961ffe36e166f47e638c0576e34b9985dd6"
+  }
+}

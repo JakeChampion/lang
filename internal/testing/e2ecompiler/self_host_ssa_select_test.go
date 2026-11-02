@@ -71,6 +71,12 @@ function probe(i: i32): Probe {
     }
     return acc % 91;
 }
+@noinline function tag_kept(r: i32, acc: i32): i32 {
+    let got: Probe = probe(r);
+    let bonus: i32 = 0;
+    if let Has(a, b) = got { bonus = a + b; }
+    match (got) { Has(a, b) => { return acc + bonus; }, Not => { return acc - bonus; } }
+}
 @noinline function safe_div(a: i32, b: i32): i32 { return if (b != 0) { a / b } else { 0 }; }
 @noinline function at(xs: i32[], i: i32): i32 { return if (i < xs.len()) { xs[i] } else { 0 - 1 }; }
 @noinline function fmn(a: f64, b: f64): f64 { return if (a < b) { a } else { b }; }
@@ -97,6 +103,7 @@ function main(): i32 {
         acc = acc * 31i64 % 1000000007i64;
         i = i + 1;
     }
+    acc = acc + tag_kept(3, 5) as i64 + tag_kept(0, 7) as i64;
     return (acc % 251i64) as i32;
 }
 `
@@ -139,7 +146,14 @@ func TestSelfHostSSASelectsAreConditionalMoves(t *testing.T) {
 		{"arm64-linux", regexp.MustCompile(`(?m)^\s+csel `), regexp.MustCompile(`(?m)^\s+(?:b\.\w+|cbn?z|tbn?z) `)},
 	}
 	selects := []string{"mn", "mx_u", "clamp", "ab", "order", "both", "fpick", "busy", "spill"}
-	moves := []string{"tagged", "phi_tag"}
+	// tag_kept reads the variant's tag twice, so the join an inlined probe
+	// returns through stays, and both branches on its tag phi are selects.
+	moves := []string{"tag_kept"}
+	// tagged and phi_tag read each payload in one arm, so semthread sends
+	// each arm of the inlined probe straight to its match arm: there is no
+	// join left to select over, and a conditional move would mean one
+	// came back.
+	direct := []string{"tagged", "phi_tag"}
 	branches := []string{"safe_div", "at", "fmn"}
 	for _, c := range cases {
 		out := filepath.Join(dir, "selects-"+c.target+".s")
@@ -162,6 +176,15 @@ func TestSelfHostSSASelectsAreConditionalMoves(t *testing.T) {
 		for _, name := range moves {
 			if fn := functionListing(string(asm), "__fn_"+name); !c.move.MatchString(fn) {
 				t.Errorf("%s: %s should hold a conditional move:\n%s", c.target, name, fn)
+			}
+		}
+		for _, name := range direct {
+			fn := functionListing(string(asm), "__fn_"+name)
+			if fn == "" {
+				t.Fatalf("%s: no __fn_%s in the listing", c.target, name)
+			}
+			if c.move.MatchString(fn) {
+				t.Errorf("%s: %s should go straight from each arm of probe to its own arm, with no conditional move:\n%s", c.target, name, fn)
 			}
 		}
 		for _, name := range branches {

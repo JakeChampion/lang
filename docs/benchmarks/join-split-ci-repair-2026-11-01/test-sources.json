@@ -1,0 +1,24 @@
+{
+  "test_sources_sha256": {
+    "internal/testing/e2ecompiler/self_host_ssa_phi_spills_test.go": "0becff56dc0d5afb4a9219c4f484b60f9d8add07ea0a95385f41bb1b6da35696",
+    "internal/testing/e2ecompiler/self_host_tiny_splice_test.go": "65c147fba6f1d9020c40f609963fcabee818cbcf69e0b0389c005e2ecf8fe053",
+    "internal/testing/e2ecompiler/self_host_bufwriter_release_test.go": "e109b434be808ddd19e7bdc1eab2662949572e89d60a55cf28ff6e8a2a36ef30",
+    "internal/testing/e2ecompiler/self_host_decided_branch_test.go": "f8d0c029ced1a7d36412bd29cddb5bf364cee823627fe1792ccec3427877a48e",
+    "internal/testing/e2ecompiler/self_host_ssa_branch_forward_test.go": "540e5959d757d57687c2a97250f9763d27bf3b083d3ec87f4189b056573ffd4f",
+    "internal/testing/e2ecompiler/self_host_ssa_loop_tail_label_test.go": "c7ce1f53c29d09cc541ee33993b6b4c44e101705f20c896d647d49a253ecaea6",
+    "internal/testing/e2ecompiler/self_host_ssa_select_test.go": "72713667ea95027cd1a824a11e5a92554cb0757854eb2d19782700472812acf5",
+    "internal/testing/e2ecompiler/self_host_constant_join_test.go": "bfe0167e32b607b9db91d0058f644f01f34bcf29be8c589acfc36da09124227f",
+    "internal/testing/e2ecompiler/self_host_ssa_join_homes_test.go": "8055d6cf990e4752cde6d722b5ff906cb6e47653155b487937d94de558528d5f",
+    "internal/testing/e2ecompiler/self_host_ssa_void_phi_test.go": "9e65aea119011c51c0e2d31e00a3c72d56060b40f81c47b66adb34aeb724c624",
+    "internal/testing/e2ecompiler/self_host_buf_push_kernels_ir_test.go": "c15e3a02c9f47cc958283b6133294f1273c64dd222c6aa6e452928765e8080a6",
+    "internal/testing/e2ecompiler/self_host_bool_join_branch_test.go": "db4d140b5041f35f0b4b23784293ea8f2754c85b8c8d020dcc4064f383cfbc6e",
+    "internal/testing/e2ecompiler/self_host_ssa_merge_chain_test.go": "13144316fa213ab655af3f683209e0aa6c1bed6711090054ea9bfba93f7ebc9c"
+  },
+  "collectors_sha256": {
+    "/tmp/fern-14009-complete-perf.py": "c85e2ae54267abcee5dadd3c4b04bd403d3c3a67e1c5f6df9e67129579f74035",
+    "/tmp/fern-14009-runtime-matrix.py": "5b0784dcc5fb650d2bc7b8ac03fa251f3e1dfc1febc6940904a3d8c7a4859c07",
+    "/tmp/fern-14009-merge-chain-probe.py": "f9fc1b5d04642665c651355f9864898bf09ff8ec307c902329fcab5b6def828f",
+    "/tmp/fern-14009-merge-chain-record.py": "35ec7044b7a3f0de379ee3b4ab7d17fde7d34abd3cd3801edc6712e1f9cfa3a1",
+    "/tmp/fern-14009-finalize-merge-chain.py": "e57ef933d82804c9a554ae1fca8c5fd276173f0ae541727369bf51e7c773bd3c"
+  }
+}

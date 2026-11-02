@@ -2876,8 +2876,6 @@ func keyed_recs {
     v20 = record_get 0 v19
     br b1
   b3:
-    br b4
-  b4:
     br b1
   b1:
     v21 = phi v20 v15
@@ -3254,20 +3252,14 @@ func tm_line {
     v10 = const_bool 1
     v11 = const_int 10
     v12 = binary * v6 v11
-    br b6
+    br b10
   b5:
-    br b6
-  b6:
-    v13 = phi v12 v3
-    v14 = phi v10 v7
-    brif v14 b9 b8
+    br b8
   b8:
     v15 = const_bool 1
     br b10
-  b9:
-    br b10
   b10:
-    v16 = phi v5 v13
+    v16 = phi v5 v12
     br b3
   b3:
     v18 = phi v16

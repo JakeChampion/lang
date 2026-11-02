@@ -1,0 +1,164 @@
+### performance (bench)
+valgrind was absent on this host: the dynamic (.ir) metrics were NOT measured.
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| profile/x86-64-linux/startup.safe.emit | 229 | 229 | +0.00% |
+| profile/x86-64-linux/startup.safe.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/int_loop.safe.emit | 250 | 250 | +0.00% |
+| profile/x86-64-linux/int_loop.safe.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/call_overhead.safe.emit | 305 | 305 | +0.00% |
+| profile/x86-64-linux/call_overhead.safe.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/closure_call.safe.emit | 916 | 916 | +0.00% |
+| profile/x86-64-linux/closure_call.safe.bytes | 8.2k | 8.2k | -0.39% |
+| profile/x86-64-linux/array_append.safe.emit | 1.1k | 1.1k | +0.09% |
+| profile/x86-64-linux/array_append.safe.bytes | 8.2k | 8.2k | +0.00% |
+| profile/x86-64-linux/map_string.safe.emit | 9.4k | 9.4k | -0.10% |
+| profile/x86-64-linux/map_string.safe.bytes | 40.3k | 40.3k | +0.00% |
+| profile/x86-64-linux/enum_match.safe.emit | 886 | 886 | +0.00% |
+| profile/x86-64-linux/enum_match.safe.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/http_hello.safe.emit | 15.1k | 15.0k | +0.75% |
+| profile/x86-64-linux/http_hello.safe.bytes | 64.4k | 64.4k | +0.00% |
+| profile/x86-64-linux/deflate_decode.safe.emit | 13.0k | 13.0k | -0.30% |
+| profile/x86-64-linux/deflate_decode.safe.bytes | 53.4k | 53.4k | +0.00% |
+| profile/x86-64-linux/startup.hardened.emit | 302 | 301 | +0.33% |
+| profile/x86-64-linux/startup.hardened.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/int_loop.hardened.emit | 323 | 322 | +0.31% |
+| profile/x86-64-linux/int_loop.hardened.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/call_overhead.hardened.emit | 378 | 377 | +0.27% |
+| profile/x86-64-linux/call_overhead.hardened.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/closure_call.hardened.emit | 1.1k | 1.1k | +0.00% |
+| profile/x86-64-linux/closure_call.hardened.bytes | 8.2k | 8.3k | -0.58% |
+| profile/x86-64-linux/array_append.hardened.emit | 1.3k | 1.3k | +0.00% |
+| profile/x86-64-linux/array_append.hardened.bytes | 8.3k | 8.3k | +0.00% |
+| profile/x86-64-linux/map_string.hardened.emit | 9.9k | 9.9k | -0.09% |
+| profile/x86-64-linux/map_string.hardened.bytes | 41.9k | 41.9k | +0.00% |
+| profile/x86-64-linux/enum_match.hardened.emit | 1.0k | 1.0k | +0.00% |
+| profile/x86-64-linux/enum_match.hardened.bytes | 8.3k | 8.3k | -0.58% |
+| profile/x86-64-linux/http_hello.hardened.emit | 15.4k | 15.3k | +0.73% |
+| profile/x86-64-linux/http_hello.hardened.bytes | 71.5k | 71.5k | +0.00% |
+| profile/x86-64-linux/deflate_decode.hardened.emit | 13.3k | 13.4k | -0.33% |
+| profile/x86-64-linux/deflate_decode.hardened.bytes | 58.9k | 58.9k | +0.00% |
+| profile/x86-64-linux/startup.diagnostic.emit | 448 | 448 | +0.00% |
+| profile/x86-64-linux/startup.diagnostic.bytes | 6.0k | 5.9k | +1.22% |
+| profile/x86-64-linux/int_loop.diagnostic.emit | 473 | 473 | +0.00% |
+| profile/x86-64-linux/int_loop.diagnostic.bytes | 6.4k | 6.3k | +1.27% |
+| profile/x86-64-linux/call_overhead.diagnostic.emit | 525 | 525 | +0.00% |
+| profile/x86-64-linux/call_overhead.diagnostic.bytes | 6.7k | 6.6k | +1.34% |
+| profile/x86-64-linux/closure_call.diagnostic.emit | 1.3k | 1.3k | +0.00% |
+| profile/x86-64-linux/closure_call.diagnostic.bytes | 13.2k | 13.0k | +0.98% |
+| profile/x86-64-linux/array_append.diagnostic.emit | 1.4k | 1.4k | +0.00% |
+| profile/x86-64-linux/array_append.diagnostic.bytes | 12.7k | 12.6k | +0.70% |
+| profile/x86-64-linux/map_string.diagnostic.emit | 10.9k | 10.9k | -0.22% |
+| profile/x86-64-linux/map_string.diagnostic.bytes | 134.9k | 135.1k | -0.14% |
+| profile/x86-64-linux/enum_match.diagnostic.emit | 1.2k | 1.2k | +0.00% |
+| profile/x86-64-linux/enum_match.diagnostic.bytes | 12.5k | 12.4k | +0.71% |
+| profile/x86-64-linux/http_hello.diagnostic.emit | 14.6k | 14.7k | -0.96% |
+| profile/x86-64-linux/http_hello.diagnostic.bytes | 113.1k | 117.2k | -3.49% |
+| profile/x86-64-linux/deflate_decode.diagnostic.emit | 12.9k | 12.9k | -0.02% |
+| profile/x86-64-linux/deflate_decode.diagnostic.bytes | 114.6k | 113.8k | +0.67% |
+| profile/x86-64-linux/startup.minimal.emit | 169 | 169 | +0.00% |
+| profile/x86-64-linux/startup.minimal.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/int_loop.minimal.emit | 190 | 190 | +0.00% |
+| profile/x86-64-linux/int_loop.minimal.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/call_overhead.minimal.emit | 245 | 245 | +0.00% |
+| profile/x86-64-linux/call_overhead.minimal.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/closure_call.minimal.emit | 834 | 827 | +0.85% |
+| profile/x86-64-linux/closure_call.minimal.bytes | 4.1k | 4.1k | -0.78% |
+| profile/x86-64-linux/array_append.minimal.emit | 1.1k | 1.1k | +0.10% |
+| profile/x86-64-linux/array_append.minimal.bytes | 8.2k | 8.2k | +0.00% |
+| profile/x86-64-linux/map_string.minimal.emit | 9.1k | 9.1k | -0.11% |
+| profile/x86-64-linux/map_string.minimal.bytes | 36.2k | 36.2k | +0.00% |
+| profile/x86-64-linux/enum_match.minimal.emit | 806 | 806 | +0.00% |
+| profile/x86-64-linux/enum_match.minimal.bytes | 4.1k | 4.1k | +0.00% |
+| profile/x86-64-linux/http_hello.minimal.emit | 12.5k | 12.6k | -0.95% |
+| profile/x86-64-linux/http_hello.minimal.bytes | 56.2k | 56.2k | +0.00% |
+| profile/x86-64-linux/deflate_decode.minimal.emit | 11.5k | 11.4k | +0.47% |
+| profile/x86-64-linux/deflate_decode.minimal.bytes | 49.3k | 49.3k | +0.00% |
+| profile/arm64-linux/startup.safe.emit | 316 | 316 | +0.00% |
+| profile/arm64-linux/startup.safe.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/int_loop.safe.emit | 333 | 330 | +0.91% |
+| profile/arm64-linux/int_loop.safe.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/call_overhead.safe.emit | 391 | 388 | +0.77% |
+| profile/arm64-linux/call_overhead.safe.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/closure_call.safe.emit | 1.1k | 1.1k | +0.00% |
+| profile/arm64-linux/closure_call.safe.bytes | 66.0k | 66.3k | -0.39% |
+| profile/arm64-linux/array_append.safe.emit | 1.4k | 1.4k | +0.22% |
+| profile/arm64-linux/array_append.safe.bytes | 66.3k | 66.3k | +0.00% |
+| profile/arm64-linux/map_string.safe.emit | 9.6k | 9.6k | -0.10% |
+| profile/arm64-linux/map_string.safe.bytes | 70.7k | 70.7k | +0.00% |
+| profile/arm64-linux/enum_match.safe.emit | 1.1k | 1.1k | +0.00% |
+| profile/arm64-linux/enum_match.safe.bytes | 66.3k | 66.3k | +0.00% |
+| profile/arm64-linux/http_hello.safe.emit | 16.1k | 15.9k | +0.95% |
+| profile/arm64-linux/http_hello.safe.bytes | 74.7k | 74.7k | +0.00% |
+| profile/arm64-linux/deflate_decode.safe.emit | 13.8k | 13.8k | -0.33% |
+| profile/arm64-linux/deflate_decode.safe.bytes | 71.2k | 71.2k | +0.00% |
+| profile/arm64-linux/startup.hardened.emit | 381 | 381 | +0.00% |
+| profile/arm64-linux/startup.hardened.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/int_loop.hardened.emit | 398 | 395 | +0.76% |
+| profile/arm64-linux/int_loop.hardened.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/call_overhead.hardened.emit | 492 | 489 | +0.61% |
+| profile/arm64-linux/call_overhead.hardened.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/closure_call.hardened.emit | 1.3k | 1.3k | +0.00% |
+| profile/arm64-linux/closure_call.hardened.bytes | 66.0k | 66.3k | -0.39% |
+| profile/arm64-linux/array_append.hardened.emit | 1.5k | 1.5k | +0.20% |
+| profile/arm64-linux/array_append.hardened.bytes | 66.3k | 66.3k | +0.00% |
+| profile/arm64-linux/map_string.hardened.emit | 11.2k | 11.2k | -0.09% |
+| profile/arm64-linux/map_string.hardened.bytes | 70.7k | 70.7k | +0.00% |
+| profile/arm64-linux/enum_match.hardened.emit | 1.3k | 1.3k | +0.00% |
+| profile/arm64-linux/enum_match.hardened.bytes | 66.3k | 66.3k | +0.00% |
+| profile/arm64-linux/http_hello.hardened.emit | 17.1k | 17.0k | +0.89% |
+| profile/arm64-linux/http_hello.hardened.bytes | 140.2k | 140.5k | -0.18% |
+| profile/arm64-linux/deflate_decode.hardened.emit | 15.1k | 15.1k | -0.30% |
+| profile/arm64-linux/deflate_decode.hardened.bytes | 71.2k | 71.2k | +0.00% |
+| profile/arm64-linux/startup.diagnostic.emit | 484 | 484 | +0.00% |
+| profile/arm64-linux/startup.diagnostic.bytes | 67.5k | 67.4k | +0.24% |
+| profile/arm64-linux/int_loop.diagnostic.emit | 505 | 502 | +0.60% |
+| profile/arm64-linux/int_loop.diagnostic.bytes | 67.9k | 67.8k | +0.25% |
+| profile/arm64-linux/call_overhead.diagnostic.emit | 566 | 563 | +0.53% |
+| profile/arm64-linux/call_overhead.diagnostic.bytes | 68.2k | 68.1k | +0.26% |
+| profile/arm64-linux/closure_call.diagnostic.emit | 1.6k | 1.6k | +0.00% |
+| profile/arm64-linux/closure_call.diagnostic.bytes | 72.0k | 72.0k | -0.09% |
+| profile/arm64-linux/array_append.diagnostic.emit | 1.7k | 1.7k | +0.18% |
+| profile/arm64-linux/array_append.diagnostic.bytes | 71.8k | 71.4k | +0.46% |
+| profile/arm64-linux/map_string.diagnostic.emit | 10.8k | 10.8k | -0.09% |
+| profile/arm64-linux/map_string.diagnostic.bytes | 166.7k | 166.9k | -0.10% |
+| profile/arm64-linux/enum_match.diagnostic.emit | 1.6k | 1.6k | +0.00% |
+| profile/arm64-linux/enum_match.diagnostic.bytes | 71.6k | 71.5k | +0.08% |
+| profile/arm64-linux/http_hello.diagnostic.emit | 15.8k | 15.9k | -0.80% |
+| profile/arm64-linux/http_hello.diagnostic.bytes | 129.2k | 129.1k | +0.06% |
+| profile/arm64-linux/deflate_decode.diagnostic.emit | 13.9k | 13.9k | -0.02% |
+| profile/arm64-linux/deflate_decode.diagnostic.bytes | 133.3k | 133.8k | -0.35% |
+| profile/arm64-linux/startup.minimal.emit | 253 | 253 | +0.00% |
+| profile/arm64-linux/startup.minimal.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/int_loop.minimal.emit | 270 | 270 | +0.00% |
+| profile/arm64-linux/int_loop.minimal.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/call_overhead.minimal.emit | 328 | 325 | +0.92% |
+| profile/arm64-linux/call_overhead.minimal.bytes | 65.8k | 65.8k | +0.00% |
+| profile/arm64-linux/closure_call.minimal.emit | 1.1k | 1.1k | +0.76% |
+| profile/arm64-linux/closure_call.minimal.bytes | 66.0k | 66.3k | -0.39% |
+| profile/arm64-linux/array_append.minimal.emit | 1.3k | 1.3k | +0.24% |
+| profile/arm64-linux/array_append.minimal.bytes | 66.3k | 66.3k | +0.00% |
+| profile/arm64-linux/map_string.minimal.emit | 9.3k | 9.3k | -0.11% |
+| profile/arm64-linux/map_string.minimal.bytes | 70.7k | 70.7k | +0.00% |
+| profile/arm64-linux/enum_match.minimal.emit | 1.0k | 1.0k | +0.00% |
+| profile/arm64-linux/enum_match.minimal.bytes | 66.3k | 66.3k | +0.00% |
+| profile/arm64-linux/http_hello.minimal.emit | 12.9k | 13.0k | -1.09% |
+| profile/arm64-linux/http_hello.minimal.bytes | 74.7k | 74.9k | -0.34% |
+| profile/arm64-linux/deflate_decode.minimal.emit | 12.2k | 12.1k | +0.37% |
+| profile/arm64-linux/deflate_decode.minimal.bytes | 71.2k | 71.2k | +0.00% |
+SLOWER: profile/x86-64-linux/startup.diagnostic.bytes 5.9k -> 6.0k (+1.22%, tolerance 1%).
+SLOWER: profile/x86-64-linux/int_loop.diagnostic.bytes 6.3k -> 6.4k (+1.27%, tolerance 1%).
+SLOWER: profile/x86-64-linux/call_overhead.diagnostic.bytes 6.6k -> 6.7k (+1.34%, tolerance 1%).
+FASTER: profile/x86-64-linux/http_hello.diagnostic.bytes 117.2k -> 113.1k (-3.49%, tolerance 1%).
+FASTER: profile/arm64-linux/http_hello.minimal.emit 13.0k -> 12.9k (-1.09%, tolerance 1%).
+Corrected baseline — paste into the baseline file:
+    profile/x86-64-linux/startup.diagnostic.bytes 5992
+    profile/x86-64-linux/int_loop.diagnostic.bytes 6400
+    profile/x86-64-linux/call_overhead.diagnostic.bytes 6664
+    profile/x86-64-linux/http_hello.diagnostic.bytes 113120
+    profile/arm64-linux/http_hello.minimal.emit 12900
+WARNING: profile/x86-64-linux/startup.diagnostic.bytes +1.22%: profile/x86-64-linux/startup.diagnostic.bytes measured 5992 against a baseline of 5920 — over its 1% tolerance
+WARNING: profile/x86-64-linux/int_loop.diagnostic.bytes +1.27%: profile/x86-64-linux/int_loop.diagnostic.bytes measured 6400 against a baseline of 6320 — over its 1% tolerance
+WARNING: profile/x86-64-linux/call_overhead.diagnostic.bytes +1.34%: profile/x86-64-linux/call_overhead.diagnostic.bytes measured 6664 against a baseline of 6576 — over its 1% tolerance
+WARNING: profile/x86-64-linux/http_hello.diagnostic.bytes -3.49%: profile/x86-64-linux/http_hello.diagnostic.bytes measured 113120 against a baseline of 117208 — update the baseline so the win becomes the new ceiling
+WARNING: profile/arm64-linux/http_hello.minimal.emit -1.09%: profile/arm64-linux/http_hello.minimal.emit measured 12900 against a baseline of 13042 — update the baseline so the win becomes the new ceiling

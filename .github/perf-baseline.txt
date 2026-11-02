@@ -1,3 +1,10 @@
+# 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
+# Source corrections must pass those limits. Improved rows keep their measured lower pins.
+# 2026-11-01: PR #14009 run 41350917312, perf-x86_64. The same two changes: enum_match.ir -40.1%,
+# http_hello.ir -2.6%, three .text rows shrink and http_hello.text +1.20%.
+# 2026-11-01: PR #14009 run 41350917312, perf-aarch64. A branch on a join of constants goes to its arm,
+# and __fern_buf_push takes a direct path: enum_match.ir -39.3%, http_hello.ir -2.4%, three .text rows
+# shrink, http_hello.text +1.35% and perceus_rbtree_ck.ir +1.25%.
 # 2026-11-01: PR #13988 run 41287852525, perf-x86_64 and perf-aarch64. A method joins the once set only
 # when its body is one block: ordmap_insert.text -3.4% to -3.6%, pvec_with and utf8_ingest return to
 # their values before the splice, and pmap_insert.text +1.5% to +2.4%.
@@ -180,7 +187,7 @@ x86_64/array_scale_f64.ir	21309613
 # 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
 x86_64/array_with.ir	36120760
 x86_64/array_with.text	1295
-x86_64/ascii_scan.text	1369
+x86_64/ascii_scan.text	1352
 x86_64/ascii_scan.ir	37315742
 x86_64/byte_copy_append.text	1245
 x86_64/byte_copy_append.ir	13442091
@@ -195,11 +202,11 @@ x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12993
 x86_64/deflate_encode.ir	42207169
 x86_64/deflate_encode.text	7275
-x86_64/enum_match.text	1017
-x86_64/enum_match.ir	48825092
+x86_64/enum_match.text	886
+x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
 x86_64/http_hello.text	15029
-x86_64/http_hello.ir	22672408
+x86_64/http_hello.ir	22076408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8478
@@ -226,9 +233,9 @@ x86_64/string_build.text	1991
 x86_64/string_build.ir	43427016
 x86_64/string_count_byte.text	1180
 x86_64/string_count_byte.ir	135589355
-x86_64/string_find_byte.text	1553
+x86_64/string_find_byte.text	1535
 x86_64/string_find_byte.ir	43687425
-x86_64/string_rfind_byte.text	1722
+x86_64/string_rfind_byte.text	1699
 x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2239
 x86_64/string_scan.ir	52670002
@@ -465,7 +472,7 @@ aarch64/array_scale_f64.text	1453
 aarch64/array_scale_f64.ir	25340945
 aarch64/array_with.text	1508
 aarch64/array_with.ir	34494442
-aarch64/ascii_scan.text	1671
+aarch64/ascii_scan.text	1653
 aarch64/ascii_scan.ir	68639570
 aarch64/byte_copy_append.text	1478
 aarch64/byte_copy_append.ir	31926661
@@ -481,12 +488,12 @@ aarch64/deflate_decode.ir	35961899
 aarch64/deflate_decode.text	13839
 aarch64/deflate_encode.ir	44105319
 aarch64/deflate_encode.text	7910
-aarch64/enum_match.text	1227
-aarch64/enum_match.ir	41175104
+aarch64/enum_match.text	1112
+aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
 aarch64/http_hello.text	15945
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
-aarch64/http_hello.ir	24448615
+aarch64/http_hello.ir	23864615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
 # 2026-11-01 (#13981): Helper reachability restores the original map limits. The division integration passes all 117 static rows.
@@ -516,9 +523,9 @@ aarch64/string_build.text	2361
 aarch64/string_build.ir	47221466
 aarch64/string_count_byte.text	1445
 aarch64/string_count_byte.ir	295207223
-aarch64/string_find_byte.text	1865
+aarch64/string_find_byte.text	1843
 aarch64/string_find_byte.ir	55921279
-aarch64/string_rfind_byte.text	1989
+aarch64/string_rfind_byte.text	1965
 aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2565
 aarch64/string_scan.ir	59787692

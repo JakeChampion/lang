@@ -9,24 +9,32 @@ pub struct Threaded { f: ssasem.Func, changed: i32 }
 
 pub function thread(f: ssasem.Func): Threaded {
   let g: ssa.SFunc = f.graph;
-  if (!decidable(g)) {
-    return Threaded { f: f, changed: 0 };
-  }
   let changed: i32 = 0;
-  let round: i32 = 0;
-  while (round < 8) {
-    let r: Round = thread_round(f, g);
-    if (r.changed == 0) {
-      break;
+  if (decidable(g)) {
+    let round: i32 = 0;
+    while (round < 8) {
+      let r: Round = thread_round(f, g);
+      if (r.changed == 0) {
+        break;
+      }
+      g = r.g;
+      changed = changed + r.changed;
+      round = round + 1;
     }
-    g = r.g;
-    changed = changed + r.changed;
-    round = round + 1;
+  }
+  let cur: ssasem.Func = f;
+  if (changed > 0) {
+    cur = ssasem.Func { ...f, graph: g };
+  }
+  let j: Joined = split_constant_joins(cur);
+  if (j.changed > 0) {
+    cur = j.f;
+    changed = changed + j.changed;
   }
   if (changed == 0) {
     return Threaded { f: f, changed: 0 };
   }
-  return Threaded { f: ssasem.Func { ...f, graph: g }, changed: changed };
+  return Threaded { f: cur, changed: changed };
 }
 
 struct Round { g: ssa.SFunc, changed: i32 }
@@ -407,4 +415,552 @@ function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
     return ssa.SInst { ...d, result: v };
   }
   return d;
+}
+
+// A call that returns its variant in two words meets the match on its result
+// as a join: a phi per payload word, and a boolean phi that is true on the Ok
+// edge and false on the Err edge, which the match branches on. Each
+// predecessor of such a join has decided that branch. It goes to the arm its
+// constant picks, the join goes, and a payload phi an arm reads becomes the
+// operand of the one predecessor that reaches the arm, or a phi of the
+// predecessors that do.
+
+struct Joined { f: ssasem.Func, changed: i32 }
+
+function split_constant_joins(f0: ssasem.Func): Joined {
+  let f: ssasem.Func = f0;
+  let changed: i32 = 0;
+  for _ in 0..16 {
+    let fw: Forwarded = forward_empty_joins(f.graph);
+    if (fw.changed > 0) {
+      f = ssasem.Func { ...f, graph: fw.g };
+      changed = changed + fw.changed;
+    }
+    let r: Joined = split_round(f);
+    if (r.changed == 0) {
+      break;
+    }
+    f = r.f;
+    changed = changed + r.changed;
+  }
+  if (changed == 0) {
+    return Joined { f: f0, changed: 0 };
+  }
+  return Joined { f: f, changed: changed };
+}
+
+struct Forwarded { g: ssa.SFunc, changed: i32 }
+
+// An empty block that jumps to a join is left out: each of its predecessors
+// jumps to the join, and each phi reads on the new edge what it read on the
+// old one. A predecessor that branches keeps the block, so that no edge
+// carries both a condition and a phi.
+function forward_empty_joins(g0: ssa.SFunc): Forwarded {
+  let g: ssa.SFunc = g0;
+  let changed: i32 = 0;
+  for round in 0..64 {
+    let at: i32[] = ssadeps.position_of(g);
+    let yi: i32 = first_forwardable(g, at);
+    if (yi < 0) {
+      break;
+    }
+    g = forward_block(g, at, yi);
+    changed = round + 1;
+  }
+  if (changed == 0) {
+    return Forwarded { g: g0, changed: 0 };
+  }
+  let kept: ssa.SFunc = ssa.SFunc { ...g, blocks: reachable_only(g) };
+  return Forwarded { g: ssa.SFunc { ...kept, blocks: ssa.refreshed_preds(kept) }, changed: changed };
+}
+
+function first_forwardable(g: ssa.SFunc, at: i32[]): i32 {
+  for yi in 0..g.blocks.len() {
+    if (forwardable(g, at, yi)) {
+      return yi;
+    }
+  }
+  return 0 - 1;
+}
+
+function forwardable(g: ssa.SFunc, at: i32[], yi: i32): boolean {
+  let y: ssa.SBlock = g.blocks[yi];
+  if (y.insts.len() != 0 || y.term.kind_tag != 2 || y.preds.len() == 0 || y.id == g.entry) {
+    return false;
+  }
+  let x: i32 = y.term.target;
+  if (x == y.id || x < 0 || x >= at.len() || at[x] < 0) {
+    return false;
+  }
+  let xb: ssa.SBlock = g.blocks[at[x]];
+  if (!has_phi(xb) || util.index_of_i32(xb.preds, y.id) < 0) {
+    return false;
+  }
+  for q in y.preds {
+    if (q == y.id || q < 0 || q >= at.len() || at[q] < 0) {
+      return false;
+    }
+    let qb: ssa.SBlock = g.blocks[at[q]];
+    if (qb.term.kind_tag != 2 || qb.term.target != y.id || util.index_of_i32(xb.preds, q) >= 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function forward_block(g: ssa.SFunc, at: i32[], yi: i32): ssa.SFunc {
+  let y: ssa.SBlock = g.blocks[yi];
+  let xi: i32 = at[y.term.target];
+  let xb: ssa.SBlock = g.blocks[xi];
+  let slot: i32 = util.index_of_i32(xb.preds, y.id);
+  let preds: i32[] = [];
+  for i in 0..xb.preds.len() {
+    if (i == slot) {
+      for q in y.preds {
+        preds = preds.append(q);
+      }
+    } else {
+      preds = preds.append(xb.preds[i]);
+    }
+  }
+  let insts: ssa.SInst[] = [];
+  for ins in xb.insts {
+    if (ins.kind_tag == 8) {
+      let args: i32[] = [];
+      for k in 0..ins.args.len() {
+        if (k == slot) {
+          for q in y.preds {
+            args = args.append(ins.args[k]);
+          }
+        } else {
+          args = args.append(ins.args[k]);
+        }
+      }
+      insts = insts.append(ssa.SInst { ...ins, args: args });
+    } else {
+      insts = insts.append(ins);
+    }
+  }
+  let blocks: ssa.SBlock[] = g.blocks.with(xi, ssa.SBlock { ...xb, insts: insts, preds: preds });
+  for q in y.preds {
+    let qi: i32 = at[q];
+    blocks = blocks.with(qi, ssa.SBlock { ...blocks[qi], term: jump(xb.id) });
+  }
+  blocks = blocks.with(yi, ssa.SBlock { ...y, preds: [] });
+  return ssa.SFunc { ...g, blocks: blocks };
+}
+
+// j and b are positions: the join, and the block that branches on its phi,
+// which is j itself or the last of chain. picks has one entry per
+// predecessor of the join: 1 for the true arm, 0 for the false arm. t and f
+// are the arms' positions.
+struct Join { ok: boolean, j: i32, chain: i32[], b: i32, picks: i32[], t: i32, f: i32 }
+
+function no_join(ji: i32): Join {
+  return Join { ok: false, j: ji, chain: [], b: ji, picks: [], t: 0 - 1, f: 0 - 1 };
+}
+
+function split_round(f: ssasem.Func): Joined {
+  let g: ssa.SFunc = f.graph;
+  let at: i32[] = ssadeps.position_of(g);
+  let uses: i32[] = ssa.use_counts(g);
+  let defs: ssa.SInst[] = definitions(g);
+  let dom: ssadeps.Dom = ssadeps.dominates(g);
+  for ji in 0..g.blocks.len() {
+    let c: Join = constant_join(g, at, uses, defs, dom, ji);
+    if (c.ok) {
+      return Joined { f: split_join(f, at, dom, c), changed: 1 };
+    }
+  }
+  return Joined { f: f, changed: 0 };
+}
+
+function dead_copy(uses: i32[], ins: ssa.SInst): boolean {
+  return ins.kind_tag == 7 && ins.result >= 0 && ins.result < uses.len() && uses[ins.result] == 0;
+}
+
+function movable_constant(ins: ssa.SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  return ins.args.len() == 0 && ins.result >= 0 && (k == 1 || k == 2 || k == 3 || k == 5 || k == ssasem.zero());
+}
+
+function constant_join(g: ssa.SFunc, at: i32[], uses: i32[], defs: ssa.SInst[], dom: ssadeps.Dom, ji: i32): Join {
+  let none: Join = no_join(ji);
+  let jb: ssa.SBlock = g.blocks[ji];
+  if (jb.id == g.entry || jb.preds.len() == 0) {
+    return none;
+  }
+  let any_phi: boolean = false;
+  for ins in jb.insts {
+    if (ins.kind_tag == 8) {
+      any_phi = true;
+    } else if (!dead_copy(uses, ins) && !movable_constant(ins)) {
+      return none;
+    }
+  }
+  if (!any_phi) {
+    return none;
+  }
+  let chain: i32[] = [];
+  let bi: i32 = ji;
+  for _ in 0..16 {
+    if (g.blocks[bi].term.kind_tag != 2) {
+      break;
+    }
+    let target: i32 = g.blocks[bi].term.target;
+    if (target < 0 || target >= at.len() || at[target] < 0) {
+      return none;
+    }
+    let next: i32 = at[target];
+    let nb: ssa.SBlock = g.blocks[next];
+    if (next == ji || nb.preds.len() != 1 || nb.preds[0] != g.blocks[bi].id) {
+      return none;
+    }
+    for ins in nb.insts {
+      if (!dead_copy(uses, ins)) {
+        return none;
+      }
+    }
+    chain = chain.append(next);
+    bi = next;
+  }
+  let bb: ssa.SBlock = g.blocks[bi];
+  if (bb.term.kind_tag != 3 || bb.term.t == bb.term.f) {
+    return none;
+  }
+  let cond: ssa.SInst = phi_of(jb, bb.term.cond);
+  if (cond.kind_tag != 8 || cond.args.len() != jb.preds.len()) {
+    return none;
+  }
+  // The later SSA pass handles joins that carry only the branch value.
+  // Preserve its register layout when no payload needs this earlier split.
+  let payload: boolean = false;
+  for ins in jb.insts {
+    if (ins.kind_tag == 8 && ins.result != cond.result && ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
+      payload = true;
+    }
+  }
+  if (!payload) {
+    return none;
+  }
+  let picks: i32[] = [];
+  for a in cond.args {
+    let d: ssa.SInst = through_copies(defs, a);
+    if (d.kind_tag != 1 && d.kind_tag != 2 || d.args.len() != 0) {
+      return none;
+    }
+    if (d.imm != 0) {
+      picks = picks.append(1);
+    } else {
+      picks = picks.append(0);
+    }
+  }
+  for q in jb.preds {
+    if (q < 0 || q >= at.len() || at[q] < 0) {
+      return none;
+    }
+    let qi: i32 = at[q];
+    let qb: ssa.SBlock = g.blocks[qi];
+    if (qi == ji || qb.term.kind_tag != 2 || qb.term.target != jb.id || ssadeps.dom_holds(dom, qi, ji)) {
+      return none;
+    }
+  }
+  if (bb.term.t < 0 || bb.term.t >= at.len() || bb.term.f < 0 || bb.term.f >= at.len()) {
+    return none;
+  }
+  let ti: i32 = at[bb.term.t];
+  let fi: i32 = at[bb.term.f];
+  if (!plain_arm(g, ti, bb.id, ji, chain) || !plain_arm(g, fi, bb.id, ji, chain)) {
+    return none;
+  }
+  let c: Join = Join { ok: true, j: ji, chain: chain, b: bi, picks: picks, t: ti, f: fi };
+  if (!reads_under_arms(g, at, dom, c)) {
+    return none;
+  }
+  return c;
+}
+
+function phi_of(b: ssa.SBlock, v: i32): ssa.SInst {
+  for ins in b.insts {
+    if (ins.kind_tag == 8 && ins.result == v) {
+      return ins;
+    }
+  }
+  return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+}
+
+// An arm is entered from the branch alone, holds no phi, and is neither the
+// join nor one of the blocks between it and the branch.
+function plain_arm(g: ssa.SFunc, ti: i32, from: i32, ji: i32, chain: i32[]): boolean {
+  if (ti < 0 || ti == ji || util.index_of_i32(chain, ti) >= 0) {
+    return false;
+  }
+  let tb: ssa.SBlock = g.blocks[ti];
+  return tb.preds.len() == 1 && tb.preds[0] == from && !has_phi(tb);
+}
+
+function join_phis(g: ssa.SFunc, c: Join): boolean[] {
+  let out: boolean[] = __alloc_bool(g.nvals);
+  for ins in g.blocks[c.j].insts {
+    if (ins.kind_tag == 8 && ins.result >= 0 && ins.result < out.len()) {
+      out = out.with(ins.result, true);
+    }
+  }
+  return out;
+}
+
+// The arm whose region holds the block at xi: t, f, or -1 for neither.
+function arm_of(dom: ssadeps.Dom, c: Join, xi: i32): i32 {
+  if (ssadeps.dom_holds(dom, xi, c.t)) {
+    return c.t;
+  }
+  if (ssadeps.dom_holds(dom, xi, c.f)) {
+    return c.f;
+  }
+  return 0 - 1;
+}
+
+function skipped_block(c: Join, xi: i32): boolean {
+  return xi == c.j || util.index_of_i32(c.chain, xi) >= 0;
+}
+
+// Every read of a join phi, outside the join and its chain, lies in one arm:
+// an instruction in a block the arm dominates, or a phi operand on an edge
+// from such a block. A read elsewhere would need a phi at a merge of the arms.
+function reads_under_arms(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join): boolean {
+  let is_phi: boolean[] = join_phis(g, c);
+  for xi in 0..g.blocks.len() {
+    let b: ssa.SBlock = g.blocks[xi];
+    if (xi == c.j) {
+      for ins in b.insts {
+        if (ins.kind_tag == 8) {
+          for a in ins.args {
+            if (a >= 0 && a < is_phi.len() && is_phi[a]) {
+              return false;
+            }
+          }
+        }
+      }
+    } else if (!skipped_block(c, xi)) {
+      let here: i32 = arm_of(dom, c, xi);
+      for ins in b.insts {
+        for k in 0..ins.args.len() {
+          let a: i32 = ins.args[k];
+          if (a >= 0 && a < is_phi.len() && is_phi[a]) {
+            let where: i32 = here;
+            if (ins.kind_tag == 8) {
+              where = 0 - 1;
+              if (k < b.preds.len() && b.preds[k] >= 0 && b.preds[k] < at.len() && at[b.preds[k]] >= 0) {
+                where = arm_of(dom, c, at[b.preds[k]]);
+              }
+            }
+            if (where < 0) {
+              return false;
+            }
+          }
+        }
+      }
+      let tv: i32 = term_read(b.term);
+      if (tv >= 0 && tv < is_phi.len() && is_phi[tv] && here < 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function term_read(t: ssa.STerm): i32 {
+  if (t.kind_tag == 1) {
+    return t.value;
+  }
+  if (t.kind_tag == 3) {
+    return t.cond;
+  }
+  return 0 - 1;
+}
+
+function same_pick(defs: ssa.SInst[], a: i32, b: i32): boolean {
+  if (a == b) {
+    return true;
+  }
+  let da: ssa.SInst = through_copies(defs, a);
+  let db: ssa.SInst = through_copies(defs, b);
+  let k: i32 = da.kind_tag;
+  if (k != db.kind_tag || k != 1 && k != 2 && k != 3 && k != 5) {
+    return false;
+  }
+  return da.args.len() == 0 && db.args.len() == 0 && da.imm == db.imm && da.str == db.str;
+}
+
+struct Split { f: ssasem.Func, blocks: ssa.SBlock[], val: i32[] }
+
+// The value a join phi has in one arm: the operand of the one predecessor the
+// arm takes, or a new phi at the arm's head over the predecessors it takes.
+function arm_values(s0: Split, g: ssa.SFunc, defs: ssa.SInst[], c: Join, ti: i32, pick: i32, needed: boolean[]): Split {
+  let s: Split = s0;
+  let jb: ssa.SBlock = g.blocks[c.j];
+  let tb: ssa.SBlock = g.blocks[ti];
+  let preds: i32[] = [];
+  for i in 0..jb.preds.len() {
+    if (c.picks[i] == pick) {
+      preds = preds.append(jb.preds[i]);
+    }
+  }
+  let phis: ssa.SInst[] = [];
+  let consts: ssa.SInst[] = [];
+  for ins in jb.insts {
+    if (ins.kind_tag != 8 || ins.result < 0 || ins.result >= needed.len() || !needed[ins.result] || preds.len() == 0) {
+      continue;
+    }
+    let args: i32[] = [];
+    let one: boolean = true;
+    let same: boolean = true;
+    for i in 0..jb.preds.len() {
+      if (c.picks[i] == pick) {
+        if (args.len() > 0 && args[0] != ins.args[i]) {
+          one = false;
+          if (!same_pick(defs, args[0], ins.args[i])) {
+            same = false;
+          }
+        }
+        args = args.append(ins.args[i]);
+      }
+    }
+    if (one) {
+      s = Split { ...s, val: s.val.with(ins.result, args[0]) };
+      continue;
+    }
+    let id: i32 = s.f.values.len();
+    s = Split { ...s, f: ssasem.Func { ...s.f, values: s.f.values.append(s.f.values[ins.result]) }, val: s.val.with(ins.result, id) };
+    if (same) {
+      // The same constant under a different id in each arm: a value defined
+      // in one arm reaches the join, and not the other arms, so the arm gets
+      // a constant of its own.
+      consts = consts.append(ssa.SInst { ...through_copies(defs, args[0]), result: id, args: [] });
+    } else {
+      phis = phis.append(ssa.SInst { kind_tag: 8, result: id, args: args, imm: 0, str: "" });
+    }
+  }
+  let insts: ssa.SInst[] = phis;
+  for k in consts {
+    insts = insts.append(k);
+  }
+  for ins in tb.insts {
+    insts = insts.append(ins);
+  }
+  return Split { ...s, blocks: s.blocks.with(ti, ssa.SBlock { ...tb, insts: insts, preds: preds }) };
+}
+
+// Which join phis each arm reads.
+function arm_needs(g: ssa.SFunc, at: i32[], dom: ssadeps.Dom, c: Join, ti: i32): boolean[] {
+  let is_phi: boolean[] = join_phis(g, c);
+  let out: boolean[] = __alloc_bool(g.nvals);
+  for xi in 0..g.blocks.len() {
+    let b: ssa.SBlock = g.blocks[xi];
+    if (!skipped_block(c, xi)) {
+      let here: boolean = arm_of(dom, c, xi) == ti;
+      for ins in b.insts {
+        for k in 0..ins.args.len() {
+          let a: i32 = ins.args[k];
+          if (a >= 0 && a < is_phi.len() && is_phi[a]) {
+            let where: boolean = here;
+            if (ins.kind_tag == 8) {
+              where = arm_of(dom, c, at[b.preds[k]]) == ti;
+            }
+            if (where) {
+              out = out.with(a, true);
+            }
+          }
+        }
+      }
+      let tv: i32 = term_read(b.term);
+      if (tv >= 0 && tv < is_phi.len() && is_phi[tv] && here) {
+        out = out.with(tv, true);
+      }
+    }
+  }
+  return out;
+}
+
+function split_join(f: ssasem.Func, at: i32[], dom: ssadeps.Dom, c: Join): ssasem.Func {
+  let g: ssa.SFunc = f.graph;
+  let defs: ssa.SInst[] = definitions(g);
+  let jb: ssa.SBlock = g.blocks[c.j];
+  let is_phi: boolean[] = join_phis(g, c);
+  let s: Split = Split { f: f, blocks: g.blocks, val: util.minus_ones(g.nvals) };
+  let val_t: i32[] = [];
+  let val_f: i32[] = [];
+  s = arm_values(s, g, defs, c, c.t, 1, arm_needs(g, at, dom, c, c.t));
+  val_t = s.val;
+  s = Split { ...s, val: util.minus_ones(g.nvals) };
+  s = arm_values(s, g, defs, c, c.f, 0, arm_needs(g, at, dom, c, c.f));
+  val_f = s.val;
+  let blocks: ssa.SBlock[] = s.blocks;
+  for i in 0..jb.preds.len() {
+    let qi: i32 = at[jb.preds[i]];
+    let target: i32 = g.blocks[c.f].id;
+    if (c.picks[i] == 1) {
+      target = g.blocks[c.t].id;
+    }
+    blocks = blocks.with(qi, ssa.SBlock { ...blocks[qi], term: jump(target) });
+  }
+  let ei: i32 = at[g.entry];
+  let moved: ssa.SInst[] = blocks[ei].insts;
+  for ins in jb.insts {
+    if (movable_constant(ins)) {
+      moved = moved.append(ins);
+    }
+  }
+  blocks = blocks.with(ei, ssa.SBlock { ...blocks[ei], insts: moved });
+  blocks = blocks.with(c.j, ssa.SBlock { ...jb, insts: [], preds: [] });
+  for ch in c.chain {
+    blocks = blocks.with(ch, ssa.SBlock { ...blocks[ch], insts: [], preds: [] });
+  }
+  for xi in 0..blocks.len() {
+    if (!skipped_block(c, xi)) {
+      let b: ssa.SBlock = blocks[xi];
+      let here: i32 = arm_of(dom, c, xi);
+      let insts: ssa.SInst[] = [];
+      let changed: boolean = false;
+      for ins in b.insts {
+        let args: i32[] = ins.args;
+        for k in 0..args.len() {
+          let a: i32 = args[k];
+          if (a >= 0 && a < is_phi.len() && is_phi[a]) {
+            let where: i32 = here;
+            if (ins.kind_tag == 8) {
+              where = arm_of(dom, c, at[b.preds[k]]);
+            }
+            args = args.with(k, arm_value(val_t, val_f, c, where, a));
+            changed = true;
+          }
+        }
+        insts = insts.append(ssa.SInst { ...ins, args: args });
+      }
+      let term: ssa.STerm = b.term;
+      let tv: i32 = term_read(term);
+      if (tv >= 0 && tv < is_phi.len() && is_phi[tv]) {
+        let nv: i32 = arm_value(val_t, val_f, c, here, tv);
+        if (term.kind_tag == 1) {
+          term = ssa.STerm { ...term, value: nv };
+        } else {
+          term = ssa.STerm { ...term, cond: nv };
+        }
+        changed = true;
+      }
+      if (changed) {
+        blocks = blocks.with(xi, ssa.SBlock { ...b, insts: insts, term: term });
+      }
+    }
+  }
+  let g2: ssa.SFunc = ssa.SFunc { ...g, blocks: blocks, nvals: s.f.values.len() };
+  let kept: ssa.SFunc = ssa.SFunc { ...g2, blocks: reachable_only(g2) };
+  return ssasem.Func { ...s.f, graph: ssa.SFunc { ...kept, blocks: ssa.refreshed_preds(kept) } };
+}
+
+function arm_value(val_t: i32[], val_f: i32[], c: Join, where: i32, a: i32): i32 {
+  if (where == c.t) {
+    return val_t[a];
+  }
+  return val_f[a];
 }

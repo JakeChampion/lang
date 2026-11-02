@@ -44,6 +44,59 @@ const mergeChainProg = `@noinline function f(ops: i32[]): i32 {
 function main(): i32 { let xs: i32[] = [1, 2, 3, 19, 0, 7]; return f(xs); }
 `
 
+func ssaMergeChainShape(fn string) (int, int) {
+	lines := strings.Split(fn, "\n")
+	// A merge block's label is the function's block number. A helper's
+	// return label, such as an append's, belongs to the arm before the chain,
+	// and so do the moves before the chain's first label: a jump to the
+	// physical fallthrough is not emitted, so nothing separates them.
+	label := regexp.MustCompile(`^\.Lssa_f_[0-9]+:$`)
+	mov := regexp.MustCompile(`^\s*movq `)
+	labels, moves, bestLabels, bestMoves := 0, 0, 0, 0
+	finish := func() {
+		if labels > bestLabels || labels == bestLabels && moves > bestMoves {
+			bestLabels, bestMoves = labels, moves
+		}
+		labels, moves = 0, 0
+	}
+	for _, line := range lines {
+		switch {
+		case label.MatchString(line):
+			labels++
+		case mov.MatchString(line):
+			if labels > 0 {
+				moves++
+			}
+		default:
+			finish()
+		}
+	}
+	finish()
+	return bestLabels, bestMoves
+}
+
+func TestSSAMergeChainShapeExcludesKernelMoves(t *testing.T) {
+	chain := ".Lssa_f_24:\n    movq %r13, %r8\n.Lssa_f_23:\n    movq %r14, %r9\n.Lssa_f_22:\n"
+	prefix := strings.Repeat("    movq -216(%rbp), %r8\n", 3) + ".Lssa_f_apush1069e:\n" + strings.Repeat("    movq %rax, %r14\n", 4)
+	for _, tc := range []struct {
+		name, listing string
+		labels, moves int
+	}{
+		{"chain", chain, 3, 2},
+		{"fallthrough kernel prefix", prefix + chain, 3, 2},
+		{"extra chain moves", chain + strings.Repeat("    movq %r8, %r13\n", 9), 3, 11},
+		{"equal chain with more moves", chain + "    nop\n" + chain + strings.Repeat("    movq %r8, %r13\n", 9), 3, 11},
+		{"kernel separates chains", ".Lssa_f_25:\n    movq %r8, %r13\n.Lssa_f_apush12e:\n" + chain, 3, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			labels, moves := ssaMergeChainShape(tc.listing)
+			if labels != tc.labels || moves != tc.moves {
+				t.Fatalf("labels=%d moves=%d, want labels=%d moves=%d", labels, moves, tc.labels, tc.moves)
+			}
+		})
+	}
+}
+
 func TestSelfHostSSAMergeChainMovesNothing(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -63,23 +116,7 @@ func TestSelfHostSSAMergeChainMovesNothing(t *testing.T) {
 	if fn == "" {
 		t.Fatal("__fn_f not in the listing")
 	}
-	lines := strings.Split(fn, "\n")
-	label := regexp.MustCompile(`^\.L\w+:$`)
-	mov := regexp.MustCompile(`^\s*movq `)
-	labels, moves, bestLabels, bestMoves := 0, 0, 0, 0
-	for _, line := range lines {
-		switch {
-		case label.MatchString(line):
-			labels++
-		case mov.MatchString(line):
-			moves++
-		default:
-			if labels > bestLabels {
-				bestLabels, bestMoves = labels, moves
-			}
-			labels, moves = 0, 0
-		}
-	}
+	bestLabels, bestMoves := ssaMergeChainShape(fn)
 	if bestLabels < 15 {
 		t.Fatalf("the longest run of merge blocks in f spans %d labels, want at least 15:\n%s", bestLabels, fn)
 	}
