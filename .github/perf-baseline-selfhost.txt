@@ -1,7 +1,5 @@
-# 2026-11-02: PR #14026 run 41452916314, perf-x86_64 and perf-aarch64. A leaf can call a byte kernel, so the
-# std/http helpers that call __memchr_bytes splice into parse_request_framed. It then exceeds the caller budget
-# and stays out of parse_request_bytes, which costs one HttpFramed box a request: http_hello.ir +1.2% to +2.6%,
-# http_hello.text and .emit +1.4% to +3.9%. ordmap_insert.ir -1.9% to -2.5%, and sort of 500,000 words -17%.
+# 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
+# Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
 # so http_hello.text and .emit grow 1.86% on x86_64 and aarch64 and the http_hello profile emits 1.0% to 1.1%.
 # 2026-11-02: PR #14025 run 41440248030 on the merge with main 87b88925 (#14019, #14023), whose rows moved
@@ -224,7 +222,7 @@ selfhost/arm64-linux/deflate_decode.emit	13839
 selfhost/arm64-linux/deflate_encode.emit	7910
 selfhost/arm64-linux/enum_match.emit	1112
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	16465
+selfhost/arm64-linux/http_hello.emit	16242
 selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -259,12 +257,12 @@ selfhost/wasm32-wasi/deflate_decode.emit	19608
 selfhost/wasm32-wasi/deflate_encode.emit	11578
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	18572
+selfhost/wasm32-wasi/http_hello.emit	18209
 selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
 selfhost/wasm32-wasi/map_string.emit	14123
-selfhost/wasm32-wasi/ordmap_insert.emit	6761
+selfhost/wasm32-wasi/ordmap_insert.emit	6680
 selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	510
@@ -294,7 +292,7 @@ selfhost/x86-64-linux/deflate_decode.emit	12993
 selfhost/x86-64-linux/deflate_encode.emit	7275
 selfhost/x86-64-linux/enum_match.emit	886
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15543
+selfhost/x86-64-linux/http_hello.emit	15308
 selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482

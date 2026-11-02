@@ -1,7 +1,5 @@
-# 2026-11-02: PR #14026 run 41452916314, perf-x86_64 and perf-aarch64. A leaf can call a byte kernel, so the
-# std/http helpers that call __memchr_bytes splice into parse_request_framed. It then exceeds the caller budget
-# and stays out of parse_request_bytes, which costs one HttpFramed box a request: http_hello.ir +1.2% to +2.6%,
-# http_hello.text and .emit +1.4% to +3.9%. ordmap_insert.ir -1.9% to -2.5%, and sort of 500,000 words -17%.
+# 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
+# Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
 # so http_hello.text and .emit grow 1.86% on x86_64 and aarch64 and the http_hello profile emits 1.0% to 1.1%.
 # 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
@@ -211,8 +209,8 @@ x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15543
-x86_64/http_hello.ir	22344429
+x86_64/http_hello.text	15308
+x86_64/http_hello.ir	22076408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8478
@@ -497,9 +495,9 @@ aarch64/deflate_encode.text	7910
 aarch64/enum_match.text	1112
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16465
+aarch64/http_hello.text	16242
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
-aarch64/http_hello.ir	24156656
+aarch64/http_hello.ir	23864615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
 # 2026-11-01 (#13981): Helper reachability restores the original map limits. The division integration passes all 117 static rows.

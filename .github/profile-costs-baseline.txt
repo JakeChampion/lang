@@ -1,7 +1,5 @@
-# 2026-11-02: PR #14026 run 41452916314, perf-x86_64 and perf-aarch64. A leaf can call a byte kernel, so the
-# std/http helpers that call __memchr_bytes splice into parse_request_framed. It then exceeds the caller budget
-# and stays out of parse_request_bytes, which costs one HttpFramed box a request: http_hello.ir +1.2% to +2.6%,
-# http_hello.text and .emit +1.4% to +3.9%. ordmap_insert.ir -1.9% to -2.5%, and sort of 500,000 words -17%.
+# 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
+# Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
 # so http_hello.text and .emit grow 1.86% on x86_64 and aarch64 and the http_hello profile emits 1.0% to 1.1%.
 # 2026-11-02: PR #14025 run 41440248030 on the merge with main 87b88925 (#14019, #14023), whose rows moved
@@ -86,14 +84,14 @@ profile/arm64-linux/enum_match.minimal.emit	1034
 profile/arm64-linux/enum_match.safe.bytes	5736
 profile/arm64-linux/enum_match.safe.emit	1116
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	129256
-profile/arm64-linux/http_hello.diagnostic.emit	16405
+profile/arm64-linux/http_hello.diagnostic.bytes	124872
+profile/arm64-linux/http_hello.diagnostic.emit	15794
 profile/arm64-linux/http_hello.hardened.bytes	80576
-profile/arm64-linux/http_hello.hardened.emit	17617
-profile/arm64-linux/http_hello.minimal.bytes	61856
-profile/arm64-linux/http_hello.minimal.emit	13104
-profile/arm64-linux/http_hello.safe.bytes	75248
-profile/arm64-linux/http_hello.safe.emit	16465
+profile/arm64-linux/http_hello.hardened.emit	17196
+profile/arm64-linux/http_hello.minimal.bytes	60896
+profile/arm64-linux/http_hello.minimal.emit	12863
+profile/arm64-linux/http_hello.safe.bytes	73792
+profile/arm64-linux/http_hello.safe.emit	16098
 profile/arm64-linux/int_loop.diagnostic.bytes	4880
 profile/arm64-linux/int_loop.diagnostic.emit	504
 profile/arm64-linux/int_loop.hardened.bytes	2392
@@ -178,18 +176,18 @@ profile/x86-64-linux/enum_match.minimal.ir	29250077
 profile/x86-64-linux/enum_match.safe.bytes	4304
 profile/x86-64-linux/enum_match.safe.emit	893
 profile/x86-64-linux/enum_match.safe.ir	29250077
-profile/x86-64-linux/http_hello.diagnostic.bytes	117320
-profile/x86-64-linux/http_hello.diagnostic.emit	15222
-profile/x86-64-linux/http_hello.diagnostic.ir	35900340
+profile/x86-64-linux/http_hello.diagnostic.bytes	113272
+profile/x86-64-linux/http_hello.diagnostic.emit	14755
+profile/x86-64-linux/http_hello.diagnostic.ir	34992340
 profile/x86-64-linux/http_hello.hardened.bytes	70704
-profile/x86-64-linux/http_hello.hardened.emit	15873
-profile/x86-64-linux/http_hello.hardened.ir	25446768
-profile/x86-64-linux/http_hello.minimal.bytes	54304
+profile/x86-64-linux/http_hello.hardened.emit	15471
+profile/x86-64-linux/http_hello.hardened.ir	25070827
+profile/x86-64-linux/http_hello.minimal.bytes	53408
 profile/x86-64-linux/http_hello.minimal.emit	12634
 profile/x86-64-linux/http_hello.minimal.ir	23588401
-profile/x86-64-linux/http_hello.safe.bytes	65520
-profile/x86-64-linux/http_hello.safe.emit	15543
-profile/x86-64-linux/http_hello.safe.ir	22344429
+profile/x86-64-linux/http_hello.safe.bytes	64000
+profile/x86-64-linux/http_hello.safe.emit	15308
+profile/x86-64-linux/http_hello.safe.ir	22076408
 profile/x86-64-linux/int_loop.diagnostic.bytes	5056
 profile/x86-64-linux/int_loop.diagnostic.emit	472
 profile/x86-64-linux/int_loop.diagnostic.ir	12000209

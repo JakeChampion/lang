@@ -38,6 +38,17 @@ function cmp_view(a: [u8], b: [u8]): i32 {
 @noinline function run_view(a: u8[], b: u8[]): i32 {
   return cmp_view(a, b) * 2 + cmp_view(b, a);
 }
+function scan_loop(a: u8[], from: i32, end: i32): i32 {
+  let at = __memchr_bytes(a, 13, from);
+  while (at >= 0 && at + 1 < end) {
+    if (a[at + 1] == 10u8) { return at; }
+    at = __memchr_bytes(a, 13, at + 1);
+  }
+  return -1;
+}
+@noinline function run_loop(a: u8[]): i32 {
+  return scan_loop(a, 0, a.len()) + scan_loop(a, 1, a.len());
+}
 function main(): i32 {
   let a: u8[] = [1u8, 2u8, 3u8, 4u8];
   let b: u8[] = [1u8, 2u8, 5u8];
@@ -45,6 +56,7 @@ function main(): i32 {
   if (scan(a, 0, b, 0, 3) != 2 || scan_view(a, 1, b, 1, 2) != 1) { return 1; }
   if (run(a, b) != 998 || run(a, c) != 1001) { return 2; }
   if (run_view(a, b) != -2 || run_view(a, c) != 1) { return 3; }
+  if (run_loop(a) != -2 || run_loop([13u8, 1u8, 13u8, 10u8]) != 4) { return 4; }
   print("ok");
   return 0;
 }
@@ -80,6 +92,9 @@ func TestSelfHostLentArrayKernel(t *testing.T) {
 		}
 		if body := condBranchBody(t, listing, "run_view"); strings.Contains(body, call[target]+"cmp_view") {
 			t.Errorf("%s: run_view still calls cmp_view:\n%s", target, body)
+		}
+		if body := condBranchBody(t, listing, "run_loop"); !strings.Contains(body, call[target]+"scan_loop") {
+			t.Errorf("%s: run_loop duplicates the kernel loop:\n%s", target, body)
 		}
 	}
 	for _, tg := range h.targets {

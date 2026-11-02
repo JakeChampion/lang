@@ -1297,8 +1297,10 @@ function narrowings(f: ssasem.Func): ssa.SInst[] {
   return out;
 }
 
+// Kernel loops keep a call boundary so their expansion does not displace
+// a larger splice that removes a box.
 function leaf_call(f: ssasem.Func, ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str) || kernel_read(f, ins);
+  return ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str) || kernel_read(f, ins) && !loops(f.graph);
 }
 
 function leaf_kind(k: i32): boolean {
