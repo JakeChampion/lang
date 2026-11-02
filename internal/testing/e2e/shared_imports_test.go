@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,6 +30,22 @@ pub function len(s: usize): i64 {
   return c_strlen(s) as i64;
 }
 
+@import("libc.so.6", "mmap")
+function c_mmap(addr: usize, n: usize, prot: i32, flags: i32, fd: i32, off: i64): usize;
+
+@import("libc.so.6", "munmap")
+function c_munmap(addr: usize, n: usize): i32;
+
+// Six arguments: an anonymous read-write page.
+pub function mapped(): i32 {
+  let p: usize = c_mmap(0 as usize, 4096 as usize, 3, 34, 0 - 1, 0i64);
+  unsafe {
+    __store_i32(p + 100 as usize, 7);
+    let v: i32 = __load_i32(p + 100 as usize);
+    return v * 10 + c_munmap(p, 4096 as usize);
+  }
+}
+
 function main(): i32 {
   return 0;
 }
@@ -41,8 +58,9 @@ int main(int c, char** v) {
   void* h = dlopen(v[1], RTLD_NOW); if (!h) { fprintf(stderr, "%s\n", dlerror()); return 100; }
   int (*pid)(void) = (int(*)(void)) dlsym(h, "pid");
   long (*len)(const char*) = (long(*)(const char*)) dlsym(h, "len");
-  if (!pid || !len) return 101;
-  return pid() == getpid() && len("hello, world") == 12 ? 42 : 1;
+  int (*mapped)(void) = (int(*)(void)) dlsym(h, "mapped");
+  if (!pid || !len || !mapped) return 101;
+  return pid() == getpid() && len("hello, world") == 12 && mapped() == 70 ? 42 : 1;
 }
 `
 
@@ -93,7 +111,7 @@ func TestSharedCImportsCallLibc(t *testing.T) {
 			if l.machine == elf.EM_AARCH64 {
 				e2eharness.Arm64CLibc(t, l.cc)
 			}
-			so, out := buildImportLib(t, l.target, libcImportSrc, "pid", "len")
+			so, out := buildImportLib(t, l.target, libcImportSrc, "pid", "len", "mapped")
 			if so == "" {
 				t.Fatalf("build: %s", out)
 			}
@@ -119,6 +137,27 @@ func TestSharedCImportsCallLibc(t *testing.T) {
 			o, _ := cmd.CombinedOutput()
 			if code := cmd.ProcessState.ExitCode(); code != 42 {
 				t.Fatalf("the C imports did not reach libc: exit %d\n%s", code, o)
+			}
+		})
+	}
+}
+
+// A library with more import slots than ten: the arm64 assembler reads the
+// page offset of each slot from its relocation, not from the digits of the
+// slot's name (#14048).
+func TestSharedCImportsManySlots(t *testing.T) {
+	src := ""
+	call := "0"
+	for i := 0; i < 24; i++ {
+		n := strconv.Itoa(i)
+		src += "@import(\"libc.so.6\", \"getpid\")\nfunction pid" + n + "(): i32;\n\n"
+		call += " + pid" + n + "()"
+	}
+	src += "pub function pids(): i32 {\n  return " + call + ";\n}\n\nfunction main(): i32 {\n  return 0;\n}\n"
+	for _, target := range []string{"arm64-linux", "arm64-android", "x86-64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			if so, out := buildImportLib(t, target, src, "pids"); so == "" {
+				t.Fatalf("build: %s", out)
 			}
 		})
 	}
@@ -194,7 +233,7 @@ func TestSharedCImportRefusals(t *testing.T) {
 	}{
 		{"executable", `@import("libc.so.6", "getpid") function c(): i32;`, "x86-64-linux", false, "has no dynamic loader; build a -shared object"},
 		{"wasm", `@import("libc.so.6", "getpid") function c(): i32;`, "wasm32-wasi", false, "cannot load the C library libc.so.6"},
-		{"five params", `@import("libc.so.6", "f") function c(a: i32, b: i32, d: i32, e: i32, g: i32): i32;`, "x86-64-linux", true, "at most 4 parameters"},
+		{"seven params", `@import("libc.so.6", "f") function c(a: i32, b: i32, d: i32, e: i32, g: i32, h: i32, k: i32): i32;`, "x86-64-linux", true, "at most 6 parameters"},
 		{"float param", `@import("libm.so.6", "sqrt") function c(x: f64): f64;`, "x86-64-linux", true, "parameter x is f64; a C import takes integer and usize parameters"},
 		{"string result", `@import("libc.so.6", "getenv") function c(n: usize): string;`, "x86-64-linux", true, "the result is string"},
 	}
