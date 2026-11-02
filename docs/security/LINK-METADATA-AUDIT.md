@@ -29,5 +29,4 @@ An `-emit asm` build linked with a C object built without BTI drops the note, wh
 
 - A shared object carries no property note, so a BTI host does not guard its pages.
 - The arm64-android image carries no property note.
-- The runtime's hand-written frames store an unsigned return address on arm64.
 - There is no test that links the emitted text with an incompatible object and inspects the dropped note.
