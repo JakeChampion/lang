@@ -137,3 +137,47 @@ func TestAndroidStopwatchHostJVM(t *testing.T) {
 		t.Fatalf("HostCheck: %v\n%s", err, out)
 	}
 }
+
+// A Java_* export takes the JNIEnv* and a jobject or jclass as usize, then
+// arguments and a result whose types have the width of a JNI type.
+func TestJNIExportWidths(t *testing.T) {
+	cases := []struct{ sig, want string }{
+		{"(env: usize, cls: usize, n: i32): i32", ""},
+		{"(env: usize, cls: usize, on: u8, d: f64, r: usize): i64", ""},
+		{"(env: usize, cls: usize): void", ""},
+		{"(env: usize): i32", "a JNI method takes the JNIEnv* and a jobject or jclass first, each as usize"},
+		{"(env: i32, cls: usize): i32", "a JNI method takes the JNIEnv* and a jobject or jclass first, each as usize"},
+		{"(env: usize, cls: usize, on: boolean): i32", "parameter on is boolean, which has no JNI type of its width"},
+		{"(env: usize, cls: usize, s: string): i32", "parameter s is string, which has no JNI type of its width"},
+		{"(env: usize, cls: usize): boolean", "the result is boolean, which has no JNI type of its width"},
+	}
+	for _, c := range cases {
+		t.Run(c.sig, func(t *testing.T) {
+			body := "return 0;"
+			if strings.HasSuffix(c.sig, "void") {
+				body = ""
+			} else if strings.HasSuffix(c.sig, "boolean") {
+				body = "return true;"
+			}
+			src := "pub function Java_dev_fern_t_T_m" + c.sig + " { " + body + " }\nfunction main(): i32 { return 0; }\n"
+			dir := t.TempDir()
+			path := filepath.Join(dir, "m.fern")
+			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", "arm64-android", "-shared",
+				"-export", "Java_dev_fern_t_T_m", "-o", filepath.Join(dir, "libm.so"), path, e2eharness.SelfHostStdlibRoot(t))
+			cmd.Env = e2eharness.ChildEnv()
+			out, err := cmd.CombinedOutput()
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("a JNI method of these widths was refused: %v\n%s", err, out)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(string(out), c.want) {
+				t.Fatalf("want a refusal with %q, got %v:\n%s", c.want, err, out)
+			}
+		})
+	}
+}

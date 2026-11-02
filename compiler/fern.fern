@@ -959,6 +959,38 @@ function shared_export_refusal(merged: parser.Module, names: string[]): string {
     if (merged.funcs[k].all_type_params.len() > 0) {
       return "-export " + n + ": a generic function has no single body to export";
     }
+    let jni: string = jni_export_refusal(merged.funcs[k]);
+    if (jni.len() > 0) {
+      return "-export " + n + ": " + jni;
+    }
+  }
+  return "";
+}
+
+// The Fern types with the width of a JNI type: usize for a reference or a
+// JNIEnv*, and the scalars jbyte, jboolean, jshort, jchar, jint, jlong,
+// jfloat and jdouble.
+function jni_width(t: string): boolean {
+  return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "i64", "f32", "f64"], t);
+}
+
+// A JNI method named Java_* takes the JNIEnv* and a jobject or jclass, then
+// its arguments. The JVM passes a 32-bit jint in a 64-bit register with
+// undefined upper bits, so each type must have the width of its JNI type.
+function jni_export_refusal(f: parser.FuncDecl): string {
+  if (!util.str_has_prefix(f.name, "Java_")) {
+    return "";
+  }
+  if (f.params.len() < 2 || f.params[0].type_name != "usize" || f.params[1].type_name != "usize") {
+    return "a JNI method takes the JNIEnv* and a jobject or jclass first, each as usize";
+  }
+  for p in f.params {
+    if (!jni_width(p.type_name)) {
+      return "parameter " + p.name + " is " + p.type_name + ", which has no JNI type of its width; use usize for a reference, i32 for jint, i64 for jlong or u8 for jboolean";
+    }
+  }
+  if (f.ret_type != "void" && f.ret_type != "" && !jni_width(f.ret_type)) {
+    return "the result is " + f.ret_type + ", which has no JNI type of its width; use usize for a reference, i32 for jint, i64 for jlong or u8 for jboolean";
   }
   return "";
 }
