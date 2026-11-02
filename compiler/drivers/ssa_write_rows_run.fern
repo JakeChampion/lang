@@ -82,6 +82,9 @@ function returned_storage(): void {
   let view = ssaunits.SchemaView { ...ssaunits.no_view(), writes: writes, raw_result: true };
   let raw = ssaunits.plan(literal, [], view);
   require(raw.ok && raw.constants[1] == "", 41);
+  let cached = ssaunits.SchemaView { ...view, raw_known: true, raw_values: writes.raw[writes.inputs.find("make")] };
+  let cached_plan = ssaunits.plan(literal, [], cached);
+  require(cached_plan.ok && cached_plan.constants[1] == "", 45);
   let read_block = caller.graph.blocks[0];
   let length = ssa.SInst { kind_tag: ssasem.length(), result: 1, args: [0], imm: 0, str: "" };
   let reader = ssasem.Func { ...caller, graph: ssa.SFunc { ...caller.graph, blocks: [ssa.SBlock { ...read_block, insts: read_block.insts.with(1, length) }] } };
@@ -89,10 +92,16 @@ function returned_storage(): void {
   require(!pure.results.has("make"), 42);
   let pooled = ssaunits.plan(literal, [], ssaunits.no_view());
   require(pooled.ok && pooled.constants[1] != "", 43);
+  let pure_cached = ssaunits.SchemaView { ...ssaunits.no_view(), raw_known: true, raw_values: pure.raw[pure.inputs.find("make")] };
+  require(ssaunits.plan(literal, [], pure_cached).constants[1] != "", 46);
   require(!ssaunits.write_rows_agree(pure, writes, []), 44);
 }
 
 function main(): i32 {
+  let none: string[] = [];
+  let empty = util.name_index(none);
+  let extended = empty.added("next");
+  require(!empty.has("next") && extended.has("next") && !extended.has("missing"), 47);
   chain(false, 0);
   chain(true, 0);
   chain(false, 1);
@@ -105,6 +114,9 @@ function main(): i32 {
   require(ssaunits.write_rows_agree(first, first, names), 21);
   let unrelated: string[] = ["other"];
   require(ssaunits.write_rows_agree(first, second, unrelated), 22);
+  let cells: string[] = ["Cell[u8[]]"];
+  let cell_demand = ssaunits.WriteRows { ...first, cells: util.name_index(cells) };
+  require(!ssaunits.write_rows_agree(first, cell_demand, unrelated), 23);
   require(ssasem.raw_array_args("tcp_addr_into")[0] == 2, 30);
   require(ssasem.raw_array_args("ring_wait")[0] == 1, 31);
   let udp = ssasem.raw_array_args("udp_recvfrom");

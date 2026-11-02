@@ -2,9 +2,10 @@ import "./ssa";
 import "./ssasem";
 import "./typeinfo";
 import "./semrecords";
+import "./semtypes";
 import "./util";
 
-pub struct Reach { values: i32[], returns: string[], indirect: string[] }
+pub struct Reach { values: i32[], returns: string[], indirect: string[], cells: string[] }
 
 function storage_kind(t: typeinfo.Type): i32 {
   if (!ssasem.reference(t)) {
@@ -23,6 +24,70 @@ function storage_kind(t: typeinfo.Type): i32 {
     return 1;
   }
   return 0;
+}
+
+function combined_kind(a: i32, b: i32): i32 {
+  if (a > 0 || b > 0) {
+    return 1;
+  }
+  if (a == 0 || b == 0) {
+    return 0;
+  }
+  return 0 - 1;
+}
+
+function types_kind(types: typeinfo.Type[]): i32 {
+  let kind: i32 = 0 - 1;
+  for t in types {
+    kind = combined_kind(kind, storage_kind(t));
+    if (kind > 0) {
+      return kind;
+    }
+  }
+  return kind;
+}
+
+function fields_kind(fields: semrecords.Field[]): i32 {
+  let kind: i32 = 0 - 1;
+  for field in fields {
+    kind = combined_kind(kind, storage_kind(field.ty));
+    if (kind > 0) {
+      return kind;
+    }
+  }
+  return kind;
+}
+
+// Flat schemas need no worklist. A direct mutable child settles the query.
+function shallow_kind(f: ssasem.Func, t: typeinfo.Type): i32 {
+  if let typeinfo.TypeStruct(record) = t {
+    let row = semrecords.find(f.records, t);
+    if (row < 0) {
+      return 1;
+    }
+    return combined_kind(types_kind(record.args), fields_kind(f.records.list[row].fields));
+  }
+  if let typeinfo.TypeUnion(union) = t {
+    let row = semrecords.find_enum(f.enums, t);
+    if (row < 0) {
+      return 1;
+    }
+    let kind = types_kind(union.args);
+    for variant in f.enums[row].variants {
+      kind = combined_kind(kind, fields_kind(variant.fields));
+      if (kind > 0) {
+        return kind;
+      }
+    }
+    return kind;
+  }
+  if let typeinfo.TypeTuple(tuple) = t {
+    return types_kind(tuple.elements);
+  }
+  if let typeinfo.TypeMap(map) = t {
+    return combined_kind(storage_kind(map.key), storage_kind(map.value));
+  }
+  return 0 - 1;
 }
 
 struct Children { types: typeinfo.Type[], opaque: boolean }
@@ -80,6 +145,10 @@ pub function storage(f: ssasem.Func, t: typeinfo.Type): boolean {
   if (kind != 0) {
     return kind > 0;
   }
+  let shallow = shallow_kind(f, t);
+  if (shallow != 0) {
+    return shallow > 0;
+  }
   let work: typeinfo.Type[] = [t];
   let seen: string[] = [];
   let at: i32 = 0;
@@ -93,6 +162,13 @@ pub function storage(f: ssasem.Func, t: typeinfo.Type): boolean {
     if (kind > 0) {
       return true;
     }
+    let shallow = shallow_kind(f, value);
+    if (shallow < 0) {
+      continue;
+    }
+    if (shallow > 0) {
+      return true;
+    }
     let spelling = typeinfo.spelling(value);
     if (util.index_of_str(seen, spelling) >= 0) {
       continue;
@@ -103,7 +179,13 @@ pub function storage(f: ssasem.Func, t: typeinfo.Type): boolean {
       return true;
     }
     for child in step.types {
-      work = work.append(child);
+      let child_kind = storage_kind(child);
+      if (child_kind > 0) {
+        return true;
+      }
+      if (child_kind == 0) {
+        work = work.append(child);
+      }
     }
   }
   return false;
@@ -125,13 +207,14 @@ function return_seeds(f: ssasem.Func, seeds: i32[], result: boolean): i32[] {
 // callee's return storage rather than a copy at the raw access.
 pub function reached(f: ssasem.Func, defs: ssa.SInst[], seeds: i32[], result: boolean): Reach {
   if (seeds.len() == 0 && !result) {
-    return Reach { values: [], returns: [], indirect: [] };
+    return Reach { values: [], returns: [], indirect: [], cells: [] };
   }
   let work = return_seeds(f, seeds, result);
   let seen: boolean[] = __alloc_bool(f.graph.nvals);
   let values: i32[] = [];
   let returns: string[] = [];
   let indirect: string[] = [];
+  let cells: string[] = [];
   let at: i32 = 0;
   while (at < work.len()) {
     let v = work[at];
@@ -141,6 +224,12 @@ pub function reached(f: ssasem.Func, defs: ssa.SInst[], seeds: i32[], result: bo
     }
     seen = seen.with(v, true);
     values = values.append(v);
+    if (semtypes.is_cell(f.values[v])) {
+      let cell = typeinfo.spelling(f.values[v]);
+      if (util.index_of_str(cells, cell) < 0) {
+        cells = cells.append(cell);
+      }
+    }
     let d = defs[v];
     if (d.kind_tag == ssasem.call()) {
       if (util.index_of_str(returns, d.str) < 0) {
@@ -153,11 +242,13 @@ pub function reached(f: ssasem.Func, defs: ssa.SInst[], seeds: i32[], result: bo
       }
     } else {
       for arg in d.args {
-        if (arg >= 0 && arg < f.values.len() && storage(f, f.values[arg])) {
-          work = work.append(arg);
+        if (arg >= 0 && arg < f.values.len()) {
+          if (storage(f, f.values[arg])) {
+            work = work.append(arg);
+          }
         }
       }
     }
   }
-  return Reach { values: values, returns: returns, indirect: indirect };
+  return Reach { values: values, returns: returns, indirect: indirect, cells: cells };
 }

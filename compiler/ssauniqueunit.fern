@@ -14,7 +14,7 @@ function refuse(name: string): helper.Proof {
 }
 
 function empty_pools(): string {
-  return ".section .data\n.align 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.section .data\n.align 8\n.Lfern_sbox_begin:\n.Lfern_sbox_end:\n.section .data\n.align 8\n.Lfern_cagg_begin:\n.Lfern_cagg_end:\n.align 8\n.Lfern_cfn_begin:\n.Lfern_cfn_end:\n.align 8\n.Lfern_cref_begin:\n.Lfern_cref_end:\n.text\n";
+  return ".section .data\n.balign 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.section .data\n.balign 8\n.Lfern_sbox_begin:\n.Lfern_sbox_end:\n.section .data\n.balign 8\n.Lfern_cagg_begin:\n.Lfern_cagg_end:\n.balign 8\n.Lfern_cfn_begin:\n.Lfern_cfn_end:\n.balign 8\n.Lfern_cref_begin:\n.Lfern_cref_end:\n.text\n";
 }
 
 function pools_match(tail: string[], architecture: string): boolean {

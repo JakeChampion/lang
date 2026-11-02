@@ -1,0 +1,127 @@
+{
+  "metrics": 144,
+  "strict_exit_before": 1,
+  "slower": [],
+  "lower_limits": [
+    {
+      "metric": "profile/arm64-linux/array_append.diagnostic.bytes",
+      "before": 13920,
+      "after": 13368
+    },
+    {
+      "metric": "profile/arm64-linux/array_append.hardened.bytes",
+      "before": 7672,
+      "after": 7208
+    },
+    {
+      "metric": "profile/arm64-linux/array_append.minimal.bytes",
+      "before": 6328,
+      "after": 5848
+    },
+    {
+      "metric": "profile/arm64-linux/array_append.safe.bytes",
+      "before": 6680,
+      "after": 6200
+    },
+    {
+      "metric": "profile/arm64-linux/closure_call.diagnostic.bytes",
+      "before": 13608,
+      "after": 13312
+    },
+    {
+      "metric": "profile/arm64-linux/closure_call.hardened.bytes",
+      "before": 6616,
+      "after": 6408
+    },
+    {
+      "metric": "profile/arm64-linux/closure_call.minimal.bytes",
+      "before": 5320,
+      "after": 5096
+    },
+    {
+      "metric": "profile/arm64-linux/closure_call.safe.bytes",
+      "before": 5640,
+      "after": 5416
+    },
+    {
+      "metric": "profile/arm64-linux/deflate_decode.hardened.bytes",
+      "before": 67736,
+      "after": 64536
+    },
+    {
+      "metric": "profile/arm64-linux/deflate_decode.minimal.bytes",
+      "before": 54472,
+      "after": 53656
+    },
+    {
+      "metric": "profile/arm64-linux/deflate_decode.safe.bytes",
+      "before": 60280,
+      "after": 59432
+    },
+    {
+      "metric": "profile/arm64-linux/enum_match.diagnostic.bytes",
+      "before": 13104,
+      "after": 12576
+    },
+    {
+      "metric": "profile/arm64-linux/enum_match.hardened.bytes",
+      "before": 8456,
+      "after": 6216
+    },
+    {
+      "metric": "profile/arm64-linux/enum_match.minimal.bytes",
+      "before": 5432,
+      "after": 4968
+    },
+    {
+      "metric": "profile/arm64-linux/enum_match.safe.bytes",
+      "before": 5736,
+      "after": 5272
+    },
+    {
+      "metric": "profile/arm64-linux/http_hello.hardened.bytes",
+      "before": 80576,
+      "after": 77896
+    },
+    {
+      "metric": "profile/arm64-linux/map_string.hardened.bytes",
+      "before": 50544,
+      "after": 49416
+    },
+    {
+      "metric": "profile/arm64-linux/map_string.minimal.bytes",
+      "before": 42240,
+      "after": 41464
+    },
+    {
+      "metric": "profile/arm64-linux/map_string.safe.bytes",
+      "before": 43760,
+      "after": 42984
+    },
+    {
+      "metric": "profile/x86-64-linux/deflate_decode.hardened.bytes",
+      "before": 56352,
+      "after": 55600
+    },
+    {
+      "metric": "profile/x86-64-linux/enum_match.hardened.bytes",
+      "before": 8256,
+      "after": 5152
+    },
+    {
+      "metric": "profile/x86-64-linux/http_hello.hardened.bytes",
+      "before": 70704,
+      "after": 69136
+    },
+    {
+      "metric": "profile/x86-64-linux/map_string.hardened.bytes",
+      "before": 43520,
+      "after": 41936
+    }
+  ],
+  "baseline_before_sha256": "e5b0745e5e35dbb8743868dce248c2806d5f5b8aac65301f37230568c2341fc7",
+  "producer_sha256": "9c8f839601a29b5cb4c07b4ac3498d8323748804e1c92166e0d41847008a0a61",
+  "report_sha256": "041049dc591d9c7d9c9bcaccfead85c09d1216487389f57cc0b298db0dfab380",
+  "strict_exit_after": 0,
+  "baseline_after_sha256": "94e18be37bdb354088d473f40586532baa7c8aef5825312464375dbbb87b178b"
+}

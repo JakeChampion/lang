@@ -6729,12 +6729,12 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
   }
   let reloc: boolean = reloc_wanted(s, darwin);
   if (reloc) {
-    s = s.write("    .section .data\n    .align 8\n");
+    s = s.write("    .section .data\n    .balign 8\n");
     s = s.write(".Lfern_relanchor:\n    .quad .Lfern_relanchor\n");
   }
   let cds: string = asmcore.const_data_section(s);
   if (reloc) {
-    s = s.write(cds + "    .align 8\n.Lfern_sbox_begin:\n");
+    s = s.write(cds + "    .balign 8\n.Lfern_sbox_begin:\n");
   }
   if (s.string_lits.len() > 0) {
     s = asmcore.emit_str_box_data_from(s, 0);
@@ -6744,13 +6744,13 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
   }
   if (reloc) {
     s = asmcore.emit_const_agg_blocks(s, 0, 1);
-    s = s.write(cds + "    .align 8\n.Lfern_cagg_begin:\n");
+    s = s.write(cds + "    .balign 8\n.Lfern_cagg_begin:\n");
     s = asmcore.emit_const_agg_blocks(s, 0, 2);
     s = s.write(".Lfern_cagg_end:\n");
-    s = s.write("    .align 8\n.Lfern_cfn_begin:\n");
+    s = s.write("    .balign 8\n.Lfern_cfn_begin:\n");
     s = asmcore.emit_const_agg_blocks(s, 0, 3);
     s = s.write(".Lfern_cfn_end:\n");
-    s = s.write("    .align 8\n.Lfern_cref_begin:\n");
+    s = s.write("    .balign 8\n.Lfern_cref_begin:\n");
     s = asmcore.emit_const_agg_refs(s);
     s = s.write(".Lfern_cref_end:\n");
   } else {

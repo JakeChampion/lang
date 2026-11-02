@@ -1,0 +1,275 @@
+{
+  "scope": "Native primary compiler builds the same retained drivers for all three runtime targets. This is separate from the Go test that hosts its compiler under QEMU.",
+  "producer_sha256": "25244cc353c2eac328522e2736fbf00bee1c62ac21b95dd4c1631887df83a251",
+  "binding": "/tmp/fern-14024-main503-proof-adoption/adoption.json",
+  "image": "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+  "rows": [
+    {
+      "driver": "ssaretained_run",
+      "target": "arm64-linux",
+      "source_sha256": "ccbdc2c03830b07cdd1eec34f42857236d1dcdd5ea7259d7de3a8dd03a025066",
+      "binary_sha256": "39c8d591426c59fa890f908b9337fa264c7d1d4445da05d4e033f306b8df8972",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "arm64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretained_run-arm64-linux",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaretained_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14024-main503-final-retained-3:/tmp/fern-14024-main503-final-retained-3",
+        "-e",
+        "FERN_LEAKCHECK=1",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretained_run-arm64-linux"
+      ],
+      "allocs": 135792291,
+      "frees": 135792291,
+      "live": 0
+    },
+    {
+      "driver": "ssaretained_run",
+      "target": "x86-64-linux",
+      "source_sha256": "ccbdc2c03830b07cdd1eec34f42857236d1dcdd5ea7259d7de3a8dd03a025066",
+      "binary_sha256": "a343cf7ee66fe9155a22ee9aadddb8703b25d346a8d92ca66b1e8550e7164cad",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "x86-64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretained_run-x86-64-linux",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaretained_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14024-main503-final-retained-3:/tmp/fern-14024-main503-final-retained-3",
+        "-e",
+        "FERN_LEAKCHECK=1",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "qemu-x86_64",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretained_run-x86-64-linux"
+      ],
+      "allocs": 135792291,
+      "frees": 135792291,
+      "live": 0
+    },
+    {
+      "driver": "ssaretained_run",
+      "target": "wasm32-wasi",
+      "source_sha256": "ccbdc2c03830b07cdd1eec34f42857236d1dcdd5ea7259d7de3a8dd03a025066",
+      "binary_sha256": "fe2a1cdaaaf2e5f78cbbd5d39794e5deb4769b60c56dc9b1f577a2a87c9dd30d",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretained_run-wasm32-wasi",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaretained_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "--env",
+        "FERN_LEAKCHECK=1",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretained_run-wasm32-wasi"
+      ],
+      "allocs": 161606336,
+      "frees": 161606336,
+      "live": 0
+    },
+    {
+      "driver": "ssaretainedmachines_run",
+      "target": "arm64-linux",
+      "source_sha256": "2d6d8396b07ad1a52c9dcf19a637058e1c1c3b9ca5ca035f380869f16d667a5b",
+      "binary_sha256": "0534ae74d2d200e8699c7f1219ef8e50e079a891873697b998611e1684855ca5",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "arm64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretainedmachines_run-arm64-linux",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaretainedmachines_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14024-main503-final-retained-3:/tmp/fern-14024-main503-final-retained-3",
+        "-e",
+        "FERN_LEAKCHECK=1",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretainedmachines_run-arm64-linux"
+      ],
+      "allocs": 51027794,
+      "frees": 51027794,
+      "live": 0
+    },
+    {
+      "driver": "ssaretainedmachines_run",
+      "target": "x86-64-linux",
+      "source_sha256": "2d6d8396b07ad1a52c9dcf19a637058e1c1c3b9ca5ca035f380869f16d667a5b",
+      "binary_sha256": "994c949f008fe12e8607a293894c3c91839ce9f78b07841d3b8601d1e4ff8b5b",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "x86-64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretainedmachines_run-x86-64-linux",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaretainedmachines_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14024-main503-final-retained-3:/tmp/fern-14024-main503-final-retained-3",
+        "-e",
+        "FERN_LEAKCHECK=1",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "qemu-x86_64",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretainedmachines_run-x86-64-linux"
+      ],
+      "allocs": 51027794,
+      "frees": 51027794,
+      "live": 0
+    },
+    {
+      "driver": "ssaretainedmachines_run",
+      "target": "wasm32-wasi",
+      "source_sha256": "2d6d8396b07ad1a52c9dcf19a637058e1c1c3b9ca5ca035f380869f16d667a5b",
+      "binary_sha256": "79fed87604db3bf550bd5d74f541cccce93e6411f4c165f00351f5f1ecef1a55",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretainedmachines_run-wasm32-wasi",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaretainedmachines_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "--env",
+        "FERN_LEAKCHECK=1",
+        "/tmp/fern-14024-main503-final-retained-3/ssaretainedmachines_run-wasm32-wasi"
+      ],
+      "allocs": 69122483,
+      "frees": 69122483,
+      "live": 0
+    },
+    {
+      "driver": "ssaallocationguards_run",
+      "target": "arm64-linux",
+      "source_sha256": "357e66d7c084a0a8115d1842dfb85ccac67a1bd55c4b1f33a3ba1c13035927cc",
+      "binary_sha256": "26725a9b1a3fe8ae38b29addf426028d75d4837eaaf03a10ddd78fe8cf50d83c",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "arm64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaallocationguards_run-arm64-linux",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaallocationguards_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14024-main503-final-retained-3:/tmp/fern-14024-main503-final-retained-3",
+        "-e",
+        "FERN_LEAKCHECK=1",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "/tmp/fern-14024-main503-final-retained-3/ssaallocationguards_run-arm64-linux"
+      ],
+      "allocs": 1775188,
+      "frees": 1775188,
+      "live": 0
+    },
+    {
+      "driver": "ssaallocationguards_run",
+      "target": "x86-64-linux",
+      "source_sha256": "357e66d7c084a0a8115d1842dfb85ccac67a1bd55c4b1f33a3ba1c13035927cc",
+      "binary_sha256": "9d2208db7fa6333010dc269e711f958b720eae97b0898bce5e0dce865a44c293",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "x86-64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaallocationguards_run-x86-64-linux",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaallocationguards_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14024-main503-final-retained-3:/tmp/fern-14024-main503-final-retained-3",
+        "-e",
+        "FERN_LEAKCHECK=1",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "qemu-x86_64",
+        "/tmp/fern-14024-main503-final-retained-3/ssaallocationguards_run-x86-64-linux"
+      ],
+      "allocs": 1775188,
+      "frees": 1775188,
+      "live": 0
+    },
+    {
+      "driver": "ssaallocationguards_run",
+      "target": "wasm32-wasi",
+      "source_sha256": "357e66d7c084a0a8115d1842dfb85ccac67a1bd55c4b1f33a3ba1c13035927cc",
+      "binary_sha256": "bfc1bb5e8e50bb8f8a087d7deb2e787b0f96b68f993a06777c0f1164b88eb26b",
+      "build": [
+        "/tmp/fern-14024-main503-fixed-point/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-sanitize",
+        "-o",
+        "/tmp/fern-14024-main503-final-retained-3/ssaallocationguards_run-wasm32-wasi",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/compiler/drivers/ssaallocationguards_run.fern",
+        "/Users/jakechampion/codex/lang-pr-14024-validation/internal/stdlib"
+      ],
+      "run": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "--env",
+        "FERN_LEAKCHECK=1",
+        "/tmp/fern-14024-main503-final-retained-3/ssaallocationguards_run-wasm32-wasi"
+      ],
+      "allocs": 2737625,
+      "frees": 2737625,
+      "live": 0
+    }
+  ]
+}

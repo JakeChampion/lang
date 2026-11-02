@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"debug/elf"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -714,6 +715,92 @@ int main(int c, char** v){
 	}
 }
 
+// jni.new_string hands NewStringUTF the bytes of a Fern string and frees its
+// copy, and free_buffer frees a cstr, jvalues or jvalue_alloc buffer. A native
+// method that makes them on every call does not grow the heap.
+func TestStdJNIBuffersFree(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function churn(env: usize, n: i32): usize {
+  let last: usize = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    last = jni.new_string(env, "hello, " + i.to_string());
+    let name: usize = jni.cstr("java/lang/String" + i.to_string());
+    let args: usize = jni.jvalues([name, i as usize]);
+    let zeros: usize = jni.jvalue_alloc(3);
+    unsafe {
+      if (__load_i64(args + 8) != i as i64 || __load_i64(zeros + 16) != 0) {
+        return 0;
+      }
+    }
+    jni.free_buffer(zeros);
+    jni.free_buffer(args);
+    jni.free_buffer(name);
+    i = i + 1;
+  }
+  return last;
+}
+function probe_new_string(env: usize, cls: usize): i64 {
+  let first: usize = churn(env, 1000);
+  let b1: i64 = __heap_bump_bytes();
+  let second: usize = churn(env, 1000);
+  let b2: i64 = __heap_bump_bytes();
+  if (first != 1000 || second != 1000) {
+    return -1;
+  }
+  return (b2 - b1) / 1000;
+}
+function main(): i32 { return 0; }`
+	so := selfHostSharedX86(t, src, "probe_new_string")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+static long calls = 0;
+static long newstr(void* env, const char* s) {
+  char want[32];
+  snprintf(want, sizeof want, "hello, %ld", calls % 1000);
+  if (strcmp(s, want) != 0) { fprintf(stderr, "got %s, want %s\n", s, want); return -1; }
+  calls++;
+  return calls % 1000 == 0 ? 1000 : calls % 1000;
+}
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* table[256] = {0};
+  table[167] = (void*)newstr;
+  void* tptr = table; void* env = &tptr;
+  long (*p)(void*, long) = (long(*)(void*, long)) dlsym(h, "probe_new_string");
+  if(!p) return 101;
+  long per_call = p(env, 0);
+  printf("%ld\n", per_call);
+  return per_call == 0 ? 42 : 1;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("std/jni buffers: exit %d, want 42; bump bytes per call (want 0): %s", code, out)
+	}
+}
+
 func TestStdJNIExceptionAndRefWrappers(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -1231,11 +1318,46 @@ func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
 	if !dynamic || !stack {
 		t.Errorf("PT_DYNAMIC present = %v, non-executable PT_GNU_STACK = %v; a loader needs both", dynamic, stack)
 	}
+	sharedSectionCheck(t, f, so)
 	if len(so) > 256<<10 {
 		t.Errorf("a seven-function library is %d bytes; its .bss is being written into the file", len(so))
 	}
 	if bytes.Contains(so, []byte("fern: stack overflow")) {
 		t.Errorf("the shared object carries the stack-overflow handler, which would take its host's SIGSEGV")
+	}
+}
+
+// The section headers that Android's loader (bionic ElfReader) requires of
+// an app that targets API 26 or later: e_shentsize is 64, e_shstrndx is set,
+// and a SHT_DYNAMIC section covers PT_DYNAMIC and links to a SHT_STRTAB.
+func sharedSectionCheck(t *testing.T, f *elf.File, so []byte) {
+	t.Helper()
+	if shentsize := binary.LittleEndian.Uint16(so[58:]); shentsize != 64 {
+		t.Errorf("e_shentsize = %d, want 64", shentsize)
+	}
+	if binary.LittleEndian.Uint16(so[62:]) == 0 {
+		t.Errorf("e_shstrndx is 0")
+	}
+	dyn := f.SectionByType(elf.SHT_DYNAMIC)
+	if dyn == nil {
+		t.Fatalf("no SHT_DYNAMIC section among %d sections", len(f.Sections))
+	}
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_DYNAMIC && (p.Off != dyn.Offset || p.Filesz != dyn.Size) {
+			t.Errorf(".dynamic is at %#x+%#x, PT_DYNAMIC at %#x+%#x", dyn.Offset, dyn.Size, p.Off, p.Filesz)
+		}
+	}
+	if int(dyn.Link) >= len(f.Sections) || f.Sections[dyn.Link].Type != elf.SHT_STRTAB {
+		t.Errorf(".dynamic sh_link %d is not a SHT_STRTAB", dyn.Link)
+	}
+	syms, err := f.DynamicSymbols()
+	if err != nil {
+		t.Fatalf("dynamic symbols: %v", err)
+	}
+	for _, s := range syms {
+		if int(s.Section) >= len(f.Sections) || f.Sections[s.Section].Name != ".text" {
+			t.Errorf("export %s is in section %d, not .text", s.Name, s.Section)
+		}
 	}
 }
 

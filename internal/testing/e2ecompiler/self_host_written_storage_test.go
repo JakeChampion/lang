@@ -63,6 +63,9 @@ func TestSelfHostReadOnlyStorageStaysPooled(t *testing.T) {
 		{"scalar-return", "@noinline function make(): i32[] { return [0, 0]; } function main(): i32 { return make()[0]; }", "make"},
 		{"byte-return", "@noinline function make(): u8[] { return [0u8, 0u8]; } function main(): i32 { return make()[0] as i32; }", "make"},
 		{"record-argument", "struct Holder { bytes: u8[] } @noinline function peek(h: Holder): i32 { return h.bytes[0] as i32; } function main(): i32 { return peek(Holder { bytes: [0u8, 0u8] }); }", "main"},
+		{"cell-store", "@noinline function put(c: Cell[u8[]]): void { c.set([0u8, 0u8]); } function main(): i32 { let c: Cell[u8[]] = cell_new([]); put(c); return c.get()[0] as i32; }", "put"},
+		{"empty-raw-array", "@noinline function touch(a: u8[]): i32 { unsafe { __arr_set_len(a, 0); } return a.len(); } function main(): i32 { let a: u8[] = []; return touch(a); }", "main"},
+		{"empty-raw-record", "struct Holder { bytes: u8[] } @noinline function touch(h: Holder): i32 { unsafe { __arr_set_len(h.bytes, 0); } return h.bytes.len(); } function main(): i32 { return touch(Holder { bytes: [] }); }", "main"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := cli.emit(t, "x86-64-linux", tc.source)

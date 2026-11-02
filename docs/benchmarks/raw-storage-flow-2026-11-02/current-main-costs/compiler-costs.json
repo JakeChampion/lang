@@ -1,0 +1,37 @@
+{
+  "scope": "Logical target counts. The pinned Darwin stage0 cross-build produces the x86 stage1 for the cliff replay. The qualified current compiler emits the leak-instrumented x86 compiler. QEMU execution carries no native latency claim.",
+  "qualified_compiler_sha256": "25244cc353c2eac328522e2736fbf00bee1c62ac21b95dd4c1631887df83a251",
+  "image": "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+  "stage0_sha256": "a9d3f533d7ee1b062d99996d81c05150f47aa829e7b899c5c5e2fa833a726af9",
+  "binaries": {
+    "compiler-stage1-x86": {
+      "sha256": "27c63134432d455cc74fad2c116256ce8dd85b70292cbf334d5719ca09bca39a",
+      "bytes": 16089104
+    },
+    "compiler-arm64-linux": {
+      "sha256": "9c8f839601a29b5cb4c07b4ac3498d8323748804e1c92166e0d41847008a0a61",
+      "bytes": 17206824
+    },
+    "compiler-lc-x86": {
+      "sha256": "724549d4130f9fae8b0af64efcbddd6f699d1549f37f569afaa0a76c536514f4",
+      "bytes": 15930112
+    }
+  },
+  "allocs": 36355630,
+  "frees": 36355630,
+  "live_bytes": 0,
+  "cliff_count": 347070,
+  "cliff_bytes": 46205120,
+  "gates": [
+    {
+      "name": "alloc",
+      "exit_code": 0,
+      "baseline_sha256": "c5376dc31a73131fbd7a0c734201ad110b847d87ff0b41822367643f97ce57c9"
+    },
+    {
+      "name": "cliff",
+      "exit_code": 0,
+      "baseline_sha256": "7b619ecc941b3676192bab9b53a98f40ed6771f27ab2558d24e1276ffc2128d0"
+    }
+  ]
+}

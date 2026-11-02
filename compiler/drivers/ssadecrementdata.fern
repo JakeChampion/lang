@@ -65,6 +65,8 @@ pub function run(output: string): void {
   for section in [".bss", ".data", ".section .bss", ".section .data"] {
     let s = section + "\n.align 8\n__fern_rc_underflow: .quad 0\n";
     check(s, true);
+    check(s + ".balign 8\n", true);
+    check(change(s, ".align 8", ".balign 8"), false);
     check(change(s, "\n", "\r\n\t"), true);
     check(change(s, section, ".section .rodata"), false);
     check(change(s, section, ".text"), false);

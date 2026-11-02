@@ -710,7 +710,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   if (pie) {
     dv = elf.elf_data_vaddr_pie_wx_unwind(text_len, hdr.len(), eh.len(), harden) as i64;
   }
-  let gap: i32 = elf.elf_executable_relro_gap(dv as i32, p.relro_pad, elf.elf_page_align(), pie);
+  let gap: i32 = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
   p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
@@ -855,7 +855,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   if (pie) {
     dv = elf.elf_x86_pie_data_vaddr(a.text.len(), hdr.len(), eh.len());
   }
-  let gap: i32 = elf.elf_executable_relro_gap(dv, a.relro_pad, elf.elf_x86_page_align(), pie);
+  let gap: i32 = elf.elf_executable_relro_gap(a.relro_pad, elf.elf_x86_page_align());
   a = x86_native.x86_relro_gap(a, gap);
   let reloc_at: i32 = a.rodata.len();
   if (pie) {

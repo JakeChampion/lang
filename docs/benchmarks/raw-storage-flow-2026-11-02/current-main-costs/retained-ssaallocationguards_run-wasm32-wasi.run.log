@@ -1,0 +1,2 @@
+bounded allocation guard controls passed
+leakcheck: allocs=2737625 frees=2737625 live_bytes=0

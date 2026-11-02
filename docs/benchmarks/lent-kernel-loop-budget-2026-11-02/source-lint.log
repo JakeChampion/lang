@@ -1,0 +1,120 @@
+python3 scripts/gen-runtime-bundle.py --check
+WARN `--no-project` was provided, but no project was found
+./bin/fern -target arm64-darwin -o build/runtime-check compiler/drivers/runtime_modules_run.fern
+./build/runtime-check
+x86-64-linux runtime modules ok
+arm64-linux runtime modules ok
+arm64-darwin runtime modules ok
+wasm32-wasi runtime modules ok
+wasm32-wasi-http runtime modules ok
+go test ./internal/testing/e2ecompiler/ -run 'TestSelfHostFeatureCensus$|TestSelfHostFixtureSourcesCheck$' -count=1
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	44.074s
+./bin/fern -check compiler/fern.fern
+./scripts/stdlib_check.sh
+./scripts/selfhost_driver_check.sh
+selfhost driver gate: 87 drivers type-check
+go vet ./...
+./scripts/gofmt_gate.sh
+./scripts/deadcode_gate.sh
+deadcode gate: OK
+actionlint
+./scripts/testname_gate.sh
+testname gate: 4055 exact + 14 prefix test selectors resolve
+node scripts/ci-changes-selftest.mjs
+ci-changes-selftest: 109 cases pass against the changes and verdict scripts in ci.yml
+node scripts/main-red-selftest.mjs
+main-red-selftest: 33 cases pass against the reporter script
+node scripts/perf-gate-selftest.mjs
+perf-gate-selftest: 22 cases pass against scripts/ci-check-perf
+node scripts/nightly-findings-selftest.mjs
+nightly-findings selftest: ok
+python3 scripts/gen-large-push-wide-decoder-reference.py --check
+WARN `--no-project` was provided, but no project was found
+{"cases": 4681, "success": 4224, "errors": 457, "bundle_sha256": "c19543d3ce23094231eaedfcf979b8deab24e5713f4c12e3fb05ef3cbf3b6e30"}
+python3 -m unittest discover -s scripts -p test_large_push_wide_decoder.py
+WARN `--no-project` was provided, but no project was found
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.003s
+
+OK
+python3 scripts/gen-large-push-wide-machine-reference.py --check
+WARN `--no-project` was provided, but no project was found
+{"cases": 336, "positive": 160, "negative": 176, "bundle_sha256": "013cda4fc513cf90fc7992ce83707bc27c8a07f19e509644eb4b7b12d557e353"}
+python3 scripts/gen-large-free-wide-classes.py --check
+WARN `--no-project` was provided, but no project was found
+{"cases": 1566, "grids": [70, 103, 103], "sha256": "d5db92375caa0e04d0baad003633988b9e1abecb77d81a6b2e305be8b0b1ac64"}
+python3 -m unittest discover -s scripts -p test_large_free_wide_classes.py
+WARN `--no-project` was provided, but no project was found
+........
+----------------------------------------------------------------------
+Ran 8 tests in 1.425s
+
+OK
+python3 -m unittest discover -s scripts -p test_large_push_wide_machine.py
+WARN `--no-project` was provided, but no project was found
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.002s
+
+OK
+uv run --no-project scripts/gen_digests.py --check
+WARN `--no-project` was provided, but no project was found
+generated digests are up to date
+uv run --no-project python -B -m unittest discover -s scripts -p test_gen_digests.py
+WARN `--no-project` was provided, but no project was found
+....
+----------------------------------------------------------------------
+Ran 4 tests in 1.909s
+
+OK
+uv run --no-project scripts/gen_log_table.py --check
+WARN `--no-project` was provided, but no project was found
+uv run --no-project scripts/gen_pow_table.py --check
+WARN `--no-project` was provided, but no project was found
+uv run --no-project python -B -m unittest discover -s scripts -p 'test_gen_*_table.py'
+WARN `--no-project` was provided, but no project was found
+............
+----------------------------------------------------------------------
+Ran 12 tests in 2.300s
+
+OK
+uv run --no-project scripts/gen-huffman-table.py --check
+WARN `--no-project` was provided, but no project was found
+states 256
+www: b'www.example.com'
+no-cache: b'no-cache'
+1fff: None
+ffffffff: None
+07: b'0'
+roundtrip failures: 0
+packed roundtrip failures: 0
+huffman tables up to date
+uv run --no-project python -B -m unittest discover -s scripts -p test_gen_huffman.py
+WARN `--no-project` was provided, but no project was found
+..
+----------------------------------------------------------------------
+Ran 2 tests in 2.022s
+
+OK
+uv run --no-project python -B -m unittest discover -s scripts/net-bench.d -p test_net_bench_rows.py
+WARN `--no-project` was provided, but no project was found
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.148s
+
+OK
+uv run --no-project python -B -m unittest discover -s scripts/deflate-bench.d -p test_deflate_bench_rows.py
+WARN `--no-project` was provided, but no project was found
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK
+uv run --no-project python -B -m unittest discover -s scripts -p test_perf_history.py
+WARN `--no-project` was provided, but no project was found
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.291s
+
+OK

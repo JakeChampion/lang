@@ -121,10 +121,29 @@ pub const GET_STRING_UTF_CHARS: i32 = 169;
 
 pub const RELEASE_STRING_UTF_CHARS: i32 = 170;
 
+// A buffer from cstr, jvalues or jvalue_alloc has its allocation size in the
+// 8 bytes before the pointer, so that free_buffer can free it.
+function alloc_buffer(n: i32): usize {
+  unsafe {
+    let base: usize = __alloc(n + 8);
+    __store_i64(base, (n + 8) as i64);
+    return base + 8;
+  }
+}
+
+// Frees a buffer from cstr, jvalues or jvalue_alloc.
+pub function free_buffer(buf: usize): void {
+  unsafe {
+    let base: usize = buf - 8;
+    __free(base, __load_i64(base) as i32);
+  }
+}
+
+// A NUL-terminated copy of `s`. Free it with free_buffer.
 pub function cstr(s: string): usize {
   unsafe {
     let n: i32 = s.len();
-    let buf: usize = __alloc(n + 4);
+    let buf: usize = alloc_buffer(n + 4);
     let i: i32 = 0;
     while (i + 4 <= n) {
       let w: i32 = s[i] as i32 | s[i + 1] as i32 << 8 | s[i + 2] as i32 << 16 | s[i + 3] as i32 << 24;
@@ -174,6 +193,16 @@ pub function get_static_field_id(env: usize, clazz: usize, name: usize, sig: usi
 
 pub function new_string_utf(env: usize, bytes: usize): usize {
   return call1(env, NEW_STRING_UTF, bytes);
+}
+
+// A Java string with the contents of `s`. The temporary C string is freed.
+pub function new_string(env: usize, s: string): usize {
+  unsafe {
+    let bytes: usize = cstr(s);
+    let jstr: usize = new_string_utf(env, bytes);
+    free_buffer(bytes);
+    return jstr;
+  }
 }
 ```
 
@@ -342,10 +371,11 @@ pub function get_array_length(env: usize, array: usize): i32 {
   return call1(env, 171, array) as i32;
 }
 
+// A jvalue array of `args`. Free it with free_buffer.
 pub function jvalues(args: usize[]): usize {
   unsafe {
     let n: i32 = args.len();
-    let buf: usize = __alloc(n * 8);
+    let buf: usize = alloc_buffer(n * 8);
     let i: i32 = 0;
     while (i < n) {
       __store_i64(buf + (i * 8) as usize, args[i] as i64);
@@ -355,9 +385,10 @@ pub function jvalues(args: usize[]): usize {
   }
 }
 
+// A jvalue array of `n` zeros. Free it with free_buffer.
 pub function jvalue_alloc(n: i32): usize {
   unsafe {
-    let buf: usize = __alloc(n * 8);
+    let buf: usize = alloc_buffer(n * 8);
     let i: i32 = 0;
     while (i < n) {
       __store_i64(buf + (i * 8) as usize, 0 as i64);

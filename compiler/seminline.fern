@@ -1297,6 +1297,12 @@ function narrowings(f: ssasem.Func): ssa.SInst[] {
   return out;
 }
 
+// Kernel loops keep a call boundary so their expansion does not displace
+// a larger splice that removes a box.
+function leaf_call(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str) || kernel_read(f, ins) && !loops(f.graph);
+}
+
 function leaf_kind(k: i32): boolean {
   return k >= 1 && k <= 10 && k != 5 || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
     || k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.variant_new()
@@ -1331,8 +1337,32 @@ function leaf_element_read(f: ssasem.Func, ins: ssa.SInst): boolean {
   return ins.kind_tag == ssasem.call() && word_read(ins.str);
 }
 
-// A view parameter that only element and word reads use ends its borrow
-// inside the leaf, so the leaf may be spliced.
+// A byte kernel reads its arguments and returns a count, an index or a hash.
+function kernel_read(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.call() && !util.has_str(f.shadows, ins.str) && copied_scalar_result(ins.str);
+}
+
+// An array lent as a view only to byte kernels ends its borrow inside the
+// leaf, as a read view parameter does.
+function lent_to_kernels(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag != ssasem.array_lend()) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    for reader in b.insts {
+      if (has_arg(reader.args, ins.result) && !kernel_read(f, reader)) {
+        return false;
+      }
+    }
+    if (term_reads(b.term, ins.result)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A view parameter that only element, word and kernel reads use ends its
+// borrow inside the leaf, so the leaf may be spliced.
 function read_view_param(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag != ssasem.param()) {
     return false;
@@ -1340,7 +1370,7 @@ function read_view_param(f: ssasem.Func, ins: ssa.SInst): boolean {
   for b in f.graph.blocks {
     for reader in b.insts {
       for k in 0..reader.args.len() {
-        if (reader.args[k] == ins.result && (k != 0 || !leaf_element_read(f, reader))) {
+        if (reader.args[k] == ins.result && (k != 0 || !leaf_element_read(f, reader)) && !kernel_read(f, reader)) {
           return false;
         }
       }
@@ -1593,7 +1623,7 @@ function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
         let t: typeinfo.Type = f.values[ins.result];
         if (record(t)) {
           records = records + 1;
-        } else if (!leaf_word(f, t) && !void_type(t) && !read_view_param(f, ins)) {
+        } else if (!leaf_word(f, t) && !void_type(t) && !read_view_param(f, ins) && !lent_to_kernels(f, ins)) {
           return 0 - 1;
         }
       }
@@ -1629,7 +1659,7 @@ function leaf_body_limit(f: ssasem.Func, ignored: i32, limit: i32): boolean {
     }
     returns = returns || b.term.kind_tag == 1;
     for ins in b.insts {
-      if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !leaf_record_build(f, ins) && !leaf_record_call(f, ins) && !(ins.kind_tag == ssasem.call() && ssasem.scalar_primitive(ins.str))) {
+      if (!leaf_kind(ins.kind_tag) && !leaf_array_op(f, ins) && !leaf_record_build(f, ins) && !leaf_record_call(f, ins) && !leaf_call(f, ins) && !lent_to_kernels(f, ins)) {
         return false;
       }
       if ((ins.kind_tag == ssasem.record_get() || ins.kind_tag == ssasem.variant_get() && member_read(f, ins)) && !scalar(f.values[ins.result])) {
