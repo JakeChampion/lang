@@ -4901,14 +4901,24 @@ function arm64_gas_family_len3_l(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_l_ld(mnem: string): i32 {
-  if (mnem == "ldr") {
-    return arm64_fam_ldst();
+  let c: u8 = mnem[2];
+  if (c == b'1' && mnem == "ld1") {
+    return arm64_fam_vecldst();
   }
-  if (mnem == "ldp") {
+  if (c == b'2' && mnem == "ld2") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'3' && mnem == "ld3") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'4' && mnem == "ld4") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'p' && mnem == "ldp") {
     return arm64_fam_pair();
   }
-  if (mnem == "ld1" || mnem == "ld2" || mnem == "ld3" || mnem == "ld4") {
-    return arm64_fam_vecldst();
+  if (c == b'r' && mnem == "ldr") {
+    return arm64_fam_ldst();
   }
   return 0 - 1;
 }
@@ -5000,14 +5010,24 @@ function arm64_gas_family_len3_s(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_s_st(mnem: string): i32 {
-  if (mnem == "str") {
-    return arm64_fam_ldst();
+  let c: u8 = mnem[2];
+  if (c == b'1' && mnem == "st1") {
+    return arm64_fam_vecldst();
   }
-  if (mnem == "stp") {
+  if (c == b'2' && mnem == "st2") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'3' && mnem == "st3") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'4' && mnem == "st4") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'p' && mnem == "stp") {
     return arm64_fam_pair();
   }
-  if (mnem == "st1" || mnem == "st2" || mnem == "st3" || mnem == "st4") {
-    return arm64_fam_vecldst();
+  if (c == b'r' && mnem == "str") {
+    return arm64_fam_ldst();
   }
   return 0 - 1;
 }
