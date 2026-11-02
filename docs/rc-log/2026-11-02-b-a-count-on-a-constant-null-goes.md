@@ -60,10 +60,13 @@ functions, no findings.
 ## Measurement trap
 
 Two runs of one stage-2 compiler on `lexer.fern` differed by 30% in
-instructions, 1.71 G against 2.23 G. Other valgrind jobs and a test sweep
-ran on the same four cores at the time. Alone, six runs agree to the instruction.
-The compiler has no threads, so the cause is open. Measure compile cost on
-a quiet machine, and under `setarch x86_64 -R`.
+instructions, 1.71 G against 2.23 G. The first run of each new compiler
+binary was the slow one. The emitted-RC certifier keeps a memo of the
+functions it certified. A digest of the compiler's own bytes keys the memo
+(`docs/TEST-GATES.md`), so a new binary's first compile certifies every
+function in full. A lone run and three concurrent runs of one warm binary
+agree to 12 instructions, so contention plays no part. Measure compile cost
+after one warm-up compile of the binary under test.
 
 ## Tests
 
