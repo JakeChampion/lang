@@ -1,0 +1,246 @@
+// The behaviour of the Fern Stopwatch app. Every function is pure: the
+// Android side passes in the clock, the stored state and the settings, and
+// shows what comes back. native.fern exposes these functions over JNI.
+
+// A stopwatch is two numbers. `started_at` is the wall-clock time of the
+// current run, or 0 when paused. `anteriority` is the sum of all earlier runs.
+pub function elapsed_ms(started_at: i64, anteriority: i64, now: i64): i64 {
+  if (started_at == 0) {
+    return anteriority;
+  }
+  return anteriority + nonneg(now - started_at);
+}
+
+pub function is_running(started_at: i64): boolean {
+  return started_at != 0;
+}
+
+// The new `started_at` after a start. Starting a running stopwatch keeps it.
+pub function start(started_at: i64, now: i64): i64 {
+  if (started_at != 0) {
+    return started_at;
+  }
+  return now;
+}
+
+// The new `anteriority` after a pause.
+pub function pause(started_at: i64, anteriority: i64, now: i64): i64 {
+  return elapsed_ms(started_at, anteriority, now);
+}
+
+// "1:02:03", or "1:02" when the seconds are hidden.
+pub function stopwatch_text(elapsed: i64, show_seconds: boolean): string {
+  let total_s: i64 = nonneg(elapsed) / 1000;
+  let h: i64 = total_s / 3600;
+  let m: i64 = total_s / 60 % 60;
+  let text: string = h.to_string() + ":" + two_digits(m);
+  if (show_seconds) {
+    return text + ":" + two_digits(total_s % 60);
+  }
+  return text;
+}
+
+// "HH:MM" for a local time given as milliseconds since the epoch.
+pub function clock_text(local_ms: i64): string {
+  let minute_of_day: i64 = floor_mod(local_ms, 86400000) / 60000;
+  return two_digits(minute_of_day / 60) + ":" + two_digits(minute_of_day % 60);
+}
+
+// Milliseconds until the stopwatch text next changes. The display updates
+// once per second, or once per minute when the seconds are hidden. The extra
+// 10 ms makes sure that the tick lands after the boundary, not before it.
+pub function stopwatch_tick_in(elapsed: i64, show_seconds: boolean): i64 {
+  if (show_seconds) {
+    return 1010 - floor_mod(elapsed, 1000);
+  }
+  return 60010 - floor_mod(elapsed, 60000);
+}
+
+// Milliseconds until the clock text next changes.
+pub function clock_tick_in(local_ms: i64): i64 {
+  return 60010 - floor_mod(local_ms, 60000);
+}
+
+pub const WHITE: i64 = 16777215;
+
+pub const RED: i64 = 15619413;
+
+// The text colour as ARGB. The stopwatch is white while it runs and red while
+// it is paused. `opacity` is a setting from 1 to 20.
+pub function stopwatch_color(running: boolean, opacity: i32): i32 {
+  if (running) {
+    return argb(opacity, WHITE);
+  }
+  return argb(opacity, RED);
+}
+
+pub function clock_color(opacity: i32): i32 {
+  return argb(opacity, WHITE);
+}
+
+function argb(opacity: i32, rgb: i64): i32 {
+  let alpha: i64 = clamp(opacity, 1, 20) as i64 * 255 / 20;
+  return (alpha * 16777216 + rgb) as i32;
+}
+
+// The screen keeps on while the stopwatch runs. With the stopwatch turned
+// off the app is a bedside clock, so the screen keeps on all the time.
+pub function keep_screen_on(running: boolean, stopwatch_enabled: boolean): boolean {
+  return running || !stopwatch_enabled;
+}
+
+pub const BUTTONS_HIDE_DELAY_MS: i32 = 5000;
+
+pub const BURN_IN_PERIOD_MS: i32 = 60000;
+
+pub const BURN_IN_MAX: i32 = 10;
+
+// One axis of the content position, in pixels. The content is centred in
+// `panel`, away from a band of `reserved` pixels at each end. A
+// `displacement` above 0 moves it by a random amount, up to
+// displacement / BURN_IN_MAX of half the free space. `random` is any
+// non-negative number.
+pub function burn_in_origin(panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
+  if (content <= 0) {
+    return reserved;
+  }
+  let space: i32 = clamp(panel - content - 2 * reserved, 0, panel);
+  let reach: i32 = clamp(displacement, 0, BURN_IN_MAX) * space / (2 * BURN_IN_MAX);
+  let jitter: i32 = 0;
+  if (reach > 0) {
+    jitter = (nonneg(random as i64) % ((2 * reach + 1) as i64)) as i32 - reach;
+  }
+  return reserved + space / 2 + jitter;
+}
+
+// Milliseconds until the next beep, or -1 when the beeper is off. The beeper
+// sounds at each whole multiple of the interval on the stopwatch.
+pub function next_beep_in(elapsed: i64, interval_minutes: i32): i64 {
+  if (interval_minutes <= 0) {
+    return -1;
+  }
+  let period: i64 = interval_minutes as i64 * 60000;
+  return period - floor_mod(elapsed, period);
+}
+
+pub function about_text(total_runtime_ms: i64): string {
+  let hours: i64 = nonneg(total_runtime_ms) / 3600000;
+  let unit: string = " hours";
+  if (hours == 1) {
+    unit = " hour";
+  }
+  return "Usage\nStart or pause: tap\nReset: long tap\nMenu: tap anywhere\n\nStats\nTotal runtime: " + hours.to_string() + unit + "\n\nThe logic of this app is written in Fern.";
+}
+
+// One row of the settings screen. A toggle stores 0 or 1. A slider stores a
+// value from `min` to `max`.
+pub struct Setting {
+  key: string,
+  section: string,
+  title: string,
+  summary: string,
+  toggle: boolean,
+  min: i32,
+  max: i32,
+  default: i32,
+}
+
+function toggle(key: string, section: string, title: string, summary: string, on: boolean): Setting {
+  let d: i32 = 0;
+  if (on) {
+    d = 1;
+  }
+  return Setting { key: key, section: section, title: title, summary: summary, toggle: true, min: 0, max: 1, default: d };
+}
+
+function slider(key: string, section: string, title: string, summary: string, min: i32, max: i32, d: i32): Setting {
+  return Setting { key: key, section: section, title: title, summary: summary, toggle: false, min: min, max: max, default: d };
+}
+
+// The settings, in the order that the settings screen shows them.
+pub function settings(): Setting[] {
+  return [
+    toggle("clock_enabled", "Clock", "Show the clock", "", true),
+    toggle("clock_thin", "Clock", "Thin font", "", true),
+    slider("clock_opacity", "Clock", "Opacity", "", 1, 20, 13),
+    slider("clock_size", "Clock", "Size", "", 40, 100, 60),
+    toggle("stopwatch_enabled", "Stopwatch", "Show the stopwatch", "", true),
+    toggle("stopwatch_seconds", "Stopwatch", "Show seconds", "", true),
+    toggle("stopwatch_thin", "Stopwatch", "Thin font", "", true),
+    slider("stopwatch_opacity", "Stopwatch", "Opacity", "", 1, 20, 13),
+    slider("stopwatch_size", "Stopwatch", "Size", "", 40, 100, 60),
+    slider("beep_interval", "Beeper", "Beep interval", "A beep at each multiple of this time on the stopwatch", 0, 120, 0),
+    toggle("beep_override_silent", "Beeper", "Override silent mode", "Use the alarm volume, which sounds when the phone is silent", false),
+    slider("burn_in", "Global", "Screen burn-in protection", "The content moves by this amount every minute", 0, BURN_IN_MAX, 0),
+  ];
+}
+
+// The index of the setting with `key`, or -1.
+pub function setting_index(key: string): i32 {
+  let all: Setting[] = settings();
+  let i: i32 = 0;
+  while (i < all.len()) {
+    if (all[i].key == key) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+// A value clamped to the range of setting `i`.
+pub function setting_clamp(i: i32, value: i32): i32 {
+  let s: Setting = settings()[i];
+  return clamp(value, s.min, s.max);
+}
+
+// The label beside a slider.
+pub function setting_value_text(i: i32, value: i32): string {
+  let s: Setting = settings()[i];
+  let v: i32 = clamp(value, s.min, s.max);
+  if (s.key == "beep_interval") {
+    if (v == 0) {
+      return "Off";
+    }
+    return v.to_string() + " min";
+  }
+  if (s.key == "burn_in" && v == 0) {
+    return "Off";
+  }
+  if (s.key == "clock_size" || s.key == "stopwatch_size") {
+    return v.to_string() + " sp";
+  }
+  return v.to_string();
+}
+
+function two_digits(n: i64): string {
+  if (n < 10) {
+    return "0" + n.to_string();
+  }
+  return n.to_string();
+}
+
+function nonneg(n: i64): i64 {
+  if (n < 0) {
+    return 0;
+  }
+  return n;
+}
+
+function floor_mod(n: i64, d: i64): i64 {
+  let r: i64 = n % d;
+  if (r < 0) {
+    return r + d;
+  }
+  return r;
+}
+
+function clamp(v: i32, lo: i32, hi: i32): i32 {
+  if (v < lo) {
+    return lo;
+  }
+  if (v > hi) {
+    return hi;
+  }
+  return v;
+}

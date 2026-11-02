@@ -49,3 +49,22 @@ jobs:
             echo "::endgroup::"
             if [ "$rc" -ne 0 ]; then echo "::error::example $name failed (exit $rc)"; exit 1; fi
           done
+
+  # The Android example app as an installable APK. The runner image's Android
+  # SDK (ANDROID_HOME) supplies aapt, d8, zipalign, apksigner and android.jar.
+  android-apk:
+    name: android-stopwatch-apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Build the stopwatch APK
+        run: |
+          make bin/fern
+          examples/android/stopwatch/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fern-stopwatch-apk
+          path: build/android-stopwatch/fern-stopwatch.apk
+          if-no-files-found: error
