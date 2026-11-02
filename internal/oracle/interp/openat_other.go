@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package interp
 
@@ -7,9 +7,8 @@ import (
 	"syscall"
 )
 
-// openAtFile opens the joined path. The Go syscall package has openat on
-// Linux only, so a symbolic link in the entry's place is refused by a check
-// before the open.
+// Hosts without a native directory-relative open use the joined path.
+// The link check precedes the open on these unsupported native targets.
 func openAtFile(dir *os.File, path, name string, flag int) (*os.File, error) {
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil, syscall.ELOOP

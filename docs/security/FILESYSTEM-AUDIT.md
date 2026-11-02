@@ -47,7 +47,9 @@ The entry resolves under the directory the handle holds open, wherever that dire
 The open refuses a symbolic link in the entry's place with `ELOOP`, as `Dir.open_dir` does.
 
 The three native runtimes share one flag table with `open_reader_with` and `open_writer_with`.
-The Go oracle opens the entry with `openat` on Linux, and checks the entry for a link elsewhere.
+The Go oracle opens the entry with `openat` on Linux and Darwin.
+Both keep the directory object alive through the syscall and set close-on-exec atomically.
+Other hosts retain the path fallback and a separate link check.
 The self-hosted interpreter reaches the entry through the descriptor's `/proc` link until the stage0 pin carries the new methods.
 
 ## Verification
