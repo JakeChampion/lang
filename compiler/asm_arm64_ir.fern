@@ -7506,7 +7506,6 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x21, #64\n");
   s = s.write("    mov x22, sp\n");
   s = s.write(".Lbt_loop:\n");
-  s = s.write("    cbz x21, .Lbt_done\n");
   s = s.write("    cmp x20, x22\n");
   s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    and x23, x20, #7\n");
@@ -7516,23 +7515,22 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x1, #16, lsl #12\n");
   s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    bl .Lbt_hex\n");
-  s = s.write("    mov x22, x20\n");
   s = s.write("    adrp x24, __fern_bt_floor\n");
   s = s.write("    add x24, x24, :lo12:__fern_bt_floor\n");
-  s = s.write("    ldr x23, [x24]\n");
-  s = s.write("    cbz x23, .Lbt_floor_kept\n");
-  s = s.write("    mov x22, x23\n");
+  s = s.write("    ldr x22, [x24]\n");
   s = s.write("    str xzr, [x24]\n");
-  s = s.write(".Lbt_floor_kept:\n");
+  s = s.write("    cmp x22, #0\n");
+  s = s.write("    csel x22, x20, x22, eq\n");
   s = s.write("    ldr x20, [x20]\n");
-  s = s.write("    sub x21, x21, #1\n");
   s = s.write("    adrp x24, __fern_stack_top\n");
   s = s.write("    add x24, x24, :lo12:__fern_stack_top\n");
   s = s.write("    ldr x24, [x24]\n");
-  s = s.write("    cbz x24, .Lbt_loop\n");
+  s = s.write("    cbz x24, .Lbt_next\n");
   s = s.write("    cmp x20, x24\n");
   s = s.write("    b.hs .Lbt_done\n");
-  s = s.write("    b .Lbt_loop\n");
+  s = s.write(".Lbt_next:\n");
+  s = s.write("    subs x21, x21, #1\n");
+  s = s.write("    b.ne .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
   s = s.write("    mov x0, x19\n");
   s = s.write(profile_exit_asm(s.profile));
@@ -7540,28 +7538,20 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.svc(94);
   s = s.write(".Lbt_hex:\n");
   s = s.write("    sub sp, sp, #32\n");
-  s = s.write("    mov w2, #32\n");
-  s = s.write("    strb w2, [sp]\n");
-  s = s.write("    strb w2, [sp, #1]\n");
-  s = s.write("    mov w2, #48\n");
-  s = s.write("    strb w2, [sp, #2]\n");
-  s = s.write("    mov w2, #120\n");
-  s = s.write("    strb w2, [sp, #3]\n");
+  s = s.write("    mov w2, #0x2020\n");
+  s = s.write("    movk w2, #0x7830, lsl #16\n");
+  s = s.write("    str w2, [sp]\n");
   s = s.write("    mov w2, #10\n");
   s = s.write("    strb w2, [sp, #20]\n");
   s = s.write("    mov x3, #16\n");
-  s = s.write("    add x4, sp, #19\n");
+  s = s.write("    add x4, sp, #3\n");
   s = s.write(".Lbt_hloop:\n");
   s = s.write("    and x2, x1, #15\n");
   s = s.write("    cmp x2, #10\n");
-  s = s.write("    b.lo .Lbt_hdec\n");
-  s = s.write("    add x2, x2, #87\n");
-  s = s.write("    b .Lbt_hput\n");
-  s = s.write(".Lbt_hdec:\n");
+  s = s.write("    add x5, x2, #87\n");
   s = s.write("    add x2, x2, #48\n");
-  s = s.write(".Lbt_hput:\n");
-  s = s.write("    strb w2, [x4]\n");
-  s = s.write("    sub x4, x4, #1\n");
+  s = s.write("    csel x2, x5, x2, hs\n");
+  s = s.write("    strb w2, [x4, x3]\n");
   s = s.write("    lsr x1, x1, #4\n");
   s = s.write("    subs x3, x3, #1\n");
   s = s.write("    b.ne .Lbt_hloop\n");
@@ -8128,6 +8118,9 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
   s = s.write("    .section .rodata\n");
   s = s.write(msg + ":\n    .ascii \"" + text + "\\n\"\n");
   s = s.write("    .text\n");
+  if (util.has_str(leaf_aborts(), label)) {
+    s = s.write(label + "_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+  }
   let sym: boolean = !util.str_has_prefix(label, ".L");
   if (sym) {
     s = s.write(".globl " + label + "\n");
@@ -8137,8 +8130,12 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
   s = s.write("    adrp x1, " + msg + "\n");
   s = s.write("    add x1, x1, :lo12:" + msg + "\n");
   s = s.write("    mov x2, #" + util.i32_to_string(text.len() + 1) + "\n");
-  s = s.write("    mov x0, #" + util.i32_to_string(status) + "\n");
-  s = s.write("    b __fern_report\n");
+  if (status == 134) {
+    s = s.need("abort_134").write("    b __fern_abort_134\n");
+  } else {
+    s = s.write("    mov x0, #" + util.i32_to_string(status) + "\n");
+    s = s.write("    b __fern_report\n");
+  }
   if (sym) {
     s = s.write(".size " + label + ", .-" + label + "\n");
   }
@@ -8160,6 +8157,9 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .text\n");
   s = s.write(".globl __fern_report\n");
   s = s.write(".type __fern_report, %function\n");
+  if (s.has_need("abort_134")) {
+    s = s.write("__fern_abort_134:\n    mov x0, #134\n");
+  }
   s = s.write("__fern_report:\n");
   s = s.write("    mov x19, x0\n");
   s = s.write("    mov x0, #2\n");
@@ -8395,9 +8395,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
   s = abort_trap(s, "__fern_free_range_abort", ".Lmsg_free_range", aborts.free_range(), 134);
   s = abort_trap(s, "__fern_double_free_abort", ".Lmsg_double_free", aborts.double_free(), 134);
-  for name in leaf_aborts() {
-    s = s.write(name + "_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b " + name + "\n");
-  }
 
   s = s.write("__fern_arr_box:\n");
   s = s.write("    movz x1, #65535\n    movk x1, #4095, lsl #16\n    cmp x0, x1\n    b.ls .Larrbox_sized\n    b __fern_alloc_size_abort_leaf\n.Larrbox_sized:\n");

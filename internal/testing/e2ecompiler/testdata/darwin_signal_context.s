@@ -29,7 +29,16 @@ __fern_report:
     adrp x9, __fern_stack_top
     add x9, x9, :lo12:__fern_stack_top
     ldr x9, [x9]
-    cbnz x9, failure
+    mov x10, #@STACK_TOP@
+    cmp x9, x10
+    b.ne failure
+    adrp x9, __fern_bt_floor
+    add x9, x9, :lo12:__fern_bt_floor
+    ldr x9, [x9]
+    movz x10, #0x1000, lsl #16
+    movk x10, #0x20
+    cmp x9, x10
+    b.ne failure
     mov x0, #0
     b done
 failure:
@@ -43,6 +52,7 @@ __fern_segv_trampoline:
 .data
 .balign 8
 __fern_stack_top: .quad @STACK_TOP@
+__fern_bt_floor: .quad 0
 siginfo: .zero 24
     .quad 0x10000020
 context: .zero 48
