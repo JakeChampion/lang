@@ -108,7 +108,7 @@ jobs:
                     if (run.head_sha !== pr.head.sha || run.event !== "pull_request" ||
                         run.path !== ".github/workflows/ci.yml") continue;
                     const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                      owner, repo, run_id: run.id, filter: "latest", per_page: 100,
+                      owner, repo, run_id: run.id, filter: "latest", per_page: 50,
                     });
                     if (jobs.some((j) => j.name.startsWith("Full suite / "))) {
                       spared.add(run.id);
