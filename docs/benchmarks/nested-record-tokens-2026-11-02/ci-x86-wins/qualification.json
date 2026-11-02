@@ -1,0 +1,46 @@
+{
+  "scope": "Native x86 CI instruction improvements on PR14022 head05fe. Only two limits decrease. The original job failed because its strict gate requires recorded improvements to become the new ceiling.",
+  "head": "05fe1a9aba9762381a01130f95951a357c28ee9a",
+  "run": 41414136189,
+  "job": 125173822284,
+  "job_url": "https://github.com/JakeChampion/lang/actions/runs/41414136189/job/125173822284",
+  "artifact": {
+    "digest": "sha256:f4c9c4816a2785e0617eba0b3c9a8b5c5a34e158d8ecdc0e8545b7d935a195ab",
+    "id": 13127056545,
+    "name": "perf-report-x86_64",
+    "workflow_run": {
+      "head_branch": "codex/issue-12795-security-integration",
+      "head_repository_id": 1230663420,
+      "head_sha": "05fe1a9aba9762381a01130f95951a357c28ee9a",
+      "id": 41414136189,
+      "repository_id": 1230663420
+    }
+  },
+  "changed_limits": {
+    "x86_64/perceus_rbtree.ir": {
+      "before": 54772423,
+      "after": 52232903,
+      "measured": 52232903
+    },
+    "x86_64/perceus_rbtree_ck.ir": {
+      "before": 54358823,
+      "after": 51779463,
+      "measured": 51779463
+    }
+  },
+  "strict_metrics": 78,
+  "gate_command": [
+    "/Users/jakechampion/codex/lang-nested-token-security/scripts/ci-check-perf",
+    "/Users/jakechampion/codex/lang-nested-token-security/.github/perf-baseline.txt",
+    "/tmp/fern-14022-perf-x86-artifact/perf-report.txt"
+  ],
+  "gate_exit_code": 0,
+  "baseline_before_sha256": "b58ea150fa5641098d0d7b753b6b0cd35963dc8594624fe9432b89e7196fd858",
+  "baseline_after_sha256": "2a91c1a71ec207303e9b1a870169b226ccffce7b089c3c2bebc2cb09fba20b85",
+  "original_job_log_sha256": "0d22099355b0d964296600747821aefd8fbaf4ce5c6d479d06885f0505e4085a",
+  "artifacts": {
+    "native-report.txt": "17531e0fff93763f681d4b2fdc6cc43ec96b005a2850ef7e3bc16fe459c91d01",
+    "gate.log": "4daca1ba6717a97f9e6503b8ff845a5610975c0b6c15156a4a0e501cc0017508",
+    "job.log.gz": "ac627f33c47e76094120c7ac9b57f69cf328bb4e21f923c75e9c8e66329477b8"
+  }
+}

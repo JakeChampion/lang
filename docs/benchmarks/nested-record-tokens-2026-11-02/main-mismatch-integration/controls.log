@@ -1,0 +1,202 @@
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (7.89s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostMismatchIRX86_64
+--- PASS: TestSelfHostMismatchIRX86_64 (25.95s)
+=== RUN   TestSelfHostMismatchIRArm64
+--- PASS: TestSelfHostMismatchIRArm64 (0.85s)
+=== RUN   TestSelfHostMismatchIRWasm
+--- PASS: TestSelfHostMismatchIRWasm (18.48s)
+=== RUN   TestSelfHostNestedKeepPlan
+--- PASS: TestSelfHostNestedKeepPlan (41.83s)
+=== RUN   TestSelfHostNestedKeepRegions
+=== RUN   TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/arm64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/x86-64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/arm64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/x86-64-linux
+--- PASS: TestSelfHostNestedKeepRegions (2.61s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/arm64-linux (0.08s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/x86-64-linux (0.19s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/arm64-linux (1.11s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/x86-64-linux (1.24s)
+=== RUN   TestSelfHostNestedKeepTokens
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/1000
+--- PASS: TestSelfHostNestedKeepTokens (2.64s)
+    --- PASS: TestSelfHostNestedKeepTokens/arm64-linux (0.21s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/shared/1000 (0.00s)
+    --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux (1.87s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/1000 (0.08s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/8 (0.07s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/1000 (0.08s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/8 (0.07s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/8 (0.07s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/1000 (0.07s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/1000 (0.05s)
+    --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi (0.56s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/8 (0.02s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/8 (0.02s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/1000 (0.02s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/1000 (0.02s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/8 (0.02s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/1000 (0.10s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/1000 (0.02s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	100.270s

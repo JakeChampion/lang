@@ -1,0 +1,206 @@
+{
+  "scope": "Native ARM64 Callgrind profiles of the wide nested-update fixture. Earlier private source only. No current-main integration or latency claim.",
+  "input": "/tmp/fern-12795-wide-nested.fern",
+  "input_sha256": "1abd3cb7f9efb093939fa97875388e2bb4b1da70f96381470126267b29b774ae",
+  "candidate_fixed_point": "/tmp/fern-12795-record-sink-v2-fixed-point/qualification.json",
+  "candidate_fixed_point_sha256": "ddad02a1bccc75e8e6a9c8cf84e2d1ecf4a143f1f8d1a5fe467ffa8f6b3f468a",
+  "candidate_source_tree": "0d294c025b16c5129e2f22e2b091dc165eb9c72b",
+  "builds": [
+    {
+      "label": "baseline",
+      "command": [
+        "/tmp/fern-12795-empty-layout-fixed-point/stage4",
+        "-g",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/tmp/fern-12795-wide-cost/baseline-rebound",
+        "/tmp/fern-12795-wide-nested.fern",
+        "/Users/jakechampion/codex/lang-nested-token-integration/internal/stdlib"
+      ],
+      "exit_code": 0,
+      "producer_sha256": "7822025ff717c11ae03118fe93e379ecd51ac6d06a8c4ef96fabfc5ce9f822a2",
+      "binary_sha256": "fa9afd92fb2eab8e20af051f86261ae00b0ae04ee4725843f1924f53bf01cac4"
+    },
+    {
+      "label": "repaired",
+      "command": [
+        "/tmp/fern-12795-record-sink-v2-fixed-point/stage4",
+        "-g",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/tmp/fern-12795-wide-cost/repaired-rebound",
+        "/tmp/fern-12795-wide-nested.fern",
+        "/Users/jakechampion/codex/lang-nested-token-integration/internal/stdlib"
+      ],
+      "exit_code": 0,
+      "producer_sha256": "ff3b69853bba23c383235aca8b69d7ba2359a194e56a7a411b03a827c8c929ab",
+      "binary_sha256": "4336fbba5359686192f5dfb57d2d8f61ecd02c17da94bfe400535ba709264fb8"
+    }
+  ],
+  "rows": [
+    {
+      "engine": "baseline",
+      "mode": "a",
+      "steps": 8,
+      "instructions": 4428,
+      "allocations": 3,
+      "stdout": "mode=a steps=8 allocations=3\n",
+      "profile_sha256": "f4c5d9c199d354edbc9b6188fe9a32738a6f906b6adf0065a11cb7a215324434",
+      "stderr_sha256": "eb1228c72c138895b089b7ff95830c1c1cb39d2f0417b68dd2fb76f965a6ca67"
+    },
+    {
+      "engine": "baseline",
+      "mode": "c",
+      "steps": 8,
+      "instructions": 3025,
+      "allocations": 3,
+      "stdout": "mode=c steps=8 allocations=3\n",
+      "profile_sha256": "65ca35a6c3aa03f29fa48bb91313d408a0cdf500b8eb8fe8debce80d18b198df",
+      "stderr_sha256": "0c714bb1ac9a3873f7af505caa8da7eebb6a2347f047f7e8ddd4dc641f44d98f"
+    },
+    {
+      "engine": "baseline",
+      "mode": "h",
+      "steps": 8,
+      "instructions": 3025,
+      "allocations": 3,
+      "stdout": "mode=h steps=8 allocations=3\n",
+      "profile_sha256": "71fbe2bcf3dd40ff0f35c1fe1307306680fa232243d3b59b933b2986f417fcd4",
+      "stderr_sha256": "5f3e282926a734d0537302abe17cfc4ce32380de815319819461d621607c8a2b"
+    },
+    {
+      "engine": "baseline",
+      "mode": "p",
+      "steps": 8,
+      "instructions": 4998,
+      "allocations": 10,
+      "stdout": "mode=p steps=8 allocations=10\n",
+      "profile_sha256": "d2544234913e9a1b8e1fa3940bcb54059ae638850e10b1a71fcda791d1416588",
+      "stderr_sha256": "aa902017270961fb0d908fb46a7e00ce67712aa1638f0c4fd983d5229c64d139"
+    },
+    {
+      "engine": "repaired",
+      "mode": "a",
+      "steps": 8,
+      "instructions": 2556,
+      "allocations": 3,
+      "stdout": "mode=a steps=8 allocations=3\n",
+      "profile_sha256": "da3fc693a605a7dcce01173bbc8e6fe937d23f9d25f260ab8b3d96cd8683d4f5",
+      "stderr_sha256": "9bcea0af19f4e2a89f17a7bbbff8beafcea8284cd33d7fdccd64e8db605892f7"
+    },
+    {
+      "engine": "repaired",
+      "mode": "c",
+      "steps": 8,
+      "instructions": 2556,
+      "allocations": 3,
+      "stdout": "mode=c steps=8 allocations=3\n",
+      "profile_sha256": "bec618450ec0f9bb96af42e52f8d8c8cb8ac007c0126661aafce068be74a4745",
+      "stderr_sha256": "e42f5eddacbe5c216b52537cb024f278c3576da02a18a8a7857382766fa36958"
+    },
+    {
+      "engine": "repaired",
+      "mode": "h",
+      "steps": 8,
+      "instructions": 2556,
+      "allocations": 3,
+      "stdout": "mode=h steps=8 allocations=3\n",
+      "profile_sha256": "ef2371485dd1483c15f8447e13c157d0279c0c0f6026eecb36100e6790c7bf39",
+      "stderr_sha256": "704b1f632b19b978d12cb4a503bfd126d9f717d7ac6d72dcb8cd0c8e2cf68a57"
+    },
+    {
+      "engine": "repaired",
+      "mode": "p",
+      "steps": 8,
+      "instructions": 3722,
+      "allocations": 3,
+      "stdout": "mode=p steps=8 allocations=3\n",
+      "profile_sha256": "d2b34413262f0e25c88dd8f8cb63ce066f27358bee7293ac25024783749b0441",
+      "stderr_sha256": "c13ed3a9011972706d3afcce7dd5d41488bfcb18cd8e482f14e8c77f59a239ce"
+    },
+    {
+      "engine": "baseline",
+      "mode": "a",
+      "steps": 10000,
+      "instructions": 3432007,
+      "allocations": 3,
+      "stdout": "mode=a steps=10000 allocations=3\n",
+      "profile_sha256": "97291a7282281d8f8ec48027da8d2b9a837add80a439e2fc59209cbc5669145f",
+      "stderr_sha256": "96a340a7cdd9145a3cd4d4cb7dbb501e63f2870f61a1233aa7373b92d3e26037"
+    },
+    {
+      "engine": "baseline",
+      "mode": "c",
+      "steps": 10000,
+      "instructions": 1562100,
+      "allocations": 3,
+      "stdout": "mode=c steps=10000 allocations=3\n",
+      "profile_sha256": "9fcd9eb85fb7c15886383d49a592c40d55234a9ada36f0a58ee42408a5632302",
+      "stderr_sha256": "3039e778683ff6f66bee172ab26bef3e983c24a79982659a97faff58c36b697c"
+    },
+    {
+      "engine": "baseline",
+      "mode": "h",
+      "steps": 10000,
+      "instructions": 1562100,
+      "allocations": 3,
+      "stdout": "mode=h steps=10000 allocations=3\n",
+      "profile_sha256": "897eb21f29b5d61c57180d887c5c416c61bfb970708eb6fe209b862354c7cad1",
+      "stderr_sha256": "11b2821be6917ac12b317994a030587bc04c4284369a82f991d4f71bedd1fe0b"
+    },
+    {
+      "engine": "baseline",
+      "mode": "p",
+      "steps": 10000,
+      "instructions": 4122289,
+      "allocations": 10002,
+      "stdout": "mode=p steps=10000 allocations=10002\n",
+      "profile_sha256": "4036e042c3d11c67e88ca655cc3872786490516369f9099fb8cad9f96fd817dc",
+      "stderr_sha256": "333af1c55957f4e60360dcc1c16a91c67c30026295fc375681bcc7b87edaa0ec"
+    },
+    {
+      "engine": "repaired",
+      "mode": "a",
+      "steps": 10000,
+      "instructions": 902159,
+      "allocations": 3,
+      "stdout": "mode=a steps=10000 allocations=3\n",
+      "profile_sha256": "bfbcb9c230edbbadac28c4faa4505355604df14f2250cfda989c19c5440ac8f8",
+      "stderr_sha256": "8dd88d6413a9469c34bca2fec4835f526787fbbca8d91bc64571d9df84777471"
+    },
+    {
+      "engine": "repaired",
+      "mode": "c",
+      "steps": 10000,
+      "instructions": 902159,
+      "allocations": 3,
+      "stdout": "mode=c steps=10000 allocations=3\n",
+      "profile_sha256": "7a908e0ea58484fc9377527dc11ea00c4977219afd07ac913d49c4e80328acc4",
+      "stderr_sha256": "fff385171333d3b85f3056a97f3a140a3f4b116f10f10e7f6ae543d6a7473ad5"
+    },
+    {
+      "engine": "repaired",
+      "mode": "h",
+      "steps": 10000,
+      "instructions": 902159,
+      "allocations": 3,
+      "stdout": "mode=h steps=10000 allocations=3\n",
+      "profile_sha256": "748c5bd5cf6c0740f747ff597fcc1daf8991f946b413bbb6471940214947606b",
+      "stderr_sha256": "475f76ee37919d2b7d34a29d7e01be0e255e3853ae316366000256a82f43013c"
+    },
+    {
+      "engine": "repaired",
+      "mode": "p",
+      "steps": 10000,
+      "instructions": 2342173,
+      "allocations": 3,
+      "stdout": "mode=p steps=10000 allocations=3\n",
+      "profile_sha256": "eedce7fd28f7af63178951860920525722c4587c4257aa02e0c574b6e3fcdb1a",
+      "stderr_sha256": "82b2ea9c299ae56b9d0087957516cbf5b720e359cad3a029a66b48d9343ea362"
+    }
+  ],
+  "method": "Matched executable name ./engine. Collection inside __fn_step_a, __fn_step_c, __fn_step_h, or __fn_step_p. Eight-step pilot precedes 10000-step runs.",
+  "docker_image": "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf"
+}

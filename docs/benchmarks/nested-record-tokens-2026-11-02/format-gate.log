@@ -1,0 +1,27 @@
+./scripts/gofmt_gate.sh
+./scripts/testname_gate.sh
+testname gate: 4055 exact + 14 prefix test selectors resolve
+./scripts/freeze_gate.sh
+native-convergence freeze preconditions (docs/NATIVE-CONVERGENCE.md)
+
+1. Roadmap goal 2 — Perceus port at parity in the self-host compiler
+  [32mGREEN[0m        constructor-reuse admission present (ssaunits.reuse_pairs)
+  [32mGREEN[0m        make distcheck runs in CI — the self-host compiler reproduces itself
+
+2. #3451 / #3457 — per-module compilation, ending with the AST emitters deleted
+  [32mGREEN[0m        asm.fern / asm_arm64.fern / wasm.fern all deleted
+  [32mGREEN[0m        asm_ir.fern routes IR-or-error (emit_module_or_error)
+  [32mGREEN[0m        asm_arm64_ir.fern routes IR-or-error (emit_module_or_error)
+  [32mGREEN[0m        wasm_ir.fern routes IR-or-error (emit_module_mode_or_error)
+
+3. Checker-codes differential compares unfiltered code sets
+  [32mGREEN[0m        no selfHostImplementedCodes filter in code (comments referencing it are fine)
+
+4. SH-057-class semantics (mutable scalar capture) closed in every engine
+  [32mGREEN[0m        self-host interpreter has by-reference scalar capture (VCellI/VCellF)
+  [32mGREEN[0m        capture cells are wired (cellify_env)
+
+summary: 9 derived green, 0 pending measurement
+
+Precondition 1's criterion is `make distcheck` green, which this gate
+reads off the CI wiring rather than running.
