@@ -1,0 +1,3321 @@
+{
+  "scope": "Frozen compiler output sizes on three targets and native ARM64 Linux instruction counts. No native latency or x86 dynamic claim.",
+  "mode": "profile",
+  "compiler_sha256": "b8a3e526eb1e03fd42f573c6c9b046950f484da497317b165694f5530d027ee8",
+  "baseline_sha256": "87b2adf5a96b6f4c335138d2faee88576005e56f43fb82335cf319829b70e53e",
+  "image": "sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+  "rows": [
+    {
+      "name": "startup",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "0bda1b3664cccde3c0ac778a129e2589b6a60bcdbdf67b93573c02ddb81463f4",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-safe.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-safe",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 228,
+      "bytes": 1696,
+      "binary_sha256": "6209854f87a382ec9d057358f898a42c0729c70b77699246668913879d98d814"
+    },
+    {
+      "name": "int_loop",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "50f1a1e4450a6ee58511d599a0d7fbe06d52c3b60ca3d0ac1265571af457f255",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 249,
+      "bytes": 1776,
+      "binary_sha256": "82d2e67a8a1dc18ab157ea522ea9203c92e58c915a673be3ee80c9b834b55ca7"
+    },
+    {
+      "name": "call_overhead",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "b3b13595f60835f15e5dc6f58f18c3e1b69d9b8505179f04a2c53772a019e68b",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 304,
+      "bytes": 1952,
+      "binary_sha256": "a3fc16517236799538b9510fe63dd766e9fb04717dd7f1d897ead80bed2f86a2"
+    },
+    {
+      "name": "closure_call",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "9571c4b7a9ba198152a493d5301b1736303cc5d7f33e345d318f19ae45816db4",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 923,
+      "bytes": 4432,
+      "binary_sha256": "53e07c0a4106c90e9f486e32080e1e23be2be2054548185448f31e9b6afa76aa"
+    },
+    {
+      "name": "array_append",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "ca3b1d6c595e93a61022f8c9282b7d3707595f2f74e77725083b2321cf27cc75",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1147,
+      "bytes": 5200,
+      "binary_sha256": "62708edc770558fdd8fda25a52d356da4abd5ff4b90d6e99c64af9a9c83a0707"
+    },
+    {
+      "name": "map_string",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "85a595e677951a3aed7be7990040be1542222b7a10ba1b98d165c1a1fde47921",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 9419,
+      "bytes": 37552,
+      "binary_sha256": "cad178e32cfb1018e186a4fc884f6d4e34199f94f3933247a0dc65bf61f8e702"
+    },
+    {
+      "name": "enum_match",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "c4b6807cd6fb50d9c01bbab3a6bfffc3d122a574900ae22732f7942164f3e091",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 893,
+      "bytes": 4304,
+      "binary_sha256": "8caf645d9b75cc5ffc2e8d2bd06c0a2c0e7732d272c05f728ade6f8e7b708849"
+    },
+    {
+      "name": "http_hello",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "ef27456d47073adb5a7e1ba6e7fd0017a796bc38b3a630a41d843649849bfe64",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 15156,
+      "bytes": 64000,
+      "binary_sha256": "d49bb53565a54245d334cd0b8b55985f5f83cedcd2223d293bf357b13ec3f5e7"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "x86-64-linux",
+      "profile": "safe",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "5a563c66d908bb48d70a42be6959a1f92ad48a39f5c8e6811cf2d8a979a65c8a",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 12959,
+      "bytes": 51968,
+      "binary_sha256": "5fe333f6614421e853154bd07a770257103b0948a6ef1f0cc462add3bf3ce315"
+    },
+    {
+      "name": "startup",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "f1780c8117aa9cc4dc03c0b48ca9d28b86ed0232a151c43e8000d4b874ae23f9",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-hardened.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-hardened",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 301,
+      "bytes": 2112,
+      "binary_sha256": "ee06c803bad121a69e63081ac2644a8c0df60708e588e3aeccca2adf28276dc6"
+    },
+    {
+      "name": "int_loop",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "278e297aa1461884aea7cfc79ca9b9ace9fc682196c32c073e7e6b55a715d809",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 322,
+      "bytes": 2192,
+      "binary_sha256": "8603ddc9e1204ce15d52e534f67d335e33c892134d268ab562cf18d33b10f116"
+    },
+    {
+      "name": "call_overhead",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "eb9d765bfa3cad89b6fef7fcd35dbf94b75934ab1fa76edd5845582d002eb614",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 377,
+      "bytes": 2352,
+      "binary_sha256": "b3a91cb981b024ea2b8c6c6ac1d158c3afaf90c6edc1d4c1a0c746509421866e"
+    },
+    {
+      "name": "closure_call",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "819ce0cd39bda74e8056a94206419c30e58ba2ec6406c2071a63e6bca502dd5a",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1124,
+      "bytes": 5296,
+      "binary_sha256": "44b4e3aef8d7954fa2e06656372b2abef5c91f08ddbecf440b2c18011fc09102"
+    },
+    {
+      "name": "array_append",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "c64f15d2592509f9d940be8d05c9221a6cdbcbd4badb7d897489c41a1dbd24d1",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1344,
+      "bytes": 6064,
+      "binary_sha256": "0724f7b251c7d1b848b6e9a0d1273a54a4f8821f84dd8d332653708acb290210"
+    },
+    {
+      "name": "map_string",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "876a0826dd89fc13c7b6371cb363c7e64d70ae9d3fea5e1d93b8b888bad3b059",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 9927,
+      "bytes": 43552,
+      "binary_sha256": "bd19ca30fd052f3a932ff5db0dfb714e11ae1f9e8bde887c54524e0aa56fbc8e"
+    },
+    {
+      "name": "enum_match",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "db40d10b66b01bc0d878fb3cff8aa4cc70f323cd897f0afc0e702ae12a45f8c3",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1086,
+      "bytes": 8256,
+      "binary_sha256": "46c6768b264550b72ac1f83846b0aaa615300c7e956d8f7d338e094844fd2e61"
+    },
+    {
+      "name": "http_hello",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "77c8262cff981c8e25501f50b7c1c9d9106eb645cab3076f53547cc02f765aef",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 15471,
+      "bytes": 70736,
+      "binary_sha256": "f76ec4914269e9c2c032f55dd0f4b994b815a69071cc35a570c07c548c960a25"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "x86-64-linux",
+      "profile": "hardened",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "ea5da6cacf5072c1220942e5c5352da0f3245362d52829c6c7d74edcc157e3e0",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 13388,
+      "bytes": 56400,
+      "binary_sha256": "22c586e925e377658528ab5c0ee0ddfa6aa8a06cc4424ac9e8174f52d59ebcf0"
+    },
+    {
+      "name": "startup",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "98c9f96a83f884085893d5acc593ecc08cd785c881fa555a063816dff0e17e4d",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-diagnostic.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-diagnostic",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 447,
+      "bytes": 4640,
+      "binary_sha256": "7417bf11fb3f6929df0013da8b350a4a429df628817a966beceb9915ef9537c4"
+    },
+    {
+      "name": "int_loop",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "aa4a8eb1c0c5402c15efd5084d642899e45b274d1041aa6669a1edcfc150406f",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 472,
+      "bytes": 5120,
+      "binary_sha256": "5e9d37b4fc8bcbbdf93df90e1af22e70e72fdd9ef532abadd47bd3ef13c8174e"
+    },
+    {
+      "name": "call_overhead",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "cc7db21d12d306c6d1743377d9dd95be427051130afcddfd96630cfb0120103e",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 524,
+      "bytes": 5544,
+      "binary_sha256": "712fd92e7a7669140b63ff0d586ee7505043614d1a25bd1eadbdc1ae972c135e"
+    },
+    {
+      "name": "closure_call",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "d15565be0e6c5937b416e80af13b267d875919523739f2c58e2f7f332789b87b",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1257,
+      "bytes": 10984,
+      "binary_sha256": "00c2a5beb53b6c2ab0bf89489c173d5eb732d6dce66b9cbd2678a74c98f0b2b9"
+    },
+    {
+      "name": "array_append",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "b5173c62fcca6ac6d3ad77d45e1c2ba99f100db6a62b3e91566da1aeee921f9a",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1355,
+      "bytes": 10848,
+      "binary_sha256": "73d0052c8482358399ff07f56037f3d8dedd26b040b057fef9ddce4e5d809a08"
+    },
+    {
+      "name": "map_string",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "ca6ec1eb6370ae32ca31ca2d894cfe5cf023d1032835922cab02542b760225db",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 10871,
+      "bytes": 133712,
+      "binary_sha256": "d244d3fcd1db1fabd3210e1f32b83cef800e9f26643b2b2e4ab93508235ff15f"
+    },
+    {
+      "name": "enum_match",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "b3494f3078deface349702c878e21e30e3c3d20f1d6038ef44dfa7abbf6e9857",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1236,
+      "bytes": 10256,
+      "binary_sha256": "4d9e2a1c4c303204537ee9f01b18d1899915c300ed1e6b9135285df1e3507152"
+    },
+    {
+      "name": "http_hello",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "d808af204d59da783bc5a7f9d35cab4846187254cfa670203ecaffd482477df2",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 14603,
+      "bytes": 113272,
+      "binary_sha256": "0338884c34c2cbb42a2cbe0eaae1c725129a183ef5d7c83b30cc16af45b705df"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "x86-64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "f4d88d6e8232d077e5d155ec18cf6c6d6bd4a74335125b1d87916dcc7cf140c7",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 12865,
+      "bytes": 110752,
+      "binary_sha256": "dc94600bd54f371e786792bc9f6ec5b2d861494eb3632619f26c38172143f28a"
+    },
+    {
+      "name": "startup",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "bf85c61e8fce4dda4fe5be60627edfabc5a8725d541eb011ab54ee7b2ab74f76",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-minimal.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-x86-64-linux-minimal",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 171,
+      "bytes": 1488,
+      "binary_sha256": "b559e534ebe2b69eb76c9d2a51011ad5d8f85b853e4a7145f0dbc714acba0f4c"
+    },
+    {
+      "name": "int_loop",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "34076c16f7afa5bac77b1feaa2146fa0bca5ee5cc5fb239ffa226b41b670353e",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 192,
+      "bytes": 1568,
+      "binary_sha256": "319327d089b3dd3af7c7d980933a4c1c7d0c325f866880f4737d1260f8701c29"
+    },
+    {
+      "name": "call_overhead",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "2bc4573957c31e2ae1effe45f5f014706ce61300e814bffe8c46e942bb32f457",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 247,
+      "bytes": 1728,
+      "binary_sha256": "3a52868628e96d9fc5d1993d52622ff332fa5a595da5fbb6f6be9e2dcbef3456"
+    },
+    {
+      "name": "closure_call",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "299443621b8c463a756cef7a09c6992f27e85c312759a0ea5d794d4bf59665b6",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 844,
+      "bytes": 4144,
+      "binary_sha256": "17c1db134fb13da65b61a01a9a78b213d246cedeecc88ce43134aeb5c2315764"
+    },
+    {
+      "name": "array_append",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "d473cf921cbe883f9d07436c4fe0043bad973ba1ff857caaa2742bd6f7b365df",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1061,
+      "bytes": 4896,
+      "binary_sha256": "a383f926288f3c3aba3653d91eee89c23a7615e603ae460304bb3c0d6b466897"
+    },
+    {
+      "name": "map_string",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "266267215696771567695ceb4c41948448f49276d24c02d4d6e867e45a72239b",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 9074,
+      "bytes": 36304,
+      "binary_sha256": "b9e7176d7502c73032b5276d4e9034034c74d91bd3cf278da9c5bb67505b06c6"
+    },
+    {
+      "name": "enum_match",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "c083a7c2aa49331b2b5a7d5cf2135ac7e579062b54140e92af87adb2cf7aa7aa",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 816,
+      "bytes": 4016,
+      "binary_sha256": "bd0971d01c324a4aa2249d5c509bb9497cc520fb2be0062e5118809243cba42a"
+    },
+    {
+      "name": "http_hello",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "d31db8416c7d27013cd381c3eb18b2aa5d61ec8b7e6dba1e2ea881f624d8a3fb",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 12501,
+      "bytes": 53408,
+      "binary_sha256": "784fa73b1a689ff7dcd63fb8c97cb28e9717556f50732d6f026aa91e2d2bd5db"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "x86-64-linux",
+      "profile": "minimal",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "ea954dd30d0f1d93bb7d6e6f852180ca92fc0242e4a9723225a32c68538a08b7",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-x86-64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 11521,
+      "bytes": 46688,
+      "binary_sha256": "1dd7ee3fda1859211a316f940c204d5f2875dd9d896281eb59f9005c9e3e9998"
+    },
+    {
+      "name": "startup",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "1d445eb1b1e7c7d33a4650c5a4c7bf13f0121b03730c96bee18dbbec3d2813d0",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-safe.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-safe",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 315,
+      "bytes": 1912,
+      "binary_sha256": "7c7def17ed6732d9f4add3b63043ccf77da5dcd625fafad75e6a6833fcc5e862"
+    },
+    {
+      "name": "int_loop",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "cdd48574800cfa03ee17b8f2d14a6b43c5ae2b727858a12585044ff82afdf74d",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 332,
+      "bytes": 1992,
+      "binary_sha256": "591135a8fc3a128406c37e8cc1d71d90485899f98c4b8094fd47c83224f61a3a"
+    },
+    {
+      "name": "call_overhead",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "3df10f9ea13b63742d12c0000a3c188483d37eeb50525d25d8db6a2f8c436344",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 390,
+      "bytes": 2232,
+      "binary_sha256": "3435466e1f981a88b4e793a40e40a800d60534f122a611cd9cb0864c290dd128"
+    },
+    {
+      "name": "closure_call",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "e1136f7720aa0873b88b858fc8dc471930d61b96aedc20c35c0d4d2fabbed007",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1153,
+      "bytes": 5640,
+      "binary_sha256": "3d3b2f33f45680bd48c04eeb612b900e231657cd487cbc9f629be46a54971ef5"
+    },
+    {
+      "name": "array_append",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "edfc50637a0ac5c3bcfe7aa8b55e1382b2f64a1bee469b20fe2ac19c13213bf0",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1357,
+      "bytes": 6680,
+      "binary_sha256": "dff026808cf22880616339c58d8e5ca7deb304a17ce31c12266ab49a4c3dbf2a"
+    },
+    {
+      "name": "map_string",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "2b4b928ace9514e49f0ab80c85cd9f97626f7c73e031b45379925a01b7322838",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 9591,
+      "bytes": 43760,
+      "binary_sha256": "8272fb668a8adb75c10b377d30af80db10ede4eb9a1ff8683e74d7db8222f15c"
+    },
+    {
+      "name": "enum_match",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "bf71b86acb3a2e9ec445bb339f4258a46fe624c6244cad472e607ccd8451222c",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1116,
+      "bytes": 5736,
+      "binary_sha256": "850884358caea32f01c824fc3c9f2449115ed930704fbdd0187293eabadda006"
+    },
+    {
+      "name": "http_hello",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "33c08dae10881a395030b3ec1583833e140c5b6e8826b5149ca5af4fa65d22d6",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 16098,
+      "bytes": 73792,
+      "binary_sha256": "43fd4355222a07d04ec23d59d9ffabd9e259ee1fe027b359f288cfdb40998faf"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "arm64-linux",
+      "profile": "safe",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "845f0db67540a4d322ba8b521eaa9285e51ae1b07dc59902ddee00a229b70954",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-safe.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "safe",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-safe",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 13748,
+      "bytes": 60280,
+      "binary_sha256": "0e363cb9d26f629a0d8cf3961fd4ba22c8cc3aca69cd7a2bcbc25a38ebfdfbd6"
+    },
+    {
+      "name": "startup",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "0c4b3afc44a5d630798eb818a20b2e3a596cdcc496fbe1a786e0344371119812",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-hardened.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-hardened",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 380,
+      "bytes": 2312,
+      "binary_sha256": "354c4a5f5b9d6bd752493625b2d6263700e1b2dc6281ea577aa5521825717681"
+    },
+    {
+      "name": "int_loop",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "4798df069fd82c5b6142871529f8fa09bed7cd97b7b5557027c1f2ae4fbd8dc4",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 397,
+      "bytes": 2392,
+      "binary_sha256": "f105c947e5e7894226cc597ba3dc3b81c900e7945295cd7b2f44a7bb53ee6143"
+    },
+    {
+      "name": "call_overhead",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "4484782311ea2b8028d0f03a80af10b365037c6918c0771d82bcfea53c5463e5",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 491,
+      "bytes": 2744,
+      "binary_sha256": "1a3eee9b9596b7ae9a17241f8b09e3382e9b3e6ecbf73ad9f584d461371eb62f"
+    },
+    {
+      "name": "closure_call",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "e0da3cb8eea2c9e55701df806d415353e3674577408f2907c7e0c4ebc0811d25",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1364,
+      "bytes": 6616,
+      "binary_sha256": "4cc93a6d36fdf9a56215470433f34eef46a1d9b392aad0b6a81c22851812fbc5"
+    },
+    {
+      "name": "array_append",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "2d4d16c746317a29231cf8c548d4c3975fd58ada12f0ef0f8c35d316150f6920",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1566,
+      "bytes": 7672,
+      "binary_sha256": "0517ea8becf64c4d42f882682dc1b3858d9420448059c5e7c1091c18dc1c79f5"
+    },
+    {
+      "name": "map_string",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "5d42b14e38a798a1bf9d41b713145ebf1b43cdd7b07a3067c568b79edde6b6e6",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 11251,
+      "bytes": 50544,
+      "binary_sha256": "b469a800f82008d020a54f44008c3bf9df1be16520617dd9e81f2b1d6a17d63a"
+    },
+    {
+      "name": "enum_match",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "32308770e51c1750edc2716ae9a3e12b7d1872e64b81a7e467b89cb2bc927566",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1310,
+      "bytes": 8456,
+      "binary_sha256": "5061192e66088c366bd9a11b1c8fd3c1764afd8af05e732eff1179a14be7e7d7"
+    },
+    {
+      "name": "http_hello",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "38b934bc2d46fd367600fee30c9ce0a2dfc9cda7e243ba530aa5c8d133ef45e0",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 17196,
+      "bytes": 80576,
+      "binary_sha256": "559307ffe4a1fa5cb67d996973a6a7a0dd92912b6456c7e14ce14cc1520e909f"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "arm64-linux",
+      "profile": "hardened",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "d789dc9ad8c7ba89da5a9660d20e50b7e723a2199ffc91bca3d9e10b4823b1d8",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-hardened.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "hardened",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-hardened",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 15056,
+      "bytes": 67736,
+      "binary_sha256": "035668f925434187e6bf6cec156b23295c442f62447848c8dbdef95c8fa1ba7a"
+    },
+    {
+      "name": "startup",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "a2deb7b7b0885125a748d3d35b4adf96e9c7d1fa44487039b1b745c3cb13b5bd",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-diagnostic.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-diagnostic",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 483,
+      "bytes": 4480,
+      "binary_sha256": "f8324b0fbb194a2048c5fad5bfd76c96ae549e55807be763d4b13015da8b04c5"
+    },
+    {
+      "name": "int_loop",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "2cb3eefb69720b2497d0c91f0e95a366cbb2fb94d771d8dc6ac8982f42485f61",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 504,
+      "bytes": 4952,
+      "binary_sha256": "2d20ac0130bbe345630a9f9d353942581d24f0f8647328ce2e892c7f7a5bcbcf"
+    },
+    {
+      "name": "call_overhead",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "1e903a5e6b3e490cff73d1ad8d191f51ab723594993ea8d211851de895a85e23",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 565,
+      "bytes": 5480,
+      "binary_sha256": "a23df5d19e19324d0fb29df82d3f0e6679333287bf4e92d41136f03a41d1e819"
+    },
+    {
+      "name": "closure_call",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "1a3f89ddd942db25d4bd6570ad928f2c8ff0ad7a912aa5a44da769809dcebfd7",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1586,
+      "bytes": 13608,
+      "binary_sha256": "66ed996722f5864e6ffc01ef00cf3381ebe286fb3b1a6799aba2ea23b6a82879"
+    },
+    {
+      "name": "array_append",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "5cab760ddc4eae23b83f3ab8ce958f9b2ee8ca6b82759a5c40f36d5415fbb0a0",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1710,
+      "bytes": 13920,
+      "binary_sha256": "ee9ddc1f81beb2f87724ff413508592b0eb90094cc84c4fff04435c33f518386"
+    },
+    {
+      "name": "map_string",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "e9eead6745d405769c2e1a7fedbff5efedadf33c06cc4de84d7b42d60604f2ce",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 10799,
+      "bytes": 140872,
+      "binary_sha256": "becbea2022c2da89aca25ba6a5c030b67bfac64038b51ca31b46a95be9d120fa"
+    },
+    {
+      "name": "enum_match",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "c513246a4b9f20cfabf92c0cfdef585a9f85cc3d0f93898cc3e2af972e801cc6",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1555,
+      "bytes": 13104,
+      "binary_sha256": "b85d82533ae068b28f2240478d1fc84deead271463c71cb0d18c9a502c644832"
+    },
+    {
+      "name": "http_hello",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "db56e878d7fd4c24c0e3e7c0a4a191070ea5da7bdbf654d92e0ab7f6acff1b2f",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 15794,
+      "bytes": 124872,
+      "binary_sha256": "5516c8c296db70f71007cdd78e90f26a9fe13e6f4e9600319170321e18d3eaf0"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "arm64-linux",
+      "profile": "diagnostic",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "cadcd6b164d16e7ea8842fdd0a7a9a394cbf39b40315628b76fe3a6df6c71198",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-diagnostic.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "diagnostic",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-diagnostic",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 13857,
+      "bytes": 119984,
+      "binary_sha256": "ada994518bfb2d3ee8c6271bef37d4b5bac061fae0ca007b128adf5c10d46cd6"
+    },
+    {
+      "name": "startup",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "asm_sha256": "61cd64b2ee73031935474d269b3d2834a3af41fd520510ca09845fd0517c7b1c",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-minimal.asm",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/startup-arm64-linux-minimal",
+            "/private/tmp/fern-14019-final-perf-profile/startup.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 254,
+      "bytes": 1672,
+      "binary_sha256": "d7d18ec5055aa30f4ab77592c990436d789c4885635bb655a317ab936176246c"
+    },
+    {
+      "name": "int_loop",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+      "asm_sha256": "01ade5820ce16a649dd3eba5cf84a833f19088e9acb2dbf03f27977445978d97",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/int_loop-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/int_loop.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 271,
+      "bytes": 1768,
+      "binary_sha256": "64c0b4980c2c1b4b51c4d5f7204822ca65df50333b4f31d8e53dc5206ead0e07"
+    },
+    {
+      "name": "call_overhead",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+      "asm_sha256": "9329a01971acb0dd19e5b9c33ad70e2ebc229498e3bcc110647cf8332cfa1cdf",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/call_overhead-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/call_overhead.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 329,
+      "bytes": 1976,
+      "binary_sha256": "7594e836d7c0d6680057dd17876d0804250cd9b0db0a466104f5cefac454a13f"
+    },
+    {
+      "name": "closure_call",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+      "asm_sha256": "de87fb1197cb816849f31da326e0cf176e8ad2c90ce85180e28390235b53886f",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/closure_call-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/closure_call.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1069,
+      "bytes": 5320,
+      "binary_sha256": "0ee6bb06939c85746eab82ca76af110a4eaf076d0293458c157b92d67d07b9d4"
+    },
+    {
+      "name": "array_append",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+      "asm_sha256": "32d5b34829faf9f00abd85e9152e2fb9372da66403e96fc636cacf38e214f7e8",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/array_append-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/array_append.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1265,
+      "bytes": 6328,
+      "binary_sha256": "2ee0f12d455e236118114cf0632a3cb507604670de621269921876b233a38bc0"
+    },
+    {
+      "name": "map_string",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+      "asm_sha256": "0e7d107965a68bbefdaedc13d20c136e2b3cae5ffa42d429227c129ecdcdc153",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/map_string-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/map_string.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 9318,
+      "bytes": 42240,
+      "binary_sha256": "b3de48fe0084b50e87c6f826798b3eeee1855c6afe968bbe915aaf5c338c7048"
+    },
+    {
+      "name": "enum_match",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+      "asm_sha256": "97e2a880c68fbf6d937508bbf292a3d76c7adf072d6bb93f87d1af982ea76c57",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/enum_match-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/enum_match.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 1034,
+      "bytes": 5432,
+      "binary_sha256": "f395c424b6191f237e849da858eb203190dea282c4d31368251cf4d119ea834e"
+    },
+    {
+      "name": "http_hello",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "asm_sha256": "39a96fa1cd8c9112f281182584be5ba2bea4635d869aecd613a79f9c00268edb",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/http_hello-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 12863,
+      "bytes": 60896,
+      "binary_sha256": "9848451b092214bb01ff2d3fb721633ab7ddec764026e62218c22bce15e491a5"
+    },
+    {
+      "name": "deflate_decode",
+      "target": "arm64-linux",
+      "profile": "minimal",
+      "source_sha256": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+      "asm_sha256": "34dfe0768474f121692530544fa0528353c2855de56d11d2741f6dab9d971a59",
+      "steps": [
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-emit",
+            "asm",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-minimal.asm",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/private/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-profile",
+            "minimal",
+            "-o",
+            "/private/tmp/fern-14019-final-perf-profile/deflate_decode-arm64-linux-minimal",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/bench/deflate_decode.fern",
+            "/Users/jakechampion/codex/lang-pr-14019-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stderr": ""
+        }
+      ],
+      "emit": 12261,
+      "bytes": 54472,
+      "binary_sha256": "cd68711c3a1292df5a47f440a51a23b2dc6e1e8fefe29f612043fd4058a8dc18"
+    }
+  ]
+}

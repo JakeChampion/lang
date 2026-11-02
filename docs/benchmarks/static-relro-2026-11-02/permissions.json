@@ -1,0 +1,6088 @@
+{
+  "scope": "ELF layout and memory permissions on native ARM64 Linux and QEMU x86-64. This does not replace native x86 CI.",
+  "compiler_sha256": "b8a3e526eb1e03fd42f573c6c9b046950f484da497317b165694f5530d027ee8",
+  "variants": 7,
+  "image": "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+  "test_source_sha256": "4f8c754ac3eccef62becf749e8e8ace6798fd250c7132297d4618bde67ed0fd2",
+  "rows": [
+    {
+      "target": "arm64-linux",
+      "variant": "plain",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "c4f575014367832523ef5aa9788d403479179b72a62e1752792a63c1652b65f5",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 8452,
+              "memsz": 8452,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 8464,
+              "vaddr": 4268304,
+              "paddr": 4268304,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 12080,
+              "vaddr": 4337456,
+              "paddr": 4337456,
+              "filesz": 1392,
+              "memsz": 1091960,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 8464,
+              "vaddr": 4268304,
+              "paddr": 4268304,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 7984,
+              "vaddr": 4202288,
+              "paddr": 4202288,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "536653cd6edf1ad6d33b861c53c04a92619808ba25fdeebb52801eb769d3d06a",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 38836,
+              "memsz": 38836,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44512,
+              "vaddr": 4369888,
+              "paddr": 4369888,
+              "filesz": 11936,
+              "memsz": 1102264,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36292,
+              "vaddr": 4230596,
+              "paddr": 4230596,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "748a7b8631d664f9d47a287712d4ee3a76650addb7235c50062d52cf42ae2c45",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 38844,
+              "memsz": 38844,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44512,
+              "vaddr": 4369888,
+              "paddr": 4369888,
+              "filesz": 11936,
+              "memsz": 1102264,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36296,
+              "vaddr": 4230600,
+              "paddr": 4230600,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "57899aa907bca030d5628c6ee53914242fa2c6bcf9d91d3c973263682c66aa0b",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 1900,
+              "memsz": 1900,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1904,
+              "vaddr": 4261744,
+              "paddr": 4261744,
+              "filesz": 8,
+              "memsz": 24,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1904,
+              "vaddr": 4261744,
+              "paddr": 4261744,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1832,
+              "vaddr": 4196136,
+              "paddr": 4196136,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-plain-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "arm64-linux",
+      "variant": "pie",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "b92d677721364fcf4bcaf60a40edb3c8450489d7ded5bc95944a04f50e7990d8",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 8652,
+              "memsz": 8652,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 8656,
+              "vaddr": 74192,
+              "paddr": 74192,
+              "filesz": 5024,
+              "memsz": 1095592,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 8656,
+              "vaddr": 74192,
+              "paddr": 74192,
+              "filesz": 3632,
+              "memsz": 3632,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 8188,
+              "vaddr": 8188,
+              "paddr": 8188,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "d0ae0b8a4bfecf545b27fdbc37f34765e4570f8b85c5e86d3117c50c52e18124",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 39044,
+              "memsz": 39044,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 39056,
+              "vaddr": 104592,
+              "paddr": 104592,
+              "filesz": 17936,
+              "memsz": 1108264,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 39056,
+              "vaddr": 104592,
+              "paddr": 104592,
+              "filesz": 6000,
+              "memsz": 6000,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36500,
+              "vaddr": 36500,
+              "paddr": 36500,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "65d86e0e35b0ff94e6c8e40c19559365b9ab24b39c7f5fadae9c01fe0e67cac8",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 39052,
+              "memsz": 39052,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 39056,
+              "vaddr": 104592,
+              "paddr": 104592,
+              "filesz": 17936,
+              "memsz": 1108264,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 39056,
+              "vaddr": 104592,
+              "paddr": 104592,
+              "filesz": 6000,
+              "memsz": 6000,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36504,
+              "vaddr": 36504,
+              "paddr": 36504,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "48adfca701d462e0ade24eac7d4b540411c18e128ba95d1c6ba935650c5682fb",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 1900,
+              "memsz": 1900,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1904,
+              "vaddr": 67440,
+              "paddr": 67440,
+              "filesz": 8,
+              "memsz": 24,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1904,
+              "vaddr": 67440,
+              "paddr": 67440,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1832,
+              "vaddr": 1832,
+              "paddr": 1832,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-pie-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "arm64-linux",
+      "variant": "harden",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "2eb842dec9389e9d04c73e84af16993889f4862a2dba4855f580737b8e026925",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 9520,
+              "memsz": 9520,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 9520,
+              "vaddr": 4269360,
+              "paddr": 4269360,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 13136,
+              "vaddr": 4338512,
+              "paddr": 4338512,
+              "filesz": 1392,
+              "memsz": 1091960,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 9520,
+              "vaddr": 4269360,
+              "paddr": 4269360,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 8988,
+              "vaddr": 4203292,
+              "paddr": 4203292,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 9488,
+              "vaddr": 4203792,
+              "paddr": 4203792,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "14962481e0db5943c59491cae8512f51d6e3bddd4657100ceba6311be20a0eaa",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 44440,
+              "memsz": 44440,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 44448,
+              "vaddr": 4304288,
+              "paddr": 4304288,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 50112,
+              "vaddr": 4375488,
+              "paddr": 4375488,
+              "filesz": 11936,
+              "memsz": 1102280,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 44448,
+              "vaddr": 4304288,
+              "paddr": 4304288,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 41508,
+              "vaddr": 4235812,
+              "paddr": 4235812,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 44408,
+              "vaddr": 4238712,
+              "paddr": 4238712,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "aab71db0d083819cd7f0e96cbc28d265c2c46f8c17e123ea2a464c16a9e5f808",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 44448,
+              "memsz": 44448,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 44448,
+              "vaddr": 4304288,
+              "paddr": 4304288,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 50112,
+              "vaddr": 4375488,
+              "paddr": 4375488,
+              "filesz": 11936,
+              "memsz": 1102280,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 44448,
+              "vaddr": 4304288,
+              "paddr": 4304288,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 41512,
+              "vaddr": 4235816,
+              "paddr": 4235816,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 44416,
+              "vaddr": 4238720,
+              "paddr": 4238720,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "7f82203525fef52277554c4e7aebbef740114a7c4fb61e8d9d38497c4bd7ee6f",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 2296,
+              "memsz": 2296,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 2304,
+              "vaddr": 4262144,
+              "paddr": 4262144,
+              "filesz": 8,
+              "memsz": 40,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 2304,
+              "vaddr": 4262144,
+              "paddr": 4262144,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 2196,
+              "vaddr": 4196500,
+              "paddr": 4196500,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 2264,
+              "vaddr": 4196568,
+              "paddr": 4196568,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "arm64-linux",
+      "variant": "harden-pie",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "b1d97d25a693ac0de46f5408c35fc81d7f3593c935da02aee8b9704b4b75c55a",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 9728,
+              "memsz": 9728,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 9728,
+              "vaddr": 75264,
+              "paddr": 75264,
+              "filesz": 8048,
+              "memsz": 1098616,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 9728,
+              "vaddr": 75264,
+              "paddr": 75264,
+              "filesz": 6656,
+              "memsz": 6656,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 9192,
+              "vaddr": 9192,
+              "paddr": 9192,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 9696,
+              "vaddr": 9696,
+              "paddr": 9696,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "558a951e7acb6c2110eb6ffb226bc18d24b7ef685b1cfa684611208b92d72e23",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 44648,
+              "memsz": 44648,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44656,
+              "vaddr": 110192,
+              "paddr": 110192,
+              "filesz": 20528,
+              "memsz": 1110872,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 44656,
+              "vaddr": 110192,
+              "paddr": 110192,
+              "filesz": 8592,
+              "memsz": 8592,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 41716,
+              "vaddr": 41716,
+              "paddr": 41716,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 44616,
+              "vaddr": 44616,
+              "paddr": 44616,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "b41e855c9b6a5c35c6199284840cbf1b517e3cb9926b2baa01400dab4379a496",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 44656,
+              "memsz": 44656,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44656,
+              "vaddr": 110192,
+              "paddr": 110192,
+              "filesz": 20528,
+              "memsz": 1110872,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 44656,
+              "vaddr": 110192,
+              "paddr": 110192,
+              "filesz": 8592,
+              "memsz": 8592,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 41720,
+              "vaddr": 41720,
+              "paddr": 41720,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 44624,
+              "vaddr": 44624,
+              "paddr": 44624,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "43cb31a4bd1fe4e83f6d4fa596343b9205aee1bf325eae647a36c38a23e67bc9",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 2296,
+              "memsz": 2296,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 2304,
+              "vaddr": 67840,
+              "paddr": 67840,
+              "filesz": 8,
+              "memsz": 40,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 2304,
+              "vaddr": 67840,
+              "paddr": 67840,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 2196,
+              "vaddr": 2196,
+              "paddr": 2196,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382483,
+              "flags": 4,
+              "offset": 2264,
+              "vaddr": 2264,
+              "paddr": 2264,
+              "filesz": 32,
+              "memsz": 32,
+              "align": 8
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-harden-pie-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "arm64-linux",
+      "variant": "debug",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "f0988e452cc1340d0e7ddc2c15d4f66770056873a785a224fdbd935b3a77e4bd",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 8452,
+              "memsz": 8452,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 8464,
+              "vaddr": 4268304,
+              "paddr": 4268304,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 12080,
+              "vaddr": 4337456,
+              "paddr": 4337456,
+              "filesz": 1392,
+              "memsz": 1091960,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 8464,
+              "vaddr": 4268304,
+              "paddr": 4268304,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 7984,
+              "vaddr": 4202288,
+              "paddr": 4202288,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "8e40ecdece534cfd68fcad6518e124a44d1c4f5d75cfc48cafda2643f66b53c2",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 38836,
+              "memsz": 38836,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44512,
+              "vaddr": 4369888,
+              "paddr": 4369888,
+              "filesz": 11936,
+              "memsz": 1102264,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36292,
+              "vaddr": 4230596,
+              "paddr": 4230596,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "9d9d1f2880526487870e7394df692ebbbb8aba39f62cc1a96fc855de254776f0",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 38844,
+              "memsz": 38844,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44512,
+              "vaddr": 4369888,
+              "paddr": 4369888,
+              "filesz": 11936,
+              "memsz": 1102264,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36296,
+              "vaddr": 4230600,
+              "paddr": 4230600,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "459b5394e4d082098130c3e9d8cfb3954d563a977ead52714beceaa4ad36d29d",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 1900,
+              "memsz": 1900,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1904,
+              "vaddr": 4261744,
+              "paddr": 4261744,
+              "filesz": 8,
+              "memsz": 24,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1904,
+              "vaddr": 4261744,
+              "paddr": 4261744,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1832,
+              "vaddr": 4196136,
+              "paddr": 4196136,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-debug-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "arm64-linux",
+      "variant": "sanitize",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "ec0787139b0518316e3683afa1bf671e12bf1f051356f3354ddabd10004a4c46",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 10116,
+              "memsz": 10116,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 10128,
+              "vaddr": 4269968,
+              "paddr": 4269968,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 13744,
+              "vaddr": 4339120,
+              "paddr": 4339120,
+              "filesz": 1392,
+              "memsz": 1091960,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 10128,
+              "vaddr": 4269968,
+              "paddr": 4269968,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 9636,
+              "vaddr": 4203940,
+              "paddr": 4203940,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "c66d6f332e2deb298290a6cc980da37e740cea4ac6f12cce2d4f3b11d49f151b",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 39292,
+              "memsz": 39292,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 39296,
+              "vaddr": 4299136,
+              "paddr": 4299136,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44960,
+              "vaddr": 4370336,
+              "paddr": 4370336,
+              "filesz": 11936,
+              "memsz": 1102312,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 39296,
+              "vaddr": 4299136,
+              "paddr": 4299136,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36740,
+              "vaddr": 4231044,
+              "paddr": 4231044,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "cc6d1b7993f405e9a19f5844f1dcedf9a2e2d70d902a4b13529141926d017205",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 39300,
+              "memsz": 39300,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 39312,
+              "vaddr": 4299152,
+              "paddr": 4299152,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44976,
+              "vaddr": 4370352,
+              "paddr": 4370352,
+              "filesz": 11936,
+              "memsz": 1102312,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 39312,
+              "vaddr": 4299152,
+              "paddr": 4299152,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36744,
+              "vaddr": 4231048,
+              "paddr": 4231048,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "42d1a72fb876618422154a9c1816b2aa94fc9f9a12de6a07b78e615483faf217",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 2716,
+              "memsz": 2716,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 2720,
+              "vaddr": 4262560,
+              "paddr": 4262560,
+              "filesz": 8,
+              "memsz": 72,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 2720,
+              "vaddr": 4262560,
+              "paddr": 4262560,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 2652,
+              "vaddr": 4196956,
+              "paddr": 4196956,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "leakcheck: allocs=3 frees=3 live_bytes=0\n",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-sanitize-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "arm64-linux",
+      "variant": "backtrace",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "c4f575014367832523ef5aa9788d403479179b72a62e1752792a63c1652b65f5",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 8452,
+              "memsz": 8452,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 8464,
+              "vaddr": 4268304,
+              "paddr": 4268304,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 12080,
+              "vaddr": 4337456,
+              "paddr": 4337456,
+              "filesz": 1392,
+              "memsz": 1091960,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 8464,
+              "vaddr": 4268304,
+              "paddr": 4268304,
+              "filesz": 3616,
+              "memsz": 3616,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 7984,
+              "vaddr": 4202288,
+              "paddr": 4202288,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "536653cd6edf1ad6d33b861c53c04a92619808ba25fdeebb52801eb769d3d06a",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 38836,
+              "memsz": 38836,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44512,
+              "vaddr": 4369888,
+              "paddr": 4369888,
+              "filesz": 11936,
+              "memsz": 1102264,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36292,
+              "vaddr": 4230596,
+              "paddr": 4230596,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "748a7b8631d664f9d47a287712d4ee3a76650addb7235c50062d52cf42ae2c45",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 38844,
+              "memsz": 38844,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 44512,
+              "vaddr": 4369888,
+              "paddr": 4369888,
+              "filesz": 11936,
+              "memsz": 1102264,
+              "align": 65536
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 38848,
+              "vaddr": 4298688,
+              "paddr": 4298688,
+              "filesz": 5664,
+              "memsz": 5664,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 36296,
+              "vaddr": 4230600,
+              "paddr": 4230600,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "arm64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "57899aa907bca030d5628c6ee53914242fa2c6bcf9d91d3c973263682c66aa0b",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 1900,
+              "memsz": 1900,
+              "align": 65536
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1904,
+              "vaddr": 4261744,
+              "paddr": 4261744,
+              "filesz": 8,
+              "memsz": 24,
+              "align": 65536
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1904,
+              "vaddr": 4261744,
+              "paddr": 4261744,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1832,
+              "vaddr": 4196136,
+              "paddr": 4196136,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "/tmp/fern-14019-final-image-controls-7/arm64-linux-backtrace-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "x86-64-linux",
+      "variant": "plain",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "74b25a3850d18e892345948b7aaef274734d0f4add9aa622633177c95344b6f9",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 7020,
+              "memsz": 7020,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 7024,
+              "vaddr": 4205424,
+              "paddr": 4205424,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 9536,
+              "vaddr": 4212032,
+              "paddr": 4212032,
+              "filesz": 912,
+              "memsz": 1090536,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 7024,
+              "vaddr": 4205424,
+              "paddr": 4205424,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 6464,
+              "vaddr": 4200768,
+              "paddr": 4200768,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "789a59ec3cd9e5a43539bca53575321b0e610111a6ba9429c5bac6118b9f1f1a",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 35900,
+              "memsz": 35900,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 40400,
+              "vaddr": 4242896,
+              "paddr": 4242896,
+              "filesz": 11456,
+              "memsz": 1101320,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 31884,
+              "vaddr": 4226188,
+              "paddr": 4226188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "fd5a231957b67f40cd98dbfc8c347333e93ce1bf6cdb450888b31add9019bc1c",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 35900,
+              "memsz": 35900,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 40400,
+              "vaddr": 4242896,
+              "paddr": 4242896,
+              "filesz": 11456,
+              "memsz": 1101320,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 31884,
+              "vaddr": 4226188,
+              "paddr": 4226188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "a87bd78c8bbe52a500df30602f94adf2cabe877c3e84fc72773b0b0bbbe02637",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 1684,
+              "memsz": 1684,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1696,
+              "vaddr": 4200096,
+              "paddr": 4200096,
+              "filesz": 0,
+              "memsz": 16,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1696,
+              "vaddr": 4200096,
+              "paddr": 4200096,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1612,
+              "vaddr": 4195916,
+              "paddr": 4195916,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-plain-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "x86-64-linux",
+      "variant": "pie",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "f8c8f1d7e5d91040e505a8f8d04365365463fcb1b817e72182aeac81e6f6b895",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 7276,
+              "memsz": 7276,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 7280,
+              "vaddr": 11376,
+              "paddr": 11376,
+              "filesz": 7600,
+              "memsz": 1097224,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 7280,
+              "vaddr": 11376,
+              "paddr": 11376,
+              "filesz": 5008,
+              "memsz": 5008,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 6720,
+              "vaddr": 6720,
+              "paddr": 6720,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "cf8106b25c271073bdf54e3f7bc95ae9ec73c57bcffcb35ecf4a243bf7948e65",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 36140,
+              "memsz": 36140,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 36144,
+              "vaddr": 40240,
+              "paddr": 40240,
+              "filesz": 18656,
+              "memsz": 1108520,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 36144,
+              "vaddr": 40240,
+              "paddr": 40240,
+              "filesz": 4816,
+              "memsz": 4816,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 32124,
+              "vaddr": 32124,
+              "paddr": 32124,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "9e9797d3e1ab0d96ac3536bc3767d39d5510f245ecc87378135a90c3e64a7f4d",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 36140,
+              "memsz": 36140,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 36144,
+              "vaddr": 40240,
+              "paddr": 40240,
+              "filesz": 18656,
+              "memsz": 1108520,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 36144,
+              "vaddr": 40240,
+              "paddr": 40240,
+              "filesz": 4816,
+              "memsz": 4816,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 32124,
+              "vaddr": 32124,
+              "paddr": 32124,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "5c0201e6442f243ccc87caa86b27e64d07d8846dc6b0587c17a88e8157038b7f",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 1748,
+              "memsz": 1748,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1760,
+              "vaddr": 5856,
+              "paddr": 5856,
+              "filesz": 32,
+              "memsz": 48,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1760,
+              "vaddr": 5856,
+              "paddr": 5856,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1676,
+              "vaddr": 1676,
+              "paddr": 1676,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-pie-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "x86-64-linux",
+      "variant": "harden",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "3dfef0b141a45c8553d18fafa7f86cfb8940aabdb09f59422cdf61d0a24c0fc6",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 7620,
+              "memsz": 7620,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 7632,
+              "vaddr": 4206032,
+              "paddr": 4206032,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 10144,
+              "vaddr": 4212640,
+              "paddr": 4212640,
+              "filesz": 912,
+              "memsz": 1090560,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 7632,
+              "vaddr": 4206032,
+              "paddr": 4206032,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 7068,
+              "vaddr": 4201372,
+              "paddr": 4201372,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "0e62da4805b958dddd0f32f2b7e61fbb030eaf4464d18f0bb2db64ab0b7792ef",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 36964,
+              "memsz": 36964,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 36976,
+              "vaddr": 4235376,
+              "paddr": 4235376,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 41472,
+              "vaddr": 4243968,
+              "paddr": 4243968,
+              "filesz": 11456,
+              "memsz": 1101344,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 36976,
+              "vaddr": 4235376,
+              "paddr": 4235376,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 32936,
+              "vaddr": 4227240,
+              "paddr": 4227240,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "91ea23f8d2104663cec43bfec62412beb3053f2e7dfb2b4c6f0549f41db1c137",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 36964,
+              "memsz": 36964,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 36976,
+              "vaddr": 4235376,
+              "paddr": 4235376,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 41472,
+              "vaddr": 4243968,
+              "paddr": 4243968,
+              "filesz": 11456,
+              "memsz": 1101344,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 36976,
+              "vaddr": 4235376,
+              "paddr": 4235376,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 32936,
+              "vaddr": 4227240,
+              "paddr": 4227240,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "acd5fc7cceb210feea4f27d4f550eda2d2a9e4f5e3cdfcbd8ce81593136d5f7d",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 1996,
+              "memsz": 1996,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 2000,
+              "vaddr": 4200400,
+              "paddr": 4200400,
+              "filesz": 0,
+              "memsz": 32,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 2000,
+              "vaddr": 4200400,
+              "paddr": 4200400,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1924,
+              "vaddr": 4196228,
+              "paddr": 4196228,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "x86-64-linux",
+      "variant": "harden-pie",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "a67e99a5d2ee8730b0088d9347cf9220f6f18ff936c7ccecd3e4a62a858c30dd",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 7860,
+              "memsz": 7860,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 7872,
+              "vaddr": 11968,
+              "paddr": 11968,
+              "filesz": 7008,
+              "memsz": 1096656,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 7872,
+              "vaddr": 11968,
+              "paddr": 11968,
+              "filesz": 4416,
+              "memsz": 4416,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 7304,
+              "vaddr": 7304,
+              "paddr": 7304,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "c1c7c47cb5978eb93e8bb07cc9b25b57855125e02574b47d9ad7a2d98792d884",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 37212,
+              "memsz": 37212,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 37216,
+              "vaddr": 41312,
+              "paddr": 41312,
+              "filesz": 21680,
+              "memsz": 1111568,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 37216,
+              "vaddr": 41312,
+              "paddr": 41312,
+              "filesz": 7840,
+              "memsz": 7840,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 33188,
+              "vaddr": 33188,
+              "paddr": 33188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "68fcb9a5281d39f6703f5baf6b05cce356df6eb6818cba701270023335d7eafe",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 37212,
+              "memsz": 37212,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 37216,
+              "vaddr": 41312,
+              "paddr": 41312,
+              "filesz": 21680,
+              "memsz": 1111568,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 37216,
+              "vaddr": 41312,
+              "paddr": 41312,
+              "filesz": 7840,
+              "memsz": 7840,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 33188,
+              "vaddr": 33188,
+              "paddr": 33188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-harden",
+            "-pie",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "0b6b68c1094b19cbab6d5362871829fea7cce3d610e4bcf2a37206a633e6a78f",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 2060,
+              "memsz": 2060,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 2064,
+              "vaddr": 6160,
+              "paddr": 6160,
+              "filesz": 32,
+              "memsz": 64,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 2064,
+              "vaddr": 6160,
+              "paddr": 6160,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1988,
+              "vaddr": 1988,
+              "paddr": 1988,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-harden-pie-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "x86-64-linux",
+      "variant": "debug",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "ce868d3bb1647aca13ea483ce9d106db820fa385e0fe41c3fab9e30751b67aba",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 7020,
+              "memsz": 7020,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 7024,
+              "vaddr": 4205424,
+              "paddr": 4205424,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 9536,
+              "vaddr": 4212032,
+              "paddr": 4212032,
+              "filesz": 912,
+              "memsz": 1090536,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 7024,
+              "vaddr": 4205424,
+              "paddr": 4205424,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 6464,
+              "vaddr": 4200768,
+              "paddr": 4200768,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "20b3b657601e713ee2c2397b4225c84a9d6890bd3c79a2b93556d5abed9463a5",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 35900,
+              "memsz": 35900,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 40400,
+              "vaddr": 4242896,
+              "paddr": 4242896,
+              "filesz": 11456,
+              "memsz": 1101320,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 31884,
+              "vaddr": 4226188,
+              "paddr": 4226188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "89499e09ba21d1bc757a5416279e547bff271d6a15f13f5d736b70b4010f9a21",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 35900,
+              "memsz": 35900,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 40400,
+              "vaddr": 4242896,
+              "paddr": 4242896,
+              "filesz": 11456,
+              "memsz": 1101320,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 31884,
+              "vaddr": 4226188,
+              "paddr": 4226188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-g",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "1db8f3bf5b76881743cb24927157f4845b0425c519f4b0db3f65fa88737c2bfd",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 1684,
+              "memsz": 1684,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1696,
+              "vaddr": 4200096,
+              "paddr": 4200096,
+              "filesz": 0,
+              "memsz": 16,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1696,
+              "vaddr": 4200096,
+              "paddr": 4200096,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1612,
+              "vaddr": 4195916,
+              "paddr": 4195916,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-debug-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "x86-64-linux",
+      "variant": "sanitize",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "a3b46fa4843f1818eb4d0fbfb9e0e43750a8ed31dc31981fcac90be255a3bb1c",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 8300,
+              "memsz": 8300,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 8304,
+              "vaddr": 4206704,
+              "paddr": 4206704,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 10816,
+              "vaddr": 4213312,
+              "paddr": 4213312,
+              "filesz": 912,
+              "memsz": 1090616,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 8304,
+              "vaddr": 4206704,
+              "paddr": 4206704,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 7768,
+              "vaddr": 4202072,
+              "paddr": 4202072,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "ac3bfde3c1956a09fcb4e7b757bcbcd62a4879aeb6a04f111fda16a99e946c6d",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 34924,
+              "memsz": 34924,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 34928,
+              "vaddr": 4233328,
+              "paddr": 4233328,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 39424,
+              "vaddr": 4241920,
+              "paddr": 4241920,
+              "filesz": 11456,
+              "memsz": 1101400,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 34928,
+              "vaddr": 4233328,
+              "paddr": 4233328,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 32084,
+              "vaddr": 4226388,
+              "paddr": 4226388,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "a4745674b977d290c682a0c31feb71669785e40654f4002f8bc4b96e22d8a651",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 34924,
+              "memsz": 34924,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 34928,
+              "vaddr": 4233328,
+              "paddr": 4233328,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 39424,
+              "vaddr": 4241920,
+              "paddr": 4241920,
+              "filesz": 11456,
+              "memsz": 1101400,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 34928,
+              "vaddr": 4233328,
+              "paddr": 4233328,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 32084,
+              "vaddr": 4226388,
+              "paddr": 4226388,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "694b57687bca5cff2d0ae9afb891ac03df348fcea9c443efa6e49abcf04aed6e",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 2732,
+              "memsz": 2732,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 2736,
+              "vaddr": 4201136,
+              "paddr": 4201136,
+              "filesz": 0,
+              "memsz": 72,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 2736,
+              "vaddr": 4201136,
+              "paddr": 4201136,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 2640,
+              "vaddr": 4196944,
+              "paddr": 4196944,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "leakcheck: allocs=3 frees=3 live_bytes=0\n",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "leakcheck: allocs=0 frees=0 live_bytes=0\n",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-sanitize-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "data"
+        }
+      ]
+    },
+    {
+      "target": "x86-64-linux",
+      "variant": "backtrace",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-main-write",
+            "/tmp/fern-14019-final-image-controls-7/main.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "74b25a3850d18e892345948b7aaef274734d0f4add9aa622633177c95344b6f9",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 7020,
+              "memsz": 7020,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 7024,
+              "vaddr": 4205424,
+              "paddr": 4205424,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 9536,
+              "vaddr": 4212032,
+              "paddr": 4212032,
+              "filesz": 912,
+              "memsz": 1090536,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 7024,
+              "vaddr": 4205424,
+              "paddr": 4205424,
+              "filesz": 2512,
+              "memsz": 2512,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 6464,
+              "vaddr": 4200768,
+              "paddr": 4200768,
+              "filesz": 100,
+              "memsz": 100,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-code-write",
+            "/tmp/fern-14019-final-image-controls-7/code.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "789a59ec3cd9e5a43539bca53575321b0e610111a6ba9429c5bac6118b9f1f1a",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 35900,
+              "memsz": 35900,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 40400,
+              "vaddr": 4242896,
+              "paddr": 4242896,
+              "filesz": 11456,
+              "memsz": 1101320,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 31884,
+              "vaddr": 4226188,
+              "paddr": 4226188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-relro-write",
+            "/tmp/fern-14019-final-image-controls-7/relro.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "fd5a231957b67f40cd98dbfc8c347333e93ce1bf6cdb450888b31add9019bc1c",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 35900,
+              "memsz": 35900,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 40400,
+              "vaddr": 4242896,
+              "paddr": 4242896,
+              "filesz": 11456,
+              "memsz": 1101320,
+              "align": 4096
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 35904,
+              "vaddr": 4234304,
+              "paddr": 4234304,
+              "filesz": 4496,
+              "memsz": 4496,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 31884,
+              "vaddr": 4226188,
+              "paddr": 4226188,
+              "filesz": 324,
+              "memsz": 324,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        },
+        {
+          "command": [
+            "/tmp/fern-14019-final-stage1",
+            "-target",
+            "x86-64-linux",
+            "-backtrace",
+            "-o",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-empty-write",
+            "/tmp/fern-14019-final-image-controls-7/empty.fern"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "binary_sha256": "a87bd78c8bbe52a500df30602f94adf2cabe877c3e84fc72773b0b0bbbe02637",
+          "headers": [
+            {
+              "type": 1,
+              "flags": 5,
+              "offset": 0,
+              "vaddr": 4194304,
+              "paddr": 4194304,
+              "filesz": 1684,
+              "memsz": 1684,
+              "align": 4096
+            },
+            {
+              "type": 1,
+              "flags": 6,
+              "offset": 1696,
+              "vaddr": 4200096,
+              "paddr": 4200096,
+              "filesz": 0,
+              "memsz": 16,
+              "align": 4096
+            },
+            {
+              "type": 0,
+              "flags": 0,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 0
+            },
+            {
+              "type": 1685382482,
+              "flags": 4,
+              "offset": 1696,
+              "vaddr": 4200096,
+              "paddr": 4200096,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 1
+            },
+            {
+              "type": 1685382480,
+              "flags": 4,
+              "offset": 1612,
+              "vaddr": 4195916,
+              "paddr": 4195916,
+              "filesz": 20,
+              "memsz": 20,
+              "align": 4
+            },
+            {
+              "type": 1685382481,
+              "flags": 6,
+              "offset": 0,
+              "vaddr": 0,
+              "paddr": 0,
+              "filesz": 0,
+              "memsz": 0,
+              "align": 16
+            }
+          ]
+        }
+      ],
+      "runs": [
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-main-write"
+          ],
+          "exit_code": 0,
+          "stdout": "ok 42\n",
+          "stderr": "",
+          "name": "main"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-code-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "code"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-relro-write"
+          ],
+          "exit_code": 139,
+          "stdout": "writing\n",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "relro"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-empty-write"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "",
+          "name": "empty"
+        },
+        {
+          "command": [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--security-opt",
+            "seccomp=unconfined",
+            "-v",
+            "/tmp/fern-14019-final-image-controls-7:/tmp/fern-14019-final-image-controls-7",
+            "fern-devbox@sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+            "bash",
+            "-c",
+            "ulimit -c 0; exec timeout --signal=KILL 30s \"$@\"",
+            "probe",
+            "qemu-x86_64",
+            "/tmp/fern-14019-final-image-controls-7/x86-64-linux-backtrace-data-jump"
+          ],
+          "exit_code": 139,
+          "stdout": "",
+          "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n",
+          "name": "data"
+        }
+      ]
+    }
+  ]
+}

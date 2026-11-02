@@ -98,59 +98,51 @@ function main(): i32 {
     if (b2[96] != 138 || b2[97] != 0) { return 27; }
 
     // ---- W^X two-segment layout ----
-    // arm64 W^X: 4-byte text + 8-byte data. headers = align16(64 + 5*56) = 352:
-    // two loads, PT_GNU_RELRO, the unwind slot (PT_NULL here) and the NX stack.
-    // text_end = 356. The data bytes follow at align16(356) = 368 and map one
-    // page later at the same page offset: 0x400000 + 65536 + 368 = 0x410170.
+    // Measured packed layout: six headers, text at 400, data at 416.
+    // Empty constant and unwind regions keep their reserved header slots.
     let t3: u8[] = [0, 0, 128, 210];
     let d3: i32[] = [7, 7, 7, 7, 7, 7, 7, 7];
     let b3: u8[] = elf_static_executable_data_wx(t3, d3);
-    if (b3.len() != 368 + 8) { return 28; }
-    // e_phnum = 5 @56.
-    if (b3[56] != 5 || b3[57] != 0) { return 29; }
-    // e_entry = 0x400160 (base + 352) @24 (LE 96,1,64,0).
-    if (b3[24] != 96 || b3[25] != 1 || b3[26] != 64 || b3[27] != 0) { return 30; }
+    if (b3.len() != 424) { return 28; }
+    // e_phnum = 6 @56; e_entry = 0x400190 @24.
+    if (b3[56] != 6 || b3[57] != 0) { return 29; }
+    if (b3[24] != 144 || b3[25] != 1 || b3[26] != 64 || b3[27] != 0) { return 30; }
     // phdr0 @64: p_type = PT_LOAD (1), p_flags = 5 (R|X) @68.
     if (b3[64] != 1 || b3[68] != 5) { return 31; }
-    // phdr0 p_offset = 0 @72; p_filesz = 356 (headers + text) @96 (LE 100,1).
-    if (b3[72] != 0 || b3[96] != 100 || b3[97] != 1) { return 32; }
+    // phdr0 p_offset = 0 @72; p_filesz = 404 @96.
+    if (b3[72] != 0 || b3[96] != 148 || b3[97] != 1) { return 32; }
     // phdr1 @120: p_type = PT_LOAD (1), p_flags = 6 (R|W) @124.
     if (b3[120] != 1 || b3[124] != 6) { return 33; }
-    // phdr1 p_offset = 368 @128 (LE 112,1,0,0).
-    if (b3[128] != 112 || b3[129] != 1 || b3[130] != 0 || b3[131] != 0) { return 34; }
-    // phdr1 p_vaddr = 0x410170 @136 (LE 112,1,65,0).
-    if (b3[136] != 112 || b3[137] != 1 || b3[138] != 65 || b3[139] != 0) { return 35; }
+    // phdr1 p_offset = 416 @128; p_vaddr = 0x4101a0 @136.
+    if (b3[128] != 160 || b3[129] != 1 || b3[130] != 0 || b3[131] != 0) { return 34; }
+    if (b3[136] != 160 || b3[137] != 1 || b3[138] != 65 || b3[139] != 0) { return 35; }
     // phdr1 p_filesz = 8 @152.
     if (b3[152] != 8 || b3[153] != 0) { return 36; }
-    // phdr2 @176 is PT_GNU_RELRO (0x6474e552, LE 82,229,116,100), p_flags = 4,
-    // over the data segment's start with no bytes in it: p_offset = 368 @184,
-    // p_filesz = 0 @208, p_memsz = 0 @216, p_align = 1 @224.
-    if (b3[176] != 82 || b3[177] != 229 || b3[178] != 116 || b3[179] != 100 || b3[180] != 4) { return 60; }
-    if (b3[184] != 112 || b3[185] != 1 || b3[208] != 0 || b3[216] != 0 || b3[224] != 1) { return 62; }
-    // phdr3 @232 is PT_NULL: no unwind data in this image.
-    if (b3[232] != 0 || b3[233] != 0 || b3[234] != 0 || b3[235] != 0) { return 53; }
-    // phdr4 @288 is PT_GNU_STACK (0x6474e551, LE 81,229,116,100), p_flags = 6.
-    if (b3[288] != 81 || b3[289] != 229 || b3[290] != 116 || b3[291] != 100 || b3[292] != 6) { return 63; }
-    // .text @352..355, the 16-byte round-up zero, data blob @368.
-    if (b3[352] != 0 || b3[353] != 0 || b3[354] != 128 || b3[355] != 210) { return 37; }
-    if (b3[356] != 0 || b3[367] != 0) { return 38; }
-    if (b3[368] != 7 || b3[375] != 7) { return 39; }
+    // phdr2 @176 is PT_NULL: no separate constant load in this image.
+    if (b3[176] != 0 || b3[177] != 0 || b3[178] != 0 || b3[179] != 0 || b3[288] != 0 || b3[289] != 0 || b3[290] != 0 || b3[291] != 0) { return 53; }
+    if (b3[232] != 82 || b3[233] != 229 || b3[234] != 116 || b3[235] != 100 || b3[236] != 4) { return 60; }
+    if (b3[240] != 160 || b3[241] != 1 || b3[264] != 0 || b3[272] != 0 || b3[280] != 1) { return 62; }
+    if (b3[344] != 81 || b3[345] != 229 || b3[346] != 116 || b3[347] != 100 || b3[348] != 6) { return 63; }
+    // Text at 400, zero alignment padding, then eight data bytes at 416.
+    if (b3[400] != 0 || b3[401] != 0 || b3[402] != 128 || b3[403] != 210) { return 37; }
+    if (b3[404] != 0 || b3[410] != 0 || b3[415] != 0) { return 38; }
+    if (b3[416] != 7 || b3[423] != 7) { return 39; }
     // The same image carrying unwind data: .eh_frame_hdr (12 bytes) lands
     // 4-aligned right after .text, .eh_frame (16 bytes) 8-aligned after it,
-    // and phdr3 becomes PT_GNU_EH_FRAME over the header.
+    // and phdr4 names PT_GNU_EH_FRAME over the header.
     let h3: i32[] = [1, 27, 3, 59, 0, 0, 0, 0, 0, 0, 0, 0];
     let e3: i32[] = [12, 0, 0, 0, 0, 0, 0, 0, 1, 122, 82, 0, 1, 120, 30, 1];
     let b8: u8[] = elf_image_wx_unwind(t3, h3, e3, d3, elf_em_aarch64(), 0, 0, false, 0);
-    // p_type @232 = 0x6474e550 (LE 80,229,116,100), p_flags @236 = 4.
-    if (b8[232] != 80 || b8[233] != 229 || b8[234] != 116 || b8[235] != 100) { return 54; }
-    if (b8[236] != 4) { return 55; }
-    // p_offset @240 = 356 (352 + 4 text). p_filesz @264 = 12.
-    if (b8[240] != 100 || b8[241] != 1 || b8[264] != 12 || b8[265] != 0) { return 56; }
-    // Header bytes at 356, .eh_frame at align8(368) = 368, data at align16(384) = 384.
-    if (b8[356] != 1 || b8[357] != 27 || b8[368] != 12 || b8[376] != 1 || b8[377] != 122) { return 57; }
-    // phdr0 p_filesz @96 = 384, past .eh_frame; the RELRO header follows the data offset @184.
-    if (b8[96] != 128 || b8[97] != 1 || b8[184] != 128 || b8[185] != 1) { return 58; }
-    if (b8[384] != 7 || b8.len() != 384 + 8) { return 59; }
+    // p_type @288 = 0x6474e550, p_flags @292 = 4.
+    if (b8[288] != 80 || b8[289] != 229 || b8[290] != 116 || b8[291] != 100) { return 54; }
+    if (b8[292] != 4) { return 55; }
+    // p_offset @296 = 404; p_filesz @320 = 12.
+    if (b8[296] != 148 || b8[297] != 1 || b8[320] != 12 || b8[321] != 0) { return 56; }
+    // Header bytes at 404, frame bytes at 416, data at 432.
+    if (b8[404] != 1 || b8[405] != 27 || b8[416] != 12 || b8[424] != 1 || b8[425] != 122) { return 57; }
+    // phdr0 p_filesz @96 = 432, past the frame bytes.
+    if (b8[96] != 176 || b8[97] != 1 || b8[240] != b8[128] || b8[241] != b8[129]) { return 58; }
+    if (b8[432] != 7 || b8.len() != 440) { return 59; }
     // x86-64 W^X with a 16-byte .bss past the data: p_memsz = p_filesz + bss.
     let b4: u8[] = elf_static_executable_bss_x86_wx_at(t3, d3, 16, 0);
     // e_machine = EM_X86_64 (62) @18.
@@ -181,29 +173,25 @@ function main(): i32 {
 
     // PIE (ET_DYN, base 0): elf_image_pie shares the W^X two-segment layout
     // but with e_type = ET_DYN (3) and a load base of 0. 4-byte text + 8-byte
-    // data, no bss. Headers = 288 (two loads, RELRO, NX stack), text_end = 292,
-    // data_off = align16(292) = 304, data vaddr = 65536 + 304.
+    // data, no bss. Measured text offset 352 and data offset 368.
     let b7: u8[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0, 0);
-    if (b7.len() != 304 + 8) { return 46; }
+    if (b7.len() != 376) { return 46; }
     // e_type = ET_DYN (3) @16.
     if (b7[16] != 3 || b7[17] != 0) { return 47; }
-    // e_entry = 288 (base 0, past ehdr + 4 phdrs) @24 (LE 32,1,0,0).
-    if (b7[24] != 32 || b7[25] != 1 || b7[26] != 0 || b7[27] != 0) { return 48; }
+    // e_entry = 352 @24.
+    if (b7[24] != 96 || b7[25] != 1 || b7[26] != 0 || b7[27] != 0) { return 48; }
     // phdr0 R+X p_vaddr = 0 @80 (base 0).
     if (b7[80] != 0 || b7[81] != 0 || b7[82] != 0 || b7[83] != 0) { return 49; }
-    // phdr1 R+W @120: p_flags = 6 @124, p_vaddr = 65840 @136 (LE 48,1,1,0).
+    // phdr1 R+W @120: p_flags = 6 @124, p_vaddr = 65904 @136.
     if (b7[120] != 1 || b7[124] != 6) { return 50; }
-    if (b7[136] != 48 || b7[137] != 1 || b7[138] != 1 || b7[139] != 0) { return 51; }
-    // e_phnum = 4 @56; phdr2 @176 is PT_GNU_RELRO, phdr3 @232 is PT_GNU_STACK.
-    if (b7[56] != 4 || b7[176] != 82 || b7[180] != 4 || b7[232] != 81 || b7[236] != 6) { return 61; }
-    // data blob at file offset 304.
-    if (b7[304] != 7 || b7[311] != 7) { return 52; }
-    // A read-only region of 8 bytes: PT_GNU_RELRO starts where the data segment
-    // starts (p_offset @184 = 304, p_vaddr @192 = 65840) and spans the region
-    // (p_filesz @208 = p_memsz @216 = 8) with p_align = 1 @224.
+    if (b7[136] != 112 || b7[137] != 1 || b7[138] != 1 || b7[139] != 0) { return 51; }
+    if (b7[56] != 5 || b7[176] != 0 || b7[232] != 82 || b7[236] != 4 || b7[288] != 81 || b7[292] != 6) { return 61; }
+    // Data blob at file offset 368.
+    if (b7[368] != 7 || b7[375] != 7) { return 52; }
+    // The region matches the writable segment's file offset and address.
     let b9: u8[] = elf_image_pie(t3, d3, elf_em_aarch64(), 0, 0, 8);
-    if (b9[184] != 48 || b9[185] != 1 || b9[192] != 48 || b9[193] != 1 || b9[194] != 1 || b9[195] != 0) { return 64; }
-    if (b9[208] != 8 || b9[209] != 0 || b9[216] != 8 || b9[217] != 0 || b9[224] != 1) { return 65; }
+    if (b9[240] != b7[128] || b9[241] != b7[129] || b9[248] != b7[136] || b9[249] != b7[137] || b9[250] != b7[138] || b9[251] != b7[139]) { return 64; }
+    if (b9[264] != 8 || b9[265] != 0 || b9[272] != 8 || b9[273] != 0 || b9[280] != 1) { return 65; }
     return 0;
 }
 `

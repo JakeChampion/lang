@@ -1,0 +1,247 @@
+[
+  {
+    "file": "fixed-point.json",
+    "source": "/tmp/fern-14019-final-v2-fixed-point/qualification.json",
+    "sha256": "9ec085a858241b6c53f46fba60b7cc23e9ccc9934fb3a88ffda6bb0659074794",
+    "bytes": 178989,
+    "source_sha256": "9ec085a858241b6c53f46fba60b7cc23e9ccc9934fb3a88ffda6bb0659074794"
+  },
+  {
+    "file": "retained.json",
+    "source": "/tmp/fern-14019-final-retained-9/qualification.json",
+    "sha256": "06fe0fd5b1c06f89dd196830162d71a80fbd2cbd49facfa96b4c8e62218fc8b8",
+    "bytes": 13127,
+    "source_sha256": "06fe0fd5b1c06f89dd196830162d71a80fbd2cbd49facfa96b4c8e62218fc8b8"
+  },
+  {
+    "file": "permissions.json",
+    "source": "/tmp/fern-14019-final-image-controls-7/qualification.json",
+    "sha256": "f389cbf482eea06bd22ee6c292bd1bb1a693361f344189e3469233d38a2520ce",
+    "bytes": 175151,
+    "source_sha256": "f389cbf482eea06bd22ee6c292bd1bb1a693361f344189e3469233d38a2520ce"
+  },
+  {
+    "file": "pages.json",
+    "source": "/tmp/fern-14019-final-direct-pages-v2/qualification.json",
+    "sha256": "157efc8a1eb204dbc239229644bde7fe40aa6e1e53369e95ff4c0381d5046a6f",
+    "bytes": 15817,
+    "source_sha256": "157efc8a1eb204dbc239229644bde7fe40aa6e1e53369e95ff4c0381d5046a6f"
+  },
+  {
+    "file": "controls.log",
+    "source": "/tmp/fern-14019-final-controls.log",
+    "sha256": "9f17953a261236a2dda808a34f4c62e52ee7ebd0c012b6a4b93d98853734c54a",
+    "bytes": 5486,
+    "source_sha256": "9f17953a261236a2dda808a34f4c62e52ee7ebd0c012b6a4b93d98853734c54a"
+  },
+  {
+    "file": "source.log",
+    "source": "/tmp/fern-14019-final-source.log",
+    "sha256": "d6be586fd95ef3969cc2b64baf773c1688a23adf1d54fa59465c8bbd9b40d9bf",
+    "bytes": 656,
+    "source_sha256": "d6be586fd95ef3969cc2b64baf773c1688a23adf1d54fa59465c8bbd9b40d9bf"
+  },
+  {
+    "file": "lint.log",
+    "source": "/tmp/fern-14019-final-lint.log",
+    "sha256": "f8dc2691613c506798057b895dff643ef441fb72279d52643b8c4fa6c578aab1",
+    "bytes": 3917,
+    "source_sha256": "f8dc2691613c506798057b895dff643ef441fb72279d52643b8c4fa6c578aab1"
+  },
+  {
+    "file": "complexity.log",
+    "source": "/tmp/fern-14019-final-complexity.log",
+    "sha256": "787ee8821bdfa9d44bed2eb8f941a11207ddfcdda4a793dc3cf24ae4fe97f1f5",
+    "bytes": 108,
+    "source_sha256": "787ee8821bdfa9d44bed2eb8f941a11207ddfcdda4a793dc3cf24ae4fe97f1f5"
+  },
+  {
+    "file": "compiler-size.log.gz",
+    "source": "/tmp/fern-14019-compiler-size.log",
+    "sha256": "99d3c77bf9ffd638647c3866a8b35565a68b1a2690c9ffa6fa8b478d5345b7a1",
+    "bytes": 316,
+    "source_sha256": "d686876fa076729502c648bf7bceeec6dab013a95ac8f303766b5a53fc94e3c0"
+  },
+  {
+    "file": "native-image.log",
+    "source": "/tmp/fern-14019-final-native-image-library.log",
+    "sha256": "747d210f653b74874629f8ceb27cd17874f8a10857d39ea7b343256edde30622",
+    "bytes": 38332,
+    "source_sha256": "747d210f653b74874629f8ceb27cd17874f8a10857d39ea7b343256edde30622"
+  },
+  {
+    "file": "native-image.jsonl",
+    "source": "/tmp/fern-14019-final-image-suite.jsonl",
+    "sha256": "c9a5c4c2ce0f0179ef2092a1dfbe2b9b13397a5674aec83ef1415680b3905589",
+    "bytes": 88377,
+    "source_sha256": "c9a5c4c2ce0f0179ef2092a1dfbe2b9b13397a5674aec83ef1415680b3905589"
+  },
+  {
+    "file": "symbols.log",
+    "source": "/tmp/fern-14019-final-symbol-controls.log",
+    "sha256": "c7d04e2d73d35a9dbbf8982fbfe6aa87fd5ed135b85e0a6d68d660134460f5f3",
+    "bytes": 72,
+    "source_sha256": "c7d04e2d73d35a9dbbf8982fbfe6aa87fd5ed135b85e0a6d68d660134460f5f3"
+  },
+  {
+    "file": "symbol-expectations.json",
+    "source": "/tmp/fern-14019-final-symbol-expectations.json",
+    "sha256": "ae9615b25aec25d877d8c09f1960a77d373a313b80acb154946585c08d5d0c2c",
+    "bytes": 44,
+    "source_sha256": "ae9615b25aec25d877d8c09f1960a77d373a313b80acb154946585c08d5d0c2c"
+  },
+  {
+    "file": "android.log",
+    "source": "/tmp/fern-14019-final-android-main.log",
+    "sha256": "a222cb27d0ca5702e91e1afd0f94ceee97ecef374ffec55012368e15ad18f414",
+    "bytes": 6,
+    "source_sha256": "a222cb27d0ca5702e91e1afd0f94ceee97ecef374ffec55012368e15ad18f414"
+  },
+  {
+    "file": "performance.json",
+    "source": "/tmp/fern-14019-final-perf-static-arm/qualification.json",
+    "sha256": "58b6f16904add8d837d54cf044247e235a8abded7bd4d2f4c28ffbbec42a24ff",
+    "bytes": 244249,
+    "source_sha256": "58b6f16904add8d837d54cf044247e235a8abded7bd4d2f4c28ffbbec42a24ff"
+  },
+  {
+    "file": "performance-comparison.json",
+    "source": "/tmp/fern-14019-final-perf-static-arm/comparison.json",
+    "sha256": "ea1eef06a78c2dbf4a0d05af5bcce6912ce0f0482afd48c7d4cc38f95b88d762",
+    "bytes": 1790,
+    "source_sha256": "ea1eef06a78c2dbf4a0d05af5bcce6912ce0f0482afd48c7d4cc38f95b88d762"
+  },
+  {
+    "file": "profile.json",
+    "source": "/tmp/fern-14019-final-perf-profile/qualification.json",
+    "sha256": "df31b2897eb4111d1e8d5efafffc802b094e049c0d6aec627aefd9611a2bc11b",
+    "bytes": 125392,
+    "source_sha256": "df31b2897eb4111d1e8d5efafffc802b094e049c0d6aec627aefd9611a2bc11b"
+  },
+  {
+    "file": "profile-comparison.json",
+    "source": "/tmp/fern-14019-final-perf-profile/accepted-static-comparison.json",
+    "sha256": "0918bd3734dda68bad7ac2693e6047609b902c72d094b3f6f788bce5f595dadb",
+    "bytes": 1615,
+    "source_sha256": "0918bd3734dda68bad7ac2693e6047609b902c72d094b3f6f788bce5f595dadb"
+  },
+  {
+    "file": "profile-gate.log",
+    "source": "/tmp/fern-14019-final-perf-profile/accepted-static-gate.log",
+    "sha256": "5c12cd0112995bdf2cd9a32d612dc966948fda922d31a6c3a692dbb773624a1c",
+    "bytes": 10695,
+    "source_sha256": "5c12cd0112995bdf2cd9a32d612dc966948fda922d31a6c3a692dbb773624a1c"
+  },
+  {
+    "file": "profile-limits.txt",
+    "source": "/tmp/fern-14019-final-perf-profile/accepted-static-limits.txt",
+    "sha256": "4fdf8feaa0ef2a012f44d0eda02c52447ea2f2fcdae919eaafafc53414c990b7",
+    "bytes": 7359,
+    "source_sha256": "4fdf8feaa0ef2a012f44d0eda02c52447ea2f2fcdae919eaafafc53414c990b7"
+  },
+  {
+    "file": "profile-measurements.txt",
+    "source": "/tmp/fern-14019-final-perf-profile/static-report.txt",
+    "sha256": "69d397bd9fd1153133dd1b37e6901eb2507714b50cdbbbc672204f1c2cdb5a2d",
+    "bytes": 7359,
+    "source_sha256": "69d397bd9fd1153133dd1b37e6901eb2507714b50cdbbbc672204f1c2cdb5a2d"
+  },
+  {
+    "file": "deflate-darwin.log",
+    "source": "/tmp/fern-14019-final-deflate-darwin.log",
+    "sha256": "a470cacc931c44d452c12a491b22efcd86fa75a410b0c6da8633349cee8bdd1a",
+    "bytes": 721,
+    "source_sha256": "a470cacc931c44d452c12a491b22efcd86fa75a410b0c6da8633349cee8bdd1a"
+  },
+  {
+    "file": "deflate-arm.log",
+    "source": "/tmp/fern-14019-final-deflate-arm.log",
+    "sha256": "002e62f125ad6d38078f297d0ef68b0263d36acece821cd119f8c4fa65228291",
+    "bytes": 721,
+    "source_sha256": "002e62f125ad6d38078f297d0ef68b0263d36acece821cd119f8c4fa65228291"
+  },
+  {
+    "file": "deflate-x86.log",
+    "source": "/tmp/fern-14019-final-deflate-x86.log",
+    "sha256": "a470cacc931c44d452c12a491b22efcd86fa75a410b0c6da8633349cee8bdd1a",
+    "bytes": 721,
+    "source_sha256": "a470cacc931c44d452c12a491b22efcd86fa75a410b0c6da8633349cee8bdd1a"
+  },
+  {
+    "file": "deflate-wasm.log",
+    "source": "/tmp/fern-14019-final-deflate-wasm.log",
+    "sha256": "0d6ea2b626371c9451a56c27f8da78be815013b562ebd3c405052191661c30bb",
+    "bytes": 721,
+    "source_sha256": "0d6ea2b626371c9451a56c27f8da78be815013b562ebd3c405052191661c30bb"
+  },
+  {
+    "file": "perf-arm-gate.log",
+    "source": "/tmp/fern-14019-final-perf-static-arm/arm-gate.log",
+    "sha256": "9bcee499acc1ee2d43f7c7138131c9af538fcdd81d424c7d07655a4f1f22c316",
+    "bytes": 4341,
+    "source_sha256": "9bcee499acc1ee2d43f7c7138131c9af538fcdd81d424c7d07655a4f1f22c316"
+  },
+  {
+    "file": "perf-arm-limits.txt",
+    "source": "/tmp/fern-14019-final-perf-static-arm/arm-limits.txt",
+    "sha256": "686134a0a673bb73e803f0f3c4a73c14ebee68e23dd002f957ea9e8e8b2c633c",
+    "bytes": 2615,
+    "source_sha256": "686134a0a673bb73e803f0f3c4a73c14ebee68e23dd002f957ea9e8e8b2c633c"
+  },
+  {
+    "file": "perf-arm.tsv",
+    "source": "/tmp/fern-14019-final-perf-static-arm/arm.tsv",
+    "sha256": "c04c52a63e21e9d1e07f6b8286536b64c3ec76c560ed0c703c1461d5067f9caf",
+    "bytes": 2559,
+    "source_sha256": "c04c52a63e21e9d1e07f6b8286536b64c3ec76c560ed0c703c1461d5067f9caf"
+  },
+  {
+    "file": "perf-selfhost-gate.log",
+    "source": "/tmp/fern-14019-final-perf-static-arm/selfhost-gate.log",
+    "sha256": "f1267ad015f2412ed00592bc48a880d49cf790781ff5ad40696bd859c7d1b21b",
+    "bytes": 15032,
+    "source_sha256": "f1267ad015f2412ed00592bc48a880d49cf790781ff5ad40696bd859c7d1b21b"
+  },
+  {
+    "file": "perf-selfhost-limits.txt",
+    "source": "/tmp/fern-14019-final-perf-static-arm/selfhost-limits.txt",
+    "sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c",
+    "bytes": 5328,
+    "source_sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c"
+  },
+  {
+    "file": "perf-selfhost.tsv",
+    "source": "/tmp/fern-14019-final-perf-static-arm/selfhost.tsv",
+    "sha256": "67fa4fa9eb413eb354bfa16692c49a2a98da6a7aff1dd93767417082dfa2cce6",
+    "bytes": 5266,
+    "source_sha256": "67fa4fa9eb413eb354bfa16692c49a2a98da6a7aff1dd93767417082dfa2cce6"
+  },
+  {
+    "file": "perf-x86-static-gate.log",
+    "source": "/tmp/fern-14019-final-perf-static-arm/x86-static-gate.log",
+    "sha256": "b7539ab9c030b53d66afcb208d6b04cba4c2c66c71c5b86b3e2713d18780493a",
+    "bytes": 2193,
+    "source_sha256": "b7539ab9c030b53d66afcb208d6b04cba4c2c66c71c5b86b3e2713d18780493a"
+  },
+  {
+    "file": "perf-x86-static-limits.txt",
+    "source": "/tmp/fern-14019-final-perf-static-arm/x86-static-limits.txt",
+    "sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35",
+    "bytes": 1251,
+    "source_sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35"
+  },
+  {
+    "file": "perf-x86-static.tsv",
+    "source": "/tmp/fern-14019-final-perf-static-arm/x86-static.tsv",
+    "sha256": "2623f1a6fd20de72506aa8580ed06efbb89db4e7ad01bd31813a7c83e417e49e",
+    "bytes": 1197,
+    "source_sha256": "2623f1a6fd20de72506aa8580ed06efbb89db4e7ad01bd31813a7c83e417e49e"
+  },
+  {
+    "file": "perf-report.txt",
+    "source": "/tmp/fern-14019-final-perf-static-arm/report.txt",
+    "sha256": "007470e028217cad078d84e746906f33d2677a2adbb0878e76367c599d8cd48d",
+    "bytes": 7825,
+    "source_sha256": "007470e028217cad078d84e746906f33d2677a2adbb0878e76367c599d8cd48d"
+  }
+]

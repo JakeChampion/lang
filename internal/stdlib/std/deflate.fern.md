@@ -214,6 +214,10 @@ function __room(avail: i32, max_out: i32): u8[] {
     if (want < 0i64) {
       want = 0i64;
     }
+    // The shared empty array already has length zero.
+    if (want == 0i64) {
+      return [];
+    }
     let out: u8[] = __alloc_u8(want as i32);
     __arr_set_len(out, 0);
     return out;

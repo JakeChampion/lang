@@ -8,12 +8,12 @@ The position-independent image is described in [PIE.md](PIE.md), and the `.note.
 
 | Image | Segments | Stack |
 |---|---|---|
-| x86-64-linux and arm64-linux executable | code and unwind tables read-execute, the constant boxes, aggregates and address tables read-only after startup under `PT_GNU_RELRO`, globals and BSS read-write | `PT_GNU_STACK` without execute |
-| the same with `-pie` | the same at base 0, loaded at a random base | the same |
+| x86-64-linux and arm64-linux executable | code and unwind tables read-execute, constant boxes and address tables in a separate read-only load segment, globals and BSS read-write | `PT_GNU_STACK` without execute |
+| the same with `-pie` | code read-execute, data read-write at load time, constants read-only after relocation under `PT_GNU_RELRO` | the same |
 | arm64-linux with `-harden` | the same plus `PT_GNU_PROPERTY` asking for BTI | the same |
 | x86-64-linux and arm64-linux `-shared` | code read-execute, data read-write, the dynamic tables read-write under `PT_GNU_RELRO`, `PT_DYNAMIC` | `PT_GNU_STACK` without execute |
 
-Every variant of an executable (`-pie`, `-harden`, `-g`, `-sanitize`, `-backtrace` and their combinations) keeps the first row's shape.
+These final permissions also hold with `-harden`, `-g`, `-sanitize`, `-backtrace` and their combinations. PIE uses the relocation row.
 `-harden` stores its stubs in the code segment, so the allowed indirect targets are read-only ([CFI.md](CFI.md)).
 
 ## Change in this record
@@ -36,22 +36,35 @@ A Fern executable has no dynamic loader, no global offset table and no procedure
 The words a loader-like step patches are the absolute addresses the `-pie` startup loop relocates: the string boxes, the constant aggregates and the address tables.
 The emitters place them in `.data.rel.ro`. The assembler puts that section at the front of the data segment.
 
-The data bytes follow the code in the file. The segment maps one page later at the same offset within the page, as the loader requires. The driver inserts zero bytes after the region so that it ends on a 4096-byte boundary. That gap takes the place of the page padding the segment start paid before, so an x86-64 image costs no file bytes on average. An arm64 image paid 64 KiB of padding before, for its 64 KiB load alignment, and loses it.
+The data bytes follow the code in the file at a 16-byte boundary. Each load segment has the same offset within a page in the file and in memory.
 
-`PT_GNU_RELRO` names the region. After the relocation loop, `_start` reads `AT_PAGESZ` from the auxiliary vector and rounds the start and the end of the region down to that page. It then calls `mprotect` with read permission on the pages between them.
+For a fixed-address image, the kernel maps the constant region read-only from the start. No protection syscall or auxiliary-vector scan is needed.
+A virtual gap separates the read-only and writable load segments. Its size is the target's load alignment, so their virtual pages cannot overlap on any supported page size.
+The file omits that gap. A write through a writable file-page alias creates a private copy and cannot change the separate read-only mapping.
+
+PIE and Android images still relocate their constants at startup. `PT_GNU_RELRO` names the region.
+The driver inserts padding after it to end on a 4096-byte boundary. After relocation, `_start` reads `AT_PAGESZ` and rounds both ends down to that page size.
+It then calls `mprotect` with read permission on the pages between them.
+
 A failed call ends the process with `fern: protection of the constant data failed`, status 134.
 The region is empty in a `-shared` object, on Darwin and on the freestanding targets. There the emitters keep the constants in `.data`.
 
 The constant boxes carry a negative reference count. The count paths skip a negative count, so the runtime never writes a constant box, and the read-only mapping holds.
 
 The array literals of bytes and scalars stay in `.data`. `reactor_wait` and `tcp_recv_into` write into their array argument in place, and a literal argument is the shared constant itself ([#14013](https://github.com/JakeChampion/lang/issues/14013)).
-The shared empty array that `__alloc_u8(0)` answers stays in `.data` for the same reason: `__arr_set_len` stores the length into it.
-Those blocks hold no address. They join the region when the builtins own their argument first.
+Those literals hold no address. They join the region when the builtins own their argument first.
+
+The shared empty allocation stays writable until those mutators own their arguments too.
+The decoder also returns an empty array before it resets a zero-capacity buffer's length, so zero or negative output limits need no length write.
 
 ## Verification
 
 `TestSelfHostImagePermissions` builds seven variants on both targets, reads the program headers, runs the program, and runs three probes.
-It requires a `PT_GNU_RELRO` that starts with the data segment and ends on a 4096-byte boundary inside its file bytes.
+It requires `PT_GNU_RELRO` to match the read-only load segment in a fixed-address image.
+It also checks that the read-only and writable virtual pages cannot overlap at the target's load alignment.
+For PIE, the region must lead the writable data segment and end on a 4096-byte boundary inside its file bytes.
+Empty-image controls check every variant too.
+
 The first probe finds its own executable mapping in `/proc/self/maps` and stores a byte into it.
 The second finds the read-only mapping of its data segment and stores a byte into it.
 The third patches the image's entry point to the data segment and writes an exit system call over its first bytes.
@@ -67,8 +80,8 @@ go test ./internal/testing/e2e -run 'TestSharedObjectLayout|TestSharedLibX86|Tes
 
 ## Remaining limits
 
-- The array literals of bytes and scalars and the shared empty array stay writable until [#14013](https://github.com/JakeChampion/lang/issues/14013) lands.
-- The protected length is rounded down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages protects fewer pages than a kernel with 4 KiB pages.
+- The array literals of bytes and scalars and the shared empty allocation stay writable until [#14013](https://github.com/JakeChampion/lang/issues/14013) lands.
+- PIE and Android protection rounds the length down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages can protect fewer pages than a kernel with 4 KiB pages. Fixed-address images have a separate read-only load segment on each supported page size.
 - The arm64-android image has no `PT_GNU_PROPERTY`, and the Darwin image is Mach-O with its own rules.
 - QEMU user mode enforces page permissions through the host, so the arm64 probes are emulated evidence.
 - A `-shared` object has no `PT_GNU_PROPERTY`, so a BTI host does not guard its pages.

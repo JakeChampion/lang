@@ -6078,9 +6078,18 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
 
 // A Linux executable keeps its constant boxes, aggregates and address tables
 // in `.data.rel.ro`. The assembler places that section at the front of the
-// data segment, and the startup maps it read-only after the relocation.
+// data segment. Fixed-address images map it read-only at load time. PIE
+// images protect it after relocation.
 pub function relro_wanted(s: EmitState): boolean {
   return !s.shared && (s.build_target == "x86-64-linux" || s.build_target == "arm64-linux" || s.build_target == "arm64-android");
+}
+
+// Without constants or runtime needs, the region has no bytes to protect.
+// Keep the conservative runtime test: a runtime body can add constant boxes.
+// Only images that relocate at startup need the protection syscall.
+pub function relro_protection_needed(s: EmitState): boolean {
+  return relro_wanted(s) && (s.pie || s.build_target == "arm64-android")
+    && (s.needed.len() > 0 || s.string_lits.len() > 0 || s.const_aggs.len() > 0 || s.sym_addrs.len() > 0);
 }
 
 pub function const_data_section(s: EmitState): string {

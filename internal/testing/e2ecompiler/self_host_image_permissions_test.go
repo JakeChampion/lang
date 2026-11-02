@@ -23,7 +23,8 @@ function twice(x: i32): i32 { return x * 2; }
 
 function main(): i32 {
   let f: (i32) => i32 = twice;
-  print("ok " + f(21).to_string());
+  let zeroes: i32[] = [0, 0, 0, 0];
+  print("ok " + f(21 + zeroes[args().len() - 1]).to_string());
   return 0;
 }
 `
@@ -103,6 +104,7 @@ func TestSelfHostImagePermissions(t *testing.T) {
 				return path
 			}
 			mainSrc := write("main.fern", imagePermSrc)
+			emptySrc := write("empty.fern", "function main(): i32 { return 0; }\n")
 			probeSrc := write("probe.fern", codeWriteSrc)
 			relroSrc := write("relro.fern", relroWriteSrc)
 			compile := func(src, out string, flags ...string) {
@@ -140,6 +142,21 @@ func TestSelfHostImagePermissions(t *testing.T) {
 			}
 			for _, v := range variants {
 				t.Run(v.name, func(t *testing.T) {
+					empty := filepath.Join(dir, v.name+"-empty")
+					compile(emptySrc, empty, v.flags...)
+					if out, c := run(empty); out != "" || c.ProcessState.ExitCode() != 0 {
+						t.Fatalf("empty image printed %q with %v", out, c.ProcessState)
+					}
+					emptyImage, err := elf.Open(empty)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, p := range emptyImage.Progs {
+						if p.Type == elf.PT_GNU_RELRO && p.Memsz != 0 {
+							t.Errorf("empty image has %d bytes of constant data", p.Memsz)
+						}
+					}
+					emptyImage.Close()
 					bin := filepath.Join(dir, v.name)
 					compile(mainSrc, bin, v.flags...)
 					if out, c := run(bin); !strings.HasPrefix(out, "ok 42\n") || c.ProcessState.ExitCode() != 0 {
@@ -153,7 +170,7 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					if f.Machine != tc.machine {
 						t.Fatalf("machine %v, want %v", f.Machine, tc.machine)
 					}
-					var code, data, relro *elf.Prog
+					var code, data, relro, readonly *elf.Prog
 					stack := false
 					for _, p := range f.Progs {
 						switch p.Type {
@@ -177,6 +194,9 @@ func TestSelfHostImagePermissions(t *testing.T) {
 							if p.Flags&elf.PF_W != 0 && data == nil {
 								data = p
 							}
+							if p.Flags == elf.PF_R {
+								readonly = p
+							}
 						}
 					}
 					if !stack {
@@ -191,7 +211,15 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					if relro == nil {
 						t.Fatal("no PT_GNU_RELRO")
 					}
-					if relro.Vaddr != data.Vaddr || relro.Memsz == 0 || (relro.Vaddr+relro.Memsz)%4096 != 0 || relro.Vaddr+relro.Memsz > data.Vaddr+data.Filesz {
+					if f.Type == elf.ET_EXEC {
+						if readonly == nil || relro.Memsz == 0 || relro.Vaddr != readonly.Vaddr || relro.Memsz != readonly.Filesz {
+							t.Fatalf("constant data has no matching read-only load segment: %v", readonly)
+						}
+						pageEnd := (readonly.Vaddr + readonly.Memsz + data.Align - 1) & ^(data.Align - 1)
+						if pageEnd > data.Vaddr & ^(data.Align-1) {
+							t.Error("read-only and writable virtual pages overlap")
+						}
+					} else if relro.Vaddr != data.Vaddr || relro.Memsz == 0 || (relro.Vaddr+relro.Memsz)%4096 != 0 || relro.Vaddr+relro.Memsz > data.Vaddr+data.Filesz {
 						t.Errorf("PT_GNU_RELRO [%#x,%#x) does not lead the data segment [%#x,%#x) and end on a page", relro.Vaddr, relro.Vaddr+relro.Memsz, data.Vaddr, data.Vaddr+data.Filesz)
 					}
 

@@ -458,8 +458,8 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// The shared empty array stays writable until #14013 lands: `__arr_set_len`
-// stores the length into the box that `__alloc_u8(0)` answers.
+// Length setters can write the shared empty array. Keep it writable with
+// other scalar arrays until #14013 requires their callers to own them.
 function empty_array_block(s: asmcore.EmitState, label: string): string {
   return "    .section .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .section .text\n";
 }
@@ -11246,9 +11246,10 @@ function emit_self_relocation(own s: asmcore.EmitState): asmcore.EmitState {
 // rounded down and the end is rounded down to the page size the kernel
 // reports in AT_PAGESZ, so no writable word is ever covered.
 function emit_relro_protect(own s: asmcore.EmitState): asmcore.EmitState {
-  if (!asmcore.relro_wanted(s)) {
+  if (!asmcore.relro_protection_needed(s)) {
     return s;
   }
+  s = s.need("relro_protect");
   s = s.write("    .section .data\n    .align 8\n__fern_relro_begin:\n    .quad 0\n__fern_relro_len:\n    .quad 0\n    .text\n");
   if (!s.pie) {
     s = s.write("    xorl %eax, %eax\n");
@@ -11325,7 +11326,7 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
-  if (asmcore.relro_wanted(s)) {
+  if (s.has_need("relro_protect")) {
     s = emit_startup_failure(s, ".Lfern_relro_failed", aborts.relro());
   }
   s = emit_startup_failure(s, ".Lfern_stack_guard_failed", aborts.stack_guard());
