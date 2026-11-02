@@ -107,6 +107,12 @@ var table = map[string]struct {
 		isa: "x86-64", environment: "linux",
 		description: "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
 	},
+	"x86-64-android": {
+		isa: "x86-64", environment: "android",
+		description: "x86-64 Android (emulators and x86-64 devices) — Linux ELF as a " +
+			"static position-independent executable, like arm64-android. Same " +
+			"syscalls / System V ABI as x86-64-linux.",
+	},
 	"x86-64-freestanding": {
 		isa: "x86-64", environment: "freestanding", noBackend: true,
 		description: "x86-64 with no host — no kernel, no syscalls, no process. " +

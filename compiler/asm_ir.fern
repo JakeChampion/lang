@@ -2613,6 +2613,10 @@ function emit_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
+  if (asmcore.is_android(s.build_target)) {
+    s = s.write("    pushq %r15\n    pushq %rdx\n    pushq %rsi\n    pushq $7\n    call __fn___fern_logcat\n");
+    s = s.write("    addq $24, %rsp\n    popq %r15\n");
+  }
   if (s.backtrace) {
     s = s.write("    jmp __fern_bt_exit\n");
     return emit_bt_exit(s);
@@ -10949,7 +10953,7 @@ function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
   if (at >= 0) {
     return emit_runtime_module(s.runtime_units.mods[at], s.runtime_units.lowered[at], s);
   }
-  let m: parser.Module = rtmodule.load("x86-64-linux", roots);
+  let m: parser.Module = rtmodule.load(asmcore.runtime_files(s, "x86-64-linux"), roots);
   let lowered: physicalbody.Lowered = s.rt_lower(m);
   return emit_runtime_module(m, lowered, asmcore.with_runtime_unit(s, roots, m, lowered));
 }
@@ -11535,6 +11539,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = asmcore.emit_build_manifest(s);
   }
   s = emit_report(s);
+  if (asmcore.is_android(s.build_target)) {
+    s = emit_runtime("__fern_logcat", s);
+  }
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
     s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);

@@ -34,6 +34,7 @@ any flag that has no value: `-cover=false`, `-g=true`.
 | `arm64-android` | Static position-independent ELF for Android. |
 | `arm64-darwin` | Static, signed Mach-O for Apple Silicon (latest macOS). |
 | `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI (Haswell, 2013, with AVX2). |
+| `x86-64-android` | Static position-independent ELF for Android emulators and x86-64 devices. |
 | `wasm32-wasi` | WASI Preview 2 component; run with `wasmtime run`. |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component; run with `wasmtime serve`. |
 | `arm64-freestanding`, `x86-64-freestanding` | Check only (`fern -check -target …`): no OS underneath, so no host capabilities at all. No backend emits for them yet. |
@@ -290,8 +291,12 @@ pub function add(a: i32, b: i32): i32 {
 fern -target x86-64-linux -shared -export add -o libadd.so add.fern
 ```
 
-`-shared` needs `-o` and an ELF target: `x86-64-linux`, `arm64-linux` or
-`arm64-android`.
+`-shared` needs `-o` and an ELF target: `x86-64-linux`, `arm64-linux`,
+`x86-64-android` or `arm64-android`.
+
+On the Android targets, each line that a program writes to stderr also goes
+to logcat at priority W. An abort report goes to logcat at priority F. The
+tag is `fern`, so `adb logcat -s fern` shows them.
 
 ## Language server — `fern -lsp`
 

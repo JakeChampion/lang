@@ -56,7 +56,7 @@ apt-get install aapt apksigner zipalign dalvik-exchange android-sdk-platform-23
 ```
 
 The APK has `libfern.so` for `arm64-v8a` (`-target arm64-android`) and for
-`x86_64` emulators (`-target x86-64-linux`). It needs Android 6.0 (API 23)
+`x86_64` emulators (`-target x86-64-android`). It needs Android 6.0 (API 23)
 or later. `build.sh` signs it with a new debug key unless `KEYSTORE` is set.
 
 ## Tests

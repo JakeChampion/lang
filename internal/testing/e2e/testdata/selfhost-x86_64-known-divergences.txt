@@ -1,6 +1,7 @@
 # Conformance cases whose self-host x86-64 run disagrees with their sidecars
 # (expected.stdout, expected.exit), which the oracle, internal/oracle/interp,
-# satisfies. Read by TestFernFixturesSelfHostX86_64 and TestFernFixturesSelfHostX86_64Quarantine.
+# satisfies. Read by TestFernFixturesSelfHostX86_64, TestFernFixturesSelfHostX86_64Quarantine
+# and TestFernFixturesSelfHostX86_64Android.
 #
 # Format: <case-name> <#issue> <reason>
 #

@@ -1339,8 +1339,13 @@ function is_flag(a: string): boolean {
   return a[0] == b'-';
 }
 
+// The targets with a native backend and a binary image.
+function is_native_target(t: string): boolean {
+  return t == "x86-64-linux" || t == "arm64-linux" || t == "x86-64-android" || t == "arm64-android" || t == "arm64-darwin";
+}
+
 function sanitize_warning(target: string): string {
-  if (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin") {
+  if (is_native_target(target)) {
     return "";
   }
   let census: string = "the leak census only, not the rc over-release or use-after-free detectors";
@@ -1448,7 +1453,7 @@ function heap_limit_bytes(text: string, target: string): i64 {
   if (text.len() == 0) {
     return 0i64;
   }
-  if (!(target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin")) {
+  if (!is_native_target(target)) {
     eprint("fern: -heap-limit is only supported for the native targets (got \"" + target + "\")");
     return 0i64 - 1i64;
   }
@@ -1881,7 +1886,7 @@ function target_writes_binary(t: string, emit: string): boolean {
   if (emit.len() > 0) {
     return false;
   }
-  return t == "x86-64-linux" || t == "arm64-linux" || t == "arm64-android" || t == "arm64-darwin";
+  return is_native_target(t);
 }
 
 function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
@@ -5243,8 +5248,8 @@ function shared_refusal(shared: boolean, target: string, out_path: string, emit:
   if (!shared) {
     return "";
   }
-  if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
-    return "fern: -shared is only supported with -target x86-64-linux, arm64-linux or arm64-android (got \"" + target + "\")";
+  if (!is_native_target(target) || target == "arm64-darwin") {
+    return "fern: -shared is only supported with -target x86-64-linux, arm64-linux, x86-64-android or arm64-android (got \"" + target + "\")";
   }
   if (out_path.len() == 0 && emit != "asm") {
     return "fern: -shared requires -o OUTPUT.so";
@@ -5258,7 +5263,7 @@ function cli_backend_refusal(backend: string, target: string): string {
   }
   let ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
   if (backend == "ssa" && !ssa_isa) {
-    return "fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)";
+    return "fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, x86-64-android)";
   }
   if (backend == "flat" && ssa_isa) {
     return "fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64";
@@ -5600,6 +5605,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let quarantine: i64 = quarantine_bytes(quarantine_text, sanitize_flag || asmcore.sanitize_on());
   if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
     return 2;
+  }
+  // An Android executable loads at a random base, as arm64-android's does.
+  if (target == "x86-64-android" && !shared) {
+    pie = true;
   }
   let (remaps, remaps_ok) = path_remaps(remap_specs);
   if (!remaps_ok) {

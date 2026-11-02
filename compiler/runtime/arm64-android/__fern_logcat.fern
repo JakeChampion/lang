@@ -1,0 +1,58 @@
+// Sends one record to logd, the daemon behind logcat: priority `prio`, the
+// tag "fern", and the `len` bytes at `data` less one final newline. The
+// record is one datagram on /dev/socket/logdw. A failure returns its errno
+// and writes nothing, because a report must not fail for want of logd.
+function __fern_logcat(prio: i32, data: usize, len: i32): i32 {
+  let n: i32 = len;
+  if (n > 0 && __raw_load8(data, n - 1) == 10) {
+    n = n - 1;
+  }
+  let fd: i32 = __syscall3(198, 1, 526338, 0) as i32;
+  if (fd < 0) {
+    return fd;
+  }
+  let b: usize = __raw_scratch(128);
+  let path: string = "/dev/socket/logdw";
+  __raw_store8(b, 0, 1);
+  __raw_store8(b, 1, 0);
+  let i: i32 = 0;
+  while (i < path.len()) {
+    __raw_store8(b, 2 + i, __raw_load8(__raw_data(path), i));
+    i = i + 1;
+  }
+  __raw_store8(b, 2 + path.len(), 0);
+  let rc: i32 = __syscall3(203, fd as i64, b as i64, 20) as i32;
+  if (rc >= 0) {
+    __syscall3(113, 0, (b + 32) as i64, 0);
+    let sec: i64 = __raw_load_ptr(b + 32, 0) as i64;
+    let nsec: i64 = __raw_load_ptr(b + 32, 1) as i64;
+    let tid: i64 = __syscall3(178, 0, 0, 0);
+    let h: usize = b + 48;
+    __raw_store8(h, 0, 0);
+    __raw_store8(h, 1, (tid & 255) as i32);
+    __raw_store8(h, 2, (tid >> 8 & 255) as i32);
+    let k: i32 = 0;
+    while (k < 4) {
+      __raw_store8(h, 3 + k, (sec >> (8 * k) as i64 & 255) as i32);
+      __raw_store8(h, 7 + k, (nsec >> (8 * k) as i64 & 255) as i32);
+      k = k + 1;
+    }
+    __raw_store8(h, 11, prio);
+    __raw_store8(h, 12, 102);
+    __raw_store8(h, 13, 101);
+    __raw_store8(h, 14, 114);
+    __raw_store8(h, 15, 110);
+    __raw_store8(h, 16, 0);
+    __raw_store8(b, 72, 0);
+    let iov: usize = b + 80;
+    __raw_store_ptr(iov, 0, h);
+    __raw_store_ptr(iov, 1, 17 as usize);
+    __raw_store_ptr(iov, 2, data);
+    __raw_store_ptr(iov, 3, n as usize);
+    __raw_store_ptr(iov, 4, b + 72);
+    __raw_store_ptr(iov, 5, 1 as usize);
+    rc = __syscall3(66, fd as i64, iov as i64, 3) as i32;
+  }
+  __syscall3(57, fd as i64, 0, 0);
+  return rc;
+}

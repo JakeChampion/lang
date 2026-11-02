@@ -13,7 +13,7 @@ fern -target arm64-android -shared \
      -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString,Java_dev_fern_demo_Native_objectHashCode,Java_dev_fern_demo_Native_charCodeAt \
      -o libfern.so examples/android/fern_jni.fern
 
-# x86-64 emulator: -target x86-64-linux (same flags)
+# x86-64 emulator: -target x86-64-android (same flags)
 ```
 
 This emits an `ET_DYN`, W^X, position-independent `.so`. Its dynamic symbol
@@ -22,6 +22,11 @@ Android's loader checks. An APK ships it as `lib/arm64-v8a/libfern.so`.
 `internal/testing/e2e/shared_lib_test.go` and `TestAndroidJNIExampleBuilds`
 test the build and the JNI ABI. The same file loads a library on the host
 with `dlopen` and calls it.
+
+Android discards the stderr of an app. On the Android targets, each line
+that Fern writes to stderr also goes to logcat at priority W. A `std/log`
+record is such a line. An abort report goes to logcat at priority F. The tag is
+`fern`, so `adb logcat -s fern` shows them.
 
 A Fern function is a JNI native method as-is, `(JNIEnv* env, jobject thiz,
 args…)`. Give each argument and the result a Fern type of the same width:

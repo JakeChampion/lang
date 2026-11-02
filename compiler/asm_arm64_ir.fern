@@ -6627,7 +6627,7 @@ function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
   if (at >= 0) {
     return emit_runtime_module(s.runtime_units.mods[at], s.runtime_units.lowered[at], s);
   }
-  let m: parser.Module = rtmodule.load(s.runtime_target, roots);
+  let m: parser.Module = rtmodule.load(asmcore.runtime_files(s, s.runtime_target), roots);
   let lowered: physicalbody.Lowered = s.rt_lower(m);
   return emit_runtime_module(m, lowered, asmcore.with_runtime_unit(s, roots, m, lowered));
 }
@@ -8234,6 +8234,11 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
   s = s.svc(64);
+  if (asmcore.is_android(s.build_target)) {
+    s = s.write("    str x19, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n");
+    s = s.write("    mov x9, #7\n    str x9, [sp, #-16]!\n    bl __fn___fern_logcat\n");
+    s = s.write("    add sp, sp, #48\n    ldr x19, [sp], #16\n");
+  }
   if (s.backtrace) {
     s = s.write("    b __fern_bt_exit\n");
     s = s.write(".size __fern_report, .-__fern_report\n");
@@ -9982,6 +9987,9 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     s = asmcore.emit_build_manifest(s);
   }
   s = emit_rt_report(s);
+  if (asmcore.is_android(s.build_target)) {
+    s = emit_runtime("__fern_logcat", s);
+  }
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
     s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);

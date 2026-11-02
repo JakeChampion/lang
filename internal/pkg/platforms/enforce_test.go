@@ -67,7 +67,7 @@ func TestEnforceSubprocessByTarget(t *testing.T) {
 			if vs[0].Builtin != "subprocess" || vs[0].Capability != "subprocess" {
 				t.Errorf("violation = %+v, want subprocess/subprocess", vs[0])
 			}
-			want := "targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-linux]"
+			want := "targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-android x86-64-linux]"
 			if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, want) {
 				t.Errorf("message does not list the hosted natives (%q): %s", want, msg)
 			}
@@ -482,7 +482,7 @@ func TestRawMemoryFloorNativeOnly(t *testing.T) {
 			t.Errorf("%s gated on %q; wasm lowers it, so it stays ungated", b, c)
 		}
 	}
-	want := "arm64-android arm64-darwin arm64-linux x86-64-linux"
+	want := "arm64-android arm64-darwin arm64-linux x86-64-android x86-64-linux"
 	if got := strings.Join(platforms.TargetsProviding("rawmem"), " "); got != want {
 		t.Errorf("rawmem providers = %s, want %s", got, want)
 	}

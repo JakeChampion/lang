@@ -26,14 +26,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-      - name: Build the stopwatch APK
+      - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
           examples/android/stopwatch/build.sh
+          ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
       - uses: actions/upload-artifact@v7
         with:
           name: fern-stopwatch-apk
-          path: build/android-stopwatch/fern-stopwatch.apk
+          path: |
+            build/android-stopwatch/fern-stopwatch.apk
+            build/android-stopwatch/report
           if-no-files-found: error
 
   emulator:
@@ -59,7 +62,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator
+          script: python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

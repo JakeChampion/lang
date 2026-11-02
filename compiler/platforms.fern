@@ -50,7 +50,7 @@ function target_environment(name: string): string {
   if (name == "x86-64-linux" || name == "arm64-linux") {
     return "linux";
   }
-  if (name == "arm64-android") {
+  if (name == "arm64-android" || name == "x86-64-android") {
     return "android";
   }
   if (name == "arm64-darwin") {
@@ -69,7 +69,7 @@ function target_environment(name: string): string {
 }
 
 function target_isa(name: string): string {
-  if (name == "x86-64-linux" || name == "x86-64-freestanding") {
+  if (name == "x86-64-linux" || name == "x86-64-android" || name == "x86-64-freestanding") {
     return "x86-64";
   }
   if (name == "wasm32-wasi" || name == "wasm32-wasi-http") {
@@ -81,7 +81,7 @@ function target_isa(name: string): string {
 pub function targets(): string[] {
   return [
     "arm64-android", "arm64-darwin", "arm64-freestanding", "arm64-linux",
-    "wasm32-wasi", "wasm32-wasi-http", "x86-64-freestanding", "x86-64-linux",
+    "wasm32-wasi", "wasm32-wasi-http", "x86-64-android", "x86-64-freestanding", "x86-64-linux",
   ];
 }
 
@@ -100,6 +100,9 @@ pub function description(name: string): string {
   }
   if (name == "x86-64-linux") {
     return "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).";
+  }
+  if (name == "x86-64-android") {
+    return "x86-64 Android (emulators and x86-64 devices) — Linux ELF as a static position-independent executable, like arm64-android. Same syscalls / System V ABI as x86-64-linux.";
   }
   if (name == "x86-64-freestanding") {
     return "x86-64 with no host — no kernel, no syscalls, no process. Type-checkable today; no backend emits for it yet (#6510).";

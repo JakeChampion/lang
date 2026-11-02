@@ -1,0 +1,10 @@
+// A std/log record, then an abort: one report at each logcat priority. The
+// Android lane runs it on an emulator, and android_logcat_test.go on Linux.
+import "std/log";
+
+function main(): i32 {
+  log.warn("about to index past the end");
+  let xs: i32[] = [1, 2, 3];
+  let i: i32 = xs.len() + 2;
+  return xs[i];
+}
