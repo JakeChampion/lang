@@ -7250,6 +7250,7 @@ function buf_push_base64_helper(): string {
   o = o + "    (if (i32.le_s (local.get $hi) (local.get $lo)) (then (return)))\n";
   o = o + "    (local.set $n (i32.div_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 3)))\n";
   o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
+  o = o + "    (if (i32.lt_u (i32.load (local.get $t)) (i32.const 64)) (then (call $__fern_abort_arr) (unreachable)))\n";
   o = o + "    (local.set $out (i32.shl (local.get $n) (i32.const 2)))\n";
   o = o + "    (local.set $len (i32.load offset=4 (local.get $h)))\n";
   o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $out)) (i32.load offset=8 (local.get $h))) (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $out)))))\n";

@@ -2083,6 +2083,7 @@ function emit_buf_push_base64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movslq %edx, %rdx\n    movslq %ecx, %rcx\n    xorl %eax, %eax\n    testq %rdx, %rdx\n    cmovsq %rax, %rdx\n");
   s = s.write("    movq (%rsi), %rax\n    cmpq %rax, %rcx\n    cmovgq %rax, %rcx\n    subq %rdx, %rcx\n    jle .Lb64_done\n");
   s = s.write("    movl %ecx, %eax\n    movl $2863311531, %r9d\n    imulq %r9, %rax\n    shrq $33, %rax\n    testq %rax, %rax\n    jz .Lb64_done\n");
+  s = s.write("    cmpq $64, (%r8)\n    jb __fern_oob_abort\n");
   s = s.write("    leaq (%rax,%rax,2), %r10\n    shlq $2, %rax\n    movq 8(%rdi), %r11\n    leaq (%r11,%rax), %r9\n    cmpq 16(%rdi), %r9\n    ja .Lb64_grow\n");
   s = s.write(".Lb64_fits:\n    movq %r9, 8(%rdi)\n    movq (%rdi), %rdi\n    addq %r11, %rdi\n    leaq 8(%rsi,%rdx), %rsi\n");
   s = s.write("    cmpq $28, %r10\n    jb .Lb64_tail\n");

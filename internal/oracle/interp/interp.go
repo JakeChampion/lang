@@ -5387,6 +5387,9 @@ func builtinBufPushBase64(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("buf_push_base64: bounds must be numbers")
 	}
 	low, high := max(int64(lo), 0), min(int64(hi), int64(len(a.Elems())))
+	if high-low >= 3 && len(t.Elems()) < 64 {
+		return nil, indexAbort(CauseArrOOB, "63", len(t.Elems()))
+	}
 	byteAt := func(arr Array, at int64) byte {
 		n, _ := arr.Elems()[at].(Number)
 		return byte(n)

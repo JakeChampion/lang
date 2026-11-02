@@ -51,6 +51,11 @@ encodes `vpmulhuw`, `vpmullw` and `vpbroadcastd`.
 
 x86-64, instructions from callgrind, 64 MiB of random bytes.
 
+These figures predate the alphabet bounds check added during PR validation.
+The kernel now requires at least 64 alphabet bytes when it encodes a whole
+input group. A shorter alphabet gets the existing array bounds abort. With
+no whole input group, the call remains a no-op.
+
 | | before | after | GNU 9.4 |
 |---|--:|--:|--:|
 | `base64` | 1,362,116,330 | 321,886,106 | 906,123,841 |

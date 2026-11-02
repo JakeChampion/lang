@@ -6931,6 +6931,9 @@ function call_buf_push_base64(h: usize, args: Value[]): Value {
             hi = arr_len(a);
           }
           if (hi > lo) {
+            if (hi - lo >= 3 && arr_len(t) < 64) {
+              return index_abort(aborts.arr_oob(), "63", arr_len(t));
+            }
             for g in 0..(hi - lo) / 3 {
               push_base64_group(h, a, t, lo + g * 3);
             }

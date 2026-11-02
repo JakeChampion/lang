@@ -7868,6 +7868,7 @@ function emit_buf_push_base64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".globl __fern_buf_push_base64\n.type __fern_buf_push_base64, %function\n__fern_buf_push_base64:\n");
   s = s.write("    sxtw x2, w2\n    sxtw x3, w3\n    cmp x2, #0\n    csel x2, xzr, x2, lt\n    ldr x5, [x1]\n    cmp x3, x5\n    csel x3, x5, x3, gt\n    subs x3, x3, x2\n    b.le .Lb64_done\n");
   s = s.write("    mov w6, #0xaaab\n    movk w6, #0xaaaa, lsl #16\n    umull x6, w3, w6\n    lsr x6, x6, #33\n    cbz x6, .Lb64_done\n");
+  s = s.write("    ldr x5, [x4]\n    cmp x5, #64\n    b.lo __fern_oob_abort\n");
   s = s.write("    add x7, x6, x6, lsl #1\n    lsl x6, x6, #2\n    ldr x9, [x0, #8]\n    add x10, x9, x6\n    ldr x11, [x0, #16]\n    cmp x10, x11\n    b.hi .Lb64_grow\n");
   s = s.write(".Lb64_fits:\n    str x10, [x0, #8]\n    ldr x12, [x0]\n    add x12, x12, x9\n    add x13, x1, #8\n    add x13, x13, x2\n    add x14, x4, #8\n");
   s = s.write("    ld1 {v16.16b-v19.16b}, [x14]\n    cmp x7, #48\n    b.lo .Lb64_tail\n");
