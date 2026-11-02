@@ -88,9 +88,11 @@ jobs:
             const LABEL = "main-red";
             const titleFor = (lane) => `main is red: ${lane}`;
 
+            // A page of 100 jobs of a full-suite run can exceed what the API
+            // returns and fail with 502, so ask for 50 at a time.
             const jobs = await github.paginate(
               github.rest.actions.listJobsForWorkflowRun,
-              { owner, repo, run_id: run.id, per_page: 100 },
+              { owner, repo, run_id: run.id, per_page: 50 },
             );
 
             // Group the run's jobs by lane: the caller job's name, which is

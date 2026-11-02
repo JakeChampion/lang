@@ -339,7 +339,7 @@ jobs:
                 if (prs.length === 0) return { reason: "no merged pull request is associated with this commit" };
                 const display = await laneNames();
                 const jobsOf = (run_id) => github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                  owner, repo, run_id, filter: "latest", per_page: 100,
+                  owner, repo, run_id, filter: "latest", per_page: 50,
                 });
                 const reason = `the pushed tree differs from the head of #${prs.map((p) => p.number).join(", #")}`;
                 for (const pr of prs) {
@@ -393,7 +393,7 @@ jobs:
                   const todo = candidates.filter((l) => !(l in base));
                   if (todo.length === 0) break;
                   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                    owner, repo, run_id: run.id, filter: "latest", per_page: 100,
+                    owner, repo, run_id: run.id, filter: "latest", per_page: 50,
                   });
                   for (const l of todo) {
                     const mine = display[l] ? jobs.filter((j) => j.name.startsWith("Validate / " + jobPrefix(l))) : [];
