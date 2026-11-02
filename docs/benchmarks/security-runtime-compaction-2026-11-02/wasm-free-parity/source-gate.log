@@ -1,0 +1,15 @@
+WARN `--no-project` was provided, but no project was found
+python3 scripts/gen-runtime-bundle.py --check
+./bin/fern -target arm64-darwin -o build/runtime-check compiler/drivers/runtime_modules_run.fern
+./build/runtime-check
+x86-64-linux runtime modules ok
+arm64-linux runtime modules ok
+arm64-darwin runtime modules ok
+wasm32-wasi runtime modules ok
+wasm32-wasi-http runtime modules ok
+go test ./internal/testing/e2ecompiler/ -run 'TestSelfHostFeatureCensus$|TestSelfHostFixtureSourcesCheck$' -count=1
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	47.190s
+./bin/fern -check compiler/fern.fern
+./scripts/stdlib_check.sh
+./scripts/selfhost_driver_check.sh
+selfhost driver gate: 87 drivers type-check
