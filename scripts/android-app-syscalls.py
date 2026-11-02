@@ -51,7 +51,7 @@ def arches(spec):
 
 
 # return_type func[|alias...][:syscall[:socketcall]](args) arches
-LINE = re.compile(r"^\s*[^(]*?\s+([\w|]+)(?::([\w]+))?(?::\w+)?\s*\([^)]*\)\s+([\w,]+)\s*$")
+LINE = re.compile(r"^\s*[^(]*?\s+([\w|]+)(?::([\w]+))?(?::\w+)?\s*\(.*\)\s+([\w,]+)\s*$")
 
 
 def names(text, arch):

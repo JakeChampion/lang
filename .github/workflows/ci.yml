@@ -195,6 +195,7 @@ jobs:
                 "mise.lock",
                 ".github/actions/setup-fern/**",
                 "scripts/android-app-syscalls.py",
+                "scripts/test_android_app_syscalls.py",
                 "conformance/**",
                 ".github/workflows/android.yml",
                 ".github/workflows/ci-suite.yml",
