@@ -607,7 +607,7 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
     e = e + 1;
   }
   let v: i32 = lv.nvals;
-  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 56, result: v, args: args, imm: argc, str: "" });
+  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 56, result: v, args: args, imm: op.i64_imm as i32, str: "" });
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 
@@ -688,7 +688,7 @@ function lift_prod_read(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_pop_push(lv, 2, 44, op.i32_imm, "");
   }
   if (k == "const_func") {
-    return lift_pop_push(lv, 0, 45, 0, op.str);
+    return lift_pop_push(lv, 0, 45, op.i32_imm, op.str);
   }
   if (k == "const_struct") {
     return lift_pop_push(lv, 0, 57, 0, op.str);

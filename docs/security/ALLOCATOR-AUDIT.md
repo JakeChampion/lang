@@ -59,13 +59,19 @@ The `raw_free_outside_heap`, `raw_double_free` and `raw_double_free_large` rows 
 Under `-sanitize` the raw free quarantines the block instead, and a second raw free quarantines it again without a report. The leak census then shows one more free than allocations. The detectors cover reference-counted misuse only ([SANITIZER-AUDIT.md](SANITIZER-AUDIT.md)).
 
 A write through a dangling raw pointer to the header word of a freed box forges the free list link.
-The next allocation of that class takes the freed box, and the one after it returns the forged address.
+In the release build the next allocation of that class takes the freed box, and the one after it returns the forged address.
 A probe that wrote a non-address there ended by signal at that allocation.
 A forged address inside a mapping comes back without a report.
 
-A safe-linking encoding of the link, keyed by the process canary and checked for alignment and arena bounds on every pop, closes that path.
-That encoding touches every free list push and pop on both backends.
-It is a `-harden` design of its own and is not in this record.
+Under `-harden` the link inside a free block is encoded: the stored word is the next address XOR the process canary XOR the block's page number.
+The list heads in `__fern_freelist` and `__fern_large_freelist` stay plain.
+Every push encodes the link with the key of the block it lands in, and `__fern_freelist_take` decodes each link it follows.
+A decoded link must be zero, or 8-byte aligned and inside the arena. Any other value aborts with `fern: corrupt free list link`, status 134.
+
+A forged word therefore aborts at the next allocation of its class, and a link copied from another block fails too.
+The cost is one load of the canary and three logical operations per push and per link followed. The release build keeps plain links.
+`TestSelfHostFreeListLinkForgery` pins the abort for a small class and a large class on both targets.
+`TestSelfHostHardenFreeListRoundTrip` recycles twelve blocks of each class through the encoded lists.
 
 ## Size checks at each entry
 
@@ -95,7 +101,7 @@ It is a `-harden` design of its own and is not in this record.
 
 | Gap | Consequence |
 |---|---|
-| Free list link inside the freed block | A raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address; `-sanitize` quarantines freed blocks and detects the touch, the release build does not (SEC-023) |
+| Free list link inside the freed block | In the release build a raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address. `-harden` encodes the link and aborts on a bad one, and `-sanitize` quarantines freed blocks and detects the touch (SEC-023) |
 | A raw double free with another free of the same class between the two | `__free` compares the block with the head of its list, so the second free of the same block in a row aborts. A free of another block of the class between them moves the head, and the second free then links the block twice (SEC-023) |
 | No zeroing on free | A secret stays in the arena until the block is reused and zero-filled. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
@@ -122,10 +128,15 @@ Before the change, the wrapped-bump probe ended with exit status 55 on x86-64, a
 No program reaches that path through a checked entry, and every runtime entry refuses a negative count before the bump.
 The check guards against a corrupted length that reaches the bump through the runtime's own arithmetic.
 
+The free list link inside a released block was plain on every build.
+Under `-harden` it is now encoded with the process canary and the block's page. A decoded link that is not aligned or not inside the arena aborts.
+The forgery probe ended by signal before the change, and ends with the corrupt-link cause after it.
+
 ## Commands
 
 ```
 go test ./internal/testing/e2ecompiler -run 'TestSelfHostAllocReuseAboveOneGigabyte$|TestSelfHostAllocRefusesWrappedBump$|TestSelfHostAllocReuseLargeDonor$'
+go test ./internal/testing/e2ecompiler -run 'TestSelfHostRawFreeOutsideHeap$|TestSelfHostRawDoubleFree$|TestSelfHostFreeListLinkForgery$|TestSelfHostHardenFreeListRoundTrip$'
 go test ./internal/testing/e2e -run 'TestAllocSize|TestLargeButRepresentable|ArenaCheckpoint|TestArenaExhausted|RcCorpusLeakGate'
 ```
 

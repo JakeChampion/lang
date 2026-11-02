@@ -27,7 +27,7 @@ The suites that pin the detectors run on both native targets and under the sanit
 
 ## What the detectors do not see
 
-- A raw read after free. `__load_*` through a dangling raw pointer touches no count, so the quarantine never sees it. The block keeps its bytes, and the read returns them.
+- A raw read after free. `__load_*` through a dangling raw pointer touches no count, so the quarantine never sees it. The quarantine fills the payload with the poison pattern, so the read returns the pattern and not the bytes the block held ([QUARANTINE.md](QUARANTINE.md)).
 - A raw write past a block. There are no redzones, so the write lands in the next block's header or payload. The next release or increment of that block then reports an over-release or nothing at all.
 - An uninitialised raw read. `__alloc` does not zero its block, and the sanitizer has no shadow memory to tell a written byte from an unwritten one.
 - A misaligned raw access. The native targets tolerate a misaligned ordinary load and store, and no check exists for the atomic operations that require alignment.
@@ -41,5 +41,5 @@ Shadow memory costs one bit to one byte per arena byte and a check on every raw 
 ## Remaining limits
 
 - The three detectors cover reference-counted misuse only. Raw memory misuse through the raw builtins is the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md). The only detector for it is the arena-bounds check of `__free`.
-- The quarantine is unbounded, which [QUARANTINE.md](QUARANTINE.md) leaves as the owner's decision.
+- The quarantine holds a byte budget, 64 MiB unless `-quarantine SIZE` gives another. A use after free older than the budget is a silent reuse again ([QUARANTINE.md](QUARANTINE.md)).
 - There is no source-span attribution beyond the backtrace. A report names the function, not the line, unless `-g` and `addr2line` resolve it.

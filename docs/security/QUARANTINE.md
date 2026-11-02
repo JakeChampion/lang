@@ -12,6 +12,7 @@ The owner chose all three options, with these numbers:
 |---|---|---|
 | Bounded quarantine | `-sanitize` | a byte budget, 64 MiB unless `-quarantine SIZE` gives another, `0` for no bound |
 | Randomized placement | `-harden` | a free list hands out one of its first eight blocks |
+| Encoded links | `-harden` | a free block's link is keyed by the canary and the block's page, and a bad link aborts |
 | Sampled guard pages | `-harden` on Linux | every 64th large block the bump hands out gets a page after it that the process cannot touch |
 
 The release build is unchanged. Its allocator recycles a released block at once, hands out the head of a free list, and maps no guard page.
@@ -28,11 +29,16 @@ Word 2 of the block links the next block.
 The count word keeps its poison.
 The other of words 0 and 1 holds the block's size in words.
 A block with no count word, such as the bytes of a string, gets the poison in word 0 when it enters.
+
+Every word after the link, the payload, gets the poison pattern, the poison word twice.
 Three counters hold the head, the tail and the bytes in the queue.
 
 A release that takes the queue past its budget evicts the oldest block until the queue fits.
-Before the evicted block returns to its free list, the helper reads its poison word again.
+Before the evicted block returns to its free list, the helper reads its poison word and every payload word again.
 A block whose poison is gone was written after its release, and the eviction reports `fern-sanitizer: write-after-free (a quarantined block was written)` with exit 124.
+A raw read through a dangling pointer gets the poison pattern, not the bytes the block held.
+At exit the leak report runs the same check over every block still in the queue, so `-quarantine 0` reports a write after free too.
+
 A large block, 512 KiB and up, returns to the large free list through the same path.
 A raw block below three words cannot carry the link. It stays out of the queue, as every released block did before.
 
@@ -52,6 +58,10 @@ Every take from a small or large free list goes through `__fern_freelist_take`.
 It steps a xorshift generator over the seed, walks up to seven links from the list head, and unlinks the block it lands on.
 The cost is one generator step and at most eight loads per allocation that a free list serves.
 A bump allocation pays nothing.
+
+The link inside a free block is encoded with the process canary and the block's page. A write through a dangling pointer cannot steer the list.
+A decoded link must be zero, or aligned and inside the arena, or the take aborts with `fern: corrupt free list link`.
+The record is the metadata section of [ALLOCATOR-AUDIT.md](ALLOCATOR-AUDIT.md).
 
 ## Sampled guard pages
 
@@ -78,6 +88,9 @@ Its `-harden` keeps the canary, the indirect-call check, the signed return addre
 `TestSelfHostQuarantinePolicy` runs on both targets:
 
 - `write-after-free`: a raw block is released and then written. The next 40000 releases under `-quarantine 1M` evict it, and the run exits 124 with the report. The release build prints `survived`.
+- `payload-write-after-free`: the same, with the write at byte 40 of the block, in its payload. The run exits 124 with the report, and the release build prints `survived`.
+- `write-after-free-at-exit`: a raw block is released and written, and the program exits with the block still in the queue. Under `-sanitize` and under `-sanitize -quarantine 0` the run exits 124 with the report. The release build prints `survived`.
+- `payload-read-after-free`: a raw block holds 7 at byte 40 and is released, and the program reads that byte back. Under `-sanitize` it reads 206, the low byte of the poison pattern. The release build reads 7.
 - `placement`: 16 blocks of one class are released and taken again 32 times. The release build takes the last released block first on all 32 rounds. The `-harden` build did so on 4 rounds on x86-64 and 2 on arm64 in one run, and the test requires fewer than 32.
 - `guard-page`: 70 one-MiB raw blocks come from the bump. Under `-harden` a read one byte past the 64th block faults, and the same read past the 63rd and the 65th does not. The release build reads past the 64th.
 - `string-blocks`: 64 rounds of a split, a join and a grown string release every string shape under `-sanitize`, `-sanitize -quarantine 1M` and `-harden`. The census balances, 1218 allocations and 1218 frees.
@@ -89,7 +102,8 @@ Its `-harden` keeps the canary, the indirect-call check, the signed return addre
 ## Remaining limits
 
 - A use after free older than the budget is a silent reuse again. The budget is the trade.
-- The write-after-free check reads one word. A write that puts the poison value back, or that touches only the block's payload, is not seen.
+- A write that puts the poison pattern back is not seen. A block below three words carries no payload and stays out of the queue.
+- The fill and the check cost one store and one load per payload word of each released block.
 - The placement window is eight. A heap spray that fills a class with more than eight blocks still gets predictable reuse past the window.
 - The guard sample is one block in 64. A write past the end of the other 63 lands in the next block.
 - `-heap-limit` bounds the arena, so a quarantined program under a limit exits 125 when the quarantine fills the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)). The guard pages count against the arena as well.

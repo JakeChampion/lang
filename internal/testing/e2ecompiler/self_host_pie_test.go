@@ -171,13 +171,18 @@ func TestSelfHostPIE(t *testing.T) {
 				t.Fatalf("the text mapping is at %q, want a base the loader chose", base1)
 			}
 			t.Logf("%s text mapping at %s", tc.target, base1)
-			if tc.target == "x86-64-linux" && len(cli.runner) == 0 {
-				policy, _ := os.ReadFile("/proc/sys/kernel/randomize_va_space")
-				if strings.TrimSpace(string(policy)) == "0" {
-					t.Logf("randomize_va_space is 0 on this host, so the second run cannot show another base")
-				} else if base2 := run(t, tc.target, bin); base2 == base1 {
-					t.Errorf("two runs mapped the text at %s both times; the kernel did not randomize the base", base1)
-				}
+			native := len(cli.runner) == 0
+			if tc.target == "arm64-linux" {
+				native = qemu == ""
+			}
+			if !native {
+				t.Logf("%s runs under an emulator here, so the kernel's randomization is not observed", tc.target)
+			} else if policy, _ := os.ReadFile("/proc/sys/kernel/randomize_va_space"); strings.TrimSpace(string(policy)) == "0" {
+				t.Logf("randomize_va_space is 0 on this host, so the second run cannot show another base")
+			} else if base2 := run(t, tc.target, bin); base2 == base1 {
+				t.Errorf("two runs mapped the text at %s both times; the kernel did not randomize the base", base1)
+			} else {
+				t.Logf("%s: the kernel randomized the base (native): %s, then %s", tc.target, base1, base2)
 			}
 			hardened := filepath.Join(dir, "pie-harden-"+tc.target)
 			if errout, code := compile(t, hardened, "-pie", "-harden", "-target", tc.target); code != 0 {

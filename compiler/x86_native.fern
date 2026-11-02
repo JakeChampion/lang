@@ -7034,6 +7034,25 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
   return X86Asm { ...a, rodata: rodata };
 }
 
+// A `.long` lands in the data of its section. Inside .text it is a data word
+// among the instructions, such as the signature word ahead of a CFI stub.
+function x86_gas_longs(own a: X86Asm, section: i32, vals: string[]): X86Asm {
+  if (section != 0) {
+    for v in vals {
+      a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(v)) };
+    }
+    return a;
+  }
+  for v in vals {
+    let w: i32 = x86_gas_atoi(v);
+    buf_push_byte(a.code, w & 255);
+    buf_push_byte(a.code, w >> 8 & 255);
+    buf_push_byte(a.code, w >> 16 & 255);
+    buf_push_byte(a.code, w >> 24 & 255);
+  }
+  return a;
+}
+
 function x86_gas_data_width(line: string): i32 {
   if (x86_str_starts_with(line, ".quad") || x86_str_starts_with(line, ".double")) {
     return 8;
@@ -7166,12 +7185,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
           qi = qi + 1;
         }
       } else if (x86_str_starts_with(line, ".long")) {
-        let lvals: string[] = x86_gas_values(line);
-        let lv: i32 = 0;
-        while (lv < lvals.len()) {
-          a = X86Asm { ...a, rodata: x86_le32(a.rodata, x86_gas_atoi(lvals[lv])) };
-          lv = lv + 1;
-        }
+        a = x86_gas_longs(a, section, x86_gas_values(line));
       } else if (x86_str_starts_with(line, ".double")) {
         a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, f64_bits(x86_gas_parse_f64(x86_gas_trim(slice_unchecked(line, 8, line.len()))))) };
       } else if (x86_str_starts_with(line, ".ascii")) {

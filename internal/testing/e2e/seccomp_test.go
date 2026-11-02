@@ -281,6 +281,49 @@ func injectExecve(asm string) string {
 	return strings.Replace(asm, label, label+execve, 1)
 }
 
+// injectMprotect makes main re-protect its own stack page with the given
+// protection word before anything else runs.
+func injectMprotect(prot int) func(string) string {
+	return func(asm string) string {
+		label := symname.Fn("main") + ":\n"
+		call := "    movq %rsp, %rdi\n    andq $-4096, %rdi\n    movq $4096, %rsi\n    movq $" + strconv.Itoa(prot) + ", %rdx\n    movq $10, %rax\n    syscall\n"
+		if runtime.GOARCH == "arm64" {
+			call = "    mov x0, sp\n    and x0, x0, #-4096\n    mov x1, #4096\n    mov x2, #" + strconv.Itoa(prot) + "\n    mov x8, #226\n    svc #0\n"
+		}
+		return strings.Replace(asm, label, label+call, 1)
+	}
+}
+
+// The filter allows mprotect by number, because the startup guards its stack
+// with it, and still kills a request for an executable mapping (SEC-039).
+func TestSeccompDeniesExecutableMapping(t *testing.T) {
+	const src = `function main(): i32 { return 0; }`
+	const readWrite, readWriteExec = 3, 7
+
+	sandboxed := buildSandboxedPatched(t, src, true, injectMprotect(readWriteExec))
+	cmd := exec.Command(sandboxed)
+	_ = cmd.Run()
+	ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok {
+		t.Fatalf("no wait status for the sandboxed run")
+	}
+	if !ws.Signaled() || ws.Signal() != syscall.SIGSYS {
+		t.Errorf("sandboxed executable mapping: signaled=%v signal=%v exit=%d, want SIGSYS", ws.Signaled(), ws.Signal(), cmd.ProcessState.ExitCode())
+	}
+
+	allowed := exec.Command(buildSandboxedPatched(t, src, true, injectMprotect(readWrite)))
+	_ = allowed.Run()
+	if aws, ok := allowed.ProcessState.Sys().(syscall.WaitStatus); !ok || aws.Signaled() || allowed.ProcessState.ExitCode() != 0 {
+		t.Fatalf("sandboxed read-write mapping: %v, want exit 0: the number is allowed and only the protection word is checked", allowed.ProcessState)
+	}
+
+	plain := exec.Command(buildSandboxedPatched(t, src, false, injectMprotect(readWriteExec)))
+	_ = plain.Run()
+	if pws, ok := plain.ProcessState.Sys().(syscall.WaitStatus); !ok || pws.Signaled() || plain.ProcessState.ExitCode() != 0 {
+		t.Fatalf("control run: %v, want exit 0: the executable mapping is legal without the sandbox", plain.ProcessState)
+	}
+}
+
 func TestSeccompFilterDenies(t *testing.T) {
 	const src = `function main(): i32 { return 0; }`
 
