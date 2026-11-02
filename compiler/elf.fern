@@ -332,7 +332,63 @@ function elf_so_shstrtab(): i32[] {
   return tab;
 }
 
-pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string): i32[] {
+// The C functions a shared object imports: the library that the loader
+// loads for each (DT_NEEDED), its symbol, and the address of the data slot
+// that a GLOB_DAT relocation fills with the symbol's address.
+pub struct SoImports { libs: string[], syms: string[], slots: i32[] }
+
+pub function no_so_imports(): SoImports {
+  return SoImports { libs: [], syms: [], slots: [] };
+}
+
+// The libraries of `imp`, each once, in first-use order.
+function so_needed(imp: SoImports): string[] {
+  let out: string[] = [];
+  for lib in imp.libs {
+    let seen: boolean = false;
+    for o in out {
+      if (o == lib) {
+        seen = true;
+      }
+    }
+    if (!seen) {
+      out = out.append(lib);
+    }
+  }
+  return out;
+}
+
+// One undefined global function symbol for each import.
+function so_import_syms(buf: i32[], offs: i32[]): i32[] {
+  for off in offs {
+    buf = elf_le32(buf, off);
+    buf = buf.append(18);
+    buf = buf.append(0);
+    buf = elf_le16(buf, 0);
+    buf = elf_le64(buf, 0 as i64);
+    buf = elf_le64(buf, 0 as i64);
+  }
+  return buf;
+}
+
+// A GLOB_DAT relocation for each import slot; the symbols follow the
+// `first` exported ones in the dynamic symbol table.
+function so_import_relocs(buf: i32[], imp: SoImports, first: i32, machine: i32): i32[] {
+  let glob_dat: i64 = 6 as i64;
+  if (machine == elf_em_aarch64()) {
+    glob_dat = 1025 as i64;
+  }
+  let j: i32 = 0;
+  while (j < imp.slots.len()) {
+    buf = elf_le64(buf, imp.slots[j] as i64);
+    buf = elf_le64(buf, (first + j) as i64 * 4294967296 + glob_dat);
+    buf = elf_le64(buf, 0 as i64);
+    j = j + 1;
+  }
+  return buf;
+}
+
+pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string, imp: SoImports): i32[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
   let text_off: i32 = elf_text_off_so();
   let code_end: i32 = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
@@ -348,9 +404,20 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     soname_off = dynstr.len();
     dynstr = elf_str_bytes(dynstr, soname);
   }
+  let needed: string[] = so_needed(imp);
+  let needed_offs: i32[] = [];
+  for lib in needed {
+    needed_offs = needed_offs.append(dynstr.len());
+    dynstr = elf_str_bytes(dynstr, lib);
+  }
   let name_offs: i32[] = [];
   for n in names {
     name_offs = name_offs.append(dynstr.len());
+    dynstr = elf_str_bytes(dynstr, n);
+  }
+  let imp_offs: i32[] = [];
+  for n in imp.syms {
+    imp_offs = imp_offs.append(dynstr.len());
     dynstr = elf_str_bytes(dynstr, n);
   }
 
@@ -358,9 +425,10 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   let tab_file: i32 = (image_sz + page - 1) / page * page;
   let slide: i32 = (image_sz + bss + page - 1) / page * page - tab_file;
   let rela_off: i32 = tab_file;
-  let rela_sz: i32 = rel_offs.len() * 24;
+  let nrela: i32 = rel_offs.len() + imp.syms.len();
+  let rela_sz: i32 = nrela * 24;
   let sym_off: i32 = elf_align8(rela_off + rela_sz);
-  let nsym: i32 = names.len() + 1;
+  let nsym: i32 = names.len() + imp.syms.len() + 1;
   let str_off: i32 = sym_off + nsym * 24;
   let hash_off: i32 = elf_align4(str_off + dynstr.len());
   let dyn_off: i32 = elf_align8(hash_off + (3 + nsym) * 4);
@@ -370,7 +438,11 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     tags = tags.append(14 as i64);
     vals_d = vals_d.append(soname_off as i64);
   }
-  if (rel_offs.len() > 0) {
+  for off in needed_offs {
+    tags = tags.append(1 as i64);
+    vals_d = vals_d.append(off as i64);
+  }
+  if (nrela > 0) {
     tags = tags.append(7 as i64).append(8 as i64).append(9 as i64).append(1879048185 as i64);
     vals_d = vals_d.append((rela_off + slide) as i64).append(rela_sz as i64).append(24 as i64).append(rel_offs.len() as i64);
   }
@@ -427,6 +499,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     buf = elf_le64(buf, rel_adds[r]);
     r = r + 1;
   }
+  buf = so_import_relocs(buf, imp, names.len() + 1, machine);
   buf = elf_pad_to(buf, sym_off + 24);
   let k: i32 = 0;
   while (k < names.len()) {
@@ -438,6 +511,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     buf = elf_le64(buf, sizes[k] as i64);
     k = k + 1;
   }
+  buf = so_import_syms(buf, imp_offs);
   buf = elf_cat(buf, dynstr);
   buf = elf_pad_to(buf, hash_off);
   buf = elf_le32(buf, 1);

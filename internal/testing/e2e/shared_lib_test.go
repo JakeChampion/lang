@@ -1361,6 +1361,9 @@ func sharedSectionCheck(t *testing.T, f *elf.File, so []byte) {
 		t.Fatalf("dynamic symbols: %v", err)
 	}
 	for _, s := range syms {
+		if s.Section == elf.SHN_UNDEF {
+			continue
+		}
 		if int(s.Section) >= len(f.Sections) || f.Sections[s.Section].Name != ".text" {
 			t.Errorf("export %s is in section %d, not .text", s.Name, s.Section)
 		}

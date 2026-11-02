@@ -46,6 +46,10 @@ To call back into the JVM, use `std/jni`. Its typed wrappers, such as
 For a method that keeps a `const char*`, make it with `jni.cstr`, and free it
 with `jni.free_buffer`.
 
+To call a C function of an NDK library, such as `liblog.so` or
+`libandroid.so`, declare it with `@import("liblog.so", "__android_log_write")`
+on a function with no body. The library loads with the `.so`.
+
 To **invoke** a Java method, resolve a `jmethodID` with `jni.get_method_id`.
 Pack the arguments with `jni.jvalues`. Then call `jni.call_int_method_a`,
 `call_object_method_a` or another method of the fixed-arity

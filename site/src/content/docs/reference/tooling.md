@@ -294,6 +294,19 @@ fern -target x86-64-linux -shared -export add -o libadd.so add.fern
 `-shared` needs `-o` and an ELF target: `x86-64-linux`, `arm64-linux`,
 `x86-64-android` or `arm64-android`.
 
+A shared object can call a C function of a system library. Name the library
+and the symbol with `@import` on a function with no body:
+
+```fern
+@import("liblog.so", "__android_log_write")
+function log_write(prio: i32, tag: usize, msg: usize): i32;
+```
+
+The object then loads the library at load time. A C import takes at most 4
+integer or `usize` parameters. It returns an integer, a `usize`, an `f32`,
+an `f64` or nothing. An executable cannot import, because a static image has
+no dynamic loader.
+
 On the Android targets, each line that a program writes to stderr also goes
 to logcat at priority W. An abort report goes to logcat at priority F. The
 tag is `fern`, so `adb logcat -s fern` shows them.
