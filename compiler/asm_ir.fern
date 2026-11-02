@@ -96,7 +96,6 @@ function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    popq %r11\n    ret\n");
 }
 
-
 function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
   let arity: i32 = 0;
   while (arity <= 4) {

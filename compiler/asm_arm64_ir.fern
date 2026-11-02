@@ -6714,7 +6714,6 @@ function emit_busy_lock_arm64(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ldp x2, x8, [sp], #16\n    ldp x0, x1, [sp], #16\n    ret\n");
 }
 
-
 function emit_ccall_shims_arm64(s: asmcore.EmitState): asmcore.EmitState {
   let ca: i32 = 0;
   while (ca <= 4) {
