@@ -1,3 +1,5 @@
+# 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
+# so http_hello.text and .emit grow 1.86% on x86_64 and aarch64 and the http_hello profile emits 1.0% to 1.1%.
 # 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
 # Source corrections must pass those limits. Improved rows keep their measured lower pins.
 # 2026-11-01: PR #14009 run 41350917312, perf-x86_64. The same two changes: enum_match.ir -40.1%,
@@ -205,7 +207,7 @@ x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15029
+x86_64/http_hello.text	15308
 x86_64/http_hello.ir	22076408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
@@ -491,7 +493,7 @@ aarch64/deflate_encode.text	7910
 aarch64/enum_match.text	1112
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	15945
+aarch64/http_hello.text	16242
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23864615
 aarch64/int_loop.text	330
