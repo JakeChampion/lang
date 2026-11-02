@@ -67,8 +67,8 @@ pub function Java_dev_fern_stopwatch_Core_burnInPeriodMs(env: usize, cls: usize)
   return stopwatch.BURN_IN_PERIOD_MS;
 }
 
-pub function Java_dev_fern_stopwatch_Core_burnInOrigin(env: usize, cls: usize, panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
-  return stopwatch.burn_in_origin(panel, content, reserved, displacement, random);
+pub function Java_dev_fern_stopwatch_Core_burnInOffset(env: usize, cls: usize, panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
+  return stopwatch.burn_in_offset(panel, content, reserved, displacement, random);
 }
 
 pub function Java_dev_fern_stopwatch_Core_nextBeepIn(env: usize, cls: usize, elapsed: i64, interval_minutes: i32): i64 {

@@ -24,7 +24,7 @@ final class Core {
 
     static native int buttonsHideDelayMs();
     static native int burnInPeriodMs();
-    static native int burnInOrigin(int panel, int content, int reserved, int displacement, int random);
+    static native int burnInOffset(int panel, int content, int reserved, int displacement, int random);
     static native long nextBeepIn(long elapsedMs, int intervalMinutes);
     static native String aboutText(long totalRuntimeMs);
 

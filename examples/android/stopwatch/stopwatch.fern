@@ -95,22 +95,21 @@ pub const BURN_IN_PERIOD_MS: i32 = 60000;
 
 pub const BURN_IN_MAX: i32 = 10;
 
-// One axis of the content position, in pixels. The content is centred in
-// `panel`, away from a band of `reserved` pixels at each end. A
-// `displacement` above 0 moves it by a random amount, up to
+// How far the content moves from the centre of `panel` on one axis, in
+// pixels. The content stays clear of a band of `reserved` pixels at each end.
+// A `displacement` above 0 moves it by a random amount, up to
 // displacement / BURN_IN_MAX of half the free space. `random` is any
 // non-negative number.
-pub function burn_in_origin(panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
-  if (content <= 0) {
-    return reserved;
+pub function burn_in_offset(panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
+  let space: i32 = panel - content - 2 * reserved;
+  if (content <= 0 || space <= 0) {
+    return 0;
   }
-  let space: i32 = clamp(panel - content - 2 * reserved, 0, panel);
   let reach: i32 = clamp(displacement, 0, BURN_IN_MAX) * space / (2 * BURN_IN_MAX);
-  let jitter: i32 = 0;
-  if (reach > 0) {
-    jitter = (nonneg(random as i64) % ((2 * reach + 1) as i64)) as i32 - reach;
+  if (reach == 0) {
+    return 0;
   }
-  return reserved + space / 2 + jitter;
+  return (nonneg(random as i64) % ((2 * reach + 1) as i64)) as i32 - reach;
 }
 
 // Milliseconds until the next beep, or -1 when the beeper is off. The beeper
