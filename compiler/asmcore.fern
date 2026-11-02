@@ -6076,11 +6076,34 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
   });
 }
 
+// A Linux executable keeps its constant boxes, aggregates and address tables
+// in `.data.rel.ro`. The assembler places that section at the front of the
+// data segment. Fixed-address images map it read-only at load time. PIE
+// images protect it after relocation.
+pub function relro_wanted(s: EmitState): boolean {
+  return !s.shared && (s.build_target == "x86-64-linux" || s.build_target == "arm64-linux" || s.build_target == "arm64-android");
+}
+
+// Without constants or runtime needs, the region has no bytes to protect.
+// Keep the conservative runtime test: a runtime body can add constant boxes.
+// Only images that relocate at startup need the protection syscall.
+pub function relro_protection_needed(s: EmitState): boolean {
+  return relro_wanted(s) && (s.pie || s.build_target == "arm64-android")
+    && (s.needed.len() > 0 || s.string_lits.len() > 0 || s.const_aggs.len() > 0 || s.sym_addrs.len() > 0);
+}
+
+pub function const_data_section(s: EmitState): string {
+  if (relro_wanted(s)) {
+    return "    .section .data.rel.ro\n";
+  }
+  return "    .section .data\n";
+}
+
 pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
   if (s.string_lits.len() <= first) {
     return s;
   }
-  let st: EmitState = s.write("    .section .data\n    .align 8\n");
+  let st: EmitState = s.write(const_data_section(s) + "    .align 8\n");
   let i: i32 = first;
   while (i < st.string_lits.len()) {
     st = st.write("    .quad -1\n");
@@ -6113,11 +6136,16 @@ pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
   return emit_const_agg_blocks(s, first, 0);
 }
 
+// An array literal of bytes or scalars stays in `.data`: `reactor_wait` and
+// `tcp_recv_into` write into their array argument in place, and a literal
+// argument is the shared constant itself (#14013). It holds no address.
+// Every other aggregate joins the read-only region.
 pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitState {
   if (s.const_aggs.len() <= first) {
     return s;
   }
-  let st: EmitState = s.write("    .section .data\n    .align 8\n");
+  let st: EmitState = s;
+  let cur: string = "";
   let i: i32 = first;
   while (i < st.const_aggs.len()) {
     let e: string = st.const_aggs[i];
@@ -6126,37 +6154,46 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
       i = i + 1;
       continue;
     }
-    let bar: i32 = 0;
-    while (bar < e.len() && e[bar] != 124) {
-      bar = bar + 1;
-    }
-    let shp: string = slice_unchecked(e, 0, bar) + "";
-    if (shp == "8") {
-      st = emit_const_bytes_block(st, i, ir.const_struct_payload(e));
-      i = i + 1;
-      continue;
-    }
-    let vals: string[] = ir.const_struct_values(e);
-    if (shp == "o") {
-      st = st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
-      i = i + 1;
-      continue;
-    }
-    let cap: i32 = vals.len() + 1;
+    let home: string = const_data_section(s);
     if (array) {
-      cap = vals.len();
-      shp = util.i32_to_string(vals.len());
+      home = "    .section .data\n";
     }
-    st = st.write("    .quad " + util.i32_to_string(cap) + "\n");
-    st = st.write("    .quad -1\n");
-    st = st.write(const_agg_label(st, i) + ":\n");
-    st = st.write("    .quad " + shp + "\n");
-    let vi: i32 = 0;
-    while (vi < vals.len()) {
-      st = emit_const_agg_field(st, i, vi, vals[vi]);
-      vi = vi + 1;
+    if (home != cur) {
+      st = st.write(home + "    .align 8\n");
+      cur = home;
     }
+    st = emit_const_agg_block(st, i, e, array);
     i = i + 1;
+  }
+  return st;
+}
+
+function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean): EmitState {
+  let bar: i32 = 0;
+  while (bar < e.len() && e[bar] != 124) {
+    bar = bar + 1;
+  }
+  let shp: string = slice_unchecked(e, 0, bar) + "";
+  if (shp == "8") {
+    return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
+  }
+  let vals: string[] = ir.const_struct_values(e);
+  if (shp == "o") {
+    return st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
+  }
+  let cap: i32 = vals.len() + 1;
+  if (array) {
+    cap = vals.len();
+    shp = util.i32_to_string(vals.len());
+  }
+  st = st.write("    .quad " + util.i32_to_string(cap) + "\n");
+  st = st.write("    .quad -1\n");
+  st = st.write(const_agg_label(st, i) + ":\n");
+  st = st.write("    .quad " + shp + "\n");
+  let vi: i32 = 0;
+  while (vi < vals.len()) {
+    st = emit_const_agg_field(st, i, vi, vals[vi]);
+    vi = vi + 1;
   }
   return st;
 }
@@ -6499,6 +6536,9 @@ pub function runtime_dir_roots(s: EmitState): string {
   }
   if (s.has_need("dir_chown")) {
     out = out + " " + "__fern_dir_chown";
+  }
+  if (s.has_need("dir_open_file")) {
+    out = out + " " + "__fern_dir_open_file";
   }
   return out;
 }

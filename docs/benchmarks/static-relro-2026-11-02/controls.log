@@ -1,0 +1,88 @@
+=== RUN   TestSelfHostArm64NativeLinuxElfRuns
+    self_host_arm64_linux_elf_test.go:19: native x86-64 run required to build the self-host emitter + driver
+--- SKIP: TestSelfHostArm64NativeLinuxElfRuns (0.00s)
+=== RUN   TestSelfHostCellReadBorrows
+--- PASS: TestSelfHostCellReadBorrows (60.87s)
+=== RUN   TestSelfHostCellReadBorrowsCensus
+--- PASS: TestSelfHostCellReadBorrowsCensus (29.68s)
+=== RUN   TestSelfHostELF
+--- PASS: TestSelfHostELF (19.69s)
+=== RUN   TestSelfHostEmptyAllocIsStatic
+=== RUN   TestSelfHostEmptyAllocIsStatic/x86-64-linux
+=== RUN   TestSelfHostEmptyAllocIsStatic/arm64-linux
+=== RUN   TestSelfHostEmptyAllocIsStatic/wasm32-wasi
+--- PASS: TestSelfHostEmptyAllocIsStatic (5.27s)
+    --- PASS: TestSelfHostEmptyAllocIsStatic/x86-64-linux (1.55s)
+    --- PASS: TestSelfHostEmptyAllocIsStatic/arm64-linux (1.46s)
+    --- PASS: TestSelfHostEmptyAllocIsStatic/wasm32-wasi (1.42s)
+=== RUN   TestSelfHostFeatureCensus
+    self_host_feature_census_test.go:349: self-host feature census over 366 modules, literals stripped:
+    self_host_feature_census_test.go:349:   generic functions              16  in 2 modules
+    self_host_feature_census_test.go:349:   generic structs                 0  in 0 modules
+    self_host_feature_census_test.go:349:   arrow lambdas                  16  in 5 modules
+    self_host_feature_census_test.go:349:   nested named fns               87  in 7 modules
+    self_host_feature_census_test.go:349:   for..in loops                5194  in 278 modules
+    self_host_feature_census_test.go:349:   try op                          0  in 0 modules
+    self_host_feature_census_test.go:349:   Map type spellings             10  in 6 modules
+    self_host_feature_census_test.go:349:   astwalk call sites            371  in 30 modules
+    self_host_feature_census_test.go:349:   wildcard match arms          1397  in 46 modules
+    self_host_feature_census_test.go:349:   arrow tokens                 6944  in 120 modules
+    self_host_feature_census_test.go:349:   while loops                  4940  in 247 modules
+    self_host_feature_census_test.go:349:   as casts                    26528  in 217 modules
+    self_host_feature_census_test.go:349:   minus-one sentinel returns    743  in 79 modules
+    self_host_feature_census_test.go:349:   method decls                  178  in 12 modules
+    self_host_feature_census_test.go:349:   annotated let decls         29472  in 290 modules
+    self_host_feature_census_test.go:349:   inferred let decls           4585  in 206 modules
+    self_host_feature_census_test.go:349:   increment by one             5202  in 286 modules
+--- PASS: TestSelfHostFeatureCensus (0.55s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (9.85s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostPIE
+=== RUN   TestSelfHostPIE/x86-64-linux
+    self_host_pie_test.go:156: x86-64-linux text mapping at 4000000000
+=== RUN   TestSelfHostPIE/arm64-linux
+    self_host_pie_test.go:156: arm64-linux text mapping at ffff93db0000
+=== RUN   TestSelfHostPIE/refusals
+--- PASS: TestSelfHostPIE (12.45s)
+    --- PASS: TestSelfHostPIE/x86-64-linux (5.85s)
+    --- PASS: TestSelfHostPIE/arm64-linux (5.53s)
+    --- PASS: TestSelfHostPIE/refusals (0.16s)
+=== RUN   TestSelfHostSSARegisterForm
+--- PASS: TestSelfHostSSARegisterForm (0.78s)
+=== RUN   TestSelfHostTempFiles
+=== RUN   TestSelfHostTempFiles/x86-64-linux
+=== RUN   TestSelfHostTempFiles/x86-64-linux/tmpdir
+=== RUN   TestSelfHostTempFiles/x86-64-linux/names
+=== RUN   TestSelfHostTempFiles/x86-64-linux/symlinks
+=== RUN   TestSelfHostTempFiles/x86-64-linux/close-on-exec
+=== RUN   TestSelfHostTempFiles/arm64-linux
+=== RUN   TestSelfHostTempFiles/arm64-linux/tmpdir
+=== RUN   TestSelfHostTempFiles/arm64-linux/names
+=== RUN   TestSelfHostTempFiles/arm64-linux/symlinks
+=== RUN   TestSelfHostTempFiles/arm64-linux/close-on-exec
+    self_host_temp_files_test.go:241: the child is a host shell; QEMU user mode keeps descriptors of its own open in it
+--- PASS: TestSelfHostTempFiles (11.97s)
+    --- PASS: TestSelfHostTempFiles/x86-64-linux (6.27s)
+        --- PASS: TestSelfHostTempFiles/x86-64-linux/tmpdir (2.18s)
+        --- PASS: TestSelfHostTempFiles/x86-64-linux/names (2.14s)
+        --- PASS: TestSelfHostTempFiles/x86-64-linux/symlinks (0.87s)
+        --- PASS: TestSelfHostTempFiles/x86-64-linux/close-on-exec (1.08s)
+    --- PASS: TestSelfHostTempFiles/arm64-linux (4.84s)
+        --- PASS: TestSelfHostTempFiles/arm64-linux/tmpdir (1.99s)
+        --- PASS: TestSelfHostTempFiles/arm64-linux/names (1.90s)
+        --- PASS: TestSelfHostTempFiles/arm64-linux/symlinks (0.96s)
+        --- SKIP: TestSelfHostTempFiles/arm64-linux/close-on-exec (0.00s)
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/x86-64-linux
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/arm64-linux
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/wasm32-wasi
+--- PASS: TestSelfHostUpdateBaseKeepsItsBox (8.04s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/x86-64-linux (2.37s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/arm64-linux (2.39s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/wasm32-wasi (2.34s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	159.156s

@@ -182,7 +182,7 @@ Both checkers report the same code at the same position for each row.
 | A reader variable that a loop reopens | the variable takes the standard-input placeholder after its close | cut, expand, fold, unexpand, tail |
 
 A handle an `open_*` builtin returns borrows nothing from its path argument, so it is a fresh local.
-A directory opened under another directory (`Dir.open_dir`) is fresh the same way.
+A directory or a file opened under another directory (`Dir.open_dir`, `Dir.open_reader`, `Dir.open_writer` and their forms with a flag word) is fresh the same way.
 
 ## Commands
 

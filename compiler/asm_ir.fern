@@ -445,7 +445,7 @@ function emit_guard_bump(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write(empty_array_block(".Lfern_empty_bytes"));
+  s = s.write(empty_array_block(s, ".Lfern_empty_bytes"));
   s = s.write("__fern_alloc_bytes:\n");
   s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_bytes_empty\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n");
@@ -458,7 +458,9 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function empty_array_block(label: string): string {
+// Length setters can write the shared empty array. Keep it writable with
+// other scalar arrays until #14013 requires their callers to own them.
+function empty_array_block(s: asmcore.EmitState, label: string): string {
   return "    .section .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .section .text\n";
 }
 
@@ -1952,7 +1954,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
-    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
   ]);
 }
 
@@ -1968,7 +1970,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts", "sysctl",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority", "clock_set",
-    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
   ]);
 }
 
@@ -3545,7 +3547,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jmp __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
-  if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
+  if (s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"])) {
     s = s.write(".section .bss\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_envp: .quad 0\n");
@@ -3861,7 +3863,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
   }
   if (s.has_need("alloc_u8")) {
-    s = s.write(empty_array_block(".Lfern_empty_u8"));
+    s = s.write(empty_array_block(s, ".Lfern_empty_u8"));
     s = s.write(".globl __fern_alloc_u8\n");
     s = s.write(".type __fern_alloc_u8, @function\n");
     s = s.write("__fern_alloc_u8:\n");
@@ -6217,7 +6219,7 @@ function emit_sym_addrs_from(s: asmcore.EmitState, first: i32): asmcore.EmitStat
   if (s.sym_addrs.len() <= first) {
     return s;
   }
-  s = s.write("    .section .data\n    .align 8\n");
+  s = s.write(asmcore.const_data_section(s) + "    .align 8\n");
   let i: i32 = first;
   while (i < s.sym_addrs.len()) {
     s = s.write(sym_addr_label(s.sym_addrs[i]) + ":\n    .quad " + s.sym_addrs[i] + "\n");
@@ -10133,7 +10135,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq " + regs[k] + "\n");
     k = k - 1;
   }
-  if (o.kind_tag == 423 || o.kind_tag == 425) {
+  if (o.kind_tag == 423 || o.kind_tag == 425 || o.kind_tag == 428) {
     s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", " + regs[n] + "\n");
     n = n + 1;
   }
@@ -10246,7 +10248,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    call __fn___fern_pipe\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("pipe");
-  } else if (o.kind_tag >= 420 && o.kind_tag <= 427) {
+  } else if (o.kind_tag >= 420 && o.kind_tag <= 428) {
     s = emit_dir_op(o, s);
   } else if (o.kind_tag == 276) {
     s = s.write("    call __fn___fern_window_size\n    addq $8, %rsp\n    pushq %rax\n");
@@ -11189,6 +11191,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
   if (s.pie) {
     s = emit_self_relocation(s);
   }
+  s = emit_relro_protect(s);
   if (asmcore.sandbox_on()) {
     s = s.write("    call __fern_seccomp_install\n");
   }
@@ -11198,7 +11201,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
     s = s.write("    leaq 8(%rsp), %rax\n");
     s = s.write("    movq %rax, __fern_argv(%rip)\n");
   }
-  if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
+  if (s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"])) {
     s = s.write("    movq (%rsp), %rax\n");
     s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
     s = s.write("    movq %rax, __fern_envp(%rip)\n");
@@ -11244,6 +11247,55 @@ function emit_self_relocation(own s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// The two slots hold the link-time address and the length of the read-only
+// region. The relocation loop leaves the load delta in %rax. The start is
+// rounded down and the end is rounded down to the page size the kernel
+// reports in AT_PAGESZ, so no writable word is ever covered.
+function emit_relro_protect(own s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.relro_protection_needed(s)) {
+    return s;
+  }
+  s = s.need("relro_protect");
+  s = s.write("    .section .data\n    .align 8\n__fern_relro_begin:\n    .quad 0\n__fern_relro_len:\n    .quad 0\n    .text\n");
+  if (!s.pie) {
+    s = s.write("    xorl %eax, %eax\n");
+  }
+  s = s.write("    movq __fern_relro_len(%rip), %rsi\n");
+  s = s.write("    testq %rsi, %rsi\n");
+  s = s.write("    jz .Lfern_relro_done\n");
+  s = s.write("    movq __fern_relro_begin(%rip), %rdi\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    movq (%rsp), %rax\n");
+  s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
+  s = s.write(".Lfern_relro_env:\n");
+  s = s.write("    movq (%rax), %rcx\n");
+  s = s.write("    addq $8, %rax\n");
+  s = s.write("    testq %rcx, %rcx\n");
+  s = s.write("    jnz .Lfern_relro_env\n");
+  s = s.write("    movl $4096, %ecx\n");
+  s = s.write(".Lfern_relro_scan:\n");
+  s = s.write("    movq (%rax), %rdx\n");
+  s = s.write("    testq %rdx, %rdx\n");
+  s = s.write("    jz .Lfern_relro_pagesz\n");
+  s = s.write("    addq $16, %rax\n");
+  s = s.write("    cmpq $6, %rdx\n");
+  s = s.write("    jne .Lfern_relro_scan\n");
+  s = s.write("    movq -8(%rax), %rcx\n");
+  s = s.write(".Lfern_relro_pagesz:\n");
+  s = s.write("    negq %rcx\n");
+  s = s.write("    addq %rdi, %rsi\n");
+  s = s.write("    andq %rcx, %rsi\n");
+  s = s.write("    andq %rcx, %rdi\n");
+  s = s.write("    subq %rdi, %rsi\n");
+  s = s.write("    jle .Lfern_relro_done\n");
+  s = s.write("    movl $1, %edx\n");
+  s = s.write("    movl $10, %eax\n");
+  s = s.syscall(10);
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jnz .Lfern_relro_failed\n");
+  return s.write(".Lfern_relro_done:\n");
+}
+
 function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {
   s = emit_stack_map(s, asmcore.stack_size());
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_stack_kept\n    movq %rax, %rbx\n    movq %rax, %rdi\n    movq $" + util.i32_to_string(asmcore.stack_guard()) + ", %rsi\n    xorl %edx, %edx\n    movl $10, %eax\n");
@@ -11280,6 +11332,9 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("relro_protect")) {
+    s = emit_startup_failure(s, ".Lfern_relro_failed", aborts.relro());
+  }
   s = emit_startup_failure(s, ".Lfern_stack_guard_failed", aborts.stack_guard());
   s = emit_startup_failure(s, ".Lfern_signal_stack_map_failed", aborts.signal_stack_map());
   s = emit_startup_failure(s, ".Lfern_signal_stack_failed", aborts.signal_stack());

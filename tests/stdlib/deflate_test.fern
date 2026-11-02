@@ -142,6 +142,27 @@ function test_adler32_long(): test.TestOutcome {
   return test.assert_eq((deflate.adler32(ones) as i64).to_string() + " " + (deflate.adler32(mixed) as i64).to_string(), "345649196 1725208588");
 }
 
+function test_zero_output_limit(): test.TestOutcome {
+  let stream: u8[] = __codec_bytes(hex.decode("cb48cdc9c957c8402701"));
+  for limit in [-1, 0] {
+    match (deflate.inflate(stream, limit)) {
+      Err(deflate.OutputLimit()) => {},
+      _ => {
+        return test.fail("expected the output limit error");
+      }
+    }
+  }
+  match (deflate.inflate(__codec_bytes(hex.decode("0300")), 0)) {
+    Ok(got) => {
+      return test.assert_eq(got.out.len(), 0);
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_output_limit(): test.TestOutcome {
   if (bytes_text(deflate.gunzip(__codec_bytes(hex.decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000")), 11)) != "error: the decompressed data is past its limit") {
     return test.fail("a cap below the output: " + bytes_text(deflate.gunzip(__codec_bytes(hex.decode("1f8b08000000000000034bcb2c2a2ed10100d7364715060000001f8b08000000000000032b4e4dcecf4b010069111fb606000000")), 11)));
@@ -309,6 +330,7 @@ function main(): i32 {
   r = r.it("zlib", test_zlib);
   r = r.it("adler32", test_adler32);
   r = r.it("adler32 past the deferred modulus", test_adler32_long);
+  r = r.it("zero output limit", test_zero_output_limit);
   r = r.it("output limit", test_output_limit);
   r = r.it("truncated", test_truncated);
   r = r.it("bad checksums", test_bad_checksums);

@@ -42,7 +42,7 @@ var stdModuleReach = map[string]string{
 	"std/http":          "config,env,fs,host,ktls,log,now,pollable,random,reactor,tcp,unix,uring",
 	"std/i32":           "",
 	"std/i64":           "",
-	"std/io":            "fs,random,stdin",
+	"std/io":            "env,fs,random,stdin",
 	"std/io_buffered":   "",
 	"std/jni":           "cabi",
 	"std/json":          "",

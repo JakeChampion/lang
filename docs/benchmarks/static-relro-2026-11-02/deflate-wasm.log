@@ -1,0 +1,29 @@
+TAP version 13
+# Suite: std/deflate
+ok 1 - stored block
+ok 2 - fixed block
+ok 3 - dynamic block
+ok 4 - consumed stops at the stream's end
+ok 5 - corpus gzip
+ok 6 - gzip header fields
+ok 7 - gzip two members
+ok 8 - zlib
+ok 9 - adler32
+ok 10 - adler32 past the deferred modulus
+ok 11 - zero output limit
+ok 12 - output limit
+ok 13 - truncated
+ok 14 - bad checksums
+ok 15 - bad headers
+ok 16 - hand-rolled refusals
+ok 17 - the encoder's streams read back
+ok 18 - a flushed stream ends open
+ok 19 - a stream goes on from earlier output
+ok 20 - every match length reads back
+ok 21 - blocks of each kind in one stream
+ok 22 - gzip reads back
+1..22
+# tests 22
+# pass 22
+# fail 0
+leakcheck: allocs=33134 frees=33134 live_bytes=0

@@ -10,7 +10,7 @@ function elf_base_vaddr(): i32 {
   return 4194304;
 }
 
-function elf_page_align(): i32 {
+pub function elf_page_align(): i32 {
   return 65536;
 }
 
@@ -482,7 +482,7 @@ pub function elf_data_vaddr_wx(text_len: i32): i32 {
 }
 
 pub function elf_data_vaddr_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32, note: boolean): i32 {
-  return elf_base_vaddr() + elf_page_up(elf_code_end(elf_unwind_end(elf_wx_text_off(note), text_len, hdr_len, eh_len), note));
+  return elf_base_vaddr() + elf_data_vaddr_pie_wx_unwind(text_len, hdr_len, eh_len, note);
 }
 
 function elf_code_end(end: i32, note: boolean): i32 {
@@ -504,16 +504,18 @@ pub function elf_bti_note(): i32[] {
 }
 
 pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
-  return elf_image_wx_unwind(text, [], [], data, machine, entry_off, bss, false);
+  return elf_image_wx_unwind(text, [], [], data, machine, entry_off, bss, false, 0);
 }
 
-pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean): u8[] {
-  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note, true, elf_page_align());
+// `relro` is the length of the read-only-after-start region that leads the
+// data segment. `PT_GNU_RELRO` covers it, and the startup protects it.
+pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note, true, elf_page_align(), relro);
 }
 
 // The same layout as a position-independent executable: ET_DYN at base 0, which the kernel loads at a random base.
-pub function elf_image_pie_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean): u8[] {
-  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, 0, 3, true, note, true, elf_page_align());
+pub function elf_image_pie_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, 0, 3, true, note, true, elf_page_align(), relro);
 }
 
 pub function elf_text_vaddr_pie_wx(note: boolean): i32 {
@@ -529,11 +531,11 @@ pub function elf_eh_frame_vaddr_pie_wx(text_len: i32, hdr_len: i32, note: boolea
 }
 
 pub function elf_data_vaddr_pie_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32, note: boolean): i32 {
-  return elf_page_up(elf_code_end(elf_unwind_end(elf_wx_text_off(note), text_len, hdr_len, eh_len), note));
+  return elf_data_vaddr_after(elf_code_end(elf_unwind_end(elf_wx_text_off(note), text_len, hdr_len, eh_len), note), elf_page_align());
 }
 
 pub function elf_x86_wx_text_off(): i32 {
-  return elf_eh_size() + 4 * elf_ph_size();
+  return elf_align16(elf_eh_size() + elf_image_phnum(true, false, true) * elf_ph_size());
 }
 
 pub function elf_x86_wx_text_vaddr(): i32 {
@@ -548,7 +550,7 @@ pub function elf_x86_wx_eh_frame_vaddr(text_len: i32, hdr_len: i32): i32 {
   return elf_align8(elf_x86_wx_eh_hdr_vaddr(text_len) + hdr_len);
 }
 
-function elf_x86_page_align(): i32 {
+pub function elf_x86_page_align(): i32 {
   return 4096;
 }
 
@@ -570,21 +572,20 @@ pub function elf_x86_pie_eh_frame_vaddr(text_len: i32, hdr_len: i32): i32 {
 
 pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
   let end: i32 = elf_unwind_end(elf_x86_wx_text_off(), text_len, hdr_len, eh_len);
-  let page: i32 = elf_x86_page_align();
-  return (end + page - 1) / page * page;
+  return elf_data_vaddr_after(end, elf_x86_page_align());
 }
 
-pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
-  return elf_image_two_seg(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0, 3, true, false, true, elf_x86_page_align());
+pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {
+  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0, 3, true, false, true, elf_x86_page_align(), relro);
 }
 
-pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
-  return elf_image_two_seg(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, elf_base_vaddr(), 2, true, false, true, elf_x86_page_align());
+pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {
+  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, elf_base_vaddr(), 2, true, false, true, elf_x86_page_align(), relro);
 }
 
-function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean, note: boolean, nx_stack: boolean, page_align: i32): u8[] {
+function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean, note: boolean, nx_stack: boolean, page_align: i32, relro: i32): u8[] {
   let nph: i32 = elf_image_phnum(unwind_ph, note, nx_stack);
-  let headers: i32 = elf_eh_size() + nph * elf_ph_size();
+  let headers: i32 = elf_align16(elf_eh_size() + nph * elf_ph_size());
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
   let hdr_off: i32 = 0;
   let eh_off: i32 = 0;
@@ -595,12 +596,24 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   let unwind_end: i32 = elf_unwind_end(headers, text.len(), hdr.len(), eh.len());
   let note_off: i32 = elf_align8(unwind_end);
   let text_end: i32 = elf_code_end(unwind_end, note);
-  let data_off: i32 = (text_end + page_align - 1) / page_align * page_align;
+  let data_off: i32 = elf_align16(text_end);
   let code_sz: i64 = text_end as i64;
-  let data_filesz: i64 = data.len() as i64;
+  let hole: i32 = 0;
+  let readonly: i32 = 0;
+  let mutable: i32 = 0;
+  if (e_type == 2 && relro > 0) {
+    hole = page_align;
+    readonly = relro - hole;
+    mutable = relro;
+  }
+  if (relro < hole || relro > data.len()) {
+    eprint("fern: invalid constant data layout");
+    exit(3);
+  }
+  let data_filesz: i64 = (data.len() - mutable) as i64;
   let data_memsz: i64 = data_filesz + elf_u32_to_i64(bss);
   let code_vaddr: i64 = base as i64;
-  let data_vaddr: i64 = (base + data_off) as i64;
+  let data_vaddr: i64 = (base + elf_data_vaddr_after(text_end, page_align)) as i64;
   let entry: i64 = (base + headers + entry_off) as i64;
   let zero64: i64 = 0;
 
@@ -642,14 +655,34 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   buf = elf_le64(buf, code_sz);
   buf = elf_le64(buf, page_align as i64);
 
+  if (hole > 0) {
+    buf = elf_phdr(buf, 1, 4, data_off, data_vaddr as i32, readonly, readonly, page_align);
+  }
+
   buf = elf_le32(buf, 1);
   buf = elf_le32(buf, 6);
-  buf = elf_le64(buf, data_off as i64);
-  buf = elf_le64(buf, data_vaddr);
-  buf = elf_le64(buf, data_vaddr);
+  buf = elf_le64(buf, (data_off + readonly) as i64);
+  buf = elf_le64(buf, data_vaddr + mutable as i64);
+  buf = elf_le64(buf, data_vaddr + mutable as i64);
   buf = elf_le64(buf, data_filesz);
   buf = elf_le64(buf, data_memsz);
   buf = elf_le64(buf, page_align as i64);
+
+  if (hole == 0) {
+    buf = elf_phdr(buf, 0, 0, 0, 0, 0, 0, 0);
+  }
+  let protected: i32 = relro;
+  if (hole > 0) {
+    protected = readonly;
+  }
+  buf = elf_le32(buf, 1685382482);
+  buf = elf_le32(buf, 4);
+  buf = elf_le64(buf, data_off as i64);
+  buf = elf_le64(buf, data_vaddr);
+  buf = elf_le64(buf, data_vaddr);
+  buf = elf_le64(buf, protected as i64);
+  buf = elf_le64(buf, protected as i64);
+  buf = elf_le64(buf, 1 as i64);
 
   if (unwind_ph) {
     if (has_unwind) {
@@ -673,8 +706,9 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   buf = elf_property_ph(buf, note, base, note_off);
   buf = elf_stack_ph(buf, nx_stack);
 
-  let img: usize = buf_new(data_off + data.len());
+  let img: usize = buf_new(data_off + data.len() - hole);
   elf_push_ints(img, buf);
+  elf_push_zeros(img, headers - buf_len(img));
   buf_push_bytes_range(img, text, 0, text.len());
   if (has_unwind) {
     elf_push_zeros(img, hdr_off - buf_len(img));
@@ -684,14 +718,62 @@ function elf_image_two_seg(text: u8[], hdr: i32[], eh: i32[], data: i32[], machi
   }
   elf_push_note(img, note, note_off);
   elf_push_zeros(img, data_off - buf_len(img));
-  elf_push_ints(img, data);
+  if (hole > 0) {
+    for i in 0..readonly {
+      buf_push_byte(img, data[i]);
+    }
+    for i in mutable..data.len() {
+      buf_push_byte(img, data[i]);
+    }
+  } else {
+    elf_push_ints(img, data);
+  }
   let out: u8[] = buf_take_bytes(img);
   buf_free(img);
   return out;
 }
 
+// The data bytes follow the code in the file at the next 16-byte boundary.
+// The segment maps one page later at the same offset within the page, as the
+// loader requires, so the file carries no page padding between them.
+function elf_data_vaddr_after(text_end: i32, page_align: i32): i32 {
+  let page: i32 = (text_end + page_align - 1) / page_align * page_align;
+  return page + elf_align16(text_end) % page_align;
+}
+
+// The zero bytes to insert after a read-only region of `relro` bytes at the
+// front of the data segment, so that the region ends on a page boundary.
+pub function elf_relro_gap(data_vaddr: i32, relro: i32, page_align: i32): i32 {
+  if (relro == 0) {
+    return 0;
+  }
+  return (page_align - (data_vaddr + relro) % page_align) % page_align;
+}
+
+// Fixed-address images give constants their own read-only load segment.
+// The virtual gap keeps it apart from writable pages on every supported
+// page size. The writer omits the gap from the file.
+pub function elf_executable_relro_gap(data_vaddr: i32, relro: i32, page_align: i32, pie: boolean): i32 {
+  if (pie) {
+    return elf_relro_gap(data_vaddr, relro, elf_relro_page());
+  }
+  if (relro == 0) {
+    return 0;
+  }
+  return page_align;
+}
+
+// The page the read-only region ends on. The startup rounds the protected
+// range to the page the kernel reports, so a kernel with larger pages protects
+// the pages that fit inside the region.
+pub function elf_relro_page(): i32 {
+  return 4096;
+}
+
+// Code, constant and writable load slots, the RELRO header, and the optional
+// unwind, property and stack headers. PIE leaves the constant load slot null.
 function elf_image_phnum(unwind: boolean, note: boolean, stack: boolean): i32 {
-  let n: i32 = 2 + elf_property_phs(note);
+  let n: i32 = 4 + elf_property_phs(note);
   if (unwind) {
     n = n + 1;
   }
@@ -745,15 +827,15 @@ function elf_property_ph(own buf: i32[], note: boolean, base: i32, off: i32): i3
 }
 
 pub function elf_text_vaddr_pie(): i32 {
-  return elf_eh_size() + 3 * elf_ph_size();
+  return elf_align16(elf_eh_size() + elf_image_phnum(false, false, true) * elf_ph_size());
 }
 
 pub function elf_data_vaddr_pie(text_len: i32): i32 {
-  return elf_page_up(elf_text_vaddr_pie() + text_len);
+  return elf_data_vaddr_after(elf_text_vaddr_pie() + text_len, elf_page_align());
 }
 
-pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
-  return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false, false, true, elf_page_align());
+pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32): u8[] {
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0, 3, false, false, true, elf_page_align(), relro);
 }
 
 function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {
@@ -1539,7 +1621,7 @@ function elf_opt_shdr(out: i32[], present: boolean, name: i32, off: i32, size: i
 }
 
 pub function elf_wx_text_off(note: boolean): i32 {
-  return elf_eh_size() + elf_image_phnum(true, note, true) * elf_ph_size();
+  return elf_align16(elf_eh_size() + elf_image_phnum(true, note, true) * elf_ph_size());
 }
 
 pub function elf_func_sym_names(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): string[] {

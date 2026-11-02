@@ -52,6 +52,6 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostPIE' -count=1 -timeout 
 
 - Randomization on physical arm64 hardware is unverified. QEMU user mode loads the image at a base it chooses, so the arm64 evidence shows relocation at a non-link base, not the kernel's randomization.
 - `-pie` is opt-in. The static image at `0x400000` stays the default, because the perf and size lanes pin it.
-- The relocated words stay in the writable data segment. A read-only segment after relocation, the `RELRO` shape, needs a third load segment and is open under SEC-028.
+- The relocated words sit under `PT_GNU_RELRO`, and the startup maps them read-only after the loop ([IMAGE-PERMISSIONS.md](IMAGE-PERMISSIONS.md)).
 - The unwind tables of the `-pie` image are written for base 0. The runtime's own backtrace walks frame pointers and needs no table, and an external unwinder must add the load base.
 - `-shared` keeps its own writer with dynamic relocations, and Android keeps its writer.

@@ -219,7 +219,7 @@ pub function temp_file(prefix: string): Result[TempFile, IoError] {
   }
   let tries: i32 = 0;
   while (tries < 64) {
-    let path: string = "/tmp/" + prefix + "-" + __hex_name(random_bytes(8));
+    let path: string = temp_root() + "/" + prefix + "-" + __hex_name(random_bytes(8));
     match (open_exclusive(path)) {
       Ok(w) => {
         return Ok(TempFile { path: path, file: w });
@@ -236,6 +236,27 @@ pub function temp_file(prefix: string): Result[TempFile, IoError] {
     tries = tries + 1;
   }
   return Err(AlreadyExists(prefix));
+}
+
+// TMPDIR names the root when it is an absolute path with more than the
+// leading separator. One trailing separator is dropped. Anything else is /tmp,
+// the rule the runtime applies for temp_dir.
+function temp_root(): string {
+  match (env("TMPDIR")) {
+    Some(v) => {
+      let n: i32 = v.len();
+      if (n > 1 && v[n - 1] == 47 as u8) {
+        n = n - 1;
+      }
+      if (n > 1 && v[0] == 47 as u8) {
+        return slice_unchecked(v, 0, n) + "";
+      }
+      return "/tmp";
+    },
+    None => {
+      return "/tmp";
+    }
+  }
 }
 
 function __hex_name(bytes: u8[]): string {
