@@ -1,0 +1,10 @@
+=== RUN   TestArm64DarwinStackOverflow
+=== RUN   TestArm64DarwinStackOverflow/runaway-recursion
+=== RUN   TestArm64DarwinStackOverflow/million-deep
+=== RUN   TestArm64DarwinStackOverflow/other-fault
+--- PASS: TestArm64DarwinStackOverflow (44.83s)
+    --- PASS: TestArm64DarwinStackOverflow/runaway-recursion (0.51s)
+    --- PASS: TestArm64DarwinStackOverflow/million-deep (0.26s)
+    --- PASS: TestArm64DarwinStackOverflow/other-fault (0.18s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	45.147s

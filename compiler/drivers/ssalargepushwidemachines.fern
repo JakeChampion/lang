@@ -109,7 +109,15 @@ function flags_and_oversized(s: string): void {
 }
 
 pub function run(output: string): void {
-  require(machine.check(output), "actual complete output");
+  require(machine.check_guarded(output), "actual complete guarded output");
+  let guard = "cmpq %r8, %rcx\n    je .Lrawfree_double";
+  require(machine.check_guarded(change(output, guard, "cmpq %r8, %rcx\n    jz .Lrawfree_double")), "equal branch alias");
+  require(machine.check_guarded(change(output, guard, "cmpq %rcx, %r8\n    je .Lrawfree_double")), "symmetric pointer equality");
+  for replacement in ["", "cmpq %r8, %rcx\n    jne .Lrawfree_double", "cmpl %r8d, %ecx\n    je .Lrawfree_double", "cmpq %r8, %r8\n    je .Lrawfree_double", "cmpq %r8, %rcx\n    je .Lwrong_abort", "cmpq %r8, %rcx\n    addq $0, %rax\n    je .Lrawfree_double"] {
+    require(!machine.check_guarded(change(output, guard, replacement)), "duplicate guard mutation " + replacement);
+  }
+  let late = change(change(output, guard, ""), "movq %rcx, (%r8)", "movq %rcx, (%r8)\n    " + guard);
+  require(machine.check(late) && !machine.check_guarded(late), "duplicate abort precedes either store");
   require(!machine.check(".text\n__fern_large_push:\nret\n"), "empty effects");
   arithmetic(output);
   memory(output);

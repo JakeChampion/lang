@@ -1,0 +1,220 @@
+mise go@1.27.3         [1/3] install
+mise go@1.27.3         [1/3] download go1.27.3.linux-arm64.tar.gz
+mise go@1.27.3         [2/3] checksum go1.27.3.linux-arm64.tar.gz
+mise go@1.27.3         [3/3] extract go1.27.3.linux-arm64.tar.gz
+mise go@1.27.3         [3/3] go version
+mise go@1.27.3         [3/3] go version go1.27.3 linux/arm64
+mise go@1.27.3       ✓ installed
+=== RUN   TestSelfHostAbortReportsX86_64
+=== RUN   TestSelfHostAbortReportsX86_64/array_oob
+=== RUN   TestSelfHostAbortReportsX86_64/string_slice_oob
+=== RUN   TestSelfHostAbortReportsX86_64/string_index_oob
+=== RUN   TestSelfHostAbortReportsX86_64/string_index_oob_runtime
+=== RUN   TestSelfHostAbortReportsX86_64/alloc_size_negative
+=== RUN   TestSelfHostAbortReportsX86_64/slice_range_oob
+=== RUN   TestSelfHostAbortReportsX86_64/byte_slice_range_oob
+=== RUN   TestSelfHostAbortReportsX86_64/wide_slice_range_oob
+=== RUN   TestSelfHostAbortReportsX86_64/byte_view_negative_oob
+=== RUN   TestSelfHostAbortReportsX86_64/byte_view_past_end_oob
+=== RUN   TestSelfHostAbortReportsX86_64/buf_push_range_past_end
+=== RUN   TestSelfHostAbortReportsX86_64/buf_push_range_negative
+=== RUN   TestSelfHostAbortReportsX86_64/buf_push_range_inverted
+=== RUN   TestSelfHostAbortReportsX86_64/map_snapshot_key_past_end
+=== RUN   TestSelfHostAbortReportsX86_64/map_snapshot_value_past_end
+=== RUN   TestSelfHostAbortReportsX86_64/raw_double_free
+=== RUN   TestSelfHostAbortReportsX86_64/raw_double_free_large
+=== RUN   TestSelfHostAbortReportsX86_64/in_bounds
+=== RUN   TestSelfHostAbortReportsX86_64/byte_view_last_in_bounds
+--- PASS: TestSelfHostAbortReportsX86_64 (12.69s)
+    --- PASS: TestSelfHostAbortReportsX86_64/array_oob (0.70s)
+    --- PASS: TestSelfHostAbortReportsX86_64/string_slice_oob (0.50s)
+    --- PASS: TestSelfHostAbortReportsX86_64/string_index_oob (0.52s)
+    --- PASS: TestSelfHostAbortReportsX86_64/string_index_oob_runtime (0.61s)
+    --- PASS: TestSelfHostAbortReportsX86_64/alloc_size_negative (0.56s)
+    --- PASS: TestSelfHostAbortReportsX86_64/slice_range_oob (0.54s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_slice_range_oob (0.48s)
+    --- PASS: TestSelfHostAbortReportsX86_64/wide_slice_range_oob (0.47s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_view_negative_oob (0.48s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_view_past_end_oob (0.54s)
+    --- PASS: TestSelfHostAbortReportsX86_64/buf_push_range_past_end (0.48s)
+    --- PASS: TestSelfHostAbortReportsX86_64/buf_push_range_negative (0.46s)
+    --- PASS: TestSelfHostAbortReportsX86_64/buf_push_range_inverted (0.48s)
+    --- PASS: TestSelfHostAbortReportsX86_64/map_snapshot_key_past_end (1.41s)
+    --- PASS: TestSelfHostAbortReportsX86_64/map_snapshot_value_past_end (1.51s)
+    --- PASS: TestSelfHostAbortReportsX86_64/raw_double_free (0.41s)
+    --- PASS: TestSelfHostAbortReportsX86_64/raw_double_free_large (0.41s)
+    --- PASS: TestSelfHostAbortReportsX86_64/in_bounds (0.36s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_view_last_in_bounds (0.51s)
+=== RUN   TestSelfHostAbortReportsArm64
+=== RUN   TestSelfHostAbortReportsArm64/array_oob
+=== RUN   TestSelfHostAbortReportsArm64/string_slice_oob
+=== RUN   TestSelfHostAbortReportsArm64/string_index_oob
+=== RUN   TestSelfHostAbortReportsArm64/string_index_oob_runtime
+=== RUN   TestSelfHostAbortReportsArm64/alloc_size_negative
+=== RUN   TestSelfHostAbortReportsArm64/slice_range_oob
+=== RUN   TestSelfHostAbortReportsArm64/byte_slice_range_oob
+=== RUN   TestSelfHostAbortReportsArm64/wide_slice_range_oob
+=== RUN   TestSelfHostAbortReportsArm64/byte_view_negative_oob
+=== RUN   TestSelfHostAbortReportsArm64/byte_view_past_end_oob
+=== RUN   TestSelfHostAbortReportsArm64/buf_push_range_past_end
+=== RUN   TestSelfHostAbortReportsArm64/buf_push_range_negative
+=== RUN   TestSelfHostAbortReportsArm64/buf_push_range_inverted
+=== RUN   TestSelfHostAbortReportsArm64/map_snapshot_key_past_end
+=== RUN   TestSelfHostAbortReportsArm64/map_snapshot_value_past_end
+=== RUN   TestSelfHostAbortReportsArm64/raw_double_free
+=== RUN   TestSelfHostAbortReportsArm64/raw_double_free_large
+=== RUN   TestSelfHostAbortReportsArm64/in_bounds
+=== RUN   TestSelfHostAbortReportsArm64/byte_view_last_in_bounds
+--- PASS: TestSelfHostAbortReportsArm64 (10.50s)
+    --- PASS: TestSelfHostAbortReportsArm64/array_oob (0.40s)
+    --- PASS: TestSelfHostAbortReportsArm64/string_slice_oob (0.34s)
+    --- PASS: TestSelfHostAbortReportsArm64/string_index_oob (0.36s)
+    --- PASS: TestSelfHostAbortReportsArm64/string_index_oob_runtime (0.39s)
+    --- PASS: TestSelfHostAbortReportsArm64/alloc_size_negative (0.35s)
+    --- PASS: TestSelfHostAbortReportsArm64/slice_range_oob (0.42s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_slice_range_oob (0.44s)
+    --- PASS: TestSelfHostAbortReportsArm64/wide_slice_range_oob (0.43s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_view_negative_oob (0.46s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_view_past_end_oob (0.48s)
+    --- PASS: TestSelfHostAbortReportsArm64/buf_push_range_past_end (0.51s)
+    --- PASS: TestSelfHostAbortReportsArm64/buf_push_range_negative (0.44s)
+    --- PASS: TestSelfHostAbortReportsArm64/buf_push_range_inverted (0.41s)
+    --- PASS: TestSelfHostAbortReportsArm64/map_snapshot_key_past_end (1.37s)
+    --- PASS: TestSelfHostAbortReportsArm64/map_snapshot_value_past_end (1.37s)
+    --- PASS: TestSelfHostAbortReportsArm64/raw_double_free (0.36s)
+    --- PASS: TestSelfHostAbortReportsArm64/raw_double_free_large (0.35s)
+    --- PASS: TestSelfHostAbortReportsArm64/in_bounds (0.32s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_view_last_in_bounds (0.45s)
+=== RUN   TestSelfHostAbortBacktraceX86_64
+--- PASS: TestSelfHostAbortBacktraceX86_64 (1.34s)
+=== RUN   TestSelfHostAbortBacktraceArm64
+--- PASS: TestSelfHostAbortBacktraceArm64 (1.27s)
+=== RUN   TestSelfHostAbortBacktraceOffX86_64
+=== RUN   TestSelfHostAbortBacktraceOffX86_64/env
+=== RUN   TestSelfHostAbortBacktraceOffX86_64/flag
+--- PASS: TestSelfHostAbortBacktraceOffX86_64 (2.02s)
+    --- PASS: TestSelfHostAbortBacktraceOffX86_64/env (0.60s)
+    --- PASS: TestSelfHostAbortBacktraceOffX86_64/flag (0.59s)
+=== RUN   TestSelfHostAbortBacktraceOffArm64
+=== RUN   TestSelfHostAbortBacktraceOffArm64/env
+=== RUN   TestSelfHostAbortBacktraceOffArm64/flag
+--- PASS: TestSelfHostAbortBacktraceOffArm64 (1.78s)
+    --- PASS: TestSelfHostAbortBacktraceOffArm64/env (0.46s)
+    --- PASS: TestSelfHostAbortBacktraceOffArm64/flag (0.48s)
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/control
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/corrupt-frame
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/arm64-linux
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/control
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/corrupt-frame
+--- PASS: TestSelfHostAbortBacktraceCorruptFrame (1.89s)
+    --- PASS: TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux (0.58s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/control (0.09s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/corrupt-frame (0.08s)
+    --- PASS: TestSelfHostAbortBacktraceCorruptFrame/arm64-linux (0.48s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/control (0.01s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/corrupt-frame (0.01s)
+=== RUN   TestSelfHostRawFreeOutsideHeap
+=== RUN   TestSelfHostRawFreeOutsideHeap/x86-64-linux
+=== RUN   TestSelfHostRawFreeOutsideHeap/arm64-linux
+--- PASS: TestSelfHostRawFreeOutsideHeap (2.79s)
+    --- PASS: TestSelfHostRawFreeOutsideHeap/x86-64-linux (0.93s)
+    --- PASS: TestSelfHostRawFreeOutsideHeap/arm64-linux (0.84s)
+=== RUN   TestSelfHostRawDoubleFree
+=== RUN   TestSelfHostRawDoubleFree/x86-64-linux/64
+=== RUN   TestSelfHostRawDoubleFree/x86-64-linux/1048576
+=== RUN   TestSelfHostRawDoubleFree/arm64-linux/64
+=== RUN   TestSelfHostRawDoubleFree/arm64-linux/1048576
+--- PASS: TestSelfHostRawDoubleFree (4.42s)
+    --- PASS: TestSelfHostRawDoubleFree/x86-64-linux/64 (0.94s)
+    --- PASS: TestSelfHostRawDoubleFree/x86-64-linux/1048576 (0.94s)
+    --- PASS: TestSelfHostRawDoubleFree/arm64-linux/64 (0.85s)
+    --- PASS: TestSelfHostRawDoubleFree/arm64-linux/1048576 (0.84s)
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/use-after-free
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/use-after-free/FERN_BACKTRACE=0
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/over-release
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/over-release/FERN_BACKTRACE=0
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/use-after-free
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/use-after-free/FERN_BACKTRACE=0
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/over-release
+=== RUN   TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/over-release/FERN_BACKTRACE=0
+--- PASS: TestSelfHostSanitizeReportCarriesBacktrace (11.85s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/use-after-free (1.41s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/use-after-free/FERN_BACKTRACE=0 (1.42s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/over-release (1.32s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/x86-64-linux/over-release/FERN_BACKTRACE=0 (1.28s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/use-after-free (1.33s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/use-after-free/FERN_BACKTRACE=0 (1.42s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/over-release (1.47s)
+    --- PASS: TestSelfHostSanitizeReportCarriesBacktrace/arm64-linux/over-release/FERN_BACKTRACE=0 (1.36s)
+=== RUN   TestSelfHostStackOverflow
+=== RUN   TestSelfHostStackOverflow/x86-64-linux
+=== RUN   TestSelfHostStackOverflow/x86-64-linux/runaway-recursion
+=== RUN   TestSelfHostStackOverflow/x86-64-linux/million-deep
+=== RUN   TestSelfHostStackOverflow/x86-64-linux/other-fault
+=== RUN   TestSelfHostStackOverflow/arm64-linux
+=== RUN   TestSelfHostStackOverflow/arm64-linux/runaway-recursion
+=== RUN   TestSelfHostStackOverflow/arm64-linux/million-deep
+=== RUN   TestSelfHostStackOverflow/arm64-linux/other-fault
+--- PASS: TestSelfHostStackOverflow (7.86s)
+    --- PASS: TestSelfHostStackOverflow/x86-64-linux (4.26s)
+        --- PASS: TestSelfHostStackOverflow/x86-64-linux/runaway-recursion (2.18s)
+        --- PASS: TestSelfHostStackOverflow/x86-64-linux/million-deep (1.73s)
+        --- PASS: TestSelfHostStackOverflow/x86-64-linux/other-fault (0.35s)
+    --- PASS: TestSelfHostStackOverflow/arm64-linux (2.44s)
+        --- PASS: TestSelfHostStackOverflow/arm64-linux/runaway-recursion (0.83s)
+        --- PASS: TestSelfHostStackOverflow/arm64-linux/million-deep (1.36s)
+        --- PASS: TestSelfHostStackOverflow/arm64-linux/other-fault (0.26s)
+=== RUN   TestSelfHostDarwinSignalContext
+=== RUN   TestSelfHostDarwinSignalContext/guard
+=== RUN   TestSelfHostDarwinSignalContext/near-sp
+--- PASS: TestSelfHostDarwinSignalContext (1.01s)
+    --- PASS: TestSelfHostDarwinSignalContext/guard (0.01s)
+    --- PASS: TestSelfHostDarwinSignalContext/near-sp (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	59.449s
+=== RUN   TestSeccompFilterIsLoadedAtRuntime
+=== RUN   TestSeccompFilterIsLoadedAtRuntime/sandbox_off
+=== RUN   TestSeccompFilterIsLoadedAtRuntime/sandbox_on
+--- PASS: TestSeccompFilterIsLoadedAtRuntime (4.40s)
+    --- PASS: TestSeccompFilterIsLoadedAtRuntime/sandbox_off (2.87s)
+    --- PASS: TestSeccompFilterIsLoadedAtRuntime/sandbox_on (1.53s)
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/arithmetic_only
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/constant_data,_no_heap
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/heap_+_strings
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/loops_and_allocation_churn
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/clock
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/sockets
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/caught_signal
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/raised_signal
+=== RUN   TestSeccompDoesNotBreakWorkingPrograms/interrupting_catch
+--- PASS: TestSeccompDoesNotBreakWorkingPrograms (0.24s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/arithmetic_only (0.02s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/constant_data,_no_heap (0.02s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/heap_+_strings (0.04s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/loops_and_allocation_churn (0.02s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/clock (0.03s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/sockets (0.03s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/caught_signal (0.04s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/raised_signal (0.02s)
+    --- PASS: TestSeccompDoesNotBreakWorkingPrograms/interrupting_catch (0.03s)
+=== RUN   TestSeccompFilterDenies
+--- PASS: TestSeccompFilterDenies (0.01s)
+=== RUN   TestSeccompFixtureCorpus
+    seccomp_test.go:316: set RUN_SECCOMP_CORPUS=1 to run the sandbox over the whole fixture corpus (~330 fixtures, built twice)
+--- SKIP: TestSeccompFixtureCorpus (0.00s)
+=== RUN   TestSharedLibX86CCallFFI
+    shared_lib_test.go:361: host is not amd64
+--- SKIP: TestSharedLibX86CCallFFI (0.00s)
+=== RUN   TestArm64SharedLibCCallFFI
+--- PASS: TestArm64SharedLibCCallFFI (0.03s)
+=== RUN   TestSharedLibX86AbortBacktrace
+    shared_lib_test.go:1349: host is not amd64
+--- SKIP: TestSharedLibX86AbortBacktrace (0.00s)
+=== RUN   TestArm64SharedLibAbortBacktrace
+--- PASS: TestArm64SharedLibAbortBacktrace (0.02s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	4.720s

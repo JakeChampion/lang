@@ -32,8 +32,8 @@ func TestSelfHostStackOverflow(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			t.Run("runaway-recursion", func(t *testing.T) {
 				r := runStackProgram(t, cli, target, runaway)
-				if r.code != 134 || !report.MatchString(r.stderr) {
-					t.Errorf("exit %d, stderr %q; want 134 and a stack-overflow report with a backtrace", r.code, r.stderr)
+				if r.code != 134 || !report.MatchString(r.stderr) || strings.Count(r.stderr, "\n  0x") > 64 {
+					t.Errorf("exit %d, stderr %q; want 134 and a stack-overflow report with 2 to 64 frames", r.code, r.stderr)
 				}
 			})
 			t.Run("million-deep", func(t *testing.T) {
