@@ -129,9 +129,11 @@ to the storage those views read, and a call result to the arguments its
 contract says it may keep (`borrow_parents`). A cell read (`cell_get`) is
 anchored to its cell when every use of the read, and of each projection off
 it, comes before the first write or call on the path from the read
-(`cell_borrows`). Nothing else replaces what a cell holds, so such a read
-owns no count. A read a write or a call can reach before its last use is a
-unit of its own. The closure of those chains
+(`cell_borrows`). The function must also have no value type that can hold a
+user finalizer. Implicit drops can invoke a finalizer that writes the cell.
+The current region proof does not track those drop sites, including edge
+drops. A read that passes both proofs owns no count. Other reads own a
+unit. The closure of those chains
 (`Closure.dependencies`) is what liveness is computed over (`ssalive`,
 validated by `ssadeps`): a container is live wherever a value anchored to it
 is. The analysis refuses a cyclic chain and a graph `ssadeps` cannot place.

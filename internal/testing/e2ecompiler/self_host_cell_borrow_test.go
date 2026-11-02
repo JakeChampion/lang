@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -13,7 +14,15 @@ import (
 // between the read and its use, so each keeps an owned copy. local reads a
 // cell whose last use is the read, so the cell must stay alive until the
 // payload is read.
-const cellBorrowProgram = `struct Err { msg: string, code: i32 }
+const cellBorrowProgram = `import "core/mem";
+
+struct Err { msg: string, code: i32 }
+
+struct Clear { state: Cell[Option[Err]] }
+
+impl mem.Drop for Clear {
+    @noinline function drop(self: Self): void { self.state.set(None); }
+}
 
 @noinline function quiet(c: Cell[Option[Err]]): i32 {
     if let Some(e) = c.get() {
@@ -53,6 +62,20 @@ const cellBorrowProgram = `struct Err { msg: string, code: i32 }
     return 0 - 1;
 }
 
+@noinline function finalized(c: Cell[Option[Err]]): i32 {
+    let old = c.get();
+    let guard = Clear { state: c };
+    if let Some(e) = old { return e.code + e.msg.len(); }
+    return 0 - 1;
+}
+
+@noinline function finalized_array(c: Cell[Option[Err]], own guards: Clear[]): i32 {
+    let old = c.get();
+    let count = guards.len();
+    if let Some(e) = old { return e.code + e.msg.len() + count; }
+    return 0 - 1;
+}
+
 function main(): i32 {
     let c: Cell[Option[Err]] = cell_new(Some(Err { msg: "boom", code: 7 }));
     if (quiet(c) != 7) {
@@ -67,6 +90,15 @@ function main(): i32 {
     }
     if (local(5) != 10 || quiet(c) != 0 - 1) {
         return 4;
+    }
+    c.set(Some(Err { msg: "drop", code: 11 }));
+    if (finalized(c) != 15 || quiet(c) != 0 - 1) {
+        return 6;
+    }
+    c.set(Some(Err { msg: "array", code: 17 }));
+    let guards = [Clear { state: c }];
+    if (finalized_array(c, guards) != 23 || quiet(c) != 0 - 1) {
+        return 7;
     }
     if (__rc_underflow_count() != 0) {
         return 5;
@@ -120,6 +152,13 @@ func TestSelfHostCellReadBorrows(t *testing.T) {
 		dump := certifierDumpOf(t, h, src, name)
 		if !strings.Contains(dump, "__fern_rc_inc") {
 			t.Errorf("%s reads its cell before a write or a call replaces the content, so the read must own a copy:\n%s", name, dump)
+		}
+	}
+	for _, name := range []string{"finalized", "finalized_array"} {
+		dump := certifierDumpOf(t, h, src, name)
+		read := regexp.MustCompile(`(?m)^\s*(v[0-9]+) = arr_at 1 rc `).FindStringSubmatch(dump)
+		if len(read) != 2 || !strings.Contains(dump, "call __fern_rc_inc "+read[1]+"\n") {
+			t.Errorf("%s must retain its cell snapshot across an implicit finalizer:\n%s", name, dump)
 		}
 	}
 	for _, tg := range h.targets {

@@ -1,0 +1,29 @@
+import "core/mem";
+import "std/string";
+
+struct Err { message: string, code: i32 }
+struct Clear { state: Cell[Option[Err]] }
+
+impl mem.Drop for Clear {
+  @noinline
+  function drop(self: Self): void {
+    self.state.set(None);
+  }
+}
+
+@noinline
+function through_drop(c: Cell[Option[Err]]): i32 {
+  let old = c.get();
+  let guard = Clear { state: c };
+  if let Some(e) = old {
+    return e.code + e.message.len();
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let c = cell_new(Some(Err { message: "kept".repeat(16), code: 7 }));
+  if (through_drop(c) != 71) { return 1; }
+  if let Some(_) = c.get() { return 2; }
+  return 0;
+}

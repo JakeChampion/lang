@@ -3745,14 +3745,37 @@ function borrow_parents(f: Func): i32[][] {
   return view_roots(f, parents);
 }
 
-// Nothing but a cell write or a call replaces what a cell holds. A read of a
-// reference out of a cell therefore borrows the cell's content when every
-// use of the read, and of each projection off it, comes before the first
-// write or call on its path from the read. Such a read carries no count of
-// its own. It is anchored to the cell, which keeps the content alive.
-// The result is empty when the function reads no reference out of a cell.
+// Implicit drops can invoke user finalizers through contained values.
+function cell_read_has_drop_hazard(f: Func): boolean {
+  if (f.finalizers.len() == 0) {
+    return false;
+  }
+  let checked: string[] = [];
+  for t in f.values {
+    if (!reference(t)) {
+      continue;
+    }
+    let key = type_key(t);
+    if (util.index_of_str(checked, key) >= 0) {
+      continue;
+    }
+    checked = checked.append(key);
+    for hook in f.finalizers {
+      let receiver = typeinfo.TypeStruct { name: hook.receiver, args: [] };
+      if (can_hold(f, t, receiver)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// A cell read borrows only before explicit writes and calls, and without
+// implicit finalizer effects. Its projections share those limits.
+// The cell anchor keeps the content alive through its last borrowed use.
 pub function cell_borrows(f: Func): boolean[] {
   let out: boolean[] = [];
+  let drop_checked: boolean = false;
   for bi in 0..f.graph.blocks.len() {
     let b: ssa.SBlock = f.graph.blocks[bi];
     for pos in 0..b.insts.len() {
@@ -3761,6 +3784,13 @@ pub function cell_borrows(f: Func): boolean[] {
         continue;
       }
       if (quiet_cell_read(f.graph, bi, pos, ins.result)) {
+        // Implicit drops, including edge drops, can call a cell-writing finalizer.
+        if (!drop_checked) {
+          if (cell_read_has_drop_hazard(f)) {
+            return [];
+          }
+          drop_checked = true;
+        }
         if (out.len() == 0) {
           out = __alloc_bool(f.graph.nvals);
         }
