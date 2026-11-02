@@ -399,7 +399,7 @@ pub function all_runtime_need_roots(): string[] {
     "tcp_close", "tcp_pollable", "poll", "timer_fd",
     "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
     "i64_to_string", "u64_to_string",
-    "alloc_count",
+    "alloc_count", "relro_protect",
   ];
 }
 
