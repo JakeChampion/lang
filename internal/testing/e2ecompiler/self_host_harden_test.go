@@ -178,6 +178,9 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if out := runHardened(t, qemu, linked); out != hardenWant {
 			t.Errorf("printed %q, want %q", out, hardenWant)
 		}
+		if !bytes.Contains(text, []byte("__fern_alloc:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n")) {
+			t.Fatal("the -harden text does not sign the return address of the hand-written __fern_alloc frame")
+		}
 		if enforced {
 			var kept []string
 			for _, line := range strings.Split(string(text), "\n") {
@@ -215,6 +218,11 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			t.Fatalf("the PAC control without authentication printed %q, want %q", out, hardenWant)
 		}
 		t.Logf("PAC fault control passed (%s)", mode)
+		// The runtime frame control removes one signature only, the one of
+		// the hand-written __fern_alloc frame, and keeps its authentication.
+		unsignedRuntime := strings.Replace(string(text), "__fern_alloc:\n    paciasp\n", "__fern_alloc:\n", 1)
+		expectHardenSignal(t, qemu, link("unsigned-runtime", []byte(unsignedRuntime)), syscall.SIGSEGV, syscall.SIGILL)
+		t.Logf("PAC runtime frame control passed (%s)", mode)
 	})
 
 	t.Run("backtrace", func(t *testing.T) {
