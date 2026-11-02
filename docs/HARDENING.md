@@ -111,10 +111,16 @@ runs. The record is `docs/security/PIE.md`.
 ## Forward-edge control-flow integrity
 
 Under `-harden` a function value points at a stub. The stub is `endbr64`
-and a jump on x86-64, or `bti c` and a branch on arm64. Every indirect call
-compares the word at its target with that pad before the call. A target without the
+and a jump on x86-64, or `bti c` and a branch on arm64. The word ahead of
+the stub is the signature hash of the function. Every indirect call compares
+the word at its target with that pad before the call. A target without the
 pad, which is any address that is not an address-taken function, prints
 `fern: indirect call to an address that is not a function` and exits with
+status 134.
+
+A call through a typed function value also compares the word
+ahead of the target with the hash of its own signature. A mismatch prints
+`fern: indirect call to a function of another signature` and exits with
 status 134. The stubs sit in the read-only text segment. The design and its
 limits are in `docs/security/CFI.md`.
 

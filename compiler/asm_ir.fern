@@ -8916,11 +8916,11 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   }
   s = ssa_parallel_moves(srcs, dsts, s);
   if (ssa.slot_call(ins) && s.harden) {
-    s = s.write("    movq 8(%rax), %r11\n" + cfi_check_x86("%r11") + "    call *%r11\n");
+    s = s.write("    movq 8(%rax), %r11\n" + cfi_check_x86("%r11", ins.imm) + "    call *%r11\n");
   } else if (ssa.slot_call(ins)) {
     s = s.write("    call *8(%rax)\n");
   } else if (s.harden) {
-    s = s.write(cfi_check_x86("%rdx") + "    call *%rdx\n");
+    s = s.write(cfi_check_x86("%rdx", ins.imm) + "    call *%rdx\n");
   } else {
     s = s.write("    call *%rdx\n");
   }
@@ -8930,9 +8930,14 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
-// The word at a valid target is endbr64 (f3 0f 1e fa), read little-endian.
-function cfi_check_x86(reg: string): string {
-  return "    cmpl $-98693133, (" + reg + ")\n    jne __fern_cfi_fail\n";
+// The word at a valid target is endbr64 (f3 0f 1e fa), read little-endian,
+// and the word ahead of it is the signature hash when the call has one.
+function cfi_check_x86(reg: string, sig: i32): string {
+  let out: string = "    cmpl $-98693133, (" + reg + ")\n    jne __fern_cfi_fail\n";
+  if (sig == 0) {
+    return out;
+  }
+  return out + "    cmpl $" + util.i32_to_string(sig) + ", -4(" + reg + ")\n    jne __fern_cfi_sig_fail\n";
 }
 
 function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
@@ -8943,7 +8948,7 @@ function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitStat
   let i: i32 = first;
   while (i < s.cfi_stubs.len()) {
     let target: string = s.cfi_stubs[i];
-    s = s.write(asmcore.cfi_stub_label(s, target) + ":\n    endbr64\n    jmp " + target + "\n");
+    s = s.write("    .long " + util.i32_to_string(s.cfi_sigs[i]) + "\n" + asmcore.cfi_stub_label(s, target) + ":\n    endbr64\n    jmp " + target + "\n");
     i = i + 1;
   }
   return s;
@@ -8966,7 +8971,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   if (k == 45) {
     label = "__fn_" + asmcore.sanitize_label(ins.str) + ".r";
     if (s.harden) {
-      s = asmcore.with_cfi_stub(s, label);
+      s = asmcore.with_cfi_stub(s, label, ins.imm);
       label = asmcore.cfi_stub_label(s, label);
     }
   } else if (k == 46) {
@@ -11385,6 +11390,7 @@ function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
     s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
     s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
     s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
+    s = emit_startup_failure(s, "__fern_cfi_sig_fail", aborts.cfi_sig());
   }
   return s;
 }

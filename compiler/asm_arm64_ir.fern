@@ -4255,7 +4255,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_ldst(s, true, "x6", "x0", 8);
   }
   if (s.harden) {
-    s = cfi_check_arm64(s, "x6");
+    s = cfi_check_arm64(s, "x6", ins.imm);
   }
   s = s.write("    blr x6\n");
   if (argc > ssa_nargs()) {
@@ -4282,7 +4282,7 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   if (k == 45) {
     label = "__fn_" + asmcore.sanitize_label(ins.str) + ".k";
     if (s.harden) {
-      s = asmcore.with_cfi_stub(s, label);
+      s = asmcore.with_cfi_stub(s, label, ins.imm);
       label = asmcore.cfi_stub_label(s, label);
     }
   } else if (k == 46) {
@@ -6435,11 +6435,20 @@ function landing_pad(s: asmcore.EmitState): string {
   return "";
 }
 
-// The word at a valid target is bti c (0xd503245f).
-function cfi_check_arm64(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+// The word at a valid target is bti c (0xd503245f), and the word ahead of
+// it is the signature hash when the call has one.
+function cfi_check_arm64(s: asmcore.EmitState, reg: string, sig: i32): asmcore.EmitState {
   let ok: asmcore.LabelOut = asmcore.fresh_label(s);
   s = ok.state;
-  return s.write("    ldr w16, [" + reg + "]\n    movz w17, #9311\n    movk w17, #54531, lsl #16\n    cmp w16, w17\n    b.eq " + ok.name + "\n    b __fern_cfi_fail\n" + ok.name + ":\n");
+  s = s.write("    ldr w16, [" + reg + "]\n    movz w17, #9311\n    movk w17, #54531, lsl #16\n    cmp w16, w17\n    b.eq " + ok.name + "\n    b __fern_cfi_fail\n" + ok.name + ":\n");
+  if (sig == 0) {
+    return s;
+  }
+  let same: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = same.state;
+  let lo: string = util.i32_to_string(sig & 65535);
+  let hi: string = util.i32_to_string((sig >> 16) & 65535);
+  return s.write("    ldur w16, [" + reg + ", #-4]\n    movz w17, #" + lo + "\n    movk w17, #" + hi + ", lsl #16\n    cmp w16, w17\n    b.eq " + same.name + "\n    b __fern_cfi_sig_fail\n" + same.name + ":\n");
 }
 
 function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
@@ -6450,7 +6459,7 @@ function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitStat
   let i: i32 = first;
   while (i < s.cfi_stubs.len()) {
     let target: string = s.cfi_stubs[i];
-    s = ssa_landing_pad(s.write(asmcore.cfi_stub_label(s, target) + ":\n"));
+    s = ssa_landing_pad(s.write("    .word " + util.i32_to_string(s.cfi_sigs[i]) + "\n" + asmcore.cfi_stub_label(s, target) + ":\n"));
     s = s.write("    b " + target + "\n");
     i = i + 1;
   }
@@ -6513,6 +6522,7 @@ function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
     s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
     s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
+    s = emit_startup_failure(s, "__fern_cfi_sig_fail", aborts.cfi_sig());
   }
   return s;
 }

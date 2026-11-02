@@ -10,14 +10,25 @@ import (
 )
 
 // Under -harden a function value points at a stub that starts with the
-// landing pad, and every indirect call checks for that pad. The control
-// takes the address of a closure and of twice; thrice has the same
-// signature as twice and is only called directly.
+// landing pad, and every indirect call checks for that pad and for the
+// signature word ahead of it. The control takes the address of a closure,
+// of twice and of pair, whose signature differs from twice; thrice has the
+// same signature as twice and is only called directly.
 const cfiSrc = `import "std/i32";
 
 @noinline
 function apply(f: (i32) => i32, x: i32): i32 {
   return f(x);
+}
+
+@noinline
+function apply2(f: (i32, i32) => i32, x: i32, y: i32): i32 {
+  return f(x, y);
+}
+
+@noinline
+function pair(x: i32, y: i32): i32 {
+  return x * 10 + y;
 }
 
 @noinline
@@ -34,14 +45,16 @@ function main(): i32 {
   let k: i32 = 5;
   let add: (i32) => i32 = (x: i32): i32 => x + k;
   let xs: i32[] = [1, 2, 3].map(twice);
-  print(apply(add, 10).to_string() + " " + apply(twice, 7).to_string() + " " + xs[2].to_string() + " " + thrice(1).to_string());
+  print(apply(add, 10).to_string() + " " + apply(twice, 7).to_string() + " " + xs[2].to_string() + " " + thrice(1).to_string() + " " + apply2(pair, 1, 2).to_string());
   return 0;
 }
 `
 
-const cfiWant = "15 14 6 3\n"
+const cfiWant = "15 14 6 3 12\n"
 
 const cfiCause = "fern: indirect call to an address that is not a function\n"
+
+const cfiSigCause = "fern: indirect call to a function of another signature\n"
 
 func TestSelfHostForwardEdgeCFI(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -105,8 +118,8 @@ func TestSelfHostForwardEdgeCFI(t *testing.T) {
 			if n := bytes.Count(plainImg, tc.pad); n != 0 {
 				t.Errorf("the plain image carries %d pads, want none", n)
 			}
-			if bytes.Contains(plainImg, []byte(cfiCause)) {
-				t.Error("the plain image carries the CFI cause")
+			if bytes.Contains(plainImg, []byte(cfiCause)) || bytes.Contains(plainImg, []byte(cfiSigCause)) {
+				t.Error("the plain image carries a CFI cause")
 			}
 			// The x86-64 check embeds the pad bytes as its immediate, so the
 			// stubs are the pads that are not checks.
@@ -115,8 +128,8 @@ func TestSelfHostForwardEdgeCFI(t *testing.T) {
 			if tc.target == "x86-64-linux" {
 				pads -= checks
 			}
-			if pads != 2 {
-				t.Errorf("the -harden image carries %d stubs, want one for the closure and one for twice", pads)
+			if pads != 3 {
+				t.Errorf("the -harden image carries %d stubs, want one each for the closure, twice and pair", pads)
 			}
 			if checks == 0 {
 				t.Error("the -harden image carries no indirect-call check")
@@ -131,6 +144,19 @@ func TestSelfHostForwardEdgeCFI(t *testing.T) {
 			stub := ".quad .Lfern_cfi___fn_twice$wrap__" + strings.TrimPrefix(tc.entry, ".") + "\n"
 			if bytes.Count(asm, []byte(stub)) != 1 {
 				t.Fatalf("the emitted text holds %d references to the stub of twice, want one:\n%s", bytes.Count(asm, []byte(stub)), stub)
+			}
+			// The word ahead of each stub is the signature hash of its function.
+			for _, fn := range []string{"twice", "pair"} {
+				label := "\n.Lfern_cfi___fn_" + fn + "$wrap__" + strings.TrimPrefix(tc.entry, ".") + ":\n"
+				at := bytes.Index(asm, []byte(label))
+				if at < 0 {
+					t.Fatalf("the emitted text defines no stub for %s", fn)
+				}
+				before := asm[:at]
+				line := before[bytes.LastIndexByte(before, '\n')+1:]
+				if !bytes.HasPrefix(line, []byte("    .long ")) && !bytes.HasPrefix(line, []byte("    .word ")) {
+					t.Errorf("the stub of %s follows %q, want a signature word", fn, line)
+				}
 			}
 			link := func(name string, body []byte) string {
 				t.Helper()
@@ -151,15 +177,116 @@ func TestSelfHostForwardEdgeCFI(t *testing.T) {
 			if out, errout, code := run(link("linked", asm)); out != cfiWant || code != 0 {
 				t.Fatalf("the linked control printed %q with exit %d (stderr %q)", out, code, errout)
 			}
-			for _, forged := range []struct{ name, target string }{
-				{"real-entry", "__fn_twice$wrap" + tc.entry},
-				{"same-signature", "__fn_thrice" + tc.entry},
-				{"data", "__fern_cfi_fail_msg"},
+			for _, forged := range []struct{ name, target, cause string }{
+				{"real-entry", "__fn_twice$wrap" + tc.entry, cfiCause},
+				{"same-signature", "__fn_thrice" + tc.entry, cfiCause},
+				{"data", "__fern_cfi_fail_msg", cfiCause},
+				{"other-signature", ".Lfern_cfi___fn_pair$wrap__" + strings.TrimPrefix(tc.entry, "."), cfiSigCause},
 			} {
 				patched := bytes.Replace(asm, []byte(stub), []byte(".quad "+forged.target+"\n"), 1)
 				out, errout, code := run(link(forged.name, patched))
-				if code != 134 || !strings.HasPrefix(errout, cfiCause) {
-					t.Errorf("%s: exit %d, stdout %q, stderr %q; want exit 134 with the CFI cause", forged.name, code, out, errout)
+				if code != 134 || !strings.HasPrefix(errout, forged.cause) {
+					t.Errorf("%s: exit %d, stdout %q, stderr %q; want exit 134 with %q", forged.name, code, out, errout, strings.TrimSpace(forged.cause))
+				}
+			}
+		})
+	}
+}
+
+// A closure that captures a string is dropped through a comparison of its
+// body address, and a string-keyed map passes its hash closure to the map
+// runtime. Both sites take a stub's address, so both must give it the
+// signature word of the closure's type.
+const cfiHelperSrc = `import "std/i32";
+import "std/string";
+import "core/map";
+
+struct Holder { f: (i32) => i32 }
+
+@noinline
+function make(k: i32): Holder {
+  let tag: string = "k" + k.to_string();
+  return Holder { f: (x: i32): i32 => x + tag.len() };
+}
+
+@noinline
+function run(h: Holder, x: i32): i32 {
+  let f: (i32) => i32 = h.f;
+  return f(x);
+}
+
+function main(): i32 {
+  let m: Map[string, string] = map_new(4);
+  m = m.insert("a", "alpha");
+  m = m.insert("b", "beta");
+  let total: i32 = 0;
+  for i in 0..3 {
+    let h: Holder = make(i);
+    total = total + run(h, 10);
+  }
+  print(m.len().to_string() + " " + total.to_string());
+  return 0;
+}
+`
+
+func TestSelfHostForwardEdgeCFIHelperSites(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	_, qemu := arm64Tooling(t)
+	for _, tc := range []struct{ target, entry string }{{"x86-64-linux", "r"}, {"arm64-linux", "k"}} {
+		t.Run(tc.target, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "main.fern")
+			if err := os.WriteFile(src, []byte(cfiHelperSrc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			compile := func(out string, flags ...string) {
+				t.Helper()
+				args := append(append([]string{}, flags...), "-target", tc.target, "-o", out, src, cli.stdlib)
+				cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+				cmd.Env = childEnv()
+				if msg, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("compile %v: %v\n%s", flags, err, msg)
+				}
+			}
+			asmPath := filepath.Join(dir, "hard.s")
+			compile(asmPath, "-harden", "-emit", "asm")
+			asm, err := os.ReadFile(asmPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			closure := ".Lfern_cfi___fn_make$clo0__" + tc.entry
+			if n := bytes.Count(asm, []byte(closure)); n < 3 {
+				t.Fatalf("the emitted text names the closure's stub %d times, want its definition, its construction and the drop's comparison", n)
+			}
+			lines := strings.Split(string(asm), "\n")
+			stubs := 0
+			for i, line := range lines {
+				if !strings.HasPrefix(line, ".Lfern_cfi_") || !strings.HasSuffix(line, ":") || i == 0 {
+					continue
+				}
+				stubs++
+				word := strings.TrimSpace(lines[i-1])
+				if word == ".long 0" || word == ".word 0" || !(strings.HasPrefix(word, ".long ") || strings.HasPrefix(word, ".word ")) {
+					t.Errorf("the stub %s follows %q, want a nonzero signature word", line, word)
+				}
+			}
+			if stubs < 2 {
+				t.Fatalf("the emitted text defines %d stubs, want the closure's and the map hash's", stubs)
+			}
+			for _, flags := range [][]string{nil, {"-harden"}} {
+				bin := filepath.Join(dir, "bin"+strings.Join(flags, ""))
+				compile(bin, flags...)
+				var c *exec.Cmd
+				if tc.target == "arm64-linux" {
+					c = runArm64Bin(qemu, bin)
+				} else {
+					c = runX86_64Bin(cli.runner, bin)
+				}
+				var stdout, stderr bytes.Buffer
+				c.Stdout, c.Stderr = &stdout, &stderr
+				_ = c.Run()
+				if got := stdout.String(); got != "2 36\n" || c.ProcessState.ExitCode() != 0 {
+					t.Errorf("%v printed %q with exit %d (stderr %q), want %q", flags, got, c.ProcessState.ExitCode(), stderr.String(), "2 36\n")
 				}
 			}
 		})

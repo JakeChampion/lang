@@ -42,6 +42,10 @@ pub function cfi(): string {
   return "fern: indirect call to an address that is not a function";
 }
 
+pub function cfi_sig(): string {
+  return "fern: indirect call to a function of another signature";
+}
+
 pub function relro(): string {
   return "fern: protection of the constant data failed";
 }
