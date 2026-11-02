@@ -52,7 +52,7 @@ func rawDoubleFreeSrc(size string) string {
 `
 }
 
-func runRawFreeProbe(t *testing.T, cli *selfHostCLI, qemu, target, source string) (stdout, stderr string, code int) {
+func runRawFreeProbe(t *testing.T, cli *selfHostCLI, qemu, target, source string, flags ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
@@ -60,7 +60,7 @@ func runRawFreeProbe(t *testing.T, cli *selfHostCLI, qemu, target, source string
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "main")
-	args := []string{"-target", target, "-o", bin, src, cli.stdlib}
+	args := append(append([]string{"-target", target}, flags...), "-o", bin, src, cli.stdlib)
 	cmd := runX86_64Bin(cli.runner, cli.bin, args...)
 	cmd.Env = childEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {

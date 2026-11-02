@@ -37,6 +37,7 @@ QEMU establishes emulated behaviour only.
 | A second release of one box | `TestX86_64SanitizeDoubleFreeReported`, `TestArm64SanitizeDoubleFreeReported`, `TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64` | `-sanitize` report; the release build counts and continues | x86, arm64 |
 | A released block reused before the sanitizer can see it | `TestX86_64SanitizeQuarantinesFreedBlocks`, `TestArm64SanitizeQuarantinesFreedBlocks`, `TestSelfHostSanitizeBoxFreeIsQuarantined`, `TestSelfHostUafQuarantineAsmContractX86_64`, `TestSelfHostUafQuarantineAsmContractArm64`, `TestSelfHostSanitizeQuarantineGrowth` | the block stays quarantined; the growth is pinned | x86, arm64 |
 | A raw free of an address outside the arena | `TestSelfHostRawFreeOutsideHeap` | abort with the out-of-heap cause | x86, arm64 |
+| A forged free list link in a released block | `TestSelfHostFreeListLinkForgery` | abort with the corrupt-link cause under `-harden`; the control recycles twelve blocks | x86, arm64 |
 | A secret left in a released block | `TestSelfHostEraseZeroesStorage` | `crypto.erase` zeroes it; the control reads it back | x86, arm64 |
 | A leak at exit | `TestX86_64SanitizeLeakVerdict`, `TestArm64SanitizeLeakVerdict`, `TestSelfHostWasmSanitizeLeakVerdict` | `-sanitize` verdict | x86, arm64, wasm |
 | A handle closed twice or used after its close or transfer | `conformance/cases/diag_e051_handle_closed_twice`, `conformance/cases/diag_e051_handle_read_after_close`, `conformance/cases/diag_e051_handle_used_after_transfer` | `E051` | both checkers |
