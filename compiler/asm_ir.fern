@@ -246,6 +246,16 @@ function quar_payload(s: asmcore.EmitState, name: string, body: string): asmcore
   return s.write("    addq $8, %r8\n    subq $1, %rcx\n    jnz .Lquar_" + name + "\n.Lquar_" + name + "_done:\n");
 }
 
+// At exit every block still in the quarantine gets the eviction's check, so
+// a write after free is reported whether or not the budget evicted it.
+function quar_scan_at_exit(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    movq __fern_quar_head(%rip), %rdi\n.Lquar_end_loop:\n    testq %rdi, %rdi\n    jz .Lquar_end_done\n");
+  s = s.write("    cmpl $" + rc_poison() + ", (%rdi)\n    jne .Lquar_end_size0\n    movq 8(%rdi), %rsi\n    jmp .Lquar_end_scan\n");
+  s = s.write(".Lquar_end_size0:\n    cmpl $" + rc_poison() + ", 8(%rdi)\n    jne __fern_san_abort_waf\n    movq (%rdi), %rsi\n.Lquar_end_scan:\n");
+  s = quar_payload(s, "atexit", "    cmpq %rax, (%r8)\n    jne __fern_san_abort_waf\n");
+  return s.write("    movq 16(%rdi), %rdi\n    jmp .Lquar_end_loop\n.Lquar_end_done:\n");
+}
+
 function emit_san_waf_abort(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
   s = s.write(".Lsan_waf:\n    .ascii \"fern-sanitizer: write-after-free (a quarantined block was written)\\n\"\n");
@@ -931,6 +941,9 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    call __fn___fern_str_arr_free\n");
       s = s.write("    addq $8, %rsp\n");
       s = s.write(".Llc_args_done:\n");
+    }
+    if (s.rc_free_debug && needs_heap_runtime(s)) {
+      s = quar_scan_at_exit(s);
     }
     s = s.write("    leaq .Llc_a(%rip), %rsi\n");
     s = s.write("    movq $18, %rdx\n");
