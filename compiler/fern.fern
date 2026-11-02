@@ -5276,6 +5276,11 @@ function coverage_refusal(cover_on: boolean, mode_interp: boolean, mode_check: b
   return "";
 }
 
+// An x86 Android executable uses PIE, like its ARM counterpart.
+function executable_pie(pie: boolean, target: string, shared: boolean): boolean {
+  return pie || target == "x86-64-android" && !shared;
+}
+
 function shared_refusal(shared: boolean, target: string, out_path: string, emit: string): string {
   if (!shared) {
     return "";
@@ -5638,10 +5643,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
     return 2;
   }
-  // An Android executable loads at a random base, as arm64-android's does.
-  if (target == "x86-64-android" && !shared) {
-    pie = true;
-  }
+  pie = executable_pie(pie, target, shared);
   let (remaps, remaps_ok) = path_remaps(remap_specs);
   if (!remaps_ok) {
     return 2;

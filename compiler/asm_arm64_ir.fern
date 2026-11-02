@@ -8233,7 +8233,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
   s = s.svc(64);
-  if (s.has_need("logcat")) {
+  if (asmcore.is_android(s.build_target)) {
     s = s.write("    str x19, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n");
     s = s.write("    mov x9, #7\n    str x9, [sp, #-16]!\n    bl __fn___fern_logcat\n");
     s = s.write("    add sp, sp, #48\n    ldr x19, [sp], #16\n");
@@ -9986,7 +9986,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     s = asmcore.emit_build_manifest(s);
   }
   s = emit_rt_report(s);
-  if (s.has_need("logcat")) {
+  if (asmcore.is_android(s.build_target)) {
     s = emit_runtime("__fern_logcat", s);
   }
   if (s.shared) {

@@ -2612,7 +2612,7 @@ function emit_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
-  if (s.has_need("logcat")) {
+  if (asmcore.is_android(s.build_target)) {
     s = s.write("    pushq %r15\n    pushq %rdx\n    pushq %rsi\n    pushq $7\n    call __fn___fern_logcat\n");
     s = s.write("    addq $24, %rsp\n    popq %r15\n");
   }
@@ -11498,6 +11498,13 @@ function emit_rt_clocks(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+function emit_logcat_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  if (asmcore.is_android(s.build_target)) {
+    return emit_runtime("__fern_logcat", s);
+  }
+  return s;
+}
+
 function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.profile > 0) {
     s = emit_profile_runtime(s);
@@ -11538,9 +11545,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = asmcore.emit_build_manifest(s);
   }
   s = emit_report(s);
-  if (s.has_need("logcat")) {
-    s = emit_runtime("__fern_logcat", s);
-  }
+  s = emit_logcat_runtime(s);
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
     s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);
