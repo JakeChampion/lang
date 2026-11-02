@@ -305,6 +305,33 @@ function elf_pad_to(buf: i32[], off: i32): i32[] {
   return buf;
 }
 
+// The section names of a shared object, in section-index order from 1.
+// Android's loader rejects a library with no section headers, or with no
+// SHT_DYNAMIC section that matches PT_DYNAMIC.
+function elf_so_section_names(): string[] {
+  return [".text", ".data", ".bss", ".rela.dyn", ".dynsym", ".dynstr", ".hash", ".dynamic", ".shstrtab"];
+}
+
+// Section index `i` names elf_so_section_names()[i - 1], at this offset.
+function elf_so_shname(i: i32): i32 {
+  let off: i32 = 1;
+  let names: string[] = elf_so_section_names();
+  let k: i32 = 0;
+  while (k + 1 < i) {
+    off = off + names[k].len() + 1;
+    k = k + 1;
+  }
+  return off;
+}
+
+function elf_so_shstrtab(): i32[] {
+  let tab: i32[] = [0];
+  for n in elf_so_section_names() {
+    tab = elf_str_bytes(tab, n);
+  }
+  return tab;
+}
+
 pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string): i32[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
   let text_off: i32 = elf_text_off_so();
@@ -352,6 +379,9 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   let dyn_sz: i32 = tags.len() * 16;
   let end: i32 = dyn_off + dyn_sz;
   let tab_mem: i32 = (end - tab_file + page - 1) / page * page;
+  let shstrtab: i32[] = elf_so_shstrtab();
+  let shnum: i32 = elf_so_section_names().len() + 1;
+  let sh_off: i32 = elf_align8(end + shstrtab.len());
 
   let buf: i32[] = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   buf = elf_le16(buf, 3);
@@ -359,14 +389,14 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_le32(buf, 1);
   buf = elf_le64(buf, 0 as i64);
   buf = elf_le64(buf, elf_eh_size() as i64);
-  buf = elf_le64(buf, 0 as i64);
+  buf = elf_le64(buf, sh_off as i64);
   buf = elf_le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
   buf = elf_le16(buf, elf_so_phnum());
-  buf = elf_le16(buf, 0);
-  buf = elf_le16(buf, 0);
-  buf = elf_le16(buf, 0);
+  buf = elf_le16(buf, 64);
+  buf = elf_le16(buf, shnum);
+  buf = elf_le16(buf, shnum - 1);
 
   buf = elf_phdr(buf, 1, 5, 0, 0, code_end, code_end, page);
   buf = elf_phdr(buf, 1, 6, data_off, data_off, data.len(), data.len() + bss, page);
@@ -433,7 +463,17 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     buf = elf_le64(buf, vals_d[d]);
     d = d + 1;
   }
-  return buf;
+  buf = elf_pad_to(elf_cat(buf, shstrtab), sh_off + 64);
+  let bss_off: i64 = (data_off + data.len()) as i64;
+  buf = elf_shdr(buf, elf_so_shname(1), 1, 6, text_off as i64, text_off as i64, text.len() as i64, 0, 0, 16, 0);
+  buf = elf_shdr(buf, elf_so_shname(2), 1, 3, data_off as i64, data_off as i64, data.len() as i64, 0, 0, 16, 0);
+  buf = elf_shdr(buf, elf_so_shname(3), 8, 3, bss_off, bss_off, bss as i64, 0, 0, 1, 0);
+  buf = elf_shdr(buf, elf_so_shname(4), 4, 2, (rela_off + slide) as i64, rela_off as i64, rela_sz as i64, 5, 0, 8, 24);
+  buf = elf_shdr(buf, elf_so_shname(5), 11, 2, (sym_off + slide) as i64, sym_off as i64, (nsym * 24) as i64, 6, 1, 8, 24);
+  buf = elf_shdr(buf, elf_so_shname(6), 3, 2, (str_off + slide) as i64, str_off as i64, dynstr.len() as i64, 0, 0, 1, 0);
+  buf = elf_shdr(buf, elf_so_shname(7), 5, 2, (hash_off + slide) as i64, hash_off as i64, ((3 + nsym) * 4) as i64, 5, 0, 4, 4);
+  buf = elf_shdr(buf, elf_so_shname(8), 6, 3, (dyn_off + slide) as i64, dyn_off as i64, dyn_sz as i64, 6, 0, 8, 16);
+  return elf_shdr(buf, elf_so_shname(9), 3, 0, 0, end as i64, shstrtab.len() as i64, 0, 0, 1, 0);
 }
 
 pub function elf_text_vaddr_wx(note: boolean): i32 {

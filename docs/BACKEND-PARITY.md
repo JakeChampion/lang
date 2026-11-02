@@ -499,9 +499,10 @@ Scope: the report loop is the work — the counter bump itself is `i64.load` /
 ### Shared objects (`-shared`) are Linux and Android only
 
 `-shared` builds an ELF shared object for x86-64-linux, arm64-linux and
-arm64-android, and every other target refuses it with exit 2. Darwin has no
-writer for a Mach-O dylib, and wasm has no shared-object form; a wasm library
-is a component's exports.
+arm64-android, and every other target refuses it with exit 2. The object has
+section headers, because Android's loader refuses a library without them.
+Darwin has no writer for a Mach-O dylib, and wasm has no shared-object form;
+a wasm library is a component's exports.
 
 Fix plan for Darwin: an `MH_DYLIB` image from the Mach-O writer, with the
 `-export` functions in its export trie.

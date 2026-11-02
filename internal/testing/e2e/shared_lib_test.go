@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"debug/elf"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1231,11 +1232,46 @@ func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
 	if !dynamic || !stack {
 		t.Errorf("PT_DYNAMIC present = %v, non-executable PT_GNU_STACK = %v; a loader needs both", dynamic, stack)
 	}
+	sharedSectionCheck(t, f, so)
 	if len(so) > 256<<10 {
 		t.Errorf("a seven-function library is %d bytes; its .bss is being written into the file", len(so))
 	}
 	if bytes.Contains(so, []byte("fern: stack overflow")) {
 		t.Errorf("the shared object carries the stack-overflow handler, which would take its host's SIGSEGV")
+	}
+}
+
+// The section headers that Android's loader (bionic ElfReader) requires of
+// an app that targets API 26 or later: e_shentsize is 64, e_shstrndx is set,
+// and a SHT_DYNAMIC section covers PT_DYNAMIC and links to a SHT_STRTAB.
+func sharedSectionCheck(t *testing.T, f *elf.File, so []byte) {
+	t.Helper()
+	if shentsize := binary.LittleEndian.Uint16(so[58:]); shentsize != 64 {
+		t.Errorf("e_shentsize = %d, want 64", shentsize)
+	}
+	if binary.LittleEndian.Uint16(so[62:]) == 0 {
+		t.Errorf("e_shstrndx is 0")
+	}
+	dyn := f.SectionByType(elf.SHT_DYNAMIC)
+	if dyn == nil {
+		t.Fatalf("no SHT_DYNAMIC section among %d sections", len(f.Sections))
+	}
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_DYNAMIC && (p.Off != dyn.Offset || p.Filesz != dyn.Size) {
+			t.Errorf(".dynamic is at %#x+%#x, PT_DYNAMIC at %#x+%#x", dyn.Offset, dyn.Size, p.Off, p.Filesz)
+		}
+	}
+	if int(dyn.Link) >= len(f.Sections) || f.Sections[dyn.Link].Type != elf.SHT_STRTAB {
+		t.Errorf(".dynamic sh_link %d is not a SHT_STRTAB", dyn.Link)
+	}
+	syms, err := f.DynamicSymbols()
+	if err != nil {
+		t.Fatalf("dynamic symbols: %v", err)
+	}
+	for _, s := range syms {
+		if int(s.Section) >= len(f.Sections) || f.Sections[s.Section].Name != ".text" {
+			t.Errorf("export %s is in section %d, not .text", s.Name, s.Section)
+		}
 	}
 }
 
