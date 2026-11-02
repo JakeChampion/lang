@@ -4720,6 +4720,50 @@ function lent_result(own r: irtables.LowerState): irtables.LowerState {
   return irtables.LowerState { ...r, ops: r.ops.with(last, ir.lent(r.ops[last])) };
 }
 
+// A byte-view kernel whose views are all lent arrays takes the array
+// kernel. The wrapper's layout test is for a view that may be a string.
+function lent_kernel_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): Lowered {
+  let kernel: Option[ir.Op] = array_kernel(ins.str);
+  if let Some(op) = kernel {
+    if (lent_views(f, ins)) {
+      return Lowered { found: true, r: emit(r, ir.packed(op)) };
+    }
+  }
+  return Lowered { found: false, r: r };
+}
+
+function array_kernel(name: string): Option[ir.Op] {
+  if (name == "__mismatch_bytes") {
+    return Some(ir.op_mismatch_bytes());
+  }
+  if (name == "__sum_bytes_array") {
+    return Some(ir.op_sum_bytes_array());
+  }
+  if (name == "__bsd_sum_bytes") {
+    return Some(ir.op_bsd_sum_bytes());
+  }
+  if (name == "__crc32_cksum_array") {
+    return Some(ir.op_crc32_cksum_array());
+  }
+  if (name == "__crc32_ieee_array") {
+    return Some(ir.op_crc32_ieee_array());
+  }
+  return None;
+}
+
+function lent_views(f: ssasem.Func, ins: ssa.SInst): boolean {
+  let any: boolean = false;
+  for a in ins.args {
+    if (byte_view(f.values[a])) {
+      if (defining(f, a).kind_tag != ssasem.array_lend()) {
+        return false;
+      }
+      any = true;
+    }
+  }
+  return any;
+}
+
 function call_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   if (paired_op(ins.str)) {
     return pair_site(r, f, ins);
@@ -4730,6 +4774,11 @@ function call_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   if (util.index_of_str(f.shadows, ins.str) >= 0) {
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
   }
+  let lent: Lowered = lent_kernel_site(r, f, ins);
+  if (lent.found) {
+    return lent.r;
+  }
+  r = lent.r;
   if (ins.str == "print") {
     r = emit(r, ir.op_print_str());
     r = emit(r, ir.op_drop());
