@@ -1,0 +1,41 @@
+struct Holder { bytes: u8[] }
+
+@noinline
+function buffer(): u8[] {
+  return [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+}
+
+@noinline
+function address(fd: i32, h: Holder): i32 {
+  return tcp_addr_into(fd, false, h.bytes);
+}
+
+function main(): i32 {
+  let fd = tcp_listen(0);
+  if (fd < 0 || args().len() != 2) { return 1; }
+  let iteration = 0;
+  while (iteration < 2) {
+    let mode = args()[1];
+    let n = 0;
+    if (mode == "record") {
+      let h = Holder { bytes: [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8] };
+      if (h.bytes[0] != 0u8) { return 3; }
+      n = address(fd, h);
+      if (h.bytes[0] == 0u8) { return 4; }
+    } else if (mode == "return") {
+      let bytes = buffer();
+      if (bytes[0] != 0u8) { return 3; }
+      n = tcp_addr_into(fd, false, bytes);
+      if (bytes[0] == 0u8) { return 4; }
+    } else {
+      let value = cell_new([0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+      if (value.get()[0] != 0u8) { return 3; }
+      n = tcp_addr_into(fd, false, value.get());
+      if (value.get()[0] == 0u8) { return 4; }
+    }
+    if (n != 19) { return 2; }
+    iteration = iteration + 1;
+  }
+  tcp_close(fd);
+  return 0;
+}

@@ -1,0 +1,29 @@
+[
+  {
+    "command": [
+      "/tmp/fern-14024-storage-freshness",
+      "record"
+    ],
+    "exit": 3,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/tmp/fern-14024-storage-freshness",
+      "return"
+    ],
+    "exit": 3,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "/tmp/fern-14024-storage-freshness",
+      "cell"
+    ],
+    "exit": 3,
+    "stdout": "",
+    "stderr": ""
+  }
+]
