@@ -2,11 +2,11 @@ import "./aborts";
 import "./util";
 
 pub function texts(): string[] {
-  return [aborts.arr_oob() + "\n", aborts.str_oob() + "\n", aborts.slice_range() + "\n", aborts.alloc_size() + "\n", aborts.oom() + "\n"];
+  return [aborts.arr_oob() + "\n", aborts.str_oob() + "\n", aborts.slice_range() + "\n", aborts.alloc_size() + "\n", aborts.oom() + "\n", aborts.free_range() + "\n", aborts.double_free() + "\n"];
 }
 
 pub function helpers(offsets: i32[], mode: i32): string {
-  let names: string[] = ["arr", "str", "slice", "alloc", "oom"];
+  let names: string[] = ["arr", "str", "slice", "alloc", "oom", "free_range", "double_free"];
   let messages: string[] = texts();
   let out: string = "";
   let i: i32 = 0;

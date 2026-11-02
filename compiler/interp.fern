@@ -6991,7 +6991,7 @@ function is_raw_mem_builtin(name: string): boolean {
 
 // The interpreter is a compiled program, so the raw builtins act on its own
 // heap, as the buffer builtins do.
-function call_raw_mem_builtin(name: string, args: Value[]): Value {
+function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let want: i32 = 1;
   if (name == "__ptr_width") {
     want = 0;
@@ -7026,7 +7026,7 @@ function call_raw_mem_builtin(name: string, args: Value[]): Value {
   if (util.str_has_prefix(name, "__load_")) {
     return raw_mem_load(name, w[0] as usize);
   }
-  return raw_mem_effect(name, w);
+  return raw_mem_effect(heap, name, w);
 }
 
 function raw_mem_load(name: string, p: usize): Value {
@@ -7044,13 +7044,25 @@ function raw_mem_load(name: string, p: usize): Value {
   }
 }
 
-function raw_mem_effect(name: string, w: i64[]): Value {
+function raw_mem_effect(heap: interpheap.Heap, name: string, w: i64[]): Value {
   unsafe {
     if (name == "__alloc") {
-      return v_usize(__alloc(w[0] as i32) as i64);
+      let fresh: usize = __alloc(w[0] as i32);
+      interpheap.raw_record(heap, fresh as i64, w[0] as i32);
+      return v_usize(fresh as i64);
     }
     let p: usize = w[0] as usize;
     if (name == "__free") {
+      if (w[0] == 0i64) {
+        return v_void();
+      }
+      let state: i32 = interpheap.raw_release(heap, w[0]);
+      if (state == 0) {
+        return v_abort(aborts.free_range(), "address " + util.i64_to_string(w[0]) + " is not a block from __alloc");
+      }
+      if (state < 0) {
+        return v_abort(aborts.double_free(), "block at " + util.i64_to_string(w[0]) + ", " + util.i64_to_string(w[1]) + " bytes");
+      }
       __free(p, w[1] as i32);
     } else if (name == "__memcpy") {
       __memcpy(p, w[1] as usize, w[2] as i32);
@@ -7274,7 +7286,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     return call_buf_builtin(heap, name, args);
   }
   if (is_raw_mem_builtin(name)) {
-    return call_raw_mem_builtin(name, args);
+    return call_raw_mem_builtin(heap, name, args);
   }
   let rt: Value = call_runtime_intrinsic(heap, name, args);
   if (!is_err(rt)) {

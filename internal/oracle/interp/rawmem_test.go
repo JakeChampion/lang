@@ -1,6 +1,7 @@
 package interp
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -67,6 +68,13 @@ function copy_moves_bytes(): i32 {
     __free(p, 8);
   }
   return n;
+}
+
+function null_free(): i32 {
+  unsafe {
+    __free(0 as usize, 8);
+  }
+  return 0;
 }
 
 function double_free(): i32 {
@@ -174,6 +182,23 @@ func TestRawMemoryReadsBackWhatItStores(t *testing.T) {
 				t.Errorf("%d-bit %s() = %v, want %d", bits, c.fn, v, c.want)
 			}
 		}
+	}
+}
+
+func TestRawMemoryAbortsOnABadRelease(t *testing.T) {
+	i := rawMemInterp(t)
+	for _, c := range []struct{ fn, cause string }{
+		{"double_free", CauseDoubleFree},
+		{"interior_free", CauseFreeRange},
+	} {
+		_, err := i.CallByName(c.fn, nil)
+		var abort *Abort
+		if !errors.As(err, &abort) || abort.Cause != c.cause {
+			t.Errorf("%s: err = %v, want an abort with the cause %q", c.fn, err, c.cause)
+		}
+	}
+	if _, err := i.CallByName("null_free", nil); err != nil {
+		t.Errorf("null_free: %v, want a no-op", err)
 	}
 }
 

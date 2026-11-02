@@ -56,14 +56,20 @@ func (m *rawMemory) block(addr int64) int {
 	return sort.Search(len(m.blocks), func(k int) bool { return m.blocks[k].off > off }) - 1
 }
 
+// A null release is a no-op, as it is in the compiled runtime. A release of
+// another address outside a block, or of a block twice, aborts as that
+// runtime does.
 func (m *rawMemory) release(name string, addr, n int64) error {
+	if addr == 0 {
+		return nil
+	}
 	k := m.block(addr)
 	if k < 0 || m.blocks[k].off != addr-rawBase {
-		return fmt.Errorf("%s: address %#x is not the start of a block from __alloc", name, uint64(addr))
+		return &Abort{CauseFreeRange, fmt.Sprintf("%s: address %#x is not the start of a block from __alloc", name, uint64(addr))}
 	}
 	b := &m.blocks[k]
 	if !b.live {
-		return fmt.Errorf("%s: the block at %#x is already free", name, uint64(addr))
+		return &Abort{CauseDoubleFree, fmt.Sprintf("%s: the block at %#x is already free", name, uint64(addr))}
 	}
 	if b.size != n {
 		return fmt.Errorf("%s: the block at %#x has %d bytes, not %d", name, uint64(addr), b.size, n)
