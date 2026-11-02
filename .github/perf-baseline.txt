@@ -1,3 +1,6 @@
+# 2026-11-02: Issue #12795 assigns independent tokens to nested record keeps.
+# Native ARM64 repeats confirm both lower red-black-tree instruction counts exactly.
+# Record: docs/benchmarks/nested-record-tokens-2026-11-02/repeated-arm-wins.json.
 # 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
 # Source corrections must pass those limits. Improved rows keep their measured lower pins.
 # 2026-11-01: PR #14009 run 41350917312, perf-x86_64. The same two changes: enum_match.ir -40.1%,
@@ -558,8 +561,8 @@ aarch64/perceus_deriv.ir	83086981
 aarch64/perceus_nqueens.text	1805
 aarch64/perceus_nqueens.ir	106638432
 aarch64/perceus_rbtree.text	3158
-aarch64/perceus_rbtree.ir	59717393
+aarch64/perceus_rbtree.ir	57613716
 aarch64/perceus_rbtree_ck.text	3251
-aarch64/perceus_rbtree_ck.ir	59058355
+aarch64/perceus_rbtree_ck.ir	57034038
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.

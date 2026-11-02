@@ -1,0 +1,221 @@
+{
+  "scope": "Controlled Wasm size and observable-output experiment. Only ended keep witnesses omit their dead clear. Carried donor locals still clear after consumption. No certifier or baseline change.",
+  "case_limit": 2,
+  "engines": {
+    "owner": "87b2adf5a96b6f4c335138d2faee88576005e56f43fb82335cf319829b70e53e",
+    "zeroed": "7bee9f84d8711487aca8bcd07c1a74e37c5139293c3c683dae6960ca3a3bb6d3",
+    "ended": "6f37bd429227c87016079d9fe5ef40fed48b45e312c6996a86e96aab1294ba55"
+  },
+  "rows": [
+    {
+      "name": "deflate_encode",
+      "engine": "owner",
+      "emit": 11578,
+      "core_bytes": 26879,
+      "command": [
+        "/tmp/fern-14016-complexity-fixed-point-v3/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "asm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/deflate_encode.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "build_command": [
+        "/tmp/fern-14016-complexity-fixed-point-v3/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "core-module",
+        "-o",
+        "/tmp/fern-12795-wasm-ended-witnesses/owner-deflate_encode.wasm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/deflate_encode.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "run_command": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "/tmp/fern-12795-wasm-ended-witnesses/owner-deflate_encode.wasm"
+      ],
+      "exit_code": 40,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "input_sha256": "8afd42e00de9aa80bf23fa2ff70e31bd661ea2fcb34d2c654edb4985e6e1fca8",
+      "binary_sha256": "808a8bcb3afc4b30ea469e23ebeb645ea78fa02e450589f5ae2250824e7fda1d"
+    },
+    {
+      "name": "deflate_encode",
+      "engine": "zeroed",
+      "emit": 11590,
+      "core_bytes": 26903,
+      "command": [
+        "/tmp/fern-12795-16ed-fixed-point/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "asm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/deflate_encode.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "build_command": [
+        "/tmp/fern-12795-16ed-fixed-point/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "core-module",
+        "-o",
+        "/tmp/fern-12795-wasm-ended-witnesses/zeroed-deflate_encode.wasm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/deflate_encode.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "run_command": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "/tmp/fern-12795-wasm-ended-witnesses/zeroed-deflate_encode.wasm"
+      ],
+      "exit_code": 40,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "input_sha256": "8afd42e00de9aa80bf23fa2ff70e31bd661ea2fcb34d2c654edb4985e6e1fca8",
+      "binary_sha256": "59b452c93a7880fa8de716d6f35ea6fdcf4e2084e375c02029ca70d3b627003a"
+    },
+    {
+      "name": "deflate_encode",
+      "engine": "ended",
+      "emit": 11578,
+      "core_bytes": 26879,
+      "command": [
+        "/tmp/fern-12795-ended-witnesses/stage1",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "asm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/deflate_encode.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "build_command": [
+        "/tmp/fern-12795-ended-witnesses/stage1",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "core-module",
+        "-o",
+        "/tmp/fern-12795-wasm-ended-witnesses/ended-deflate_encode.wasm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/deflate_encode.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "run_command": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "/tmp/fern-12795-wasm-ended-witnesses/ended-deflate_encode.wasm"
+      ],
+      "exit_code": 40,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "input_sha256": "8afd42e00de9aa80bf23fa2ff70e31bd661ea2fcb34d2c654edb4985e6e1fca8",
+      "binary_sha256": "0072e36dd87f77c14631c66dd3a9955f5387c97185bda9c0938d7ce027d89110"
+    },
+    {
+      "name": "perceus_cfold",
+      "engine": "owner",
+      "emit": 1766,
+      "core_bytes": 6254,
+      "command": [
+        "/tmp/fern-14016-complexity-fixed-point-v3/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "asm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/perceus_cfold.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "build_command": [
+        "/tmp/fern-14016-complexity-fixed-point-v3/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "core-module",
+        "-o",
+        "/tmp/fern-12795-wasm-ended-witnesses/owner-perceus_cfold.wasm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/perceus_cfold.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "run_command": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "/tmp/fern-12795-wasm-ended-witnesses/owner-perceus_cfold.wasm"
+      ],
+      "exit_code": 84,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "input_sha256": "eed02000f17776d39a453b98bd86b02d3463023cb027c3ba1e08d31a64ac4f53",
+      "binary_sha256": "3cf4d5cb6f20b01dde0485e37bed03c25ac54e45043c57ae465d7b1de7c73dc8"
+    },
+    {
+      "name": "perceus_cfold",
+      "engine": "zeroed",
+      "emit": 1777,
+      "core_bytes": 6273,
+      "command": [
+        "/tmp/fern-12795-16ed-fixed-point/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "asm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/perceus_cfold.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "build_command": [
+        "/tmp/fern-12795-16ed-fixed-point/stage4",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "core-module",
+        "-o",
+        "/tmp/fern-12795-wasm-ended-witnesses/zeroed-perceus_cfold.wasm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/perceus_cfold.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "run_command": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "/tmp/fern-12795-wasm-ended-witnesses/zeroed-perceus_cfold.wasm"
+      ],
+      "exit_code": 84,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "input_sha256": "eed02000f17776d39a453b98bd86b02d3463023cb027c3ba1e08d31a64ac4f53",
+      "binary_sha256": "8d4fea21b47c351e6873d594f8bd596f24adfe23f4209cc2f47d234f26248b2c"
+    },
+    {
+      "name": "perceus_cfold",
+      "engine": "ended",
+      "emit": 1765,
+      "core_bytes": 6249,
+      "command": [
+        "/tmp/fern-12795-ended-witnesses/stage1",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "asm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/perceus_cfold.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "build_command": [
+        "/tmp/fern-12795-ended-witnesses/stage1",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "core-module",
+        "-o",
+        "/tmp/fern-12795-wasm-ended-witnesses/ended-perceus_cfold.wasm",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/bench/perceus_cfold.fern",
+        "/Users/jakechampion/codex/lang-nested-token-current-main/internal/stdlib"
+      ],
+      "run_command": [
+        "/Users/jakechampion/.wasmtime/bin/wasmtime",
+        "run",
+        "/tmp/fern-12795-wasm-ended-witnesses/ended-perceus_cfold.wasm"
+      ],
+      "exit_code": 84,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "input_sha256": "eed02000f17776d39a453b98bd86b02d3463023cb027c3ba1e08d31a64ac4f53",
+      "binary_sha256": "81a8d2e62e0df8b819ba01a3c4430aa611ff948a0763b0ae942950bd49a75622"
+    }
+  ]
+}

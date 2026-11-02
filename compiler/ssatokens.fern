@@ -1,0 +1,154 @@
+import "core/cmp";
+
+pub struct Layout { ok: boolean, why: string, slots: i32[], count: i32 }
+
+pub struct Region { ok: boolean, why: string, blocks: Layout[], transient: i32, keep_count: i32, scratch_start: i32 }
+
+struct TokenSpan { row: i32, start: i32, end: i32 }
+
+function invalid(why: string): Layout {
+  return Layout { ok: false, why: why, slots: [], count: 0 };
+}
+
+function ordered(a: TokenSpan, b: TokenSpan): i32 {
+  if (a.start != b.start) {
+    return if (a.start < b.start) { 0 - 1 } else { 1 };
+  }
+  return if (a.row < b.row) { 0 - 1 } else if (a.row == b.row) { 0 } else { 1 };
+}
+
+// Intervals include both endpoints. Each result index identifies its input row.
+pub function assign(starts: i32[], ends: i32[]): Layout {
+  if (starts.len() != ends.len()) {
+    return invalid("token interval lengths differ");
+  }
+  let spans: TokenSpan[] = [];
+  for row in 0..starts.len() {
+    if (starts[row] < 0 || ends[row] < starts[row]) {
+      return invalid("invalid token interval");
+    }
+    spans = spans.append(TokenSpan { row: row, start: starts[row], end: ends[row] });
+  }
+  spans = cmp.sort_by_in_place(spans, ordered);
+  let slots: i32[] = __alloc_i32(starts.len());
+  let occupied_until: i32[] = [];
+  for span in spans {
+    let slot: i32 = occupied_until.len();
+    for candidate in 0..occupied_until.len() {
+      if (occupied_until[candidate] < span.start) {
+        slot = candidate;
+        break;
+      }
+    }
+    if (slot == occupied_until.len()) {
+      occupied_until = occupied_until.append(span.end);
+    } else {
+      occupied_until = occupied_until.with(slot, span.end);
+    }
+    slots = slots.with(span.row, slot);
+  }
+  return Layout { ok: true, why: "", slots: slots, count: occupied_until.len() };
+}
+
+function invalid_layout_row(starts: i32[], ends: i32[], slots: i32[], count: i32, row: i32): boolean {
+  return starts[row] < 0 || ends[row] < starts[row] || slots[row] < 0 || slots[row] >= count;
+}
+
+function spans_overlap(starts: i32[], ends: i32[], row: i32, other: i32): boolean {
+  return starts[row] <= ends[other] && starts[other] <= ends[row];
+}
+
+// Check the assigned rows independently of the allocation order.
+pub function verify(starts: i32[], ends: i32[], slots: i32[], count: i32): string {
+  if (starts.len() != ends.len() || slots.len() != starts.len() || count < 0 || count > starts.len()) {
+    return "invalid token layout dimensions";
+  }
+  for row in 0..starts.len() {
+    if (invalid_layout_row(starts, ends, slots, count, row)) {
+      return "invalid token layout row";
+    }
+    for other in 0..row {
+      if (slots[row] == slots[other] && spans_overlap(starts, ends, row, other)) {
+        return "live token intervals share a slot";
+      }
+    }
+  }
+  return "";
+}
+
+function invalid_region(why: string): Region {
+  return Region { ok: false, why: why, blocks: [], transient: 0, keep_count: 0, scratch_start: 0 };
+}
+
+// These intervals stay inside their block. Separate blocks share physical slots.
+pub function region(starts: i32[][], ends: i32[][], first: i32): Region {
+  if (starts.len() != ends.len() || first < 0 || first == 2147483647) {
+    return invalid_region("invalid token region dimensions");
+  }
+  let blocks: Layout[] = [];
+  let keep_count: i32 = 0;
+  let vacant: Layout = Layout { ok: true, why: "", slots: [], count: 0 };
+  for block in 0..starts.len() {
+    let layout: Layout = vacant;
+    if (starts[block].len() != 0 || ends[block].len() != 0) {
+      layout = assign(starts[block], ends[block]);
+    }
+    if (!layout.ok) {
+      return invalid_region(layout.why);
+    }
+    if (layout.count > 2147483647 - first - 1) {
+      return invalid_region("token region exceeds the local index range");
+    }
+    if (layout.count > keep_count) {
+      keep_count = layout.count;
+    }
+    blocks = blocks.append(layout);
+  }
+  return Region { ok: true, why: "", blocks: blocks, transient: first, keep_count: keep_count, scratch_start: first + 1 + keep_count };
+}
+
+function invalid_region_dimensions(starts: i32[][], ends: i32[][], first: i32, r: Region): boolean {
+  return !r.ok || starts.len() != ends.len() || r.blocks.len() != starts.len()
+    || first < 0 || first == 2147483647 || r.transient != first || r.keep_count < 0;
+}
+
+function used_slots(layout: Layout): i32 {
+  let used: i32 = 0;
+  for slot in layout.slots {
+    if (slot + 1 > used) {
+      used = slot + 1;
+    }
+  }
+  return used;
+}
+
+pub function verify_region(starts: i32[][], ends: i32[][], first: i32, r: Region): string {
+  if (invalid_region_dimensions(starts, ends, first, r)) {
+    return "invalid token region dimensions";
+  }
+  if (r.keep_count > 2147483647 - first - 1 || r.scratch_start != first + 1 + r.keep_count) {
+    return "invalid token scratch boundary";
+  }
+  let most: i32 = 0;
+  for block in 0..starts.len() {
+    let layout: Layout = r.blocks[block];
+    if (!layout.ok) {
+      return "invalid token block layout";
+    }
+    let why: string = verify(starts[block], ends[block], layout.slots, layout.count);
+    if (why != "") {
+      return why;
+    }
+    let used: i32 = used_slots(layout);
+    if (used != layout.count) {
+      return "token block reserves an unused trailing slot";
+    }
+    if (used > most) {
+      most = used;
+    }
+  }
+  if (r.keep_count != most) {
+    return "token region does not match the maximum block demand";
+  }
+  return "";
+}

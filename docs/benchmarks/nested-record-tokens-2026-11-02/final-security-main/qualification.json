@@ -1,0 +1,32 @@
+{
+  "scope": "Final issue12795 source on actual merged security main. The compiler and stdlib inputs exactly match the separately qualified post-root source. Earlier broad campaigns retain their c3d source scope.",
+  "parent_commit": "1b032a0c154cddb26960e41d8681909c95427ce8",
+  "parent_tree": "e3f3f604ab1603e077c57d64617797a8532e2756",
+  "qualified_parent_head": "8ca8378edd3ab942478610f18fe6092e0fcb8def",
+  "parent_tree_matches_qualified_head": true,
+  "candidate_compiler_sha256": "ee1c9ebb069764c8c73c70ea0412b88fc6c747c4cf58f5dacaeadf1e6e26503e",
+  "candidate_compiler_bytes": 23966033,
+  "original_issue_snapshot": "62ec3188ebe16368bd5b94017133e473cb4c87bb",
+  "owner_root_followup": "5af8c3fe10895921578a54bf0d0921c5145bdbf5",
+  "owner_empty_image_fixture": "8ca8378edd3ab942478610f18fe6092e0fcb8def",
+  "owner_fixture_sha256": "6c7b385a855af994acff9d884f64f954a272efdaa73f519f4454c97ff0151c9b",
+  "source_input_hashes_match_post_root_binding": true,
+  "normalization": "Public log copies omit extra trailing blank lines. Original bytes remain hash-bound.",
+  "artifacts": {
+    "source-binding.json": {
+      "sha256": "d203060e38924e0d1e9b129aae1f4b8e66e03c95c7de661674033aa7e06e184c",
+      "source": "/tmp/fern-12795-owner-root-bind/qualification.json",
+      "source_sha256": "d203060e38924e0d1e9b129aae1f4b8e66e03c95c7de661674033aa7e06e184c"
+    },
+    "root-controls.log": {
+      "sha256": "5f8e3432aa8d5e810bdedc61a33f7bf53cbf5db6ab7dd63c3e10a27213a83bd4",
+      "source": "/tmp/fern-12795-owner-root-controls.log",
+      "source_sha256": "5f8e3432aa8d5e810bdedc61a33f7bf53cbf5db6ab7dd63c3e10a27213a83bd4"
+    },
+    "parent-ci.json": {
+      "sha256": "d221ded2108c9e2fed04f053dbd9f947736dce6839e126516b8c57e2b10cfd47",
+      "source": "/tmp/fern-14019-final-head-checks.json",
+      "source_sha256": "cc80f670033b78ec8b72b463274ecf8b5b6efc7a4a7667d2573e20a444a8cbf2"
+    }
+  }
+}

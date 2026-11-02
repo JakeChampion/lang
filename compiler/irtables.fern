@@ -920,6 +920,7 @@ pub struct LowerState {
   ok: boolean,
   ops: ir.Op[],
   n_locals: i32,
+  scratch_start: i32,
   n_params: i32,
   erased_wide: boolean,
   superseded: boolean,

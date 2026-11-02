@@ -1,0 +1,146 @@
+{
+  "scope": "Private issue12795 on pending security PR14019 c3d5987c6b. The owner runtime-root follow-up is not part of this snapshot. Earlier records retain their source scope. No publication before the security parent merges and exact final integration passes.",
+  "base_commit": "c3d5987c6b8a2c3e4c8401ccf0e481cb5e8d5bc5",
+  "base_tree": "204b1c0cf481d05a4e68f6edd90a4944b540e787",
+  "source_snapshot_tree": "12d61048d1489af1f0f64054e6ce4dc6b4ac656a",
+  "protected_ref": "refs/codex/proofs/issue-12795-security-12d61048",
+  "compiler_sha256": "ee1c9ebb069764c8c73c70ea0412b88fc6c747c4cf58f5dacaeadf1e6e26503e",
+  "compiler_bytes": 23966033,
+  "embedding": "Every stdlib source byte matches the reused embedding. Fixed-point.json records all embedded assets separately.",
+  "tests": {
+    "linux": {
+      "roots": 23,
+      "seconds": 523.421,
+      "skips": 0
+    },
+    "darwin": {
+      "roots": 3,
+      "seconds": 108.033,
+      "skips": 0
+    }
+  },
+  "fixture_sha256": "9cef14236feff50448ebf85d401f5e929c931c9d92afb2a11cac64cb11867d8c",
+  "go_test_sha256": "df6a4bff668f43d6e064b93c398a6b5fda3eb244032fe7ac63dd765f512ffc02",
+  "complexity": {
+    "compiler_excess": 18302,
+    "worst_function": 223,
+    "stdlib_excess": 821,
+    "stdlib_worst": 68,
+    "limits_changed": false
+  },
+  "performance": "All 78 ARM strict rows, 39 x86 static strict rows and 117 advisory target rows pass. All 39 ARM observable outputs match the baseline. No baseline increases.",
+  "witnesses": "Ended keep witnesses have no later read. A new region writes its witness before use. Carried donor SSA locals still clear after consumption. No certificate or diagnostic relaxation.",
+  "normalization": "Public log copies omit extra trailing blank lines. Original bytes and hashes remain recorded.",
+  "artifacts": {
+    "fixed-point.json": {
+      "sha256": "03c33e24a00a2ce31e55a40a2ba2fbe0ba6011b7c150fe6cb35adf0f067e8cfd",
+      "original_path": "/tmp/fern-12795-security-fixed-point/qualification.json",
+      "original_sha256": "03c33e24a00a2ce31e55a40a2ba2fbe0ba6011b7c150fe6cb35adf0f067e8cfd"
+    },
+    "linux-controls.log": {
+      "sha256": "136ebedce41a318361b173c46472a1ec8afe70990a37718a8ff8eee298a1c004",
+      "original_path": "/tmp/fern-12795-security-controls.log",
+      "original_sha256": "136ebedce41a318361b173c46472a1ec8afe70990a37718a8ff8eee298a1c004"
+    },
+    "darwin-controls.log": {
+      "sha256": "6d08b69f7105b1da5a22a2c684d4ab3afb5d5d64eef598c56d71f078e8691994",
+      "original_path": "/tmp/fern-12795-security-darwin.log",
+      "original_sha256": "6d08b69f7105b1da5a22a2c684d4ab3afb5d5d64eef598c56d71f078e8691994"
+    },
+    "source-gate.log": {
+      "sha256": "920736e303e7ef517d25c8cec8a148c7d1a542987fdea5bae15c0feb9cc8500a",
+      "original_path": "/tmp/fern-12795-security-source.log",
+      "original_sha256": "920736e303e7ef517d25c8cec8a148c7d1a542987fdea5bae15c0feb9cc8500a"
+    },
+    "lint.log": {
+      "sha256": "cf6792ceea5a4b10f243aefffc9027fc5128e4c1d008d440322a681ed40096ac",
+      "original_path": "/tmp/fern-12795-security-lint.log",
+      "original_sha256": "cf6792ceea5a4b10f243aefffc9027fc5128e4c1d008d440322a681ed40096ac"
+    },
+    "format-gate.log": {
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "original_path": "/tmp/fern-12795-security-format.log",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "complexity.log": {
+      "sha256": "2edd8c669f78d12d99c84ae5b4c784659f8d37fba3d10cfd49e7dc94c1be1330",
+      "original_path": "/tmp/fern-12795-security-complexity.log",
+      "original_sha256": "2edd8c669f78d12d99c84ae5b4c784659f8d37fba3d10cfd49e7dc94c1be1330"
+    },
+    "native-perf.json": {
+      "sha256": "71eea9909885a35496857f6e02f08a2e34f382d0619c4158250f04e9bbfeff31",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/qualification.json",
+      "original_sha256": "71eea9909885a35496857f6e02f08a2e34f382d0619c4158250f04e9bbfeff31"
+    },
+    "comparison.json": {
+      "sha256": "cc6f89791040c5e20d21ee2fee3343bc5e5d69ae30c0a30a745a956876c2336d",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/comparison.json",
+      "original_sha256": "cc6f89791040c5e20d21ee2fee3343bc5e5d69ae30c0a30a745a956876c2336d"
+    },
+    "compiler-cost.json": {
+      "sha256": "2800e3b5b8eb97ec4b9994c8d4e60b5e8d9f4c80fecc59ffffe9925e2a64a0b0",
+      "original_path": "/tmp/fern-12795-security-compiler-cost/qualification.json",
+      "original_sha256": "2800e3b5b8eb97ec4b9994c8d4e60b5e8d9f4c80fecc59ffffe9925e2a64a0b0"
+    },
+    "wide-pilot.json": {
+      "sha256": "2bd828e797876339ee516d36449d1400d9777c68029dd6ba6fe6ae85a2f3d71d",
+      "original_path": "/tmp/fern-12795-security-wide-cost/qualification-8.json",
+      "original_sha256": "2bd828e797876339ee516d36449d1400d9777c68029dd6ba6fe6ae85a2f3d71d"
+    },
+    "wide-controls.json": {
+      "sha256": "7d6bfbf18ef8e39e2dcfd94aff5bece1262acef8b123384e862d16d1f1b653a7",
+      "original_path": "/tmp/fern-12795-security-wide-cost/qualification-10000.json",
+      "original_sha256": "7d6bfbf18ef8e39e2dcfd94aff5bece1262acef8b123384e862d16d1f1b653a7"
+    },
+    "retained.json": {
+      "sha256": "77439987f13547b711e10f6c21e3e55398272e06da93f9298cdd2b2e3703f882",
+      "original_path": "/tmp/fern-12795-security-retained-9/qualification.json",
+      "original_sha256": "77439987f13547b711e10f6c21e3e55398272e06da93f9298cdd2b2e3703f882"
+    },
+    "arm.tsv": {
+      "sha256": "b471c05da2e2b7d457a8354cf590a2aee3449303efe5edc1481b4206707f7e2d",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/arm.tsv",
+      "original_sha256": "b471c05da2e2b7d457a8354cf590a2aee3449303efe5edc1481b4206707f7e2d"
+    },
+    "arm-limits.txt": {
+      "sha256": "38d1fd38efa333597c1bc7b42e5d2a13bf99c0bb263ea7324a9e33a86299c840",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/arm-limits.txt",
+      "original_sha256": "38d1fd38efa333597c1bc7b42e5d2a13bf99c0bb263ea7324a9e33a86299c840"
+    },
+    "arm-gate.log": {
+      "sha256": "a4281e1e16b13c7263e7228bf8d6645d9f8a289a4dc44516b9ddf7844f281cb5",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/arm-gate.log",
+      "original_sha256": "a4281e1e16b13c7263e7228bf8d6645d9f8a289a4dc44516b9ddf7844f281cb5"
+    },
+    "x86-static.tsv": {
+      "sha256": "95d6cc3a0e6cf62f6ee1daf54339c7dc7c9c706ad047567e08ba3b6787dc5db9",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/x86-static.tsv",
+      "original_sha256": "95d6cc3a0e6cf62f6ee1daf54339c7dc7c9c706ad047567e08ba3b6787dc5db9"
+    },
+    "x86-static-limits.txt": {
+      "sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/x86-static-limits.txt",
+      "original_sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35"
+    },
+    "x86-static-gate.log": {
+      "sha256": "51fa4679b4fcb5eb8896b71de6a40a04bb12d6780f0f3eb5169f743635fa5599",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/x86-static-gate.log",
+      "original_sha256": "51fa4679b4fcb5eb8896b71de6a40a04bb12d6780f0f3eb5169f743635fa5599"
+    },
+    "selfhost.tsv": {
+      "sha256": "bb0092287e704888854db6a8cec366224b2093a6eb8b9213490b2353b7e4e0d6",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/selfhost.tsv",
+      "original_sha256": "bb0092287e704888854db6a8cec366224b2093a6eb8b9213490b2353b7e4e0d6"
+    },
+    "selfhost-limits.txt": {
+      "sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/selfhost-limits.txt",
+      "original_sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c"
+    },
+    "selfhost-gate.log": {
+      "sha256": "a7be42720ccd814d4199e9a1647966089f8362905ba2758ce852671ee108b5c5",
+      "original_path": "/tmp/fern-12795-security-perf-static-arm/selfhost-gate.log",
+      "original_sha256": "a7be42720ccd814d4199e9a1647966089f8362905ba2758ce852671ee108b5c5"
+    }
+  }
+}

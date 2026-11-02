@@ -9,7 +9,7 @@ import "./util";
 
 pub struct Sunk { f: ssasem.Func, reread: i32 }
 
-struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], strict: i32[][], kids: i32[][], grown: i32[][], updated: i32[][], first: i32[] }
+struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], strict: i32[][], kids: i32[][], grown: i32[][], updated: i32[][], first: i32[], types: typeinfo.Type[] }
 
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
@@ -175,7 +175,7 @@ function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
   if (lent) {
     strict = spent_by(f, false, t.parent, deps, pos);
   }
-  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps, t.first), first: t.first };
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps, t.first), first: t.first, types: f.values };
 }
 
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
@@ -222,15 +222,18 @@ function grown_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
   return grown;
 }
 
-// A with on any read of a slot counts for the slot's first read, which the
-// kept-read rule asks about.
+// An update of any read of a slot counts for that slot's first read.
 function updated_by(g: ssa.SFunc, deps: i32[][], first: i32[]): i32[][] {
   let updated: i32[][] = deps;
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == ssasem.with() && ins.args.len() == 3 && ins.args[0] >= 0 && ins.args[0] < updated.len()) {
-        let x: i32 = first[ins.args[0]];
+      let base: i32 = ssasem.update_base(ins);
+      if (ins.kind_tag == ssasem.with() && ins.args.len() == 3) {
+        base = ins.args[0];
+      }
+      if (base >= 0 && base < updated.len()) {
+        let x: i32 = first[base];
         updated = updated.with(x, updated[x].append(bi));
       }
     }
@@ -538,6 +541,9 @@ function child_grown_in(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   }
   let x: i32 = rd.first[v];
   if (util.index_of_i32(rd.updated[x], bi) >= 0) {
+    if let typeinfo.TypeStruct(_) = rd.types[x] {
+      return true;
+    }
     return !read_in(rd, bi, x);
   }
   for c in rd.kids[x] {

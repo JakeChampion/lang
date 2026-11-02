@@ -1,0 +1,122 @@
+[
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "b",
+      "8",
+      "unique"
+    ],
+    "mode": "b",
+    "sharing": "unique",
+    "steps": 8,
+    "allocations": 3,
+    "stdout": "mode=b steps=8 allocations=3\n",
+    "stderr": "leakcheck: allocs=12 frees=12 live_bytes=0\n",
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "b",
+      "8",
+      "shared"
+    ],
+    "mode": "b",
+    "sharing": "shared",
+    "steps": 8,
+    "allocations": 32,
+    "stdout": "mode=b steps=8 allocations=32\n",
+    "stderr": "leakcheck: allocs=41 frees=41 live_bytes=0\n",
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "s",
+      "8",
+      "unique"
+    ],
+    "mode": "s",
+    "sharing": "unique",
+    "steps": 8,
+    "allocations": 2,
+    "stdout": "mode=s steps=8 allocations=2\n",
+    "stderr": "leakcheck: allocs=11 frees=11 live_bytes=0\n",
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "s",
+      "8",
+      "shared"
+    ],
+    "mode": "s",
+    "sharing": "shared",
+    "steps": 8,
+    "allocations": 24,
+    "stdout": "mode=s steps=8 allocations=24\n",
+    "stderr": "leakcheck: allocs=33 frees=33 live_bytes=0\n",
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "b",
+      "1000",
+      "unique"
+    ],
+    "mode": "b",
+    "sharing": "unique",
+    "steps": 1000,
+    "allocations": 3,
+    "stdout": "mode=b steps=1000 allocations=3\n",
+    "stderr": "leakcheck: allocs=14 frees=14 live_bytes=0\n",
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "b",
+      "1000",
+      "shared"
+    ],
+    "mode": "b",
+    "sharing": "shared",
+    "steps": 1000,
+    "allocations": 4000,
+    "stdout": "mode=b steps=1000 allocations=4000\n",
+    "stderr": "leakcheck: allocs=4012 frees=4012 live_bytes=0\n",
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "s",
+      "1000",
+      "unique"
+    ],
+    "mode": "s",
+    "sharing": "unique",
+    "steps": 1000,
+    "allocations": 2,
+    "stdout": "mode=s steps=1000 allocations=2\n",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n",
+    "exit_code": 0
+  },
+  {
+    "command": [
+      "/tmp/fern-12795-wide-extra-modes",
+      "s",
+      "1000",
+      "shared"
+    ],
+    "mode": "s",
+    "sharing": "shared",
+    "steps": 1000,
+    "allocations": 3000,
+    "stdout": "mode=s steps=1000 allocations=3000\n",
+    "stderr": "leakcheck: allocs=3012 frees=3012 live_bytes=0\n",
+    "exit_code": 0
+  }
+]

@@ -1,0 +1,12 @@
+=== RUN   TestSelfHostNestedKeepRegions
+=== RUN   TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/arm64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/x86-64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/arm64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/x86-64-linux
+--- PASS: TestSelfHostNestedKeepRegions (29.32s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/arm64-linux (0.14s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/x86-64-linux (0.27s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/arm64-linux (1.10s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/x86-64-linux (1.20s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	29.329s
