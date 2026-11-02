@@ -59,7 +59,7 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__arr_set_len(a, n)` | `n` must not exceed the capacity, and the new elements must be initialized before a read. [The bounds audit](BOUNDS-AUDIT.md) shows a safe `main` that reads past a three-element array through it. |
 | `__arr_push_shared_bytes()`, `__arr_push_shared_count()` | Read-only counters. No obligation. |
 | `__heap_mark()`, `__heap_release_to(m)` | Every value allocated after the mark must be dead before the release. |
-| `__c_call0` to `__c_call4`, with `_f32` and `_f64` forms | A foreign call through a code address. The address and the argument contract are the caller's proof. |
+| `__c_call0` to `__c_call6`, with `_f32` and `_f64` forms | A foreign call through a code address. The address and the argument contract are the caller's proof. |
 | `__task_new`, `__task_free`, `__task_enter`, `__task_leave`, `__task_park`, `__task_wait`, `__task_set_ready`, `__task_set_cancelled`, `__task_cancelled`, `__task_timeout`, `__task_cur` | Runtime scheduler hooks. A task id must be live and the state transition must be valid. |
 | `__syscall3` to `__syscall6` | Arbitrary kernel calls. Admitted only in runtime helper sources today. |
 
