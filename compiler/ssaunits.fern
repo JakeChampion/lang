@@ -4976,7 +4976,6 @@ function carried_builds(c: Carry, b: ssa.SBlock): boolean[] {
 
 function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], uses: ssasem.Uses): Keeps {
   let out: Keeps = no_keeps();
-  let carried: boolean[] = carried_builds(carry, b);
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     let donor: i32 = pairs.selfs[pos];
@@ -4987,7 +4986,7 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
     }
     if (donor >= 0 && taken >= 0) {
       let k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
-      if (k.donors.len() > 0 && !token_busy(pairs, carried, k.start[0], pos, pos)) {
+      if (k.donors.len() > 0 && !keep_identity_conflict(out, out.donors.len(), donor, k.values[0], k.moved[0], k.start[0], pos)) {
         out = Keeps {
           donors: out.donors.append(donor), slots: out.slots.append(k.slots[0]),
           values: out.values.append(k.values[0]), late: out.late.append(k.late[0]),
@@ -5002,7 +5001,6 @@ function block_keeps(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs
 }
 
 function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
-  let carried: boolean[] = carried_builds(carry, b);
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     let dying: i32[] = step_of(p, idx, b.id, pos, 0 - 1).drops;
@@ -5014,8 +5012,7 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
     }
     for d in dying {
       let start: i32 = first_classified_take(f, p, b, d, pos, links);
-      if (start >= 0 && util.index_of_i32(out.donors, d) < 0 && util.index_of_i32(pairs.selfs, d) < 0
-        && !token_busy(pairs, carried, start, pos, util.index_of_i32(pairs.builds, d)) && !keep_overlaps(out, start, pos)) {
+      if (start >= 0 && util.index_of_i32(out.donors, d) < 0 && util.index_of_i32(pairs.selfs, d) < 0) {
         let moved: i32[] = [];
         let freed: boolean[] = [];
         let n: i32 = donor_fields(f, b.insts[start], d);
@@ -5031,11 +5028,13 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
           }
           i = i + 1;
         }
-        out = Keeps {
-          donors: out.donors.append(d), slots: out.slots.append([]), values: out.values.append([]), late: out.late.append([]),
-          moved: out.moved.append(moved), freed: out.freed.append(freed),
-          start: out.start.append(start), taken: out.taken.append(pos), built: out.built.append(0 - 1), lives: out.lives.append(false),
-        };
+        if (!keep_identity_conflict(out, out.donors.len(), d, [], moved, start, pos)) {
+          out = Keeps {
+            donors: out.donors.append(d), slots: out.slots.append([]), values: out.values.append([]), late: out.late.append([]),
+            moved: out.moved.append(moved), freed: out.freed.append(freed),
+            start: out.start.append(start), taken: out.taken.append(pos), built: out.built.append(0 - 1), lives: out.lives.append(false),
+          };
+        }
       }
     }
     pos = pos + 1;
@@ -5169,6 +5168,29 @@ function keep_overlaps(k: Keeps, from: i32, to: i32): boolean {
       return true;
     }
     i = i + 1;
+  }
+  return false;
+}
+
+// Live keeps need distinct donor and field identities, not disjoint intervals.
+function keep_identity_conflict(held: Keeps, limit: i32, donor: i32, values: i32[], moved: i32[], from: i32, to: i32): boolean {
+  for other in 0..limit {
+    let end = if (held.built[other] >= 0) { held.built[other] } else { held.taken[other] };
+    if (held.start[other] <= to && from <= end) {
+      if (held.donors[other] == donor) {
+        return true;
+      }
+      for value in values {
+        if (util.index_of_i32(held.values[other], value) >= 0 || util.index_of_i32(held.moved[other], value) >= 0) {
+          return true;
+        }
+      }
+      for value in moved {
+        if (util.index_of_i32(held.values[other], value) >= 0 || util.index_of_i32(held.moved[other], value) >= 0) {
+          return true;
+        }
+      }
+    }
   }
   return false;
 }
@@ -5582,8 +5604,11 @@ function verify_keeps(pr: ReusePairs, carried: boolean[], k: Keeps): string {
       if (k.lives[i]) {
         held_to = taken - 1;
       }
-      if (token_busy(pr, carried, k.start[i], held_to, util.index_of_i32(pr.builds, k.donors[i]))) {
+      if (k.lives[i] && token_busy(pr, carried, k.start[i], held_to, util.index_of_i32(pr.builds, k.donors[i]))) {
         return "a classified donor's token overlaps a pairing's";
+      }
+      if (keep_identity_conflict(k, i, k.donors[i], k.values[i], k.moved[i], k.start[i], taken)) {
+        return "live keeps have an ambiguous donor or field identity";
       }
       i = i + 1;
       continue;
@@ -5596,8 +5621,8 @@ function verify_keeps(pr: ReusePairs, carried: boolean[], k: Keeps): string {
     if (!own && !earlier) {
       return "a kept donor is not its construction's token";
     }
-    if (token_busy(pr, carried, k.start[i], built, built)) {
-      return "a kept donor's token overlaps another pairing's";
+    if (keep_identity_conflict(k, i, k.donors[i], k.values[i], k.moved[i], k.start[i], built)) {
+      return "live keeps have an ambiguous donor or field identity";
     }
     i = i + 1;
   }

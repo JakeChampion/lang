@@ -1,0 +1,196 @@
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| selfhost/arm64-linux/array_append.emit | 1.4k | 1.4k | +0.59% |
+| selfhost/arm64-linux/array_index.emit | 1.4k | 1.4k | +0.59% |
+| selfhost/arm64-linux/array_scale_f64.emit | 1.5k | 1.5k | +0.34% |
+| selfhost/arm64-linux/array_with.emit | 1.5k | 1.5k | +0.66% |
+| selfhost/arm64-linux/ascii_scan.emit | 1.7k | 1.7k | +0.30% |
+| selfhost/arm64-linux/byte_copy_append.emit | 1.5k | 1.5k | +0.34% |
+| selfhost/arm64-linux/byte_copy_with.emit | 1.4k | 1.4k | +0.35% |
+| selfhost/arm64-linux/call_overhead.emit | 391 | 388 | +0.77% |
+| selfhost/arm64-linux/closure_call.emit | 1.2k | 1.1k | +0.44% |
+| selfhost/arm64-linux/deflate_decode.emit | 13.8k | 13.8k | -0.40% |
+| selfhost/arm64-linux/deflate_encode.emit | 8.0k | 7.9k | +0.52% |
+| selfhost/arm64-linux/enum_match.emit | 1.1k | 1.1k | +0.45% |
+| selfhost/arm64-linux/http_hello.emit | 16.1k | 15.9k | +0.98% |
+| selfhost/arm64-linux/int_loop.emit | 333 | 330 | +0.91% |
+| selfhost/arm64-linux/map_int.emit | 8.5k | 8.5k | -0.05% |
+| selfhost/arm64-linux/map_probe_chain.emit | 8.5k | 8.5k | -0.05% |
+| selfhost/arm64-linux/map_string.emit | 9.6k | 9.6k | -0.05% |
+| selfhost/arm64-linux/ordmap_insert.emit | 5.9k | 5.9k | +0.15% |
+| selfhost/arm64-linux/perceus_cfold.emit | 2.2k | 2.2k | +0.69% |
+| selfhost/arm64-linux/perceus_deriv.emit | 3.0k | 3.0k | +0.26% |
+| selfhost/arm64-linux/perceus_nqueens.emit | 1.8k | 1.8k | +0.44% |
+| selfhost/arm64-linux/perceus_rbtree.emit | 3.1k | 3.2k | -0.51% |
+| selfhost/arm64-linux/perceus_rbtree_ck.emit | 3.2k | 3.3k | -0.58% |
+| selfhost/arm64-linux/pmap_insert.emit | 3.2k | 3.2k | +0.15% |
+| selfhost/arm64-linux/pvec_with.emit | 3.2k | 3.2k | +0.16% |
+| selfhost/arm64-linux/record_update.emit | 1.5k | 1.5k | +0.33% |
+| selfhost/arm64-linux/sort_inplace.emit | 1.7k | 1.7k | +0.30% |
+| selfhost/arm64-linux/sort_ints.emit | 2.2k | 2.2k | +0.18% |
+| selfhost/arm64-linux/sort_strings.emit | 3.6k | 3.6k | +0.08% |
+| selfhost/arm64-linux/string_build.emit | 2.4k | 2.4k | +0.17% |
+| selfhost/arm64-linux/string_count_byte.emit | 1.4k | 1.4k | +0.28% |
+| selfhost/arm64-linux/string_find_byte.emit | 1.8k | 1.8k | +0.11% |
+| selfhost/arm64-linux/string_rfind_byte.emit | 2.0k | 2.0k | +0.25% |
+| selfhost/arm64-linux/string_scan.emit | 2.6k | 2.6k | +0.12% |
+| selfhost/arm64-linux/string_slice.emit | 1.1k | 1.1k | +0.71% |
+| selfhost/arm64-linux/struct_drop.emit | 2.7k | 2.7k | +0.19% |
+| selfhost/arm64-linux/tokenize.emit | 1.4k | 1.4k | +0.58% |
+| selfhost/arm64-linux/utf8_ingest_unchecked.emit | 8.7k | 8.7k | -0.07% |
+| selfhost/arm64-linux/utf8_ingest_validated.emit | 9.2k | 9.3k | -0.54% |
+| selfhost/wasm32-wasi/array_append.emit | 460 | 443 | +3.84% |
+| selfhost/wasm32-wasi/array_index.emit | 465 | 448 | +3.79% |
+| selfhost/wasm32-wasi/array_scale_f64.emit | 520 | 503 | +3.38% |
+| selfhost/wasm32-wasi/array_with.emit | 510 | 493 | +3.45% |
+| selfhost/wasm32-wasi/ascii_scan.emit | 1.2k | 1.2k | +0.90% |
+| selfhost/wasm32-wasi/byte_copy_append.emit | 571 | 554 | +3.07% |
+| selfhost/wasm32-wasi/byte_copy_with.emit | 586 | 569 | +2.99% |
+| selfhost/wasm32-wasi/call_overhead.emit | 119 | 115 | +3.48% |
+| selfhost/wasm32-wasi/closure_call.emit | 504 | 487 | +3.49% |
+| selfhost/wasm32-wasi/deflate_decode.emit | 19.8k | 19.6k | +0.97% |
+| selfhost/wasm32-wasi/deflate_encode.emit | 11.6k | 11.3k | +2.57% |
+| selfhost/wasm32-wasi/enum_match.emit | 545 | 528 | +3.22% |
+| selfhost/wasm32-wasi/http_hello.emit | 18.3k | 18.2k | +0.30% |
+| selfhost/wasm32-wasi/int_loop.emit | 73 | 69 | +5.80% |
+| selfhost/wasm32-wasi/map_int.emit | 13.3k | 13.3k | +0.09% |
+| selfhost/wasm32-wasi/map_probe_chain.emit | 13.3k | 13.3k | +0.09% |
+| selfhost/wasm32-wasi/map_string.emit | 14.1k | 14.1k | +0.06% |
+| selfhost/wasm32-wasi/ordmap_insert.emit | 6.7k | 6.7k | +0.25% |
+| selfhost/wasm32-wasi/perceus_cfold.emit | 1.8k | 1.7k | +2.42% |
+| selfhost/wasm32-wasi/perceus_deriv.emit | 2.9k | 2.8k | +2.26% |
+| selfhost/wasm32-wasi/perceus_nqueens.emit | 1.3k | 1.3k | +0.87% |
+| selfhost/wasm32-wasi/perceus_rbtree.emit | 3.6k | 3.6k | +0.22% |
+| selfhost/wasm32-wasi/perceus_rbtree_ck.emit | 3.9k | 3.8k | +1.56% |
+| selfhost/wasm32-wasi/pmap_insert.emit | 3.3k | 3.3k | +0.82% |
+| selfhost/wasm32-wasi/pvec_with.emit | 2.8k | 2.8k | +1.19% |
+| selfhost/wasm32-wasi/record_update.emit | 510 | 493 | +3.45% |
+| selfhost/wasm32-wasi/sort_inplace.emit | 1.0k | 996 | +1.71% |
+| selfhost/wasm32-wasi/sort_ints.emit | 2.1k | 2.1k | +0.44% |
+| selfhost/wasm32-wasi/sort_strings.emit | 3.4k | 3.4k | +0.27% |
+| selfhost/wasm32-wasi/string_build.emit | 1.3k | 1.3k | +1.33% |
+| selfhost/wasm32-wasi/string_count_byte.emit | 544 | 527 | +3.23% |
+| selfhost/wasm32-wasi/string_find_byte.emit | 1.7k | 1.7k | +1.59% |
+| selfhost/wasm32-wasi/string_rfind_byte.emit | 1.7k | 1.7k | +1.57% |
+| selfhost/wasm32-wasi/string_scan.emit | 1.4k | 1.4k | +1.20% |
+| selfhost/wasm32-wasi/string_slice.emit | 543 | 526 | +3.23% |
+| selfhost/wasm32-wasi/struct_drop.emit | 1.7k | 1.6k | +1.04% |
+| selfhost/wasm32-wasi/tokenize.emit | 890 | 875 | +1.71% |
+| selfhost/wasm32-wasi/utf8_ingest_unchecked.emit | 9.2k | 9.2k | +0.10% |
+| selfhost/wasm32-wasi/utf8_ingest_validated.emit | 10.2k | 10.2k | -0.21% |
+| selfhost/x86-64-linux/array_append.emit | 1.1k | 1.1k | +0.70% |
+| selfhost/x86-64-linux/array_index.emit | 1.1k | 1.1k | +0.70% |
+| selfhost/x86-64-linux/array_scale_f64.emit | 1.3k | 1.3k | +0.55% |
+| selfhost/x86-64-linux/array_with.emit | 1.3k | 1.3k | +0.54% |
+| selfhost/x86-64-linux/ascii_scan.emit | 1.4k | 1.4k | +0.52% |
+| selfhost/x86-64-linux/byte_copy_append.emit | 1.3k | 1.2k | +0.64% |
+| selfhost/x86-64-linux/byte_copy_with.emit | 1.2k | 1.2k | +0.67% |
+| selfhost/x86-64-linux/call_overhead.emit | 304 | 305 | -0.33% |
+| selfhost/x86-64-linux/closure_call.emit | 923 | 916 | +0.76% |
+| selfhost/x86-64-linux/deflate_decode.emit | 12.9k | 13.0k | -0.42% |
+| selfhost/x86-64-linux/deflate_encode.emit | 7.3k | 7.3k | +0.74% |
+| selfhost/x86-64-linux/enum_match.emit | 893 | 886 | +0.79% |
+| selfhost/x86-64-linux/http_hello.emit | 15.1k | 15.0k | +0.79% |
+| selfhost/x86-64-linux/int_loop.emit | 249 | 250 | -0.40% |
+| selfhost/x86-64-linux/map_int.emit | 8.5k | 8.5k | -0.01% |
+| selfhost/x86-64-linux/map_probe_chain.emit | 8.5k | 8.5k | -0.01% |
+| selfhost/x86-64-linux/map_string.emit | 9.4k | 9.4k | -0.02% |
+| selfhost/x86-64-linux/ordmap_insert.emit | 5.5k | 5.5k | +0.20% |
+| selfhost/x86-64-linux/perceus_cfold.emit | 1.9k | 1.9k | +0.63% |
+| selfhost/x86-64-linux/perceus_deriv.emit | 2.7k | 2.7k | +0.26% |
+| selfhost/x86-64-linux/perceus_nqueens.emit | 1.6k | 1.6k | +0.51% |
+| selfhost/x86-64-linux/perceus_rbtree.emit | 2.8k | 2.9k | -0.84% |
+| selfhost/x86-64-linux/perceus_rbtree_ck.emit | 2.9k | 3.0k | -0.94% |
+| selfhost/x86-64-linux/pmap_insert.emit | 3.0k | 3.0k | +0.24% |
+| selfhost/x86-64-linux/pvec_with.emit | 3.0k | 3.0k | +0.24% |
+| selfhost/x86-64-linux/record_update.emit | 1.3k | 1.3k | +0.46% |
+| selfhost/x86-64-linux/sort_inplace.emit | 1.5k | 1.5k | +0.47% |
+| selfhost/x86-64-linux/sort_ints.emit | 2.0k | 2.0k | +0.31% |
+| selfhost/x86-64-linux/sort_strings.emit | 3.2k | 3.2k | +0.15% |
+| selfhost/x86-64-linux/string_build.emit | 2.0k | 2.0k | +0.30% |
+| selfhost/x86-64-linux/string_count_byte.emit | 1.2k | 1.2k | +0.59% |
+| selfhost/x86-64-linux/string_find_byte.emit | 1.5k | 1.5k | +0.26% |
+| selfhost/x86-64-linux/string_rfind_byte.emit | 1.7k | 1.7k | +0.35% |
+| selfhost/x86-64-linux/string_scan.emit | 2.2k | 2.2k | +0.22% |
+| selfhost/x86-64-linux/string_slice.emit | 903 | 895 | +0.89% |
+| selfhost/x86-64-linux/struct_drop.emit | 2.4k | 2.4k | +0.29% |
+| selfhost/x86-64-linux/tokenize.emit | 1.2k | 1.2k | +0.67% |
+| selfhost/x86-64-linux/utf8_ingest_unchecked.emit | 8.2k | 8.2k | -0.05% |
+| selfhost/x86-64-linux/utf8_ingest_validated.emit | 8.8k | 8.9k | -0.78% |
+SLOWER: selfhost/wasm32-wasi/array_append.emit 443 -> 460 (+3.84%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/array_index.emit 448 -> 465 (+3.79%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/array_scale_f64.emit 503 -> 520 (+3.38%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/array_with.emit 493 -> 510 (+3.45%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/byte_copy_append.emit 554 -> 571 (+3.07%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/byte_copy_with.emit 569 -> 586 (+2.99%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/call_overhead.emit 115 -> 119 (+3.48%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/closure_call.emit 487 -> 504 (+3.49%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/deflate_encode.emit 11.3k -> 11.6k (+2.57%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/enum_match.emit 528 -> 545 (+3.22%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/int_loop.emit 69 -> 73 (+5.80%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/perceus_cfold.emit 1.7k -> 1.8k (+2.42%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/perceus_deriv.emit 2.8k -> 2.9k (+2.26%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/perceus_rbtree_ck.emit 3.8k -> 3.9k (+1.56%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/pvec_with.emit 2.8k -> 2.8k (+1.19%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/record_update.emit 493 -> 510 (+3.45%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/sort_inplace.emit 996 -> 1.0k (+1.71%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/string_build.emit 1.3k -> 1.3k (+1.33%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/string_count_byte.emit 527 -> 544 (+3.23%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/string_find_byte.emit 1.7k -> 1.7k (+1.59%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/string_rfind_byte.emit 1.7k -> 1.7k (+1.57%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/string_scan.emit 1.4k -> 1.4k (+1.20%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/string_slice.emit 526 -> 543 (+3.23%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/struct_drop.emit 1.6k -> 1.7k (+1.04%, tolerance 1%).
+SLOWER: selfhost/wasm32-wasi/tokenize.emit 875 -> 890 (+1.71%, tolerance 1%).
+Corrected baseline — paste into the baseline file:
+    selfhost/wasm32-wasi/array_append.emit 460
+    selfhost/wasm32-wasi/array_index.emit 465
+    selfhost/wasm32-wasi/array_scale_f64.emit 520
+    selfhost/wasm32-wasi/array_with.emit 510
+    selfhost/wasm32-wasi/byte_copy_append.emit 571
+    selfhost/wasm32-wasi/byte_copy_with.emit 586
+    selfhost/wasm32-wasi/call_overhead.emit 119
+    selfhost/wasm32-wasi/closure_call.emit 504
+    selfhost/wasm32-wasi/deflate_encode.emit 11590
+    selfhost/wasm32-wasi/enum_match.emit 545
+    selfhost/wasm32-wasi/int_loop.emit 73
+    selfhost/wasm32-wasi/perceus_cfold.emit 1777
+    selfhost/wasm32-wasi/perceus_deriv.emit 2853
+    selfhost/wasm32-wasi/perceus_rbtree_ck.emit 3900
+    selfhost/wasm32-wasi/pvec_with.emit 2796
+    selfhost/wasm32-wasi/record_update.emit 510
+    selfhost/wasm32-wasi/sort_inplace.emit 1013
+    selfhost/wasm32-wasi/string_build.emit 1292
+    selfhost/wasm32-wasi/string_count_byte.emit 544
+    selfhost/wasm32-wasi/string_find_byte.emit 1723
+    selfhost/wasm32-wasi/string_rfind_byte.emit 1744
+    selfhost/wasm32-wasi/string_scan.emit 1430
+    selfhost/wasm32-wasi/string_slice.emit 543
+    selfhost/wasm32-wasi/struct_drop.emit 1654
+    selfhost/wasm32-wasi/tokenize.emit 890
+WARNING: selfhost/wasm32-wasi/array_append.emit +3.84%: selfhost/wasm32-wasi/array_append.emit measured 460 against a baseline of 443 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/array_index.emit +3.79%: selfhost/wasm32-wasi/array_index.emit measured 465 against a baseline of 448 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/array_scale_f64.emit +3.38%: selfhost/wasm32-wasi/array_scale_f64.emit measured 520 against a baseline of 503 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/array_with.emit +3.45%: selfhost/wasm32-wasi/array_with.emit measured 510 against a baseline of 493 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/byte_copy_append.emit +3.07%: selfhost/wasm32-wasi/byte_copy_append.emit measured 571 against a baseline of 554 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/byte_copy_with.emit +2.99%: selfhost/wasm32-wasi/byte_copy_with.emit measured 586 against a baseline of 569 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/call_overhead.emit +3.48%: selfhost/wasm32-wasi/call_overhead.emit measured 119 against a baseline of 115 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/closure_call.emit +3.49%: selfhost/wasm32-wasi/closure_call.emit measured 504 against a baseline of 487 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/deflate_encode.emit +2.57%: selfhost/wasm32-wasi/deflate_encode.emit measured 11590 against a baseline of 11300 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/enum_match.emit +3.22%: selfhost/wasm32-wasi/enum_match.emit measured 545 against a baseline of 528 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/int_loop.emit +5.80%: selfhost/wasm32-wasi/int_loop.emit measured 73 against a baseline of 69 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/perceus_cfold.emit +2.42%: selfhost/wasm32-wasi/perceus_cfold.emit measured 1777 against a baseline of 1735 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/perceus_deriv.emit +2.26%: selfhost/wasm32-wasi/perceus_deriv.emit measured 2853 against a baseline of 2790 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/perceus_rbtree_ck.emit +1.56%: selfhost/wasm32-wasi/perceus_rbtree_ck.emit measured 3900 against a baseline of 3840 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/pvec_with.emit +1.19%: selfhost/wasm32-wasi/pvec_with.emit measured 2796 against a baseline of 2763 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/record_update.emit +3.45%: selfhost/wasm32-wasi/record_update.emit measured 510 against a baseline of 493 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/sort_inplace.emit +1.71%: selfhost/wasm32-wasi/sort_inplace.emit measured 1013 against a baseline of 996 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/string_build.emit +1.33%: selfhost/wasm32-wasi/string_build.emit measured 1292 against a baseline of 1275 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/string_count_byte.emit +3.23%: selfhost/wasm32-wasi/string_count_byte.emit measured 544 against a baseline of 527 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/string_find_byte.emit +1.59%: selfhost/wasm32-wasi/string_find_byte.emit measured 1723 against a baseline of 1696 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/string_rfind_byte.emit +1.57%: selfhost/wasm32-wasi/string_rfind_byte.emit measured 1744 against a baseline of 1717 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/string_scan.emit +1.20%: selfhost/wasm32-wasi/string_scan.emit measured 1430 against a baseline of 1413 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/string_slice.emit +3.23%: selfhost/wasm32-wasi/string_slice.emit measured 543 against a baseline of 526 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/struct_drop.emit +1.04%: selfhost/wasm32-wasi/struct_drop.emit measured 1654 against a baseline of 1637 — over its 1% tolerance
+WARNING: selfhost/wasm32-wasi/tokenize.emit +1.71%: selfhost/wasm32-wasi/tokenize.emit measured 890 against a baseline of 875 — over its 1% tolerance

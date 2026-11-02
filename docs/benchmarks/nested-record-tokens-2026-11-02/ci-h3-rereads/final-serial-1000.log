@@ -1,0 +1,4 @@
+=== RUN   TestPreparedH3
+    runner_test.go:27: 46694 allocations over 1000 HTTP/3 requests in 0 s: 46.69 per request
+--- PASS: TestPreparedH3 (1.53s)
+PASS

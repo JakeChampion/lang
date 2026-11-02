@@ -1,0 +1,62 @@
+{
+  "scope": "Final PR14022 source on actual main87b889. Existing HTTP/3 harness, ceilings48/29, concurrency64 and slack remain unchanged.",
+  "producer_sha256": "f5ba48fe3a8c0ee025f38d57aa310401aae41ee2184899765c5988782367605c",
+  "builds": [
+    {
+      "command": [
+        "/tmp/fern-14022-h3-final-fixed-point/stage4",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/fern-14022-h3-final-comparison/final-server-1000",
+        "/tmp/fern-14022-h3-comparison/generated-1000/main.fern",
+        "/Users/jakechampion/codex/lang-12795-h3-regression/internal/stdlib"
+      ],
+      "source_sha256": "4e0d1df3cb6def904921e47ef08734ee756c2ea1841c304144dfb0967c361c86",
+      "binary_sha256": "7f450fbc83aaebea61f1fb9da522016c3270cd6bf93f81642dc24ae3bc4cd05b",
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/fern-14022-h3-final-fixed-point/stage4",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/fern-14022-h3-final-comparison/final-server-100000",
+        "/tmp/fern-14022-h3-comparison/generated-100000/main.fern",
+        "/Users/jakechampion/codex/lang-12795-h3-regression/internal/stdlib"
+      ],
+      "source_sha256": "e6a76e50749d1dc4631014b35a50c90c772e37d1ebd3dfc80f08aeac2a461ace",
+      "binary_sha256": "e56c3fa6dd2db1aa14fb0761694724353cb329dddcd2b61eab905a8bda869075",
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/fern-14022-h3-final-fixed-point/stage4",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/fern-14022-h3-final-comparison/final-client",
+        "/tmp/fern-14022-h3-comparison/generated-1000/client.fern",
+        "/Users/jakechampion/codex/lang-12795-h3-regression/internal/stdlib"
+      ],
+      "source_sha256": "4b762d19446df8e9d0e2f758c7212a336c663a2628eec584aea72d23361496ae",
+      "binary_sha256": "105d7690ce3bbde93073a781c72be550ebd9c740dcf236cb497389a645837268",
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/tmp/fern-14022-h3-final-fixed-point/stage4",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/fern-14022-h3-final-comparison/final-mux-client",
+        "/tmp/fern-14022-h3-comparison/sources/issue-census-010-client.fern",
+        "/Users/jakechampion/codex/lang-12795-h3-regression/internal/stdlib"
+      ],
+      "source_sha256": "5d55653262c2126dc645dde8022ecaf7265fb8c71676d90bf7e2a50e7a99c903",
+      "binary_sha256": "c6c54ebc2d06647c321ffe18ffda50424316182e7d43aa414daba0e36eb476cd",
+      "exit_code": 0
+    }
+  ]
+}

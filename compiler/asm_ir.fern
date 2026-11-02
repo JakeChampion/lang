@@ -4648,7 +4648,8 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    addq %rax, %rsi\n    addq %rdx, %rcx\n    xorq %rdx, %rdx\n");
   s = s.write("    cmpq $16, %r8\n    jge " + lb + "_vec\n");
   s = s.write("    cmpq $8, %r8\n    jge " + lb + "_w8\n");
-  s = s.write("    cmpq $4, %r8\n    jge " + lb + "_w4\n    jmp " + lb + "_tail\n");
+  s = s.write("    cmpq $4, %r8\n    jge " + lb + "_w4\n");
+  s = s.write("    cmpq $2, %r8\n    jge " + lb + "_w2\n    jmp " + lb + "_tail\n");
   s = s.write(lb + "_w8:\n    movq (%rsi), %rax\n    xorq (%rcx), %rax\n    jnz " + lb + "_w8l\n");
   s = s.write("    movq %r8, %rdi\n    subq $8, %rdi\n");
   s = s.write("    movq (%rsi,%rdi), %rax\n    xorq (%rcx,%rdi), %rax\n    jz " + lb + "_eq\n");
@@ -4659,6 +4660,11 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movl (%rsi,%rdi), %eax\n    xorl (%rcx,%rdi), %eax\n    jz " + lb + "_eq\n");
   s = s.write("    bsfl %eax, %eax\n    shrl $3, %eax\n    addq %rdi, %rax\n    jmp " + lb + "_done\n");
   s = s.write(lb + "_w4l:\n    bsfl %eax, %eax\n    shrl $3, %eax\n    jmp " + lb + "_done\n");
+  s = s.write(lb + "_w2:\n    movzwl (%rsi), %eax\n    movzwl (%rcx), %r9d\n    xorl %r9d, %eax\n    jnz " + lb + "_w2l\n");
+  s = s.write("    movq %r8, %rdi\n    subq $2, %rdi\n");
+  s = s.write("    movzwl (%rsi,%rdi), %eax\n    movzwl (%rcx,%rdi), %r9d\n    xorl %r9d, %eax\n    jz " + lb + "_eq\n");
+  s = s.write("    bsfl %eax, %eax\n    shrl $3, %eax\n    addq %rdi, %rax\n    jmp " + lb + "_done\n");
+  s = s.write(lb + "_w2l:\n    bsfl %eax, %eax\n    shrl $3, %eax\n    jmp " + lb + "_done\n");
   s = s.write(lb + "_vec:\n    movq %r8, %rax\n    subq %rdx, %rax\n    cmpq $16, %rax\n    jl " + lb + "_tail\n");
   s = s.write("    movdqu (%rsi,%rdx), %xmm0\n    movdqu (%rcx,%rdx), %xmm1\n");
   s = s.write("    pcmpeqb %xmm1, %xmm0\n    pmovmskb %xmm0, %eax\n");

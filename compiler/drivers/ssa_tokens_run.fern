@@ -1,0 +1,162 @@
+import "../ssatokens";
+
+function peak(starts: i32[], ends: i32[]): i32 {
+  let most: i32 = 0;
+  for point in 0..3 {
+    let live: i32[] = [];
+    for row in 0..starts.len() {
+      if (starts[row] <= point && point <= ends[row]) {
+        live = live.append(row);
+      }
+    }
+    if (live.len() > most) {
+      most = live.len();
+    }
+  }
+  return most;
+}
+
+function region_checks(starts: i32[], ends: i32[]): boolean {
+  let lows: i32[][] = [starts, [], starts];
+  let highs: i32[][] = [ends, [], ends];
+  let r: ssatokens.Region = ssatokens.region(lows, highs, 17);
+  if (!r.ok || r.transient != 17 || r.keep_count != peak(starts, ends)
+    || r.scratch_start != 18 + peak(starts, ends) || r.blocks.len() != 3
+    || ssatokens.verify_region(lows, highs, 17, r) != "") {
+    return false;
+  }
+  let original: ssatokens.Layout = ssatokens.assign(starts, ends);
+  for row in 0..starts.len() {
+    if (r.blocks[0].slots[row] != original.slots[row] || r.blocks[2].slots[row] != original.slots[row]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function layout_construction(): i32 {
+  let empty: ssatokens.Layout = ssatokens.assign([], []);
+  if (!empty.ok || empty.count != 0 || empty.slots.len() != 0) {
+    return 1;
+  }
+  if (ssatokens.assign([0], []).ok || ssatokens.assign([0 - 1], [0]).ok || ssatokens.assign([2], [1]).ok) {
+    return 2;
+  }
+  return 0;
+}
+
+function layout_verification(): i32 {
+  if (ssatokens.verify([0, 1], [1, 2], [0, 0], 1) == ""
+    || ssatokens.verify([0], [1], [1], 1) == ""
+    || ssatokens.verify([0], [1], [], 1) == ""
+    || ssatokens.verify([], [], [], 0 - 1) == "") {
+    return 3;
+  }
+  if (ssatokens.verify([0, 2], [1, 2], [0, 0], 1) != "") {
+    return 4;
+  }
+  return 0;
+}
+
+function exhaustive_layouts(): i32 {
+  let lows: i32[] = [0, 0, 0, 1, 1, 2];
+  let highs: i32[] = [0, 1, 2, 1, 2, 2];
+  // All ordered four-row combinations over the six intervals on three points.
+  for code in 0..1296 {
+    let value: i32 = code;
+    let starts: i32[] = [];
+    let ends: i32[] = [];
+    for row in 0..4 {
+      let index: i32 = value % 6;
+      starts = starts.append(lows[index]);
+      ends = ends.append(highs[index]);
+      value = value / 6;
+    }
+    let layout: ssatokens.Layout = ssatokens.assign(starts, ends);
+    if (!layout.ok || layout.count != peak(starts, ends)) {
+      return 5;
+    }
+    if (ssatokens.verify(starts, ends, layout.slots, layout.count) != "") {
+      return 6;
+    }
+    if (!region_checks(starts, ends)) {
+      return 8;
+    }
+  }
+  return 0;
+}
+
+function extreme_layout(): i32 {
+  // A maximal endpoint must not overflow into a reusable interval.
+  let extreme: ssatokens.Layout = ssatokens.assign([0, 2147483647], [2147483647, 2147483647]);
+  if (!extreme.ok || extreme.count != 2) {
+    return 7;
+  }
+  return 0;
+}
+
+function region_counts(): i32 {
+  let vacant: ssatokens.Region = ssatokens.region([[], []], [[], []], 2147483646);
+  if (!vacant.ok || vacant.keep_count != 0 || vacant.scratch_start != 2147483647
+    || ssatokens.verify_region([[], []], [[], []], 2147483646, vacant) != "") {
+    return 9;
+  }
+  let mixed: ssatokens.Region = ssatokens.region([[0, 1], [], [0, 0, 0]], [[1, 2], [], [0, 0, 0]], 10);
+  if (!mixed.ok || mixed.keep_count != 3 || mixed.scratch_start != 14
+    || ssatokens.verify_region([[0, 1], [], [0, 0, 0]], [[1, 2], [], [0, 0, 0]], 10, mixed) != "") {
+    return 10;
+  }
+  return 0;
+}
+
+function region_admission(): i32 {
+  if (ssatokens.region([], [[]], 0).ok || ssatokens.region([[0]], [[]], 0).ok
+    || ssatokens.region([], [], 0 - 1).ok || ssatokens.region([], [], 2147483647).ok
+    || ssatokens.region([[0]], [[0]], 2147483646).ok
+    || ssatokens.region([[0, 0]], [[0, 0]], 2147483645).ok) {
+    return 11;
+  }
+  return 0;
+}
+
+function region_replay(): i32 {
+  let mixed: ssatokens.Region = ssatokens.region([[0, 1], [], [0, 0, 0]], [[1, 2], [], [0, 0, 0]], 10);
+  let boundary: ssatokens.Region = ssatokens.Region { ...mixed, scratch_start: mixed.scratch_start - 1 };
+  let extra: ssatokens.Region = ssatokens.Region { ...mixed, keep_count: 4, scratch_start: 15 };
+  let overlap: ssatokens.Layout = ssatokens.Layout { ok: true, why: "", slots: [0, 0], count: 1 };
+  let collision: ssatokens.Region = ssatokens.Region { ok: true, why: "", blocks: [overlap], transient: 10, keep_count: 1, scratch_start: 12 };
+  if (ssatokens.verify_region([[0, 1], [], [0, 0, 0]], [[1, 2], [], [0, 0, 0]], 10, boundary) == ""
+    || ssatokens.verify_region([[0, 1], [], [0, 0, 0]], [[1, 2], [], [0, 0, 0]], 10, extra) == ""
+    || ssatokens.verify_region([[0, 1]], [[1, 2]], 10, collision) == "") {
+    return 12;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let code: i32 = layout_construction();
+  if (code != 0) {
+    return code;
+  }
+  code = layout_verification();
+  if (code != 0) {
+    return code;
+  }
+  code = exhaustive_layouts();
+  if (code != 0) {
+    return code;
+  }
+  code = extreme_layout();
+  if (code != 0) {
+    return code;
+  }
+  code = region_counts();
+  if (code != 0) {
+    return code;
+  }
+  code = region_admission();
+  if (code != 0) {
+    return code;
+  }
+  return region_replay();
+}

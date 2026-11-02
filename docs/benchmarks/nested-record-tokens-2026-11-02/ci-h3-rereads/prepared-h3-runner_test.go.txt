@@ -1,0 +1,29 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"strconv"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+)
+
+func TestPreparedH3(t *testing.T) {
+	rounds, err := strconv.Atoi(os.Getenv("FERN_PROBE_ROUNDS"))
+	if err != nil { t.Fatal(err) }
+	runner := os.Getenv("FERN_PROBE_RUNNER")
+	command := func(path string, args ...string) *exec.Cmd {
+		if runner != "" { return exec.Command(runner, append([]string{path}, args...)...) }
+		return exec.Command(path, args...)
+	}
+	ln := e2eharness.ListenInherited(t)
+	addr, _ := ln.Start(t, command(os.Getenv("FERN_PROBE_SERVER")))
+	args := []string{strconv.Itoa(ln.Port), strconv.Itoa(rounds)}
+	if os.Getenv("FERN_PROBE_MUX") == "1" {
+		args = append(args, "64")
+		e2eharness.CheckServeAllocsH3Mux(t, addr, command(os.Getenv("FERN_PROBE_CLIENT"), args...), 29, rounds, 48)
+	} else {
+		e2eharness.CheckServeAllocsH3(t, addr, command(os.Getenv("FERN_PROBE_CLIENT"), args...), 48, rounds)
+	}
+}
