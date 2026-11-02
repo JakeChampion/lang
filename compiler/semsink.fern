@@ -541,8 +541,10 @@ function child_grown_in(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   }
   let x: i32 = rd.first[v];
   if (util.index_of_i32(rd.updated[x], bi) >= 0) {
+    // Keep the first read for consumed record and variant donors.
+    // Array snapshots follow the same block-local rule as array updates.
     if let typeinfo.TypeStruct(_) = rd.types[x] {
-      return true;
+      return !read_in(rd, bi, x) || child_spent_between_for(rd, bi, x, 0, true);
     }
     return !read_in(rd, bi, x);
   }
@@ -566,18 +568,22 @@ function read_in(rd: Reads, bi: i32, x: i32): boolean {
 // A descendant of the first read is spent in a block the first read
 // dominates, and is not live into bi.
 function child_spent_between(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
+  return child_spent_between_for(rd, bi, v, depth, false);
+}
+
+function child_spent_between_for(rd: Reads, bi: i32, v: i32, depth: i32, donors: boolean): boolean {
   if (depth > 8) {
     return false;
   }
   for c in rd.kids[rd.first[v]] {
-    if (!ssalive.live_in_has(rd.flow, bi, c)) {
+    if ((!donors || ssasem.owned_shape(rd.types[c])) && !ssalive.live_in_has(rd.flow, bi, c)) {
       for s in rd.spent[c] {
         if (s != bi && ssadeps.dom_holds(rd.dom, s, rd.at[v])) {
           return true;
         }
       }
     }
-    if (child_spent_between(rd, bi, c, depth + 1)) {
+    if (child_spent_between_for(rd, bi, c, depth + 1, donors)) {
       return true;
     }
   }
