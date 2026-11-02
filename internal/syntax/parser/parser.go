@@ -327,6 +327,7 @@ func (p *parser) parseProgram() *ast.Program {
 		var derives []string
 		var importIface, importWIT string
 		var exportIface, exportWIT string
+		var jniClass, jniDecl string
 		mustConsume := false
 		tryMarker := false
 		inlineHint := ast.InlineHintNone
@@ -346,6 +347,8 @@ func (p *parser) parseProgram() *ast.Program {
 			importWIT = attr.importWIT
 			exportIface = attr.exportIface
 			exportWIT = attr.exportWIT
+			jniClass = attr.jniClass
+			jniDecl = attr.jniDecl
 			mustConsume = attr.mustConsume
 			tryMarker = attr.tryMarker
 			inlineHint = attr.inlineHint
@@ -634,6 +637,13 @@ func (p *parser) parseProgram() *ast.Program {
 				}
 				fn.ExportIface = exportIface
 				fn.ExportWITName = exportWIT
+			} else if jniClass != "" {
+				if fn.Body == nil {
+					p.errors = append(p.errors, p.errorf(fn.P,
+						"@jni function %q must have a body", fn.Name))
+				}
+				fn.JNIClass = jniClass
+				fn.JNIDecl = jniDecl
 			} else if fn.Body == nil {
 				p.errors = append(p.errors, p.errorf(fn.P,
 					"function %q has no body (only @import functions may omit a body)", fn.Name))
@@ -1112,6 +1122,8 @@ type declAttr struct {
 	importWIT   string
 	exportIface string
 	exportWIT   string
+	jniClass    string
+	jniDecl     string
 	mustConsume bool
 	tryMarker   bool
 	inlineHint  ast.InlineHint
@@ -1158,7 +1170,7 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		return declAttr{name: attr, inlineHint: ast.InlineHintAlways}, nil
 	case "noinline":
 		return declAttr{name: attr, inlineHint: ast.InlineHintNever}, nil
-	case "import", "export":
+	case "import", "export", "jni":
 		iface, name, err := p.parseIfaceNamePair()
 		if err != nil {
 			return declAttr{}, err
@@ -1166,9 +1178,12 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		if attr == "import" {
 			return declAttr{name: attr, importIface: iface, importWIT: name}, nil
 		}
+		if attr == "jni" {
+			return declAttr{name: attr, jniClass: iface, jniDecl: name}, nil
+		}
 		return declAttr{name: attr, exportIface: iface, exportWIT: name}, nil
 	default:
-		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @jni, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
 }
 
@@ -1196,6 +1211,8 @@ func attrMisplaced(name string) string {
 		return "@import only applies to a function or resource declaration"
 	case "export":
 		return "@export only applies to a function declaration"
+	case "jni":
+		return "@jni only applies to a function declaration"
 	}
 	return "@inline / @noinline only applies to a function declaration"
 }

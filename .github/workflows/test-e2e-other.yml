@@ -100,6 +100,7 @@ jobs:
         uses: ./.github/actions/apt-cross-toolchain
         with:
           qemu-package: qemu-user
+          cross-libc: "true"
       - name: build the e2e test binary
         run: |
           go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/testing/e2e/

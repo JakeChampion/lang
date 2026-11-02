@@ -3210,6 +3210,24 @@ function run(): i32 { return 0; }`)
 	}
 }
 
+func TestJNIAttributeParses(t *testing.T) {
+	prog, err := Parse(`@jni("dev.fern.demo.Native", "static long add(long, int)")
+pub function add(env: usize, cls: usize, a: i64, b: i32): i64 { return a + b as i64; }`)
+	if err != nil {
+		t.Fatalf("@jni should parse: %v", err)
+	}
+	fn := prog.Funcs[0]
+	if fn.JNIClass != "dev.fern.demo.Native" || fn.JNIDecl != "static long add(long, int)" || !fn.Public {
+		t.Errorf("jni binding = {%q %q} public %v", fn.JNIClass, fn.JNIDecl, fn.Public)
+	}
+	if _, err := Parse(`@jni("a.B", "static int f()") function f(env: usize, cls: usize): i32;`); err == nil {
+		t.Error("@jni on a body-less function should be rejected")
+	}
+	if _, err := Parse(`@jni("a.B", "static int f()") struct S { a: i32 }`); err == nil {
+		t.Error("@jni on a struct should be rejected")
+	}
+}
+
 func TestExportAttributeErrors(t *testing.T) {
 	if _, err := Parse(`@export("a:b/c", "d") function f(): i32;`); err == nil {
 		t.Error("@export on a body-less function should be rejected")

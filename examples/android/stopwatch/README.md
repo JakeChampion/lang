@@ -30,7 +30,7 @@ amount.
 | file | what it does |
 |---|---|
 | `stopwatch.fern` | All of the behaviour: the state changes, the text, the colours, when to update next, the burn-in position, the beep times and the settings table. Every function is pure. |
-| `native.fern` | The JNI methods of `Core`. Each one changes JNI types into Fern types and calls `stopwatch.fern`. |
+| `native.fern` | The JNI methods of `Core`, each with `@jni`. Each one changes JNI types into Fern types and calls `stopwatch.fern`. `build.sh` writes `Core.java` from them with `-jni-java`. |
 | `stopwatch_test.fern` | The tests for `stopwatch.fern` (`std/test`). |
 | `java/dev/fern/stopwatch/` | The Android shell: views, touch events, timers and stored values. It asks `Core` for every decision. |
 | `host/HostCheck.java` | Calls every native method in a desktop JVM. |
@@ -64,9 +64,9 @@ or later. `build.sh` signs it with a new debug key unless `KEYSTORE` is set.
 `internal/testing/e2e/android_stopwatch_test.go` runs three checks:
 
 - `TestAndroidStopwatchLogic` runs `stopwatch_test.fern`.
-- `TestAndroidStopwatchExports` checks that each `native` method in
-  `Core.java` has an export, and that the arm64 library is one that
-  Android's loader accepts.
+- `TestAndroidStopwatchExports` checks that each `native` method in the
+  generated `Core.java` has an export, and that the arm64 library is one
+  that Android's loader accepts.
 - `TestAndroidStopwatchHostJVM` loads the host build of `libfern.so` into a
   desktop JVM and runs `HostCheck`.
 
