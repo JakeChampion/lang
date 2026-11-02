@@ -710,18 +710,21 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   if (pie) {
     dv = elf.elf_data_vaddr_pie_wx_unwind(text_len, hdr.len(), eh.len(), harden) as i64;
   }
+  let gap: i32 = elf.elf_relro_gap(dv as i32, p.relro_pad, elf.elf_relro_page());
+  p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "linker", p.unknown);
   }
+  p = arm64_relro_slots(p, tv, dv);
   let pa2: arm64_native.Arm64Asm = p.asm;
   let eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
   if (eoff < 0) {
     eoff = 0;
   }
-  let bin: u8[] = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden);
+  let bin: u8[] = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden, p.relro_pad);
   if (pie) {
-    bin = elf.elf_image_pie_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden);
+    bin = elf.elf_image_pie_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden, p.relro_pad);
   }
   if (!emit_syms) {
     return string_from_bytes_unchecked(bin);
@@ -773,26 +776,53 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   let pa: arm64_native.Arm64Asm = p.asm;
   let tv: i64 = elf.elf_text_vaddr_pie() as i64;
   let dv: i64 = elf.elf_data_vaddr_pie(pa.text.len()) as i64;
+  let gap: i32 = elf.elf_relro_gap(dv as i32, p.relro_pad, elf.elf_relro_page());
+  p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "linker", p.unknown);
   }
+  p = arm64_relro_slots(p, tv, dv);
   let pa2: arm64_native.Arm64Asm = p.asm;
   let eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
   if (eoff < 0) {
     eoff = 0;
   }
-  return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size));
+  return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad));
+}
+
+// The startup reads the address and the page-rounded length of the read-only
+// region from two data slots. An image without the slots has no region.
+function arm64_relro_slots(own p: arm64_native.Arm64GasProg, tv: i64, dv: i64): arm64_native.Arm64GasProg {
+  let begin: i64 = arm64_native.arm64_symbol_addr(p, "__fern_relro_begin", tv, dv);
+  let len: i64 = arm64_native.arm64_symbol_addr(p, "__fern_relro_len", tv, dv);
+  if (begin < 0i64 || len < 0i64) {
+    return p;
+  }
+  let data: i32[] = p.data;
+  p = arm64_native.Arm64GasProg { ...p, data: [] };
+  data = store_le64(data, (begin - dv) as i32, dv);
+  data = store_le64(data, (len - dv) as i32, p.relro_pad as i64);
+  return arm64_native.Arm64GasProg { ...p, data: data };
+}
+
+function x86_relro_slots(own a: x86_native.X86Asm, tv: i32, dv: i32): x86_native.X86Asm {
+  let begin: i32 = x86_native.x86_symbol_addr(a, "__fern_relro_begin", tv);
+  let len: i32 = x86_native.x86_symbol_addr(a, "__fern_relro_len", tv);
+  if (a.unknown.len() > 0 || begin < 0 || len < 0) {
+    return a;
+  }
+  let data: i32[] = a.rodata;
+  a = x86_native.X86Asm { ...a, rodata: [] };
+  data = store_le64(data, begin - dv, dv as i64);
+  data = store_le64(data, len - dv, a.relro_pad as i64);
+  return x86_native.X86Asm { ...a, rodata: data };
 }
 
 function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
-  let reloc_at: i32 = a.rodata.len();
-  if (pie) {
-    a = x86_native.X86Asm { ...a, rodata: reserve_bytes(a.rodata, 8 * a.dfix_offs.len()) };
-  }
   let tv: i64 = elf.elf_x86_wx_text_vaddr() as i64;
   let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
   let hv: i64 = elf.elf_x86_wx_eh_hdr_vaddr(a.text.len()) as i64;
@@ -808,6 +838,12 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   if (pie) {
     dv = elf.elf_x86_pie_data_vaddr(a.text.len(), hdr.len(), eh.len());
   }
+  let gap: i32 = elf.elf_relro_gap(dv, a.relro_pad, elf.elf_relro_page());
+  a = x86_native.x86_relro_gap(a, gap);
+  let reloc_at: i32 = a.rodata.len();
+  if (pie) {
+    a = x86_native.X86Asm { ...a, rodata: reserve_bytes(a.rodata, 8 * a.dfix_offs.len()) };
+  }
   a = x86_native.x86_link(a, tv as i32, dv);
   if (pie && a.afix_offs.len() > 0 && a.unknown.len() == 0) {
     a = x86_native.X86Asm { ...a, unknown: ["an absolute code address in a -pie image: " + a.afix_names[0]] };
@@ -815,6 +851,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   if (pie && a.unknown.len() == 0) {
     a = x86_self_relocation(a, tv as i32, dv, reloc_at);
   }
+  a = x86_relro_slots(a, tv as i32, dv);
   util.arr_push_cliff_report("x86:resolved", 0);
   if (a.unknown.len() > 0) {
     eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
@@ -826,9 +863,9 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     return "";
   }
   util.arr_push_cliff_report("x86:unwind", 0);
-  let bin: u8[] = elf.elf_program_x86_wx(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
+  let bin: u8[] = elf.elf_program_x86_wx(a.text, hdr, eh, a.rodata, a.bss_size, eoff, a.relro_pad);
   if (pie) {
-    bin = elf.elf_program_x86_pie(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
+    bin = elf.elf_program_x86_pie(a.text, hdr, eh, a.rodata, a.bss_size, eoff, a.relro_pad);
   }
   util.arr_push_cliff_report("x86:image", 0);
   if (!emit_syms) {

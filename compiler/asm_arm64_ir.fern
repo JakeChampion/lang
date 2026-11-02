@@ -6247,9 +6247,59 @@ function emit_vdso_scan(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// The two slots hold the link-time address and the length of the read-only
+// region. The relocation loop leaves the load delta in x9. The start is
+// rounded down and the end is rounded down to the page size the kernel
+// reports in AT_PAGESZ, so no writable word is ever covered.
+function emit_relro_protect(s: asmcore.EmitState, reloc: boolean): asmcore.EmitState {
+  if (!asmcore.relro_wanted(s)) {
+    return s;
+  }
+  s = s.write("    .section .data\n    .align 3\n__fern_relro_begin:\n    .quad 0\n__fern_relro_len:\n    .quad 0\n    .text\n");
+  if (!reloc) {
+    s = s.write("    mov x9, xzr\n");
+  }
+  s = s.write("    adrp x10, __fern_relro_len\n");
+  s = s.write("    add x10, x10, :lo12:__fern_relro_len\n");
+  s = s.write("    ldr x1, [x10]\n");
+  s = s.write("    cbz x1, .Lfern_relro_done\n");
+  s = s.write("    adrp x10, __fern_relro_begin\n");
+  s = s.write("    add x10, x10, :lo12:__fern_relro_begin\n");
+  s = s.write("    ldr x0, [x10]\n");
+  s = s.write("    add x0, x0, x9\n");
+  s = s.write("    ldr x2, [sp]\n");
+  s = s.write("    lsl x2, x2, #3\n");
+  s = s.write("    add x2, x2, #16\n");
+  s = s.write("    add x2, sp, x2\n");
+  s = s.write(".Lfern_relro_env:\n");
+  s = s.write("    ldr x3, [x2], #8\n");
+  s = s.write("    cbnz x3, .Lfern_relro_env\n");
+  s = s.write("    mov x4, #4096\n");
+  s = s.write(".Lfern_relro_scan:\n");
+  s = s.write("    ldp x3, x5, [x2], #16\n");
+  s = s.write("    cbz x3, .Lfern_relro_pagesz\n");
+  s = s.write("    cmp x3, #6\n");
+  s = s.write("    b.ne .Lfern_relro_scan\n");
+  s = s.write("    mov x4, x5\n");
+  s = s.write(".Lfern_relro_pagesz:\n");
+  s = s.write("    neg x4, x4\n");
+  s = s.write("    add x1, x0, x1\n");
+  s = s.write("    and x1, x1, x4\n");
+  s = s.write("    and x0, x0, x4\n");
+  s = s.write("    sub x1, x1, x0\n");
+  s = s.write("    cmp x1, #0\n");
+  s = s.write("    b.le .Lfern_relro_done\n");
+  s = s.write("    mov x2, #1\n");
+  s = s.write("    mov x8, #226\n");
+  s = s.svc(226);
+  s = s.write("    cbnz x0, .Lfern_relro_failed\n");
+  return s.write(".Lfern_relro_done:\n");
+}
+
 function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write("_start:\n");
   s = emit_ir_reloc(s, darwin);
+  s = emit_relro_protect(s, reloc_wanted(s, darwin));
   if (!darwin && asmcore.sandbox_on()) {
     s = s.write("    bl __fern_seccomp_install\n");
   }
@@ -6442,6 +6492,9 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
 }
 
 function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
+  if (asmcore.relro_wanted(s)) {
+    s = emit_startup_failure(s, ".Lfern_relro_failed", aborts.relro());
+  }
   s = emit_startup_failure(s, ".Lfern_stack_guard_failed", aborts.stack_guard());
   s = emit_startup_failure(s, ".Lfern_signal_stack_map_failed", aborts.signal_stack_map());
   s = emit_startup_failure(s, ".Lfern_signal_stack_failed", aborts.signal_stack());
@@ -6670,26 +6723,27 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     s = s.write("    .section .data\n    .align 8\n");
     s = s.write(".Lfern_relanchor:\n    .quad .Lfern_relanchor\n");
   }
+  let cds: string = asmcore.const_data_section(s);
   if (reloc) {
-    s = s.write("    .align 8\n.Lfern_sbox_begin:\n");
+    s = s.write(cds + "    .align 8\n.Lfern_sbox_begin:\n");
   }
   if (s.string_lits.len() > 0) {
     s = asmcore.emit_str_box_data_from(s, 0);
   }
   if (reloc) {
-    s = s.write("    .section .data\n.Lfern_sbox_end:\n");
+    s = s.write(cds + ".Lfern_sbox_end:\n");
   }
   if (reloc) {
     s = asmcore.emit_const_agg_blocks(s, 0, 1);
-    s = s.write("    .align 8\n.Lfern_cagg_begin:\n");
+    s = s.write(cds + "    .align 8\n.Lfern_cagg_begin:\n");
     s = asmcore.emit_const_agg_blocks(s, 0, 2);
-    s = s.write("    .section .data\n.Lfern_cagg_end:\n");
+    s = s.write(cds + ".Lfern_cagg_end:\n");
     s = s.write("    .align 8\n.Lfern_cfn_begin:\n");
     s = asmcore.emit_const_agg_blocks(s, 0, 3);
-    s = s.write("    .section .data\n.Lfern_cfn_end:\n");
+    s = s.write(cds + ".Lfern_cfn_end:\n");
     s = s.write("    .align 8\n.Lfern_cref_begin:\n");
     s = asmcore.emit_const_agg_refs(s);
-    s = s.write(".Lfern_cref_end:\n");
+    s = s.write(cds + ".Lfern_cref_end:\n");
   } else {
     s = asmcore.emit_const_agg_data(s);
   }
@@ -7359,7 +7413,7 @@ function arr_push_fast_u8(slow: string, on: boolean): string {
 }
 
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write(empty_array_block(".Lfern_empty_bytes"));
+  s = s.write(empty_array_block(s, ".Lfern_empty_bytes"));
   s = s.write("__fern_alloc_bytes:\n");
   s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort_leaf\n.Lfern_alloc_bytes_sized:\n");
   s = s.write("    cbz w0, .Lfern_alloc_bytes_empty\n");
@@ -7374,8 +7428,8 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function empty_array_block(label: string): string {
-  return "    .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .text\n";
+function empty_array_block(s: asmcore.EmitState, label: string): string {
+  return asmcore.const_data_section(s) + "    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .text\n";
 }
 
 function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
@@ -9866,7 +9920,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  s = s.write(empty_array_block(".Lfern_empty_u8"));
+  s = s.write(empty_array_block(s, ".Lfern_empty_u8"));
   s = s.write(".globl __fern_alloc_u8\n");
   s = s.write(".type __fern_alloc_u8, %function\n");
   s = s.write("__fern_alloc_u8:\n");

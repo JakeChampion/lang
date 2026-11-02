@@ -13,8 +13,9 @@ import (
 
 // Every image variant must keep code and data apart: one read-execute load
 // segment, writable segments that are not executable, and a non-executable
-// stack. A write into the code mapping and a jump into the data mapping
-// must both fault.
+// stack. The constant data leads the data segment under PT_GNU_RELRO, ends
+// on a page, and the startup maps it read-only. A write into the code mapping, a write into
+// the read-only data mapping and a jump into the data mapping must all fault.
 const imagePermSrc = `import "std/string";
 
 @noinline
@@ -58,6 +59,11 @@ function main(): i32 {
 }
 `
 
+// The program finds the read-only mapping of its own data segment and stores
+// a byte into it. The code mapping is the only other read-only mapping of the
+// image, and it is executable.
+var relroWriteSrc = strings.NewReplacer(` r-xp `, ` r--p `, "code-write", "relro-write").Replace(codeWriteSrc)
+
 func TestSelfHostImagePermissions(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	_, qemu := arm64Tooling(t)
@@ -98,6 +104,7 @@ func TestSelfHostImagePermissions(t *testing.T) {
 			}
 			mainSrc := write("main.fern", imagePermSrc)
 			probeSrc := write("probe.fern", codeWriteSrc)
+			relroSrc := write("relro.fern", relroWriteSrc)
 			compile := func(src, out string, flags ...string) {
 				t.Helper()
 				args := append(append([]string{}, flags...), "-target", tc.target, "-o", out, src, cli.stdlib)
@@ -146,10 +153,12 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					if f.Machine != tc.machine {
 						t.Fatalf("machine %v, want %v", f.Machine, tc.machine)
 					}
-					var code, data *elf.Prog
+					var code, data, relro *elf.Prog
 					stack := false
 					for _, p := range f.Progs {
 						switch p.Type {
+						case elf.PT_GNU_RELRO:
+							relro = p
 						case elf.PT_GNU_STACK:
 							stack = true
 							if p.Flags&elf.PF_X != 0 {
@@ -179,6 +188,12 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					if code.Vaddr+code.Memsz > data.Vaddr {
 						t.Errorf("code [%#x,%#x) overlaps data at %#x", code.Vaddr, code.Vaddr+code.Memsz, data.Vaddr)
 					}
+					if relro == nil {
+						t.Fatal("no PT_GNU_RELRO")
+					}
+					if relro.Vaddr != data.Vaddr || relro.Memsz == 0 || (relro.Vaddr+relro.Memsz)%4096 != 0 || relro.Vaddr+relro.Memsz > data.Vaddr+data.Filesz {
+						t.Errorf("PT_GNU_RELRO [%#x,%#x) does not lead the data segment [%#x,%#x) and end on a page", relro.Vaddr, relro.Vaddr+relro.Memsz, data.Vaddr, data.Vaddr+data.Filesz)
+					}
 
 					probe := filepath.Join(dir, "code-write-"+v.name)
 					compile(probeSrc, probe, v.flags...)
@@ -186,6 +201,13 @@ func TestSelfHostImagePermissions(t *testing.T) {
 						t.Fatal(err)
 					}
 					expectSegv("write into code", filepath.Join(dir, v.name+"-code-write"))
+
+					relroProbe := filepath.Join(dir, "relro-write-"+v.name)
+					compile(relroSrc, relroProbe, v.flags...)
+					if err := os.Rename(relroProbe, filepath.Join(dir, v.name+"-relro-write")); err != nil {
+						t.Fatal(err)
+					}
+					expectSegv("write into the read-only data", filepath.Join(dir, v.name+"-relro-write"))
 
 					image, err := os.ReadFile(bin)
 					if err != nil {
