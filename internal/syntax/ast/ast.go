@@ -803,6 +803,11 @@ func (f FloatType) NormalWidth() int {
 
 var CoverEnabled = envflag.On("FERN_COVER")
 
+// CallbackIface is the import interface of a @callback("f") declaration.
+// The compiler gives the declaration a body that returns the address of the
+// C entry of f.
+const CallbackIface = "fern:callback"
+
 const CoverLinePrefix = "fern-cover: "
 
 const CoverBranchPrefix = "fern-branch: "
@@ -1889,10 +1894,11 @@ type FuncDecl struct {
 	ReturnType        Type
 	ReturnUnannotated bool
 	Body              *Block
-	ImportIface       string
-	ImportWITName     string
-	ExportIface       string
-	ExportWITName     string
+	// ImportIface is CallbackIface for @callback(ImportWITName).
+	ImportIface   string
+	ImportWITName string
+	ExportIface   string
+	ExportWITName string
 	// @jni(JNIClass, JNIDecl): the Java class and the Java declaration of
 	// the JNI method that this function implements.
 	JNIClass                 string
