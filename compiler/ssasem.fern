@@ -370,7 +370,9 @@ pub function holds_no_argument(name: string): boolean {
   return name == "__arr_set_len" || name == "__str_bytes" || name == "__ct_secret" || name == "__ct_public";
 }
 
-// The array arguments a builtin writes in place or exposes as raw storage.
+// The positions of the array arguments a builtin reaches raw: the arrays it
+// writes in place, or the array whose storage it hands out as a pointer. An
+// empty list names a builtin that reaches no argument raw.
 pub function raw_array_args(name: string): i32[] {
   if (name == "__arr_set_len" || name == "__raw_arr_ptr") {
     return [0];

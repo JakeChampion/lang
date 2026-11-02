@@ -1216,9 +1216,9 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): i32[
 // The argument positions a call reaches raw.
 function raw_args(writes: WriteRows, ins: ssa.SInst): i32[] {
   let out: i32[] = [];
-  let direct: i32[] = ssasem.raw_array_args(ins.str);
-  if (direct.len() > 0) {
-    for k in direct {
+  let raw: i32[] = ssasem.raw_array_args(ins.str);
+  if (raw.len() > 0) {
+    for k in raw {
       if (k < ins.args.len()) {
         out = out.append(k);
       }

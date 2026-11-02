@@ -51,7 +51,7 @@ The region is empty in a `-shared` object, on Darwin and on the freestanding tar
 
 The constant boxes carry a negative reference count. The count paths skip a negative count, so the runtime never writes a constant box, and the read-only mapping holds.
 
-A builtin that writes into an array argument in place never reaches a constant. `reactor_wait`, `tcp_recv_into`, `ring_recv` and `__arr_set_len` are those builtins.
+A builtin that writes into an array argument in place never reaches a constant. Those builtins are `reactor_wait`, `ring_wait`, `ring_recv`, `tcp_recv_into`, `tcp_addr_into`, `udp_recvfrom` and `__arr_set_len`, named in `ssasem.raw_array_args`.
 The unit plan builds a literal on such a path as a heap box, through a callee's parameter as well (`ssaunits.raw_reached`, [#14013](https://github.com/JakeChampion/lang/issues/14013)).
 The length setter skips a box with a negative count, so the shared empty array stays a constant that no code writes.
 The array literals and the empty array are in the region with the other constants.
