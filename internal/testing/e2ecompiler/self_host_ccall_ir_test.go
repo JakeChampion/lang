@@ -26,7 +26,9 @@ function run1(cb: usize, x: usize): i32 { unsafe { return __c_call1(cb, x) as i3
 function run2(cb: usize, a: usize, b: usize): i32 { unsafe { return __c_call2(cb, a, b) as i32; } }
 function run3(cb: usize, a: usize, b: usize, c: usize): i32 { unsafe { return __c_call3(cb, a, b, c) as i32; } }
 function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { unsafe { return __c_call4(cb, a, b, c, d) as i32; } }
-function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run2(0 as usize, 1 as usize, 2 as usize) + run3(0 as usize, 1 as usize, 2 as usize, 3 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize); }`
+function run5(cb: usize, a: usize, b: usize, c: usize, d: usize, e: usize): i32 { unsafe { return __c_call5(cb, a, b, c, d, e) as i32; } }
+function run6(cb: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize): i32 { unsafe { return __c_call6(cb, a, b, c, d, e, f) as i32; } }
+function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run2(0 as usize, 1 as usize, 2 as usize) + run3(0 as usize, 1 as usize, 2 as usize, 3 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize) + run5(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize, 5 as usize) + run6(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize, 5 as usize, 6 as usize); }`
 	asm := string(runCapture(t, gcc, runner, driverBin, []byte(prog)))
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes")
@@ -34,14 +36,14 @@ function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + 
 
 	shimBody := func(n int) []string {
 		want := []string{"movq 16(%rbp), %r11"}
-		regs := []string{"%rdi", "%rsi", "%rdx", "%rcx"}
+		regs := []string{"%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"}
 		for i := 0; i < n; i++ {
 			want = append(want, "movq "+itoa(24+8*i)+"(%rbp), "+regs[i])
 		}
 		want = append(want, "andq $-16, %rsp", "xorl %eax, %eax", "call *%r11")
 		return want
 	}
-	for n := 0; n <= 4; n++ {
+	for n := 0; n <= 6; n++ {
 		label := "__fn___c_call" + itoa(n) + ":"
 		idx := strings.Index(asm, label)
 		if idx < 0 {
@@ -91,7 +93,8 @@ func TestSelfHostCCallIRArm64(t *testing.T) {
 	prog := `function run0(cb: usize): i32 { unsafe { return __c_call0(cb) as i32; } }
 function run1(cb: usize, x: usize): i32 { unsafe { return __c_call1(cb, x) as i32; } }
 function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { unsafe { return __c_call4(cb, a, b, c, d) as i32; } }
-function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize); }`
+function run6(cb: usize, a: usize, b: usize, c: usize, d: usize, e: usize, f: usize): i32 { unsafe { return __c_call6(cb, a, b, c, d, e, f) as i32; } }
+function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize) + run6(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize, 5 as usize, 6 as usize); }`
 	var cmd *exec.Cmd
 	if len(x86runner) == 0 {
 		cmd = exec.Command(driverBin, "-target", "arm64-linux")
@@ -106,14 +109,14 @@ function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + 
 	txt := string(asm)
 	shimBody := func(n int) []string {
 		want := []string{"ldr x9, [x29, #16]"}
-		regs := []string{"x0", "x1", "x2", "x3"}
+		regs := []string{"x0", "x1", "x2", "x3", "x4", "x5"}
 		for i := 0; i < n; i++ {
 			want = append(want, "ldr "+regs[i]+", [x29, #"+itoa(32+16*i)+"]")
 		}
 		want = append(want, "blr x9")
 		return want
 	}
-	for _, n := range []int{0, 1, 4} {
+	for _, n := range []int{0, 1, 4, 6} {
 		label := "__fn___c_call" + itoa(n) + ":"
 		idx := strings.Index(txt, label)
 		if idx < 0 {

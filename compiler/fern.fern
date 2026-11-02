@@ -1000,8 +1000,8 @@ function c_import_refusal(f: parser.FuncDecl, target: string, shared: boolean): 
   if (!shared) {
     return what + "an executable for -target " + target + " has no dynamic loader; build a -shared object to import " + f.import_wit + " from " + f.import_iface;
   }
-  if (f.params.len() > 4) {
-    return what + "a C import takes at most 4 parameters (it has " + util.i32_to_string(f.params.len()) + ")";
+  if (f.params.len() > 6) {
+    return what + "a C import takes at most 6 parameters (it has " + util.i32_to_string(f.params.len()) + ")";
   }
   for p in f.params {
     if (!c_import_int(p.type_name)) {

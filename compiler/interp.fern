@@ -2293,6 +2293,7 @@ function is_raw_floor(name: string): boolean {
   return util.has_str(["__syscall3", "__syscall4", "__syscall5", "__syscall6"], name)
     || util.has_str(["__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32", "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64"], name)
     || util.has_str(["__c_call3", "__c_call3_f32", "__c_call3_f64", "__c_call4", "__c_call4_f32", "__c_call4_f64"], name)
+    || util.has_str(["__c_call5", "__c_call5_f32", "__c_call5_f64", "__c_call6", "__c_call6_f32", "__c_call6_f64"], name)
     || util.has_str(["__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
 }
 

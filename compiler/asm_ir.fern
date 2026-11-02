@@ -40,17 +40,9 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   s = s.write("\n__fn_" + variant + ":\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n");
   s = s.write("    movq 16(%rbp), %r11\n");
-  if (n >= 1) {
-    s = s.write("    movq 24(%rbp), %rdi\n");
-  }
-  if (n >= 2) {
-    s = s.write("    movq 32(%rbp), %rsi\n");
-  }
-  if (n >= 3) {
-    s = s.write("    movq 40(%rbp), %rdx\n");
-  }
-  if (n >= 4) {
-    s = s.write("    movq 48(%rbp), %rcx\n");
+  let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+  for i in 0..n {
+    s = s.write("    movq " + util.i32_to_string(24 + 8 * i) + "(%rbp), " + regs[i] + "\n");
   }
   s = s.write("    andq $-16, %rsp\n");
   if (s.shared) {
@@ -98,7 +90,7 @@ function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
   let arity: i32 = 0;
-  while (arity <= 4) {
+  while (arity <= 6) {
     let base: string = "__c_call" + util.i32_to_string(arity);
     if (s.has_need("ccall:" + base)) {
       s = emit_ccall_shim1(s, base, arity);
@@ -116,7 +108,7 @@ function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
 
 function any_ccall_need(s: asmcore.EmitState): boolean {
   let arity: i32 = 0;
-  while (arity <= 4) {
+  while (arity <= 6) {
     let base: string = "__c_call" + util.i32_to_string(arity);
     if (s.has_need("ccall:" + base)) {
       return true;

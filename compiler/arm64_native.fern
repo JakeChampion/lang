@@ -4252,7 +4252,7 @@ function arm64_gas_mem(op: string): Arm64Mem {
           ext_has_amt = true;
         }
       }
-    } else {
+    } else if (!arm64_gas_is_page_offset(parts[1])) {
       off = arm64_gas_imm(parts[1]);
     }
   }
@@ -4261,6 +4261,12 @@ function arm64_gas_mem(op: string): Arm64Mem {
     idx_w: idx_w, ext_opt: ext_opt, ext_amt: ext_amt, ext_has_amt: ext_has_amt,
     at: 0 - 1,
   };
+}
+
+// A :lo12: or @PAGEOFF operand is a relocation, and the fixup supplies its
+// value.
+function arm64_gas_is_page_offset(p: string): boolean {
+  return arm64_str_indexof(p, ":lo12:") >= 0 || arm64_str_indexof(p, "@PAGEOFF") >= 0;
 }
 
 function arm64_gas_line_mem(ops: string[]): Arm64Mem {
