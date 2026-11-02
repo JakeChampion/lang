@@ -632,6 +632,10 @@ func New() *Interp {
 	i.Builtins["__method_Reader_close_unchecked"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["open_dir"] = &Builtin{Fn: builtinOpenDir}
 	i.Builtins["__method_Dir_open_dir"] = &Builtin{Fn: builtinDirOpenDir}
+	i.Builtins["__method_Dir_open_reader"] = &Builtin{Fn: builtinDirOpenFile("Reader", os.O_RDONLY, false)}
+	i.Builtins["__method_Dir_open_writer"] = &Builtin{Fn: builtinDirOpenFile("Writer", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, false)}
+	i.Builtins["__method_Dir_open_reader_with"] = &Builtin{Fn: builtinDirOpenFile("Reader", os.O_RDONLY, true)}
+	i.Builtins["__method_Dir_open_writer_with"] = &Builtin{Fn: builtinDirOpenFile("Writer", os.O_WRONLY, true)}
 	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
 	i.Builtins["__method_Dir_entries_bytes"] = &Builtin{Fn: builtinDirEntriesBytes}
 	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
@@ -4436,26 +4440,36 @@ func openWithHelper(i *Interp, args []Value, structName string, access int) (Val
 	if !ok {
 		return nil, fmt.Errorf("open_*_with: expected number flags, got %T", args[1])
 	}
+	flag, refused := openFlagsOf(int(flags), access)
+	if refused != nil {
+		return refused, nil
+	}
+	return openHelper(i, args[:1], structName, flag, 0o666)
+}
+
+// openFlagsOf maps the portable flag word of the open_*_with builtins onto
+// the host's open flags. A bit the host has no word for is refused.
+func openFlagsOf(flags, access int) (int, Value) {
 	flag := access
-	if int(flags)&1 != 0 {
+	if flags&1 != 0 {
 		flag |= os.O_CREATE
 	}
-	if int(flags)&4 != 0 {
+	if flags&4 != 0 {
 		flag |= os.O_EXCL
 	}
 	for _, b := range []struct{ bit, word int }{
 		{2, oNonblock}, {8, oDirect}, {16, oDirectory}, {32, oDsync},
 		{64, oSync}, {128, oNoatime}, {256, oNoctty}, {512, oNofollow},
 	} {
-		if int(flags)&b.bit == 0 {
+		if flags&b.bit == 0 {
 			continue
 		}
 		if b.word == 0 && b.bit != 2 {
-			return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+			return 0, resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5})
 		}
 		flag |= b.word
 	}
-	return openHelper(i, args[:1], structName, flag, 0o666)
+	return flag, nil
 }
 
 func openHelper(i *Interp, args []Value, structName string, flag int, perm os.FileMode) (Value, error) {

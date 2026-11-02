@@ -5157,7 +5157,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
     k = k - 1;
   }
-  if (o.kind_tag == 423 || o.kind_tag == 425) {
+  if (o.kind_tag == 423 || o.kind_tag == 425 || o.kind_tag == 428) {
     s = s.write("    mov x" + util.i32_to_string(n) + ", #" + util.i32_to_string(o.i32_imm) + "\n");
     n = n + 1;
   }
@@ -5284,7 +5284,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("pipe");
     s = s.write("    bl __fn___fern_pipe\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 420 && o.kind_tag <= 427) {
+  } else if (o.kind_tag >= 420 && o.kind_tag <= 428) {
     s = emit_dir_op(o, s);
   } else if (o.kind_tag == 276) {
     s = s.need("heap");
@@ -11539,7 +11539,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
-    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
   ]);
 }
 

@@ -4887,7 +4887,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_mulhi_u64\n");
   } else if (o.kind_tag == 484) {
     parts = parts.append("    call $__fern_mulhi_s64\n");
-  } else if (o.kind_tag >= 421 && o.kind_tag <= 427) {
+  } else if (o.kind_tag >= 421 && o.kind_tag <= 428) {
     parts = parts.append("    unreachable\n");
   } else {
     parts = parts.append("    " + wasm_binop_w(o.kind_tag, o.width) + "\n");

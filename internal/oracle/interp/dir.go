@@ -27,6 +27,49 @@ func builtinDirOpenDir(i *Interp, args []Value) (Value, error) {
 	return openDirValue(i, path, name, true), nil
 }
 
+// builtinDirOpenFile opens a regular file under a directory handle. The entry
+// is one name relative to the directory, and a symbolic link in its place is
+// refused, as Dir.open_dir refuses one. The forms with flags take the portable
+// flag word of open_reader_with and open_writer_with.
+func builtinDirOpenFile(structName string, access int, withFlags bool) func(*Interp, []Value) (Value, error) {
+	what := "Dir.open_" + strings.ToLower(structName)
+	n := 2
+	if withFlags {
+		what += "_with"
+		n = 3
+	}
+	return func(i *Interp, args []Value) (Value, error) {
+		path, name, err := dirName(i, what, n, args)
+		if err != nil {
+			return nil, err
+		}
+		d, _ := dirFile(i, args[0])
+		if d == nil {
+			return closedDir(), nil
+		}
+		flag := access
+		if withFlags {
+			flags, ok := args[2].(Number)
+			if !ok {
+				return nil, fmt.Errorf("%s: expected number flags, got %T", what, args[2])
+			}
+			var refused Value
+			flag, refused = openFlagsOf(int(flags), access)
+			if refused != nil {
+				return refused, nil
+			}
+		}
+		f, err := openAtFile(d, path, name, flag|oNofollow)
+		if err != nil {
+			return resultErr(classifyIoError(name, err)), nil
+		}
+		id := i.nextFd
+		i.nextFd++
+		i.openFiles[id] = f
+		return resultOk(&Struct{TypeName: structName, Fields: map[string]Value{"fd": Number(id)}}), nil
+	}
+}
+
 func openDirValue(i *Interp, path, name string, nofollow bool) Value {
 	if nofollow {
 		info, err := os.Lstat(path)

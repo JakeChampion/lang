@@ -226,7 +226,7 @@ func (c *checker) freshMethodResult(x *ast.Call) bool {
 	return freshBuiltinMethods[field] && !c.declaredMethods[field]
 }
 
-var freshBuiltinMethods = map[string]bool{"open_dir": true}
+var freshBuiltinMethods = map[string]bool{"open_dir": true, "open_reader": true, "open_writer": true, "open_reader_with": true, "open_writer_with": true}
 
 // A handle an open builtin returns is a kernel descriptor: it borrows nothing
 // from the path it was opened with.
