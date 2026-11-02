@@ -26,6 +26,25 @@ The random source is `random_bytes`, which reads the kernel's entropy service an
 `std/rand` provides a seeded PCG32 generator, which its document describes as a reproducible sequence, not an entropy source.
 `crypto.erase` zeroes an owned byte array's storage before the release.
 
+## Wycheproof
+
+The five `tests/stdlib/wycheproof_*_test.fern` suites run the Wycheproof `testvectors_v1` files for AES-GCM, ChaCha20-Poly1305, X25519, Ed25519 and ECDSA over P-256 with SHA-256.
+`scripts/gen-wycheproof.py` writes them from the JSON files, and the header of each suite names its source and vector count.
+The module must accept every valid vector and refuse every invalid vector. An acceptable vector runs for its verdict alone.
+A module refuses a key, nonce or tag size it does not take. The AEAD suites check that a valid vector of such a size answers an error.
+
+The ECDSA suite uses the DER signatures, which the module reads as strict DER, so every BER variant is refused.
+The std test gate runs the first four suites on both native targets and under the oracle.
+The oracle interprets the P-256 arithmetic and takes about 25 minutes on the ECDSA suite, so `TestSelfHostWycheproofEcdsaP256` runs that suite natively on both targets alone.
+
+| Suite | Vectors | Groups |
+|---|---|---|
+| `wycheproof_aes_gcm` | 316 | 45, of which the 192-bit keys and the 64-bit and 128-bit nonces and the short tags are refused |
+| `wycheproof_chacha20poly1305` | 325 | 10 |
+| `wycheproof_x25519` | 518 | 9 |
+| `wycheproof_ed25519` | 210 | 111 |
+| `wycheproof_ecdsa_p256` | 484 | 113 |
+
 ## Constant time
 
 A verdict that depends on a secret is computed without a branch and then declassified.
@@ -42,5 +61,5 @@ Memcheck must report five small programs that branch or index on a secret, which
 - The constant-time gate observes one execution under memcheck. It does not prove the absence of a data-dependent timing in the processor's own instructions, such as a variable-latency multiply.
 - RSA is verification only. There is no RSA signing and no RSA encryption.
 - `crypto.erase` wipes an owned array the caller passes. A secret held in a struct field or a copy the compiler made is not wiped.
-- The suites check published vectors and the listed negative cases. They are not a Wycheproof corpus, which covers many more malformed inputs per primitive.
+- The Wycheproof suites cover the five primitives above. RSA, ML-KEM-768, the hashes and the key derivation functions check their standards' vectors and the listed negative cases alone.
 - TLS trusts the root store it is given. Revocation checking is not implemented.
