@@ -42,6 +42,14 @@
     "native-reproducer-controls.json": "e617c299e8cde1d309017aec7ff514a0c367b22f8f04442b2f7daf2a2e87de04",
     "owner-finalizer-dump.log": "44d7b03f4256589365f831248688d2e36bef26b8be8d2e95d412b03ba1d9ca23",
     "native-shuf-cost.json": "26587cdf384898b7bab5741cf98dcece6a73c9adc78b631dac2fad490a9b71cb",
-    "reproducer.fern": "7fea6289b8ed238b98b122f793aef57d791959d750321e7906cd7da889f71264"
+    "reproducer.fern": "82d1696545a06fdb90be1e63a616aa6f82da9aba5e5bd1e6aab6f3ba1702e74d"
+  },
+  "reproducer_copy_format": "Repository formatting now applies to the published reproducer. Earlier collector inputs retain their original hashes. Compiler source and Go test fixture are unchanged.",
+  "formatted_reproducer_control": {
+    "input_sha256": "82d1696545a06fdb90be1e63a616aa6f82da9aba5e5bd1e6aab6f3ba1702e74d",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n",
+    "compiler_sha256": "431e233d202739a1d0cf077d7b42b83da4fc12ac334cfca503abd142ba24430f"
   }
 }
