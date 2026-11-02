@@ -1341,9 +1341,11 @@ function params_kept_apart(funcs: ssasem.Func[], ix: util.NameIndex, split0: boo
       let f: ssasem.Func = funcs[j];
       for b in f.graph.blocks {
         for ins in b.insts {
-          // A consumed update donor must retain its box for in-place reuse.
+          // The base of a record update keeps its box: the update reuses it
+          // in place once the inference counts the parameter, which it does
+          // for every update base.
           let donor: i32 = ssasem.update_base(ins);
-          if (donor >= 0 && donor < split[j].len() && split[j][donor] && modes[j][donor] == ssasem.counted_mode()) {
+          if (donor >= 0 && donor < split[j].len() && split[j][donor]) {
             split = split.with(j, split[j].with(donor, false));
             changed = true;
           }

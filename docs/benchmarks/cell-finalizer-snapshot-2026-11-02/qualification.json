@@ -1,0 +1,55 @@
+{
+  "scope": "Issue14014 implicit-finalizer snapshot repair on actual main988fa499. Full current-head GitHub CI remains required.",
+  "actual_main": "988fa499ed4671db1d22dbdd9f44d800cdcd45f1",
+  "original_owner_head": "ed6a0ad03f6d393aa56a9c028e403c436e2655ad",
+  "owner_and_actual_main_trees_identical": true,
+  "compiler_sha256": "431e233d202739a1d0cf077d7b42b83da4fc12ac334cfca503abd142ba24430f",
+  "source_tree_before_evidence": "cff46d8189cac1622b3953c6ef6b66f681bb1b15",
+  "baseline_hashes": {
+    ".github/perf-baseline.txt": "9a4d08e977b9b2378f8c84e60cc4148d9c43fe3e74cc466736efd7fa64867da1",
+    ".github/perf-baseline-selfhost.txt": "c7e607f709bf6d89c88b7e50e837e604d14e450f978ffd671e1bd32130c40b5f",
+    ".github/profile-costs-baseline.txt": "b559a3499ed49c82501b606555e8e09e262a8476acb3ca22521aa4f7b20b60cc"
+  },
+  "tests_seconds": 79.67,
+  "tests_skipped": 0,
+  "native_static_rows": 78,
+  "native_arm_static_and_dynamic_rows": 78,
+  "native_arm_observable_controls": 39,
+  "selfhost_emit_rows": 117,
+  "selfhost_advisories": [
+    "wasm32-wasi/deflate_encode",
+    "wasm32-wasi/perceus_rbtree_ck"
+  ],
+  "static_comparison_scope": "All78static metrics against the unchanged static subset. The earlier incorrect full-baseline comparison remains outside the completed result.",
+  "performance_limit": "Conservative finalizer containment restores the preceding-main shuf cost in this measured resource-containing case. Original owner figures retain their source scope.",
+  "log_copy_format": "Text logs omit extra terminal blank lines. Raw collector logs remain unchanged.",
+  "artifacts": {
+    "fixed-point.json": "fc861011c26b1e5d55a25b876b2b9431fc6f4f67d3d62ab5ed3939c5d6011104",
+    "tests.log": "aa01d8dc359907176f8d4bb1fa49fb1fc9485aa7593d08f0eef18a5fd16c623f",
+    "source-gate.log": "dee81eb958e5071751b8ab49b4dfee5843f09493d3195f403dc008c4a3fb0bdb",
+    "lint.log": "bddaeca9801208b3379ce2357324e4f4e0d70f6ed1e1a3926de90de56483ea8b",
+    "native-static.json": "17812fe396d539921d7c2f6f14689660038add3217f3b8d88cfc0e1696c59049",
+    "native-static.tsv": "c82b1fc7ad89b916384f57d88a1059adcc54ea7a5f4ecb38e1450190f16e7696",
+    "native-static-limits.txt": "b704d8c48300df2542cd0fe581a0548bbd83b190730c575e37736a4e428605b6",
+    "native-static-gate.log": "6bbcdf94e60057b7e242398cfb3a1fb540540411e02b7713d1542397b21094b0",
+    "native-arm.json": "26f26b70a528892aa0d108817129ffd182f5cb7d11769205d8a31e28fe064733",
+    "native-arm.tsv": "00d658e45b0097f42dcc2ff5767079cc31839420e607dac8c37f8ee34671ca74",
+    "native-arm-limits.txt": "51eb2c23f054240a8040b04ef9279f49660af9288f9c9cb6f1af7aa44048a490",
+    "native-arm-gate.log": "a89816135cf22d8e6c89dc9e81b5f90d29dd785f3a663dbfd604aed464b870fc",
+    "selfhost.tsv": "b97d470c79f0b4e29ca040cc603caae8b683aa605e938ac14bb5aacdc9841b78",
+    "selfhost-advisory-gate.log": "a937afcdb64b9dc51f08a7b79e186595d99c2409efe23977b41ab8d6037cd085",
+    "preceding-main-wasm-control.json": "3ccad10ef7fcd523374ab999ad5d9034487377a2e21efcbc0ba2987cb8d47b56",
+    "native-reproducer-controls.json": "e617c299e8cde1d309017aec7ff514a0c367b22f8f04442b2f7daf2a2e87de04",
+    "owner-finalizer-dump.log": "44d7b03f4256589365f831248688d2e36bef26b8be8d2e95d412b03ba1d9ca23",
+    "native-shuf-cost.json": "26587cdf384898b7bab5741cf98dcece6a73c9adc78b631dac2fad490a9b71cb",
+    "reproducer.fern": "82d1696545a06fdb90be1e63a616aa6f82da9aba5e5bd1e6aab6f3ba1702e74d"
+  },
+  "reproducer_copy_format": "Repository formatting now applies to the published reproducer. Earlier collector inputs retain their original hashes. Compiler source and Go test fixture are unchanged.",
+  "formatted_reproducer_control": {
+    "input_sha256": "82d1696545a06fdb90be1e63a616aa6f82da9aba5e5bd1e6aab6f3ba1702e74d",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n",
+    "compiler_sha256": "431e233d202739a1d0cf077d7b42b83da4fc12ac334cfca503abd142ba24430f"
+  }
+}

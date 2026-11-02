@@ -1,0 +1,237 @@
+{
+  "scope": "CLI status, stdout and stderr parity across formatting and coverage/shared/backend admission, including refusal order. Candidate includes the owner record-update follow-up; baseline predates it.",
+  "baseline_sha256": "b0c1eeec353bc3f3b4e5effe1062251e885fdc36f0ae1935aa4ef28454620937",
+  "candidate_sha256": "1b4a7f920ab764618f3aaac400e6b22e61dc62490914693a42f5d27c532be766",
+  "cases": [
+    {
+      "args": [
+        "-cover",
+        "-interp",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "90aae77819e2626ef8689491fba3acc6eeeb5173815b333e6b987fc2e2a29e45",
+      "equal": true
+    },
+    {
+      "args": [
+        "-cover",
+        "-target",
+        "arm64-darwin",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "71470a2f0311d58836d5865da555859a8ab3f86507a9b8df0aef6ea7f57ed54d",
+      "equal": true
+    },
+    {
+      "args": [
+        "-cover",
+        "-target",
+        "wasm32-wasi",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "1c1eead6de2d0e793c2e953518e25356a2a603758e76179bd9d777392c33863d",
+      "equal": true
+    },
+    {
+      "args": [
+        "-check",
+        "-cover",
+        "-target",
+        "arm64-darwin",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "equal": true
+    },
+    {
+      "args": [
+        "-shared",
+        "-target",
+        "arm64-darwin",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "17faf441fb6e717f537462b046caba223bbb26785eda81ad0acaa1f5cf614020",
+      "equal": true
+    },
+    {
+      "args": [
+        "-shared",
+        "-target",
+        "arm64-linux",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "1d0fe75dc1d3e2284455fff68c4eb98ce324df9303319b89e19c13bd93d9686a",
+      "equal": true
+    },
+    {
+      "args": [
+        "-backend",
+        "unknown",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e512e696f3e79c8d345b1b8e8ceef5c11214623aa38c6de175ceb8442f0fb24e",
+      "equal": true
+    },
+    {
+      "args": [
+        "-backend",
+        "ssa",
+        "-target",
+        "wasm32-wasi",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "9e5504dca99b6a163b464348c907901e812d7ca56193017c15e8e4248cf369d4",
+      "equal": true
+    },
+    {
+      "args": [
+        "-backend",
+        "flat",
+        "-target",
+        "arm64-darwin",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "cb7c100e509fc0ae93d4f2d63d018dbad0ffcf6eb161220ab6724ed86f257001",
+      "equal": true
+    },
+    {
+      "args": [
+        "-backend",
+        "flat",
+        "-target",
+        "x86-64-linux",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "b9ad645f3f47d89f5a440fb6d260e758008eb96538512d32acc94211b47545b7",
+      "equal": true
+    },
+    {
+      "args": [
+        "-backend",
+        "flat",
+        "-target",
+        "wasm32-wasi",
+        "-emit",
+        "asm",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "f1e99a5be1275e27939b75a9625554295db8cf1649dbecd9e72a439851713f9f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "equal": true
+    },
+    {
+      "args": [
+        "-backend",
+        "unknown",
+        "-shared",
+        "-target",
+        "arm64-darwin",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "17faf441fb6e717f537462b046caba223bbb26785eda81ad0acaa1f5cf614020",
+      "equal": true
+    },
+    {
+      "args": [
+        "-backend",
+        "unknown",
+        "-cover",
+        "-interp",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "90aae77819e2626ef8689491fba3acc6eeeb5173815b333e6b987fc2e2a29e45",
+      "equal": true
+    },
+    {
+      "args": [
+        "-fmt",
+        "/tmp/fern-14016-cli-parity/empty"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "f890d918bf5edaa99d7e6db708bc93449d1ed3cd6b1a494740f548226bb2b793",
+      "equal": true
+    },
+    {
+      "args": [
+        "-fmt",
+        "/tmp/fern-14016-cli-parity/missing.fern"
+      ],
+      "exit_code": 1,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "53695607a6c192df973e214a3d90ebc971c050e0e8b051a3da1475a7b590895c",
+      "equal": true
+    },
+    {
+      "args": [
+        "-fmt",
+        "-o",
+        "/tmp/fern-14016-cli-parity/output.fern",
+        "/tmp/fern-14016-cli-parity/entry.fern",
+        "/tmp/fern-14016-cli-parity/second.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "b59cb040c7a57fef399f10db67abf5c233d1c227278c5ff5720328035c03af25",
+      "equal": true
+    },
+    {
+      "args": [
+        "-fmt",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "447c59b7832f6eaae55b6fce6ed81cf3f5b5e61e16f080bf69d57a7445465390",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "equal": true
+    },
+    {
+      "args": [
+        "-fmt",
+        "-d",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 1,
+      "stdout_sha256": "ce956fd14f7b7e223e190897ec672f59b991c4fc5c78059cf6a34a0f7d1fa59d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "equal": true
+    },
+    {
+      "args": [
+        "-fmt",
+        "-cover",
+        "-interp",
+        "/tmp/fern-14016-cli-parity/entry.fern"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "90aae77819e2626ef8689491fba3acc6eeeb5173815b333e6b987fc2e2a29e45",
+      "equal": true
+    }
+  ]
+}

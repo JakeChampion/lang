@@ -1,0 +1,58 @@
+{
+  "scope": "PR14016 owner headeeb integrated with actual main711 and the CLI complexity repair. Earlier failed attempts retain their original raw logs.",
+  "owner_head": "eeb6b357d5cf9ba8eb9acc7623b923353660631e",
+  "main": "71121667b0d94ad8895847fb2584637a8a3b0b57",
+  "source_snapshot_tree": "4cd3cfa1879f3ce0e341e53ffc6e1afd92571910",
+  "stable_compiler_sha256": "87b2adf5a96b6f4c335138d2faee88576005e56f43fb82335cf319829b70e53e",
+  "targeted_roots": 14,
+  "targeted_seconds": 194.305,
+  "skips": 0,
+  "complexity": {
+    "compiler_excess": 18313,
+    "worst_function": 223,
+    "baseline_excess": 17447,
+    "baseline_worst": 221,
+    "tolerance": 0.05,
+    "baseline_changed": false,
+    "suppressions_added": false
+  },
+  "before_scope": "Before logs separately measure main711 and the earlier b262 owner integration. The after log includes the later eeb record-update change.",
+  "normalization": "Public text logs omit extra trailing blank lines. Original files remain unchanged.",
+  "artifacts": {
+    "fixed-point.json": {
+      "sha256": "05426410f3eb90aca35491e7e78e79380ea41214d5660cb5765b8a0028f8f246",
+      "original_path": "/tmp/fern-14016-complexity-fixed-point-v3/qualification.json",
+      "original_sha256": "05426410f3eb90aca35491e7e78e79380ea41214d5660cb5765b8a0028f8f246"
+    },
+    "runtime-tests.log": {
+      "sha256": "c4368a775b80dc535199dbb2fef0f0e44db66f3bf346a9945968f7db3395cb50",
+      "original_path": "/tmp/fern-14016-eeb-complexity-controls.log",
+      "original_sha256": "c4368a775b80dc535199dbb2fef0f0e44db66f3bf346a9945968f7db3395cb50"
+    },
+    "cli-parity.json": {
+      "sha256": "cccd543b65317c40c5b67dd23284245cac9e7f23819383588021a77135c0079a",
+      "original_path": "/tmp/fern-14016-cli-parity/qualification.json",
+      "original_sha256": "cccd543b65317c40c5b67dd23284245cac9e7f23819383588021a77135c0079a"
+    },
+    "complexity-before.log": {
+      "sha256": "a9a243e7c2cc0105091b773b2cc4f4052e7bee53b786e7ffb06a318a8f67e16d",
+      "original_path": "/tmp/fern-14016-complexity-trees-before.log",
+      "original_sha256": "a9a243e7c2cc0105091b773b2cc4f4052e7bee53b786e7ffb06a318a8f67e16d"
+    },
+    "complexity-after.log": {
+      "sha256": "75fe734a5240433bb02cdb3494942297b6ea6b41dbe351323e516ed68b1a078c",
+      "original_path": "/tmp/fern-14016-eeb-complexity.log",
+      "original_sha256": "75fe734a5240433bb02cdb3494942297b6ea6b41dbe351323e516ed68b1a078c"
+    },
+    "lint.log": {
+      "sha256": "655d21084d4074a7d303d71b4a4a9a8424cde78ee9f3ff47370b3c27b3a2bd39",
+      "original_path": "/tmp/fern-14016-eeb-complexity-lint.log",
+      "original_sha256": "655d21084d4074a7d303d71b4a4a9a8424cde78ee9f3ff47370b3c27b3a2bd39"
+    },
+    "source-gate.log": {
+      "sha256": "63254f459003df43e99445eb5e07eb5f3a7d993ff68ef60d8d348045275972fa",
+      "original_path": "/tmp/fern-14016-eeb-complexity-source.log",
+      "original_sha256": "63254f459003df43e99445eb5e07eb5f3a7d993ff68ef60d8d348045275972fa"
+    }
+  }
+}
