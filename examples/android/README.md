@@ -35,9 +35,11 @@ args…)`. Give each argument and the result a Fern type of the same width:
 
 To call back into the JVM, use `std/jni`. Its typed wrappers, such as
 `jni.get_version`, `jni.find_class` and `jni.get_int_field`, use
-`jni.call0/1/2/3`. `jni.cstr` makes the `const char*` that the lookup
-methods expect. Free it with `jni.free_buffer` after the call. To return a
-Java string, use `jni.new_string(env, s)`, which frees its temporary copy.
+`jni.call0/1/2/3`. The lookups take Fern strings, for example
+`jni.find_class(env, "java/lang/String")`. To return a Java string, use
+`jni.new_string(env, s)`. These functions free their temporary C copies.
+For a method that keeps a `const char*`, make it with `jni.cstr`, and free it
+with `jni.free_buffer`.
 
 To **invoke** a Java method, resolve a `jmethodID` with `jni.get_method_id`.
 Pack the arguments with `jni.jvalues`. Then call `jni.call_int_method_a`,
