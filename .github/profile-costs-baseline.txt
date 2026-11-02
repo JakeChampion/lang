@@ -1,3 +1,8 @@
+# 2026-11-02: PR #14019, from a local run on the branch with main merged. The shared empty array block
+# stays in .data, so an arm64 image whose only constant was that block has no read-only region and no
+# gap: eight array_append and closure_call .bytes rows shrink by 2.5% to 35%. The x86-64
+# deflate_decode.minimal.bytes row grows 8.9%: the main merge moved the region's end, and the gap to the
+# next page with it. The perf-x86_64 lane measured the same row at 50864 before the merge.
 # 2026-11-02: SEC-028 (#13530), from a local profile-costs run. The constant boxes, aggregates and address
 # tables move to .data.rel.ro and _start maps them read-only. Every .emit row grows by the 50 lines of the
 # protection block, and the .ir rows by the auxv scan and the mprotect call. The .bytes rows move with the
@@ -32,13 +37,13 @@
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-27: first measurement, from scripts/profile-costs on the follow-on branch of #13677 at the profile-costs commit.
 # Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, valgrind 3.22.0. Rows are deterministic; the default tolerance applies.
-profile/arm64-linux/array_append.diagnostic.bytes	14328
+profile/arm64-linux/array_append.diagnostic.bytes	13976
 profile/arm64-linux/array_append.diagnostic.emit	1762
-profile/arm64-linux/array_append.hardened.bytes	8728
+profile/arm64-linux/array_append.hardened.bytes	7608
 profile/arm64-linux/array_append.hardened.emit	1570
-profile/arm64-linux/array_append.minimal.bytes	8728
+profile/arm64-linux/array_append.minimal.bytes	6488
 profile/arm64-linux/array_append.minimal.emit	1317
-profile/arm64-linux/array_append.safe.bytes	8728
+profile/arm64-linux/array_append.safe.bytes	6840
 profile/arm64-linux/array_append.safe.emit	1409
 profile/arm64-linux/call_overhead.diagnostic.bytes	5776
 profile/arm64-linux/call_overhead.diagnostic.emit	617
@@ -48,13 +53,13 @@ profile/arm64-linux/call_overhead.minimal.bytes	2392
 profile/arm64-linux/call_overhead.minimal.emit	381
 profile/arm64-linux/call_overhead.safe.bytes	2648
 profile/arm64-linux/call_overhead.safe.emit	442
-profile/arm64-linux/closure_call.diagnostic.bytes	14528
+profile/arm64-linux/closure_call.diagnostic.bytes	13664
 profile/arm64-linux/closure_call.diagnostic.emit	1638
-profile/arm64-linux/closure_call.hardened.bytes	8456
+profile/arm64-linux/closure_call.hardened.bytes	6552
 profile/arm64-linux/closure_call.hardened.emit	1368
-profile/arm64-linux/closure_call.minimal.bytes	8456
+profile/arm64-linux/closure_call.minimal.bytes	5480
 profile/arm64-linux/closure_call.minimal.emit	1121
-profile/arm64-linux/closure_call.safe.bytes	8456
+profile/arm64-linux/closure_call.safe.bytes	5800
 profile/arm64-linux/closure_call.safe.emit	1205
 profile/arm64-linux/deflate_decode.diagnostic.bytes	121840
 profile/arm64-linux/deflate_decode.diagnostic.emit	13963
@@ -147,7 +152,7 @@ profile/x86-64-linux/deflate_decode.diagnostic.ir	40445213
 profile/x86-64-linux/deflate_decode.hardened.bytes	56352
 profile/x86-64-linux/deflate_decode.hardened.emit	13405
 profile/x86-64-linux/deflate_decode.hardened.ir	33974700
-profile/x86-64-linux/deflate_decode.minimal.bytes	46768
+profile/x86-64-linux/deflate_decode.minimal.bytes	50912
 profile/x86-64-linux/deflate_decode.minimal.emit	11560
 profile/x86-64-linux/deflate_decode.minimal.ir	42603812
 profile/x86-64-linux/deflate_decode.safe.bytes	54960
