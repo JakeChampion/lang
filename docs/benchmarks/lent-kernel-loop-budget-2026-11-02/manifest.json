@@ -7,10 +7,6 @@
     "sha256": "4b679e9c33235d3b8929ccdf326cf0e7be7ae7dc974032a1307c1cb13a2e87f4",
     "bytes": 15959
   },
-  "direct-control.fern": {
-    "sha256": "b66de5097d39041e2c50d825e1d823615aad4411c7ed8829728cefda324a156a",
-    "bytes": 1703
-  },
   "direct-control.json": {
     "sha256": "096133257b74d6c6bd99137bef640cafbd15aa49bdab1f5db670fb37ddae371c",
     "bytes": 3249
@@ -186,5 +182,9 @@
   "x86-ci-failure.log.gz": {
     "sha256": "6732ebcbbed1276600f463f9de5ebfd33b1f018ecfe8dc9f1ee2835ba09af843",
     "bytes": 23778
+  },
+  "direct-control.fern.txt": {
+    "sha256": "b66de5097d39041e2c50d825e1d823615aad4411c7ed8829728cefda324a156a",
+    "bytes": 1703
   }
 }

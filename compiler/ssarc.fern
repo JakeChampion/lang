@@ -4761,11 +4761,19 @@ function lent_result(own r: irtables.LowerState): irtables.LowerState {
 function lent_kernel_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): Lowered {
   let kernel: Option[ir.Op] = array_kernel(ins.str);
   if let Some(op) = kernel {
-    if (lent_views(f, ins)) {
+    if (lent_views(f, ins) && dynamic_kernel_count(f, ins)) {
       return Lowered { found: true, r: emit(r, ir.packed(op)) };
     }
   }
   return Lowered { found: false, r: r };
+}
+
+// A fixed-count mismatch shares the wrapper instead of a full generic kernel.
+function dynamic_kernel_count(f: ssasem.Func, ins: ssa.SInst): boolean {
+  if (ins.str == "__mismatch_bytes" && ins.args.len() == 5) {
+    return defining(f, ins.args[4]).kind_tag != 1;
+  }
+  return true;
 }
 
 function array_kernel(name: string): Option[ir.Op] {

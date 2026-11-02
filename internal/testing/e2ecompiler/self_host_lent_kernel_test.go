@@ -18,6 +18,9 @@ const lentKernelProgram = `@noinline function scan(a: u8[], ao: i32, b: u8[], bo
 @noinline function scan_view(a: [u8], ao: i32, b: [u8], bo: i32, n: i32): i32 {
   return __mismatch_bytes(a, ao, b, bo, n);
 }
+@noinline function scan_fixed(a: u8[], b: u8[]): i32 {
+  return __mismatch_bytes(a, 0, b, 0, 5);
+}
 function cmp(a: u8[], b: u8[]): i32 {
   let n: i32 = a.len();
   if (b.len() < n) { n = b.len(); }
@@ -57,6 +60,7 @@ function main(): i32 {
   if (run(a, b) != 998 || run(a, c) != 1001) { return 2; }
   if (run_view(a, b) != -2 || run_view(a, c) != 1) { return 3; }
   if (run_loop(a) != -2 || run_loop([13u8, 1u8, 13u8, 10u8]) != 4) { return 4; }
+  if (scan_fixed([1u8, 2u8, 3u8, 4u8, 5u8], [1u8, 2u8, 3u8, 4u8, 9u8]) != 4) { return 5; }
   print("ok");
   return 0;
 }
@@ -86,6 +90,9 @@ func TestSelfHostLentArrayKernel(t *testing.T) {
 		}
 		if body := condBranchBody(t, listing, "scan_view"); !strings.Contains(body, wrapper) {
 			t.Errorf("%s: scan_view lost the layout wrapper its views need:\n%s", target, body)
+		}
+		if body := condBranchBody(t, listing, "scan_fixed"); !strings.Contains(body, wrapper) {
+			t.Errorf("%s: scan_fixed duplicates the generic mismatch kernel:\n%s", target, body)
 		}
 		if body := condBranchBody(t, listing, "run"); strings.Contains(body, call[target]+"cmp") {
 			t.Errorf("%s: run still calls cmp:\n%s", target, body)
