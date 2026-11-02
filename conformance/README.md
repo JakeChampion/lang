@@ -46,7 +46,7 @@ A case is a directory `cases/<name>/`. Contents:
 | `expected.exit` | no | Expected process exit code, `0`–`255`. Defaults to `0`. |
 | `stdin` | no | Bytes fed to the program's stdin. |
 | `match` | no | `exact` (default) or `contains`. |
-| `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 arm64_android arm64_darwin wasm wasm_component wasi_http`, one name for each leg. `#` starts a comment. Defaults to all of them. `arm64` is the arm64-linux leg, `wasm` the preview-1 core module, and `wasm_component` the default wasi:cli/run component. |
+| `backends` | no | Whitespace-separated subset of `interp x86_64 x86_64_android arm64 arm64_android arm64_darwin wasm wasm_component wasi_http`, one name for each leg. `#` starts a comment. Defaults to all of them. `x86_64` and `arm64` are the Linux legs, `wasm` the preview-1 core module, and `wasm_component` the default wasi:cli/run component. |
 | `expected.http` | no | The response that the `wasm32-wasi-http` leg must get for `GET /`: the status code on the first line, then the body byte for byte. Permitted only when `main.fern` declares `handle(req: HttpRequest, plat: platform.Platform): HttpResponse`. That leg runs only the cases that carry this file. |
 | `expected.error` | no | Marks a **compile-error case** — the front end must reject it. See below. |
 | `expected.lowering-error` | no | Marks a **lowering-error case** — the front end must ACCEPT it and lowering must reject it. See below. |

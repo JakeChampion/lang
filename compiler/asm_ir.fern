@@ -2613,7 +2613,7 @@ function emit_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
-  if (asmcore.is_android(s.build_target)) {
+  if (s.has_need("logcat")) {
     s = s.write("    pushq %r15\n    pushq %rdx\n    pushq %rsi\n    pushq $7\n    call __fn___fern_logcat\n");
     s = s.write("    addq $24, %rsp\n    popq %r15\n");
   }
@@ -11539,7 +11539,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = asmcore.emit_build_manifest(s);
   }
   s = emit_report(s);
-  if (asmcore.is_android(s.build_target)) {
+  if (s.has_need("logcat")) {
     s = emit_runtime("__fern_logcat", s);
   }
   if (s.shared) {

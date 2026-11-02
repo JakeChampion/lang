@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: target_os() is defined per target and a case carries one
+  expected.stdout, so it can only be asserted on the legs that compile for
+  the same environment. Both Android legs answer "android", and the Android
+  runtime file set and logcat writer key off that environment.
+  target_os_linux pins the Linux legs.
