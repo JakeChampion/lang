@@ -1,0 +1,2 @@
+retained native text machines passed
+leakcheck: allocs=69122483 frees=69122483 live_bytes=0

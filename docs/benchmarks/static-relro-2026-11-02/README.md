@@ -4,12 +4,12 @@ Fixed-address Linux images map constant boxes and address tables through a separ
 The kernel applies this permission before the program starts.
 A virtual gap separates constant data from writable data. The file omits this gap.
 PIE and Android images retain the relocation and startup protection path.
-Byte-array literals, scalar-array literals and the shared empty allocation stay writable pending issue #14013.
+Byte-array literals, scalar-array literals and the shared empty allocation were writable at this measurement, pending issue #14013.
 
 This repair preserves the security features and owner commits in PR #14019 through `34e87d553b`.
 It removes redundant ARM section switches and pins the retained-body proof to the exact empty-pool output.
 The proof rejects other pool text. It does not normalize arbitrary section lines.
-The decoder returns an empty array before a zero-capacity length write.
+The decoder returned an empty array before a zero-capacity length write.
 ELF fixtures retain their assertions with the measured new header and data offsets.
 
 ## Source and producer

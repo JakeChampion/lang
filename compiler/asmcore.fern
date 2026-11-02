@@ -6123,7 +6123,7 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
   if (s.string_lits.len() <= first) {
     return s;
   }
-  let st: EmitState = s.write(const_data_section(s) + "    .align 8\n");
+  let st: EmitState = s.write(const_data_section(s) + "    .balign 8\n");
   let i: i32 = first;
   while (i < st.string_lits.len()) {
     st = st.write("    .quad -1\n");
@@ -6156,10 +6156,9 @@ pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
   return emit_const_agg_blocks(s, first, 0);
 }
 
-// An array literal of bytes or scalars stays in `.data`: `reactor_wait` and
-// `tcp_recv_into` write into their array argument in place, and a literal
-// argument is the shared constant itself (#14013). It holds no address.
-// Every other aggregate joins the read-only region.
+// Every constant aggregate goes to the constant data section. An array
+// literal that a builtin writes in place is a heap box, not a constant
+// (ssaunits.raw_reached), so no aggregate here is ever written.
 pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitState {
   if (s.const_aggs.len() <= first) {
     return s;
@@ -6175,11 +6174,8 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
       continue;
     }
     let home: string = const_data_section(s);
-    if (array) {
-      home = "    .section .data\n";
-    }
     if (home != cur) {
-      st = st.write(home + "    .align 8\n");
+      st = st.write(home + "    .balign 8\n");
       cur = home;
     }
     st = emit_const_agg_block(st, i, e, array);

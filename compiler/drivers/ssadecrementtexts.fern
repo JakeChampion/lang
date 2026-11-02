@@ -47,6 +47,7 @@ function directives(s: string, entry: string): void {
   check("\"quoted_alias\": .set hidden, " + entry + "\n" + s, entry, false);
   check(s + "\n.text\n.byte 0\n", entry, false);
   check(change(s, entry + ".r:\n", entry + ".r:\n.align 8\n"), entry, false);
+  check(change(s, entry + ".r:\n", entry + ".r:\n.balign 8\n"), entry, false);
   check(change(s, entry + ".r:\n", entry + ".r:\n.cfi_startproc\n"), entry, false);
 }
 

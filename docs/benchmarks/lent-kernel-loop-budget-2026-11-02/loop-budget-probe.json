@@ -1,0 +1,126 @@
+{
+  "scope": "Native ARM64 instruction counts and assembly line counts. No latency claim.",
+  "compiler_sha256": "7c3092de9e9cf56a236561402ac5e875a9726e0e5dde8fb8a538ae43c83cb522",
+  "binding": "/tmp/fern-14026-loop-budget-diagnostic/diagnostic.json",
+  "image": "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+  "rows": [
+    {
+      "name": "http_hello",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "binary_sha256": "82359d191cee7b4843f88b65a11d289f3cb899a659796f6b3cc7ac48323110e4",
+      "asm_sha256": "e105ac3e6a9482ad61239eddb4cb70d36119edfa082acd6f8abbd52d97eecaa0",
+      "emit": 16353,
+      "ir": 23808615,
+      "exit_code": 30,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14026-loop-budget-diagnostic/probe:/tmp/fern-14026-loop-budget-diagnostic/probe",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--dump-instr=yes",
+        "--collect-jumps=yes",
+        "--callgrind-out-file=/tmp/fern-14026-loop-budget-diagnostic/probe/http_hello.callgrind",
+        "/tmp/fern-14026-loop-budget-diagnostic/probe/http_hello"
+      ],
+      "callgrind_sha256": "5411a27dadbc96e693b1d69157c0e08801012b661ad92feebfe6d53207fe6f75",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14026-loop-budget-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-emit",
+            "asm",
+            "-o",
+            "/tmp/fern-14026-loop-budget-diagnostic/probe/http_hello.s",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/tmp/fern-14026-loop-budget-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14026-loop-budget-diagnostic/probe/http_hello",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "name": "ordmap_insert",
+      "source_sha256": "2a92f089af14868a6b34ee2e0f4ad1ebeaa945e9847a2cea8e5e12f9e242d153",
+      "binary_sha256": "f7eb239dded8abcac6a65c53a1c65c7f2e9803b54369fc7fe54a08cf1be4ff7a",
+      "asm_sha256": "a65c3387c52464e141c4cd71573cc0e264dec6be236bc3e90a7142eff21371cd",
+      "emit": 5893,
+      "ir": 95978671,
+      "exit_code": 11,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14026-loop-budget-diagnostic/probe:/tmp/fern-14026-loop-budget-diagnostic/probe",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--dump-instr=yes",
+        "--collect-jumps=yes",
+        "--callgrind-out-file=/tmp/fern-14026-loop-budget-diagnostic/probe/ordmap_insert.callgrind",
+        "/tmp/fern-14026-loop-budget-diagnostic/probe/ordmap_insert"
+      ],
+      "callgrind_sha256": "fb47b15ef6ec4536be087f6de4a8440e3bca69c3de193d19647d88e119810ddd",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14026-loop-budget-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-emit",
+            "asm",
+            "-o",
+            "/tmp/fern-14026-loop-budget-diagnostic/probe/ordmap_insert.s",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/bench/ordmap_insert.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/tmp/fern-14026-loop-budget-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14026-loop-budget-diagnostic/probe/ordmap_insert",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/bench/ordmap_insert.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        }
+      ]
+    }
+  ]
+}

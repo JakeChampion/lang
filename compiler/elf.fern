@@ -641,7 +641,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   let hole: i32 = 0;
   let readonly: i32 = 0;
   let mutable: i32 = 0;
-  if (e_type == 2 && relro > 0) {
+  if (relro > 0) {
     hole = page_align;
     readonly = relro - hole;
     mutable = relro;
@@ -696,7 +696,13 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   buf = elf_le64(buf, page_align as i64);
 
   if (hole > 0) {
-    buf = elf_phdr(buf, 1, 4, data_off, data_vaddr as i32, readonly, readonly, page_align);
+    let flags: i32 = 4;
+    let mapped: i32 = readonly;
+    if (e_type == 3) {
+      flags = 6;
+      mapped = relro - (data_vaddr as i32 + relro) % elf_relro_page();
+    }
+    buf = elf_phdr(buf, 1, flags, data_off, data_vaddr as i32, readonly, mapped, page_align);
   }
 
   buf = elf_le32(buf, 1);
@@ -714,6 +720,9 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   let protected: i32 = relro;
   if (hole > 0) {
     protected = readonly;
+    if (e_type == 3) {
+      protected = relro - (data_vaddr as i32 + relro) % elf_relro_page();
+    }
   }
   buf = elf_le32(buf, 1685382482);
   buf = elf_le32(buf, 4);
@@ -790,13 +799,10 @@ pub function elf_relro_gap(data_vaddr: i32, relro: i32, page_align: i32): i32 {
   return (page_align - (data_vaddr + relro) % page_align) % page_align;
 }
 
-// Fixed-address images give constants their own read-only load segment.
-// The virtual gap keeps it apart from writable pages on every supported
-// page size. The writer omits the gap from the file.
-pub function elf_executable_relro_gap(data_vaddr: i32, relro: i32, page_align: i32, pie: boolean): i32 {
-  if (pie) {
-    return elf_relro_gap(data_vaddr, relro, elf_relro_page());
-  }
+// Separate load segments keep constant bytes apart from writable pages.
+// PIE maps the gap as zero-fill until startup protects the constant range.
+// The writer omits the gap from the file.
+pub function elf_executable_relro_gap(relro: i32, page_align: i32): i32 {
   if (relro == 0) {
     return 0;
   }

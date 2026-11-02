@@ -63,7 +63,7 @@ near_s=$((budget_s - 60))
 if [ -n "${FERN_CI_JOBS_JSON:-}" ]; then
   jobs_json=$(cat "$FERN_CI_JOBS_JSON" 2>/dev/null)
 else
-  jobs_json=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" --paginate 2>/dev/null)
+  jobs_json=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=50" --paginate 2>/dev/null)
 fi
 if [ -z "$jobs_json" ]; then
   echo "ci-classify-vanished-shards: could not read run $RUN_ID's jobs; skipping the diagnosis" >&2

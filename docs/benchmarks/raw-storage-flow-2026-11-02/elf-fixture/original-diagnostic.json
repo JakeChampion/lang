@@ -1,0 +1,9 @@
+{
+  "scope": "The original ELF fixture reaches the old eight-byte RELRO call and exits through the writer guard. Earlier checks pass. The test discarded stderr before the repair.",
+  "exit_code": 3,
+  "stdout": "",
+  "stderr": "fern: invalid constant data layout\n",
+  "source_sha256": "f16c844861436abd6ae68044ac99893a7f858f97c36e64ac2488430ca8655ff0",
+  "wasm_sha256": "ef9c4ef9d8f09a456b4f0e4f79bd6c222037aec699ce074d7f1671781a1d383e",
+  "driver_sha256": "e82a95e7a020d7bfc9cfef6c6a4d778505eb156d5dc1a567ea67ac0a51f589c0"
+}

@@ -1,0 +1,5 @@
+fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors
+FERN_IR_VERIFY: 6440 functions verified, 6440 modelled by the stack verifier, 0 skipped
+FERN_RC_CERTIFY: memo hits=5216 misses=1224
+FERN_IR_VERIFY: 5 functions verified, 5 modelled by the stack verifier, 0 skipped
+FERN_RC_CERTIFY: memo hits=5 misses=0

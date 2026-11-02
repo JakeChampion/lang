@@ -1,0 +1,8 @@
+{
+  "scope": "All compiler and standard-library inputs remain identical after adoption of actual merged main.",
+  "adopted_main": "628102e76378697d32b5bb24a819e8c366a17040",
+  "adopted_branch_head": "7eabf38b77339a92b23e055ccb331d8b4355114b",
+  "compiler_sha256": "c8cd336f60e562479ca9dbb65b86d121912d16da3b64e1b5ce9250d02ea34da8",
+  "input_binding_sha256": "2ed2d4e12ded3de167b942f14d64da41eab54f2f5d42121fc1d4ab278b35e99b",
+  "verified_inputs": 1261
+}

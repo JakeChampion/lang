@@ -18,6 +18,17 @@ func fnLabels(asm string) []string {
 	return out
 }
 
+// calledFns names each function a call or tail jump in the listing reaches,
+// without the entry suffix after the dot.
+func calledFns(asm string) []string {
+	re := regexp.MustCompile(`(?m)^\s+(?:call|jmp)\s+(__fn_[A-Za-z_0-9$]+)`)
+	var out []string
+	for _, m := range re.FindAllStringSubmatch(asm, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
 func TestSelfHostCLIPrunesStdlibImportClosureX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -65,8 +76,10 @@ function main(): i32 {
 			t.Errorf("%s is emitted, but nothing in the program can reach it — the import closure was not pruned", dead)
 		}
 	}
-	if !strings.Contains(asm, "\n__fn_string__starts_with:") {
-		t.Errorf("__fn_string__starts_with is NOT emitted, but main calls it — the prune dropped a reachable function")
+	for _, called := range calledFns(asm) {
+		if !strings.Contains(asm, "\n"+called+":") {
+			t.Errorf("%s is NOT emitted, but the program calls it — the prune dropped a reachable function", called)
+		}
 	}
 
 	const ceiling = 300

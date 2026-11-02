@@ -1,0 +1,51 @@
+=== RUN   TestSelfHostFetchAccumulatorStaysLinearX86_64
+--- PASS: TestSelfHostFetchAccumulatorStaysLinearX86_64 (44.97s)
+=== RUN   TestSelfHostHeldConnectionsHeapBoundX86_64
+=== RUN   TestSelfHostHeldConnectionsHeapBoundX86_64/accepted
+    self_host_held_connections_test.go:43: accepted connections: first batch of 64 grew the heap by 50288 bytes, second by 58904 (920 per connection)
+=== RUN   TestSelfHostHeldConnectionsHeapBoundX86_64/kept
+    self_host_held_connections_test.go:43: kept connections: first batch of 64 grew the heap by 50272 bytes, second by 58904 (920 per connection)
+=== RUN   TestSelfHostHeldConnectionsHeapBoundX86_64/accepted-io_uring
+    self_host_held_connections_test.go:43: accepted-io_uring connections: first batch of 64 grew the heap by 50288 bytes, second by 58904 (920 per connection)
+=== RUN   TestSelfHostHeldConnectionsHeapBoundX86_64/kept-io_uring
+    self_host_held_connections_test.go:43: kept-io_uring connections: first batch of 64 grew the heap by 50272 bytes, second by 58904 (920 per connection)
+=== RUN   TestSelfHostHeldConnectionsHeapBoundX86_64/suspended
+    self_host_held_connections_test.go:56: suspended handlers: first batch of 64 grew the heap by 272928 bytes, second by 308104 (4814 per handler)
+=== RUN   TestSelfHostHeldConnectionsHeapBoundX86_64/streams
+    self_host_held_connections_test.go:68: parked streams: first batch of 64 grew the heap by 287624 bytes, second by 299328 (4677 per stream)
+--- PASS: TestSelfHostHeldConnectionsHeapBoundX86_64 (237.26s)
+    --- PASS: TestSelfHostHeldConnectionsHeapBoundX86_64/accepted (33.85s)
+    --- PASS: TestSelfHostHeldConnectionsHeapBoundX86_64/kept (34.03s)
+    --- PASS: TestSelfHostHeldConnectionsHeapBoundX86_64/accepted-io_uring (35.01s)
+    --- PASS: TestSelfHostHeldConnectionsHeapBoundX86_64/kept-io_uring (33.80s)
+    --- PASS: TestSelfHostHeldConnectionsHeapBoundX86_64/suspended (36.87s)
+    --- PASS: TestSelfHostHeldConnectionsHeapBoundX86_64/streams (36.23s)
+=== RUN   TestSelfHostServeAllocsPerRequest
+    self_host_serve_allocs_test.go:28: counts 217, 221, 281: 56 allocations over 100000 requests in 5 s
+--- PASS: TestSelfHostServeAllocsPerRequest (32.29s)
+=== RUN   TestSelfHostServeAllocsPerRequestRing
+    self_host_serve_allocs_test.go:41: counts 220, 224, 281: 53 allocations over 100000 requests in 4 s
+--- PASS: TestSelfHostServeAllocsPerRequestRing (31.55s)
+=== RUN   TestSelfHostServeAllocsPerRequestArm64
+    self_host_serve_allocs_test.go:52: counts 217, 221, 233: 8 allocations over 10000 requests in 0 s
+--- PASS: TestSelfHostServeAllocsPerRequestArm64 (28.37s)
+=== RUN   TestSelfHostServeAllocsPerRequestWasm
+    self_host_serve_allocs_test.go:76: counts 246, 250, 262: 8 allocations over 10000 requests in 0 s
+--- PASS: TestSelfHostServeAllocsPerRequestWasm (28.97s)
+=== RUN   TestSelfHostServeAllocsPerRequestH2
+    self_host_serve_allocs_test.go:89: counts 40245, 40269, 2040448: 2000155 allocations over 100000 requests in 5 s
+--- PASS: TestSelfHostServeAllocsPerRequestH2 (34.08s)
+=== RUN   TestSelfHostServeAllocsPerRequestTLS
+    self_host_serve_allocs_test.go:112: counts 33946, 33960, 1034030: 1000056 allocations over 100000 requests in 6 s
+--- PASS: TestSelfHostServeAllocsPerRequestTLS (42.88s)
+=== RUN   TestSelfHostServeAllocsPerRequestH3
+    self_host_serve_allocs_test.go:141: 4668863 allocations over 100000 HTTP/3 requests in 13 s: 46.69 per request
+--- PASS: TestSelfHostServeAllocsPerRequestH3 (75.23s)
+=== RUN   TestSelfHostServeAllocsPerRequestH3Mux
+    self_host_serve_allocs_test.go:163: 2873905 allocations over 100000 multiplexed HTTP/3 requests in 2 s: 28.74 per request, peak 64 in flight
+--- PASS: TestSelfHostServeAllocsPerRequestH3Mux (57.94s)
+=== RUN   TestSelfHostServeAllocsPerRequestTwoFetch
+    self_host_serve_allocs_test.go:181: counts 112413, 112418, 672461: 560038 allocations over 10000 requests in 1 s
+--- PASS: TestSelfHostServeAllocsPerRequestTwoFetch (49.79s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	663.334s

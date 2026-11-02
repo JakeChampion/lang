@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -66,22 +67,23 @@ function main(): i32 {
 var relroWriteSrc = strings.NewReplacer(` r-xp `, ` r--p `, "code-write", "relro-write").Replace(codeWriteSrc)
 
 func TestSelfHostImagePermissions(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	_, qemu := arm64Tooling(t)
-	if len(cli.runner) != 0 {
-		t.Skip("requires native x86-64 Linux memory protection")
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux memory protection")
 	}
+	cli := selfHostCLIForHost(t)
 	variants := []struct {
-		name  string
-		flags []string
+		name       string
+		flags      []string
+		largePages bool
 	}{
-		{"plain", nil},
-		{"pie", []string{"-pie"}},
-		{"harden", []string{"-harden"}},
-		{"harden-pie", []string{"-harden", "-pie"}},
-		{"debug", []string{"-g"}},
-		{"sanitize", []string{"-sanitize"}},
-		{"backtrace", []string{"-backtrace"}},
+		{"plain", nil, false},
+		{"pie", []string{"-pie"}, false},
+		{"harden", []string{"-harden"}, false},
+		{"harden-pie", []string{"-harden", "-pie"}, false},
+		{"debug", []string{"-g"}, false},
+		{"sanitize", []string{"-sanitize"}, false},
+		{"backtrace", []string{"-backtrace"}, false},
+		{"pie-64k", []string{"-harden", "-pie"}, true},
 	}
 	for _, tc := range []struct {
 		target  string
@@ -92,8 +94,19 @@ func TestSelfHostImagePermissions(t *testing.T) {
 		{"x86-64-linux", elf.EM_X86_64, []byte{0xb8, 60, 0, 0, 0, 0x31, 0xff, 0x0f, 0x05}},
 		// mov x8, #93; mov x0, #0; svc #0
 		{"arm64-linux", elf.EM_AARCH64, []byte{0xa8, 0x0b, 0x80, 0xd2, 0x00, 0x00, 0x80, 0xd2, 0x01, 0x00, 0x00, 0xd4}},
+		{"arm64-android", elf.EM_AARCH64, []byte{0xa8, 0x0b, 0x80, 0xd2, 0x00, 0x00, 0x80, 0xd2, 0x01, 0x00, 0x00, 0xd4}},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
+			var runner []string
+			available := false
+			for _, target := range cli.targets {
+				if target.target == tc.target || (tc.target == "arm64-android" && target.target == "arm64-linux") {
+					runner, available = target.runner, true
+				}
+			}
+			if !available {
+				t.Skip("target runner not available")
+			}
 			dir := t.TempDir()
 			write := func(name, src string) string {
 				t.Helper()
@@ -107,10 +120,10 @@ func TestSelfHostImagePermissions(t *testing.T) {
 			emptySrc := write("empty.fern", "function main(): i32 { return 0; }\n")
 			probeSrc := write("probe.fern", codeWriteSrc)
 			relroSrc := write("relro.fern", relroWriteSrc)
-			compile := func(src, out string, flags ...string) {
+			compile := func(t *testing.T, src, out string, flags ...string) {
 				t.Helper()
 				args := append(append([]string{}, flags...), "-target", tc.target, "-o", out, src, cli.stdlib)
-				cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+				cmd := exec.Command(cli.cli, args...)
 				cmd.Env = childEnv()
 				if msg, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("compile %v: %v\n%s", flags, err, msg)
@@ -119,21 +132,25 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			command := func(bin string) *exec.Cmd {
-				if tc.target == "arm64-linux" {
-					return runArm64Bin(qemu, bin)
+			command := func(bin string, override []string) *exec.Cmd {
+				selected := runner
+				if len(override) != 0 {
+					selected = override
 				}
-				return runX86_64Bin(cli.runner, bin)
+				if len(selected) != 0 {
+					return exec.Command(selected[0], append(append([]string{}, selected[1:]...), bin)...)
+				}
+				return exec.Command(bin)
 			}
-			run := func(bin string) (string, *exec.Cmd) {
+			run := func(bin string, override []string) (string, *exec.Cmd) {
 				t.Helper()
-				c := command(bin)
+				c := command(bin, override)
 				out, _ := c.CombinedOutput()
 				return string(out), c
 			}
-			expectSegv := func(what, bin string) {
+			expectSegv := func(t *testing.T, what, bin string, override []string) {
 				t.Helper()
-				c := withoutCoreDump(command(bin))
+				c := withoutCoreDump(command(bin, override))
 				out, _ := c.CombinedOutput()
 				status, ok := c.ProcessState.Sys().(syscall.WaitStatus)
 				if !ok || !status.Signaled() || status.Signal() != syscall.SIGSEGV {
@@ -141,11 +158,29 @@ func TestSelfHostImagePermissions(t *testing.T) {
 				}
 			}
 			for _, v := range variants {
+				// Android always emits PIE through its own executable path.
+				if tc.target == "arm64-android" && v.name != "plain" && v.name != "pie-64k" {
+					continue
+				}
+				if tc.target == "arm64-android" {
+					v.flags = nil
+				}
 				t.Run(v.name, func(t *testing.T) {
+					var override []string
+					if v.largePages {
+						if tc.machine != elf.EM_AARCH64 {
+							t.Skip("large-page control uses the ARM64 target")
+						}
+						qemu, err := exec.LookPath("qemu-aarch64")
+						if err != nil {
+							t.Skip("qemu-aarch64 not on PATH")
+						}
+						override = []string{qemu, "-p", "65536"}
+					}
 					empty := filepath.Join(dir, v.name+"-empty")
-					compile(emptySrc, empty, v.flags...)
+					compile(t, emptySrc, empty, v.flags...)
 					// A -sanitize build prints its leak census at exit; an empty program's census is balanced.
-					if out, c := run(empty); (out != "" && out != "leakcheck: allocs=0 frees=0 live_bytes=0\n") || c.ProcessState.ExitCode() != 0 {
+					if out, c := run(empty, override); (out != "" && out != "leakcheck: allocs=0 frees=0 live_bytes=0\n") || c.ProcessState.ExitCode() != 0 {
 						t.Fatalf("empty image printed %q with %v", out, c.ProcessState)
 					}
 					emptyImage, err := elf.Open(empty)
@@ -159,8 +194,8 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					}
 					emptyImage.Close()
 					bin := filepath.Join(dir, v.name)
-					compile(mainSrc, bin, v.flags...)
-					if out, c := run(bin); !strings.HasPrefix(out, "ok 42\n") || c.ProcessState.ExitCode() != 0 {
+					compile(t, mainSrc, bin, v.flags...)
+					if out, c := run(bin, override); !strings.HasPrefix(out, "ok 42\n") || c.ProcessState.ExitCode() != 0 {
 						t.Fatalf("printed %q with %v", out, c.ProcessState)
 					}
 					f, err := elf.Open(bin)
@@ -168,6 +203,9 @@ func TestSelfHostImagePermissions(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer f.Close()
+					if tc.target == "arm64-android" && f.Type != elf.ET_DYN {
+						t.Fatalf("Android image type %v, want ET_DYN", f.Type)
+					}
 					if f.Machine != tc.machine {
 						t.Fatalf("machine %v, want %v", f.Machine, tc.machine)
 					}
@@ -192,7 +230,7 @@ func TestSelfHostImagePermissions(t *testing.T) {
 								}
 								code = p
 							}
-							if p.Flags&elf.PF_W != 0 && data == nil {
+							if p.Flags&elf.PF_W != 0 {
 								data = p
 							}
 							if p.Flags == elf.PF_R {
@@ -220,38 +258,89 @@ func TestSelfHostImagePermissions(t *testing.T) {
 						if pageEnd > data.Vaddr & ^(data.Align-1) {
 							t.Error("read-only and writable virtual pages overlap")
 						}
-					} else if relro.Vaddr != data.Vaddr || relro.Memsz == 0 || (relro.Vaddr+relro.Memsz)%4096 != 0 || relro.Vaddr+relro.Memsz > data.Vaddr+data.Filesz {
-						t.Errorf("PT_GNU_RELRO [%#x,%#x) does not lead the data segment [%#x,%#x) and end on a page", relro.Vaddr, relro.Vaddr+relro.Memsz, data.Vaddr, data.Vaddr+data.Filesz)
+					} else {
+						var relocated *elf.Prog
+						for _, p := range f.Progs {
+							if p.Type == elf.PT_LOAD && p.Vaddr == relro.Vaddr && p.Flags == elf.PF_R|elf.PF_W {
+								relocated = p
+							}
+						}
+						if relocated == nil || relocated == data || relro.Memsz == 0 || relro.Memsz != relocated.Memsz || (relro.Vaddr+relro.Memsz)%4096 != 0 {
+							t.Fatal("PIE has no separate mapped RELRO range with a page-aligned end")
+						}
+						if relocated.Memsz <= relocated.Filesz {
+							t.Error("PIE does not use mapped zero-fill space after its constants")
+						}
+						if data.Off != relocated.Off+relocated.Filesz {
+							t.Error("PIE stores its virtual constant gap in the file")
+						}
+						pageEnd := (relocated.Vaddr + relocated.Filesz + data.Align - 1) & ^(data.Align - 1)
+						if pageEnd > data.Vaddr & ^(data.Align-1) {
+							t.Error("PIE constant bytes and writable globals share virtual pages")
+						}
 					}
 
 					probe := filepath.Join(dir, "code-write-"+v.name)
-					compile(probeSrc, probe, v.flags...)
+					if tc.target == "arm64-android" && v.largePages {
+						// QEMU omits file names from these large-page mappings.
+						// Store to the current instruction, then exit if it succeeds.
+						image, err := os.ReadFile(bin)
+						if err != nil {
+							t.Fatal(err)
+						}
+						entry := code.Off + f.Entry - code.Vaddr
+						words := []uint32{0x10000000, 0x3900001f, 0xd2800060, 0xd2800ba8, 0xd4000001}
+						if entry+uint64(len(words)*4) > code.Off+code.Filesz {
+							t.Fatal("entry has no space for the code-write probe")
+						}
+						for i, word := range words {
+							binary.LittleEndian.PutUint32(image[entry+uint64(i*4):], word)
+						}
+						if err := os.WriteFile(probe, image, 0o755); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						compile(t, probeSrc, probe, v.flags...)
+					}
 					if err := os.Rename(probe, filepath.Join(dir, v.name+"-code-write")); err != nil {
 						t.Fatal(err)
 					}
-					expectSegv("write into code", filepath.Join(dir, v.name+"-code-write"))
+					expectSegv(t, "write into code", filepath.Join(dir, v.name+"-code-write"), override)
 
 					relroProbe := filepath.Join(dir, "relro-write-"+v.name)
-					compile(relroSrc, relroProbe, v.flags...)
+					selectedRelroSrc := relroSrc
+					if tc.target == "arm64-android" && v.largePages {
+						selectedRelroSrc = write("direct-relro.fern", `function main(): i32 {
+  unsafe { let s = "protected constant"; __store_u8(s as usize, 0); }
+  return 3;
+}`)
+					}
+					compile(t, selectedRelroSrc, relroProbe, v.flags...)
 					if err := os.Rename(relroProbe, filepath.Join(dir, v.name+"-relro-write")); err != nil {
 						t.Fatal(err)
 					}
-					expectSegv("write into the read-only data", filepath.Join(dir, v.name+"-relro-write"))
+					expectSegv(t, "write into the read-only data", filepath.Join(dir, v.name+"-relro-write"), override)
 
 					image, err := os.ReadFile(bin)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if data.Filesz < uint64(len(tc.exit)) {
-						t.Fatalf("data segment holds %d file bytes, fewer than the %d-byte probe", data.Filesz, len(tc.exit))
+					// A plain program has no writable file bytes, so the probe
+					// then executes from the read-only data segment instead.
+					target := data
+					if target.Filesz < uint64(len(tc.exit)) && readonly != nil {
+						target = readonly
 					}
-					copy(image[data.Off:], tc.exit)
-					binary.LittleEndian.PutUint64(image[24:32], data.Vaddr)
+					if target.Filesz < uint64(len(tc.exit)) {
+						t.Fatalf("data segment holds %d file bytes, fewer than the %d-byte probe", target.Filesz, len(tc.exit))
+					}
+					copy(image[target.Off:], tc.exit)
+					binary.LittleEndian.PutUint64(image[24:32], target.Vaddr)
 					nx := filepath.Join(dir, v.name+"-execute-data")
 					if err := os.WriteFile(nx, image, 0o755); err != nil {
 						t.Fatal(err)
 					}
-					expectSegv("execute from data", nx)
+					expectSegv(t, "execute from data", nx, override)
 				})
 			}
 		})

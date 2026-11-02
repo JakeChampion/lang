@@ -1,0 +1,163 @@
+=== RUN   TestSelfHostImagePermissions
+=== RUN   TestSelfHostImagePermissions/x86-64-linux
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/plain
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/pie
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/harden
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/harden-pie
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/debug
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/sanitize
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/backtrace
+=== RUN   TestSelfHostImagePermissions/x86-64-linux/pie-64k
+    self_host_image_permissions_test.go:164: large-page control uses the ARM64 target
+=== RUN   TestSelfHostImagePermissions/arm64-linux
+=== RUN   TestSelfHostImagePermissions/arm64-linux/plain
+=== RUN   TestSelfHostImagePermissions/arm64-linux/pie
+=== RUN   TestSelfHostImagePermissions/arm64-linux/harden
+=== RUN   TestSelfHostImagePermissions/arm64-linux/harden-pie
+=== RUN   TestSelfHostImagePermissions/arm64-linux/debug
+=== RUN   TestSelfHostImagePermissions/arm64-linux/sanitize
+=== RUN   TestSelfHostImagePermissions/arm64-linux/backtrace
+=== RUN   TestSelfHostImagePermissions/arm64-linux/pie-64k
+--- PASS: TestSelfHostImagePermissions (42.21s)
+    --- PASS: TestSelfHostImagePermissions/x86-64-linux (4.20s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/plain (0.79s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/pie (0.65s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/harden (0.56s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/harden-pie (0.53s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/debug (0.58s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/sanitize (0.55s)
+        --- PASS: TestSelfHostImagePermissions/x86-64-linux/backtrace (0.53s)
+        --- SKIP: TestSelfHostImagePermissions/x86-64-linux/pie-64k (0.00s)
+    --- PASS: TestSelfHostImagePermissions/arm64-linux (2.89s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/plain (0.33s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/pie (0.33s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/harden (0.32s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/harden-pie (0.33s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/debug (0.33s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/sanitize (0.31s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/backtrace (0.31s)
+        --- PASS: TestSelfHostImagePermissions/arm64-linux/pie-64k (0.63s)
+=== RUN   TestSelfHostLentArrayKernel
+--- PASS: TestSelfHostLentArrayKernel (0.04s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (10.69s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostWriteRows
+=== RUN   TestSelfHostWriteRows/arm64-linux
+=== RUN   TestSelfHostWriteRows/x86-64-linux
+=== RUN   TestSelfHostWriteRows/wasm32-wasi
+--- PASS: TestSelfHostWriteRows (3.58s)
+    --- PASS: TestSelfHostWriteRows/arm64-linux (1.10s)
+    --- PASS: TestSelfHostWriteRows/x86-64-linux (1.19s)
+    --- PASS: TestSelfHostWriteRows/wasm32-wasi (1.28s)
+=== RUN   TestSelfHostWrittenStoragePaths
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/all
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/record
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/method
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/tuple
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/variant
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/array
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/return
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/chain
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/indirect-return
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/cell
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/cell-set
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/cell-argument
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/closure
+=== RUN   TestSelfHostWrittenStoragePaths/arm64-linux/indirect-argument
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/all
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/record
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/method
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/tuple
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/variant
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/array
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/return
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/chain
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/indirect-return
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/cell
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/cell-set
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/cell-argument
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/closure
+=== RUN   TestSelfHostWrittenStoragePaths/x86-64-linux/indirect-argument
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/all
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/record
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/method
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/tuple
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/variant
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/array
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/return
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/chain
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/indirect-return
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/cell
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/cell-set
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/cell-argument
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/closure
+=== RUN   TestSelfHostWrittenStoragePaths/wasm32-wasi/indirect-argument
+--- PASS: TestSelfHostWrittenStoragePaths (1.13s)
+    --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux (0.03s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/all (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/record (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/method (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/tuple (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/variant (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/array (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/return (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/chain (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/indirect-return (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/cell (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/cell-set (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/cell-argument (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/closure (0.00s)
+        --- PASS: TestSelfHostWrittenStoragePaths/arm64-linux/indirect-argument (0.00s)
+    --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux (0.92s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/all (0.06s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/record (0.08s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/method (0.05s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/tuple (0.07s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/variant (0.07s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/array (0.06s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/return (0.05s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/chain (0.05s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/indirect-return (0.09s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/cell (0.11s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/cell-set (0.07s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/cell-argument (0.05s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/closure (0.05s)
+        --- PASS: TestSelfHostWrittenStoragePaths/x86-64-linux/indirect-argument (0.06s)
+    --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi (0.19s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/all (0.02s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/record (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/method (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/tuple (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/variant (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/array (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/return (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/chain (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/indirect-return (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/cell (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/cell-set (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/cell-argument (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/closure (0.01s)
+        --- PASS: TestSelfHostWrittenStoragePaths/wasm32-wasi/indirect-argument (0.01s)
+=== RUN   TestSelfHostReadOnlyStorageStaysPooled
+=== RUN   TestSelfHostReadOnlyStorageStaysPooled/scalar-return
+=== RUN   TestSelfHostReadOnlyStorageStaysPooled/byte-return
+=== RUN   TestSelfHostReadOnlyStorageStaysPooled/record-argument
+=== RUN   TestSelfHostReadOnlyStorageStaysPooled/cell-store
+=== RUN   TestSelfHostReadOnlyStorageStaysPooled/empty-raw-array
+=== RUN   TestSelfHostReadOnlyStorageStaysPooled/empty-raw-record
+--- PASS: TestSelfHostReadOnlyStorageStaysPooled (42.40s)
+    --- PASS: TestSelfHostReadOnlyStorageStaysPooled/scalar-return (0.82s)
+    --- PASS: TestSelfHostReadOnlyStorageStaysPooled/byte-return (0.68s)
+    --- PASS: TestSelfHostReadOnlyStorageStaysPooled/record-argument (0.67s)
+    --- PASS: TestSelfHostReadOnlyStorageStaysPooled/cell-store (0.88s)
+    --- PASS: TestSelfHostReadOnlyStorageStaysPooled/empty-raw-array (0.82s)
+    --- PASS: TestSelfHostReadOnlyStorageStaysPooled/empty-raw-record (0.69s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	100.060s
