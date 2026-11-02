@@ -52,6 +52,10 @@ A block that is the head aborts with `fern: release of memory that is already fr
 
 The check costs one load and one compare on the raw free path. The typed releases keep their count and do not pay it.
 `TestSelfHostRawDoubleFree` pins the abort and a control that frees two blocks of one class in turn, on both targets.
+
+The WebAssembly runtime makes the same two checks in `$__fern_raw_free`.
+The two interpreters keep a table of the raw blocks a program took, and a release is checked against that table.
+The `raw_free_outside_heap`, `raw_double_free` and `raw_double_free_large` rows of the abort report suite pin the cause line on every target and in both interpreters.
 Under `-sanitize` the raw free quarantines the block instead, and a second raw free quarantines it again without a report. The leak census then shows one more free than allocations. The detectors cover reference-counted misuse only ([SANITIZER-AUDIT.md](SANITIZER-AUDIT.md)).
 
 A write through a dangling raw pointer to the header word of a freed box forges the free list link.
