@@ -1,0 +1,64 @@
+import "std/test";
+import "./face";
+
+function digit_text(d: i32[]): string {
+  let out: string = "";
+  for x in d {
+    out = out + x.to_string();
+  }
+  return out;
+}
+
+function inside(rs: face.Rect[], w: i32, h: i32): boolean {
+  for r in rs {
+    if (r.x < 0 || r.y < 0 || r.x + r.w > w || r.y + r.h > h) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function test_eight(): test.TestOutcome {
+  return test.assert_eq(face.segments(8), 127);
+}
+
+function test_one(): test.TestOutcome {
+  return test.assert_eq(face.segments(1), 6);
+}
+
+function test_digits(): test.TestOutcome {
+  return test.assert_eq(digit_text(face.digits(754000 as i64)), "1234");
+}
+
+function test_minutes_stop(): test.TestOutcome {
+  return test.assert_eq(digit_text(face.digits(7000000 as i64)), "9940");
+}
+
+function test_next_change(): test.TestOutcome {
+  return test.assert_eq(face.next_change_ms(1250 as i64), 750);
+}
+
+function test_seven(): test.TestOutcome {
+  return test.assert_eq(face.digit_rects(7, 0, 0, 10, 2).len(), 3);
+}
+
+function test_zero_face(): test.TestOutcome {
+  return test.assert_eq(face.face_rects(0 as i64, 1080, 2400).len(), 26);
+}
+
+function test_fits(): test.TestOutcome {
+  return test.assert_true(inside(face.face_rects(5999000 as i64, 1080, 2400), 1080, 2400) && inside(face.face_rects(5999000 as i64, 2400, 1080), 2400, 1080));
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("android native stopwatch face");
+  r = r.it("digit 8 lights every segment", test_eight);
+  r = r.it("digit 1 lights b and c", test_one);
+  r = r.it("mm:ss of 754 s", test_digits);
+  r = r.it("the minutes stop at 99", test_minutes_stop);
+  r = r.it("the next change is at the next second", test_next_change);
+  r = r.it("digit 7 has three rectangles", test_seven);
+  r = r.it("00:00 has 26 rectangles", test_zero_face);
+  r = r.it("the face fits in the window", test_fits);
+  return r.finish();
+}

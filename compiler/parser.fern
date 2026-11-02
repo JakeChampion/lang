@@ -25925,21 +25925,12 @@ pub function merge_module(into: Module, from: Module): Module {
   return resolve_assoc_projections(Module { ...into, funcs: nfuncs, structs: nstructs, aliases: naliases, enums: concat_enums(into.enums, from.enums), resources: nresources, exports: nexports, impls: nimpls, trait_reqs: ntreqs, trait_decls: ntdecls });
 }
 
-// A callback names a function of its own module, so the target takes the
-// module's prefix too.
-function callback_target(fd: FuncDecl, prefix: string): string {
-  if (fd.import_iface == CALLBACK_IFACE) {
-    return prefix + "." + fd.import_wit;
-  }
-  return fd.import_wit;
-}
-
 pub function merge_module_prefixed(into: Module, from: Module, prefix: string): Module {
   let nfuncs: FuncDecl[] = into.funcs;
   let fi: i32 = 0;
   while (fi < from.funcs.len()) {
     let fd: FuncDecl = from.funcs[fi];
-    nfuncs = nfuncs.append(FuncDecl { ...fd, name: prefix + "." + fd.name, import_wit: callback_target(fd, prefix), is_pub: true });
+    nfuncs = nfuncs.append(FuncDecl { ...fd, name: prefix + "." + fd.name, is_pub: true });
     fi = fi + 1;
   }
   let nstructs: StructDecl[] = into.structs;
