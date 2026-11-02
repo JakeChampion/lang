@@ -144,7 +144,8 @@ func TestSelfHostImagePermissions(t *testing.T) {
 				t.Run(v.name, func(t *testing.T) {
 					empty := filepath.Join(dir, v.name+"-empty")
 					compile(emptySrc, empty, v.flags...)
-					if out, c := run(empty); out != "" || c.ProcessState.ExitCode() != 0 {
+					// A -sanitize build prints its leak census at exit; an empty program's census is balanced.
+					if out, c := run(empty); (out != "" && out != "leakcheck: allocs=0 frees=0 live_bytes=0\n") || c.ProcessState.ExitCode() != 0 {
 						t.Fatalf("empty image printed %q with %v", out, c.ProcessState)
 					}
 					emptyImage, err := elf.Open(empty)
