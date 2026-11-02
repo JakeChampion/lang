@@ -242,6 +242,36 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		t.Logf("PAC runtime frame control passed (%s)", mode)
 	})
 
+	t.Run("mixed-link", func(t *testing.T) {
+		// The linker keeps the BTI property only when every input carries it,
+		// so a C object built without branch protection drops it silently.
+		asm := filepath.Join(dir, "mixed.s")
+		compile(asm, "-harden", "-emit", "asm")
+		csrc := filepath.Join(dir, "helper.c")
+		if err := os.WriteFile(csrc, []byte("int fern_c_helper(int x) { return x + 1; }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			name, protection string
+			note             bool
+		}{{"protected", "standard", true}, {"unprotected", "none", false}} {
+			obj := filepath.Join(dir, tc.name+".o")
+			if msg, err := exec.Command(armgcc, "-c", "-O2", "-mbranch-protection="+tc.protection, "-o", obj, csrc).CombinedOutput(); err != nil {
+				t.Fatalf("compile the %s helper: %v\n%s", tc.name, err, msg)
+			}
+			bin := filepath.Join(dir, "mixed-"+tc.name)
+			if msg, err := exec.Command(armgcc, "-nostdlib", "-static", "-o", bin, asm, obj).CombinedOutput(); err != nil {
+				t.Fatalf("link with the %s helper: %v\n%s", tc.name, err, msg)
+			}
+			if got := btiNote(t, bin); got != tc.note {
+				t.Errorf("linked with the %s helper, the image asks for BTI: %t, want %t", tc.name, got, tc.note)
+			}
+			if out := runHardened(t, qemu, bin); out != hardenWant {
+				t.Errorf("linked with the %s helper, printed %q, want %q", tc.name, out, hardenWant)
+			}
+		}
+	})
+
 	t.Run("backtrace", func(t *testing.T) {
 		abort := filepath.Join(dir, "abort.fern")
 		if err := os.WriteFile(abort, []byte(hardenAbortSrc), 0o644); err != nil {
