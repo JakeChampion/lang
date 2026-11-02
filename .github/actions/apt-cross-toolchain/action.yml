@@ -52,6 +52,13 @@ inputs:
       so it would silently un-skip a different set of tests.
     required: false
     default: "true"
+  cross-libc:
+    description: >
+      Also install libc6-dev-arm64-cross, the aarch64 glibc headers and
+      libraries. A lane that links a C program against glibc for arm64, as
+      the dlopen loaders of the shared-object tests do, sets this true.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -81,13 +88,14 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/apt-cross-cache
-        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-${{ inputs.qemu-package }}
+        key: apt-cross-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.image.outputs.id }}-gcc${{ inputs.cross-gcc }}-libc${{ inputs.cross-libc }}-${{ inputs.qemu-package }}
 
     - name: aarch64 cross toolchain + ${{ inputs.qemu-package }}
       shell: bash
       env:
         CACHE_DIR: ${{ runner.temp }}/apt-cross-cache
         WANT_GCC: ${{ inputs.cross-gcc }}
+        WANT_LIBC: ${{ inputs.cross-libc }}
         QEMU_PKG: ${{ inputs.qemu-package }}
       run: |
         set -uo pipefail
@@ -96,11 +104,17 @@ runs:
         if [ "$WANT_GCC" = "true" ]; then
           PACKAGES="gcc-aarch64-linux-gnu $PACKAGES"
         fi
+        if [ "$WANT_LIBC" = "true" ]; then
+          PACKAGES="libc6-dev-arm64-cross $PACKAGES"
+        fi
 
         toolchain_present() {
           if [ "$WANT_GCC" = "true" ]; then
             command -v aarch64-linux-gnu-gcc >/dev/null 2>&1 || return 1
             command -v aarch64-linux-gnu-as >/dev/null 2>&1 || return 1
+          fi
+          if [ "$WANT_LIBC" = "true" ]; then
+            [ -f /usr/aarch64-linux-gnu/include/stdio.h ] || return 1
           fi
           # The unit lane looks up qemu-aarch64, while other lanes request
           # the static executable. An installed sibling is not a cache hit

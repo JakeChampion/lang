@@ -90,6 +90,9 @@ func TestSharedCImportsCallLibc(t *testing.T) {
 	}
 	for _, l := range legs {
 		t.Run(l.target, func(t *testing.T) {
+			if l.machine == elf.EM_AARCH64 {
+				e2eharness.Arm64CLibc(t, l.cc)
+			}
 			so, out := buildImportLib(t, l.target, libcImportSrc, "pid", "len")
 			if so == "" {
 				t.Fatalf("build: %s", out)
