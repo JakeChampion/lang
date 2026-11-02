@@ -220,7 +220,7 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     at = at + 1;
   }
   let writes: ssaunits.WriteRows = ssaunits.write_rows(keys, funcs);
-  let views: ssaunits.SchemaView[] = ssarc.schema_views(funcs, writes);
+  let views: ssaunits.SchemaView[] = ssarc.schema_views(keys, funcs, writes);
   let plans: ssaunits.Plan[] = [];
   i = 0;
   while (i < funcs.len()) {

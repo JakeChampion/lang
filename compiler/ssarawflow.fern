@@ -1,0 +1,163 @@
+import "./ssa";
+import "./ssasem";
+import "./typeinfo";
+import "./semrecords";
+import "./util";
+
+pub struct Reach { values: i32[], returns: string[], indirect: string[] }
+
+function storage_kind(t: typeinfo.Type): i32 {
+  if (!ssasem.reference(t)) {
+    return 0 - 1;
+  }
+  if let typeinfo.TypeString(_) = t {
+    return 0 - 1;
+  }
+  if let typeinfo.TypeArray(_) = t {
+    return 1;
+  }
+  if let typeinfo.TypeFunc(_) = t {
+    return 1;
+  }
+  if let typeinfo.TypeDyn(_) = t {
+    return 1;
+  }
+  return 0;
+}
+
+struct Children { types: typeinfo.Type[], opaque: boolean }
+
+function record_children(f: ssasem.Func, t: typeinfo.Type): Children {
+  let types: typeinfo.Type[] = [];
+  if let typeinfo.TypeStruct(record) = t {
+    types = record.args;
+    let row = semrecords.find(f.records, t);
+    if (row < 0) {
+      return Children { types: types, opaque: true };
+    }
+    for field in f.records.list[row].fields {
+      types = types.append(field.ty);
+    }
+  }
+  return Children { types: types, opaque: false };
+}
+
+function union_children(f: ssasem.Func, t: typeinfo.Type): Children {
+  let types: typeinfo.Type[] = [];
+  if let typeinfo.TypeUnion(union) = t {
+    types = union.args;
+    let row = semrecords.find_enum(f.enums, t);
+    if (row < 0) {
+      return Children { types: types, opaque: true };
+    }
+    for variant in f.enums[row].variants {
+      for field in variant.fields {
+        types = types.append(field.ty);
+      }
+    }
+  }
+  return Children { types: types, opaque: false };
+}
+
+function children(f: ssasem.Func, t: typeinfo.Type): Children {
+  if let typeinfo.TypeStruct(_) = t {
+    return record_children(f, t);
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return union_children(f, t);
+  }
+  if let typeinfo.TypeMap(map) = t {
+    return Children { types: [map.key, map.value], opaque: false };
+  }
+  if let typeinfo.TypeTuple(tuple) = t {
+    return Children { types: tuple.elements, opaque: false };
+  }
+  return Children { types: [], opaque: false };
+}
+
+pub function storage(f: ssasem.Func, t: typeinfo.Type): boolean {
+  let kind = storage_kind(t);
+  if (kind != 0) {
+    return kind > 0;
+  }
+  let work: typeinfo.Type[] = [t];
+  let seen: string[] = [];
+  let at: i32 = 0;
+  while (at < work.len()) {
+    let value = work[at];
+    at = at + 1;
+    let kind = storage_kind(value);
+    if (kind < 0) {
+      continue;
+    }
+    if (kind > 0) {
+      return true;
+    }
+    let spelling = typeinfo.spelling(value);
+    if (util.index_of_str(seen, spelling) >= 0) {
+      continue;
+    }
+    seen = seen.append(spelling);
+    let step = children(f, value);
+    if (step.opaque) {
+      return true;
+    }
+    for child in step.types {
+      work = work.append(child);
+    }
+  }
+  return false;
+}
+
+function return_seeds(f: ssasem.Func, seeds: i32[], result: boolean): i32[] {
+  if (!result) {
+    return seeds;
+  }
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1 && b.term.value >= 0 && storage(f, f.values[b.term.value])) {
+      seeds = seeds.append(b.term.value);
+    }
+  }
+  return seeds;
+}
+
+// Trace storage back through reference operands. A call result demands the
+// callee's return storage rather than a copy at the raw access.
+pub function reached(f: ssasem.Func, defs: ssa.SInst[], seeds: i32[], result: boolean): Reach {
+  if (seeds.len() == 0 && !result) {
+    return Reach { values: [], returns: [], indirect: [] };
+  }
+  let work = return_seeds(f, seeds, result);
+  let seen: boolean[] = __alloc_bool(f.graph.nvals);
+  let values: i32[] = [];
+  let returns: string[] = [];
+  let indirect: string[] = [];
+  let at: i32 = 0;
+  while (at < work.len()) {
+    let v = work[at];
+    at = at + 1;
+    if (v < 0 || v >= seen.len() || seen[v]) {
+      continue;
+    }
+    seen = seen.with(v, true);
+    values = values.append(v);
+    let d = defs[v];
+    if (d.kind_tag == ssasem.call()) {
+      if (util.index_of_str(returns, d.str) < 0) {
+        returns = returns.append(d.str);
+      }
+    } else if (d.kind_tag == ssasem.call_value()) {
+      let spelling = typeinfo.spelling(f.values[v]);
+      if (util.index_of_str(indirect, spelling) < 0) {
+        indirect = indirect.append(spelling);
+      }
+    } else {
+      for arg in d.args {
+        if (arg >= 0 && arg < f.values.len() && storage(f, f.values[arg])) {
+          work = work.append(arg);
+        }
+      }
+    }
+  }
+  return Reach { values: values, returns: returns, indirect: indirect };
+}

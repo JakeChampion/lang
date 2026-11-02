@@ -3,6 +3,7 @@ import "./rtbytecopy";
 import "./ssa";
 import "./sempair";
 import "./ssasem";
+import "./ssarawflow";
 import "./ssadeps";
 import "./ssalive";
 import "./semrecords";
@@ -505,11 +506,11 @@ function call_contract_error(c: ssasem.Contract, f: ssasem.Func): string {
   return mode_error(c.params, c.modes);
 }
 
-pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[], writes: WriteRows }
+pub struct SchemaView { rec_unit: boolean[], rec_walk: boolean[], enum_unit: boolean[], enum_walk: boolean[], writes: WriteRows, raw_result: boolean }
 
 pub function no_view(): SchemaView {
   let none: boolean[] = [];
-  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none, writes: no_writes() };
+  return SchemaView { rec_unit: none, rec_walk: none, enum_unit: none, enum_walk: none, writes: no_writes(), raw_result: false };
 }
 
 pub function view_fits(v: SchemaView, f: ssasem.Func): boolean {
@@ -1055,7 +1056,7 @@ function text_lens(f: ssasem.Func): i32[] {
   return out;
 }
 
-function constants(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): string[] {
+function constants(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows, result: boolean): string[] {
   let out: string[] = [];
   let i: i32 = 0;
   while (i < f.graph.nvals) {
@@ -1063,7 +1064,7 @@ function constants(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): string
     i = i + 1;
   }
   let raw: boolean[] = __alloc_bool(f.graph.nvals);
-  for v in raw_reached(f, defs, writes) {
+  for v in ssarawflow.reached(f, defs, raw_seeds(f, writes), result).values {
     raw = raw.with(v, true);
   }
   let again: boolean = true;
@@ -1178,7 +1179,7 @@ function placed_box(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], v: i32): 
 // builtin writes in place or hands out as a pointer, and an argument to a
 // callee that writes the matching parameter. Copies and phis carry the reach
 // back to the construction, so a literal on such a path is a heap box.
-function raw_reached(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): i32[] {
+function raw_seeds(f: ssasem.Func, writes: WriteRows): i32[] {
   let work: i32[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
@@ -1190,27 +1191,20 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): i32[
           work = work.append(ins.args[k]);
         }
       }
-    }
-  }
-  let seen: boolean[] = __alloc_bool(f.graph.nvals);
-  let out: i32[] = [];
-  let at: i32 = 0;
-  while (at < work.len()) {
-    let v: i32 = work[at];
-    at = at + 1;
-    if (v < 0 || v >= seen.len() || seen[v]) {
-      continue;
-    }
-    seen = seen.with(v, true);
-    out = out.append(v);
-    let d: ssa.SInst = defs[v];
-    if (d.kind_tag == 7 || d.kind_tag == 8) {
-      for a in d.args {
-        work = work.append(a);
+      if (ins.kind_tag == ssasem.call_value()) {
+        for v in ins.args {
+          if (v >= 0 && v < f.values.len() && ssarawflow.storage(f, f.values[v])) {
+            work = work.append(v);
+          }
+        }
+      }
+      // A cell store exposes its value to later aliases of the cell.
+      if (ins.kind_tag == ssasem.cell_set() && ins.args.len() == 2 && ssarawflow.storage(f, f.values[ins.args[1]])) {
+        work = work.append(ins.args[1]);
       }
     }
   }
-  return out;
+  return work;
 }
 
 // The argument positions a call reaches raw.
@@ -1241,76 +1235,121 @@ function raw_args(writes: WriteRows, ins: ssa.SInst): i32[] {
 // WriteRows names the functions that reach a parameter raw, with one flag
 // per parameter. A caller treats an argument in a flagged position as the
 // builtin write itself would.
-pub struct WriteRows { rows: util.NameIndex, params: boolean[][] }
+pub struct WriteRows { rows: util.NameIndex, params: boolean[][], results: util.NameIndex }
 
 pub function no_writes(): WriteRows {
   let none: string[] = [];
-  return WriteRows { rows: util.name_index(none), params: [] };
+  return WriteRows { rows: util.name_index(none), params: [], results: util.name_index(none) };
 }
 
-// The rows grow to a fixed point: a parameter handed to a callee's flagged
-// parameter is flagged in turn. Only a function with an array parameter can
-// hold a row, and after the first round only a caller of a row that grew
-// can change.
+struct WriteQueue { jobs: i32[], queued: boolean[] }
+
+function queue_write(own q: WriteQueue, i: i32): WriteQueue {
+  if (q.queued[i]) {
+    return q;
+  }
+  return WriteQueue { jobs: q.jobs.append(i), queued: q.queued.with(i, true) };
+}
+
+function write_callers(index: util.NameIndex, funcs: ssasem.Func[]): i32[][] {
+  let callers: i32[][] = [];
+  for f in funcs {
+    callers = callers.append([]);
+  }
+  for i in 0..funcs.len() {
+    for b in funcs[i].graph.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag == ssasem.call()) {
+          let callee = index.find(ins.str);
+          if (callee >= 0) {
+            callers = callers.with(callee, callers[callee].append(i));
+          }
+        }
+      }
+    }
+  }
+  return callers;
+}
+
+// Parameter effects move to callers. Raw return demands move to callees.
+// Each effect only grows, including effects inside recursive call graphs.
 pub function write_rows(keys: string[], funcs: ssasem.Func[]): WriteRows {
   let none: ssa.SInst[] = [];
   let defs: ssa.SInst[][] = [];
-  let check: boolean[] = __alloc_bool(keys.len());
+  let pending = WriteQueue { jobs: [], queued: __alloc_bool(funcs.len()) };
   for i in 0..funcs.len() {
-    let has: boolean = has_array_param(funcs[i]);
-    check = check.with(i, has);
-    defs = defs.append(if (has) { definitions(funcs[i]) } else { none });
+    defs = defs.append(none);
+    pending = queue_write(pending, i);
   }
-  let eligible: boolean[] = check;
+  let index = util.name_index(keys);
+  let callers = write_callers(index, funcs);
   let out: WriteRows = no_writes();
-  let grew: boolean = true;
-  while (grew) {
-    grew = false;
-    let added: string[] = [];
-    for i in 0..funcs.len() {
-      if (!check[i]) {
-        continue;
-      }
-      let flags: boolean[] = written_params(funcs[i], defs[i], out);
-      let row: i32 = out.rows.find(keys[i]);
-      if (row < 0 && count_true(flags) > 0) {
-        out = WriteRows { rows: out.rows.added(keys[i]), params: out.params.append(flags) };
-      } else if (row >= 0 && count_true(flags) > count_true(out.params[row])) {
-        out = WriteRows { ...out, params: out.params.with(row, flags) };
-      } else {
-        continue;
-      }
-      added = added.append(keys[i]);
-      grew = true;
+  let cursor: i32 = 0;
+  while (cursor < pending.jobs.len()) {
+    let i = pending.jobs[cursor];
+    cursor = cursor + 1;
+    pending = WriteQueue { ...pending, queued: pending.queued.with(i, false) };
+    let seeds = raw_seeds(funcs[i], out);
+    let result = out.results.has(keys[i]);
+    if (seeds.len() == 0 && !result) {
+      continue;
     }
-    let ix: util.NameIndex = util.name_index(added);
-    for i in 0..funcs.len() {
-      check = check.with(i, eligible[i] && calls_any(funcs[i], ix));
+    if (defs[i].len() == 0) {
+      defs = defs.with(i, definitions(funcs[i]));
+    }
+    let reach = ssarawflow.reached(funcs[i], defs[i], seeds, result);
+    let flags = written_params(funcs[i], defs[i], reach.values);
+    let row = out.rows.find(keys[i]);
+    let changed = row < 0 && count_true(flags) > 0 || row >= 0 && count_true(flags) > count_true(out.params[row]);
+    if (changed) {
+      if (row < 0) {
+        out = WriteRows { ...out, rows: out.rows.added(keys[i]), params: out.params.append(flags) };
+      } else {
+        out = WriteRows { ...out, params: out.params.with(row, flags) };
+      }
+      for caller in callers[i] {
+        pending = queue_write(pending, caller);
+      }
+    }
+    let returns = reach.returns;
+    for spelling in reach.indirect {
+      for j in 0..funcs.len() {
+        if (typeinfo.spelling(funcs[j].result) == spelling) {
+          returns = returns.append(keys[j]);
+        }
+      }
+    }
+    for name in returns {
+      let callee = index.find(name);
+      if (callee >= 0 && !out.results.has(name)) {
+        out = WriteRows { ...out, results: out.results.added(name) };
+        pending = queue_write(pending, callee);
+      }
     }
   }
   return out;
 }
 
-function has_array_param(f: ssasem.Func): boolean {
-  for t in f.params {
-    if (is_array(t)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function written_params(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): boolean[] {
+function written_params(f: ssasem.Func, defs: ssa.SInst[], reached: i32[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nparams);
-  for v in raw_reached(f, defs, writes) {
-    if (v < f.graph.nparams && is_array(f.values[v])) {
-      out = out.with(v, true);
+  for v in reached {
+    let d = defs[v];
+    if (d.kind_tag == 6 && d.imm >= 0 && d.imm < out.len() && ssasem.reference(f.values[v])) {
+      out = out.with(d.imm, true);
     }
   }
   return out;
 }
 
 pub function write_rows_agree(a: WriteRows, b: WriteRows, callees: string[]): boolean {
+  if (a.results.names.len() != b.results.names.len()) {
+    return false;
+  }
+  for name in a.results.names {
+    if (!b.results.has(name)) {
+      return false;
+    }
+  }
   for callee in callees {
     let left = written_row(a, callee);
     let right = written_row(b, callee);
@@ -3102,7 +3141,7 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   if (why != "") {
     return bad(why);
   }
-  let consts: string[] = constants(f, defs, view.writes);
+  let consts: string[] = constants(f, defs, view.writes, view.raw_result);
   return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
 }
 
