@@ -1,0 +1,4 @@
+WARN `--no-project` was provided, but no project was found
+./scripts/testname_gate.sh
+testname gate: 4055 exact + 14 prefix test selectors resolve
+./scripts/gofmt_gate.sh

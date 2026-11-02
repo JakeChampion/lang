@@ -137,7 +137,7 @@ function need_open_file(needs: string[]): boolean {
 
 pub function need_ops(): string[] {
   return [
-    "args", "arr_reserve", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
+    "free", "args", "arr_reserve", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
     "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "writer_splice_forever", "fd_flags", "writer_truncate", "read_dir", "read_dir_bytes",
@@ -8716,7 +8716,8 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (local $cls i32) (local $slot i32)\n";
   o = o + "    (if (i32.eqz (local.get $base)) (then (return)))\n";
   o = o + "    (if (i32.lt_u (local.get $base) (i32.const " + hb + ")) (then (call $__fern_abort_free_range) (unreachable)))\n";
-  o = o + "    (if (i32.ge_u (local.get $base) (global.get $heap)) (then (call $__fern_abort_free_range) (unreachable)))\n";
+  // A zero-byte allocation can equal the heap cursor without advancing it.
+  o = o + "    (if (i32.or (i32.gt_u (local.get $base) (global.get $heap)) (i32.and (i32.eq (local.get $base) (global.get $heap)) (i32.ne (local.get $bytes) (i32.const 0)))) (then (call $__fern_abort_free_range) (unreachable)))\n";
   o = o + "    (local.set $bytes (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8)))\n";
   o = o + lc_bump_free("(local.get $bytes)", lc);
   o = o + "    (if (i32.lt_u (local.get $bytes) (i32.const 8)) (then (return)))\n";
@@ -9746,7 +9747,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     }
   }
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
-    "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
+    "free", "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect_with", "tcp_send_bytes", "tcp_send_buf", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {

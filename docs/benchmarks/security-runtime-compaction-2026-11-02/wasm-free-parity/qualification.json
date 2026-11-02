@@ -1,0 +1,14 @@
+{
+  "scope": "Zero-byte Wasm free and standalone-free runtime dependencies on owner head21f09f1c. Full GitHub CI remains a merge gate.",
+  "source_tree_before_evidence": "e286c91132b2c4911af2cfeee09535ad3063fcd6",
+  "compiler_sha256": "814d8fb36eb6f97345d31492d7a62cef7e57ae93e3e0cd7a8ed0deb0739d3c2b",
+  "performance_limits_unchanged": true,
+  "lint_scope": "Full lint, Go format, test-name, Fern format and diff checks pass after both corrections.",
+  "artifacts": {
+    "fixed-point.json": "5508718205f5872ebaf7a70bc712f495b10471df1e67a6757b17e1e668eb53ba",
+    "targeted-tests.log": "e857792865d1a8d94ad444d86da2c1fdd2521f59edb42281a154815bde2f2b2f",
+    "source-gate.log": "8a6b123502f7c0abe770c8ce0ba9430967d25cff4f6aca874d79c3435133380c",
+    "lint.log": "804495a2c0650a21f193ad3ce5abb5a241c3ecc90d18fb8d457b5d13399a4903",
+    "final-go-lint.log": "650431315192aa9038123ef25a8d30252da1422d3fbba47269a729e87ace13f6"
+  }
+}
