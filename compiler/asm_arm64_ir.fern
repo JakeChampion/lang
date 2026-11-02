@@ -7054,6 +7054,15 @@ function rc_poison(): i32 {
   return 2129525454;
 }
 
+// Runs `body` on each payload word of the block at x0, words 3 to x1 - 1,
+// with the address in x10, which `body` advances, and the poison pattern,
+// the poison word twice, in x9.
+function quar_payload(s: asmcore.EmitState, name: string, body: string): asmcore.EmitState {
+  s = s.write(rc_poison_into("w9") + "    orr x9, x9, x9, lsl #32\n    add x10, x0, #24\n    sub x11, x1, #3\n");
+  s = s.write("    cbz x11, .Lquar_" + name + "_done\n.Lquar_" + name + ":\n" + body);
+  return s.write("    subs x11, x11, #1\n    b.ne .Lquar_" + name + "\n.Lquar_" + name + "_done:\n");
+}
+
 function rc_poison_into(w: string): string {
   let v: i32 = rc_poison();
   return "    movz " + w + ", #" + util.i32_to_string(v & 65535) + "\n"
@@ -7130,6 +7139,7 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x13, [x12]\n");
   s = s.write("    add x13, x13, x1, lsl #3\n");
   s = s.write("    str x13, [x12]\n");
+  s = quar_payload(s, "fill", "    str x9, [x10], #8\n");
   if (s.quarantine > 0i64) {
     s = s.write(".Lquar_evict:\n");
     s = s.write(mov_imm64("x14", s.quarantine));
@@ -7159,6 +7169,7 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x1, [x0]\n");
     s = s.write("    str wzr, [x0, #8]\n");
     s = s.write(".Lquar_recycle:\n");
+    s = quar_payload(s, "scan", "    ldr x12, [x10], #8\n    cmp x12, x9\n    b.ne .Lquar_waf\n");
     s = s.write(quar_addr("x12", "__fern_quar_bytes"));
     s = s.write("    ldr x13, [x12]\n");
     s = s.write("    sub x13, x13, x1, lsl #3\n");
