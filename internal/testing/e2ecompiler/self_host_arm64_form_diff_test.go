@@ -215,7 +215,11 @@ func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 
-	lines := []string{"mov x1, #4294967295"}
+	lines := []string{
+		"mov x1, #4294967295",
+		"ldr w1, [x2, :lo12:sym]",
+		"str x1, [x2, :lo12:sym]",
+	}
 	for _, ln := range lines {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected != "" {
 			t.Errorf("%-40s GNU as refuses it too, so this row does not "+
