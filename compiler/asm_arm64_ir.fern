@@ -7974,8 +7974,8 @@ function emit_buf_push_base64(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    and w8, w5, #63\n    ldrb w8, [x14, x8]\n    strb w8, [x12, #3]\n");
   s = s.write("    add x13, x13, #3\n    add x12, x12, #4\n    subs x7, x7, #3\n    b.ne .Lb64_one\n");
   s = s.write(".Lb64_done:\n    mov x0, #0\n    ret\n");
-  s = s.write(".Lb64_grow:\n    stp x29, x30, [sp, #-64]!\n    mov x29, sp\n    stp x0, x1, [sp, #16]\n    stp x2, x4, [sp, #32]\n    stp x6, x7, [sp, #48]\n");
-  s = s.write("    mov x1, x10\n    bl __fern_buf_reserve\n    ldp x0, x1, [sp, #16]\n    ldp x2, x4, [sp, #32]\n    ldp x6, x7, [sp, #48]\n    ldp x29, x30, [sp], #64\n");
+  s = s.write(".Lb64_grow:\n" + rt_frame_of(s, 64) + "    mov x29, sp\n    stp x0, x1, [sp, #16]\n    stp x2, x4, [sp, #32]\n    stp x6, x7, [sp, #48]\n");
+  s = s.write("    mov x1, x10\n    bl __fern_buf_reserve\n    ldp x0, x1, [sp, #16]\n    ldp x2, x4, [sp, #32]\n    ldp x6, x7, [sp, #48]\n" + rt_unframe_of(s, 64));
   s = s.write("    ldr x9, [x0, #8]\n    add x10, x9, x6\n    b .Lb64_fits\n");
   return s.write(".size __fern_buf_push_base64, .-__fern_buf_push_base64\n");
 }
@@ -11680,17 +11680,27 @@ function profile_exit_asm(mode: i32): string {
 // authenticates it on the way out, as a compiled frame does. The stack
 // pointer is the same at both instructions, so the signature matches.
 function rt_frame(s: asmcore.EmitState): string {
-  if (s.harden) {
-    return "    paciasp\n    stp x29, x30, [sp, #-16]!\n";
-  }
-  return "    stp x29, x30, [sp, #-16]!\n";
+  return rt_frame_of(s, 16);
 }
 
 function rt_unframe(s: asmcore.EmitState): string {
+  return rt_unframe_of(s, 16);
+}
+
+function rt_frame_of(s: asmcore.EmitState, bytes: i32): string {
+  let save: string = "    stp x29, x30, [sp, #-" + util.i32_to_string(bytes) + "]!\n";
   if (s.harden) {
-    return "    ldp x29, x30, [sp], #16\n    autiasp\n";
+    return "    paciasp\n" + save;
   }
-  return "    ldp x29, x30, [sp], #16\n";
+  return save;
+}
+
+function rt_unframe_of(s: asmcore.EmitState, bytes: i32): string {
+  let load: string = "    ldp x29, x30, [sp], #" + util.i32_to_string(bytes) + "\n";
+  if (s.harden) {
+    return load + "    autiasp\n";
+  }
+  return load;
 }
 
 function profile_frame(s: asmcore.EmitState, name: string): asmcore.EmitState {
