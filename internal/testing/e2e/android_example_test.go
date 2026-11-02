@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -26,11 +25,19 @@ func TestAndroidJNIExampleBuilds(t *testing.T) {
 		"Java_dev_fern_demo_Native_objectHashCode",
 		"Java_dev_fern_demo_Native_charCodeAt",
 	}
-	exports := strings.Join(syms, ",")
-	so := filepath.Join(t.TempDir(), "libfern.so")
+	dir := t.TempDir()
+	so := filepath.Join(dir, "libfern.so")
+	java := filepath.Join(dir, "java")
 	if o, err := exec.Command(bin, "-target", "arm64-android", "-shared",
-		"-export", exports, "-o", so, src).CombinedOutput(); err != nil {
+		"-jni-java", java, "-o", so, src).CombinedOutput(); err != nil {
 		t.Fatalf("build example .so: %v\n%s", err, o)
+	}
+	native, err := os.ReadFile(filepath.Join(java, "dev", "fern", "demo", "Native.java"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(native, []byte("    native int charCodeAt(String s, int i);\n")) || bytes.Contains(native, []byte("final class")) {
+		t.Errorf("Native.java has no instance method charCodeAt:\n%s", native)
 	}
 	raw, err := os.ReadFile(so)
 	if err != nil {

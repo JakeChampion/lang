@@ -9,8 +9,7 @@ a Fern library, a small Java shell, and a script that builds a signed APK.
 
 ```sh
 # arm64 device:
-fern -target arm64-android -shared \
-     -export Java_dev_fern_demo_Native_answer,Java_dev_fern_demo_Native_jniVersion,Java_dev_fern_demo_Native_greeting,Java_dev_fern_demo_Native_utf8Length,Java_dev_fern_demo_Native_isString,Java_dev_fern_demo_Native_objectHashCode,Java_dev_fern_demo_Native_charCodeAt \
+fern -target arm64-android -shared -jni-java java \
      -o libfern.so examples/android/fern_jni.fern
 
 # x86-64 emulator: -target x86-64-android (same flags)
@@ -28,15 +27,29 @@ that Fern writes to stderr also goes to logcat at priority W. A `std/log`
 record is such a line. An abort report goes to logcat at priority F. The tag is
 `fern`, so `adb logcat -s fern` shows them.
 
-A Fern function is a JNI native method as-is, `(JNIEnv* env, jobject thiz,
-args…)`. Give each argument and the result a Fern type of the same width:
+`@jni` binds a Fern function to a Java native method. Its arguments are the
+Java class and the Java declaration:
 
-| JNI | Fern |
+```fern
+@jni("dev.fern.demo.Native", "int charCodeAt(String, int)")
+pub function char_code_at(env: usize, thiz: usize, s: usize, i: i32): i32 {
+```
+
+The function takes the `JNIEnv*` and the `jobject` (or the `jclass` of a
+`static` method) first, then the Java arguments. Each Fern type must have the
+width of its Java type, and the compiler refuses one that does not:
+
+| Java | Fern |
 |---|---|
-| `JNIEnv*`, `jobject`, `jclass`, `jstring` | `usize` |
-| `jint` | `i32` |
-| `jlong` | `i64` |
-| `jboolean` | `u8` |
+| a reference, such as `String`, `Object` or `int[]` | `usize` |
+| `boolean` | `u8` |
+| `byte`, `char`, `short` | `i8`, `u16`, `i16` |
+| `int`, `long` | `i32`, `i64` |
+| `float`, `double` | `f32`, `f64` |
+
+The compiler exports each method under its JNI symbol, so `-export` is not
+necessary. `-jni-java DIR` writes the Java class of each bound class under
+`DIR`, with its `native` declarations and the `System.loadLibrary` call.
 
 To call back into the JVM, use `std/jni`. Its typed wrappers, such as
 `jni.get_version`, `jni.find_class` and `jni.get_int_field`, use
@@ -55,21 +68,11 @@ Pack the arguments with `jni.jvalues`. Then call `jni.call_int_method_a`,
 `call_object_method_a` or another method of the fixed-arity
 `Call<Type>MethodA` family. Free the arguments with `jni.free_buffer`.
 
-## 2. The Java/Kotlin side (one tiny class)
+## 2. The Java side
 
-```kotlin
-package dev.fern.demo
-class Native {
-    external fun answer(): Int
-    external fun jniVersion(): Int
-    external fun greeting(): String
-    external fun utf8Length(s: String): Int
-    external fun isString(obj: Any): Boolean
-    external fun objectHashCode(obj: Any): Int
-    external fun charCodeAt(s: String, i: Int): Int
-    companion object { init { System.loadLibrary("fern") } }
-}
-```
+`-jni-java` writes `java/dev/fern/demo/Native.java` for this example: a
+class with one `native` method for each `@jni` function. Compile it with the
+rest of the app, in Java or in Kotlin.
 
 > **Kotlin-free option:** point `AndroidManifest.xml` at the framework's
 > `android.app.NativeActivity` with an `android.app.lib_name` meta-data tag
@@ -87,7 +90,7 @@ Gradle: `aapt` for the resources, `javac` and `d8` for the Java shell,
 APK as a build artifact.
 
 With Gradle, put the `.so` in `src/main/jniLibs/arm64-v8a/` of a standard
-app module, beside the `Native` class above.
+app module, and the generated `Native.java` in its sources.
 
 ## What's validated where
 

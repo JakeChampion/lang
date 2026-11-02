@@ -263,6 +263,7 @@ func main() {
 	runIt := flag.Bool("run", false, "build to a temporary binary and execute it: directly when the target's ISA is the host's, else under -qemu (qemu-x86_64 for an x86-64 target when -qemu is left at its default); a wasm32-wasi target runs under `wasmtime run`")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64-linux, arm64-linux, x86-64-android, arm64-android); requires -o.")
+	jniJava := flag.String("jni-java", "", "with -shared: write the Java class of each @jni class under this directory, with its native methods and System.loadLibrary.")
 	export := flag.String("export", "", "with -shared: comma-separated function names to export in the .so (default: main). Each must be a defined top-level function; it becomes a dynamic symbol resolvable by the loader.")
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by -run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
@@ -571,7 +572,7 @@ func main() {
 
 	req := compileRequest{
 		src: srcPath, out: *out, target: *target, emit: *emit, backend: *backend,
-		embed: *embedDir, export: *export, qemu: *qemu,
+		embed: *embedDir, export: *export, jniJava: *jniJava, qemu: *qemu,
 		runIt: *runIt, shared: *shared, debug: *emitDebug, sanitize: *sanitize,
 		cover: *cover, optimize: *optimize, harden: *harden, progArgs: progArgs,
 	}

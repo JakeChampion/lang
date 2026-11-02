@@ -307,6 +307,11 @@ integer or `usize` parameters. It returns an integer, a `usize`, an `f32`,
 an `f64` or nothing. An executable cannot import, because a static image has
 no dynamic loader.
 
+`@jni("dev.fern.demo.Native", "static long add(long, int)")` on a function
+binds it to a Java native method. The compiler checks each Fern type against
+the width of its Java type, and exports the function under its JNI symbol.
+`-jni-java DIR` writes the Java class of each bound class under `DIR`.
+
 On the Android targets, each line that a program writes to stderr also goes
 to logcat at priority W. An abort report goes to logcat at priority F. The
 tag is `fern`, so `adb logcat -s fern` shows them.

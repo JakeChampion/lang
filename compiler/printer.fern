@@ -3346,7 +3346,11 @@ function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBin
   let prefix = "";
   for binding in exports {
     if (binding.func_name == fd.name && !binding.c_abi && fd.receiver_name.len() > 0 == binding.method) {
-      prefix = prefix + "@export(" + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n";
+      let attr: string = "@export(";
+      if (binding.jni) {
+        attr = "@jni(";
+      }
+      prefix = prefix + attr + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n";
     }
   }
   let has_hint = cursor < hints.len() && hints[cursor].line == fd.line && hints[cursor].col == fd.col;

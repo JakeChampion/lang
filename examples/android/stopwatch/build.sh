@@ -34,10 +34,10 @@ command -v d8 >/dev/null || command -v dx >/dev/null || { echo "build.sh: no d8 
 rm -rf "$out"
 mkdir -p "$out/gen" "$out/classes" "$out/apk/lib/arm64-v8a" "$out/apk/lib/x86_64"
 
-exports=$(sed -n 's/^pub function \(Java_[A-Za-z0-9_]*\).*/\1/p' "$here/native.fern" | paste -sd, -)
-"$fern" -target arm64-android -shared -export "$exports" \
+# The @jni declarations of native.fern give the exports and Core.java.
+"$fern" -target arm64-android -shared -jni-java "$out/gen" \
   -o "$out/apk/lib/arm64-v8a/libfern.so" "$here/native.fern"
-"$fern" -target x86-64-android -shared -export "$exports" \
+"$fern" -target x86-64-android -shared \
   -o "$out/apk/lib/x86_64/libfern.so" "$here/native.fern"
 
 aapt package -f -m -J "$out/gen" -M "$here/AndroidManifest.xml" -S "$here/res" \

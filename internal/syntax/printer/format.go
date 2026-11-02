@@ -846,6 +846,14 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(fn.ImportWITName)
 		f.b.WriteString("\")\n")
 	}
+	if fn.JNIClass != "" {
+		f.indent(depth)
+		f.b.WriteString("@jni(\"")
+		f.b.WriteString(fn.JNIClass)
+		f.b.WriteString("\", \"")
+		f.b.WriteString(fn.JNIDecl)
+		f.b.WriteString("\")\n")
+	}
 	if fn.ExportIface != "" {
 		f.indent(depth)
 		f.b.WriteString("@export(\"")

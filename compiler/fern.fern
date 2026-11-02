@@ -943,11 +943,20 @@ function x86_self_relocation(own a: x86_native.X86Asm, tv: i32, dv: i32, reloc_a
   return x86_native.X86Asm { ...a, rodata: data };
 }
 
-function shared_export_names(list: string): string[] {
-  if (list.len() == 0) {
+// The -export names and the JNI symbols. With neither, a shared object
+// exports main.
+function shared_export_names(list: string, jni: JniMethod[]): string[] {
+  let out: string[] = [];
+  if (list.len() > 0) {
+    out = list.split(",");
+  }
+  for jm in jni {
+    out = out.append(jm.symbol);
+  }
+  if (out.len() == 0) {
     return ["main"];
   }
-  return list.split(",");
+  return out;
 }
 
 function shared_export_refusal(merged: parser.Module, names: string[]): string {
@@ -1122,6 +1131,334 @@ pub function native_imports(m: parser.Module, target: string): parser.Module {
     }
   }
   return parser.Module { ...m, funcs: funcs };
+}
+
+// A JNI method from @jni(class, declaration). The declaration is Java:
+// "[static] result name(type, ...)". `symbol` is the JNI symbol of the
+// generated wrapper that calls `func`.
+struct JniMethod { func: parser.FuncDecl, class: string, is_static: boolean, result: string, name: string, types: string[], params: string[], symbol: string }
+
+// The Fern type with the width of Java type `t`, or "" for void. A Java
+// reference, such as String or int[], is a usize.
+function jni_fern_type(t: string): string {
+  let java: string[] = ["void", "boolean", "byte", "char", "short", "int", "long", "float", "double"];
+  let fern: string[] = ["", "u8", "i8", "u16", "i16", "i32", "i64", "f32", "f64"];
+  let k: i32 = util.index_of_str(java, t);
+  if (k >= 0) {
+    return fern[k];
+  }
+  return "usize";
+}
+
+function jni_name_char(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.';
+}
+
+function jni_name_ok(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  for c in s.bytes() {
+    if (!jni_name_char(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A Java name as a JNI symbol spells it: "." becomes "_" and "_" becomes "_1".
+function jni_mangle(s: string): string {
+  let out: string = "";
+  for c in s.bytes() {
+    if (c == b'.') {
+      out = out + "_";
+    } else if (c == b'_') {
+      out = out + "_1";
+    } else {
+      out = out + string_from_bytes_unchecked([c]);
+    }
+  }
+  return out;
+}
+
+function char_at(s: string, c: u8): i32 {
+  let i: i32 = 0;
+  while (i < s.len()) {
+    if (s[i] == c) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function jni_bad(f: parser.FuncDecl, why: string): (JniMethod, string) {
+  let none: string[] = [];
+  return (JniMethod { func: f, class: "", is_static: false, result: "", name: "", types: none, params: none, symbol: "" }, "@jni " + f.name + ": " + why);
+}
+
+// A parsed Java declaration "[static] result name(type, ...)". `ok` is
+// false when it does not parse.
+struct JavaDecl { ok: boolean, is_static: boolean, result: string, name: string, types: string[] }
+
+function java_decl(class: string, decl: string): JavaDecl {
+  let none: string[] = [];
+  let bad: JavaDecl = JavaDecl { ok: false, is_static: false, result: "", name: "", types: none };
+  let d: string = decl.trim();
+  let is_static: boolean = util.str_has_prefix(d, "static ");
+  if (is_static) {
+    d = slice_unchecked(d, 7, d.len()).trim();
+  }
+  let open: i32 = char_at(d, b'(');
+  if (open < 0 || d[d.len() - 1] != b')') {
+    return bad;
+  }
+  let head: string[] = slice_unchecked(d, 0, open).trim().split(" ");
+  if (head.len() != 2 || !jni_name_ok(class) || !jni_name_ok(head[1])) {
+    return bad;
+  }
+  let types: string[] = [];
+  let inner: string = slice_unchecked(d, open + 1, d.len() - 1).trim();
+  if (inner.len() > 0) {
+    for part in inner.split(",") {
+      types = types.append(part.trim().split(" ")[0]);
+    }
+  }
+  return JavaDecl { ok: true, is_static: is_static, result: head[0], name: head[1], types: types };
+}
+
+// Why the Fern signature of `f` does not fit the Java declaration `jd`, or "".
+function jni_signature_refusal(f: parser.FuncDecl, jd: JavaDecl): string {
+  if (f.params.len() != jd.types.len() + 2) {
+    return "it takes the JNIEnv*, the jobject or jclass and " + util.i32_to_string(jd.types.len()) + " arguments, so it needs " + util.i32_to_string(jd.types.len() + 2) + " parameters (it has " + util.i32_to_string(f.params.len()) + ")";
+  }
+  if (f.params[0].type_name != "usize" || f.params[1].type_name != "usize") {
+    return "the JNIEnv* and the jobject or jclass come first, each as usize";
+  }
+  let k: i32 = 0;
+  while (k < jd.types.len()) {
+    let p = f.params[k + 2];
+    if (p.type_name != jni_fern_type(jd.types[k])) {
+      return "parameter " + p.name + " is " + p.type_name + ", but the Java " + jd.types[k] + " needs " + jni_fern_type(jd.types[k]);
+    }
+    k = k + 1;
+  }
+  let ret: string = f.ret_type;
+  if (ret == "void") {
+    ret = "";
+  }
+  if (ret != jni_fern_type(jd.result)) {
+    return "the result is " + f.ret_type + ", but the Java " + jd.result + " needs " + jni_fern_type(jd.result);
+  }
+  return "";
+}
+
+// The JNI method of `f`, or a refusal: the Java declaration must parse, and
+// each Fern type must have the width of its Java type.
+function jni_method(f: parser.FuncDecl, class: string, decl: string): (JniMethod, string) {
+  let jd: JavaDecl = java_decl(class, decl);
+  if (!jd.ok) {
+    return jni_bad(f, "the declaration \"" + decl + "\" is not \"[static] result name(type, ...)\"");
+  }
+  let bad: string = jni_signature_refusal(f, jd);
+  if (bad.len() > 0) {
+    return jni_bad(f, bad);
+  }
+  let params: string[] = [];
+  let k: i32 = 0;
+  while (k < jd.types.len()) {
+    params = params.append(f.params[k + 2].name);
+    k = k + 1;
+  }
+  let symbol: string = "Java_" + jni_mangle(class) + "_" + jni_mangle(jd.name);
+  return (JniMethod { func: f, class: class, is_static: jd.is_static, result: jd.result, name: jd.name, types: jd.types, params: params, symbol: symbol }, "");
+}
+
+// The JNI methods of a build, or a refusal: they need a native -shared
+// build, and -jni-java needs at least one.
+function jni_build_methods(m: parser.Module, target: string, shared: boolean, java_dir: string): (JniMethod[], string) {
+  let (jni, bad) = jni_methods(m);
+  if (bad.len() > 0) {
+    return (jni, bad);
+  }
+  if (jni.len() > 0 && !(shared && is_native_target(target))) {
+    return (jni, "@jni " + jni[0].func.name + ": a JNI method needs -shared and a native target");
+  }
+  if (java_dir.len() > 0 && jni.len() == 0) {
+    return (jni, "-jni-java: the program has no @jni function");
+  }
+  return (jni, "");
+}
+
+// The JNI methods of the module, or the first refusal.
+pub function jni_methods(m: parser.Module): (JniMethod[], string) {
+  let out: JniMethod[] = [];
+  let symbols: string[] = [];
+  for b in m.exports {
+    if (b.jni) {
+      let k: i32 = export_func_index(m, b.func_name);
+      if (k < 0) {
+        let none: JniMethod[] = [];
+        return (none, "@jni " + b.func_name + ": no such function");
+      }
+      let (jm, bad) = jni_method(m.funcs[k], b.iface, b.wit);
+      if (bad.len() > 0) {
+        let none: JniMethod[] = [];
+        return (none, bad);
+      }
+      if (util.has_str(symbols, jm.symbol)) {
+        let none: JniMethod[] = [];
+        return (none, "@jni " + b.func_name + ": " + jm.class + "." + jm.name + " is bound twice, and JNI overloads are not supported");
+      }
+      symbols = symbols.append(jm.symbol);
+      out = out.append(jm);
+    }
+  }
+  return (out, "");
+}
+
+// Each JNI method becomes a C-ABI export named by its JNI symbol, which
+// calls the Fern function.
+pub function jni_wrappers(m: parser.Module, methods: JniMethod[]): parser.Module {
+  if (methods.len() == 0) {
+    return m;
+  }
+  let src: string = "";
+  for jm in methods {
+    let f: parser.FuncDecl = jm.func;
+    let decl: string = "";
+    let args: string = "";
+    for p in f.params {
+      if (decl.len() > 0) {
+        decl = decl + ", ";
+        args = args + ", ";
+      }
+      decl = decl + p.name + ": " + p.type_name;
+      args = args + p.name;
+    }
+    let call: string = f.name + "(" + args + ");";
+    if (f.ret_type.len() > 0 && f.ret_type != "void") {
+      src = src + "pub function " + jm.symbol + "(" + decl + "): " + f.ret_type + " {\n  return " + call + "\n}\n";
+    } else {
+      src = src + "pub function " + jm.symbol + "(" + decl + "): void {\n  " + call + "\n}\n";
+    }
+  }
+  let gen: parser.Module = parser.parse_module(lexer.tokenize(src));
+  let funcs: parser.FuncDecl[] = m.funcs;
+  let exports: parser.ExportBinding[] = [];
+  for b in m.exports {
+    if (!b.jni) {
+      exports = exports.append(b);
+    }
+  }
+  let i: i32 = 0;
+  for g in gen.funcs {
+    let f: parser.FuncDecl = methods[i].func;
+    funcs = funcs.append(parser.FuncDecl { ...g, module: f.module, stdlib: f.stdlib, line: f.line, col: f.col });
+    i = i + 1;
+  }
+  return parser.Module { ...m, funcs: funcs, exports: exports };
+}
+
+// The native declaration of `jm` in its Java class.
+function jni_java_method(jm: JniMethod): string {
+  let args: string = "";
+  let k: i32 = 0;
+  while (k < jm.types.len()) {
+    if (k > 0) {
+      args = args + ", ";
+    }
+    args = args + jm.types[k] + " " + jm.params[k];
+    k = k + 1;
+  }
+  let st: string = "";
+  if (jm.is_static) {
+    st = "static ";
+  }
+  return "    " + st + "native " + jm.result + " " + jm.name + "(" + args + ");\n";
+}
+
+// The header and the static block of `class`. A class of static methods
+// alone is final, with a private constructor.
+function jni_java_head(class: string, library: string, all_static: boolean): string {
+  let dot: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < class.len()) {
+    if (class[i] == b'.') {
+      dot = i;
+    }
+    i = i + 1;
+  }
+  let simple: string = slice_unchecked(class, dot + 1, class.len()) + "";
+  let out: string = "// Generated by fern -jni-java from the @jni functions. Do not edit.\n";
+  if (dot > 0) {
+    out = out + "package " + slice_unchecked(class, 0, dot) + ";\n\n";
+  }
+  let mods: string = "";
+  let ctor: string = "";
+  if (all_static) {
+    mods = "final ";
+    ctor = "\n    private " + simple + "() {}\n";
+  }
+  return out + mods + "class " + simple + " {\n    static {\n        System.loadLibrary(\"" + library + "\");\n    }\n" + ctor + "\n";
+}
+
+// The Java source of `class`: its JNI methods as native declarations, and
+// the static block that loads `library`.
+function jni_java_class(class: string, library: string, methods: JniMethod[]): string {
+  let all_static: boolean = true;
+  let body: string = "";
+  for jm in methods {
+    if (jm.class == class) {
+      all_static = all_static && jm.is_static;
+      body = body + jni_java_method(jm);
+    }
+  }
+  return jni_java_head(class, library, all_static) + body + "}\n";
+}
+
+// The library name that System.loadLibrary takes for `out_path`, such as
+// "fern" for "lib/arm64-v8a/libfern.so".
+function jni_library(out_path: string): string {
+  let base: string = slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "";
+  if (util.str_has_prefix(base, "lib")) {
+    base = slice_unchecked(base, 3, base.len()) + "";
+  }
+  if (base.ends_with(".so")) {
+    base = slice_unchecked(base, 0, base.len() - 3) + "";
+  }
+  return base;
+}
+
+// Writes one Java file for each class of `methods` under `dir`, when -jni-java
+// names one.
+function write_jni_java(dir: string, out_path: string, methods: JniMethod[]): string {
+  if (dir.len() == 0) {
+    return "";
+  }
+  let classes: string[] = [];
+  for jm in methods {
+    if (!util.has_str(classes, jm.class)) {
+      classes = classes.append(jm.class);
+    }
+  }
+  for class in classes {
+    let path: string = dir + "/" + class.replace(".", "/") + ".java";
+    let parent: string = slice_unchecked(path, 0, util.last_slash(path)) + "";
+    match (create_dir_all(parent)) {
+      Err(e) => {
+        return "cannot make " + parent + ": " + e.message();
+      },
+      Ok(_) => {}
+    }
+    match (write_file(path, jni_java_class(class, jni_library(out_path), methods))) {
+      Err(e) => {
+        return "cannot write " + path + ": " + e.message();
+      },
+      Ok(_) => {}
+    }
+  }
+  return "";
 }
 
 // The Fern types with the width of a JNI type: usize for a reference or a
@@ -1756,7 +2093,8 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
-      cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
+      cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export, besides the @jni ones (default main)"),
+      cli_flag("-jni-java", "DIR", "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
@@ -5515,6 +5853,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag: boolean = false;
   let shared: boolean = false;
   let export_list: string = "";
+  let jni_java_dir: string = "";
   let harden: boolean = false;
   let heap_limit_text: string = "";
   let quarantine_text: string = "";
@@ -5611,6 +5950,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       shared = f.on;
     } else if (f.name == "-export") {
       export_list = f.value;
+    } else if (f.name == "-jni-java") {
+      jni_java_dir = f.value;
     } else if (f.name == "-capabilities") {
       mode_caps = f.on;
     } else if (f.name == "-effects") {
@@ -5913,6 +6254,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 2;
   }
   merged = native_imports(merged, target);
+  let (jni, jni_bad) = jni_build_methods(merged, target, shared, jni_java_dir);
+  if (jni_bad.len() > 0) {
+    eprint("fern: " + jni_bad);
+    return 2;
+  }
+  merged = jni_wrappers(merged, jni);
   if (eprint_findings(st, errors_of(gate(merged, modloader.base_name(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
     return 1;
   }
@@ -5926,14 +6273,14 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
 
   let shared_roots: string[] = [];
   if (shared) {
-    shared_roots = shared_export_names(export_list);
+    shared_roots = shared_export_names(export_list, jni);
     let bad: string = shared_export_refusal(merged, shared_roots);
     if (bad.len() > 0) {
       eprint("fern: " + bad);
       return 2;
     }
     for n in shared_roots {
-      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true, method: false }) };
+      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
     }
   }
   if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {
@@ -6132,6 +6479,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     }
   } else {
     write(out_asm);
+  }
+  let java_bad: string = write_jni_java(jni_java_dir, out_path, jni);
+  if (java_bad.len() > 0) {
+    eprint("fern: -jni-java: " + java_bad);
+    return 1;
   }
   if (tf.run_it) {
     return run_and_clean(target, out_path, run_dir, prog_args, tf.qemu);

@@ -30,7 +30,7 @@ func TestAttributePlacement(t *testing.T) {
 		{"@derive(Eq)", "2:1", "@derive " + structOrEnum},
 		{"pub @derive(Eq) struct S { a: i32 }", "1:1", "`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"},
 		{"pub(foo) function f(): void {}", "1:1", "`pub(...)` only supports `pub(package)`"},
-		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)"},
+		{"@frob\nstruct S { a: i32 }", "1:1", "unknown attribute @frob (only @derive, @import, @export, @jni, @must_consume, @try, @inline, and @noinline are supported)"},
 	} {
 		_, err := Parse(tc.src + "\n")
 		var batch diag.Errors
