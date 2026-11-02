@@ -72,6 +72,19 @@ function counted_down(test: string): ssa.SFunc {
   return ssa.SFunc { name: "counted_down", nparams: 1, nvals: 7, blocks: [b0, b1, b2, b3], entry: 0, takes_env: false };
 }
 
+// A count taken on a constant null, one given back on it, one given back on
+// a parameter, and one on the null whose result is read.
+function counted_nulls(): ssa.SFunc {
+  let insts: ssa.SInst[] = [
+    inst(6, 0, [], ""), konst(1, 0),
+    inst(11, 2, [1], "__fern_rc_inc"), inst(11, 3, [1], "__fern_rc_dec"),
+    inst(11, 4, [0], "__fern_rc_dec"), inst(11, 5, [1], "__fern_rc_dec"),
+    inst(9, 6, [5, 0], "add"),
+  ];
+  let b0: ssa.SBlock = ssa.SBlock { id: 0, insts: insts, term: ret(6), preds: [] };
+  return ssa.SFunc { name: "counted_nulls", nparams: 1, nvals: 7, blocks: [b0], entry: 0, takes_env: false };
+}
+
 function has(f: ssa.SFunc, v: i32): boolean {
   for b in f.blocks {
     for ins in b.insts {
@@ -125,6 +138,11 @@ function main(): i32 {
   let twice: ssa.SFunc = ssa.SFunc { ...f, blocks: [f.blocks[0], b1, f.blocks[2], b3, b4] };
   let tw: i32[] = ssa.block_loop_weights(twice);
   failures = check(tw[1] == 8 && tw[2] == 8 && tw[3] == 8 && tw[4] == 1, "a loop with two back edges weighs 8", failures);
+  let nulls: ssa.SFunc = ssa.drop_null_counts(counted_nulls());
+  failures = check(!has(nulls, 2), "a count taken on a constant null goes", failures);
+  failures = check(!has(nulls, 3), "a count given back on a constant null goes", failures);
+  failures = check(has(nulls, 4), "a count given back on a parameter stays", failures);
+  failures = check(has(nulls, 5) && has(nulls, 6) && nulls.nvals == 7, "a count on a null whose result is read stays", failures);
   print("failures=" + util.i32_to_string(failures));
   return failures;
 }
