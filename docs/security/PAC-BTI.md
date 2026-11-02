@@ -22,6 +22,7 @@ Each instruction is in the hint space, so a hardened image runs on a core withou
 | The instructions are present and counted | `TestSelfHostHardenArm64` counts the pads, the signatures and the authentications in the in-process image |
 | A removed pad faults under BTI | the test's BTI fault control, which also turns the software indirect-call compare off, under QEMU 8.2.2 and on the native ARM shard |
 | A removed signature faults under PAC | the test's PAC fault control, under QEMU and on the native ARM shard (run 40405443296, kernel 6.17.0-1022-azure, `PAC fault control passed (native)`) |
+| A removed signature faults in the image the in-process assembler writes | the test's direct-image PAC control, which puts `bti c` in place of every `paciasp` and must fault, then puts `nop` in place of every `autiasp` and must run, under QEMU and on the native ARM shard |
 | A removed signature on a runtime frame faults under PAC | the test's runtime frame control, which removes the `paciasp` of `__fern_alloc` alone, under QEMU and on the native ARM shard |
 | A forged function pointer is refused before the branch | `TestSelfHostForwardEdgeCFI` under QEMU |
 | What a process runs with | `std/mitigations` reads `/proc/self/status`, the auxiliary vector, the memory map flags and `prctl` |
