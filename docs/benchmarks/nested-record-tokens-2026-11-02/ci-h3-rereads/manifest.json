@@ -1,0 +1,315 @@
+{
+  "scope": "Final source on actual main87b889. Preserve earlier source and measurement scopes. QEMU supplies HTTP/3 correctness and allocation evidence. Native ARM supplies the instruction counts. No native latency or native x86 dynamic claim.",
+  "files": [
+    {
+      "path": "compiler-binding.json",
+      "sha256": "12f8388e107373e70aef4c7364c0dbccb2847bee127e6e9a08b392966ef494bd",
+      "source_path": "/tmp/fern-14022-h3-final-fixed-point/qualification.json"
+    },
+    {
+      "path": "retained-controls.json",
+      "sha256": "7bcc2fdd942198dc8c01196971e7420f8a2adbdb5d5ce9817e9051d93b6ebb25",
+      "source_path": "/tmp/fern-14022-h3-final-retained-9/qualification.json"
+    },
+    {
+      "path": "benchmark-binding.json",
+      "sha256": "148f611771e5278c38dbf62775c0019e6d1809f991b905dfc92da28d38799b41",
+      "source_path": "/tmp/fern-14022-h3-final-perf-static-arm/qualification.json"
+    },
+    {
+      "path": "benchmark-report.txt",
+      "sha256": "b98fcc78a450b93e5833786fec64c3c8eee024b8368fa5f8e068d8e01b825a62",
+      "source_path": "/tmp/fern-14022-h3-final-perf-static-arm/report.txt"
+    },
+    {
+      "path": "benchmark-gates.json",
+      "sha256": "8716ef86ef5064fffe23a3722e23e3426f3a16931699c894f49ccc654d4d32fa",
+      "source_path": "/tmp/fern-14022-h3-final-perf-static-arm/comparison.json"
+    },
+    {
+      "path": "arm-gate.log",
+      "sha256": "f7d7571d2887f137ea298fc06a1ca0de8ae440a85a23869534d4e3cab9f557d0",
+      "source_path": "/tmp/fern-14022-h3-final-perf-static-arm/arm-gate.log"
+    },
+    {
+      "path": "x86-static-gate.log",
+      "sha256": "51fa4679b4fcb5eb8896b71de6a40a04bb12d6780f0f3eb5169f743635fa5599",
+      "source_path": "/tmp/fern-14022-h3-final-perf-static-arm/x86-static-gate.log"
+    },
+    {
+      "path": "selfhost-advisory-gate.log",
+      "sha256": "a7be42720ccd814d4199e9a1647966089f8362905ba2758ce852671ee108b5c5",
+      "source_path": "/tmp/fern-14022-h3-final-perf-static-arm/selfhost-gate.log"
+    },
+    {
+      "path": "wide-pilot.json",
+      "sha256": "644e4cab71a6f8028380f35188783153791f07690ea5baebab7a9834bccf853b",
+      "source_path": "/tmp/fern-14022-h3-final-wide-cost/qualification-8.json"
+    },
+    {
+      "path": "wide-full.json",
+      "sha256": "a41674913558d083ea55cc1501bc0a5553f755d33f63f8d0d185513101cee0d9",
+      "source_path": "/tmp/fern-14022-h3-final-wide-cost/qualification-10000.json"
+    },
+    {
+      "path": "h3-builds.json",
+      "sha256": "db340ad7cb2f40390dc0e714ba09bcc186012aa983e453e07316b0b04e54c159",
+      "source_path": "/tmp/fern-14022-h3-final-comparison/builds.json"
+    },
+    {
+      "path": "h3-runs.json",
+      "sha256": "4ca1df39a1933c2b40cca8187b28323b15aa65a2afa342f60a70610d5bfcd3f2",
+      "source_path": "/tmp/fern-14022-h3-final-comparison/final-campaign.json"
+    },
+    {
+      "path": "h3-parent-issue-comparison.json",
+      "sha256": "ecb600a18dfca0b8d34c31cb134f70cb6f64dd2f77dc77ecceaf1ef5aac3bbe8",
+      "source_path": "/tmp/fern-14022-h3-comparison/qualification.json"
+    },
+    {
+      "path": "prepared-h3-runner_test.go.txt",
+      "sha256": "1ea903f3026538caf688eb60dacbad69dc1e5c39669b9a095648a4cbc4ac4909",
+      "source_path": "/tmp/fern-14022-h3-sourcegen/runner_test.go"
+    },
+    {
+      "path": "x86-runner-control.json",
+      "sha256": "10322c41de68aeb74af57c86375d54250364ab99737d73b684a048d2bdece628",
+      "source_path": "/tmp/fern-14022-h3-typed-donor-experiment/direct-control.json"
+    },
+    {
+      "path": "final-mux-1000.log",
+      "sha256": "9cfa2d67e69394286aeeeaadc70c6e7e1ddc863d5be26d0b59ad70a83ea71e0f",
+      "source_path": "/tmp/fern-14022-h3-final-comparison/final-mux-1000.log"
+    },
+    {
+      "path": "final-serial-1000.log",
+      "sha256": "297e1d6ebc03540fe117a17102c36c5830df7b82e86244f12650c5ec5e25d37a",
+      "source_path": "/tmp/fern-14022-h3-final-comparison/final-serial-1000.log"
+    },
+    {
+      "path": "final-serial-100000.log",
+      "sha256": "a4546af0f2abfd5ed66ca3d5b0f40eb34a10731ffa237e7b785ac47f6db10da7",
+      "source_path": "/tmp/fern-14022-h3-final-comparison/final-serial-100000.log"
+    },
+    {
+      "path": "final-mux-100000.log",
+      "sha256": "de4c9bae8b1c16b8a7940aaf082982c6f752faac6bd27194e4cb8fa7ea3b0483",
+      "source_path": "/tmp/fern-14022-h3-final-comparison/final-mux-100000.log"
+    },
+    {
+      "path": "ci-serial-failure.log.gz",
+      "sha256": "0ac61ff40bad1a2a2ea896122051829aa8a348f867e0d05b94464597d7474382",
+      "source_path": "/tmp/fern-14022-x86-shard6.log",
+      "raw_sha256": "372f2a032829e58ff92d572cd460264348e31b9c9390dd5290a2a207c7af771f"
+    },
+    {
+      "path": "ci-mux-failure.log.gz",
+      "sha256": "4c14ea2ce102fa09a5c18dbbd75dbab50f8383c5f8964bae25623f50cdaaeaa4",
+      "source_path": "/tmp/fern-14022-x86-shard2.log",
+      "raw_sha256": "f2e857041d9dbc100bf8ed77f404d2f9a7bb786db8b2a279ef9b87293a54638a"
+    },
+    {
+      "path": "matched-parent.log.gz",
+      "sha256": "11976c96b5d4699a3d36c14ee6b393b37b1c845c3ee8d2da88c6533ed42102ce",
+      "source_path": "/tmp/fern-14022-h3-comparison/parent.log",
+      "raw_sha256": "7011ee6739ad27f6f84edbe1820731e6c55c603f634191fa4342b6ba6f022096"
+    },
+    {
+      "path": "matched-issue.log.gz",
+      "sha256": "18626c34b60a011a787d325ded7741ba04a9dd532353be11b50b945ca6f02b56",
+      "source_path": "/tmp/fern-14022-h3-comparison/issue.log",
+      "raw_sha256": "a3aff9c5cc133dd9a97d0437bcd22c3cb25016f37714cf9785482a601dc1e99c"
+    },
+    {
+      "path": "parent-call-census.txt.gz",
+      "sha256": "240d43a7c72147d67b0a6df1908a67486b8d3c513441bf2224cae082d4b013a3",
+      "source_path": "/tmp/fern-14022-h3-comparison/parent.txt",
+      "raw_sha256": "7afec715e6748343f49b81d9ac67a960f8b364c83ab44fee6ea56e451c8b879f"
+    },
+    {
+      "path": "issue-call-census.txt.gz",
+      "sha256": "a8eda635bf96a6c4297022d83fc58a0e7d5e4dad8c9a7ff40f92b2311b21e8c2",
+      "source_path": "/tmp/fern-14022-h3-comparison/issue.txt",
+      "raw_sha256": "4c9c17ac94ebd4e4f5c729a03d4e12684e8e2e766ea29ce05a7b5745283364e6"
+    },
+    {
+      "path": "server-1000.fern.gz",
+      "sha256": "5bcc6eac9bae5ba76bf82935db08cf3c1c863377b19fc71cb232faca726dfe3c",
+      "source_path": "/tmp/fern-14022-h3-comparison/generated-1000/main.fern",
+      "raw_sha256": "4e0d1df3cb6def904921e47ef08734ee756c2ea1841c304144dfb0967c361c86"
+    },
+    {
+      "path": "server-100000.fern.gz",
+      "sha256": "477e1329bf6aa3b5c399a75950e786ddadad3df63a788efd4408003867c12e8c",
+      "source_path": "/tmp/fern-14022-h3-comparison/generated-100000/main.fern",
+      "raw_sha256": "e6a76e50749d1dc4631014b35a50c90c772e37d1ebd3dfc80f08aeac2a461ace"
+    },
+    {
+      "path": "client.fern.gz",
+      "sha256": "7e68296b3ffe7479e6384c594b222b9e1a73357f74512c6c8b17fd1684e9f5aa",
+      "source_path": "/tmp/fern-14022-h3-comparison/generated-1000/client.fern",
+      "raw_sha256": "4b762d19446df8e9d0e2f758c7212a336c663a2628eec584aea72d23361496ae"
+    },
+    {
+      "path": "mux-client.fern.gz",
+      "sha256": "98a6953f7233da692755cfe558c6d0ce9a380e8be0e627c2205971fc65574c86",
+      "source_path": "/tmp/fern-14022-h3-comparison/sources/issue-census-010-client.fern",
+      "raw_sha256": "5d55653262c2126dc645dde8022ecaf7265fb8c71676d90bf7e2a50e7a99c903"
+    },
+    {
+      "path": "ownership-go-tests.log.gz",
+      "sha256": "061b51e0216b34f56f77452e9dcbe807eb33c9e7f0169188765a01ae87dbd420",
+      "source_path": "/tmp/fern-14022-h3-final-go-broad.log",
+      "raw_sha256": "f9222d08069ff5b7fad768c709213ab668803282a0ca5146c82fdb8ba1cac14c"
+    },
+    {
+      "path": "source-lint.log.gz",
+      "sha256": "60e79b692f2cf081c9c6984c5cf25c55a4e40eca5b156253ced05009257fb559",
+      "source_path": "/tmp/fern-14022-h3-final-source-lint.log",
+      "raw_sha256": "0ae8ac86418f1e3853490a132a7daa5d42c615bd5878b3f794ff2de60885b86e"
+    },
+    {
+      "path": "native-ownership-go-tests.log.gz",
+      "sha256": "8909a0cbab90c4184218275c1c6b738de5901d767e8503dce0705e0a4395038b",
+      "source_path": "/tmp/fern-14022-h3-final-go-native.log",
+      "raw_sha256": "184d081285c806cf3d37c7dbe794ac8de3f62110b4545ff78f1ae3e866102a53"
+    },
+    {
+      "path": "x86-runner-control.log.gz",
+      "sha256": "0c53d642ad8177d70b7deb1742320d248a21f0af1b2f17500d2a18e3dd29aafa",
+      "source_path": "/tmp/fern-14022-h3-typed-donor-experiment/direct-control.log",
+      "raw_sha256": "9ae0c1dca6617f33557c6d24e07603f6c2095cd8747b376e07762bc05499243a"
+    },
+    {
+      "path": "x86-runner-control.fern.gz",
+      "sha256": "4b6bd3fb5168c54ec7f4f94afeec4f206e4d1d2e483f80fa0c7e2fbef3f3033d",
+      "source_path": "/tmp/fern-14022-h3-typed-donor-experiment/direct-control.fern",
+      "raw_sha256": "c86fa5c7496c8dbbef09d6b56e979c09c241649a398133faf53e80673044a217"
+    },
+    {
+      "path": "wide-raw.tar.gz",
+      "sha256": "5ad7cfd29a1b3704b49033f8a69a96373721bb1f226042174e7fc6792e4329b8",
+      "source_path": "/tmp/fern-14022-h3-final-wide-cost",
+      "members": {
+        "candidate-a-10000.callgrind": "11a1b64155bc63858a4a72c2b2f0bc28278d3ad151aeef17bf94b3a605cf614c",
+        "candidate-a-10000.stderr": "b50edd81f7e1a46505e18592e50f82612691a619cb71f967d328c0d52aa50581",
+        "candidate-a-10000.stdout": "5b72ce0f8fc13806f0392799ada6f79de63388be8892dd0dcece17ff32dc1c62",
+        "candidate-a-8.callgrind": "fa2a23cb1931cf75300f77449a299ef44830696a1ebfdce6b856942c246b246c",
+        "candidate-a-8.stderr": "f9ef8e56ea33cc116c1c174872c7adf66970cbbc8ed6979030ffbfe511e4fa16",
+        "candidate-a-8.stdout": "9880667a09ad1a6e9f96a74d2c34c3d8da0c882c888db0fdb23de02ccfa03140",
+        "candidate-b-10000.callgrind": "6000a750a77e5c46660bb58cea5b3e6fb0bee1b33ab50aa0ad528abb4ed2d51f",
+        "candidate-b-10000.stderr": "e3b54c5577c27d8556e82f49d6cf0fe2e35340eccfd3b9e1df4e50f762c8963a",
+        "candidate-b-10000.stdout": "16ff16da6161d4574a5d1ddc373c0b99247a0d569d6c607d999c09ffa9a472e9",
+        "candidate-b-8.callgrind": "ace424cc2d4ff57fd3c2f2c06286b9f07c5b88c6b140bc7a111a9d1becb61c1f",
+        "candidate-b-8.stderr": "12da899c7f8a0faa750a6aaaac2b9e9043b83c881a50b36d7f88e125a58b49d6",
+        "candidate-b-8.stdout": "bc9520fb22daf633de9196259c5b3a3e1be3cf15e92d7eb195fcd37ed6f14e07",
+        "candidate-c-10000.callgrind": "407d126cf0afeb31d1d9342be2948dc02391fbb8b05061523c1aaf34cab32094",
+        "candidate-c-10000.stderr": "7f6836468ea45372fe8112aabd718075dc010404037c7050bb04d9bfb18fe450",
+        "candidate-c-10000.stdout": "9c1e7f8ad15e2dfdd4de4f2bc884e156c4aaece4668255aade09b748ec9747e6",
+        "candidate-c-8.callgrind": "2e8cd4089f2e58037bad223f256b991056652e1b338b4fa927e9c5370a0c0641",
+        "candidate-c-8.stderr": "bd3ba6fbd80a720b983cff412e547e37cadfc297ad3cbbc1fb58282e60e7846f",
+        "candidate-c-8.stdout": "7a38e96e7b7f895acbbdcab41ce6fe745e26613160c6253346bd07b29e12aeb1",
+        "candidate-d-10000.callgrind": "4f25411fdcba64ad2898a86b36c1a8c19b67824be4563ecf7b21bc00404cb97a",
+        "candidate-d-10000.stderr": "13889535924db41d20c333f58b99be2a67fc7533642e59c79598a06a439b5dc2",
+        "candidate-d-10000.stdout": "b792dbc2e70aa8189ba219c4c4faf3c0a20aac79951e233861573a2d57204547",
+        "candidate-d-8.callgrind": "bc9cf6d64545c3be61ef309aa4badd25a23092bd20988d0d991a968c2539ad08",
+        "candidate-d-8.stderr": "4e3eb63808ff8661e76e31ecb55e8adf3986e8e5ae435ba2f884be7051c3d7b2",
+        "candidate-d-8.stdout": "e9d46bec20e6ee65fbe910d11698d5aebb865e390adb7a2ced8e1e8d81195d2f",
+        "candidate-h-10000.callgrind": "17de66545f43ad0ebd62ce8600ce3a18296478dd2b6ec4314ccda4ba452ec323",
+        "candidate-h-10000.stderr": "9e78e8050bbc68cf3e9b07d99243a3a0715acbd5f86d49181e8dc5e0828455b7",
+        "candidate-h-10000.stdout": "871315514c98fb6126f97d6e9bdc6d9499f6e47bff129a12e5525c48279ee76e",
+        "candidate-h-8.callgrind": "9579d6c0ef557bbc3d8e652b1e8d30df3339223d7dee3badee762a7128496811",
+        "candidate-h-8.stderr": "b9834b6bdf7c8a4cab7a84a1fa8995308014c1834ace0a105c00f351ef58b7c4",
+        "candidate-h-8.stdout": "ba585a257362a188322d7204e5d01163aa6cb5b26dece148a3701c29318d57a9",
+        "candidate-p-10000.callgrind": "1877e2e450a16482e6af8728b65ea36c002f8944a1b939e032e902c8e0035be5",
+        "candidate-p-10000.stderr": "7f6eb54c92042075b7a7227bc55d59ba218ac197c0f1ecb77746704c5409b727",
+        "candidate-p-10000.stdout": "d3d097d54c3bb946f4219af60fcedd88c88e6f37aee397d0851e83d365b0e85f",
+        "candidate-p-8.callgrind": "2bc3eaf369b5487ca3909b0da9ced7f4335d3a0ae7793376379cc899df246f09",
+        "candidate-p-8.stderr": "ee21f5ec855fb43c59892953932d136a0cb9e506cc48ce9ec5101c4db048b84d",
+        "candidate-p-8.stdout": "b0f0d4e9da5c49e2d3d3ed3397ba2044e216c4b18b02c95142edef7589ac5806",
+        "candidate-s-10000.callgrind": "347d7aa5f916e31d79fe5ccfba1ea207fbc641089378c0726358be2b45116ba4",
+        "candidate-s-10000.stderr": "aea5c5941449f31a6cc8534b91ba3aff18dda645b30b78f232b414b1e9ea3617",
+        "candidate-s-10000.stdout": "87a23e8cd51563f3f6a8ac11cc9e66b793ec7e779bad764f230e148124498434",
+        "candidate-s-8.callgrind": "9e9a6ba9e76135004b3580436d0bc84f10a55f5d6a11f3bc2e5431fe4f5f2c31",
+        "candidate-s-8.stderr": "8a7debb41dc1cb4850a03ae84dc1d673d82f147c3c4065755b2dc5a0cee871c6",
+        "candidate-s-8.stdout": "f49f86f770f6efb8c7f941f5410343c895be9a0da366c83a8fb9eaaf3e36ea8d",
+        "parent-a-10000.callgrind": "13f7edc2bf0a566e3add819b27b82e88749103c237327236828a346568cb390e",
+        "parent-a-10000.stderr": "6e9020d4670889e4ff29aa4750bdc788bc5971481c4137273e7bf7392877bb4a",
+        "parent-a-10000.stdout": "5b72ce0f8fc13806f0392799ada6f79de63388be8892dd0dcece17ff32dc1c62",
+        "parent-a-8.callgrind": "57a4bbd3b2d0e5637381ae385e5c6e58353316bd5bccce13ed2b7265916f6cb3",
+        "parent-a-8.stderr": "a01fb9ffebe094fdf1959517f74b786d861f0286f306e42ef443fe7279c22694",
+        "parent-a-8.stdout": "9880667a09ad1a6e9f96a74d2c34c3d8da0c882c888db0fdb23de02ccfa03140",
+        "parent-b-10000.callgrind": "08089f3ad5040717b814e65bfb3f5ae15c2631a582608d3c365da8b53e2933da",
+        "parent-b-10000.stderr": "41bf6e960fda2bdd57d6e7818e902c58f237e78be9787ffb90599c90157dcf84",
+        "parent-b-10000.stdout": "16ff16da6161d4574a5d1ddc373c0b99247a0d569d6c607d999c09ffa9a472e9",
+        "parent-b-8.callgrind": "be8c6da9152133ae882aadc96cf28c6d7b6da09430ba98762777d5f4edc5e578",
+        "parent-b-8.stderr": "2eb4291c4cacafe4f977206837fb30eba8b38c23c53225e9da4b1ab8c81296b0",
+        "parent-b-8.stdout": "bc9520fb22daf633de9196259c5b3a3e1be3cf15e92d7eb195fcd37ed6f14e07",
+        "parent-c-10000.callgrind": "d54100518564e51cf46bd1affa1bc2b4c47175d02ec09ecedf31324b7b49bbd3",
+        "parent-c-10000.stderr": "1d26ee5c241633d034e92ba24c00cda41b97a6ca052c082ac738f5807469bb2b",
+        "parent-c-10000.stdout": "9c1e7f8ad15e2dfdd4de4f2bc884e156c4aaece4668255aade09b748ec9747e6",
+        "parent-c-8.callgrind": "5c611ad5e4e7a96248187f719c0234d32fab2a748c78f80364867c05f8706e8d",
+        "parent-c-8.stderr": "8f03bfb55fcd8fecab347f60cc9564f84c3d81a73f0ceb79955ff16e78640e09",
+        "parent-c-8.stdout": "7a38e96e7b7f895acbbdcab41ce6fe745e26613160c6253346bd07b29e12aeb1",
+        "parent-d-10000.callgrind": "115ef23e94a2f8580786035ba6c20db40c8e6dd449a2c2414e74cb8175ae97be",
+        "parent-d-10000.stderr": "e8cd3b5fa3b4f43c45f598402c76bac34fd7de40d0ee61e3d454529542610894",
+        "parent-d-10000.stdout": "9adc61c02fd13901b797db9a337167f6366d07a2b1ee92c44732553b81c89577",
+        "parent-d-8.callgrind": "0a27c61ee50822c0239516ad45c14688b9fec015b9a966261dfd32d8d8d0742c",
+        "parent-d-8.stderr": "441008e2c158caa2b36ae73018d4aef599cb2096cd88b6684d7cc0648f4dbc93",
+        "parent-d-8.stdout": "bc1f8745049843f9a816f60867045afd5861dd8af2672eac811653ab2b4d0636",
+        "parent-h-10000.callgrind": "c3dd6031ba704f71fc7db911f1f08fc6864de22d9f15d75e9300c408c8c1825f",
+        "parent-h-10000.stderr": "9f2f4cfe8a13ecfd7b49571f879523304b6c4c640a4cdce7f4cfa099ceecbdb8",
+        "parent-h-10000.stdout": "871315514c98fb6126f97d6e9bdc6d9499f6e47bff129a12e5525c48279ee76e",
+        "parent-h-8.callgrind": "786f173a21bb9c90a08e5c10e6aa81251552b1b8e52fa173ea51057b6fb864ff",
+        "parent-h-8.stderr": "ea54026ccadaba01c6239bcf245d917dc1a2ae3a19d6f9ab3e6c8d81c699710c",
+        "parent-h-8.stdout": "ba585a257362a188322d7204e5d01163aa6cb5b26dece148a3701c29318d57a9",
+        "parent-p-10000.callgrind": "fe19a385c1703e71c9c6ba5b4bdd4be64a9923ffd5de4fe1d6c6b655d6d80c82",
+        "parent-p-10000.stderr": "3fe7b95391918e46214657a695442532b752930e189bb47956410ce06cdd83c4",
+        "parent-p-10000.stdout": "8c174cb01af8a033d77cc2cfa8a982cea3cceabbb038ba3f7ae3b5cf3734c45f",
+        "parent-p-8.callgrind": "5c149df4607ccda79753a395c809408b75a0f5f097d734c2f102cd409f8fb473",
+        "parent-p-8.stderr": "0429c7d594c25c8d1c30b44c6e50690e105d8bad812daae8e09c31cf106fd2c1",
+        "parent-p-8.stdout": "8e31d5693cd98f79b7838ff68f9e4c5aff5dac5cfe0edee611f975c0b7d9b99f",
+        "parent-s-10000.callgrind": "cdfeb02b2044b10f62cfba0f4139d01c8809a62b4a3c7f018bc9a27e5ab72a0e",
+        "parent-s-10000.stderr": "f0215fa6b9b2e6ef014589beb7b60ba5a4aa7c5751cefa79a12b98bd58ff0adf",
+        "parent-s-10000.stdout": "87a23e8cd51563f3f6a8ac11cc9e66b793ec7e779bad764f230e148124498434",
+        "parent-s-8.callgrind": "db21a287e29c239e52085226ca64e305f0098598e806ee3fe430fb116c62f9bf",
+        "parent-s-8.stderr": "ddd7866735c45e74eac612640d720e0fe7280a3d0a3c113b6f0d7700c6eea56b",
+        "parent-s-8.stdout": "f49f86f770f6efb8c7f941f5410343c895be9a0da366c83a8fb9eaaf3e36ea8d"
+      }
+    },
+    {
+      "path": "retained-raw.tar.gz",
+      "sha256": "5fa228b81a23a40f0d4e387bf0d01d1dfc8b1909fabdf10da0783e552787fc95",
+      "source_path": "/tmp/fern-14022-h3-final-retained-9",
+      "members": {
+        "ssaallocationguards_run-arm64-linux.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaallocationguards_run-arm64-linux.stderr": "0f64d939387e69892b8e6cf5042d26173d89ba2ba7f878c7e33ffa080ac7cac6",
+        "ssaallocationguards_run-arm64-linux.stdout": "2a4e8a6189f0cf678eced66602d25a2c8d8c36b7f6b0080fcb4042ec4296ca4a",
+        "ssaallocationguards_run-wasm32-wasi.wat.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaallocationguards_run-wasm32-wasi.wat.stderr": "031f52208aa5028e03f10e6581dab8db4ce866461c2ded913126cbc07fab2b1f",
+        "ssaallocationguards_run-wasm32-wasi.wat.stdout": "2a4e8a6189f0cf678eced66602d25a2c8d8c36b7f6b0080fcb4042ec4296ca4a",
+        "ssaallocationguards_run-x86-64-linux.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaallocationguards_run-x86-64-linux.stderr": "0f64d939387e69892b8e6cf5042d26173d89ba2ba7f878c7e33ffa080ac7cac6",
+        "ssaallocationguards_run-x86-64-linux.stdout": "2a4e8a6189f0cf678eced66602d25a2c8d8c36b7f6b0080fcb4042ec4296ca4a",
+        "ssaretained_run-arm64-linux.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaretained_run-arm64-linux.stderr": "d7f2141d2f7264c8496c1bdc31f19fc3b70f3618f3ff04d9cdc4ce56930cd9d2",
+        "ssaretained_run-arm64-linux.stdout": "e2228029267222281e66e5c996790415e641c62a826e1fc6f61014c4729a1734",
+        "ssaretained_run-wasm32-wasi.wat.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaretained_run-wasm32-wasi.wat.stderr": "b3d3c02f5e7efaad98ebbf15e20c2cad8ecffaece02c5401af1633dd6eea1508",
+        "ssaretained_run-wasm32-wasi.wat.stdout": "e2228029267222281e66e5c996790415e641c62a826e1fc6f61014c4729a1734",
+        "ssaretained_run-x86-64-linux.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaretained_run-x86-64-linux.stderr": "d7f2141d2f7264c8496c1bdc31f19fc3b70f3618f3ff04d9cdc4ce56930cd9d2",
+        "ssaretained_run-x86-64-linux.stdout": "e2228029267222281e66e5c996790415e641c62a826e1fc6f61014c4729a1734",
+        "ssaretainedmachines_run-arm64-linux.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaretainedmachines_run-arm64-linux.stderr": "ffc4d91685809e4796fee3b9e88e677263871e04eed6004a599ab3042ee5107a",
+        "ssaretainedmachines_run-arm64-linux.stdout": "7e42ea5cd4b858808449996ba936c436bcc9dc0e218e13fade180e627cc430ea",
+        "ssaretainedmachines_run-wasm32-wasi.wat.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaretainedmachines_run-wasm32-wasi.wat.stderr": "44410678677b6278604a28e70f4e38d8b8813a1a7bcae30dfd970bf3d65e479b",
+        "ssaretainedmachines_run-wasm32-wasi.wat.stdout": "7e42ea5cd4b858808449996ba936c436bcc9dc0e218e13fade180e627cc430ea",
+        "ssaretainedmachines_run-x86-64-linux.build.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "ssaretainedmachines_run-x86-64-linux.stderr": "44fecf50d309a648003761f81540d780530978a258c75854090e7d150a8384a1",
+        "ssaretainedmachines_run-x86-64-linux.stdout": "7e42ea5cd4b858808449996ba936c436bcc9dc0e218e13fade180e627cc430ea"
+      }
+    }
+  ]
+}

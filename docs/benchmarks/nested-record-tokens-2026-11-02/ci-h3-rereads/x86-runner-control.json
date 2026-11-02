@@ -1,0 +1,13 @@
+{
+  "scope": "Pre-integration control for the ARM host execution helper. The public issue and typed-donor diagnostic compilers emit identical x86 binaries. Direct host execution faults; the explicit x86 target runner succeeds with the expected result.",
+  "source_sha256": "c86fa5c7496c8dbbef09d6b56e979c09c241649a398133faf53e80673044a217",
+  "public_producer_sha256": "ee1c9ebb069764c8c73c70ea0412b88fc6c747c4cf58f5dacaeadf1e6e26503e",
+  "diagnostic_producer_sha256": "02e386d762e858291f254bab2b04122eefafe0121eaa3675597b4521a4b2073b",
+  "public_binary_sha256": "7272dac68bebe44453b581940fcf07e5cf868e84e2fbaf185f2b5573c49fe17c",
+  "diagnostic_binary_sha256": "7272dac68bebe44453b581940fcf07e5cf868e84e2fbaf185f2b5573c49fe17c",
+  "identical": true,
+  "raw_log_sha256": "9ae0c1dca6617f33557c6d24e07603f6c2095cd8747b376e07762bc05499243a",
+  "direct_exit": 139,
+  "qemu_exit": 6,
+  "expected_exit": 6
+}
