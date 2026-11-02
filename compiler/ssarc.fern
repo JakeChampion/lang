@@ -4950,6 +4950,9 @@ function dir_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (m == "Dir.open_dir") {
     return Lowered { found: true, r: emit(r, ir.op_dir_open()) };
   }
+  if (util.str_has_prefix(m, "Dir.open_")) {
+    return dir_open_file_site(r, m);
+  }
   if (m == "Dir.entries_bytes") {
     return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_dir_entries())) };
   }
@@ -4981,6 +4984,26 @@ function dir_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   }
   if (m == "Dir.close") {
     return Lowered { found: true, r: emit(r, ir.op_reader_close()) };
+  }
+  return Lowered { found: false, r: r };
+}
+
+// A file opened under a directory. The plain forms push the flag word the
+// path forms take from the caller: none for a reader, create for a writer.
+function dir_open_file_site(own r: irtables.LowerState, m: string): Lowered {
+  if (m == "Dir.open_reader") {
+    r = emit(r, ir.op_const_i32(0));
+    return Lowered { found: true, r: emit(r, ir.op_dir_open_file(0)) };
+  }
+  if (m == "Dir.open_writer") {
+    r = emit(r, ir.op_const_i32(1));
+    return Lowered { found: true, r: emit(r, ir.op_dir_open_file(2)) };
+  }
+  if (m == "Dir.open_reader_with") {
+    return Lowered { found: true, r: emit(r, ir.op_dir_open_file(0)) };
+  }
+  if (m == "Dir.open_writer_with") {
+    return Lowered { found: true, r: emit(r, ir.op_dir_open_file(1)) };
   }
   return Lowered { found: false, r: r };
 }

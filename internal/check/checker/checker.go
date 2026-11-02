@@ -1988,6 +1988,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	dirResult := ast.EnumType{Name: "Result", Args: []ast.Type{dirType, ioErrType}}
 	c.info.FuncSigs["open_dir"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: dirResult}
 	registerStructMethod("Dir", "open_dir", []ast.Type{ast.StringType{}}, dirResult)
+	readerResult := ast.EnumType{Name: "Result", Args: []ast.Type{ast.StructType{Name: "Reader"}, ioErrType}}
+	writerResult := ast.EnumType{Name: "Result", Args: []ast.Type{ast.StructType{Name: "Writer"}, ioErrType}}
+	openFlags := ast.NumberType{Width: 32, Signed: true}
+	registerStructMethod("Dir", "open_reader", []ast.Type{ast.StringType{}}, readerResult)
+	registerStructMethod("Dir", "open_writer", []ast.Type{ast.StringType{}}, writerResult)
+	registerStructMethod("Dir", "open_reader_with", []ast.Type{ast.StringType{}, openFlags}, readerResult)
+	registerStructMethod("Dir", "open_writer_with", []ast.Type{ast.StringType{}, openFlags}, writerResult)
 	registerStructMethod("Dir", "entries_bytes", nil, ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: u8s}, ioErrType}})
 	registerStructMethod("Dir", "entries", nil,
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ioErrType}})

@@ -3207,7 +3207,7 @@ function is_handle_method(kind: string, name: string): boolean {
     return true;
   }
   if (kind == "Dir") {
-    return util.has_str(["open_dir", "entries", "entries_bytes", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
+    return util.has_str(["open_dir", "open_reader", "open_writer", "open_reader_with", "open_writer_with", "entries", "entries_bytes", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
   }
   if (util.has_str(["seek", "flags", "isatty", "fsync", "fdatasync", "syncfs", "drop_cache", "dup_onto"], name)) {
     return true;
@@ -3385,6 +3385,9 @@ function dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]):
   if (name == "open_dir") {
     return dir_result_value(d.open_dir(entry));
   }
+  if (util.str_has_prefix(name, "open_")) {
+    return dir_file_method(d, name, entry, args);
+  }
   if (name == "entries_bytes") {
     return byte_arrays_result_value(heap, d.entries_bytes());
   }
@@ -3403,6 +3406,94 @@ function dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]):
     }
   }
   return dir_change_method(d, name, entry, args);
+}
+
+// The stage0 pin does not carry the Dir file opens yet, so the entry is
+// reached through the descriptor's /proc link, which the kernel resolves to
+// the directory the handle holds open. A symbolic link in the entry's place is
+// refused, as the native open refuses it.
+function dir_file_method(d: Dir, name: string, entry: string, args: Value[]): Value {
+  if (target_os() != "linux") {
+    return io_err_value(Unsupported);
+  }
+  let path: string = "/proc/self/fd/" + util.i32_to_string(d.fd) + "/" + entry;
+  if (name == "open_reader") {
+    return dir_reader_value(open_reader_with(path, 512), entry);
+  }
+  if (name == "open_reader_with") {
+    return dir_reader_value(open_reader_with(path, arg_i32(args, 1) | 512), entry);
+  }
+  if (name == "open_writer_with") {
+    return dir_writer_value(open_writer_with(path, arg_i32(args, 1) | 512), entry);
+  }
+  match (open_writer_with(path, 1 | 512)) {
+    Ok(w) => {
+      match (w.truncate(0)) {
+        Ok(_) => {},
+        Err(e) => {
+          match (w.close()) {
+            Ok(_) => {},
+            Err(_) => {}
+          }
+          return io_err_value(io_error_named(e, entry));
+        }
+      }
+      return ok_value(writer_value(w));
+    },
+    Err(e) => {
+      return io_err_value(io_error_named(e, entry));
+    }
+  }
+}
+
+function dir_reader_value(r: Result[Reader, IoError], entry: string): Value {
+  match (r) {
+    Ok(h) => {
+      return ok_value(reader_value(h));
+    },
+    Err(e) => {
+      return io_err_value(io_error_named(e, entry));
+    }
+  }
+}
+
+function dir_writer_value(r: Result[Writer, IoError], entry: string): Value {
+  match (r) {
+    Ok(h) => {
+      return ok_value(writer_value(h));
+    },
+    Err(e) => {
+      return io_err_value(io_error_named(e, entry));
+    }
+  }
+}
+
+// Names the entry in an error from the /proc path.
+
+function io_error_named(e: IoError, entry: string): IoError {
+  match (e) {
+    NotFound(_) => {
+      return NotFound(entry);
+    },
+    PermissionDenied(_) => {
+      return PermissionDenied(entry);
+    },
+    AlreadyExists(_) => {
+      return AlreadyExists(entry);
+    },
+    InvalidUtf8(_) => {
+      return InvalidUtf8(entry);
+    },
+    Interrupted => {
+      return Interrupted;
+    },
+    Unsupported => {
+      return Unsupported;
+    },
+    Other(_, m, n) => {
+      return Other(entry, m, n);
+    }
+  }
 }
 
 function dir_change_method(d: Dir, name: string, entry: string, args: Value[]): Value {

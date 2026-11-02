@@ -7133,6 +7133,10 @@ function dir_contracts(): ssasem.Contract[] {
   return [
     ssasem.Contract { name: "open_dir", params: [t_string()], modes: [b], result: t_io_result(dir) },
     ssasem.Contract { name: "Dir.open_dir", params: [dir, t_string()], modes: [v, b], result: t_io_result(dir) },
+    ssasem.Contract { name: "Dir.open_reader", params: [dir, t_string()], modes: [v, b], result: t_io_result(t_handle("Reader")) },
+    ssasem.Contract { name: "Dir.open_writer", params: [dir, t_string()], modes: [v, b], result: t_io_result(t_handle("Writer")) },
+    ssasem.Contract { name: "Dir.open_reader_with", params: [dir, t_string(), t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Reader")) },
+    ssasem.Contract { name: "Dir.open_writer_with", params: [dir, t_string(), t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Writer")) },
     ssasem.Contract { name: "Dir.entries", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
     ssasem.Contract { name: "Dir.entries_bytes", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeArray { elem: t_u8(), view: false }, view: false }) },
     ssasem.Contract { name: "Dir.stat", params: [dir, t_string()], modes: [v, b], result: stat },
