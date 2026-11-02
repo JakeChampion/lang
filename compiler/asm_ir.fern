@@ -54,7 +54,7 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
   }
   s = s.write("    andq $-16, %rsp\n");
   if (s.shared) {
-    s = s.write("    movl $0, __fern_busy(%rip)\n");
+    s = s.write(busy_give_x86());
   }
   s = s.write("    xorl %eax, %eax\n");
   s = s.write("    call *%r11\n");
@@ -72,8 +72,30 @@ function emit_ccall_shim1(s: asmcore.EmitState, variant: string, n: i32): asmcor
 }
 
 pub function busy_take_x86(): string {
-  return "    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz __fern_busy_abort\n";
+  return "    call __fern_busy_take\n";
 }
+
+pub function busy_give_x86(): string {
+  return "    call __fern_busy_give\n";
+}
+
+// __fern_busy holds 0 when no thread runs Fern code, 1 when one does, and 2
+// when one does and others wait. A waiter sleeps on the futex. Both routines
+// keep every register except r11 and the flags, and __fern_busy_give keeps
+// r11 too.
+function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
+  s = s.write("__fern_busy_take:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n    ret\n");
+  s = s.write(".Lfern_busy_wait:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r10\n");
+  s = s.write(".Lfern_busy_retry:\n    movl $2, %eax\n    xchgl %eax, __fern_busy(%rip)\n    testl %eax, %eax\n    jz .Lfern_busy_won\n");
+  s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $128, %esi\n    movl $2, %edx\n    xorl %r10d, %r10d\n    syscall\n    jmp .Lfern_busy_retry\n");
+  s = s.write(".Lfern_busy_won:\n    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
+  s = s.write("__fern_busy_give:\n    pushq %r11\n    xorl %r11d, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    cmpl $2, %r11d\n    je .Lfern_busy_wake\n    popq %r11\n    ret\n");
+  s = s.write(".Lfern_busy_wake:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+  s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $129, %esi\n    movl $1, %edx\n    syscall\n");
+  return s.write("    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    popq %r11\n    ret\n");
+}
+
 
 function emit_ccall_shims(s: asmcore.EmitState): asmcore.EmitState {
   let arity: i32 = 0;
@@ -11547,8 +11569,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_report(s);
   s = emit_logcat_runtime(s);
   if (s.shared) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
-    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);
+    s = emit_busy_lock_x86(s);
   }
   if (s.rc_free_debug) {
     s = s.write("    .text\n");

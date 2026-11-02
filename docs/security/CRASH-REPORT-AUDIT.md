@@ -18,7 +18,7 @@ With the backtrace off (`-backtrace=false` or `FERN_BACKTRACE=0`), it exits at o
 Every step is a register move, a stack buffer of 32 bytes, or a system call.
 No step allocates, takes a lock, or calls back into the program.
 
-The cause lines live in `compiler/aborts.fern`: array index, string index, slice range, stack overflow, stack guard, busy flag, allocation size, out of memory, and map failure.
+The cause lines live in `compiler/aborts.fern`: array index, string index, slice range, stack overflow, stack guard, allocation size, out of memory, and map failure.
 The bounds and allocation aborts exit with status 134.
 `docs/security/BOUNDS-AUDIT.md` pins the abort of every checked path on x86-64, arm64, and Wasm.
 
