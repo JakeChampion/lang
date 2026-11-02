@@ -129,6 +129,23 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if bytes.Count(img, sign) == 0 || bytes.Count(img, auth) < bytes.Count(img, sign) {
 			t.Fatalf("the -harden image has %d paciasp and %d autiasp, want every framed function to sign and each of its exits to authenticate", bytes.Count(img, sign), bytes.Count(img, auth))
 		}
+		if authenticated {
+			// PACIASP is also a BTI target, so the control keeps a pad in its place.
+			unsigned := bytes.ReplaceAll(img, sign, pad)
+			unsignedBin := filepath.Join(dir, "direct-unsigned")
+			if err := os.WriteFile(unsignedBin, unsigned, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			expectHardenSignal(t, qemu, unsignedBin, syscall.SIGSEGV, syscall.SIGILL)
+			unauthenticated := filepath.Join(dir, "direct-unauthenticated")
+			if err := os.WriteFile(unauthenticated, bytes.ReplaceAll(unsigned, auth, binary.LittleEndian.AppendUint32(nil, 0xd503201f)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if out := runHardened(t, qemu, unauthenticated); out != hardenWant {
+				t.Fatalf("the direct-image PAC control without authentication printed %q, want %q", out, hardenWant)
+			}
+			t.Logf("direct-image PAC fault control passed (%s)", mode)
+		}
 		if !enforced {
 			t.Log("this host does not enforce BTI; the pads are not proved load-bearing here")
 			return
