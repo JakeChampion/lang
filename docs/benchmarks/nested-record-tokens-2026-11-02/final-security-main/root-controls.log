@@ -1,0 +1,14 @@
+=== RUN   TestAllRuntimeNeedRootsCoversEveryLiteralNeed
+--- PASS: TestAllRuntimeNeedRootsCoversEveryLiteralNeed (0.01s)
+PASS
+ok  	github.com/jakechampion/lang/compiler	0.009s
+=== RUN   TestSelfHostIRPerModuleLink
+--- PASS: TestSelfHostIRPerModuleLink (22.00s)
+=== RUN   TestSelfHostIRPerModuleLinkStrings
+--- PASS: TestSelfHostIRPerModuleLinkStrings (1.23s)
+=== RUN   TestSelfHostIRRuntimeNeedsAggregation
+--- PASS: TestSelfHostIRRuntimeNeedsAggregation (1.77s)
+=== RUN   TestSelfHostRuntimeNeedRegistration
+--- PASS: TestSelfHostRuntimeNeedRegistration (1.23s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	26.241s

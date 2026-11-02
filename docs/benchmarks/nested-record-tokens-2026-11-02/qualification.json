@@ -1,0 +1,162 @@
+{
+  "scope": "Issue12795 compiler source on merged main71121667. All compiler and stdlib hashes match the fixed-point record. Later owner PR14016 is outside this source scope.",
+  "base_commit": "71121667b0d94ad8895847fb2584637a8a3b0b57",
+  "base_tree": "33d7491b6365848355d7aa4f25d5bd4688dd9d94",
+  "stable_compiler_sha256": "04253afb26e48fffae913646d1af674e342c9cc370ce501c5541577767bdd78c",
+  "source_snapshot_tree": "5f719bee8c5900650bdf37af182b843ff09c59ce",
+  "tests": {
+    "linux_roots": 14,
+    "linux_seconds": 410.677,
+    "region_seconds": 29.329,
+    "darwin_roots": 3,
+    "darwin_seconds": 127.255,
+    "skips": 0,
+    "seven_shape_linux_roots": 3,
+    "seven_shape_linux_seconds": 75.891,
+    "seven_shape_darwin_roots": 3,
+    "seven_shape_darwin_seconds": 42.417,
+    "fixture_sha256": "9cef14236feff50448ebf85d401f5e929c931c9d92afb2a11cac64cb11867d8c",
+    "go_test_sha256": "df6a4bff668f43d6e064b93c398a6b5fda3eb244032fe7ac63dd765f512ffc02"
+  },
+  "performance": "39 benchmarks; 78 ARM strict rows, 39 x86 static strict rows, 117 advisory target rows. 39 observable outputs match the baseline. Only two exactly repeated ARM instruction limits decrease.",
+  "original_arm_comparison": "The repeated comparison against the original main ARM subset exits 1 only for two FASTER findings. The lower limits make those wins the new ceilings.",
+  "earlier_wide_cost_scope": "The wide cost artifact compares earlier empty-layout and record-sink-v2 producers. It does not qualify main71121667 or later PR14016.",
+  "normalization": "Public text-log copies omit extra trailing blank lines. Original raw files and their hashes remain unchanged.",
+  "artifacts": {
+    "fixed-point.json": {
+      "sha256": "17d70661029be326c1d3d70bcde162f26f69f18f6a94285fe4da2c357533d1d2",
+      "original_path": "/tmp/fern-12795-current-main-fixed-point/qualification.json",
+      "original_sha256": "17d70661029be326c1d3d70bcde162f26f69f18f6a94285fe4da2c357533d1d2"
+    },
+    "linux-controls.log": {
+      "sha256": "9db92d0d890139de5c2b525b0b3ca024e2b57652930aa396fbe0245777af2f90",
+      "original_path": "/tmp/fern-12795-current-main-controls.log",
+      "original_sha256": "9db92d0d890139de5c2b525b0b3ca024e2b57652930aa396fbe0245777af2f90"
+    },
+    "darwin-controls.log": {
+      "sha256": "91511d2afdc684a3d4c09e2f8abba5045c1ee8008e26a5b2b1c5687551a3a64e",
+      "original_path": "/tmp/fern-12795-current-main-darwin.log",
+      "original_sha256": "91511d2afdc684a3d4c09e2f8abba5045c1ee8008e26a5b2b1c5687551a3a64e"
+    },
+    "region-controls.log": {
+      "sha256": "4b01632f8e4f2969b521ccd1f0b3f4247f6341fc8febbcef14c725abc9da1f21",
+      "original_path": "/tmp/fern-12795-current-main-regions.log",
+      "original_sha256": "4b01632f8e4f2969b521ccd1f0b3f4247f6341fc8febbcef14c725abc9da1f21"
+    },
+    "source-gate.log": {
+      "sha256": "ee26a18bc72898f28e1287b49a96ed61e0723d6685d4160fbd3173f08d417c5c",
+      "original_path": "/tmp/fern-12795-current-main-check-sources.log",
+      "original_sha256": "ee26a18bc72898f28e1287b49a96ed61e0723d6685d4160fbd3173f08d417c5c"
+    },
+    "lint.log": {
+      "sha256": "25d6e3994d66570bafe6bf889492b144d1186cdcd05a1e9737398bc3ed2de7ee",
+      "original_path": "/tmp/fern-12795-current-main-lint.log",
+      "original_sha256": "25d6e3994d66570bafe6bf889492b144d1186cdcd05a1e9737398bc3ed2de7ee"
+    },
+    "format-gate.log": {
+      "sha256": "f7b5de977b04cf1fd8ea0779d2248bb3af19f6c80f026398fac06527ba8b7000",
+      "original_path": "/tmp/fern-12795-current-main-final-format.log",
+      "original_sha256": "f7b5de977b04cf1fd8ea0779d2248bb3af19f6c80f026398fac06527ba8b7000"
+    },
+    "native-perf.json": {
+      "sha256": "bc587a19b50a3fe0cb0de175b00f9a2db8c975c38559dad033816dfdfd84e018",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/qualification.json",
+      "original_sha256": "bc587a19b50a3fe0cb0de175b00f9a2db8c975c38559dad033816dfdfd84e018"
+    },
+    "comparison.json": {
+      "sha256": "46fb2524b8071c5e63ec8047bc5b70946fffe113c15d699f80fd81fa9b543477",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/comparison.json",
+      "original_sha256": "46fb2524b8071c5e63ec8047bc5b70946fffe113c15d699f80fd81fa9b543477"
+    },
+    "repeated-arm-wins.json": {
+      "sha256": "785dec8b39bb1ebe646a3ea8a08112ce4fae581d9f830c24ad1bc97c904d0494",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/repeated-arm-wins.json",
+      "original_sha256": "785dec8b39bb1ebe646a3ea8a08112ce4fae581d9f830c24ad1bc97c904d0494"
+    },
+    "original-arm-limits.txt": {
+      "sha256": "805cfb6677c8afdc41e6024b562e703268e656308952806d15f07c3ba63c25fd",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/original-arm-limits.txt",
+      "original_sha256": "805cfb6677c8afdc41e6024b562e703268e656308952806d15f07c3ba63c25fd"
+    },
+    "original-arm-gate.log": {
+      "sha256": "bd947eb60c1eb5fac4b5c8fea8c0e6e8148b8eeec0f82f221456be3f35ab3c85",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/original-arm-gate.log",
+      "original_sha256": "bd947eb60c1eb5fac4b5c8fea8c0e6e8148b8eeec0f82f221456be3f35ab3c85"
+    },
+    "compiler-cost.json": {
+      "sha256": "4e116685ac1a32a27bb03269d90626ef68f164c90f800ec2bd713a81dfdd4a48",
+      "original_path": "/tmp/fern-12795-current-main-compiler-cost/qualification.json",
+      "original_sha256": "4e116685ac1a32a27bb03269d90626ef68f164c90f800ec2bd713a81dfdd4a48"
+    },
+    "earlier-wide-cost.json": {
+      "sha256": "0381d75168af15f835f92dcc6491981c67148dc74c4f75d65ce0c892e4431d92",
+      "original_path": "/tmp/fern-12795-wide-cost/qualification.json",
+      "original_sha256": "0381d75168af15f835f92dcc6491981c67148dc74c4f75d65ce0c892e4431d92"
+    },
+    "seven-shape-linux.log": {
+      "sha256": "94157e1c819032451c6e1f3e689ac24d778bbab52a5f5cc4649331cccce17334",
+      "original_path": "/tmp/fern-12795-seven-shape-controls.log",
+      "original_sha256": "94157e1c819032451c6e1f3e689ac24d778bbab52a5f5cc4649331cccce17334"
+    },
+    "seven-shape-darwin.log": {
+      "sha256": "51fcbc7f4598e6db3139023b3a750f643c98154a9e50ce2b93fabef3fcd15766",
+      "original_path": "/tmp/fern-12795-seven-shape-darwin.log",
+      "original_sha256": "51fcbc7f4598e6db3139023b3a750f643c98154a9e50ce2b93fabef3fcd15766"
+    },
+    "seven-shape-format.log": {
+      "sha256": "0838480f0e865aa7e27159ce5241855ac3be1e6ac9f71a25a9765507fc6ea431",
+      "original_path": "/tmp/fern-12795-seven-shape-format.log",
+      "original_sha256": "0838480f0e865aa7e27159ce5241855ac3be1e6ac9f71a25a9765507fc6ea431"
+    },
+    "extra-shape-pilot.json": {
+      "sha256": "189e07d7cf19f9b6fdde0560fba44803add0d7a37f41516523a7760791b7d18a",
+      "original_path": "/tmp/fern-12795-wide-extra-modes.json",
+      "original_sha256": "189e07d7cf19f9b6fdde0560fba44803add0d7a37f41516523a7760791b7d18a"
+    },
+    "arm.tsv": {
+      "sha256": "cba263b4c81a3a04f09d8cf478a9dbe5d600635388cefe851e0cc861dfae0bec",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/arm.tsv",
+      "original_sha256": "cba263b4c81a3a04f09d8cf478a9dbe5d600635388cefe851e0cc861dfae0bec"
+    },
+    "arm-limits.txt": {
+      "sha256": "38d1fd38efa333597c1bc7b42e5d2a13bf99c0bb263ea7324a9e33a86299c840",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/arm-limits.txt",
+      "original_sha256": "38d1fd38efa333597c1bc7b42e5d2a13bf99c0bb263ea7324a9e33a86299c840"
+    },
+    "arm-gate.log": {
+      "sha256": "6fa70d80a15a6e6e23ff0595ca974c131f2433c5ef882c69c5a564def95c411f",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/arm-gate.log",
+      "original_sha256": "6fa70d80a15a6e6e23ff0595ca974c131f2433c5ef882c69c5a564def95c411f"
+    },
+    "x86-static.tsv": {
+      "sha256": "21686a70e65ba901659d2a081ff922407bef53b5f575ba00e7a65c682b02cc18",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/x86-static.tsv",
+      "original_sha256": "21686a70e65ba901659d2a081ff922407bef53b5f575ba00e7a65c682b02cc18"
+    },
+    "x86-static-limits.txt": {
+      "sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/x86-static-limits.txt",
+      "original_sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35"
+    },
+    "x86-static-gate.log": {
+      "sha256": "b976cb18f48e789b0a21d897495bbfea2aac20c1b28723ac0594a3c9ec902b92",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/x86-static-gate.log",
+      "original_sha256": "b976cb18f48e789b0a21d897495bbfea2aac20c1b28723ac0594a3c9ec902b92"
+    },
+    "selfhost.tsv": {
+      "sha256": "168110f9646a96d19ce51c077cf159e613aedc67bb974aa4d4891f6a908bc6a2",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/selfhost.tsv",
+      "original_sha256": "168110f9646a96d19ce51c077cf159e613aedc67bb974aa4d4891f6a908bc6a2"
+    },
+    "selfhost-limits.txt": {
+      "sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/selfhost-limits.txt",
+      "original_sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c"
+    },
+    "selfhost-gate.log": {
+      "sha256": "3c7d31ecdcddfd116ce8c0426cfadf71c91679aeb8e4c4d951dc605deaf9f77a",
+      "original_path": "/tmp/fern-12795-current-main-perf-static-arm/selfhost-gate.log",
+      "original_sha256": "3c7d31ecdcddfd116ce8c0426cfadf71c91679aeb8e4c4d951dc605deaf9f77a"
+    }
+  }
+}

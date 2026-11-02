@@ -18,7 +18,7 @@ import "./sourcepos";
 function body(kind: i32, name: string, params: i32): irtables.LowerState {
   return irtables.LowerState {
     ok: kind != 0, superseded: kind == 1, why: if (kind == 0) { "declined" } else { "" },
-    ops: [], n_locals: params, n_params: params, erased_wide: false,
+    ops: [], n_locals: params, scratch_start: 0, n_params: params, erased_wide: false,
     arr_slots: [], i64_slots: [], f64_slots: [], v128_slots: [], str_slots: [],
     name: name, result_kind: irtables.result_i32(), dbg_slots: [], dbg_names: [], dbg_types: [],
     source_positions: irtables.no_source(),
@@ -110,10 +110,8 @@ func TestSelfHostLowerResultAlignmentContracts(t *testing.T) {
 	}
 }
 
-func TestSelfHostEmitBodyBoundary(t *testing.T) {
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ircore.fern")
-	source := `import "./ircore";` + "\n" + strings.Split(lowerResultAlignmentProg, "function main(): i32 {")[0] + `
+func emitBodyBoundarySource() string {
+	return `import "./ircore";` + "\n" + strings.Split(lowerResultAlignmentProg, "function main(): i32 {")[0] + `
 function main(): i32 {
   let av = args();
   let state = body(util.digits_to_i32(av[1]), "stored_name", 3);
@@ -121,7 +119,12 @@ function main(): i32 {
   return selected.n_params - 3;
 }
 `
-	writeResolveProject(t, dir, map[string]string{"emit_body_boundary.fern": source})
+}
+
+func TestSelfHostEmitBodyBoundary(t *testing.T) {
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "ircore.fern")
+	writeResolveProject(t, dir, map[string]string{"emit_body_boundary.fern": emitBodyBoundarySource()})
 	cases := []struct {
 		name    string
 		kind    string

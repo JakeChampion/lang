@@ -1,0 +1,3 @@
+./scripts/gofmt_gate.sh
+./scripts/testname_gate.sh
+testname gate: 4055 exact + 14 prefix test selectors resolve

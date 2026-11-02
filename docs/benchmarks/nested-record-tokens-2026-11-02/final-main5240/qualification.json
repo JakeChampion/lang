@@ -1,0 +1,141 @@
+{
+  "scope": "Final issue12795 source on actual merged main5240. Mainc52 adds a documentation correction only. Earlier records retain their original source scope.",
+  "base_commit": "5240bb7e2da6f1536b845b876dc82e916fc83743",
+  "base_tree": "116f1378545661e3fd9b4171bfe1f1afb15f010b",
+  "source_snapshot_tree": "04edb6689435440d328ace892d7a51e031652bbf",
+  "protected_ref": "refs/codex/proofs/issue-12795-ended-04edb668",
+  "compiler_sha256": "6f37bd429227c87016079d9fe5ef40fed48b45e312c6996a86e96aab1294ba55",
+  "compiler_bytes": 23899697,
+  "embedding": "Every stdlib source byte matches the reused embedding. Fixed-point.json records all embedded assets separately.",
+  "tests": {
+    "linux": {
+      "roots": 19,
+      "seconds": 360.402,
+      "skips": 0
+    },
+    "darwin": {
+      "roots": 3,
+      "seconds": 102.125,
+      "skips": 0
+    }
+  },
+  "fixture_sha256": "9cef14236feff50448ebf85d401f5e929c931c9d92afb2a11cac64cb11867d8c",
+  "go_test_sha256": "df6a4bff668f43d6e064b93c398a6b5fda3eb244032fe7ac63dd765f512ffc02",
+  "complexity": {
+    "compiler_excess": 18318,
+    "worst_function": 223,
+    "stdlib_excess": 821,
+    "stdlib_worst": 68,
+    "limits_changed": false
+  },
+  "performance": "All 78 ARM strict rows, 39 x86 static strict rows and 117 advisory target rows pass. All 39 ARM observable outputs match the baseline. No baseline increases.",
+  "witnesses": "Ended keep witnesses have no later read. A new region writes its witness before use. Carried donor SSA locals still clear after consumption. No certificate or diagnostic relaxation.",
+  "normalization": "Public log copies omit extra trailing blank lines. Original bytes and hashes remain recorded.",
+  "artifacts": {
+    "fixed-point.json": {
+      "sha256": "bc80ab94e56023ef7b0d0a07b561c4c9505a214323b76741628a20d3f72c5f5d",
+      "original_path": "/tmp/fern-12795-ended-fixed-point/qualification.json",
+      "original_sha256": "bc80ab94e56023ef7b0d0a07b561c4c9505a214323b76741628a20d3f72c5f5d"
+    },
+    "linux-controls.log": {
+      "sha256": "ffbb3d0fc74e5de436e157c970b71f6948783c6fad003e346bacf9ead748b847",
+      "original_path": "/tmp/fern-12795-ended-controls.log",
+      "original_sha256": "ffbb3d0fc74e5de436e157c970b71f6948783c6fad003e346bacf9ead748b847"
+    },
+    "darwin-controls.log": {
+      "sha256": "9f579a6c21721c0b2b3926620ca4bdb1fe7d3413db926c0b440d803eb300b0f7",
+      "original_path": "/tmp/fern-12795-ended-darwin.log",
+      "original_sha256": "9f579a6c21721c0b2b3926620ca4bdb1fe7d3413db926c0b440d803eb300b0f7"
+    },
+    "source-gate.log": {
+      "sha256": "94ed19bafe9dd79f23d66e4889e2e8e2417fc7f2f423bd981164e544210421c4",
+      "original_path": "/tmp/fern-12795-ended-source.log",
+      "original_sha256": "94ed19bafe9dd79f23d66e4889e2e8e2417fc7f2f423bd981164e544210421c4"
+    },
+    "lint.log": {
+      "sha256": "80bcee2508cd7516e05faa056c7c828e50d53ab7bb7b6d7fddb0199ed3d59e6b",
+      "original_path": "/tmp/fern-12795-ended-lint.log",
+      "original_sha256": "80bcee2508cd7516e05faa056c7c828e50d53ab7bb7b6d7fddb0199ed3d59e6b"
+    },
+    "format-gate.log": {
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "original_path": "/tmp/fern-12795-ended-format.log",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "complexity.log": {
+      "sha256": "d4c8d1770dc411a8c484c8be295974bc86e6ed1796880168dc2a0395791a24c9",
+      "original_path": "/tmp/fern-12795-ended-complexity.log",
+      "original_sha256": "d4c8d1770dc411a8c484c8be295974bc86e6ed1796880168dc2a0395791a24c9"
+    },
+    "native-perf.json": {
+      "sha256": "9e4e46cdb6210fff8e8d26ae19fbba3c89c02bd77e7132aae21cab6152bcb833",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/qualification.json",
+      "original_sha256": "9e4e46cdb6210fff8e8d26ae19fbba3c89c02bd77e7132aae21cab6152bcb833"
+    },
+    "comparison.json": {
+      "sha256": "d0c1bb5f4914b29d6a5c7a2bd6ff634882bfd7fbd418c44e1061e96f1b795401",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/comparison.json",
+      "original_sha256": "d0c1bb5f4914b29d6a5c7a2bd6ff634882bfd7fbd418c44e1061e96f1b795401"
+    },
+    "compiler-cost.json": {
+      "sha256": "343c266e108c55aa7e7c1174acb586cdf1ae54204b3641749e1a651896aac1a1",
+      "original_path": "/tmp/fern-12795-ended-compiler-cost/qualification.json",
+      "original_sha256": "343c266e108c55aa7e7c1174acb586cdf1ae54204b3641749e1a651896aac1a1"
+    },
+    "wasm-pilot.json": {
+      "sha256": "bcfde72944f72bb63b614d8bb24f4a7a64e94e8eda738d4ec861935da524d99d",
+      "original_path": "/tmp/fern-12795-wasm-ended-witnesses/qualification-2.json",
+      "original_sha256": "bcfde72944f72bb63b614d8bb24f4a7a64e94e8eda738d4ec861935da524d99d"
+    },
+    "wasm-controls.json": {
+      "sha256": "3f34b41d03e5450429d114c4f8196f958da6b2b1dafd1e32afe2af71b13b8fab",
+      "original_path": "/tmp/fern-12795-wasm-ended-witnesses/qualification-5.json",
+      "original_sha256": "3f34b41d03e5450429d114c4f8196f958da6b2b1dafd1e32afe2af71b13b8fab"
+    },
+    "arm.tsv": {
+      "sha256": "c48d9364bf9bd239a41de22a5b8f3e94dc763c3d66e1eb9ae4ef6b623c601fd2",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/arm.tsv",
+      "original_sha256": "c48d9364bf9bd239a41de22a5b8f3e94dc763c3d66e1eb9ae4ef6b623c601fd2"
+    },
+    "arm-limits.txt": {
+      "sha256": "38d1fd38efa333597c1bc7b42e5d2a13bf99c0bb263ea7324a9e33a86299c840",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/arm-limits.txt",
+      "original_sha256": "38d1fd38efa333597c1bc7b42e5d2a13bf99c0bb263ea7324a9e33a86299c840"
+    },
+    "arm-gate.log": {
+      "sha256": "a54129f7bf1d10de7cb53087e727151fc0727dac07c3eb2ecacaacac031446d7",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/arm-gate.log",
+      "original_sha256": "a54129f7bf1d10de7cb53087e727151fc0727dac07c3eb2ecacaacac031446d7"
+    },
+    "x86-static.tsv": {
+      "sha256": "5ad18f27442e5c69d027115c3d3a3f396537bd497623df27e0ee4426b743b722",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/x86-static.tsv",
+      "original_sha256": "5ad18f27442e5c69d027115c3d3a3f396537bd497623df27e0ee4426b743b722"
+    },
+    "x86-static-limits.txt": {
+      "sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/x86-static-limits.txt",
+      "original_sha256": "b03e3d9005dfb1bce5e11680958965309f08476ed9c63b2694b28c03e8c51d35"
+    },
+    "x86-static-gate.log": {
+      "sha256": "055bbda037c48cbbe49798377e223e23ff649e1c15f408ab92e9c89b694cb76d",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/x86-static-gate.log",
+      "original_sha256": "055bbda037c48cbbe49798377e223e23ff649e1c15f408ab92e9c89b694cb76d"
+    },
+    "selfhost.tsv": {
+      "sha256": "75c2ce628fda65f495a75e6847c19c34d47ecb57edffd37fda3eae33cdb5f2b0",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/selfhost.tsv",
+      "original_sha256": "75c2ce628fda65f495a75e6847c19c34d47ecb57edffd37fda3eae33cdb5f2b0"
+    },
+    "selfhost-limits.txt": {
+      "sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/selfhost-limits.txt",
+      "original_sha256": "50ce8c1321ebf08a7065f2e2b308d4c5766e6100b9f2f458b868c3bc6515476c"
+    },
+    "selfhost-gate.log": {
+      "sha256": "8cc30703193e4c21c697dc9c83f0599611ce662d674e6e2490d907b1a689a0b0",
+      "original_path": "/tmp/fern-12795-ended-perf-static-arm/selfhost-gate.log",
+      "original_sha256": "8cc30703193e4c21c697dc9c83f0599611ce662d674e6e2490d907b1a689a0b0"
+    }
+  }
+}

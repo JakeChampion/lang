@@ -89,8 +89,8 @@ function main(): i32 {
 func TestSelfHostTestedTakeShapeX86_64(t *testing.T) {
 	emit, run := x86ShapeHarness(t)
 	asm := emit(t, testedTakeSrc)
-	// Split-phi folding lets the final update reuse Tab after the join.
-	for fn, want := range map[string]int{"retire": 9, "lock": 4} {
+	// Nested keeps share each row's uniqueness result across its field takes.
+	for fn, want := range map[string]int{"retire": 8, "lock": 2} {
 		if got := rcIsUniqueSites(fnText(t, asm, fn)); got != want {
 			t.Errorf("%s: %d uniqueness tests, want %d", fn, got, want)
 		}

@@ -1,0 +1,44 @@
+{
+  "scope": "All 39 benchmarks. Unchanged limits, exact target subsets. Native ARM dynamic and static counts, x86 static counts, three-target advisory output sizes.",
+  "comparisons": [
+    {
+      "name": "arm",
+      "metrics": 78,
+      "strict": true,
+      "command": [
+        "/Users/jakechampion/codex/lang-12795-h3-regression/scripts/ci-check-perf",
+        "/tmp/fern-14022-h3-final-perf-static-arm/arm-limits.txt",
+        "/tmp/fern-14022-h3-final-perf-static-arm/arm.tsv"
+      ],
+      "exit_code": 0,
+      "original_baseline_sha256": "2a91c1a71ec207303e9b1a870169b226ccffce7b089c3c2bebc2cb09fba20b85",
+      "log_sha256": "f7d7571d2887f137ea298fc06a1ca0de8ae440a85a23869534d4e3cab9f557d0"
+    },
+    {
+      "name": "x86-static",
+      "metrics": 39,
+      "strict": true,
+      "command": [
+        "/Users/jakechampion/codex/lang-12795-h3-regression/scripts/ci-check-perf",
+        "/tmp/fern-14022-h3-final-perf-static-arm/x86-static-limits.txt",
+        "/tmp/fern-14022-h3-final-perf-static-arm/x86-static.tsv"
+      ],
+      "exit_code": 0,
+      "original_baseline_sha256": "2a91c1a71ec207303e9b1a870169b226ccffce7b089c3c2bebc2cb09fba20b85",
+      "log_sha256": "51fa4679b4fcb5eb8896b71de6a40a04bb12d6780f0f3eb5169f743635fa5599"
+    },
+    {
+      "name": "selfhost",
+      "metrics": 117,
+      "strict": false,
+      "command": [
+        "/Users/jakechampion/codex/lang-12795-h3-regression/scripts/ci-check-perf",
+        "/tmp/fern-14022-h3-final-perf-static-arm/selfhost-limits.txt",
+        "/tmp/fern-14022-h3-final-perf-static-arm/selfhost.tsv"
+      ],
+      "exit_code": 0,
+      "original_baseline_sha256": "c7e607f709bf6d89c88b7e50e837e604d14e450f978ffd671e1bd32130c40b5f",
+      "log_sha256": "a7be42720ccd814d4199e9a1647966089f8362905ba2758ce852671ee108b5c5"
+    }
+  ]
+}

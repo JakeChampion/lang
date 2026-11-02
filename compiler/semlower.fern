@@ -70,6 +70,7 @@ function tally(what: string, why: string): i32 {
 
 function declined_state(why: string): irtables.LowerState {
   return irtables.LowerState {
+    scratch_start: 0,
     source_positions: irtables.no_source(),
     ok: false, why: why, ops: [], n_locals: 0, n_params: 0,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], v128_slots: [], str_slots: [],
