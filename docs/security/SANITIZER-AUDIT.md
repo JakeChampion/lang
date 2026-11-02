@@ -41,5 +41,5 @@ Shadow memory costs one bit to one byte per arena byte and a check on every raw 
 ## Remaining limits
 
 - The three detectors cover reference-counted misuse only. Raw memory misuse through the raw builtins is the unsafe surface of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md). The only detector for it is the arena-bounds check of `__free`.
-- The quarantine is unbounded, which [QUARANTINE.md](QUARANTINE.md) leaves as the owner's decision.
+- The quarantine holds a byte budget, 64 MiB unless `-quarantine SIZE` gives another. A use after free older than the budget is a silent reuse again ([QUARANTINE.md](QUARANTINE.md)).
 - There is no source-span attribution beyond the backtrace. A report names the function, not the line, unless `-g` and `addr2line` resolve it.
