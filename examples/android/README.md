@@ -72,7 +72,7 @@ class Native {
 
 [`stopwatch/build.sh`](stopwatch/build.sh) is a complete recipe with no
 Gradle: `aapt` for the resources, `javac` and `d8` for the Java shell,
-`zipalign`, then `apksigner`. The Examples CI lane runs it and keeps the
+`zipalign`, then `apksigner`. The Android CI lane runs it and keeps the
 APK as a build artifact.
 
 With Gradle, put the `.so` in `src/main/jniLibs/arm64-v8a/` of a standard

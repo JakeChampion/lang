@@ -185,6 +185,20 @@ jobs:
                 ".github/workflows/ci-main.yml",
                 ".github/workflows/ci.yml"
               ] },
+              "android": { "paths": [
+                "examples/android/**",
+                "compiler/**",
+                "internal/stdlib/**",
+                "bootstrap/**",
+                "Makefile",
+                "mise.toml",
+                "mise.lock",
+                ".github/actions/setup-fern/**",
+                ".github/workflows/android.yml",
+                ".github/workflows/ci-suite.yml",
+                ".github/workflows/ci-main.yml",
+                ".github/workflows/ci.yml"
+              ] },
               "vscode-extension": { "paths": [
                 "editors/vscode/**",
                 ".github/workflows/vscode-extension.yml",

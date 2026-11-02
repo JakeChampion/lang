@@ -1,0 +1,67 @@
+name: Android
+
+# Builds the Android example app and runs it on an emulator. The APK job
+# uses the runner image's Android SDK (ANDROID_HOME) for aapt, d8, zipalign,
+# apksigner and android.jar. The emulator job installs that APK on an x86-64
+# emulator with KVM, and examples/android/stopwatch/emulator_check.py drives
+# it: the content at the screen centre, a tap to start, a long tap to reset,
+# the settings screen, and no crash in logcat. It is the one gate that loads
+# a Fern library with Android's loader.
+
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It decides from the changed files
+# whether this lane runs (its path filter is the lane table's `android`
+# row) and cancels the rest of the run when a lane goes red.
+# `workflow_dispatch` stays so the lane can be run on its own.
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    name: android-stopwatch-apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Build the stopwatch APK
+        run: |
+          make bin/fern
+          examples/android/stopwatch/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fern-stopwatch-apk
+          path: build/android-stopwatch/fern-stopwatch.apk
+          if-no-files-found: error
+
+  emulator:
+    name: android-stopwatch-emulator
+    needs: [apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: fern-stopwatch-apk
+          path: build/android-stopwatch
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the APK on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: fern-stopwatch-emulator
+          path: build/android-stopwatch/emulator

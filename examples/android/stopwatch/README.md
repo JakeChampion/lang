@@ -70,5 +70,15 @@ or later. `build.sh` signs it with a new debug key unless `KEYSTORE` is set.
 - `TestAndroidStopwatchHostJVM` loads the host build of `libfern.so` into a
   desktop JVM and runs `HostCheck`.
 
-The Examples CI lane builds the APK and keeps it as the `fern-stopwatch-apk`
-artifact. No test runs the app on a device or an emulator.
+The Android CI lane builds the APK and keeps it as the `fern-stopwatch-apk`
+artifact. Then it runs the APK on an x86-64 emulator with
+`emulator_check.py`. The check requires these results:
+
+- The content is at the screen centre.
+- A tap starts the stopwatch, and a long tap resets it.
+- The settings screen has its rows.
+- logcat shows no crash.
+
+It keeps the screenshots, the view trees and logcat as the
+`fern-stopwatch-emulator` artifact. To run the check on a phone, connect the
+phone with `adb`. Then run the script with the APK and an output directory.
