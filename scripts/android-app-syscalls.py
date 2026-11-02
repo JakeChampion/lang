@@ -50,23 +50,28 @@ def arches(spec):
     return out
 
 
-# return_type func[|alias...][:syscall[:socketcall]](args) arches
-LINE = re.compile(r"^\s*[^(]*?\s+([\w|]+)(?::([\w]+))?(?::\w+)?\s*\([^)]*\)\s+([\w,]+)\s*$")
-
-
 def names(text, arch):
-    """The syscall names in a SYSCALLS.TXT-format list for one ABI."""
+    """The syscall names in a SYSCALLS.TXT-format list for one ABI.
+
+    A line is "return_type func[|alias...][:syscall[:socketcall]](args) arches".
+    The arguments can hold parentheses, as a function pointer does, so the
+    name is the last word before the first "(" and the arches the last field.
+    """
     out = set()
     for line in text.splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        m = LINE.match(line)
-        if m is None:
+        if "(" not in line or len(line.split()) < 2:
             raise ValueError(f"cannot read the SYSCALLS line {line!r}")
-        func, syscall, spec = m.groups()
+        spec = line.split()[-1]
+        head = line[: line.index("(")].split()
+        if not head:
+            raise ValueError(f"cannot read the SYSCALLS line {line!r}")
+        parts = head[-1].lstrip("*").split(":")
+        func = parts[0].split("|")[0]
         if arch in arches(spec):
-            out.add(syscall or func.split("|")[0])
+            out.add(parts[1] if len(parts) > 1 and parts[1] else func)
     return out
 
 
