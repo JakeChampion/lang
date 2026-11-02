@@ -715,6 +715,81 @@ int main(int c, char** v){
 	}
 }
 
+// jni.new_string hands NewStringUTF the bytes of a Fern string and frees its
+// copy, so a native method that returns a string on every call does not grow
+// the heap.
+func TestStdJNINewStringFrees(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function churn(env: usize, n: i32): usize {
+  let last: usize = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    last = jni.new_string(env, "hello, " + i.to_string());
+    i = i + 1;
+  }
+  return last;
+}
+function probe_new_string(env: usize, cls: usize): i64 {
+  let first: usize = churn(env, 1000);
+  let b1: i64 = __heap_bump_bytes();
+  let second: usize = churn(env, 1000);
+  let b2: i64 = __heap_bump_bytes();
+  if (first != 1000 || second != 1000) {
+    return -1;
+  }
+  return (b2 - b1) / 1000;
+}
+function main(): i32 { return 0; }`
+	so := selfHostSharedX86(t, src, "probe_new_string")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+static long calls = 0;
+static long newstr(void* env, const char* s) {
+  char want[32];
+  snprintf(want, sizeof want, "hello, %ld", calls % 1000);
+  if (strcmp(s, want) != 0) { fprintf(stderr, "got %s, want %s\n", s, want); return -1; }
+  calls++;
+  return calls % 1000 == 0 ? 1000 : calls % 1000;
+}
+int main(int c, char** v){
+  void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void* table[256] = {0};
+  table[167] = (void*)newstr;
+  void* tptr = table; void* env = &tptr;
+  long (*p)(void*, long) = (long(*)(void*, long)) dlsym(h, "probe_new_string");
+  if(!p) return 101;
+  long per_call = p(env, 0);
+  printf("%ld\n", per_call);
+  return per_call == 0 ? 42 : 1;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("jni.new_string: exit %d, want 42; bump bytes per call (want 0): %s", code, out)
+	}
+}
+
 func TestStdJNIExceptionAndRefWrappers(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {

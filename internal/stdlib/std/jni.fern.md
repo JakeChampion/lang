@@ -175,6 +175,16 @@ pub function get_static_field_id(env: usize, clazz: usize, name: usize, sig: usi
 pub function new_string_utf(env: usize, bytes: usize): usize {
   return call1(env, NEW_STRING_UTF, bytes);
 }
+
+// A Java string with the contents of `s`. The temporary C string is freed.
+pub function new_string(env: usize, s: string): usize {
+  unsafe {
+    let bytes: usize = cstr(s);
+    let jstr: usize = new_string_utf(env, bytes);
+    __free(bytes, s.len() + 4);
+    return jstr;
+  }
+}
 ```
 
 ### `3 pub function get_string_utf_length(env: usize, jstr: usize): i32`
