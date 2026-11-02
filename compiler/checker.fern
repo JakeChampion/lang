@@ -2694,39 +2694,19 @@ function is_resolvable_value(name: string, s: Scope): boolean {
   if (floor >= 0 || util.str_has_prefix(name, "__raw_") || util.str_has_prefix(name, "__syscall")) {
     return floor >= 0 && raw_floor_allowed(s.sigs, name);
   }
-  if (name.len() >= 2 && slice_unchecked(name, 0, 2) == "__") {
-    return true;
-  }
-  if (parser.is_builtin_function(name)) {
-    return true;
-  }
-  return false;
+  return is_resolvable_raw_name(name) || parser.is_builtin_function(name);
 }
 
-function is_resolvable_callee(name: string, s: Scope): boolean {
-  if (s.defines(name)) {
+// The parser's desugar names, the runtime's own entry points, and the
+// registered intrinsics are the only names outside the source that resolve.
+function is_resolvable_raw_name(name: string): boolean {
+  if (name == "__range" || name == "__range_incl" || name == "__set_field" || name == "__set_index") {
     return true;
   }
-  if (s.has_sig(name)) {
+  if (util.str_has_prefix(name, "__fern_")) {
     return true;
   }
-  if (variant_in_unions(name, s.unions) || s.variant_ambiguous(name)) {
-    return true;
-  }
-  if (is_builtin_variant(name)) {
-    return true;
-  }
-  let floor: i32 = raw_floor_at(s.sigs, name);
-  if (floor >= 0 || util.str_has_prefix(name, "__raw_") || util.str_has_prefix(name, "__syscall")) {
-    return floor >= 0 && raw_floor_allowed(s.sigs, name);
-  }
-  if (name.len() >= 2 && slice_unchecked(name, 0, 2) == "__") {
-    return true;
-  }
-  if (parser.is_builtin_function(name)) {
-    return true;
-  }
-  return false;
+  return util.str_has_prefix(name, "__") && util.has_str(registered_intrinsics(), name);
 }
 
 function for_iter_is_range(iter: ast.Expr): boolean {
@@ -14322,7 +14302,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
       }
     },
     ast.ExprIdent(cid) => {
-      if (!is_resolvable_callee(cid.name, s)) {
+      if (!is_resolvable_value(cid.name, s)) {
         out = out.append(undefined_name(cid.name, s, cid.line, cid.col));
       }
       if (is_map_new_name(cid.name) && !s.module_imported("core/map")) {
@@ -15925,7 +15905,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
 
 function (s: Scope) callee_resolves(c: ast.ExprCall): boolean {
   if let ast.ExprIdent(cid) = c.callee {
-    return is_resolvable_callee(cid.name, s);
+    return is_resolvable_value(cid.name, s);
   }
   if let ast.ExprFieldAccess(mfa) = c.callee {
     return !s.method_missing(check_expr(mfa.obj, s), mfa.field);
