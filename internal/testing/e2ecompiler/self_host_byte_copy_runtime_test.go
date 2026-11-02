@@ -129,10 +129,9 @@ const byteCopyRuntimeSuccess = `function main(): i32 {
   let len = a.len();
   let out = __fern_bytes_append_back(a, dist, n);
   if (out.len() != len + n) { return false; }
-  let base: usize = __raw_arr_ptr(out) + 8;
   let i: i32 = 0;
-  while (i < len) { if (__raw_load8(base, i) != i * 7 + 1) { return false; } i = i + 1; }
-  while (i < len + n) { if (__raw_load8(base, i) != __raw_load8(base, i - dist)) { return false; } i = i + 1; }
+  while (i < len) { if (__raw_load8(__raw_arr_ptr(out) + 8, i) != i * 7 + 1) { return false; } i = i + 1; }
+  while (i < len + n) { if (__raw_load8(__raw_arr_ptr(out) + 8, i) != __raw_load8(__raw_arr_ptr(out) + 8, i - dist)) { return false; } i = i + 1; }
   return true;
 }
 `
