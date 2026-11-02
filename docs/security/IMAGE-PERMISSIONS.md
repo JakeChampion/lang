@@ -42,33 +42,50 @@ For a fixed-address image, the kernel maps the constant region read-only from th
 A virtual gap separates the read-only and writable load segments. Its size is the target's load alignment, so their virtual pages cannot overlap on any supported page size.
 The file omits that gap. A write through a writable file-page alias creates a private copy and cannot change the separate read-only mapping.
 
-PIE and Android images still relocate their constants at startup. `PT_GNU_RELRO` names the region.
-The driver inserts padding after it to end on a 4096-byte boundary. After relocation, `_start` reads `AT_PAGESZ` and rounds both ends down to that page size.
+PIE maps its constants in a separate writable segment until startup completes relocation.
+Mapped zero-fill space separates their virtual pages from the globals. The file omits that space.
+`PT_GNU_RELRO` names the mapped range through its final 4096-byte boundary.
+After relocation, `_start` reads `AT_PAGESZ` and rounds both ends down to that page size.
 It then calls `mprotect` with read permission on the pages between them.
+
+Android shared images retain the dynamic loader's page-aligned RELRO layout.
+Constant headers use eight-byte alignment on both native targets.
 
 A failed call ends the process with `fern: protection of the constant data failed`, status 134.
 The region is empty in a `-shared` object, on Darwin and on the freestanding targets. There the emitters keep the constants in `.data`.
 
 The constant boxes carry a negative reference count. The count paths skip a negative count, so the runtime never writes a constant box, and the read-only mapping holds.
 
-The array literals of bytes and scalars stay in `.data`. `reactor_wait` and `tcp_recv_into` write into their array argument in place, and a literal argument is the shared constant itself ([#14013](https://github.com/JakeChampion/lang/issues/14013)).
-Those literals hold no address. They join the region when the builtins own their argument first.
-
-The shared empty allocation stays writable until those mutators own their arguments too.
-The decoder also returns an empty array before it resets a zero-capacity buffer's length, so zero or negative output limits need no length write.
+A builtin that writes into an array argument in place never reaches a constant. Those builtins are `reactor_wait`, `ring_wait`, `ring_recv`, `tcp_recv_into`, `tcp_addr_into`, `udp_recvfrom` and `__arr_set_len`, named in `ssasem.raw_array_args`.
+The unit plan builds a literal on such a path as a fresh heap box ([#14013](https://github.com/JakeChampion/lang/issues/14013)).
+`ssarawflow.reached` traces storage through projections, containers, cells and call results.
+`ssaunits.write_rows` propagates parameter effects to callers and return demands to callees.
+Indirect calls expose their storage arguments conservatively.
+A demanded indirect result reaches every function with the same result type.
+Raw reads through a cell demand every store with the same cell type.
+The worklist revisits those stores before it converges.
+The plan cache compares exact parameter flags and the complete sets of return and cell demands.
+Constant placement reuses the final reach for the same input graphs.
+The length setter skips a box with a negative count, so the shared empty array stays a constant that no code writes.
+The array literals and the empty array are in the region with the other constants.
 
 ## Verification
 
 `TestSelfHostImagePermissions` builds seven variants on both targets, reads the program headers, runs the program, and runs three probes.
 It requires `PT_GNU_RELRO` to match the read-only load segment in a fixed-address image.
 It also checks that the read-only and writable virtual pages cannot overlap at the target's load alignment.
-For PIE, the region must lead the writable data segment and end on a 4096-byte boundary inside its file bytes.
+For PIE, the mapped constant segment ends on a 4096-byte boundary before the globals.
+The constant bytes and globals must occupy separate virtual pages.
+Their file ranges remain adjacent, with no copy of the virtual gap.
 Empty-image controls check every variant too.
 
 The first probe finds its own executable mapping in `/proc/self/maps` and stores a byte into it.
 The second finds the read-only mapping of its data segment and stores a byte into it.
-The third patches the image's entry point to the data segment and writes an exit system call over its first bytes.
-All three must end with `SIGSEGV`, natively on x86-64 and under QEMU on arm64.
+The third patches the image's entry point to a data segment and writes an exit system call over its first bytes. It takes the writable segment, or the read-only one when the writable segment has no file bytes.
+All three must end with `SIGSEGV`. The suite supports native Linux ARM64 and x86-64, with QEMU for the other target.
+
+`TestSelfHostWrittenLiteralImage` runs a program that hands a literal to `reactor_wait`, directly and through a callee, and sets the length of the empty array.
+It must exit 0 on a fixed-address image and on a PIE image. `TestSelfHostWrittenLiteralIsHeapX86_64` pins the plan: such a literal is a heap box, and a literal a callee only reads stays a constant.
 
 `TestSharedObjectLayout` builds a shared object for each target. It requires a read-execute code segment first, no writable executable segment, a non-executable stack and `PT_DYNAMIC`. It also requires a page-aligned `PT_GNU_RELRO` that covers the dynamic section inside a non-executable load segment.
 The dlopen tests of `internal/testing/e2e` load the x86-64 object through glibc and call its exports.
@@ -80,7 +97,6 @@ go test ./internal/testing/e2e -run 'TestSharedObjectLayout|TestSharedLibX86|Tes
 
 ## Remaining limits
 
-- The array literals of bytes and scalars and the shared empty allocation stay writable until [#14013](https://github.com/JakeChampion/lang/issues/14013) lands.
 - PIE and Android protection rounds the length down to the kernel's page size. A kernel with 16 KiB or 64 KiB pages can protect fewer pages than a kernel with 4 KiB pages. Fixed-address images have a separate read-only load segment on each supported page size.
 - The arm64-android image has no `PT_GNU_PROPERTY`, and the Darwin image is Mach-O with its own rules.
 - QEMU user mode enforces page permissions through the host, so the arm64 probes are emulated evidence.

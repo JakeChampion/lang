@@ -1,3 +1,5 @@
+# 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
+# Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14022 run41414136189 measures the matching native x86 wins.
 # Lower only the two red-black-tree instruction limits; all tolerances stay unchanged.
 # Record: docs/benchmarks/nested-record-tokens-2026-11-02/ci-x86-wins/.
@@ -224,7 +226,7 @@ x86_64/map_probe_chain.ir	241010587
 x86_64/map_string.text	9419
 x86_64/map_string.ir	53037751	2
 x86_64/ordmap_insert.text	5498
-x86_64/ordmap_insert.ir	82611593
+x86_64/ordmap_insert.ir	81070676
 x86_64/pmap_insert.text	2973
 x86_64/pmap_insert.ir	53294866
 x86_64/pvec_with.text	2951
@@ -513,7 +515,7 @@ aarch64/map_string.text	9599
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
 aarch64/ordmap_insert.text	5873
-aarch64/ordmap_insert.ir	98457462
+aarch64/ordmap_insert.ir	95978671
 aarch64/pmap_insert.text	3242
 aarch64/pmap_insert.ir	63996220
 aarch64/pvec_with.text	3202

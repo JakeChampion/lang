@@ -1,0 +1,13 @@
+=== RUN   TestFernFixturesSelfHostArm64Android
+    fixture_selfhost_test.go:148: set FERN_SELFHOST_FIXTURES=1 to run the fixture corpus through the self-host compiler
+--- SKIP: TestFernFixturesSelfHostArm64Android (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	0.005s
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (8.24s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	8.258s

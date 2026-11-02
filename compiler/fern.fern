@@ -710,7 +710,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   if (pie) {
     dv = elf.elf_data_vaddr_pie_wx_unwind(text_len, hdr.len(), eh.len(), harden) as i64;
   }
-  let gap: i32 = elf.elf_executable_relro_gap(dv as i32, p.relro_pad, elf.elf_page_align(), pie);
+  let gap: i32 = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
   p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
@@ -778,7 +778,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   let pa: arm64_native.Arm64Asm = p.asm;
   let tv: i64 = elf.elf_text_vaddr_pie() as i64;
   let dv: i64 = elf.elf_data_vaddr_pie(pa.text.len()) as i64;
-  let gap: i32 = elf.elf_relro_gap(dv as i32, p.relro_pad, elf.elf_relro_page());
+  let gap: i32 = elf.elf_executable_relro_gap(p.relro_pad, elf.elf_page_align());
   p = arm64_native.arm64_relro_gap(p, gap);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
@@ -855,7 +855,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   if (pie) {
     dv = elf.elf_x86_pie_data_vaddr(a.text.len(), hdr.len(), eh.len());
   }
-  let gap: i32 = elf.elf_executable_relro_gap(dv, a.relro_pad, elf.elf_x86_page_align(), pie);
+  let gap: i32 = elf.elf_executable_relro_gap(a.relro_pad, elf.elf_x86_page_align());
   a = x86_native.x86_relro_gap(a, gap);
   let reloc_at: i32 = a.rodata.len();
   if (pie) {
@@ -1101,33 +1101,30 @@ function c_import_body(f: parser.FuncDecl, k: i32): string {
     + "@import(\"" + f.import_iface + "\", \"" + f.import_wit + "\")\nfunction " + import_stub(k) + "(): usize;\n";
 }
 
-pub function native_imports(m: parser.Module, target: string): parser.Module {
-  if (!is_native_target(target)) {
-    return m;
-  }
-  let src: string = "";
-  let k: i32 = 0;
+function has_c_imports(m: parser.Module): boolean {
   for f in m.funcs {
     if (is_c_library(f.import_iface)) {
-      src = src + c_import_body(f, k);
-      k = k + 1;
+      return true;
     }
   }
-  if (k == 0) {
+  return false;
+}
+
+pub function native_imports(m: parser.Module, target: string): parser.Module {
+  if (!is_native_target(target) || !has_c_imports(m)) {
     return m;
   }
-  let gen: parser.Module = parser.parse_module(lexer.tokenize(src));
   let funcs: parser.FuncDecl[] = [];
-  let i: i32 = 0;
-  for f in m.funcs {
+  for k in 0..m.funcs.len() {
+    let f: parser.FuncDecl = m.funcs[k];
     if (!is_c_library(f.import_iface)) {
       funcs = funcs.append(f);
     } else {
-      let body: parser.FuncDecl = gen.funcs[2 * i];
-      let stub: parser.FuncDecl = gen.funcs[2 * i + 1];
+      let gen: parser.Module = parser.parse_module(lexer.tokenize(c_import_body(f, k)));
+      let body: parser.FuncDecl = gen.funcs[0];
+      let stub: parser.FuncDecl = gen.funcs[1];
       funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "" });
       funcs = funcs.append(parser.FuncDecl { ...stub, module: f.module, stdlib: f.stdlib, line: f.line, col: f.col });
-      i = i + 1;
     }
   }
   return parser.Module { ...m, funcs: funcs };
@@ -1272,6 +1269,22 @@ function jni_method(f: parser.FuncDecl, class: string, decl: string): (JniMethod
   }
   let symbol: string = "Java_" + jni_mangle(class) + "_" + jni_mangle(jd.name);
   return (JniMethod { func: f, class: class, is_static: jd.is_static, result: jd.result, name: jd.name, types: jd.types, params: params, symbol: symbol }, "");
+}
+
+// The module with its C imports and its JNI wrappers, and the JNI methods,
+// or the first refusal of either.
+function native_bindings(m: parser.Module, target: string, shared: boolean, java_dir: string): (parser.Module, JniMethod[], string) {
+  let none: JniMethod[] = [];
+  let import_bad: string = native_import_refusal(m, target, shared);
+  if (import_bad.len() > 0) {
+    return (m, none, import_bad);
+  }
+  let imported: parser.Module = native_imports(m, target);
+  let (jni, jni_bad) = jni_build_methods(imported, target, shared, java_dir);
+  if (jni_bad.len() > 0) {
+    return (imported, jni, jni_bad);
+  }
+  return (jni_wrappers(imported, jni), jni, "");
 }
 
 // The JNI methods of a build, or a refusal: they need a native -shared
@@ -1487,6 +1500,22 @@ function jni_export_refusal(f: parser.FuncDecl): string {
     return "the result is " + f.ret_type + ", which has no JNI type of its width; use usize for a reference, i32 for jint, i64 for jlong or u8 for jboolean";
   }
   return "";
+}
+
+function shared_exports(merged: parser.Module, shared: boolean, export_list: string, jni: JniMethod[]): (parser.Module, string[], string) {
+  let roots: string[] = [];
+  if (!shared) {
+    return (merged, roots, "");
+  }
+  roots = shared_export_names(export_list, jni);
+  let bad: string = shared_export_refusal(merged, roots);
+  if (bad.len() > 0) {
+    return (merged, roots, bad);
+  }
+  for name in roots {
+    merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: name, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
+  }
+  return (merged, roots, "");
 }
 
 function export_func_index(merged: parser.Module, name: string): i32 {
@@ -5784,6 +5813,11 @@ function coverage_refusal(cover_on: boolean, mode_interp: boolean, mode_check: b
   return "";
 }
 
+// An x86 Android executable uses PIE, like its ARM counterpart.
+function executable_pie(pie: boolean, target: string, shared: boolean): boolean {
+  return pie || target == "x86-64-android" && !shared;
+}
+
 function shared_refusal(shared: boolean, target: string, out_path: string, emit: string): string {
   if (!shared) {
     return "";
@@ -6149,10 +6183,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
     return 2;
   }
-  // An Android executable loads at a random base, as arm64-android's does.
-  if (target == "x86-64-android" && !shared) {
-    pie = true;
-  }
+  pie = executable_pie(pie, target, shared);
   let (remaps, remaps_ok) = path_remaps(remap_specs);
   if (!remaps_ok) {
     return 2;
@@ -6248,18 +6279,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 1;
   }
 
-  let import_bad: string = native_import_refusal(merged, target, shared);
-  if (import_bad.len() > 0) {
-    eprint("fern: " + import_bad);
+  let (bound, jni, bind_bad) = native_bindings(merged, target, shared, jni_java_dir);
+  if (bind_bad.len() > 0) {
+    eprint("fern: " + bind_bad);
     return 2;
   }
-  merged = native_imports(merged, target);
-  let (jni, jni_bad) = jni_build_methods(merged, target, shared, jni_java_dir);
-  if (jni_bad.len() > 0) {
-    eprint("fern: " + jni_bad);
-    return 2;
-  }
-  merged = jni_wrappers(merged, jni);
+  merged = bound;
   if (eprint_findings(st, errors_of(gate(merged, modloader.base_name(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
     return 1;
   }
@@ -6271,18 +6296,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
 
-  let shared_roots: string[] = [];
-  if (shared) {
-    shared_roots = shared_export_names(export_list, jni);
-    let bad: string = shared_export_refusal(merged, shared_roots);
-    if (bad.len() > 0) {
-      eprint("fern: " + bad);
-      return 2;
-    }
-    for n in shared_roots {
-      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
-    }
+  let (exported_module, shared_roots, export_bad) = shared_exports(merged, shared, export_list, jni);
+  if (export_bad.len() > 0) {
+    eprint("fern: " + export_bad);
+    return 2;
   }
+  merged = exported_module;
   if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {
     return 1;
   }

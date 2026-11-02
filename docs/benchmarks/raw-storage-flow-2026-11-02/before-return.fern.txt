@@ -1,0 +1,14 @@
+@noinline
+function buffer(): u8[] {
+  return [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+}
+function main(): i32 {
+  let fd = tcp_listen(0);
+  if (fd < 0) { return 1; }
+  let bytes = buffer();
+  let n = tcp_addr_into(fd, false, bytes);
+  tcp_close(fd);
+  print(n.to_string());
+  if (n != 19 || bytes[0] == 0u8) { return 2; }
+  return 0;
+}

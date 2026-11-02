@@ -1,0 +1,126 @@
+{
+  "scope": "Native ARM64 instruction counts and assembly line counts. No latency claim.",
+  "compiler_sha256": "dc3de013c220698bee8889fb1137371a0c0a50811340470f0f67759fd5d80086",
+  "binding": "/tmp/fern-14026-no-leaf-diagnostic/diagnostic.json",
+  "image": "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+  "rows": [
+    {
+      "name": "http_hello",
+      "source_sha256": "3a3af8ddce8bbfd0ed89b82bd03c878b1c1ae039f0579e1c8b201ec274feb982",
+      "binary_sha256": "da14eb4b165f69cca8ca05d84bd89fc2ab929517133e3fe9eec111782b9a1346",
+      "asm_sha256": "e29d8b56e58ebef1b43b0cefd32c338eecca7be9786051bad854622f926f95d3",
+      "emit": 16356,
+      "ir": 23812615,
+      "exit_code": 30,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14026-no-leaf-diagnostic/probe:/tmp/fern-14026-no-leaf-diagnostic/probe",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--dump-instr=yes",
+        "--collect-jumps=yes",
+        "--callgrind-out-file=/tmp/fern-14026-no-leaf-diagnostic/probe/http_hello.callgrind",
+        "/tmp/fern-14026-no-leaf-diagnostic/probe/http_hello"
+      ],
+      "callgrind_sha256": "eddfc1af7a84559142879ff04b3c10da4e4910521d9ca50d1461c80df4a85a36",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14026-no-leaf-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-emit",
+            "asm",
+            "-o",
+            "/tmp/fern-14026-no-leaf-diagnostic/probe/http_hello.s",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/tmp/fern-14026-no-leaf-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14026-no-leaf-diagnostic/probe/http_hello",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/bench/http_hello.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        }
+      ]
+    },
+    {
+      "name": "ordmap_insert",
+      "source_sha256": "2a92f089af14868a6b34ee2e0f4ad1ebeaa945e9847a2cea8e5e12f9e242d153",
+      "binary_sha256": "16fa728daf57ead5dea6eeae55648ff6748e3d68734e8495e6415fd07e48107d",
+      "asm_sha256": "722e9aafcf2cbb3833c3bca8522ed8672c71a0e035a7f922a0663af9c98beea1",
+      "emit": 5879,
+      "ir": 98047294,
+      "exit_code": 11,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-14026-no-leaf-diagnostic/probe:/tmp/fern-14026-no-leaf-diagnostic/probe",
+        "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--dump-instr=yes",
+        "--collect-jumps=yes",
+        "--callgrind-out-file=/tmp/fern-14026-no-leaf-diagnostic/probe/ordmap_insert.callgrind",
+        "/tmp/fern-14026-no-leaf-diagnostic/probe/ordmap_insert"
+      ],
+      "callgrind_sha256": "7887efc5080c33d9e92a9c876a8c307d1e85c73443d8ae3ae4a585c5fcd266c2",
+      "builds": [
+        {
+          "command": [
+            "/tmp/fern-14026-no-leaf-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-emit",
+            "asm",
+            "-o",
+            "/tmp/fern-14026-no-leaf-diagnostic/probe/ordmap_insert.s",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/bench/ordmap_insert.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        },
+        {
+          "command": [
+            "/tmp/fern-14026-no-leaf-diagnostic/compiler",
+            "-target",
+            "arm64-linux",
+            "-o",
+            "/tmp/fern-14026-no-leaf-diagnostic/probe/ordmap_insert",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/bench/ordmap_insert.fern",
+            "/Users/jakechampion/codex/lang-pr-14026-no-leaf/internal/stdlib"
+          ],
+          "exit_code": 0,
+          "stderr": ""
+        }
+      ]
+    }
+  ]
+}

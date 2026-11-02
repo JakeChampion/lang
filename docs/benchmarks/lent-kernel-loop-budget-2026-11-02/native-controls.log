@@ -1,0 +1,4 @@
+=== RUN   TestSelfHostLentArrayKernel
+--- PASS: TestSelfHostLentArrayKernel (26.92s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	27.302s

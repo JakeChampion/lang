@@ -8304,6 +8304,10 @@ function arm64_gas_strip_at(tok: string): string {
   return arm64_gas_trim(s);
 }
 
+function arm64_gas_page_load(mnem: string, rest: string, ops: string[]): boolean {
+  return mnem == "ldr" && (arm64_str_indexof(rest, "@PAGEOFF") >= 0 || arm64_str_indexof(rest, ":lo12:") >= 0) && !arm64_gas_is_w(ops[0]);
+}
+
 function arm64_gas_strip_lo12(tok: string): string {
   let s: string = arm64_gas_trim(tok);
   let at: i32 = arm64_str_indexof(s, ":lo12:");
@@ -9113,7 +9117,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     // The page offset of a symbol: @PAGEOFF on Mach-O, :lo12: on ELF. The
     // fixup scales the offset by 8, so only an x-register load takes it.
     let lo12: boolean = arm64_str_indexof(rest, ":lo12:") >= 0;
-    if (mnem == "ldr" && (arm64_str_indexof(rest, "@PAGEOFF") >= 0 || lo12) && !arm64_gas_is_w(ops[0])) {
+    if (arm64_gas_page_load(mnem, rest, ops)) {
       let lm: Arm64Mem = arm64_gas_mem_at(ops, 1, lmem);
       let linner: string = ops[1];
       let lb: i32 = arm64_str_indexof(linner, "[");

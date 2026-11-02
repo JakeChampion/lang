@@ -468,6 +468,11 @@ pub function op_raw_store_ptr(): Op {
   return op0(84);
 }
 
+// The count word of the array on the stack.
+pub function op_arr_rc(): Op {
+  return op0(91);
+}
+
 pub function op_raw_load_ptr(): Op {
   return op0(85);
 }

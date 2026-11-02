@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostLentArrayKernel
+--- PASS: TestSelfHostLentArrayKernel (25.61s)
+=== RUN   TestSelfHostMismatchIRX86_64
+--- PASS: TestSelfHostMismatchIRX86_64 (23.84s)
+=== RUN   TestSelfHostMismatchIRArm64
+--- PASS: TestSelfHostMismatchIRArm64 (0.82s)
+=== RUN   TestSelfHostMismatchIRWasm
+--- PASS: TestSelfHostMismatchIRWasm (27.37s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	77.657s

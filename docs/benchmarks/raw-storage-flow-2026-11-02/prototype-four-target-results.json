@@ -1,0 +1,221 @@
+[
+  {
+    "target": "arm64-darwin",
+    "mode": "record",
+    "command": [
+      "/tmp/fern-14024-raw-storage-v2-experiment/freshness-arm64-darwin",
+      "record"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n",
+    "binary_sha256": "6578e5577dff38cbdd068f18f4de2094ffa0a0b262c33070c3f62a0d6c4c54de"
+  },
+  {
+    "target": "arm64-darwin",
+    "mode": "return",
+    "command": [
+      "/tmp/fern-14024-raw-storage-v2-experiment/freshness-arm64-darwin",
+      "return"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=11 frees=11 live_bytes=0\n",
+    "binary_sha256": "6578e5577dff38cbdd068f18f4de2094ffa0a0b262c33070c3f62a0d6c4c54de"
+  },
+  {
+    "target": "arm64-darwin",
+    "mode": "cell",
+    "command": [
+      "/tmp/fern-14024-raw-storage-v2-experiment/freshness-arm64-darwin",
+      "cell"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n",
+    "binary_sha256": "6578e5577dff38cbdd068f18f4de2094ffa0a0b262c33070c3f62a0d6c4c54de"
+  },
+  {
+    "target": "arm64-linux",
+    "mode": "record",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--pull=never",
+      "-v",
+      "/tmp/fern-14024-raw-storage-v2-experiment:/probe",
+      "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+      "timeout",
+      "15",
+      "/probe/freshness-arm64-linux",
+      "record"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n",
+    "binary_sha256": "ea48a63408782f031e3a44960d80cb5c354cea36f197fb8ded03a9c17ed4929a"
+  },
+  {
+    "target": "arm64-linux",
+    "mode": "return",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--pull=never",
+      "-v",
+      "/tmp/fern-14024-raw-storage-v2-experiment:/probe",
+      "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+      "timeout",
+      "15",
+      "/probe/freshness-arm64-linux",
+      "return"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=11 frees=11 live_bytes=0\n",
+    "binary_sha256": "ea48a63408782f031e3a44960d80cb5c354cea36f197fb8ded03a9c17ed4929a"
+  },
+  {
+    "target": "arm64-linux",
+    "mode": "cell",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--pull=never",
+      "-v",
+      "/tmp/fern-14024-raw-storage-v2-experiment:/probe",
+      "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+      "timeout",
+      "15",
+      "/probe/freshness-arm64-linux",
+      "cell"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n",
+    "binary_sha256": "ea48a63408782f031e3a44960d80cb5c354cea36f197fb8ded03a9c17ed4929a"
+  },
+  {
+    "target": "x86-64-linux",
+    "mode": "record",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--pull=never",
+      "-v",
+      "/tmp/fern-14024-raw-storage-v2-experiment:/probe",
+      "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+      "timeout",
+      "15",
+      "qemu-x86_64",
+      "/probe/freshness-x86-64-linux",
+      "record"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n",
+    "binary_sha256": "ed8d7ed58860e3b58ee84fda52f911243af921f983bfcd08f616ba28e3f2919d"
+  },
+  {
+    "target": "x86-64-linux",
+    "mode": "return",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--pull=never",
+      "-v",
+      "/tmp/fern-14024-raw-storage-v2-experiment:/probe",
+      "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+      "timeout",
+      "15",
+      "qemu-x86_64",
+      "/probe/freshness-x86-64-linux",
+      "return"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=11 frees=11 live_bytes=0\n",
+    "binary_sha256": "ed8d7ed58860e3b58ee84fda52f911243af921f983bfcd08f616ba28e3f2919d"
+  },
+  {
+    "target": "x86-64-linux",
+    "mode": "cell",
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--pull=never",
+      "-v",
+      "/tmp/fern-14024-raw-storage-v2-experiment:/probe",
+      "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+      "timeout",
+      "15",
+      "qemu-x86_64",
+      "/probe/freshness-x86-64-linux",
+      "cell"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=13 frees=13 live_bytes=0\n",
+    "binary_sha256": "ed8d7ed58860e3b58ee84fda52f911243af921f983bfcd08f616ba28e3f2919d"
+  },
+  {
+    "target": "wasm32-wasi",
+    "mode": "record",
+    "command": [
+      "/Users/jakechampion/.wasmtime/bin/wasmtime",
+      "run",
+      "-S",
+      "inherit-network",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "/tmp/fern-14024-raw-storage-v2-experiment/freshness-wasm32-wasi",
+      "record"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=28 frees=28 live_bytes=0\n",
+    "binary_sha256": "d1abb32d2b49729a8c23de977f3ddd28f1c9a0c87bee11d18ad25fca49eca05b"
+  },
+  {
+    "target": "wasm32-wasi",
+    "mode": "return",
+    "command": [
+      "/Users/jakechampion/.wasmtime/bin/wasmtime",
+      "run",
+      "-S",
+      "inherit-network",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "/tmp/fern-14024-raw-storage-v2-experiment/freshness-wasm32-wasi",
+      "return"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=26 frees=26 live_bytes=0\n",
+    "binary_sha256": "d1abb32d2b49729a8c23de977f3ddd28f1c9a0c87bee11d18ad25fca49eca05b"
+  },
+  {
+    "target": "wasm32-wasi",
+    "mode": "cell",
+    "command": [
+      "/Users/jakechampion/.wasmtime/bin/wasmtime",
+      "run",
+      "-S",
+      "inherit-network",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "/tmp/fern-14024-raw-storage-v2-experiment/freshness-wasm32-wasi",
+      "cell"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=28 frees=28 live_bytes=0\n",
+    "binary_sha256": "d1abb32d2b49729a8c23de977f3ddd28f1c9a0c87bee11d18ad25fca49eca05b"
+  }
+]

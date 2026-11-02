@@ -1,0 +1,23 @@
+{
+  "parent": "feaf3c45b375ce1d651ba92952f4a7005c228d62",
+  "scope": "Android executable gap correction. Prior measurements retain their original producer. The new compiler matches all 156 measured non-Android benchmark outputs byte for byte.",
+  "compiler_sha256": "fd5b67c5cab98a6d6ee1f48ba773b2bb9abcb600c3f43eeb5aee163defd434a4",
+  "linux_core_sha256": "55f5e93f5ae0cd2bdae228b85fd99db38031d121c76a32d4158f487406fe60cd",
+  "linux_core_command": [
+    "/tmp/fern-14024-main503-fixed-point/stage4",
+    "-target",
+    "arm64-linux",
+    "-o",
+    "/tmp/fern-14024-android-gap/compiler-arm64-linux",
+    "compiler/fern.fern",
+    "internal/stdlib"
+  ],
+  "linux_core_producer_sha256": "25244cc353c2eac328522e2736fbf00bee1c62ac21b95dd4c1631887df83a251",
+  "test_source_hashes": {
+    "internal/testing/e2ecompiler/self_host_image_permissions_test.go": "c4a6b87a58d4d3fb37be82b517225b077e7b10f3cce9a86071b58e1a9d44ef78",
+    "internal/testing/e2ecompiler/self_host_const_aggregate_arm64_pie_test.go": "b1ee4bfdb0244e39054a95fb79030a43dfe4fe7d9efc03e3ac1a41fe7596dad9"
+  },
+  "docker_image": "fern-devbox@sha256:d2e3385724437d928ef8cc5531c76887d95ea253ed681bc3bdec7aa40e6acb6e",
+  "android_fixtures_passed": 1199,
+  "non_android_outputs_identical": 156
+}

@@ -88,6 +88,7 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
       - name: Read the Android app filter from AOSP
         run: |
+          python3 -B -m unittest discover -s scripts -p test_android_app_syscalls.py
           mkdir -p build
           python3 scripts/android-app-syscalls.py build/android-app-syscalls.json
       - name: go test (the corpus against the Android app filter)

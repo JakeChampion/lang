@@ -458,10 +458,9 @@ function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// Length setters can write the shared empty array. Keep it writable with
-// other scalar arrays until #14013 requires their callers to own them.
+// The shared empty array is a constant box: a length setter skips it.
 function empty_array_block(s: asmcore.EmitState, label: string): string {
-  return "    .section .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .section .text\n";
+  return asmcore.const_data_section(s) + "    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .section .text\n";
 }
 
 function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
@@ -2613,7 +2612,7 @@ function emit_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $2, %rdi\n");
   s = s.write("    movq $1, %rax\n");
   s = s.syscall(1);
-  if (s.has_need("logcat")) {
+  if (asmcore.is_android(s.build_target)) {
     s = s.write("    pushq %r15\n    pushq %rdx\n    pushq %rsi\n    pushq $7\n    call __fn___fern_logcat\n");
     s = s.write("    addq $24, %rsp\n    popq %r15\n");
   }
@@ -10183,7 +10182,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    pushq $0\n");
     s = s.need("heap");
   } else if (o.kind_tag == 91) {
-    s = s.write("    popq %rax\n    movl -8(%rax), %eax\n    pushq %rax\n");
+    s = s.write("    popq %rax\n    movslq -8(%rax), %rax\n    pushq %rax\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {
     s = emit_str_op(o, s);
   } else if (o.kind_tag == 185) {
@@ -11499,6 +11498,13 @@ function emit_rt_clocks(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+function emit_logcat_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  if (asmcore.is_android(s.build_target)) {
+    return emit_runtime("__fern_logcat", s);
+  }
+  return s;
+}
+
 function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.profile > 0) {
     s = emit_profile_runtime(s);
@@ -11539,9 +11545,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = asmcore.emit_build_manifest(s);
   }
   s = emit_report(s);
-  if (s.has_need("logcat")) {
-    s = emit_runtime("__fern_logcat", s);
-  }
+  s = emit_logcat_runtime(s);
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
     s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);

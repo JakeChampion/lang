@@ -1,0 +1,7 @@
+=== RUN   TestRawStoragePathsLeakCensusX86_64
+--- PASS: TestRawStoragePathsLeakCensusX86_64 (29.49s)
+=== RUN   TestConformanceLeakCensusX86_64
+    conformance_leak_census_test.go:146: 1205 fixtures measured, 5 leak, 18 unpaired allocs total
+--- PASS: TestConformanceLeakCensusX86_64 (36.12s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	65.620s

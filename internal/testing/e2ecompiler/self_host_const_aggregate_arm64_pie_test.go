@@ -11,14 +11,8 @@ func TestSelfHostConstAggregateArm64PIE(t *testing.T) {
 	if _, err := exec.LookPath("qemu-aarch64"); err != nil {
 		t.Skip("qemu-aarch64 not on PATH; skipping arm64 PIE const-aggregate e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("self-host CLI driver runs only natively (argv paths)")
-	}
-
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	cli := selfHostCLIForHost(t)
+	dir := t.TempDir()
 
 	strBoxCases := []struct {
 		name     string
@@ -52,7 +46,7 @@ func TestSelfHostConstAggregateArm64PIE(t *testing.T) {
 					t.Fatalf("write src: %v", err)
 				}
 				binPath := filepath.Join(dir, name+"_"+target+".bin")
-				emit := exec.Command(fernBin, "-target", target, "-o", binPath, srcPath)
+				emit := exec.Command(cli.cli, "-target", target, "-o", binPath, srcPath, cli.stdlib)
 				emitOut, err := emit.CombinedOutput()
 				if err != nil {
 					t.Fatalf("emit -target %s: %v\n%s", target, err, emitOut)

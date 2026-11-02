@@ -16,6 +16,8 @@ import (
 const libcImportSrc = `@import("libc.so.6", "getpid")
 function c_getpid(): i32;
 
+function between_imports(): i32 { return 1; }
+
 @import("libc.so.6", "strlen")
 function c_strlen(s: usize): usize;
 
