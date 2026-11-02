@@ -773,6 +773,10 @@ pub function op_dir_chown(): Op {
   return op0(427);
 }
 
+pub function op_dir_open_file(write: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: 428, i32_imm: write, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
 pub function op_termios_get(): Op {
   return op0(312);
 }
@@ -2068,7 +2072,7 @@ pub function kind_id(name: string): i32 {
   if (lane > 0) {
     return lane;
   }
-  if (n >= 8 && n <= 11 && (name[0] == b'd' || name[0] == b'o')) {
+  if (n >= 8 && n <= 13 && (name[0] == b'd' || name[0] == b'o')) {
     let dir: i32 = kind_id_dir(name);
     if (dir > 0) {
       return dir;
@@ -2147,7 +2151,7 @@ pub function kind_id(name: string): i32 {
 }
 
 function dir_kind_names(): string[] {
-  return ["open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown"];
+  return ["open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file"];
 }
 
 function kind_id_dir(name: string): i32 {
@@ -4583,7 +4587,7 @@ pub function kind_name(id: i32): string {
   if (id == 409) {
     return "sha256_hw";
   }
-  if (id >= 420 && id <= 427) {
+  if (id >= 420 && id <= 428) {
     return dir_kind_name(id);
   }
   if (id == 430) {
@@ -4992,7 +4996,7 @@ function pops_dir(t: i32): i32 {
   if (t == 420 || t == 422) {
     return 1;
   }
-  if (t == 424) {
+  if (t == 424 || t == 428) {
     return 3;
   }
   if (t == 426) {
@@ -5048,7 +5052,7 @@ function kind_pops(t: i32): i32 {
   if (bufn >= 0) {
     return bufn;
   }
-  if (t >= 420 && t <= 427) {
+  if (t >= 420 && t <= 428) {
     return pops_dir(t);
   }
   if (pops0(t)) {
@@ -7101,7 +7105,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 276 || tag == 408) {
     return true;
   }
-  if (tag >= 420 && tag <= 427) {
+  if (tag >= 420 && tag <= 428) {
     return true;
   }
   if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 407 || tag == 366) {

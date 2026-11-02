@@ -1,0 +1,10 @@
+function __fern_dir_open_file(dirfd: i32, path: string, flags: i32, write: i32): Result[i32, IoError] {
+  let f: i32 = __fern_open_flags(flags, write);
+  if (f < 0) {
+    return Err(Unsupported);
+  }
+  if (write == 2) {
+    f = f | 1024;
+  }
+  return __fern_dir_openat(dirfd, path, f | 256 | 16777216, 438);
+}

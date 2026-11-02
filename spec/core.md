@@ -446,6 +446,7 @@ is the number of slots it leaves.
 | `dir_unlink` | 425 | 2 | 1 |
 | `dir_chmod` | 426 | 4 | 1 |
 | `dir_chown` | 427 | 5 | 1 |
+| `dir_open_file` | 428 | 3 | 1 |
 | `mulhi_u` | 430 | 2 | 1 |
 | `writer_splice_forever` | 431 | 2 | 1 |
 | `read_dir_ino_all` | 432 | 1 | 1 |

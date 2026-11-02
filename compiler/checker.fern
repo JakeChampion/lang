@@ -4734,6 +4734,10 @@ function builtin_sigs(): string[] {
     "__method_Dir_entries_bytes(Dir): Result[u8[][], IoError]",
     "__method_Dir_lstat(Dir, string): Result[FileStat, IoError]",
     "__method_Dir_open_dir(Dir, string): Result[Dir, IoError]",
+    "__method_Dir_open_reader(Dir, string): Result[Reader, IoError]",
+    "__method_Dir_open_reader_with(Dir, string, i32): Result[Reader, IoError]",
+    "__method_Dir_open_writer(Dir, string): Result[Writer, IoError]",
+    "__method_Dir_open_writer_with(Dir, string, i32): Result[Writer, IoError]",
     "__method_Dir_remove_dir(Dir, string): Result[void, IoError]",
     "__method_Dir_remove_file(Dir, string): Result[void, IoError]",
     "__method_Dir_stat(Dir, string): Result[FileStat, IoError]",
@@ -18529,8 +18533,8 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   return ow_is_owned_expr(e, ctx);
 }
 
-// A method call whose result is a kernel descriptor: a directory opened
-// under another directory.
+// A method call whose result is a kernel descriptor: a directory or a file
+// opened under another directory.
 function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
   if let ast.ExprFieldAccess(mfa) = c.callee {
     for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
@@ -18543,7 +18547,7 @@ function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
 }
 
 function ow_fresh_builtin_methods(): string[] {
-  return ["Dir.open_dir"];
+  return ["Dir.open_dir", "Dir.open_reader", "Dir.open_writer", "Dir.open_reader_with", "Dir.open_writer_with"];
 }
 
 function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
@@ -21457,7 +21461,7 @@ function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.Nam
 }
 
 function ow_fresh_builtin_method_names(): string[] {
-  return ["open_dir"];
+  return ["open_dir", "open_reader", "open_writer", "open_reader_with", "open_writer_with"];
 }
 
 function ow_value_block_call(c: ast.ExprCall, lm: ast.ExprLambda): boolean {

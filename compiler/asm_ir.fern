@@ -1954,7 +1954,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
-    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
   ]);
 }
 
@@ -1970,7 +1970,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts", "sysctl",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority", "clock_set",
-    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
   ]);
 }
 
@@ -10129,7 +10129,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq " + regs[k] + "\n");
     k = k - 1;
   }
-  if (o.kind_tag == 423 || o.kind_tag == 425) {
+  if (o.kind_tag == 423 || o.kind_tag == 425 || o.kind_tag == 428) {
     s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", " + regs[n] + "\n");
     n = n + 1;
   }
@@ -10242,7 +10242,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    call __fn___fern_pipe\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("pipe");
-  } else if (o.kind_tag >= 420 && o.kind_tag <= 427) {
+  } else if (o.kind_tag >= 420 && o.kind_tag <= 428) {
     s = emit_dir_op(o, s);
   } else if (o.kind_tag == 276) {
     s = s.write("    call __fn___fern_window_size\n    addq $8, %rsp\n    pushq %rax\n");

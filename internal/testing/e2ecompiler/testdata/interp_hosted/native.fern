@@ -83,6 +83,37 @@ function main(): i32 {
         },
         Err(e) => { print("dir open_dir: " + kind(e)); }
       }
+      match (dir.open_reader("f")) {
+        Ok(r) => {
+          match (r.read_chunk(8)) {
+            Ok(s) => { print("dir open_reader: " + s); },
+            Err(e) => { print("dir open_reader read: " + kind(e)); }
+          }
+          done("dir reader close", r.close());
+        },
+        Err(e) => { print("dir open_reader: " + kind(e)); }
+      }
+      match (dir.open_reader("nope")) {
+        Ok(_) => { print("dir open_reader missing: ok"); },
+        Err(e) => { print("dir open_reader missing: " + kind(e)); }
+      }
+      match (dir.open_writer("w")) {
+        Ok(w) => {
+          done("dir writer write", w.write("abc"));
+          done("dir writer close", w.close());
+        },
+        Err(e) => { print("dir open_writer: " + kind(e)); }
+      }
+      perm("dir writer stat", dir.lstat("w"));
+      match (dir.open_writer_with("w", 1 | 4)) {
+        Ok(w) => { print("dir open_writer_with exclusive: ok"); done("dir writer close", w.close()); },
+        Err(e) => { print("dir open_writer_with exclusive: " + kind(e)); }
+      }
+      match (dir.open_reader_with("w", 512)) {
+        Ok(r) => { print("dir open_reader_with: ok"); done("dir reader close", r.close()); },
+        Err(e) => { print("dir open_reader_with: " + kind(e)); }
+      }
+      done("dir remove_file w", dir.remove_file("w"));
       done("dir remove_file", dir.remove_file("f"));
       done("dir remove_dir", dir.remove_dir("sub"));
       done("dir close", dir.close());

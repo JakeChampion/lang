@@ -6537,6 +6537,9 @@ pub function runtime_dir_roots(s: EmitState): string {
   if (s.has_need("dir_chown")) {
     out = out + " " + "__fern_dir_chown";
   }
+  if (s.has_need("dir_open_file")) {
+    out = out + " " + "__fern_dir_open_file";
+  }
   return out;
 }
 

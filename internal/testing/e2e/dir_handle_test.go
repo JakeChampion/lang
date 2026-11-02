@@ -54,6 +54,54 @@ function rm_tree(d: Dir, name: string): i32 {
     return n + 1;
 }
 
+// open_under opens files under top and sub by name. The step codes run from
+// 50. The directory sub is renamed away and replaced while its handle is open,
+// and the handle must still name the original.
+function open_under(top: Dir, sub: Dir, root: string): i32 {
+    let Ok(r) = top.open_reader("f") else { return 50; };
+    match (r.read_chunk(16)) {
+        Ok(s) => { if (s != "hello") { return 51; } },
+        Err(_) => { return 52; }
+    }
+    match (r.close()) { Ok(_) => {}, Err(_) => { return 53; } }
+    match (top.open_reader("l")) { Ok(_) => { return 54; }, Err(_) => {} }
+    match (create_symlink("f", root + "/lf")) { Ok(_) => {}, Err(_) => { return 55; } }
+    match (top.open_reader("lf")) { Ok(_) => { return 56; }, Err(e) => { match (e) { Other(p, _, n) => { if (p != "lf" || n != 40) { return 57; } }, _ => { return 58; } } } }
+    match (top.open_reader_with("lf", 0)) { Ok(_) => { return 59; }, Err(_) => {} }
+    match (top.remove_file("lf")) { Ok(_) => {}, Err(_) => { return 60; } }
+    match (top.open_reader("nope")) {
+        Ok(_) => { return 61; },
+        Err(e) => { match (e) { NotFound(p) => { if (p != "nope") { return 62; } }, _ => { return 63; } } }
+    }
+    let Ok(w) = top.open_writer("w") else { return 64; };
+    match (w.write("abc")) { Ok(_) => {}, Err(_) => { return 65; } }
+    match (w.close()) { Ok(_) => {}, Err(_) => { return 66; } }
+    match (top.lstat("w")) { Ok(st) => { if (st.size != 3i64) { return 67; } }, Err(_) => { return 68; } }
+    let Ok(w2) = top.open_writer("w") else { return 69; };
+    match (w2.write("z")) { Ok(_) => {}, Err(_) => { return 70; } }
+    match (w2.close()) { Ok(_) => {}, Err(_) => { return 71; } }
+    match (top.lstat("w")) { Ok(st) => { if (st.size != 1i64) { return 72; } }, Err(_) => { return 73; } }
+    match (top.open_writer_with("w", 1 | 4)) { Ok(_) => { return 74; }, Err(e) => { match (e) { AlreadyExists(p) => { if (p != "w") { return 75; } }, _ => { return 76; } } } }
+    let Ok(w3) = top.open_writer_with("w", 0) else { return 77; };
+    match (w3.write("yy")) { Ok(_) => {}, Err(_) => { return 78; } }
+    match (w3.close()) { Ok(_) => {}, Err(_) => { return 79; } }
+    match (top.lstat("w")) { Ok(st) => { if (st.size != 2i64) { return 80; } }, Err(_) => { return 81; } }
+    match (top.remove_file("w")) { Ok(_) => {}, Err(_) => { return 82; } }
+    match (rename(root + "/sub", root + "/swap")) { Ok(_) => {}, Err(_) => { return 83; } }
+    match (create_dir(root + "/sub", 448)) { Ok(_) => {}, Err(_) => { return 84; } }
+    match (write_file(root + "/sub/g", "evil")) { Ok(_) => {}, Err(_) => { return 85; } }
+    let Ok(g) = sub.open_reader("g") else { return 86; };
+    match (g.read_chunk(16)) {
+        Ok(s) => { if (s != "x") { return 87; } },
+        Err(_) => { return 88; }
+    }
+    match (g.close()) { Ok(_) => {}, Err(_) => { return 89; } }
+    match (remove_file(root + "/sub/g")) { Ok(_) => {}, Err(_) => { return 90; } }
+    match (remove_dir(root + "/sub")) { Ok(_) => {}, Err(_) => { return 91; } }
+    match (rename(root + "/swap", root + "/sub")) { Ok(_) => {}, Err(_) => { return 92; } }
+    return 0;
+}
+
 function main(): i32 {
     let Ok(top) = open_dir(%[1]q) else { return 10; };
     match (top.lstat("f")) {
@@ -79,6 +127,8 @@ function main(): i32 {
         Ok(names) => { if (names.len() != 1) { return 24; } if (names[0] != "g") { return 25; } },
         Err(_) => { return 26; }
     }
+    let k: i32 = open_under(top, sub, %[1]q);
+    if (k != 0) { return k; }
     match (sub.entries()) {
         Ok(names) => { if (names.len() != 1) { return 27; } },
         Err(_) => { return 28; }
@@ -190,13 +240,20 @@ func TestDirHandleGatedOnFsdir(t *testing.T) {
 	}
 	for _, target := range []string{"wasm32-wasi", "wasm32-wasi-http"} {
 		vs := platforms.Enforce(prog, target)
-		if len(vs) == 0 {
-			t.Errorf("%s: no violations, want open_dir refused", target)
-		}
+		sawDir := false
 		for _, v := range vs {
-			if v.Builtin != "open_dir" {
+			switch {
+			case v.Builtin == "open_dir":
+				sawDir = true
+			case target == "wasm32-wasi-http" && v.Capability == "fs":
+				// The proxy target provides no filesystem at all, so the
+				// swap's rename and create_dir are refused with it.
+			default:
 				t.Errorf("%s: unexpected violation %+v", target, v)
 			}
+		}
+		if !sawDir {
+			t.Errorf("%s: no violation names open_dir, want it refused", target)
 		}
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
