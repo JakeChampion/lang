@@ -9671,6 +9671,14 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     si = si + 1;
   }
   let alloc: ssa.Alloc = ssa_allocate(f, imm, s);
+  match (env("FERN_SSA_ALLOC")) {
+    Some(want) => {
+      if (want == label_name) {
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc(f, alloc));
+      }
+    },
+    None => {}
+  }
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
