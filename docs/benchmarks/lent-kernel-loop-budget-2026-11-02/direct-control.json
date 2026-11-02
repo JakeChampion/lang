@@ -1,0 +1,85 @@
+{
+  "scope": "Direct before/after compiler control. Go host helpers rebuild the current CLI, so changing their bootstrap producer is not a before/after source control.",
+  "rows": [
+    {
+      "name": "original",
+      "target": "arm64-linux",
+      "command": [
+        "/tmp/fern-14026-original-diagnostic/compiler",
+        "-O",
+        "-target",
+        "arm64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-14026-loop-direct-control/original-arm64-linux.s",
+        "/tmp/fern-14026-loop-direct-control/main.fern",
+        "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+      ],
+      "compiler_sha256": "a5700d1d9684434864678da617eabc13e7833fbdf6de391b8b85e5facee62ad3",
+      "source_sha256": "b66de5097d39041e2c50d825e1d823615aad4411c7ed8829728cefda324a156a",
+      "asm_sha256": "663e04f7fea1794760e9a530b45a930f8638de75cdf469ab4590c7b2a9b7aed9",
+      "loop_call_retained": false
+    },
+    {
+      "name": "original",
+      "target": "x86-64-linux",
+      "command": [
+        "/tmp/fern-14026-original-diagnostic/compiler",
+        "-O",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-14026-loop-direct-control/original-x86-64-linux.s",
+        "/tmp/fern-14026-loop-direct-control/main.fern",
+        "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+      ],
+      "compiler_sha256": "a5700d1d9684434864678da617eabc13e7833fbdf6de391b8b85e5facee62ad3",
+      "source_sha256": "b66de5097d39041e2c50d825e1d823615aad4411c7ed8829728cefda324a156a",
+      "asm_sha256": "262ce71e4e3eeab369a943f981a8a6495d7aa02893c83dac809943cac9944b14",
+      "loop_call_retained": false
+    },
+    {
+      "name": "fixed",
+      "target": "arm64-linux",
+      "command": [
+        "/tmp/fern-14026-loop-budget-diagnostic/compiler",
+        "-O",
+        "-target",
+        "arm64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-14026-loop-direct-control/fixed-arm64-linux.s",
+        "/tmp/fern-14026-loop-direct-control/main.fern",
+        "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+      ],
+      "compiler_sha256": "7c3092de9e9cf56a236561402ac5e875a9726e0e5dde8fb8a538ae43c83cb522",
+      "source_sha256": "b66de5097d39041e2c50d825e1d823615aad4411c7ed8829728cefda324a156a",
+      "asm_sha256": "83e46b782e33f3288ef3eef29df157472e81d2f53dfd4cdb46f9712e3fc95d36",
+      "loop_call_retained": true
+    },
+    {
+      "name": "fixed",
+      "target": "x86-64-linux",
+      "command": [
+        "/tmp/fern-14026-loop-budget-diagnostic/compiler",
+        "-O",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/tmp/fern-14026-loop-direct-control/fixed-x86-64-linux.s",
+        "/tmp/fern-14026-loop-direct-control/main.fern",
+        "/Users/jakechampion/codex/lang-pr-14026-validation/internal/stdlib"
+      ],
+      "compiler_sha256": "7c3092de9e9cf56a236561402ac5e875a9726e0e5dde8fb8a538ae43c83cb522",
+      "source_sha256": "b66de5097d39041e2c50d825e1d823615aad4411c7ed8829728cefda324a156a",
+      "asm_sha256": "166a9fbcf26bc64a3368bac015682fd9728a68f3d13e2f8679d9475895a53d82",
+      "loop_call_retained": true
+    }
+  ]
+}

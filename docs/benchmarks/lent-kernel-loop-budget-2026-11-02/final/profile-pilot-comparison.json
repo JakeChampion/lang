@@ -1,0 +1,12 @@
+{
+  "scope": "Static profiles on both target ISAs. Canonical CI source paths. Dynamic x86 instructions still require native CI.",
+  "metrics": 48,
+  "baseline_sha256": "e5b0745e5e35dbb8743868dce248c2806d5f5b8aac65301f37230568c2341fc7",
+  "producer_sha256": "14f71fbe871fb84943a340156d484da2595ccd2619965f7af0c0257a635cc5ee",
+  "command": [
+    "/Users/jakechampion/codex/lang-pr-14026-validation/scripts/ci-check-perf",
+    "/tmp/fern-14026-final-profile-ci-pilot/limits.txt",
+    "/tmp/fern-14026-final-profile-ci-pilot/report.txt"
+  ],
+  "exit_code": 0
+}

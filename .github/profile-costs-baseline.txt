@@ -1,3 +1,5 @@
+# 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
+# Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
 # so http_hello.text and .emit grow 1.86% on x86_64 and aarch64 and the http_hello profile emits 1.0% to 1.1%.
 # 2026-11-02: PR #14025 run 41440248030 on the merge with main 87b88925 (#14019, #14023), whose rows moved
