@@ -94,6 +94,31 @@ sanitizer.
 
 ## Next lead
 
+### Implicit finalizer correction
+
+An implicit drop can call a finalizer that replaces the cell's content.
+A record construction is not an explicit call in semantic SSA.
+A quiet read across that construction can therefore observe a freed snapshot.
+The reproducer returns zero on main and one on the initial PR head, with balanced allocation counts in both cases.
+
+The borrow proof now also checks whether the function's value types can hold a user finalizer.
+It uses the existing recursive containment proof, including opaque values.
+It checks this condition once per function with an otherwise quiet read.
+Functions with possible finalizer effects retain the snapshot.
+The region proof does not yet track implicit drop sites or edge drops.
+
+The direct and array-contained finalizer regressions preserve the snapshot after the finalizer clears its cell.
+The original quiet, local, written, and called controls still pass.
+Both local test roots pass in 79.670 seconds without skips.
+The earlier measurements retain their original source scope.
+
+The guard is conservative in functions that contain resources.
+The deterministic native ARM64 `shuf` control has identical output across three engines at 10,000 values.
+The owner head records 3,266,702 instructions.
+The repaired engine and the preceding main both record 3,436,719.
+The repair restores correctness and the preceding main's cost in this path.
+The evidence resides in `docs/benchmarks/cell-finalizer-snapshot-2026-11-02`.
+
 A read matched in a block with two predecessors is still a unit. One
 example is a value read before an `if` and matched after it. The region can
 grow through a join when every predecessor of the join is in the region.

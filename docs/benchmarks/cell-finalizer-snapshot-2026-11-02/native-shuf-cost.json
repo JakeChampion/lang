@@ -1,0 +1,105 @@
+{
+  "scope": "Native ARM64 Callgrind instructions for shuf with deterministic entropy, identical argv0 and byte-identical output. No latency or native x86 timing claim. The conservative finalizer guard restores the preceding-main cost for this resource-containing function.",
+  "random_source_sha256": "094a9d022b6686629528f786db9e4c1114c585961905755120cd2892e3d1b146",
+  "preceding_main": "f4ef721eb3eca85498b714f04d296a22c8fd02d3",
+  "owner_head": "ed6a0ad03f6d393aa56a9c028e403c436e2655ad",
+  "repaired_compiler_sha256": "431e233d202739a1d0cf077d7b42b83da4fc12ac334cfca503abd142ba24430f",
+  "rows": [
+    {
+      "engine": "preceding-main",
+      "scale": 100,
+      "instructions": 45808,
+      "stdout_sha256": "355d1ca04c69d7853401606b0534697b5498540d7eb495852f0c3fc0cd30b996",
+      "binary_sha256": "5d11a2c99a903f9219e4f056e435d0b0443e1f249bc1a03173c93676c16d90ac",
+      "command": [
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=preceding-main-100.callgrind",
+        "./engine",
+        "--random-source=random.bin",
+        "-i",
+        "1-100"
+      ]
+    },
+    {
+      "engine": "owner",
+      "scale": 100,
+      "instructions": 44091,
+      "stdout_sha256": "355d1ca04c69d7853401606b0534697b5498540d7eb495852f0c3fc0cd30b996",
+      "binary_sha256": "4a5104381f70a7bb2e29b9386bd26fd4bca00a55c84915258d9427a86c8173b7",
+      "command": [
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=owner-100.callgrind",
+        "./engine",
+        "--random-source=random.bin",
+        "-i",
+        "1-100"
+      ]
+    },
+    {
+      "engine": "repaired",
+      "scale": 100,
+      "instructions": 45808,
+      "stdout_sha256": "355d1ca04c69d7853401606b0534697b5498540d7eb495852f0c3fc0cd30b996",
+      "binary_sha256": "5d11a2c99a903f9219e4f056e435d0b0443e1f249bc1a03173c93676c16d90ac",
+      "command": [
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=repaired-100.callgrind",
+        "./engine",
+        "--random-source=random.bin",
+        "-i",
+        "1-100"
+      ]
+    },
+    {
+      "engine": "preceding-main",
+      "scale": 10000,
+      "instructions": 3436719,
+      "stdout_sha256": "3d4301d1725f90c415e86320090af9749519030b8751da346c25ac5681876f98",
+      "binary_sha256": "5d11a2c99a903f9219e4f056e435d0b0443e1f249bc1a03173c93676c16d90ac",
+      "command": [
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=preceding-main-10000.callgrind",
+        "./engine",
+        "--random-source=random.bin",
+        "-i",
+        "1-10000"
+      ]
+    },
+    {
+      "engine": "owner",
+      "scale": 10000,
+      "instructions": 3266702,
+      "stdout_sha256": "3d4301d1725f90c415e86320090af9749519030b8751da346c25ac5681876f98",
+      "binary_sha256": "4a5104381f70a7bb2e29b9386bd26fd4bca00a55c84915258d9427a86c8173b7",
+      "command": [
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=owner-10000.callgrind",
+        "./engine",
+        "--random-source=random.bin",
+        "-i",
+        "1-10000"
+      ]
+    },
+    {
+      "engine": "repaired",
+      "scale": 10000,
+      "instructions": 3436719,
+      "stdout_sha256": "3d4301d1725f90c415e86320090af9749519030b8751da346c25ac5681876f98",
+      "binary_sha256": "5d11a2c99a903f9219e4f056e435d0b0443e1f249bc1a03173c93676c16d90ac",
+      "command": [
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=repaired-10000.callgrind",
+        "./engine",
+        "--random-source=random.bin",
+        "-i",
+        "1-10000"
+      ]
+    }
+  ]
+}

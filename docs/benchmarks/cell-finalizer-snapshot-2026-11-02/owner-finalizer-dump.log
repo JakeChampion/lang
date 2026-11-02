@@ -1,0 +1,39 @@
+FERN_RC_CERTIFY: lifted through_drop
+func through_drop {
+  b0:
+    v0 = param 0
+    v10 = const_int 0
+    v11 = arr_at 1 rc v0 v10
+    v12 = call __fern_rc_inc v0
+    v13 = arr_box
+    v14 = shape_addr Clear
+    v15 = st_at v13 v14
+    v16 = st_at 8 v13 v0
+    v17 = call __sem_release_Clear v13
+    v18 = ld_at v11
+    v19 = const_int 0
+    v20 = binary eq v18 v19
+    brif v20 b4 b1
+  b4:
+    v21 = ld_at 8 rc v11
+    v22 = ld_at 16 v21
+    v23 = ld_at 8 rc v21
+    v24 = ld_at 8 v23
+    v25 = binary add v22 v24
+    v26 = unary int_cast:i32 v25
+    ret v26
+  b1:
+    v27 = const_int 0
+    ret v27
+}
+
+FERN_RC_CERTIFY: census string.repeat tracked=7 unproved=0 findings=0 abi=21>unit
+FERN_RC_CERTIFY: census Clear.drop tracked=1 unproved=0 findings=0 abi=2
+FERN_RC_CERTIFY: census through_drop tracked=2 unproved=0 findings=0 abi=2
+FERN_RC_CERTIFY: census main tracked=6 unproved=0 findings=0 abi=
+FERN_RC_CERTIFY: census __sem_drop_Clear tracked=2 unproved=0 findings=0 abi=4
+FERN_RC_CERTIFY: census __sem_release_Clear tracked=1 unproved=0 findings=0 abi=3
+FERN_RC_CERTIFY: census __sem_drop_Err tracked=1 unproved=0 findings=0 abi=4
+FERN_RC_CERTIFY: census __sem_release_Err tracked=1 unproved=0 findings=0 abi=3
+FERN_RC_CERTIFY: census __sem_drop_Option$Err tracked=1 unproved=0 findings=0 abi=4
+FERN_RC_CERTIFY: census __sem_release_Option$Err tracked=1 unproved=0 findings=0 abi=3
