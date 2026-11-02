@@ -69,7 +69,7 @@ function main(): i32 {
     let pa2: Arm64Asm = p.asm;
     let entry_off: i32 = arm64_asm_label_off(pa2, "_start");
     if (entry_off < 0) { entry_off = 0; }
-    write(string_from_bytes_unchecked(elf_image_pie(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size)));
+    write(string_from_bytes_unchecked(elf_image_pie(pa2.text, p.data, elf_em_aarch64(), entry_off, p.bss_size, 0)));
     return 0;
 }
 `
