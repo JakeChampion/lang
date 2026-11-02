@@ -12,6 +12,9 @@ A program that passes a number at run time is refused at compile time, so the li
 The installer sets `PR_SET_NO_NEW_PRIVS` first, so the filter needs no privilege and an `execve` of a setuid or setcap program cannot gain privilege.
 A denied call kills the process with `SIGSYS`.
 
+The filter also checks one argument. The list admits `mmap`, `mprotect` and `pkey_mprotect` by number when the program contains them, because the runtime maps its arena and guards its stack.
+A request for an executable mapping, a protection word with `PROT_EXEC`, is killed. No runtime path asks for one, so the rule costs no program anything.
+
 A child process inherits the filter across `execve`, so a program the sandboxed program runs is held to the same list.
 
 | Test | What it pins |
@@ -20,7 +23,8 @@ A child process inherits the filter across `execve`, so a program the sandboxed 
 | `TestSeccompDoesNotBreakWorkingPrograms` | arithmetic, constant data, heap and strings, allocation churn and the clock run to the same result under the filter |
 | `TestSeccompFilterDenies` | an `execve` spliced into the program dies with `SIGSYS` under the filter and returns `EFAULT` without it |
 | `TestSeccompFixtureCorpus` | the conformance corpus under the filter, on request |
-| `TestSelfHostSandboxFilterShape` | the emitted filter on both targets checks the audit architecture first, lists the program's calls in ascending order, and leaves out `prctl` and `seccomp` |
+| `TestSelfHostSandboxFilterShape` | the emitted filter on both targets checks the audit architecture first, lists the program's calls in ascending order, sends the mapping calls through the protection check, and leaves out `prctl` and `seccomp` |
+| `TestSeccompDeniesExecutableMapping` | an `mprotect` with `PROT_EXEC` spliced into the program dies with `SIGSYS` under the filter, the same call with read and write passes, and the executable request passes without the filter |
 | `TestSelfHostSandboxRefusesDarwin`, `TestSelfHostSandboxRefusesRunTimeSyscallNumber`, `TestSelfHostSandboxNoBareSyscallEmit` | an `arm64-darwin` build refuses the flag, a run-time syscall number is refused on both targets, and no backend writes a `syscall` or `svc #0` outside the recorders |
 | `TestSeccompNoNewPrivsBlocksSetuidEscalation` | a sandboxed program that dropped to user 65534 runs a setuid-root helper, and the helper reports 65534. Without the sandbox the same helper reports 0, which is the control. The child inherits the filter, so the helper can only make the calls the driver makes. The test needs root to install the helper and skips where the host refuses setuid |
 
@@ -30,7 +34,7 @@ The runtime provides `setuid`, `setgid` and `setgroups` for a privilege drop, an
 ## Remaining limits
 
 - The sandbox is Linux only. An `arm64-darwin` build refuses the flag, and a wasm image has no process to confine. QEMU user mode does not emulate seccomp, so the arm64 run-time tests and the arm64 fixture corpus run on the native arm64 runner alone.
-- The allowlist is by number alone. It does not constrain arguments, so an allowed `openat` can open any path the process can reach.
+- The allowlist constrains one argument, the protection word of a mapping call. An allowed `openat` can open any path the process can reach.
 - There is no namespace, chroot-by-default, or mount isolation. `chroot` exists as a builtin for a program that is already root.
 - A privilege drop is the program's own call. Nothing drops privilege at startup, and nothing verifies that a drop happened before the program reads untrusted input.
 - The resource quotas are the arena and the descriptor ceiling. There is no CPU time or child process quota.

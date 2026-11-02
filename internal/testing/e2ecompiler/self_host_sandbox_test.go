@@ -29,6 +29,7 @@ type sandboxTarget struct {
 	arch      uint32   // the AUDIT_ARCH_* word the filter checks first
 	installer []uint32 // prctl and seccomp: issued before the filter applies, so never allowed
 	program   []uint32 // the calls sandboxSocketProg makes on this target
+	mapping   []uint32 // mmap, mprotect and pkey_mprotect: allowed only without PROT_EXEC
 	install   string   // the call of the installer in _start
 	mainCall  string   // the call of main, which the installer must precede
 }
@@ -39,6 +40,7 @@ var sandboxTargets = []sandboxTarget{
 		arch:      0xC000003E,
 		installer: []uint32{157, 317},
 		program:   []uint32{3, 41, 49, 50, 51, 231},
+		mapping:   []uint32{9, 10, 329},
 		install:   "    call __fern_seccomp_install\n",
 		mainCall:  "    call __fn_main\n",
 	},
@@ -47,6 +49,7 @@ var sandboxTargets = []sandboxTarget{
 		arch:      0xC00000B7,
 		installer: []uint32{167, 277},
 		program:   []uint32{57, 94, 198, 200, 201, 204},
+		mapping:   []uint32{222, 226, 288},
 		install:   "    bl __fern_seccomp_install\n",
 		mainCall:  "    bl __fn_main\n",
 	},
@@ -152,21 +155,61 @@ func checkSandboxFilterShape(t *testing.T, tgt sandboxTarget) {
 	if f[last] != (sandboxBPF{code: retK, k: allow}) {
 		t.Errorf("final insn = %+v, want RET ALLOW", f[last])
 	}
-	if f[last-1] != (sandboxBPF{code: retK, k: kill}) {
-		t.Errorf("penultimate insn = %+v, want RET KILL_PROCESS: the fall-through must deny", f[last-1])
+	// The list ends at the first RET KILL: the fall-through denies. A
+	// mapping call in the list jumps to the check block behind that kill,
+	// which loads the protection word and kills a request with PROT_EXEC.
+	const jsetK = 0x45
+	killAt := -1
+	for i := 4; i < last; i++ {
+		if f[i].code == retK && f[i].k == kill {
+			killAt = i
+			break
+		}
+	}
+	if killAt < 0 {
+		t.Fatalf("no RET KILL_PROCESS after the list: the fall-through must deny: %+v", f)
+	}
+	checked := killAt+1 != last
+	if checked {
+		if last != killAt+4 {
+			t.Fatalf("the check block spans insns %d to %d, want three instructions before the ALLOW", killAt+1, last-1)
+		}
+		if f[killAt+1] != (sandboxBPF{code: ldWAbs, k: 32}) {
+			t.Errorf("insn %d = %+v, want a load of seccomp_data.args[2], the protection word", killAt+1, f[killAt+1])
+		}
+		if f[killAt+2] != (sandboxBPF{code: jsetK, jt: 0, jf: 1, k: 4}) {
+			t.Errorf("insn %d = %+v, want JSET PROT_EXEC falling through to the kill and skipping it otherwise", killAt+2, f[killAt+2])
+		}
+		if f[killAt+3] != (sandboxBPF{code: retK, k: kill}) {
+			t.Errorf("insn %d = %+v, want RET KILL_PROCESS for an executable mapping", killAt+3, f[killAt+3])
+		}
+	}
+	mapping := map[uint32]bool{}
+	for _, nr := range tgt.mapping {
+		mapping[nr] = true
 	}
 	allowed := map[uint32]bool{}
-	for i := 4; i < last-1; i++ {
+	for i := 4; i < killAt; i++ {
 		if f[i].code != jeqK || f[i].jf != 0 {
 			t.Fatalf("insn %d = %+v, want a JEQ falling through to the next comparison", i, f[i])
 		}
-		if target := i + 1 + f[i].jt; target != last {
-			t.Errorf("insn %d (allow %d) jumps to %d, want %d (the ALLOW)", i, f[i].k, target, last)
+		want, where := last, "the ALLOW"
+		if mapping[f[i].k] {
+			if !checked {
+				t.Fatalf("insn %d allows the mapping call %d without a check block", i, f[i].k)
+			}
+			want, where = killAt+1, "the protection check"
+		}
+		if target := i + 1 + f[i].jt; target != want {
+			t.Errorf("insn %d (allow %d) jumps to %d, want %d (%s)", i, f[i].k, target, want, where)
 		}
 		if i > 4 && f[i].k <= f[i-1].k {
 			t.Errorf("insn %d allows %d after %d: the list is not ascending and unique", i, f[i].k, f[i-1].k)
 		}
 		allowed[f[i].k] = true
+	}
+	if !checked {
+		t.Errorf("the program maps its heap, so the filter must carry the protection check")
 	}
 	for _, nr := range tgt.program {
 		if !allowed[nr] {

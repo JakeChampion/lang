@@ -11769,7 +11769,7 @@ function emit_seccomp_install(s: asmcore.EmitState): asmcore.EmitState {
   let allowed: i32[] = asmcore.seccomp_allowlist(s);
   s = s.write("    .text\n__fern_seccomp_install:\n");
   s = s.write("    mov x0, #38\n    mov x1, #1\n    mov x2, #0\n    mov x3, #0\n    mov x4, #0\n    mov x8, #167\n").svc(167);
-  s = s.write("    sub sp, sp, #16\n    mov x0, #" + util.i32_to_string(allowed.len() + 6) + "\n    str x0, [sp]\n");
+  s = s.write("    sub sp, sp, #16\n    mov x0, #" + util.i32_to_string(asmcore.seccomp_filter_len(s, allowed)) + "\n    str x0, [sp]\n");
   s = s.write("    adrp x0, .Lseccomp_filter\n    add x0, x0, :lo12:.Lseccomp_filter\n    str x0, [sp, #8]\n");
   s = s.write("    mov x0, #1\n    mov x1, #0\n    mov x2, sp\n    mov x8, #277\n").svc(277);
   s = s.write("    add sp, sp, #16\n    ret\n");

@@ -101,6 +101,7 @@ QEMU establishes emulated behaviour only.
 | Attack | Test or case | Outcome | Hosts |
 |---|---|---|---|
 | A system call outside the allowlist | `TestSeccompFilterDenies`, `TestSeccompFilterIsLoadedAtRuntime` | `SIGSYS` | x86, native arm64 |
+| An executable mapping request from a sandboxed process | `TestSeccompDeniesExecutableMapping` | `SIGSYS`; a read-write request passes | x86, native arm64 |
 | A setuid helper run from a sandboxed process | `TestSeccompNoNewPrivsBlocksSetuidEscalation` | the helper keeps the caller's user | x86, native arm64 |
 | A program that allocates past its quota | `TestSelfHostHeapLimit` | exit 125 with the heap exhausted cause | x86, arm64 |
 
