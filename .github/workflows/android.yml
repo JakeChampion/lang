@@ -19,6 +19,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
 jobs:
   apk:
     name: android-stopwatch-apk
