@@ -13,6 +13,7 @@ The string representation decisions are in `docs/STR-VIEW-CONTRACT.md`, and the 
 | Length | A string or array length is an `i32`, and a box holds at most 2^28 - 1 words, so a concatenation or a repeat past the ceiling aborts with the allocation size cause ([ARITHMETIC-AUDIT.md](ARITHMETIC-AUDIT.md)). |
 | Number parsing | Every parser answers `OutOfRange` above its type's range, `InvalidDigit(offset)` for a bad byte, and `EmptyInput` for nothing. There is no trim and no digit separator. |
 | JSON | The parser refuses a document nested deeper than 128 arrays or objects with a `JsonError`, so a hostile document cannot exhaust the stack. |
+| PEG | `std/peg` fails a match at a rule reference nested deeper than 2048, so a recursive grammar cannot exhaust the stack on a hostile input. |
 | Format strings | `f"..."` is compiled, so its placeholders are not data. `std/format.format` takes a specification at run time, and a width or precision now saturates at one million. |
 | Fuzzing | `std/fuzz` drives a target with mutated seeds, and `fernsmith` generates whole programs (`docs/FUZZING.md`). |
 
@@ -27,6 +28,7 @@ A width or a precision now saturates at one million, which the module's contract
 The `std parse limits` suite runs natively on x86-64 and on arm64 under QEMU, and under the Go oracle.
 
 - 128 nested arrays parse and 129 are refused, as are 100000.
+- A grammar of nested parentheses parses 2000 levels and refuses 2100.
 - `utf8.from_bytes` refuses a truncated sequence, an overlong encoding, and a surrogate, and accepts a valid three-byte sequence.
 - `parse_i32` refuses a value above the range and below it, and accepts the maximum.
 - A two-billion width and a fourteen-digit width pad to one million bytes, an eleven-digit precision stays within that bound, and a small width is unchanged.
@@ -35,6 +37,6 @@ The `std parse limits` suite runs natively on x86-64 and on arm64 under QEMU, an
 ## Remaining limits
 
 - The iteration count and the seed set bound the fuzz runs. A coverage-guided run of the same targets is `go test -fuzz` territory in `docs/FUZZING.md`.
-- The JSON depth limit is fixed at 128. A caller cannot lower it.
+- The JSON depth limit is fixed at 128, and the PEG depth limit at 2048. A caller cannot lower them.
 - A format width of one million still allocates one megabyte per placeholder. A caller that formats untrusted specifications bounds them itself.
-- Other text parsers in the standard library have no depth or size limit of their own beyond the string ceiling. That includes CSV, headers, and the PEG engine.
+- CSV and the header map are flat parsers with no limit of their own beyond the string ceiling. The HTTP parser bounds its request line, header block, header count and body (`HttpLimits`).

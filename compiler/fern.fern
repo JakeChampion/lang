@@ -951,7 +951,7 @@ function export_entry(f: parser.FuncDecl): string {
       stack = stack + 8;
     }
   }
-  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n" + asm_ir.busy_take_x86();
+  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n" + asm_ir.busy_take_x86();
   let i: i32 = f.params.len() - 1;
   while (i >= 0) {
     out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
@@ -963,7 +963,7 @@ function export_entry(f: parser.FuncDecl): string {
   } else if (f.ret_type == "f32") {
     out = out + "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n";
   }
-  return out + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+  return out + "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
 }
 
 function export_arg(src: string, t: string): string {
@@ -1005,7 +1005,7 @@ function export_entry_arm64(f: parser.FuncDecl): string {
     }
   }
   let n: i32 = f.params.len();
-  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + asm_arm64_ir.busy_take_arm64();
+  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n" + asm_arm64_ir.busy_take_arm64();
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
@@ -1020,7 +1020,7 @@ function export_entry_arm64(f: parser.FuncDecl): string {
   } else if (f.ret_type == "f32") {
     out = out + "    fmov d0, x0\n    fcvt s0, d0\n";
   }
-  return out + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
+  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
 }
 
 function export_arg_arm64(src: string, t: string): string {
@@ -5147,6 +5147,69 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   return run_with_gate(av, embedded_root, fetcher, checker.build_gate_diags_with_file);
 }
 
+function run_format_files(st: DiagStyle, pos: string[], fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+  let (files, _, ferr) = source_files(pos);
+  if (ferr.len() > 0) {
+    eprint("fern: " + ferr);
+    return 2;
+  }
+  if (files.len() == 0) {
+    eprint("fern: -fmt: no .fern or .fern.md files under " + comma_joined(pos));
+    return 2;
+  }
+  if (out_path.len() > 0 && files.len() > 1) {
+    eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(files.len()) + " given)");
+    return 2;
+  }
+  let code: i32 = 0;
+  let fi: i32 = 0;
+  while (fi < files.len()) {
+    let fc: i32 = fmt_file(st, files[fi], fmt_write, fmt_diff, out_path);
+    if (fc > code) {
+      code = fc;
+    }
+    fi = fi + 1;
+  }
+  return code;
+}
+
+function coverage_refusal(cover_on: boolean, mode_interp: boolean, mode_check: boolean, target: string): string {
+  if (cover_on && mode_interp) {
+    return "fern: -cover instruments compiled code; -interp does not lower, so it has no coverage to report";
+  }
+  if (cover_on && !mode_check && target != "x86-64-linux" && target != "arm64-linux") {
+    return "fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover";
+  }
+  return "";
+}
+
+function shared_refusal(shared: boolean, target: string, out_path: string, emit: string): string {
+  if (!shared) {
+    return "";
+  }
+  if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
+    return "fern: -shared is only supported with -target x86-64-linux, arm64-linux or arm64-android (got \"" + target + "\")";
+  }
+  if (out_path.len() == 0 && emit != "asm") {
+    return "fern: -shared requires -o OUTPUT.so";
+  }
+  return "";
+}
+
+function cli_backend_refusal(backend: string, target: string): string {
+  if (backend != "" && backend != "ssa" && backend != "flat") {
+    return "fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)";
+  }
+  let ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
+  if (backend == "ssa" && !ssa_isa) {
+    return "fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)";
+  }
+  if (backend == "flat" && ssa_isa) {
+    return "fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64";
+  }
+  return "";
+}
+
 function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
   let entry_path: string = "";
   let out_path: string = "";
@@ -5446,12 +5509,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return check_dir(st, entry_path, root, target, target_given, embed_dir);
   }
 
-  if (cover_on && mode_interp) {
-    eprint("fern: -cover instruments compiled code; -interp does not lower, so it has no coverage to report");
-    return 2;
-  }
-  if (cover_on && !mode_check && target != "x86-64-linux" && target != "arm64-linux") {
-    eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
+  let bad_cover: string = coverage_refusal(cover_on, mode_interp, mode_check, target);
+  if (bad_cover.len() > 0) {
+    eprint(bad_cover);
     return 2;
   }
   let bad_emit: string = emit_refusal(target, emit);
@@ -5468,15 +5528,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     out_path = rout;
     run_dir = rdir;
   }
-  if (shared) {
-    if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
-      eprint("fern: -shared is only supported with -target x86-64-linux, arm64-linux or arm64-android (got \"" + target + "\")");
-      return 2;
-    }
-    if (out_path.len() == 0 && emit != "asm") {
-      eprint("fern: -shared requires -o OUTPUT.so");
-      return 2;
-    }
+  let bad_shared: string = shared_refusal(shared, target, out_path, emit);
+  if (bad_shared.len() > 0) {
+    eprint(bad_shared);
+    return 2;
   }
   let profile_mode: i32 = rtprofile.mode();
   let profile_error: string = rtprofile.error(profile_mode, target, shared);
@@ -5494,44 +5549,14 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (!remaps_ok) {
     return 2;
   }
-  if (backend != "" && backend != "ssa" && backend != "flat") {
-    eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
-    return 2;
-  }
-  let ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
-  if (backend == "ssa" && !ssa_isa) {
-    eprint("fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)");
-    return 2;
-  }
-  if (backend == "flat" && ssa_isa) {
-    eprint("fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64");
+  let bad_backend: string = cli_backend_refusal(backend, target);
+  if (bad_backend.len() > 0) {
+    eprint(bad_backend);
     return 2;
   }
 
   if (mode_fmt) {
-    let (files, _, ferr) = source_files(pos);
-    if (ferr.len() > 0) {
-      eprint("fern: " + ferr);
-      return 2;
-    }
-    if (files.len() == 0) {
-      eprint("fern: -fmt: no .fern or .fern.md files under " + comma_joined(pos));
-      return 2;
-    }
-    if (out_path.len() > 0 && files.len() > 1) {
-      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(files.len()) + " given)");
-      return 2;
-    }
-    let code: i32 = 0;
-    let fi: i32 = 0;
-    while (fi < files.len()) {
-      let fc: i32 = fmt_file(st, files[fi], fmt_write, fmt_diff, out_path);
-      if (fc > code) {
-        code = fc;
-      }
-      fi = fi + 1;
-    }
-    return code;
+    return run_format_files(st, pos, fmt_write, fmt_diff, out_path);
   }
   let (form, refused) = output_form(target, emit, out_path.len() > 0);
   if (refused.len() > 0 && !(mode_check || mode_interp || mode_caps || mode_effects || array_report == semarrayreport.to_stdout())) {

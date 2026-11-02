@@ -351,6 +351,8 @@ const (
 	CauseStrOOB     = "fern: string index out of range"
 	CauseSliceRange = "fern: slice range out of bounds"
 	CauseAllocSize  = "fern: allocation size out of range"
+	CauseFreeRange  = "fern: release of memory outside the heap"
+	CauseDoubleFree = "fern: release of memory that is already free"
 )
 
 const AbortStatus = 134

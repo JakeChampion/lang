@@ -97,7 +97,12 @@ pub function large_program(output: string): WideProgram {
       return error("unsupported wide large-push instruction");
     }
     if (op.instruction.kind == 17 && op.instruction.target < 0) {
-      return error("wide large-push branch target outside selected body");
+      let instruction = op.instruction;
+      let target = util.trim(slice_unchecked(line, instruction.condition.len(), line.len()) + "");
+      if (target != ".Lrawfree_double" || instruction.condition != "je" && instruction.condition != "jz") {
+        return error("wide large-push branch target outside selected body");
+      }
+      op = WideOp { ...op, instruction: isa.Op { ...instruction, kind: 35, symbol: target } };
     }
     ops = ops.append(op);
   }

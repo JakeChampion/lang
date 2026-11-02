@@ -12,7 +12,11 @@ struct State { nodes: Node[], first_free: i32, next_collection: i32, collections
 
 struct Counts { generations: i64[], values: i32[] }
 
-pub struct Heap { state: Cell[State], counts: Cell[Counts] }
+// The raw blocks a program took from `__alloc`. A release is checked here
+// before it reaches the allocator the interpreter itself runs on.
+pub struct RawBlocks { addrs: i64[], sizes: i32[], live: boolean[] }
+
+pub struct Heap { state: Cell[State], counts: Cell[Counts], raw: Cell[RawBlocks] }
 
 pub struct Root { heap: Heap, reference: Ref }
 
@@ -38,7 +42,41 @@ function empty_payload(): Payload {
 }
 
 pub function create(): Heap {
-  return Heap { state: cell_new(empty_state()), counts: cell_new(empty_counts()) };
+  return Heap { state: cell_new(empty_state()), counts: cell_new(empty_counts()), raw: cell_new(RawBlocks { addrs: [], sizes: [], live: [] }) };
+}
+
+function raw_index(blocks: RawBlocks, addr: i64): i32 {
+  for i in 0..blocks.addrs.len() {
+    if (blocks.addrs[i] == addr) {
+      return i;
+    }
+  }
+  return 0 - 1;
+}
+
+pub function raw_record(h: Heap, addr: i64, size: i32): void {
+  let blocks = h.raw.get();
+  let i: i32 = raw_index(blocks, addr);
+  if (i < 0) {
+    h.raw.set(RawBlocks { addrs: blocks.addrs.append(addr), sizes: blocks.sizes.append(size), live: blocks.live.append(true) });
+    return;
+  }
+  h.raw.set(RawBlocks { ...blocks, sizes: blocks.sizes.with(i, size), live: blocks.live.with(i, true) });
+}
+
+// 1 when the block was live and is now released, 0 when the address is not a
+// block from `__alloc`, and -1 when the block was already released.
+pub function raw_release(h: Heap, addr: i64): i32 {
+  let blocks = h.raw.get();
+  let i: i32 = raw_index(blocks, addr);
+  if (i < 0) {
+    return 0;
+  }
+  if (!blocks.live[i]) {
+    return 0 - 1;
+  }
+  h.raw.set(RawBlocks { ...blocks, live: blocks.live.with(i, false) });
+  return 1;
 }
 
 // A count transaction has no Root values. A finalizer cannot interrupt it.

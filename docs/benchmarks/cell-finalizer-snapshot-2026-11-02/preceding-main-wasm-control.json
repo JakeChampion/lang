@@ -1,0 +1,30 @@
+[
+  {
+    "name": "deflate_encode",
+    "preceding_main_emit": 11561,
+    "command": [
+      "/tmp/fern-14009-edge-combined/stage4",
+      "-target",
+      "wasm32-wasi",
+      "-emit",
+      "asm",
+      "/Users/jakechampion/codex/lang-pr-14012-validation/bench/deflate_encode.fern",
+      "/Users/jakechampion/codex/lang-pr-14012-validation/internal/stdlib"
+    ],
+    "asm_sha256": "e85482145d4ddec7e294fd288afe806845b49cbc57adccfc76bfddd8a641e650"
+  },
+  {
+    "name": "perceus_rbtree_ck",
+    "preceding_main_emit": 3880,
+    "command": [
+      "/tmp/fern-14009-edge-combined/stage4",
+      "-target",
+      "wasm32-wasi",
+      "-emit",
+      "asm",
+      "/Users/jakechampion/codex/lang-pr-14012-validation/bench/perceus_rbtree_ck.fern",
+      "/Users/jakechampion/codex/lang-pr-14012-validation/internal/stdlib"
+    ],
+    "asm_sha256": "284c15c0d928b63d236cc8d277692dd201acb5b9dc4cd1233c655b45364f5f1c"
+  }
+]

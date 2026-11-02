@@ -34,15 +34,35 @@ func buildSandboxedPatched(t *testing.T, src string, sandbox bool, patch func(st
 	return buildSandboxedPath(t, srcPath, sandbox, patch)
 }
 
+// sandboxHost is the native toolchain and the target of this host. The filter
+// is a Linux kernel feature that QEMU user mode does not emulate, so the tests
+// run on a native x86-64 or arm64 Linux host only.
+func sandboxHost(t *testing.T) (gcc, target string) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("the seccomp sandbox is a Linux kernel feature")
+	}
+	switch runtime.GOARCH {
+	case "amd64":
+		gcc, runnerCmd := x86_64Tooling(t)
+		if len(runnerCmd) != 0 {
+			t.Skip("emulated x86-64 runner: seccomp semantics are not faithful under qemu-user")
+		}
+		return gcc, e2eharness.TargetX86_64Linux
+	case "arm64":
+		gcc, _, _ := e2eharness.LookupArm64Tooling()
+		if gcc == "" {
+			t.Skip("no gcc on this arm64 host to assemble the sandboxed program")
+		}
+		return gcc, e2eharness.TargetArm64Linux
+	}
+	t.Skipf("the seccomp sandbox exists on x86-64 and arm64 Linux, not %s", runtime.GOARCH)
+	return "", ""
+}
+
 func buildSandboxedPath(t *testing.T, srcPath string, sandbox bool, patch func(string) string) string {
 	t.Helper()
-	if runtime.GOARCH != "amd64" || runtime.GOOS != "linux" {
-		t.Skip("seccomp sandbox is x86-64 Linux only; qemu-user does not emulate it faithfully")
-	}
-	gcc, runnerCmd := x86_64Tooling(t)
-	if len(runnerCmd) != 0 {
-		t.Skip("emulated x86-64 runner: seccomp semantics are not faithful under qemu-user")
-	}
+	gcc, target := sandboxHost(t)
 	dir := t.TempDir()
 	asmPath := filepath.Join(dir, "prog.s")
 	binPath := filepath.Join(dir, "prog")
@@ -50,7 +70,7 @@ func buildSandboxedPath(t *testing.T, srcPath string, sandbox bool, patch func(s
 	if sandbox {
 		env = append(env, "FERN_SANDBOX=1")
 	}
-	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", e2eharness.TargetX86_64Linux, "-emit", "asm", "-o", asmPath, srcPath, e2eharness.SelfHostStdlibRoot(t))
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", target, "-emit", "asm", "-o", asmPath, srcPath, e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = e2eharness.ChildEnv(env...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host -emit asm (sandbox %v): %v\n%s", sandbox, err, out)
@@ -250,10 +270,15 @@ func exitCodeOf(err error) int {
 	return -1
 }
 
+// injectExecve splices an execve(NULL, NULL, NULL) at the top of main, in the
+// host's own instruction set.
 func injectExecve(asm string) string {
 	label := symname.Fn("main") + ":\n"
-	return strings.Replace(asm, label,
-		label+"    movq $59, %rax\n    movq $0, %rdi\n    movq $0, %rsi\n    movq $0, %rdx\n    syscall\n", 1)
+	execve := "    movq $59, %rax\n    movq $0, %rdi\n    movq $0, %rsi\n    movq $0, %rdx\n    syscall\n"
+	if runtime.GOARCH == "arm64" {
+		execve = "    mov x8, #221\n    mov x0, #0\n    mov x1, #0\n    mov x2, #0\n    svc #0\n"
+	}
+	return strings.Replace(asm, label, label+execve, 1)
 }
 
 func TestSeccompFilterDenies(t *testing.T) {

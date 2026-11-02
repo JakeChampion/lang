@@ -1,0 +1,107 @@
+=== RUN   TestSelfHostCellReadBorrows
+--- PASS: TestSelfHostCellReadBorrows (55.92s)
+=== RUN   TestSelfHostCellReadBorrowsCensus
+--- PASS: TestSelfHostCellReadBorrowsCensus (29.07s)
+=== RUN   TestSelfHostShippedFernFlagSpellings
+--- PASS: TestSelfHostShippedFernFlagSpellings (57.20s)
+=== RUN   TestSelfHostCLIHelp
+--- PASS: TestSelfHostCLIHelp (0.00s)
+=== RUN   TestSelfHostCLIUsageListsEveryFlag
+--- PASS: TestSelfHostCLIUsageListsEveryFlag (0.03s)
+=== RUN   TestSelfHostCoverRefusals
+=== RUN   TestSelfHostCoverRefusals/wasm
+=== RUN   TestSelfHostCoverRefusals/interp
+--- PASS: TestSelfHostCoverRefusals (0.00s)
+    --- PASS: TestSelfHostCoverRefusals/wasm (0.00s)
+    --- PASS: TestSelfHostCoverRefusals/interp (0.00s)
+=== RUN   TestSelfHostFmtLintPaths
+=== RUN   TestSelfHostFmtLintPaths/fmt-stdin
+=== RUN   TestSelfHostFmtLintPaths/fmt-diff-stdin
+=== RUN   TestSelfHostFmtLintPaths/fmt-write-stdin
+=== RUN   TestSelfHostFmtLintPaths/fmt-directory
+=== RUN   TestSelfHostFmtLintPaths/fmt-argument-order
+=== RUN   TestSelfHostFmtLintPaths/fmt-write-directory
+=== RUN   TestSelfHostFmtLintPaths/fmt-empty-directory
+=== RUN   TestSelfHostFmtLintPaths/fmt-missing-file
+=== RUN   TestSelfHostFmtLintPaths/lint-stdin
+--- PASS: TestSelfHostFmtLintPaths (1.93s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-stdin (0.13s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-diff-stdin (0.12s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-write-stdin (0.10s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-directory (0.24s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-argument-order (0.09s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-write-directory (0.12s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-empty-directory (0.05s)
+    --- PASS: TestSelfHostFmtLintPaths/fmt-missing-file (0.06s)
+    --- PASS: TestSelfHostFmtLintPaths/lint-stdin (0.07s)
+=== RUN   TestSelfHostFmtWriteDiagnosticMarkers
+--- PASS: TestSelfHostFmtWriteDiagnosticMarkers (2.91s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (7.10s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostProfiles
+=== RUN   TestSelfHostProfiles/x86-64-linux
+=== RUN   TestSelfHostProfiles/x86-64-linux/safe
+=== RUN   TestSelfHostProfiles/x86-64-linux/hardened
+    self_host_profile_test.go:113: x86-64-linux hardened status:
+        nx-stack compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostImagePermissions)
+        canary compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostStackCanary)
+        cfi compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostForwardEdgeCFI)
+        pie compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostPIE)
+        sanitizer compiled=no supported=yes requested=no enabled=no verified=native (the sanitizer suites)
+        shadow-stack compiled=yes supported=no requested=yes enabled=no verified=unverified (no host with the feature yet)
+        ibt compiled=yes supported=no requested=no enabled=no verified=unavailable (Linux enforces no user-space IBT)
+=== RUN   TestSelfHostProfiles/x86-64-linux/diagnostic
+=== RUN   TestSelfHostProfiles/x86-64-linux/minimal
+=== RUN   TestSelfHostProfiles/arm64-linux
+=== RUN   TestSelfHostProfiles/arm64-linux/safe
+=== RUN   TestSelfHostProfiles/arm64-linux/hardened
+    self_host_profile_test.go:113: arm64-linux hardened status:
+        nx-stack compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostImagePermissions)
+        canary compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostStackCanary)
+        cfi compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostForwardEdgeCFI)
+        pie compiled=yes supported=yes requested=yes enabled=yes verified=native (TestSelfHostPIE)
+        sanitizer compiled=no supported=yes requested=no enabled=no verified=native (the sanitizer suites)
+        pac compiled=yes supported=yes requested=yes enabled=yes verified=native, one host (TestSelfHostHardenArm64)
+        bti compiled=yes supported=no requested=yes enabled=no verified=emulated (TestSelfHostHardenArm64 under QEMU)
+        mte compiled=no supported=no requested=no enabled=no verified=design (MTE-DESIGN.md)
+=== RUN   TestSelfHostProfiles/arm64-linux/diagnostic
+=== RUN   TestSelfHostProfiles/arm64-linux/minimal
+=== RUN   TestSelfHostProfiles/refusals
+--- PASS: TestSelfHostProfiles (16.32s)
+    --- PASS: TestSelfHostProfiles/x86-64-linux (7.66s)
+        --- PASS: TestSelfHostProfiles/x86-64-linux/safe (1.87s)
+        --- PASS: TestSelfHostProfiles/x86-64-linux/hardened (2.00s)
+        --- PASS: TestSelfHostProfiles/x86-64-linux/diagnostic (1.86s)
+        --- PASS: TestSelfHostProfiles/x86-64-linux/minimal (1.93s)
+    --- PASS: TestSelfHostProfiles/arm64-linux (7.51s)
+        --- PASS: TestSelfHostProfiles/arm64-linux/safe (1.77s)
+        --- PASS: TestSelfHostProfiles/arm64-linux/hardened (1.83s)
+        --- PASS: TestSelfHostProfiles/arm64-linux/diagnostic (1.87s)
+        --- PASS: TestSelfHostProfiles/arm64-linux/minimal (2.03s)
+    --- PASS: TestSelfHostProfiles/refusals (0.23s)
+=== RUN   TestSelfHostScalarParams
+=== RUN   TestSelfHostScalarParams/x86-64-linux
+=== RUN   TestSelfHostScalarParams/arm64-linux
+=== RUN   TestSelfHostScalarParams/wasm32-wasi
+--- PASS: TestSelfHostScalarParams (13.88s)
+    --- PASS: TestSelfHostScalarParams/x86-64-linux (3.69s)
+    --- PASS: TestSelfHostScalarParams/arm64-linux (3.36s)
+    --- PASS: TestSelfHostScalarParams/wasm32-wasi (4.92s)
+=== RUN   TestSelfHostSSABackendRefusesOtherTargets
+--- PASS: TestSelfHostSSABackendRefusesOtherTargets (0.04s)
+=== RUN   TestSelfHostSSARegisterForm
+--- PASS: TestSelfHostSSARegisterForm (0.33s)
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/x86-64-linux
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/arm64-linux
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/wasm32-wasi
+--- PASS: TestSelfHostUpdateBaseKeepsItsBox (9.58s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/x86-64-linux (3.25s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/arm64-linux (2.65s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/wasm32-wasi (2.21s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	194.305s

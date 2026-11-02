@@ -1,6 +1,7 @@
 name: Test e2e arm64
 
-# `TestArm64*` — the arm64-Linux ELF backend's end-to-end suite.
+# `TestArm64*` — the arm64-Linux ELF backend's end-to-end suite — and
+# `TestSeccomp*`, the sandbox tests, which run on a native Linux host only.
 # Runs binaries via the native arm64 runner (no qemu involved).
 # Only scheduled on `ubuntu-24.04-arm`; on an x86 host every test
 # in this prefix would SKIP because `aarch64-linux-gnu-gcc` +
@@ -71,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t MINE < <(
-            go test -list '^TestArm64' ./internal/testing/e2e/ |
+            go test -list '^Test(Arm64|Seccomp)' ./internal/testing/e2e/ |
               grep -E '^Test' |
               sort |
               scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" /dev/null
@@ -115,6 +116,26 @@ jobs:
             exit 1
           fi
           echo "all shards succeeded"
+
+  seccomp-corpus:
+    # The sandbox's over-tightness gate on the arm64 backend, the twin of
+    # seccomp-corpus-x86_64: every runnable fixture built with and without
+    # the filter must behave the same. QEMU user mode does not emulate
+    # seccomp, so the corpus runs here on the native runner alone.
+    name: seccomp-corpus-arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: go test (fixture corpus under the seccomp filter)
+        env:
+          RUN_SECCOMP_CORPUS: "1"
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/testing/e2e/ -timeout 30m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
   cross-host:
     name: test-e2e-arm64-cross-host

@@ -61,7 +61,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | An interrupted or short transfer keeps the bytes already moved | `TestSelfHostWriteAllContinuesAfterInterrupt`, `TestSelfHostReadAllContinuesAfterInterrupt` | x86, arm64 |
 | A temporary name comes from kernel entropy, and no descriptor leaks to a child | `TestSelfHostTempFiles` | x86, arm64 |
 | A JSON document deeper than 128 levels, an invalid UTF-8 sequence and a format width past one million are refused or saturated | `tests/stdlib/parse_limits_test.fern` | x86, arm64, oracle |
-| A sandboxed program cannot gain privilege through a setuid helper, and a system call outside the allowlist is `SIGSYS` | `TestSeccompNoNewPrivsBlocksSetuidEscalation`, `TestSeccompFilterDenies` | x86 |
+| A sandboxed program cannot gain privilege through a setuid helper, and a system call outside the allowlist is `SIGSYS` | `TestSeccompNoNewPrivsBlocksSetuidEscalation`, `TestSeccompFilterDenies` | x86, native arm64 |
 | `std/mitigations` reports hardware mitigations from the kernel's records only | `TestSelfHostMitigationsReport` | x86, arm64 |
 
 ## Toolchain and packages
@@ -84,10 +84,9 @@ The owner decided these on 2026-10-29. Each one bounds what a row above can clai
 
 ## Not guaranteed
 
-- Raw builtins (`__alloc`, `__store_*`, `__load_*`, `__free`, `__memcpy`, `__c_call*`, `__arr_set_len`) are callable from every source until the stage0 pin learns unsafe blocks (`UNSAFE-INVENTORY.md`).
 - A thread that shares the heap is not supported. Reference counts are not atomic.
 - No signature covers a package archive. An index file is verified only when the manifest names `index_key` (`PACKAGE-INTEGRITY.md`).
 - An index rollback is refused only after a lock records the index serial. Nothing refuses a frozen index.
 - The fault tests ran on a physical host for PAC only. BTI, MTE and the user shadow stack carry emulated evidence or none.
 - Nothing mitigates a speculation attack.
-- The seccomp sandbox exists on x86-64 only.
+- The seccomp sandbox exists on x86-64 and arm64 Linux. An `arm64-darwin` build refuses the flag.

@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bytes"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,10 @@ func TestSelfHostWasmHostScratchFreed(t *testing.T) {
 		name, src     string
 		bare, withEnv int
 	}{
+		{"zero-allocation", `function main(): i32 {
+    unsafe { let p: usize = __alloc(0); __free(p, 0); }
+    return 0;
+}`, 0, 0},
 		{"args", `function main(): i32 {
     let n: i32 = 0;
     let k: i32 = 0;
@@ -67,6 +72,29 @@ func TestSelfHostWasmHostScratchFreed(t *testing.T) {
 				if allocs == 0 || allocs != frees || live != 0 {
 					t.Fatalf("%s: allocs=%d frees=%d live_bytes=%d, want balanced", leg.label, allocs, frees, live)
 				}
+			}
+		})
+	}
+}
+
+func TestSelfHostWasmRawFreeHeapCursor(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("requires wasmtime")
+	}
+	cli := buildSelfHostCLI(t)
+	for _, tc := range []struct {
+		name, release string
+	}{
+		{"nonempty-at-cursor", "__free(p, 8);"},
+		{"empty-above-cursor", "__free(p + 8 as usize, 0);"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "function main(): i32 { unsafe { let p: usize = __alloc(0); " + tc.release + " } return 0; }"
+			wat := cli.emit(t, mustWrite(t, t.TempDir(), "main.fern", src), "wasm32-wasi")
+			cmd := exec.Command("wasmtime", "run", wat)
+			out, err := cmd.CombinedOutput()
+			if err == nil || cmd.ProcessState.ExitCode() != 134 || !strings.HasPrefix(string(out), "fern: release of memory outside the heap\n") {
+				t.Fatalf("invalid release: %v\n%s", err, out)
 			}
 		})
 	}

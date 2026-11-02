@@ -49,7 +49,7 @@ An `f32` or `f64` result moves from `%xmm0` or `d0` into that register after a w
 |---|---|
 | The shim's register loads, alignment, and call on x86-64 | `TestSelfHostCCallIRX86_64` |
 | The shim's register loads and call on arm64 | `TestSelfHostCCallIRArm64` |
-| A C callee entered through the shim sees a 16-byte aligned stack, and a callee that clobbers every caller-saved integer and vector register leaves the Fern caller's live values intact | `TestSharedLibX86CCallFFI` |
+| A C callee entered through the shim sees a 16-byte aligned stack, and a callee that clobbers every caller-saved integer and vector register leaves the Fern caller's live values intact | `TestSharedLibX86CCallFFI`, `TestArm64SharedLibCCallFFI` |
 | A float result returns in the result register | `TestSelfHostCCallFPShimsReturnInTheResultRegister` |
 | Exported Fern functions called from C with integer, float, and ten-argument signatures | `TestSharedLibX86ExportDlopen`, `TestSharedLibX86ExportArgsJNI` |
 | A leaf builds no frame and a frame that saves a register records the CFA offset | `TestSelfHostLeafFrame` |
@@ -66,7 +66,6 @@ An `f32` or `f64` result moves from `%xmm0` or `d0` into that register after a w
 |---|---|
 | A foreign call takes at most four integer arguments and no float argument | A C function with a float parameter or a fifth parameter has no safe call; the checker refuses nothing, because the shim count is the whole surface |
 | A variadic C callee on arm64-darwin | Apple's convention passes variadic arguments on the stack; the shim passes them in registers, so such a call is wrong on that target |
-| No runtime foreign-call test on arm64 | The arm64 shim is pinned on its assembly text only; the shared-object writer exists for x86-64 only, so the native arm64 shards run no `dlopen` test |
 | Tail calls | A call in tail position to a register entry is a jump (`jmp __fn_f.r`, `b __fn_f.r`), so the caller's frame is gone and a backtrace omits it; `TestSelfHostAbortBacktraceCorruptFrame` keeps work after its call for that reason |
 | The register entry `.r` is not exported | A C caller reaches only the stack entry, which is the exported symbol, so this is a limit on size and not on safety |
 | A signal handler's frame | The alternate signal stack is 64 KiB (`docs/security/STACK-GUARD.md`); a handler that allocates is outside this record |
@@ -79,11 +78,14 @@ A variadic callee therefore read whatever the register held.
 The shim now zeroes it, which is correct for every callee because the shim passes no vector argument.
 `TestSelfHostCCallIRX86_64` asserts the instruction, and `TestSharedLibX86CCallFFI` gains the alignment callee and the clobbering callee.
 
+The arm64 shim had no run-time test. `TestArm64SharedLibCCallFFI` now loads an arm64 shared object from a C program under QEMU and calls back into C through every shim arity.
+Its callees check the AAPCS64 stack alignment and clobber every caller-saved integer and vector register.
+
 ## Commands
 
 ```
 go test ./internal/testing/e2ecompiler -run 'TestSelfHostCCallIR|TestSelfHostLeafFrame|TestSelfHostUnwindData|TestSelfHostSSAABIEviction'
-go test ./internal/testing/e2e -run 'TestSharedLibX86CCallFFI|TestSharedLibX86ExportDlopen|TestSharedLibX86ExportArgsJNI|TestX86_64AbortBacktrace|TestArm64AbortBacktrace'
+go test ./internal/testing/e2e -run 'TestSharedLibX86CCallFFI|TestArm64SharedLibCCallFFI|TestSharedLibX86ExportDlopen|TestSharedLibX86ExportArgsJNI|TestX86_64AbortBacktrace|TestArm64AbortBacktrace'
 ```
 
 Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, Go go1.27.3, QEMU 8.2.2, wasmtime 46.0.1.

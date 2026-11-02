@@ -1,0 +1,51 @@
+{
+  "scope": "Local security-runtime repair controls. Current-head full GitHub CI remains the merge gate.",
+  "recorded_at": "2026-11-02T00:42:56.788566+00:00",
+  "parent_head": "97075ca886aafeab62767a13ec13ee477126b27e",
+  "compiler_sha256": "a2313554ee926a1b84253a97c01a398aa3be3ca4f9ed4aabb8b62f31b20874d0",
+  "all_source_hashes_match_fixed_point_record": true,
+  "original_baseline_hashes": {
+    ".github/perf-baseline.txt": "271bdce77ddd4dfd80254222dcd2038e016710005dcd69bad142c534ca8d67aa",
+    ".github/perf-baseline-selfhost.txt": "06c97f4581e1f8e80b43fbfccde2996bbe32b6db61bfc17e64a5a9e86e2ca5bd",
+    ".github/profile-costs-baseline.txt": "b925e6037e2593f968d6f94bc8787ba5aefd326020b58bff9043a42b56db9236",
+    ".github/cliff-baseline.txt": "7b619ecc941b3676192bab9b53a98f40ed6771f27ab2558d24e1276ffc2128d0",
+    ".github/alloc-baseline.txt": "c5376dc31a73131fbd7a0c734201ad110b847d87ff0b41822367643f97ce57c9"
+  },
+  "native_static_rows": 78,
+  "native_arm_static_and_dynamic_rows": 78,
+  "native_arm_observable_controls": 39,
+  "selfhost_emit_rows": 117,
+  "selfhost_advisories": [
+    "wasm32-wasi/deflate_decode",
+    "wasm32-wasi/deflate_encode"
+  ],
+  "local_security_skips": [
+    "Full seccomp corpus requires RUN_SECCOMP_CORPUS=1",
+    "Native x86 shared-object FFI requires an x86 host",
+    "Native x86 shared-object backtrace requires an x86 host"
+  ],
+  "cross_target_proof_go_selection": "Still running separately; excluded from completed local evidence.",
+  "artifacts": {
+    "fixed-point.json": "389472c28fb79e3514e6b10eea92434bf924247b5afac19d99cbbeacf1450e8a",
+    "prior-fixed-point.json": "0c1fba7bfca16f88d66cca92fd7302ea2cb33996833ea656b3986416f8bc2508",
+    "native-static.json": "9322bcfc5d296355a2d2d52bc28ed31db1b562fe858427248a7b0e5f64a2cd44",
+    "native-static.tsv": "6ff317b7c5ee8a58c0beb7df94410aab9cf234acd1a12fef7f4a9fdeda30c01b",
+    "native-static-gate.log": "aa540f23034f6a8f7dfe5a3bf19eb0ae92e3c137d7d3a27cc7444cd795b7a8f0",
+    "native-arm.json": "fa1935ebbfc33dc8bf83c2c9d40421ffc398f16d0c7940bd64ea50a714f7a51c",
+    "native-arm.tsv": "35d3d4c65ea64e5e82c293f5d762b4f95994e235cf4c7dcdefb503704a3036ee",
+    "native-arm-gate.log": "3e1c01ca8a28a7c20cb3a4f0f70ca8f0d9ed3d65b37dc4a2b17733b2bd3fd2de",
+    "selfhost.tsv": "adc4bd2da6437625b09680ab9421bd5c16370ec5347a9ee90994b3fbe536fc38",
+    "selfhost-advisory-gate.log": "0570b90348f666992bb1496cfbb98603808f7de435c8658fe65664148592f98d",
+    "security.log": "2f7bd6e88e947331fef8f9fda016f225da4a0922a421f872b2f7cb5dd4c93b1f",
+    "darwin-native.log": "e4b8ccc2082e6af8f91bdd494a05453b893f7631fb660b5a802191c9838e54ef",
+    "source-gate.log": "e57d92aa34fae683761249c494f5e80e5a9519d0718473ef0b8992dd9730e807",
+    "lint.log": "f76b75473c0442db31dfc586995db5d24388a309b0cc28792190890c44f28944",
+    "retained-native.stdout": "7e42ea5cd4b858808449996ba936c436bcc9dc0e218e13fade180e627cc430ea",
+    "retained-native.stderr": "28605ec448cb76122118629ce2ee33c1433db40d95ee4638c21ce77055b2545d",
+    "guarded-native.stdout": "b0d2ddcffa1d7f170f0d3d306e1dac3300a8912470aeaf806999caa64cfe4768",
+    "guarded-native.stderr": "7beb56570dea2005bd3cdd4c59d48a21b7da19e23e3ffad6c68fb0a3b76b4530",
+    "collect-fixed-point.py": "815845c6e57882a48ac12a836867bd52718c04d47caf59c6de9a31e652d28474",
+    "collect-native-perf.py": "5e50693e23d0b57778a90c4c8ca8bcaf0e68b60bcaf7478a66d362173130186c",
+    "collect-static.py": "1512fe6ed1d9ed1b015429de792f2a43365ae4a7a6f4a49cc278058f2fbd25a5"
+  }
+}

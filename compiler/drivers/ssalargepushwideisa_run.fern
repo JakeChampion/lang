@@ -117,8 +117,8 @@ function actual(): void {
   let output = retained.emit(g, g.cache, g.physical, false, true, true, 0, -1).text;
   let body = text.dependency(output, "__fern_large_push");
   let p = wide.large_program(output);
-  let kinds = [41, 28, 17, 2, 16, 17, 5, 1, 8, 9, 5, 13, 15, 12, 11, 8, 9, 2, 14, 20, 10, 9, 2, 19, 3, 4, 4, 1, 18];
-  require(body.error == "" && p.error == "" && p.ops.len() == 29 && p.ops.len() == body.lines.len(), "actual emission coverage");
+  let kinds = [41, 28, 17, 2, 16, 17, 5, 1, 8, 9, 5, 13, 15, 12, 11, 8, 9, 2, 14, 20, 10, 9, 2, 19, 3, 28, 35, 4, 4, 1, 18];
+  require(body.error == "" && p.error == "" && p.ops.len() == 31 && p.ops.len() == body.lines.len(), "actual emission coverage");
   for at in 0..p.ops.len() {
     let op = p.ops[at].instruction;
     require(op.kind == kinds[at], "actual instruction " + at.to_string());
@@ -128,8 +128,9 @@ function actual(): void {
   }
   require(p.ops[0].immediate == 17179869184 as i64 && p.ops[0].instruction.destination == 0, "actual full immediate");
   require(p.ops[1].instruction.width == 64 && p.ops[1].instruction.source == 0 && p.ops[1].instruction.destination == 6, "actual guard operands");
-  require(p.ops[2].instruction.target == 27 && p.ops[5].instruction.target == 7, "actual guard targets");
-  require(p.ops[23].instruction.symbol == "__fern_large_freelist" && p.ops[24].instruction.base == 2 && p.ops[24].instruction.index == 0 && p.ops[24].instruction.scale == 8 && p.ops[26].instruction.source == 8, "actual freelist operands");
+  require(p.ops[2].instruction.target == 29 && p.ops[5].instruction.target == 7, "actual guard targets");
+  require(p.ops[23].instruction.symbol == "__fern_large_freelist" && p.ops[24].instruction.base == 2 && p.ops[24].instruction.index == 0 && p.ops[24].instruction.scale == 8 && p.ops[28].instruction.source == 8, "actual freelist operands");
+  require(p.ops[25].instruction.width == 64 && p.ops[25].instruction.source == 8 && p.ops[25].instruction.destination == 1 && p.ops[26].instruction.condition == "je" && p.ops[26].instruction.symbol == ".Lrawfree_double", "actual duplicate guard");
 }
 
 function exact_op(actual: wide.WideOp, expected: reference.ExpectedOp): boolean {

@@ -76,12 +76,13 @@ function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): Wor
   return identity(2, reg);
 }
 
-function initial(r: ranges.Interval, oversized: boolean): State {
+function initial(r: ranges.Interval, oversized: boolean, duplicate: boolean): State {
   let regs: Word[] = [];
   for reg in 0..16 {
     regs = regs.append(initial_register(r, reg, oversized));
   }
-  let cells = [token(5, 0, 0), token(5, 0, 1), token(6, 0, 0), token(6, 0, 1), token(4, 0, 0), token(4, 0, 1)];
+  let head = identity(if (duplicate) { 8 } else { 6 }, 0);
+  let cells = [token(5, 0, 0), token(5, 0, 1), head.low, head.high, token(4, 0, 0), token(4, 0, 1)];
   return State { regs: regs, cells: cells, flags: unknown_flags(), ok: true, oversized: oversized, block_writes: 0, slot_writes: 0 };
 }
 
@@ -240,6 +241,16 @@ function lea(s: State, r: ranges.Interval, op: isa.Op): State {
 }
 
 function comparison(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 28 && op.width == 64) {
+    let a = s.regs[op.destination];
+    let b = s.regs[op.source];
+    if (a.low.kind != 0 && a.high.kind != 0 && same_word(a, b)) {
+      return State { ...s, flags: value.Comparison { less: 0, equal: 1, less_equal: 1 } };
+    }
+    if (same_word(a, identity(6, 0)) && same_word(b, identity(8, 0)) || same_word(a, identity(8, 0)) && same_word(b, identity(6, 0))) {
+      return State { ...s, flags: value.Comparison { less: -1, equal: 0, less_equal: -1 } };
+    }
+  }
   let operand = if (op.kind == 16) { op.source } else { op.destination };
   let threshold = if (op.kind == 16) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
   if (!nonnegative(r, threshold) || threshold.factor != 0) {
@@ -345,8 +356,13 @@ function finished(s: State, r: ranges.Interval): boolean {
   return s.block_writes == writes && s.slot_writes == writes && same_word(read(s, r, 0, 64), block) && same_word(read(s, r, 2, 64), head) && same_word(read(s, r, 4, 64), identity(4, 0));
 }
 
-function execute(s: State, r: ranges.Interval, item: decoder.WideOp, pc: i32): Flow {
+function execute(s: State, r: ranges.Interval, item: decoder.WideOp, pc: i32, duplicate: boolean): Flow {
   let op = item.instruction;
+  if (op.kind == 35) {
+    let taken = branch(s.flags, op.condition);
+    let abort = taken == 1 && duplicate && !s.oversized && s.block_writes == 0 && s.slot_writes == 0;
+    return Flow { state: State { ...s, ok: s.ok && (taken == 0 || abort) }, next: if (taken == 1) { -1 } else { pc + 1 } };
+  }
   if (op.kind == 17) {
     let taken = branch(s.flags, op.condition);
     return Flow { state: State { ...s, ok: s.ok && taken >= 0 }, next: if (taken == 1) { op.target } else { pc + 1 } };
@@ -355,8 +371,8 @@ function execute(s: State, r: ranges.Interval, item: decoder.WideOp, pc: i32): F
   return Flow { state: next, next: pc + 1 };
 }
 
-function path(p: decoder.WideProgram, r: ranges.Interval, oversized: boolean): boolean {
-  let s = initial(r, oversized);
+function path(p: decoder.WideProgram, r: ranges.Interval, oversized: boolean, duplicate: boolean): boolean {
+  let s = initial(r, oversized, duplicate);
   let visited: boolean[] = [];
   for op in p.ops {
     visited = visited.append(false);
@@ -369,13 +385,16 @@ function path(p: decoder.WideProgram, r: ranges.Interval, oversized: boolean): b
     visited = visited.with(pc, true);
     let op = p.ops[pc];
     if (op.instruction.kind == 18) {
-      return finished(s, r);
+      return !duplicate && finished(s, r);
     }
-    let flow = execute(s, r, op, pc);
+    let flow = execute(s, r, op, pc, duplicate);
     s = flow.state;
     pc = flow.next;
     if (!s.ok) {
       return false;
+    }
+    if (pc == -1) {
+      return true;
     }
   }
   return false;
@@ -387,9 +406,22 @@ pub function check(output: string): boolean {
     return false;
   }
   for r in ranges.intervals() {
-    if (!path(p, r, false)) {
+    if (!path(p, r, false, false)) {
       return false;
     }
   }
-  return path(p, ranges.Interval { low: 0, high: 0 }, true);
+  return path(p, ranges.Interval { low: 0, high: 0 }, true, false);
+}
+
+pub function check_guarded(output: string): boolean {
+  if (!check(output)) {
+    return false;
+  }
+  let p = decoder.large_program(output);
+  for r in ranges.intervals() {
+    if (!path(p, r, false, true)) {
+      return false;
+    }
+  }
+  return true;
 }

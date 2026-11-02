@@ -387,7 +387,7 @@ pub function all_runtime_need_roots(): string[] {
     "uname_field", "getcwd", "cpu_count",
     "isatty", "window_size", "set_window_size", "pipe", "signal_ignore", "signal_default",
     "signal_catch", "signal_taken", "signal_raise",
-    "trap_stubs",
+    "trap_stubs", "abort_134",
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
     "disable_core_dumps", "prctl_query", "proc_waitpid_status",
     "ct_mark",

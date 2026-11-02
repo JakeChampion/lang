@@ -1,0 +1,48 @@
+{
+  "scope": "Native ARM64 sanitizer and leak controls for the same implicit finalizer reproducer. The incorrect owner result has balanced allocation counts.",
+  "input_sha256": "7fea6289b8ed238b98b122f793aef57d791959d750321e7906cd7da889f71264",
+  "runs": [
+    {
+      "engine": "previous-main",
+      "binary": "/tmp/fern-14012-drop-borrow-main",
+      "binary_sha256": "e29abf08785dc4ee96567f82a08c662c65e3922ebe2c826123fe68eb384cf330",
+      "command": [
+        "/tmp/fern-14012-drop-borrow-main"
+      ],
+      "environment": {
+        "FERN_LEAKCHECK": "1"
+      },
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n"
+    },
+    {
+      "engine": "owner",
+      "binary": "/tmp/fern-14012-drop-borrow",
+      "binary_sha256": "e4faf9b753b968aa3c31bfdb723fe94d9d9a5a7c40a754e8c0a74ce2f45c5269",
+      "command": [
+        "/tmp/fern-14012-drop-borrow"
+      ],
+      "environment": {
+        "FERN_LEAKCHECK": "1"
+      },
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n"
+    },
+    {
+      "engine": "repaired",
+      "binary": "/tmp/fern-14012-drop-borrow-fixed",
+      "binary_sha256": "affcdd7960ac973152ea00dfd722b6660dff081299dd4bcb34f1cccec7ade7d2",
+      "command": [
+        "/tmp/fern-14012-drop-borrow-fixed"
+      ],
+      "environment": {
+        "FERN_LEAKCHECK": "1"
+      },
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "leakcheck: allocs=5 frees=5 live_bytes=0\n"
+    }
+  ]
+}

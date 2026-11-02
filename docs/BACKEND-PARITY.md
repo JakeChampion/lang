@@ -100,7 +100,7 @@ still need their own classifications.
 | wasm32-wasi | E066: the target has no `syscall` capability |
 | `fern -interp`, `fern-oracle -interp` | refused at run time: the interpreters have no address space |
 
-`FERN_SANDBOX=1` on x86-64 records a floor call whose number is a literal
+`FERN_SANDBOX=1` on x86-64 and arm64 Linux records a floor call whose number is a literal
 like any other syscall, and refuses a program whose number is a run-time
 operand, which the seccomp allowlist cannot cover.
 

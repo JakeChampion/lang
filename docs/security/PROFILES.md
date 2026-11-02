@@ -52,6 +52,6 @@ The refusals of a bad name and of a profile the target cannot carry exit 2.
 
 ## Remaining limits
 
-- A shared object carries no manifest, and a wasm or Darwin image carries none either.
+- A shared object carries no manifest, and a wasm image carries none either. A Darwin image carries one.
 - The `verified` cell is a fixed text per feature, not a measurement on the running host.
 - The manifest is a line in the image, not an ELF note, so a generic tool reads it with `strings` rather than `readelf -n`.

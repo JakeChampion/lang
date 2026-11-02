@@ -335,8 +335,8 @@ the reactor keeps a guest table of pollables.
 
 The bytes floor, `__str_bytes(s, scratch)` and `__arr_set_len(a, n)`,
 lowers onto the `str_data` op and the length slot of the string and array
-boxes. Under `FERN_SANDBOX=1` the x86-64 emitter records a raw syscall where
-it writes the `syscall`, when the frame knows the number as a constant, so
+boxes. Under `FERN_SANDBOX=1` the x86-64 and arm64 emitters record a syscall
+where they write the `syscall` or `svc #0`, when the frame knows the number as a constant, so
 the seccomp allowlist stays exact through these helpers; a number computed
 at run time is refused.
 

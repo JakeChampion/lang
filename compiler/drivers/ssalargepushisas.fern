@@ -120,7 +120,7 @@ function actual_branch(p: wide.WideProgram, body: text.Body, at: i32, op: isa.Op
 pub function run(output: string): void {
   let body = text.dependency(output, "__fern_large_push");
   let p = wide.large_program(output);
-  let kinds = [41, 28, 17, 2, 16, 17, 5, 1, 8, 9, 5, 13, 15, 12, 11, 8, 9, 2, 14, 20, 10, 9, 2, 19, 3, 4, 4, 1, 18];
+  let kinds = [41, 28, 17, 2, 16, 17, 5, 1, 8, 9, 5, 13, 15, 12, 11, 8, 9, 2, 14, 20, 10, 9, 2, 19, 3, 28, 35, 4, 4, 1, 18];
   require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual emission length");
   let at = 0;
   for op in p.ops {
@@ -131,8 +131,11 @@ pub function run(output: string): void {
   require(p.ops[0].immediate == 17179869184 as i64 && p.ops[23].instruction.symbol == "__fern_large_freelist", "actual threshold/global");
   require(p.ops[0].instruction.width == 64 && p.ops[0].instruction.destination == 0 && p.ops[1].instruction.width == 64 && p.ops[1].instruction.source == 0 && p.ops[1].instruction.destination == 6, "actual guard operands");
   let load = p.ops[24].instruction;
-  let block = p.ops[25].instruction;
-  let slot = p.ops[26].instruction;
+  let guard = p.ops[25].instruction;
+  let abort = p.ops[26].instruction;
+  require(guard.width == 64 && guard.source == 8 && guard.destination == 1 && abort.condition == "je" && abort.symbol == ".Lrawfree_double", "actual duplicate guard");
+  let block = p.ops[27].instruction;
+  let slot = p.ops[28].instruction;
   require(load.width == 64 && load.destination == 1 && load.base == 2 && load.index == 0 && load.scale == 8 && slot.source == 8, "actual freelist operands");
   require(block.width == 64 && block.source == 1 && block.base == 8 && block.offset == 0 && slot.width == 64 && slot.base == 2 && slot.index == 0 && slot.scale == 8, "actual freelist stores");
   addresses();
