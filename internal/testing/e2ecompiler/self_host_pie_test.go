@@ -78,7 +78,9 @@ func pieLayout(t *testing.T, bin string, machine elf.Machine) {
 	if f.Type != elf.ET_DYN || f.Machine != machine {
 		t.Fatalf("%s: type %v machine %v, want ET_DYN %v", bin, f.Type, f.Machine, machine)
 	}
-	loads, stack := 0, false
+	var loads []*elf.Prog
+	var relro *elf.Prog
+	stack := false
 	for _, p := range f.Progs {
 		switch p.Type {
 		case elf.PT_INTERP, elf.PT_DYNAMIC:
@@ -88,18 +90,33 @@ func pieLayout(t *testing.T, bin string, machine elf.Machine) {
 			if p.Flags&elf.PF_X != 0 {
 				t.Errorf("%s: the stack is executable", bin)
 			}
+		case elf.PT_GNU_RELRO:
+			relro = p
 		case elf.PT_LOAD:
-			if loads == 0 && p.Vaddr != 0 {
+			if len(loads) == 0 && p.Vaddr != 0 {
 				t.Errorf("%s: the first load maps at %#x, want 0", bin, p.Vaddr)
 			}
 			if p.Flags&elf.PF_W != 0 && p.Flags&elf.PF_X != 0 {
 				t.Errorf("%s: a load segment is writable and executable", bin)
 			}
-			loads++
+			loads = append(loads, p)
 		}
 	}
-	if loads != 2 || !stack {
-		t.Errorf("%s: %d load segments, stack header %t; want 2 and true", bin, loads, stack)
+	if len(loads) != 3 || !stack {
+		t.Fatalf("%s: %d load segments, stack header %t; want 3 and true", bin, len(loads), stack)
+	}
+	constants, globals := loads[1], loads[2]
+	if constants.Flags != elf.PF_R|elf.PF_W || globals.Flags != elf.PF_R|elf.PF_W {
+		t.Errorf("%s: constants and globals must start writable and non-executable", bin)
+	}
+	if relro == nil || relro.Vaddr != constants.Vaddr || relro.Off != constants.Off || relro.Memsz != constants.Memsz || relro.Memsz == 0 {
+		t.Fatalf("%s: no matching constant load and protected range", bin)
+	}
+	if constants.Filesz == 0 || constants.Memsz <= constants.Filesz || constants.Vaddr+constants.Memsz > globals.Vaddr {
+		t.Errorf("%s: constants have no separate zero-fill space before globals", bin)
+	}
+	if globals.Off != constants.Off+constants.Filesz {
+		t.Errorf("%s: the image stores the virtual constant gap in the file", bin)
 	}
 }
 

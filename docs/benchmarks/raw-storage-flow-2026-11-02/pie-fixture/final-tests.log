@@ -1,0 +1,14 @@
+=== RUN   TestSelfHostELF
+--- PASS: TestSelfHostELF (2.94s)
+=== RUN   TestSelfHostPIE
+=== RUN   TestSelfHostPIE/x86-64-linux
+    self_host_pie_test.go:173: x86-64-linux text mapping at 4000000000
+=== RUN   TestSelfHostPIE/arm64-linux
+    self_host_pie_test.go:173: arm64-linux text mapping at ffff85af0000
+=== RUN   TestSelfHostPIE/refusals
+--- PASS: TestSelfHostPIE (48.24s)
+    --- PASS: TestSelfHostPIE/x86-64-linux (7.67s)
+    --- PASS: TestSelfHostPIE/arm64-linux (6.63s)
+    --- PASS: TestSelfHostPIE/refusals (0.16s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	51.203s
