@@ -679,6 +679,7 @@ function literals(f: ssasem.Func): boolean[] {
 
 function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
+  let cells: boolean[] = ssasem.cell_borrows(f);
   for b in f.graph.blocks {
     for ins in b.insts {
       let owns: boolean = false;
@@ -686,7 +687,7 @@ function owned_values(f: ssasem.Func, modes: i32[], defs: ssa.SInst[]): boolean[
         owns = modes[ins.imm] == counted_mode();
       }
       if (ins.kind_tag != 8 && fresh_unit(ins.kind_tag)) {
-        owns = ssasem.reference(f.values[ins.result]);
+        owns = ssasem.reference(f.values[ins.result]) && !(ins.kind_tag == ssasem.cell_get() && ssasem.cell_borrowed(cells, ins.result));
       }
       out = out.with(ins.result, owns);
     }

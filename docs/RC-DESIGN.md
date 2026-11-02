@@ -126,7 +126,12 @@ scrutinee and rebuild the member in the scrutinee's box.
 **dependencies** between values: a projection (`record_get`, `tuple_get`,
 `array_get`) is anchored to the container it reads, a value that gathers views
 to the storage those views read, and a call result to the arguments its
-contract says it may keep (`borrow_parents`). The closure of those chains
+contract says it may keep (`borrow_parents`). A cell read (`cell_get`) is
+anchored to its cell when every use of the read, and of each projection off
+it, comes before the first write or call on the path from the read
+(`cell_borrows`). Nothing else replaces what a cell holds, so such a read
+owns no count. A read a write or a call can reach before its last use is a
+unit of its own. The closure of those chains
 (`Closure.dependencies`) is what liveness is computed over (`ssalive`,
 validated by `ssadeps`): a container is live wherever a value anchored to it
 is. The analysis refuses a cyclic chain and a graph `ssadeps` cannot place.

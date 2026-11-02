@@ -3718,10 +3718,11 @@ function borrow_parents(f: Func): i32[][] {
     parents = parents.append([]);
     i = i + 1;
   }
+  let cells: boolean[] = cell_borrows(f);
   for b in f.graph.blocks {
     for ins in b.insts {
       let anchors: boolean = projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result]);
-      if (anchors || borrows_storage(ins, f)) {
+      if (anchors || borrows_storage(ins, f) || ins.kind_tag == cell_get() && cell_borrowed(cells, ins.result)) {
         parents = parents.with(ins.result, [ins.args[0]]);
       }
       let read: i32[] = map_read_sources(ins);
@@ -3742,6 +3743,132 @@ function borrow_parents(f: Func): i32[][] {
     }
   }
   return view_roots(f, parents);
+}
+
+// Nothing but a cell write or a call replaces what a cell holds. A read of a
+// reference out of a cell therefore borrows the cell's content when every
+// use of the read, and of each projection off it, comes before the first
+// write or call on its path from the read. Such a read carries no count of
+// its own. It is anchored to the cell, which keeps the content alive.
+// The result is empty when the function reads no reference out of a cell.
+pub function cell_borrows(f: Func): boolean[] {
+  let out: boolean[] = [];
+  for bi in 0..f.graph.blocks.len() {
+    let b: ssa.SBlock = f.graph.blocks[bi];
+    for pos in 0..b.insts.len() {
+      let ins: ssa.SInst = b.insts[pos];
+      if (ins.kind_tag != cell_get() || ins.result < 0 || ins.result >= f.graph.nvals || !semtypes.needs_anchor(f.values[ins.result])) {
+        continue;
+      }
+      if (quiet_cell_read(f.graph, bi, pos, ins.result)) {
+        if (out.len() == 0) {
+          out = __alloc_bool(f.graph.nvals);
+        }
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+pub function cell_borrowed(cells: boolean[], v: i32): boolean {
+  return v >= 0 && v < cells.len() && cells[v];
+}
+
+function replaces_cell(kind: i32): boolean {
+  return kind == call() || kind == call_value() || kind == cell_set();
+}
+
+// The position of the first write or call in b after pos, or the block's
+// length when there is none.
+function hazard_after(b: ssa.SBlock, pos: i32): i32 {
+  for q in 0..b.insts.len() {
+    if (q > pos && replaces_cell(b.insts[q].kind_tag)) {
+      return q;
+    }
+  }
+  return b.insts.len();
+}
+
+// The read at (ri, rpos) and every projection off it. A projection of a
+// projection is one as well.
+function projections_off(g: ssa.SFunc, v: i32): boolean[] {
+  let out: boolean[] = __alloc_bool(g.nvals).with(v, true);
+  let grown: boolean = true;
+  while (grown) {
+    grown = false;
+    for b in g.blocks {
+      for ins in b.insts {
+        if (projects(ins.kind_tag) && ins.args.len() > 0 && ins.args[0] >= 0 && out[ins.args[0]] && ins.result >= 0 && !out[ins.result]) {
+          out = out.with(ins.result, true);
+          grown = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// The blocks a borrow may reach from the read's block: each is entered from
+// one block of the region alone, and the region ends in a block at its first
+// write or call. limit holds, per block, the position the borrow may be used
+// before, or -1 outside the region.
+function quiet_region(g: ssa.SFunc, at: i32[], own limit: i32[], bi: i32): i32[] {
+  if (limit[bi] != g.blocks[bi].insts.len()) {
+    return limit;
+  }
+  for which in 0..2 {
+    let s: i32 = ssa.successor_id(g.blocks[bi].term, which);
+    if (s < 0 || s >= at.len() || at[s] < 0 || s == g.entry) {
+      continue;
+    }
+    let si: i32 = at[s];
+    if (limit[si] >= 0 || g.blocks[si].preds.len() != 1) {
+      continue;
+    }
+    limit = limit.with(si, hazard_after(g.blocks[si], 0 - 1));
+    limit = quiet_region(g, at, limit, si);
+  }
+  return limit;
+}
+
+function quiet_cell_read(g: ssa.SFunc, ri: i32, rpos: i32, v: i32): boolean {
+  let off: boolean[] = projections_off(g, v);
+  let at: i32[] = ssadeps.position_of(g);
+  let limit: i32[] = util.minus_ones(g.blocks.len()).with(ri, hazard_after(g.blocks[ri], rpos));
+  limit = quiet_region(g, at, limit, ri);
+  for xi in 0..g.blocks.len() {
+    let b: ssa.SBlock = g.blocks[xi];
+    for q in 0..b.insts.len() {
+      let ins: ssa.SInst = b.insts[q];
+      for k in 0..ins.args.len() {
+        let a: i32 = ins.args[k];
+        if (a < 0 || a >= off.len() || !off[a]) {
+          continue;
+        }
+        if (ins.kind_tag == 8) {
+          // A phi reads its operand on the edge from the predecessor its
+          // slot names, so that block must end inside the region.
+          if (k >= b.preds.len() || b.preds[k] < 0 || b.preds[k] >= at.len() || at[b.preds[k]] < 0) {
+            return false;
+          }
+          let pi: i32 = at[b.preds[k]];
+          if (limit[pi] != g.blocks[pi].insts.len()) {
+            return false;
+          }
+          continue;
+        }
+        if (limit[xi] < 0 || q >= limit[xi] || xi == ri && q <= rpos) {
+          return false;
+        }
+      }
+    }
+    let t: i32 = term_operand(b.term);
+    if (t >= 0 && t < off.len() && off[t] && limit[xi] != b.insts.len()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 struct Closure { ok: boolean, dependencies: i32[][] }
