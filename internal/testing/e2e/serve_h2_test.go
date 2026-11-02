@@ -261,6 +261,7 @@ func driveFiles(t *testing.T, cmd *exec.Cmd, big []byte) {
 func (w *serveH2World) drivePrefix(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.WaitServerReady(t, addr)
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		t.Fatal(err)
