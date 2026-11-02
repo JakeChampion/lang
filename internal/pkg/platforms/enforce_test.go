@@ -78,6 +78,22 @@ func TestEnforceSubprocessByTarget(t *testing.T) {
 	}
 }
 
+func TestEnforceIOUringByTarget(t *testing.T) {
+	prog := prepared(t, `function main(): i32 { return ring_new(1) as i32; }`, false)
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "arm64-android", "x86-64-android"} {
+		t.Run(target, func(t *testing.T) {
+			vs := platforms.Enforce(prog, target)
+			if strings.HasSuffix(target, "-linux") {
+				if len(vs) != 0 {
+					t.Fatalf("Linux ring violations: %+v", vs)
+				}
+			} else if len(vs) != 1 || vs[0].Builtin != "ring_new" || vs[0].Capability != "uring" {
+				t.Fatalf("want the io_uring capability refusal: %+v", vs)
+			}
+		})
+	}
+}
+
 func TestEnforceProcByTarget(t *testing.T) {
 	src := `function main(): i32 {
     let pid: i32 = proc_fork();

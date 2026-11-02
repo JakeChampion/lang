@@ -11,6 +11,9 @@ pub struct Descriptor {
 }
 
 function capability_profile(profile: string): string[] {
+  if (profile == "hosted-android") {
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "ktls"];
+  }
   if (profile == "hosted-linux") {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "ktls"];
   }
@@ -28,7 +31,10 @@ function capability_profile(profile: string): string[] {
 }
 
 function environment_profile(environment: string): string {
-  if (environment == "linux" || environment == "android") {
+  if (environment == "android") {
+    return "hosted-android";
+  }
+  if (environment == "linux") {
     return "hosted-linux";
   }
   if (environment == "darwin") {
