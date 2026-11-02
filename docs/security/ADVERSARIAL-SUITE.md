@@ -36,6 +36,8 @@ QEMU establishes emulated behaviour only.
 | A read through a released box | `TestX86_64SanitizeUseAfterFreeReported`, `TestArm64SanitizeUseAfterFreeReported`, `TestX86_64SanitizeMapHandleUseAfterFree`, `TestArm64SanitizeMapHandleUseAfterFree` | `-sanitize` report, exit 134 | x86, arm64 |
 | A second release of one box | `TestX86_64SanitizeDoubleFreeReported`, `TestArm64SanitizeDoubleFreeReported`, `TestSelfHostDoubleFreeSilentWithoutSanitizeX86_64` | `-sanitize` report; the release build counts and continues | x86, arm64 |
 | A released block reused before the sanitizer can see it | `TestX86_64SanitizeQuarantinesFreedBlocks`, `TestArm64SanitizeQuarantinesFreedBlocks`, `TestSelfHostSanitizeBoxFreeIsQuarantined`, `TestSelfHostUafQuarantineAsmContractX86_64`, `TestSelfHostUafQuarantineAsmContractArm64`, `TestSelfHostSanitizeQuarantineGrowth` | the block stays quarantined; the growth is pinned | x86, arm64 |
+| A raw write into the payload of a released block | `TestSelfHostQuarantinePolicy` | `fern-sanitizer: write-after-free`, exit 124 under `-sanitize` | x86, arm64 |
+| A raw read through a dangling pointer | `TestSelfHostQuarantinePolicy` | the poison pattern, not the stale bytes, under `-sanitize` | x86, arm64 |
 | A raw free of an address outside the arena | `TestSelfHostRawFreeOutsideHeap` | abort with the out-of-heap cause | x86, arm64 |
 | A forged free list link in a released block | `TestSelfHostFreeListLinkForgery` | abort with the corrupt-link cause under `-harden`; the control recycles twelve blocks | x86, arm64 |
 | A secret left in a released block | `TestSelfHostEraseZeroesStorage` | `crypto.erase` zeroes it; the control reads it back | x86, arm64 |

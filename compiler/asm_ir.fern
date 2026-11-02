@@ -135,6 +135,11 @@ function rc_poison(): string {
   return "2129525454";
 }
 
+// The poison word twice, which fills the payload of a quarantined block.
+function rc_poison64(): string {
+  return "9146242183059077838";
+}
+
 function quarantine_rc(addr: string, on: boolean): string {
   if (on) {
     return "    movl $" + rc_poison() + ", " + addr + "\n";
@@ -187,6 +192,7 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rdi, __fern_quar_tail(%rip)\n");
   s = s.write("    leaq 0(,%rsi,8), %rax\n");
   s = s.write("    addq %rax, __fern_quar_bytes(%rip)\n");
+  s = quar_payload(s, "fill", "    movq %rax, (%r8)\n");
   if (s.quarantine > 0i64) {
     s = s.write(".Lquar_evict:\n");
     s = s.write("    movabs $" + util.i64_to_string(s.quarantine) + ", %rax\n");
@@ -210,6 +216,7 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq (%rdi), %rsi\n");
     s = s.write("    movl $0, 8(%rdi)\n");
     s = s.write(".Lquar_recycle:\n");
+    s = quar_payload(s, "scan", "    cmpq %rax, (%r8)\n    jne __fern_san_abort_waf\n");
     s = s.write("    leaq 0(,%rsi,8), %rax\n");
     s = s.write("    subq %rax, __fern_quar_bytes(%rip)\n");
     s = s.write("    cmpq $65536, %rsi\n");
@@ -229,6 +236,14 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    popq %rax\n");
   s = s.write(".Lquar_ret:\n");
   return s.write("    ret\n");
+}
+
+// Runs `body` on each payload word of the block at %rdi, words 3 to %rsi - 1,
+// with the word's address in %r8 and the poison pattern in %rax.
+function quar_payload(s: asmcore.EmitState, name: string, body: string): asmcore.EmitState {
+  s = s.write("    leaq 24(%rdi), %r8\n    leaq -3(%rsi), %rcx\n    movabs $" + rc_poison64() + ", %rax\n");
+  s = s.write("    testq %rcx, %rcx\n    jz .Lquar_" + name + "_done\n.Lquar_" + name + ":\n" + body);
+  return s.write("    addq $8, %r8\n    subq $1, %rcx\n    jnz .Lquar_" + name + "\n.Lquar_" + name + "_done:\n");
 }
 
 function emit_san_waf_abort(s: asmcore.EmitState): asmcore.EmitState {
