@@ -37,6 +37,7 @@ A release that takes the queue past its budget evicts the oldest block until the
 Before the evicted block returns to its free list, the helper reads its poison word and every payload word again.
 A block whose poison is gone was written after its release, and the eviction reports `fern-sanitizer: write-after-free (a quarantined block was written)` with exit 124.
 A raw read through a dangling pointer gets the poison pattern, not the bytes the block held.
+At exit the leak report runs the same check over every block still in the queue, so `-quarantine 0` reports a write after free too.
 
 A large block, 512 KiB and up, returns to the large free list through the same path.
 A raw block below three words cannot carry the link. It stays out of the queue, as every released block did before.
@@ -88,6 +89,7 @@ Its `-harden` keeps the canary, the indirect-call check, the signed return addre
 
 - `write-after-free`: a raw block is released and then written. The next 40000 releases under `-quarantine 1M` evict it, and the run exits 124 with the report. The release build prints `survived`.
 - `payload-write-after-free`: the same, with the write at byte 40 of the block, in its payload. The run exits 124 with the report, and the release build prints `survived`.
+- `write-after-free-at-exit`: a raw block is released and written, and the program exits with the block still in the queue. Under `-sanitize` and under `-sanitize -quarantine 0` the run exits 124 with the report. The release build prints `survived`.
 - `payload-read-after-free`: a raw block holds 7 at byte 40 and is released, and the program reads that byte back. Under `-sanitize` it reads 206, the low byte of the poison pattern. The release build reads 7.
 - `placement`: 16 blocks of one class are released and taken again 32 times. The release build takes the last released block first on all 32 rounds. The `-harden` build did so on 4 rounds on x86-64 and 2 on arm64 in one run, and the test requires fewer than 32.
 - `guard-page`: 70 one-MiB raw blocks come from the bump. Under `-harden` a read one byte past the 64th block faults, and the same read past the 63rd and the 65th does not. The release build reads past the 64th.
@@ -101,7 +103,6 @@ Its `-harden` keeps the canary, the indirect-call check, the signed return addre
 
 - A use after free older than the budget is a silent reuse again. The budget is the trade.
 - A write that puts the poison pattern back is not seen. A block below three words carries no payload and stays out of the queue.
-- The check runs at eviction. A write after free in a block that is still in the queue at exit is not reported. Under `-quarantine 0` no block is evicted, so no write is reported.
 - The fill and the check cost one store and one load per payload word of each released block.
 - The placement window is eight. A heap spray that fills a class with more than eight blocks still gets predictable reuse past the window.
 - The guard sample is one block in 64. A write past the end of the other 63 lands in the next block.

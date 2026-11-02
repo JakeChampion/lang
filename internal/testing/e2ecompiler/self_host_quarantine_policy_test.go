@@ -50,6 +50,19 @@ const quarantinePayloadWriteSrc = `function main(): i32 {
 }
 `
 
+// A write after free with no release after it: the block is still in the
+// quarantine when the program exits.
+const quarantineExitWriteSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __free(p, 64);
+    __store_u8(p + 40, 7);
+  }
+  print("survived");
+  return 0;
+}
+`
+
 // A raw read through a dangling pointer. The quarantine fills the payload
 // of a released block with the poison pattern, so the read sees its low
 // byte, 0xce, and not the byte the block held.
@@ -256,6 +269,18 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 					t.Fatalf("exit %d, want 124 with the write-after-free report\n%s%s", r.code, r.stdout, r.stderr)
 				}
 				plain := quarantineBuild(t, cli, qemu, target, quarantinePayloadWriteSrc, nil)
+				if plain.code != 0 || !strings.Contains(plain.stdout, "survived") {
+					t.Fatalf("release build: exit %d\n%s%s", plain.code, plain.stdout, plain.stderr)
+				}
+			})
+			t.Run("write-after-free-at-exit", func(t *testing.T) {
+				for _, flags := range [][]string{{"-sanitize"}, {"-sanitize", "-quarantine", "0"}} {
+					r := quarantineBuild(t, cli, qemu, target, quarantineExitWriteSrc, flags)
+					if r.code != 124 || !strings.Contains(r.stderr, "fern-sanitizer: write-after-free (a quarantined block was written)") {
+						t.Fatalf("%v: exit %d, want 124 with the write-after-free report\n%s%s", flags, r.code, r.stdout, r.stderr)
+					}
+				}
+				plain := quarantineBuild(t, cli, qemu, target, quarantineExitWriteSrc, nil)
 				if plain.code != 0 || !strings.Contains(plain.stdout, "survived") {
 					t.Fatalf("release build: exit %d\n%s%s", plain.code, plain.stdout, plain.stderr)
 				}

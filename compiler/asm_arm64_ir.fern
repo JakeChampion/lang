@@ -6932,6 +6932,9 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add sp, sp, #16\n");
     s = s.write(".Llc_args_done:\n");
   }
+  if (s.rc_free_debug && s.has_need("heap")) {
+    s = quar_scan_at_exit(s);
+  }
   s = s.write("    adrp x1, .Llc_a\n");
   s = s.write("    add x1, x1, :lo12:.Llc_a\n");
   s = s.write("    mov x2, #18\n");
@@ -7061,6 +7064,16 @@ function quar_payload(s: asmcore.EmitState, name: string, body: string): asmcore
   s = s.write(rc_poison_into("w9") + "    orr x9, x9, x9, lsl #32\n    add x10, x0, #24\n    sub x11, x1, #3\n");
   s = s.write("    cbz x11, .Lquar_" + name + "_done\n.Lquar_" + name + ":\n" + body);
   return s.write("    subs x11, x11, #1\n    b.ne .Lquar_" + name + "\n.Lquar_" + name + "_done:\n");
+}
+
+// At exit every block still in the quarantine gets the eviction's check, so
+// a write after free is reported whether or not the budget evicted it.
+function quar_scan_at_exit(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(quar_addr("x12", "__fern_quar_head") + "    ldr x0, [x12]\n.Lquar_end_loop:\n    cbz x0, .Lquar_end_done\n");
+  s = s.write(rc_poison_into("w9") + "    ldr w11, [x0]\n    cmp w11, w9\n    b.ne .Lquar_end_size0\n    ldr x1, [x0, #8]\n    b .Lquar_end_scan\n");
+  s = s.write(".Lquar_end_size0:\n    ldr w11, [x0, #8]\n    cmp w11, w9\n    b.ne __fern_san_abort_waf\n    ldr x1, [x0]\n.Lquar_end_scan:\n");
+  s = quar_payload(s, "atexit", "    ldr x12, [x10], #8\n    cmp x12, x9\n    b.ne __fern_san_abort_waf\n");
+  return s.write("    ldr x0, [x0, #16]\n    b .Lquar_end_loop\n.Lquar_end_done:\n");
 }
 
 function rc_poison_into(w: string): string {
