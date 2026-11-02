@@ -13,8 +13,18 @@ function refuse(name: string): helper.Proof {
   return helper.Proof { ok: false, function_name: name, message: "unproved uniqueness final unit" };
 }
 
+// The pools of an arm64 unit with no constants: the relocation anchor, then
+// the four empty pools. A section line names `.data` here, or `.data.rel.ro`
+// when the unit keeps its constants read-only.
 function empty_pools(): string {
-  return ".section .data\n.align 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.align 8\n.Lfern_sbox_begin:\n.section .data\n.Lfern_sbox_end:\n.align 8\n.Lfern_cagg_begin:\n.section .data\n.Lfern_cagg_end:\n.align 8\n.Lfern_cfn_begin:\n.section .data\n.Lfern_cfn_end:\n.align 8\n.Lfern_cref_begin:\n.Lfern_cref_end:\n.text\n";
+  return ".section .data\n.align 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.section .data\n.align 8\n.Lfern_sbox_begin:\n.section .data\n.Lfern_sbox_end:\n.section .data\n.align 8\n.Lfern_cagg_begin:\n.section .data\n.Lfern_cagg_end:\n.align 8\n.Lfern_cfn_begin:\n.section .data\n.Lfern_cfn_end:\n.align 8\n.Lfern_cref_begin:\n.section .data\n.Lfern_cref_end:\n.text\n";
+}
+
+function pool_line(line: string): string {
+  if (line == ".section .data.rel.ro") {
+    return ".section .data";
+  }
+  return line;
 }
 
 function pools_match(tail: string[], architecture: string): boolean {
@@ -24,7 +34,7 @@ function pools_match(tail: string[], architecture: string): boolean {
   }
   let i = 0;
   while (i < tail.len()) {
-    if (tail[i] != expected[i]) {
+    if (pool_line(tail[i]) != expected[i]) {
       return false;
     }
     i = i + 1;
