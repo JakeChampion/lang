@@ -1,3 +1,6 @@
+# 2026-11-02: PR #14022 run41414136189 measures the matching native x86 wins.
+# Lower only the two red-black-tree instruction limits; all tolerances stay unchanged.
+# Record: docs/benchmarks/nested-record-tokens-2026-11-02/ci-x86-wins/.
 # 2026-11-02: Issue #12795 assigns independent tokens to nested record keeps.
 # Native ARM64 repeats confirm both lower red-black-tree instruction counts exactly.
 # Record: docs/benchmarks/nested-record-tokens-2026-11-02/repeated-arm-wins.json.
@@ -551,9 +554,9 @@ x86_64/perceus_deriv.ir	67372410
 x86_64/perceus_nqueens.text	1555
 x86_64/perceus_nqueens.ir	92759479
 x86_64/perceus_rbtree.text	2872
-x86_64/perceus_rbtree.ir	54772423
+x86_64/perceus_rbtree.ir	52232903
 x86_64/perceus_rbtree_ck.text	2976
-x86_64/perceus_rbtree_ck.ir	54358823
+x86_64/perceus_rbtree_ck.ir	51779463
 aarch64/perceus_cfold.text	2178
 aarch64/perceus_cfold.ir	62299589
 aarch64/perceus_deriv.text	3026
