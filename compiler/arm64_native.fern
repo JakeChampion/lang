@@ -8832,6 +8832,17 @@ function arm64_section_kind(line: string): i32 {
 }
 
 // The sections whose bytes the data directives fill.
+// A `.word` inside .text is a data word among the instructions, such as the
+// signature word ahead of a CFI stub.
+function arm64_gas_text_words(code: usize, line: string): void {
+  if (arm64_gas_data_width(line) != 4) {
+    return;
+  }
+  for v in arm64_gas_values(line) {
+    arm64_push_word(code, arm64_gas_atoi64(v));
+  }
+}
+
 function arm64_data_like(section: i32): boolean {
   return section == 1 || section == 3 || section == 4;
 }
@@ -9022,10 +9033,8 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = arm64_gas_bss_directive(p, line);
       } else if (arm64_data_like(section)) {
         p = arm64_gas_data_directive(p, line, section);
-      } else if (section == 0 && arm64_gas_data_width(line) == 4) {
-        for v in arm64_gas_values(line) {
-          arm64_push_word(a.code, arm64_gas_atoi64(v));
-        }
+      } else {
+        arm64_gas_text_words(a.code, line);
       }
       continue;
     }
