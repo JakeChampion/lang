@@ -107,7 +107,10 @@ function and the op (`ircore.ssa_refuse`, exit 3), never a fall-through:
 there is no other emitter. Every op the lowering produces has an arm, so
 that refusal is a compiler bug report. `FERN_SSA_REPORT=1` prints, on
 stderr, one line per function whose lift or emit took over 200 ms, with both
-times and its op and slot counts; nothing about the emitted program changes
+times and its op and slot counts. `FERN_SSA_ALLOC=<function>` prints that
+function's register form, each block with its position and whether it is
+cold, each call with its cold kind, and each value's interval, spill weight
+and home (`ssa.print_alloc`). Nothing about the emitted program changes
 with it. `-backend ssa` names the register path explicitly and is
 byte-identical to omitting the flag; `-backend flat` is refused on the native
 ISAs and names wasm's one emitter.

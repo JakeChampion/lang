@@ -1961,6 +1961,48 @@ pub function spill_slot(code: i32): i32 {
   return 0 - 2 - code;
 }
 
+// One line per value with a home: its interval, its spill weight and the
+// register index or frame slot it took. FERN_SSA_ALLOC=<function> prints it.
+pub function print_alloc(f: SFunc, a: Alloc): string {
+  let w: i32[] = spill_weights(f, block_positions(f));
+  let cold: boolean[] = cold_blocks(f);
+  let out: string = "";
+  let start: i32 = 0;
+  for bi in 0..f.blocks.len() {
+    let blk: SBlock = f.blocks[bi];
+    out = out + "  block " + util.i32_to_string(bi) + " id " + util.i32_to_string(blk.id) + " at " + util.i32_to_string(start);
+    if (cold[bi]) {
+      out = out + " cold";
+    }
+    out = out + "\n";
+    for k in 0..blk.insts.len() {
+      let ins: SInst = blk.insts[k];
+      if (inst_is_call(ins.kind_tag)) {
+        let kind: i32 = COLD_NONE;
+        if (start + k < a.cold.len()) {
+          kind = a.cold[start + k];
+        }
+        out = out + "    " + util.i32_to_string(start + k) + ": v" + util.i32_to_string(ins.result) + " " + ins.str + " cold=" + util.i32_to_string(kind) + "\n";
+      }
+    }
+    start = start + blk.insts.len() + 1;
+  }
+  for v in 0..a.reg_of.len() {
+    if (a.hi[v] < 0) {
+      continue;
+    }
+    let home: string = "reg " + util.i32_to_string(a.reg_of[v]);
+    if (a.reg_of[v] == 0 - 1) {
+      home = "none";
+    }
+    if (a.reg_of[v] < 0 - 1) {
+      home = "slot " + util.i32_to_string(spill_slot(a.reg_of[v]));
+    }
+    out = out + "  v" + util.i32_to_string(v) + " [" + util.i32_to_string(a.lo[v]) + ", " + util.i32_to_string(a.hi[v]) + "] w=" + util.i32_to_string(w[v]) + " " + home + "\n";
+  }
+  return out;
+}
+
 pub function spill_count(reg_of: i32[]): i32 {
   let n: i32 = 0;
   for h in reg_of {
@@ -4065,8 +4107,77 @@ pub function register_form(f: SFunc): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = zero_extended_indices(g);
+  g = zero_extended_indices(drop_null_counts(g));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
+}
+
+// A count taken or given back on a constant null does nothing: the runtime
+// entries return at the floor test. The instruction goes.
+pub function drop_null_counts(f: SFunc): SFunc {
+  if (!counts_a_null(f)) {
+    return f;
+  }
+  let defs: SInst[] = inst_defs(f);
+  let uses: i32[] = use_counts(f);
+  let nblocks: SBlock[] = [];
+  let changed: boolean = false;
+  for blk in f.blocks {
+    let kept: SBlock = without_null_counts(blk, defs, uses);
+    changed = changed || kept.insts.len() != blk.insts.len();
+    nblocks = nblocks.append(kept);
+  }
+  if (!changed) {
+    return f;
+  }
+  return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+}
+
+// Whether the function holds both a zero constant and a count call, so the
+// common function pays one scan and no allocation.
+function counts_a_null(f: SFunc): boolean {
+  let zero: boolean = false;
+  let counts: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      zero = zero || zero_constant(ins);
+      counts = counts || count_call(ins);
+    }
+  }
+  return zero && counts;
+}
+
+function zero_constant(ins: SInst): boolean {
+  if (ins.result < 0) {
+    return false;
+  }
+  if (ins.kind_tag == 1) {
+    return ins.imm == 0;
+  }
+  return ins.kind_tag == 3 && ins.str.len() > 0 && util.lit_to_i64(ins.str) == 0i64;
+}
+
+function without_null_counts(blk: SBlock, defs: SInst[], uses: i32[]): SBlock {
+  let ninsts: SInst[] = [];
+  for ins in blk.insts {
+    if (!null_count(ins, defs, uses)) {
+      ninsts = ninsts.append(ins);
+    }
+  }
+  if (ninsts.len() == blk.insts.len()) {
+    return blk;
+  }
+  return SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds };
+}
+
+function count_call(ins: SInst): boolean {
+  return ins.kind_tag == 11 && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" || ins.str == "__fern_rc_inc");
+}
+
+function null_count(ins: SInst, defs: SInst[], uses: i32[]): boolean {
+  if (!count_call(ins) || ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
+    return false;
+  }
+  return const_is(defs, ins.args[0], 0i64);
 }
 
 // An index reads a sign- and a zero-extended i32 the same: no length reaches 2^31, so a negative index fails either way.
