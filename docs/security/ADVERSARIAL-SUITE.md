@@ -51,6 +51,7 @@ QEMU establishes emulated behaviour only.
 | A frame larger than the guard | `TestSelfHostFrameProbes` | the probe loop reaches the guard; overflow report | x86, arm64 |
 | A write past a frame box into the saved registers | `TestSelfHostStackCanary` | `fern: stack canary mismatch`, exit 134 under `-harden` | x86, arm64 |
 | A forged function pointer | `TestSelfHostForwardEdgeCFI` | `fern: indirect call to an address that is not a function`, exit 134 under `-harden` | x86, arm64 |
+| A function pointer forged to a function of another signature | `TestSelfHostForwardEdgeCFI` | `fern: indirect call to a function of another signature`, exit 134 under `-harden` | x86, arm64 |
 | A branch to the middle of a function on a BTI core | `TestSelfHostHardenArm64` | `SIGILL`; unverified on a host without BTI | arm64 |
 | An overwritten return address | `TestSelfHostShadowStack`, `TestSelfHostHardenArm64` | `SIGSEGV` where the shadow stack or PAC is active; the test logs unverified elsewhere | x86, arm64 |
 | A corrupted frame pointer during a report | `TestSelfHostAbortBacktraceCorruptFrame` | the walk stops; exit 134 with the cause | x86, arm64 |

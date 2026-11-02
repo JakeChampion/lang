@@ -66,6 +66,7 @@ pub struct EmitState {
   shape_lits: string[],
   sym_addrs: string[],
   cfi_stubs: string[],
+  cfi_sigs: i32[],
   build_profile: string,
   build_target: string,
   const_aggs: string[],
@@ -514,6 +515,7 @@ pub function new_state(): EmitState {
     shape_lits: [],
     sym_addrs: [],
     cfi_stubs: [],
+    cfi_sigs: [],
     build_profile: "",
     build_target: "",
     const_aggs: [],
@@ -4257,7 +4259,9 @@ pub struct LabelOut { state: EmitState, name: string }
 
 // Under -harden a function value points at a stub that starts with the
 // landing pad an indirect call checks for, so only an address-taken
-// function is a valid indirect target.
+// function is a valid indirect target. The word ahead of the pad is the
+// signature hash of the function's type (`ir.cfi_sig_hash`), which a call
+// through a typed function value compares with its own.
 pub function cfi_stub_label(s: EmitState, target: string): string {
   if (s.str_ns.len() > 0) {
     return ".Lfern_cfi_" + s.str_ns + "_" + sanitize_label(target);
@@ -4265,11 +4269,16 @@ pub function cfi_stub_label(s: EmitState, target: string): string {
   return ".Lfern_cfi_" + sanitize_label(target);
 }
 
-pub function with_cfi_stub(s: EmitState, target: string): EmitState {
-  if (util.index_of_str(s.cfi_stubs, target) >= 0) {
+pub function with_cfi_stub(s: EmitState, target: string, sig: i32): EmitState {
+  let at: i32 = util.index_of_str(s.cfi_stubs, target);
+  if (at >= 0) {
+    if (s.cfi_sigs[at] != sig) {
+      eprint("internal error: the CFI stub of " + target + " takes signature words " + util.i32_to_string(s.cfi_sigs[at]) + " and " + util.i32_to_string(sig));
+      exit(3);
+    }
     return s;
   }
-  return EmitState { ...s, cfi_stubs: s.cfi_stubs.append(target) };
+  return EmitState { ...s, cfi_stubs: s.cfi_stubs.append(target), cfi_sigs: s.cfi_sigs.append(sig) };
 }
 
 pub function fresh_label(s: EmitState): LabelOut {
@@ -4371,7 +4380,7 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   if (body.len() > 0) {
     let target: string = "__fn_" + sanitize_label(body) + entry;
     if (s.harden) {
-      s = with_cfi_stub(s, target);
+      s = with_cfi_stub(s, target, ir.const_struct_fn_sig(packed));
       let stub: string = cfi_stub_label(s, target);
       return ConstAggPack { state: s, text: "1|" + stub };
     }

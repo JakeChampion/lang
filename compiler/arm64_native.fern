@@ -9022,6 +9022,10 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = arm64_gas_bss_directive(p, line);
       } else if (arm64_data_like(section)) {
         p = arm64_gas_data_directive(p, line, section);
+      } else if (section == 0 && arm64_gas_data_width(line) == 4) {
+        for v in arm64_gas_values(line) {
+          arm64_push_word(a.code, arm64_gas_atoi64(v));
+        }
       }
       continue;
     }

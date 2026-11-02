@@ -7059,6 +7059,19 @@ function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
   return X86Asm { ...a, rodata: rodata };
 }
 
+// A `.long` inside .text is a data word among the instructions, such as the
+// signature word ahead of a CFI stub.
+function x86_text_longs(own a: X86Asm, vals: string[]): X86Asm {
+  for v in vals {
+    let w: i32 = x86_gas_atoi(v);
+    buf_push_byte(a.code, w & 255);
+    buf_push_byte(a.code, (w >> 8) & 255);
+    buf_push_byte(a.code, (w >> 16) & 255);
+    buf_push_byte(a.code, (w >> 24) & 255);
+  }
+  return a;
+}
+
 function x86_gas_data_width(line: string): i32 {
   if (x86_str_starts_with(line, ".quad") || x86_str_starts_with(line, ".double")) {
     return 8;
@@ -7175,6 +7188,8 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
         section = 1;
       } else if (section == 2 && x86_gas_data_width(line) > 0) {
         a = x86_bss_skip(a, x86_gas_data_width(line) * x86_gas_values(line).len());
+      } else if (section == 0 && x86_str_starts_with(line, ".long")) {
+        a = x86_text_longs(a, x86_gas_values(line));
       } else if (x86_str_starts_with(line, ".quad")) {
         let qvals: string[] = x86_gas_values(line);
         let qi: i32 = 0;

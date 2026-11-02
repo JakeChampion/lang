@@ -318,14 +318,14 @@ function release(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, f: ssa
   }
   if (ssasem.is_map(t) && ssasem.keyed_map_key(ssasem.map_key(t))) {
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_key(t))));
-    r = emit(r, ir.op_const_closure(value_env_release(ssasem.map_value(t))));
+    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_key(t)), word_signature(2)));
+    r = emit(r, ir.op_const_closure(value_env_release(ssasem.map_value(t)), word_signature(2)));
     r = emit(r, ir.op_call_direct(release_name(t, f), 3));
     return emit(r, ir.op_drop());
   }
   if (ssasem.is_map(t) && routed_box(ssasem.map_value(t))) {
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t))));
+    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t)), word_signature(2)));
     r = emit(r, ir.op_call_direct(release_name(t, f), 2));
     return emit(r, ir.op_drop());
   }
@@ -725,7 +725,7 @@ function drop_captures(own r: irtables.LowerState, slot: i32, fn_ty: typeinfo.Ty
   for rec in env_records(f, fn_ty) {
     r = else_if_open(r, open);
     r = body_address(r, slot);
-    r = emit(r, ir.op_const_func(0, semtypes.env_body(rec.ty)));
+    r = emit(r, ir.op_const_func(ir.cfi_sig_hash(full_signature_tag(fn_ty)), semtypes.env_body(rec.ty)));
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
     r = helper(r, slot, drop_helper_name(rec.ty));
@@ -3212,8 +3212,8 @@ function map_entry(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, p
   if (!ssasem.keyed_map_key(k)) {
     return emit(r, ir.op_call_direct(plain, argc));
   }
-  r = emit(r, ir.op_const_closure(key_closure_name(k, "hash")));
-  r = emit(r, ir.op_const_closure(key_closure_name(k, "eq")));
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "hash"), word_signature(2)));
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "eq"), word_signature(3)));
   return emit(r, ir.op_call_direct(keyed, argc + 2));
 }
 
@@ -4550,7 +4550,7 @@ function map_in_place(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst
   r = emit(r, ir.op_load_local(index));
   r = emit(r, arr_get_op(elem, true));
   r = body_address(r, fn);
-  r = emit(r, ir.op_call_indirect_sig(2, signature_tag(f.values[fn])));
+  r = emit(r, call_value_op(2, f.values[fn]));
   r = emit(r, arr_set_op(elem));
   r = emit(r, ir.op_load_local(index));
   r = emit(r, ir.op_const_i32(1));
@@ -4649,10 +4649,11 @@ function cell_write(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst):
 
 function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   if (ins.kind_tag == ssasem.closure_new()) {
+    let cfi: i32 = ir.cfi_sig_hash(full_signature_tag(f.values[ins.result]));
     if (ins.args.len() == 0) {
-      return emit(r, ir.op_const_closure(ins.str));
+      return emit(r, ir.op_const_closure(ins.str, cfi));
     }
-    r = emit(r, ir.op_const_func(0, ins.str));
+    r = emit(r, ir.op_const_func(cfi, ins.str));
     for capture in ins.args {
       r = emit(r, ir.op_load_local(capture));
     }
@@ -4666,7 +4667,13 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
     return emit(r, ir.op_call_direct(callee.str, ins.args.len()));
   }
   r = body_address(r, ins.args[0]);
-  return emit(r, ir.op_call_indirect_sig(ins.args.len(), signature_tag(f.values[ins.args[0]])));
+  return emit(r, call_value_op(ins.args.len(), f.values[ins.args[0]]));
+}
+
+// A call through a function value of type `sig`: the wasm type tag and the
+// signature word a hardened native call checks against the callee's stub.
+function call_value_op(argc: i32, sig: typeinfo.Type): ir.Op {
+  return ir.op_call_indirect_sig(argc, signature_tag(sig), ir.cfi_sig_hash(full_signature_tag(sig)));
 }
 
 function body_address(own r: irtables.LowerState, slot: i32): irtables.LowerState {
@@ -4675,12 +4682,29 @@ function body_address(own r: irtables.LowerState, slot: i32): irtables.LowerStat
   return emit(r, ir.op_arr_get_nc(32));
 }
 
-function signature_tag(sig: typeinfo.Type): string {
+// The signature word of a runtime helper closure whose `nparams` parameters,
+// the environment first, and result are all words, as the map runtime
+// declares its hash, equality and release parameters.
+function word_signature(nparams: i32): i32 {
+  let tag: string = "";
+  for _ in 0..nparams {
+    tag = tag + "w";
+  }
+  return ir.cfi_sig_hash(tag + "_w");
+}
+
+function full_signature_tag(sig: typeinfo.Type): string {
   let tag: string = "w";
   for p in ssasem.func_params(sig) {
     tag = tag + width_char(p);
   }
-  tag = tag + "_" + width_char(ssasem.func_result(sig));
+  return tag + "_" + width_char(ssasem.func_result(sig));
+}
+
+// The wasm type tag: the full tag, or "" when every width is a word so the
+// backend keys the type by arity alone.
+function signature_tag(sig: typeinfo.Type): string {
+  let tag: string = full_signature_tag(sig);
   let i: i32 = 0;
   while (i < tag.len()) {
     if (tag[i] != b'w' && tag[i] != b'_') {

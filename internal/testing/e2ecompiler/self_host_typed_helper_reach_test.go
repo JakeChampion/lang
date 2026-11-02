@@ -48,7 +48,7 @@ function main(): i32 {
   if (!check([body("main", [])], helpers, [true, true], "")) { return 1; }
   if (!check([body("main", [ir.op_call_direct("release", 1)])], helpers, [true, true], "drop;release;")) { return 2; }
   if (!check([body("main", [ir.op_const_func(0, "release")])], helpers, [true, true], "drop;release;")) { return 3; }
-  if (!check([body("main", [ir.op_const_closure("release")])], helpers, [true, true], "drop;release;")) { return 4; }
+  if (!check([body("main", [ir.op_const_closure("release", 0)])], helpers, [true, true], "drop;release;")) { return 4; }
   if (!check([body("main", [ir.op_const_struct("&arr", 1, "{&fn:release}")])], helpers, [true, true], "drop;release;")) { return 5; }
   if (!check([body("main", [ir.op_dyn_dispatch(["release", "other"], 0, 1)])], helpers, [true, true], "drop;release;")) { return 6; }
   let cycle = helpers.with(0, body("drop", [ir.op_call_direct("release", 1)]));
