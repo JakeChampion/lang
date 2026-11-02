@@ -36,13 +36,13 @@ args…)`. Give each argument and the result a Fern type of the same width:
 To call back into the JVM, use `std/jni`. Its typed wrappers, such as
 `jni.get_version`, `jni.find_class` and `jni.get_int_field`, use
 `jni.call0/1/2/3`. `jni.cstr` makes the `const char*` that the lookup
-methods expect. Nothing frees a `jni.cstr` buffer. To return a Java string,
-use `jni.new_string(env, s)`, which frees its temporary copy.
+methods expect. Free it with `jni.free_buffer` after the call. To return a
+Java string, use `jni.new_string(env, s)`, which frees its temporary copy.
 
 To **invoke** a Java method, resolve a `jmethodID` with `jni.get_method_id`.
 Pack the arguments with `jni.jvalues`. Then call `jni.call_int_method_a`,
 `call_object_method_a` or another method of the fixed-arity
-`Call<Type>MethodA` family.
+`Call<Type>MethodA` family. Free the arguments with `jni.free_buffer`.
 
 ## 2. The Java/Kotlin side (one tiny class)
 

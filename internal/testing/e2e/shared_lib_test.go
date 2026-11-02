@@ -716,9 +716,9 @@ int main(int c, char** v){
 }
 
 // jni.new_string hands NewStringUTF the bytes of a Fern string and frees its
-// copy, so a native method that returns a string on every call does not grow
-// the heap.
-func TestStdJNINewStringFrees(t *testing.T) {
+// copy, and free_buffer frees a cstr, jvalues or jvalue_alloc buffer. A native
+// method that makes them on every call does not grow the heap.
+func TestStdJNIBuffersFree(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
 		t.Skip("gcc not on PATH")
@@ -732,6 +732,17 @@ function churn(env: usize, n: i32): usize {
   let i: i32 = 0;
   while (i < n) {
     last = jni.new_string(env, "hello, " + i.to_string());
+    let name: usize = jni.cstr("java/lang/String" + i.to_string());
+    let args: usize = jni.jvalues([name, i as usize]);
+    let zeros: usize = jni.jvalue_alloc(3);
+    unsafe {
+      if (__load_i64(args + 8) != i as i64 || __load_i64(zeros + 16) != 0) {
+        return 0;
+      }
+    }
+    jni.free_buffer(zeros);
+    jni.free_buffer(args);
+    jni.free_buffer(name);
     i = i + 1;
   }
   return last;
@@ -786,7 +797,7 @@ int main(int c, char** v){
 	cmd := exec.Command(ld, soPath)
 	out, _ := cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Fatalf("jni.new_string: exit %d, want 42; bump bytes per call (want 0): %s", code, out)
+		t.Fatalf("std/jni buffers: exit %d, want 42; bump bytes per call (want 0): %s", code, out)
 	}
 }
 
