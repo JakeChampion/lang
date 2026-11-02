@@ -1,0 +1,662 @@
+=== RUN   TestSelfHostCellReadBorrows
+--- PASS: TestSelfHostCellReadBorrows (54.24s)
+=== RUN   TestSelfHostCellReadBorrowsCensus
+--- PASS: TestSelfHostCellReadBorrowsCensus (29.25s)
+=== RUN   TestSelfHostElementRereadReuse
+=== RUN   TestSelfHostElementRereadReuse/x86-64-linux
+=== RUN   TestSelfHostElementRereadReuse/arm64-linux
+=== RUN   TestSelfHostElementRereadReuse/wasm32-wasi
+--- PASS: TestSelfHostElementRereadReuse (9.45s)
+    --- PASS: TestSelfHostElementRereadReuse/x86-64-linux (2.95s)
+    --- PASS: TestSelfHostElementRereadReuse/arm64-linux (2.90s)
+    --- PASS: TestSelfHostElementRereadReuse/wasm32-wasi (2.75s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (6.82s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostNestedKeepPlan
+--- PASS: TestSelfHostNestedKeepPlan (9.92s)
+=== RUN   TestSelfHostNestedKeepRegions
+=== RUN   TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/arm64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/x86-64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/arm64-linux
+=== RUN   TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/x86-64-linux
+--- PASS: TestSelfHostNestedKeepRegions (1.47s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/arm64-linux (0.04s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_tokens_run.fern/x86-64-linux (0.10s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/arm64-linux (0.65s)
+    --- PASS: TestSelfHostNestedKeepRegions/ssa_keep_region_run.fern/x86-64-linux (0.67s)
+=== RUN   TestSelfHostNestedKeepTokens
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/a/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/b/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/c/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/h/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/p/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/d/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/arm64-linux/s/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/1000
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/8
+=== RUN   TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/1000
+--- PASS: TestSelfHostNestedKeepTokens (2.12s)
+    --- PASS: TestSelfHostNestedKeepTokens/arm64-linux (0.10s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/a/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/b/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/c/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/h/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/p/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/d/shared/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/unique/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/unique/1000 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/shared/8 (0.00s)
+        --- PASS: TestSelfHostNestedKeepTokens/arm64-linux/s/shared/1000 (0.00s)
+    --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux (1.63s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/8 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/a/shared/1000 (0.07s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/b/shared/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/8 (0.11s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/unique/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/c/shared/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/unique/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/h/shared/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/unique/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/8 (0.10s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/p/shared/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/unique/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/d/shared/1000 (0.06s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/unique/1000 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/8 (0.05s)
+        --- PASS: TestSelfHostNestedKeepTokens/x86-64-linux/s/shared/1000 (0.05s)
+    --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi (0.40s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/8 (0.02s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/a/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/b/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/c/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/h/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/p/shared/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/d/shared/1000 (0.02s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/unique/1000 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/8 (0.01s)
+        --- PASS: TestSelfHostNestedKeepTokens/wasm32-wasi/s/shared/1000 (0.01s)
+=== RUN   TestSelfHostCertifiesATokenJoinedFromTwoArms
+=== RUN   TestSelfHostCertifiesATokenJoinedFromTwoArms/closure-payload/x86-64-linux
+=== RUN   TestSelfHostCertifiesATokenJoinedFromTwoArms/closure-payload/arm64-linux
+=== RUN   TestSelfHostCertifiesATokenJoinedFromTwoArms/closure-payload/wasm32-wasi
+=== RUN   TestSelfHostCertifiesATokenJoinedFromTwoArms/string-payload/x86-64-linux
+=== RUN   TestSelfHostCertifiesATokenJoinedFromTwoArms/string-payload/arm64-linux
+=== RUN   TestSelfHostCertifiesATokenJoinedFromTwoArms/string-payload/wasm32-wasi
+--- PASS: TestSelfHostCertifiesATokenJoinedFromTwoArms (20.21s)
+    --- PASS: TestSelfHostCertifiesATokenJoinedFromTwoArms/closure-payload/x86-64-linux (20.08s)
+    --- PASS: TestSelfHostCertifiesATokenJoinedFromTwoArms/closure-payload/arm64-linux (0.01s)
+    --- PASS: TestSelfHostCertifiesATokenJoinedFromTwoArms/closure-payload/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostCertifiesATokenJoinedFromTwoArms/string-payload/x86-64-linux (0.07s)
+    --- PASS: TestSelfHostCertifiesATokenJoinedFromTwoArms/string-payload/arm64-linux (0.01s)
+    --- PASS: TestSelfHostCertifiesATokenJoinedFromTwoArms/string-payload/wasm32-wasi (0.02s)
+=== RUN   TestSelfHostReuseCarry
+=== RUN   TestSelfHostReuseCarry/arm64-linux
+=== RUN   TestSelfHostReuseCarry/x86-64-linux
+=== RUN   TestSelfHostReuseCarry/x86-64-sanitize
+=== RUN   TestSelfHostReuseCarry/wasm32-wasi
+--- PASS: TestSelfHostReuseCarry (23.75s)
+    --- PASS: TestSelfHostReuseCarry/arm64-linux (0.70s)
+    --- PASS: TestSelfHostReuseCarry/x86-64-linux (0.71s)
+    --- PASS: TestSelfHostReuseCarry/x86-64-sanitize (0.65s)
+    --- PASS: TestSelfHostReuseCarry/wasm32-wasi (0.55s)
+=== RUN   TestSelfHostReuseCarryKeepsBlockDonor
+=== RUN   TestSelfHostReuseCarryKeepsBlockDonor/x86-64-linux
+=== RUN   TestSelfHostReuseCarryKeepsBlockDonor/arm64-linux
+=== RUN   TestSelfHostReuseCarryKeepsBlockDonor/wasm32-wasi
+--- PASS: TestSelfHostReuseCarryKeepsBlockDonor (7.03s)
+    --- PASS: TestSelfHostReuseCarryKeepsBlockDonor/x86-64-linux (2.08s)
+    --- PASS: TestSelfHostReuseCarryKeepsBlockDonor/arm64-linux (2.08s)
+    --- PASS: TestSelfHostReuseCarryKeepsBlockDonor/wasm32-wasi (2.01s)
+=== RUN   TestSelfHostScalarParams
+=== RUN   TestSelfHostScalarParams/x86-64-linux
+=== RUN   TestSelfHostScalarParams/arm64-linux
+=== RUN   TestSelfHostScalarParams/wasm32-wasi
+--- PASS: TestSelfHostScalarParams (8.89s)
+    --- PASS: TestSelfHostScalarParams/x86-64-linux (2.73s)
+    --- PASS: TestSelfHostScalarParams/arm64-linux (2.72s)
+    --- PASS: TestSelfHostScalarParams/wasm32-wasi (2.59s)
+=== RUN   TestSelfHostSSAPhysicalRC
+=== RUN   TestSelfHostSSAPhysicalRC/projected-return
+=== RUN   TestSelfHostSSAPhysicalRC/projected-return/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/projected-return/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/projected-return/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/projected-return/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/shared-parent
+=== RUN   TestSelfHostSSAPhysicalRC/shared-parent/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/shared-parent/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/shared-parent/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/shared-parent/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-child
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-child/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-child/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-child/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-child/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/empty-parent
+=== RUN   TestSelfHostSSAPhysicalRC/empty-parent/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/empty-parent/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/empty-parent/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/empty-parent/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/unused-deep-parent
+=== RUN   TestSelfHostSSAPhysicalRC/unused-deep-parent/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/unused-deep-parent/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/unused-deep-parent/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/unused-deep-parent/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/copied-projection
+=== RUN   TestSelfHostSSAPhysicalRC/copied-projection/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/copied-projection/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/copied-projection/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/copied-projection/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/mixed-scalar-tuple
+=== RUN   TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/borrowed-parameter
+=== RUN   TestSelfHostSSAPhysicalRC/borrowed-parameter/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/borrowed-parameter/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/borrowed-parameter/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/borrowed-parameter/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/counted-parameter
+=== RUN   TestSelfHostSSAPhysicalRC/counted-parameter/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/counted-parameter/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/counted-parameter/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/counted-parameter/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/unused-counted-parameter
+=== RUN   TestSelfHostSSAPhysicalRC/unused-counted-parameter/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/unused-counted-parameter/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/unused-counted-parameter/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/unused-counted-parameter/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/branch-phi
+=== RUN   TestSelfHostSSAPhysicalRC/branch-phi/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/branch-phi/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/branch-phi/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/branch-phi/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/arm64-linux/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/arm64-linux/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-linux/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-linux/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-sanitize/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-sanitize/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/wasm32-wasi/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRC/edge-parent-drop/wasm32-wasi/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-phis
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-phis/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-phis/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-phis/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/duplicate-phis/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/scalar-phis
+=== RUN   TestSelfHostSSAPhysicalRC/scalar-phis/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/scalar-phis/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/scalar-phis/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/scalar-phis/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/early-returns
+=== RUN   TestSelfHostSSAPhysicalRC/early-returns/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/early-returns/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/early-returns/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/early-returns/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/same-target
+=== RUN   TestSelfHostSSAPhysicalRC/same-target/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/same-target/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/same-target/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/same-target/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/unreachable-predecessor
+=== RUN   TestSelfHostSSAPhysicalRC/unreachable-predecessor/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/unreachable-predecessor/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/unreachable-predecessor/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/unreachable-predecessor/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRC/nested-joins
+=== RUN   TestSelfHostSSAPhysicalRC/nested-joins/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/nested-joins/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRC/nested-joins/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRC/nested-joins/wasm32-wasi
+--- PASS: TestSelfHostSSAPhysicalRC (47.16s)
+    --- PASS: TestSelfHostSSAPhysicalRC/projected-return (1.57s)
+        --- PASS: TestSelfHostSSAPhysicalRC/projected-return/arm64-linux (0.43s)
+        --- PASS: TestSelfHostSSAPhysicalRC/projected-return/x86-64-linux (0.49s)
+        --- PASS: TestSelfHostSSAPhysicalRC/projected-return/x86-64-sanitize (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/projected-return/wasm32-wasi (0.28s)
+    --- PASS: TestSelfHostSSAPhysicalRC/shared-parent (1.51s)
+        --- PASS: TestSelfHostSSAPhysicalRC/shared-parent/arm64-linux (0.35s)
+        --- PASS: TestSelfHostSSAPhysicalRC/shared-parent/x86-64-linux (0.44s)
+        --- PASS: TestSelfHostSSAPhysicalRC/shared-parent/x86-64-sanitize (0.44s)
+        --- PASS: TestSelfHostSSAPhysicalRC/shared-parent/wasm32-wasi (0.28s)
+    --- PASS: TestSelfHostSSAPhysicalRC/duplicate-child (1.53s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-child/arm64-linux (0.40s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-child/x86-64-linux (0.41s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-child/x86-64-sanitize (0.44s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-child/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostSSAPhysicalRC/empty-parent (1.45s)
+        --- PASS: TestSelfHostSSAPhysicalRC/empty-parent/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/empty-parent/x86-64-linux (0.39s)
+        --- PASS: TestSelfHostSSAPhysicalRC/empty-parent/x86-64-sanitize (0.38s)
+        --- PASS: TestSelfHostSSAPhysicalRC/empty-parent/wasm32-wasi (0.34s)
+    --- PASS: TestSelfHostSSAPhysicalRC/unused-deep-parent (1.46s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-deep-parent/arm64-linux (0.34s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-deep-parent/x86-64-linux (0.41s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-deep-parent/x86-64-sanitize (0.38s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-deep-parent/wasm32-wasi (0.34s)
+    --- PASS: TestSelfHostSSAPhysicalRC/copied-projection (1.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/copied-projection/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/copied-projection/x86-64-linux (0.39s)
+        --- PASS: TestSelfHostSSAPhysicalRC/copied-projection/x86-64-sanitize (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/copied-projection/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostSSAPhysicalRC/mixed-scalar-tuple (1.35s)
+        --- PASS: TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/arm64-linux (0.34s)
+        --- PASS: TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/x86-64-linux (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/x86-64-sanitize (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/mixed-scalar-tuple/wasm32-wasi (0.29s)
+    --- PASS: TestSelfHostSSAPhysicalRC/borrowed-parameter (1.40s)
+        --- PASS: TestSelfHostSSAPhysicalRC/borrowed-parameter/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/borrowed-parameter/x86-64-linux (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/borrowed-parameter/x86-64-sanitize (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/borrowed-parameter/wasm32-wasi (0.36s)
+    --- PASS: TestSelfHostSSAPhysicalRC/counted-parameter (1.34s)
+        --- PASS: TestSelfHostSSAPhysicalRC/counted-parameter/arm64-linux (0.34s)
+        --- PASS: TestSelfHostSSAPhysicalRC/counted-parameter/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/counted-parameter/x86-64-sanitize (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/counted-parameter/wasm32-wasi (0.28s)
+    --- PASS: TestSelfHostSSAPhysicalRC/unused-counted-parameter (1.35s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-counted-parameter/arm64-linux (0.34s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-counted-parameter/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-counted-parameter/x86-64-sanitize (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unused-counted-parameter/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostSSAPhysicalRC/branch-phi (1.34s)
+        --- PASS: TestSelfHostSSAPhysicalRC/branch-phi/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/branch-phi/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/branch-phi/x86-64-sanitize (0.38s)
+        --- PASS: TestSelfHostSSAPhysicalRC/branch-phi/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop (3.60s)
+        --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/arm64-linux (0.92s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/arm64-linux/certifier-refuses-missing-retain (0.24s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/arm64-linux/missing-edge-retain (0.32s)
+        --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-linux (0.97s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-linux/certifier-refuses-missing-retain (0.24s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-linux/missing-edge-retain (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-sanitize (0.95s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-sanitize/certifier-refuses-missing-retain (0.23s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/x86-64-sanitize/missing-edge-retain (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/wasm32-wasi (0.76s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/wasm32-wasi/certifier-refuses-missing-retain (0.23s)
+            --- PASS: TestSelfHostSSAPhysicalRC/edge-parent-drop/wasm32-wasi/missing-edge-retain (0.25s)
+    --- PASS: TestSelfHostSSAPhysicalRC/duplicate-phis (1.42s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-phis/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-phis/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-phis/x86-64-sanitize (0.46s)
+        --- PASS: TestSelfHostSSAPhysicalRC/duplicate-phis/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostSSAPhysicalRC/scalar-phis (1.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/scalar-phis/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/scalar-phis/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/scalar-phis/x86-64-sanitize (0.39s)
+        --- PASS: TestSelfHostSSAPhysicalRC/scalar-phis/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostSSAPhysicalRC/early-returns (1.35s)
+        --- PASS: TestSelfHostSSAPhysicalRC/early-returns/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/early-returns/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/early-returns/x86-64-sanitize (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/early-returns/wasm32-wasi (0.28s)
+    --- PASS: TestSelfHostSSAPhysicalRC/same-target (1.32s)
+        --- PASS: TestSelfHostSSAPhysicalRC/same-target/arm64-linux (0.33s)
+        --- PASS: TestSelfHostSSAPhysicalRC/same-target/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/same-target/x86-64-sanitize (0.35s)
+        --- PASS: TestSelfHostSSAPhysicalRC/same-target/wasm32-wasi (0.26s)
+    --- PASS: TestSelfHostSSAPhysicalRC/unreachable-predecessor (1.42s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unreachable-predecessor/arm64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unreachable-predecessor/x86-64-linux (0.41s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unreachable-predecessor/x86-64-sanitize (0.36s)
+        --- PASS: TestSelfHostSSAPhysicalRC/unreachable-predecessor/wasm32-wasi (0.29s)
+    --- PASS: TestSelfHostSSAPhysicalRC/nested-joins (1.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/nested-joins/arm64-linux (0.34s)
+        --- PASS: TestSelfHostSSAPhysicalRC/nested-joins/x86-64-linux (0.37s)
+        --- PASS: TestSelfHostSSAPhysicalRC/nested-joins/x86-64-sanitize (0.39s)
+        --- PASS: TestSelfHostSSAPhysicalRC/nested-joins/wasm32-wasi (0.28s)
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/projected-return
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/projected-return/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/projected-return/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/projected-return/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/projected-return/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/shared-parent
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/shared-parent/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/shared-parent/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/shared-parent/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/shared-parent/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-child
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/empty-parent
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/empty-parent/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/empty-parent/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/empty-parent/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/empty-parent/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/copied-projection
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/copied-projection/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/copied-projection/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/copied-projection/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/copied-projection/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/counted-parameter
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/branch-phi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/branch-phi/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/branch-phi/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/branch-phi/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/branch-phi/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/arm64-linux/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/arm64-linux/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-linux/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-linux/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-sanitize/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-sanitize/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/wasm32-wasi/certifier-refuses-missing-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/wasm32-wasi/missing-edge-retain
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/scalar-phis
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/early-returns
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/early-returns/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/early-returns/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/early-returns/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/early-returns/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/same-target
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/same-target/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/same-target/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/same-target/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/same-target/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/wasm32-wasi
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/nested-joins
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/nested-joins/arm64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/nested-joins/x86-64-linux
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/nested-joins/x86-64-sanitize
+=== RUN   TestSelfHostSSAPhysicalRCIRArm64/nested-joins/wasm32-wasi
+--- PASS: TestSelfHostSSAPhysicalRCIRArm64 (99.64s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/projected-return (0.16s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/projected-return/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/projected-return/x86-64-linux (0.08s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/projected-return/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/projected-return/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/shared-parent (0.17s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/shared-parent/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/shared-parent/x86-64-linux (0.11s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/shared-parent/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/shared-parent/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-child (0.16s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/x86-64-sanitize (0.09s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-child/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/empty-parent (0.18s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/empty-parent/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/empty-parent/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/empty-parent/x86-64-sanitize (0.11s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/empty-parent/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent (0.14s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/x86-64-linux (0.06s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-deep-parent/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/copied-projection (0.12s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/copied-projection/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/copied-projection/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/copied-projection/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/copied-projection/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple (0.12s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/mixed-scalar-tuple/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter (0.11s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/borrowed-parameter/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/counted-parameter (0.11s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/counted-parameter/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter (0.12s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unused-counted-parameter/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/branch-phi (0.13s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/branch-phi/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/branch-phi/x86-64-linux (0.06s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/branch-phi/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/branch-phi/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop (0.25s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/arm64-linux (0.02s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/arm64-linux/certifier-refuses-missing-retain (0.00s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/arm64-linux/missing-edge-retain (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-linux (0.09s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-linux/certifier-refuses-missing-retain (0.00s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-linux/missing-edge-retain (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-sanitize (0.11s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-sanitize/certifier-refuses-missing-retain (0.00s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/x86-64-sanitize/missing-edge-retain (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/wasm32-wasi (0.02s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/wasm32-wasi/certifier-refuses-missing-retain (0.00s)
+            --- PASS: TestSelfHostSSAPhysicalRCIRArm64/edge-parent-drop/wasm32-wasi/missing-edge-retain (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis (0.11s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/duplicate-phis/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/scalar-phis (0.14s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/x86-64-linux (0.08s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/scalar-phis/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/early-returns (0.15s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/early-returns/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/early-returns/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/early-returns/x86-64-sanitize (0.08s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/early-returns/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/same-target (0.14s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/same-target/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/same-target/x86-64-linux (0.07s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/same-target/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/same-target/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor (0.12s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/unreachable-predecessor/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostSSAPhysicalRCIRArm64/nested-joins (0.12s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/nested-joins/arm64-linux (0.01s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/nested-joins/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/nested-joins/x86-64-sanitize (0.05s)
+        --- PASS: TestSelfHostSSAPhysicalRCIRArm64/nested-joins/wasm32-wasi (0.01s)
+=== RUN   TestSelfHostSSAPhysicalRCRejects
+--- PASS: TestSelfHostSSAPhysicalRCRejects (11.41s)
+=== RUN   TestSelfHostSSARegisterForm
+--- PASS: TestSelfHostSSARegisterForm (0.15s)
+=== RUN   TestSelfHostTestedTakeShapeX86_64
+--- PASS: TestSelfHostTestedTakeShapeX86_64 (19.85s)
+=== RUN   TestSelfHostTestedTakeArm64
+--- PASS: TestSelfHostTestedTakeArm64 (1.00s)
+=== RUN   TestSelfHostTestedTakeWasm
+--- PASS: TestSelfHostTestedTakeWasm (1.34s)
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/x86-64-linux
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/arm64-linux
+=== RUN   TestSelfHostUpdateBaseKeepsItsBox/wasm32-wasi
+--- PASS: TestSelfHostUpdateBaseKeepsItsBox (6.70s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/x86-64-linux (1.97s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/arm64-linux (2.00s)
+    --- PASS: TestSelfHostUpdateBaseKeepsItsBox/wasm32-wasi (1.94s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	360.402s

@@ -616,7 +616,7 @@ func nativeLeakVerdict(t *testing.T, cli, dir, name, src string) (leakVerdict, i
 		t.Logf("%s: native compile failed:\n%s", name, out)
 		return verdictError, -1
 	}
-	cmd := exec.Command(binPath)
+	cmd := runX86_64Bin(x86_64Runner(t), binPath)
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	_ = cmd.Run()

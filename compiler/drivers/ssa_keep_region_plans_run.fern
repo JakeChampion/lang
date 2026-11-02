@@ -1,0 +1,128 @@
+import "../ssakeepregion";
+import "../ssaunits";
+import "../ssasem";
+import "../semsource";
+import "../lexer";
+import "../parser";
+import "../lift";
+import "../util";
+
+struct Summary { code: i32, why: string, keeps: i32, peak: i32 }
+
+function failed(code: i32, why: string): Summary {
+  return Summary { code: code, why: why, keeps: 0, peak: 0 };
+}
+
+function donor_matches(witness: ssakeepregion.Witness, donor: ssakeepregion.Witness, row: i32, nvals: i32, scratch: i32): boolean {
+  return witness.ok && donor.ok && donor.row == row && witness.slot == donor.slot
+    && witness.slot > nvals && witness.slot < scratch;
+}
+
+function slot_matches(found: ssakeepregion.Witness, row: i32, slot: i32): boolean {
+  return found.ok && found.row == row && found.slot == slot;
+}
+
+function verify_row(k: ssaunits.Keeps, bound: ssakeepregion.Bound, block: i32, row: i32, nvals: i32): i32 {
+  let witness = ssakeepregion.at(bound, block, row);
+  let donor = ssakeepregion.for_donor(bound, block, k.start[row], k.donors[row]);
+  if (!donor_matches(witness, donor, row, nvals, bound.region.scratch_start)) {
+    return 6;
+  }
+  for value in k.values[row] {
+    let found = ssakeepregion.for_value(bound, block, k.start[row], value);
+    if (!slot_matches(found, row, witness.slot)) {
+      return 7;
+    }
+  }
+  for value in k.moved[row] {
+    let found = ssakeepregion.for_value(bound, block, k.start[row], value);
+    if (!slot_matches(found, row, witness.slot) || found.tested != k.lives[row]) {
+      return 8;
+    }
+  }
+  return 0;
+}
+
+function verify_rows(keeps: ssaunits.Keeps[], bound: ssakeepregion.Bound, nvals: i32): i32 {
+  for block in 0..keeps.len() {
+    let k = keeps[block];
+    for row in 0..k.donors.len() {
+      let code: i32 = verify_row(k, bound, block, row, nvals);
+      if (code != 0) {
+        return code;
+      }
+    }
+  }
+  return 0;
+}
+
+function check_function(f: ssasem.Func, modes: i32[]): Summary {
+  let plan = ssaunits.plan(f, modes, ssaunits.no_view());
+  if (!plan.ok) {
+    return failed(4, plan.why);
+  }
+  plan = ssaunits.with_reuse(f, plan, ssaunits.step_index(plan), ssasem.dominators(f, plan.analysis));
+  let why = ssaunits.verify_planned(f, modes, plan);
+  if (why != "") {
+    return failed(10, why);
+  }
+  let bound = ssakeepregion.bind(plan.reuse.keeps, f.graph.nvals);
+  if (!bound.ok) {
+    return failed(5, bound.why);
+  }
+  let code: i32 = verify_rows(plan.reuse.keeps, bound, f.graph.nvals);
+  if (code != 0) {
+    return failed(code, "");
+  }
+  let keeps: i32 = 0;
+  for k in plan.reuse.keeps {
+    keeps = keeps + k.donors.len();
+  }
+  return Summary { code: 0, why: "", keeps: keeps, peak: bound.region.keep_count };
+}
+
+function report_failure(name: string, counted: Summary): i32 {
+  if (counted.why != "") {
+    eprint(name + ": " + counted.why);
+  }
+  return counted.code;
+}
+
+function main(): i32 {
+  if (args().len() != 2) {
+    return 1;
+  }
+  let src: string = "";
+  match (read_file(args()[1])) {
+    Ok(text) => {
+      src = text;
+    },
+    Err(_) => {
+      return 2;
+    }
+  }
+  let parsed = parser.parse_module(lexer.tokenize(src));
+  let mod = lift.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+  let built = semsource.with_inferred_modes(semsource.build_module(mod));
+  let functions: i32 = 0;
+  let keeps: i32 = 0;
+  let peak: i32 = 0;
+  for produced in built.decls {
+    if (!produced.ok) {
+      eprint(produced.key + ": " + produced.why);
+      return 3;
+    }
+    let f = produced.func;
+    let counted: Summary = check_function(f, produced.modes);
+    if (counted.code != 0) {
+      return report_failure(f.graph.name, counted);
+    }
+    if (counted.peak > peak) {
+      peak = counted.peak;
+    }
+    keeps = keeps + counted.keeps;
+  }
+  functions = built.decls.len();
+  print("functions=" + util.i32_to_string(functions) + " keeps=" + util.i32_to_string(keeps) + " peak=" + util.i32_to_string(peak));
+  return if (functions > 0 && keeps > 0) { 0 } else { 9 };
+}

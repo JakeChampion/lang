@@ -291,6 +291,11 @@ reads (`units_of`):
 - **Kept fields** (`Plan.kept`): the fields a record update keeps, so the
   construction that reuses the record's box leaves them in place.
 
+The sink pass preserves an earlier record projection when a later record
+update replaces a consumed descendant. A read of another sibling does not
+force a second projection after a loop. The existing descendant-spend and
+dominance checks still apply. Array updates retain their separate read guard.
+
 Once a plan is final, it decides where a construction builds in a dying
 box, and those decisions are tables of its own (`Plan.reuse`, `Plan.links`,
 made by `with_reuse` at the lowering's entry, once per function rather than
@@ -334,11 +339,16 @@ for every plan ownership inference tries):
   its takes and its death follow one uniqueness read. A donor that
   outlives a run of two or more of its takes in a block is **tested**
   (`tested`, `Keeps.lives`): the run's takes follow one uniqueness read in
-  the token slot, and the run frees the slot after its last take. The
-  routes and the one-token-slot discipline are decided here, once (a
-  carried construction inside a keep's or a classified donor's span reads
-  its token from the donor's local, so it needs no slot); the
-  lowering only emits what the tables say. `FERN_SELFHOST_NO_REUSE=1`
+  its assigned token slot, and the run clears that slot after its last take.
+  Each simultaneous keep has a separate slot (`ssatokens`, `ssakeepregion`).
+  Closed intervals share slots only when their endpoints do not overlap.
+  Separate blocks share the maximum slot demand, above a separate transient
+  token slot. Ordinary and classified rows reject conflicting donor or field
+  identities, rather than every overlapping interval. Tested rows retain
+  their additional admission guards. A carried box stays in its donor local.
+  A parent-field witness and its child's donor witness remain distinct.
+  The independent region verifier rejects ambiguous identities and slot
+  collisions before the lowering emits the plan. `FERN_SELFHOST_NO_REUSE=1`
   (`reuse_layer_disabled`) plans no token, and the program's behaviour is
   unchanged.
 
@@ -379,7 +389,7 @@ locals sit above `nvals`. It emits:
 - **takes and steals** as a uniqueness test, a slot store of zero and the
   value in its local (`steal`); a tested run's takes read the token slot
   for that test (`tested_take`); a kept or classified donor's takes read the
-  token slot instead, and on its unique arm leave the slot as it is: its
+  slot of their own witness, and on its unique arm leave the slot as it is: its
   death releases only the fields nothing took (`keep_release`,
   `classified_death`), and a classified donor's box goes to the release
   helper's `.u` entry with no guard in front (`ir.sole`), since nothing

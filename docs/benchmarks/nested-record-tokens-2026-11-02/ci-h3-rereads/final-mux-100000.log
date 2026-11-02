@@ -1,0 +1,4 @@
+=== RUN   TestPreparedH3
+    runner_test.go:25: 2874735 allocations over 100000 multiplexed HTTP/3 requests in 4 s: 28.75 per request, peak 64 in flight
+--- PASS: TestPreparedH3 (4.60s)
+PASS

@@ -1,0 +1,97 @@
+{
+  "scope": "Exact repeated native ARM64 instruction wins with the same binaries and commands.",
+  "rows": [
+    {
+      "name": "perceus_rbtree",
+      "repeat": 1,
+      "instructions": 57613716,
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-12795-current-main-perf-static-arm:/tmp/fern-12795-current-main-perf-static-arm",
+        "sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree-repeat-1.callgrind",
+        "/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree-arm64-linux"
+      ],
+      "exit_code": 86,
+      "profile_sha256": "a4689f03878f89930881ac96ee0f95a1cabc7e049afd954bdc3b7e7c6d77b384"
+    },
+    {
+      "name": "perceus_rbtree",
+      "repeat": 2,
+      "instructions": 57613716,
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-12795-current-main-perf-static-arm:/tmp/fern-12795-current-main-perf-static-arm",
+        "sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree-repeat-2.callgrind",
+        "/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree-arm64-linux"
+      ],
+      "exit_code": 86,
+      "profile_sha256": "a4689f03878f89930881ac96ee0f95a1cabc7e049afd954bdc3b7e7c6d77b384"
+    },
+    {
+      "name": "perceus_rbtree_ck",
+      "repeat": 1,
+      "instructions": 57034038,
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-12795-current-main-perf-static-arm:/tmp/fern-12795-current-main-perf-static-arm",
+        "sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree_ck-repeat-1.callgrind",
+        "/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree_ck-arm64-linux"
+      ],
+      "exit_code": 23,
+      "profile_sha256": "7adebf5c5e0bcc9acb521693fbb0cc626a73579b81b102b33274ebeb1e3c6e11"
+    },
+    {
+      "name": "perceus_rbtree_ck",
+      "repeat": 2,
+      "instructions": 57034038,
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--pull=never",
+        "-v",
+        "/tmp/fern-12795-current-main-perf-static-arm:/tmp/fern-12795-current-main-perf-static-arm",
+        "sha256:eba183ee857a3a377a8c0276996f5879cb7df5d7fce457c4d102f21fdc440edf",
+        "timeout",
+        "--signal=KILL",
+        "90s",
+        "valgrind",
+        "--tool=callgrind",
+        "--callgrind-out-file=/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree_ck-repeat-2.callgrind",
+        "/tmp/fern-12795-current-main-perf-static-arm/perceus_rbtree_ck-arm64-linux"
+      ],
+      "exit_code": 23,
+      "profile_sha256": "0d2cf54b23a2db82d4e2aa52bd59f1edb96482d48cbcad6bb968db252accdc85"
+    }
+  ]
+}

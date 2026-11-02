@@ -1,0 +1,164 @@
+import "./ssaunits";
+import "./ssatokens";
+import "./util";
+
+pub struct Bound { ok: boolean, why: string, blocks: ssaunits.Keeps[], region: ssatokens.Region }
+
+pub struct Witness { ok: boolean, why: string, row: i32, slot: i32, tested: boolean }
+
+function invalid(why: string): Bound {
+  return Bound {
+    ok: false, why: why, blocks: [],
+    region: ssatokens.Region { ok: false, why: why, blocks: [], transient: 0, keep_count: 0, scratch_start: 0 },
+  };
+}
+
+function missing(why: string): Witness {
+  return Witness { ok: false, why: why, row: 0 - 1, slot: 0 - 1, tested: false };
+}
+
+function end(k: ssaunits.Keeps, row: i32): i32 {
+  return if (k.built[row] >= 0) { k.built[row] } else { k.taken[row] };
+}
+
+function contains(k: ssaunits.Keeps, row: i32, value: i32): boolean {
+  return util.index_of_i32(k.values[row], value) >= 0 || util.index_of_i32(k.moved[row], value) >= 0;
+}
+
+function shared_value(k: ssaunits.Keeps, row: i32, other: i32): boolean {
+  for value in k.values[row] {
+    if (contains(k, other, value)) {
+      return true;
+    }
+  }
+  for value in k.moved[row] {
+    if (contains(k, other, value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function same_row_lengths(k: ssaunits.Keeps): boolean {
+  let n: i32 = k.donors.len();
+  return k.slots.len() == n && k.values.len() == n && k.late.len() == n && k.moved.len() == n
+    && k.freed.len() == n && k.start.len() == n && k.taken.len() == n && k.built.len() == n && k.lives.len() == n;
+}
+
+function invalid_interval(k: ssaunits.Keeps, row: i32): boolean {
+  return k.donors[row] < 0 || k.start[row] < 0 || k.taken[row] < k.start[row]
+    || k.built[row] < 0 - 1 || k.built[row] >= 0 && (k.built[row] < k.taken[row] || k.lives[row]);
+}
+
+function negative_identity(values: i32[]): boolean {
+  for value in values {
+    if (value < 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ambiguous_live(k: ssaunits.Keeps, row: i32, other: i32): boolean {
+  return k.start[row] <= end(k, other) && k.start[other] <= end(k, row)
+    && (k.donors[row] == k.donors[other] || shared_value(k, row, other));
+}
+
+function valid_rows(k: ssaunits.Keeps): string {
+  if (!same_row_lengths(k)) {
+    return "keep row lengths differ";
+  }
+  for row in 0..k.donors.len() {
+    if (invalid_interval(k, row)) {
+      return "invalid keep row interval";
+    }
+    if (negative_identity(k.values[row]) || negative_identity(k.moved[row])) {
+      return "invalid keep value identity";
+    }
+    for other in 0..row {
+      if (ambiguous_live(k, row, other)) {
+        return "ambiguous live keep identity";
+      }
+    }
+  }
+  return "";
+}
+
+// Each witness retains its planner row identity after physical slot assignment.
+pub function bind(blocks: ssaunits.Keeps[], first: i32): Bound {
+  let starts: i32[][] = [];
+  let ends: i32[][] = [];
+  for k in blocks {
+    let why: string = valid_rows(k);
+    if (why != "") {
+      return invalid(why);
+    }
+    let highs: i32[] = [];
+    for row in 0..k.donors.len() {
+      highs = highs.append(end(k, row));
+    }
+    starts = starts.append(k.start);
+    ends = ends.append(highs);
+  }
+  let region: ssatokens.Region = ssatokens.region(starts, ends, first);
+  let why: string = ssatokens.verify_region(starts, ends, first, region);
+  if (why != "") {
+    return invalid(why);
+  }
+  return Bound { ok: true, why: "", blocks: blocks, region: region };
+}
+
+pub function at(bound: Bound, block: i32, row: i32): Witness {
+  if (!bound.ok || block < 0 || block >= bound.blocks.len()) {
+    return missing("invalid keep witness block");
+  }
+  let k: ssaunits.Keeps = bound.blocks[block];
+  if (row < 0 || row >= k.donors.len()) {
+    return missing("invalid keep witness row");
+  }
+  return Witness {
+    ok: true, why: "", row: row,
+    slot: bound.region.transient + 1 + bound.region.blocks[block].slots[row], tested: k.lives[row],
+  };
+}
+
+function row_matches(k: ssaunits.Keeps, row: i32, pos: i32, value: i32, donor: boolean): boolean {
+  return k.start[row] <= pos && pos <= end(k, row)
+    && (donor && k.donors[row] == value || !donor && contains(k, row, value));
+}
+
+function find_row(bound: Bound, block: i32, pos: i32, value: i32, donor: boolean): i32 {
+  if (!bound.ok || block < 0 || block >= bound.blocks.len() || pos < 0 || value < 0) {
+    return 0 - 1;
+  }
+  let k: ssaunits.Keeps = bound.blocks[block];
+  for row in 0..k.donors.len() {
+    if (row_matches(k, row, pos, value, donor)) {
+      return row;
+    }
+  }
+  return 0 - 1;
+}
+
+function find(bound: Bound, block: i32, pos: i32, value: i32, donor: boolean): Witness {
+  if (!bound.ok || block < 0 || block >= bound.blocks.len() || pos < 0 || value < 0) {
+    return missing("invalid keep witness query");
+  }
+  let row: i32 = find_row(bound, block, pos, value, donor);
+  if (row < 0) {
+    return missing("no keep witness at this instruction");
+  }
+  return at(bound, block, row);
+}
+
+pub function value_row(bound: Bound, block: i32, pos: i32, value: i32): i32 {
+  return find_row(bound, block, pos, value, false);
+}
+
+pub function for_donor(bound: Bound, block: i32, pos: i32, donor: i32): Witness {
+  return find(bound, block, pos, donor, true);
+}
+
+pub function for_value(bound: Bound, block: i32, pos: i32, value: i32): Witness {
+  return find(bound, block, pos, value, false);
+}

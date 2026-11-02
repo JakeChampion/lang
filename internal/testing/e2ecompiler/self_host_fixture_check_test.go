@@ -34,6 +34,9 @@ func selfHostFixtureSources(t *testing.T) []fixtureSource {
 		{"physical_rc", "physicalRCBundle in self_host_ssa_rc_test.go", physicalRCBundle(physicalRCCases())},
 		{"physical_rc_reject", "TestSelfHostSSAPhysicalRCRejects in self_host_ssa_rc_test.go", physicalRCRejectSource()},
 		{"rccertify_cases", "rccertifyCasesSource in self_host_rccertify_test.go", rccertifyCasesSource()},
+		{"lower_result_alignment", "lowerResultAlignmentProg in self_host_lower_result_alignment_test.go", lowerResultAlignmentProg},
+		{"emit_body_boundary", "emitBodyBoundarySource in self_host_lower_result_alignment_test.go", emitBodyBoundarySource()},
+		{"gate_option", "gateOptionSource in self_host_gate_option_test.go", gateOptionSource()},
 	}
 
 	unitIdx := make([]int, len(unitCases()))
