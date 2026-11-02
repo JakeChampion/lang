@@ -2,9 +2,8 @@
 
 Fern compiles to a native, position-independent shared object that an
 Android app loads with `System.loadLibrary`. This directory shows the
-verified-here part (building the `.so`) and documents the SDK-side part
-(packaging an installable APK), which needs the Android SDK/NDK and a
-device or emulator.
+smallest JNI library. [`stopwatch/`](stopwatch/README.md) is a complete app:
+a Fern library, a small Java shell, and a script that builds a signed APK.
 
 ## 1. Build the shared object (verified in CI)
 
@@ -17,23 +16,33 @@ fern -target arm64-android -shared \
 # x86-64 emulator: -target x86-64-linux (same flags)
 ```
 
-This emits an `ET_DYN`, W^X, position-independent `.so` with the exported
-symbols in its dynamic symbol table — the artifact an APK ships under
-`lib/arm64-v8a/libfern.so`. The Fern→`.so` build and the JNI ABI are
-covered by the test suite (`internal/testing/e2e/shared_lib_test.go`,
-`TestAndroidJNIExampleBuilds`); the `dlopen`+call mechanics are validated
-on the host in the same file.
+This emits an `ET_DYN`, W^X, position-independent `.so`. Its dynamic symbol
+table has the exported functions, and it has the section headers that
+Android's loader checks. An APK ships it as `lib/arm64-v8a/libfern.so`.
+`internal/testing/e2e/shared_lib_test.go` and `TestAndroidJNIExampleBuilds`
+test the build and the JNI ABI. The same file loads a library on the host
+with `dlopen` and calls it.
 
-A Fern function is a JNI native method as-is: `(JNIEnv* env, jobject thiz,
-args…)` maps to `usize` params (System V / AAPCS64), and an `i32` return is
-a `jint`. To call back into the JVM, use `std/jni`: typed wrappers like
-`jni.get_version` / `jni.find_class` / `jni.new_string_utf` /
-`jni.get_int_field` / `jni.is_instance_of` (built on `jni.call0/1/2/3`),
-plus `jni.cstr` to turn a Fern string into the `const char*` the
-string/lookup methods expect. To **invoke** a Java method, resolve a
-`jmethodID` with `jni.get_method_id`, pack arguments with `jni.jvalues`,
-and call `jni.call_int_method_a` / `call_object_method_a` / etc. (the
-fixed-arity `Call<Type>MethodA` family).
+A Fern function is a JNI native method as-is, `(JNIEnv* env, jobject thiz,
+args…)`. Give each argument and the result a Fern type of the same width:
+
+| JNI | Fern |
+|---|---|
+| `JNIEnv*`, `jobject`, `jclass`, `jstring` | `usize` |
+| `jint` | `i32` |
+| `jlong` | `i64` |
+| `jboolean` | `u8` |
+
+To call back into the JVM, use `std/jni`. Its typed wrappers, such as
+`jni.get_version`, `jni.find_class` and `jni.get_int_field`, use
+`jni.call0/1/2/3`. `jni.cstr` makes the `const char*` that the lookup
+methods expect. Nothing frees a `jni.cstr` buffer. To return a Java string,
+use `jni.new_string(env, s)`, which frees its temporary copy.
+
+To **invoke** a Java method, resolve a `jmethodID` with `jni.get_method_id`.
+Pack the arguments with `jni.jvalues`. Then call `jni.call_int_method_a`,
+`call_object_method_a` or another method of the fixed-arity
+`Call<Type>MethodA` family.
 
 ## 2. The Java/Kotlin side (one tiny class)
 
@@ -59,32 +68,15 @@ class Native {
 > `__load_ptr` pattern as `std/jni`). The JNI-library route above is the
 > smaller, more standard starting point.
 
-## 3. Package the APK (requires the Android SDK — run on your machine)
+## 3. Package the APK
 
-Raw build-tools recipe (no Gradle):
+[`stopwatch/build.sh`](stopwatch/build.sh) is a complete recipe with no
+Gradle: `aapt` for the resources, `javac` and `d8` for the Java shell,
+`zipalign`, then `apksigner`. The Examples CI lane runs it and keeps the
+APK as a build artifact.
 
-```sh
-# layout
-mkdir -p apk/lib/arm64-v8a
-cp libfern.so apk/lib/arm64-v8a/
-
-# compile resources + manifest to a base APK
-aapt2 link -o base.apk -I $ANDROID_HOME/platforms/android-34/android.jar \
-      --manifest AndroidManifest.xml
-
-# add the native lib, align, sign
-(cd apk && zip -r ../base.apk lib)
-zipalign -f 4 base.apk app.apk
-apksigner sign --ks debug.keystore app.apk
-
-adb install -r app.apk
-```
-
-Or with Gradle: a standard library/app module with the `.so` placed in
-`src/main/jniLibs/arm64-v8a/` and the `Native` class above.
-
-`AndroidManifest.xml` (minimal, JNI-library + a host `Activity`) is
-provided alongside this README.
+With Gradle, put the `.so` in `src/main/jniLibs/arm64-v8a/` of a standard
+app module, beside the `Native` class above.
 
 ## What's validated where
 
@@ -93,5 +85,7 @@ provided alongside this README.
 | Fern → arm64/x86-64 `.so` with JNI exports | ✅ (CI) | |
 | JNI method ABI (`env`/`thiz`/args, `jint` return) | ✅ (host dlopen) | |
 | `JNIEnv` method dispatch via `std/jni` | ✅ (fake-env dlopen) | |
-| `aapt2`/`zipalign`/`apksigner` packaging | recipe only | ✅ |
+| a desktop JVM calls the JNI methods | ✅ (`TestAndroidStopwatchHostJVM`) | |
+| section headers that Android's loader checks | ✅ (`sharedImageCheck`) | |
+| `aapt`/`d8`/`zipalign`/`apksigner` packaging | ✅ (`stopwatch/build.sh` in CI) | |
 | install + run on a device | — | ✅ |

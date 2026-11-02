@@ -1,0 +1,176 @@
+import "std/test";
+import "./stopwatch";
+
+function test_elapsed_paused(): test.TestOutcome {
+  return test.assert_eq(stopwatch.elapsed_ms(0, 4200, 99999), 4200 as i64);
+}
+
+function test_elapsed_running(): test.TestOutcome {
+  return test.assert_eq(stopwatch.elapsed_ms(1000, 500, 3500), 3000 as i64);
+}
+
+function test_elapsed_clock_moved_back(): test.TestOutcome {
+  return test.assert_eq(stopwatch.elapsed_ms(5000, 700, 4000), 700 as i64);
+}
+
+function test_start_pause_resume(): test.TestOutcome {
+  let started: i64 = stopwatch.start(0, 10000);
+  let again: i64 = stopwatch.start(started, 12000);
+  let paused: i64 = stopwatch.pause(again, 0, 13500);
+  let resumed: i64 = stopwatch.start(0, 20000);
+  let got: string = started.to_string() + " " + again.to_string() + " " + paused.to_string() + " " + stopwatch.elapsed_ms(resumed, paused, 21000).to_string();
+  return test.assert_eq(got, "10000 10000 3500 4500");
+}
+
+function test_pause_when_paused(): test.TestOutcome {
+  return test.assert_eq(stopwatch.pause(0, 1234, 99999), 1234 as i64);
+}
+
+function test_is_running(): test.TestOutcome {
+  return test.assert_eq(stopwatch.is_running(0).to_string() + " " + stopwatch.is_running(1).to_string(), "false true");
+}
+
+function test_stopwatch_text_seconds(): test.TestOutcome {
+  let got: string = stopwatch.stopwatch_text(0, true) + " " + stopwatch.stopwatch_text(3723999, true) + " " + stopwatch.stopwatch_text(36000000 * 3, true);
+  return test.assert_eq(got, "0:00:00 1:02:03 30:00:00");
+}
+
+function test_stopwatch_text_minutes(): test.TestOutcome {
+  return test.assert_eq(stopwatch.stopwatch_text(3723999, false) + " " + stopwatch.stopwatch_text(59999, false), "1:02 0:00");
+}
+
+function test_clock_text(): test.TestOutcome {
+  let nine_oh_five: i64 = (9 * 3600 + 5 * 60 + 59) as i64 * 1000;
+  let day: i64 = 86400000;
+  let got: string = stopwatch.clock_text(nine_oh_five) + " " + stopwatch.clock_text(day * 20000 + nine_oh_five) + " " + stopwatch.clock_text(0 - 60000);
+  return test.assert_eq(got, "09:05 09:05 23:59");
+}
+
+function test_stopwatch_tick_in(): test.TestOutcome {
+  let got: string = stopwatch.stopwatch_tick_in(0, true).to_string() + " " + stopwatch.stopwatch_tick_in(1999, true).to_string() + " " + stopwatch.stopwatch_tick_in(61000, false).to_string();
+  return test.assert_eq(got, "1010 11 59010");
+}
+
+function test_clock_tick_in(): test.TestOutcome {
+  return test.assert_eq(stopwatch.clock_tick_in(120000 + 30000), 30010 as i64);
+}
+
+function test_colors(): test.TestOutcome {
+  let got: string = stopwatch.stopwatch_color(true, 20).to_string() + " " + stopwatch.stopwatch_color(false, 20).to_string() + " " + stopwatch.clock_color(10).to_string() + " " + stopwatch.clock_color(0).to_string();
+  // 0xFFFFFFFF, 0xFFEE5555, 0x7FFFFFFF, and 0x0CFFFFFF for the lowest opacity.
+  return test.assert_eq(got, "-1 -1157803 2147483647 218103807");
+}
+
+function test_keep_screen_on(): test.TestOutcome {
+  let got: string = stopwatch.keep_screen_on(true, true).to_string() + " " + stopwatch.keep_screen_on(false, true).to_string() + " " + stopwatch.keep_screen_on(false, false).to_string();
+  return test.assert_eq(got, "true false true");
+}
+
+function test_burn_in_centred(): test.TestOutcome {
+  // 1000 px panel, 400 px content, 50 px reserved at each end: 500 px free.
+  return test.assert_eq(stopwatch.burn_in_origin(1000, 400, 50, 0, 12345), 300);
+}
+
+function test_burn_in_range(): test.TestOutcome {
+  let lo: i32 = 1000;
+  let hi: i32 = 0;
+  let r: i32 = 0;
+  while (r < 2000) {
+    let x: i32 = stopwatch.burn_in_origin(1000, 400, 50, 10, r);
+    if (x < lo) {
+      lo = x;
+    }
+    if (x > hi) {
+      hi = x;
+    }
+    r = r + 1;
+  }
+  return test.assert_eq(lo.to_string() + " " + hi.to_string(), "50 550");
+}
+
+function test_burn_in_no_room(): test.TestOutcome {
+  let got: string = stopwatch.burn_in_origin(300, 400, 50, 10, 7).to_string() + " " + stopwatch.burn_in_origin(1000, 0, 50, 10, 7).to_string();
+  return test.assert_eq(got, "50 50");
+}
+
+function test_next_beep_in(): test.TestOutcome {
+  let got: string = stopwatch.next_beep_in(0, 5).to_string() + " " + stopwatch.next_beep_in(299000, 5).to_string() + " " + stopwatch.next_beep_in(300000, 5).to_string() + " " + stopwatch.next_beep_in(1000, 0).to_string();
+  return test.assert_eq(got, "300000 1000 300000 -1");
+}
+
+function test_about_text(): test.TestOutcome {
+  let one: string = stopwatch.about_text(3600000);
+  let many: string = stopwatch.about_text(3600000 * 5 + 1);
+  return test.assert_contains_all(one + "|" + many, ["Total runtime: 1 hour\n", "Total runtime: 5 hours", "Reset: long tap"]);
+}
+
+function test_settings_keys_unique(): test.TestOutcome {
+  let keys: string[] = [];
+  let all: stopwatch.Setting[] = stopwatch.settings();
+  let i: i32 = 0;
+  while (i < all.len()) {
+    keys = keys.append(all[i].key);
+    i = i + 1;
+  }
+  return test.assert_unique(keys);
+}
+
+function test_settings_defaults_in_range(): test.TestOutcome {
+  let all: stopwatch.Setting[] = stopwatch.settings();
+  let i: i32 = 0;
+  while (i < all.len()) {
+    let s: stopwatch.Setting = all[i];
+    if (s.default < s.min || s.default > s.max) {
+      return test.fail("default of " + s.key + " is out of range");
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+function test_setting_index(): test.TestOutcome {
+  let i: i32 = stopwatch.setting_index("burn_in");
+  let got: string = stopwatch.settings()[i].key + " " + stopwatch.setting_index("missing").to_string();
+  return test.assert_eq(got, "burn_in -1");
+}
+
+function test_setting_clamp(): test.TestOutcome {
+  let i: i32 = stopwatch.setting_index("stopwatch_opacity");
+  return test.assert_eq(stopwatch.setting_clamp(i, 0).to_string() + " " + stopwatch.setting_clamp(i, 50).to_string(), "1 20");
+}
+
+function test_setting_value_text(): test.TestOutcome {
+  let beep: i32 = stopwatch.setting_index("beep_interval");
+  let size: i32 = stopwatch.setting_index("clock_size");
+  let burn: i32 = stopwatch.setting_index("burn_in");
+  let got: string = stopwatch.setting_value_text(beep, 0) + "|" + stopwatch.setting_value_text(beep, 15) + "|" + stopwatch.setting_value_text(size, 60) + "|" + stopwatch.setting_value_text(burn, 0) + "|" + stopwatch.setting_value_text(burn, 3);
+  return test.assert_eq(got, "Off|15 min|60 sp|Off|3");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("android stopwatch");
+  r = r.it("elapsed while paused", test_elapsed_paused);
+  r = r.it("elapsed while running", test_elapsed_running);
+  r = r.it("elapsed when the clock moves back", test_elapsed_clock_moved_back);
+  r = r.it("start, pause and resume", test_start_pause_resume);
+  r = r.it("pause when paused", test_pause_when_paused);
+  r = r.it("is running", test_is_running);
+  r = r.it("stopwatch text with seconds", test_stopwatch_text_seconds);
+  r = r.it("stopwatch text without seconds", test_stopwatch_text_minutes);
+  r = r.it("clock text", test_clock_text);
+  r = r.it("stopwatch tick delay", test_stopwatch_tick_in);
+  r = r.it("clock tick delay", test_clock_tick_in);
+  r = r.it("colours", test_colors);
+  r = r.it("keep the screen on", test_keep_screen_on);
+  r = r.it("burn-in origin centred", test_burn_in_centred);
+  r = r.it("burn-in origin range", test_burn_in_range);
+  r = r.it("burn-in origin with no room", test_burn_in_no_room);
+  r = r.it("next beep", test_next_beep_in);
+  r = r.it("about text", test_about_text);
+  r = r.it("setting keys are unique", test_settings_keys_unique);
+  r = r.it("setting defaults are in range", test_settings_defaults_in_range);
+  r = r.it("setting index", test_setting_index);
+  r = r.it("setting clamp", test_setting_clamp);
+  r = r.it("setting value text", test_setting_value_text);
+  return r.finish();
+}
