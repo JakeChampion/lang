@@ -1,0 +1,69 @@
+import "../ssa";
+import "../ssasem";
+import "../ssaunits";
+import "../semrecords";
+import "../typeinfo";
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function fixture(name: string, callee: string, slot: i32): ssasem.Func {
+  let size: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+  let array: typeinfo.Type = typeinfo.TypeArray { elem: size, view: false };
+  let arguments: i32[] = [0, 1];
+  if (callee == "__raw_arr_ptr") {
+    arguments = [slot];
+  }
+  let insts: ssa.SInst[] = [
+    ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" },
+    ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" },
+    ssa.SInst { kind_tag: ssasem.call(), result: 2, args: arguments, imm: 0, str: callee },
+  ];
+  return ssasem.Func {
+    graph: ssa.SFunc { name: name, nparams: 2, nvals: 3, entry: 0, takes_env: false, blocks: [
+      ssa.SBlock { id: 0, preds: [], insts: insts, term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } },
+    ] },
+    values: [array, array, size], params: [array, array], result: size,
+    records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [],
+    map_module: false, dbg_vals: [], dbg_names: [], source_positions: ssasem.no_source(), schema_checked: false,
+  };
+}
+
+function chain(reverse: boolean, slot: i32): void {
+  let keys: string[] = ["first", "second", "third", "leaf"];
+  let funcs: ssasem.Func[] = [fixture("first", "second", slot), fixture("second", "third", slot), fixture("third", "leaf", slot), fixture("leaf", "__raw_arr_ptr", slot)];
+  if (reverse) {
+    keys = [keys[3], keys[2], keys[1], keys[0]];
+    funcs = [funcs[3], funcs[2], funcs[1], funcs[0]];
+  }
+  let rows = ssaunits.write_rows(keys, funcs);
+  for name in keys {
+    let at = rows.rows.find(name);
+    require(at >= 0, 10);
+    require(rows.params[at].len() == 2 && rows.params[at][slot] && !rows.params[at][1 - slot], 11);
+  }
+}
+
+function main(): i32 {
+  chain(false, 0);
+  chain(true, 0);
+  chain(false, 1);
+  chain(true, 1);
+  let names: string[] = ["callee"];
+  let first = ssaunits.WriteRows { rows: util.name_index(names), params: [[true, false]] };
+  let second = ssaunits.WriteRows { rows: util.name_index(names), params: [[false, true]] };
+  require(!ssaunits.write_rows_agree(first, second, names), 20);
+  require(ssaunits.write_rows_agree(first, first, names), 21);
+  let unrelated: string[] = ["other"];
+  require(ssaunits.write_rows_agree(first, second, unrelated), 22);
+  require(ssasem.raw_array_args("tcp_addr_into")[0] == 2, 30);
+  require(ssasem.raw_array_args("ring_wait")[0] == 1, 31);
+  let udp = ssasem.raw_array_args("udp_recvfrom");
+  require(udp.len() == 2 && udp[0] == 1 && udp[1] == 2, 32);
+  require(ssasem.raw_array_args("tcp_send_bytes").len() == 0, 33);
+  return 0;
+}

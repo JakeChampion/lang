@@ -1216,10 +1216,12 @@ function raw_reached(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): i32[
 // The argument positions a call reaches raw.
 function raw_args(writes: WriteRows, ins: ssa.SInst): i32[] {
   let out: i32[] = [];
-  let k: i32 = ssasem.raw_array_arg(ins.str);
-  if (k >= 0) {
-    if (k < ins.args.len()) {
-      out = out.append(k);
+  let direct: i32[] = ssasem.raw_array_args(ins.str);
+  if (direct.len() > 0) {
+    for k in direct {
+      if (k < ins.args.len()) {
+        out = out.append(k);
+      }
     }
     return out;
   }
@@ -1259,6 +1261,7 @@ pub function write_rows(keys: string[], funcs: ssasem.Func[]): WriteRows {
     check = check.with(i, has);
     defs = defs.append(if (has) { definitions(funcs[i]) } else { none });
   }
+  let eligible: boolean[] = check;
   let out: WriteRows = no_writes();
   let grew: boolean = true;
   while (grew) {
@@ -1282,7 +1285,7 @@ pub function write_rows(keys: string[], funcs: ssasem.Func[]): WriteRows {
     }
     let ix: util.NameIndex = util.name_index(added);
     for i in 0..funcs.len() {
-      check = check.with(i, check[i] && calls_any(funcs[i], ix));
+      check = check.with(i, eligible[i] && calls_any(funcs[i], ix));
     }
   }
   return out;
@@ -1309,8 +1312,15 @@ function written_params(f: ssasem.Func, defs: ssa.SInst[], writes: WriteRows): b
 
 pub function write_rows_agree(a: WriteRows, b: WriteRows, callees: string[]): boolean {
   for callee in callees {
-    if (count_true(written_row(a, callee)) != count_true(written_row(b, callee))) {
+    let left = written_row(a, callee);
+    let right = written_row(b, callee);
+    if (left.len() != right.len()) {
       return false;
+    }
+    for i in 0..left.len() {
+      if (left[i] != right[i]) {
+        return false;
+      }
     }
   }
   return true;
