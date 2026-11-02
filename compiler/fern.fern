@@ -967,6 +967,160 @@ function shared_export_refusal(merged: parser.Module, names: string[]): string {
   return "";
 }
 
+// A C import is a function with @import(library, symbol) and no body, where
+// the library is a shared-object name such as "liblog.so" or "libc.so.6". A
+// WIT interface such as "wasi:http/types@0.2.0" names a wasm import instead.
+function is_c_library(iface: string): boolean {
+  return !iface.contains(":") && (iface.ends_with(".so") || iface.contains(".so."));
+}
+
+// On a native target a C import becomes a Fern function that calls through a slot, which
+// the dynamic loader fills with the symbol's address. The stub
+// __fern_import_<k> keeps the @import, and the emitter gives it a body that
+// reads that slot.
+function import_stub(k: i32): string {
+  return "__fern_import_" + util.i32_to_string(k);
+}
+
+function c_import_int(t: string): boolean {
+  return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"], t);
+}
+
+function c_import_refusal(f: parser.FuncDecl, target: string, shared: boolean): string {
+  let what: string = "@import " + f.name + ": ";
+  if (!shared) {
+    return what + "an executable for -target " + target + " has no dynamic loader; build a -shared object to import " + f.import_wit + " from " + f.import_iface;
+  }
+  if (f.params.len() > 4) {
+    return what + "a C import takes at most 4 parameters (it has " + util.i32_to_string(f.params.len()) + ")";
+  }
+  for p in f.params {
+    if (!c_import_int(p.type_name)) {
+      return what + "parameter " + p.name + " is " + p.type_name + "; a C import takes integer and usize parameters";
+    }
+  }
+  if (f.ret_type != "" && f.ret_type != "void" && f.ret_type != "f32" && f.ret_type != "f64" && !c_import_int(f.ret_type)) {
+    return what + "the result is " + f.ret_type + "; a C import returns an integer, a usize, an f32, an f64 or nothing";
+  }
+  return "";
+}
+
+pub function native_import_refusal(m: parser.Module, target: string, shared: boolean): string {
+  for f in m.funcs {
+    if (is_c_library(f.import_iface) && !is_native_target(target)) {
+      return "@import " + f.name + ": -target " + target + " cannot load the C library " + f.import_iface;
+    }
+    if (is_c_library(f.import_iface)) {
+      let bad: string = c_import_refusal(f, target, shared);
+      if (bad.len() > 0) {
+        return bad;
+      }
+    }
+  }
+  return "";
+}
+
+// The data slot of import stub `stub`.
+function got_label(stub: string): string {
+  return "__fern_got" + slice_unchecked(stub, "__fern_import".len(), stub.len());
+}
+
+// Each import stub's slot, and the stub's body, which returns the slot's
+// contents: the address that the dynamic loader writes there.
+function import_entries(merged: parser.Module, arm64: boolean): string {
+  let out: string = "";
+  for f in merged.funcs {
+    if (is_c_library(f.import_iface)) {
+      let got: string = got_label(f.name);
+      if (arm64) {
+        out = out + "    .section .data\n    .align 3\n" + got + ":\n    .quad 0\n    .text\n";
+        out = out + "__fn_" + f.name + ":\n    adrp x0, " + got + "\n    ldr x0, [x0, :lo12:" + got + "]\n    ret\n";
+      } else {
+        out = out + "    .section .data\n    .align 8\n" + got + ":\n    .quad 0\n    .text\n";
+        out = out + "__fn_" + f.name + ":\n    movq " + got + "(%rip), %rax\n    ret\n";
+      }
+    }
+  }
+  return out;
+}
+
+// The libraries and symbols of the import stubs. The slots are found after
+// assembly.
+function so_imports(merged: parser.Module): elf.SoImports {
+  let imp: elf.SoImports = elf.no_so_imports();
+  for f in merged.funcs {
+    if (is_c_library(f.import_iface)) {
+      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0) };
+    }
+  }
+  return imp;
+}
+
+function import_stub_names(merged: parser.Module): string[] {
+  let out: string[] = [];
+  for f in merged.funcs {
+    if (is_c_library(f.import_iface)) {
+      out = out.append(f.name);
+    }
+  }
+  return out;
+}
+
+// The source of the body that calls C import `f` through stub `k`.
+function c_import_body(f: parser.FuncDecl, k: i32): string {
+  let args: string = import_stub(k) + "()";
+  let params: string = "";
+  for p in f.params {
+    args = args + ", " + p.name + " as usize";
+    if (params.len() > 0) {
+      params = params + ", ";
+    }
+    params = params + p.name + ": " + p.type_name;
+  }
+  let n: string = util.i32_to_string(f.params.len());
+  let call: string = "__c_call" + n + "(" + args + ")";
+  let ret: string = "";
+  let stmt: string = "let ignored: usize = " + call + ";";
+  if (f.ret_type == "f32" || f.ret_type == "f64") {
+    ret = ": " + f.ret_type;
+    stmt = "return __c_call" + n + "_" + f.ret_type + "(" + args + ");";
+  } else if (f.ret_type != "" && f.ret_type != "void") {
+    ret = ": " + f.ret_type;
+    stmt = "return " + call + " as " + f.ret_type + ";";
+  }
+  return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n    " + stmt + "\n  }\n}\n"
+    + "@import(\"" + f.import_iface + "\", \"" + f.import_wit + "\")\nfunction " + import_stub(k) + "(): usize;\n";
+}
+
+function has_c_imports(m: parser.Module): boolean {
+  for f in m.funcs {
+    if (is_c_library(f.import_iface)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function native_imports(m: parser.Module, target: string): parser.Module {
+  if (!is_native_target(target) || !has_c_imports(m)) {
+    return m;
+  }
+  let funcs: parser.FuncDecl[] = [];
+  for k in 0..m.funcs.len() {
+    let f: parser.FuncDecl = m.funcs[k];
+    if (!is_c_library(f.import_iface)) {
+      funcs = funcs.append(f);
+    } else {
+      let gen: parser.Module = parser.parse_module(lexer.tokenize(c_import_body(f, k)));
+      let body: parser.FuncDecl = gen.funcs[0];
+      let stub: parser.FuncDecl = gen.funcs[1];
+      funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "" });
+      funcs = funcs.append(parser.FuncDecl { ...stub, module: f.module, stdlib: f.stdlib, line: f.line, col: f.col });
+    }
+  }
+  return parser.Module { ...m, funcs: funcs };
+}
+
 // The Fern types with the width of a JNI type: usize for a reference or a
 // JNIEnv*, and the scalars jbyte, jboolean, jshort, jchar, jint, jlong,
 // jfloat and jdouble.
@@ -993,6 +1147,22 @@ function jni_export_refusal(f: parser.FuncDecl): string {
     return "the result is " + f.ret_type + ", which has no JNI type of its width; use usize for a reference, i32 for jint, i64 for jlong or u8 for jboolean";
   }
   return "";
+}
+
+function shared_exports(merged: parser.Module, shared: boolean, export_list: string): (parser.Module, string[], string) {
+  let roots: string[] = [];
+  if (!shared) {
+    return (merged, roots, "");
+  }
+  roots = shared_export_names(export_list);
+  let bad: string = shared_export_refusal(merged, roots);
+  if (bad.len() > 0) {
+    return (merged, roots, bad);
+  }
+  for name in roots {
+    merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: name, iface: "", wit: "", c_abi: true, method: false }) };
+  }
+  return (merged, roots, "");
 }
 
 function export_func_index(merged: parser.Module, name: string): i32 {
@@ -1143,7 +1313,7 @@ function export_widen_arm64(x: string, w: string, t: string): string {
   return "    mov x16, " + x + "\n";
 }
 
-function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string): string {
+function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "assembler", p.unknown);
@@ -1178,11 +1348,17 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let imp: elf.SoImports = so_imports(merged);
+  let slots: i32[] = [];
+  for stub in import_stub_names(merged) {
+    slots = slots.append(arm64_native.arm64_symbol_addr(p, got_label(stub), tv as i64, dv as i64) as i32);
+  }
+  imp = elf.SoImports { ...imp, slots: slots };
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
-function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
+function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string, merged: parser.Module): string {
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   let tv: i32 = elf.elf_text_off_so();
   let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
@@ -1216,7 +1392,14 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let imp: elf.SoImports = so_imports(merged);
+  let slots: i32[] = [];
+  let base: i32 = x86_native.x86_data_base(a, a.text.len());
+  for stub in import_stub_names(merged) {
+    slots = slots.append(data_at + x86_native.x86_symbol_addr(a, got_label(stub), 0) - base);
+  }
+  imp = elf.SoImports { ...imp, slots: slots };
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -5739,6 +5922,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 1;
   }
 
+  let import_bad: string = native_import_refusal(merged, target, shared);
+  if (import_bad.len() > 0) {
+    eprint("fern: " + import_bad);
+    return 2;
+  }
+  merged = native_imports(merged, target);
   if (eprint_findings(st, errors_of(gate(merged, modloader.base_name(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
     return 1;
   }
@@ -5750,18 +5939,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
 
-  let shared_roots: string[] = [];
-  if (shared) {
-    shared_roots = shared_export_names(export_list);
-    let bad: string = shared_export_refusal(merged, shared_roots);
-    if (bad.len() > 0) {
-      eprint("fern: " + bad);
-      return 2;
-    }
-    for n in shared_roots {
-      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true, method: false }) };
-    }
+  let (exported_module, shared_roots, export_bad) = shared_exports(merged, shared, export_list);
+  if (export_bad.len() > 0) {
+    eprint("fern: " + export_bad);
+    return 2;
   }
+  merged = exported_module;
   if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {
     return 1;
   }
@@ -5817,11 +6000,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+      out_asm = export_entries(merged, shared_roots, true) + import_entries(merged, true) + out_asm;
     }
     out_asm = out_asm + bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged);
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -5839,10 +6022,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+      out_asm = export_entries(merged, shared_roots, true) + import_entries(merged, true) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged);
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -5934,10 +6117,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared && out_asm.len() > 0) {
-      out_asm = export_entries(merged, shared_roots, false) + out_asm;
+      out_asm = export_entries(merged, shared_roots, false) + import_entries(merged, false) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");
+      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", merged);
       if (out_asm.len() == 0) {
         return 2;
       }

@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,6 +126,9 @@ func TestSelfHostStackCanary(t *testing.T) {
 				if out, errout, code, sig := execute(bin); code != 0 || sig || out != "246\n" {
 					t.Fatalf("hardened image: exit %d, signalled %t, stdout %q, stderr %q", code, sig, out, errout)
 				}
+				if target == "arm64-linux" {
+					arm64CanaryLoadsArePageOffsets(t, bin)
+				}
 			})
 			for _, tc := range []struct {
 				name    string
@@ -156,5 +160,35 @@ func TestSelfHostStackCanary(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// The canary is read with adrp then ldr [x, :lo12:__fern_canary]. The
+// in-process assembler once read the "12" of ":lo12:" as the offset and
+// wrote an unscaled ldur from the wrong word, so the prologue and the
+// epilogue agreed on a value that no smash could change.
+func arm64CanaryLoadsArePageOffsets(t *testing.T, bin string) {
+	t.Helper()
+	raw, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loads := 0
+	for i := 0; i+8 <= len(raw); i += 4 {
+		adrp := binary.LittleEndian.Uint32(raw[i:])
+		next := binary.LittleEndian.Uint32(raw[i+4:])
+		rd := adrp & 31
+		if adrp&0x9f000000 != 0x90000000 || (rd != 16 && rd != 17) || next&31 != rd || (next>>5)&31 != rd {
+			continue
+		}
+		if next&0xffe00c00 == 0xf8400000 {
+			t.Errorf("at %#x the canary load is an unscaled ldur (%08x), not ldr of the page offset", i+4, next)
+		}
+		if next&0xffc00000 == 0xf9400000 {
+			loads++
+		}
+	}
+	if loads == 0 {
+		t.Errorf("no adrp+ldr canary load in the hardened image")
 	}
 }
