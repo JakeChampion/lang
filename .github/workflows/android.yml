@@ -6,7 +6,8 @@ name: Android
 # emulator with KVM, and examples/android/stopwatch/emulator_check.py drives
 # it: the content at the screen centre, a tap to start, a long tap to reset,
 # the settings screen, and no crash in logcat. It is the one gate that loads
-# a Fern library with Android's loader.
+# a Fern library with Android's loader. The seccomp job checks the syscalls
+# of the fixture corpus against Android's app filter.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It decides from the changed files
@@ -68,3 +69,27 @@ jobs:
         with:
           name: fern-stopwatch-emulator
           path: build/android-stopwatch/emulator
+
+  # Each syscall that an Android image of a fixture can make, against the app
+  # seccomp filter that bionic generates at the AOSP tag in
+  # scripts/android-app-syscalls.py. A syscall outside it kills an app with
+  # SIGSYS on a phone, and nothing else would see it.
+  seccomp:
+    name: android-seccomp-corpus
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: Read the Android app filter from AOSP
+        run: |
+          mkdir -p build
+          python3 scripts/android-app-syscalls.py build/android-app-syscalls.json
+      - name: go test (the corpus against the Android app filter)
+        env:
+          ANDROID_APP_SYSCALLS: ${{ github.workspace }}/build/android-app-syscalls.json
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestAndroidSeccompCorpus$' ./internal/testing/e2e/ -timeout 40m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
