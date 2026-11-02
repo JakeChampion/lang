@@ -122,13 +122,16 @@ func TestSelfHostTempFiles(t *testing.T) {
 		}
 		return bin
 	}
-	run := func(t *testing.T, target, bin string, args ...string) string {
+	runEnv := func(t *testing.T, target, bin string, env []string, args ...string) string {
 		t.Helper()
 		var c *exec.Cmd
 		if target == "arm64-linux" {
 			c = runArm64Bin(qemu, bin, args...)
 		} else {
 			c = runX86_64Bin(cli.runner, bin, args...)
+		}
+		if env != nil {
+			c.Env = append(os.Environ(), env...)
 		}
 		var stdout, stderr bytes.Buffer
 		c.Stdout, c.Stderr = &stdout, &stderr
@@ -137,8 +140,38 @@ func TestSelfHostTempFiles(t *testing.T) {
 		}
 		return stdout.String()
 	}
+	run := func(t *testing.T, target, bin string, args ...string) string {
+		t.Helper()
+		return runEnv(t, target, bin, nil, args...)
+	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
+			// TMPDIR moves the root when it is an absolute path. A relative
+			// value and a bare separator leave the root at /tmp.
+			t.Run("tmpdir", func(t *testing.T) {
+				bin := build(t, target, "tmpdir", tempNamesSrc)
+				root := t.TempDir()
+				for _, tc := range []struct{ value, want string }{
+					{root, root},
+					{root + "/", root},
+					{"relative/dir", "/tmp"},
+					{"/", "/tmp"},
+					{"", "/tmp"},
+				} {
+					out := runEnv(t, target, bin, []string{"TMPDIR=" + tc.value})
+					wantRe := regexp.MustCompile("^" + regexp.QuoteMeta(tc.want) + `/sec-[0-9a-f]{16}$`)
+					for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+						kind, path, _ := strings.Cut(line, " ")
+						if kind != "dir" && kind != "file" {
+							continue
+						}
+						defer os.RemoveAll(path)
+						if !wantRe.MatchString(path) {
+							t.Errorf("TMPDIR=%q: %s name %q does not match %s", tc.value, kind, path, wantRe)
+						}
+					}
+				}
+			})
 			t.Run("names", func(t *testing.T) {
 				out := run(t, target, build(t, target, "names", tempNamesSrc))
 				seen := map[string]bool{}

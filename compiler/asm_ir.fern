@@ -3545,7 +3545,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jmp __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
-  if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
+  if (s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"])) {
     s = s.write(".section .bss\n");
     s = s.write("    .align 8\n");
     s = s.write("__fern_envp: .quad 0\n");
@@ -11185,7 +11185,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
     s = s.write("    leaq 8(%rsp), %rax\n");
     s = s.write("    movq %rax, __fern_argv(%rip)\n");
   }
-  if (s.any_need(["env", "subprocess", "environ", "raw_environ"])) {
+  if (s.any_need(["env", "subprocess", "environ", "raw_environ", "temp_dir"])) {
     s = s.write("    movq (%rsp), %rax\n");
     s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
     s = s.write("    movq %rax, __fern_envp(%rip)\n");

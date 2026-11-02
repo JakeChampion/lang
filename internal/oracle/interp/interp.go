@@ -3011,6 +3011,17 @@ func builtinProcWaitpidStatus(_ *Interp, args []Value) (Value, error) {
 	return Number(-10), nil
 }
 
+// TMPDIR names the temporary root when it is an absolute path with more
+// than the leading separator, as the native runtime reads it. One trailing
+// separator is dropped. Anything else is /tmp.
+func tempRootDir() string {
+	root := strings.TrimSuffix(os.Getenv("TMPDIR"), "/")
+	if len(root) > 1 && root[0] == '/' {
+		return root
+	}
+	return "/tmp"
+}
+
 func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("temp_dir: expected 1 arg, got %d", len(args))
@@ -3022,7 +3033,7 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	if strings.ContainsRune(string(prefix), '/') {
 		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil
 	}
-	tempRoot := os.TempDir()
+	tempRoot := tempRootDir()
 	if !utf8.ValidString(tempRoot) {
 		return resultErr(ioErrorOfErrno(string(prefix), syscall.EILSEQ)), nil
 	}

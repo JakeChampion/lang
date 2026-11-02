@@ -7,27 +7,30 @@ function __fern_temp_dir(prefix: string): Result[string, IoError] {
     }
     si = si + 1;
   }
-  let total: i32 = 5 + plen + 1 + 16;
+  let root: string = __fern_temp_root();
+  let rlen: i32 = root.len();
+  let total: i32 = rlen + 1 + plen + 1 + 16;
   let tries: i32 = 0;
   while (tries < 64) {
     let rnd: u8[] = random_bytes(8);
     let buf: usize = __raw_alloc(total + 1);
-    __raw_store8(buf, 0, 47);
-    __raw_store8(buf, 1, 116);
-    __raw_store8(buf, 2, 109);
-    __raw_store8(buf, 3, 112);
-    __raw_store8(buf, 4, 47);
     let i: i32 = 0;
-    while (i < plen) {
-      __raw_store8(buf, 5 + i, prefix[i] as i32);
+    while (i < rlen + 1 + plen) {
+      let c: i32 = 47;
+      if (i < rlen) {
+        c = root[i] as i32;
+      } else if (i > rlen) {
+        c = prefix[i - rlen - 1] as i32;
+      }
+      __raw_store8(buf, i, c);
       i = i + 1;
     }
-    __raw_store8(buf, 5 + plen, 45);
+    __raw_store8(buf, rlen + 1 + plen, 45);
     let k: i32 = 0;
     while (k < 8) {
       let v: i32 = rnd[k] as i32;
-      __raw_store8(buf, 6 + plen + 2 * k, __fern_hex_digit(v >> 4));
-      __raw_store8(buf, 7 + plen + 2 * k, __fern_hex_digit(v & 15));
+      __raw_store8(buf, rlen + 2 + plen + 2 * k, __fern_hex_digit(v >> 4));
+      __raw_store8(buf, rlen + 3 + plen + 2 * k, __fern_hex_digit(v & 15));
       k = k + 1;
     }
     __raw_store8(buf, total, 0);
@@ -49,4 +52,24 @@ function __fern_hex_digit(d: i32): i32 {
     return 48 + d;
   }
   return 87 + d;
+}
+
+// TMPDIR names the root when it is an absolute path with more than the
+// leading separator. One trailing separator is dropped. Anything else is /tmp.
+function __fern_temp_root(): string {
+  match (__fern_env("TMPDIR")) {
+    Some(v) => {
+      let n: i32 = v.len();
+      if (n > 1 && v[n - 1] == 47) {
+        n = n - 1;
+      }
+      if (n > 1 && v[0] == 47) {
+        return __fern_path_copy(v, n);
+      }
+      return "/tmp";
+    },
+    None => {
+      return "/tmp";
+    }
+  }
 }
