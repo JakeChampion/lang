@@ -19439,15 +19439,16 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
     return true;
   }
   if let ast.StmtMatch(m) = st {
+    let r: i32 = LU_CONTINUES;
     if (lu_same_ident(m.scrutinee, aid)) {
-      let r: i32 = lu_match_tag_live(fx, m, aid.name);
-      if (r == LU_LIVE) {
-        return true;
-      }
-      if (r == LU_SETTLED) {
-        return false;
-      }
-      return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
+      r = lu_match_tag_live(fx, m, aid.name);
+    } else if (lu_mentions_at(m.scrutinee, aid)) {
+      r = lu_call_tag_settles(fx, m, aid);
+    } else {
+      r = LU_NOT_TAG;
+    }
+    if (r != LU_NOT_TAG) {
+      return r == LU_LIVE || r == LU_CONTINUES && lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
     }
   }
   if (lu_later_in(st, aid)) {
@@ -19461,6 +19462,48 @@ const LU_CONTINUES: i32 = 0;
 const LU_LIVE: i32 = 1;
 
 const LU_SETTLED: i32 = 2;
+
+const LU_NOT_TAG: i32 = 3;
+
+// The argument at aid is in the expression, so a call in a match tag takes it.
+function lu_mentions_at(e: ast.Expr, aid: ast.ExprIdent): boolean {
+  let facts: LuFacts = astwalk.fold_expr_nodes(e, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == aid.name && o.line == aid.line && o.col == aid.col) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A local that a call in a match tag takes. LU_LIVE: a later read in the
+// tag, or a read in a guard or an arm before a whole assignment. LU_SETTLED:
+// every arm assigns the local whole or leaves the statement.
+function lu_call_tag_settles(fx: LuFn, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
+  let facts: LuFacts = astwalk.fold_expr_nodes(m.scrutinee, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == aid.name && (o.line > aid.line || o.line == aid.line && o.col > aid.col)) {
+      return LU_LIVE;
+    }
+  }
+  let settled: boolean = m.arms.len() > 0;
+  for arm in m.arms {
+    if (arm.has_guard && astwalk.count_ident_expr(arm.guard, aid.name) > 0) {
+      return LU_LIVE;
+    }
+    let r: i32 = lu_stmts_settle(fx, arm.body, aid.name);
+    if (r == LU_LIVE) {
+      return LU_LIVE;
+    }
+    if (r != LU_SETTLED) {
+      settled = false;
+    }
+  }
+  if (settled) {
+    return LU_SETTLED;
+  }
+  return LU_CONTINUES;
+}
 
 function lu_same_ident(e: ast.Expr, aid: ast.ExprIdent): boolean {
   if let ast.ExprIdent(id) = e {

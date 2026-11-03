@@ -2005,3 +2005,50 @@ function g(own names: string[]): i32 {
     return n;
 }`)
 }
+
+// A call in a match tag takes its argument when every arm gives the local a
+// new value or leaves, as the give-back idiom does in a loop (#14106).
+func TestOwnGuardCallInMatchTagRebinds(t *testing.T) {
+	const settle = `
+struct R { items: i32[], n: i32 }
+function settle(own r: R): Result[i32, R] { return Err(R { items: r.items, n: r.n + 1 }); }
+`
+	if err := checkSource(t, settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (true) {
+        if (r.n > 3) {
+            return r.n;
+        }
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => { r = after; }
+        }
+    }
+    return 0;
+}`); err != nil {
+		t.Errorf("a call in a match tag whose arms rebind or leave should take its argument, got: %v", err)
+	}
+	wantE051(t, "call-in-match-tag-arm-reads-the-local", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (true) {
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => { let m: i32 = r.n; r = after; }
+        }
+    }
+    return 0;
+}`)
+	wantE051(t, "call-in-match-tag-arm-falls-through", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (r.n < 3) {
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => {}
+        }
+    }
+    return 0;
+}`)
+}
