@@ -2053,8 +2053,8 @@ function f(): i32 {
 }`)
 }
 
-// A call whose body returns no borrow is an owned scrutinee, in a match and
-// in a let-else, as it is when a let binds it.
+// A call whose body returns a fresh handle is an owned scrutinee in a match
+// and in a let-else.
 func TestOwnGuardScrutineeOfBodyFreshCall(t *testing.T) {
 	const opener = `
 function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); }
@@ -2068,6 +2068,7 @@ function f(l: Socket): i32 {
     }
     return 0;
 }
+
 function g(l: Socket): i32 {
     let Ok(s) = accepted(l) else { return 1; };
     return take(s);
@@ -2083,5 +2084,16 @@ function f(l: Socket): i32 {
         Err(e) => { return e; }
     }
     return 0;
+}`)
+}
+
+func TestOwnGuardBodyFreshValuePayloadRemainsCopyable(t *testing.T) {
+	wantOK(t, "copyable-payload-of-body-fresh-call", `
+struct Box { items: i32[] }
+function make(s: Socket): Result[Box, i32] { return Ok(Box { items: [7] }); }
+function f(s: Socket): i32 {
+    let Ok(input) = make(s) else { return 1; };
+    let alias = input;
+    return input.items[0] + alias.items[0];
 }`)
 }

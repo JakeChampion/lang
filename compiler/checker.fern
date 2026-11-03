@@ -18632,7 +18632,7 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
-      return util.has_str(ctx.fresh_scrut, cid.name) || util.has_str(ctx.fresh, cid.name);
+      return util.has_str(ctx.fresh_scrut, cid.name) || util.has_str(ctx.fresh, cid.name) && !ow_expr_holds_no_handle(e, ctx);
     }
     return ow_qualified_ctor(c.callee, ctx) || ow_fresh_method_result(c, ctx);
   }
