@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // keep holds twelve call results live across calls, so it has a frame with
@@ -70,18 +73,23 @@ func smashCanary(t *testing.T, asm, target string) string {
 }
 
 func TestSelfHostStackCanary(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	x86gcc, _ := x86_64Tooling(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux canary fault controls require a Linux host")
+	}
+	cli := e2eharness.SelfHostCLI(t)
+	stdlib := e2eharness.SelfHostStdlibRoot(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
-			gcc := x86gcc
+			var gcc string
 			var run func(bin string) *exec.Cmd
 			if target == "arm64-linux" {
 				arm64gcc, qemu := arm64Tooling(t)
 				gcc = arm64gcc
 				run = func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) }
 			} else {
-				run = func(bin string) *exec.Cmd { return runX86_64Bin(cli.runner, bin) }
+				x86gcc, runner := x86_64Tooling(t)
+				gcc = x86gcc
+				run = func(bin string) *exec.Cmd { return runX86_64Bin(runner, bin) }
 			}
 			dir := t.TempDir()
 			src := filepath.Join(dir, "keep.fern")
@@ -91,8 +99,8 @@ func TestSelfHostStackCanary(t *testing.T) {
 			emit := func(name string, flags ...string) string {
 				t.Helper()
 				out := filepath.Join(dir, name)
-				args := append(append([]string{}, flags...), "-target", target, "-o", out, src, cli.stdlib)
-				cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+				args := append(append([]string{}, flags...), "-target", target, "-o", out, src, stdlib)
+				cmd := exec.Command(cli, args...)
 				cmd.Env = childEnv()
 				if text, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("self-host CLI %v: %v\n%s", args, err, text)
