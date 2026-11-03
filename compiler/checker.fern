@@ -372,6 +372,10 @@ function is_owned_array(t: typeinfo.Type): boolean {
   return false;
 }
 
+function t_socket(): typeinfo.Type {
+  return t_struct("Socket");
+}
+
 function t_struct(name: string): typeinfo.Type {
   let noargs: typeinfo.Type[] = [];
   return typeinfo.TypeStruct { name: name, args: noargs };
@@ -1026,7 +1030,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([t_string(), t_i32()], true);
   }
   if (name == "__tcp_close_unchecked") {
-    return ([t_struct("Socket")], true);
+    return ([t_socket()], true);
   }
   if (name == "__count_byte") {
     return ([t_string(), t_i32()], true);
