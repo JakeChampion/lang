@@ -549,3 +549,15 @@ grpc/special_status_message	1
 grpc/custom_metadata	1
 grpc/unimplemented_method	1
 grpc/unimplemented_service	1
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	122.5
+tls/client/openssl.handshakes_per_s	53.9
+tls/client/go.bulk_mbytes_per_s	116.5
+tls/client/go.handshakes_per_s	54.1
+tls/client/rustls.handshakes_per_s	55.9
+tls/client/bssl.handshakes_per_s	55.4
+tls/server/go.bulk_mbytes_per_s	144.6
+tls/server/curl.bulk_mbytes_per_s	153.1
+tls/server/handshakes_per_s	491.0
+tls/server/resumed_handshakes_per_s	543.2
