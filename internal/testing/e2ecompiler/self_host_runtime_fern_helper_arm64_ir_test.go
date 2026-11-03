@@ -39,14 +39,14 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (rand.next_i32() == 0) { return 12; }\n" +
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
-		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
+		"    if (tcp_accept(999).fd >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
 		"    let pfds: i32[] = [];\n" +
 		"    if (poll(pfds, 0) != 0 - 1) { return 15; }\n" +
 		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
 		"    if (timer_fd(1) < 0) { return 17; }\n" +
-		"    if (tcp_listen(0) < 0) { return 18; }\n" +
-		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false) == 0) { return 19; }\n" +
+		"    if (tcp_listen(0).fd < 0) { return 18; }\n" +
+		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false).fd == 0) { return 19; }\n" +
 		"    if (tcp_recv_into(999, [0u8, 0u8, 0u8, 0u8]) >= 0) { return 20; }\n" +
 		"    let av: string[] = [];\n" +
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
@@ -177,9 +177,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (rand.next_i32() == 0) { return 12; }\n" +
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
-		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
+		"    if (tcp_accept(999).fd >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
-		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false) == 0) { return 15; }\n" +
+		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false).fd == 0) { return 15; }\n" +
 		"    if (tcp_recv_into(999, [0u8, 0u8, 0u8, 0u8]) >= 0) { return 16; }\n" +
 		"    if (proc_fork() == 123456) { return 17; }\n" +
 		"    write(\"x\");\n" +
