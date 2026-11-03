@@ -89,15 +89,19 @@ function test_changed_frame_is_refused(): test.TestOutcome {
   return test.assert_eq(opened(got), "refused");
 }
 
-function test_control_replay_and_reorder_are_refused(): test.TestOutcome {
+// A control frame opens in any order, and after a lost one. A copy of a
+// frame is refused.
+function test_control_replay_is_refused_and_order_is_free(): test.TestOutcome {
   let (a, b) = channels(party(true, "alice"), party(false, "bob"));
   let (a1, f1) = secure.seal_control(a, "one".as_bytes());
   let (a2, f2) = secure.seal_control(a1, "two".as_bytes());
-  let (b1, early) = secure.open_control(b, f2);
+  let (a3, f3) = secure.seal_control(a2, "three".as_bytes());
+  let (a4, f4) = secure.seal_control(a3, "four".as_bytes());
+  let (b1, second) = secure.open_control(b, f2);
   let (b2, first) = secure.open_control(b1, f1);
-  let (b3, again) = secure.open_control(b2, f1);
-  let (b4, second) = secure.open_control(b3, f2);
-  return test.assert_eq(opened(early) + " " + opened(first) + " " + opened(again) + " " + opened(second), "refused ok:one refused ok:two");
+  let (b3, again) = secure.open_control(b2, f2);
+  let (b4, fourth) = secure.open_control(b3, f4);
+  return test.assert_eq(opened(second) + " " + opened(first) + " " + opened(again) + " " + opened(fourth), "ok:two ok:one refused ok:four");
 }
 
 function test_voice_window(): test.TestOutcome {
@@ -348,7 +352,7 @@ function main(): i32 {
   r = r.it("a party in the middle shows different strings", test_man_in_the_middle_shows_different_strings);
   r = r.it("the reveal must match the commitment", test_reveal_must_match_commitment);
   r = r.it("a changed frame is refused", test_changed_frame_is_refused);
-  r = r.it("a replayed or reordered control frame is refused", test_control_replay_and_reorder_are_refused);
+  r = r.it("a control frame opens once, in any order", test_control_replay_is_refused_and_order_is_free);
   r = r.it("voice frames open once inside the window", test_voice_window);
   r = r.it("a frame of one channel does not open on the other", test_channels_are_separate);
   r = r.it("a third party cannot read or inject", test_third_party_cannot_read_or_inject);

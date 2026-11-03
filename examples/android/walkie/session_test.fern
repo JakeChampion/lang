@@ -18,7 +18,16 @@ function sim(delay: i32): Sim {
   s = event(s, true, session.TransportUp(true, 1, 2, 77 as i64));
   s = event(s, false, session.TransportUp(false, 2, 1, 77 as i64));
   s = event(s, true, session.Authenticated);
-  return event(s, false, session.Authenticated);
+  return hellos(event(s, false, session.Authenticated));
+}
+
+// Delivers the Hello of each side, so that each knows the other confirmed.
+function hellos(s: Sim): Sim {
+  while (s.head < s.wire.len()) {
+    let f: Flight = s.wire[s.head];
+    s = event(Sim { ...s, head: s.head + 1 }, !f.to_b, session.Received(f.m));
+  }
+  return s;
 }
 
 // Applies one event to side A (`to_a`) or B, then the resulting actions.

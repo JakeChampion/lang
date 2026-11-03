@@ -13,8 +13,9 @@ name: Android
 # -apk writes, and its check requires that ART loads, constructs and binds
 # them. tests/android/audio checks std/android/audio and a JNI call from
 # the loop thread, so the emulator runs with its audio on.
-# examples/android/walkie is the LAN walkie-talkie: its check requires that
-# it starts, opens its socket and speaker, and still runs five seconds later.
+# examples/android/walkie is the LAN walkie-talkie: its check runs two
+# copies of it against each other. It reboots the emulator with the freezer of
+# cached apps off, so it runs last.
 # The seccomp job checks the syscalls of the fixture corpus against
 # Android's app filter.
 
@@ -49,6 +50,7 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE examples/android/walkie/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-walkie2.apk -apk-package dev.fern.walkie2 -apk-label "Fern Walkie 2" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE examples/android/walkie/app.fern
       - uses: actions/upload-artifact@v7
         with:
           name: fern-stopwatch-apk
@@ -59,6 +61,7 @@ jobs:
             build/android-stopwatch/fern-dextest.apk
             build/android-stopwatch/fern-audiotest.apk
             build/android-stopwatch/fern-walkie.apk
+            build/android-stopwatch/fern-walkie2.apk
           if-no-files-found: error
 
   emulator:
@@ -89,7 +92,7 @@ jobs:
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
             python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
-            python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/emulator/walkie
+            python3 examples/android/walkie/emulator_check.py build/android-stopwatch/fern-walkie.apk build/android-stopwatch/fern-walkie2.apk build/android-stopwatch/emulator/walkie
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

@@ -1,0 +1,236 @@
+// Two walkie-talkie nodes on a simulated network, with a clock that steps
+// 10 ms at a time. The network drops a part of the datagrams and delays each
+// by a random time, so some arrive out of order. A script of cues confirms the
+// string and presses and releases the talk buttons.
+import "std/net";
+import "std/test";
+import "./lan";
+import "./node";
+import "./session";
+
+const STEP_MS: i64 = 10i64;
+
+// Microphone samples in one step at the wire rate of 16 kHz.
+const STEP_SAMPLES: i32 = 160;
+
+const CONFIRM: i32 = 1;
+
+const PRESS: i32 = 2;
+
+const RELEASE: i32 = 3;
+
+// A datagram on its way to node `to`, which arrives at `at`.
+struct Flight { at: i64, to: i32, data: u8[] }
+
+// The network: `loss` datagrams in a thousand are dropped, and each takes
+// `delay` ms and up to `jitter` ms more.
+struct Network { loss: i64, delay: i64, jitter: i64 }
+
+// User action `what` on node `who` at time `at`. A user confirms the string
+// at `at` or, when it is not on the screen yet, when it shows.
+struct Cue { at: i64, who: i32, what: i32 }
+
+struct Sim {
+  nodes: node.Node[],
+  flights: Flight[],
+  rng: i64,
+  now: i64,
+  // The voice frames that each node played.
+  heard: i32[],
+  // The notice of each node when its session ended, or "".
+  lost: string[],
+  // Both nodes transmitted at the same time.
+  overlap: boolean,
+}
+
+function addr(i: i32): net.SocketAddr {
+  return net.socket_addr(net.V4([10u8, 0u8, 0u8, (i + 1) as u8]), 47120);
+}
+
+function next(r: i64): i64 {
+  return (r * 1103515245i64 + 12345i64) % 2147483648i64;
+}
+
+// The samples of one step of a tone, as a microphone gives them.
+function tone(): i32[] {
+  let out: i32[] = [];
+  for k in 0..STEP_SAMPLES {
+    out = out.append((k % 32 - 16) * 1000);
+  }
+  return out;
+}
+
+// The datagrams of node `from` on their way to the other node.
+function send(s: Sim, from: i32, nw: Network): Sim {
+  let rng: i64 = s.rng;
+  let flights: Flight[] = s.flights;
+  for d in s.nodes[from].out {
+    rng = next(rng);
+    if (rng % 1000i64 >= nw.loss) {
+      rng = next(rng);
+      let at: i64 = s.now + nw.delay + rng % (nw.jitter + 1i64);
+      flights = flights.append(Flight { at: at, to: 1 - from, data: d.data });
+    }
+  }
+  return Sim { ...s, rng: rng, flights: flights };
+}
+
+function deliver(s: Sim): Sim {
+  let nodes: node.Node[] = s.nodes;
+  let left: Flight[] = [];
+  for f in s.flights {
+    if (f.at <= s.now) {
+      nodes = nodes.with(f.to, node.receive(nodes[f.to], f.data, f.data.len(), addr(1 - f.to), s.now));
+    } else {
+      left = left.append(f);
+    }
+  }
+  return Sim { ...s, nodes: nodes, flights: left };
+}
+
+function cue(n: node.Node, what: i32, now: i64): node.Node {
+  if (what == CONFIRM) {
+    return node.confirm(n, now);
+  }
+  if (what == PRESS) {
+    return node.press(n, now);
+  }
+  return node.release(n, now);
+}
+
+function shows_code(n: node.Node): boolean {
+  match (n.link.phase) {
+    lan.Verifying => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function ended_notice(n: node.Node): string {
+  match (n.sess.state) {
+    session.Reconnecting => {
+      return n.notice;
+    },
+    session.Failed => {
+      return n.notice;
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+// Runs nodes 5 and 9 on the network until `end` ms, with the cues.
+function run(nw: Network, cues: Cue[], end: i64): Sim {
+  let s: Sim = Sim { nodes: [node.new(5i64, seed(1), 0i64), node.new(9i64, seed(2), 0i64)], flights: [], rng: 12345i64, now: 0i64, heard: [0, 0], lost: ["", ""], overlap: false };
+  let voice: i32[] = tone();
+  let done: boolean[] = [];
+  for c in cues {
+    done = done.append(false);
+  }
+  while (s.now <= end) {
+    s = deliver(s);
+    let nodes: node.Node[] = s.nodes;
+    for k in 0..cues.len() {
+      let c: Cue = cues[k];
+      if (!done[k] && c.at <= s.now && (c.what != CONFIRM || shows_code(nodes[c.who]))) {
+        nodes = nodes.with(c.who, cue(nodes[c.who], c.what, s.now));
+        done = done.with(k, true);
+      }
+    }
+    for i in 0..2 {
+      nodes = nodes.with(i, node.voice(node.tick(nodes[i], s.now), voice));
+    }
+    s = Sim { ...s, nodes: nodes };
+    for i in 0..2 {
+      s = send(s, i, nw);
+      let n: node.Node = s.nodes[i];
+      let heard: i32[] = s.heard.with(i, s.heard[i] + n.heard.len());
+      let lost: string[] = s.lost;
+      if (lost[i] == "") {
+        lost = lost.with(i, ended_notice(n));
+      }
+      s = Sim { ...s, nodes: s.nodes.with(i, node.drained(n)), heard: heard, lost: lost };
+    }
+    if (session.transmitting(s.nodes[0].sess) && session.transmitting(s.nodes[1].sess)) {
+      s = Sim { ...s, overlap: true };
+    }
+    s = Sim { ...s, now: s.now + STEP_MS };
+  }
+  return s;
+}
+
+function seed(k: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..node.SEED_BYTES {
+    out = out.append(((i * 7 + k * 31) % 256) as u8);
+  }
+  return out;
+}
+
+function summary(s: Sim, end: i64): string {
+  let a: node.Node = s.nodes[0];
+  let b: node.Node = s.nodes[1];
+  return "lost [" + s.lost[0] + "] [" + s.lost[1] + "], heard " + s.heard[0].to_string() + " " + s.heard[1].to_string() + ", overlap " + s.overlap.to_string() + ", buttons " + node.button(a, end) + " / " + node.button(b, end) + ", codes " + a.link.sas + " " + b.link.sas;
+}
+
+// Node 5 confirms at 3 s, and node 9 confirms 8 s later. Node 5, the floor
+// controller, talks for 10 s and again for 5 s. Node 9 talks for 5 s between
+// them. Then both are silent for a minute.
+function talk_script(): Cue[] {
+  return [Cue { at: 3000i64, who: 0, what: CONFIRM }, Cue { at: 11000i64, who: 1, what: CONFIRM }, Cue { at: 13000i64, who: 0, what: PRESS }, Cue { at: 23000i64, who: 0, what: RELEASE }, Cue { at: 26000i64, who: 1, what: PRESS }, Cue { at: 31000i64, who: 1, what: RELEASE }, Cue { at: 34000i64, who: 0, what: PRESS }, Cue { at: 39000i64, who: 0, what: RELEASE }];
+}
+
+// The two nodes stay connected through the script. Each hears at least
+// `min_a` and `min_b` frames of the 750 and 250 that the other sends.
+function check_talk(nw: Network, min_heard_by_b: i32, min_heard_by_a: i32): test.TestOutcome {
+  let end: i64 = 100000i64;
+  let s: Sim = run(nw, talk_script(), end);
+  let a: node.Node = s.nodes[0];
+  let b: node.Node = s.nodes[1];
+  let ok: boolean = s.lost[0] == "" && s.lost[1] == "" && !s.overlap && session.connected(a.sess) && session.connected(b.sess) && a.link.sas.len() == 6 && a.link.sas == b.link.sas && s.heard[1] >= min_heard_by_b && s.heard[0] >= min_heard_by_a && s.heard[1] <= 750 && s.heard[0] <= 250 && node.button(a, end) == "HOLD TO TALK" && node.button(b, end) == "HOLD TO TALK";
+  if (!ok) {
+    return test.fail(summary(s, end));
+  }
+  return test.pass();
+}
+
+function test_clean_network(): test.TestOutcome {
+  return check_talk(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, 740, 240);
+}
+
+function test_five_percent_loss_and_reordering(): test.TestOutcome {
+  return check_talk(Network { loss: 50i64, delay: 5i64, jitter: 40i64 }, 650, 200);
+}
+
+function test_twenty_percent_loss(): test.TestOutcome {
+  return check_talk(Network { loss: 200i64, delay: 20i64, jitter: 60i64 }, 520, 100);
+}
+
+// A press before the other phone confirms does not start a transmission.
+function test_press_before_the_peer_confirms(): test.TestOutcome {
+  let cues: Cue[] = [Cue { at: 3000i64, who: 0, what: CONFIRM }, Cue { at: 4000i64, who: 0, what: PRESS }];
+  let s: Sim = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 6000i64);
+  let a: node.Node = s.nodes[0];
+  return test.assert_eq(session.transmitting(a.sess).to_string() + " " + s.heard[1].to_string() + " " + a.notice, "false 0 wait for the other phone to confirm the code");
+}
+
+// When the other phone never confirms, the session ends with a reason.
+function test_peer_that_never_confirms(): test.TestOutcome {
+  let cues: Cue[] = [Cue { at: 3000i64, who: 0, what: CONFIRM }];
+  let s: Sim = run(Network { loss: 0i64, delay: 5i64, jitter: 0i64 }, cues, 3000i64 + session.CONFIRM_TIMEOUT_MS as i64 + 1000i64);
+  return test.assert_eq(s.lost[0], "the other phone did not confirm the code");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("walkie nodes");
+  r = r.it("two nodes talk on a clean network", test_clean_network);
+  r = r.it("two nodes talk with 5% loss and reordering", test_five_percent_loss_and_reordering);
+  r = r.it("two nodes talk with 20% loss", test_twenty_percent_loss);
+  r = r.it("a press before the peer confirms waits", test_press_before_the_peer_confirms);
+  r = r.it("a peer that never confirms ends the session", test_peer_that_never_confirms);
+  return r.finish();
+}
