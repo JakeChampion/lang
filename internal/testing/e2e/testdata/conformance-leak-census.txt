@@ -189,6 +189,7 @@ codec_errors                                         0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
+const_array_methods                                  0
 const_char_comparison                                0
 const_composite                                      0
 const_divisor_lowering                               0

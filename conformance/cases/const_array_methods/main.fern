@@ -1,0 +1,14 @@
+// A generic array method called on a top-level const array, directly or
+// through a local copy, is instantiated for the const's element type.
+import "std/array";
+
+const NAMES: string[] = ["a", "b"];
+
+const NUMS: i32[] = [3, 1, 2];
+
+function main(): i32 {
+  let d = NAMES;
+  let more = d.concat(["z"]);
+  print(f"{NAMES.contains("b")} {NAMES.contains("q")} {more.len()} {NUMS.contains(2)}");
+  return 0;
+}

@@ -8995,6 +8995,14 @@ function renamed_receivers(decls: FuncDecl[]): string[] {
   return out;
 }
 
+function const_type(name: string, fns: MFns): string {
+  let k = fns.pix.find(name);
+  if (k >= 0 && fns.decls[fns.pat[k]].is_const) {
+    return fns.decls[fns.pat[k]].ret_type;
+  }
+  return "";
+}
+
 function bg_find(fns: MFns, name: string): i32 {
   let e: i32 = fns.ghead[util.hash_bucket(name, fns.ghead.len())];
   while (e >= 0) {
@@ -11100,7 +11108,11 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return et + "[]";
     },
     ast.ExprIdent(id) => {
-      return env.elook(id.name);
+      let local = env.elook(id.name);
+      if (local.len() > 0) {
+        return local;
+      }
+      return const_type(id.name, funcs);
     },
     ast.ExprSlice(sl) => {
       let source: string = mono_infer(sl.array, env, funcs);
