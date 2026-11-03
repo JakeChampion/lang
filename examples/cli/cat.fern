@@ -1,6 +1,7 @@
 import "std/string";
 import "std/i32";
 import "std/io";
+import "std/array";
 
 struct Opts { number: boolean, number_nonblank: boolean, squeeze: boolean, show_ends: boolean, show_tabs: boolean }
 
@@ -16,32 +17,21 @@ function render_line(line: string, o: Opts): string {
 }
 
 function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, boolean) {
-  let lines = text.lines();
-  let n = lines.len();
-  let i = 0;
-  while (i < n) {
-    let line = lines[i];
+  for line in text.lines() {
     let is_blank = line.is_empty();
     if (o.squeeze && is_blank && prev_blank) {
-      i += 1;
       continue;
     }
     prev_blank = is_blank;
     let rendered = render_line(line, o);
-    let want_number = false;
-    if (o.number_nonblank) {
-      want_number = !is_blank;
-    } else if (o.number) {
-      want_number = true;
-    }
+    let want_number = if (o.number_nonblank) { !is_blank } else { o.number };
     if (want_number) {
       counter += 1;
       let num = counter.to_string().pad_start(6, ' ');
-      print(num + "\t" + rendered);
+      print(f"{num}\t{rendered}");
     } else {
       print(rendered);
     }
-    i += 1;
   }
   return (counter, prev_blank);
 }
@@ -52,23 +42,27 @@ function main(): i32 {
   let inputs: string[] = [];
   let status = 0;
 
-  let i = 1;
-  while (i < argv.len()) {
-    let a = argv[i];
-    if (a == "-n" || a == "--number") {
-      o = Opts { ...o, number: true };
-    } else if (a == "-b" || a == "--number-nonblank") {
-      o = Opts { ...o, number_nonblank: true };
-    } else if (a == "-s" || a == "--squeeze-blank") {
-      o = Opts { ...o, squeeze: true };
-    } else if (a == "-E" || a == "--show-ends") {
-      o = Opts { ...o, show_ends: true };
-    } else if (a == "-T" || a == "--show-tabs") {
-      o = Opts { ...o, show_tabs: true };
-    } else {
-      inputs = inputs.append(a);
+  for a in array.drop(argv, 1) {
+    match (a) {
+      "-n" | "--number" => {
+        o = Opts { ...o, number: true };
+      },
+      "-b" | "--number-nonblank" => {
+        o = Opts { ...o, number_nonblank: true };
+      },
+      "-s" | "--squeeze-blank" => {
+        o = Opts { ...o, squeeze: true };
+      },
+      "-E" | "--show-ends" => {
+        o = Opts { ...o, show_ends: true };
+      },
+      "-T" | "--show-tabs" => {
+        o = Opts { ...o, show_tabs: true };
+      },
+      _ => {
+        inputs = inputs.append(a);
+      }
     }
-    i += 1;
   }
 
   if (inputs.len() == 0) {
@@ -77,20 +71,18 @@ function main(): i32 {
 
   let counter = 0;
   let prev_blank = false;
-  let j = 0;
-  while (j < inputs.len()) {
-    match (io.read_input(inputs[j])) {
+  for input in inputs {
+    match (io.read_input(input)) {
       Ok(text) => {
-        let st: (i32, boolean) = emit(text, o, counter, prev_blank);
-        counter = st.0;
-        prev_blank = st.1;
+        let (n, blank) = emit(text, o, counter, prev_blank);
+        counter = n;
+        prev_blank = blank;
       },
       Err(_) => {
-        eprint("cat: " + inputs[j] + ": No such file or directory");
+        eprint(f"cat: {input}: No such file or directory");
         status = 1;
       }
     }
-    j += 1;
   }
   return status;
 }

@@ -1,5 +1,6 @@
 import "std/string";
 import "std/io";
+import "std/array";
 
 function reverse_bytes(s: string): string {
   let n = s.len();
@@ -14,34 +15,24 @@ function reverse_bytes(s: string): string {
 
 function main(): i32 {
   let argv = args();
-  let inputs: string[] = [];
+  let inputs = array.drop(argv, 1);
   let status = 0;
-  let i = 1;
-  while (i < argv.len()) {
-    inputs = inputs.append(argv[i]);
-    i += 1;
-  }
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }
 
-  let j = 0;
-  while (j < inputs.len()) {
-    match (io.read_input(inputs[j])) {
+  for input in inputs {
+    match (io.read_input(input)) {
       Ok(text) => {
-        let lines = text.lines();
-        let k = 0;
-        while (k < lines.len()) {
-          print(reverse_bytes(lines[k]));
-          k += 1;
+        for line in text.lines() {
+          print(reverse_bytes(line));
         }
       },
       Err(_) => {
-        eprint("rev: cannot open " + inputs[j]);
+        eprint("rev: cannot open " + input);
         status = 1;
       }
     }
-    j += 1;
   }
   return status;
 }

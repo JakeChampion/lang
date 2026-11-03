@@ -8,45 +8,29 @@ import "std/platform";
 
 function values_as_jarray(values: string[]): json.JsonValue {
   let arr: json.JsonValue[] = [];
-  let i = 0;
-  while (i < values.len()) {
-    arr = arr.append(JString(values[i]));
-    i += 1;
+  for v in values {
+    arr = arr.append(JString(v));
   }
   return JArray(arr);
 }
 
 function describe(path: string, q: Map[string, string[]]): json.JsonValue {
-  let out: json.JsonObject = json.object();
-  out = out.insert("path", JString(path));
-  match (q.get("q")) {
-    Some(qs) => {
-      if (qs.len() > 0) {
-        out = out.insert("q", JString(qs[0]));
-      }
-    },
-    None => {}
+  let out = json.object().insert("path", JString(path));
+  if let Some(qs) = q.get("q") {
+    if (qs.len() > 0) {
+      out = out.insert("q", JString(qs[0]));
+    }
   }
-  match (q.get("tag")) {
-    Some(tags) => {
-      out = out.insert("tags", values_as_jarray(tags));
-    },
-    None => {}
+  if let Some(tags) = q.get("tag") {
+    out = out.insert("tags", values_as_jarray(tags));
   }
   return JObject(out);
 }
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-  let full: string = "http://example.local" + req.path;
-  match (url.parse(full)) {
-    Err(_) => {
-      return http.bad_request("bad URL\n");
-    },
-    Ok(u) => {
-      let q: Map[string, string[]] = url.query_parse(u.query);
-      let body: string = describe(u.path, q) |> json.encode;
-      return http.ok(body);
-    }
-  }
-  return http.internal_error("unreachable\n");
+  let Ok(u) = url.parse("http://example.local" + req.path) else {
+    return http.bad_request("bad URL\n");
+  };
+  let body = describe(u.path, url.query_parse(u.query)) |> json.encode;
+  return http.ok(body);
 }

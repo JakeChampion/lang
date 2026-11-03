@@ -4,18 +4,15 @@ import "std/array";
 
 function main(): i32 {
   let argv = args();
-  let limit: i32 = -1;
+  let limit = -1;
   let words: string[] = [];
 
   let i = 1;
   while (i < argv.len()) {
     let a = argv[i];
     if (a == "-n" && i + 1 < argv.len()) {
-      match (i32.parse_i32(argv[i + 1])) {
-        Ok(n) => {
-          limit = n;
-        },
-        Err(_) => {}
+      if let Ok(n) = i32.parse_i32(argv[i + 1]) {
+        limit = n;
       }
       i += 1;
     } else {
@@ -24,10 +21,7 @@ function main(): i32 {
     i += 1;
   }
 
-  let line = "y";
-  if (words.len() > 0) {
-    line = words.join(" ");
-  }
+  let line = if (words.len() > 0) { words.join(" ") } else { "y" };
 
   let count = 0;
   while (limit < 0 || count < limit) {

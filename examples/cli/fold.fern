@@ -19,14 +19,7 @@ import "std/i32";
 import "std/io";
 
 function slurp(path: string): string {
-  match (io.read_input(path)) {
-    Ok(contents) => {
-      return contents;
-    },
-    Err(_) => {
-      return "";
-    }
-  }
+  return io.read_input(path).unwrap_or("");
 }
 
 function fold_line(line: string, width: i32, at_spaces: boolean): void {
@@ -38,7 +31,7 @@ function fold_line(line: string, width: i32, at_spaces: boolean): void {
   while (rest.len() > width) {
     let brk = width;
     if (at_spaces) {
-      let head: str = rest.take(width);
+      let head = rest.take(width);
       if let Some(sp) = head.last_index_of(" ") {
         if (sp > 0) {
           brk = sp + 1;
@@ -76,15 +69,10 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  let j = 0;
-  while (j < inputs.len()) {
-    let lines = slurp(inputs[j]).lines();
-    let k = 0;
-    while (k < lines.len()) {
-      fold_line(lines[k], width, at_spaces);
-      k += 1;
+  for input in inputs {
+    for line in slurp(input).lines() {
+      fold_line(line, width, at_spaces);
     }
-    j += 1;
   }
   return 0;
 }

@@ -9,22 +9,21 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartError] {
   let out = "";
   let r = multipart.open(req, multipart.limits())?;
-  let going = true;
-  while (going) {
+  loop {
     match (r.next()?) {
       NextPart(part, r1) => {
         if (part.filename.len() > 0) {
-          let got: (string, multipart.Reader) = sized(part, r1)?;
-          out += got.0;
-          r = got.1;
+          let (line, r2) = sized(part, r1)?;
+          out += line;
+          r = r2;
         } else {
-          let got: (u8[], multipart.Reader) = r1.content()?;
-          out = out + part.name + " = " + string_from_bytes_unchecked(got.0) + "\n";
-          r = got.1;
+          let (content, r2) = r1.content()?;
+          out += f"{part.name} = {string_from_bytes_unchecked(content)}\n";
+          r = r2;
         }
       },
       NoMoreParts => {
-        going = false;
+        break;
       }
     }
   }
@@ -35,15 +34,16 @@ function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multi
   let bytes = 0;
   let pieces = 0;
   let cur = r;
-  let done = false;
-  while (!done) {
-    let piece: (u8[], boolean, multipart.Reader) = cur.read(4)?;
-    bytes += piece.0.len();
+  loop {
+    let (chunk, last, next) = cur.read(4)?;
+    bytes += chunk.len();
     pieces += 1;
-    done = piece.1;
-    cur = piece.2;
+    cur = next;
+    if (last) {
+      break;
+    }
   }
-  return Ok((part.name + " = " + part.filename + " (" + part.content_type + ", " + bytes.to_string() + " bytes in " + pieces.to_string() + " pieces)\n", cur));
+  return Ok((f"{part.name} = {part.filename} ({part.content_type}, {bytes} bytes in {pieces} pieces)\n", cur));
 }
 
 function main(): i32 {

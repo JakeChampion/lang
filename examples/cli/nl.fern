@@ -25,14 +25,7 @@ import "std/io";
 struct Opts { body: string, width: i32, sep: string, start: i32, incr: i32 }
 
 function slurp(path: string): string {
-  match (io.read_input(path)) {
-    Ok(contents) => {
-      return contents;
-    },
-    Err(_) => {
-      return "";
-    }
-  }
+  return io.read_input(path).unwrap_or("");
 }
 
 function main(): i32 {
@@ -69,27 +62,16 @@ function main(): i32 {
 
   let num = o.start;
   let blanks = "".pad_start(o.width, ' ');
-  let j = 0;
-  while (j < inputs.len()) {
-    let lines = slurp(inputs[j]).lines();
-    let k = 0;
-    while (k < lines.len()) {
-      let line = lines[k];
-      let number_it = false;
-      if (o.body == "a") {
-        number_it = true;
-      } else if (o.body == "t") {
-        number_it = !line.is_empty();
-      }
+  for input in inputs {
+    for line in slurp(input).lines() {
+      let number_it = match (o.body) { "a" => true, "t" => !line.is_empty(), _ => false };
       if (number_it) {
         print(num.to_string().pad_start(o.width, ' ') + o.sep + line);
         num += o.incr;
       } else {
-        print(blanks + o.sep + line);
+        print(f"{blanks}{o.sep}{line}");
       }
-      k += 1;
     }
-    j += 1;
   }
   return 0;
 }

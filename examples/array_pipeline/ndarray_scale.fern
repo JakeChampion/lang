@@ -12,34 +12,23 @@ function scale(xs: f64[]): ndarray.NdArray[f64] {
 }
 
 function checksum(a: ndarray.NdArray[f64]): i64 {
-  let result = 0 as i64;
-  let i = 0;
-  let xs = a.to_flat();
-  while (i < xs.len()) {
-    result = result + xs[i] as i64;
-    i += 1;
+  let result = 0i64;
+  for x in a.to_flat() {
+    result += x as i64;
   }
   return result;
 }
 
 function main(): i32 {
   let argv = args();
-  let n = 1000;
-  let rounds = 2;
-  if (argv.len() > 1) {
-    n = i32.parse_i32(argv[1]).unwrap_or(n);
-  }
-  if (argv.len() > 2) {
-    rounds = i32.parse_i32(argv[2]).unwrap_or(rounds);
-  }
+  let n = if (argv.len() > 1) { i32.parse_i32(argv[1]).unwrap_or(1000) } else { 1000 };
+  let rounds = if (argv.len() > 2) { i32.parse_i32(argv[2]).unwrap_or(2) } else { 2 };
   if (n < 1 || rounds < 1) {
     return 1;
   }
   let xs: f64[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     xs = xs.append((i % 127) as f64);
-    i += 1;
   }
 
   let cold_a = __heap_alloc_count();
@@ -51,19 +40,17 @@ function main(): i32 {
 
   let mark_a = __heap_alloc_count();
   let mark_b = __heap_bump_bytes();
-  let elapsed = 0 as i64;
-  let sum = 0 as i64;
-  i = 0;
-  while (i < rounds) {
+  let elapsed = 0i64;
+  let sum = 0i64;
+  for _ in 0..rounds {
     let start = monotonic_ns();
     let out = scale(xs);
-    elapsed = elapsed + monotonic_ns() - start;
+    elapsed += monotonic_ns() - start;
     let got = checksum(out);
     if (got != expected) {
       return 2;
     }
     sum += got;
-    i += 1;
   }
   let allocs = __heap_alloc_count() - mark_a;
   let bytes = __heap_bump_bytes() - mark_b;

@@ -61,7 +61,7 @@ function test_line_links(): test.TestOutcome {
 }
 
 function test_routes(): test.TestOutcome {
-  let pages: source.Page[] = [source.Page { name: "fractal.fern", html: source.render("fractal.fern", "pub const SIZE: i32 = 256;\n") }];
+  let pages = [source.Page { name: "fractal.fern", html: source.render("fractal.fern", "pub const SIZE: i32 = 256;\n") }];
   let routes = server.routes[platform.Host](server.stats("test", 0, 0, "test-version"), "web", pages);
   let index = routes.handle(http.request("GET", "/_src/"), platform.host());
   let file = routes.handle(http.request("GET", "/_src/fractal.fern"), platform.host());
@@ -123,7 +123,7 @@ function test_version_and_cancel(): test.TestOutcome {
     return test.fail("renderer versions share a cache URL");
   }
   let session_id = "0123456789abcdef";
-  let cancelled = routes.handle(http.request("POST", "/cancel/" + session_id + "/1"), platform.host());
+  let cancelled = routes.handle(http.request("POST", f"/cancel/{session_id}/1"), platform.host());
   let request = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", session_id).with_header("X-Fern-Request", "1");
   let refused = routes.handle(request, platform.host());
   if (cancelled.status != 204 || refused.status != 499 || state.tiles.get() != 0 || state.cancelled.get().len() != 0) {

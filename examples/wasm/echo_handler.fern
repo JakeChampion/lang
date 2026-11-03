@@ -4,13 +4,5 @@ import "std/i32";
 import "std/platform";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-  match (req.body_text()) {
-    Ok(text) => {
-      return http.ok(f"{req.method} {req.path} ({req.body_len()} bytes)\n\n{text}");
-    },
-    Err(e) => {
-      return e.to_response();
-    }
-  }
-  return http.internal_error("unreachable");
+  return match (req.body_text()) { Ok(text) => http.ok(f"{req.method} {req.path} ({req.body_len()} bytes)\n\n{text}"), Err(e) => e.to_response() };
 }

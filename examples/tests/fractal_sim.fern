@@ -33,7 +33,7 @@ function tile_is_png(resp: HttpResponse): boolean {
   if (resp.status != 200 || png.len() < 8) {
     return false;
   }
-  if (png[1] != 80 as u8 || png[2] != 78 as u8 || png[3] != 71 as u8) {
+  if (png[1] != b'P' || png[2] != b'N' || png[3] != b'G') {
     return false;
   }
   return resp.headers.get("Server-Timing").unwrap_or("").starts_with("render;dur=");

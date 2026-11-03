@@ -12,9 +12,7 @@ function write_output(path: string, append: boolean, bytes: u8[]): Result[void, 
   let w = open_output(path, append)?;
   let written = w.write_bytes(bytes);
   let closed = w.close();
-  if let Err(e) = written {
-    return Err(e);
-  }
+  written?;
   return closed;
 }
 
@@ -26,7 +24,7 @@ function copy_outputs(data: u8[], files: string[], append: boolean): i32 {
   }
   for path in files {
     if let Err(_) = write_output(path, append, data) {
-      eprint("tee: " + path + ": cannot write");
+      eprint(f"tee: {path}: cannot write");
       status = 1;
     }
   }
@@ -38,24 +36,20 @@ function main(): i32 {
   let append = false;
   let files: string[] = [];
 
-  let i = 1;
-  while (i < argv.len()) {
-    let a = argv[i];
-    if (a == "-a" || a == "--append") {
-      append = true;
-    } else {
-      files = files.append(a);
+  for a in array.drop(argv, 1) {
+    match (a) {
+      "-a" | "--append" => {
+        append = true;
+      },
+      _ => {
+        files = files.append(a);
+      }
     }
-    i += 1;
   }
 
-  match (io.read_all_stdin_bytes()) {
-    Err(_) => {
-      eprint("tee: cannot read stdin");
-      return 1;
-    },
-    Ok(data) => {
-      return copy_outputs(data, files, append);
-    }
-  }
+  let Ok(data) = io.read_all_stdin_bytes() else {
+    eprint("tee: cannot read stdin");
+    return 1;
+  };
+  return copy_outputs(data, files, append);
 }

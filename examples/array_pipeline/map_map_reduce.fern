@@ -47,10 +47,8 @@ function combine(a: i64, b: i64): i64 {
 
 function build_input(n: i32): i64[] {
   let xs: i64[] = [];
-  let i = 0;
-  while (i < n) {
-    xs = xs.append(i as i64 * (2654435761 as i64) % modulus());
-    i += 1;
+  for i in 0..n {
+    xs = xs.append(i as i64 * 2654435761 % modulus());
   }
   return xs;
 }
@@ -133,56 +131,24 @@ function run_call_loop(xs: i64[]): i64 {
 }
 
 function dispatch(variant: i32, sel: i32, xs: i64[]): i64 {
-  if (variant == 0) {
-    return run_pipeline(xs);
-  }
-  if (variant == 1) {
-    return run_closure_loop(sel, xs);
-  }
-  if (variant == 2) {
-    return run_loop(xs);
-  }
-  return run_call_loop(xs);
+  return match (variant) { 0 => run_pipeline(xs), 1 => run_closure_loop(sel, xs), 2 => run_loop(xs), _ => run_call_loop(xs) };
 }
 
 function main(): i32 {
   let argv = args();
-  let name = "pipeline";
-  if (argv.len() > 1) {
-    name = argv[1];
-  }
-  let variant = 0;
-  if (name == "closure_loop") {
-    variant = 1;
-  }
-  if (name == "loop") {
-    variant = 2;
-  }
-  if (name == "call_loop") {
-    variant = 3;
-  }
+  let name = if (argv.len() > 1) { argv[1] } else { "pipeline" };
+  let variant = match (name) { "closure_loop" => 1, "loop" => 2, "call_loop" => 3, _ => 0 };
 
-  let n = 4096;
-  if (argv.len() > 2) {
-    n = i32.parse_i32(argv[2]).unwrap_or(4096);
-  }
-  let rounds = 200;
-  if (argv.len() > 3) {
-    rounds = i32.parse_i32(argv[3]).unwrap_or(200);
-  }
+  let n = if (argv.len() > 2) { i32.parse_i32(argv[2]).unwrap_or(4096) } else { 4096 };
+  let rounds = if (argv.len() > 3) { i32.parse_i32(argv[3]).unwrap_or(200) } else { 200 };
 
-  let sel = 0;
-  if (argv.len() > 4) {
-    sel = 1;
-  }
+  let sel = if (argv.len() > 4) { 1 } else { 0 };
 
   let xs = build_input(n);
 
   let samples: i64[] = [];
-  let p = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p += 1;
+  for _ in 0..rounds {
+    samples = samples.append(0);
   }
 
   let cold_a0 = bench.alloc_count();
@@ -194,12 +160,10 @@ function main(): i32 {
   let at_allocs = bench.alloc_count();
   let at_fresh = bench.bump_bytes();
   let started_ns = monotonic_ns();
-  let r = 0;
-  while (r < rounds) {
+  for r in 0..rounds {
     let t0 = monotonic_ns();
-    checksum = (checksum * (31 as i64) + dispatch(variant, sel, xs)) % modulus();
+    checksum = (checksum * 31 + dispatch(variant, sel, xs)) % modulus();
     samples = samples.with(r, monotonic_ns() - t0);
-    r += 1;
   }
   let elapsed_ns = monotonic_ns() - started_ns;
   let allocs = bench.allocs_after(at_allocs);

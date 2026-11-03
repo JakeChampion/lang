@@ -8,10 +8,8 @@ import "std/string";
 
 function input(rows: i32, columns: i32, bias: i32): ndarray.NdArray[f64] {
   let data: f64[] = [];
-  let i = 0;
-  while (i < rows * columns) {
+  for i in 0..rows * columns {
     data = data.append((i % 127 + bias) as f64 * 0.125);
-    i += 1;
   }
   return ndarray.from_flat(data, [rows, columns]);
 }
@@ -78,62 +76,37 @@ function correct(out: ndarray.NdArray[f64], a: ndarray.NdArray[f64], b: ndarray.
   let values = out.to_flat();
   let xs = a.to_flat();
   let ys = b.to_flat();
-  let i = 0;
-  while (i < xs.len()) {
+  for i in 0..xs.len() {
     if (xs[i] != (i % 127 + 1) as f64 * 0.125) {
       return false;
     }
-    i += 1;
   }
-  i = 0;
-  while (i < ys.len()) {
+  for i in 0..ys.len() {
     if (ys[i] != (i % 127 + 3) as f64 * 0.125) {
       return false;
     }
-    i += 1;
   }
-  i = 0;
-  while (i < rows) {
-    let j = 0;
-    while (j < columns) {
+  for i in 0..rows {
+    for j in 0..columns {
       let acc = init;
-      let k = 0;
-      while (k < extent) {
+      for k in 0..extent {
         acc = plus(acc, multiply(xs[i * extent + k], ys[k * columns + j]));
-        k += 1;
       }
       if (f64_bits(values[i * columns + j]) != f64_bits(acc)) {
         return false;
       }
-      j += 1;
     }
-    i += 1;
   }
   return true;
 }
 
 function main(): i32 {
   let argv = args();
-  let rows = 32;
-  let extent = 32;
-  let columns = 32;
-  let rounds = 2;
-  let mode = 0;
-  if (argv.len() > 1) {
-    rows = i32.parse_i32(argv[1]).unwrap_or(rows);
-  }
-  if (argv.len() > 2) {
-    extent = i32.parse_i32(argv[2]).unwrap_or(extent);
-  }
-  if (argv.len() > 3) {
-    columns = i32.parse_i32(argv[3]).unwrap_or(columns);
-  }
-  if (argv.len() > 4) {
-    rounds = i32.parse_i32(argv[4]).unwrap_or(rounds);
-  }
-  if (argv.len() > 5) {
-    mode = i32.parse_i32(argv[5]).unwrap_or(mode);
-  }
+  let rows = if (argv.len() > 1) { i32.parse_i32(argv[1]).unwrap_or(32) } else { 32 };
+  let extent = if (argv.len() > 2) { i32.parse_i32(argv[2]).unwrap_or(32) } else { 32 };
+  let columns = if (argv.len() > 3) { i32.parse_i32(argv[3]).unwrap_or(32) } else { 32 };
+  let rounds = if (argv.len() > 4) { i32.parse_i32(argv[4]).unwrap_or(2) } else { 2 };
+  let mode = if (argv.len() > 5) { i32.parse_i32(argv[5]).unwrap_or(0) } else { 0 };
   if (rows < 1 || extent < 1 || columns < 1 || rounds < 1 || mode < 0 || mode > 2) {
     return 1;
   }
@@ -142,19 +115,17 @@ function main(): i32 {
   }
   let a = input(rows, extent, 1);
   let b = input(extent, columns, 3);
-  let init: f64 = 0.25;
+  let init = 0.25;
   let mark_calls = __heap_alloc_count();
   let mark_bytes = __heap_bump_bytes();
-  let elapsed: i64 = 0i64;
-  let r = 0;
-  while (r < rounds) {
+  let elapsed = 0i64;
+  for _ in 0..rounds {
     let start = monotonic_ns();
     let out = run_inner(a, b, init, mode);
-    elapsed = elapsed + monotonic_ns() - start;
+    elapsed += monotonic_ns() - start;
     if (!correct(out, a, b, init)) {
       return 2;
     }
-    r += 1;
   }
   let calls = __heap_alloc_count() - mark_calls;
   let bytes = __heap_bump_bytes() - mark_bytes;

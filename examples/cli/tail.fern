@@ -24,14 +24,8 @@ function emit(text: string, o: Opts): void {
     return;
   }
   let lines = text.lines();
-  let start = lines.len() - o.count;
-  if (start < 0) {
-    start = 0;
-  }
-  let i = start;
-  while (i < lines.len()) {
+  for i in (lines.len() - o.count).max(0)..lines.len() {
     print(lines[i]);
-    i += 1;
   }
 }
 
@@ -54,7 +48,7 @@ function main(): i32 {
       o = Opts { ...o, count: i32.parse_i32(a.drop(2)).unwrap_or(10), by_bytes: false };
     } else if (a.starts_with("-c")) {
       o = Opts { ...o, count: i32.parse_i32(a.drop(2)).unwrap_or(10), by_bytes: true };
-    } else if (a.len() > 1 && a[0] == 45 && a[1].is_ascii_digit()) {
+    } else if (a.len() > 1 && a[0] == b'-' && a[1].is_ascii_digit()) {
       o = Opts { ...o, count: i32.parse_i32(a.drop(1)).unwrap_or(10), by_bytes: false };
     } else {
       inputs = inputs.append(a);
@@ -66,24 +60,23 @@ function main(): i32 {
   }
 
   let multi = inputs.len() > 1;
-  let j = 0;
-  while (j < inputs.len()) {
-    match (io.read_input(inputs[j])) {
+  for j in 0..inputs.len() {
+    let input = inputs[j];
+    match (io.read_input(input)) {
       Ok(text) => {
         if (multi) {
           if (j > 0) {
             print("");
           }
-          print("==> " + inputs[j] + " <==");
+          print(f"==> {input} <==");
         }
         emit(text, o);
       },
       Err(_) => {
-        eprint("tail: cannot open '" + inputs[j] + "' for reading");
+        eprint(f"tail: cannot open '{input}' for reading");
         status = 1;
       }
     }
-    j += 1;
   }
   return status;
 }

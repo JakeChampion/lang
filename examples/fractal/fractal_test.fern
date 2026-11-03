@@ -4,7 +4,7 @@ import "std/binary";
 import "./fractal";
 
 function test_coordinates(): test.TestOutcome {
-  let last: i64 = (1 as i64 << fractal.MAX_ZOOM as i64) - 1;
+  let last = (1 as i64 << fractal.MAX_ZOOM as i64) - 1;
   return test.assert_true(
     fractal.valid(0, 0, 0) && fractal.valid(fractal.MAX_ZOOM, last, last)
       && !fractal.valid(-1, 0, 0) && !fractal.valid(fractal.MAX_ZOOM + 1, 0, 0)
@@ -25,19 +25,12 @@ function test_binary_fields(): test.TestOutcome {
   let output = binary.append_u32_be([], 0x89abcdef as u32);
   output = binary.append_u32_be(output, 0xffffffff as u32);
   output = binary.append_bytes(output, "PNG".as_bytes());
-  let expected: u8[] = [137 as u8, 171 as u8, 205 as u8, 239 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 80 as u8, 78 as u8, 71 as u8];
+  let expected: u8[] = [137, 171, 205, 239, 255, 255, 255, 255, b'P', b'N', b'G'];
   return test.assert_eq_array(output, expected);
 }
 
 function check_tile(z: i32, x: i64, y: i64, iterations: i64, bytes: i32, checksum: u32): test.TestOutcome {
-  match (fractal.render_reference(z, x, y)) {
-    Ok(tile) => {
-      return check_rendered(tile, iterations, bytes, checksum);
-    },
-    Err(_) => {
-      return test.fail("tile renderer failed");
-    }
-  }
+  return match (fractal.render_reference(z, x, y)) { Ok(tile) => check_rendered(tile, iterations, bytes, checksum), Err(_) => test.fail("tile renderer failed") };
 }
 
 function check_rendered(tile: fractal.Tile, iterations: i64, bytes: i32, checksum: u32): test.TestOutcome {

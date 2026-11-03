@@ -9,10 +9,9 @@ import "./series";
 struct Escape { steps: i32, magnitude: f64 }
 
 function scalar(real: f64, imaginary: f64, limit: i32): Escape {
-  let zr: f64 = 0.0;
-  let zi: f64 = 0.0;
-  let steps = 0;
-  while (steps < limit) {
+  let zr = 0.0;
+  let zi = 0.0;
+  for steps in 0..limit {
     let rr = zr * zr;
     let ii = zi * zi;
     if (rr + ii > 65536.0) {
@@ -20,7 +19,6 @@ function scalar(real: f64, imaginary: f64, limit: i32): Escape {
     }
     zi = 2.0 * zr * zi + imaginary;
     zr = rr - ii + real;
-    steps += 1;
   }
   return Escape { steps: limit, magnitude: -1.0 };
 }
@@ -30,10 +28,8 @@ function test_refill(): test.TestOutcome {
     for limit in [0, 1, 4, 5, 15, 16, 17, 63, 64, 65, 257] {
       let view = kernel.View { size: size, x: 0, y: 0, step: 4.0 / (size as f64), limit: limit };
       let pixels = kernel.render(view, None);
-      let row = 0;
-      while (row < size) {
-        let column = 0;
-        while (column < size) {
+      for row in 0..size {
+        for column in 0..size {
           let real = -2.5 + (column as f64 + 0.5) * view.step;
           let imaginary = 2.0 - (row as f64 + 0.5) * view.step;
           let want = scalar(real, imaginary, limit);
@@ -45,9 +41,7 @@ function test_refill(): test.TestOutcome {
           } else if (pixels.counts[at] < 0 || pixels.counts[at] > limit || f64_from_bits(pixels.magnitudes[at]) > 0.0) {
             return test.fail("bounded lane has an escape result");
           }
-          column += 1;
         }
-        row += 1;
       }
     }
   }
@@ -56,10 +50,7 @@ function test_refill(): test.TestOutcome {
 
 function test_prefix(): test.TestOutcome {
   for real in [0.0, -0.75] {
-    let imaginary: f64 = 0.0;
-    if (real < 0.0) {
-      imaginary = 0.1;
-    }
+    let imaginary = if (real < 0.0) { 0.1 } else { 0.0 };
     let ref = linear.reference(real, imaginary, 1e-8, 256, 1e-8);
     if (ref.series.steps < 2 || ref.series.error < 0.0) {
       return test.fail("shared series was not constructed");
@@ -69,10 +60,9 @@ function test_prefix(): test.TestOutcome {
       if (start.steps < 2) {
         return test.fail("prefix did not skip updates");
       }
-      let zr: f64 = 0.0;
-      let zi: f64 = 0.0;
-      let at = 0;
-      while (at < start.steps) {
+      let zr = 0.0;
+      let zi = 0.0;
+      for _ in 0..start.steps {
         let rr = zr * zr;
         let ii = zi * zi;
         if (rr + ii > 65536.0) {
@@ -80,7 +70,6 @@ function test_prefix(): test.TestOutcome {
         }
         zi = 2.0 * zr * zi + imaginary + delta;
         zr = rr - ii + real + delta;
-        at += 1;
       }
       if ((zr - start.real).abs() + (zi - start.imaginary).abs() > 1e-6) {
         return test.fail("prefix state exceeds the comparison tolerance");
@@ -148,7 +137,7 @@ function test_output_paths(): test.TestOutcome {
 
 function test_cancelled_rows(): test.TestOutcome {
   let polls = cell_new(0);
-  let stop: () => boolean = (): boolean => {
+  let stop = (): boolean => {
     polls.set(polls.get() + 1);
     return polls.get() >= 4;
   };

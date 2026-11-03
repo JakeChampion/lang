@@ -1,3 +1,4 @@
+import "std/result";
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -5,58 +6,24 @@ import "std/array";
 
 function parse_list(spec: string): (i32, i32)[] {
   let out: (i32, i32)[] = [];
-  let parts = spec.split(",");
-  let i = 0;
-  while (i < parts.len()) {
-    let p = parts[i];
-    match (p.split_once("-")) {
-      Some(bounds) => {
-        let los = bounds.0;
-        let his = bounds.1;
-        let lo = 1;
-        let hi = 0;
-        if (!los.is_empty()) {
-          match (i32.parse_i32(los)) {
-            Ok(n) => {
-              lo = n;
-            },
-            Err(_) => {}
-          }
-        }
-        if (!his.is_empty()) {
-          match (i32.parse_i32(his)) {
-            Ok(n) => {
-              hi = n;
-            },
-            Err(_) => {}
-          }
-        }
-        out = out.append((lo, hi));
-      },
-      None => {
-        match (i32.parse_i32(p)) {
-          Ok(n) => {
-            out = out.append((n, n));
-          },
-          Err(_) => {}
-        }
-      }
+  for p in spec.split(",") {
+    if let Some((los, his)) = p.split_once("-") {
+      let lo = i32.parse_i32(los).unwrap_or(1);
+      let hi = i32.parse_i32(his).unwrap_or(0);
+      out = out.append((lo, hi));
+    } else if let Ok(n) = i32.parse_i32(p) {
+      out = out.append((n, n));
     }
-    i += 1;
   }
   return out;
 }
 
 function selected(pos: i32, ranges: (i32, i32)[]): boolean {
-  let i = 0;
-  while (i < ranges.len()) {
-    let r: (i32, i32) = ranges[i];
-    let lo = r.0;
-    let hi = r.1;
+  for r in ranges {
+    let (lo, hi) = r;
     if (pos >= lo && (hi == 0 || pos <= hi)) {
       return true;
     }
-    i += 1;
   }
   return false;
 }
@@ -67,37 +34,26 @@ function cut_fields(line: string, delim: string, ranges: (i32, i32)[]): string {
   }
   let fields = line.split(delim);
   let picked: string[] = [];
-  let i = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     if (selected(i + 1, ranges)) {
       picked = picked.append(fields[i]);
     }
-    i += 1;
   }
   return picked.join(delim);
 }
 
 function cut_chars(line: string, ranges: (i32, i32)[]): string {
   let out = "";
-  let i = 0;
-  while (i < line.len()) {
+  for i in 0..line.len() {
     if (selected(i + 1, ranges)) {
       out += slice_unchecked(line, i, i + 1);
     }
-    i += 1;
   }
   return out;
 }
 
 function slurp(path: string): string {
-  match (io.read_input(path)) {
-    Ok(contents) => {
-      return contents;
-    },
-    Err(_) => {
-      return "";
-    }
-  }
+  return io.read_input(path).unwrap_or("");
 }
 
 function main(): i32 {
@@ -134,21 +90,16 @@ function main(): i32 {
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }
-  let ranges: (i32, i32)[] = parse_list(spec);
+  let ranges = parse_list(spec);
 
-  let j = 0;
-  while (j < inputs.len()) {
-    let lines = slurp(inputs[j]).lines();
-    let k = 0;
-    while (k < lines.len()) {
+  for input in inputs {
+    for line in slurp(input).lines() {
       if (mode == "f") {
-        print(cut_fields(lines[k], delim, ranges));
+        print(cut_fields(line, delim, ranges));
       } else {
-        print(cut_chars(lines[k], ranges));
+        print(cut_chars(line, ranges));
       }
-      k += 1;
     }
-    j += 1;
   }
   return 0;
 }
