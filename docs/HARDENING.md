@@ -90,6 +90,11 @@ that record in the same way. They use `rt_frame_of` and `rt_unframe_of` in
 before its explicit stack adjustment and authenticates after the restore.
 The startup record in `_start` has no signature because it never returns.
 
+Some helper paths push `x30` alone or with one other register around a call.
+They use `rt_save_lr` and `rt_restore_lr`, which sign the push and
+authenticate the pop. Inside a signed frame, `x30` already holds a signed
+address. So `rt_save_lr` strips it with `xpaclri` before `paciasp` signs it.
+
 `bti`, `paciasp`, `autiasp` and `xpaclri` are all in the hint space, so each
 is a NOP on a core without the feature. The ARMv8.2-A baseline does not
 change: a hardened binary runs everywhere an unhardened one does, with the
@@ -184,9 +189,12 @@ The test checks PAC and BTI instructions in the in-process image.
 A `-backtrace` abort must print plain code addresses without signature bits.
 
 The `runtime-frames` case links the frame records listed in issue #14052 and
-the subprocess record. It checks `x29/x30` stores and restores for PAC.
+the subprocess record. It checks each `x29/x30` record and each push and pop
+of `x30` for PAC. It also refuses a `paciasp` while `x30` is still signed.
+
 For each helper that runs, a PAC control removes only its signature.
-The control must fault. This audit does not check other forms of `x30` saves.
+A further control removes the signatures of the compact pushes.
+Each control must fault.
 
 `TestSelfHostForwardEdgeCFI` builds the control under `-harden` and under
 `-harden -pie` on both targets and counts the pads. It then runs three
@@ -247,11 +255,6 @@ with it active. It reads the kernel's own records and infers nothing from the em
 - **Speculation barriers**: none are emitted. Speculation attacks are outside
   the threat model (`docs/security/GUARANTEES.md`), because a Fern process
   runs only the code it was compiled from.
-- **Compact runtime saves of `x30`**: some helper paths save `x30` alone or
-  with another register, without a signature at that save. Examples include
-  `__fn___fern_arr_inc_elems` and `__fn___fern_arr_own_elems`.
-  The `x29/x30` frame record audit does not establish PAC coverage for these
-  paths. Compiled Fern frames and runtime `x29/x30` records are signed.
 - **arm64-android**: the PIE image writer has no fourth program header yet.
 - **arm64-darwin**: Apple's arm64e ABI, not BTI, is the mechanism there.
 - **x86-64 IBT**: the kernel enforces no user-space IBT. The `endbr64`
