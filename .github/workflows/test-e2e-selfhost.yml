@@ -513,6 +513,9 @@ jobs:
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain
+        with:
+          # TestSelfHostHardenShared builds a C host that loads an arm64 shared object.
+          cross-libc: "true"
       - uses: ./.github/actions/build-e2e-binaries
         with:
           e2e: "true"
