@@ -5,19 +5,61 @@
 // lower half. While the users compare the authentication string, two
 // buttons in the middle confirm or reject it.
 
+import "std/string";
+
 pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
 
 pub function contains(r: Rect, x: f32, y: f32): boolean {
   return x >= r.x as f32 && y >= r.y as f32 && x < (r.x + r.w) as f32 && y < (r.y + r.h) as f32;
 }
 
-// The scale of the text: about 30 characters across the screen.
-pub function text_scale(w: i32): i32 {
-  let s: i32 = w / 300;
+// The characters on one line of status text, at least.
+pub const LINE_CHARS: i32 = 20;
+
+// The scale of the text for a screen `w` pixels wide and characters `cell_w`
+// pixels wide at scale 1: LINE_CHARS characters fit inside the margins.
+pub function text_scale(w: i32, cell_w: i32): i32 {
+  let s: i32 = w * 9 / 10 / (LINE_CHARS * cell_w);
   if (s < 1) {
     return 1;
   }
   return s;
+}
+
+// The characters that fit on one line inside the margins at scale `sc`.
+pub function line_chars(w: i32, cell_w: i32, sc: i32): i32 {
+  return w * 9 / 10 / (cell_w * sc);
+}
+
+// The lines of `text` with at most `max` characters each, broken at spaces.
+// A word longer than `max` is cut.
+pub function wrap(text: string, max: i32): string[] {
+  let lines: string[] = [];
+  let line: string = "";
+  for word in text.split(" ") {
+    let w: string = word;
+    while (w.len() > max) {
+      if (line.len() > 0) {
+        lines = lines.append(line);
+        line = "";
+      }
+      let (head, rest) = w.split_at(max);
+      lines = lines.append(head);
+      w = rest;
+    }
+    if (line.len() == 0) {
+      line = w;
+    } else if (line.len() + 1 + w.len() <= max) {
+      line = line + " " + w;
+    } else {
+      lines = lines.append(line);
+      line = w;
+    }
+  }
+  if (line.len() > 0) {
+    lines = lines.append(line);
+  }
+  return lines;
 }
 
 pub function talk_button(w: i32, h: i32): Rect {

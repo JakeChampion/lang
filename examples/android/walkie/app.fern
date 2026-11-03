@@ -518,6 +518,15 @@ function status(s: App): string {
   return "";
 }
 
+// The largest scale up to `cap` at which `text` fits in `w` pixels.
+function fit_scale(text: string, w: i32, cap: i32): i32 {
+  let sc: i32 = cap;
+  while (sc > 1 && draw.text_width(text, sc) > w) {
+    sc = sc - 1;
+  }
+  return sc;
+}
+
 function draw(s: App): App {
   let now: i64 = now_ms();
   let (label, color) = button_face(s, now);
@@ -532,13 +541,22 @@ function draw(s: App): App {
   }
   let fw: i32 = f.width;
   let fh: i32 = f.height;
-  let sc: i32 = screen.text_scale(fw);
+  let cell: i32 = draw.text_width("x", 1);
+  let sc: i32 = screen.text_scale(fw, cell);
+  let chars: i32 = screen.line_chars(fw, cell, sc);
   let line: i32 = draw.text_height(sc) * 3 / 2;
   let white: i32 = android.rgb(230, 230, 230);
   f.fill(0, 0, fw, fh, android.rgb(0, 0, 0));
   f.text(fw / 20, line, "Fern Walkie (LAN)", sc, white);
-  f.text(fw / 20, 2 * line, status(s), sc, android.rgb(160, 160, 160));
-  f.text(fw / 20, 3 * line, s.notice, sc, android.rgb(230, 120, 80));
+  let y: i32 = 2 * line;
+  for l in screen.wrap(status(s), chars) {
+    f.text(fw / 20, y, l, sc, android.rgb(160, 160, 160));
+    y = y + line;
+  }
+  for l in screen.wrap(s.notice, chars) {
+    f.text(fw / 20, y, l, sc, android.rgb(230, 120, 80));
+    y = y + line;
+  }
   match (s.link.phase) {
     lan.Verifying => {
       let big: i32 = sc * 3;
@@ -555,7 +573,8 @@ function draw(s: App): App {
   }
   let b: screen.Rect = screen.talk_button(fw, fh);
   f.fill(b.x, b.y, b.w, b.h, color);
-  f.text(screen.center_x(b, draw.text_width(label, sc * 2)), b.y + b.h / 2 - draw.text_height(sc * 2) / 2, label, sc * 2, white);
+  let bs: i32 = fit_scale(label, b.w * 9 / 10, sc * 2);
+  f.text(screen.center_x(b, draw.text_width(label, bs)), b.y + b.h / 2 - draw.text_height(bs) / 2, label, bs, white);
   android.post(f);
   return App { ...s, drawn: key };
 }

@@ -33,8 +33,31 @@ function test_contains_is_half_open(): test.TestOutcome {
   return test.assert_eq(s, "true false true");
 }
 
+// At the scale, LINE_CHARS characters of 15 pixels fit in 90% of the width.
 function test_text_scale(): test.TestOutcome {
-  return test.assert_eq(screen.text_scale(1080).to_string() + " " + screen.text_scale(200).to_string(), "3 1");
+  let s: string = "";
+  for w in [899, 1080, 1440, 200] {
+    let sc: i32 = screen.text_scale(w, 15);
+    let n: i32 = screen.line_chars(w, 15, sc);
+    s = s + sc.to_string() + ":" + n.to_string() + ":" + (n * 15 * sc <= w * 9 / 10).to_string() + " ";
+  }
+  return test.assert_eq(s, "2:26:true 3:21:true 4:21:true 1:12:true ");
+}
+
+function joined(lines: string[]): string {
+  let s: string = "";
+  for l in lines {
+    s = s + "[" + l + "]";
+  }
+  return s;
+}
+
+// Lines break at spaces, and a word longer than a line is cut.
+function test_wrap(): test.TestOutcome {
+  let a: string = joined(screen.wrap("looking for a phone on this Wi-Fi", 20));
+  let b: string = joined(screen.wrap("abcdefghijkl xy", 5));
+  let c: string = joined(screen.wrap("", 5));
+  return test.assert_eq(a + " " + b + " " + c, "[looking for a phone][on this Wi-Fi] [abcde][fghij][kl xy] ");
 }
 
 function main(): i32 {
@@ -42,5 +65,6 @@ function main(): i32 {
   r = r.it("the buttons fit and do not overlap", test_buttons_fit_and_do_not_overlap);
   r = r.it("contains is half-open", test_contains_is_half_open);
   r = r.it("the text scale follows the width", test_text_scale);
+  r = r.it("text wraps at spaces", test_wrap);
   return r.finish();
 }
