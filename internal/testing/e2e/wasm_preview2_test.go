@@ -447,12 +447,12 @@ import "std/net";
 
 function main(): i32 {
     let sock = tcp_listen(0);
-    if (sock < 0) { return 1; }
+    if (sock.fd < 0) { return 1; }
     let port: i32 = tcp_local_port(sock);
     if (port <= 0) { return 4; }
     print(port.to_string());
     let conn = tcp_accept(sock);
-    if (conn < 0) { return 2; }
+    if (conn.fd < 0) { return 2; }
     let msg: u8[] = match (net.read_watched(conn, 1024, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => b,
         _ => { return 5; },
@@ -579,10 +579,10 @@ import "std/net";
 
 function main(): i32 {
     let sock = tcp_listen(__PORT__);
-    if (sock < 0) { return 1; }
+    if (sock.fd < 0) { return 1; }
     print("LISTENING");
     let conn = tcp_accept(sock);
-    if (conn < 0) { return 2; }
+    if (conn.fd < 0) { return 2; }
     let msg: u8[] = match (net.read_watched(conn, 1024, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => b,
         _ => { return 5; },

@@ -7275,6 +7275,10 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			}
 			return arr.Elems()[idx], nil
 		}
+		if n, ok := tv.(Number); ok && x.Field == "fd" {
+			// A Socket runs as its descriptor number.
+			return n, nil
+		}
 		s, ok := tv.(*Struct)
 		if !ok {
 			return nil, fmt.Errorf("field access on non-struct %T", tv)

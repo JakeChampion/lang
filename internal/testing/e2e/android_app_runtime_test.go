@@ -42,7 +42,7 @@ function main(): i32 {
   let d: async.RealDriver = async.real_driver_io_uring();
   if (d.io_uring()) { return 1; }
   if (poll([-1], 0) != -1) { return 2; }
-  if (tcp_accept(-1) != -9) { return 3; }
+  if (tcp_accept(-1).fd != -9) { return 3; }
   let handle: i32 = d.handle();
   if (handle < 0) { return 4; }
   if (tcp_close(handle) != 0) { return 5; }

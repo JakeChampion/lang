@@ -5428,11 +5428,22 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
       }
       return v_err(handle_kind(hv) + " has no field `" + fa.field + "`");
     },
+    VInt(_) => {
+      return socket_field(ov, fa.field);
+    },
     _ => {
       return v_err("can only field-access a struct or tuple");
     }
   }
   return v_err("unreachable field-access arm");
+}
+
+// A Socket runs as its descriptor number, which is also its fd.
+function socket_field(ov: Value, field: string): Value {
+  if (field == "fd") {
+    return ov;
+  }
+  return v_err("can only field-access a struct or tuple");
 }
 
 function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
