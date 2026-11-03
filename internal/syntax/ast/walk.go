@@ -44,210 +44,229 @@ func RewriteProgramExprs(p *Program, fn func(Expr) Expr) {
 	if p == nil {
 		return
 	}
+	rw := newRewriter(fn)
 	for _, d := range p.Funcs {
 		if d.Body != nil {
-			rewriteStmtChildren(d.Body, fn)
+			rewriteStmtChildren(d.Body, rw)
 		}
 	}
 	for _, d := range p.Consts {
 		if d.Value != nil {
-			d.Value = rewriteExpr(d.Value, fn)
+			d.Value = rewriteExpr(d.Value, rw)
 		}
 	}
 }
 
 func RewriteBlockExprs(b *Block, fn func(Expr) Expr) {
+	rw := newRewriter(fn)
 	if b != nil {
-		rewriteStmtChildren(b, fn)
+		rewriteStmtChildren(b, rw)
 	}
 }
 
-func rewriteExpr(e Expr, fn func(Expr) Expr) Expr {
+// rewriter rewrites each node once. A tree can share a node, as an f-string
+// shares its parts with its desugaring, and a second visit would rewrite the
+// result of the first.
+type rewriter struct {
+	fn   func(Expr) Expr
+	done map[Expr]Expr
+}
+
+func newRewriter(fn func(Expr) Expr) *rewriter {
+	return &rewriter{fn: fn, done: map[Expr]Expr{}}
+}
+
+func rewriteExpr(e Expr, rw *rewriter) Expr {
 	if e == nil {
 		return nil
 	}
-	rewriteExprChildren(e, fn)
-	return fn(e)
+	if r, ok := rw.done[e]; ok {
+		return r
+	}
+	rewriteExprChildren(e, rw)
+	r := rw.fn(e)
+	rw.done[e] = r
+	return r
 }
 
-func rewriteExprChildren(n Node, fn func(Expr) Expr) {
+func rewriteExprChildren(n Node, rw *rewriter) {
 	switch x := n.(type) {
 	case *NumberLit, *BoolLit, *UnitLit, *StringLit, *CharLit, *FloatLit, *Ident, *CaptureRef:
 	case *CastExpr:
-		x.Inner = rewriteExpr(x.Inner, fn)
+		x.Inner = rewriteExpr(x.Inner, rw)
 	case *DowncastExpr:
-		x.Inner = rewriteExpr(x.Inner, fn)
+		x.Inner = rewriteExpr(x.Inner, rw)
 	case *FString:
 		for i := range x.Parts {
 			if x.Parts[i].Expr != nil {
-				x.Parts[i].Expr = rewriteExpr(x.Parts[i].Expr, fn)
+				x.Parts[i].Expr = rewriteExpr(x.Parts[i].Expr, rw)
 			}
 		}
 		if x.Desugared != nil {
-			x.Desugared = rewriteExpr(x.Desugared, fn)
+			x.Desugared = rewriteExpr(x.Desugared, rw)
 		}
 	case *ArrayLit:
 		for i := range x.Elems {
-			x.Elems[i] = rewriteExpr(x.Elems[i], fn)
+			x.Elems[i] = rewriteExpr(x.Elems[i], rw)
 		}
 	case *Index:
-		x.Array = rewriteExpr(x.Array, fn)
-		x.Idx = rewriteExpr(x.Idx, fn)
+		x.Array = rewriteExpr(x.Array, rw)
+		x.Idx = rewriteExpr(x.Idx, rw)
 	case *SliceExpr:
-		x.Source = rewriteExpr(x.Source, fn)
+		x.Source = rewriteExpr(x.Source, rw)
 		if x.Low != nil {
-			x.Low = rewriteExpr(x.Low, fn)
+			x.Low = rewriteExpr(x.Low, rw)
 		}
 		if x.High != nil {
-			x.High = rewriteExpr(x.High, fn)
+			x.High = rewriteExpr(x.High, rw)
 		}
 	case *Call:
-		x.Callee = rewriteExpr(x.Callee, fn)
+		x.Callee = rewriteExpr(x.Callee, rw)
 		for i := range x.Args {
-			x.Args[i] = rewriteExpr(x.Args[i], fn)
+			x.Args[i] = rewriteExpr(x.Args[i], rw)
 		}
 	case *Binary:
 		switch {
 		case x.EqCall != nil:
-			rewriteExprChildren(x.EqCall, fn)
+			rewriteExprChildren(x.EqCall, rw)
 		case x.CmpCall != nil:
-			rewriteExprChildren(x.CmpCall, fn)
+			rewriteExprChildren(x.CmpCall, rw)
 		case x.ArithCall != nil:
-			rewriteExprChildren(x.ArithCall, fn)
+			rewriteExprChildren(x.ArithCall, rw)
 		default:
-			x.Left = rewriteExpr(x.Left, fn)
-			x.Right = rewriteExpr(x.Right, fn)
+			x.Left = rewriteExpr(x.Left, rw)
+			x.Right = rewriteExpr(x.Right, rw)
 		}
 	case *Unary:
 		if x.NegCall != nil {
-			rewriteExprChildren(x.NegCall, fn)
+			rewriteExprChildren(x.NegCall, rw)
 		} else {
-			x.Operand = rewriteExpr(x.Operand, fn)
+			x.Operand = rewriteExpr(x.Operand, rw)
 		}
 	case *Assign:
-		x.Target = rewriteExpr(x.Target, fn)
-		x.Value = rewriteExpr(x.Value, fn)
+		x.Target = rewriteExpr(x.Target, rw)
+		x.Value = rewriteExpr(x.Value, rw)
 	case *IfExpr:
-		x.Cond = rewriteExpr(x.Cond, fn)
-		x.Then = rewriteExpr(x.Then, fn)
-		x.Else = rewriteExpr(x.Else, fn)
+		x.Cond = rewriteExpr(x.Cond, rw)
+		x.Then = rewriteExpr(x.Then, rw)
+		x.Else = rewriteExpr(x.Else, rw)
 	case *TryOp:
-		x.Inner = rewriteExpr(x.Inner, fn)
+		x.Inner = rewriteExpr(x.Inner, rw)
 	case *StructLit:
 		if x.Base != nil {
-			x.Base = rewriteExpr(x.Base, fn)
+			x.Base = rewriteExpr(x.Base, rw)
 		}
 		for i := range x.Fields {
-			x.Fields[i].Value = rewriteExpr(x.Fields[i].Value, fn)
+			x.Fields[i].Value = rewriteExpr(x.Fields[i].Value, rw)
 		}
 	case *TupleLit:
 		for i := range x.Elems {
-			x.Elems[i] = rewriteExpr(x.Elems[i], fn)
+			x.Elems[i] = rewriteExpr(x.Elems[i], rw)
 		}
 	case *MapLit:
 		for i := range x.Entries {
-			x.Entries[i].Key = rewriteExpr(x.Entries[i].Key, fn)
-			x.Entries[i].Value = rewriteExpr(x.Entries[i].Value, fn)
+			x.Entries[i].Key = rewriteExpr(x.Entries[i].Key, rw)
+			x.Entries[i].Value = rewriteExpr(x.Entries[i].Value, rw)
 		}
 	case *FieldAccess:
-		x.Target = rewriteExpr(x.Target, fn)
+		x.Target = rewriteExpr(x.Target, rw)
 	case *EnumLit:
 		for i := range x.Args {
-			x.Args[i] = rewriteExpr(x.Args[i], fn)
+			x.Args[i] = rewriteExpr(x.Args[i], rw)
 		}
 	case *Lambda:
 		if x.Body != nil {
-			rewriteStmtChildren(x.Body, fn)
+			rewriteStmtChildren(x.Body, rw)
 		}
 	case *MakeClosure:
 		for i := range x.Captures {
-			x.Captures[i] = rewriteExpr(x.Captures[i], fn)
+			x.Captures[i] = rewriteExpr(x.Captures[i], rw)
 		}
 	case *MatchExpr:
-		x.Tag = rewriteExpr(x.Tag, fn)
+		x.Tag = rewriteExpr(x.Tag, rw)
 		for i := range x.Arms {
 			if x.Arms[i].Guard != nil {
-				x.Arms[i].Guard = rewriteExpr(x.Arms[i].Guard, fn)
+				x.Arms[i].Guard = rewriteExpr(x.Arms[i].Guard, rw)
 			}
-			x.Arms[i].Body = rewriteExpr(x.Arms[i].Body, fn)
+			x.Arms[i].Body = rewriteExpr(x.Arms[i].Body, rw)
 		}
 	case *BlockExpr:
 		for _, s := range x.Stmts {
-			rewriteStmtChildren(s, fn)
+			rewriteStmtChildren(s, rw)
 		}
 		if x.Tail != nil {
-			x.Tail = rewriteExpr(x.Tail, fn)
+			x.Tail = rewriteExpr(x.Tail, rw)
 		}
 	case Stmt:
-		rewriteStmtChildren(x, fn)
+		rewriteStmtChildren(x, rw)
 	default:
 		panic(unhandledKind("rewriteExprChildren", n))
 	}
 }
 
-func rewriteStmtChildren(n Node, fn func(Expr) Expr) {
+func rewriteStmtChildren(n Node, rw *rewriter) {
 	switch x := n.(type) {
 	case *Block:
 		for _, s := range x.Stmts {
-			rewriteStmtChildren(s, fn)
+			rewriteStmtChildren(s, rw)
 		}
 	case *If:
-		x.Cond = rewriteExpr(x.Cond, fn)
-		rewriteStmtChildren(x.Then, fn)
+		x.Cond = rewriteExpr(x.Cond, rw)
+		rewriteStmtChildren(x.Then, rw)
 		if x.Else != nil {
-			rewriteStmtChildren(x.Else, fn)
+			rewriteStmtChildren(x.Else, rw)
 		}
 	case *While:
-		x.Cond = rewriteExpr(x.Cond, fn)
-		rewriteStmtChildren(x.Body, fn)
+		x.Cond = rewriteExpr(x.Cond, rw)
+		rewriteStmtChildren(x.Body, rw)
 	case *Loop:
-		rewriteStmtChildren(x.Body, fn)
+		rewriteStmtChildren(x.Body, rw)
 	case *For:
 		if x.Init != nil {
-			rewriteStmtChildren(x.Init, fn)
+			rewriteStmtChildren(x.Init, rw)
 		}
 		if x.Cond != nil {
-			x.Cond = rewriteExpr(x.Cond, fn)
+			x.Cond = rewriteExpr(x.Cond, rw)
 		}
 		if x.Step != nil {
-			rewriteStmtChildren(x.Step, fn)
+			rewriteStmtChildren(x.Step, rw)
 		}
-		rewriteStmtChildren(x.Body, fn)
+		rewriteStmtChildren(x.Body, rw)
 	case *ForEach:
-		x.Iter = rewriteExpr(x.Iter, fn)
-		rewriteStmtChildren(x.Body, fn)
+		x.Iter = rewriteExpr(x.Iter, rw)
+		rewriteStmtChildren(x.Body, rw)
 	case *Return:
 		if x.Value != nil {
-			x.Value = rewriteExpr(x.Value, fn)
+			x.Value = rewriteExpr(x.Value, rw)
 		}
 	case *Defer:
-		x.Expr = rewriteExpr(x.Expr, fn)
+		x.Expr = rewriteExpr(x.Expr, rw)
 	case *Var:
 		if x.Init != nil {
-			x.Init = rewriteExpr(x.Init, fn)
+			x.Init = rewriteExpr(x.Init, rw)
 		}
 	case *Destructure:
-		x.Init = rewriteExpr(x.Init, fn)
+		x.Init = rewriteExpr(x.Init, rw)
 		for _, sub := range x.Nested {
 			if sub != nil {
-				rewriteStmtChildren(sub, fn)
+				rewriteStmtChildren(sub, rw)
 			}
 		}
 	case *ExprStmt:
-		x.Expr = rewriteExpr(x.Expr, fn)
+		x.Expr = rewriteExpr(x.Expr, rw)
 	case *Match:
-		x.Tag = rewriteExpr(x.Tag, fn)
+		x.Tag = rewriteExpr(x.Tag, rw)
 		for ai := range x.Arms {
 			if x.Arms[ai].Guard != nil {
-				x.Arms[ai].Guard = rewriteExpr(x.Arms[ai].Guard, fn)
+				x.Arms[ai].Guard = rewriteExpr(x.Arms[ai].Guard, rw)
 			}
 			if x.Arms[ai].Body != nil {
-				rewriteStmtChildren(x.Arms[ai].Body, fn)
+				rewriteStmtChildren(x.Arms[ai].Body, rw)
 			}
 		}
 	case *FuncDecl:
 		if x.Body != nil {
-			rewriteStmtChildren(x.Body, fn)
+			rewriteStmtChildren(x.Body, rw)
 		}
 	case *Break, *Continue:
 	default:
