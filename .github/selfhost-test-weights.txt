@@ -35,11 +35,6 @@
 # Each update uses max(existing, ceil(1.5 * measured seconds)). No weight decreases.
 # The worker deadline and the test selection rules stay unchanged.
 
-# Twenty-three rows raised or added on 2026-11-03 from run 41668392373's audit
-# (ceil of 1.5 times the measurement). x86_64 shard 2 of that run and shard 4
-# of main run 41663582561 (#14112) timed out on tests of about two minutes
-# that had the default weight of 1.
-
 # 2026-11-01: Completed x86-64 observations from run 41253378891 supply raises.
 # Each value uses max(existing, ceil(1.5 * measured seconds)). No weight decreases.
 # The run failed. Interrupted and unobserved tests retain their prior weights.
@@ -49,6 +44,7 @@
 # Both runs contain timeouts. Interrupted tests retain their existing weights.
 # The independent Socket run 41669959339 supplies the complete replay workload.
 # Replay and limits: docs/ci-log/2026-11-03-self-host-shard-balance.md.
+# 2026-11-03: TestSelfHostConstAggregateArm64PIE measured 112.7 s in the audit of run 41668392373.
 
 TestAbortCauseLineInterpreters 11
 TestCheckRenderMatchesOracle 6

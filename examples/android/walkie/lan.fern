@@ -116,14 +116,16 @@ pub function beacon(l: Link, now: i64): (Link, u8[][]) {
 }
 
 // Starts the key exchange with `peer`, from 32 random bytes for the key and
-// 16 for the nonce.
+// 16 for the nonce. The side that waits for the first message sends its
+// beacon to the peer directly until that message comes, because the peer
+// possibly did not hear its broadcasts.
 pub function pair(l: Link, peer: i64, now: i64, own random_key: u8[], random_nonce: u8[]): (Link, u8[][]) {
   let first: boolean = l.me < peer;
   let h: secure.Handshake = secure.start(first, random_key, random_nonce);
-  if (!first) {
-    return (Link { ...l, peer: peer, phase: Pairing, hs: Some(h), last_out: [], resend_at: now + RESEND_MS }, []);
+  let out: u8[] = encode(BEACON, l.me, []);
+  if (first) {
+    out = encode(HANDSHAKE, l.me, secure.first(h));
   }
-  let out: u8[] = encode(HANDSHAKE, l.me, secure.first(h));
   return (Link { ...l, peer: peer, phase: Pairing, hs: Some(h), last_out: out, resend_at: now + RESEND_MS }, [out]);
 }
 
