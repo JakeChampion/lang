@@ -27,38 +27,38 @@ function opt_z(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... DIRECTORY...\n";
-  out = out + "Create the DIRECTORY(ies), if they do not already exist.\n";
-  out = out + "\n";
-  out = out + "  -m, --mode=MODE   set file mode (as in chmod), not a=rwx - umask\n";
-  out = out + "  -p, --parents     no error if existing, make parent directories as needed,\n";
-  out = out + "                    with their file modes unaffected by any -m option.\n";
-  out = out + "  -v, --verbose     print a message for each created directory\n";
-  out = out + "  -Z                   set SELinux security context of each created directory\n";
-  out = out + "                         to the default type\n";
-  out = out + "      --context[=CTX]  like -Z, or if CTX is specified then set the SELinux\n";
-  out = out + "                         or SMACK security context to CTX\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Create the DIRECTORY(ies), if they do not already exist.\n";
+  out += "\n";
+  out += "  -m, --mode=MODE   set file mode (as in chmod), not a=rwx - umask\n";
+  out += "  -p, --parents     no error if existing, make parent directories as needed,\n";
+  out += "                    with their file modes unaffected by any -m option.\n";
+  out += "  -v, --verbose     print a message for each created directory\n";
+  out += "  -Z                   set SELinux security context of each created directory\n";
+  out += "                         to the default type\n";
+  out += "      --context[=CTX]  like -Z, or if CTX is specified then set the SELinux\n";
+  out += "                         or SMACK security context to CTX\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 struct Plan { create: i32, finish: i32, bits: i32 }
 
 function plan_default(mask: i32): Plan {
-  let m: i32 = mode.s_irwxugo() & mode.complement(mask);
+  let m = mode.s_irwxugo() & mode.complement(mask);
   return Plan { create: m, finish: m, bits: 0 };
 }
 
 function plan_mode(c: mode.Changes, mask: i32): Plan {
-  let a: mode.Adjusted = c.adjust(mode.s_irwxugo(), true, mask);
-  let bits: i32 = a.mentioned | a.mode & mode.setid_bits();
-  let special: i32 = mode.setid_bits() + mode.s_isvtx();
+  let a = c.adjust(mode.s_irwxugo(), true, mask);
+  let bits = a.mentioned | a.mode & mode.setid_bits();
+  let special = mode.setid_bits() + mode.s_isvtx();
   if ((a.mode & special) == 0 && !a.touches_setid) {
     return Plan { create: a.mode, finish: a.mode, bits: bits };
   }
-  let held: i32 = a.mode & mode.complement(mode.w_group_other());
+  let held = a.mode & mode.complement(mode.w_group_other());
   return Plan { create: held, finish: a.mode, bits: bits };
 }
 
@@ -104,13 +104,13 @@ function enterable(dir: string): Option[IoError] {
 }
 
 function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
-  let o: Out = o0;
+  let o = o0;
   match (create_dir(prefix, cfg.ancestor)) {
     Ok(_) => {
       return (announce(o, cfg.verbose, prefix), true);
     },
     Err(e) => {
-      let text: string = gnu.io_error_text(e);
+      let text = gnu.io_error_text(e);
       if (errno.of(e) != errno.EEXIST) {
         return (cannot_create(o, prefix, text), false);
       }
@@ -119,7 +119,7 @@ function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
           return (o, true);
         },
         Some(e2) => {
-          let t2: string = gnu.io_error_text(e2);
+          let t2 = gnu.io_error_text(e2);
           if (errno.of(e2) == errno.ENOENT) {
             t2 = text;
           }
@@ -131,7 +131,7 @@ function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
 }
 
 function make_final(o0: Out, cfg: Cfg, dir: string): Out {
-  let o: Out = o0;
+  let o = o0;
   match (create_dir(dir, cfg.plan.create)) {
     Ok(_) => {
       o = announce(o, cfg.verbose, dir);
@@ -159,7 +159,7 @@ function make_final(o0: Out, cfg: Cfg, dir: string): Out {
       return o;
     },
     Err(e) => {
-      let text: string = gnu.io_error_text(e);
+      let text = gnu.io_error_text(e);
       if (!cfg.parents || errno.of(e) != errno.EEXIST) {
         return cannot_create(o, dir, text);
       }
@@ -177,7 +177,7 @@ function existing_final(o: Out, dir: string, text: string): Out {
       return cannot_create(o, dir, text);
     },
     Err(e) => {
-      let n: i32 = errno.of(e);
+      let n = errno.of(e);
       if (n == errno.ENOENT || n == errno.ENOTDIR) {
         return cannot_create(o, dir, text);
       }
@@ -187,11 +187,11 @@ function existing_final(o: Out, dir: string, text: string): Out {
 }
 
 function make(o0: Out, cfg: Cfg, dir: string): Out {
-  let o: Out = o0;
+  let o = o0;
   if (cfg.parents) {
-    let last: i32 = fts.last_component_end(dir);
-    let start: i32 = 0;
-    let i: i32 = 0;
+    let last = fts.last_component_end(dir);
+    let start = 0;
+    let i = 0;
     while (i < last) {
       if (fts.is_slash(dir, i)) {
         if (!fts.is_traversed(dir, start, i)) {
@@ -203,7 +203,7 @@ function make(o0: Out, cfg: Cfg, dir: string): Out {
         }
         start = i + 1;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return make_final(o, cfg, dir);
@@ -219,8 +219,8 @@ function scan_options(): (Scan, string[]) {
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
   opts = opts.append(gnu.flag("Z", "", opt_z()));
 
-  let s: Scan = Scan { mode_text: "", mode_given: false, parents: false, verbose: false };
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "mkdir", help_text(), 1);
+  let s = Scan { mode_text: "", mode_given: false, parents: false, verbose: false };
+  let g = gnu.getopt_new(args(), opts, "mkdir", help_text(), 1);
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -256,15 +256,15 @@ function security_context(named: boolean): void {
 
 pub function main(): i32 {
   let scanned: (Scan, string[]) = scan_options();
-  let s: Scan = scanned.0;
-  let operands: string[] = scanned.1;
+  let s = scanned.0;
+  let operands = scanned.1;
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
 
-  let mask: i32 = umask(0);
+  let mask = umask(0);
 
-  let plan: Plan = plan_default(mask);
+  let plan = plan_default(mask);
   if (s.mode_given) {
     match (mode.compile(s.mode_text)) {
       Some(c) => {
@@ -277,12 +277,12 @@ pub function main(): i32 {
     }
   }
 
-  let cfg: Cfg = Cfg { plan: plan, ancestor: ancestor_mode(mask), parents: s.parents, verbose: s.verbose };
-  let o: Out = Out { s: gnu.stdio_new(), ok: true };
-  let i: i32 = 0;
+  let cfg = Cfg { plan: plan, ancestor: ancestor_mode(mask), parents: s.parents, verbose: s.verbose };
+  let o = Out { s: gnu.stdio_new(), ok: true };
+  let i = 0;
   while (i < operands.len()) {
     o = make(o, cfg, operands[i]);
-    i = i + 1;
+    i += 1;
   }
   o.s.close_stdout();
   if (o.ok) {

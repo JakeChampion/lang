@@ -1,0 +1,169 @@
+import "std/hash/crc32";
+import "std/opus/pvq";
+import "std/opus/range";
+import "std/test";
+
+// Each script codes random codewords in one packet. The trace names each
+// band, the bits used after it, the packet hash, and each decoded codeword.
+// libopus 1.4 gave the CRC-32 of each trace, from a C program that codes the
+// same codewords in the same order.
+
+const LAST: i32[] = [176, 176, 176, 176, 176, 176, 96, 54, 37, 28, 24, 19, 18, 16, 14];
+
+function next(x: u32): u32 {
+  return x * 1664525u32 + 1013904223u32;
+}
+
+function reach(a: i32, b: i32): boolean {
+  let mn: i32 = a;
+  let mx: i32 = b;
+  if (b < a) {
+    mn = b;
+    mx = a;
+  }
+  return mn <= 14 && mx <= LAST[mn];
+}
+
+// U(n, k) + U(n, k + 1) < 2^32, worked out in i64.
+function fits(n: i32, k: i32): boolean {
+  if (!reach(n, k) || !reach(n, k + 1)) {
+    return false;
+  }
+  return pvq.u(n, k) as i64 + pvq.u(n, k + 1) as i64 < 4294967296i64;
+}
+
+struct Script { ns: i32[], ks: i32[], ys: i32[][] }
+
+function script(seed: u32, cases: i32): Script {
+  let x: u32 = seed;
+  let ns: i32[] = [];
+  let ks: i32[] = [];
+  let ys: i32[][] = [];
+  for c in 0..cases {
+    x = next(x);
+    let n: i32 = 0;
+    if ((x >> 8u32) % 2u32 == 1u32) {
+      x = next(x);
+      n = 2 + ((x >> 8u32) % 15u32) as i32;
+    } else {
+      x = next(x);
+      n = 2 + ((x >> 8u32) % 175u32) as i32;
+    }
+    x = next(x);
+    let k: i32 = 1 + ((x >> 8u32) % 128u32) as i32;
+    while (!fits(n, k)) {
+      x = next(x);
+      k = 1 + ((x >> 8u32) % 128u32) as i32;
+    }
+    let y: i32[] = [];
+    for j in 0..n {
+      y = y.append(0);
+    }
+    for p in 0..k {
+      x = next(x);
+      let at: i32 = ((x >> 8u32) % (n as u32)) as i32;
+      y = y.with(at, y[at] + 1);
+    }
+    for j in 0..n {
+      if (y[j] != 0) {
+        x = next(x);
+        if ((x >> 8u32) % 2u32 == 1u32) {
+          y = y.with(j, 0 - y[j]);
+        }
+      }
+    }
+    ns = ns.append(n);
+    ks = ks.append(k);
+    ys = ys.append(y);
+  }
+  return Script { ns: ns, ks: ks, ys: ys };
+}
+
+function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let s: Script = script(seed, cases);
+  let c: crc32.Crc32 = crc32.new();
+  let size: i32 = 20000;
+  let e: range.Encoder = range.encoder(size);
+  for i in 0..cases {
+    e = pvq.encode_pulses(e, s.ys[i], s.ks[i]);
+    c = line(c, "c " + s.ns[i].to_string() + " " + s.ks[i].to_string() + " " + e.tell().to_string());
+  }
+  e = e.done();
+  let err: string = "0";
+  if (e.error) {
+    err = "1";
+  }
+  c = line(c, "err " + err);
+  let h: u32 = 0u32;
+  let packet: u8[] = e.bytes();
+  for b in packet {
+    h = h * 31u32 + b as u32;
+  }
+  c = line(c, "hash " + h.to_string());
+  let d: range.Decoder = range.decoder(packet);
+  for i in 0..cases {
+    let (d1, y, yy) = pvq.decode_pulses(d, s.ns[i], s.ks[i]);
+    d = d1;
+    let text: string = "y";
+    for v in y {
+      text = text + " " + v.to_string();
+    }
+    c = line(c, text + " = " + yy.to_string());
+  }
+  return c.finish();
+}
+
+function test_short_script(): test.TestOutcome {
+  return test.assert_eq(trace(3u32, 500), 2706145821u32);
+}
+
+function test_long_script(): test.TestOutcome {
+  return test.assert_eq(trace(7u32, 1500), 2846166966u32);
+}
+
+function test_counts(): test.TestOutcome {
+  let all: string = pvq.v(2, 1).to_string() + " " + pvq.v(3, 2).to_string() + " " + pvq.v(4, 3).to_string() + " " + pvq.u(176, 1).to_string();
+  return test.assert_eq(all, "4 18 88 1");
+}
+
+// Each index of a small band names a codeword with the right pulses, and the
+// codeword gives back the same index.
+function test_every_small_index(): test.TestOutcome {
+  for n in 2..7 {
+    for k in 1..7 {
+      let total: u32 = pvq.v(n, k);
+      let i: u32 = 0u32;
+      while (i < total) {
+        let (y, yy) = pvq.codeword(n, k, i);
+        let pulses: i32 = 0;
+        let squares: i32 = 0;
+        for v in y {
+          if (v < 0) {
+            pulses = pulses - v;
+          } else {
+            pulses = pulses + v;
+          }
+          squares = squares + v * v;
+        }
+        if (y.len() != n || pulses != k || squares != yy || pvq.index(y) != i) {
+          return test.fail("n " + n.to_string() + ", k " + k.to_string() + ", index " + i.to_string());
+        }
+        i = i + 1u32;
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/pvq");
+  r = r.it("a short script gives the libopus trace", test_short_script);
+  r = r.it("a long script gives the libopus trace", test_long_script);
+  r = r.it("v and u give the codeword counts", test_counts);
+  r = r.it("each index of a small band round trips", test_every_small_index);
+  return r.finish();
+}

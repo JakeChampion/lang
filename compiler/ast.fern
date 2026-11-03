@@ -118,8 +118,35 @@ pub function stmt_col(st: Stmt): i32 {
     StmtContinue(c) => {
       return c.col;
     },
+    StmtExpr(x) => {
+      return start_col(x.value);
+    },
+    StmtFor(fo) => {
+      return fo.col;
+    },
     _ => {
       return 0;
+    }
+  }
+}
+
+// The column of the leftmost token of `e`.
+function start_col(e: Expr): i32 {
+  match (e) {
+    ExprCall(c) => {
+      return start_col(c.callee);
+    },
+    ExprFieldAccess(fa) => {
+      return start_col(fa.obj);
+    },
+    ExprIndex(ix) => {
+      return start_col(ix.array);
+    },
+    ExprBinary(b) => {
+      return start_col(b.left);
+    },
+    _ => {
+      return expr_col(e);
     }
   }
 }

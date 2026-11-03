@@ -228,7 +228,7 @@ function create_mode(cfg: Cfg, src: Info): i32 {
     return perm_bits(src.mode);
   }
   if (cfg.attrs.mode_declined) {
-    let deflt: i32 = 438;
+    let deflt = 438;
     if (src.is_dir) {
       deflt = 511;
     }
@@ -238,7 +238,7 @@ function create_mode(cfg: Cfg, src: Info): i32 {
 }
 
 function current_umask(): i32 {
-  let m: i32 = umask(0);
+  let m = umask(0);
   umask(m);
   return m;
 }
@@ -269,7 +269,7 @@ function newer(src: Info, dst: Info): boolean {
 pub struct Replace { verdict: i32, backup: string, out: io_buffered.BufWriter, status: i32 }
 
 function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace {
-  let w: io_buffered.BufWriter = s.out;
+  let w = s.out;
   if (update_skips(cfg.update)) {
     if (cfg.update == update_none_fail()) {
       return Replace { verdict: skip(), backup: "", out: gnu.error_out(w, "not replacing " + gnu.quotea(dest)), status: 1 };
@@ -289,7 +289,7 @@ function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace
     }
   }
   if (cfg.backups) {
-    let name: string = gnu.backup_name(dest, cfg.control, cfg.suffix);
+    let name = gnu.backup_name(dest, cfg.control, cfg.suffix);
     match (rename(dest, name)) {
       Ok(_) => {},
       Err(e) => {
@@ -330,7 +330,7 @@ function verbose_line(cfg: Cfg, s: State, src: string, dest: string, backup: str
   if (!cfg.verbose) {
     return s;
   }
-  let line: string = gnu.quotea(src) + " -> " + gnu.quotea(dest);
+  let line = gnu.quotea(src) + " -> " + gnu.quotea(dest);
   if (cfg.verbose_style == vstyle_move()) {
     line = "copied " + line;
   }
@@ -354,7 +354,7 @@ function debug_line(cfg: Cfg, s: State, b: Bytes): State {
   if (!cfg.debug) {
     return s;
   }
-  let offload: string = "no";
+  let offload = "no";
   if (b.offloaded) {
     offload = "yes";
   }
@@ -377,7 +377,7 @@ function scans_extents(cfg: Cfg, src: Info): boolean {
 }
 
 function hole_block(src: Info): i32 {
-  let bs: i32 = src.blksize as i32;
+  let bs = src.blksize as i32;
   if (bs < 512 || bs > 1048576) {
     return 4096;
   }
@@ -387,10 +387,10 @@ function hole_block(src: Info): i32 {
 struct Run { to: i32, zero: boolean }
 
 function next_run(data: u8[], from: i32, bs: i32, zeros: u8[]): Run {
-  let zero: boolean = run_is_zero(data, from, bs, zeros);
-  let at: i32 = from + piece_len(data, from, bs);
+  let zero = run_is_zero(data, from, bs, zeros);
+  let at = from + piece_len(data, from, bs);
   while (at < data.len() && run_is_zero(data, at, bs, zeros) == zero) {
-    at = at + piece_len(data, at, bs);
+    at += piece_len(data, at, bs);
   }
   return Run { to: at, zero: zero };
 }
@@ -403,14 +403,14 @@ function piece_len(data: u8[], from: i32, bs: i32): i32 {
 }
 
 function run_is_zero(data: u8[], from: i32, bs: i32, zeros: u8[]): boolean {
-  let n: i32 = piece_len(data, from, bs);
+  let n = piece_len(data, from, bs);
   return __mismatch_bytes(data, from, zeros, 0, n) == n;
 }
 
 function write_all(w: Writer, data: u8[], from: i32, to: i32): string {
-  let piece: u8[] = data;
+  let piece = data;
   if (from != 0 || to != data.len()) {
-    let h: usize = buf_new(to - from);
+    let h = buf_new(to - from);
     buf_push_bytes_range(h, data, from, to);
     piece = buf_take_bytes(h);
     buf_free(h);
@@ -432,17 +432,17 @@ function flow_fail(f: Flow, err: string): Flow {
 }
 
 function put_chunk(w: Writer, data: u8[], punch: boolean, bs: i32, zeros: u8[], f0: Flow): Flow {
-  let f: Flow = f0;
+  let f = f0;
   if (!punch) {
-    let werr: string = write_all(w, data, 0, data.len());
+    let werr = write_all(w, data, 0, data.len());
     if (werr.len() > 0) {
       return flow_fail(f, werr);
     }
     return Flow { ...f, ended_in_hole: false };
   }
-  let at: i32 = 0;
+  let at = 0;
   while (at < data.len()) {
-    let run: Run = next_run(data, at, bs, zeros);
+    let run = next_run(data, at, bs, zeros);
     if (run.zero) {
       match (w.seek((run.to - at) as i64, 1)) {
         Err(e) => {
@@ -453,7 +453,7 @@ function put_chunk(w: Writer, data: u8[], punch: boolean, bs: i32, zeros: u8[], 
         }
       }
     } else {
-      let werr2: string = write_all(w, data, at, run.to);
+      let werr2 = write_all(w, data, at, run.to);
       if (werr2.len() > 0) {
         return flow_fail(f, werr2);
       }
@@ -465,18 +465,18 @@ function put_chunk(w: Writer, data: u8[], punch: boolean, bs: i32, zeros: u8[], 
 }
 
 function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, zeros: u8[], limit: i64, f0: Flow): Flow {
-  let f: Flow = f0;
-  let left: i64 = limit;
+  let f = f0;
+  let left = limit;
   while (limit < 0 as i64 || left > 0 as i64) {
     if (!punch && f.offload) {
-      let ask: i32 = offload_size();
+      let ask = offload_size();
       if (limit >= 0 as i64 && left < ask as i64) {
         ask = left as i32;
       }
       match (r.copy_range_to(w, ask)) {
         Ok(n) => {
           if (n > 0 as i64) {
-            left = left - n;
+            left -= n;
             f = Flow { ...f, offloaded: true, ended_in_hole: false };
             continue;
           }
@@ -497,7 +497,7 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, zeros: u8[], 
         }
       }
     }
-    let want: i32 = chunk_size();
+    let want = chunk_size();
     if (limit >= 0 as i64 && left < want as i64) {
       want = left as i32;
     }
@@ -521,13 +521,13 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, zeros: u8[], 
 }
 
 function put_zeros(w: Writer, n: i64, zeros: u8[]): string {
-  let left: i64 = n;
+  let left = n;
   while (left > 0 as i64) {
-    let k: i32 = zeros.len();
+    let k = zeros.len();
     if (left < k as i64) {
       k = left as i32;
     }
-    let err: string = write_all(w, zeros, 0, k);
+    let err = write_all(w, zeros, 0, k);
     if (err.len() > 0) {
       return err;
     }
@@ -537,12 +537,12 @@ function put_zeros(w: Writer, n: i64, zeros: u8[]): string {
 }
 
 function put_extents(r: Reader, w: Writer, f0: Flow, fill: boolean, punch: boolean, total: i64, bs: i32, zeros: u8[]): Option[Flow] {
-  let seek_data: i32 = 3;
-  let seek_hole: i32 = 4;
-  let f: Flow = f0;
-  let pos: i64 = 0 as i64;
+  let seek_data = 3;
+  let seek_hole = 4;
+  let f = f0;
+  let pos = 0 as i64;
   while (pos < total) {
-    let data: i64 = total;
+    let data = total;
     match (r.seek(pos, seek_data)) {
       Ok(d) => {
         data = d;
@@ -559,7 +559,7 @@ function put_extents(r: Reader, w: Writer, f0: Flow, fill: boolean, punch: boole
     if (data >= total) {
       break;
     }
-    let hole: i64 = total;
+    let hole = total;
     match (r.seek(data, seek_hole)) {
       Ok(h) => {
         hole = h;
@@ -578,7 +578,7 @@ function put_extents(r: Reader, w: Writer, f0: Flow, fill: boolean, punch: boole
       Ok(_) => {}
     }
     if (fill) {
-      let zerr: string = put_zeros(w, data - pos, zeros);
+      let zerr = put_zeros(w, data - pos, zeros);
       if (zerr.len() > 0) {
         return Some(flow_fail(f, zerr));
       }
@@ -598,7 +598,7 @@ function put_extents(r: Reader, w: Writer, f0: Flow, fill: boolean, punch: boole
   }
   if (pos < total) {
     if (fill) {
-      let terr: string = put_zeros(w, total - pos, zeros);
+      let terr = put_zeros(w, total - pos, zeros);
       if (terr.len() > 0) {
         return Some(flow_fail(f, terr));
       }
@@ -616,15 +616,15 @@ function write_data(r: Reader, w: Writer, scan: boolean, fill: boolean, punch: b
   if (fill) {
     zeros = __alloc_u8(chunk_size());
   } else if (scan) {
-    let n: i32 = bs;
+    let n = bs;
     if (n > chunk_size()) {
       n = chunk_size();
     }
     zeros = __alloc_u8(n);
   }
-  let f: Flow = flow_new(!fill);
-  let how: string = "no";
-  let done: boolean = false;
+  let f = flow_new(!fill);
+  let how = "no";
+  let done = false;
   if (scan) {
     match (put_extents(r, w, f, fill, punch, total, bs, zeros)) {
       Some(g) => {
@@ -636,7 +636,7 @@ function write_data(r: Reader, w: Writer, scan: boolean, fill: boolean, punch: b
     }
   }
   if (!done) {
-    let zero_runs: boolean = scan && !fill;
+    let zero_runs = scan && !fill;
     if (zero_runs) {
       how = "zero blocks";
     }
@@ -657,11 +657,11 @@ function existing_mode(cfg: Cfg, src: Info): i32 {
   if (cfg.attrs.mode) {
     return perm_bits(src.mode);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function apply_attrs(cfg: Cfg, s: State, src: Info, dest: string, want_mode: i32): State {
-  let st: State = s;
+  let st = s;
   if (cfg.attrs.ownership) {
     match (chown_at(dest, src.uid as i32, src.gid as i32, false)) {
       Ok(_) => {},
@@ -690,12 +690,12 @@ function apply_attrs(cfg: Cfg, s: State, src: Info, dest: string, want_mode: i32
 }
 
 function link_lookup(s: State, src: Info): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.link_ino.len()) {
     if (s.link_ino[i] == src.ino && s.link_dev[i] == src.dev) {
       return s.link_dest[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -705,14 +705,14 @@ function link_record(s: State, src: Info, dest: string): State {
 }
 
 function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
-  let st: State = s;
-  let want_mode: i32 = create_mode(cfg, src);
+  let st = s;
+  let want_mode = create_mode(cfg, src);
   if (existed && !cfg.attrs.mode) {
-    want_mode = 0 - 1;
+    want_mode = -1;
   }
   if (cfg.attributes_only) {
     if (!existed) {
-      let made: Result[Writer, IoError] = create_new(dest);
+      let made = create_new(dest);
       match (made) {
         Err(e) => {
           return fail(st, "cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
@@ -731,7 +731,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
   if (existed && dangling_symlink(dest)) {
     return fail(st, "not writing through dangling symlink " + gnu.quotea(dest));
   }
-  let cl: Cloned = try_clone(cfg, st, src_path, dest, src, existed, want_mode);
+  let cl = try_clone(cfg, st, src_path, dest, src, existed, want_mode);
   if (cl.done) {
     return cl.st;
   }
@@ -741,7 +741,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
       return fail(st, "cannot open " + gnu.quotea(src_path) + " for reading: " + gnu.io_error_text(e2));
     },
     Ok(r) => {
-      let opened: DestOpen = open_dest(cfg, dest, existed);
+      let opened = open_dest(cfg, dest, existed);
       match (opened.err) {
         Some(e3) => {
           r.close();
@@ -755,7 +755,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
           return fail(st, "cannot create regular file " + gnu.quotea(dest));
         },
         Some(w) => {
-          let b: Bytes = write_data(r, w, scans_extents(cfg, src), cfg.sparse == sparse_never(), cfg.sparse == sparse_always(), src.size, hole_block(src));
+          let b = write_data(r, w, scans_extents(cfg, src), cfg.sparse == sparse_never(), cfg.sparse == sparse_always(), src.size, hole_block(src));
           r.close();
           if let Err(ce) = w.close() {
             if (b.ok) {
@@ -770,7 +770,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
             return apply_attrs(cfg, st, src, dest, want_mode);
           }
           if (cfg.attrs.ownership || cfg.attrs.timestamps) {
-            return apply_attrs(cfg, st, src, dest, 0 - 1);
+            return apply_attrs(cfg, st, src, dest, -1);
           }
           return st;
         }
@@ -789,7 +789,7 @@ function try_clone(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
     return Cloned { done: false, st: s };
   }
   if (target_os() == "darwin") {
-    let cloned: i32 = src.mode as i32 & 1023;
+    let cloned = src.mode as i32 & 1023;
     if (existed || (cloned & mode.complement(create_mode(cfg, src))) != 0) {
       return clone_refused(cfg, s, src_path, dest, "Operation not supported");
     }
@@ -800,7 +800,7 @@ function try_clone(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
     },
     Ok(_) => {}
   }
-  let st: State = s;
+  let st = s;
   if (target_os() == "darwin" && !cfg.attrs.timestamps) {
     match (set_file_times(dest, 0 as i64, 0 as i64, 0 as i64, 0 as i64, 25)) {
       Ok(_) => {},
@@ -835,7 +835,7 @@ function clone_refused(cfg: Cfg, s: State, src_path: string, dest: string, why: 
 }
 
 function dangling_symlink(path: string): boolean {
-  let l: Info = lstat_of(path);
+  let l = lstat_of(path);
   if (!l.ok || !l.is_link) {
     return false;
   }
@@ -883,7 +883,7 @@ function open_dest(cfg: Cfg, dest: string, existed: boolean): DestOpen {
 }
 
 function copy_link(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
-  let st: State = s;
+  let st = s;
   match (read_link(src_path)) {
     Err(e) => {
       return fail(st, "cannot read symbolic link " + gnu.quotea(src_path) + ": " + gnu.io_error_text(e));
@@ -919,15 +919,15 @@ function copy_link(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
 }
 
 function copy_special(cfg: Cfg, s: State, dest: string, src: Info, existed: boolean): State {
-  let st: State = s;
+  let st = s;
   if (existed) {
     match (remove_file(dest)) {
       Ok(_) => {},
       Err(_) => {}
     }
   }
-  let major: i32 = listing.dev_major(src.rdev as u64) as i32;
-  let minor: i32 = listing.dev_minor(src.rdev as u64) as i32;
+  let major = listing.dev_major(src.rdev as u64) as i32;
+  let minor = listing.dev_minor(src.rdev as u64) as i32;
   match (mknod(dest, src.mode as i32, major, minor)) {
     Ok(_) => {},
     Err(e) => {
@@ -960,18 +960,18 @@ function walk_order(dir: string, entries: DirEntry[]): DirEntry[] {
 }
 
 function made(st: State, dev: i64, ino: i64): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < st.made_ino.len()) {
     if (st.made_ino[i] == ino && st.made_dev[i] == dev) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean, top: boolean): State {
-  let st: State = s;
+  let st = s;
   if (top) {
     st = State { ...st, made_dev: [], made_ino: [], top_src: src_path, top_dest: dest, aborted: false, unclonable: [] };
   }
@@ -983,11 +983,11 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
       }
     }
     st = verbose_dir_line(cfg, st, src_path, dest);
-    let mi: Info = lstat_of(dest);
+    let mi = lstat_of(dest);
     st = State { ...st, made_dev: st.made_dev.append(mi.dev), made_ino: st.made_ino.append(mi.ino) };
   }
   let entries: DirEntry[] = [];
-  let readable: boolean = true;
+  let readable = true;
   match (read_dir_ino(src_path)) {
     Err(e2) => {
       st = fail(st, "cannot read directory " + gnu.quotea(src_path) + ": " + gnu.io_error_text(e2));
@@ -1005,10 +1005,10 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
       st = copy_one(cfg, st, gnu.join_path(src_path, e.name), gnu.join_path(dest, e.name), false);
     }
   }
-  let want: i32 = create_mode(cfg, src);
+  let want = create_mode(cfg, src);
   if (existed && !cfg.attrs.mode) {
     if (cfg.attrs.ownership || cfg.attrs.timestamps) {
-      return apply_attrs(cfg, st, src, dest, 0 - 1);
+      return apply_attrs(cfg, st, src, dest, -1);
     }
     return st;
   }
@@ -1016,8 +1016,8 @@ function copy_dir(cfg: Cfg, s: State, src_path: string, dest: string, src: Info,
 }
 
 pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: boolean): State {
-  let st: State = s;
-  let src: Info = source_info(cfg, src_path, top);
+  let st = s;
+  let src = source_info(cfg, src_path, top);
   if (!src.ok) {
     return fail(st, "cannot stat " + gnu.quotea(src_path) + ": " + src.err);
   }
@@ -1026,8 +1026,8 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
   } else if (cfg.one_fs && src.dev != st.root_dev) {
     return st;
   }
-  let dst: Info = lstat_of(dest);
-  let existed: boolean = dst.ok;
+  let dst = lstat_of(dest);
+  let existed = dst.ok;
   if (existed && dst.dev == src.dev && dst.ino == src.ino) {
     return fail(st, gnu.quotea(src_path) + " and " + gnu.quotea(dest) + " are the same file");
   }
@@ -1047,9 +1047,9 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
   if (existed && dst.is_dir) {
     return fail(st, "cannot overwrite directory " + gnu.quotea(dest) + " with non-directory " + gnu.quotea(src_path));
   }
-  let backup: string = "";
+  let backup = "";
   if (existed) {
-    let r: Replace = decide(cfg, st, src, dst, dest);
+    let r = decide(cfg, st, src, dst, dest);
     st = State { ...st, out: r.out };
     if (r.verdict == skip()) {
       if (r.status != 0) {
@@ -1068,7 +1068,7 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
   if (backup.len() == 0 && top) {
     backup = cfg.announced_backup;
   }
-  let follower: string = "";
+  let follower = "";
   if (!cfg.sym_link && !(cfg.hard_link && !src.is_link) && cfg.attrs.links && src.nlink > 1) {
     follower = link_lookup(st, src);
   }
@@ -1103,18 +1103,18 @@ function relative_link_ok(target: string, dest: string): boolean {
   if (target.len() > 0 && target[0] as i32 == 47) {
     return true;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < dest.len()) {
     if (dest[i] as i32 == 47) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function make_symlink(s: State, target: string, dest: string, existed: boolean): State {
-  let st: State = s;
+  let st = s;
   if (!relative_link_ok(target, dest)) {
     return fail(st, dest + ": can make relative symbolic links only in current directory");
   }
@@ -1135,7 +1135,7 @@ function make_symlink(s: State, target: string, dest: string, existed: boolean):
 }
 
 function make_hardlink(s: State, target: string, dest: string, existed: boolean): State {
-  let st: State = s;
+  let st = s;
   if (existed) {
     match (remove_file(dest)) {
       Ok(_) => {},

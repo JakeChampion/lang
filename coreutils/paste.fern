@@ -15,18 +15,18 @@ function opt_zero(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Write lines consisting of the sequentially corresponding lines from\n";
-  out = out + "each FILE, separated by TABs, to standard output.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -d, --delimiters=LIST   reuse characters from LIST instead of TABs\n";
-  out = out + "  -s, --serial            paste one file at a time instead of in parallel\n";
-  out = out + "  -z, --zero-terminated    line delimiter is NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Write lines consisting of the sequentially corresponding lines from\n";
+  out += "each FILE, separated by TABs, to standard output.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -d, --delimiters=LIST   reuse characters from LIST instead of TABs\n";
+  out += "  -s, --serial            paste one file at a time instead of in parallel\n";
+  out += "  -z, --zero-terminated    line delimiter is NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -40,20 +40,20 @@ function block_size(): i32 {
 
 function collapse(list: string): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < list.len()) {
-    let c: i32 = list[i] as i32;
+    let c = list[i] as i32;
     if (c != 92) {
       out = out.append(c as u8);
-      i = i + 1;
+      i += 1;
       continue;
     }
-    i = i + 1;
+    i += 1;
     if (i >= list.len()) {
       gnu.error("delimiter list ends with an unescaped backslash: " + list);
       exit(1);
     }
-    let e: i32 = list[i] as i32;
+    let e = list[i] as i32;
     if (e == 48) {
       out = out.append(0 as u8);
     } else if (e == 98) {
@@ -71,22 +71,22 @@ function collapse(list: string): u8[] {
     } else {
       out = out.append(e as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("s", "serial", opt_serial()));
   opts = opts.append(gnu.valued("d", "delimiters", opt_delims()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
 
-  let serial: boolean = false;
-  let list: string = "\t";
-  let term: i32 = 10;
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "paste", help_text(), 1);
+  let serial = false;
+  let list = "\t";
+  let term = 10;
+  let g = gnu.getopt_new(argv, opts, "paste", help_text(), 1);
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -109,9 +109,9 @@ pub function main(): i32 {
       }
     }
   }
-  let delims: u8[] = collapse(list);
+  let delims = collapse(list);
 
-  let files: string[] = g.operands();
+  let files = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -122,17 +122,17 @@ pub function main(): i32 {
 }
 
 function run_serial(files: string[], delims: u8[], term: i32): i32 {
-  let o: io_buffered.BufWriter = gnu.out_with(block_size());
-  let h: usize = o.handle();
-  let ok: boolean = true;
+  let o = gnu.out_with(block_size());
+  let h = o.handle();
+  let ok = true;
 
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < files.len()) {
-    let name: string = files[fi];
-    fi = fi + 1;
-    let is_stdin: boolean = name == "-";
-    let r: Reader = stdin();
-    let opened: boolean = true;
+    let name = files[fi];
+    fi += 1;
+    let is_stdin = name == "-";
+    let r = stdin();
+    let opened = true;
     if (!is_stdin) {
       opened = false;
       match (open_reader(name)) {
@@ -150,18 +150,18 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
       continue;
     }
     let chunk: u8[] = [];
-    let pos: i32 = 0;
-    let eof: boolean = false;
-    let di: i32 = 0;
-    let first_line: boolean = true;
-    let in_line: boolean = false;
+    let pos = 0;
+    let eof = false;
+    let di = 0;
+    let first_line = true;
+    let in_line = false;
     while (true) {
       if (pos >= chunk.len()) {
         if (eof) {
           break;
         }
         let piece: u8[] = [];
-        let read_ok: boolean = true;
+        let read_ok = true;
         match (r.read_chunk_bytes(read_size())) {
           Ok(c) => {
             piece = c;
@@ -180,9 +180,9 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
         }
         continue;
       }
-      let j: i32 = __memchr_bytes(chunk, term, pos);
-      let end: i32 = chunk.len();
-      let terminated: boolean = false;
+      let j = __memchr_bytes(chunk, term, pos);
+      let end = chunk.len();
+      let terminated = false;
       if (j >= 0) {
         end = j;
         terminated = true;
@@ -193,7 +193,7 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
             if (delims[di] != 0 as u8) {
               buf_push_byte(h, delims[di] as i32);
             }
-            di = di + 1;
+            di += 1;
             if (di >= delims.len()) {
               di = 0;
             }
@@ -205,7 +205,7 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
       }
       pos = end;
       if (terminated) {
-        pos = pos + 1;
+        pos += 1;
         in_line = false;
       }
       if (buf_len(h) >= block_size()) {
@@ -229,9 +229,9 @@ function run_serial(files: string[], delims: u8[], term: i32): i32 {
 }
 
 function run_parallel(files: string[], delims: u8[], term: i32): i32 {
-  let o: io_buffered.BufWriter = gnu.out_with(block_size());
-  let h: usize = o.handle();
-  let ok: boolean = true;
+  let o = gnu.out_with(block_size());
+  let h = o.handle();
+  let ok = true;
 
   let rs: Reader[] = [];
   let chunks: u8[][] = [];
@@ -240,19 +240,19 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
   let live: boolean[] = [];
   let stdins: boolean[] = [];
   let slot: i32[] = [];
-  let stdin_slot: i32 = 0 - 1;
-  let i: i32 = 0;
+  let stdin_slot: i32 = -1;
+  let i = 0;
   while (i < files.len()) {
-    let name: string = files[i];
-    let is_stdin: boolean = name == "-";
+    let name = files[i];
+    let is_stdin = name == "-";
     live = live.append(true);
     stdins = stdins.append(is_stdin);
     if (is_stdin && stdin_slot >= 0) {
       slot = slot.append(stdin_slot);
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let r: Reader = stdin();
+    let r = stdin();
     if (!is_stdin) {
       match (open_reader(name)) {
         Ok(f) => {
@@ -273,25 +273,25 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
     chunks = chunks.append([]);
     poss = poss.append(0);
     eofs = eofs.append(false);
-    i = i + 1;
+    i += 1;
   }
 
-  let open_count: i32 = files.len();
+  let open_count = files.len();
   while (open_count > 0) {
-    let somedone: boolean = false;
-    let di: i32 = 0;
+    let somedone = false;
+    let di = 0;
     let held: u8[] = [];
     i = 0;
     while (i < files.len()) {
-      let k: i32 = slot[i];
-      let produced: boolean = false;
-      let took_term: boolean = false;
-      let whole: boolean = false;
+      let k = slot[i];
+      let produced = false;
+      let took_term = false;
+      let whole = false;
       if (live[i]) {
-        let ck: u8[] = chunks[k];
-        let cp: i32 = poss[k];
+        let ck = chunks[k];
+        let cp = poss[k];
         if (cp < ck.len()) {
-          let w: i32 = __memchr_bytes(ck, term, cp);
+          let w = __memchr_bytes(ck, term, cp);
           if (w >= 0) {
             whole = true;
             produced = true;
@@ -300,7 +300,7 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
               buf_push_bytes_range(h, held, 0, held.len());
               held = [];
             }
-            let upto: i32 = w;
+            let upto = w;
             if (i + 1 == files.len()) {
               upto = w + 1;
               took_term = true;
@@ -313,7 +313,7 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
       if (live[i] && !whole) {
         while (poss[k] >= chunks[k].len() && !eofs[k]) {
           let piece: u8[] = [];
-          let read_ok: boolean = true;
+          let read_ok = true;
           match (rs[k].read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
@@ -338,14 +338,14 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
             buf_push_bytes_range(h, held, 0, held.len());
             held = [];
           }
-          let reading: boolean = true;
+          let reading = true;
           while (reading) {
             if (poss[k] >= chunks[k].len()) {
               if (eofs[k]) {
                 reading = false;
               } else {
                 let more: u8[] = [];
-                let read2: boolean = true;
+                let read2 = true;
                 match (rs[k].read_chunk_bytes(read_size())) {
                   Ok(c) => {
                     more = c;
@@ -364,9 +364,9 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
                 }
               }
             } else {
-              let j: i32 = __memchr_bytes(chunks[k], term, poss[k]);
+              let j = __memchr_bytes(chunks[k], term, poss[k]);
               if (j >= 0) {
-                let upto: i32 = j;
+                let upto = j;
                 if (i + 1 == files.len()) {
                   upto = j + 1;
                   took_term = true;
@@ -388,7 +388,7 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
       if (!produced) {
         if (live[i]) {
           live = live.with(i, false);
-          open_count = open_count - 1;
+          open_count -= 1;
           if (!stdins[i]) {
             let (done, rest) = rs.swap_at(k, stdin());
             rs = rest;
@@ -405,7 +405,7 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
           if (delims[di] != 0 as u8) {
             held = held.append(delims[di]);
           }
-          di = di + 1;
+          di += 1;
           if (di >= delims.len()) {
             di = 0;
           }
@@ -417,18 +417,18 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
           }
         } else if (delims[di] != 0 as u8) {
           buf_push_byte(h, delims[di] as i32);
-          di = di + 1;
+          di += 1;
           if (di >= delims.len()) {
             di = 0;
           }
         } else {
-          di = di + 1;
+          di += 1;
           if (di >= delims.len()) {
             di = 0;
           }
         }
       }
-      i = i + 1;
+      i += 1;
     }
     if (buf_len(h) >= block_size()) {
       o = gnu.flush(o);

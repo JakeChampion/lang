@@ -94,7 +94,7 @@ function u16_at(bs: u8[], off: i32): i32 {
 }
 
 function i16_at(bs: u8[], off: i32): i32 {
-  let v: i32 = u16_at(bs, off);
+  let v = u16_at(bs, off);
   if (v > 32767) {
     return v - 65536;
   }
@@ -102,7 +102,7 @@ function i16_at(bs: u8[], off: i32): i32 {
 }
 
 function i32_at(bs: u8[], off: i32): i32 {
-  let v: i64 = bs[off] as i64 + bs[off + 1] as i64 * (256 as i64) + bs[off + 2] as i64 * (65536 as i64) + bs[off + 3] as i64 * (16777216 as i64);
+  let v = bs[off] as i64 + bs[off + 1] as i64 * (256 as i64) + bs[off + 2] as i64 * (65536 as i64) + bs[off + 3] as i64 * (16777216 as i64);
   if (v > 2147483647 as i64) {
     v = v - 4294967296 as i64;
   }
@@ -110,25 +110,25 @@ function i32_at(bs: u8[], off: i32): i32 {
 }
 
 function i64_at(bs: u8[], off: i32): i64 {
-  let v: i64 = 0 as i64;
-  let i: i32 = 7;
+  let v = 0 as i64;
+  let i = 7;
   while (i >= 0) {
     v = v * (256 as i64) + bs[off + i] as i64;
-    i = i - 1;
+    i -= 1;
   }
   return v;
 }
 
 function field_at(bs: u8[], off: i32, width: i32): string {
-  let n: i32 = 0;
+  let n = 0;
   while (n < width && bs[off + n] as i32 != 0) {
-    n = n + 1;
+    n += 1;
   }
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(bs[off + i]);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -156,7 +156,7 @@ pub function read_all_result(path: string): Result[Entry[], IoError] {
   let out: Entry[] = [];
   match (read_file_bytes(opened_path(path))) {
     Ok(bs) => {
-      let off: i32 = 0;
+      let off = 0;
       if (darwin()) {
         if (!signed(bs)) {
           return Ok(out);
@@ -165,7 +165,7 @@ pub function read_all_result(path: string): Result[Entry[], IoError] {
       }
       while (off + record_bytes() <= bs.len()) {
         out = out.append(entry_at(bs, off));
-        off = off + record_bytes();
+        off += record_bytes();
       }
       return Ok(out);
     },
@@ -179,13 +179,13 @@ function signed(bs: u8[]): boolean {
   if (bs.len() < record_bytes() || u16_at(bs, 296) != signature_type()) {
     return false;
   }
-  let magic: string = "utmpx-1.00";
-  let i: i32 = 0;
+  let magic = "utmpx-1.00";
+  let i = 0;
   while (i < magic.len()) {
     if (bs[i] as i32 != magic[i] as i32) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return bs[magic.len()] as i32 == 0;
 }
@@ -195,9 +195,9 @@ pub function (e: Entry) is_login(): boolean {
 }
 
 pub function (e: Entry) name(): string {
-  let n: i32 = e.user.len();
+  let n = e.user.len();
   while (n > 0 && e.user[n - 1] as i32 == 32) {
-    n = n - 1;
+    n -= 1;
   }
   if (n == e.user.len()) {
     return e.user;
@@ -206,14 +206,14 @@ pub function (e: Entry) name(): string {
 }
 
 pub function read_logins(path: string): Entry[] {
-  let all: Entry[] = read_all(path);
+  let all = read_all(path);
   let out: Entry[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < all.len()) {
     if (all[i].is_login()) {
       out = out.append(all[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -253,13 +253,13 @@ pub function terminal_line(): Option[string] {
 }
 
 pub function user_on_line(path: string, line: string): Option[string] {
-  let entries: Entry[] = read_all(path);
-  let i: i32 = 0;
+  let entries = read_all(path);
+  let i = 0;
   while (i < entries.len()) {
     if (entries[i].kind == user_process() && entries[i].line == line && entries[i].user.len() > 0) {
       return Some(entries[i].user);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }

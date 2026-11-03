@@ -20,56 +20,56 @@ function opt_truncate(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... STRING1 [STRING2]\n";
-  out = out + "Translate, squeeze, and/or delete characters from standard input,\n";
-  out = out + "writing to standard output.  STRING1 and STRING2 specify arrays of\n";
-  out = out + "characters ARRAY1 and ARRAY2 that control the action.\n";
-  out = out + "\n";
-  out = out + "  -c, -C, --complement    use the complement of ARRAY1\n";
-  out = out + "  -d, --delete            delete characters in ARRAY1, do not translate\n";
-  out = out + "  -s, --squeeze-repeats   replace each sequence of a repeated character\n";
-  out = out + "                            that is listed in the last specified ARRAY,\n";
-  out = out + "                            with a single occurrence of that character\n";
-  out = out + "  -t, --truncate-set1     first truncate ARRAY1 to length of ARRAY2\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "ARRAYs are specified as strings of characters.  Most represent themselves.\n";
-  out = out + "Interpreted sequences are:\n";
-  out = out + "\n";
-  out = out + "  \\NNN            character with octal value NNN (1 to 3 octal digits)\n";
-  out = out + "  \\\\              backslash\n";
-  out = out + "  \\a              audible BEL\n";
-  out = out + "  \\b              backspace\n";
-  out = out + "  \\f              form feed\n";
-  out = out + "  \\n              new line\n";
-  out = out + "  \\r              return\n";
-  out = out + "  \\t              horizontal tab\n";
-  out = out + "  \\v              vertical tab\n";
-  out = out + "  CHAR1-CHAR2     all characters from CHAR1 to CHAR2 in ascending order\n";
-  out = out + "  [CHAR*]         in ARRAY2, copies of CHAR until length of ARRAY1\n";
-  out = out + "  [CHAR*REPEAT]   REPEAT copies of CHAR, REPEAT octal if starting with 0\n";
-  out = out + "  [:alnum:]       all letters and digits\n";
-  out = out + "  [:alpha:]       all letters\n";
-  out = out + "  [:blank:]       all horizontal whitespace\n";
-  out = out + "  [:cntrl:]       all control characters\n";
-  out = out + "  [:digit:]       all digits\n";
-  out = out + "  [:graph:]       all printable characters, not including space\n";
-  out = out + "  [:lower:]       all lower case letters\n";
-  out = out + "  [:print:]       all printable characters, including space\n";
-  out = out + "  [:punct:]       all punctuation characters\n";
-  out = out + "  [:space:]       all horizontal or vertical whitespace\n";
-  out = out + "  [:upper:]       all upper case letters\n";
-  out = out + "  [:xdigit:]      all hexadecimal digits\n";
-  out = out + "  [=CHAR=]        all characters which are equivalent to CHAR\n";
-  out = out + "\n";
-  out = out + "Translation occurs if -d is not given and both STRING1 and STRING2 appear.\n";
-  out = out + "-t is only significant when translating.  ARRAY2 is extended to length of\n";
-  out = out + "ARRAY1 by repeating its last character as necessary.  Excess characters\n";
-  out = out + "of ARRAY2 are ignored.  Character classes expand in unspecified order;\n";
-  out = out + "while translating, [:lower:] and [:upper:] may be used in pairs to\n";
-  out = out + "specify case conversion.  Squeezing occurs after translation or deletion.\n";
+  out += "Translate, squeeze, and/or delete characters from standard input,\n";
+  out += "writing to standard output.  STRING1 and STRING2 specify arrays of\n";
+  out += "characters ARRAY1 and ARRAY2 that control the action.\n";
+  out += "\n";
+  out += "  -c, -C, --complement    use the complement of ARRAY1\n";
+  out += "  -d, --delete            delete characters in ARRAY1, do not translate\n";
+  out += "  -s, --squeeze-repeats   replace each sequence of a repeated character\n";
+  out += "                            that is listed in the last specified ARRAY,\n";
+  out += "                            with a single occurrence of that character\n";
+  out += "  -t, --truncate-set1     first truncate ARRAY1 to length of ARRAY2\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "ARRAYs are specified as strings of characters.  Most represent themselves.\n";
+  out += "Interpreted sequences are:\n";
+  out += "\n";
+  out += "  \\NNN            character with octal value NNN (1 to 3 octal digits)\n";
+  out += "  \\\\              backslash\n";
+  out += "  \\a              audible BEL\n";
+  out += "  \\b              backspace\n";
+  out += "  \\f              form feed\n";
+  out += "  \\n              new line\n";
+  out += "  \\r              return\n";
+  out += "  \\t              horizontal tab\n";
+  out += "  \\v              vertical tab\n";
+  out += "  CHAR1-CHAR2     all characters from CHAR1 to CHAR2 in ascending order\n";
+  out += "  [CHAR*]         in ARRAY2, copies of CHAR until length of ARRAY1\n";
+  out += "  [CHAR*REPEAT]   REPEAT copies of CHAR, REPEAT octal if starting with 0\n";
+  out += "  [:alnum:]       all letters and digits\n";
+  out += "  [:alpha:]       all letters\n";
+  out += "  [:blank:]       all horizontal whitespace\n";
+  out += "  [:cntrl:]       all control characters\n";
+  out += "  [:digit:]       all digits\n";
+  out += "  [:graph:]       all printable characters, not including space\n";
+  out += "  [:lower:]       all lower case letters\n";
+  out += "  [:print:]       all printable characters, including space\n";
+  out += "  [:punct:]       all punctuation characters\n";
+  out += "  [:space:]       all horizontal or vertical whitespace\n";
+  out += "  [:upper:]       all upper case letters\n";
+  out += "  [:xdigit:]      all hexadecimal digits\n";
+  out += "  [=CHAR=]        all characters which are equivalent to CHAR\n";
+  out += "\n";
+  out += "Translation occurs if -d is not given and both STRING1 and STRING2 appear.\n";
+  out += "-t is only significant when translating.  ARRAY2 is extended to length of\n";
+  out += "ARRAY1 by repeating its last character as necessary.  Excess characters\n";
+  out += "of ARRAY2 are ignored.  Character classes expand in unspecified order;\n";
+  out += "while translating, [:lower:] and [:upper:] may be used in pairs to\n";
+  out += "specify case conversion.  Squeezing occurs after translation or deletion.\n";
   return out;
 }
 
@@ -93,30 +93,30 @@ function octal3(c: i32): string {
 }
 
 function printable_str(s: u8[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 7) {
-      out = out + "\\a";
+      out += "\\a";
     } else if (c == 8) {
-      out = out + "\\b";
+      out += "\\b";
     } else if (c == 12) {
-      out = out + "\\f";
+      out += "\\f";
     } else if (c == 10) {
-      out = out + "\\n";
+      out += "\\n";
     } else if (c == 13) {
-      out = out + "\\r";
+      out += "\\r";
     } else if (c == 9) {
-      out = out + "\\t";
+      out += "\\t";
     } else if (c == 11) {
-      out = out + "\\v";
+      out += "\\v";
     } else if (c >= 32 && c < 127) {
-      out = out + chr(c);
+      out += chr(c);
     } else {
       out = out + "\\" + octal3(c);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -125,12 +125,12 @@ function class_name_is(bytes: u8[], text: string): boolean {
   if (bytes.len() != text.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < bytes.len()) {
     if (bytes[i] != text[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -172,16 +172,16 @@ function class_id(name: u8[]): i32 {
   if (class_name_is(name, "xdigit")) {
     return 11;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function in_class(cls: i32, c: i32): boolean {
-  let lower: boolean = c >= 97 && c <= 122;
-  let upper: boolean = c >= 65 && c <= 90;
-  let digit: boolean = c >= 48 && c <= 57;
-  let alpha: boolean = lower || upper;
-  let alnum: boolean = alpha || digit;
-  let graph: boolean = c >= 33 && c <= 126;
+  let lower = c >= 97 && c <= 122;
+  let upper = c >= 65 && c <= 90;
+  let digit = c >= 48 && c <= 57;
+  let alpha = lower || upper;
+  let alnum = alpha || digit;
+  let graph = c >= 33 && c <= 126;
   if (cls == 0) {
     return alnum;
   }
@@ -219,28 +219,28 @@ function in_class(cls: i32, c: i32): boolean {
 }
 
 function class_first(cls: i32): i32 {
-  return class_next(cls, 0 - 1);
+  return class_next(cls, -1);
 }
 
 function class_next(cls: i32, after: i32): i32 {
-  let i: i32 = after + 1;
+  let i = after + 1;
   while (i < 256) {
     if (in_class(cls, i)) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function class_size(cls: i32): u64 {
-  let n: u64 = 0 as u64;
-  let i: i32 = 0;
+  let n = 0 as u64;
+  let i = 0;
   while (i < 256) {
     if (in_class(cls, i)) {
       n = n + 1 as u64;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
@@ -254,26 +254,26 @@ function es_is(e: ES, i: i32, b: i32): boolean {
 function unquote(raw: string): ES {
   let bs: u8[] = [];
   let fl: u8[] = [];
-  let n: i32 = raw.len();
-  let i: i32 = 0;
+  let n = raw.len();
+  let i = 0;
   while (i < n) {
-    let c: i32 = raw[i] as i32;
+    let c = raw[i] as i32;
     if (c != 92) {
       bs = bs.append(c as u8);
       fl = fl.append(0 as u8);
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (i + 1 >= n) {
       gnu.error("warning: an unescaped backslash at end of string is not portable");
       bs = bs.append(92 as u8);
       fl = fl.append(0 as u8);
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let d: i32 = raw[i + 1] as i32;
-    let val: i32 = d;
-    let adv: i32 = 2;
+    let d = raw[i + 1] as i32;
+    let val = d;
+    let adv = 2;
     if (d == 92) {
       val = 92;
     } else if (d == 97) {
@@ -296,14 +296,14 @@ function unquote(raw: string): ES {
         val = 8 * val + (raw[i + 2] as i32 - 48);
         adv = 3;
         if (i + 3 < n && is_octal(raw[i + 3] as i32)) {
-          let wide: i32 = 8 * val + (raw[i + 3] as i32 - 48);
+          let wide = 8 * val + (raw[i + 3] as i32 - 48);
           if (wide < 256) {
             val = wide;
             adv = 4;
           } else {
-            let d1: string = chr(raw[i + 1] as i32);
-            let d2: string = chr(raw[i + 2] as i32);
-            let d3: string = chr(raw[i + 3] as i32);
+            let d1 = chr(raw[i + 1] as i32);
+            let d2 = chr(raw[i + 2] as i32);
+            let d3 = chr(raw[i + 3] as i32);
             gnu.error("warning: the ambiguous octal escape \\" + d1 + d2 + d3 + " is being\n\tinterpreted as the 2-byte sequence \\0" + d1 + d2 + ", " + d3);
           }
         }
@@ -311,7 +311,7 @@ function unquote(raw: string): ES {
     }
     bs = bs.append(val as u8);
     fl = fl.append(1 as u8);
-    i = i + adv;
+    i += adv;
   }
   return ES { s: bs, esc: fl };
 }
@@ -325,29 +325,29 @@ function die(msg: string): void {
 
 function build_spec(e: ES): Item[] {
   let items: Item[] = [];
-  let n: i32 = e.s.len();
-  let i: i32 = 0;
+  let n = e.s.len();
+  let i = 0;
   while (i < n) {
     if (es_is(e, i, 91)) {
-      let handled: boolean = false;
+      let handled = false;
       if (es_is(e, i + 1, 58) || es_is(e, i + 1, 61)) {
-        let delim: i32 = e.s[i + 1] as i32;
-        let j: i32 = i + 2;
-        let close: i32 = 0 - 1;
+        let delim = e.s[i + 1] as i32;
+        let j = i + 2;
+        let close: i32 = -1;
         while (j + 1 < n) {
           if (e.s[j] as i32 == delim && e.s[j + 1] as i32 == 93 && e.esc[j] as i32 == 0 && e.esc[j + 1] as i32 == 0) {
             close = j;
             break;
           }
-          j = j + 1;
+          j += 1;
         }
         if (close >= 0) {
-          let body: u8[] = array.slice(e.s, i + 2, close);
+          let body = array.slice(e.s, i + 2, close);
           if (delim == 58) {
             if (body.len() == 0) {
               die("missing character class name " + gnu.quote("[::]"));
             }
-            let cls: i32 = class_id(body);
+            let cls = class_id(body);
             if (cls < 0) {
               die("invalid character class " + gnu.quote(printable_str(body)));
             }
@@ -366,17 +366,17 @@ function build_spec(e: ES): Item[] {
         }
       }
       if (!handled && i + 2 < n && es_is(e, i + 2, 42)) {
-        let k: i32 = i + 3;
-        let end: i32 = 0 - 1;
+        let k = i + 3;
+        let end: i32 = -1;
         while (k < n && e.esc[k] as i32 == 0) {
           if (e.s[k] as i32 == 93) {
             end = k;
             break;
           }
-          k = k + 1;
+          k += 1;
         }
         if (end >= 0) {
-          let digits: u8[] = array.slice(e.s, i + 3, end);
+          let digits = array.slice(e.s, i + 3, end);
           items = items.append(Item { kind: 4, a: e.s[i + 1] as i32, b: 0, n: repeat_count(digits) });
           i = end + 1;
           handled = true;
@@ -387,17 +387,17 @@ function build_spec(e: ES): Item[] {
       }
     }
     if (es_is(e, i + 1, 45) && i + 2 < n) {
-      let lo: i32 = e.s[i] as i32;
-      let hi: i32 = e.s[i + 2] as i32;
+      let lo = e.s[i] as i32;
+      let hi = e.s[i + 2] as i32;
       if (hi < lo) {
         die("range-endpoints of '" + printable_char(lo) + "-" + printable_char(hi) + "' are in reverse collating sequence order");
       }
       items = items.append(Item { kind: 1, a: lo, b: hi, n: 0 as u64 });
-      i = i + 3;
+      i += 3;
       continue;
     }
     items = items.append(Item { kind: 0, a: e.s[i] as i32, b: 0, n: 0 as u64 });
-    i = i + 1;
+    i += 1;
   }
   return items;
 }
@@ -406,29 +406,29 @@ function repeat_count(digits: u8[]): u64 {
   if (digits.len() == 0) {
     return 0 as u64;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < digits.len() && (digits[i] as i32 == 32 || digits[i] as i32 >= 9 && digits[i] as i32 <= 13)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < digits.len() && (digits[i] as i32 == 43 || digits[i] as i32 == 45)) {
     neg = digits[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
-  let base: u64 = 10 as u64;
+  let base = 10 as u64;
   if (i < digits.len() && digits[i] as i32 == 48) {
     base = 8 as u64;
   }
-  let start: i32 = i;
-  let v: u64 = 0 as u64;
-  let over: boolean = false;
-  let limit: u64 = 18446744073709551615 as u64;
+  let start = i;
+  let v = 0 as u64;
+  let over = false;
+  let limit = 18446744073709551615 as u64;
   while (i < digits.len()) {
-    let c: i32 = digits[i] as i32;
+    let c = digits[i] as i32;
     if (c < 48 || c > 57) {
       break;
     }
-    let d: u64 = (c - 48) as u64;
+    let d = (c - 48) as u64;
     if (d >= base) {
       break;
     }
@@ -438,7 +438,7 @@ function repeat_count(digits: u8[]): u64 {
     } else {
       v = v * base + d;
     }
-    i = i + 1;
+    i += 1;
   }
   if (i == start || i != digits.len() || over) {
     die("invalid repeat count " + gnu.quote(printable_str(digits)) + " in [c*n] construct");
@@ -463,14 +463,14 @@ function cur_step(i: i32): Cur {
 }
 
 function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
-  let cur: Cur = c;
+  let cur = c;
   while (cur.i < items.len()) {
-    let it: Item = items[cur.i];
+    let it = items[cur.i];
     if (it.kind == 0 || it.kind == 3) {
       return (it.a, 0, cur_step(cur.i));
     }
     if (it.kind == 1) {
-      let v: i32 = it.a;
+      let v = it.a;
       if (!cur.fresh) {
         v = cur.st + 1;
       }
@@ -480,11 +480,11 @@ function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
       return (v, 0, Cur { i: cur.i, st: v, fresh: false, k: 0 as u64 });
     }
     if (it.kind == 2) {
-      let m: i32 = class_first(it.a);
+      let m = class_first(it.a);
       if (!cur.fresh) {
         m = class_next(it.a, cur.st);
       }
-      let ul: i32 = 0;
+      let ul = 0;
       if (it.a == 6) {
         ul = 1;
       }
@@ -496,7 +496,7 @@ function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
       }
       return (m, ul, Cur { i: cur.i, st: m, fresh: false, k: 0 as u64 });
     }
-    let done: u64 = cur.k;
+    let done = cur.k;
     if (cur.fresh) {
       done = 0 as u64;
     }
@@ -506,70 +506,70 @@ function spec_next(items: Item[], c: Cur): (i32, i32, Cur) {
     }
     return (it.a, 0, Cur { i: cur.i, st: 0, fresh: false, k: done + 1 as u64 });
   }
-  return (0 - 1, 0, cur);
+  return (-1, 0, cur);
 }
 
 function spec_len(items: Item[]): u64 {
-  let total: u64 = 0 as u64;
-  let i: i32 = 0;
+  let total = 0 as u64;
+  let i = 0;
   while (i < items.len()) {
-    let it: Item = items[i];
+    let it = items[i];
     if (it.kind == 0 || it.kind == 3) {
       total = total + 1 as u64;
     } else if (it.kind == 1) {
       total = total + (it.b - it.a + 1) as u64;
     } else if (it.kind == 2) {
-      total = total + class_size(it.a);
+      total += class_size(it.a);
     } else {
-      total = total + it.n;
+      total += it.n;
     }
-    i = i + 1;
+    i += 1;
   }
   return total;
 }
 
 function count_indefinite(items: Item[]): i32 {
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let n = 0;
+  let i = 0;
   while (i < items.len()) {
     if (items[i].kind == 4 && items[i].n == 0 as u64) {
-      n = n + 1;
+      n += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function has_equiv(items: Item[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < items.len()) {
     if (items[i].kind == 3) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function has_restricted_class(items: Item[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < items.len()) {
     if (items[i].kind == 2 && items[i].a != 6 && items[i].a != 10) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function members(items: Item[], flip: boolean): u8[] {
-  let set: u8[] = __alloc_u8(256);
-  let i: i32 = 0;
+  let set = __alloc_u8(256);
+  let i = 0;
   while (i < 256) {
     set = set.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
-  let cur: Cur = cur_new();
+  let cur = cur_new();
   while (true) {
     let r: (i32, i32, Cur) = spec_next(items, cur);
     cur = r.2;
@@ -581,35 +581,35 @@ function members(items: Item[], flip: boolean): u8[] {
   if (flip) {
     i = 0;
     while (i < 256) {
-      let v: i32 = 1;
+      let v = 1;
       if (set[i] as i32 == 1) {
         v = 0;
       }
       set = set.with(i, v as u8);
-      i = i + 1;
+      i += 1;
     }
   }
   return set;
 }
 
 function member_count(set: u8[]): u64 {
-  let n: u64 = 0 as u64;
-  let i: i32 = 0;
+  let n = 0 as u64;
+  let i = 0;
   while (i < 256) {
     if (set[i] as i32 != 0) {
       n = n + 1 as u64;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function identity_table(): u8[] {
-  let t: u8[] = __alloc_u8(256);
-  let i: i32 = 0;
+  let t = __alloc_u8(256);
+  let i = 0;
   while (i < 256) {
     t = t.with(i, i as u8);
-    i = i + 1;
+    i += 1;
   }
   return t;
 }
@@ -629,9 +629,9 @@ function to_lower(c: i32): i32 {
 }
 
 function build_xlate(s1: Item[], s2: Item[], truncate: boolean): u8[] {
-  let t: u8[] = identity_table();
-  let c1: Cur = cur_new();
-  let c2: Cur = cur_new();
+  let t = identity_table();
+  let c1 = cur_new();
+  let c2 = cur_new();
   while (true) {
     let r1: (i32, i32, Cur) = spec_next(s1, c1);
     c1 = r1.2;
@@ -640,7 +640,7 @@ function build_xlate(s1: Item[], s2: Item[], truncate: boolean): u8[] {
     if (r1.1 == 0 && r2.1 != 0) {
       die("misaligned [:upper:] and/or [:lower:] construct");
     }
-    let to: i32 = r2.0;
+    let to = r2.0;
     if (to < 0 && r1.0 >= 0 && !truncate) {
       to = extend_byte(s2);
     }
@@ -659,11 +659,11 @@ function build_xlate(s1: Item[], s2: Item[], truncate: boolean): u8[] {
 }
 
 function build_xlate_complement(s1: Item[], s2: Item[], truncate: boolean): u8[] {
-  let t: u8[] = identity_table();
-  let in1: u8[] = members(s1, false);
-  let cur: Cur = cur_new();
-  let last: i32 = 0 - 1;
-  let i: i32 = 0;
+  let t = identity_table();
+  let in1 = members(s1, false);
+  let cur = cur_new();
+  let last: i32 = -1;
+  let i = 0;
   while (i < 256) {
     if (in1[i] as i32 == 0) {
       let r: (i32, i32, Cur) = spec_next(s2, cur);
@@ -678,7 +678,7 @@ function build_xlate_complement(s1: Item[], s2: Item[], truncate: boolean): u8[]
       }
       t = t.with(i, last as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   return t;
 }
@@ -688,63 +688,63 @@ function read_size(): i32 {
 }
 
 function xf_squeeze(chunk: u8[], sq: u8[], last: i32): (u8[], i32, i32) {
-  let n: i32 = chunk.len();
-  let buf: u8[] = __alloc_u8(n);
-  let j: i32 = 0;
-  let prev: i32 = last;
-  let i: i32 = 0;
+  let n = chunk.len();
+  let buf = __alloc_u8(n);
+  let j = 0;
+  let prev = last;
+  let i = 0;
   while (i < n) {
-    let c: i32 = chunk[i] as i32;
+    let c = chunk[i] as i32;
     if (c != prev || sq[c] as i32 == 0) {
       buf = buf.with(j, c as u8);
-      j = j + 1;
+      j += 1;
     }
     prev = c;
-    i = i + 1;
+    i += 1;
   }
   return (buf, j, prev);
 }
 
 function xf_translate_squeeze(chunk: u8[], t: u8[], sq: u8[], last: i32): (u8[], i32, i32) {
-  let n: i32 = chunk.len();
-  let buf: u8[] = __alloc_u8(n);
-  let j: i32 = 0;
-  let prev: i32 = last;
-  let i: i32 = 0;
+  let n = chunk.len();
+  let buf = __alloc_u8(n);
+  let j = 0;
+  let prev = last;
+  let i = 0;
   while (i < n) {
-    let c: i32 = t[chunk[i] as i32] as i32;
+    let c = t[chunk[i] as i32] as i32;
     if (c != prev || sq[c] as i32 == 0) {
       buf = buf.with(j, c as u8);
-      j = j + 1;
+      j += 1;
     }
     prev = c;
-    i = i + 1;
+    i += 1;
   }
   return (buf, j, prev);
 }
 
 function xf_delete_squeeze(chunk: u8[], del: u8[], sq: u8[], last: i32): (u8[], i32, i32) {
-  let n: i32 = chunk.len();
-  let buf: u8[] = __alloc_u8(n);
-  let j: i32 = 0;
-  let prev: i32 = last;
-  let i: i32 = 0;
+  let n = chunk.len();
+  let buf = __alloc_u8(n);
+  let j = 0;
+  let prev = last;
+  let i = 0;
   while (i < n) {
-    let c: i32 = chunk[i] as i32;
+    let c = chunk[i] as i32;
     if (del[c] as i32 == 0) {
       if (c != prev || sq[c] as i32 == 0) {
         buf = buf.with(j, c as u8);
-        j = j + 1;
+        j += 1;
       }
       prev = c;
     }
-    i = i + 1;
+    i += 1;
   }
   return (buf, j, prev);
 }
 
 function check_operands(ops: string[], deleting: boolean, squeezing: boolean): void {
-  let n: i32 = ops.len();
+  let n = ops.len();
   if (n == 0) {
     gnu.die_usage("missing operand", 1);
   }
@@ -774,29 +774,29 @@ function check_operands(ops: string[], deleting: boolean, squeezing: boolean): v
 }
 
 function resolve_indefinite(s2: Item[], len1: u64, len2: u64): Item[] {
-  let out: Item[] = s2;
-  let fill: u64 = 0 as u64;
+  let out = s2;
+  let fill = 0 as u64;
   if (len1 > len2) {
     fill = len1 - len2;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < out.len()) {
-    let it: Item = out[i];
+    let it = out[i];
     if (it.kind == 4 && it.n == 0 as u64) {
       out = out.with(i, Item { kind: 4, a: it.a, b: it.b, n: fill });
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function fill_byte(items: Item[]): i32 {
   if (items.len() == 0) {
-    return 0 - 2;
+    return -2;
   }
-  let last: Item = items[items.len() - 1];
+  let last = items[items.len() - 1];
   if (last.kind == 2) {
-    return 0 - 1;
+    return -1;
   }
   if (last.kind == 1) {
     return last.b;
@@ -805,18 +805,18 @@ function fill_byte(items: Item[]): i32 {
 }
 
 function extend_byte(s2: Item[]): i32 {
-  let fb: i32 = fill_byte(s2);
-  if (fb == 0 - 2) {
+  let fb = fill_byte(s2);
+  if (fb == -2) {
     die("when not truncating set1, string2 must be non-empty");
   }
-  if (fb == 0 - 1) {
+  if (fb == -1) {
     die("when translating with string1 longer than string2,\nthe latter string must not end with a character class");
   }
   return fb;
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "complement", opt_complement()));
   opts = opts.append(gnu.flag("C", "", opt_complement()));
@@ -824,11 +824,11 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("s", "squeeze-repeats", opt_squeeze()));
   opts = opts.append(gnu.flag("t", "truncate-set1", opt_truncate()));
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "tr", help_text(), 1).in_order();
-  let complement: boolean = false;
-  let deleting: boolean = false;
-  let squeezing: boolean = false;
-  let truncate: boolean = false;
+  let g = gnu.getopt_new(argv, opts, "tr", help_text(), 1).in_order();
+  let complement = false;
+  let deleting = false;
+  let squeezing = false;
+  let truncate = false;
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -850,11 +850,11 @@ pub function main(): i32 {
     }
   }
 
-  let ops: string[] = g.operands();
+  let ops = g.operands();
   check_operands(ops, deleting, squeezing);
-  let translating: boolean = ops.len() == 2 && !deleting;
+  let translating = ops.len() == 2 && !deleting;
 
-  let s1: Item[] = build_spec(unquote(ops[0]));
+  let s1 = build_spec(unquote(ops[0]));
   let s2: Item[] = [];
   if (ops.len() == 2) {
     s2 = build_spec(unquote(ops[1]));
@@ -877,7 +877,7 @@ pub function main(): i32 {
     if (has_restricted_class(s2)) {
       die("when translating, the only character classes that may appear in\nstring2 are 'upper' and 'lower'");
     }
-    let len1: u64 = spec_len(s1);
+    let len1 = spec_len(s1);
     if (complement) {
       len1 = 256 as u64 - member_count(members(s1, false));
     }
@@ -899,9 +899,9 @@ pub function main(): i32 {
     }
   }
 
-  let o: io_buffered.BufWriter = gnu.out_new();
-  let r: Reader = stdin();
-  let last: i32 = 0 - 1;
+  let o = gnu.out_new();
+  let r = stdin();
+  let last: i32 = -1;
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {

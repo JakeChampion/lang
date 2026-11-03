@@ -4,15 +4,15 @@ import "std/errno";
 import "./lib/gnu";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... NAME...\n";
-  out = out + "Diagnose invalid or non-portable file names.\n";
-  out = out + "\n";
-  out = out + "  -p                  check for most POSIX systems\n";
-  out = out + "  -P                  check for empty names and leading \"-\"\n";
-  out = out + "      --portability   check for all POSIX systems (equivalent to -p -P)\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Diagnose invalid or non-portable file names.\n";
+  out += "\n";
+  out += "  -p                  check for most POSIX systems\n";
+  out += "  -P                  check for empty names and leading \"-\"\n";
+  out += "      --portability   check for all POSIX systems (equivalent to -p -P)\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -42,25 +42,25 @@ function is_slash(s: string, i: i32): boolean {
 }
 
 function component_start(s: string, i: i32): i32 {
-  let j: i32 = i;
+  let j = i;
   while (j < s.len() && is_slash(s, j)) {
-    j = j + 1;
+    j += 1;
   }
   return j;
 }
 
 function component_end(s: string, start: i32): i32 {
-  let j: i32 = start;
+  let j = start;
   while (j < s.len() && !is_slash(s, j)) {
-    j = j + 1;
+    j += 1;
   }
   return j;
 }
 
 function check_leading_dash(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len()) {
-    let start: i32 = component_start(name, i);
+    let start = component_start(name, i);
     if (start >= name.len()) {
       return true;
     }
@@ -74,27 +74,27 @@ function check_leading_dash(name: string): boolean {
 }
 
 function check_posix_minimums(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len()) {
-    let b: i32 = name[i] as i32;
+    let b = name[i] as i32;
     if (!is_portable(b)) {
       gnu.error("non-portable character " + gnu.quote(slice_unchecked(name, i, i + 1) + "") + " in file name " + gnu.quotea(name));
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
-  let path_limit: i32 = posix_path_max() - 1;
+  let path_limit = posix_path_max() - 1;
   if (name.len() > path_limit) {
     gnu.error("limit " + path_limit.to_string() + " exceeded by length " + name.len().to_string() + " of file name " + gnu.quotea(name));
     return false;
   }
   i = 0;
   while (i < name.len()) {
-    let start: i32 = component_start(name, i);
+    let start = component_start(name, i);
     if (start >= name.len()) {
       return true;
     }
-    let end: i32 = component_end(name, start);
+    let end = component_end(name, start);
     if (end - start > posix_name_max()) {
       gnu.error("limit " + posix_name_max().to_string() + " exceeded by length " + (end - start).to_string() + " of file name component " + gnu.quotea(slice_unchecked(name, start, end) + ""));
       return false;
@@ -105,13 +105,13 @@ function check_posix_minimums(name: string): boolean {
 }
 
 function has_long_component(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len()) {
-    let start: i32 = component_start(name, i);
+    let start = component_start(name, i);
     if (start >= name.len()) {
       return false;
     }
-    let end: i32 = component_end(name, start);
+    let end = component_end(name, start);
     if (end - start > posix_name_max()) {
       return true;
     }
@@ -124,17 +124,17 @@ function check_filesystem_lengths(name: string): boolean {
   if (!has_long_component(name)) {
     return true;
   }
-  let limit: i64 = 0 - 1;
-  let querying: boolean = true;
-  let i: i32 = 0;
+  let limit: i64 = -1;
+  let querying = true;
+  let i = 0;
   while (i < name.len()) {
-    let start: i32 = component_start(name, i);
+    let start = component_start(name, i);
     if (start >= name.len()) {
       return true;
     }
-    let end: i32 = component_end(name, start);
+    let end = component_end(name, start);
     if (querying) {
-      let dir: string = ".";
+      let dir = ".";
       if (start > 0) {
         dir = slice_unchecked(name, 0, start) + "";
       }
@@ -191,12 +191,12 @@ function check_name(name: string, posix: boolean, shape: boolean): boolean {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [gnu.flag("p", "", 1), gnu.flag("P", "", 2), gnu.flag("", "portability", 3)];
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "pathchk", help_text(), 1);
+  let g = gnu.getopt_new(argv, opts, "pathchk", help_text(), 1);
   g = g.in_order();
-  let posix: boolean = false;
-  let shape: boolean = false;
+  let posix = false;
+  let shape = false;
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -216,17 +216,17 @@ pub function main(): i32 {
       }
     }
   }
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let ok = true;
+  let i = 0;
   while (i < operands.len()) {
     if (!check_name(operands[i], posix, shape)) {
       ok = false;
     }
-    i = i + 1;
+    i += 1;
   }
   if (ok) {
     return 0;

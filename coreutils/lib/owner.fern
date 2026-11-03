@@ -54,14 +54,14 @@ function is_space(c: i32): boolean {
 }
 
 pub function parse_number(s: string): Option[i64] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && is_space(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   let v: i64 = 0;
-  let digits: i32 = 0;
+  let digits = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c < 48 || c > 57) {
       return None;
     }
@@ -69,8 +69,8 @@ pub function parse_number(s: string): Option[i64] {
     if (v > 4294967294 as i64) {
       return None;
     }
-    i = i + 1;
-    digits = digits + 1;
+    i += 1;
+    digits += 1;
   }
   if (digits == 0) {
     return None;
@@ -162,19 +162,19 @@ function login_group(db: Db, sp: Spec): Option[Spec] {
 }
 
 function split_first(s: string, sep: i32): Option[(string, string)] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] as i32 == sep) {
       return Some((slice_unchecked(s, 0, i) + "", slice_unchecked(s, i + 1, s.len()) + ""));
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 function parse_split(db: Db, user_tok: string, group_tok: string): Parsed {
-  let sp: Spec = spec_none();
-  let trailing: boolean = group_tok.len() == 0 && user_tok.len() > 0;
+  let sp = spec_none();
+  let trailing = group_tok.len() == 0 && user_tok.len() > 0;
   if (user_tok.len() > 0) {
     match (resolve_user(db, user_tok, sp)) {
       Some(next) => {
@@ -212,7 +212,7 @@ function parse_split(db: Db, user_tok: string, group_tok: string): Parsed {
 }
 
 function parse_user_only(db: Db, spec: string): Parsed {
-  let sp: Spec = spec_none();
+  let sp = spec_none();
   if (spec.len() == 0) {
     return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
   }
@@ -235,11 +235,11 @@ pub function parse(db: Db, spec: string): Parsed {
   }
   match (split_first(spec, 46)) {
     Some(parts) => {
-      let dotted: Parsed = parse_split(db, parts.0, parts.1);
+      let dotted = parse_split(db, parts.0, parts.1);
       if (dotted.ok) {
         return Parsed { ...dotted, warn_dot: true };
       }
-      let whole: Parsed = parse_user_only(db, spec);
+      let whole = parse_user_only(db, spec);
       if (whole.ok) {
         return whole;
       }
@@ -251,7 +251,7 @@ pub function parse(db: Db, spec: string): Parsed {
 }
 
 pub function parse_group_only(db: Db, spec: string): Parsed {
-  let sp: Spec = spec_none();
+  let sp = spec_none();
   if (spec.len() == 0) {
     return Parsed { ok: true, spec: sp, kind: err_none(), warn_dot: false };
   }
@@ -294,7 +294,7 @@ pub function (sp: Spec) render(chgrp_mode: boolean): string {
     if (chgrp_mode) {
       return sp.gname;
     }
-    let u: string = "";
+    let u = "";
     if (sp.has_uname) {
       u = sp.uname;
     }

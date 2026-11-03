@@ -59,44 +59,44 @@ function opt_separator(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE [PREFIX]]\n";
-  out = out + "Output pieces of FILE to PREFIXaa, PREFIXab, ...;\n";
-  out = out + "default size is 1000 lines, and default PREFIX is 'x'.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -a, --suffix-length=N   generate suffixes of length N (default 2)\n";
-  out = out + "      --additional-suffix=SUFFIX  append an additional SUFFIX to file names\n";
-  out = out + "  -b, --bytes=SIZE        put SIZE bytes per output file\n";
-  out = out + "  -C, --line-bytes=SIZE   put at most SIZE bytes of records per output file\n";
-  out = out + "  -d                      use numeric suffixes starting at 0, not alphabetic\n";
-  out = out + "      --numeric-suffixes[=FROM]  same as -d, but allow setting the start value\n";
-  out = out + "  -x                      use hex suffixes starting at 0, not alphabetic\n";
-  out = out + "      --hex-suffixes[=FROM]  same as -x, but allow setting the start value\n";
-  out = out + "  -e, --elide-empty-files  do not generate empty output files with '-n'\n";
-  out = out + "      --filter=COMMAND    write to shell COMMAND; file name is $FILE\n";
-  out = out + "  -l, --lines=NUMBER      put NUMBER lines/records per output file\n";
-  out = out + "  -n, --number=CHUNKS     generate CHUNKS output files; see explanation below\n";
-  out = out + "  -t, --separator=SEP     use SEP instead of newline as the record separator;\n";
-  out = out + "                            '\\0' (zero) specifies the NUL character\n";
-  out = out + "  -u, --unbuffered        immediately copy input to output with '-n r/...'\n";
-  out = out + "      --verbose           print a diagnostic just before each\n";
-  out = out + "                            output file is opened\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "The SIZE argument is an integer and optional unit (example: 10K is 10*1024).\n";
-  out = out + "Units are K,M,G,T,P,E,Z,Y,R,Q (powers of 1024) or KB,MB,... (powers of 1000).\n";
-  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
-  out = out + "\n";
-  out = out + "CHUNKS may be:\n";
-  out = out + "  N       split into N files based on size of input\n";
-  out = out + "  K/N     output Kth of N to stdout\n";
-  out = out + "  l/N     split into N files without splitting lines/records\n";
-  out = out + "  l/K/N   output Kth of N to stdout without splitting lines/records\n";
-  out = out + "  r/N     like 'l' but use round robin distribution\n";
-  out = out + "  r/K/N   likewise but only output Kth of N to stdout\n";
+  out += "Output pieces of FILE to PREFIXaa, PREFIXab, ...;\n";
+  out += "default size is 1000 lines, and default PREFIX is 'x'.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -a, --suffix-length=N   generate suffixes of length N (default 2)\n";
+  out += "      --additional-suffix=SUFFIX  append an additional SUFFIX to file names\n";
+  out += "  -b, --bytes=SIZE        put SIZE bytes per output file\n";
+  out += "  -C, --line-bytes=SIZE   put at most SIZE bytes of records per output file\n";
+  out += "  -d                      use numeric suffixes starting at 0, not alphabetic\n";
+  out += "      --numeric-suffixes[=FROM]  same as -d, but allow setting the start value\n";
+  out += "  -x                      use hex suffixes starting at 0, not alphabetic\n";
+  out += "      --hex-suffixes[=FROM]  same as -x, but allow setting the start value\n";
+  out += "  -e, --elide-empty-files  do not generate empty output files with '-n'\n";
+  out += "      --filter=COMMAND    write to shell COMMAND; file name is $FILE\n";
+  out += "  -l, --lines=NUMBER      put NUMBER lines/records per output file\n";
+  out += "  -n, --number=CHUNKS     generate CHUNKS output files; see explanation below\n";
+  out += "  -t, --separator=SEP     use SEP instead of newline as the record separator;\n";
+  out += "                            '\\0' (zero) specifies the NUL character\n";
+  out += "  -u, --unbuffered        immediately copy input to output with '-n r/...'\n";
+  out += "      --verbose           print a diagnostic just before each\n";
+  out += "                            output file is opened\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "The SIZE argument is an integer and optional unit (example: 10K is 10*1024).\n";
+  out += "Units are K,M,G,T,P,E,Z,Y,R,Q (powers of 1024) or KB,MB,... (powers of 1000).\n";
+  out += "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  out += "\n";
+  out += "CHUNKS may be:\n";
+  out += "  N       split into N files based on size of input\n";
+  out += "  K/N     output Kth of N to stdout\n";
+  out += "  l/N     split into N files without splitting lines/records\n";
+  out += "  l/K/N   output Kth of N to stdout without splitting lines/records\n";
+  out += "  r/N     like 'l' but use round robin distribution\n";
+  out += "  r/K/N   likewise but only output Kth of N to stdout\n";
   return out;
 }
 
@@ -163,7 +163,7 @@ function size_operand(value: string, noun: string): u64 {
     gnu.error("invalid number of " + noun + ": " + gnu.quote(value));
     exit(1);
   }
-  let n: u64 = r.0;
+  let n = r.0;
   if (gnu.count_overflow(r.1)) {
     n = u64_max();
   }
@@ -180,7 +180,7 @@ function lines_operand(value: string): u64 {
     gnu.error("invalid number of lines: " + gnu.quote(value));
     exit(1);
   }
-  let n: u64 = r.0;
+  let n = r.0;
   if (gnu.count_overflow(r.1)) {
     n = u64_max();
   }
@@ -217,21 +217,21 @@ function suffix_length_operand(value: string): i32 {
 }
 
 function negated_number(value: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < value.len() && gnu.is_blank(value[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= value.len() || value[i] as i32 != 45) {
     return false;
   }
-  let rest: string = slice_unchecked(value, i + 1, value.len()) + "";
+  let rest = slice_unchecked(value, i + 1, value.len()) + "";
   let r: (u64, i32) = gnu.parse_number(rest);
   return !gnu.count_malformed(r.1);
 }
 
 function start_operand(value: string, hex: boolean): u64 {
-  let word: string = "numerical";
-  let base: i32 = 10;
+  let word = "numerical";
+  let base = 10;
   if (hex) {
     word = "hexadecimal";
     base = 16;
@@ -239,10 +239,10 @@ function start_operand(value: string, hex: boolean): u64 {
   if (value.len() == 0) {
     return 0 as u64;
   }
-  let v: u64 = 0 as u64;
-  let i: i32 = 0;
+  let v = 0 as u64;
+  let i = 0;
   while (i < value.len()) {
-    let d: i32 = digit_value(value[i] as i32, base);
+    let d = digit_value(value[i] as i32, base);
     if (d < 0) {
       gnu.die_usage(gnu.quote(value) + ": invalid start value for " + word + " suffix", 1);
     }
@@ -261,20 +261,20 @@ function start_operand(value: string, hex: boolean): u64 {
         gnu.die_usage(gnu.quote(value) + ": invalid start value for " + word + " suffix", 1);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function digit_value(c: i32, base: i32): i32 {
-  let v: i32 = 0 - 1;
+  let v: i32 = -1;
   if (c >= 48 && c <= 57) {
     v = c - 48;
   } else if (base == 16 && c >= 97 && c <= 102) {
     v = c - 87;
   }
   if (v >= base) {
-    return 0 - 1;
+    return -1;
   }
   return v;
 }
@@ -295,8 +295,8 @@ function separator_operand(value: string): i32 {
 }
 
 function chunk_operand(value: string, s: Settings): Settings {
-  let body: string = value;
-  let style: i32 = style_bytes();
+  let body = value;
+  let style = style_bytes();
   if (body.len() >= 2 && body[0] as i32 == 108 && body[1] as i32 == 47) {
     style = style_lines();
     body = slice_unchecked(body, 2, body.len()) + "";
@@ -304,14 +304,14 @@ function chunk_operand(value: string, s: Settings): Settings {
     style = style_round();
     body = slice_unchecked(body, 2, body.len()) + "";
   }
-  let slash: i32 = __memchr(body, 47, 0);
-  let k: u64 = 0 as u64;
-  let n: u64 = 0 as u64;
+  let slash = __memchr(body, 47, 0);
+  let k = 0 as u64;
+  let n = 0 as u64;
   if (slash < 0) {
     n = chunk_count(body, body);
   } else {
-    let kstr: string = slice_unchecked(body, 0, slash) + "";
-    let nstr: string = slice_unchecked(body, slash + 1, body.len()) + "";
+    let kstr = slice_unchecked(body, 0, slash) + "";
+    let nstr = slice_unchecked(body, slash + 1, body.len()) + "";
     k = chunk_count(kstr, body);
     n = chunk_count(nstr, nstr);
     if (k > n) {
@@ -328,7 +328,7 @@ function chunk_count(value: string, blame: string): u64 {
     gnu.error("invalid number of chunks: " + gnu.quote(blame));
     exit(1);
   }
-  let n: u64 = r.0;
+  let n = r.0;
   if (gnu.count_overflow(r.1)) {
     n = u64_max();
   }
@@ -347,41 +347,41 @@ struct Suffix { alpha: string, idx: i32[], reserved: i32, auto: boolean, done: b
 
 function suffix_new(alpha: string, width: i32, auto: boolean, start: u64): Suffix {
   let idx: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < width) {
     idx = idx.append(0);
-    i = i + 1;
+    i += 1;
   }
-  let base: u64 = alpha.len() as u64;
-  let v: u64 = start;
-  let p: i32 = width - 1;
+  let base = alpha.len() as u64;
+  let v = start;
+  let p = width - 1;
   while (v > 0 as u64) {
     if (p < 0) {
       gnu.die_usage("numerical suffix start value is too large for the suffix length", 1);
     }
     idx = idx.with(p, (v % base) as i32);
-    v = v / base;
-    p = p - 1;
+    v /= base;
+    p -= 1;
   }
   return Suffix { alpha: alpha, idx: idx, reserved: 0, auto: auto, done: false };
 }
 
 function suffix_name(x: Suffix): string {
   let bs: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < x.idx.len()) {
     bs = bs.append(x.alpha[x.idx[i]]);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bs);
 }
 
 function suffix_next(x: Suffix): Suffix {
-  let idx: i32[] = x.idx;
-  let last: i32 = x.alpha.len() - 1;
-  let i: i32 = idx.len() - 1;
+  let idx = x.idx;
+  let last = x.alpha.len() - 1;
+  let i = idx.len() - 1;
   while (i >= x.reserved) {
-    let v: i32 = idx[i] + 1;
+    let v = idx[i] + 1;
     if (i == x.reserved && x.auto && v == last) {
       return suffix_widen(x);
     }
@@ -389,31 +389,31 @@ function suffix_next(x: Suffix): Suffix {
       return Suffix { ...x, idx: idx.with(i, v) };
     }
     idx = idx.with(i, 0);
-    i = i - 1;
+    i -= 1;
   }
   return Suffix { ...x, idx: idx, done: true };
 }
 
 function suffix_widen(x: Suffix): Suffix {
-  let reserved: i32 = x.reserved + 1;
-  let width: i32 = x.idx.len() + 2;
-  let last: i32 = x.alpha.len() - 1;
+  let reserved = x.reserved + 1;
+  let width = x.idx.len() + 2;
+  let last = x.alpha.len() - 1;
   let idx: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < width) {
     if (i < reserved) {
       idx = idx.append(last);
     } else {
       idx = idx.append(0);
     }
-    i = i + 1;
+    i += 1;
   }
   return Suffix { ...x, idx: idx, reserved: reserved };
 }
 
 function suffix_needed(n: u64, base: i32): i32 {
-  let w: i32 = 1;
-  let cap: u64 = base as u64;
+  let w = 1;
+  let cap = base as u64;
   while (cap < n) {
     match (cap.checked_mul(base as u64)) {
       Some(m) => {
@@ -423,7 +423,7 @@ function suffix_needed(n: u64, base: i32): i32 {
         return w + 1;
       }
     }
-    w = w + 1;
+    w += 1;
   }
   return w;
 }
@@ -431,7 +431,7 @@ function suffix_needed(n: u64, base: i32): i32 {
 struct Out { s: Settings, sfx: Suffix, w: io_buffered.BufWriter, open: boolean, name: string, so: io_buffered.BufWriter, to_stdout: boolean, pid: i32 }
 
 function out_new(s: Settings, sfx: Suffix, to_stdout: boolean): Out {
-  let so: io_buffered.BufWriter = gnu.out_with(65536);
+  let so = gnu.out_with(65536);
   return Out { s: s, sfx: sfx, w: so, open: false, name: "", so: so, to_stdout: to_stdout, pid: 0 };
 }
 
@@ -441,7 +441,7 @@ function out_name(own o: Out): (string, Out) {
     gnu.error("output file suffixes exhausted");
     exit(1);
   }
-  let name: string = o.s.prefix + suffix_name(o.sfx) + o.s.add_suffix;
+  let name = o.s.prefix + suffix_name(o.sfx) + o.s.add_suffix;
   return (name, Out { ...o, sfx: suffix_next(o.sfx) });
 }
 
@@ -449,12 +449,12 @@ function out_begin(own o: Out): Out {
   if (o.to_stdout) {
     return o;
   }
-  let closed: Out = out_end(o);
+  let closed = out_end(o);
   let r: (string, Out) = out_name(closed);
-  let name: string = r.0;
-  let next: Out = r.1;
+  let name = r.0;
+  let next = r.1;
   next = out_verbose(next, name);
-  let pc: Piece = piece_open(next.s, next.so, name);
+  let pc = piece_open(next.s, next.so, name);
   return Out { ...next, w: io_buffered.buf_writer_new(pc.w, 65536), open: true, name: name, pid: pc.pid };
 }
 
@@ -485,7 +485,7 @@ function out_end(own o: Out): Out {
   if (!o.open) {
     return o;
   }
-  let ended: Out = Out { ...o, w: io_buffered.buf_writer_new(stdout(), 0), open: false, pid: 0 };
+  let ended = Out { ...o, w: io_buffered.buf_writer_new(stdout(), 0), open: false, pid: 0 };
   if let Err(e) = o.w.close() {
     write_failed(o.s, o.so, o.name, e);
   }
@@ -494,7 +494,7 @@ function out_end(own o: Out): Out {
 }
 
 function out_finish(own o: Out): void {
-  let done: Out = out_end(o);
+  let done = out_end(o);
   gnu.finish(done.so);
 }
 
@@ -504,9 +504,9 @@ function copy_bytes(bytes: u8[], lo: i32, hi: i32): u8[] {
   if (lo == 0 && hi == bytes.len()) {
     return bytes;
   }
-  let h: usize = buf_new(hi - lo);
+  let h = buf_new(hi - lo);
   buf_push_bytes_range(h, bytes, lo, hi);
-  let out: u8[] = buf_take_bytes(h);
+  let out = buf_take_bytes(h);
   buf_free(h);
   return out;
 }
@@ -518,10 +518,10 @@ function join_bytes(left: u8[], right: u8[]): u8[] {
   if (right.len() == 0) {
     return left;
   }
-  let h: usize = buf_new(left.len() + right.len());
+  let h = buf_new(left.len() + right.len());
   buf_push_bytes_range(h, left, 0, left.len());
   buf_push_bytes_range(h, right, 0, right.len());
-  let out: u8[] = buf_take_bytes(h);
+  let out = buf_take_bytes(h);
   buf_free(h);
   return out;
 }
@@ -540,12 +540,12 @@ function read_size(): i32 {
 
 function src_read(s: Src, n: i32): (u8[], Src) {
   if (s.pos < s.mem.len()) {
-    let end: i32 = s.pos + n;
+    let end = s.pos + n;
     if (end > s.mem.len()) {
       end = s.mem.len();
     }
-    let got: u8[] = copy_bytes(s.mem, s.pos, end);
-    let rest: Src = Src { ...s, pos: end };
+    let got = copy_bytes(s.mem, s.pos, end);
+    let rest = Src { ...s, pos: end };
     if (end >= s.mem.len()) {
       rest = Src { ...rest, mem: [], pos: 0 };
     }
@@ -590,24 +590,24 @@ function tmp_root(): string {
 
 function temp_name(root: string): string {
   let bs: u8[] = [];
-  let letters: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  let i: i32 = 0;
+  let letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let i = 0;
   while (i < 6) {
-    let v: i32 = rand.next_i32();
+    let v = rand.next_i32();
     if (v < 0) {
       v = 0 - v;
     }
     bs = bs.append(letters[v % letters.len()]);
-    i = i + 1;
+    i += 1;
   }
   return root + "/cutmp" + string_from_bytes_unchecked(bs);
 }
 
 function spool(s: Src, first: u8[]): (Src, i64) {
-  let root: string = tmp_root();
-  let path: string = "";
-  let w: Writer = stdout();
-  let tries: i32 = 0;
+  let root = tmp_root();
+  let path = "";
+  let w = stdout();
+  let tries = 0;
   while (true) {
     path = temp_name(root);
     match (open_exclusive(path)) {
@@ -618,7 +618,7 @@ function spool(s: Src, first: u8[]): (Src, i64) {
       Err(e) => {
         match (e) {
           AlreadyExists(_) => {
-            tries = tries + 1;
+            tries += 1;
             if (tries > 100) {
               gnu.error("cannot create temporary file in " + gnu.quote(root) + ": File exists");
               exit(1);
@@ -632,7 +632,7 @@ function spool(s: Src, first: u8[]): (Src, i64) {
       }
     }
   }
-  let back: Reader = stdin();
+  let back = stdin();
   match (open_reader(path)) {
     Ok(r) => {
       back = r;
@@ -644,10 +644,10 @@ function spool(s: Src, first: u8[]): (Src, i64) {
     }
   }
   drop_spool(path);
-  let total: i64 = 0 as i64;
-  let buf: io_buffered.BufWriter = io_buffered.buf_writer_new(w, 65536);
-  let block: u8[] = first;
-  let src: Src = s;
+  let total = 0 as i64;
+  let buf = io_buffered.buf_writer_new(w, 65536);
+  let block = first;
+  let src = s;
   while (block.len() > 0) {
     total = total + block.len() as i64;
     match (buf.write_bytes(block)) {
@@ -681,14 +681,14 @@ function sized(s: Src, r: Reader): (Src, i64) {
   match (r.stat()) {
     Ok(st) => {
       if (st.is_file) {
-        let at: i64 = 0 as i64;
+        let at = 0 as i64;
         match (r.seek(0 as i64, 1)) {
           Ok(p) => {
             at = p;
           },
           Err(_) => {}
         }
-        let size: i64 = st.size - at;
+        let size = st.size - at;
         if (size < 0 as i64) {
           size = 0 as i64;
         }
@@ -698,8 +698,8 @@ function sized(s: Src, r: Reader): (Src, i64) {
     Err(_) => {}
   }
   let head: (u8[], Src) = src_read(s, read_size());
-  let first: u8[] = head.0;
-  let rest: Src = head.1;
+  let first = head.0;
+  let rest = head.1;
   if (rest.eof) {
     return (src_mem(rest.r, rest.name, first), first.len() as i64);
   }
@@ -707,19 +707,19 @@ function sized(s: Src, r: Reader): (Src, i64) {
 }
 
 function split_lines(s: Settings, o: Out, src: Src): Out {
-  let out: Out = o;
-  let input: Src = src;
-  let left: u64 = s.units;
-  let started: boolean = false;
+  let out = o;
+  let input = src;
+  let left = s.units;
+  let started = false;
   while (true) {
     let r: (u8[], Src) = src_read(input, read_size());
-    let block: u8[] = r.0;
+    let block = r.0;
     input = r.1;
     if (block.len() == 0) {
       return out;
     }
-    let at: i32 = 0;
-    let here: u64 = __count_byte_bytes(block, s.sep) as u64;
+    let at = 0;
+    let here = __count_byte_bytes(block, s.sep) as u64;
     while (at < block.len()) {
       if (!started) {
         out = out_begin(out);
@@ -727,18 +727,18 @@ function split_lines(s: Settings, o: Out, src: Src): Out {
       }
       if (here < left) {
         out = out_put_range(out, block, at, block.len());
-        left = left - here;
+        left -= here;
         at = block.len();
       } else {
-        let cut: i32 = at;
-        let want: u64 = left;
+        let cut = at;
+        let want = left;
         while (want > 0 as u64) {
           cut = __memchr_bytes(block, s.sep, cut) + 1;
           want = want - 1 as u64;
         }
         out = out_put_range(out, block, at, cut);
         at = cut;
-        here = here - left;
+        here -= left;
         left = s.units;
         started = false;
       }
@@ -748,36 +748,36 @@ function split_lines(s: Settings, o: Out, src: Src): Out {
 }
 
 function split_bytes(s: Settings, o: Out, src: Src): Out {
-  let out: Out = o;
-  let input: Src = src;
-  let left: u64 = s.units;
-  let started: boolean = false;
+  let out = o;
+  let input = src;
+  let left = s.units;
+  let started = false;
   while (true) {
     let r: (u8[], Src) = src_read(input, read_size());
-    let block: u8[] = r.0;
+    let block = r.0;
     input = r.1;
     if (block.len() == 0) {
       return out;
     }
-    let at: i32 = 0;
+    let at = 0;
     while (at < block.len()) {
       if (!started) {
         out = out_begin(out);
         started = true;
       }
-      let have: u64 = (block.len() - at) as u64;
+      let have = (block.len() - at) as u64;
       if (have < left) {
         if (at == 0) {
           out = out_put(out, block);
         } else {
           out = out_put_range(out, block, at, block.len());
         }
-        left = left - have;
+        left -= have;
         at = block.len();
       } else {
-        let take: i32 = left as i32;
+        let take = left as i32;
         out = out_put_range(out, block, at, at + take);
-        at = at + take;
+        at += take;
         left = s.units;
         started = false;
       }
@@ -787,19 +787,19 @@ function split_bytes(s: Settings, o: Out, src: Src): Out {
 }
 
 function split_line_bytes(s: Settings, o: Out, src: Src): Out {
-  let out: Out = o;
-  let input: Src = src;
+  let out = o;
+  let input = src;
   let buf: u8[] = [];
-  let used: u64 = 0 as u64;
-  let started: boolean = false;
-  let eof: boolean = false;
+  let used = 0 as u64;
+  let started = false;
+  let eof = false;
   while (true) {
-    let avail: u64 = s.units - used;
-    let hi: i32 = buf.len();
+    let avail = s.units - used;
+    let hi = buf.len();
     if (avail < hi as u64) {
       hi = avail as i32;
     }
-    let j: i32 = __rmemchr_bytes(buf, s.sep, hi - 1);
+    let j = __rmemchr_bytes(buf, s.sep, hi - 1);
     if (j >= 0) {
       if (!started) {
         out = out_begin(out);
@@ -822,7 +822,7 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
         eof = more.2;
         continue;
       }
-      let want: i32 = read_size();
+      let want = read_size();
       if (avail - buf.len() as u64 < want as u64) {
         want = (avail - buf.len() as u64) as i32;
       }
@@ -864,13 +864,13 @@ function split_line_bytes(s: Settings, o: Out, src: Src): Out {
 }
 
 function extend_record(src: Src, prefix: u8[], budget: u64, sep: i32): (u8[], Src, boolean) {
-  let input: Src = src;
-  let h: usize = buf_new(prefix.len());
+  let input = src;
+  let h = buf_new(prefix.len());
   buf_push_bytes_range(h, prefix, 0, prefix.len());
-  let eof: boolean = false;
+  let eof = false;
   while (buf_len(h) as u64 < budget) {
-    let left: u64 = budget - buf_len(h) as u64;
-    let want: i32 = read_size();
+    let left = budget - buf_len(h) as u64;
+    let want = read_size();
     if (left < want as u64) {
       want = left as i32;
     }
@@ -885,15 +885,15 @@ function extend_record(src: Src, prefix: u8[], budget: u64, sep: i32): (u8[], Sr
       break;
     }
   }
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return (bytes, input, eof);
 }
 
 function chunk_end(k: u64, n: u64, size: u64): u64 {
-  let each: u64 = size / n;
-  let extra: u64 = size % n;
-  let bonus: u64 = k;
+  let each = size / n;
+  let extra = size % n;
+  let bonus = k;
   if (bonus > extra) {
     bonus = extra;
   }
@@ -901,20 +901,20 @@ function chunk_end(k: u64, n: u64, size: u64): u64 {
 }
 
 function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
-  let out: Out = o;
-  let input: Src = src;
-  let total: u64 = size as u64;
-  let pos: u64 = 0 as u64;
-  let k: u64 = 1 as u64;
+  let out = o;
+  let input = src;
+  let total = size as u64;
+  let pos = 0 as u64;
+  let k = 1 as u64;
   while (k <= s.units) {
-    let end: u64 = chunk_end(k, s.units, total);
-    let want: u64 = end - pos;
-    let wanted: boolean = s.chunk_k == 0 as u64 || s.chunk_k == k;
+    let end = chunk_end(k, s.units, total);
+    let want = end - pos;
+    let wanted = s.chunk_k == 0 as u64 || s.chunk_k == k;
     if (wanted && (want > 0 as u64 || !s.elide)) {
       out = out_begin(out);
     }
     while (want > 0 as u64) {
-      let n: i32 = read_size();
+      let n = read_size();
       if (want < n as u64) {
         n = want as i32;
       }
@@ -936,26 +936,26 @@ function split_chunk_bytes(s: Settings, o: Out, src: Src, size: i64): Out {
 }
 
 function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
-  let out: Out = o;
-  let input: Src = src;
-  let total: u64 = size as u64;
-  let pos: u64 = 0 as u64;
-  let k: u64 = 1 as u64;
-  let at_boundary: boolean = true;
-  let ends_sep: boolean = false;
+  let out = o;
+  let input = src;
+  let total = size as u64;
+  let pos = 0 as u64;
+  let k = 1 as u64;
+  let at_boundary = true;
+  let ends_sep = false;
   while (true) {
-    let end: u64 = chunk_end(k, s.units, total);
+    let end = chunk_end(k, s.units, total);
     if (end < pos) {
       end = pos;
     }
-    let wanted: boolean = s.chunk_k == 0 as u64 || s.chunk_k == k;
-    let opened: boolean = false;
+    let wanted = s.chunk_k == 0 as u64 || s.chunk_k == k;
+    let opened = false;
     if (wanted && !s.elide) {
       out = out_begin(out);
       opened = true;
     }
     while (pos < end) {
-      let n: i32 = read_size();
+      let n = read_size();
       if (end - pos < n as u64) {
         n = (end - pos) as i32;
       }
@@ -979,13 +979,13 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
     while (!at_boundary && pos < total) {
       let rr: (u8[], Src) = src_read(input, read_size());
       input = rr.1;
-      let block: u8[] = rr.0;
+      let block = rr.0;
       if (block.len() == 0) {
         pos = total;
         at_boundary = true;
       } else {
-        let j: i32 = __memchr_bytes(block, s.sep, 0);
-        let take: i32 = block.len();
+        let j = __memchr_bytes(block, s.sep, 0);
+        let take = block.len();
         if (j >= 0) {
           take = j + 1;
           at_boundary = true;
@@ -1005,7 +1005,7 @@ function split_chunk_lines(s: Settings, o: Out, src: Src, size: i64): Out {
       }
     }
     if (k >= s.units) {
-      let runaway: boolean = s.chunk_k == 0 as u64 && s.units > total && total > 0 as u64 && ends_sep;
+      let runaway = s.chunk_k == 0 as u64 && s.units > total && total > 0 as u64 && ends_sep;
       if (!runaway) {
         break;
       }
@@ -1023,8 +1023,8 @@ function src_pushback(s: Src, rest: u8[]): Src {
 }
 
 function split_round(s: Settings, o: Out, src: Src): Out {
-  let out: Out = o;
-  let input: Src = src;
+  let out = o;
+  let input = src;
   if (s.chunk_k != 0 as u64) {
     return split_round_one(s, out, input);
   }
@@ -1032,10 +1032,10 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   let pids: i32[] = [];
   let names: string[] = [];
   let live: boolean[] = [];
-  let i: u64 = 0 as u64;
+  let i = 0 as u64;
   while (i < s.units) {
     let r: (string, Out) = out_name(out);
-    let name: string = r.0;
+    let name = r.0;
     out = r.1;
     names = names.append(name);
     if (s.elide) {
@@ -1044,64 +1044,64 @@ function split_round(s: Settings, o: Out, src: Src): Out {
       live = live.append(false);
     } else {
       out = out_verbose(out, name);
-      let pc: Piece = piece_open(s, out.so, name);
+      let pc = piece_open(s, out.so, name);
       ws = ws.append(pc.w);
       pids = pids.append(pc.pid);
       live = live.append(true);
     }
     i = i + 1 as u64;
   }
-  let n: i32 = names.len();
-  let slot: i32 = 0;
-  let share_buf: usize = buf_new(round_block());
+  let n = names.len();
+  let slot = 0;
+  let share_buf = buf_new(round_block());
   while (true) {
     let rd: (u8[], Src) = src_read(input, round_block());
     input = rd.1;
-    let buf: u8[] = rd.0;
+    let buf = rd.0;
     if (buf.len() == 0) {
       break;
     }
     let ends: i32[] = [];
-    let at: i32 = 0;
+    let at = 0;
     while (at < buf.len()) {
-      let j: i32 = __memchr_bytes(buf, s.sep, at);
+      let j = __memchr_bytes(buf, s.sep, at);
       if (j < 0) {
         break;
       }
       ends = ends.append(j + 1);
       at = j + 1;
     }
-    let completed: i32 = ends.len();
+    let completed = ends.len();
     if (at < buf.len()) {
       ends = ends.append(buf.len());
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < n && k < ends.len()) {
-      let e: i32 = k;
+      let e = k;
       while (e < ends.len()) {
-        let from: i32 = 0;
+        let from = 0;
         if (e > 0) {
           from = ends[e - 1];
         }
         buf_push_bytes_range(share_buf, buf, from, ends[e]);
-        e = e + n;
+        e += n;
       }
-      let share: u8[] = buf_take_bytes(share_buf);
-      let target: i32 = (slot + k) % n;
+      let share = buf_take_bytes(share_buf);
+      let target = (slot + k) % n;
       if (!live[target]) {
         out = out_verbose(out, names[target]);
-        let pc: Piece = piece_open(s, out.so, names[target]);
+        let pc = piece_open(s, out.so, names[target]);
         ws = ws.with(target, pc.w);
         pids = pids.with(target, pc.pid);
         live = live.with(target, true);
       }
       write_fd(s, out.so, ws[target], names[target], share);
-      k = k + 1;
+      k += 1;
     }
     slot = (slot + completed) % n;
   }
   buf_free(share_buf);
-  let c: i32 = 0;
+  let c = 0;
   while (c < n) {
     if (live[c]) {
       let (w, rest) = ws.swap_at(c, stdout());
@@ -1111,7 +1111,7 @@ function split_round(s: Settings, o: Out, src: Src): Out {
       }
       piece_wait(s, out.so, names[c], pids[c]);
     }
-    c = c + 1;
+    c += 1;
   }
   return out;
 }
@@ -1121,19 +1121,19 @@ function round_block(): i32 {
 }
 
 function split_round_one(s: Settings, o: Out, src: Src): Out {
-  let out: Out = o;
-  let input: Src = src;
-  let slot: u64 = 1 as u64;
+  let out = o;
+  let input = src;
+  let slot = 1 as u64;
   while (true) {
     let rd: (u8[], Src) = src_read(input, read_size());
     input = rd.1;
-    let buf: u8[] = rd.0;
+    let buf = rd.0;
     if (buf.len() == 0) {
       break;
     }
-    let at: i32 = 0;
+    let at = 0;
     while (at < buf.len()) {
-      let j: i32 = __memchr_bytes(buf, s.sep, at);
+      let j = __memchr_bytes(buf, s.sep, at);
       if (j < 0) {
         break;
       }
@@ -1157,11 +1157,11 @@ function out_verbose(own o: Out, name: string): Out {
   if (!o.s.verbose) {
     return o;
   }
-  let line: string = "creating file " + gnu.quote(name);
+  let line = "creating file " + gnu.quote(name);
   if (o.s.filter) {
     line = "executing with FILE=" + gnu.quotef(name);
   }
-  let so: io_buffered.BufWriter = gnu.put(o.so, line + "\n");
+  let so = gnu.put(o.so, line + "\n");
   if (o.s.filter && !isatty(1)) {
     return Out { ...o, so: so };
   }
@@ -1222,30 +1222,30 @@ function piece_open(s: Settings, so: io_buffered.BufWriter, name: string): Piece
 }
 
 function spawn_filter(s: Settings, so: io_buffered.BufWriter, name: string): Piece {
-  let envp: string[] = with_file(environ(), name);
+  let envp = with_file(environ(), name);
   let shell: (string, boolean) = gnu.env_value(envp, "SHELL");
-  let prog: string = "/bin/sh";
+  let prog = "/bin/sh";
   if (shell.1) {
     prog = shell.0;
   }
-  let p: Pipe = open_pipe(so);
-  let ep: Pipe = open_pipe(so);
-  let pid: i32 = proc_fork();
+  let p = open_pipe(so);
+  let ep = open_pipe(so);
+  let pid = proc_fork();
   if (pid == 0) {
     p.r.dup_onto(0);
     if (s.sigpipe_default) {
       signal_default(sig_pipe());
     }
-    let rc: i32 = proc_exec_as(prog, [gnu.base_name(prog), "-c", s.command], envp);
-    ep.w.write((0 - rc).to_string());
+    let rc = proc_exec_as(prog, [gnu.base_name(prog), "-c", s.command], envp);
+    ep.w.write((-rc).to_string());
     exit(127);
   }
   if (pid < 0) {
-    fail(so, "fork system call failed: " + gnu.exec_errno_text(0 - pid), 1);
+    fail(so, "fork system call failed: " + gnu.exec_errno_text(-pid), 1);
   }
   p.r.close();
   ep.w.close();
-  let errno: i32 = exec_errno(ep.r);
+  let errno = exec_errno(ep.r);
   ep.r.close();
   if (errno != 0) {
     proc_waitpid_status(pid);
@@ -1267,30 +1267,30 @@ function open_pipe(so: io_buffered.BufWriter): Pipe {
 }
 
 function exec_errno(r: Reader): i32 {
-  let text: string = "";
+  let text = "";
   match (r.read_chunk(16)) {
     Ok(chunk) => {
       text = chunk;
     },
     Err(_) => {}
   }
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let n = 0;
+  let i = 0;
   while (i < text.len()) {
     n = n * 10 + (text[i] as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function with_file(envp: string[], name: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < envp.len()) {
     if (!envp[i].starts_with("FILE=")) {
       out = out.append(envp[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out.append("FILE=" + name);
 }
@@ -1305,19 +1305,19 @@ function piece_wait(s: Settings, so: io_buffered.BufWriter, name: string, pid: i
 }
 
 function reap(s: Settings, so: io_buffered.BufWriter, name: string, pid: i32): void {
-  let st: i32 = proc_waitpid_status(pid);
+  let st = proc_waitpid_status(pid);
   if (st < 0) {
-    fail(so, "waiting for child process: " + gnu.exec_errno_text(0 - st), 1);
+    fail(so, "waiting for child process: " + gnu.exec_errno_text(-st), 1);
   }
-  let sig: i32 = st & 127;
+  let sig = st & 127;
   if (sig != 0 && sig != sig_pipe()) {
-    let signame: string = signals.name(sig);
+    let signame = signals.name(sig);
     if (signame == "") {
       signame = sig.to_string();
     }
     fail(so, "with FILE=" + gnu.quotef(name) + ", signal " + signame + " from command: " + s.command, 128 + sig);
   }
-  let code: i32 = st >> 8 & 255;
+  let code = st >> 8 & 255;
   if (sig == 0 && code != 0) {
     fail(so, "with FILE=" + gnu.quotef(name) + ", exit " + code.to_string() + " from command: " + s.command, code);
   }
@@ -1342,9 +1342,9 @@ function declare_options(): gnu.Opt[] {
 }
 
 function scan(argv: string[]): (Settings, string[]) {
-  let s: Settings = settings_new();
-  let have_sep: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "split", help_text(), 1);
+  let s = settings_new();
+  let have_sep = false;
+  let g = gnu.getopt_new(argv, declare_options(), "split", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -1382,7 +1382,7 @@ function scan(argv: string[]): (Settings, string[]) {
         } else if (m.id == opt_verbose()) {
           s = Settings { ...s, verbose: true };
         } else if (m.id == opt_separator()) {
-          let sep: i32 = separator_operand(m.value);
+          let sep = separator_operand(m.value);
           if (have_sep && sep != s.sep) {
             gnu.error("multiple separator characters specified");
             exit(1);
@@ -1400,14 +1400,14 @@ function scan(argv: string[]): (Settings, string[]) {
 }
 
 function make_suffix(s: Settings): Suffix {
-  let width: i32 = 2;
-  let auto: boolean = true;
+  let width = 2;
+  let auto = true;
   if (s.suffix_len > 0) {
     width = s.suffix_len;
     auto = false;
   }
   if (s.mode == mode_chunks()) {
-    let needed: i32 = suffix_needed(s.units, s.alpha.len());
+    let needed = suffix_needed(s.units, s.alpha.len());
     if (s.suffix_len > 0 && s.suffix_len < needed) {
       gnu.error("the suffix length needs to be at least " + needed.to_string());
       exit(1);
@@ -1440,14 +1440,14 @@ function open_input(path: string): Reader {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let r: (Settings, string[]) = scan(argv);
-  let s: Settings = r.0;
-  let operands: string[] = r.1;
+  let s = r.0;
+  let operands = r.1;
   if (operands.len() > 2) {
     gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
   }
-  let path: string = "-";
+  let path = "-";
   if (operands.len() >= 1) {
     path = operands[0];
   }
@@ -1465,11 +1465,11 @@ pub function main(): i32 {
     signal_ignore(sig_pipe());
   }
 
-  let reader: Reader = open_input(path);
-  let name: string = path;
-  let src: Src = src_new(reader, name);
-  let to_stdout: boolean = s.mode == mode_chunks() && s.chunk_k != 0 as u64;
-  let out: Out = out_new(s, make_suffix(s), to_stdout);
+  let reader = open_input(path);
+  let name = path;
+  let src = src_new(reader, name);
+  let to_stdout = s.mode == mode_chunks() && s.chunk_k != 0 as u64;
+  let out = out_new(s, make_suffix(s), to_stdout);
 
   if (s.mode == mode_lines()) {
     out = split_lines(s, out, src);

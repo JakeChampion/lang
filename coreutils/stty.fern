@@ -306,30 +306,30 @@ function darwin_alias_modes(): Mode[] {
 }
 
 function modes(): Mode[] {
-  let m: Mode[] = cflag_modes();
-  let g: Mode[] = iflag_modes();
-  let i: i32 = 0;
+  let m = cflag_modes();
+  let g = iflag_modes();
+  let i = 0;
   while (i < g.len()) {
     m = m.append(g[i]);
-    i = i + 1;
+    i += 1;
   }
   g = oflag_modes();
   i = 0;
   while (i < g.len()) {
     m = m.append(g[i]);
-    i = i + 1;
+    i += 1;
   }
   g = lflag_modes();
   i = 0;
   while (i < g.len()) {
     m = m.append(g[i]);
-    i = i + 1;
+    i += 1;
   }
   g = alias_modes();
   i = 0;
   while (i < g.len()) {
     m = m.append(g[i]);
-    i = i + 1;
+    i += 1;
   }
   return m;
 }
@@ -449,16 +449,16 @@ function hex_lower(v: i64): string {
   if (v == 0 as i64) {
     return "0";
   }
-  let out: string = "";
-  let n: i64 = v;
+  let out = "";
+  let n = v;
   while (n > 0 as i64) {
-    let d: i32 = (n % (16 as i64)) as i32;
+    let d = (n % (16 as i64)) as i32;
     if (d < 10) {
       out = one_char(48 + d) + out;
     } else {
       out = one_char(87 + d) + out;
     }
-    n = n / (16 as i64);
+    n /= 16 as i64;
   }
   return out;
 }
@@ -467,11 +467,11 @@ function fmt_cc(v: i32): string {
   if (v == vdisable()) {
     return "<undef>";
   }
-  let pre: string = "";
-  let c: i32 = v;
+  let pre = "";
+  let c = v;
   if (c >= 128) {
     pre = "M-";
-    c = c - 128;
+    c -= 128;
   }
   if (c == 127) {
     return pre + "^?";
@@ -489,8 +489,8 @@ function speed_text(t: i64[], fancy: boolean): string {
     }
     return speed_name(t[w_cflag()]);
   }
-  let isp: string = (t[w_ispeed()] as u64).to_string();
-  let osp: string = (t[w_ospeed()] as u64).to_string();
+  let isp = (t[w_ispeed()] as u64).to_string();
+  let osp = (t[w_ospeed()] as u64).to_string();
   if (t[w_ispeed()] == 0 as i64 || isp == osp) {
     if (fancy) {
       return "speed " + osp + " baud;";
@@ -504,14 +504,14 @@ function speed_text(t: i64[], fancy: boolean): string {
 }
 
 function speed_name(cflag: i64): string {
-  let bits: i64 = cflag & cbaud_mask();
-  let s: Speed[] = speeds();
-  let i: i32 = 0;
+  let bits = cflag & cbaud_mask();
+  let s = speeds();
+  let i = 0;
   while (i < s.len()) {
     if (s[i].bits == bits) {
       return s[i].value.to_string();
     }
-    i = i + 1;
+    i += 1;
   }
   return "0";
 }
@@ -563,21 +563,21 @@ function min_time(t: i64[]): string {
 }
 
 function print_g(t: i64[]): string {
-  let out: string = hex_lower(t[w_iflag()]) + ":" + hex_lower(t[w_oflag()]) + ":" + hex_lower(t[w_cflag()]) + ":" + hex_lower(t[w_lflag()]);
-  let i: i32 = 0;
+  let out = hex_lower(t[w_iflag()]) + ":" + hex_lower(t[w_oflag()]) + ":" + hex_lower(t[w_cflag()]) + ":" + hex_lower(t[w_lflag()]);
+  let i = 0;
   while (i < n_cc_printed()) {
     if (i < n_cc_kernel()) {
       out = out + ":" + hex_lower(t[cc_base() + i]);
     } else {
-      out = out + ":0";
+      out += ":0";
     }
-    i = i + 1;
+    i += 1;
   }
   return out + "\n";
 }
 
 function print_all(t: i64[], rows: i64, cols: i64): string {
-  let w: Wrap = wrap_new();
+  let w = wrap_new();
   w = wrap_put(w, speed_text(t, true));
   w = wrap_put(w, "rows " + rows.to_string() + "; columns " + cols.to_string() + ";");
   if (!darwin()) {
@@ -585,29 +585,29 @@ function print_all(t: i64[], rows: i64, cols: i64): string {
   }
   w = wrap_break(w);
 
-  let cs: Cchar[] = cchars();
-  let i: i32 = 0;
+  let cs = cchars();
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].show) {
       w = wrap_put(w, cc_token(cs[i].name, t[cc_base() + cs[i].idx] as i32));
     }
-    i = i + 1;
+    i += 1;
   }
   w = wrap_put(w, min_time(t));
   w = wrap_break(w);
 
-  let ms: Mode[] = modes();
-  let word: i32 = 0 - 1;
+  let ms = modes();
+  let word: i32 = -1;
   i = 0;
   while (i < ms.len()) {
-    let m: Mode = ms[i];
+    let m = ms[i];
     if (m.show) {
       if (m.word != word) {
         w = wrap_break(w);
         word = m.word;
       }
       if (m.grp) {
-        let tok: string = group_token(t, m);
+        let tok = group_token(t, m);
         if (tok.len() > 0) {
           w = wrap_put(w, tok);
         }
@@ -617,53 +617,53 @@ function print_all(t: i64[], rows: i64, cols: i64): string {
         w = wrap_put(w, "-" + m.name);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return wrap_done(w);
 }
 
 function print_diff(t: i64[]): string {
-  let w: Wrap = wrap_new();
+  let w = wrap_new();
   w = wrap_put(w, speed_text(t, true));
   if (!darwin()) {
     w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
   }
   w = wrap_break(w);
 
-  let cs: Cchar[] = cchars();
-  let i: i32 = 0;
+  let cs = cchars();
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].show) {
-      let v: i32 = t[cc_base() + cs[i].idx] as i32;
+      let v = t[cc_base() + cs[i].idx] as i32;
       if (v != cs[i].dflt) {
         w = wrap_put(w, cc_token(cs[i].name, v));
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if ((t[w_lflag()] & icanon_bit()) == 0 as i64) {
-    let mt: string = min_time(t);
+    let mt = min_time(t);
     w = wrap_put_n(w, mt, mt.len() + 1);
   }
   w = wrap_break(w);
 
-  let ms: Mode[] = modes();
-  let word: i32 = 0 - 1;
+  let ms = modes();
+  let word: i32 = -1;
   i = 0;
   while (i < ms.len()) {
-    let m: Mode = ms[i];
+    let m = ms[i];
     if (m.show && m.sane != 0) {
       if (m.word != word) {
         w = wrap_break(w);
         word = m.word;
       }
       if (m.sane == 3) {
-        let tok: string = group_token(t, m);
+        let tok = group_token(t, m);
         if (tok.len() > 0) {
           w = wrap_put(w, tok);
         }
       } else if (!m.grp) {
-        let on: boolean = (t[m.word] & m.bits) != 0 as i64;
+        let on = (t[m.word] & m.bits) != 0 as i64;
         if (on && m.sane == 2) {
           w = wrap_put(w, m.name);
         }
@@ -672,31 +672,31 @@ function print_diff(t: i64[]): string {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return wrap_done(w);
 }
 
 function find_mode(name: string): (Mode, boolean) {
-  let ms: Mode[] = modes();
-  let i: i32 = 0;
+  let ms = modes();
+  let i = 0;
   while (i < ms.len()) {
     if (ms[i].name == name) {
       return (ms[i], true);
     }
-    i = i + 1;
+    i += 1;
   }
   return (Mode { name: "", word: 0, bits: 0 as i64, mask: 0 as i64, grp: false, rev: false, sane: 0, show: false, setattr: true }, false);
 }
 
 function find_cchar(name: string): (Cchar, boolean) {
-  let cs: Cchar[] = cchars();
-  let i: i32 = 0;
+  let cs = cchars();
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].name == name) {
       return (cs[i], true);
     }
-    i = i + 1;
+    i += 1;
   }
   return (Cchar { name: "", idx: 0, dflt: 0, show: false }, false);
 }
@@ -705,13 +705,13 @@ function value_to_baud(v: u64): (i64, boolean) {
   if (darwin()) {
     return (v as i64, v != u64_max());
   }
-  let ss: Speed[] = speeds();
-  let i: i32 = 0;
+  let ss = speeds();
+  let i = 0;
   while (i < ss.len()) {
     if (ss[i].value as u64 == v) {
       return (ss[i].bits, true);
     }
-    i = i + 1;
+    i += 1;
   }
   return (0 as i64, false);
 }
@@ -724,32 +724,32 @@ function inc_u64(v: u64): u64 {
 }
 
 function find_speed(arg: string): (i64, boolean) {
-  let n: i32 = arg.len();
-  let i: i32 = 0;
+  let n = arg.len();
+  let i = 0;
   while (i < n && is_space(arg[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < n && arg[i] as i32 == 45) {
     return (0 as i64, false);
   }
   let r: (u64, i32, boolean) = strtoul10(arg, i);
-  let v: u64 = r.0;
-  let p: i32 = r.1;
-  let c: i32 = at_byte(arg, p);
-  p = p + 1;
+  let v = r.0;
+  let p = r.1;
+  let c = at_byte(arg, p);
+  p += 1;
   if (c == 46) {
     c = at_byte(arg, p);
-    p = p + 1;
+    p += 1;
     if (c != 0) {
-      let d: i32 = c - 48;
+      let d = c - 48;
       if (d > 5 || d < 0) {
         v = inc_u64(v);
       } else if (d == 5) {
         c = at_byte(arg, p);
-        p = p + 1;
+        p += 1;
         while (c == 48) {
           c = at_byte(arg, p);
-          p = p + 1;
+          p += 1;
         }
         if (c != 0 || (v & 1 as u64) == 1 as u64) {
           v = inc_u64(v);
@@ -757,14 +757,14 @@ function find_speed(arg: string): (i64, boolean) {
       }
       while (c >= 48 && c <= 57) {
         c = at_byte(arg, p);
-        p = p + 1;
+        p += 1;
       }
       if (c != 0) {
         return (0 as i64, false);
       }
     }
   } else if (c != 0) {
-    let rest: string = slice_unchecked(arg, i, n) + "";
+    let rest = slice_unchecked(arg, i, n) + "";
     if (rest == "exta") {
       return value_to_baud(19200 as u64);
     }
@@ -788,22 +788,22 @@ function at_byte(s: string, i: i32): i32 {
 }
 
 function strtoul10(s: string, i: i32): (u64, i32, boolean) {
-  let p: i32 = i;
+  let p = i;
   if (at_byte(s, p) == 43) {
-    p = p + 1;
+    p += 1;
   }
-  let start: i32 = p;
-  let v: u64 = 0 as u64;
-  let over: boolean = false;
+  let start = p;
+  let v = 0 as u64;
+  let over = false;
   while (at_byte(s, p) >= 48 && at_byte(s, p) <= 57) {
-    let d: u64 = (at_byte(s, p) - 48) as u64;
+    let d = (at_byte(s, p) - 48) as u64;
     if (v > u64_max() / (10 as u64) || v == u64_max() / (10 as u64) && d > 5 as u64) {
       over = true;
     }
     if (!over) {
       v = v * (10 as u64) + d;
     }
-    p = p + 1;
+    p += 1;
   }
   if (p == start) {
     return (0 as u64, i, false);
@@ -836,7 +836,7 @@ function raw_tokens(): string {
 }
 
 function combo_tokens(name: string): (string, boolean) {
-  let cooked: string = "brkint ignpar istrip icrnl ixon opost isig icanon";
+  let cooked = "brkint ignpar istrip icrnl ixon opost isig icanon";
   if (name == "raw" || name == "-cooked") {
     return (raw_tokens(), true);
   }
@@ -914,18 +914,18 @@ function parse_hex(s: string): (i64, boolean) {
   if (s.len() == 0) {
     return (0 as i64, false);
   }
-  let body: string = s;
+  let body = s;
   if (s.len() > 2 && s[0] as i32 == 48 && (s[1] as i32 == 120 || s[1] as i32 == 88)) {
     body = slice_unchecked(s, 2, s.len()) + "";
   }
   if (body.len() == 0) {
     return (0 as i64, false);
   }
-  let v: i64 = 0 as i64;
-  let i: i32 = 0;
+  let v = 0 as i64;
+  let i = 0;
   while (i < body.len()) {
-    let c: i32 = body[i] as i32;
-    let d: i32 = 0 - 1;
+    let c = body[i] as i32;
+    let d: i32 = -1;
     if (c >= 48 && c <= 57) {
       d = c - 48;
     }
@@ -939,25 +939,25 @@ function parse_hex(s: string): (i64, boolean) {
       return (0 as i64, false);
     }
     v = v * (16 as i64) + d as i64;
-    i = i + 1;
+    i += 1;
   }
   return (v, true);
 }
 
 function parse_saved(tok: string): (i64[], boolean) {
-  let parts: string[] = tok.split(":");
+  let parts = tok.split(":");
   if (parts.len() != 4 + n_cc_printed()) {
     return ([], false);
   }
   let out: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < parts.len()) {
     let r: (i64, boolean) = parse_hex(parts[i]);
     if (!r.1) {
       return ([], false);
     }
     out = out.append(r.0);
-    i = i + 1;
+    i += 1;
   }
   return (out, true);
 }
@@ -969,16 +969,16 @@ function long_names(): string[] {
 }
 
 function long_match(p: string): string {
-  let ns: string[] = long_names();
-  let hit: string = "";
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let ns = long_names();
+  let hit = "";
+  let n = 0;
+  let i = 0;
   while (i < ns.len()) {
     if (ns[i].starts_with(p)) {
       hit = ns[i];
-      n = n + 1;
+      n += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (n == 1) {
     return hit;
@@ -995,16 +995,16 @@ function scan_device(s: Scan, path: string): Scan {
 }
 
 function scan_long(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boolean) {
-  let body: string = slice_unchecked(a, 2, a.len()) + "";
-  let name: string = body;
-  let value: string = "";
-  let has_value: boolean = false;
+  let body = slice_unchecked(a, 2, a.len()) + "";
+  let name = body;
+  let value = "";
+  let has_value = false;
   if let Some(eq) = body.index_of("=") {
     name = slice_unchecked(body, 0, eq) + "";
     value = slice_unchecked(body, eq + 1, body.len()) + "";
     has_value = true;
   }
-  let full: string = long_match(name);
+  let full = long_match(name);
   if (full.len() == 0) {
     return (s, i, false);
   }
@@ -1036,10 +1036,10 @@ function scan_long(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, bool
 }
 
 function scan_short(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boolean) {
-  let st: Scan = s;
-  let j: i32 = 1;
+  let st = s;
+  let j = 1;
   while (j < a.len()) {
-    let c: i32 = a[j] as i32;
+    let c = a[j] as i32;
     if (c == 97) {
       st = Scan { ...st, verbose: true };
     } else if (c == 103) {
@@ -1055,22 +1055,22 @@ function scan_short(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boo
     } else {
       return (st, i, false);
     }
-    j = j + 1;
+    j += 1;
   }
   return (st, i + 1, true);
 }
 
 function scan(argv: string[]): Scan {
-  let s: Scan = Scan { verbose: false, save: false, device: "", has_device: false, modes: [] };
-  let i: i32 = 1;
+  let s = Scan { verbose: false, save: false, device: "", has_device: false, modes: [] };
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "--") {
       if (s.modes.len() == 0) {
         return s;
       }
       s = Scan { ...s, modes: s.modes.append(a) };
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (a.len() > 2 && a.starts_with("--")) {
@@ -1089,238 +1089,238 @@ function scan(argv: string[]): Scan {
       }
     }
     s = Scan { ...s, modes: s.modes.append(a) };
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
 
 function help_special_chars(): string {
-  let o: string = "";
-  o = o + "Special characters:\n";
-  o = o + " * discard CHAR  CHAR will toggle discarding of output\n";
+  let o = "";
+  o += "Special characters:\n";
+  o += " * discard CHAR  CHAR will toggle discarding of output\n";
   if (darwin()) {
-    o = o + " * dsusp CHAR    CHAR will send a terminal stop signal once input flushed\n";
+    o += " * dsusp CHAR    CHAR will send a terminal stop signal once input flushed\n";
   }
-  o = o + "   eof CHAR      CHAR will send an end of file (terminate the input)\n";
-  o = o + "   eol CHAR      CHAR will end the line\n";
-  o = o + " * eol2 CHAR     alternate CHAR for ending the line\n";
-  o = o + "   erase CHAR    CHAR will erase the last character typed\n";
-  o = o + "   intr CHAR     CHAR will send an interrupt signal\n";
-  o = o + "   kill CHAR     CHAR will erase the current line\n";
-  o = o + " * lnext CHAR    CHAR will enter the next character quoted\n";
+  o += "   eof CHAR      CHAR will send an end of file (terminate the input)\n";
+  o += "   eol CHAR      CHAR will end the line\n";
+  o += " * eol2 CHAR     alternate CHAR for ending the line\n";
+  o += "   erase CHAR    CHAR will erase the last character typed\n";
+  o += "   intr CHAR     CHAR will send an interrupt signal\n";
+  o += "   kill CHAR     CHAR will erase the current line\n";
+  o += " * lnext CHAR    CHAR will enter the next character quoted\n";
   if (darwin()) {
-    o = o + " * status CHAR   CHAR will send an info signal\n";
+    o += " * status CHAR   CHAR will send an info signal\n";
   }
-  o = o + "   quit CHAR     CHAR will send a quit signal\n";
-  o = o + " * rprnt CHAR    CHAR will redraw the current line\n";
-  o = o + "   start CHAR    CHAR will restart the output after stopping it\n";
-  o = o + "   stop CHAR     CHAR will stop the output\n";
-  o = o + "   susp CHAR     CHAR will send a terminal stop signal\n";
-  o = o + " * swtch CHAR    CHAR will switch to a different shell layer\n";
-  o = o + " * werase CHAR   CHAR will erase the last word typed\n";
-  o = o + "\n";
+  o += "   quit CHAR     CHAR will send a quit signal\n";
+  o += " * rprnt CHAR    CHAR will redraw the current line\n";
+  o += "   start CHAR    CHAR will restart the output after stopping it\n";
+  o += "   stop CHAR     CHAR will stop the output\n";
+  o += "   susp CHAR     CHAR will send a terminal stop signal\n";
+  o += " * swtch CHAR    CHAR will switch to a different shell layer\n";
+  o += " * werase CHAR   CHAR will erase the last word typed\n";
+  o += "\n";
   return o;
 }
 
 function help_special_settings(): string {
-  let o: string = "";
-  o = o + "Special settings:\n";
-  o = o + "   N             set the input and output speeds to N bauds\n";
-  o = o + "   cols N        tell the kernel that the terminal has N columns\n";
-  o = o + " * columns N     same as cols N\n";
-  o = o + " * [-]drain      wait for transmission before applying settings (on by default)\n";
-  o = o + "   ispeed N      set the input speed to N\n";
+  let o = "";
+  o += "Special settings:\n";
+  o += "   N             set the input and output speeds to N bauds\n";
+  o += "   cols N        tell the kernel that the terminal has N columns\n";
+  o += " * columns N     same as cols N\n";
+  o += " * [-]drain      wait for transmission before applying settings (on by default)\n";
+  o += "   ispeed N      set the input speed to N\n";
   if (!darwin()) {
-    o = o + " * line N        use line discipline N\n";
+    o += " * line N        use line discipline N\n";
   }
-  o = o + "   min N         with -icanon, set N characters minimum for a completed read\n";
-  o = o + "   ospeed N      set the output speed to N\n";
-  o = o + "   rows N        tell the kernel that the terminal has N rows\n";
-  o = o + "   size          print the number of rows and columns according to the kernel\n";
-  o = o + "   speed         print the terminal speed\n";
-  o = o + "   time N        with -icanon, set read timeout of N tenths of a second\n";
-  o = o + "\n";
+  o += "   min N         with -icanon, set N characters minimum for a completed read\n";
+  o += "   ospeed N      set the output speed to N\n";
+  o += "   rows N        tell the kernel that the terminal has N rows\n";
+  o += "   size          print the number of rows and columns according to the kernel\n";
+  o += "   speed         print the terminal speed\n";
+  o += "   time N        with -icanon, set read timeout of N tenths of a second\n";
+  o += "\n";
   return o;
 }
 
 function help_control_settings(): string {
-  let o: string = "";
-  o = o + "Control settings:\n";
-  o = o + "   [-]clocal     disable modem control signals\n";
-  o = o + "   [-]cread      allow input to be received\n";
-  o = o + " * [-]crtscts    enable RTS/CTS handshaking\n";
-  o = o + "   csN           set character size to N bits, N in [5..8]\n";
-  o = o + "   [-]cstopb     use two stop bits per character (one with '-')\n";
-  o = o + "   [-]hup        send a hangup signal when the last process closes the tty\n";
-  o = o + "   [-]hupcl      same as [-]hup\n";
-  o = o + "   [-]parenb     generate parity bit in output and expect parity bit in input\n";
-  o = o + "   [-]parodd     set odd parity (or even parity with '-')\n";
+  let o = "";
+  o += "Control settings:\n";
+  o += "   [-]clocal     disable modem control signals\n";
+  o += "   [-]cread      allow input to be received\n";
+  o += " * [-]crtscts    enable RTS/CTS handshaking\n";
+  o += "   csN           set character size to N bits, N in [5..8]\n";
+  o += "   [-]cstopb     use two stop bits per character (one with '-')\n";
+  o += "   [-]hup        send a hangup signal when the last process closes the tty\n";
+  o += "   [-]hupcl      same as [-]hup\n";
+  o += "   [-]parenb     generate parity bit in output and expect parity bit in input\n";
+  o += "   [-]parodd     set odd parity (or even parity with '-')\n";
   if (!darwin()) {
-    o = o + " * [-]cmspar     use \"stick\" (mark/space) parity\n";
+    o += " * [-]cmspar     use \"stick\" (mark/space) parity\n";
   }
-  o = o + "\n";
+  o += "\n";
   return o;
 }
 
 function help_input_settings(): string {
-  let o: string = "";
-  o = o + "Input settings:\n";
-  o = o + "   [-]brkint     breaks cause an interrupt signal\n";
-  o = o + "   [-]icrnl      translate carriage return to newline\n";
-  o = o + "   [-]ignbrk     ignore break characters\n";
-  o = o + "   [-]igncr      ignore carriage return\n";
-  o = o + "   [-]ignpar     ignore characters with parity errors\n";
-  o = o + " * [-]imaxbel    beep and do not flush a full input buffer on a character\n";
-  o = o + "   [-]inlcr      translate newline to carriage return\n";
-  o = o + "   [-]inpck      enable input parity checking\n";
-  o = o + "   [-]istrip     clear high (8th) bit of input characters\n";
-  o = o + " * [-]iutf8      assume input characters are UTF-8 encoded\n";
+  let o = "";
+  o += "Input settings:\n";
+  o += "   [-]brkint     breaks cause an interrupt signal\n";
+  o += "   [-]icrnl      translate carriage return to newline\n";
+  o += "   [-]ignbrk     ignore break characters\n";
+  o += "   [-]igncr      ignore carriage return\n";
+  o += "   [-]ignpar     ignore characters with parity errors\n";
+  o += " * [-]imaxbel    beep and do not flush a full input buffer on a character\n";
+  o += "   [-]inlcr      translate newline to carriage return\n";
+  o += "   [-]inpck      enable input parity checking\n";
+  o += "   [-]istrip     clear high (8th) bit of input characters\n";
+  o += " * [-]iutf8      assume input characters are UTF-8 encoded\n";
   if (!darwin()) {
-    o = o + " * [-]iuclc      translate uppercase characters to lowercase\n";
+    o += " * [-]iuclc      translate uppercase characters to lowercase\n";
   }
-  o = o + " * [-]ixany      let any character restart output, not only start character\n";
-  o = o + "   [-]ixoff      enable sending of start/stop characters\n";
-  o = o + "   [-]ixon       enable XON/XOFF flow control\n";
-  o = o + "   [-]parmrk     mark parity errors (with a 255-0-character sequence)\n";
-  o = o + "   [-]tandem     same as [-]ixoff\n";
-  o = o + "\n";
+  o += " * [-]ixany      let any character restart output, not only start character\n";
+  o += "   [-]ixoff      enable sending of start/stop characters\n";
+  o += "   [-]ixon       enable XON/XOFF flow control\n";
+  o += "   [-]parmrk     mark parity errors (with a 255-0-character sequence)\n";
+  o += "   [-]tandem     same as [-]ixoff\n";
+  o += "\n";
   return o;
 }
 
 function help_output_settings(): string {
-  let o: string = "";
-  o = o + "Output settings:\n";
-  o = o + " * bsN           backspace delay style, N in [0..1]\n";
-  o = o + " * crN           carriage return delay style, N in [0..3]\n";
-  o = o + " * ffN           form feed delay style, N in [0..1]\n";
-  o = o + " * nlN           newline delay style, N in [0..1]\n";
-  o = o + " * [-]ocrnl      translate carriage return to newline\n";
-  o = o + " * [-]ofdel      use delete characters for fill instead of NUL characters\n";
-  o = o + " * [-]ofill      use fill (padding) characters instead of timing for delays\n";
+  let o = "";
+  o += "Output settings:\n";
+  o += " * bsN           backspace delay style, N in [0..1]\n";
+  o += " * crN           carriage return delay style, N in [0..3]\n";
+  o += " * ffN           form feed delay style, N in [0..1]\n";
+  o += " * nlN           newline delay style, N in [0..1]\n";
+  o += " * [-]ocrnl      translate carriage return to newline\n";
+  o += " * [-]ofdel      use delete characters for fill instead of NUL characters\n";
+  o += " * [-]ofill      use fill (padding) characters instead of timing for delays\n";
   if (!darwin()) {
-    o = o + " * [-]olcuc      translate lowercase characters to uppercase\n";
+    o += " * [-]olcuc      translate lowercase characters to uppercase\n";
   }
-  o = o + " * [-]onlcr      translate newline to carriage return-newline\n";
-  o = o + " * [-]onlret     newline performs a carriage return\n";
-  o = o + " * [-]onocr      do not print carriage returns in the first column\n";
-  o = o + "   [-]opost      postprocess output\n";
-  o = o + " * tabN          horizontal tab delay style, N in [0..3]\n";
-  o = o + " * tabs          same as tab0\n";
-  o = o + " * -tabs         same as tab3\n";
-  o = o + " * vtN           vertical tab delay style, N in [0..1]\n";
-  o = o + "\n";
+  o += " * [-]onlcr      translate newline to carriage return-newline\n";
+  o += " * [-]onlret     newline performs a carriage return\n";
+  o += " * [-]onocr      do not print carriage returns in the first column\n";
+  o += "   [-]opost      postprocess output\n";
+  o += " * tabN          horizontal tab delay style, N in [0..3]\n";
+  o += " * tabs          same as tab0\n";
+  o += " * -tabs         same as tab3\n";
+  o += " * vtN           vertical tab delay style, N in [0..1]\n";
+  o += "\n";
   return o;
 }
 
 function help_local_settings(): string {
-  let o: string = "";
-  o = o + "Local settings:\n";
-  o = o + "   [-]crterase   echo erase characters as backspace-space-backspace\n";
-  o = o + " * crtkill       kill all line by obeying the echoprt and echoe settings\n";
-  o = o + " * -crtkill      kill all line by obeying the echoctl and echok settings\n";
-  o = o + " * [-]ctlecho    echo control characters in hat notation ('^c')\n";
-  o = o + "   [-]echo       echo input characters\n";
-  o = o + " * [-]echoctl    same as [-]ctlecho\n";
-  o = o + "   [-]echoe      same as [-]crterase\n";
-  o = o + "   [-]echok      echo a newline after a kill character\n";
-  o = o + " * [-]echoke     same as [-]crtkill\n";
-  o = o + "   [-]echonl     echo newline even if not echoing other characters\n";
-  o = o + " * [-]echoprt    echo erased characters backward, between '\\' and '/'\n";
-  o = o + " * [-]extproc    enable \"LINEMODE\"; useful with high latency links\n";
-  o = o + " * [-]flusho     discard output\n";
-  o = o + "   [-]icanon     enable special characters: erase, kill, werase, rprnt\n";
-  o = o + "   [-]iexten     enable non-POSIX special characters\n";
-  o = o + "   [-]isig       enable interrupt, quit, and suspend special characters\n";
-  o = o + "   [-]noflsh     disable flushing after interrupt and quit special characters\n";
-  o = o + " * [-]prterase   same as [-]echoprt\n";
-  o = o + " * [-]tostop     stop background jobs that try to write to the terminal\n";
+  let o = "";
+  o += "Local settings:\n";
+  o += "   [-]crterase   echo erase characters as backspace-space-backspace\n";
+  o += " * crtkill       kill all line by obeying the echoprt and echoe settings\n";
+  o += " * -crtkill      kill all line by obeying the echoctl and echok settings\n";
+  o += " * [-]ctlecho    echo control characters in hat notation ('^c')\n";
+  o += "   [-]echo       echo input characters\n";
+  o += " * [-]echoctl    same as [-]ctlecho\n";
+  o += "   [-]echoe      same as [-]crterase\n";
+  o += "   [-]echok      echo a newline after a kill character\n";
+  o += " * [-]echoke     same as [-]crtkill\n";
+  o += "   [-]echonl     echo newline even if not echoing other characters\n";
+  o += " * [-]echoprt    echo erased characters backward, between '\\' and '/'\n";
+  o += " * [-]extproc    enable \"LINEMODE\"; useful with high latency links\n";
+  o += " * [-]flusho     discard output\n";
+  o += "   [-]icanon     enable special characters: erase, kill, werase, rprnt\n";
+  o += "   [-]iexten     enable non-POSIX special characters\n";
+  o += "   [-]isig       enable interrupt, quit, and suspend special characters\n";
+  o += "   [-]noflsh     disable flushing after interrupt and quit special characters\n";
+  o += " * [-]prterase   same as [-]echoprt\n";
+  o += " * [-]tostop     stop background jobs that try to write to the terminal\n";
   if (!darwin()) {
-    o = o + " * [-]xcase      with icanon, escape with '\\' for uppercase characters\n";
+    o += " * [-]xcase      with icanon, escape with '\\' for uppercase characters\n";
   }
-  o = o + "\n";
+  o += "\n";
   return o;
 }
 
 function help_combination_settings(): string {
-  let o: string = "";
-  o = o + "Combination settings:\n";
+  let o = "";
+  o += "Combination settings:\n";
   if (!darwin()) {
-    o = o + " * [-]LCASE      same as [-]lcase\n";
+    o += " * [-]LCASE      same as [-]lcase\n";
   }
-  o = o + "   cbreak        same as -icanon\n";
-  o = o + "   -cbreak       same as icanon\n";
-  o = o + "   cooked        same as brkint ignpar istrip icrnl ixon opost isig\n";
-  o = o + "                 icanon, eof and eol characters to their default values\n";
-  o = o + "   -cooked       same as raw\n";
-  o = o + "   crt           same as echoe echoctl echoke\n";
-  o = o + "   dec           same as echoe echoctl echoke -ixany intr ^c erase 0177\n";
-  o = o + "                 kill ^u\n";
-  o = o + " * [-]decctlq    same as [-]ixany\n";
-  o = o + "   ek            erase and kill characters to their default values\n";
-  o = o + "   evenp         same as parenb -parodd cs7\n";
-  o = o + "   -evenp        same as -parenb cs8\n";
+  o += "   cbreak        same as -icanon\n";
+  o += "   -cbreak       same as icanon\n";
+  o += "   cooked        same as brkint ignpar istrip icrnl ixon opost isig\n";
+  o += "                 icanon, eof and eol characters to their default values\n";
+  o += "   -cooked       same as raw\n";
+  o += "   crt           same as echoe echoctl echoke\n";
+  o += "   dec           same as echoe echoctl echoke -ixany intr ^c erase 0177\n";
+  o += "                 kill ^u\n";
+  o += " * [-]decctlq    same as [-]ixany\n";
+  o += "   ek            erase and kill characters to their default values\n";
+  o += "   evenp         same as parenb -parodd cs7\n";
+  o += "   -evenp        same as -parenb cs8\n";
   if (!darwin()) {
-    o = o + " * [-]lcase      same as xcase iuclc olcuc\n";
+    o += " * [-]lcase      same as xcase iuclc olcuc\n";
   }
-  o = o + "   litout        same as -parenb -istrip -opost cs8\n";
-  o = o + "   -litout       same as parenb istrip opost cs7\n";
-  o = o + "   nl            same as -icrnl -onlcr\n";
-  o = o + "   -nl           same as icrnl -inlcr -igncr onlcr -ocrnl -onlret\n";
-  o = o + "   oddp          same as parenb parodd cs7\n";
-  o = o + "   -oddp         same as -parenb cs8\n";
-  o = o + "   [-]parity     same as [-]evenp\n";
-  o = o + "   pass8         same as -parenb -istrip cs8\n";
-  o = o + "   -pass8        same as parenb istrip cs7\n";
-  o = o + "   raw           same as -ignbrk -brkint -ignpar -parmrk -inpck -istrip\n";
-  o = o + "                 -inlcr -igncr -icrnl -ixon -ixoff -icanon -opost\n";
+  o += "   litout        same as -parenb -istrip -opost cs8\n";
+  o += "   -litout       same as parenb istrip opost cs7\n";
+  o += "   nl            same as -icrnl -onlcr\n";
+  o += "   -nl           same as icrnl -inlcr -igncr onlcr -ocrnl -onlret\n";
+  o += "   oddp          same as parenb parodd cs7\n";
+  o += "   -oddp         same as -parenb cs8\n";
+  o += "   [-]parity     same as [-]evenp\n";
+  o += "   pass8         same as -parenb -istrip cs8\n";
+  o += "   -pass8        same as parenb istrip cs7\n";
+  o += "   raw           same as -ignbrk -brkint -ignpar -parmrk -inpck -istrip\n";
+  o += "                 -inlcr -igncr -icrnl -ixon -ixoff -icanon -opost\n";
   if (darwin()) {
-    o = o + "                 -isig -ixany -imaxbel min 1 time 0\n";
+    o += "                 -isig -ixany -imaxbel min 1 time 0\n";
   } else {
-    o = o + "                 -isig -iuclc -ixany -imaxbel -xcase min 1 time 0\n";
+    o += "                 -isig -iuclc -ixany -imaxbel -xcase min 1 time 0\n";
   }
-  o = o + "   -raw          same as cooked\n";
-  o = o + "   sane          same as cread -ignbrk brkint -inlcr -igncr icrnl\n";
-  o = o + "                 icanon iexten echo echoe echok -echonl -noflsh\n";
+  o += "   -raw          same as cooked\n";
+  o += "   sane          same as cread -ignbrk brkint -inlcr -igncr icrnl\n";
+  o += "                 icanon iexten echo echoe echok -echonl -noflsh\n";
   if (darwin()) {
-    o = o + "                 -ixoff -iutf8 -ixany imaxbel -ocrnl\n";
+    o += "                 -ixoff -iutf8 -ixany imaxbel -ocrnl\n";
   } else {
-    o = o + "                 -ixoff -iutf8 -iuclc -ixany imaxbel -xcase -olcuc -ocrnl\n";
+    o += "                 -ixoff -iutf8 -iuclc -ixany imaxbel -xcase -olcuc -ocrnl\n";
   }
-  o = o + "                 opost -ofill onlcr -onocr -onlret nl0 cr0 tab0 bs0 vt0 ff0\n";
-  o = o + "                 isig -tostop -ofdel -echoprt echoctl echoke -extproc -flusho,\n";
-  o = o + "                 all special characters to their default values\n";
-  o = o + "\n";
+  o += "                 opost -ofill onlcr -onocr -onlret nl0 cr0 tab0 bs0 vt0 ff0\n";
+  o += "                 isig -tostop -ofdel -echoprt echoctl echoke -extproc -flusho,\n";
+  o += "                 all special characters to their default values\n";
+  o += "\n";
   return o;
 }
 
 function help_text(): string {
-  let o: string = "";
+  let o = "";
   o = o + "Usage: " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [SETTING]...\n";
   o = o + "  or:  " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [-a|--all]\n";
   o = o + "  or:  " + gnu.prog() + " [-F DEVICE | --file=DEVICE] [-g|--save]\n";
-  o = o + "Print or change terminal characteristics.\n";
-  o = o + "\n";
-  o = o + "Mandatory arguments to long options are mandatory for short options too.\n";
-  o = o + "  -a, --all          print all current settings in human-readable form\n";
-  o = o + "  -g, --save         print all current settings in a stty-readable form\n";
-  o = o + "  -F, --file=DEVICE  open and use DEVICE instead of standard input\n";
-  o = o + "      --help        display this help and exit\n";
-  o = o + "      --version     output version information and exit\n";
-  o = o + "\n";
-  o = o + "Optional - before SETTING indicates negation.  An * marks non-POSIX\n";
-  o = o + "settings.  The underlying system defines which settings are available.\n";
-  o = o + "\n";
-  o = o + help_special_chars();
-  o = o + help_special_settings();
-  o = o + help_control_settings();
-  o = o + help_input_settings();
-  o = o + help_output_settings();
-  o = o + help_local_settings();
-  o = o + help_combination_settings();
-  o = o + "Handle the tty line connected to standard input.  Without arguments,\n";
-  o = o + "prints baud rate, line discipline, and deviations from stty sane.  In\n";
-  o = o + "settings, CHAR is taken literally, or coded as in ^c, 0x37, 0177 or\n";
-  o = o + "127; special values ^- or undef used to disable special characters.\n";
+  o += "Print or change terminal characteristics.\n";
+  o += "\n";
+  o += "Mandatory arguments to long options are mandatory for short options too.\n";
+  o += "  -a, --all          print all current settings in human-readable form\n";
+  o += "  -g, --save         print all current settings in a stty-readable form\n";
+  o += "  -F, --file=DEVICE  open and use DEVICE instead of standard input\n";
+  o += "      --help        display this help and exit\n";
+  o += "      --version     output version information and exit\n";
+  o += "\n";
+  o += "Optional - before SETTING indicates negation.  An * marks non-POSIX\n";
+  o += "settings.  The underlying system defines which settings are available.\n";
+  o += "\n";
+  o += help_special_chars();
+  o += help_special_settings();
+  o += help_control_settings();
+  o += help_input_settings();
+  o += help_output_settings();
+  o += help_local_settings();
+  o += help_combination_settings();
+  o += "Handle the tty line connected to standard input.  Without arguments,\n";
+  o += "prints baud rate, line discipline, and deviations from stty sane.  In\n";
+  o += "settings, CHAR is taken literally, or coded as in ^c, 0x37, 0177 or\n";
+  o += "127; special values ^- or undef used to disable special characters.\n";
   return o;
 }
 
@@ -1340,8 +1340,8 @@ function parse_u64(s: string): (u64, boolean, boolean) {
   if (s.len() == 0) {
     return (0 as u64, false, false);
   }
-  let base: u64 = 10 as u64;
-  let i: i32 = 0;
+  let base = 10 as u64;
+  let i = 0;
   if (s.len() > 2 && s[0] as i32 == 48 && (s[1] as i32 == 120 || s[1] as i32 == 88)) {
     base = 16 as u64;
     i = 2;
@@ -1352,11 +1352,11 @@ function parse_u64(s: string): (u64, boolean, boolean) {
   if (i >= s.len()) {
     return (0 as u64, false, false);
   }
-  let v: u64 = 0 as u64;
-  let over: boolean = false;
+  let v = 0 as u64;
+  let over = false;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
-    let d: i32 = 0 - 1;
+    let c = s[i] as i32;
+    let d: i32 = -1;
     if (c >= 48 && c <= 57) {
       d = c - 48;
     }
@@ -1369,16 +1369,16 @@ function parse_u64(s: string): (u64, boolean, boolean) {
     if (d < 0 || d as u64 >= base) {
       return (0 as u64, false, false);
     }
-    let du: u64 = d as u64;
+    let du = d as u64;
     if (v > u64_max() / base) {
       over = true;
     }
-    v = v * base;
+    v *= base;
     if (v > u64_max() - du) {
       over = true;
     }
-    v = v + du;
-    i = i + 1;
+    v += du;
+    i += 1;
   }
   return (v, true, over);
 }
@@ -1415,7 +1415,7 @@ function parse_cchar(s: string): i64 {
     return s[0] as i64;
   }
   if (s.len() == 2 && s[0] as i32 == 94) {
-    let c: i32 = s[1] as i32;
+    let c = s[1] as i32;
     if (c == 63) {
       return 127 as i64;
     }
@@ -1443,7 +1443,7 @@ function set_word(st: Set, word: i32, v: i64): Set {
 }
 
 function apply_mode(st: Set, m: Mode, neg: boolean): Set {
-  let cur: i64 = st.t[m.word];
+  let cur = st.t[m.word];
   if (neg) {
     return set_word(st, m.word, cur & inv(m.bits));
   }
@@ -1459,25 +1459,25 @@ function apply_speed(st: Set, bits: i64): Set {
 }
 
 function apply_sane(st: Set): Set {
-  let s: Set = st;
-  let ms: Mode[] = modes();
-  let i: i32 = 0;
+  let s = st;
+  let ms = modes();
+  let i = 0;
   while (i < ms.len()) {
-    let m: Mode = ms[i];
+    let m = ms[i];
     if (m.sane == 1 && m.setattr) {
       s = set_word(s, m.word, s.t[m.word] & inv(m.mask) | m.bits);
     } else if (m.sane == 2 && m.setattr) {
       s = set_word(s, m.word, s.t[m.word] & inv(m.bits));
     }
-    i = i + 1;
+    i += 1;
   }
-  let cs: Cchar[] = cchars();
+  let cs = cchars();
   i = 0;
   while (i < cs.len()) {
     if (cs[i].show) {
       s = apply_cc(s, cs[i].idx, cs[i].dflt as i64);
     }
-    i = i + 1;
+    i += 1;
   }
   s = apply_cc(s, idx_min(), 1 as i64);
   s = apply_cc(s, idx_time(), 0 as i64);
@@ -1485,28 +1485,28 @@ function apply_sane(st: Set): Set {
 }
 
 function apply_ek(st: Set): Set {
-  let s: Set = st;
-  let cs: Cchar[] = cchars();
-  let i: i32 = 0;
+  let s = st;
+  let cs = cchars();
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].name == "erase" || cs[i].name == "kill") {
       s = apply_cc(s, cs[i].idx, cs[i].dflt as i64);
     }
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
 
 function apply_saved(st: Set, f: i64[]): Set {
-  let s: Set = st;
+  let s = st;
   s = set_word(s, w_iflag(), f[0]);
   s = set_word(s, w_oflag(), f[1]);
   s = set_word(s, w_cflag(), f[2]);
   s = set_word(s, w_lflag(), f[3]);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n_cc_kernel()) {
     s = apply_cc(s, i, f[4 + i]);
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
@@ -1515,12 +1515,12 @@ function words_equal(a: i64[], b: i64[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -1534,7 +1534,7 @@ function speed_value(tok: string, value: string): i64 {
 }
 
 function line_value(value: string): i64 {
-  let n: u64 = need_limited(value, u64_max());
+  let n = need_limited(value, u64_max());
   if (n > 255 as u64) {
     gnu.error("invalid line discipline " + gnu.quote(value) + ": " + gnu.eoverflow_text());
   }
@@ -1575,7 +1575,7 @@ function known_mode(tok: string): boolean {
   if (cb.1) {
     return true;
   }
-  let neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
+  let neg = tok.len() > 1 && tok[0] as i32 == 45;
   if (!neg) {
     let sp: (i64, boolean) = find_speed(tok);
     if (sp.1) {
@@ -1585,7 +1585,7 @@ function known_mode(tok: string): boolean {
       return true;
     }
   }
-  let base: string = tok;
+  let base = tok;
   if (neg) {
     base = slice_unchecked(tok, 1, tok.len()) + "";
   }
@@ -1600,9 +1600,9 @@ function known_mode(tok: string): boolean {
 }
 
 function validate(toks: string[]): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < toks.len()) {
-    let tok: string = toks[i];
+    let tok = toks[i];
     if (!known_mode(tok)) {
       gnu.die_usage("invalid argument " + gnu.quote(tok), 1);
     }
@@ -1611,20 +1611,20 @@ function validate(toks: string[]): void {
         gnu.die_usage("missing argument to " + gnu.quote(tok), 1);
       }
       check_value(tok, toks[i + 1]);
-      i = i + 2;
+      i += 2;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
 }
 
 function any_setting(toks: string[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < toks.len()) {
     if (toks[i] != "drain" && toks[i] != "-drain") {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -1635,16 +1635,16 @@ function device_error(dev: string, e: IoError): void {
 }
 
 function apply_list(st: Set, r: Reader, dev: string, toks: string[]): Set {
-  let s: Set = st;
-  let i: i32 = 0;
+  let s = st;
+  let i = 0;
   while (i < toks.len()) {
-    let tok: string = toks[i];
-    let value: string = "";
+    let tok = toks[i];
+    let value = "";
     if (!looks_like_saved(tok) && takes_value(tok)) {
       value = toks[i + 1];
-      i = i + 2;
+      i += 2;
     } else {
-      i = i + 1;
+      i += 1;
     }
     s = apply_token(s, r, dev, tok, value);
   }
@@ -1652,7 +1652,7 @@ function apply_list(st: Set, r: Reader, dev: string, toks: string[]): Set {
 }
 
 function apply_size(r: Reader, dev: string, tok: string, value: string): void {
-  let n: i64 = need_int(value);
+  let n = need_int(value);
   let rows: i64 = 0;
   let cols: i64 = 0;
   match (r.window_size()) {
@@ -1730,7 +1730,7 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     return apply_cc(st, idx_time(), need_byte(value));
   }
   if (tok == "ispeed") {
-    let ib: i64 = speed_value(tok, value);
+    let ib = speed_value(tok, value);
     if (darwin()) {
       return set_word(st, w_ispeed(), ib);
     }
@@ -1740,7 +1740,7 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     return Set { ...apply_speed(st, ib), isp: value, has_isp: true };
   }
   if (tok == "ospeed") {
-    let ob: i64 = speed_value(tok, value);
+    let ob = speed_value(tok, value);
     if (darwin()) {
       return set_word(st, w_ospeed(), ob);
     }
@@ -1757,8 +1757,8 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
   if (sp.1) {
     return Set { ...apply_speed(st, sp.0), isp: tok, osp: tok, has_isp: true, has_osp: true };
   }
-  let neg: boolean = tok.len() > 1 && tok[0] as i32 == 45;
-  let base: string = tok;
+  let neg = tok.len() > 1 && tok[0] as i32 == 45;
+  let base = tok;
   if (neg) {
     base = slice_unchecked(tok, 1, tok.len()) + "";
   }
@@ -1792,22 +1792,22 @@ function glibc_refused(st: Set, before: i64[], now: i64[]): boolean {
   if (input_speed_zero(st)) {
     return false;
   }
-  let csize: i64 = 48 as i64;
-  let i: i32 = 0;
-  let moved: boolean = false;
-  let missed: boolean = false;
+  let csize = 48 as i64;
+  let i = 0;
+  let moved = false;
+  let missed = false;
   while (i < cc_base()) {
     if (now[i] != before[i]) {
       moved = true;
     }
-    let d: i64 = now[i] ^ st.t[i];
+    let d = now[i] ^ st.t[i];
     if (i == w_cflag() && (st.t[i] & csize) == 0 as i64) {
       d = d & inv(csize);
     }
     if (d != 0 as i64) {
       missed = true;
     }
-    i = i + 1;
+    i += 1;
   }
   return missed && !moved;
 }
@@ -1826,12 +1826,12 @@ function check_speeds(st: Set): void {
 }
 
 function darwin_matches(want: i64[], got: i64[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < w_ispeed()) {
     if (want[i] != got[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return speed_near(want, want[w_ospeed()], got[w_ospeed()]) && speed_near(want, in_speed(want), in_speed(got));
 }
@@ -1844,8 +1844,8 @@ function in_speed(t: i64[]): i64 {
 }
 
 function char_bits(want: i64[]): u64 {
-  let c: i64 = want[w_cflag()];
-  let bits: u64 = 2 as u64 + (c & 768 as i64) as u64 / (256 as u64) + 5 as u64;
+  let c = want[w_cflag()];
+  let bits = 2 as u64 + (c & 768 as i64) as u64 / (256 as u64) + 5 as u64;
   if ((c & 1024 as i64) != 0 as i64) {
     bits = bits + 1 as u64;
   }
@@ -1859,9 +1859,9 @@ function speed_near(want: i64[], asked: i64, got: i64): boolean {
   if (asked == got) {
     return true;
   }
-  let a: u64 = asked as u64;
-  let g: u64 = got as u64;
-  let delta: u64 = a - g;
+  let a = asked as u64;
+  let g = got as u64;
+  let delta = a - g;
   if (g > a) {
     delta = g - a;
   }
@@ -1869,7 +1869,7 @@ function speed_near(want: i64[], asked: i64, got: i64): boolean {
 }
 
 pub function main(): i32 {
-  let sc: Scan = scan(args());
+  let sc = scan(args());
   if (sc.verbose && sc.save) {
     gnu.error("the options for verbose and stty-readable output styles are\nmutually exclusive");
     exit(1);
@@ -1880,8 +1880,8 @@ pub function main(): i32 {
   }
   validate(sc.modes);
 
-  let dev: string = "standard input";
-  let r: Reader = stdin();
+  let dev = "standard input";
+  let r = stdin();
   if (sc.has_device) {
     dev = sc.device;
     match (open_reader_with(sc.device, 2)) {
@@ -1928,7 +1928,7 @@ pub function main(): i32 {
     return 0;
   }
 
-  let st: Set = apply_list(set_new(t), r, dev, sc.modes);
+  let st = apply_list(set_new(t), r, dev, sc.modes);
   check_speeds(st);
   if (st.set_attr) {
     match (r.termios_set(st.act, st.t)) {

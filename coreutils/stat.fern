@@ -13,86 +13,86 @@ import "./lib/fstype";
 import "./lib/selinux";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
-  out = out + "Display file or file system status.\n";
-  out = out + "\n";
-  out = out + "  -L, --dereference     follow links\n";
-  out = out + "  -f, --file-system     display file system status instead of file status\n";
-  out = out + "      --cached=MODE     specify how to use cached attributes;\n";
-  out = out + "                          useful on remote file systems. See MODE below\n";
-  out = out + "  -c  --format=FORMAT   use the specified FORMAT instead of the default;\n";
-  out = out + "                          output a newline after each use of FORMAT\n";
-  out = out + "      --printf=FORMAT   like --format, but interpret backslash escapes,\n";
-  out = out + "                          and do not output a mandatory trailing newline;\n";
-  out = out + "                          if you want a newline, include \\n in FORMAT\n";
-  out = out + "  -t, --terse           print the information in terse form\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "The MODE argument of --cached can be: always, never, or default.\n";
-  out = out + "\n";
-  out = out + "The valid format sequences for files (without --file-system):\n";
-  out = out + "\n";
-  out = out + "  %a   permission bits in octal (note '#' and '0' printf flags)\n";
-  out = out + "  %A   permission bits and file type in human readable form\n";
-  out = out + "  %b   number of blocks allocated (see %B)\n";
-  out = out + "  %B   the size in bytes of each block reported by %b\n";
-  out = out + "  %C   SELinux security context string\n";
-  out = out + "  %d   device number in decimal (st_dev)\n";
-  out = out + "  %D   device number in hex (st_dev)\n";
-  out = out + "  %Hd  major device number in decimal\n";
-  out = out + "  %Ld  minor device number in decimal\n";
-  out = out + "  %f   raw mode in hex\n";
-  out = out + "  %F   file type\n";
-  out = out + "  %g   group ID of owner\n";
-  out = out + "  %G   group name of owner\n";
-  out = out + "  %h   number of hard links\n";
-  out = out + "  %i   inode number\n";
-  out = out + "  %m   mount point\n";
-  out = out + "  %n   file name\n";
-  out = out + "  %Qn  quoted file name\n";
-  out = out + "  %N   quoted file name with dereference if symbolic link\n";
-  out = out + "  %o   optimal I/O transfer size hint\n";
-  out = out + "  %s   total size, in bytes\n";
-  out = out + "  %r   device type in decimal (st_rdev)\n";
-  out = out + "  %R   device type in hex (st_rdev)\n";
-  out = out + "  %Hr  major device type in decimal, for character/block device special files\n";
-  out = out + "  %Lr  minor device type in decimal, for character/block device special files\n";
-  out = out + "  %t   major device type in hex, for character/block device special files\n";
-  out = out + "  %T   minor device type in hex, for character/block device special files\n";
-  out = out + "  %u   user ID of owner\n";
-  out = out + "  %U   user name of owner\n";
-  out = out + "  %w   time of file birth, human-readable; - if unknown\n";
-  out = out + "  %W   time of file birth, seconds since Epoch; 0 if unknown\n";
-  out = out + "  %x   time of last access, human-readable\n";
-  out = out + "  %X   time of last access, seconds since Epoch\n";
-  out = out + "  %y   time of last data modification, human-readable\n";
-  out = out + "  %Y   time of last data modification, seconds since Epoch\n";
-  out = out + "  %z   time of last status change, human-readable\n";
-  out = out + "  %Z   time of last status change, seconds since Epoch\n";
-  out = out + "\n";
-  out = out + "Valid format sequences for file systems:\n";
-  out = out + "\n";
-  out = out + "  %a   free blocks available to non-superuser\n";
-  out = out + "  %b   total data blocks in file system\n";
-  out = out + "  %c   total file nodes in file system\n";
-  out = out + "  %d   free file nodes in file system\n";
-  out = out + "  %f   free blocks in file system\n";
-  out = out + "  %i   file system ID in hex\n";
-  out = out + "  %l   maximum length of filenames\n";
-  out = out + "  %n   file name\n";
-  out = out + "  %Qn  quoted file name\n";
-  out = out + "  %s   block size (for faster transfers)\n";
-  out = out + "  %S   fundamental block size (for block counts)\n";
-  out = out + "  %t   file system type in hex\n";
-  out = out + "  %T   file system type in human readable form\n";
-  out = out + "\n";
-  out = out + "--terse is equivalent to the following FORMAT:\n";
+  out += "Display file or file system status.\n";
+  out += "\n";
+  out += "  -L, --dereference     follow links\n";
+  out += "  -f, --file-system     display file system status instead of file status\n";
+  out += "      --cached=MODE     specify how to use cached attributes;\n";
+  out += "                          useful on remote file systems. See MODE below\n";
+  out += "  -c  --format=FORMAT   use the specified FORMAT instead of the default;\n";
+  out += "                          output a newline after each use of FORMAT\n";
+  out += "      --printf=FORMAT   like --format, but interpret backslash escapes,\n";
+  out += "                          and do not output a mandatory trailing newline;\n";
+  out += "                          if you want a newline, include \\n in FORMAT\n";
+  out += "  -t, --terse           print the information in terse form\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "The MODE argument of --cached can be: always, never, or default.\n";
+  out += "\n";
+  out += "The valid format sequences for files (without --file-system):\n";
+  out += "\n";
+  out += "  %a   permission bits in octal (note '#' and '0' printf flags)\n";
+  out += "  %A   permission bits and file type in human readable form\n";
+  out += "  %b   number of blocks allocated (see %B)\n";
+  out += "  %B   the size in bytes of each block reported by %b\n";
+  out += "  %C   SELinux security context string\n";
+  out += "  %d   device number in decimal (st_dev)\n";
+  out += "  %D   device number in hex (st_dev)\n";
+  out += "  %Hd  major device number in decimal\n";
+  out += "  %Ld  minor device number in decimal\n";
+  out += "  %f   raw mode in hex\n";
+  out += "  %F   file type\n";
+  out += "  %g   group ID of owner\n";
+  out += "  %G   group name of owner\n";
+  out += "  %h   number of hard links\n";
+  out += "  %i   inode number\n";
+  out += "  %m   mount point\n";
+  out += "  %n   file name\n";
+  out += "  %Qn  quoted file name\n";
+  out += "  %N   quoted file name with dereference if symbolic link\n";
+  out += "  %o   optimal I/O transfer size hint\n";
+  out += "  %s   total size, in bytes\n";
+  out += "  %r   device type in decimal (st_rdev)\n";
+  out += "  %R   device type in hex (st_rdev)\n";
+  out += "  %Hr  major device type in decimal, for character/block device special files\n";
+  out += "  %Lr  minor device type in decimal, for character/block device special files\n";
+  out += "  %t   major device type in hex, for character/block device special files\n";
+  out += "  %T   minor device type in hex, for character/block device special files\n";
+  out += "  %u   user ID of owner\n";
+  out += "  %U   user name of owner\n";
+  out += "  %w   time of file birth, human-readable; - if unknown\n";
+  out += "  %W   time of file birth, seconds since Epoch; 0 if unknown\n";
+  out += "  %x   time of last access, human-readable\n";
+  out += "  %X   time of last access, seconds since Epoch\n";
+  out += "  %y   time of last data modification, human-readable\n";
+  out += "  %Y   time of last data modification, seconds since Epoch\n";
+  out += "  %z   time of last status change, human-readable\n";
+  out += "  %Z   time of last status change, seconds since Epoch\n";
+  out += "\n";
+  out += "Valid format sequences for file systems:\n";
+  out += "\n";
+  out += "  %a   free blocks available to non-superuser\n";
+  out += "  %b   total data blocks in file system\n";
+  out += "  %c   total file nodes in file system\n";
+  out += "  %d   free file nodes in file system\n";
+  out += "  %f   free blocks in file system\n";
+  out += "  %i   file system ID in hex\n";
+  out += "  %l   maximum length of filenames\n";
+  out += "  %n   file name\n";
+  out += "  %Qn  quoted file name\n";
+  out += "  %s   block size (for faster transfers)\n";
+  out += "  %S   fundamental block size (for block counts)\n";
+  out += "  %t   file system type in hex\n";
+  out += "  %T   file system type in human readable form\n";
+  out += "\n";
+  out += "--terse is equivalent to the following FORMAT:\n";
   out = out + "    " + file_terse_format(false);
-  out = out + "--terse --file-system is equivalent to the following FORMAT:\n";
+  out += "--terse --file-system is equivalent to the following FORMAT:\n";
   out = out + "    " + fs_terse_format();
-  out = out + "\n";
+  out += "\n";
   return out;
 }
 
@@ -104,16 +104,16 @@ function file_terse_format(context: boolean): string {
 }
 
 function file_default_format(device: boolean, context: boolean): string {
-  let f: string = "  File: %N\n";
-  f = f + "  Size: %-10s\tBlocks: %-10b IO Block: %-6o %F\n";
+  let f = "  File: %N\n";
+  f += "  Size: %-10s\tBlocks: %-10b IO Block: %-6o %F\n";
   if (device) {
-    f = f + "Device: %Hd,%Ld\tInode: %-10i  Links: %-5h Device type: %Hr,%Lr\n";
+    f += "Device: %Hd,%Ld\tInode: %-10i  Links: %-5h Device type: %Hr,%Lr\n";
   } else {
-    f = f + "Device: %Hd,%Ld\tInode: %-10i  Links: %h\n";
+    f += "Device: %Hd,%Ld\tInode: %-10i  Links: %h\n";
   }
-  f = f + "Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n";
+  f += "Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n";
   if (context) {
-    f = f + "Context: %C\n";
+    f += "Context: %C\n";
   }
   return f + "Access: %x\nModify: %y\nChange: %z\n Birth: %w\n";
 }
@@ -123,10 +123,10 @@ function fs_terse_format(): string {
 }
 
 function fs_default_format(): string {
-  let f: string = "  File: %Qn\n";
-  f = f + "    ID: %-8i Namelen: %-7l Type: %T\n";
-  f = f + "Block size: %-10s Fundamental block size: %S\n";
-  f = f + "Blocks: Total: %-10b Free: %-10f Available: %a\n";
+  let f = "  File: %Qn\n";
+  f += "    ID: %-8i Namelen: %-7l Type: %T\n";
+  f += "Block size: %-10s Fundamental block size: %S\n";
+  f += "Blocks: Total: %-10b Free: %-10f Available: %a\n";
   return f + "Inodes: Total: %-10c Free: %d\n";
 }
 
@@ -183,31 +183,31 @@ function is_digit_byte(b: i32): boolean {
 function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
   let out: Piece[] = [];
   let lit: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < fmt.len()) {
-    let b: i32 = fmt[i] as i32;
+    let b = fmt[i] as i32;
     if (b != 37) {
       lit = lit.append(b as u8);
-      i = i + 1;
+      i += 1;
       if (escapes && b == 92 && i < fmt.len()) {
         lit = lit.append(fmt[i]);
-        i = i + 1;
+        i += 1;
       }
       continue;
     }
     if (i + 1 >= fmt.len()) {
       lit = lit.append(37 as u8);
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let start: i32 = i;
-    i = i + 1;
-    let d: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
+    let start = i;
+    i += 1;
+    let d = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
     while (i < fmt.len()) {
-      let f: i32 = fmt[i] as i32;
+      let f = fmt[i] as i32;
       if (f == 45) {
         d = Directive { ...d, minus: true, raw: true };
-        i = i + 1;
+        i += 1;
         continue;
       }
       if (f == 48) {
@@ -222,16 +222,16 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
         break;
       }
       d = Directive { ...d, raw: true, plain_flags: d.plain_flags + 1 };
-      i = i + 1;
+      i += 1;
     }
-    let w: i32 = 0;
-    let saw_width: boolean = false;
+    let w = 0;
+    let saw_width = false;
     while (i < fmt.len() && is_digit_byte(fmt[i] as i32)) {
       if (w < max_width()) {
         w = w * 10 + (fmt[i] as i32 - 48);
       }
       saw_width = true;
-      i = i + 1;
+      i += 1;
     }
     if (saw_width) {
       if (w > max_width()) {
@@ -240,13 +240,13 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       d = Directive { ...d, width: w, raw: true };
     }
     if (i < fmt.len() && fmt[i] as i32 == 46) {
-      i = i + 1;
-      let p: i32 = 0;
+      i += 1;
+      let p = 0;
       while (i < fmt.len() && is_digit_byte(fmt[i] as i32)) {
         if (p < max_width()) {
           p = p * 10 + (fmt[i] as i32 - 48);
         }
-        i = i + 1;
+        i += 1;
       }
       if (p > max_width()) {
         p = max_width();
@@ -254,10 +254,10 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       d = Directive { ...d, prec: p, has_prec: true, raw: true };
     }
     if (i < fmt.len()) {
-      let m: i32 = fmt[i] as i32;
+      let m = fmt[i] as i32;
       if (m == 72 || m == 76 || m == 81) {
         d = Directive { ...d, mod: m };
-        i = i + 1;
+        i += 1;
       }
     }
     if (i >= fmt.len()) {
@@ -266,11 +266,11 @@ function scan(fmt: string, fs_mode: boolean, escapes: boolean): Piece[] {
       out = out.append(Piece { literal: [], dir: Directive { ...d, conv: 0, mod: 0, text: "" }, is_dir: true, escapes: false });
       continue;
     }
-    let conv: i32 = fmt[i] as i32;
-    i = i + 1;
-    let mod_ok: boolean = d.mod == 81 && conv == 110 || (d.mod == 72 || d.mod == 76) && !fs_mode && (conv == 100 || conv == 114);
+    let conv = fmt[i] as i32;
+    i += 1;
+    let mod_ok = d.mod == 81 && conv == 110 || (d.mod == 72 || d.mod == 76) && !fs_mode && (conv == 100 || conv == 114);
     if (d.mod != 0 && !mod_ok) {
-      i = i - 1;
+      i -= 1;
       out = flush_literal(out, lit, escapes);
       lit = [];
       out = out.append(Piece { literal: [], dir: Directive { ...d, conv: 0, mod: 0, text: "" }, is_dir: true, escapes: false });
@@ -295,7 +295,7 @@ function flush_literal(out: Piece[], lit: u8[], escapes: boolean): Piece[] {
   if (lit.len() == 0) {
     return out;
   }
-  let empty: Directive = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
+  let empty = Directive { minus: false, zero: false, hash: false, plus: false, space: false, width: 0, prec: 0, has_prec: false, raw: false, plain_flags: 0, mod: 0, conv: 0, text: "" };
   return out.append(Piece { literal: lit, dir: empty, is_dir: false, escapes: escapes });
 }
 
@@ -309,29 +309,29 @@ function hex_value(b: i32): i32 {
   if (b >= 65 && b <= 70) {
     return b - 55;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b != 92) {
       out = out.append(b as u8);
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (i + 1 >= s.len()) {
       w = gnu.error_out(gnu.check(w.write_bytes(out)), "warning: backslash at end of format");
       out = [];
       out = out.append(92 as u8);
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let c: i32 = s[i + 1] as i32;
-    i = i + 2;
+    let c = s[i + 1] as i32;
+    i += 2;
     if (c == 97) {
       out = out.append(7 as u8);
     } else if (c == 98) {
@@ -353,12 +353,12 @@ function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter
     } else if (c == 34) {
       out = out.append(34 as u8);
     } else if (c >= 48 && c <= 55) {
-      let v: i32 = c - 48;
-      let n: i32 = 1;
+      let v = c - 48;
+      let n = 1;
       while (n < 3 && i < s.len() && s[i] as i32 >= 48 && s[i] as i32 <= 55) {
         v = v * 8 + (s[i] as i32 - 48);
-        i = i + 1;
-        n = n + 1;
+        i += 1;
+        n += 1;
       }
       out = out.append((v % 256) as u8);
     } else if (c == 120) {
@@ -367,11 +367,11 @@ function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter
         out = [];
         out = out.append(120 as u8);
       } else {
-        let hv: i32 = hex_value(s[i] as i32);
-        i = i + 1;
+        let hv = hex_value(s[i] as i32);
+        i += 1;
         if (i < s.len() && hex_value(s[i] as i32) >= 0) {
           hv = hv * 16 + hex_value(s[i] as i32);
-          i = i + 1;
+          i += 1;
         }
         out = out.append(hv as u8);
       }
@@ -386,30 +386,30 @@ function put_unescaped(o: io_buffered.BufWriter, s: u8[]): io_buffered.BufWriter
 
 function spaces(n: i32): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(32 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
 
 function zeros(n: i32): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(48 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
 
 function out_string(d: Directive, s: string): u8[] {
-  let n: i32 = s.len();
+  let n = s.len();
   if (d.has_prec && d.prec < n) {
     n = d.prec;
   }
-  let h: usize = buf_new(n);
+  let h = buf_new(n);
   if (!d.minus && d.width > n) {
     buf_push(h, spaces(d.width - n));
   }
@@ -417,21 +417,21 @@ function out_string(d: Directive, s: string): u8[] {
   if (d.minus && d.width > n) {
     buf_push(h, spaces(d.width - n));
   }
-  let out: u8[] = buf_take_bytes(h);
+  let out = buf_take_bytes(h);
   buf_free(h);
   return out;
 }
 
 function out_digits(d: Directive, sign: string, digits: string): string {
-  let body: string = digits;
+  let body = digits;
   if (d.has_prec && d.prec > body.len()) {
     body = zeros(d.prec - body.len()) + body;
   }
-  let v: string = sign + body;
+  let v = sign + body;
   if (v.len() >= d.width) {
     return v;
   }
-  let pad: i32 = d.width - v.len();
+  let pad = d.width - v.len();
   if (d.minus) {
     return v + spaces(pad);
   }
@@ -449,8 +449,8 @@ function out_unsigned(d: Directive, v: u64): string {
 }
 
 function out_signed(d: Directive, v: i64): string {
-  let sign: string = "";
-  let mag: u64 = v as u64;
+  let sign = "";
+  let mag = v as u64;
   if (v < 0 as i64) {
     sign = "-";
     mag = (0 as i64 - v) as u64;
@@ -467,28 +467,28 @@ function hex_digits(v: u64): string {
     return "0";
   }
   let out: u8[] = [];
-  let n: u64 = v;
+  let n = v;
   while (n > 0 as u64) {
-    let dgt: i32 = (n % (16 as u64)) as i32;
+    let dgt = (n % (16 as u64)) as i32;
     if (dgt < 10) {
       out = out.append((48 + dgt) as u8);
     } else {
       out = out.append((87 + dgt) as u8);
     }
-    n = n / (16 as u64);
+    n /= 16 as u64;
   }
   let rev: u8[] = [];
-  let i: i32 = out.len() - 1;
+  let i = out.len() - 1;
   while (i >= 0) {
     rev = rev.append(out[i]);
-    i = i - 1;
+    i -= 1;
   }
   return string_from_bytes_unchecked(rev);
 }
 
 function out_hex(d: Directive, v: u64): string {
-  let body: string = hex_digits(v);
-  let prefix: string = "";
+  let body = hex_digits(v);
+  let prefix = "";
   if (d.hash && v != 0 as u64) {
     prefix = "0x";
   }
@@ -503,22 +503,22 @@ function octal_digits(v: u64): string {
     return "0";
   }
   let out: u8[] = [];
-  let n: u64 = v;
+  let n = v;
   while (n > 0 as u64) {
     out = out.append((48 + (n % (8 as u64)) as i32) as u8);
-    n = n / (8 as u64);
+    n /= 8 as u64;
   }
   let rev: u8[] = [];
-  let i: i32 = out.len() - 1;
+  let i = out.len() - 1;
   while (i >= 0) {
     rev = rev.append(out[i]);
-    i = i - 1;
+    i -= 1;
   }
   return string_from_bytes_unchecked(rev);
 }
 
 function out_octal(d: Directive, v: u64): string {
-  let body: string = octal_digits(v);
+  let body = octal_digits(v);
   if (d.has_prec && d.prec == 0 && v == 0 as u64) {
     body = "";
   }
@@ -544,13 +544,13 @@ function pad2(n: i32): string {
 }
 
 function pad_year(y: i32): string {
-  let mag: i32 = y;
-  let sign: string = "";
+  let mag = y;
+  let sign = "";
   if (y < 0) {
     sign = "-";
-    mag = 0 - y;
+    mag = -y;
   }
-  let s: string = mag.to_string();
+  let s = mag.to_string();
   while (s.len() < 4) {
     s = "0" + s;
   }
@@ -558,7 +558,7 @@ function pad_year(y: i32): string {
 }
 
 function pad9(n: i64): string {
-  let s: string = n.to_string();
+  let s = n.to_string();
   while (s.len() < 9) {
     s = "0" + s;
   }
@@ -566,13 +566,13 @@ function pad9(n: i64): string {
 }
 
 function human_time(z: tz.Zone, sec: i64, nsec: i64): string {
-  let dt: DateTime = z.at(time.timestamp_from_unix(sec)).to_datetime();
-  let off: i32 = z.offset_at(time.timestamp_from_unix(sec));
-  let sign: string = "+";
-  let mag: i32 = off;
+  let dt = z.at(time.timestamp_from_unix(sec)).to_datetime();
+  let off = z.offset_at(time.timestamp_from_unix(sec));
+  let sign = "+";
+  let mag = off;
   if (off < 0) {
     sign = "-";
-    mag = 0 - off;
+    mag = -off;
   }
   return pad_year(dt.date.year) + "-" + pad2(dt.date.month) + "-" + pad2(dt.date.day) + " " + pad2(dt.time.hour) + ":" + pad2(dt.time.minute) + ":" + pad2(dt.time.second) + "." + pad9(nsec) + " " + sign + pad2(mag / 3600) + pad2(mag / 60 % 60);
 }
@@ -581,9 +581,9 @@ function epoch_time(d: Directive, sec: i64, nsec: i64): string {
   if (!d.has_prec || d.prec == 0) {
     return out_signed(d, sec);
   }
-  let whole: i64 = sec;
-  let frac: i64 = nsec;
-  let sign: string = "";
+  let whole = sec;
+  let frac = nsec;
+  let sign = "";
   if (sec < 0 as i64) {
     sign = "-";
     if (nsec == 0 as i64) {
@@ -597,11 +597,11 @@ function epoch_time(d: Directive, sec: i64, nsec: i64): string {
   } else if (d.space) {
     sign = " ";
   }
-  let f: string = pad9(frac);
+  let f = pad9(frac);
   while (f.len() < d.prec) {
-    f = f + "0";
+    f += "0";
   }
-  let digits: string = whole.to_string() + "." + (slice_unchecked(f, 0, d.prec) + "");
+  let digits = whole.to_string() + "." + (slice_unchecked(f, 0, d.prec) + "");
   return out_digits(Directive { ...d, has_prec: false }, sign, digits);
 }
 
@@ -609,9 +609,9 @@ function parent_of(p: string): string {
   if (p == "/") {
     return "/";
   }
-  let i: i32 = p.len() - 1;
+  let i = p.len() - 1;
   while (i > 0 && p[i] as i32 != 47) {
-    i = i - 1;
+    i -= 1;
   }
   if (i == 0) {
     return "/";
@@ -631,7 +631,7 @@ function dev_of(path: string): Option[i64] {
 }
 
 function mount_point(name: string, st: FileStat): Option[string] {
-  let real: string = "";
+  let real = "";
   match (canon.canonicalize(name, canon.existing(), false)) {
     Ok(p) => {
       real = p;
@@ -640,13 +640,13 @@ function mount_point(name: string, st: FileStat): Option[string] {
       return None;
     }
   }
-  let cur: string = real;
+  let cur = real;
   if (!st.is_dir) {
     cur = parent_of(real);
   }
-  let dev: i64 = st.dev;
+  let dev = st.dev;
   while (cur != "/") {
-    let up: string = parent_of(cur);
+    let up = parent_of(cur);
     match (dev_of(up)) {
       Some(d) => {
         if (d != dev) {
@@ -713,10 +713,10 @@ function quoting_ready(q: Quoting): Quoting {
 }
 
 function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered, Quoting) {
-  let st: FileStat = it.st;
-  let c: i32 = d.conv;
+  let st = it.st;
+  let c = d.conv;
   if (d.mod != 0 && d.mod != 81) {
-    let dev: u64 = st.dev as u64;
+    let dev = st.dev as u64;
     if (c == 114) {
       dev = st.rdev as u64;
     }
@@ -780,7 +780,7 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
   }
   if (c == 110) {
     if (d.mod == 81) {
-      let qn: Quoting = quoting_ready(qi);
+      let qn = quoting_ready(qi);
       return (ok_rendered_bytes(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
     }
     return (ok_rendered_bytes(out_string(d, it.name)), qi);
@@ -797,7 +797,7 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
     }
   }
   if (c == 78) {
-    let qq: Quoting = quoting_ready(qi);
+    let qq = quoting_ready(qi);
     return (ok_rendered_bytes(quoted_name(d, it, qq.style)), qq);
   }
   if (c == 111) {
@@ -871,17 +871,17 @@ function render_file(d: Directive, it: Item, z: tz.Zone, qi: Quoting): (Rendered
 }
 
 function quoted_name(d: Directive, it: Item, style: i32): u8[] {
-  let name: u8[] = out_string(d, gnu.quote_style(it.name, style));
+  let name = out_string(d, gnu.quote_style(it.name, style));
   if (!it.is_link) {
     return name;
   }
-  let target: u8[] = out_string(d, gnu.quote_style(it.link, style));
-  let h: usize = buf_new(name.len() + target.len() + 5);
+  let target = out_string(d, gnu.quote_style(it.link, style));
+  let h = buf_new(name.len() + target.len() + 5);
   buf_push_bytes_range(h, name, 0, name.len());
   buf_push(h, " -> ");
   buf_push_bytes_range(h, target, 0, target.len());
   buf_push(h, link_tail(d));
-  let out: u8[] = buf_take_bytes(h);
+  let out = buf_take_bytes(h);
   buf_free(h);
   return out;
 }
@@ -894,10 +894,10 @@ function link_tail(d: Directive): string {
 }
 
 function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
-  let fs: FsStat = it.fs;
-  let c: i32 = d.conv;
+  let fs = it.fs;
+  let c = d.conv;
   if (d.mod == 81 && c == 110) {
-    let qn: Quoting = quoting_ready(qi);
+    let qn = quoting_ready(qi);
     return (ok_rendered_bytes(out_string(d, gnu.quote_style(it.name, qn.style))), qn);
   }
   if (d.mod != 0) {
@@ -934,7 +934,7 @@ function render_fs(d: Directive, it: FsItem, qi: Quoting): (Rendered, Quoting) {
     return (ok_rendered(out_hex(d, fs.fsid as u64)), qi);
   }
   if (c == 83) {
-    let frsize: i64 = fs.frag_size;
+    let frsize = fs.frag_size;
     if (frsize == 0 as i64) {
       frsize = fs.block_size;
     }
@@ -964,10 +964,10 @@ function fstype_text(magic: i64): string {
 }
 
 function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boolean, it: Item, fs: FsItem, z: tz.Zone, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
-  let w: io_buffered.BufWriter = o;
-  let q: Quoting = qi;
-  let failed: boolean = false;
-  let i: i32 = 0;
+  let w = o;
+  let q = qi;
+  let failed = false;
+  let i = 0;
   while (i < pieces.len()) {
     if (!pieces[i].is_dir) {
       if (pieces[i].escapes) {
@@ -975,10 +975,10 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
       } else {
         w = gnu.check(w.write_bytes(pieces[i].literal));
       }
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let d: Directive = pieces[i].dir;
+    let d = pieces[i].dir;
     if (d.conv == 37) {
       gnu.die(w, gnu.quote(d.text) + ": invalid directive", 1);
     }
@@ -1006,30 +1006,30 @@ function render_pieces(o: io_buffered.BufWriter, pieces: Piece[], fs_mode: boole
         w = gnu.check(w.write_u64(v));
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return (w, failed, q);
 }
 
 function names_conv(pieces: Piece[], conv: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pieces.len()) {
     if (pieces[i].is_dir && pieces[i].dir.conv == conv) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function needs_zone(pieces: Piece[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pieces.len()) {
-    let c: i32 = pieces[i].dir.conv;
+    let c = pieces[i].dir.conv;
     if (pieces[i].is_dir && (c == 119 || c == 120 || c == 121 || c == 122)) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -1049,11 +1049,11 @@ function is_symlink(st: FileStat): boolean {
 }
 
 function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece[], name: string, deref: boolean, newline: boolean, z: tz.Zone, qi: Quoting, names: pwdb.Names): (io_buffered.BufWriter, boolean, Quoting, pwdb.Names) {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   match (stat_of(name, deref)) {
     Ok(st) => {
-      let link: string = "";
-      let is_link: boolean = is_symlink(st);
+      let link = "";
+      let is_link = is_symlink(st);
       if (is_link) {
         match (canon.byte_link_target(name)) {
           Ok(t) => {
@@ -1066,10 +1066,10 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece
       }
       let u: (string, pwdb.Names) = names.user(st.uid as i64);
       let g: (string, pwdb.Names) = u.1.group(st.gid as i64);
-      let fmt: u32 = st.mode & 61440 as u32;
-      let it: Item = Item { name: name, st: st, link: link, is_link: is_link, deref: deref, owner: u.0, group: g.0 };
-      let empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
-      let layout: Piece[] = pieces;
+      let fmt = st.mode & 61440 as u32;
+      let it = Item { name: name, st: st, link: link, is_link: is_link, deref: deref, owner: u.0, group: g.0 };
+      let empty_fs = FsItem { name: name, fs: fsstat_zero() };
+      let layout = pieces;
       if (fmt == 8192 as u32 || fmt == 24576 as u32) {
         layout = device_pieces;
       }
@@ -1081,7 +1081,7 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece
       return (w, !rendered.1, rendered.2, g.1);
     },
     Err(e) => {
-      let action: string = "cannot statx ";
+      let action = "cannot statx ";
       if (target_os() == "darwin") {
         action = "cannot stat ";
       }
@@ -1119,8 +1119,8 @@ function fsstat_fallback(name: string, original: IoError): Result[FsStat, IoErro
 }
 
 function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline: boolean, qi: Quoting): (io_buffered.BufWriter, boolean, Quoting) {
-  let w: io_buffered.BufWriter = o;
-  let probe: Result[FsStat, IoError] = statfs(name);
+  let w = o;
+  let probe = statfs(name);
   if (target_os() == "darwin") {
     if let Err(original) = probe {
       probe = fsstat_fallback(name, original);
@@ -1128,8 +1128,8 @@ function do_fs(o: io_buffered.BufWriter, pieces: Piece[], name: string, newline:
   }
   match (probe) {
     Ok(fs) => {
-      let it: FsItem = FsItem { name: name, fs: fs };
-      let empty_st: Item = Item { name: name, st: stat_zero(), link: "", is_link: false, deref: false, owner: "", group: "" };
+      let it = FsItem { name: name, fs: fs };
+      let empty_st = Item { name: name, st: stat_zero(), link: "", is_link: false, deref: false, owner: "", group: "" };
       let rendered: (io_buffered.BufWriter, boolean, Quoting) = render_pieces(w, pieces, true, empty_st, it, tz.utc_zone(), qi);
       w = rendered.0;
       if (newline) {
@@ -1153,13 +1153,13 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("t", "terse", opt_terse()));
   opts = opts.append(gnu.valued("", "cached", opt_cached()));
 
-  let deref: boolean = false;
-  let fs_mode: boolean = false;
-  let terse: boolean = false;
-  let format: string = "";
-  let have_format: boolean = false;
-  let escapes: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "stat", help_text(), 1);
+  let deref = false;
+  let fs_mode = false;
+  let terse = false;
+  let format = "";
+  let have_format = false;
+  let escapes = false;
+  let g = gnu.getopt_new(args(), opts, "stat", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -1181,7 +1181,7 @@ pub function main(): i32 {
           escapes = true;
         } else if (m.id == opt_cached()) {
           let names: string[] = ["default", "never", "always"];
-          let ignored: i32 = gnu.argmatch(m.value, names, "--cached");
+          let ignored = gnu.argmatch(m.value, names, "--cached");
         }
       },
       None => {
@@ -1190,13 +1190,13 @@ pub function main(): i32 {
     }
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
 
-  let newline: boolean = !escapes;
-  let device_format: string = format;
+  let newline = !escapes;
+  let device_format = format;
   if (!have_format) {
     newline = false;
     if (fs_mode && terse) {
@@ -1207,36 +1207,36 @@ pub function main(): i32 {
       format = file_terse_format(selinux.enabled());
       device_format = format;
     } else {
-      let context: boolean = selinux.enabled();
+      let context = selinux.enabled();
       format = file_default_format(false, context);
       device_format = file_default_format(true, context);
     }
   }
 
-  let quoting: Quoting = quoting_new();
-  let pieces: Piece[] = scan(format, fs_mode, escapes);
-  let device_pieces: Piece[] = pieces;
+  let quoting = quoting_new();
+  let pieces = scan(format, fs_mode, escapes);
+  let device_pieces = pieces;
   if (device_format != format) {
     device_pieces = scan(device_format, fs_mode, escapes);
   }
 
-  let z: tz.Zone = tz.utc_zone();
+  let z = tz.utc_zone();
   if (needs_zone(pieces)) {
     z = tz.local_zone();
   }
-  let names: pwdb.Names = pwdb.names_new(names_conv(pieces, 85), names_conv(pieces, 71));
-  let status: i32 = 0;
-  let o: io_buffered.BufWriter = gnu.out_new();
-  let i: i32 = 0;
+  let names = pwdb.names_new(names_conv(pieces, 85), names_conv(pieces, 71));
+  let status = 0;
+  let o = gnu.out_new();
+  let i = 0;
   while (i < operands.len()) {
-    let name: string = operands[i];
+    let name = operands[i];
     if (fs_mode && name == "-") {
       o = gnu.error_out(o, "using '-' to denote standard input does not work in file system mode");
       status = 1;
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let ok: boolean = true;
+    let ok = true;
     if (fs_mode) {
       let res: (io_buffered.BufWriter, boolean, Quoting) = do_fs(o, pieces, name, newline, quoting);
       o = res.0;
@@ -1252,7 +1252,7 @@ pub function main(): i32 {
     if (!ok) {
       status = 1;
     }
-    i = i + 1;
+    i += 1;
   }
   gnu.finish(o);
   return status;

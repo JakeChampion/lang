@@ -24,18 +24,18 @@ function opt_digit(d: i32): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Wrap input lines in each FILE, writing to standard output.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -b, --bytes         count bytes rather than columns\n";
-  out = out + "  -c, --characters    count characters rather than columns\n";
-  out = out + "  -s, --spaces        break at spaces\n";
-  out = out + "  -w, --width=WIDTH   use WIDTH columns instead of 80\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Wrap input lines in each FILE, writing to standard output.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -b, --bytes         count bytes rather than columns\n";
+  out += "  -c, --characters    count characters rather than columns\n";
+  out += "  -s, --spaces        break at spaces\n";
+  out += "  -w, --width=WIDTH   use WIDTH columns instead of 80\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -64,16 +64,16 @@ function width_max(): u64 {
 }
 
 function width_of(text: string): u64 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < text.len() && (text[i] as i32 == 32 || text[i] as i32 >= 9 && text[i] as i32 <= 13)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < text.len() && text[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
-  let digits: i32 = i;
-  let value: u64 = 0 as u64;
-  let over: boolean = false;
+  let digits = i;
+  let value = 0 as u64;
+  let over = false;
   while (i < text.len() && is_digit(text[i] as i32)) {
     match (value.checked_mul(10 as u64)) {
       Some(m) => {
@@ -90,7 +90,7 @@ function width_of(text: string): u64 {
         over = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (i == digits || i != text.len()) {
     gnu.error("invalid number of columns: " + gnu.quote(text));
@@ -142,27 +142,27 @@ function advance(column: u64, lastw: i32, c: i32, mode: i32): (u64, i32) {
   if (c == 9) {
     return (column + (8 as u64 - column % (8 as u64)), lastw);
   }
-  let w: i32 = byte_width(c, mode);
+  let w = byte_width(c, mode);
   return (column + w as u64, w);
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "bytes", opt_bytes()));
   opts = opts.append(gnu.flag("c", "characters", opt_chars()));
   opts = opts.append(gnu.flag("s", "spaces", opt_spaces()));
   opts = opts.append(gnu.valued("w", "width", opt_width()));
-  let d: i32 = 0;
+  let d = 0;
   while (d < 10) {
     opts = opts.append(gnu.optional(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
-    d = d + 1;
+    d += 1;
   }
 
-  let mode: i32 = count_columns();
-  let break_spaces: boolean = false;
-  let width: u64 = 80 as u64;
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "fold", help_text(), 1);
+  let mode = count_columns();
+  let break_spaces = false;
+  let width = 80 as u64;
+  let g = gnu.getopt_new(argv, opts, "fold", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -186,7 +186,7 @@ pub function main(): i32 {
     }
   }
 
-  let files: string[] = g.operands();
+  let files = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -194,33 +194,33 @@ pub function main(): i32 {
 }
 
 function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32 {
-  let o: io_buffered.BufWriter = gnu.out_with(block_size());
-  let h: usize = o.handle();
+  let o = gnu.out_with(block_size());
+  let h = o.handle();
   let nul: u8 = 0;
   if (mode == count_columns()) {
     nul = 1;
   }
   let specials: u8[] = [nul, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1];
-  let ok: boolean = true;
+  let ok = true;
 
-  let fi: i32 = 0;
-  let have_reader: boolean = false;
-  let is_stdin: boolean = false;
-  let name: string = "";
-  let r: Reader = stdin();
+  let fi = 0;
+  let have_reader = false;
+  let is_stdin = false;
+  let name = "";
+  let r = stdin();
   let chunk: u8[] = [];
-  let pos: i32 = 0;
-  let specat: i32 = 0 - 1;
-  let carry: usize = buf_new(0);
-  let tail: boolean = false;
-  let done: boolean = false;
+  let pos = 0;
+  let specat: i32 = -1;
+  let carry = buf_new(0);
+  let tail = false;
+  let done = false;
 
   while (true) {
     if (pos >= chunk.len()) {
       chunk = [];
       pos = 0;
       tail = false;
-      let got: boolean = false;
+      let got = false;
       while (!got) {
         if (!have_reader) {
           if (fi >= files.len()) {
@@ -228,13 +228,13 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             got = true;
           } else {
             name = files[fi];
-            fi = fi + 1;
+            fi += 1;
             is_stdin = name == "-";
             if (is_stdin) {
               r = stdin();
               have_reader = true;
             } else {
-              let opened: boolean = false;
+              let opened = false;
               match (open_reader(name)) {
                 Ok(f) => {
                   r = f;
@@ -250,7 +250,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
           }
         } else {
           let piece: u8[] = [];
-          let read_ok: boolean = true;
+          let read_ok = true;
           match (r.read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
@@ -288,7 +288,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       continue;
     }
 
-    let j: i32 = __memchr_bytes(chunk, 10, pos);
+    let j = __memchr_bytes(chunk, 10, pos);
     if (j < 0) {
       if (!tail) {
         buf_push_bytes_range(carry, chunk, pos, chunk.len());
@@ -298,29 +298,29 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       j = chunk.len() - 1;
     }
 
-    let buf: u8[] = chunk;
-    let lo: i32 = pos;
-    let hi: i32 = j + 1;
-    let carried: boolean = buf_len(carry) > 0;
+    let buf = chunk;
+    let lo = pos;
+    let hi = j + 1;
+    let carried = buf_len(carry) > 0;
     if (carried) {
       buf_push_bytes_range(carry, chunk, pos, j + 1);
       buf = buf_take_bytes(carry);
       lo = 0;
       hi = buf.len();
     }
-    let terminated: boolean = !tail;
+    let terminated = !tail;
     pos = j + 1;
 
-    let body: i32 = hi;
+    let body = hi;
     if (terminated) {
       body = hi - 1;
     }
 
-    let start: i32 = lo;
-    let p: i32 = lo;
-    let column: u64 = 0 as u64;
-    let lastw: i32 = 1;
-    let sp: i32 = 0 - 1;
+    let start = lo;
+    let p = lo;
+    let column = 0 as u64;
+    let lastw = 1;
+    let sp: i32 = -1;
     if (mode != count_bytes_mode()) {
       if (carried) {
         sp = special_at(buf, lo, specials);
@@ -333,22 +333,22 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
     }
 
     while (p < body) {
-      let run_end: i32 = body;
+      let run_end = body;
       if (sp >= p && sp < run_end) {
         run_end = sp;
       }
       while (p < run_end) {
-        let room: u64 = 0 as u64;
+        let room = 0 as u64;
         if (column < width) {
           room = width - column;
         }
-        let avail: i32 = run_end - p;
+        let avail = run_end - p;
         if (avail as u64 <= room) {
           column = column + avail as u64;
           lastw = 1;
           p = run_end;
         } else {
-          let cut: i32 = break_before(buf, start, p + room as i32, break_spaces);
+          let cut = break_before(buf, start, p + room as i32, break_spaces);
           buf_push_bytes_range(h, buf, start, cut);
           buf_push_byte(h, 10);
           start = cut;
@@ -357,12 +357,12 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
             column = 0 as u64;
           } else {
             column = 0 as u64;
-            let m: i32 = cut;
+            let m = cut;
             while (m < p) {
               let st: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
               column = st.0;
               lastw = st.1;
-              m = m + 1;
+              m += 1;
             }
           }
           if (buf_len(h) >= block_size()) {
@@ -373,26 +373,26 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
       if (p >= body) {
         break;
       }
-      let c: i32 = buf[p] as i32;
+      let c = buf[p] as i32;
       let step: (u64, i32) = advance(column, lastw, c, mode);
-      let next: u64 = step.0;
+      let next = step.0;
       if (next <= width) {
         column = next;
         lastw = step.1;
-        p = p + 1;
+        p += 1;
       } else {
-        let cut: i32 = break_before(buf, start, p, break_spaces);
+        let cut = break_before(buf, start, p, break_spaces);
         if (cut > start) {
           buf_push_bytes_range(h, buf, start, cut);
           buf_push_byte(h, 10);
           start = cut;
           column = 0 as u64;
-          let m: i32 = cut;
+          let m = cut;
           while (m < p) {
             let st2: (u64, i32) = advance(column, lastw, buf[m] as i32, mode);
             column = st2.0;
             lastw = st2.1;
-            m = m + 1;
+            m += 1;
           }
           if (buf_len(h) >= block_size()) {
             o = gnu.flush(o);
@@ -400,7 +400,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
         } else {
           column = next;
           lastw = step.1;
-          p = p + 1;
+          p += 1;
         }
       }
       if (sp >= 0 && sp < p) {
@@ -433,9 +433,9 @@ function break_before(s: u8[], start: i32, limit: i32, break_spaces: boolean): i
   if (!break_spaces) {
     return limit;
   }
-  let k: i32 = limit;
+  let k = limit;
   while (k > start) {
-    k = k - 1;
+    k -= 1;
     if (is_blank(s[k] as i32)) {
       return k + 1;
     }
@@ -444,9 +444,9 @@ function break_before(s: u8[], start: i32, limit: i32, break_spaces: boolean): i
 }
 
 function special_at(s: u8[], from: i32, specials: u8[]): i32 {
-  let at: i32 = __scan_set_bytes(s, from, specials);
+  let at = __scan_set_bytes(s, from, specials);
   if (at == s.len()) {
-    return 0 - 1;
+    return -1;
   }
   return at;
 }

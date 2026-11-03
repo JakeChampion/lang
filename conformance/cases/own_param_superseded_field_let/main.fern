@@ -1,0 +1,36 @@
+// A local's initializer that replaces a field of an own parameter moves the
+// field into an own parameter, as a returned literal does (#14111).
+struct Res { v: i32[] }
+
+@noinline
+function (own r: Res) size(): i32 {
+  return r.v.len();
+}
+
+struct Box { r: Res, n: i32 }
+
+@noinline
+function grow(own r: Res, k: i32): Res {
+  return Res { v: r.v.append(k) };
+}
+
+@noinline
+function step(own b: Box, k: i32): Box {
+  let c: Box = Box { ...b, r: grow(b.r, k) };
+  return Box { ...c, n: c.n + 1 };
+}
+
+@noinline
+function run(own b: Box): i32 {
+  let c: Box = step(b, 7);
+  let d: Box = step(c, 8);
+  return d.n * 10 + d.r.size();
+}
+
+function main(): i32 {
+  let r: i32 = run(Box { r: Res { v: [1, 2] }, n: 0 });
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r;
+}

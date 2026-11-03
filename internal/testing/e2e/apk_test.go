@@ -4,9 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/binary"
+	"hash/adler32"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,7 +39,7 @@ func buildApk(t *testing.T, dir string, extra ...string) (string, []byte) {
 // library for each ABI, and a v2 signature that verifies.
 func TestApkWriter(t *testing.T) {
 	dir := t.TempDir()
-	path, raw := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test")
+	path, raw := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test", "-apk-min-sdk", "28", "-apk-permission", "RECORD_AUDIO,android.permission.INTERNET")
 	if info, err := os.Stat(filepath.Join(dir, "app.key.pem")); err != nil {
 		t.Fatalf("no new key next to the APK: %v", err)
 	} else if info.Mode().Perm() != 0o600 {
@@ -72,7 +74,7 @@ func TestApkWriter(t *testing.T) {
 		t.Errorf("entries = %s", got)
 	}
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
-	for _, s := range []string{"dev.fern.test", "Fern Stopwatch", "android.app.NativeActivity", "android.app.lib_name", "app"} {
+	for _, s := range []string{"dev.fern.test", "Fern Stopwatch", "android.app.NativeActivity", "android.app.lib_name", "app", "uses-permission", "android.permission.RECORD_AUDIO", "android.permission.INTERNET"} {
 		if !bytes.Contains(man, utf16le(s)) {
 			t.Errorf("the manifest has no string %q", s)
 		}
@@ -85,13 +87,14 @@ func TestApkWriter(t *testing.T) {
 	}
 	if aapt, err := exec.LookPath("aapt"); err == nil {
 		o, err := exec.Command(aapt, "dump", "badging", path).CombinedOutput()
-		if err != nil || !strings.Contains(string(o), "package: name='dev.fern.test'") || !strings.Contains(string(o), "native-code: 'arm64-v8a' 'x86_64'") {
+		if err != nil || !strings.Contains(string(o), "package: name='dev.fern.test'") || !strings.Contains(string(o), "native-code: 'arm64-v8a' 'x86_64'") ||
+			!strings.Contains(string(o), "sdkVersion:'28'") || !strings.Contains(string(o), "uses-permission: name='android.permission.RECORD_AUDIO'") {
 			t.Errorf("aapt dump badging: %v\n%s", err, o)
 		}
 	}
 
 	// The same key gives the same APK.
-	_, again := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test")
+	_, again := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test", "-apk-min-sdk", "28", "-apk-permission", "RECORD_AUDIO,android.permission.INTERNET")
 	if !bytes.Equal(raw, again) {
 		t.Error("two builds with the same key give different APKs")
 	}
@@ -107,6 +110,14 @@ func TestApkRefusals(t *testing.T) {
 		o, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(o), "-apk builds the library for both Android ABIs itself, so it takes no "+flag[0]) {
 			t.Errorf("%v: want a refusal, got %v\n%s", flag, err, o)
+		}
+	}
+	for _, level := range []string{"9", "35", "x"} {
+		args := []string{"-apk", filepath.Join(dir, "z.apk"), "-apk-min-sdk", level, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "-apk-min-sdk takes an API level from 24 to 34") {
+			t.Errorf("-apk-min-sdk %s: want a refusal, got %v\n%s", level, err, o)
 		}
 	}
 	bad := filepath.Join(dir, "bad.pem")
@@ -266,4 +277,74 @@ func v2Digest(sections ...[]byte) []byte {
 	h.Write(head[:])
 	h.Write(chunks)
 	return h.Sum(nil)
+}
+
+// An app with @jni classes: fern -apk writes them to classes.dex, the
+// manifest says hasCode, and the class that extends NativeActivity is the
+// activity. TestApkWriter's app has no @jni class, and so no classes.dex.
+func TestApkJniClasses(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "dextest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.dextest",
+		e2eharness.RepoPath("tests/android/dex", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	classes := readZipEntry(t, zr, "classes.dex")
+	checkDex(t, classes)
+	for _, s := range []string{"Ldev/fern/dextest/Main;", "Landroid/app/NativeActivity;", "Ldev/fern/dextest/Ping;", "Ljava/lang/Runnable;", "loadLibrary", "app"} {
+		if !bytes.Contains(classes, []byte(s)) {
+			t.Errorf("classes.dex has no string %q", s)
+		}
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	if !bytes.Contains(man, utf16le("dev.fern.dextest.Main")) {
+		t.Error("the manifest does not name dev.fern.dextest.Main as the activity")
+	}
+	verifyApkV2(t, raw)
+	if dx, err := filepath.Glob("/usr/lib/android-sdk/build-tools/*/lib/dx.jar"); err == nil && len(dx) > 0 {
+		if java, err := exec.LookPath("java"); err == nil {
+			dexFile := filepath.Join(dir, "classes.dex")
+			if err := os.WriteFile(dexFile, classes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			o, err := exec.Command(java, "-cp", dx[0], "com.android.dx.merge.DexMerger", filepath.Join(dir, "merged.dex"), dexFile).CombinedOutput()
+			if err != nil {
+				t.Errorf("DexMerger cannot read classes.dex: %v\n%s", err, o)
+			}
+		}
+	}
+	if aapt, err := exec.LookPath("aapt"); err == nil {
+		o, _ := exec.Command(aapt, "dump", "badging", out).CombinedOutput()
+		if !strings.Contains(string(o), "launchable-activity: name='dev.fern.dextest.Main'") {
+			t.Errorf("aapt dump badging names another activity:\n%s", o)
+		}
+	}
+}
+
+// checkDex checks the header of a DEX file: the magic, the size, the
+// SHA-1 signature and the Adler-32 checksum.
+func checkDex(t *testing.T, b []byte) {
+	t.Helper()
+	if len(b) < 0x70 || string(b[:8]) != "dex\n035\x00" {
+		t.Fatalf("classes.dex has no DEX 035 magic")
+	}
+	if got := binary.LittleEndian.Uint32(b[32:]); int(got) != len(b) {
+		t.Errorf("the header gives the size %d, and the file has %d bytes", got, len(b))
+	}
+	if sum := sha1.Sum(b[32:]); !bytes.Equal(sum[:], b[12:32]) {
+		t.Error("the SHA-1 signature does not match")
+	}
+	if got := binary.LittleEndian.Uint32(b[8:]); got != adler32.Checksum(b[12:]) {
+		t.Error("the Adler-32 checksum does not match")
+	}
 }

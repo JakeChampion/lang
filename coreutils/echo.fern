@@ -16,38 +16,38 @@ function hex_digit(b: i32): i32 {
   if (b >= 65 && b <= 70) {
     return b - 55;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [SHORT-OPTION]... [STRING]...\n";
   out = out + "  or:  " + gnu.prog() + " LONG-OPTION\n";
-  out = out + "Write the STRINGs to standard output, separated by spaces.\n";
-  out = out + "\n";
-  out = out + "  -n         do not write the trailing newline\n";
-  out = out + "  -e         interpret backslash escapes\n";
-  out = out + "  -E         do not interpret backslash escapes (default)\n";
-  out = out + "      --help     display this help and exit\n";
-  out = out + "      --version  output version information and exit\n";
-  out = out + "\n";
-  out = out + "A long option is recognised only as the sole argument.\n";
+  out += "Write the STRINGs to standard output, separated by spaces.\n";
+  out += "\n";
+  out += "  -n         do not write the trailing newline\n";
+  out += "  -e         interpret backslash escapes\n";
+  out += "  -E         do not interpret backslash escapes (default)\n";
+  out += "      --help     display this help and exit\n";
+  out += "      --version  output version information and exit\n";
+  out += "\n";
+  out += "A long option is recognised only as the sole argument.\n";
   return out;
 }
 
 function expand_into(out: u8[], s: string): (u8[], boolean) {
-  let bs: u8[] = out;
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let bs = out;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b != 92 || i + 1 >= n) {
       bs = bs.append(b as u8);
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let c: i32 = s[i + 1] as i32;
-    i = i + 2;
+    let c = s[i + 1] as i32;
+    i += 2;
     if (c == 97) {
       bs = bs.append(7 as u8);
     } else if (c == 98) {
@@ -69,25 +69,25 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
     } else if (c == 92) {
       bs = bs.append(92 as u8);
     } else if (c >= 48 && c <= 55) {
-      let oct: i32 = c - 48;
-      let more: i32 = 2;
+      let oct = c - 48;
+      let more = 2;
       if (c == 48) {
         more = 3;
       }
-      let taken: i32 = 0;
+      let taken = 0;
       while (taken < more && i < n && is_octal_digit(s[i] as i32)) {
         oct = oct * 8 + (s[i] as i32 - 48);
-        i = i + 1;
-        taken = taken + 1;
+        i += 1;
+        taken += 1;
       }
       bs = bs.append((oct % 256) as u8);
     } else if (c == 120) {
-      let hex: i32 = 0;
-      let digits: i32 = 0;
+      let hex = 0;
+      let digits = 0;
       while (digits < 2 && i < n && hex_digit(s[i] as i32) >= 0) {
         hex = hex * 16 + hex_digit(s[i] as i32);
-        i = i + 1;
-        digits = digits + 1;
+        i += 1;
+        digits += 1;
       }
       if (digits == 0) {
         bs = bs.append(92 as u8);
@@ -104,11 +104,11 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
 }
 
 function append_raw(out: u8[], s: string): u8[] {
-  let bs: u8[] = out;
-  let i: i32 = 0;
+  let bs = out;
+  let i = 0;
   while (i < s.len()) {
     bs = bs.append(s[i]);
-    i = i + 1;
+    i += 1;
   }
   return bs;
 }
@@ -117,40 +117,40 @@ function is_flag_token(a: string): boolean {
   if (a.len() < 2 || a[0] as i32 != 45) {
     return false;
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < a.len()) {
-    let b: i32 = a[i] as i32;
+    let b = a[i] as i32;
     if (b != 101 && b != 69 && b != 110) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let posix: boolean = false;
+  let argv = args();
+  let posix = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       posix = true;
     },
     None => {}
   }
-  let allow_options: boolean = !posix || argv.len() > 1 && argv[1] == "-n";
+  let allow_options = !posix || argv.len() > 1 && argv[1] == "-n";
   if (allow_options) {
     gnu.sole_help_version(argv, "echo", help_text(), 0);
   }
 
-  let i: i32 = 1;
-  let newline: boolean = true;
-  let do_v9: boolean = false;
+  let i = 1;
+  let newline = true;
+  let do_v9 = false;
   if (allow_options) {
     while (i < argv.len() && is_flag_token(argv[i])) {
-      let a: string = argv[i];
-      let j: i32 = 1;
+      let a = argv[i];
+      let j = 1;
       while (j < a.len()) {
-        let b: i32 = a[j] as i32;
+        let b = a[j] as i32;
         if (b == 101) {
           do_v9 = true;
         } else if (b == 69) {
@@ -158,15 +158,15 @@ pub function main(): i32 {
         } else {
           newline = false;
         }
-        j = j + 1;
+        j += 1;
       }
-      i = i + 1;
+      i += 1;
     }
   }
 
-  let escapes: boolean = do_v9 || posix;
+  let escapes = do_v9 || posix;
   let out: u8[] = [];
-  let stopped: boolean = false;
+  let stopped = false;
   while (i < argv.len() && !stopped) {
     if (escapes) {
       let r: (u8[], boolean) = expand_into(out, argv[i]);
@@ -178,7 +178,7 @@ pub function main(): i32 {
     if (!stopped && i + 1 < argv.len()) {
       out = out.append(32 as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   if (!stopped && newline) {
     out = out.append(10 as u8);

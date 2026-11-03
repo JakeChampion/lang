@@ -6,15 +6,15 @@ pub function bytes_word(text: string, lo: i32, hi: i32): i64 {
   if (hi - lo >= 8) {
     return text[lo] as i64 << 56 as i64 | text[lo + 1] as i64 << 48 as i64 | text[lo + 2] as i64 << 40 as i64 | text[lo + 3] as i64 << 32 as i64 | text[lo + 4] as i64 << 24 as i64 | text[lo + 5] as i64 << 16 as i64 | text[lo + 6] as i64 << 8 as i64 | text[lo + 7] as i64;
   }
-  let w: i64 = 0 as i64;
-  let b: i32 = 0;
+  let w = 0 as i64;
+  let b = 0;
   while (b < 8) {
-    let x: i32 = 0;
+    let x = 0;
     if (lo + b < hi) {
       x = text[lo + b] as i32;
     }
     w = w << 8 as i64 | x as i64;
-    b = b + 1;
+    b += 1;
   }
   return w;
 }
@@ -23,82 +23,82 @@ pub function bytes_word_bytes(text: u8[], lo: i32, hi: i32): i64 {
   if (hi - lo >= 8) {
     return text[lo] as i64 << 56 as i64 | text[lo + 1] as i64 << 48 as i64 | text[lo + 2] as i64 << 40 as i64 | text[lo + 3] as i64 << 32 as i64 | text[lo + 4] as i64 << 24 as i64 | text[lo + 5] as i64 << 16 as i64 | text[lo + 6] as i64 << 8 as i64 | text[lo + 7] as i64;
   }
-  let w: i64 = 0 as i64;
-  let b: i32 = 0;
+  let w = 0 as i64;
+  let b = 0;
   while (b < 8) {
-    let x: i32 = 0;
+    let x = 0;
     if (lo + b < hi) {
       x = text[lo + b] as i32;
     }
     w = w << 8 as i64 | x as i64;
-    b = b + 1;
+    b += 1;
   }
   return w;
 }
 
 pub function by_word(own idx: i64[], words: i64[], n: i32, signed: boolean, rev: boolean): i64[] {
-  let flip: i32 = 0;
+  let flip = 0;
   if (rev) {
     flip = 65535;
   }
   let counts: i32[] = [];
-  let z: i32 = 0;
+  let z = 0;
   while (z < 262144) {
     counts = counts.append(0);
-    z = z + 1;
+    z += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let w: i64 = words[idx[i] as i32];
-    let d0: i32 = (w & 65535 as i64) as i32 ^ flip;
-    let d1: i32 = 65536 + (w >> 16 as i64 & 65535 as i64) as i32 ^ flip;
-    let d2: i32 = 131072 + (w >> 32 as i64 & 65535 as i64) as i32 ^ flip;
-    let d3: i32 = 196608 + (w >> 48 as i64 & 65535 as i64) as i32 ^ flip;
+    let w = words[idx[i] as i32];
+    let d0 = (w & 65535 as i64) as i32 ^ flip;
+    let d1 = 65536 + (w >> 16 as i64 & 65535 as i64) as i32 ^ flip;
+    let d2 = 131072 + (w >> 32 as i64 & 65535 as i64) as i32 ^ flip;
+    let d3 = 196608 + (w >> 48 as i64 & 65535 as i64) as i32 ^ flip;
     counts = counts.with(d0, counts[d0] + 1);
     counts = counts.with(d1, counts[d1] + 1);
     counts = counts.with(d2, counts[d2] + 1);
     counts = counts.with(d3, counts[d3] + 1);
-    i = i + 1;
+    i += 1;
   }
   let tmp: i64[] = [];
-  let t: i32 = 0;
+  let t = 0;
   while (t < n) {
     tmp = tmp.append(0 as i64);
-    t = t + 1;
+    t += 1;
   }
-  let shift: i32 = 0;
+  let shift = 0;
   while (shift < 64) {
-    let sh: i64 = shift as i64;
-    let base: i32 = shift / 16 * 65536;
-    let first: i32 = base + (words[idx[0] as i32] >> sh & 65535 as i64) as i32 ^ flip;
+    let sh = shift as i64;
+    let base = shift / 16 * 65536;
+    let first = base + (words[idx[0] as i32] >> sh & 65535 as i64) as i32 ^ flip;
     if (counts[first] < n) {
-      let sflip: i32 = 0;
+      let sflip = 0;
       if (signed && shift == 48) {
         sflip = 32768;
       }
-      let sum: i32 = 0;
-      let b: i32 = 0;
+      let sum = 0;
+      let b = 0;
       while (b < 65536) {
-        let slot: i32 = base + (b ^ sflip);
-        let cnt: i32 = counts[slot];
+        let slot = base + (b ^ sflip);
+        let cnt = counts[slot];
         counts = counts.with(slot, sum);
-        sum = sum + cnt;
-        b = b + 1;
+        sum += cnt;
+        b += 1;
       }
-      let j: i32 = 0;
+      let j = 0;
       while (j < n) {
-        let v: i64 = idx[j];
-        let dj: i32 = base + (words[v as i32] >> sh & 65535 as i64) as i32 ^ flip;
-        let at: i32 = counts[dj];
+        let v = idx[j];
+        let dj = base + (words[v as i32] >> sh & 65535 as i64) as i32 ^ flip;
+        let at = counts[dj];
         tmp = tmp.with(at, v);
         counts = counts.with(dj, at + 1);
-        j = j + 1;
+        j += 1;
       }
-      let swap: i64[] = idx;
+      let swap = idx;
       idx = tmp;
       tmp = swap;
     }
-    shift = shift + 16;
+    shift += 16;
   }
   return idx;
 }

@@ -7,16 +7,16 @@ import "std/tz";
 import "./lib/utmp";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
-  out = out + "Print the current time, the length of time the system has been up,\n";
-  out = out + "the number of users on the system, and the average number of jobs\n";
-  out = out + "in the run queue over the last 1, 5 and 15 minutes.  Processes in\n";
-  out = out + "an uninterruptible sleep state also contribute to the load average.\n";
+  out += "Print the current time, the length of time the system has been up,\n";
+  out += "the number of users on the system, and the average number of jobs\n";
+  out += "in the run queue over the last 1, 5 and 15 minutes.  Processes in\n";
+  out += "an uninterruptible sleep state also contribute to the load average.\n";
   out = out + "If FILE is not specified, use " + utmp.default_path() + ".  /var/log/wtmp as FILE is common.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -40,11 +40,11 @@ function load_averages(): Option[string] {
   }
   match (read_file("/proc/loadavg")) {
     Ok(text) => {
-      let f: string[] = text.fields();
+      let f = text.fields();
       if (f.len() < 3) {
         return None;
       }
-      let out: string = ",  load average: " + two_places(f[0]);
+      let out = ",  load average: " + two_places(f[0]);
       out = out + ", " + two_places(f[1]);
       out = out + ", " + two_places(f[2]);
       return Some(out);
@@ -61,11 +61,11 @@ function darwin_load_averages(): Option[string] {
       if (bs.len() < 24) {
         return None;
       }
-      let scale: i64 = le_bytes(bs, 16, 8);
+      let scale = le_bytes(bs, 16, 8);
       if (scale <= 0 as i64) {
         return None;
       }
-      let out: string = ",  load average: " + hundredths(le_bytes(bs, 0, 4), scale);
+      let out = ",  load average: " + hundredths(le_bytes(bs, 0, 4), scale);
       out = out + ", " + hundredths(le_bytes(bs, 4, 4), scale);
       out = out + ", " + hundredths(le_bytes(bs, 8, 4), scale);
       return Some(out);
@@ -77,8 +77,8 @@ function darwin_load_averages(): Option[string] {
 }
 
 function hundredths(num: i64, den: i64): string {
-  let q: i64 = num * (100 as i64) / den;
-  let r: i64 = num * (100 as i64) % den;
+  let q = num * (100 as i64) / den;
+  let r = num * (100 as i64) % den;
   if (r * (2 as i64) > den || r * (2 as i64) == den && q % (2 as i64) == 1 as i64) {
     q = q + 1 as i64;
   }
@@ -86,11 +86,11 @@ function hundredths(num: i64, den: i64): string {
 }
 
 function le_bytes(bs: u8[], at: i32, width: i32): i64 {
-  let v: i64 = 0 as i64;
-  let i: i32 = width - 1;
+  let v = 0 as i64;
+  let i = width - 1;
   while (i >= 0) {
     v = v * (256 as i64) + bs[at + i] as i64;
-    i = i - 1;
+    i -= 1;
   }
   return v;
 }
@@ -110,33 +110,33 @@ function darwin_boot_time(): i64 {
 }
 
 function two_places(s: string): string {
-  let whole: string = "";
-  let frac: string = "";
-  let seen_dot: boolean = false;
-  let i: i32 = 0;
+  let whole = "";
+  let frac = "";
+  let seen_dot = false;
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 46 && !seen_dot) {
       seen_dot = true;
     } else if (seen_dot) {
-      frac = frac + slice_unchecked(s, i, i + 1);
+      frac += slice_unchecked(s, i, i + 1);
     } else {
-      whole = whole + slice_unchecked(s, i, i + 1);
+      whole += slice_unchecked(s, i, i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   if (whole.len() == 0) {
     whole = "0";
   }
   while (frac.len() < 2) {
-    frac = frac + "0";
+    frac += "0";
   }
   return whole + "." + slice_unchecked(frac, 0, 2);
 }
 
 function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i64): (string, i32) {
   let entries: utmp.Entry[] = [];
-  let why: string = "";
+  let why = "";
   match (read) {
     Ok(v) => {
       entries = v;
@@ -145,38 +145,38 @@ function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i6
       why = ": " + gnu.io_error_text(e);
     }
   }
-  let status: i32 = 0;
-  let boot: i64 = 0 as i64;
-  let sessions: i32 = 0;
-  let i: i32 = 0;
+  let status = 0;
+  let boot = 0 as i64;
+  let sessions = 0;
+  let i = 0;
   while (i < entries.len()) {
     if (entries[i].is_login()) {
-      sessions = sessions + 1;
+      sessions += 1;
     }
     if (entries[i].kind == utmp.boot_time()) {
       boot = entries[i].sec;
     }
-    i = i + 1;
+    i += 1;
   }
   if (boot == 0 as i64) {
     boot = fallback_boot;
   }
-  let out: string = "";
+  let out = "";
   if (boot == 0 as i64) {
     gnu.error("couldn't get boot time" + why);
     status = 1;
   }
-  out = out + timefmt.strftime(" %H:%M:%S  ", tz.local_zone(), now, 0 as i64);
-  let elapsed: i64 = now - boot;
+  out += timefmt.strftime(" %H:%M:%S  ", tz.local_zone(), now, 0 as i64);
+  let elapsed = now - boot;
   if (boot == 0 as i64 || elapsed < 0 as i64) {
-    out = out + "up ???? days ??:??,  ";
+    out += "up ???? days ??:??,  ";
     status = 1;
   } else {
-    let days: i64 = elapsed / (86400 as i64);
-    let hours: i32 = (elapsed % (86400 as i64) / (3600 as i64)) as i32;
-    let mins: i32 = (elapsed % (3600 as i64) / (60 as i64)) as i32;
+    let days = elapsed / (86400 as i64);
+    let hours = (elapsed % (86400 as i64) / (3600 as i64)) as i32;
+    let mins = (elapsed % (3600 as i64) / (60 as i64)) as i32;
     if (days > 0 as i64) {
-      let unit: string = " days ";
+      let unit = " days ";
       if (days == 1 as i64) {
         unit = " day ";
       }
@@ -187,11 +187,11 @@ function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i6
   }
   out = out + sessions.to_string() + " user";
   if (sessions != 1) {
-    out = out + "s";
+    out += "s";
   }
   match (load_averages()) {
     Some(l) => {
-      out = out + l;
+      out += l;
     },
     None => {}
   }
@@ -199,7 +199,7 @@ function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i6
 }
 
 pub function main(): i32 {
-  let operands: string[] = gnu.parse_standard_options_only(args(), "uptime", help_text(), 1);
+  let operands = gnu.parse_standard_options_only(args(), "uptime", help_text(), 1);
   if (target_os() != "linux" && target_os() != "android" && target_os() != "darwin") {
     gnu.error("the load averages are read from /proc/loadavg, which " + target_os() + " does not have");
     return 1;
@@ -207,18 +207,18 @@ pub function main(): i32 {
   if (operands.len() > 1) {
     gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
   }
-  let path: string = utmp.default_path();
+  let path = utmp.default_path();
   if (operands.len() == 1) {
     path = operands[0];
   }
-  let fallback_boot: i64 = 0 as i64;
+  let fallback_boot = 0 as i64;
   if (target_os() == "darwin") {
     if (path == utmp.default_path()) {
       fallback_boot = darwin_boot_time();
     }
   }
   let r: (string, i32) = report(utmp.read_all_result(path), now_unix_ms() / (1000 as i64), fallback_boot);
-  let o: io_buffered.BufWriter = gnu.put(gnu.out_new(), r.0);
+  let o = gnu.put(gnu.out_new(), r.0);
   gnu.finish(o);
   return r.1;
 }

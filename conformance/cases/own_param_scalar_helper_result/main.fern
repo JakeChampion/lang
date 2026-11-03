@@ -1,0 +1,28 @@
+// An array built from the scalar results of a helper is fresh, so it moves
+// into an own parameter (#14104).
+struct W { v: f32[], n: i32 }
+
+@noinline function renorm(own xs: f32[]): f32[] { return xs.append(1.0f32); }
+
+@noinline function wget(w: W, j: i32): f32 { return w.v[j]; }
+
+@noinline function take(w: W, n: i32): f32[] {
+  let out: f32[] = [];
+  for j in 0..n {
+    out = out.append(wget(w, j));
+  }
+  return out;
+}
+
+@noinline function f(own w: W): W {
+  let v: f32[] = renorm(take(w, 2));
+  return W { v: v, n: w.n + v.len() };
+}
+
+function main(): i32 {
+  let w: W = f(W { v: [1.0f32, 2.0f32, 3.0f32], n: 2 });
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return w.n + w.v.len();
+}

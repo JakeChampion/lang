@@ -1,0 +1,48 @@
+// An alias that takes a local at its last use moves into an own method
+// receiver, after a self-update of that local (#14109).
+struct R { v: i32[], n: i32 }
+
+@noinline
+function (own r: R) step(): (R, i32) {
+  return (R { v: r.v.append(r.n), n: r.n + 1 }, r.v.len());
+}
+
+@noinline
+function split(own r: R): (R, boolean) {
+  let big: boolean = r.n > 0;
+  return (r, big);
+}
+
+@noinline
+function after_update(own r0: R): i32 {
+  let r1: R = r0;
+  r1 = R { ...r1, n: r1.n + 2 };
+  let r2: R = r1;
+  let (r3, k) = r2.step();
+  r2 = r3;
+  return r2.n + k;
+}
+
+@noinline
+function after_unpack(own r0: R): i32 {
+  let (r1, big) = split(r0);
+  if (big) {
+    r1 = R { ...r1, n: r1.n * 2 };
+  }
+  let r2: R = r1;
+  if (r2.n > 3) {
+    let (r3, k) = r2.step();
+    r2 = r3;
+  }
+  let (r4, m) = r2.step();
+  return r4.v.len() + r4.n + m;
+}
+
+function main(): i32 {
+  let r: i32 = after_update(R { v: [1, 2], n: 1 });
+  r = r + after_unpack(R { v: [5], n: 2 }) + after_unpack(R { v: [], n: 0 });
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r;
+}

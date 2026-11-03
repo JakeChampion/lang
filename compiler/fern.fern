@@ -33,6 +33,7 @@ import "./arm64_native";
 import "./x86_native";
 import "./elf";
 import "./apk";
+import "./dex";
 import "./ircore";
 import "./emitforms";
 import "./semarrayreport";
@@ -1198,7 +1199,80 @@ pub function native_imports(m: parser.Module, target: string): parser.Module {
 // A JNI method from @jni(class, declaration). The declaration is Java:
 // "[static] result name(type, ...)". `symbol` is the JNI symbol of the
 // generated wrapper that calls `func`.
-struct JniMethod { func: parser.FuncDecl, class: string, is_static: boolean, result: string, name: string, types: string[], params: string[], symbol: string }
+struct JniMethod { func: parser.FuncDecl, class: string, superclass: string, interfaces: string[], is_static: boolean, result: string, name: string, types: string[], params: string[], symbol: string }
+
+// The class argument of @jni: a class name, with "extends S" and
+// "implements A, B" after it as a Java class head has them. `superclass` is
+// "" when the head does not name one.
+struct JavaClassHead { ok: boolean, name: string, superclass: string, interfaces: string[] }
+
+function java_class_head(text: string): JavaClassHead {
+  let none: string[] = [];
+  let bad: JavaClassHead = JavaClassHead { ok: false, name: "", superclass: "", interfaces: none };
+  let rest: string = text.trim();
+  let interfaces: string[] = [];
+  let at: i32 = util.index_of_sub(rest, " implements ");
+  if (at >= 0) {
+    for part in slice_unchecked(rest, at + 12, rest.len()).split(",") {
+      interfaces = interfaces.append(part.trim());
+    }
+    rest = slice_unchecked(rest, 0, at).trim();
+  }
+  let superclass: string = "";
+  let ext: i32 = util.index_of_sub(rest, " extends ");
+  if (ext >= 0) {
+    superclass = slice_unchecked(rest, ext + 9, rest.len()).trim();
+    rest = slice_unchecked(rest, 0, ext).trim();
+  }
+  for n in interfaces.append(rest).append(superclass) {
+    if (n.len() > 0 && !jni_name_ok(n)) {
+      return bad;
+    }
+  }
+  if (rest.len() == 0) {
+    return bad;
+  }
+  return JavaClassHead { ok: true, name: rest, superclass: superclass, interfaces: interfaces };
+}
+
+function has_head(jm: JniMethod): boolean {
+  return jm.superclass.len() > 0 || jm.interfaces.len() > 0;
+}
+
+function head_text(jm: JniMethod): string {
+  let out: string = "";
+  if (jm.superclass.len() > 0) {
+    out = " extends " + jm.superclass;
+  }
+  for k in 0..jm.interfaces.len() {
+    if (k == 0) {
+      out = out + " implements ";
+    } else {
+      out = out + ", ";
+    }
+    out = out + jm.interfaces[k];
+  }
+  return out;
+}
+
+// Gives each method the head of its class. One method of a class can name
+// the head, and two different heads of one class are a refusal.
+function jni_unify_heads(methods: JniMethod[]): (JniMethod[], string) {
+  let out: JniMethod[] = [];
+  for jm in methods {
+    let head: JniMethod = jm;
+    for other in methods {
+      if (other.class == jm.class && has_head(other)) {
+        if (has_head(head) && head_text(head) != head_text(other)) {
+          return (out, "@jni " + other.func.name + ": class " + jm.class + " is declared as" + head_text(head) + " and as" + head_text(other));
+        }
+        head = other;
+      }
+    }
+    out = out.append(JniMethod { ...jm, superclass: head.superclass, interfaces: head.interfaces });
+  }
+  return (out, "");
+}
 
 // The Fern type with the width of Java type `t`, or "" for void. A Java
 // reference, such as String or int[], is a usize.
@@ -1254,7 +1328,7 @@ function char_at(s: string, c: u8): i32 {
 
 function jni_bad(f: parser.FuncDecl, why: string): (JniMethod, string) {
   let none: string[] = [];
-  return (JniMethod { func: f, class: "", is_static: false, result: "", name: "", types: none, params: none, symbol: "" }, "@jni " + f.name + ": " + why);
+  return (JniMethod { func: f, class: "", superclass: "", interfaces: none, is_static: false, result: "", name: "", types: none, params: none, symbol: "" }, "@jni " + f.name + ": " + why);
 }
 
 // A parsed Java declaration "[static] result name(type, ...)". `ok` is
@@ -1313,7 +1387,12 @@ function jni_signature_refusal(f: parser.FuncDecl, jd: JavaDecl): string {
 
 // The JNI method of `f`, or a refusal: the Java declaration must parse, and
 // each Fern type must have the width of its Java type.
-function jni_method(f: parser.FuncDecl, class: string, decl: string): (JniMethod, string) {
+function jni_method(f: parser.FuncDecl, class_text: string, decl: string): (JniMethod, string) {
+  let head: JavaClassHead = java_class_head(class_text);
+  if (!head.ok) {
+    return jni_bad(f, "the class \"" + class_text + "\" is not \"name [extends class] [implements interface, ...]\"");
+  }
+  let class: string = head.name;
   let jd: JavaDecl = java_decl(class, decl);
   if (!jd.ok) {
     return jni_bad(f, "the declaration \"" + decl + "\" is not \"[static] result name(type, ...)\"");
@@ -1327,7 +1406,7 @@ function jni_method(f: parser.FuncDecl, class: string, decl: string): (JniMethod
     params = params.append(f.params[k + 2].name);
   }
   let symbol: string = "Java_" + jni_mangle(class) + "_" + jni_mangle(jd.name);
-  return (JniMethod { func: f, class: class, is_static: jd.is_static, result: jd.result, name: jd.name, types: jd.types, params: params, symbol: symbol }, "");
+  return (JniMethod { func: f, class: class, superclass: head.superclass, interfaces: head.interfaces, is_static: jd.is_static, result: jd.result, name: jd.name, types: jd.types, params: params, symbol: symbol }, "");
 }
 
 // The module with its C imports and its JNI wrappers, and the JNI methods,
@@ -1390,7 +1469,7 @@ pub function jni_methods(m: parser.Module): (JniMethod[], string) {
       out = out.append(jm);
     }
   }
-  return (out, "");
+  return jni_unify_heads(out);
 }
 
 // Each JNI method becomes a C-ABI export named by its JNI symbol, which
@@ -1445,15 +1524,19 @@ function jni_java_method(jm: JniMethod): string {
     args = args + jm.types[k] + " " + jm.params[k];
   }
   let st: string = "";
+  if (has_head(jm)) {
+    st = "public ";
+  }
   if (jm.is_static) {
-    st = "static ";
+    st = st + "static ";
   }
   return "    " + st + "native " + jm.result + " " + jm.name + "(" + args + ");\n";
 }
 
-// The header and the static block of `class`. A class of static methods
-// alone is final, with a private constructor.
-function jni_java_head(class: string, library: string, all_static: boolean): string {
+// The header and the static block of `class`. A class with a head, such as
+// "implements Runnable", is public. A class of static methods alone and no
+// head is final, with a private constructor.
+function jni_java_head(class: string, library: string, all_static: boolean, head: string): string {
   let dot: i32 = 0 - 1;
   for i in 0..class.len() {
     if (class[i] == b'.') {
@@ -1467,11 +1550,13 @@ function jni_java_head(class: string, library: string, all_static: boolean): str
   }
   let mods: string = "";
   let ctor: string = "";
-  if (all_static) {
+  if (head.len() > 0) {
+    mods = "public ";
+  } else if (all_static) {
     mods = "final ";
     ctor = "\n    private " + simple + "() {}\n";
   }
-  return out + mods + "class " + simple + " {\n    static {\n        System.loadLibrary(\"" + library + "\");\n    }\n" + ctor + "\n";
+  return out + mods + "class " + simple + head + " {\n    static {\n        System.loadLibrary(\"" + library + "\");\n    }\n" + ctor + "\n";
 }
 
 // The Java source of `class`: its JNI methods as native declarations, and
@@ -1479,13 +1564,15 @@ function jni_java_head(class: string, library: string, all_static: boolean): str
 function jni_java_class(class: string, library: string, methods: JniMethod[]): string {
   let all_static: boolean = true;
   let body: string = "";
+  let head: string = "";
   for jm in methods {
     if (jm.class == class) {
       all_static = all_static && jm.is_static;
       body = body + jni_java_method(jm);
+      head = head_text(jm);
     }
   }
-  return jni_java_head(class, library, all_static) + body + "}\n";
+  return jni_java_head(class, library, all_static, head) + body + "}\n";
 }
 
 // The library name that System.loadLibrary takes for `out_path`, such as
@@ -1518,18 +1605,63 @@ function write_jni_java(dir: string, out_path: string, methods: JniMethod[]): st
     let parent: string = slice_unchecked(path, 0, util.last_slash(path)) + "";
     match (create_dir_all(parent)) {
       Err(e) => {
-        return "cannot make " + parent + ": " + e.message();
+        return "-jni-java: cannot make " + parent + ": " + e.message();
       },
       Ok(_) => {}
     }
     match (write_file(path, jni_java_class(class, jni_library(out_path), methods))) {
       Err(e) => {
-        return "cannot write " + path + ": " + e.message();
+        return "-jni-java: cannot write " + path + ": " + e.message();
       },
       Ok(_) => {}
     }
   }
   return "";
+}
+
+// The DEX classes of the JNI methods: one class for each @jni class, with
+// java.lang.Object as the superclass when the head names none.
+function jni_dex_classes(methods: JniMethod[]): dex.Class[] {
+  let out: dex.Class[] = [];
+  let names: string[] = [];
+  for jm in methods {
+    if (!util.has_str(names, jm.class)) {
+      names = names.append(jm.class);
+      let superclass: string = jm.superclass;
+      if (superclass.len() == 0) {
+        superclass = "java.lang.Object";
+      }
+      let ifaces: string[] = [];
+      for i in jm.interfaces {
+        ifaces = ifaces.append(dex.descriptor(i));
+      }
+      out = out.append(dex.Class { name: dex.descriptor(jm.class), superclass: dex.descriptor(superclass), interfaces: ifaces, methods: [] });
+    }
+    let k: i32 = util.index_of_str(names, jm.class);
+    let params: string[] = [];
+    for t in jm.types {
+      params = params.append(dex.descriptor(t));
+    }
+    let m: dex.Method = dex.Method { name: jm.name, is_static: jm.is_static, ret: dex.descriptor(jm.result), params: params };
+    out = out.with(k, dex.Class { ...out[k], methods: out[k].methods.append(m) });
+  }
+  return out;
+}
+
+// Writes the DEX file of the @jni classes to `path`, when -jni-dex names one
+// and the program has a @jni class.
+function write_jni_dex(path: string, out_path: string, methods: JniMethod[]): string {
+  if (path.len() == 0 || methods.len() == 0) {
+    return "";
+  }
+  match (write_file_bytes(path, dex.write(jni_dex_classes(methods), jni_library(out_path)))) {
+    Err(e) => {
+      return "-jni-dex: cannot write " + path + ": " + e.message();
+    },
+    Ok(_) => {
+      return "";
+    }
+  }
 }
 
 // The Fern types with the width of a JNI type: usize for a reference or a
@@ -2188,9 +2320,12 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export, besides the @jni ones (default main)"),
       cli_flag("-jni-java", "DIR", "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
+      cli_flag("-jni-dex", "FILE", "with -shared: write the @jni classes to the DEX file FILE, with native methods, a public constructor and System.loadLibrary; nothing is written when there is no @jni class"),
       cli_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
       cli_flag("-apk-package", "NAME", "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       cli_flag("-apk-label", "TEXT", "with -apk: the name of the app on the launcher (default LIB)"),
+      cli_flag("-apk-permission", "NAMES", "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission"),
+      cli_flag("-apk-min-sdk", "LEVEL", "with -apk: the lowest Android API level the app runs on (default 24)"),
       cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
@@ -3736,24 +3871,16 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
   if (b.errs.len() > 0) {
     return Loaded { b: b, refused: errors_of(b.errs) };
   }
+  let imported: Finding[] = errors_of(asmcore.imported_parse_errors(flatten.modules(b.loaded)));
+  if (imported.len() > 0) {
+    return Loaded { b: b, refused: imported };
+  }
   let (folded, fold_errs) = fold_embedded_assets(b, embed_dir);
   if (fold_errs.len() > 0) {
     return Loaded { b: b, refused: fold_errs };
   }
   let vis: util.Diag[] = visibility.export_diags(folded.entry, folded.entry_ident, folded.loaded, folded.package_roots);
   return Loaded { b: folded, refused: errors_of(vis) };
-}
-
-function imported_parse_findings(b: Bundle): Finding[] {
-  let none: parser.FuncDecl[] = [];
-  for lm in b.loaded {
-    let fs: Finding[] = errors_of(asmcore.parse_unknown_errors_module(parser.Module { ...lm.mod, funcs: none }));
-    if (fs.len() > 0) {
-      return fs;
-    }
-  }
-  let ok: Finding[] = [];
-  return ok;
 }
 
 function parse_findings(mod: parser.Module): Finding[] {
@@ -3825,7 +3952,7 @@ function executable_entry_diags(mod: parser.Module, target: string, shared: bool
 
 function check_bundle(b: Bundle, entry_path: string, target: string, target_given: boolean): Checked {
   let merged: parser.Module = b.merged;
-  let parsed: Finding[] = util.append_all(parse_findings(merged), imported_parse_findings(b));
+  let parsed: Finding[] = parse_findings(merged);
   if (parsed.len() > 0) {
     return Checked { findings: parsed, entry: entry_path, files: b.files, maps: b.maps, ok: false };
   }
@@ -5915,15 +6042,18 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label and key file
 // of -apk.
-struct ApkOpts { jni_java: string, out: string, package: string, label: string, key: string }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, key: string, permissions: string, min_sdk: string }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-apk", "-apk-package", "-apk-label", "-apk-key"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-key", "-apk-permission", "-apk-min-sdk"], name);
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
   if (f.name == "-jni-java") {
     return ApkOpts { ...o, jni_java: f.value };
+  }
+  if (f.name == "-jni-dex") {
+    return ApkOpts { ...o, jni_dex: f.value };
   }
   if (f.name == "-apk") {
     return ApkOpts { ...o, out: f.value };
@@ -5937,6 +6067,12 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
   if (f.name == "-apk-key") {
     return ApkOpts { ...o, key: f.value };
   }
+  if (f.name == "-apk-permission") {
+    return ApkOpts { ...o, permissions: f.value };
+  }
+  if (f.name == "-apk-min-sdk") {
+    return ApkOpts { ...o, min_sdk: f.value };
+  }
   return o;
 }
 
@@ -5948,7 +6084,7 @@ function apk_build_args(av: string[]): (string[], string) {
     let name: string = apk_flag_name(a);
     if (value_next) {
       value_next = false;
-    } else if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java"], name)) {
+    } else if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java", "-jni-dex"], name)) {
       return (out, "fern: -apk builds the library for both Android ABIs itself, so it takes no " + a);
     } else if (util.str_has_prefix(name, "-apk")) {
       value_next = !a.contains("=");
@@ -6039,15 +6175,20 @@ function apk_key(path: string): (u8[], string) {
 
 // The library of the app for each Android ABI, built under `dir` with the
 // name lib<lib>.so, which is also its SONAME.
-function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): (apk.Lib[], i32) {
+// The arm64 build also writes the DEX file of the @jni classes, which is
+// empty when there is none.
+function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): (apk.Lib[], u8[], i32) {
   let libs: apk.Lib[] = [];
   let status: i32 = 0;
+  let dex_path: string = dir + "/classes.dex";
+  let flags: string[] = ["-jni-dex", dex_path];
   for abi in [("arm64-v8a", "arm64-android"), ("x86_64", "x86-64-android")] {
     let so: string = dir + "/" + abi.0 + "/lib" + lib + ".so";
     let _ = create_dir_all(dir + "/" + abi.0);
     if (status == 0) {
-      status = run_with_gate(util.append_all([fern, "-target", abi.1, "-shared", "-export", "ANativeActivity_onCreate", "-o", so], rest), embedded_root, fetcher, gate);
+      status = run_with_gate(util.append_all(util.append_all([fern, "-target", abi.1, "-shared", "-export", "ANativeActivity_onCreate", "-o", so], flags), rest), embedded_root, fetcher, gate);
     }
+    flags = [];
     match (read_file_bytes(so)) {
       Ok(image) => {
         libs = libs.append(apk.Lib { abi: abi.0, image: image });
@@ -6060,8 +6201,15 @@ function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedd
       }
     }
   }
+  let classes: u8[] = [];
+  match (read_file_bytes(dex_path)) {
+    Ok(b) => {
+      classes = b;
+    },
+    Err(_) => {}
+  }
   let _ = remove_dir_all(dir);
-  return (libs, status);
+  return (libs, classes, status);
 }
 
 // The -apk-key file, or by default the APK path with .key.pem for .apk.
@@ -6075,8 +6223,38 @@ function apk_key_path(o: ApkOpts): string {
   return o.out + ".key.pem";
 }
 
-function apk_app(o: ApkOpts, lib: string): apk.App {
-  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0" };
+function apk_level_ok(n: i64): boolean {
+  return n >= apk.MIN_SDK as i64 && n <= apk.TARGET_SDK as i64;
+}
+
+// The full names of the -apk-permission list. A name with no dot is in
+// android.permission.
+function apk_permissions(list: string): string[] {
+  let out: string[] = [];
+  if (list.len() == 0) {
+    return out;
+  }
+  for name in list.split(",") {
+    let n: string = name.trim();
+    if (!n.contains(".")) {
+      n = "android.permission." + n;
+    }
+    out = out.append(n);
+  }
+  return out;
+}
+
+// The app of the APK. A @jni class that extends NativeActivity is the
+// activity, and NativeActivity itself is the activity otherwise.
+function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
+  let activity: string = dex.subclass_of(classes, "android.app.NativeActivity");
+  if (activity.len() == 0) {
+    activity = "android.app.NativeActivity";
+  }
+  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: apk_permissions(o.permissions), min_sdk: apk.MIN_SDK };
+  if (o.min_sdk.len() > 0) {
+    app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
+  }
   if (o.package.len() > 0) {
     app = apk.App { ...app, package: o.package };
   }
@@ -6094,8 +6272,12 @@ function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: st
     eprint(bad);
     return 2;
   }
+  if (o.min_sdk.len() > 0 && !apk_level_ok(size_bytes(o.min_sdk))) {
+    eprint("fern: -apk-min-sdk takes an API level from " + util.i32_to_string(apk.MIN_SDK) + " to " + util.i32_to_string(apk.TARGET_SDK) + " (got \"" + o.min_sdk + "\")");
+    return 2;
+  }
   let lib: string = apk_lib_name(entry_path);
-  let (libs, status) = apk_libs(av[0], rest, o.out + ".lib", lib, embedded_root, fetcher, gate);
+  let (libs, classes, status) = apk_libs(av[0], rest, o.out + ".lib", lib, embedded_root, fetcher, gate);
   if (status != 0) {
     return status;
   }
@@ -6104,7 +6286,7 @@ function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: st
     eprint(key_bad);
     return 1;
   }
-  match (write_file_bytes(o.out, apk.write(apk_app(o, lib), libs, d))) {
+  match (write_file_bytes(o.out, apk.write(apk_app(o, lib, classes), libs, d))) {
     Ok(_) => {
       return 0;
     },
@@ -6157,7 +6339,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag: boolean = false;
   let shared: boolean = false;
   let export_list: string = "";
-  let apk_opts: ApkOpts = ApkOpts { jni_java: "", out: "", package: "", label: "", key: "" };
+  let apk_opts: ApkOpts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", key: "", permissions: "", min_sdk: "" };
   let harden: boolean = false;
   let heap_limit_text: string = "";
   let quarantine_text: string = "";
@@ -6521,7 +6703,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
 
   if (mode_interp) {
-    if (eprint_findings(st, util.append_all(parse_findings(merged), imported_parse_findings(b)), entry_path, b.files, b.maps)) {
+    if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
       return 1;
     }
     if (eprint_findings(st, errors_of(flatten.handler_serve_diags(b.entry, target)), entry_path, b.files, b.maps)) {
@@ -6544,7 +6726,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
   emit = form;
 
-  if (eprint_findings(st, util.append_all(parse_findings(merged), imported_parse_findings(b)), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -6772,9 +6954,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   } else {
     write(out_asm);
   }
-  let java_bad: string = write_jni_java(apk_opts.jni_java, out_path, jni);
+  let java_bad: string = write_jni_java(apk_opts.jni_java, out_path, jni) + write_jni_dex(apk_opts.jni_dex, out_path, jni);
   if (java_bad.len() > 0) {
-    eprint("fern: -jni-java: " + java_bad);
+    eprint("fern: " + java_bad);
     return 1;
   }
   if (tf.run_it) {

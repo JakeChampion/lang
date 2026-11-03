@@ -64,31 +64,31 @@ function opt_users(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [ FILE | ARG1 ARG2 ]\n";
-  out = out + "Print information about users who are currently logged in.\n";
-  out = out + "\n";
-  out = out + "  -a, --all         same as -b -d --login -p -r -t -T -u\n";
-  out = out + "  -b, --boot        time of last system boot\n";
-  out = out + "  -d, --dead        print dead processes\n";
-  out = out + "  -H, --heading     print line of column headings\n";
-  out = out + "  -l, --login       print system login processes\n";
-  out = out + "      --lookup      attempt to canonicalize hostnames via DNS\n";
-  out = out + "  -m                only hostname and user associated with stdin\n";
-  out = out + "  -p, --process     print active processes spawned by init\n";
-  out = out + "  -q, --count       all login names and number of users logged on\n";
-  out = out + "  -r, --runlevel    print current runlevel\n";
-  out = out + "  -s, --short       print only name, line, and time (default)\n";
-  out = out + "  -t, --time        print last system clock change\n";
-  out = out + "  -T, -w, --mesg    add user's message status as +, - or ?\n";
-  out = out + "  -u, --users       list users logged in\n";
-  out = out + "      --message     same as -T\n";
-  out = out + "      --writable    same as -T\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
+  out += "Print information about users who are currently logged in.\n";
+  out += "\n";
+  out += "  -a, --all         same as -b -d --login -p -r -t -T -u\n";
+  out += "  -b, --boot        time of last system boot\n";
+  out += "  -d, --dead        print dead processes\n";
+  out += "  -H, --heading     print line of column headings\n";
+  out += "  -l, --login       print system login processes\n";
+  out += "      --lookup      attempt to canonicalize hostnames via DNS\n";
+  out += "  -m                only hostname and user associated with stdin\n";
+  out += "  -p, --process     print active processes spawned by init\n";
+  out += "  -q, --count       all login names and number of users logged on\n";
+  out += "  -r, --runlevel    print current runlevel\n";
+  out += "  -s, --short       print only name, line, and time (default)\n";
+  out += "  -t, --time        print last system clock change\n";
+  out += "  -T, -w, --mesg    add user's message status as +, - or ?\n";
+  out += "  -u, --users       list users logged in\n";
+  out += "      --message     same as -T\n";
+  out += "      --writable    same as -T\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
   out = out + "If FILE is not specified, use " + utmp.default_path() + ".  /var/log/wtmp as FILE is common.\n";
-  out = out + "If ARG1 ARG2 given, -m presumed: 'am i' or 'mom likes' are usual.\n";
+  out += "If ARG1 ARG2 given, -m presumed: 'am i' or 'mom likes' are usual.\n";
   return out;
 }
 
@@ -116,8 +116,8 @@ function parse_mode(argv: string[]): (Mode, string[]) {
   opts = opts.append(gnu.flag("u", "users", opt_users()));
   opts = opts.append(gnu.flag("w", "writable", opt_mesg()));
   opts = opts.append(gnu.flag("m", "", opt_mine()));
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "who", help_text(), 1);
-  let m: Mode = mode_new();
+  let g = gnu.getopt_new(argv, opts, "who", help_text(), 1);
+  let m = mode_new();
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -183,29 +183,29 @@ function apply(m: Mode, id: i32): Mode {
 }
 
 function pad_right(s: string, w: i32): string {
-  let out: string = s;
-  let n: i32 = s.len();
+  let out = s;
+  let n = s.len();
   while (n < w) {
-    out = out + " ";
-    n = n + 1;
+    out += " ";
+    n += 1;
   }
   return out;
 }
 
 function pad_left(s: string, w: i32): string {
-  let out: string = "";
-  let n: i32 = s.len();
+  let out = "";
+  let n = s.len();
   while (n < w) {
-    out = out + " ";
-    n = n + 1;
+    out += " ";
+    n += 1;
   }
   return out + s;
 }
 
 function trim_right(s: string): string {
-  let n: i32 = s.len();
+  let n = s.len();
   while (n > 0 && s[n - 1] as i32 == 32) {
-    n = n - 1;
+    n -= 1;
   }
   if (n == s.len()) {
     return s;
@@ -218,11 +218,11 @@ function long_row(m: Mode): boolean {
 }
 
 function row(m: Mode, user: string, state: string, line: string, at: string, idle: string, pid: string, comment: string, exit_text: string): string {
-  let out: string = pad_right(user, 8);
+  let out = pad_right(user, 8);
   if (m.mesg) {
     out = out + " " + state + " ";
   } else {
-    out = out + " ";
+    out += " ";
   }
   out = out + pad_right(line, 12) + " " + pad_right(at, 12);
   if (m.idle && long_row(m)) {
@@ -243,8 +243,8 @@ function heading(m: Mode): string {
 }
 
 function time_string(z: tz.Zone, sec: i64): string {
-  let dt: DateTime = z.at(time.timestamp_from_unix(sec)).to_datetime();
-  let name: string = time.month_name(dt.date.month);
+  let dt = z.at(time.timestamp_from_unix(sec)).to_datetime();
+  let name = time.month_name(dt.date.month);
   return slice_unchecked(name, 0, 3) + " " + pad_left(dt.date.day.to_string(), 2) + " " + two(dt.time.hour) + ":" + two(dt.time.minute);
 }
 
@@ -260,12 +260,12 @@ function idle_string(now: i64, at: i64, boottime: i64): string {
     return "  ?";
   }
   if (boottime < at && now - 86400 as i64 < at && at <= now) {
-    let secs: i64 = now - at;
+    let secs = now - at;
     if (secs < 60 as i64) {
       return "  .";
     }
-    let hours: i32 = (secs / (3600 as i64)) as i32;
-    let mins: i32 = (secs % (3600 as i64) / (60 as i64)) as i32;
+    let hours = (secs / (3600 as i64)) as i32;
+    let mins = (secs % (3600 as i64) / (60 as i64)) as i32;
     return two(hours) + ":" + two(mins);
   }
   return " old ";
@@ -274,8 +274,8 @@ function idle_string(now: i64, at: i64, boottime: i64): string {
 struct Ctx { m: Mode, z: tz.Zone, now: i64, boot: i64 }
 
 function print_user(c: Ctx, e: utmp.Entry): string {
-  let info: utmp.Line = utmp.line_info(e.line);
-  let state: string = "?";
+  let info = utmp.line_info(e.line);
+  let state = "?";
   let last: i64 = 0;
   if (info.present) {
     state = "-";
@@ -284,7 +284,7 @@ function print_user(c: Ctx, e: utmp.Entry): string {
     }
     last = info.atime;
   }
-  let comment: string = "";
+  let comment = "";
   if (e.host.len() > 0) {
     comment = "(" + host_text(c.m, e.host) + ")";
   }
@@ -292,8 +292,8 @@ function print_user(c: Ctx, e: utmp.Entry): string {
 }
 
 function host_text(m: Mode, host: string): string {
-  let name: string = host;
-  let display: string = "";
+  let name = host;
+  let display = "";
   if let Some(colon) = host.index_of(":") {
     name = slice_unchecked(host, 0, colon) + "";
     display = ":" + slice_unchecked(host, colon + 1, host.len());
@@ -314,10 +314,10 @@ function print_boottime(c: Ctx, e: utmp.Entry): string {
 }
 
 function print_runlevel(c: Ctx, e: utmp.Entry): string {
-  let curr: i32 = e.pid & 255;
-  let last: i32 = e.pid >> 8 & 255;
-  let line: string = "run-level " + char_text(curr);
-  let comment: string = "";
+  let curr = e.pid & 255;
+  let last = e.pid >> 8 & 255;
+  let line = "run-level " + char_text(curr);
+  let comment = "";
   if (last != 0) {
     if (last == 78) {
       comment = "last=S";
@@ -342,7 +342,7 @@ function print_login(c: Ctx, e: utmp.Entry): string {
 }
 
 function print_dead(c: Ctx, e: utmp.Entry): string {
-  let exit_text: string = "term=" + e.term.to_string() + " exit=" + e.exit.to_string();
+  let exit_text = "term=" + e.term.to_string() + " exit=" + e.exit.to_string();
   return row(c.m, "", " ", e.line, time_string(c.z, e.sec), "", e.pid.to_string(), "id=" + e.id, exit_text);
 }
 
@@ -380,25 +380,25 @@ function print_entry(c: Ctx, e: utmp.Entry): string {
 }
 
 function count_output(path: string): string {
-  let entries: utmp.Entry[] = utmp.read_logins(path);
-  let line: string = "";
-  let i: i32 = 0;
+  let entries = utmp.read_logins(path);
+  let line = "";
+  let i = 0;
   while (i < entries.len()) {
     if (i > 0) {
-      line = line + " ";
+      line += " ";
     }
-    line = line + entries[i].name();
-    i = i + 1;
+    line += entries[i].name();
+    i += 1;
   }
   return line + "\n# users=" + entries.len().to_string() + "\n";
 }
 
 function scan(m: Mode, path: string): string {
-  let out: string = "";
+  let out = "";
   if (m.heading) {
-    out = out + heading(m);
+    out += heading(m);
   }
-  let only: string = "";
+  let only = "";
   if (m.mine) {
     match (utmp.terminal_line()) {
       Some(l) => {
@@ -409,41 +409,41 @@ function scan(m: Mode, path: string): string {
       }
     }
   }
-  let c: Ctx = Ctx { m: m, z: tz.local_zone(), now: now_unix_ms() / (1000 as i64), boot: 0 - 9223372036854775807 as i64 };
-  let entries: utmp.Entry[] = utmp.read_all(path);
-  let i: i32 = 0;
+  let c = Ctx { m: m, z: tz.local_zone(), now: now_unix_ms() / (1000 as i64), boot: 0 - 9223372036854775807 as i64 };
+  let entries = utmp.read_all(path);
+  let i = 0;
   while (i < entries.len()) {
     if (!m.mine || entries[i].line == only) {
-      out = out + print_entry(c, entries[i]);
+      out += print_entry(c, entries[i]);
     }
     if (entries[i].kind == utmp.boot_time()) {
       c = Ctx { ...c, boot: entries[i].sec };
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function main(): i32 {
   let parsed: (Mode, string[]) = parse_mode(args());
-  let m: Mode = parsed.0;
-  let operands: string[] = parsed.1;
+  let m = parsed.0;
+  let operands = parsed.1;
   if (operands.len() > 2) {
     gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
   }
-  let path: string = utmp.default_path();
+  let path = utmp.default_path();
   if (operands.len() == 1) {
     path = operands[0];
   } else if (operands.len() == 2) {
     m = Mode { ...m, mine: true };
   }
-  let out: string = "";
+  let out = "";
   if (m.count) {
     out = count_output(path);
   } else {
     out = scan(m, path);
   }
-  let o: io_buffered.BufWriter = gnu.put(gnu.out_new(), out);
+  let o = gnu.put(gnu.out_new(), out);
   gnu.finish(o);
   return 0;
 }

@@ -37,14 +37,14 @@ function dev_stat(path: string): Result[FileStat, IoError] {
 }
 
 function walk_dev(want: i64): Option[string] {
-  let ds: string[] = dirs();
-  let d: i32 = 0;
+  let ds = dirs();
+  let d = 0;
   while (d < ds.len()) {
     match (read_dir(ds[d])) {
       Ok(names) => {
-        let i: i32 = 0;
+        let i = 0;
         while (i < names.len()) {
-          let path: string = ds[d] + "/" + names[i];
+          let path = ds[d] + "/" + names[i];
           match (dev_stat(path)) {
             Ok(st) => {
               if (is_char_device(st) && st.rdev == want) {
@@ -53,12 +53,12 @@ function walk_dev(want: i64): Option[string] {
             },
             Err(_) => {}
           }
-          i = i + 1;
+          i += 1;
         }
       },
       Err(_) => {}
     }
-    d = d + 1;
+    d += 1;
   }
   return None;
 }

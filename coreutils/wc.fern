@@ -39,29 +39,29 @@ function opt_total(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --files0-from=F\n";
-  out = out + "Print newline, word, and byte counts for each FILE, and a total line if\n";
-  out = out + "more than one FILE is specified.  A word is a non-zero-length sequence of\n";
-  out = out + "printable characters delimited by white space.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "The options below may be used to select which counts are printed, always in\n";
-  out = out + "the following order: newline, word, character, byte, maximum line length.\n";
-  out = out + "  -c, --bytes            print the byte counts\n";
-  out = out + "  -m, --chars            print the character counts\n";
-  out = out + "  -l, --lines            print the newline counts\n";
-  out = out + "      --files0-from=F    read input from the files specified by\n";
-  out = out + "                           NUL-terminated names in file F;\n";
-  out = out + "                           If F is - then read names from standard input\n";
-  out = out + "  -L, --max-line-length  print the maximum display width\n";
-  out = out + "  -w, --words            print the word counts\n";
-  out = out + "      --total=WHEN       when to print a line with total counts;\n";
-  out = out + "                           WHEN can be: auto, always, only, never\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print newline, word, and byte counts for each FILE, and a total line if\n";
+  out += "more than one FILE is specified.  A word is a non-zero-length sequence of\n";
+  out += "printable characters delimited by white space.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "The options below may be used to select which counts are printed, always in\n";
+  out += "the following order: newline, word, character, byte, maximum line length.\n";
+  out += "  -c, --bytes            print the byte counts\n";
+  out += "  -m, --chars            print the character counts\n";
+  out += "  -l, --lines            print the newline counts\n";
+  out += "      --files0-from=F    read input from the files specified by\n";
+  out += "                           NUL-terminated names in file F;\n";
+  out += "                           If F is - then read names from standard input\n";
+  out += "  -L, --max-line-length  print the maximum display width\n";
+  out += "  -w, --words            print the word counts\n";
+  out += "      --total=WHEN       when to print a line with total counts;\n";
+  out += "                           WHEN can be: auto, always, only, never\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -72,7 +72,7 @@ function zero_counts(): Counts {
 }
 
 function add_counts(a: Counts, b: Counts): Counts {
-  let m: i64 = a.maxlen;
+  let m = a.maxlen;
   if (b.maxlen > m) {
     m = b.maxlen;
   }
@@ -82,21 +82,21 @@ function add_counts(a: Counts, b: Counts): Counts {
 struct Show { lines: boolean, words: boolean, chars: boolean, bytes: boolean, maxlen: boolean }
 
 function show_count(s: Show): i32 {
-  let n: i32 = 0;
+  let n = 0;
   if (s.lines) {
-    n = n + 1;
+    n += 1;
   }
   if (s.words) {
-    n = n + 1;
+    n += 1;
   }
   if (s.chars) {
-    n = n + 1;
+    n += 1;
   }
   if (s.bytes) {
-    n = n + 1;
+    n += 1;
   }
   if (s.maxlen) {
-    n = n + 1;
+    n += 1;
   }
   return n;
 }
@@ -108,18 +108,18 @@ function is_print(b: i32): boolean {
 struct Scan { in_word: boolean, linepos: i64 }
 
 function scan_width(c: Counts, st: Scan, s: u8[], other: u8[]): (Counts, Scan) {
-  let lines: i64 = c.lines;
-  let maxlen: i64 = c.maxlen;
-  let pos: i64 = st.linepos;
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let lines = c.lines;
+  let maxlen = c.maxlen;
+  let pos = st.linepos;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
-    let j: i32 = __scan_set_bytes(s, i, other);
+    let j = __scan_set_bytes(s, i, other);
     pos = pos + (j - i) as i64;
     if (j >= n) {
       break;
     }
-    let b: i32 = s[j] as i32;
+    let b = s[j] as i32;
     if (b == 10 || b == 13 || b == 12) {
       if (b == 10) {
         lines = lines + 1 as i64;
@@ -137,24 +137,24 @@ function scan_width(c: Counts, st: Scan, s: u8[], other: u8[]): (Counts, Scan) {
 }
 
 function other_table(): u8[] {
-  let t: u8[] = __alloc_u8(256);
-  let b: i32 = 0;
+  let t = __alloc_u8(256);
+  let b = 0;
   while (b < 256) {
     if (b < 32 || b > 126) {
       t = t.with(b, 1 as u8);
     }
-    b = b + 1;
+    b += 1;
   }
   return t;
 }
 
 function space_table(): u8[] {
-  let t: u8[] = __alloc_u8(256);
+  let t = __alloc_u8(256);
   t = t.with(32, 1 as u8);
-  let b: i32 = 9;
+  let b = 9;
   while (b <= 13) {
     t = t.with(b, 1 as u8);
-    b = b + 1;
+    b += 1;
   }
   match (env("POSIXLY_CORRECT")) {
     None => {
@@ -166,20 +166,20 @@ function space_table(): u8[] {
 }
 
 function count_words(c: Counts, st: Scan, s: u8[], space: u8[]): (Counts, Scan) {
-  let inside: i32 = 1;
+  let inside = 1;
   if (st.in_word) {
     inside = 0;
   }
-  let ends: i32 = __count_runs_bytes(s, inside, space);
-  let in_word: boolean = space[s[s.len() - 1] as i32] as i32 == 0;
+  let ends = __count_runs_bytes(s, inside, space);
+  let in_word = space[s[s.len() - 1] as i32] as i32 == 0;
   return (Counts { ...c, words: c.words + ends as i64 }, Scan { ...st, in_word: in_word });
 }
 
 function count_stream(r: Reader, show: Show): (Counts, Option[IoError]) {
-  let c: Counts = zero_counts();
-  let st: Scan = Scan { in_word: false, linepos: 0 as i64 };
-  let space: u8[] = space_table();
-  let other: u8[] = other_table();
+  let c = zero_counts();
+  let st = Scan { in_word: false, linepos: 0 as i64 };
+  let space = space_table();
+  let other = other_table();
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -225,8 +225,8 @@ function read_size(): i32 {
 }
 
 function field(n: i64, width: i32): string {
-  let s: string = n.to_string();
-  let pad: i32 = width - s.len();
+  let s = n.to_string();
+  let pad = width - s.len();
   if (pad <= 0) {
     return s;
   }
@@ -234,38 +234,38 @@ function field(n: i64, width: i32): string {
 }
 
 function line_for(c: Counts, show: Show, width: i32, name: string, named: boolean): string {
-  let out: string = "";
-  let first: boolean = true;
+  let out = "";
+  let first = true;
   if (show.lines) {
-    out = out + field(c.lines, width);
+    out += field(c.lines, width);
     first = false;
   }
   if (show.words) {
     if (!first) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + field(c.words, width);
+    out += field(c.words, width);
     first = false;
   }
   if (show.chars) {
     if (!first) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + field(c.chars, width);
+    out += field(c.chars, width);
     first = false;
   }
   if (show.bytes) {
     if (!first) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + field(c.bytes, width);
+    out += field(c.bytes, width);
     first = false;
   }
   if (show.maxlen) {
     if (!first) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + field(c.maxlen, width);
+    out += field(c.maxlen, width);
   }
   if (named) {
     out = out + " " + name;
@@ -296,8 +296,8 @@ function total_of(v: string): i32 {
 struct Job { path: string, name: string, origin: string }
 
 function read_names(file: string): Option[Job[]] {
-  let from_stdin: boolean = file == "-";
-  let r: Reader = stdin();
+  let from_stdin = file == "-";
+  let r = stdin();
   if (!from_stdin) {
     match (open_reader(file)) {
       Ok(f) => {
@@ -310,7 +310,7 @@ function read_names(file: string): Option[Job[]] {
     }
   }
   let data: u8[] = [];
-  let result: Result[u8[], IoError] = io.read_all_bytes(r);
+  let result = io.read_all_bytes(r);
   if (!from_stdin) {
     r.close();
   }
@@ -324,16 +324,16 @@ function read_names(file: string): Option[Job[]] {
     }
   }
   let jobs: Job[] = [];
-  let start: i32 = 0;
-  let n: i32 = 0;
+  let start = 0;
+  let n = 0;
   while (start < data.len()) {
-    let end: i32 = __memchr_bytes(data, 0, start);
+    let end = __memchr_bytes(data, 0, start);
     if (end < 0) {
       end = data.len();
     }
-    n = n + 1;
-    let origin: string = gnu.quotef(file) + ":" + n.to_string();
-    let name: string = "";
+    n += 1;
+    let origin = gnu.quotef(file) + ":" + n.to_string();
+    let name = "";
     match (utf8.from_bytes(array.slice(data, start, end))) {
       Ok(text) => {
         name = text;
@@ -360,27 +360,27 @@ function width_for(jobs: Job[], show: Show, total: i32): i32 {
   if (jobs.len() <= 1 && show_count(show) == 1) {
     return 1;
   }
-  let min: i32 = 1;
-  let sum: i64 = 0 as i64;
-  let i: i32 = 0;
+  let min = 1;
+  let sum = 0 as i64;
+  let i = 0;
   while (i < jobs.len()) {
     match (job_stat(jobs[i].path)) {
       Ok(st) => {
         if (st.is_file) {
-          sum = sum + st.size;
+          sum += st.size;
         } else {
           min = 7;
         }
       },
       Err(_) => {}
     }
-    i = i + 1;
+    i += 1;
   }
-  let w: i32 = 1;
-  let v: i64 = sum;
+  let w = 1;
+  let v = sum;
   while (v >= 10 as i64) {
-    v = v / (10 as i64);
-    w = w + 1;
+    v /= 10 as i64;
+    w += 1;
   }
   if (w < min) {
     return min;
@@ -405,16 +405,16 @@ function job_label(job: Job): string {
 }
 
 function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   if (job.path.len() == 0) {
-    let where: string = "";
+    let where = "";
     if (job.origin.len() > 0) {
       where = job.origin + ": ";
     }
     w = gnu.error_out(w, where + "invalid zero-length file name");
     return Done { counts: zero_counts(), counted: false, failed: true, w: w };
   }
-  let r: Reader = stdin();
+  let r = stdin();
   if (job.path != "-") {
     match (open_reader(job.path)) {
       Ok(f) => {
@@ -441,7 +441,7 @@ function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
   if (job.path != "-") {
     r.close();
   }
-  let c: Counts = Counts { ...res.0, chars: res.0.bytes };
+  let c = Counts { ...res.0, chars: res.0.bytes };
   match (res.1) {
     Some(e) => {
       w = gnu.error_out(w, job_label(job) + ": " + gnu.io_error_text(e));
@@ -453,7 +453,7 @@ function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "bytes", opt_bytes()));
   opts = opts.append(gnu.flag("m", "chars", opt_chars()));
@@ -464,13 +464,13 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("L", "max-line-length", opt_maxlen()));
   opts = opts.append(gnu.valued("", "total", opt_total()));
 
-  let show: Show = Show { lines: false, words: false, chars: false, bytes: false, maxlen: false };
-  let any: boolean = false;
-  let total_when: i32 = total_auto();
-  let files0: string = "";
-  let have_files0: boolean = false;
+  let show = Show { lines: false, words: false, chars: false, bytes: false, maxlen: false };
+  let any = false;
+  let total_when = total_auto();
+  let files0 = "";
+  let have_files0 = false;
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "wc", help_text(), 1);
+  let g = gnu.getopt_new(argv, opts, "wc", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -507,7 +507,7 @@ pub function main(): i32 {
     show = Show { lines: true, words: true, chars: false, bytes: true, maxlen: false };
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   let jobs: Job[] = [];
   if (have_files0) {
     if (operands.len() > 0) {
@@ -525,20 +525,20 @@ pub function main(): i32 {
   } else if (operands.len() == 0) {
     jobs = jobs.append(Job { path: "-", name: "", origin: "" });
   } else {
-    let i: i32 = 0;
+    let i = 0;
     while (i < operands.len()) {
       jobs = jobs.append(Job { path: operands[i], name: operands[i], origin: "" });
-      i = i + 1;
+      i += 1;
     }
   }
 
-  let width: i32 = width_for(jobs, show, total_when);
-  let out: io_buffered.BufWriter = gnu.out_new();
-  let total: Counts = zero_counts();
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let width = width_for(jobs, show, total_when);
+  let out = gnu.out_new();
+  let total = zero_counts();
+  let ok = true;
+  let i = 0;
   while (i < jobs.len()) {
-    let res: Done = count_job(jobs[i], show, out);
+    let res = count_job(jobs[i], show, out);
     out = res.w;
     if (res.failed) {
       ok = false;
@@ -549,11 +549,11 @@ pub function main(): i32 {
         out = gnu.put(out, line_for(res.counts, show, width, jobs[i].name, jobs[i].name.len() > 0));
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  let show_total: boolean = total_when == total_always() || total_when == total_only() || total_when == total_auto() && jobs.len() > 1;
+  let show_total = total_when == total_always() || total_when == total_only() || total_when == total_auto() && jobs.len() > 1;
   if (show_total) {
-    let named: boolean = total_when != total_only();
+    let named = total_when != total_only();
     out = gnu.put(out, line_for(total, show, width, "total", named));
   }
   gnu.close_stdout(out, false);

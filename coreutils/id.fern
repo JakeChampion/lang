@@ -38,22 +38,22 @@ function opt_ignored(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [USER]...\n";
-  out = out + "Print user and group information for each specified USER,\n";
-  out = out + "or (when USER omitted) for the current process.\n";
-  out = out + "\n";
-  out = out + "  -a             ignore, for compatibility with other versions\n";
-  out = out + "  -Z, --context  print only the security context of the process\n";
-  out = out + "  -g, --group    print only the effective group ID\n";
-  out = out + "  -G, --groups   print all group IDs\n";
-  out = out + "  -n, --name     print a name instead of a number, for -ugG\n";
-  out = out + "  -r, --real     print the real ID instead of the effective ID, with -ugG\n";
-  out = out + "  -u, --user     print only the effective user ID\n";
-  out = out + "  -z, --zero     delimit entries with NUL characters, not whitespace;\n";
-  out = out + "                   not permitted in default format\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print user and group information for each specified USER,\n";
+  out += "or (when USER omitted) for the current process.\n";
+  out += "\n";
+  out += "  -a             ignore, for compatibility with other versions\n";
+  out += "  -Z, --context  print only the security context of the process\n";
+  out += "  -g, --group    print only the effective group ID\n";
+  out += "  -G, --groups   print all group IDs\n";
+  out += "  -n, --name     print a name instead of a number, for -ugG\n";
+  out += "  -r, --real     print the real ID instead of the effective ID, with -ugG\n";
+  out += "  -u, --user     print only the effective user ID\n";
+  out += "  -z, --zero     delimit entries with NUL characters, not whitespace;\n";
+  out += "                   not permitted in default format\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -73,23 +73,23 @@ function is_blank_byte(c: i32): boolean {
 }
 
 function operand_uid(spec: string): Result[i64, string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < spec.len() && is_blank_byte(spec[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < spec.len() && spec[i] as i32 == 45) {
     return Err("");
   }
   if (i < spec.len() && spec[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
-  let start: i32 = i;
+  let start = i;
   while (i < spec.len() && spec[i] as i32 == 48) {
-    i = i + 1;
+    i += 1;
   }
-  let sig: i32 = i;
+  let sig = i;
   while (i < spec.len() && spec[i] as i32 >= 48 && spec[i] as i32 <= 57) {
-    i = i + 1;
+    i += 1;
   }
   if (i == start) {
     if (target_os() == "darwin") {
@@ -104,10 +104,10 @@ function operand_uid(spec: string): Result[i64, string] {
     return Err("");
   }
   let v: i64 = 0;
-  let k: i32 = sig;
+  let k = sig;
   while (k < i) {
     v = v * (10 as i64) + (spec[k] as i32 - 48) as i64;
-    k = k + 1;
+    k += 1;
   }
   if (v >= 4294967295 as i64) {
     return Err("");
@@ -116,16 +116,16 @@ function operand_uid(spec: string): Result[i64, string] {
 }
 
 function exceeds_ulong(s: string, from: i32, to: i32): boolean {
-  let max: string = "18446744073709551615";
+  let max = "18446744073709551615";
   if (to - from != max.len()) {
     return to - from > max.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < max.len()) {
     if (s[from + i] != max[i]) {
       return s[from + i] > max[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -165,7 +165,7 @@ function name_or_number(o: Out, id: i64, name: Option[string], kind: string): Ou
       return Out { w: gnu.put(o.w, n), ok: o.ok };
     },
     None => {
-      let w: io_buffered.BufWriter = gnu.error_out(o.w, "cannot find name for " + kind + " ID " + id.to_string());
+      let w = gnu.error_out(o.w, "cannot find name for " + kind + " ID " + id.to_string());
       return Out { w: gnu.put(w, id.to_string()), ok: false };
     }
   }
@@ -175,7 +175,7 @@ function print_user(o: Out, uid: i64, use_name: boolean): Out {
   if (!use_name) {
     return Out { w: gnu.put(o.w, uid.to_string()), ok: o.ok };
   }
-  let name: Option[string] = pwdb.user_name(uid);
+  let name = pwdb.user_name(uid);
   return name_or_number(o, uid, name, "user");
 }
 
@@ -191,25 +191,25 @@ function group_list_ids(rgid: i64, egid: i64, all: i64[]): i64[] {
   if (egid != rgid) {
     out = out.append(egid);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < all.len()) {
     if (all[i] != rgid && all[i] != egid) {
       out = out.append(all[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function print_group_list(o: Out, ids: i64[], use_name: boolean, delim: string): Out {
-  let acc: Out = o;
-  let i: i32 = 0;
+  let acc = o;
+  let i = 0;
   while (i < ids.len()) {
     if (i > 0) {
       acc = Out { w: gnu.put(acc.w, delim), ok: acc.ok };
     }
     acc = print_group(acc, ids[i], use_name);
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -226,12 +226,12 @@ function id_with_name(id: i64, name: Option[string]): string {
 }
 
 function user_field(label: string, uid: i64): string {
-  let name: Option[string] = pwdb.user_name(uid);
+  let name = pwdb.user_name(uid);
   return label + id_with_name(uid, name);
 }
 
 function print_full_info(o: Out, ruid: i64, rgid: i64, euid: i64, egid: i64, all: i64[], context: string): Out {
-  let line: string = user_field("uid=", ruid);
+  let line = user_field("uid=", ruid);
   line = line + " gid=" + id_with_name(rgid, pwdb.group_name(rgid));
   if (euid != ruid) {
     line = line + " " + user_field("euid=", euid);
@@ -239,15 +239,15 @@ function print_full_info(o: Out, ruid: i64, rgid: i64, euid: i64, egid: i64, all
   if (egid != rgid) {
     line = line + " egid=" + id_with_name(egid, pwdb.group_name(egid));
   }
-  line = line + " groups=";
-  let names: Option[string][] = pwdb.group_names(all);
-  let i: i32 = 0;
+  line += " groups=";
+  let names = pwdb.group_names(all);
+  let i = 0;
   while (i < all.len()) {
     if (i > 0) {
-      line = line + ",";
+      line += ",";
     }
-    line = line + id_with_name(all[i], names[i]);
-    i = i + 1;
+    line += id_with_name(all[i], names[i]);
+    i += 1;
   }
   if (context.len() > 0) {
     line = line + " context=" + context;
@@ -258,21 +258,21 @@ function print_full_info(o: Out, ruid: i64, rgid: i64, euid: i64, egid: i64, all
 pub struct Mode { user: boolean, group: boolean, groups: boolean, context: boolean, name: boolean, real: boolean, zero: boolean }
 
 function print_one(o: Out, m: Mode, ruid: i64, rgid: i64, euid: i64, egid: i64, all: i64[], context: string, term: string, extra: boolean): Out {
-  let acc: Out = o;
+  let acc = o;
   if (m.user) {
-    let uid: i64 = euid;
+    let uid = euid;
     if (m.real) {
       uid = ruid;
     }
     acc = print_user(acc, uid, m.name);
   } else if (m.group) {
-    let gid: i64 = egid;
+    let gid = egid;
     if (m.real) {
       gid = rgid;
     }
     acc = print_group(acc, gid, m.name);
   } else if (m.groups) {
-    let delim: string = " ";
+    let delim = " ";
     if (m.zero) {
       delim = term;
     }
@@ -299,8 +299,8 @@ function parse_mode(argv: string[]): (Mode, string[]) {
   opts = opts.append(gnu.flag("u", "user", opt_user()));
   opts = opts.append(gnu.flag("z", "zero", opt_zero()));
   opts = opts.append(gnu.flag("a", "", opt_ignored()));
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "id", help_text(), 1);
-  let m: Mode = Mode { user: false, group: false, groups: false, context: false, name: false, real: false, zero: false };
+  let g = gnu.getopt_new(argv, opts, "id", help_text(), 1);
+  let m = Mode { user: false, group: false, groups: false, context: false, name: false, real: false, zero: false };
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -331,18 +331,18 @@ function parse_mode(argv: string[]): (Mode, string[]) {
 }
 
 function check_mode(m: Mode): string {
-  let only: i32 = 0;
+  let only = 0;
   if (m.user) {
-    only = only + 1;
+    only += 1;
   }
   if (m.group) {
-    only = only + 1;
+    only += 1;
   }
   if (m.groups) {
-    only = only + 1;
+    only += 1;
   }
   if (m.context) {
-    only = only + 1;
+    only += 1;
   }
   if (only > 1) {
     gnu.error("cannot print \"only\" of more than one choice");
@@ -366,37 +366,37 @@ function check_mode(m: Mode): string {
 
 pub function main(): i32 {
   let parsed: (Mode, string[]) = parse_mode(args());
-  let m: Mode = parsed.0;
-  let operands: string[] = parsed.1;
+  let m = parsed.0;
+  let operands = parsed.1;
   if (m.context && !selinux.enabled()) {
     gnu.error("--context (-Z) works only on an SELinux-enabled kernel");
     return 1;
   }
-  let context: string = check_mode(m);
-  let term: string = "\n";
+  let context = check_mode(m);
+  let term = "\n";
   if (m.zero) {
     term = "\x00";
   }
-  let o: Out = Out { w: gnu.out_new(), ok: true };
+  let o = Out { w: gnu.out_new(), ok: true };
   if (operands.len() == 0) {
     o = print_one(o, m, getuid() as i64, getgid() as i64, geteuid() as i64, getegid() as i64, pwdb.process_groups(), context, term, false);
   } else {
-    let extra: boolean = operands.len() > 1;
-    let i: i32 = 0;
+    let extra = operands.len() > 1;
+    let i = 0;
     while (i < operands.len()) {
       match (lookup_user(operands[i])) {
         Ok(u) => {
           o = print_one(o, m, u.uid, u.gid, u.uid, u.gid, pwdb.group_list(u.name, u.gid), "", term, extra);
         },
         Err(why) => {
-          let msg: string = gnu.quote(operands[i]) + ": no such user";
+          let msg = gnu.quote(operands[i]) + ": no such user";
           if (why.len() > 0) {
             msg = msg + ": " + why;
           }
           o = Out { w: gnu.error_out(o.w, msg), ok: false };
         }
       }
-      i = i + 1;
+      i += 1;
     }
   }
   gnu.finish(o.w);

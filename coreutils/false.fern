@@ -2,13 +2,13 @@ import "std/string";
 import "./lib/gnu";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [ARGUMENT]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "Do nothing, unsuccessfully. Arguments are ignored.\n";
-  out = out + "\n";
-  out = out + "      --help     display this help and exit\n";
-  out = out + "      --version  output version information and exit\n";
+  out += "Do nothing, unsuccessfully. Arguments are ignored.\n";
+  out += "\n";
+  out += "      --help     display this help and exit\n";
+  out += "      --version  output version information and exit\n";
   return out;
 }
 

@@ -98,43 +98,43 @@ pub struct Target { spec: owner.Spec, from: owner.Spec, has_from: boolean, db: o
 pub struct St { out: gnu.Stdio, status: i32 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [OWNER][:[GROUP]] FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
-  out = out + "Change the owner and/or group of each FILE to OWNER and/or GROUP.\n";
-  out = out + "With --reference, change the owner and group of each FILE to those of RFILE.\n";
-  out = out + "\n";
-  out = out + "  -c, --changes          like verbose but report only when a change is made\n";
-  out = out + "  -f, --silent, --quiet  suppress most error messages\n";
-  out = out + "  -v, --verbose          output a diagnostic for every file processed\n";
-  out = out + "      --dereference      affect the referent of each symbolic link (this is\n";
-  out = out + "                         the default), rather than the symbolic link itself\n";
-  out = out + "  -h, --no-dereference   affect symbolic links instead of any referenced file\n";
-  out = out + "      --from=CURRENT_OWNER:CURRENT_GROUP\n";
-  out = out + "                         change the ownership of each file only if its\n";
-  out = out + "                         current owner and/or group match those specified here.\n";
-  out = out + "                         Either may be omitted, in which case a match\n";
-  out = out + "                         is not required for the omitted attribute\n";
-  out = out + "      --no-preserve-root  do not treat '/' specially (the default)\n";
-  out = out + "      --preserve-root    fail to operate recursively on '/'\n";
-  out = out + "      --reference=RFILE  use RFILE's ownership rather than specifying values.\n";
-  out = out + "                         RFILE is always dereferenced if a symbolic link.\n";
-  out = out + "  -R, --recursive        operate on files and directories recursively\n";
-  out = out + "\n";
-  out = out + "The following options modify how a hierarchy is traversed when the -R\n";
-  out = out + "option is also specified.  If more than one is specified, only the final\n";
-  out = out + "one takes effect. -P is the default.\n";
-  out = out + "\n";
-  out = out + "  -H                     if a command line argument is a symlink to a directory,\n";
-  out = out + "                         traverse it\n";
-  out = out + "  -L                     traverse every symbolic link to a directory encountered\n";
-  out = out + "  -P                     do not traverse any symbolic links\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Owner is unchanged if missing.  Group is unchanged if missing, but changed\n";
-  out = out + "to login group if implied by a ':' following a symbolic OWNER.\n";
-  out = out + "OWNER and GROUP may be numeric as well as symbolic.\n";
+  out += "Change the owner and/or group of each FILE to OWNER and/or GROUP.\n";
+  out += "With --reference, change the owner and group of each FILE to those of RFILE.\n";
+  out += "\n";
+  out += "  -c, --changes          like verbose but report only when a change is made\n";
+  out += "  -f, --silent, --quiet  suppress most error messages\n";
+  out += "  -v, --verbose          output a diagnostic for every file processed\n";
+  out += "      --dereference      affect the referent of each symbolic link (this is\n";
+  out += "                         the default), rather than the symbolic link itself\n";
+  out += "  -h, --no-dereference   affect symbolic links instead of any referenced file\n";
+  out += "      --from=CURRENT_OWNER:CURRENT_GROUP\n";
+  out += "                         change the ownership of each file only if its\n";
+  out += "                         current owner and/or group match those specified here.\n";
+  out += "                         Either may be omitted, in which case a match\n";
+  out += "                         is not required for the omitted attribute\n";
+  out += "      --no-preserve-root  do not treat '/' specially (the default)\n";
+  out += "      --preserve-root    fail to operate recursively on '/'\n";
+  out += "      --reference=RFILE  use RFILE's ownership rather than specifying values.\n";
+  out += "                         RFILE is always dereferenced if a symbolic link.\n";
+  out += "  -R, --recursive        operate on files and directories recursively\n";
+  out += "\n";
+  out += "The following options modify how a hierarchy is traversed when the -R\n";
+  out += "option is also specified.  If more than one is specified, only the final\n";
+  out += "one takes effect. -P is the default.\n";
+  out += "\n";
+  out += "  -H                     if a command line argument is a symlink to a directory,\n";
+  out += "                         traverse it\n";
+  out += "  -L                     traverse every symbolic link to a directory encountered\n";
+  out += "  -P                     do not traverse any symbolic links\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Owner is unchanged if missing.  Group is unchanged if missing, but changed\n";
+  out += "to login group if implied by a ':' following a symbolic OWNER.\n";
+  out += "OWNER and GROUP may be numeric as well as symbolic.\n";
   return out;
 }
 
@@ -161,26 +161,26 @@ pub struct Parsed { s: Settings, from: string, has_from: boolean, reference: str
 
 function table_with_reference(chgrp_mode: boolean): gnu.Opt[] {
   let opts: gnu.Opt[] = [];
-  let base: gnu.Opt[] = option_table(chgrp_mode);
-  let i: i32 = 0;
+  let base = option_table(chgrp_mode);
+  let i = 0;
   while (i < base.len()) {
     if (base[i].id == opt_reference()) {
       opts = opts.append(gnu.valued("", "reference", opt_reference()));
     } else {
       opts = opts.append(base[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return opts;
 }
 
 pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
-  let s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_default(), traverse: trav_p(), chgrp_mode: chgrp_mode };
-  let from: string = "";
-  let has_from: boolean = false;
-  let reference: string = "";
-  let has_reference: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(argv, table_with_reference(chgrp_mode), name, help_text(), 1);
+  let s = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_default(), traverse: trav_p(), chgrp_mode: chgrp_mode };
+  let from = "";
+  let has_from = false;
+  let reference = "";
+  let has_reference = false;
+  let g = gnu.getopt_new(argv, table_with_reference(chgrp_mode), name, help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -225,10 +225,10 @@ pub function parse(argv: string[], chgrp_mode: boolean, name: string): Parsed {
 }
 
 function fts_trim(p: string): string {
-  let n: i32 = p.len();
+  let n = p.len();
   if (n > 2 && p[n - 1] as i32 == 47) {
     while (n > 1 && p[n - 2] as i32 == 47) {
-      n = n - 1;
+      n -= 1;
     }
   }
   return slice_unchecked(p, 0, n) + "";
@@ -271,11 +271,11 @@ function is_root_dir(info: FileStat): boolean {
 }
 
 function refuse_root(st0: St, path: string): St {
-  let same: string = "";
+  let same = "";
   if (path != "/") {
     same = " (same as '/')";
   }
-  let st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  let st = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
   return fail_loud(st, "use --no-preserve-root to override this failsafe");
 }
 
@@ -300,15 +300,15 @@ function descends_links(s: Settings, top: boolean): boolean {
 }
 
 function describe(t: Target, s: Settings, path: string, old_uid: i64, old_gid: i64, known: boolean, changed: boolean, failed: boolean): string {
-  let gv: boolean = t.spec.group_verb(s.chgrp_mode);
-  let noun: string = "ownership of ";
+  let gv = t.spec.group_verb(s.chgrp_mode);
+  let noun = "ownership of ";
   if (gv) {
     noun = "group of ";
   }
-  let to: string = t.spec.render(s.chgrp_mode);
-  let from: string = owner.current_label(t.db, old_uid, old_gid, t.spec.names_group(), gv);
+  let to = t.spec.render(s.chgrp_mode);
+  let from = owner.current_label(t.db, old_uid, old_gid, t.spec.names_group(), gv);
   if (failed) {
-    let head: string = "failed to change " + noun + gnu.quotea(path);
+    let head = "failed to change " + noun + gnu.quotea(path);
     if (known) {
       if (to.len() == 0) {
         return head + "\n";
@@ -343,17 +343,17 @@ function from_matches(t: Target, uid: i64, gid: i64): boolean {
 }
 
 function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i64): St {
-  let st: St = st0;
-  let path: string = ent.path;
+  let st = st0;
+  let path = ent.path;
   if (!from_matches(t, uid, gid)) {
     if (s.verbosity == v_all()) {
       return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
     }
     return st;
   }
-  let want_uid: i64 = t.spec.uid;
-  let want_gid: i64 = t.spec.gid;
-  let changed: boolean = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
+  let want_uid = t.spec.uid;
+  let want_gid = t.spec.gid;
+  let changed = want_uid >= 0 as i64 && want_uid != uid || want_gid >= 0 as i64 && want_gid != gid;
   if (want_uid < 0 as i64 && want_gid < 0 as i64) {
     if (s.verbosity == v_all()) {
       return St { ...st, out: st.out.fwrite(describe(t, s, path, uid, gid, true, false, false)) };
@@ -368,7 +368,7 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i6
       return st;
     },
     Err(e) => {
-      let noun: string = "changing ownership of ";
+      let noun = "changing ownership of ";
       if (t.spec.uid < 0 as i64) {
         noun = "changing group of ";
       }
@@ -379,7 +379,7 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, uid: i64, gid: i6
 }
 
 function unreachable(st0: St, s: Settings, t: Target, path: string, msg: string): St {
-  let st: St = fail_quiet(st0, s, msg);
+  let st = fail_quiet(st0, s, msg);
   return say(st, s, describe(t, s, path, 0 as i64, 0 as i64, false, false, true));
 }
 
@@ -437,8 +437,8 @@ function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
 struct Seen { ok: boolean, uid: i64, gid: i64, is_dir: boolean, is_link: boolean }
 
 function look(s: Settings, ent: Ent, top: boolean): (Seen, string) {
-  let path: string = ent.path;
-  let want_target: boolean = follows(s) || descends_links(s, top);
+  let path = ent.path;
+  let want_target = follows(s) || descends_links(s, top);
   match (ent_lstat(ent)) {
     Ok(li) => {
       if (!want_target || !filetype.is_link(li.mode)) {
@@ -446,9 +446,9 @@ function look(s: Settings, ent: Ent, top: boolean): (Seen, string) {
       }
       match (ent_stat(ent)) {
         Ok(ti) => {
-          let dir: boolean = filetype.is_dir(ti.mode) && descends_links(s, top);
-          let uid: i64 = ti.uid as i64;
-          let gid: i64 = ti.gid as i64;
+          let dir = filetype.is_dir(ti.mode) && descends_links(s, top);
+          let uid = ti.uid as i64;
+          let gid = ti.gid as i64;
           if (!follows(s)) {
             uid = li.uid as i64;
             gid = li.gid as i64;
@@ -467,10 +467,10 @@ function look(s: Settings, ent: Ent, top: boolean): (Seen, string) {
 }
 
 function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
-  let st: St = st0;
-  let path: string = ent.path;
+  let st = st0;
+  let path = ent.path;
   let r: (Seen, string) = look(s, ent, top);
-  let seen: Seen = r.0;
+  let seen = r.0;
   if (!seen.ok) {
     return unreachable(st, s, t, path, r.1);
   }
@@ -478,15 +478,15 @@ function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
     return refuse_root(st, path);
   }
   if (s.recursive && seen.is_dir) {
-    let opened: Result[Dir, IoError] = ent_open(ent, seen.is_link);
+    let opened = ent_open(ent, seen.is_link);
     match (opened) {
       Ok(d) => {
         match (d.entries()) {
           Ok(names) => {
-            let i: i32 = 0;
+            let i = 0;
             while (i < names.len()) {
               st = process(st, s, t, Ent { path: child_path(path, names[i]), dir: Some(d), name: names[i] }, false);
-              i = i + 1;
+              i += 1;
             }
           },
           Err(e) => {
@@ -515,17 +515,17 @@ function is_root(path: string): boolean {
 }
 
 pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
-  let p: Parsed = parse(argv, chgrp_mode, name);
-  let s: Settings = p.s;
-  let files: string[] = p.files;
+  let p = parse(argv, chgrp_mode, name);
+  let s = p.s;
+  let files = p.files;
 
   if (s.recursive && s.deref == deref_yes() && s.traverse == trav_p()) {
     gnu.error("-R --dereference requires either -H or -L");
     exit(1);
   }
 
-  let spec_text: string = "";
-  let has_spec: boolean = false;
+  let spec_text = "";
+  let has_spec = false;
   if (!p.has_reference) {
     if (files.len() == 0) {
       gnu.die_usage("missing operand", 1);
@@ -540,12 +540,12 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
     gnu.die_usage("missing operand", 1);
   }
 
-  let st: St = St { out: gnu.stdio_new(), status: 0 };
-  let db: owner.Db = owner.db_load();
-  let t: Target = Target { spec: owner.spec_none(), from: owner.spec_none(), has_from: false, db: db };
+  let st = St { out: gnu.stdio_new(), status: 0 };
+  let db = owner.db_load();
+  let t = Target { spec: owner.spec_none(), from: owner.spec_none(), has_from: false, db: db };
 
   if (p.has_from) {
-    let f: owner.Parsed = owner.parse(db, p.from);
+    let f = owner.parse(db, p.from);
     if (f.warn_dot) {
       gnu.error(owner.dot_warning(p.from));
     }
@@ -559,7 +559,7 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
   if (p.has_reference) {
     match (stat(p.reference)) {
       Ok(info) => {
-        let sp: owner.Spec = owner.spec_none();
+        let sp = owner.spec_none();
         if (!chgrp_mode) {
           sp = owner.Spec { ...sp, uid: info.uid as i64 };
         }
@@ -572,7 +572,7 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
       }
     }
   } else if (has_spec) {
-    let parsed: owner.Parsed = owner.parse_group_only(db, spec_text);
+    let parsed = owner.parse_group_only(db, spec_text);
     if (!chgrp_mode) {
       parsed = owner.parse(db, spec_text);
     }
@@ -586,10 +586,10 @@ pub function run(argv: string[], chgrp_mode: boolean, name: string): i32 {
     t = Target { ...t, spec: parsed.spec };
   }
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < files.len()) {
     st = process(st, s, t, operand(fts_trim(files[i])), true);
-    i = i + 1;
+    i += 1;
   }
   st.out.close_stdout();
   return st.status;

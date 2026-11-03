@@ -305,6 +305,8 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 		err = syscall.Shutdown(fd, int(arg))
 	case 5:
 		err = connectResult(fd)
+	case 9:
+		err = syscall.SetsockoptInt(fd, solSocket, syscall.SO_BROADCAST, int(arg))
 	}
 	if err != nil {
 		return negErrno(err), true
