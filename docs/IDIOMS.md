@@ -12,7 +12,7 @@ the parts of it that you touch.
 
 ## Scope
 
-The rules apply to every tracked `.fern` and `.fern.md` file, with five
+The rules apply to every tracked `.fern` and `.fern.md` file, with six
 exceptions:
 
 - `conformance/cases/` is normative. A case shows one behaviour, and its
@@ -23,6 +23,8 @@ exceptions:
   the language stopped them (`tests/proposals/README.md`).
 - `tests/probes/` holds probes. Each probe keeps the shape that showed one
   defect.
+- `docs/benchmarks/` holds the programs that a dated measurement record
+  measured.
 - A program that tests one form keeps that form. Examples are a parser
   test, a differential case for an old form, and a probe for a bug in one
   construct.
