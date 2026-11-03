@@ -75,6 +75,8 @@ pub struct Session {
   id: i64,
   // This side's current floor request, or 0.
   request: i32,
+  // Local send time of that request. A delayed grant cannot restart its lease.
+  request_at: i64,
   next_request: i32,
   // The end of this side's grant, while it transmits.
   lease_until: i64,
@@ -93,7 +95,7 @@ pub struct Session {
 }
 
 pub function new(): Session {
-  return Session { state: Idle, mode: Offline, controller: false, me: 0, peer: 0, id: 0 as i64, request: 0, next_request: 1, lease_until: 0 as i64, next_renew: 0 as i64, owner: 0, owner_request: 0, owner_until: 0 as i64, receiving: false, held: false, last_heard: 0 as i64, next_heartbeat: 0 as i64, heartbeat_seq: 0 };
+  return Session { state: Idle, mode: Offline, controller: false, me: 0, peer: 0, id: 0 as i64, request: 0, request_at: 0 as i64, next_request: 1, lease_until: 0 as i64, next_renew: 0 as i64, owner: 0, owner_request: 0, owner_until: 0 as i64, receiving: false, held: false, last_heard: 0 as i64, next_heartbeat: 0 as i64, heartbeat_seq: 0 };
 }
 
 pub function connected(s: Session): boolean {
@@ -270,7 +272,7 @@ function ptt_down(s: Session, now: i64): (Session, Action[]) {
     return (t, [Notice("the peer is talking")]);
   }
   let request: i32 = s.next_request;
-  t = Session { ...t, state: Requesting, request: request, next_request: request + 1 };
+  t = Session { ...t, state: Requesting, request: request, request_at: now, next_request: request + 1 };
   if (s.controller) {
     return grant_self(t, now);
   }
@@ -299,7 +301,7 @@ function stop_talking(s: Session, acts: Action[]): (Session, Action[]) {
       return (s, acts);
     }
   }
-  let t: Session = Session { ...s, state: Listening, request: 0, lease_until: 0 as i64 };
+  let t: Session = Session { ...s, state: Listening, request: 0, request_at: 0 as i64, lease_until: 0 as i64 };
   if (s.controller && s.owner == s.me) {
     t = Session { ...t, owner: 0, owner_request: 0 };
   }
@@ -384,9 +386,18 @@ function granted(s: Session, request: i32, owner: i32, lease: i32, now: i64): (S
     }
   }
   if (request != s.request) {
+    // An old reply can refer to the still-active grant during a renewal.
+    // Releasing it here could let the controller start a second speaker.
+    if (transmitting(s)) {
+      return (s, []);
+    }
     return (s, [Send(protocol.PttRelease(request))]);
   }
-  let until: i64 = now + lease as i64;
+  let until: i64 = s.request_at + lease as i64;
+  if (lease <= 0 || lease > LEASE_MS || now >= until) {
+    let (t, acts) = stop_talking(s, []);
+    return (t, acts.append(Notice("the floor grant expired")));
+  }
   match (s.state) {
     Requesting => {
       return (Session { ...s, state: Transmitting, lease_until: until, next_renew: now + RENEW_MS as i64, receiving: false }, [Capture(true)]);
@@ -451,7 +462,10 @@ function renew(s: Session, acts: Action[], now: i64): (Session, Action[]) {
     let until: i64 = now + LEASE_MS as i64;
     return (Session { ...t, owner_until: until, lease_until: until }, acts);
   }
-  return (t, acts.append(Send(protocol.PttRequest(s.id, s.me, s.request, now))));
+  // Each attempt has its own deadline and reply. An old grant cannot renew it.
+  let request: i32 = s.next_request;
+  t = Session { ...t, request: request, request_at: now, next_request: request + 1 };
+  return (t, acts.append(Send(protocol.PttRequest(s.id, s.me, request, now))));
 }
 
 function lost(s: Session, why: string): (Session, Action[]) {

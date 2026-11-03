@@ -333,9 +333,19 @@ pub function is_resource_handle(t: typeinfo.Type): boolean {
   return false;
 }
 
+// The built-in types that own a descriptor. Only the call that opens one
+// makes it, and its close consumes it.
+pub function fd_handle_names(): string[] {
+  return ["Reader", "Writer", "Dir"];
+}
+
 pub function is_fd_handle(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
-    return s.name == "Reader" || s.name == "Writer" || s.name == "Dir";
+    for name in fd_handle_names() {
+      if (name == s.name) {
+        return true;
+      }
+    }
   }
   return false;
 }

@@ -742,60 +742,64 @@ pub function dedupe_weak_defs(asm_text: string): string {
   return text;
 }
 
+// The runtime piece a call to a buffer helper needs, besides heap and buf.
+const BUF_CALL_SYMS: string[] = [
+  "__fern_buf_take", "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8", "__fern_buf_push_bytes_range",
+  "__fern_buf_push_bytes_range_u8", "__fern_buf_push_decimal", "__fern_buf_push_base64",
+];
+
+const BUF_CALL_NEEDS: string[] = [
+  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64",
+];
+
+pub function buf_call_need(sym: string): string {
+  for k in 0..BUF_CALL_SYMS.len() {
+    if (BUF_CALL_SYMS[k] == sym) {
+      return BUF_CALL_NEEDS[k];
+    }
+  }
+  if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
+    if (util.str_has_suffix(sym, "_u8")) {
+      return "buf_bytes_u8";
+    }
+    return "buf_bytes";
+  }
+  if (util.str_has_suffix(sym, "_u8")) {
+    return "buf_u8";
+  }
+  return "";
+}
+
+// The runtime helper each buffer op calls, by IR kind.
+const BUF_KINDS: i32[] = [372, 371, 370, 347, 351, 291, 292, 293, 294, 295, 296, 297, 386, 306, 485, 487, 325, 326, 328];
+
+const BUF_HELPERS: string[] = [
+  "__fern_buf_push_bytes_expanded",
+  "__fern_buf_push_bytes_filtered",
+  "__fern_buf_push_bytes_mapped",
+  "__fern_buf_take_bytes",
+  "__fern_buf_push_bytes_range",
+  "__fern_buf_new",
+  "__fern_buf_push",
+  "__fern_buf_push_range",
+  "__fern_buf_push_byte",
+  "__fern_buf_len",
+  "__fern_buf_take",
+  "__fern_buf_free",
+  "__fern_buf_clear",
+  "__fern_buf_push_u64",
+  "__fern_buf_push_decimal",
+  "__fern_buf_push_base64",
+  "__fern_buf_push_mapped",
+  "__fern_buf_push_filtered",
+  "__fern_buf_push_expanded",
+];
+
 pub function buf_helper(kind: i32): string {
-  if (kind == 372) {
-    return "__fern_buf_push_bytes_expanded";
-  }
-  if (kind == 371) {
-    return "__fern_buf_push_bytes_filtered";
-  }
-  if (kind == 370) {
-    return "__fern_buf_push_bytes_mapped";
-  }
-  if (kind == 347) {
-    return "__fern_buf_take_bytes";
-  }
-  if (kind == 351) {
-    return "__fern_buf_push_bytes_range";
-  }
-  if (kind == 291) {
-    return "__fern_buf_new";
-  }
-  if (kind == 292) {
-    return "__fern_buf_push";
-  }
-  if (kind == 293) {
-    return "__fern_buf_push_range";
-  }
-  if (kind == 294) {
-    return "__fern_buf_push_byte";
-  }
-  if (kind == 295) {
-    return "__fern_buf_len";
-  }
-  if (kind == 296) {
-    return "__fern_buf_take";
-  }
-  if (kind == 297) {
-    return "__fern_buf_free";
-  }
-  if (kind == 386) {
-    return "__fern_buf_clear";
-  }
-  if (kind == 306) {
-    return "__fern_buf_push_u64";
-  }
-  if (kind == 485) {
-    return "__fern_buf_push_decimal";
-  }
-  if (kind == 325) {
-    return "__fern_buf_push_mapped";
-  }
-  if (kind == 326) {
-    return "__fern_buf_push_filtered";
-  }
-  if (kind == 328) {
-    return "__fern_buf_push_expanded";
+  for k in 0..BUF_KINDS.len() {
+    if (BUF_KINDS[k] == kind) {
+      return BUF_HELPERS[k];
+    }
   }
   return "";
 }
@@ -827,6 +831,9 @@ pub function buf_arity(kind: i32): i32 {
   }
   if (kind == 292 || kind == 294 || kind == 306 || kind == 485) {
     return 2;
+  }
+  if (kind == 487) {
+    return 5;
   }
   if (buf_helper(kind) != "") {
     return 1;
@@ -6354,7 +6361,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
-    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",
+    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_push_base64", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",

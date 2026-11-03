@@ -51,7 +51,7 @@ func TestSelfHostBufCallDirect(t *testing.T) {
 				t.Errorf("%s: %s passes its builder operands through the stack:\n%s", target, fn, body)
 			}
 		}
-		if target == "x86-64-linux" && !regexp.MustCompile(`xchgq %rdi, %rsi\n\s+call __fern_buf_push\n`).MatchString(condBranchBody(t, string(asm), "swap")) {
+		if target == "x86-64-linux" && !bufCallExchangesOperands(condBranchBody(t, string(asm), "swap")) {
 			t.Errorf("%s: swap does not exchange its crossed operands:\n%s", target, condBranchBody(t, string(asm), "swap"))
 		}
 	}
@@ -68,5 +68,35 @@ func TestSelfHostBufCallDirect(t *testing.T) {
 		if got := run.ProcessState.ExitCode(); got != 42 {
 			t.Errorf("%s: exit %d, want 42 (1: the builder's bytes)", tg.target, got)
 		}
+	}
+}
+
+func bufCallExchangesOperands(body string) bool {
+	if regexp.MustCompile(`xchgq (%rdi, %rsi|%rsi, %rdi)\n\s+call __fern_buf_push\n`).MatchString(body) {
+		return true
+	}
+	moves := regexp.MustCompile(`movq %rsi, (%r[a-z0-9]+)\n\s+movq %rdi, %rsi\n\s+movq (%r[a-z0-9]+), %rdi\n\s+call __fern_buf_push\n`).FindStringSubmatch(body)
+	return len(moves) == 3 && moves[1] == moves[2] && moves[1] != "%rdi" && moves[1] != "%rsi"
+}
+
+func TestBufCallOperandExchange(t *testing.T) {
+	cases := []struct {
+		name, body string
+		want       bool
+	}{
+		{"exchange", "xchgq %rdi, %rsi\n call __fern_buf_push\n", true},
+		{"exchange-reversed", "xchgq %rsi, %rdi\n call __fern_buf_push\n", true},
+		{"scratch-r11", "movq %rsi, %r11\n movq %rdi, %rsi\n movq %r11, %rdi\n call __fern_buf_push\n", true},
+		{"scratch-r10", "movq %rsi, %r10\n movq %rdi, %rsi\n movq %r10, %rdi\n call __fern_buf_push\n", true},
+		{"different-scratch", "movq %rsi, %r11\n movq %rdi, %rsi\n movq %r10, %rdi\n call __fern_buf_push\n", false},
+		{"overwritten-scratch", "movq %rsi, %rdi\n movq %rdi, %rsi\n movq %rdi, %rdi\n call __fern_buf_push\n", false},
+		{"destructive-copy", "movq %rsi, %rdi\n movq %rdi, %rsi\n call __fern_buf_push\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bufCallExchangesOperands(tc.body); got != tc.want {
+				t.Errorf("operand exchange = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }

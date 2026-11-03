@@ -1,6 +1,10 @@
 package checker
 
-import "github.com/jakechampion/lang/internal/syntax/ast"
+import (
+	"slices"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
 
 func (c *checker) computeResultBorrows(prog *ast.Program) {
 	c.resultBorrows = make(map[string]bool, len(prog.Funcs))
@@ -360,8 +364,12 @@ func (c *checker) allNoHandleIn(ts []ast.Type, free map[string]bool, seen map[st
 	return true
 }
 
+// fdHandleNames are the built-in types that own a descriptor. Only the
+// call that opens one makes it, and its close consumes it.
+var fdHandleNames = []string{"Reader", "Writer", "Dir"}
+
 func builtinHandle(name string) bool {
-	return name == "Reader" || name == "Writer" || name == "Dir"
+	return slices.Contains(fdHandleNames, name)
 }
 
 func paramSet(names []string) map[string]bool {
