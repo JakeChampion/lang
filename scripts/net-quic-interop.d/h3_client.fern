@@ -160,7 +160,7 @@ function main(): i32 {
   let started = now();
   while (!c.done() && now().since(started).cmp(time.duration_seconds(20)) < 0) {
     c = pump(c, sock, peer);
-    let _ = async.wait_any([sock, 1], wait_for(c));
+    let _ = async.wait_any([sock.fd, 1], wait_for(c));
     c = drain(c, sock, buf);
     if (passed(c.deadline())) {
       c = c.tick(now());

@@ -95,27 +95,27 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<33 pub enum Recv>>
 
-<<34 pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError]>>
+<<34 pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError]>>
 
 <<35 pub enum Shutdown>>
 
-<<36 pub function set_nodelay(sock: i32, on: boolean): Result[void, NetError]>>
+<<36 pub function set_nodelay(sock: Socket, on: boolean): Result[void, NetError]>>
 
-<<37 function __socket_ctl(sock: i32, op: i32, on: boolean): Result[void, NetError]>>
+<<37 function __socket_ctl(sock: Socket, op: i32, on: boolean): Result[void, NetError]>>
 
-<<38 pub function udp_socket(addr: SocketAddr): Result[i32, NetError]>>
+<<38 pub function udp_socket(addr: SocketAddr): Result[Socket, NetError]>>
 
 <<39 pub function sender(from: [u8]): SocketAddr>>
 
-<<40 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError]>>
+<<40 pub function recv_from(sock: Socket, buf: u8[]): Result[(i32, SocketAddr), NetError]>>
 
-<<41 function __tcp_socket(r: i32): Result[i32, NetError]>>
+<<41 function __tcp_socket(own s: Socket): Result[Socket, NetError]>>
 
-<<42 pub function listen_unix(path: string, backlog: i32): Result[i32, NetError]>>
+<<42 pub function listen_unix(path: string, backlog: i32): Result[Socket, NetError]>>
 
-<<43 function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError]>>
+<<43 function __name_of(sock: Socket, peer: boolean): Result[SocketAddr, NetError]>>
 
-<<44 pub function local_port(sock: i32): Result[i32, NetError]>>
+<<44 pub function local_port(sock: Socket): Result[i32, NetError]>>
 
 <<45 impl cmp.Eq for NetError>>
 ```
@@ -1446,16 +1446,16 @@ pub function listen_options(): ListenOptions {
   return ListenOptions { backlog: 128, reuse_port: false };
 }
 
-pub function listen_with(port: i32, opts: ListenOptions): Result[i32, NetError] {
+pub function listen_with(port: i32, opts: ListenOptions): Result[Socket, NetError] {
   return listen_at(socket_addr(ipv4_unspecified(), port), opts);
 }
 
-pub function listen_at(addr: SocketAddr, opts: ListenOptions): Result[i32, NetError] {
-  return __socket_count(tcp_listen_with(addr.ip.bytes(), addr.port, opts.backlog, opts.reuse_port));
+pub function listen_at(addr: SocketAddr, opts: ListenOptions): Result[Socket, NetError] {
+  return __socket_open(tcp_listen_with(addr.ip.bytes(), addr.port, opts.backlog, opts.reuse_port));
 }
 
 // listen_any listens on every local address: one dual-stack socket where the host has IPv6, IPv4 alone elsewhere and on wasi.
-pub function listen_any(port: i32, opts: ListenOptions): Result[i32, NetError] {
+pub function listen_any(port: i32, opts: ListenOptions): Result[Socket, NetError] {
   if (target_os() != "wasi") {
     match (listen_at(socket_addr(ipv6_unspecified(), port), opts)) {
       Ok(fd) => {
@@ -1471,11 +1471,11 @@ pub function listen_any(port: i32, opts: ListenOptions): Result[i32, NetError] {
   return listen_at(socket_addr(ipv4_unspecified(), port), opts);
 }
 
-pub function read(sock: i32, buf: u8[]): Result[i32, NetError] {
+pub function read(sock: Socket, buf: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_recv_into(sock, buf));
 }
 
-pub function read_up_to(sock: i32, max: i32): Result[u8[], NetError] {
+pub function read_up_to(sock: Socket, max: i32): Result[u8[], NetError] {
   unsafe {
     let buf: u8[] = __alloc_u8(max);
     let n: i32 = read(sock, buf)?;
@@ -1484,12 +1484,12 @@ pub function read_up_to(sock: i32, max: i32): Result[u8[], NetError] {
   }
 }
 
-pub function write(sock: i32, data: u8[]): Result[i32, NetError] {
+pub function write(sock: Socket, data: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_send_bytes(sock, data));
 }
 
 // write_rest sends what a non-blocking socket takes now and returns the bytes it did not take, empty once all are sent.
-pub function write_rest(sock: i32, data: u8[]): Result[u8[], NetError] {
+pub function write_rest(sock: Socket, data: u8[]): Result[u8[], NetError] {
   let n: i32 = tcp_send_bytes(sock, data);
   if (n >= data.len()) {
     let none: u8[] = [];
@@ -1520,17 +1520,17 @@ pub function write_rest(sock: i32, data: u8[]): Result[u8[], NetError] {
 pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
 ```
 
-### `34 pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError]`
+### `34 pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError]`
 
 ```fern
-<<34 pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError]>>=
-pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError] {
+<<34 pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError]>>=
+pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError] {
   return read_watched(sock, max, deadline, 1);
 }
 
-pub function read_watched(sock: i32, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
+pub function read_watched(sock: Socket, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
   let until: i64 = monotonic_ns() + wait.as_nanos();
-  let set: i32[] = [sock, interest];
+  let set: i32[] = [sock.fd, interest];
   while (true) {
     let at: i64 = until;
     if (at - monotonic_ns() < 1000000i64) {
@@ -1571,27 +1571,27 @@ pub enum Shutdown {
 }
 ```
 
-### `36 pub function set_nodelay(sock: i32, on: boolean): Result[void, NetError]`
+### `36 pub function set_nodelay(sock: Socket, on: boolean): Result[void, NetError]`
 
 ```fern
-<<36 pub function set_nodelay(sock: i32, on: boolean): Result[void, NetError]>>=
-pub function set_nodelay(sock: i32, on: boolean): Result[void, NetError] {
+<<36 pub function set_nodelay(sock: Socket, on: boolean): Result[void, NetError]>>=
+pub function set_nodelay(sock: Socket, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 1, on);
 }
 
-pub function set_keepalive(sock: i32, on: boolean): Result[void, NetError] {
+pub function set_keepalive(sock: Socket, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 2, on);
 }
 
-pub function set_nonblocking(sock: i32, on: boolean): Result[void, NetError] {
+pub function set_nonblocking(sock: Socket, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 3, on);
 }
 
-pub function send_queue(sock: i32): Result[i32, NetError] {
+pub function send_queue(sock: Socket): Result[i32, NetError] {
   return __socket_count(tcp_socket_ctl(sock, 6, 0));
 }
 
-pub function peer_key(sock: i32): Option[i32] {
+pub function peer_key(sock: Socket): Option[i32] {
   let k: i32 = tcp_socket_ctl(sock, 7, 0);
   if (k == 0) {
     return None;
@@ -1599,7 +1599,7 @@ pub function peer_key(sock: i32): Option[i32] {
   return Some(k);
 }
 
-pub function shutdown(sock: i32, how: Shutdown): Result[void, NetError] {
+pub function shutdown(sock: Socket, how: Shutdown): Result[void, NetError] {
   let arg: i32 = 2;
   match (how) {
     Read => {
@@ -1616,11 +1616,11 @@ pub function shutdown(sock: i32, how: Shutdown): Result[void, NetError] {
 }
 ```
 
-### `37 function __socket_ctl(sock: i32, op: i32, on: boolean): Result[void, NetError]`
+### `37 function __socket_ctl(sock: Socket, op: i32, on: boolean): Result[void, NetError]`
 
 ```fern
-<<37 function __socket_ctl(sock: i32, op: i32, on: boolean): Result[void, NetError]>>=
-function __socket_ctl(sock: i32, op: i32, on: boolean): Result[void, NetError] {
+<<37 function __socket_ctl(sock: Socket, op: i32, on: boolean): Result[void, NetError]>>=
+function __socket_ctl(sock: Socket, op: i32, on: boolean): Result[void, NetError] {
   let arg: i32 = 0;
   if (on) {
     arg = 1;
@@ -1643,23 +1643,23 @@ function __socket_count(r: i32): Result[i32, NetError] {
 }
 ```
 
-### `38 pub function udp_socket(addr: SocketAddr): Result[i32, NetError]`
+### `38 pub function udp_socket(addr: SocketAddr): Result[Socket, NetError]`
 
 ```fern
-<<38 pub function udp_socket(addr: SocketAddr): Result[i32, NetError]>>=
-pub function udp_socket(addr: SocketAddr): Result[i32, NetError] {
-  return __socket_count(udp_bind(addr.ip.bytes(), addr.port));
+<<38 pub function udp_socket(addr: SocketAddr): Result[Socket, NetError]>>=
+pub function udp_socket(addr: SocketAddr): Result[Socket, NetError] {
+  return __socket_open(udp_bind(addr.ip.bytes(), addr.port));
 }
 
-pub function set_peer(sock: i32, peer: SocketAddr): Result[void, NetError] {
+pub function set_peer(sock: Socket, peer: SocketAddr): Result[void, NetError] {
   return __socket_result(udp_connect(sock, peer.ip.bytes(), peer.port));
 }
 
-pub function send_to(sock: i32, data: u8[], to: SocketAddr): Result[i32, NetError] {
+pub function send_to(sock: Socket, data: u8[], to: SocketAddr): Result[i32, NetError] {
   return __socket_count(udp_sendto_bytes(sock, to.ip.bytes(), to.port, data));
 }
 
-pub function send(sock: i32, data: u8[]): Result[i32, NetError] {
+pub function send(sock: Socket, data: u8[]): Result[i32, NetError] {
   let peer: u8[] = [];
   return __socket_count(udp_sendto_bytes(sock, peer, 0, data));
 }
@@ -1689,11 +1689,11 @@ pub function sender(from: [u8]): SocketAddr {
 }
 ```
 
-### `40 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError]`
+### `40 pub function recv_from(sock: Socket, buf: u8[]): Result[(i32, SocketAddr), NetError]`
 
 ```fern
-<<40 pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError]>>=
-pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError] {
+<<40 pub function recv_from(sock: Socket, buf: u8[]): Result[(i32, SocketAddr), NetError]>>=
+pub function recv_from(sock: Socket, buf: u8[]): Result[(i32, SocketAddr), NetError] {
   let from: u8[] = __alloc_u8(SENDER_BYTES);
   let n: i32 = udp_recvfrom(sock, buf, from);
   if (n < 0) {
@@ -1704,63 +1704,71 @@ pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError
 
 // recv_into reads one datagram into buf and its sender into from, SENDER_BYTES
 // long, for sender to read only when the address is needed.
-pub function recv_into(sock: i32, buf: u8[], from: u8[]): Result[i32, NetError] {
+pub function recv_into(sock: Socket, buf: u8[], from: u8[]): Result[i32, NetError] {
   return __socket_count(udp_recvfrom(sock, buf, from));
 }
 
 pub const SENDER_BYTES: i32 = 19;
 
-pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
+pub function recv(sock: Socket, buf: u8[]): Result[i32, NetError] {
   let none: u8[] = [];
   return __socket_count(udp_recvfrom(sock, buf, none));
 }
 
-pub function connect(addr: SocketAddr): Result[i32, NetError] {
+pub function connect(addr: SocketAddr): Result[Socket, NetError] {
   return __tcp_socket(tcp_connect_with(addr.ip.bytes(), addr.port, false));
 }
 
-pub function connect_start(addr: SocketAddr): Result[i32, NetError] {
+pub function connect_start(addr: SocketAddr): Result[Socket, NetError] {
   return __tcp_socket(tcp_connect_with(addr.ip.bytes(), addr.port, true));
 }
 
-pub function connect_result(sock: i32): Result[void, NetError] {
+pub function connect_result(sock: Socket): Result[void, NetError] {
   return __socket_result(tcp_socket_ctl(sock, 5, 0));
 }
 
-pub function accept(sock: i32): Result[i32, NetError] {
+pub function accept(sock: Socket): Result[Socket, NetError] {
   return __tcp_socket(tcp_accept(sock));
 }
 ```
 
-### `41 function __tcp_socket(r: i32): Result[i32, NetError]`
+### `41 function __tcp_socket(own s: Socket): Result[Socket, NetError]`
 
 ```fern
-<<41 function __tcp_socket(r: i32): Result[i32, NetError]>>=
-function __tcp_socket(r: i32): Result[i32, NetError] {
-  if (r >= 0) {
-    tcp_socket_ctl(r, 1, 1);
+<<41 function __tcp_socket(own s: Socket): Result[Socket, NetError]>>=
+function __tcp_socket(own s: Socket): Result[Socket, NetError] {
+  if (s.fd < 0) {
+    return Err(error_from_host(s.fd));
   }
-  return __socket_count(r);
+  tcp_socket_ctl(s, 1, 1);
+  return Ok(s);
+}
+
+function __socket_open(own s: Socket): Result[Socket, NetError] {
+  if (s.fd < 0) {
+    return Err(error_from_host(s.fd));
+  }
+  return Ok(s);
 }
 ```
 
-### `42 pub function listen_unix(path: string, backlog: i32): Result[i32, NetError]`
+### `42 pub function listen_unix(path: string, backlog: i32): Result[Socket, NetError]`
 
 ```fern
-<<42 pub function listen_unix(path: string, backlog: i32): Result[i32, NetError]>>=
-pub function listen_unix(path: string, backlog: i32): Result[i32, NetError] {
-  return __socket_count(unix_listen(path, backlog));
+<<42 pub function listen_unix(path: string, backlog: i32): Result[Socket, NetError]>>=
+pub function listen_unix(path: string, backlog: i32): Result[Socket, NetError] {
+  return __socket_open(unix_listen(path, backlog));
 }
 
-pub function connect_unix(path: string): Result[i32, NetError] {
-  return __socket_count(unix_connect(path));
+pub function connect_unix(path: string): Result[Socket, NetError] {
+  return __socket_open(unix_connect(path));
 }
 
-pub function local_addr(sock: i32): Result[SocketAddr, NetError] {
+pub function local_addr(sock: Socket): Result[SocketAddr, NetError] {
   return __name_of(sock, false);
 }
 
-pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
+pub function peer_addr(sock: Socket): Result[SocketAddr, NetError] {
   match (__name_of(sock, true)) {
     Ok(a) => {
       return Ok(socket_addr(a.ip.to_canonical(), a.port));
@@ -1772,11 +1780,11 @@ pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
 }
 ```
 
-### `43 function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError]`
+### `43 function __name_of(sock: Socket, peer: boolean): Result[SocketAddr, NetError]`
 
 ```fern
-<<43 function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError]>>=
-function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError] {
+<<43 function __name_of(sock: Socket, peer: boolean): Result[SocketAddr, NetError]>>=
+function __name_of(sock: Socket, peer: boolean): Result[SocketAddr, NetError] {
   let rec: u8[] = __alloc_u8(SENDER_BYTES);
   let r: i32 = tcp_addr_into(sock, peer, rec);
   if (r < 0) {
@@ -1786,15 +1794,15 @@ function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError] {
 }
 ```
 
-### `44 pub function local_port(sock: i32): Result[i32, NetError]`
+### `44 pub function local_port(sock: Socket): Result[i32, NetError]`
 
 ```fern
-<<44 pub function local_port(sock: i32): Result[i32, NetError]>>=
-pub function local_port(sock: i32): Result[i32, NetError] {
+<<44 pub function local_port(sock: Socket): Result[i32, NetError]>>=
+pub function local_port(sock: Socket): Result[i32, NetError] {
   return __socket_count(tcp_local_port(sock));
 }
 
-pub function close(sock: i32): Result[void, NetError] {
+pub function close(own sock: Socket): Result[void, NetError] {
   return __socket_result(tcp_close(sock));
 }
 ```

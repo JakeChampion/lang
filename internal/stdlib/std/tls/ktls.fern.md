@@ -22,15 +22,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub enum Attached>>
 
-<<4 pub function attach(fd: i32, keys: handshake.KernelKeys): Attached>>
+<<4 pub function attach(sock: Socket, keys: handshake.KernelKeys): Attached>>
 
-<<5 function __send_all(fd: i32, data: u8[]): i32>>
+<<5 function __send_all(sock: Socket, data: u8[]): i32>>
 
 <<6 pub enum Read>>
 
-<<7 pub function read(fd: i32, wait: Duration): Read>>
+<<7 pub function read(sock: Socket, wait: Duration): Read>>
 
-<<8 function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32>>
+<<8 function __ktls(sock: Socket, op: i32, arg: i32, data: u8[]): i32>>
 ```
 
 ### `module introduction`
@@ -56,34 +56,34 @@ import "std/tls/handshake";
 pub enum Attached { Kernel, Unchanged, Broken(i32) }
 ```
 
-### `4 pub function attach(fd: i32, keys: handshake.KernelKeys): Attached`
+### `4 pub function attach(sock: Socket, keys: handshake.KernelKeys): Attached`
 
 ```fern
-<<4 pub function attach(fd: i32, keys: handshake.KernelKeys): Attached>>=
-pub function attach(fd: i32, keys: handshake.KernelKeys): Attached {
+<<4 pub function attach(sock: Socket, keys: handshake.KernelKeys): Attached>>=
+pub function attach(sock: Socket, keys: handshake.KernelKeys): Attached {
   let none: u8[] = [];
-  if (__ktls(fd, 1, 0, none) < 0) {
+  if (__ktls(sock, 1, 0, none) < 0) {
     return Unchanged;
   }
-  if (__ktls(fd, 3, 0, keys.receive) < 0) {
+  if (__ktls(sock, 3, 0, keys.receive) < 0) {
     return Unchanged;
   }
-  let tx: i32 = __ktls(fd, 2, 0, keys.transmit);
+  let tx: i32 = __ktls(sock, 2, 0, keys.transmit);
   if (tx < 0) {
     return Broken(0 - tx);
   }
   return Kernel;
 }
 
-pub function install(fd: i32, keys: handshake.KernelKeys): i32 {
+pub function install(sock: Socket, keys: handshake.KernelKeys): i32 {
   if (keys.receive.len() > 0) {
-    let r: i32 = __ktls(fd, 3, 0, keys.receive);
+    let r: i32 = __ktls(sock, 3, 0, keys.receive);
     if (r < 0) {
       return r;
     }
   }
   if (keys.transmit.len() > 0) {
-    let t: i32 = __ktls(fd, 2, 0, keys.transmit);
+    let t: i32 = __ktls(sock, 2, 0, keys.transmit);
     if (t < 0) {
       return t;
     }
@@ -91,7 +91,7 @@ pub function install(fd: i32, keys: handshake.KernelKeys): i32 {
   return 0;
 }
 
-pub function send_records(fd: i32, framed: [u8]): i32 {
+pub function send_records(sock: Socket, framed: [u8]): i32 {
   let at: i32 = 0;
   while (framed.len() - at >= 5) {
     let len: i32 = framed[at + 3] as i32 << 8 | framed[at + 4] as i32;
@@ -99,9 +99,9 @@ pub function send_records(fd: i32, framed: [u8]): i32 {
     let content: u8[] = __copy(framed[at + 5:at + 5 + len]);
     let r: i32 = 0;
     if (t == 23) {
-      r = __send_all(fd, content);
+      r = __send_all(sock, content);
     } else {
-      r = __ktls(fd, 4, t, content);
+      r = __ktls(sock, 4, t, content);
     }
     if (r < 0) {
       return r;
@@ -112,14 +112,14 @@ pub function send_records(fd: i32, framed: [u8]): i32 {
 }
 ```
 
-### `5 function __send_all(fd: i32, data: u8[]): i32`
+### `5 function __send_all(sock: Socket, data: u8[]): i32`
 
 ```fern
-<<5 function __send_all(fd: i32, data: u8[]): i32>>=
-function __send_all(fd: i32, data: u8[]): i32 {
+<<5 function __send_all(sock: Socket, data: u8[]): i32>>=
+function __send_all(sock: Socket, data: u8[]): i32 {
   let at: i32 = 0;
   while (at < data.len()) {
-    let n: i32 = tcp_send_bytes(fd, __copy(data[at:data.len()]));
+    let n: i32 = tcp_send_bytes(sock, __copy(data[at:data.len()]));
     if (n < 0) {
       return n;
     }
@@ -139,19 +139,19 @@ function __send_all(fd: i32, data: u8[]): i32 {
 pub enum Read { Opened(i32, u8[]), StreamEnded, NothingYet, WaitCancelled, ReadFailed(i32) }
 ```
 
-### `7 pub function read(fd: i32, wait: Duration): Read`
+### `7 pub function read(sock: Socket, wait: Duration): Read`
 
 ```fern
-<<7 pub function read(fd: i32, wait: Duration): Read>>=
-pub function read(fd: i32, wait: Duration): Read {
+<<7 pub function read(sock: Socket, wait: Duration): Read>>=
+pub function read(sock: Socket, wait: Duration): Read {
   let limit: Duration = wait;
   if (limit.cmp(time.duration_millis(1)) < 0) {
     limit = time.duration_millis(1);
   }
-  let set: i32[] = [fd, 1];
+  let set: i32[] = [sock.fd, 1];
   match (async.wait_any(set, Some(time.instant_from_nanos(monotonic_ns()).add(limit)))) {
     Woke(i) => {
-      return read_now(fd);
+      return read_now(sock);
     },
     TimedOut => {
       return Read.NothingYet;
@@ -163,9 +163,9 @@ pub function read(fd: i32, wait: Duration): Read {
   return Read.NothingYet;
 }
 
-pub function read_now(fd: i32): Read {
+pub function read_now(sock: Socket): Read {
   let buf: u8[] = __alloc_u8(16385);
-  let r: i32 = __ktls(fd, 5, 0, buf);
+  let r: i32 = __ktls(sock, 5, 0, buf);
   if (r == 0 - 11) {
     return Read.NothingYet;
   }
@@ -188,19 +188,19 @@ pub function framed(t: i32, content: [u8]): u8[] {
   return out;
 }
 
-pub function alert(fd: i32, code: i32): void {
+pub function alert(sock: Socket, code: i32): void {
   let body: u8[] = [2 as u8, code as u8];
-  __ktls(fd, 4, 21, body);
+  __ktls(sock, 4, 21, body);
 }
 ```
 
-### `8 function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32`
+### `8 function __ktls(sock: Socket, op: i32, arg: i32, data: u8[]): i32`
 
 ```fern
-<<8 function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32>>=
-function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32 {
+<<8 function __ktls(sock: Socket, op: i32, arg: i32, data: u8[]): i32>>=
+function __ktls(sock: Socket, op: i32, arg: i32, data: u8[]): i32 {
   if (target_os() == "linux" || target_os() == "android") {
-    return tcp_ktls(fd, op, arg, data);
+    return tcp_ktls(sock, op, arg, data);
   }
   return 0 - 38;
 }

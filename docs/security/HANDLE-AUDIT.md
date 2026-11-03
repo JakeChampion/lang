@@ -30,7 +30,14 @@ At run time a `Socket` is its descriptor number in compiled code and in both int
 For one release a `Socket` and its `i32` descriptor convert both ways (#13544).
 The published stage0 must compile the standard library before and after it moves to `Socket`, by the rule in `docs/BOOTSTRAP.md`.
 While the conversion exists, code that holds the descriptor as an `i32` still reaches the hazard below.
-The next step moves every caller to `Socket` and deletes the conversion.
+
+`std/net`, `std/dns`, `std/async`, `std/fetch`, `std/tls/client` and `std/tls/ktls` hold a `Socket`.
+A waiter such as `async.wait_any` still takes the descriptor number, which a `Socket` gives as its `fd`.
+
+The `std/fetch` pool owns each socket that it dials, in a table of descriptor numbers.
+A test `Transport` names a connection by an `i32`, and it cannot make a `Socket`.
+The compiler's interpreter keeps a guest `Socket` as its descriptor number, because a guest `Cell` can hold a number but not a host handle.
+The next steps move the other callers and the interpreter, and then delete the conversion.
 A `resource R` declaration is the WIT import surface only.
 Its `own R` and `borrow R` types erase to `i32`, and no standard library type uses them.
 

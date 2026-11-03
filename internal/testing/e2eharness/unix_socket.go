@@ -80,7 +80,7 @@ function fail(n: i32): i32 {
     return n;
 }
 
-function errno_of(r: Result[i32, net.NetError]): i32 {
+function errno_of[T](r: Result[T, net.NetError]): i32 {
     match (r) {
         Ok(fd) => { return 0; },
         Err(e) => { return e.errno(); },
