@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // The program touches every static kind a relocation must move: string
@@ -120,9 +122,11 @@ func pieLayout(t *testing.T, bin string, machine elf.Machine) {
 	}
 }
 
+// The test runs the host's own compiler, so it runs on an arm64 host too.
+// Each target runs natively where it can, and under an emulator otherwise.
 func TestSelfHostPIE(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	_, qemu := arm64Tooling(t)
+	cli := e2eharness.SelfHostCLI(t)
+	stdlib := e2eharness.SelfHostStdlibRoot(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(src, []byte(pieSrc), 0o644); err != nil {
@@ -130,22 +134,17 @@ func TestSelfHostPIE(t *testing.T) {
 	}
 	compile := func(t *testing.T, out string, flags ...string) (string, int) {
 		t.Helper()
-		args := append(append([]string{}, flags...), "-o", out, src, cli.stdlib)
-		cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+		args := append(append([]string{}, flags...), "-o", out, src, stdlib)
+		cmd := exec.Command(cli, args...)
 		cmd.Env = childEnv()
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		_ = cmd.Run()
 		return stderr.String(), cmd.ProcessState.ExitCode()
 	}
-	run := func(t *testing.T, target, bin string) string {
+	run := func(t *testing.T, runner []string, bin string) string {
 		t.Helper()
-		var c *exec.Cmd
-		if target == "arm64-linux" {
-			c = runArm64Bin(qemu, bin)
-		} else {
-			c = runX86_64Bin(cli.runner, bin)
-		}
+		c := runX86_64Bin(runner, bin)
 		var stdout, stderr bytes.Buffer
 		c.Stdout, c.Stderr = &stdout, &stderr
 		if err := c.Run(); err != nil {
@@ -161,25 +160,29 @@ func TestSelfHostPIE(t *testing.T) {
 		machine elf.Machine
 	}{{"x86-64-linux", elf.EM_X86_64}, {"arm64-linux", elf.EM_AARCH64}} {
 		t.Run(tc.target, func(t *testing.T) {
+			var runner []string
+			if tc.target == "arm64-linux" {
+				if qemu := e2eharness.Arm64Runner(t); qemu != "" {
+					runner = []string{qemu}
+				}
+			} else {
+				runner = e2eharness.X86_64Runner(t)
+			}
 			bin := filepath.Join(dir, "pie-"+tc.target)
 			if errout, code := compile(t, bin, "-pie", "-target", tc.target); code != 0 {
 				t.Fatalf("compile -pie: exit %d\n%s", code, errout)
 			}
 			pieLayout(t, bin, tc.machine)
-			base1 := run(t, tc.target, bin)
+			base1 := run(t, runner, bin)
 			if base1 == "" || base1 == "00400000" {
 				t.Fatalf("the text mapping is at %q, want a base the loader chose", base1)
 			}
 			t.Logf("%s text mapping at %s", tc.target, base1)
-			native := len(cli.runner) == 0
-			if tc.target == "arm64-linux" {
-				native = qemu == ""
-			}
-			if !native {
+			if len(runner) > 0 {
 				t.Logf("%s runs under an emulator here, so the kernel's randomization is not observed", tc.target)
 			} else if policy, _ := os.ReadFile("/proc/sys/kernel/randomize_va_space"); strings.TrimSpace(string(policy)) == "0" {
 				t.Logf("randomize_va_space is 0 on this host, so the second run cannot show another base")
-			} else if base2 := run(t, tc.target, bin); base2 == base1 {
+			} else if base2 := run(t, runner, bin); base2 == base1 {
 				t.Errorf("two runs mapped the text at %s both times; the kernel did not randomize the base", base1)
 			} else {
 				t.Logf("%s: the kernel randomized the base (native): %s, then %s", tc.target, base1, base2)
@@ -189,12 +192,12 @@ func TestSelfHostPIE(t *testing.T) {
 				t.Fatalf("compile -pie -harden: exit %d\n%s", code, errout)
 			}
 			pieLayout(t, hardened, tc.machine)
-			run(t, tc.target, hardened)
+			run(t, runner, hardened)
 			symbols := filepath.Join(dir, "pie-g-"+tc.target)
 			if errout, code := compile(t, symbols, "-pie", "-g", "-target", tc.target); code != 0 {
 				t.Fatalf("compile -pie -g: exit %d\n%s", code, errout)
 			}
-			run(t, tc.target, symbols)
+			run(t, runner, symbols)
 			f, err := elf.Open(symbols)
 			if err != nil {
 				t.Fatal(err)
