@@ -19156,8 +19156,20 @@ function lu_hold_keep(e: ast.Expr, own h: LuHold): LuHold {
   return h;
 }
 
+// A `for` header runs once, so only its body runs the call again.
 function lu_loop_hold_stmt(st: ast.Stmt, own h: LuHold): LuHold {
-  if (h.found || !lu_is_loop_stmt(st)) {
+  if (h.found) {
+    return h;
+  }
+  if let ast.StmtFor(fo) = st {
+    for b in fo.body {
+      if (lu_stmt_holds(b, h.line, h.col)) {
+        return LuHold { ...h, found: true };
+      }
+    }
+    return h;
+  }
+  if (!lu_is_loop_stmt(st)) {
     return h;
   }
   return LuHold { ...h, found: lu_stmt_holds(st, h.line, h.col) };
