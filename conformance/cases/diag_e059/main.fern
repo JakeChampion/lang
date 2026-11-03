@@ -2,6 +2,8 @@
 
 
 
+struct Circle { r: f64 }
+
 function main(): i32 {
 let x: string = "5";
 let y = x as? Circle;

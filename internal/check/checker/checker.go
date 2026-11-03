@@ -6177,6 +6177,12 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 						c.lanesContained(*t, pos)
 					}
 				})
+				switch x := n.(type) {
+				case *ast.CastExpr:
+					c.checkTypeKnown(x.Target, params, x.P)
+				case *ast.DowncastExpr:
+					c.checkTypeKnown(x.Target, params, x.P)
+				}
 				return true
 			})
 		}

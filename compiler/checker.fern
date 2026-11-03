@@ -22551,9 +22551,21 @@ struct Annot { type_name: string, line: i32, col: i32 }
 function collect_annots(stmts: ast.Stmt[]): Annot[] {
   let acc: Annot[] = [];
   for stmt in stmts {
-    acc = astwalk.fold_stmt_nodes(stmt, acc, annot_of_stmt, annot_of_expr, astwalk.descend_all);
+    acc = astwalk.fold_stmt_nodes(stmt, acc, annot_of_stmt, annot_or_cast_of_expr, astwalk.descend_all);
   }
   return acc;
+}
+
+function annot_or_cast_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
+  if let ast.ExprUnary(u) = e {
+    if (util.str_has_prefix(u.op, "as?_")) {
+      return acc.append(Annot { type_name: slice_unchecked(u.op, 4, u.op.len()) + "", line: u.line, col: u.col });
+    }
+    if (util.str_has_prefix(u.op, "as_")) {
+      return acc.append(Annot { type_name: slice_unchecked(u.op, 3, u.op.len()) + "", line: u.line, col: u.col });
+    }
+  }
+  return annot_of_expr(e, acc);
 }
 
 function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
