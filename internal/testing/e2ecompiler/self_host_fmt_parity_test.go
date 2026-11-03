@@ -1509,6 +1509,16 @@ a = b = c = 7;
 return a + b + c;
 }
 `},
+	{"negative-operand-of-cast", `function f(x: i32, y: f64, r: Result[i32, string]): i64 {
+let a = (-x) as i64;
+let b = -x as i64;
+let c = (-1.5) as i32;
+let d = -(2.5 as i32);
+let e = (-(x as i64)) as u64;
+let h = (-r?) as i64;
+return a + b + (c + d) as i64 + e as i64 + h;
+}
+`},
 	{"float-value-if-in-enum-arm", `enum Value { VBool(boolean), VNum(f64) }
 function g(v: Value, n: i32, q: boolean): f64 {
 let a = match (n) { 0 | 1 => 1.5, 2 => 2.5, _ => 3.5 };

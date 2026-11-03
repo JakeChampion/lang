@@ -1707,7 +1707,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte('(')
 		}
-		f.formatExpr(x.Inner, precCast)
+		f.formatExpr(x.Inner, precUnary)
 		f.b.WriteString(" as ")
 		f.b.WriteString(x.Target.String())
 		if needsParens {
@@ -1718,7 +1718,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte('(')
 		}
-		f.formatExpr(x.Inner, precCast)
+		f.formatExpr(x.Inner, precUnary)
 		f.b.WriteString(" as? ")
 		f.b.WriteString(x.Target.String())
 		if needsParens {

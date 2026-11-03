@@ -770,7 +770,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       // uses the same precedence and parentheses as a plain cast.
       let checked_cast: boolean = u.op.len() > 4 && util.str_has_prefix(u.op, "as?_");
       if (checked_cast || u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
-        let (co, cf) = print_expr_c(u.operand, prec_cast(), depth, f);
+        let (co, cf) = print_expr_c(u.operand, prec_unary(), depth, f);
         let start: i32 = 3;
         let cast_op: string = " as ";
         if (checked_cast) {
