@@ -2052,7 +2052,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, voidIoResult)
 	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, voidIoResult)
-	for _, h := range []string{"Reader", "Writer", "Dir"} {
+	for _, h := range fdHandleNames {
 		registerStructMethod(h, "close_unchecked", nil, voidIoResult)
 	}
 	registerStructMethod("Writer", "truncate",
@@ -2868,7 +2868,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	// The built-in close consumes its handle: a descriptor closed once is
 	// not a value the program reads again.
-	for _, h := range []string{"Reader", "Writer", "Dir"} {
+	for _, h := range fdHandleNames {
 		c.ownFuncs["__method_"+h+"_close"] = []bool{true}
 	}
 	c.info.OwnFuncs = c.ownFuncs
@@ -15436,6 +15436,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return nil
 		}
 		c.checkOpaqueAccess(sd, n.P, "construct")
+		if builtinHandle(n.TypeName) {
+			c.errfCode(n.P, "E099", "a %s cannot be built from a literal: only the call that opens it makes one", n.TypeName)
+			return ast.StructType{Name: sd.Name}
+		}
 		seen := map[string]bool{}
 		fieldT := map[string]ast.Type{}
 		for _, f := range sd.Fields {

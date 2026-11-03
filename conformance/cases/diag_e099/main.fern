@@ -1,0 +1,8 @@
+// A built-in handle comes only from the call that opens it. A literal
+// makes a second handle for a descriptor that another handle owns.
+
+function main(): i32 {
+    let out: Writer = stdout();
+    let copy: Writer = Writer { fd: out.fd };
+    return copy.fd;
+}
