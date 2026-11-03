@@ -28,7 +28,7 @@ import time
 FIRST = "dev.fern.walkie"
 SECOND = "dev.fern.walkie2"
 ACTIVITY = "/android.app.NativeActivity"
-START = re.compile(r"walkie: node \d+, port (4712[01]), socket (\d+), speaker rate ([1-9]\d*)")
+START = re.compile(r"walkie: node \d+, port (4712[01]), socket (-?\d+), speaker rate ([1-9]\d*)")
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 LOST = re.compile(r"walkie: (the peer stopped answering|the other phone did not confirm the code|the peer left|the connection was lost)")
 LOGCAT = ["logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:F", "*:F"]
@@ -80,8 +80,16 @@ def disable_freezer():
 
 
 def to_front(package):
-    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-f", "0x10200000", "-n", package + ACTIVITY)
+    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-f", "0x10200000", "--activity-single-top", "-n", package + ACTIVITY)
     time.sleep(1.5)
+
+
+def check_node(log, p):
+    starts = [START.search(line) for line in lines_of(log, p) if START.search(line)]
+    if len(starts) != 1:
+        raise Failure("expected one Walkie node in process " + p)
+    if int(starts[0].group(2)) < 0:
+        raise Failure("a copy did not open its UDP socket")
 
 
 def screen_size():
@@ -100,6 +108,7 @@ def last_state(log, p):
 
 def confirm(package, p, w, h):
     to_front(package)
+    check_node(logcat(), p)
     # The middle of screen.same_button.
     adb("shell", "input", "tap", str(w // 10 + w * 7 // 40), str(h * 3 // 10 + h // 16))
     wait_for(package + " confirms the code", lambda log: has(log, p, "walkie: the string is confirmed"), 10)
@@ -107,6 +116,7 @@ def confirm(package, p, w, h):
 
 def talk(package, talker, listener, w, h):
     to_front(package)
+    check_node(logcat(), talker)
     mark = len(lines_of(logcat(), listener))
     # A long press in the middle of screen.talk_button.
     adb("shell", "input", "swipe", str(w // 2), str(h * 7 // 10), str(w // 2), str(h * 7 // 10), "4000")
@@ -141,15 +151,13 @@ def run(apk, second_apk, out):
         adb("install", "-r", "-g", a)
         adb("shell", "pm", "grant", package, "android.permission.RECORD_AUDIO")
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", FIRST + ACTIVITY)
+    to_front(FIRST)
     wait_for("the first copy starts", lambda log: pid(FIRST) != "" and any(START.search(line) and START.search(line).group(1) == "47120" for line in lines_of(log, pid(FIRST))))
-    adb("shell", "am", "start", "-W", "-n", SECOND + ACTIVITY)
+    to_front(SECOND)
     wait_for("the second copy starts", lambda log: pid(SECOND) != "" and any(START.search(line) and START.search(line).group(1) == "47121" for line in lines_of(log, pid(SECOND))))
     a, b = pid(FIRST), pid(SECOND)
     for p in (a, b):
-        m = next(START.search(line) for line in lines_of(logcat(), p) if START.search(line))
-        if int(m.group(2)) < 0:
-            raise Failure("a copy did not open its UDP socket")
+        check_node(logcat(), p)
     wait_for("both copies make keys", lambda log: has(log, a, "walkie: keys are ready") and has(log, b, "walkie: keys are ready"))
     w, h = screen_size()
     confirm(SECOND, b, w, h)
@@ -163,6 +171,8 @@ def run(apk, second_apk, out):
     log = logcat()
     if pid(FIRST) != a or pid(SECOND) != b:
         raise Failure("a copy stopped running")
+    for p in (a, b):
+        check_node(log, p)
     lost = [line for line in log.splitlines() if LOST.search(line)]
     if lost:
         raise Failure("a copy lost its peer: " + "; ".join(lost))

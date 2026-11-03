@@ -45,6 +45,15 @@ class FreezerTest(unittest.TestCase):
 
 
 class AdbTest(unittest.TestCase):
+    def test_refocus_uses_a_launcher_intent_that_reuses_the_top_activity(self):
+        with mock.patch.object(walkie, "adb") as adb, mock.patch.object(walkie.time, "sleep"):
+            walkie.to_front(walkie.FIRST)
+        command = adb.call_args.args
+        self.assertIn("--activity-single-top", command)
+        self.assertEqual(command[command.index("-a") + 1], "android.intent.action.MAIN")
+        self.assertEqual(command[command.index("-c") + 1], "android.intent.category.LAUNCHER")
+        self.assertEqual(command[-1], walkie.FIRST + walkie.ACTIVITY)
+
     def test_an_unresponsive_command_has_a_deadline(self):
         def stalled(command, **kwargs):
             self.assertEqual(command, ["adb", "shell", "pidof", walkie.FIRST])
@@ -71,6 +80,22 @@ class AdbTest(unittest.TestCase):
         ):
             with self.assertRaises(subprocess.TimeoutExpired):
                 walkie.screenshot(str(Path(directory, "screen.png")))
+
+
+class NodeTest(unittest.TestCase):
+    def line(self, socket="73"):
+        return f"W/fern    ( 1918): walkie: node 123, port 47120, socket {socket}, speaker rate 16000\n"
+
+    def test_a_single_node_is_accepted(self):
+        walkie.check_node(self.line(), "1918")
+
+    def test_a_second_node_in_the_same_process_is_rejected(self):
+        with self.assertRaisesRegex(walkie.Failure, "expected one Walkie node"):
+            walkie.check_node(self.line() + self.line("-1"), "1918")
+
+    def test_a_negative_socket_is_a_startup_failure(self):
+        with self.assertRaisesRegex(walkie.Failure, "UDP socket"):
+            walkie.check_node(self.line("-1"), "1918")
 
 
 class DiagnosticTest(unittest.TestCase):
