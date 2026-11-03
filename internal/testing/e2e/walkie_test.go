@@ -44,3 +44,19 @@ func TestWalkieSessionEngine(t *testing.T) {
 func TestWalkieSecureChannel(t *testing.T) {
 	runWalkieTest(t, "secure_test.fern")
 }
+
+// The LAN transport of the first build: the datagram format, the beacons,
+// and the key exchange with a resend of each lost message.
+func TestWalkieLanTransport(t *testing.T) {
+	runWalkieTest(t, "lan_test.fern")
+}
+
+// The raw audio of the first build: 16-bit samples and the resampler.
+func TestWalkiePcm(t *testing.T) {
+	runWalkieTest(t, "pcm_test.fern")
+}
+
+// The layout of the screen.
+func TestWalkieScreen(t *testing.T) {
+	runWalkieTest(t, "screen_test.fern")
+}

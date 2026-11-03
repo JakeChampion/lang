@@ -1,0 +1,40 @@
+// The layout of the walkie-talkie screen. It has no Android code, so the
+// host tests it.
+//
+// The top of the screen holds the status lines. The talk button fills the
+// lower half. While the users compare the authentication string, two
+// buttons in the middle confirm or reject it.
+
+pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
+
+pub function contains(r: Rect, x: f32, y: f32): boolean {
+  return x >= r.x as f32 && y >= r.y as f32 && x < (r.x + r.w) as f32 && y < (r.y + r.h) as f32;
+}
+
+// The scale of the text: about 30 characters across the screen.
+pub function text_scale(w: i32): i32 {
+  let s: i32 = w / 300;
+  if (s < 1) {
+    return 1;
+  }
+  return s;
+}
+
+pub function talk_button(w: i32, h: i32): Rect {
+  return Rect { x: w / 10, y: h / 2, w: w * 8 / 10, h: h * 2 / 5 };
+}
+
+// The button that says the two strings are the same.
+pub function same_button(w: i32, h: i32): Rect {
+  return Rect { x: w / 10, y: h * 3 / 10, w: w * 7 / 20, h: h / 8 };
+}
+
+// The button that says the two strings differ.
+pub function differ_button(w: i32, h: i32): Rect {
+  return Rect { x: w * 11 / 20, y: h * 3 / 10, w: w * 7 / 20, h: h / 8 };
+}
+
+// The x of `text_w` pixels of text in the middle of `r`.
+pub function center_x(r: Rect, text_w: i32): i32 {
+  return r.x + (r.w - text_w) / 2;
+}

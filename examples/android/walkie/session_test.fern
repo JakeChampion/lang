@@ -289,6 +289,31 @@ function test_version_mismatch_fails(): test.TestOutcome {
   return test.assert_eq(state_of(a), "ERROR");
 }
 
+function test_codec_mismatch_fails(): test.TestOutcome {
+  let s: Sim = run(sim(20), 100);
+  let (a, acts) = session.step(session.with_codec(s.a, protocol.CODEC_PCM16), session.Received(protocol.Hello(protocol.VERSION, 77 as i64, protocol.CODEC_OPUS, 0)), s.now);
+  let (b, _) = session.step(s.b, session.Received(protocol.Hello(protocol.VERSION, 77 as i64, protocol.CODEC_OPUS, 0)), s.now);
+  return test.assert_eq(state_of(a) + " " + state_of(b), "ERROR CONNECTED_LISTENING");
+}
+
+// A restart keeps the codec, so the Hello names it.
+function test_start_keeps_the_codec(): test.TestOutcome {
+  let s0: session.Session = session.with_codec(session.new(), protocol.CODEC_PCM16);
+  let (s1, _) = session.step(s0, session.Start(session.Offline), 0 as i64);
+  let (s2, _) = session.step(s1, session.TransportUp(true, 1, 2, 9 as i64), 0 as i64);
+  let (s3, acts) = session.step(s2, session.Authenticated, 0 as i64);
+  let codec: i32 = 0;
+  for a in acts {
+    match (a) {
+      session.Send(protocol.Hello(_, _, c, _)) => {
+        codec = c;
+      },
+      _ => {}
+    }
+  }
+  return test.assert_eq(codec, protocol.CODEC_PCM16);
+}
+
 function test_leave_says_bye(): test.TestOutcome {
   let s: Sim = run(event(run(sim(20), 100), false, session.Leave), 100);
   return test.assert_eq(state_of(s.b) + " " + state_of(s.a), "IDLE RECONNECTING");
@@ -347,6 +372,8 @@ function main(): i32 {
   r = r.it("a transmitter stops when the link drops", test_transmitter_stops_when_link_drops);
   r = r.it("a microphone loss releases the floor", test_mic_loss_releases_the_floor);
   r = r.it("a version mismatch fails the session", test_version_mismatch_fails);
+  r = r.it("a codec mismatch fails the session", test_codec_mismatch_fails);
+  r = r.it("a restart keeps the codec", test_start_keeps_the_codec);
   r = r.it("leave says bye", test_leave_says_bye);
   r = r.it("random presses never overlap", test_random_presses_never_overlap);
   return r.finish();
