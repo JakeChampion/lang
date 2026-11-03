@@ -1,0 +1,61 @@
+// A local that every branch rebinds after a call takes it moves into the
+// call (#14124). A break with no read after the loop leaves it too (#14125).
+struct G { x: i32[], n: i32 }
+
+@noinline
+function rnd(own g: G): (G, i32) {
+  return (G { x: g.x.append(g.n), n: g.n + 1 }, g.n);
+}
+
+struct R { items: i32[], n: i32 }
+
+@noinline
+function settle(own r: R): Result[i32, R] {
+  if (r.n >= 3) {
+    return Ok(r.n * 10 + r.items.len());
+  }
+  return Err(R { items: r.items.append(r.n), n: r.n + 1 });
+}
+
+@noinline
+function rebound(): i32 {
+  let g: G = G { x: [], n: 0 };
+  let t: i32 = 0;
+  for k in 0..5 {
+    let (g1, a) = rnd(g);
+    if (a % 2 == 0) {
+      g = g1;
+    } else {
+      g = g1;
+      t = t + a;
+    }
+  }
+  return t * 100 + g.n * 10 + g.x.len();
+}
+
+@noinline
+function settled(): i32 {
+  let r: R = R { items: [], n: 0 };
+  let total: i32 = 0;
+  while (true) {
+    match (settle(r)) {
+      Ok(n) => {
+        total = n;
+        break;
+      },
+      Err(after) => {
+        r = after;
+      }
+    }
+  }
+  return total;
+}
+
+function main(): i32 {
+  // rebound: t = 1 + 3 = 4, g.n = 5, g.x has 5 items: 455. settled: 33.
+  let r: i32 = rebound() - 455 + settled();
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r;
+}
