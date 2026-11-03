@@ -14934,6 +14934,10 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
         _ => {}
       }
     }
+    let target_errors: util.Diag[] = cast_target_diags(slice_unchecked(u.op, 3, u.op.len()) + "", u, s);
+    if (target_errors.len() > 0) {
+      return util.append_diags(out, target_errors);
+    }
     let tgt: typeinfo.Type = s.resolve_type(slice_unchecked(u.op, 3, u.op.len()) + "");
     if (bare_numeric_literal(u.operand)) {
       out = util.append_diags(out, int_dest_range_diags(u.operand, tgt));
@@ -14943,6 +14947,10 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
     let aot: typeinfo.Type = check_expr(u.operand, s);
     let target: string = slice_unchecked(u.op, 4, u.op.len()) + "";
+    let target_errors: util.Diag[] = cast_target_diags(target, u, s);
+    if (target_errors.len() > 0) {
+      return util.append_diags(out, target_errors);
+    }
     if (is_integer(aot)) {
       if (!is_integer(s.resolve_type(target))) {
         out = out.append(dg_at("E060", "'as?' from " + type_label(aot) + " converts only to an integer type, got " + target, u.line, u.col));
@@ -14976,6 +14984,21 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   }
 
   return out;
+}
+
+function cast_target_diags(target: string, u: ast.ExprUnary, s: Scope): util.Diag[] {
+  let traits: string[] = [];
+  for req in s.trait_reqs {
+    traits = traits.append(req.trait_name);
+    if (req.module.len() > 0) {
+      traits = traits.append(req.module + "__" + req.trait_name);
+    }
+  }
+  let missing: string = e064_unknown_name(target, s.type_names(), traits, s.tparams);
+  if (missing.len() > 0) {
+    return [unknown_type_diag(missing, traits, u.line, u.col)];
+  }
+  return [];
 }
 
 function cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
@@ -22551,21 +22574,9 @@ struct Annot { type_name: string, line: i32, col: i32 }
 function collect_annots(stmts: ast.Stmt[]): Annot[] {
   let acc: Annot[] = [];
   for stmt in stmts {
-    acc = astwalk.fold_stmt_nodes(stmt, acc, annot_of_stmt, annot_or_cast_of_expr, astwalk.descend_all);
+    acc = astwalk.fold_stmt_nodes(stmt, acc, annot_of_stmt, annot_of_expr, astwalk.descend_all);
   }
   return acc;
-}
-
-function annot_or_cast_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
-  if let ast.ExprUnary(u) = e {
-    if (util.str_has_prefix(u.op, "as?_")) {
-      return acc.append(Annot { type_name: slice_unchecked(u.op, 4, u.op.len()) + "", line: u.line, col: u.col });
-    }
-    if (util.str_has_prefix(u.op, "as_")) {
-      return acc.append(Annot { type_name: slice_unchecked(u.op, 3, u.op.len()) + "", line: u.line, col: u.col });
-    }
-  }
-  return annot_of_expr(e, acc);
 }
 
 function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
