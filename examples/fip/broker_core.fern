@@ -39,19 +39,15 @@ pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity
   let empty = Message { topic: -1, serial: 0i64, payload: 0i64 };
   let slots: Message[] = [];
   let free = __alloc_i32(pool);
-  let i = 0;
-  while (i < pool) {
+  for i in 0..pool {
     slots = slots.append(Message { topic: no_topic(), serial: 0i64, payload: 0i64 });
     free = free.with(i, pool - i - 1);
-    i += 1;
   }
   let leases: Message[] = [];
   let lease_slots = __alloc_i32(subscribers);
-  i = 0;
-  while (i < subscribers) {
+  for i in 0..subscribers {
     leases = leases.append(empty);
     lease_slots = lease_slots.with(i, -1);
-    i += 1;
   }
   return Some(Broker {
     topics: topics, subscribers: subscribers, queue_capacity: queue_capacity,

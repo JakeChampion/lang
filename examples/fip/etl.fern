@@ -7,16 +7,20 @@ import "std/i64";
 import "std/string";
 
 function process(variant: i32, own s: etl_core.State, data: u8[], offset: i32, count: i32): etl_core.State {
-  if (variant == 0) {
-    return etl_variants.process_baseline(s, data, offset, count);
+  match (variant) {
+    0 => {
+      return etl_variants.process_baseline(s, data, offset, count);
+    },
+    1 => {
+      return etl_variants.process_batched(s, data, offset, count);
+    },
+    2 => {
+      return etl_variants.process_fbip(s, data, offset, count);
+    },
+    _ => {
+      return etl_core.process(s, data, offset, count);
+    }
   }
-  if (variant == 1) {
-    return etl_variants.process_batched(s, data, offset, count);
-  }
-  if (variant == 2) {
-    return etl_variants.process_fbip(s, data, offset, count);
-  }
-  return etl_core.process(s, data, offset, count);
 }
 
 function main(): i32 {
@@ -24,56 +28,26 @@ function main(): i32 {
   if (argv.len() < 4 || argv.len() > 5) {
     return 2;
   }
-  let variant = -1;
-  if (argv[1] == "baseline") {
-    variant = 0;
-  }
-  if (argv[1] == "batched") {
-    variant = 1;
-  }
-  if (argv[1] == "fbip") {
-    variant = 2;
-  }
-  if (argv[1] == "fip") {
-    variant = 3;
-  }
-  let records = 0;
-  let batch = 0;
-  match (i32.parse_i32(argv[2])) {
-    Ok(n) => {
-      records = n;
-    },
-    Err(_) => {
-      return 2;
-    }
-  }
-  match (i32.parse_i32(argv[3])) {
-    Ok(n) => {
-      batch = n;
-    },
-    Err(_) => {
-      return 2;
-    }
-  }
+  let variant = match (argv[1]) { "baseline" => 0, "batched" => 1, "fbip" => 2, "fip" => 3, _ => -1 };
+  let Ok(records) = i32.parse_i32(argv[2]) else {
+    return 2;
+  };
+  let Ok(batch) = i32.parse_i32(argv[3]) else {
+    return 2;
+  };
   if (variant < 0 || records <= 0 || records > 268435455 || batch <= 0 || batch > 268435455) {
     return 2;
   }
-  let export_samples = false;
-  if (argv.len() == 5) {
-    if (argv[4] != "samples") {
-      return 2;
-    }
-    export_samples = true;
+  let export_samples = argv.len() == 5;
+  if (export_samples && argv[4] != "samples") {
+    return 2;
   }
   let start_allocs = bench.alloc_count();
   let start_fresh = bench.bump_bytes();
   let start_ns = monotonic_ns();
   let data = etl_core.dataset(records);
   let s = etl_core.new_state(batch);
-  let warm = batch;
-  if (warm > records) {
-    warm = records;
-  }
+  let warm = if (batch > records) { records } else { batch };
   s = process(variant, s, data, 0, warm);
   s = etl_core.reset(s);
   let rounds = (records - 1) / batch + 1;
@@ -87,19 +61,14 @@ function main(): i32 {
   let started = monotonic_ns();
   let first = 0;
   let r = 0;
-  let checksum: i64 = 0i64;
+  let checksum = 0i64;
   while (first < records) {
-    let count = batch;
-    if (count > records - first) {
-      count = records - first;
-    }
+    let count = if (batch > records - first) { records - first } else { batch };
     let t0 = monotonic_ns();
     s = process(variant, s, data, first * 8, count);
     samples = samples.with(r, monotonic_ns() - t0);
-    let i = 0;
-    while (i < s.output_count * 8) {
-      checksum = checksum + s.output[i] as i64;
-      i += 1;
+    for i in 0..s.output_count * 8 {
+      checksum += s.output[i] as i64;
     }
     first += count;
     r += 1;
@@ -108,34 +77,32 @@ function main(): i32 {
   let allocations = bench.allocs_after(mark_allocs);
   let fresh = bench.fresh_bytes_after(mark_fresh);
   if (export_samples) {
-    r = 0;
-    while (r < rounds) {
-      print("sample," + r.to_string() + "," + samples[r].to_string());
-      r += 1;
+    for r in 0..rounds {
+      print(f"sample,{r},{samples[r]}");
     }
   }
-  let rep: bench.Report = bench.Report {
+  let rep = bench.Report {
     name: argv[1], iterations: rounds,
     wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh,
   };
-  print("{\"variant\":\"" + argv[1] + "\",\"records\":" + records.to_string()
-    + ",\"batch\":" + batch.to_string() + ",\"batches\":" + rounds.to_string()
-    + ",\"seen\":" + s.seen.to_string() + ",\"accepted\":" + s.accepted.to_string()
-    + ",\"invalid\":" + s.invalid.to_string() + ",\"filtered\":" + s.filtered.to_string()
-    + ",\"refused\":" + s.refused.to_string() + ",\"total\":" + s.total.to_string()
-    + ",\"low\":" + s.low.to_string() + ",\"high\":" + s.high.to_string()
-    + ",\"checksum\":" + checksum.to_string()
-    + ",\"startup_ns\":" + startup_ns.to_string()
-    + ",\"startup_allocs\":" + startup_allocs.to_string()
-    + ",\"startup_fresh_bytes\":" + startup_fresh.to_string()
-    + ",\"wall_ns\":" + elapsed.to_string()
-    + ",\"steady_allocs\":" + allocations.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"batch_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"batch_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"batch_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"batch_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"batch_max_ns\":" + rep.max_ns().to_string() + "}");
+  print(f"{{\"variant\":\"{argv[1]}\",\"records\":{records}"
+    + f",\"batch\":{batch},\"batches\":{rounds}"
+    + f",\"seen\":{s.seen},\"accepted\":{s.accepted}"
+    + f",\"invalid\":{s.invalid},\"filtered\":{s.filtered}"
+    + f",\"refused\":{s.refused},\"total\":{s.total}"
+    + f",\"low\":{s.low},\"high\":{s.high}"
+    + f",\"checksum\":{checksum}"
+    + f",\"startup_ns\":{startup_ns}"
+    + f",\"startup_allocs\":{startup_allocs}"
+    + f",\"startup_fresh_bytes\":{startup_fresh}"
+    + f",\"wall_ns\":{elapsed}"
+    + f",\"steady_allocs\":{allocations}"
+    + f",\"steady_fresh_bytes\":{fresh}"
+    + f",\"batch_p50_ns\":{rep.p50_ns()}"
+    + f",\"batch_p95_ns\":{rep.p95_ns()}"
+    + f",\"batch_p99_ns\":{rep.p99_ns()}"
+    + f",\"batch_p999_ns\":{rep.p999_ns()}"
+    + f",\"batch_max_ns\":{rep.max_ns()}}}");
   if (s.seen != records as i64 || s.refused != 0i64) {
     return 1;
   }

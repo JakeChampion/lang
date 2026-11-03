@@ -43,13 +43,13 @@ function new_state(): State {
   let o: Response[] = [];
   return State {
     entries: none, queue: q, out: o,
-    m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64,
+    m_ok: 0i64, m_miss: 0i64, m_full: 0i64, m_dropped: 0i64,
   };
 }
 
 function enqueue(s: State, e: Event): State {
   if (s.queue.len() >= queue_cap()) {
-    return State { ...s, m_dropped: s.m_dropped + 1 as i64 };
+    return State { ...s, m_dropped: s.m_dropped + 1i64 };
   }
   return State { ...s, queue: s.queue.append(e) };
 }
@@ -58,63 +58,55 @@ function respond(s: State, r: Response): State {
   return State { ...s, out: s.out.append(r) };
 }
 
-function find_slot(entries: Entry[], id: i64): i32 {
-  let i = 0;
-  while (i < entries.len()) {
+function find_slot(entries: Entry[], id: i64): Option[i32] {
+  for i in 0..entries.len() {
     if (entries[i].key == id) {
-      return i;
+      return Some(i);
     }
-    i += 1;
   }
-  return -1;
+  return None;
 }
 
 function apply_create(s: State, id: i64, value: i64): State {
-  let at = find_slot(s.entries, id);
-  if (at >= 0) {
+  if let Some(at) = find_slot(s.entries, id) {
     let updated = s.entries.with(at, Entry { key: id, value: value });
-    return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
+    return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1i64 }, Response.Ok);
   }
   if (s.entries.len() >= max_entries()) {
-    return respond(State { ...s, m_full: s.m_full + 1 as i64 }, Response.Full);
+    return respond(State { ...s, m_full: s.m_full + 1i64 }, Response.Full);
   }
   let grown = s.entries.append(Entry { key: id, value: value });
-  return respond(State { ...s, entries: grown, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
+  return respond(State { ...s, entries: grown, m_ok: s.m_ok + 1i64 }, Response.Ok);
 }
 
 function apply_update(s: State, id: i64, delta: i64): State {
-  let at = find_slot(s.entries, id);
-  if (at < 0) {
-    return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
-  }
+  let Some(at) = find_slot(s.entries, id) else {
+    return respond(State { ...s, m_miss: s.m_miss + 1i64 }, Response.Missing);
+  };
   let e = s.entries[at];
-  let updated = s.entries.with(at, Entry { key: e.key, value: e.value + delta });
-  return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
+  let updated = s.entries.with(at, Entry { ...e, value: e.value + delta });
+  return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1i64 }, Response.Ok);
 }
 
 function apply_read(s: State, id: i64): State {
-  let at = find_slot(s.entries, id);
-  if (at < 0) {
-    return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
-  }
+  let Some(at) = find_slot(s.entries, id) else {
+    return respond(State { ...s, m_miss: s.m_miss + 1i64 }, Response.Missing);
+  };
   let e = s.entries[at];
-  return respond(State { ...s, m_ok: s.m_ok + 1 as i64 }, Response.Value(e.value));
+  return respond(State { ...s, m_ok: s.m_ok + 1i64 }, Response.Value(e.value));
 }
 
 function apply_delete(s: State, id: i64): State {
-  let at = find_slot(s.entries, id);
-  if (at < 0) {
-    return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
-  }
+  let Some(at) = find_slot(s.entries, id) else {
+    return respond(State { ...s, m_miss: s.m_miss + 1i64 }, Response.Missing);
+  };
   let kept: Entry[] = [];
-  let i = 0;
-  while (i < s.entries.len()) {
+  for i in 0..s.entries.len() {
     if (i != at) {
       kept = kept.append(s.entries[i]);
     }
-    i += 1;
   }
-  return respond(State { ...s, entries: kept, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
+  return respond(State { ...s, entries: kept, m_ok: s.m_ok + 1i64 }, Response.Ok);
 }
 
 function iteration(s: State): State {
@@ -123,10 +115,8 @@ function iteration(s: State): State {
   }
   let head = s.queue[0];
   let rest: Event[] = [];
-  let i = 1;
-  while (i < s.queue.len()) {
+  for i in 1..s.queue.len() {
     rest = rest.append(s.queue[i]);
-    i += 1;
   }
   let t = State { ...s, queue: rest };
   match (head) {
@@ -151,30 +141,30 @@ function drain_output(s: State): State {
 }
 
 function reset_metrics(s: State): State {
-  return State { ...s, m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64 };
+  return State { ...s, m_ok: 0i64, m_miss: 0i64, m_full: 0i64, m_dropped: 0i64 };
 }
 
 function event_id(n: i64): i64 {
-  let x = n * (2654435761 as i64);
-  x = x ^ x >> 15 as i64;
-  x *= 2246822519 as i64;
-  x = x ^ x >> 13 as i64;
-  if (x < 0 as i64) {
+  let x = n * 2654435761i64;
+  x ^= x >> 15i64;
+  x *= 2246822519i64;
+  x ^= x >> 13i64;
+  if (x < 0i64) {
     x = -x;
   }
   return x % (max_entries() as i64);
 }
 
 function event_of(n: i64): Event {
-  let bucket = n % (10 as i64);
+  let bucket = n % 10i64;
   let id = event_id(n);
-  if (bucket == 0 as i64) {
+  if (bucket == 0i64) {
     return Create(id, n);
   }
-  if (bucket == 1 as i64) {
+  if (bucket == 1i64) {
     return Delete(id);
   }
-  if (bucket < 4 as i64) {
+  if (bucket < 4i64) {
     return Update(id, n);
   }
   return Read(id);
@@ -182,25 +172,19 @@ function event_of(n: i64): Event {
 
 function prefill(s: State): State {
   let t = s;
-  let id = 0;
-  while (id < max_entries()) {
-    t = apply_create(t, id as i64, id as i64 * (10 as i64));
-    id += 1;
+  for id in 0..max_entries() {
+    t = apply_create(t, id as i64, id as i64 * 10i64);
   }
   return drain_output(t);
 }
 
 function round(s: State, seed: i64, batch: i32): State {
   let t = s;
-  let i = 0;
-  while (i < batch) {
+  for i in 0..batch {
     t = enqueue(t, event_of(seed + i as i64));
-    i += 1;
   }
-  let worked = 0;
-  while (worked < batch) {
+  for _ in 0..batch {
     t = iteration(t);
-    worked += 1;
   }
   return drain_output(t);
 }
@@ -208,30 +192,26 @@ function round(s: State, seed: i64, batch: i32): State {
 function main(): i32 {
   let s = new_state();
   s = prefill(s);
-  s = round(s, 1 as i64, queue_cap());
+  s = round(s, 1i64, queue_cap());
   s = reset_metrics(s);
   let rounds = 20000;
   let samples: i64[] = [];
-  let p = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p += 1;
+  for _ in 0..rounds {
+    samples = samples.append(0i64);
   }
   let at_allocs = bench.alloc_count();
   let at_fresh = bench.bump_bytes();
   let started_ns = monotonic_ns();
-  let r = 0;
-  while (r < rounds) {
+  for r in 0..rounds {
     let t0 = monotonic_ns();
-    s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
+    s = round(s, r as i64 * 7i64 + 1i64, queue_cap());
     samples = samples.with(r, monotonic_ns() - t0);
-    r += 1;
   }
   let elapsed_ns = monotonic_ns() - started_ns;
   let allocs = bench.allocs_after(at_allocs);
   let fresh = bench.fresh_bytes_after(at_fresh);
   let events = rounds as i64 * (queue_cap() as i64);
-  let rep: bench.Report = bench.Report {
+  let rep = bench.Report {
     name: "baseline",
     iterations: rounds,
     wall_ns: elapsed_ns,
@@ -239,24 +219,22 @@ function main(): i32 {
     allocs: allocs,
     fresh_bytes: fresh,
   };
-  print("{\"variant\":\"baseline\""
-    + ",\"events\":" + events.to_string()
-    + ",\"events_per_round\":" + queue_cap().to_string()
-    + ",\"live_entries\":" + s.entries.len().to_string()
-    + ",\"ok\":" + s.m_ok.to_string()
-    + ",\"missing\":" + s.m_miss.to_string()
-    + ",\"table_full\":" + s.m_full.to_string()
-    + ",\"dropped\":" + s.m_dropped.to_string()
-    + ",\"steady_allocs\":" + allocs.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"allocs_per_event_milli\":" + (allocs * (1000 as i64) / events).to_string()
-    + ",\"ns_per_event\":" + (elapsed_ns / events).to_string()
-    + ",\"events_per_sec\":" + (events * 1000000000i64 / elapsed_ns).to_string()
-    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"round_max_ns\":" + rep.max_ns().to_string()
-    + "}");
+  print(f"{{\"variant\":\"baseline\",\"events\":{events}"
+    + f",\"events_per_round\":{queue_cap()}"
+    + f",\"live_entries\":{s.entries.len()}"
+    + f",\"ok\":{s.m_ok}"
+    + f",\"missing\":{s.m_miss}"
+    + f",\"table_full\":{s.m_full}"
+    + f",\"dropped\":{s.m_dropped}"
+    + f",\"steady_allocs\":{allocs}"
+    + f",\"steady_fresh_bytes\":{fresh}"
+    + f",\"allocs_per_event_milli\":{allocs * 1000i64 / events}"
+    + f",\"ns_per_event\":{elapsed_ns / events}"
+    + f",\"events_per_sec\":{events * 1000000000i64 / elapsed_ns}"
+    + f",\"round_p50_ns\":{rep.p50_ns()}"
+    + f",\"round_p95_ns\":{rep.p95_ns()}"
+    + f",\"round_p99_ns\":{rep.p99_ns()}"
+    + f",\"round_p999_ns\":{rep.p999_ns()}"
+    + f",\"round_max_ns\":{rep.max_ns()}}}");
   return 0;
 }

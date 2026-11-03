@@ -12,12 +12,10 @@ pub function process_baseline(own s: etl_core.State, data: u8[], offset: i32, co
     return etl_core.refuse(s);
   }
   s = etl_core.State { ...s, output_count: 0 };
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     let at = offset + i * 8;
     let row = decode(data, at);
     s = etl_core.apply(s, data, at, row.sensor, row.quality, row.value);
-    i += 1;
   }
   return s;
 }
@@ -27,17 +25,13 @@ pub function process_batched(own s: etl_core.State, data: u8[], offset: i32, cou
     return etl_core.refuse(s);
   }
   let rows: etl_core.Record[] = [];
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     rows = rows.append(decode(data, offset + i * 8));
-    i += 1;
   }
   s = etl_core.State { ...s, output_count: 0 };
-  i = 0;
-  while (i < count) {
+  for i in 0..count {
     let row = rows[i];
     s = etl_core.apply(s, data, offset + i * 8, row.sensor, row.quality, row.value);
-    i += 1;
   }
   return s;
 }

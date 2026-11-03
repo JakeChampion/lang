@@ -86,14 +86,8 @@ pub fip function encode(own out: u8[], pos: i32, normalized: i32, data: u8[], at
 pub function dataset(records: i32): u8[] {
   let data = __alloc_u8(records * 8);
   for i in 0..records {
-    let sensor = i % 16;
-    if (i % 19 == 0) {
-      sensor = 255;
-    }
-    let quality = i % 4;
-    if (i % 23 == 0) {
-      quality = 7;
-    }
+    let sensor = if (i % 19 == 0) { 255 } else { i % 16 };
+    let quality = if (i % 23 == 0) { 7 } else { i % 4 };
     let value = (i as i64 * 173i64 % 20000i64) as i32 - 5000;
     let at = i * 8;
     data = data.with(at, sensor as u8);

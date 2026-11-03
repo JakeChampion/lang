@@ -23,25 +23,17 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
   if (count < 0 || count > 4096) {
     return None;
   }
-  let w: World = World {
+  let w = World {
     count: count, tick: 0, x: __alloc_i32(count), y: __alloc_i32(count),
     vx: __alloc_i32(count), vy: __alloc_i32(count), health: __alloc_i32(count),
     kind: __alloc_i32(count), target: __alloc_i32(count), mode: __alloc_i32(count),
     heads: __alloc_i32(256), next: __alloc_i32(count), neighbors: __alloc_i32(count),
     candidates: 0i64, checksum: 0i64, refused: 0,
   };
-  let i = 0;
-  while (i < count) {
-    let x = i * 73 % 4096;
-    let y = i * 151 % 4096;
-    if (clustered) {
-      x = i % 8;
-      y = i / 8 % 8;
-    }
-    let target = -1;
-    if (i % 3 != 0) {
-      target = (i + 1) % count;
-    }
+  for i in 0..count {
+    let x = if (clustered) { i % 8 } else { i * 73 % 4096 };
+    let y = if (clustered) { i / 8 % 8 } else { i * 151 % 4096 };
+    let target = if (i % 3 != 0) { (i + 1) % count } else { -1 };
     w = World { ...w, x: w.x.with(i, x) };
     w = World { ...w, y: w.y.with(i, y) };
     w = World { ...w, vx: w.vx.with(i, i * 7 % 9 - 4) };
@@ -50,7 +42,6 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
     w = World { ...w, kind: w.kind.with(i, i % 3) };
     w = World { ...w, target: w.target.with(i, target) };
     w = World { ...w, mode: w.mode.with(i, simulation_rules.mode(0, 100, target)) };
-    i += 1;
   }
   return Some(w);
 }
@@ -108,7 +99,7 @@ pub fip function rebuild(own w: World): World {
 }
 
 pub fip function proximity(own w: World): World {
-  let candidates: i64 = 0i64;
+  let candidates = 0i64;
   let i = 0;
   while (i < w.count) {
     let neighbors = 0;

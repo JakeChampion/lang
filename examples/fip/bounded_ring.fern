@@ -11,10 +11,8 @@ pub function new_ring[T](capacity: i32, empty: T): Option[Ring[T]] {
     return None;
   }
   let data: T[] = [];
-  let i = 0;
-  while (i < capacity) {
+  for _ in 0..capacity {
     data = data.append(empty);
-    i += 1;
   }
   return Some(Ring[T] { data: data, empty: empty, head: 0, count: 0, status: 0 });
 }

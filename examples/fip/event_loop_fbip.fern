@@ -34,43 +34,41 @@ struct State {
 }
 
 fip function ev_create(): i64 {
-  return 1 as i64;
+  return 1i64;
 }
 
 fip function ev_update(): i64 {
-  return 2 as i64;
+  return 2i64;
 }
 
 fip function ev_read(): i64 {
-  return 3 as i64;
+  return 3i64;
 }
 
 fip function ev_delete(): i64 {
-  return 4 as i64;
+  return 4i64;
 }
 
 fip function rsp_ok(): i64 {
-  return 1 as i64;
+  return 1i64;
 }
 
 fip function rsp_missing(): i64 {
-  return 2 as i64;
+  return 2i64;
 }
 
 fip function rsp_full(): i64 {
-  return 3 as i64;
+  return 3i64;
 }
 
 fip function rsp_value(): i64 {
-  return 4 as i64;
+  return 4i64;
 }
 
 function zeros(n: i32): i64[] {
   let xs: i64[] = [];
-  let i = 0;
-  while (i < n) {
-    xs = xs.append(0 as i64);
-    i += 1;
+  for _ in 0..n {
+    xs = xs.append(0i64);
   }
   return xs;
 }
@@ -78,7 +76,7 @@ function zeros(n: i32): i64[] {
 function new_state(): State {
   return State {
     q_head: 0, q_count: 0, out_count: 0, live: 0,
-    m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64,
+    m_ok: 0i64, m_miss: 0i64, m_full: 0i64, m_dropped: 0i64,
     q_kind: zeros(queue_cap()), q_id: zeros(queue_cap()), q_val: zeros(queue_cap()),
     out: zeros(out_cap()),
     keys: zeros(max_entries()), vals: zeros(max_entries()), used: zeros(max_entries()),
@@ -87,7 +85,7 @@ function new_state(): State {
 
 fbip function enqueue(own s: State, kind: i64, id: i64, value: i64): State {
   if (s.q_count >= queue_cap()) {
-    return State { ...s, m_dropped: s.m_dropped + 1 as i64 };
+    return State { ...s, m_dropped: s.m_dropped + 1i64 };
   }
   let slot = (s.q_head + s.q_count) % queue_cap();
   return State {
@@ -101,7 +99,7 @@ fbip function enqueue(own s: State, kind: i64, id: i64, value: i64): State {
 
 fbip function respond(own s: State, code: i64): State {
   if (s.out_count >= out_cap()) {
-    return State { ...s, m_dropped: s.m_dropped + 1 as i64 };
+    return State { ...s, m_dropped: s.m_dropped + 1i64 };
   }
   return State { ...s, out: s.out.with(s.out_count, code), out_count: s.out_count + 1 };
 }
@@ -109,7 +107,7 @@ fbip function respond(own s: State, code: i64): State {
 fip function find_slot(keys: i64[], used: i64[], id: i64): i32 {
   let i = 0;
   while (i < max_entries()) {
-    if (used[i] != 0 as i64 && keys[i] == id) {
+    if (used[i] != 0i64 && keys[i] == id) {
       return i;
     }
     i += 1;
@@ -120,7 +118,7 @@ fip function find_slot(keys: i64[], used: i64[], id: i64): i32 {
 fip function free_slot(used: i64[]): i32 {
   let i = 0;
   while (i < max_entries()) {
-    if (used[i] == 0 as i64) {
+    if (used[i] == 0i64) {
       return i;
     }
     i += 1;
@@ -131,21 +129,21 @@ fip function free_slot(used: i64[]): i32 {
 fbip function apply_create(own s: State, id: i64, value: i64): State {
   let at = find_slot(s.keys, s.used, id);
   if (at >= 0) {
-    s = State { ...s, vals: s.vals.with(at, value), m_ok: s.m_ok + 1 as i64 };
+    s = State { ...s, vals: s.vals.with(at, value), m_ok: s.m_ok + 1i64 };
     return respond(s, rsp_ok());
   }
   let slot = free_slot(s.used);
   if (slot < 0) {
-    s = State { ...s, m_full: s.m_full + 1 as i64 };
+    s = State { ...s, m_full: s.m_full + 1i64 };
     return respond(s, rsp_full());
   }
   s = State {
     ...s,
     keys: s.keys.with(slot, id),
     vals: s.vals.with(slot, value),
-    used: s.used.with(slot, 1 as i64),
+    used: s.used.with(slot, 1i64),
     live: s.live + 1,
-    m_ok: s.m_ok + 1 as i64,
+    m_ok: s.m_ok + 1i64,
   };
   return respond(s, rsp_ok());
 }
@@ -153,31 +151,31 @@ fbip function apply_create(own s: State, id: i64, value: i64): State {
 fbip function apply_update(own s: State, id: i64, delta: i64): State {
   let at = find_slot(s.keys, s.used, id);
   if (at < 0) {
-    s = State { ...s, m_miss: s.m_miss + 1 as i64 };
+    s = State { ...s, m_miss: s.m_miss + 1i64 };
     return respond(s, rsp_missing());
   }
   let current = s.vals[at];
-  s = State { ...s, vals: s.vals.with(at, current + delta), m_ok: s.m_ok + 1 as i64 };
+  s = State { ...s, vals: s.vals.with(at, current + delta), m_ok: s.m_ok + 1i64 };
   return respond(s, rsp_ok());
 }
 
 fbip function apply_read(own s: State, id: i64): State {
   let at = find_slot(s.keys, s.used, id);
   if (at < 0) {
-    s = State { ...s, m_miss: s.m_miss + 1 as i64 };
+    s = State { ...s, m_miss: s.m_miss + 1i64 };
     return respond(s, rsp_missing());
   }
-  s = State { ...s, m_ok: s.m_ok + 1 as i64 };
+  s = State { ...s, m_ok: s.m_ok + 1i64 };
   return respond(s, rsp_value());
 }
 
 fbip function apply_delete(own s: State, id: i64): State {
   let at = find_slot(s.keys, s.used, id);
   if (at < 0) {
-    s = State { ...s, m_miss: s.m_miss + 1 as i64 };
+    s = State { ...s, m_miss: s.m_miss + 1i64 };
     return respond(s, rsp_missing());
   }
-  s = State { ...s, used: s.used.with(at, 0 as i64), live: s.live - 1, m_ok: s.m_ok + 1 as i64 };
+  s = State { ...s, used: s.used.with(at, 0i64), live: s.live - 1, m_ok: s.m_ok + 1i64 };
   return respond(s, rsp_ok());
 }
 
@@ -210,29 +208,29 @@ fbip function drain_output(own s: State): State {
 }
 
 fbip function reset_metrics(own s: State): State {
-  return State { ...s, m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_dropped: 0 as i64 };
+  return State { ...s, m_ok: 0i64, m_miss: 0i64, m_full: 0i64, m_dropped: 0i64 };
 }
 
 fip function event_id(n: i64): i64 {
-  let x = n * (2654435761 as i64);
-  x = x ^ x >> 15 as i64;
-  x *= 2246822519 as i64;
-  x = x ^ x >> 13 as i64;
-  if (x < 0 as i64) {
-    x = 0 - x;
+  let x = n * 2654435761i64;
+  x ^= x >> 15i64;
+  x *= 2246822519i64;
+  x ^= x >> 13i64;
+  if (x < 0i64) {
+    x = -x;
   }
   return x % (max_entries() as i64);
 }
 
 fip function event_kind(n: i64): i64 {
-  let bucket = n % (10 as i64);
-  if (bucket == 0 as i64) {
+  let bucket = n % 10i64;
+  if (bucket == 0i64) {
     return ev_create();
   }
-  if (bucket == 1 as i64) {
+  if (bucket == 1i64) {
     return ev_delete();
   }
-  if (bucket < 4 as i64) {
+  if (bucket < 4i64) {
     return ev_update();
   }
   return ev_read();
@@ -241,7 +239,7 @@ fip function event_kind(n: i64): i64 {
 fbip function prefill(own s: State): State {
   let id = 0;
   while (id < max_entries()) {
-    s = apply_create(s, id as i64, id as i64 * (10 as i64));
+    s = apply_create(s, id as i64, id as i64 * 10i64);
     id += 1;
   }
   return drain_output(s);
@@ -265,30 +263,26 @@ fbip function round(own s: State, seed: i64, batch: i32): State {
 function main(): i32 {
   let s = new_state();
   s = prefill(s);
-  s = round(s, 1 as i64, queue_cap());
+  s = round(s, 1i64, queue_cap());
   s = reset_metrics(s);
   let rounds = 20000;
   let samples: i64[] = [];
-  let p = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p += 1;
+  for _ in 0..rounds {
+    samples = samples.append(0i64);
   }
   let at_allocs = bench.alloc_count();
   let at_fresh = bench.bump_bytes();
   let started_ns = monotonic_ns();
-  let r = 0;
-  while (r < rounds) {
+  for r in 0..rounds {
     let t0 = monotonic_ns();
-    s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
+    s = round(s, r as i64 * 7i64 + 1i64, queue_cap());
     samples = samples.with(r, monotonic_ns() - t0);
-    r += 1;
   }
   let elapsed_ns = monotonic_ns() - started_ns;
   let allocs = bench.allocs_after(at_allocs);
   let fresh = bench.fresh_bytes_after(at_fresh);
   let events = rounds as i64 * (queue_cap() as i64);
-  let rep: bench.Report = bench.Report {
+  let rep = bench.Report {
     name: "fbip",
     iterations: rounds,
     wall_ns: elapsed_ns,
@@ -296,24 +290,22 @@ function main(): i32 {
     allocs: allocs,
     fresh_bytes: fresh,
   };
-  print("{\"variant\":\"fbip\""
-    + ",\"events\":" + events.to_string()
-    + ",\"events_per_round\":" + queue_cap().to_string()
-    + ",\"live_entries\":" + s.live.to_string()
-    + ",\"ok\":" + s.m_ok.to_string()
-    + ",\"missing\":" + s.m_miss.to_string()
-    + ",\"table_full\":" + s.m_full.to_string()
-    + ",\"dropped\":" + s.m_dropped.to_string()
-    + ",\"steady_allocs\":" + allocs.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"allocs_per_event_milli\":" + (allocs * (1000 as i64) / events).to_string()
-    + ",\"ns_per_event\":" + (elapsed_ns / events).to_string()
-    + ",\"events_per_sec\":" + (events * 1000000000i64 / elapsed_ns).to_string()
-    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"round_max_ns\":" + rep.max_ns().to_string()
-    + "}");
+  print(f"{{\"variant\":\"fbip\",\"events\":{events}"
+    + f",\"events_per_round\":{queue_cap()}"
+    + f",\"live_entries\":{s.live}"
+    + f",\"ok\":{s.m_ok}"
+    + f",\"missing\":{s.m_miss}"
+    + f",\"table_full\":{s.m_full}"
+    + f",\"dropped\":{s.m_dropped}"
+    + f",\"steady_allocs\":{allocs}"
+    + f",\"steady_fresh_bytes\":{fresh}"
+    + f",\"allocs_per_event_milli\":{allocs * 1000i64 / events}"
+    + f",\"ns_per_event\":{elapsed_ns / events}"
+    + f",\"events_per_sec\":{events * 1000000000i64 / elapsed_ns}"
+    + f",\"round_p50_ns\":{rep.p50_ns()}"
+    + f",\"round_p95_ns\":{rep.p95_ns()}"
+    + f",\"round_p99_ns\":{rep.p99_ns()}"
+    + f",\"round_p999_ns\":{rep.p999_ns()}"
+    + f",\"round_max_ns\":{rep.max_ns()}}}");
   return 0;
 }

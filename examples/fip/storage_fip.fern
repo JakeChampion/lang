@@ -108,7 +108,7 @@ fip function complete(own s: storage_core.State, slot: i32): storage_core.State 
   if (kind < 2 && s.mapped[frame] != page) {
     s = load(s, frame, page);
   }
-  let result: i64 = 0i64;
+  let result = 0i64;
   if (kind == 0) {
     result = s.cache[frame * s.width + s.offset[slot]];
   } else if (kind == 1) {

@@ -20,10 +20,8 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
     return None;
   }
   let entities = pvec.new[simulation_entity.Entity]();
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     entities = entities.append(simulation_entity.initial(i, count, clustered));
-    i += 1;
   }
   return Some(World {
     count: count, tick: 0, entities: entities,
@@ -38,8 +36,7 @@ pub function get(w: World, index: i32): simulation_entity.Entity {
 }
 
 pub function input_ai(own w: World): World {
-  let i = 0;
-  while (i < w.count) {
+  for i in 0..w.count {
     let row = get(w, i);
     let target = simulation_rules.target(row.target, i, w.tick, w.count);
     let tx = 0;
@@ -51,51 +48,41 @@ pub function input_ai(own w: World): World {
     }
     row = simulation_entity.input_ai(row, i, w.tick, target, tx, ty);
     w = World { ...w, entities: w.entities.with(i, row) };
-    i += 1;
   }
   return w;
 }
 
 pub function move(own w: World): World {
-  let i = 0;
-  while (i < w.count) {
+  for i in 0..w.count {
     let row = get(w, i);
     row = simulation_entity.move(row);
     w = World { ...w, entities: w.entities.with(i, row) };
-    i += 1;
   }
   return w;
 }
 
 pub function rebuild(own w: World): World {
-  let cell = 0;
-  while (cell < 256) {
+  for cell in 0..256 {
     w = World { ...w, heads: w.heads.with(cell, -1) };
-    cell += 1;
   }
-  let i = 0;
-  while (i < w.count) {
+  for i in 0..w.count {
     let row = get(w, i);
-    cell = row.y / 256 * 16 + row.x / 256;
+    let cell = row.y / 256 * 16 + row.x / 256;
     let next = w.heads[cell];
     w = World { ...w, next: w.next.with(i, next) };
     w = World { ...w, heads: w.heads.with(cell, i) };
-    i += 1;
   }
   return w;
 }
 
 pub function proximity(own w: World): World {
-  let candidates: i64 = 0i64;
-  let i = 0;
-  while (i < w.count) {
+  let candidates = 0i64;
+  for i in 0..w.count {
     let row = get(w, i);
     let neighbors = 0;
-    let oy = -1;
-    while (oy <= 1) {
+    for oy in -1..=1 {
       let cy = row.y / 256 + oy & 15;
-      let ox = -1;
-      while (ox <= 1) {
+      for ox in -1..=1 {
         let cx = row.x / 256 + ox & 15;
         let j = w.heads[cy * 16 + cx];
         while (j >= 0) {
@@ -110,33 +97,26 @@ pub function proximity(own w: World): World {
           }
           j = w.next[j];
         }
-        ox += 1;
       }
-      oy += 1;
     }
     w = World { ...w, neighbors: w.neighbors.with(i, neighbors) };
-    i += 1;
   }
   return World { ...w, candidates: candidates };
 }
 
 pub function update(own w: World): World {
-  let i = 0;
-  while (i < w.count) {
+  for i in 0..w.count {
     let row = get(w, i);
     row = simulation_entity.update(row, w.neighbors[i]);
     w = World { ...w, entities: w.entities.with(i, row) };
-    i += 1;
   }
   return w;
 }
 
 pub function checksum(w: World): i64 {
   let hash = w.tick as i64;
-  let i = 0;
-  while (i < w.count) {
+  for i in 0..w.count {
     hash = simulation_entity.mix(hash, get(w, i), w.neighbors[i]);
-    i += 1;
   }
   return hash;
 }

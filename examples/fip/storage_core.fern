@@ -45,22 +45,16 @@ pub function new_state(pages: i32, frames: i32, width: i32, capacity: i32, batch
     return None;
   }
   let disk = __alloc_i64(pages * width);
-  let i = 0;
-  while (i < disk.len()) {
+  for i in 0..disk.len() {
     disk = disk.with(i, initial_word(i / width, i % width));
-    i += 1;
   }
   let mapped = __alloc_i32(frames);
-  i = 0;
-  while (i < frames) {
+  for i in 0..frames {
     mapped = mapped.with(i, -1);
-    i += 1;
   }
   let frame = __alloc_i32(capacity);
-  i = 0;
-  while (i < capacity) {
+  for i in 0..capacity {
     frame = frame.with(i, -1);
-    i += 1;
   }
   return Some(State {
     pages: pages, frames: frames, width: width, capacity: capacity, batch: batch,

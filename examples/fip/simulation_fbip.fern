@@ -19,10 +19,8 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
     return None;
   }
   let entities: simulation_entity.Entity[] = [];
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     entities = entities.append(simulation_entity.initial(i, count, clustered));
-    i += 1;
   }
   return Some(World {
     count: count, tick: 0, entities: entities,
@@ -87,7 +85,7 @@ pub fbip function rebuild(own w: World): World {
 }
 
 pub fbip function proximity(own w: World): World {
-  let candidates: i64 = 0i64;
+  let candidates = 0i64;
   let i = 0;
   while (i < w.count) {
     let row = get(w, i);

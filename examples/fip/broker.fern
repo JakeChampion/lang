@@ -14,19 +14,16 @@ function oldest(b: broker_core.Broker): broker_core.Message {
 }
 
 function queued_checksum(b: broker_core.Broker): i64 {
-  let sum: i64 = 0i64;
-  let i = 0;
-  while (i < b.lengths[0]) {
+  let sum = 0i64;
+  for i in 0..b.lengths[0] {
     let slot = b.queues[(b.heads[0] + i) % b.queue_capacity];
     sum += broker_core.slot_message(b, slot).payload;
-    i += 1;
   }
   return sum;
 }
 
 function turnover(own b: broker_core.Broker, serial: i64): broker_core.Broker {
-  let s = 0;
-  while (s < b.subscribers) {
+  for s in 0..b.subscribers {
     b = broker_core.consume(b, s);
     if (b.status != 0 || broker_core.message(b, s).serial != serial || broker_core.message(b, s).payload != payload(serial)) {
       return broker_core.result(b, 90, -1);
@@ -35,7 +32,6 @@ function turnover(own b: broker_core.Broker, serial: i64): broker_core.Broker {
     if (b.status != 0) {
       return broker_core.result(b, 91, -1);
     }
-    s += 1;
   }
   let next = b.serial + 1i64;
   b = broker_core.reserve(b, 0, payload(next));
@@ -57,113 +53,88 @@ function run(subscribers: i32, occupancy: i32, turns: i32, mode: string, sharing
   let startup_fresh = bench.bump_bytes();
   let startup = monotonic_ns();
   let samples = __alloc_i64(turns);
-  let pool = occupancy;
-  if (mode == "full") {
-    pool += 1;
-  }
-  match (broker_core.new_broker(1, subscribers, pool, occupancy)) {
-    None => {
-      return 2;
-    },
-    Some(b) => {
-      let fill_mark = bench.alloc_count();
-      let i = 0;
-      while (i < occupancy) {
-        b = broker_core.reserve(b, 0, payload(i as i64 + 1i64));
-        b = broker_core.publish(b);
-        if (b.status != 0) {
-          return 3;
-        }
-        i += 1;
-      }
-      if (mode == "full") {
-        b = broker_core.reserve(b, 0, payload(occupancy as i64 + 1i64));
-        if (b.status != 0) {
-          return 4;
-        }
-      }
-      let fill_allocs = bench.allocs_after(fill_mark);
-      let startup_ns = monotonic_ns() - startup;
-      let startup_allocs = bench.allocs_after(startup_mark);
-      let startup_bytes = bench.fresh_bytes_after(startup_fresh);
-      let mark = bench.alloc_count();
-      let fresh_mark = bench.bump_bytes();
-      let started = monotonic_ns();
-      let checks: i64 = 0i64;
-      let first_allocs: i64 = 0i64;
-      i = 0;
-      while (i < turns) {
-        let serial = i as i64 + 1i64;
-        let expected_status = 0;
-        if (mode == "full") {
-          serial = 1i64;
-          expected_status = 4;
-        }
-        let observed: i64 = 0i64;
-        let duration: i64 = 0i64;
-        if (sharing == "shared") {
-          let saved = oldest(b);
-          let t0 = monotonic_ns();
-          b = operation(b, serial, mode);
-          duration = monotonic_ns() - t0;
-          observed = saved.payload;
-          if (saved.serial != serial) {
-            return 5;
-          }
-        } else {
-          observed = oldest(b).payload;
-          if (oldest(b).serial != serial) {
-            return 5;
-          }
-          let t0 = monotonic_ns();
-          b = operation(b, serial, mode);
-          duration = monotonic_ns() - t0;
-        }
-        if (b.status != expected_status || observed != payload(serial)) {
-          return 6;
-        }
-        checks += observed;
-        samples = samples.with(i, duration);
-        if (i == 0) {
-          first_allocs = bench.allocs_after(mark);
-        }
-        i += 1;
-      }
-      let elapsed = monotonic_ns() - started;
-      let allocations = bench.allocs_after(mark);
-      let fresh = bench.fresh_bytes_after(fresh_mark);
-      let deliveries = turns as i64 * (subscribers as i64);
-      let refused = 0;
-      if (mode == "full") {
-        deliveries = 0i64;
-        refused = turns;
-      }
-      if (export_samples) {
-        i = 0;
-        while (i < turns) {
-          print("sample," + i.to_string() + "," + samples[i].to_string());
-          i += 1;
-        }
-      }
-      let stats = bench.Report { name: mode, iterations: turns, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
-      print("{\"subscribers\":" + subscribers.to_string() + ",\"occupancy\":" + occupancy.to_string()
-        + ",\"turns\":" + turns.to_string() + ",\"mode\":\"" + mode + "\",\"sharing\":\"" + sharing + "\""
-        + ",\"observed_checksum\":" + checks.to_string() + ",\"queued_checksum\":" + queued_checksum(b).to_string()
-        + ",\"serial\":" + b.serial.to_string() + ",\"deliveries\":" + deliveries.to_string()
-        + ",\"refusals\":" + refused.to_string() + ",\"free_slots\":" + b.free_count.to_string()
-        + ",\"producer_slot\":" + b.producer_slot.to_string() + ",\"fill_allocs\":" + fill_allocs.to_string()
-        + ",\"startup_ns\":" + startup_ns.to_string() + ",\"startup_allocs\":" + startup_allocs.to_string()
-        + ",\"startup_fresh_bytes\":" + startup_bytes.to_string() + ",\"wall_ns\":" + elapsed.to_string()
-        + ",\"allocs\":" + allocations.to_string() + ",\"first_turn_allocs\":" + first_allocs.to_string()
-        + ",\"fresh_bytes\":" + fresh.to_string() + ",\"turn_p50_ns\":" + stats.p50_ns().to_string()
-        + ",\"turn_p95_ns\":" + stats.p95_ns().to_string() + ",\"turn_p99_ns\":" + stats.p99_ns().to_string()
-        + ",\"turn_p999_ns\":" + stats.p999_ns().to_string() + ",\"turn_max_ns\":" + stats.max_ns().to_string() + "}");
-      if (fill_allocs != 0i64 || sharing == "unique" && allocations != 0i64) {
-        return 7;
-      }
-      return 0;
+  let pool = if (mode == "full") { occupancy + 1 } else { occupancy };
+  let Some(b) = broker_core.new_broker(1, subscribers, pool, occupancy) else {
+    return 2;
+  };
+  let fill_mark = bench.alloc_count();
+  for i in 0..occupancy {
+    b = broker_core.reserve(b, 0, payload(i as i64 + 1i64));
+    b = broker_core.publish(b);
+    if (b.status != 0) {
+      return 3;
     }
   }
+  if (mode == "full") {
+    b = broker_core.reserve(b, 0, payload(occupancy as i64 + 1i64));
+    if (b.status != 0) {
+      return 4;
+    }
+  }
+  let fill_allocs = bench.allocs_after(fill_mark);
+  let startup_ns = monotonic_ns() - startup;
+  let startup_allocs = bench.allocs_after(startup_mark);
+  let startup_bytes = bench.fresh_bytes_after(startup_fresh);
+  let mark = bench.alloc_count();
+  let fresh_mark = bench.bump_bytes();
+  let started = monotonic_ns();
+  let checks = 0i64;
+  let first_allocs = 0i64;
+  for i in 0..turns {
+    let serial = if (mode == "full") { 1i64 } else { i as i64 + 1i64 };
+    let expected_status = if (mode == "full") { 4 } else { 0 };
+    let observed = 0i64;
+    let duration = 0i64;
+    if (sharing == "shared") {
+      let saved = oldest(b);
+      let t0 = monotonic_ns();
+      b = operation(b, serial, mode);
+      duration = monotonic_ns() - t0;
+      observed = saved.payload;
+      if (saved.serial != serial) {
+        return 5;
+      }
+    } else {
+      observed = oldest(b).payload;
+      if (oldest(b).serial != serial) {
+        return 5;
+      }
+      let t0 = monotonic_ns();
+      b = operation(b, serial, mode);
+      duration = monotonic_ns() - t0;
+    }
+    if (b.status != expected_status || observed != payload(serial)) {
+      return 6;
+    }
+    checks += observed;
+    samples = samples.with(i, duration);
+    if (i == 0) {
+      first_allocs = bench.allocs_after(mark);
+    }
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocations = bench.allocs_after(mark);
+  let fresh = bench.fresh_bytes_after(fresh_mark);
+  let deliveries = if (mode == "full") { 0i64 } else { turns as i64 * (subscribers as i64) };
+  let refused = if (mode == "full") { turns } else { 0 };
+  if (export_samples) {
+    for i in 0..turns {
+      print(f"sample,{i},{samples[i]}");
+    }
+  }
+  let stats = bench.Report { name: mode, iterations: turns, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
+  print(f"{{\"subscribers\":{subscribers},\"occupancy\":{occupancy},\"turns\":{turns},\"mode\":\"{mode}\",\"sharing\":\"{sharing}\""
+    + f",\"observed_checksum\":{checks},\"queued_checksum\":{queued_checksum(b)}"
+    + f",\"serial\":{b.serial},\"deliveries\":{deliveries},\"refusals\":{refused},\"free_slots\":{b.free_count}"
+    + f",\"producer_slot\":{b.producer_slot},\"fill_allocs\":{fill_allocs}"
+    + f",\"startup_ns\":{startup_ns},\"startup_allocs\":{startup_allocs},\"startup_fresh_bytes\":{startup_bytes}"
+    + f",\"wall_ns\":{elapsed},\"allocs\":{allocations},\"first_turn_allocs\":{first_allocs},\"fresh_bytes\":{fresh}"
+    + f",\"turn_p50_ns\":{stats.p50_ns()},\"turn_p95_ns\":{stats.p95_ns()},\"turn_p99_ns\":{stats.p99_ns()}"
+    + f",\"turn_p999_ns\":{stats.p999_ns()},\"turn_max_ns\":{stats.max_ns()}}}");
+  if (fill_allocs != 0i64 || sharing == "unique" && allocations != 0i64) {
+    return 7;
+  }
+  return 0;
 }
 
 function main(): i32 {
@@ -171,33 +142,15 @@ function main(): i32 {
   if (argv.len() < 6 || argv.len() > 7) {
     return 2;
   }
-  let subscribers = 0;
-  let occupancy = 0;
-  let turns = 0;
-  match (i32.parse_i32(argv[1])) {
-    Ok(n) => {
-      subscribers = n;
-    },
-    Err(_) => {
-      return 2;
-    }
-  }
-  match (i32.parse_i32(argv[2])) {
-    Ok(n) => {
-      occupancy = n;
-    },
-    Err(_) => {
-      return 2;
-    }
-  }
-  match (i32.parse_i32(argv[3])) {
-    Ok(n) => {
-      turns = n;
-    },
-    Err(_) => {
-      return 2;
-    }
-  }
+  let Ok(subscribers) = i32.parse_i32(argv[1]) else {
+    return 2;
+  };
+  let Ok(occupancy) = i32.parse_i32(argv[2]) else {
+    return 2;
+  };
+  let Ok(turns) = i32.parse_i32(argv[3]) else {
+    return 2;
+  };
   if (subscribers < 1 || subscribers > 16 || occupancy < 1 || occupancy > 4096 || turns < 1 || turns > 1000000) {
     return 2;
   }
