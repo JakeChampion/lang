@@ -650,6 +650,7 @@ own_param_payloadless_variant                        0
 own_param_rebound_on_every_branch                    0
 own_param_scalar_helper_result                       0
 own_param_sibling_scope_names                        0
+own_param_superseded_field_argument                  0
 own_param_superseded_field_let                       0
 own_parameter_compared_then_moved                    0
 own_self_reassign_move                               0
