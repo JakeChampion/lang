@@ -3871,24 +3871,16 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
   if (b.errs.len() > 0) {
     return Loaded { b: b, refused: errors_of(b.errs) };
   }
+  let imported: Finding[] = errors_of(asmcore.imported_parse_errors(flatten.modules(b.loaded)));
+  if (imported.len() > 0) {
+    return Loaded { b: b, refused: imported };
+  }
   let (folded, fold_errs) = fold_embedded_assets(b, embed_dir);
   if (fold_errs.len() > 0) {
     return Loaded { b: b, refused: fold_errs };
   }
   let vis: util.Diag[] = visibility.export_diags(folded.entry, folded.entry_ident, folded.loaded, folded.package_roots);
   return Loaded { b: folded, refused: errors_of(vis) };
-}
-
-function imported_parse_findings(b: Bundle): Finding[] {
-  let none: parser.FuncDecl[] = [];
-  for lm in b.loaded {
-    let fs: Finding[] = errors_of(asmcore.parse_unknown_errors_module(parser.Module { ...lm.mod, funcs: none }));
-    if (fs.len() > 0) {
-      return fs;
-    }
-  }
-  let ok: Finding[] = [];
-  return ok;
 }
 
 function parse_findings(mod: parser.Module): Finding[] {
@@ -3960,7 +3952,7 @@ function executable_entry_diags(mod: parser.Module, target: string, shared: bool
 
 function check_bundle(b: Bundle, entry_path: string, target: string, target_given: boolean): Checked {
   let merged: parser.Module = b.merged;
-  let parsed: Finding[] = util.append_all(parse_findings(merged), imported_parse_findings(b));
+  let parsed: Finding[] = parse_findings(merged);
   if (parsed.len() > 0) {
     return Checked { findings: parsed, entry: entry_path, files: b.files, maps: b.maps, ok: false };
   }
@@ -6711,7 +6703,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
 
   if (mode_interp) {
-    if (eprint_findings(st, util.append_all(parse_findings(merged), imported_parse_findings(b)), entry_path, b.files, b.maps)) {
+    if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
       return 1;
     }
     if (eprint_findings(st, errors_of(flatten.handler_serve_diags(b.entry, target)), entry_path, b.files, b.maps)) {
@@ -6734,7 +6726,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
   emit = form;
 
-  if (eprint_findings(st, util.append_all(parse_findings(merged), imported_parse_findings(b)), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, parse_findings(merged), entry_path, b.files, b.maps)) {
     return 1;
   }
 

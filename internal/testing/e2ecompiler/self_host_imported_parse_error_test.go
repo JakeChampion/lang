@@ -38,25 +38,39 @@ func TestSelfHostImportedParseErrorX86_64(t *testing.T) {
 		"check":  {"-check"},
 		"interp": {"-interp"},
 	}
+	// A lex error leaves the module with no functions, so a later "no
+	// function seven" must not hide it. A top-level statement in an imported
+	// module never runs.
+	bad := map[string]struct{ tail, at string }{
+		"parse": {"this is not fern\n", "lib.fern:4:1:"},
+		"lex":   {"pub function eight(): i32 {\n  return $8;\n}\n", "lib.fern:5:10:"},
+		"call":  {"println(\"never\");\n", "lib.fern:4:1:"},
+		"let":   {"let x: i32 = 1;\n", "lib.fern:4:1:"},
+	}
 	for name, flags := range modes {
-		t.Run(name, func(t *testing.T) {
-			entry := write(t, lib+"this is not fern\n")
-			args := append([]string{}, flags...)
-			for i, a := range args {
-				if a == "BIN" {
-					args[i] = filepath.Join(filepath.Dir(entry), "main.bin")
+		for what, b := range bad {
+			t.Run(name+"/"+what, func(t *testing.T) {
+				entry := write(t, lib+b.tail)
+				args := append([]string{}, flags...)
+				for i, a := range args {
+					if a == "BIN" {
+						args[i] = filepath.Join(filepath.Dir(entry), "main.bin")
+					}
 				}
-			}
-			args = append(args, entry, stdlibRoot)
-			cmd := exec.Command(fernBin, args...)
-			out, _ := cmd.CombinedOutput()
-			if code := cmd.ProcessState.ExitCode(); code == 0 {
-				t.Fatalf("a module that does not parse was accepted (exit 0):\n%s", out)
-			}
-			if !strings.Contains(string(out), "lib.fern:4:") || !strings.Contains(string(out), "error[P001]") {
-				t.Errorf("stderr does not name the imported module's parse error:\n%s", out)
-			}
-		})
+				args = append(args, entry, stdlibRoot)
+				cmd := exec.Command(fernBin, args...)
+				out, _ := cmd.CombinedOutput()
+				if code := cmd.ProcessState.ExitCode(); code == 0 {
+					t.Fatalf("a module that does not parse was accepted (exit 0):\n%s", out)
+				}
+				if !strings.Contains(string(out), b.at) || !strings.Contains(string(out), "error[P001]") {
+					t.Errorf("stderr does not name the imported module's parse error at %s:\n%s", b.at, out)
+				}
+				if strings.Contains(string(out), "E087") {
+					t.Errorf("a visibility error hides the parse error:\n%s", out)
+				}
+			})
+		}
 	}
 	t.Run("clean", func(t *testing.T) {
 		entry := write(t, lib)

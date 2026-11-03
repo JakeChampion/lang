@@ -1634,6 +1634,14 @@ function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: stri
 
 pub struct LoadedModule { name: string, ident: string, mod: parser.Module }
 
+pub function modules(loaded: LoadedModule[]): parser.Module[] {
+  let out: parser.Module[] = [];
+  for lm in loaded {
+    out = out.append(lm.mod);
+  }
+  return out;
+}
+
 struct MethodDedup { mod: parser.Module, keys: string[] }
 
 function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[]): MethodDedup {

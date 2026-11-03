@@ -6132,6 +6132,29 @@ pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
   return errs;
 }
 
+// The parse errors of imported modules that their bodies, merged into the
+// entry, do not carry: a module that did not lex, and top-level statements.
+pub function imported_parse_errors(mods: parser.Module[]): util.Diag[] {
+  let errs: util.Diag[] = [];
+  let none: parser.FuncDecl[] = [];
+  for m in mods {
+    errs = util.append_diags(errs, parse_unknown_errors_module(parser.Module { ...m, funcs: none }));
+    for st in m.top_stmts {
+      if (!is_parse_sentinel(st)) {
+        errs = errs.append(util.Diag {
+          length: 0,
+          related: [],
+          code: "P001",
+          message: "statement at top level of an imported module: only the entry module runs top-level statements, so this never executes — move it inside a function",
+          line: ast.stmt_line(st), col: ast.stmt_col(st),
+          fix: None,
+        });
+      }
+    }
+  }
+  return errs;
+}
+
 function is_parse_sentinel(st: ast.Stmt): boolean {
   match (st) {
     ast.StmtUnknown(_) => {
