@@ -71,7 +71,7 @@ function main(): i32 {
   }
   let inventory = 0i64;
   for amount in factory.cargo {
-    inventory = inventory + amount as i64;
+    inventory += amount as i64;
   }
   if (factory.produced != factory.consumed + inventory || factory.consumed == 0) {
     return 17;
@@ -119,7 +119,7 @@ function main(): i32 {
   }
   let units = 0i64;
   for cargo in powered.cargo {
-    units = units + foundry.units(cargo) as i64;
+    units += foundry.units(cargo) as i64;
   }
   if (powered.refined == 0 || powered.consumed == 0 || powered.produced != powered.consumed + units) {
     return 26;
@@ -132,7 +132,7 @@ function main(): i32 {
   if (disconnected.refined != 0 || disconnected.powered[2] != 0) {
     return 27;
   }
-  let rails: i32[] = [1, 11, 9, 9, 9, 9, 11, 6];
+  let rails = [1, 11, 9, 9, 9, 9, 11, 6];
   let freight = foundry.factory(8);
   for tick in 0..128 {
     freight = foundry.step(rails, freight, 8);

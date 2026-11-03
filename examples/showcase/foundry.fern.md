@@ -165,14 +165,12 @@ pub function power(layout: i32[], width: i32): i32[] {
   let queue = __alloc_i32(layout.len());
   let head = 0;
   let tail = 0;
-  let at = 0;
-  for kind in layout {
-    if (kind == 8) {
+  for at in 0..layout.len() {
+    if (layout[at] == 8) {
       powered = powered.with(at, 1);
       queue = queue.with(tail, at);
       tail += 1;
     }
-    at += 1;
   }
   while (head < tail) {
     let source = queue[head];
@@ -207,41 +205,30 @@ pub function step(layout: i32[], before: Factory, width: i32): Factory {
   let incoming = __alloc_i32(size);
   let outgoing = __alloc_i32(size);
   let capacity = __alloc_i32(size);
-  let i = 0;
-  while (i < size) {
+  for i in 0..size {
     capacity = capacity.with(i, 15 - (before.cargo[i] & 15) - (before.cargo[i] >> 4 & 15));
-    i += 1;
   }
-  i = 0;
-  while (i < size) {
+  for i in 0..size {
     let kind = layout[i];
     let item = material(kind, before.cargo[i]);
     if (item > 0 && kind != 6 && kind != 0 && (kind != 7 || before.powered[i] > 0)) {
       let target = output(kind, i, width, size);
-      let connected = true;
-      if (kind == 9) {
-        connected = before.tick % 4 == 0 && i % width + 4 < width && i + 4 < size;
-        if (connected) {
-          connected = rail_path(layout[i + 1], layout[i + 2], layout[i + 3], layout[i + 4]);
-        }
-      }
+      let connected = kind != 9 || before.tick % 4 == 0 && i % width + 4 < width && i + 4 < size && rail_path(layout[i + 1], layout[i + 2], layout[i + 3], layout[i + 4]);
       if (target != i && connected && accepts(layout[target], item) && capacity[target] > 0) {
         outgoing = outgoing.with(i, item);
         incoming = incoming.with(target, incoming[target] + item);
         capacity = capacity.with(target, capacity[target] - 1);
       }
     }
-    i += 1;
   }
   let cargo = before.cargo;
   let produced = before.produced;
   let consumed = before.consumed;
   let refined = before.refined;
-  i = 0;
-  while (i < size) {
+  for i in 0..size {
     let kind = layout[i];
     if (kind == 6) {
-      consumed = consumed + units(incoming[i]) as i64;
+      consumed += units(incoming[i]) as i64;
     }
     if (kind == 1 && before.tick % 8 == 0 && (before.cargo[i] & 15) - (outgoing[i] & 15) < 15) {
       produced += 1;
@@ -251,7 +238,6 @@ pub function step(layout: i32[], before: Factory, width: i32): Factory {
       refined += 1;
     }
     cargo = cargo.with(i, next);
-    i += 1;
   }
   return Factory { ...before, cargo: cargo, tick: before.tick + 1, produced: produced, consumed: consumed, refined: refined };
 }

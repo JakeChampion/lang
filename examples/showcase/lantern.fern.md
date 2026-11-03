@@ -70,13 +70,7 @@ pub function tokenize(text: string): string[] {
   for separator in ["\n", "\r", "\t", ".", ",", ";", ":", "!", "?", "(", ")", "[", "]", "{", "}", "\"", "'", "/", "\\", "-", "—", "　"] {
     clean = clean.replace(separator, " ");
   }
-  let terms: string[] = [];
-  for term in clean.split(" ") {
-    if (term.len() > 0 && term.len() <= 128) {
-      terms = terms.append(term);
-    }
-  }
-  return terms;
+  return clean.split(" ") |> array.filter((term: string): boolean => term.len() > 0 && term.len() <= 128);
 }
 ```
 
@@ -95,7 +89,7 @@ pub function add(index: Index, document: Document): Result[Index, string] {
   if (index.bytes + document.title.len() + document.text.len() > 4194304) {
     return Err("The archive exceeds its 4 MiB text limit.");
   }
-  let words = tokenize(document.title + " " + document.text);
+  let words = tokenize(f"{document.title} {document.text}");
   if (index.words + words.len() > 262144) {
     return Err("The archive exceeds its 262144-token limit.");
   }

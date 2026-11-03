@@ -52,9 +52,8 @@ pub function subscribe(state: State, room: string): Result[Subscription, http.Ht
   if (state.listeners.get().len() >= 256) {
     return Err(http.fail(503, "all live subscriptions are in use"));
   }
-  let fd: i32 = net.udp_socket(net.socket_addr(net.ipv4_loopback(), 0)).map_err((e: net.NetError): http.HttpError => http.fail(503, "cannot create a live notification"))?;
-  let result: Result[net.SocketAddr, net.NetError] = net.local_addr(fd);
-  let Ok(address) = result else {
+  let fd = net.udp_socket(net.socket_addr(net.ipv4_loopback(), 0)).map_err((e: net.NetError): http.HttpError => http.fail(503, "cannot create a live notification"))?;
+  let Ok(address) = net.local_addr(fd) else {
     let closed = net.close(fd);
     return Err(http.fail(503, "cannot locate a live notification"));
   };
@@ -68,13 +67,11 @@ pub function subscribe(state: State, room: string): Result[Subscription, http.Ht
 }
 
 pub function move(subscription: Subscription, room: string): void {
-  let listeners: Listener[] = subscription.state.listeners.get();
-  let index = 0;
-  while (index < listeners.len()) {
+  let listeners = subscription.state.listeners.get();
+  for index in 0..listeners.len() {
     if (listeners[index].id == subscription.listener.id) {
       listeners = listeners.with(index, Listener { ...listeners[index], room: room });
     }
-    index += 1;
   }
   subscription.state.listeners.set(listeners);
 }
@@ -113,15 +110,12 @@ pub function wait_for(subscription: Subscription, timeout: Option[Duration]): bo
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
-  let until: Option[Instant] = None;
-  if let Some(d) = timeout {
-    until = Some(clock.instant().add(d));
-  }
-  let ready: async.Wake = async.wait_any([subscription.listener.fd, 1], until);
+  let until = timeout.map((d: Duration): Instant => clock.instant().add(d));
+  let ready = async.wait_any([subscription.listener.fd, 1], until);
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
-  let buffer: u8[] = __alloc_u8(64);
+  let buffer = __alloc_u8(64);
   while (net.recv(subscription.listener.fd, buffer).is_ok()) {}
   return true;
 }
@@ -139,12 +133,7 @@ pub function cancel(subscription: Subscription): void {
     return;
   }
   subscription.alive.set(false);
-  let kept: Listener[] = [];
-  for listener in subscription.state.listeners.get() {
-    if (listener.id != subscription.listener.id) {
-      kept = kept.append(listener);
-    }
-  }
+  let kept = subscription.state.listeners.get() |> array.filter((listener: Listener): boolean => listener.id != subscription.listener.id);
   subscription.state.listeners.set(kept);
   wake(subscription);
 }

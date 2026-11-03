@@ -107,6 +107,15 @@ pub function sample(frame: i32, rate: i32, note: i32, wave: i32, age: f64, relea
   return sample_hz(frame, rate, frequency(note, rate), wave, age, release);
 }
 
+function square(cycle: f64, step: f64): f64 {
+  let shifted = cycle + 0.5;
+  if (shifted >= 1.0) {
+    shifted -= 1.0;
+  }
+  let level = if (cycle < 0.5) { 1.0 } else { -1.0 };
+  return level + blep(cycle, step) - blep(shifted, step);
+}
+
 @export("fern:showcase/patchbay", "sample-hz")
 pub function sample_hz(frame: i32, rate: i32, frequency: f64, wave: i32, age: f64, release: f64): f64 {
   if (frame < 0 || rate < 8000 || rate > 192000 || frequency <= 0.0 || frequency > rate as f64 * 0.45 || age < 0.0) {
@@ -114,27 +123,8 @@ pub function sample_hz(frame: i32, rate: i32, frequency: f64, wave: i32, age: f6
   }
   let phase = frame as f64 * frequency / (rate as f64);
   let cycle = phase - phase.floor();
-  let value = (phase * 6.283185307179586).sin();
-  if (wave == 1) {
-    value = 1.0 - 4.0 * (cycle - 0.5).abs();
-  }
-  if (wave == 2) {
-    value = 2.0 * cycle - 1.0 - blep(cycle, frequency / (rate as f64));
-  }
-  if (wave == 3) {
-    if (cycle < 0.5) {
-      value = 1.0;
-    } else {
-      value = -1.0;
-    }
-  }
-  if (wave == 3) {
-    let shifted = cycle + 0.5;
-    if (shifted >= 1.0) {
-      shifted -= 1.0;
-    }
-    value = value + blep(cycle, frequency / (rate as f64)) - blep(shifted, frequency / (rate as f64));
-  }
+  let step = frequency / (rate as f64);
+  let value = match (wave) { 1 => 1.0 - 4.0 * (cycle - 0.5).abs(), 2 => 2.0 * cycle - 1.0 - blep(cycle, step), 3 => square(cycle, step), _ => (phase * 6.283185307179586).sin() };
   let envelope = (age * 100.0).min(1.0) * (-age * 2.0).exp();
   if (release >= 0.0) {
     envelope *= (-release * 25.0).exp();

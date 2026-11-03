@@ -56,14 +56,9 @@ function seats_and_interest(): test.TestOutcome {
   seats = seats.with(0, replacement);
   let players = world.players.get();
   world.players.set([] as model.Player[]);
-  let at = 0;
-  while (at < players.len()) {
-    let position: f64 = 32.5;
-    if (at >= 256) {
-      position = 450.5;
-    }
+  for at in 0..players.len() {
+    let position = if (at >= 256) { 450.5 } else { 32.5 };
     players = players.with(at, model.Player { ...players[at], x: position, y: 35, z: position, flags: 2 });
-    at += 1;
   }
   world.players.set(players);
   world.updated.set(None);

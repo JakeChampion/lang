@@ -69,7 +69,7 @@ pub function lower_bound(rows: Row[], key: string): (i32, i32) {
   let comparisons = 0;
   while (lo < hi) {
     let mid = lo + (hi - lo) / 2;
-    comparisons = comparisons + 1;
+    comparisons += 1;
     if (rows[mid].key < key) {
       lo = mid + 1;
     } else {
@@ -96,18 +96,7 @@ function put(rows: Row[], row: Row, insert_only: boolean): Result[Row[], string]
   if (rows.len() >= 10000) {
     return Err("This database already has 10000 rows.");
   }
-  let result: Row[] = [];
-  let i = 0;
-  while (i < at) {
-    result = result.append(rows[i]);
-    i = i + 1;
-  }
-  result = result.append(row);
-  while (i < rows.len()) {
-    result = result.append(rows[i]);
-    i = i + 1;
-  }
-  return Ok(result);
+  return Ok(array.take(rows, at).append(row).concat(array.drop(rows, at)));
 }
 ```
 
@@ -125,49 +114,49 @@ pub function tokens(sql: string): Result[string[], string] {
   let out: string[] = [];
   let at = 0;
   while (at < sql.len()) {
-    let byte = sql[at];
-    if (byte == 32 || byte == 10 || byte == 13 || byte == 9) {
-      at = at + 1;
-      continue;
-    }
-    if (byte == 39) {
-      at = at + 1;
-      let text = "";
-      let closed = false;
-      while (at < sql.len()) {
+    match (sql[at]) {
+      b' ' | b'\n' | b'\r' | b'\t' => {
+        at += 1;
+      },
+      b'\'' => {
+        at += 1;
+        let text = "";
+        let closed = false;
+        while (at < sql.len()) {
+          let start = at;
+          while (at < sql.len() && sql[at] != b'\'') {
+            at += 1;
+          }
+          text += sql.drop(start).take(at - start);
+          if (at >= sql.len()) {
+            break;
+          }
+          at += 1;
+          if (at < sql.len() && sql[at] == b'\'') {
+            text += "'";
+            at += 1;
+          } else {
+            closed = true;
+            break;
+          }
+        }
+        if (!closed) {
+          return Err("Close the quoted SQL string.");
+        }
+        out = out.append("'" + text);
+      },
+      b'(' | b')' | b',' | b'=' | b';' | b'*' => {
+        out = out.append(sql.drop(at).take(1));
+        at += 1;
+      },
+      _ => {
         let start = at;
-        while (at < sql.len() && sql[at] != 39) {
-          at = at + 1;
+        while (at < sql.len() && sql[at] != b' ' && sql[at] != b'\n' && sql[at] != b'\r' && sql[at] != b'\t' && sql[at] != b'(' && sql[at] != b')' && sql[at] != b',' && sql[at] != b'=' && sql[at] != b';') {
+          at += 1;
         }
-        text = text + sql.drop(start).take(at - start);
-        if (at >= sql.len()) {
-          break;
-        }
-        at = at + 1;
-        if (at < sql.len() && sql[at] == 39) {
-          text = text + "'";
-          at = at + 1;
-        } else {
-          closed = true;
-          break;
-        }
+        out = out.append(sql.drop(start).take(at - start).to_ascii_lower());
       }
-      if (!closed) {
-        return Err("Close the quoted SQL string.");
-      }
-      out = out.append("'" + text);
-      continue;
     }
-    if (byte == 40 || byte == 41 || byte == 44 || byte == 61 || byte == 59 || byte == 42) {
-      out = out.append(sql.drop(at).take(1));
-      at = at + 1;
-      continue;
-    }
-    let start = at;
-    while (at < sql.len() && sql[at] != 32 && sql[at] != 10 && sql[at] != 13 && sql[at] != 9 && sql[at] != 40 && sql[at] != 41 && sql[at] != 44 && sql[at] != 61 && sql[at] != 59) {
-      at = at + 1;
-    }
-    out = out.append(sql.drop(start).take(at - start).to_ascii_lower());
   }
   return Ok(out);
 }
@@ -209,10 +198,7 @@ function statement(db: Database, t: string[]): Result[Execution, string] {
     }
     let key = literal(t[7])?;
     let (at, comparisons) = lower_bound(db.rows, key);
-    let rows: Row[] = [];
-    if (at < db.rows.len() && db.rows[at].key == key) {
-      rows = rows.append(db.rows[at]);
-    }
+    let rows = if (at < db.rows.len() && db.rows[at].key == key) { [db.rows[at]] } else { [] as Row[] };
     return Ok(Execution { database: db, output: Output { ...output, rows: rows, comparisons: comparisons, plan: "BINARY SEARCH entries PRIMARY KEY" } });
   }
   if (t.len() == 9 && t[0] == "insert" && t[1] == "into" && t[2] == "entries" && t[3] == "values" && t[4] == "(" && t[6] == "," && t[8] == ")") {
@@ -225,12 +211,7 @@ function statement(db: Database, t: string[]): Result[Execution, string] {
   }
   if (t.len() == 7 && t[0] == "delete" && t[1] == "from" && t[2] == "entries" && t[3] == "where" && t[4] == "key" && t[5] == "=") {
     let key = literal(t[6])?;
-    let rows: Row[] = [];
-    for row in db.rows {
-      if (row.key != key) {
-        rows = rows.append(row);
-      }
-    }
+    let rows = db.rows |> array.filter((row: Row): boolean => row.key != key);
     return Ok(Execution { database: Database { ...db, rows: rows }, output: Output { ...output, changed: rows.len() != db.rows.len(), plan: "PRIMARY KEY DELETE" } });
   }
   return Err("Use SELECT, EXPLAIN SELECT, INSERT, UPDATE, or DELETE on entries(key, value).");
@@ -255,7 +236,7 @@ pub function execute(database: Database, sql: string): Result[Execution, string]
   for token in input.append(";") {
     if (token == ";") {
       if (current.len() > 0) {
-        count = count + 1;
+        count += 1;
         if (count > 128) {
           return Err("A transaction has at most 128 statements.");
         }

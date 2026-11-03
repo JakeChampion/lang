@@ -23,7 +23,7 @@ point a stable height. The scalar export needs no heap allocations.
 import "std/f64";
 
 fip function lattice(x: i32, z: i32): f64 {
-  let h: u32 = x as u32 * 374761393 + z as u32 * 668265263 + 1831565813;
+  let h = x as u32 * 374761393 + z as u32 * 668265263 + 1831565813;
   h = (h ^ h >> 13) * 1274126177;
   return ((h ^ h >> 16) & 65535) as f64 / 65535.0;
 }

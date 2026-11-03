@@ -54,18 +54,18 @@ Parse failures return `Result` with HTTP status 400. Validate before any sample 
 ```fern
 <<Validate a pattern>>=
 pub function parse_pattern(req: HttpRequest): Result[Pattern, http.HttpError] {
-  let bpm: i32 = common.integer(req, "bpm", 112, 60, 180)?;
-  let voice: string = common.query(req, "voice", "sine");
+  let bpm = common.integer(req, "bpm", 112, 60, 180)?;
+  let voice = common.query(req, "voice", "sine");
   if (voice != "sine" && voice != "triangle" && voice != "square" && voice != "saw") {
     return Err(http.fail(400, "unknown oscillator"));
   }
   let notes: i32[] = [];
-  let fields: string[] = common.query(req, "notes", "0,-1,2,-1,4,-1,5,4,2,-1,1,-1,0,2,4,-1").split(",");
+  let fields = common.query(req, "notes", "0,-1,2,-1,4,-1,5,4,2,-1,1,-1,0,2,4,-1").split(",");
   if (fields.len() != 16) {
     return Err(http.fail(400, "a pattern needs sixteen steps"));
   }
   for field in fields {
-    let note: i64 = i64.parse_i64(field).map_err((e: number_parse.ParseNumberError): http.HttpError => http.fail(400, "invalid note"))?;
+    let note = i64.parse_i64(field).map_err((e: number_parse.ParseNumberError): http.HttpError => http.fail(400, "invalid note"))?;
     if (note < -1 || note > 7) {
       return Err(http.fail(400, "note is outside the scale"));
     }
@@ -92,20 +92,8 @@ function little32(own bytes: u8[], at: i32, value: i32): u8[] {
 }
 
 function oscillator(phase: f64, voice: string): f64 {
-  let p: f64 = phase - phase.floor();
-  if (voice == "square") {
-    if (p < 0.5) {
-      return 0.7;
-    }
-    return -0.7;
-  }
-  if (voice == "saw") {
-    return (p * 2.0 - 1.0) * 0.7;
-  }
-  if (voice == "triangle") {
-    return (1.0 - 4.0 * (p - 0.5).abs()) * 0.9;
-  }
-  return (p * 6.283185307179586).sin();
+  let p = phase - phase.floor();
+  return match (voice) { "square" => if (p < 0.5) { 0.7 } else { -0.7 }, "saw" => (p * 2.0 - 1.0) * 0.7, "triangle" => (1.0 - 4.0 * (p - 0.5).abs()) * 0.9, _ => (p * 6.283185307179586).sin() };
 }
 ```
 
@@ -118,14 +106,12 @@ The loop yields every 4096 samples so another connection can run during synthesi
 ```fern
 <<Build a WAV file>>=
 pub function render(pattern: Pattern): u8[] {
-  let step: i32 = RATE * 15 / pattern.bpm;
-  let samples: i32 = step * 16;
-  let bytes: u8[] = __alloc_u8(44 + samples * 2);
-  let magic: u8[] = "RIFF".bytes();
-  let at: i32 = 0;
-  while (at < 4) {
+  let step = RATE * 15 / pattern.bpm;
+  let samples = step * 16;
+  let bytes = __alloc_u8(44 + samples * 2);
+  let magic = "RIFF".bytes();
+  for at in 0..4 {
     bytes = bytes.with(at, magic[at]).with(8 + at, "WAVE".bytes()[at]).with(12 + at, "fmt ".bytes()[at]).with(36 + at, "data".bytes()[at]);
-    at = at + 1;
   }
   bytes = little32(bytes, 4, 36 + samples * 2);
   bytes = little32(bytes, 16, 16);
@@ -136,21 +122,19 @@ pub function render(pattern: Pattern): u8[] {
   bytes = little16(bytes, 32, 2);
   bytes = little16(bytes, 34, 16);
   bytes = little32(bytes, 40, samples * 2);
-  at = 0;
-  while (at < samples) {
-    let note: i32 = pattern.notes[at / step];
-    let value: f64 = 0.0;
+  for at in 0..samples {
+    let note = pattern.notes[at / step];
+    let value = 0.0;
     if (note >= 0) {
-      let local: i32 = at % step;
-      let t: f64 = local as f64 / (RATE as f64);
-      let envelope: f64 = (local as f64 / 160.0).min(1.0) * ((step - local) as f64 / 700.0).min(1.0);
+      let local = at % step;
+      let t = local as f64 / (RATE as f64);
+      let envelope = (local as f64 / 160.0).min(1.0) * ((step - local) as f64 / 700.0).min(1.0);
       value = oscillator(t * FREQUENCIES[note], pattern.voice) * envelope * 0.65;
     }
     bytes = little16(bytes, 44 + at * 2, (value * 32767.0) as i32);
     if (at % 4096 == 0 && async.in_task()) {
-      let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(1))));
+      let ready = async.wait_any([], Some(clock.instant().add(time.duration_millis(1))));
     }
-    at = at + 1;
   }
   return bytes;
 }
@@ -164,14 +148,16 @@ The response reports synthesis time and sample count. A download request adds an
 ```fern
 <<Cache audio responses>>=
 pub function audio(req: HttpRequest): Result[HttpResponse, http.HttpError] {
-  let pattern: Pattern = parse_pattern(req)?;
-  let etag: string = "\"" + hex.encode(crypto.sha256(req.path.bytes())).take(24) + "\"";
+  let pattern = parse_pattern(req)?;
+  let digest = hex.encode(crypto.sha256(req.path.bytes())).take(24);
+  let etag = f"\"{digest}\"";
   if (req.headers.get("If-None-Match").unwrap_or("") == etag) {
     return Ok(http.bytes(304, []).with_header("ETag", etag));
   }
-  let started: i64 = now_ns();
-  let bytes: u8[] = render(pattern);
-  let response: HttpResponse = http.bytes(200, bytes).with_content_type("audio/wav").with_header("ETag", etag).with_header("Cache-Control", "public, max-age=3600").with_header("X-Fern-Audio-Samples", ((bytes.len() - 44) / 2).to_string()).with_header("Server-Timing", "synthesis;dur=" + ((now_ns() - started) as f64 / 1000000.0).to_string());
+  let started = now_ns();
+  let bytes = render(pattern);
+  let elapsed = (now_ns() - started) as f64 / 1000000.0;
+  let response = http.bytes(200, bytes).with_content_type("audio/wav").with_header("ETag", etag).with_header("Cache-Control", "public, max-age=3600").with_header("X-Fern-Audio-Samples", ((bytes.len() - 44) / 2).to_string()).with_header("Server-Timing", f"synthesis;dur={elapsed}");
   if (common.query(req, "download", "0") == "1") {
     response = response.with_header("Content-Disposition", "attachment; filename=fern-loop.wav");
   }

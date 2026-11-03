@@ -45,15 +45,13 @@ function shared_board(): test.TestOutcome {
   if (mosaic.paint(room, mosaic.Stroke { color: 3, points: [0, 2560] }).is_ok() || mosaic.snapshot(room).revision != 0) {
     return test.fail("invalid stroke partly committed");
   }
-  let index: i32 = 0;
-  while (index < 260) {
+  for index in 0..260 {
     let Ok(change) = mosaic.paint(room, mosaic.Stroke { color: index % 12, points: [index] }) else {
       return test.fail("expected a valid result");
     };
     if (change.revision != (index + 1) as i64) {
       return test.fail("revision did not increase");
     }
-    index = index + 1;
   }
   let Some(reset) = mosaic.changes(room, Some(0)) else {
     return test.fail("expected an event");
@@ -203,7 +201,7 @@ function large_arena(): test.TestOutcome {
 }
 
 function streams_stay_lazy(): test.TestOutcome {
-  let calls: Cell[i32] = cell_new(0);
+  let calls = cell_new(0);
   for content_type in ["text/event-stream", "application/octet-stream"] {
     let stream = http.chunks(200, (index: i32): Option[u8[]] => {
       calls.set(calls.get() + 1);

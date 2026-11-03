@@ -90,15 +90,9 @@ pub function alu(operation: i32, a: i32, b: i32): i32 {
     let x = a >> bit & 1;
     let y = b >> bit & 1;
     let xor = gate(5, x, y, 0);
-    let value = gate(5, xor, carry, 0);
     let next_carry = gate(4, gate(3, x, y, 0), gate(3, xor, carry, 0), 0);
-    if (operation == 3) {
-      value = xor;
-    }
-    if (operation == 4) {
-      value = gate(3, x, y, 0);
-    }
-    result = result | value << bit;
+    let value = match (operation) { 3 => xor, 4 => gate(3, x, y, 0), _ => gate(5, xor, carry, 0) };
+    result |= value << bit;
     carry = next_carry;
   }
   if (operation != 2) {
@@ -123,23 +117,31 @@ pub function cpu(instruction: i32, accumulator: i32, pc: i32): i32 {
   let value = accumulator & 15;
   let next = pc + 1 & 15;
   let flags = 0;
-  if (operation == 1) {
-    value = operand;
-  } else if (operation == 2 || operation == 3 || operation == 4) {
-    let output = alu(operation, value, operand);
-    value = output & 15;
-    flags = (output >> 4 & 1) << 10;
-  } else if (operation == 5) {
-    if (value == 0) {
+  match (operation) {
+    1 => {
+      value = operand;
+    },
+    2 | 3 | 4 => {
+      let output = alu(operation, value, operand);
+      value = output & 15;
+      flags = (output >> 4 & 1) << 10;
+    },
+    5 => {
+      if (value == 0) {
+        next = operand;
+      }
+    },
+    6 => {
       next = operand;
-    }
-  } else if (operation == 6) {
-    next = operand;
-  } else if (operation == 7) {
-    flags = flags | 512;
-  } else if (operation == 8) {
-    next = pc & 15;
-    flags = flags | 256;
+    },
+    7 => {
+      flags |= 512;
+    },
+    8 => {
+      next = pc & 15;
+      flags |= 256;
+    },
+    _ => {}
   }
   return value | next << 4 | flags;
 }

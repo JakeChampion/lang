@@ -82,22 +82,18 @@ function approach(value: f64, target: f64, amount: f64): f64 {
 }
 
 pub function advance(own game: Game, left: f64, right: f64, seconds: f64): Game {
-  let dt: f64 = seconds.max(0.0).min(0.05);
+  let dt = seconds.max(0.0).min(0.05);
   game = Game { ...game, left: approach(game.left, left.max(0.105).min(0.895), dt * 1.6) };
-  let target: f64 = right;
-  let speed: f64 = 1.6;
-  if (game.solo) {
-    target = game.y;
-    speed = 0.55;
-  }
+  let target = if (game.solo) { game.y } else { right };
+  let speed = if (game.solo) { 0.55 } else { 1.6 };
   game = Game { ...game, right: approach(game.right, target.max(0.105).min(0.895), dt * speed) };
   if (!game.running) {
     return game;
   }
-  let x: f64 = game.x + game.vx * dt;
-  let y: f64 = game.y + game.vy * dt;
-  let vx: f64 = game.vx;
-  let vy: f64 = game.vy;
+  let x = game.x + game.vx * dt;
+  let y = game.y + game.vy * dt;
+  let vx = game.vx;
+  let vy = game.vy;
   if (y < 0.014) {
     y = 0.028 - y;
     vy = vy.abs();
@@ -139,63 +135,46 @@ function join(state: State, input: Input, peer: string): Result[Joined, string] 
     if (!common.room_name(input.room)) {
       return Err("invalid room code");
     }
-    for candidate in state.rooms.get() {
-      if (candidate.id == input.room) {
-        room = Some(candidate);
-      }
-    }
+    room = find(state, input.room);
     if (room.is_none()) {
       return Err("this room no longer exists");
     }
   } else {
-    let rooms: Room[] = state.rooms.get();
+    let rooms = state.rooms.get();
     if (rooms.len() >= 16) {
-      let kept: Room[] = [];
-      for candidate in rooms {
-        if (candidate.seats[0] != "" || candidate.seats[1] != "") {
-          kept = kept.append(candidate);
-        }
-      }
-      rooms = kept;
+      rooms = rooms |> array.filter((candidate: Room): boolean => candidate.seats[0] != "" || candidate.seats[1] != "");
     }
     if (rooms.len() >= 16) {
       return Err("all game rooms are in use");
     }
-    let created: Room = Room { id: common.token(), game: initial(input.mode != "duo"), seats: ["", ""], targets: [0.5, 0.5], clock: now_ns() };
+    let created = Room { id: common.token(), game: initial(input.mode != "duo"), seats: ["", ""], targets: [0.5, 0.5], clock: now_ns() };
     state.rooms.set(rooms.append(created));
     room = Some(created);
   }
-  match (room) {
-    Some(found) => {
-      let seats: string[] = found.seats;
-      let seat: i32 = -1;
-      if (seats[0] == "") {
-        seat = 0;
-      } else if (!found.game.solo && seats[1] == "") {
-        seat = 1;
-      }
-      if (seat < 0) {
-        return Err("this room already has its players");
-      }
-      store(state, Room { ...found, seats: seats.with(seat, peer) });
-      return Ok(Joined { id: found.id, seat: seat, seq: input.seq });
-    },
-    None => {
-      return Err("room creation failed");
-    }
+  let Some(found) = room else {
+    return Err("room creation failed");
+  };
+  let seats = found.seats;
+  let seat = if (seats[0] == "") { 0 } else if (!found.game.solo && seats[1] == "") { 1 } else { -1 };
+  if (seat < 0) {
+    return Err("this room already has its players");
   }
+  store(state, Room { ...found, seats: seats.with(seat, peer) });
+  return Ok(Joined { id: found.id, seat: seat, seq: input.seq });
 }
 
 function store(state: State, room: Room): void {
-  let rooms: Room[] = state.rooms.get();
-  let at: i32 = 0;
-  while (at < rooms.len()) {
+  let rooms = state.rooms.get();
+  for at in 0..rooms.len() {
     if (rooms[at].id == room.id) {
       state.rooms.set(rooms.with(at, room));
       return;
     }
-    at = at + 1;
   }
+}
+
+function occupied(room: Room): i32 {
+  return room.seats |> array.count_where((seat: string): boolean => seat != "");
 }
 
 function find(state: State, id: string): Option[Room] {
@@ -223,31 +202,29 @@ function reply(state: State, joined: Joined, connection: websocket.Conn, input: 
     connection.close(1008, "room expired");
     return;
   };
-  let game: Game = room.game;
-  let now: i64 = now_ns();
-  let targets: f64[] = room.targets.with(joined.seat, input.y);
+  let now = now_ns();
+  let targets = room.targets.with(joined.seat, input.y);
+  let game = room.game;
   game = advance(game, targets[0], targets[1], (now - room.clock) as f64 / 1000000000.0);
-  let seats: string[] = room.seats;
-  let players: i32 = 0;
-  if (seats[0] != "") {
-    players = players + 1;
-  }
-  if (seats[1] != "") {
-    players = players + 1;
-  }
-  if (input.kind == "start" && (game.solo || players == 2)) {
-    game = Game { ...game, running: true };
-  }
-  if (input.kind == "pause") {
-    game = Game { ...game, running: false };
-  }
-  if (input.kind == "reset") {
-    game = initial(game.solo);
+  let players = occupied(room);
+  match (input.kind) {
+    "start" => {
+      if (game.solo || players == 2) {
+        game = Game { ...game, running: true };
+      }
+    },
+    "pause" => {
+      game = Game { ...game, running: false };
+    },
+    "reset" => {
+      game = initial(game.solo);
+    },
+    _ => {}
   }
   store(state, Room { ...room, game: game, targets: targets, clock: now });
   state.messages.set(state.messages.get() + 1);
-  let frame: Frame = Frame { room: room.id, seat: joined.seat, players: players, game: game, tick: now / 1000000, seq: input.seq, server_us: (now_ns() - started) / 1000 };
-  let sent: websocket.SendResult = connection.send_text(frame.to_json());
+  let frame = Frame { room: room.id, seat: joined.seat, players: players, game: game, tick: now / 1000000, seq: input.seq, server_us: (now_ns() - started) / 1000 };
+  let sent = connection.send_text(frame.to_json());
 }
 ```
 
@@ -262,13 +239,13 @@ A room publication wakes the other player immediately. A background producer sen
 ```fern
 <<Manage connection lifetime>>=
 pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
-  let subscription: live.Subscription = live.subscribe(state.live, "")?;
-  let peer: string = common.token();
-  let session: Cell[Option[Joined]] = cell_new(None as Option[Joined]);
-  let handlers: websocket.Handlers = websocket.Handlers {
+  let subscription = live.subscribe(state.live, "")?;
+  let peer = common.token();
+  let session = cell_new(None as Option[Joined]);
+  let handlers = websocket.Handlers {
     open: (connection: websocket.Conn): void => live.wake(subscription),
     message: (connection: websocket.Conn, message: websocket.Message): void => {
-      let started: i64 = now_ns();
+      let started = now_ns();
       match (message) {
         Text(text) => {
           if (text.len() > 512) {
@@ -287,7 +264,7 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
                     connection.close(1008, "unknown command");
                     return;
                   }
-                  let updated: Joined = Joined { ...joined, seq: input.seq };
+                  let updated = Joined { ...joined, seq: input.seq };
                   session.set(Some(updated));
                   reply(state, updated, connection, input, started);
                   live.notify(state.live, joined.id, subscription.listener.id);
@@ -305,7 +282,7 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
                       live.notify(state.live, joined.id, subscription.listener.id);
                     },
                     Err(message) => {
-                      let sent: websocket.SendResult = connection.send_text("{\"error\":\"" + json.escape(message) + "\"}");
+                      let sent = connection.send_text(f"{{\"error\":\"{json.escape(message)}\"}}");
                       connection.close(1013, message);
                     }
                   }
@@ -325,42 +302,27 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
     drain: (connection: websocket.Conn): void => {},
     close: (connection: websocket.Conn, code: i32, reason: string): void => {
       live.cancel(subscription);
-      match (session.get()) {
-        Some(joined) => {
-          match (find(state, joined.id)) {
-            Some(room) => {
-              let seats: string[] = room.seats;
-              if (seats[joined.seat] == peer) {
-                seats = seats.with(joined.seat, "");
-              }
-              store(state, Room { ...room, seats: seats, game: Game { ...room.game, running: false } });
-              live.notify(state.live, room.id, subscription.listener.id);
-            },
-            None => {}
+      if let Some(joined) = session.get() {
+        if let Some(room) = find(state, joined.id) {
+          let seats = room.seats;
+          if (seats[joined.seat] == peer) {
+            seats = seats.with(joined.seat, "");
           }
-        },
-        None => {}
+          store(state, Room { ...room, seats: seats, game: Game { ...room.game, running: false } });
+          live.notify(state.live, room.id, subscription.listener.id);
+        }
       }
     },
   };
-  let options: websocket.Options = websocket.Options { ...websocket.options(), max_message: 1024, backpressure: 8192, max_backpressure: 65536 };
+  let options = websocket.Options { ...websocket.options(), max_message: 1024, backpressure: 8192, max_backpressure: 65536 };
   match (websocket.accept_with_push(req, options, handlers, (connection: websocket.Conn): void => {
     while (live.wait(subscription)) {
       if let Some(joined) = session.get() {
         if let Some(room) = find(state, joined.id) {
-          let players: i32 = 0;
-          for seat in room.seats {
-            if (seat != "") {
-              players = players + 1;
-            }
-          }
-          let frame: Frame = Frame { room: room.id, seat: joined.seat, players: players, game: room.game, tick: room.clock / 1000000, seq: joined.seq, server_us: 0 };
+          let frame = Frame { room: room.id, seat: joined.seat, players: occupied(room), game: room.game, tick: room.clock / 1000000, seq: joined.seq, server_us: 0 };
           let sent = connection.send_text(frame.to_json());
-          match (connection.flush()) {
-            Dropped => {
-              break;
-            },
-            _ => {}
+          if let Dropped = connection.flush() {
+            break;
           }
         }
       }

@@ -60,10 +60,7 @@ function putword(s: u8[], at: i32, value: i32): u8[] {
 }
 
 function signed(value: i32): i32 {
-  if (value > 127) {
-    return value - 256;
-  }
-  return value;
+  return if (value > 127) { value - 256 } else { value };
 }
 
 function peek(s: u8[], base: i32, ptr: i32, offset: i32, size: i32): i32 {
@@ -172,16 +169,7 @@ function draw_pixel(s: u8[], value: i32): u8[] {
 }
 
 function blend(color: i32, channel: i32): i32 {
-  if (channel == 0) {
-    return color >> 2;
-  }
-  if (channel == 1) {
-    return color & 3;
-  }
-  if (channel == 2) {
-    return (color & 3) % 3 + 1;
-  }
-  return ((color & 3) + 1) % 3 + 1;
+  return match (channel) { 0 => color >> 2, 1 => color & 3, 2 => (color & 3) % 3 + 1, _ => ((color & 3) + 1) % 3 + 1 };
 }
 
 function draw_sprite(s: u8[], value: i32): u8[] {
@@ -197,32 +185,17 @@ function draw_sprite(s: u8[], value: i32): u8[] {
   let addr = word(s, DEV + 0x2c);
   let mode = value >> 7;
   let color = value & 15;
-  let dx = 8;
-  let dy = 8;
-  if ((value & 16) != 0) {
-    dx = -8;
-  }
-  if ((value & 32) != 0) {
-    dy = -8;
-  }
+  let dx = if ((value & 16) != 0) { -8 } else { 8 };
+  let dy = if ((value & 32) != 0) { -8 } else { 8 };
   for n in 0..(auto >> 4) + 1 {
     for row in 0..8 {
       let lo = s[addr + row & 65535] as i32;
-      let hi = 0;
-      if (mode != 0) {
-        hi = s[addr + row + 8 & 65535] as i32;
-      }
+      let hi = if (mode != 0) { s[addr + row + 8 & 65535] as i32 } else { 0 };
       for col in 0..8 {
         let channel = lo >> 7 - col & 1 | (hi >> 7 - col & 1) << 1;
         if (channel != 0 || color % 5 != 0) {
-          let px = col;
-          let py = row;
-          if ((value & 16) != 0) {
-            px = 7 - col;
-          }
-          if ((value & 32) != 0) {
-            py = 7 - row;
-          }
+          let px = if ((value & 16) != 0) { 7 - col } else { col };
+          let py = if ((value & 32) != 0) { 7 - row } else { row };
           s = pixel(s, x + px, y + py, value >> 6 & 1, blend(color, channel));
         }
       }
@@ -266,12 +239,8 @@ function output(s: u8[], port: i32): u8[] {
     }
   }
   if (port == 0x23 || port == 0x25) {
-    let at = DEV + 0x22;
-    let actual = META + 16;
-    if (port == 0x25) {
-      at = DEV + 0x24;
-      actual = META + 18;
-    }
+    let at = if (port == 0x25) { DEV + 0x24 } else { DEV + 0x22 };
+    let actual = if (port == 0x25) { META + 18 } else { META + 16 };
     let size = word(s, at).max(1).min(512);
     let changed = size != word(s, actual);
     s = putword(s, at, size);
@@ -393,13 +362,7 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
       }
     } else {
       // Decode each operand with its specified width before performing effects.
-      let first = size;
-      if (op == 0x10 || op == 0x11 || op == 0x12 || op == 0x13 || op == 0x16 || op == 0x17 || op == 0x1f) {
-        first = 1;
-      }
-      if (op == 0x14 || op == 0x15) {
-        first = 2;
-      }
+      let first = match (op) { 0x10 | 0x11 | 0x12 | 0x13 | 0x16 | 0x17 | 0x1f => 1, 0x14 | 0x15 => 2, _ => size };
       a = peek(s, base, ptr, 0, first);
       consumed = first;
       if (op == 3 || op == 4 || op == 5 || op == 7 || op >= 8 && op <= 11 || op == 0x11 || op == 0x13 || op == 0x15 || op == 0x17 || op >= 0x18) {
@@ -467,12 +430,8 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
       }
       if (op == 12 || op == 13 || op == 14) {
         if (op == 14) {
-          let other = RST;
-          let otherptr = rp;
-          if (ret) {
-            other = WST;
-            otherptr = wp;
-          }
+          let other = if (ret) { WST } else { RST };
+          let otherptr = if (ret) { wp } else { rp };
           s = push(s, other, otherptr, pc, 2);
           if (ret) {
             wp = wp + 2 & 255;
@@ -489,12 +448,8 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
         }
       }
       if (op == 15) {
-        let other = RST;
-        let otherptr = rp;
-        if (ret) {
-          other = WST;
-          otherptr = wp;
-        }
+        let other = if (ret) { WST } else { RST };
+        let otherptr = if (ret) { wp } else { rp };
         s = push(s, other, otherptr, a, size);
         if (ret) {
           wp = wp + size & 255;
@@ -503,19 +458,9 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
         }
       }
       if (op >= 0x10 && op <= 0x17) {
-        let address = a;
-        let mask = 65535;
-        let offset = 0;
-        if (op == 0x10 || op == 0x11) {
-          mask = 255;
-        }
-        if (op == 0x12 || op == 0x13) {
-          address = pc + signed(a) & 65535;
-        }
-        if (op == 0x16 || op == 0x17) {
-          mask = 255;
-          offset = DEV;
-        }
+        let address = if (op == 0x12 || op == 0x13) { pc + signed(a) & 65535 } else { a };
+        let mask = if (op == 0x10 || op == 0x11 || op == 0x16 || op == 0x17) { 255 } else { 65535 };
+        let offset = if (op == 0x16 || op == 0x17) { DEV } else { 0 };
         if (op == 0x16) {
           s = s.with(DEV + 4, wp as u8).with(DEV + 5, rp as u8);
           if (address == 0x22) {
@@ -603,10 +548,7 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
     }
   }
   s = putword(s, META, pc).with(META + 2, wp as u8).with(META + 3, rp as u8);
-  s = s.with(DEV + 4, wp as u8).with(DEV + 5, rp as u8).with(META + 4, 0);
-  if (active) {
-    s = s.with(META + 4, 1);
-  }
+  s = s.with(DEV + 4, wp as u8).with(DEV + 5, rp as u8).with(META + 4, if (active) { 1 } else { 0 });
   s = putword(s, META + 8, steps >> 16);
   return putword(s, META + 10, steps);
 }
@@ -631,74 +573,61 @@ function fail(message: string): u8[] {
   return [1 as u8].concat(message.bytes());
 }
 
-function hex(s: string): i32 {
+function hex(s: string): Option[i32] {
   if (s.len() == 0 || s.len() > 4) {
-    return -1;
+    return None;
   }
   let value = 0;
   for c in s.bytes() {
     let digit = c as i32 - 48;
-    if (c >= 97 && c <= 102) {
+    if (c >= b'a' && c <= b'f') {
       digit = c as i32 - 87;
-    } else if (c < 48 || c > 57) {
-      return -1;
+    } else if (c < b'0' || c > b'9') {
+      return None;
     }
     value = value * 16 + digit;
   }
-  return value;
+  return Some(value);
 }
 
-function opcode(token: string): i32 {
-  if (token == "BRK") {
-    return 0;
-  }
-  if (token == "JCI") {
-    return 32;
-  }
-  if (token == "JMI") {
-    return 64;
-  }
-  if (token == "JSI") {
-    return 96;
+function opcode(token: string): Option[i32] {
+  match (token) {
+    "BRK" => {
+      return Some(0);
+    },
+    "JCI" => {
+      return Some(32);
+    },
+    "JMI" => {
+      return Some(64);
+    },
+    "JSI" => {
+      return Some(96);
+    },
+    _ => {}
   }
   let names = ["LIT", "INC", "POP", "NIP", "SWP", "ROT", "DUP", "OVR", "EQU", "NEQ", "GTH", "LTH", "JMP", "JCN", "JSR", "STH", "LDZ", "STZ", "LDR", "STR", "LDA", "STA", "DEI", "DEO", "ADD", "SUB", "MUL", "DIV", "AND", "ORA", "EOR", "SFT"];
   if (token.len() < 3) {
-    return -1;
+    return None;
   }
-  let op: i32 = -1;
-  for i in 0..names.len() {
-    if (token.take(3) == names[i]) {
-      op = i;
-    }
-  }
-  if (op < 0) {
-    return op;
-  }
-  if (op == 0) {
-    op = 128;
-  }
+  let stem = token.take(3);
+  let Some(index) = array.position(names, (name: string): boolean => name == stem) else {
+    return None;
+  };
+  let op = if (index == 0) { 128 } else { index };
   for c in token.drop(3).bytes() {
-    let flag = 0;
-    if (c == b'2') {
-      flag = 32;
-    }
-    if (c == b'r') {
-      flag = 64;
-    }
-    if (c == b'k') {
-      flag = 128;
-    }
+    let flag = match (c) { b'2' => 32, b'r' => 64, b'k' => 128, _ => 0 };
     if (flag == 0) {
-      return -1;
+      return None;
     }
-    op = op | flag;
+    op |= flag;
   }
-  return op;
+  return Some(op);
 }
 
 function qualify(name: string, scope: string): string {
   if (name.starts_with("&") || name.starts_with("/")) {
-    return scope + "/" + name.drop(1);
+    return f"{scope}/{name.drop(1)}";
   }
   return name;
 }
@@ -711,12 +640,12 @@ function lex(source: string): Result[string[], string] {
   let at = 0;
   let depth = 0;
   while (at < source.len()) {
-    if (source[at] <= 32) {
+    if (source[at] <= b' ') {
       at += 1;
       continue;
     }
     let start = at;
-    while (at < source.len() && source[at] > 32) {
+    while (at < source.len() && source[at] > b' ') {
       at += 1;
     }
     let t = source.drop(start).take(at - start);
@@ -749,15 +678,7 @@ function lex(source: string): Result[string[], string] {
 
 @export("fern:showcase/uxn", "assemble")
 pub function assemble(source: string): u8[] {
-  let tokens: string[] = [];
-  match (lex(source)) {
-    Ok(value) => {
-      tokens = value;
-    },
-    Err(message) => {
-      return fail(message);
-    }
-  }
+  let tokens = match (lex(source)) { Ok(value) => value, Err(message) => { return fail(message); } };
   let labels: Map[string, i32] = map_new(256);
   let macros: Map[string, string[]] = map_new(64);
   let fixups: Fixup[] = [];
@@ -777,7 +698,7 @@ pub function assemble(source: string): u8[] {
     }
     if (t.starts_with("%")) {
       let name = t.drop(1);
-      if (name == "" || macros.contains(name) || labels.contains(name) || opcode(name) >= 0 || hex(name) >= 0) {
+      if (name == "" || macros.contains(name) || labels.contains(name) || opcode(name).is_some() || hex(name).is_some()) {
         return fail("Invalid or duplicate macro: " + name);
       }
       if (i >= tokens.len() || tokens[i] != "{") {
@@ -821,31 +742,23 @@ pub function assemble(source: string): u8[] {
       continue;
     }
     if (t.starts_with("@") || t.starts_with("&")) {
-      let name = t.drop(1);
-      if (t.starts_with("&")) {
-        name = scope + "/" + name;
-      }
-      if (name == "" || labels.contains(name) || macros.contains(name) || opcode(name) >= 0 || hex(name) >= 0) {
+      let name = if (t.starts_with("&")) { f"{scope}/{t.drop(1)}" } else { t.drop(1) };
+      if (name == "" || labels.contains(name) || macros.contains(name) || opcode(name).is_some() || hex(name).is_some()) {
         return fail("Invalid or duplicate label: " + name);
       }
       labels = labels.insert(name, pc);
       if (t.starts_with("@")) {
         scope = name;
-        let slash = name.index_of("/").unwrap_or(-1);
-        if (slash >= 0) {
+        if let Some(slash) = name.index_of("/") {
           scope = name.take(slash);
         }
       }
       continue;
     }
     if (t.starts_with("|") || t.starts_with("$")) {
-      let amount = hex(t.drop(1));
-      if (amount < 0) {
-        amount = labels.get(qualify(t.drop(1), scope)).unwrap_or(-1);
-      }
-      if (amount < 0) {
+      let Some(amount) = hex(t.drop(1)).or(labels.get(qualify(t.drop(1), scope))) else {
         return fail("Unknown padding: " + t);
-      }
+      };
       if (t.starts_with("|")) {
         pc = amount;
       } else {
@@ -858,20 +771,20 @@ pub function assemble(source: string): u8[] {
     }
     let data: u8[] = [];
     let op = opcode(t);
-    if (op >= 0) {
-      data = [op as u8];
+    let raw = hex(t);
+    if let Some(code) = op {
+      data = [code as u8];
     } else if (t.starts_with("\"")) {
       data = t.drop(1).bytes();
-    } else if (hex(t) >= 0 && (t.len() == 2 || t.len() == 4)) {
-      if (t.len() == 4) {
-        data = [(hex(t) >> 8) as u8, hex(t) as u8];
-      } else {
-        data = [hex(t) as u8];
-      }
+    } else if (raw.is_some() && (t.len() == 2 || t.len() == 4)) {
+      let value = raw.unwrap_or(0);
+      data = if (t.len() == 4) { [(value >> 8) as u8, value as u8] } else { [value as u8] };
     } else if (t.starts_with("#")) {
       let h = t.drop(1);
-      let value = hex(h);
-      if (value < 0 || h.len() != 2 && h.len() != 4) {
+      let Some(value) = hex(h) else {
+        return fail("Invalid literal: " + t);
+      };
+      if (h.len() != 2 && h.len() != 4) {
         return fail("Invalid literal: " + t);
       }
       if (h.len() == 4) {
@@ -885,34 +798,37 @@ pub function assemble(source: string): u8[] {
       let name = t.drop(1);
       let literal = false;
       let instruction = 0;
-      if (prefix == "," || prefix == "_") {
-        kind = 1;
-        literal = prefix == ",";
-        instruction = 128;
-      } else if (prefix == "." || prefix == "-") {
-        kind = 2;
-        literal = prefix == ".";
-        instruction = 128;
-      } else if (prefix == ";" || prefix == "=") {
-        kind = 3;
-        literal = prefix == ";";
-        instruction = 160;
-      } else if (prefix == "!" || prefix == "?") {
-        kind = 4;
-        literal = true;
-        instruction = 64;
-        if (prefix == "?") {
-          instruction = 32;
+      match (prefix) {
+        "," | "_" => {
+          kind = 1;
+          literal = prefix == ",";
+          instruction = 128;
+        },
+        "." | "-" => {
+          kind = 2;
+          literal = prefix == ".";
+          instruction = 128;
+        },
+        ";" | "=" => {
+          kind = 3;
+          literal = prefix == ";";
+          instruction = 160;
+        },
+        "!" | "?" => {
+          kind = 4;
+          literal = true;
+          instruction = if (prefix == "?") { 32 } else { 64 };
+        },
+        _ => {
+          kind = 4;
+          literal = true;
+          instruction = 96;
+          name = t;
         }
-      } else {
-        kind = 4;
-        literal = true;
-        instruction = 96;
-        name = t;
       }
       if (name == "{") {
         unique += 1;
-        name = "~anonymous-" + unique.to_string();
+        name = f"~anonymous-{unique}";
         anonymous = anonymous.append(name);
       } else {
         name = qualify(name, scope);

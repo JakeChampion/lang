@@ -46,7 +46,7 @@ pub struct State { instance: string, server: string, directory: string, hosts: W
 
 pub function state(instance: string): State {
   let server = env("FERN_BLOCKYARD_SERVER").unwrap_or("local");
-  let hosts: WorldHost[] = [WorldHost { name: "commons", server: server, origin: "" }, WorldHost { name: "meadow", server: server, origin: "" }, WorldHost { name: "harbor", server: server, origin: "" }];
+  let hosts = [WorldHost { name: "commons", server: server, origin: "" }, WorldHost { name: "meadow", server: server, origin: "" }, WorldHost { name: "harbor", server: server, origin: "" }];
   let error = "";
   if let Some(config) = env("FERN_BLOCKYARD_WORLDS") {
     match (json.decode_array[WorldHost](config)) {
@@ -107,7 +107,7 @@ function host(state: State, name: string): Result[WorldHost, http.HttpError] {
 pub function destination(state: State, request: HttpRequest): Result[Option[string], http.HttpError] {
   let entry = host(state, common.query(request, "world", "commons"))?;
   if (entry.server != state.server) {
-    return Ok(Some(entry.origin + "/blockyard/?world=" + entry.name));
+    return Ok(Some(f"{entry.origin}/blockyard/?world={entry.name}"));
   }
   return Ok(None);
 }
@@ -141,21 +141,20 @@ function load_world(folder: string, name: string): model.World {
       return unavailable;
     }
   }
-  return model.world(name, map_new(4), 0, (blocks: Map[i32, i32], changes: model.Change[], revision: i64): Result[void, string] => Err("World storage is unavailable."));
 }
 
 pub function participants(state: State): i32 {
-  let count: i32 = 0;
+  let count = 0;
   for value in state.worlds {
-    count = count + value.count.get();
+    count += value.count.get();
   }
   return count;
 }
 
 pub function edited_blocks(state: State): i32 {
-  let count: i32 = 0;
+  let count = 0;
   for value in state.worlds {
-    count = count + value.blocks.get().len();
+    count += value.blocks.get().len();
   }
   return count;
 }
@@ -163,7 +162,7 @@ pub function edited_blocks(state: State): i32 {
 pub function inputs(state: State): i64 {
   let count: i64 = 0;
   for value in state.worlds {
-    count = count + value.inputs.get();
+    count += value.inputs.get();
   }
   return count;
 }
@@ -205,14 +204,11 @@ pub function chunk(state: State, request: HttpRequest): Result[HttpResponse, htt
   let z = common.integer(request, "z", 16, 0, 31)?;
   let at = z * 32 + x;
   let revision = value.versions.get().get(at).unwrap_or(0 as i64);
-  let etag = "\"blockyard-1-" + value.name + "-" + at.to_string() + "-" + revision.to_string() + "\"";
+  let etag = f"\"blockyard-1-{value.name}-{at}-{revision}\"";
   if (request.headers.get("If-None-Match").unwrap_or("") == etag) {
     return Ok(http.text(304, "").with_header("ETag", etag));
   }
-  let blocks: Block[] = [];
-  for entry in value.chunks.get().get(at).unwrap_or([] as (i32, i32)[]) {
-    blocks = blocks.append(Block { at: entry.0, material: entry.1 });
-  }
+  let blocks = value.chunks.get().get(at).unwrap_or([] as (i32, i32)[]) |> array.map((entry: (i32, i32)): Block => Block { at: entry.0, material: entry.1 });
   return Ok(http.json_of(Chunk { x: x, z: z, revision: revision, blocks: blocks }).with_header("ETag", etag).with_header("Cache-Control", "no-cache"));
 }
 ```
@@ -269,32 +265,37 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
             connection.close(1008, "Send a sixteen-byte control or block packet.");
             return;
           }
-          if (bytes[0] == 1) {
-            match (model.control(value, seat, bytes, started)) {
-              Ok(seq) => {
-                if let websocket.Dropped = connection.send_binary(model.acknowledgement(seq, started)) {
-                  connection.close(1013, "Cannot receive input acknowledgements.");
+          match (bytes[0]) {
+            1 => {
+              match (model.control(value, seat, bytes, started)) {
+                Ok(seq) => {
+                  if let websocket.Dropped = connection.send_binary(model.acknowledgement(seq, started)) {
+                    connection.close(1013, "Cannot receive input acknowledgements.");
+                  }
+                },
+                Err(error) => {
+                  connection.close(1008, error);
                 }
-              },
-              Err(error) => {
-                connection.close(1008, error);
               }
-            }
-          } else if (bytes[0] == 2) {
-            if let Err(error) = model.queue_edit(value, seat, bytes, started) {
-              rejected(connection, model.read32(bytes, 10), error);
-            }
-          } else if (bytes[0] == 3) {
-            match (model.travel(value, seat, bytes, started)) {
-              Ok(player) => {
-                let result = connection.send_text(Travel { kind: "travel", seq: player.seq, x: player.x, y: player.y, z: player.z }.to_json());
-              },
-              Err(error) => {
-                rejected(connection, 0, error);
+            },
+            2 => {
+              if let Err(error) = model.queue_edit(value, seat, bytes, started) {
+                rejected(connection, model.read32(bytes, 10), error);
               }
+            },
+            3 => {
+              match (model.travel(value, seat, bytes, started)) {
+                Ok(player) => {
+                  let result = connection.send_text(Travel { kind: "travel", seq: player.seq, x: player.x, y: player.y, z: player.z }.to_json());
+                },
+                Err(error) => {
+                  rejected(connection, 0, error);
+                }
+              }
+            },
+            _ => {
+              connection.close(1008, "Unknown control packet.");
             }
-          } else {
-            connection.close(1008, "Unknown control packet.");
           }
         },
         Text(_) => {
@@ -349,7 +350,7 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
               connection.close(1013, "Cannot receive block results.");
             }
           }
-          at = at + 1;
+          at += 1;
         }
         if let websocket.Dropped = connection.send_text(model.delta(value, model.sector(player), cursor.get())) {
           connection.close(1013, "Cannot receive block updates.");

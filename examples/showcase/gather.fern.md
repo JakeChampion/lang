@@ -104,10 +104,8 @@ function start_round(state: State, now: i64): void {
   state.seeds.set(seeds);
   let players = state.players.get();
   state.players.set([] as Player[]);
-  let at: i32 = 0;
-  while (at < players.len()) {
+  for at in 0..players.len() {
     players = players.with(at, Player { ...players[at], score: 0 });
-    at = at + 1;
   }
   state.players.set(players);
 }
@@ -124,9 +122,9 @@ pub function reserve(state: State): Result[Seat, http.HttpError] {
   }
   let players = state.players.get();
   state.players.set([] as Player[]);
-  let at: i32 = 0;
+  let at = 0;
   while (at < players.len() && players[at].key != "") {
-    at = at + 1;
+    at += 1;
   }
   let key = common.token();
   let point = new_seed(state, at % 64);
@@ -185,11 +183,8 @@ pub function collected(seed: Seed, before: Player, after: Player): boolean {
   let dx = after.x - before.x;
   let dy = after.y - before.y;
   let length = dx * dx + dy * dy;
-  let fraction: f64 = 0;
-  if (length > 0.0) {
-    fraction = ((seed.x - before.x) * dx + (seed.y - before.y) * dy) / length;
-  }
-  fraction = fraction.max(0.0).min(1.0);
+  let projected = if (length > 0.0) { ((seed.x - before.x) * dx + (seed.y - before.y) * dy) / length } else { 0.0 };
+  let fraction = projected.max(0.0).min(1.0);
   let x = before.x + dx * fraction - seed.x;
   let y = before.y + dy * fraction - seed.y;
   return x * x + y * y <= 144.0;
@@ -205,10 +200,7 @@ pub function advance(state: State, now: i64): void {
       return;
     }
   }
-  let seconds: f64 = 0.0;
-  if let Some(last) = previous {
-    seconds = ((now - last) as f64 / 1000000000.0).min(0.1);
-  }
+  let seconds = if let Some(last) = previous { ((now - last) as f64 / 1000000000.0).min(0.1) } else { 0.0 };
   state.updated.set(Some(now));
   state.tick.set(state.tick.get() + 1);
   if let Some(restart) = state.restart.get() {
@@ -221,35 +213,29 @@ pub function advance(state: State, now: i64): void {
   }
   let seeds = state.seeds.get();
   state.seeds.set([] as Seed[]);
-  let index: i32 = 0;
-  while (index < seeds.len()) {
+  for index in 0..seeds.len() {
     if let Some(ready) = seeds[index].ready {
       if (ready <= now) {
         seeds = seeds.with(index, new_seed(state, index));
       }
     }
-    index = index + 1;
   }
   let players = state.players.get();
   state.players.set([] as Player[]);
-  let visited: i32 = 0;
-  while (visited < players.len()) {
+  for visited in 0..players.len() {
     let at = (visited + (state.tick.get() % (players.len() as i64)) as i32) % players.len();
     let before = players[at];
     if (before.key != "" && now - before.seen > 60000000000) {
       players = players.with(at, empty_player());
       state.count.set(state.count.get() - 1);
-      visited = visited + 1;
       continue;
     }
     if (before.key != "" && state.restart.get().is_none()) {
       let player = move(Player { ...before }, seconds);
       let column = (player.x / 128.0) as i32;
       let row = (player.y / 80.0) as i32;
-      let cy = (row - 1).max(0);
-      while (cy <= (row + 1).min(7)) {
-        let cx = (column - 1).max(0);
-        while (cx <= (column + 1).min(7)) {
+      for cy in (row - 1).max(0)..=(row + 1).min(7) {
+        for cx in (column - 1).max(0)..=(column + 1).min(7) {
           let pos = cy * 8 + cx;
           let seed = seeds[pos];
           if (seed.ready.is_none() && collected(seed, before, player)) {
@@ -257,13 +243,10 @@ pub function advance(state: State, now: i64): void {
             player = Player { ...player, score: player.score + 1 };
             state.pooled.set(state.pooled.get() + 1);
           }
-          cx = cx + 1;
         }
-        cy = cy + 1;
       }
       players = players.with(at, player);
     }
-    visited = visited + 1;
   }
   state.players.set(players);
   state.seeds.set(seeds);
@@ -333,11 +316,8 @@ pub function input(state: State, seat: Seat, bytes: u8[]): Result[i64, string] {
 
 pub function snapshot(state: State, now: i64): u8[] {
   let out = __alloc_u8(32 + state.count.get() * 12 + 64 * 5);
-  let phase: u8 = 0;
-  if (state.restart.get().is_some()) {
-    phase = 1;
-  }
-  out = out.with(0, 70).with(1, 67).with(2, 1).with(3, phase).with(30, 0).with(31, 0);
+  let phase: u8 = if (state.restart.get().is_some()) { 1 } else { 0 };
+  out = out.with(0, b'F').with(1, b'C').with(2, 1).with(3, phase).with(30, 0).with(31, 0);
   out = put32(out, 4, state.tick.get());
   out = put16(out, 8, state.round.get());
   out = put16(out, 10, state.count.get());
@@ -348,8 +328,8 @@ pub function snapshot(state: State, now: i64): u8[] {
   out = put16(out, 24, 64);
   out = put16(out, 26, WIDTH);
   out = put16(out, 28, HEIGHT);
-  let at: i32 = 32;
-  let id: i32 = 1;
+  let at = 32;
+  let id = 1;
   for player in state.players.get() {
     if (player.key != "") {
       out = put16(out, at, id);
@@ -357,26 +337,23 @@ pub function snapshot(state: State, now: i64): u8[] {
       out = put16(out, at + 4, (player.y * 16.0) as i32);
       out = put16(out, at + 6, player.score);
       out = put32(out, at + 8, player.applied);
-      at = at + 12;
+      at += 12;
     }
-    id = id + 1;
+    id += 1;
   }
   for seed in state.seeds.get() {
     out = put16(out, at, (seed.x * 16.0) as i32);
     out = put16(out, at + 2, (seed.y * 16.0) as i32);
-    let available: u8 = 0;
-    if (seed.ready.is_none()) {
-      available = 1;
-    }
+    let available: u8 = if (seed.ready.is_none()) { 1 } else { 0 };
     out = out.with(at + 4, available);
-    at = at + 5;
+    at += 5;
   }
   return out;
 }
 
 function acknowledgement(seq: i64, started: i64): u8[] {
   let out = __alloc_u8(12);
-  out = out.with(0, 70).with(1, 65).with(2, 1).with(3, 0);
+  out = out.with(0, b'F').with(1, b'A').with(2, 1).with(3, 0);
   out = put32(out, 4, seq);
   return put32(out, 8, (monotonic_ns() - started) / 1000);
 }

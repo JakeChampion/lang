@@ -74,13 +74,17 @@ Three bytes pack its coordinates so the native reference route and browser use t
 ```fern
 <<Scene geometry>>=
 function center(index: i32, scene: i32): V {
-  if (index == 0) {
-    return V { x: 0.0, y: -1000.5, z: 0.0 };
+  match (index) {
+    0 => {
+      return V { x: 0.0, y: -1000.5, z: 0.0 };
+    },
+    2 => {
+      return V { x: ((scene & 255) - 128) as f64 / 32.0, y: ((scene >> 8 & 255) - 128) as f64 / 32.0, z: ((scene >> 16 & 255) - 128) as f64 / 32.0 };
+    },
+    _ => {
+      return V { x: (index - 2) as f64 * 1.15, y: 0.0, z: -1.0 };
+    }
   }
-  if (index == 2) {
-    return V { x: ((scene & 255) - 128) as f64 / 32.0, y: ((scene >> 8 & 255) - 128) as f64 / 32.0, z: ((scene >> 16 & 255) - 128) as f64 / 32.0 };
-  }
-  return V { x: (index - 2) as f64 * 1.15, y: 0.0, z: -1.0 };
 }
 ```
 
@@ -93,10 +97,7 @@ A missing intersection returns a distant sentinel inside this numerical kernel. 
 <<Ray intersection>>=
 function intersect(origin: V, direction: V, index: i32, scene: i32): f64 {
   let offset = add(origin, scale(center(index, scene), -1.0));
-  let radius = 0.5;
-  if (index == 0) {
-    radius = 1000.0;
-  }
+  let radius = if (index == 0) { 1000.0 } else { 0.5 };
   let b = dot(offset, direction);
   let discriminant = b * b - dot(offset, offset) + radius * radius;
   if (discriminant < 0.0) {
@@ -159,18 +160,15 @@ The floor pattern makes camera motion and reflected geometry easy to see.
 <<Trace the path>>=
 let throughput = V { x: 1.0, y: 1.0, z: 1.0 };
 let result = V { x: 0.0, y: 0.0, z: 0.0 };
-let bounce = 0;
-while (bounce < 5) {
+for bounce in 0..5 {
   let distance = 1e20;
-  let hit = 0 - 1;
-  let i = 0;
-  while (i < 4) {
+  let hit = -1;
+  for i in 0..4 {
     let t = intersect(origin, direction, i, scene);
     if (t < distance) {
       distance = t;
       hit = i;
     }
-    i = i + 1;
   }
   if (hit < 0) {
     let sky = 0.5 * (direction.y + 1.0);
@@ -180,32 +178,29 @@ while (bounce < 5) {
   origin = add(origin, scale(direction, distance));
   let normal = unit(add(origin, scale(center(hit, scene), -1.0)));
   let albedo = V { x: 0.65, y: 0.65, z: 0.65 };
-  if (hit == 0) {
-    let checker = origin.x.floor() as i32 + origin.z.floor() as i32 & 1;
-    if (checker == 0) {
-      albedo = V { x: 0.78, y: 0.72, z: 0.58 };
-    } else {
-      albedo = V { x: 0.22, y: 0.28, z: 0.36 };
-    }
-  }
-  if (hit == 1) {
-    albedo = V { x: 0.85, y: 0.18, z: 0.10 };
-  }
-  if (hit == 2) {
-    albedo = V { x: 0.12, y: 0.65, z: 0.35 };
-  }
-  if (hit == 3) {
-    albedo = V { x: 0.7, y: 0.75, z: 0.9 };
+  match (hit) {
+    0 => {
+      let checker = origin.x.floor() as i32 + origin.z.floor() as i32 & 1;
+      albedo = if (checker == 0) { V { x: 0.78, y: 0.72, z: 0.58 } } else { V { x: 0.22, y: 0.28, z: 0.36 } };
+    },
+    1 => {
+      albedo = V { x: 0.85, y: 0.18, z: 0.10 };
+    },
+    2 => {
+      albedo = V { x: 0.12, y: 0.65, z: 0.35 };
+    },
+    3 => {
+      albedo = V { x: 0.7, y: 0.75, z: 0.9 };
+    },
+    _ => {}
   }
   throughput = V { x: throughput.x * albedo.x, y: throughput.y * albedo.y, z: throughput.z * albedo.z };
   let light = unit(V { x: -0.6, y: 0.9, z: 0.4 });
   let shadow = false;
-  i = 1;
-  while (i < 4) {
+  for i in 1..4 {
     if (intersect(add(origin, scale(normal, 0.002)), light, i, scene) < 1e19) {
       shadow = true;
     }
-    i = i + 1;
   }
   if (!shadow) {
     result = add(result, scale(throughput, dot(normal, light).max(0.0) * 0.6));
@@ -220,7 +215,6 @@ while (bounce < 5) {
     direction = unit(add(normal, random));
   }
   origin = add(origin, scale(normal, 0.002));
-  bounce = bounce + 1;
 }
 ```
 

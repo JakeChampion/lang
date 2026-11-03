@@ -117,10 +117,7 @@ pub function terrain(x: i32, y: i32, z: i32): i32 {
 
 @export("fern:showcase/voxel", "solid")
 pub function solid(material: i32): i32 {
-  if (material > 0 && material != 11) {
-    return 1;
-  }
-  return 0;
+  return if (material > 0 && material != 11) { 1 } else { 0 };
 }
 ```
 
@@ -155,17 +152,19 @@ pub function clip(x: f64, y: f64, z: f64, delta: f64, axis: i32, low: i32, high:
   let nx = x;
   let ny = y;
   let nz = z;
-  if (axis == 0) {
-    nx += delta;
+  match (axis) {
+    0 => {
+      nx += delta;
+    },
+    1 => {
+      ny += delta;
+    },
+    2 => {
+      nz += delta;
+    },
+    _ => {}
   }
-  if (axis == 1) {
-    ny += delta;
-  }
-  if (axis == 2) {
-    nz += delta;
-  }
-  let at = 0;
-  while (at < 45) {
+  for at in 0..45 {
     if ((mask >> at as u64 & 1) != 0) {
       let bx = (ox + at % 3) as f64;
       let by = (oy + at / 9) as f64;
@@ -193,15 +192,8 @@ pub function clip(x: f64, y: f64, z: f64, delta: f64, axis: i32, low: i32, high:
         }
       }
     }
-    at += 1;
   }
-  if (axis == 0) {
-    return nx.max(0.31).min(511.69);
-  }
-  if (axis == 1) {
-    return ny.max(1.0).min(45.9);
-  }
-  return nz.max(0.31).min(511.69);
+  return match (axis) { 0 => nx.max(0.31).min(511.69), 1 => ny.max(1.0).min(45.9), _ => nz.max(0.31).min(511.69) };
 }
 ```
 
@@ -224,7 +216,7 @@ function main(): i32 {
 function main(): i32 {
   if (height(256, 256) != 13 || terrain(256, 0, 256) != 3 || terrain(256, 30, 256) != 0) { return 1; }
   if (solid(11) != 0 || solid(8) != 1) { return 2; }
-  let wall: i32 = 1 << 14;
+  let wall = 1 << 14;
   let clipped = clip(2.5, 2.0, 2.5, 0.4, 0, wall, 0);
   if (clipped < 2.699 || clipped > 2.701) { return 3; }
   if (vertical(0.0, 1, 1, 0, 0.0, 0.025) != 7.5) { return 4; }

@@ -61,56 +61,45 @@ pub function room(state: State, app: string, name: string): Result[Room, http.Ht
   if (!common.room_name(name) || app != "foundry" && app != "patchbay" && app != "circuit") {
     return Err(http.fail(400, "Invalid project name."));
   }
-  let key = app + "/" + name;
-  let at = 0;
-  for project in state.projects.get() {
-    if (project.name == key) {
-      return Ok(Room { state: state, at: at });
-    }
-    at = at + 1;
+  let key = f"{app}/{name}";
+  let projects = state.projects.get();
+  if let Some(at) = array.position(projects, (project: Project): boolean => project.name == key) {
+    return Ok(Room { state: state, at: at });
   }
+  let at = projects.len();
   if (at >= 24) {
     return Err(http.fail(429, "All project rooms are in use."));
   }
-  let size = 65536;
-  if (app == "patchbay") {
-    size = 512;
+  let size = if (app == "patchbay") { 512 } else { 65536 };
+  let cells = __alloc_i32(size);
+  match (app) {
+    "foundry" => {
+      for i in 0..30 {
+        cells = cells.with(2570 + i, 2);
+      }
+      cells = cells.with(2570, 1).with(2599, 6);
+      cells = cells.with(3850, 1).with(3851, 2).with(3852, 7).with(3860, 6);
+      for x in 13..20 {
+        cells = cells.with(3840 + x, 2);
+      }
+      cells = cells.with(4363, 8).with(4364, 10).with(4108, 10);
+      cells = cells.with(5130, 1).with(5131, 11).with(5152, 11).with(5153, 2).with(5154, 6);
+      for x in 12..32 {
+        cells = cells.with(5120 + x, 9);
+      }
+    },
+    "patchbay" => {
+      for i in 0..16 {
+        cells = cells.with(i * 8 + i % 4 * 2, 1);
+      }
+      cells = cells.with(128, 110).with(130, 6000).with(131, 25).with(132, 5);
+    },
+    "circuit" => {
+      cells = cells.with(0, 9).with(3, 8).with(6, 5).with(7, 0).with(8, 1).with(9, 3).with(10, 0).with(11, 1);
+    },
+    _ => {}
   }
-  let cells: i32[] = __alloc_i32(size);
-  if (app == "foundry") {
-    let i = 0;
-    while (i < 30) {
-      cells = cells.with(2570 + i, 2);
-      i = i + 1;
-    }
-    cells = cells.with(2570, 1).with(2599, 6);
-    cells = cells.with(3850, 1).with(3851, 2).with(3852, 7).with(3860, 6);
-    for x in 13..20 {
-      cells = cells.with(3840 + x, 2);
-    }
-    cells = cells.with(4363, 8).with(4364, 10).with(4108, 10);
-    cells = cells.with(5130, 1).with(5131, 11).with(5152, 11).with(5153, 2).with(5154, 6);
-    for x in 12..32 {
-      cells = cells.with(5120 + x, 9);
-    }
-  }
-  if (app == "patchbay") {
-    let i = 0;
-    while (i < 16) {
-      cells = cells.with(i * 8 + i % 4 * 2, 1);
-      i = i + 1;
-    }
-  }
-  if (app == "patchbay") {
-    cells = cells.with(128, 110).with(130, 6000).with(131, 25).with(132, 5);
-  }
-  if (app == "circuit") {
-    cells = cells.with(0, 9).with(3, 8).with(6, 5).with(7, 0).with(8, 1).with(9, 3).with(10, 0).with(11, 1);
-  }
-  let factory_size = 0;
-  if (app == "foundry") {
-    factory_size = size;
-  }
+  let factory_size = if (app == "foundry") { size } else { 0 };
   let factory = foundry.factory(factory_size);
   if (factory_size > 0) {
     factory = foundry.configure(cells, factory, 256);
@@ -141,23 +130,19 @@ function apply_edit(room: Room, points: i32[], values: i32[], sender: string): R
     }
   }
   let changed: i32[] = [];
-  let check = 0;
-  while (check < points.len()) {
+  for check in 0..points.len() {
     if (!valid_edit(p.name, points[check], values[check])) {
       return Err(http.fail(400, "Invalid cell value for this project."));
     }
     if (p.cells[points[check]] != values[check]) {
       changed = changed.append(points[check]);
     }
-    check = check + 1;
   }
   if (changed.len() == 0) {
     return Ok(p.revision);
   }
-  let i = 0;
-  while (i < points.len()) {
+  for i in 0..points.len() {
     p = Project { ...p, cells: p.cells.with(points[i], values[i]) };
-    i = i + 1;
   }
   let event = Change { kind: "change", revision: p.revision + 1, points: points, values: values, sender: sender };
   if (p.factory.cargo.len() > 0) {
@@ -205,11 +190,11 @@ function pending(room: Room, cursor: Cell[i64], connection: websocket.Conn, clie
 pub function socket(state: State, app: string, req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
   let room = room(state, app, common.query(req, "room", "commons"))?;
   let subscription = live.subscribe(state.live, state.projects.get()[room.at].name)?;
-  let cursor = cell_new(0i64 - 1);
-  let sequence = cell_new(0i64 - 1);
+  let cursor = cell_new(-1i64);
+  let sequence = cell_new(-1i64);
   let last = cell_new(monotonic_ns());
   let credits = cell_new(32i64);
-  let factory_cursor = cell_new(0i64 - 1);
+  let factory_cursor = cell_new(-1i64);
   let handlers = websocket.Handlers {
     open: (connection: websocket.Conn): void => {
       pending(room, cursor, connection, subscription.listener.id);
@@ -235,49 +220,49 @@ pub function socket(state: State, app: string, req: HttpRequest): Result[HttpRes
           if (refill > 0) {
             last.set(last.get() + refill * 5000000);
           }
-          if (input.kind == "sync") {
-            let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
-            return;
-          }
-          if (input.kind == "program") {
-            if (app != "circuit" || input.points.len() != 1 || input.values.len() != 1 || input.points[0] < 0 || input.points[0] > 15 || input.values[0] < 0 || input.values[0] > 143) {
-              connection.close(1008, "Invalid processor instruction.");
-              return;
-            }
-            let old = state.projects.get()[room.at];
-            let p = Project { ...old, program: old.program.with(input.points[0], input.values[0]) };
-            let saved = record(room, p, Change { kind: "program", revision: p.revision + 1, points: input.points, values: input.values, sender: subscription.listener.id });
-            let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
-            pending(room, cursor, connection, subscription.listener.id);
-            return;
-          }
-          if (input.kind == "note") {
-            if (app != "patchbay" || input.points.len() != 1 || input.values.len() != 1 || input.points[0] < 36 || input.points[0] > 96 || input.values[0] < 0 || input.values[0] > 1) {
-              connection.close(1008, "Invalid live note.");
-              return;
-            }
-            let p = state.projects.get()[room.at];
-            let played = record(room, p, Change { kind: "note", revision: p.revision + 1, points: input.points, values: input.values, sender: subscription.listener.id });
-            let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
-            pending(room, cursor, connection, subscription.listener.id);
-            return;
-          }
-          if (input.kind != "edit") {
-            if (app != "foundry" || !control(room, input.kind)) {
-              connection.close(1008, "Unknown project command.");
-              return;
-            }
-            let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
-            factory_pending(room, factory_cursor, connection);
-            return;
-          }
-          match (apply_edit(room, input.points, input.values, subscription.listener.id)) {
-            Ok(revision) => {
-              let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
+          match (input.kind) {
+            "sync" => {
+              let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
+            },
+            "program" => {
+              if (app != "circuit" || input.points.len() != 1 || input.values.len() != 1 || input.points[0] < 0 || input.points[0] > 15 || input.values[0] < 0 || input.values[0] > 143) {
+                connection.close(1008, "Invalid processor instruction.");
+                return;
+              }
+              let old = state.projects.get()[room.at];
+              let p = Project { ...old, program: old.program.with(input.points[0], input.values[0]) };
+              let saved = record(room, p, Change { kind: "program", revision: p.revision + 1, points: input.points, values: input.values, sender: subscription.listener.id });
+              let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
               pending(room, cursor, connection, subscription.listener.id);
             },
-            Err(error) => {
-              connection.close(1008, error.detail);
+            "note" => {
+              if (app != "patchbay" || input.points.len() != 1 || input.values.len() != 1 || input.points[0] < 36 || input.points[0] > 96 || input.values[0] < 0 || input.values[0] > 1) {
+                connection.close(1008, "Invalid live note.");
+                return;
+              }
+              let p = state.projects.get()[room.at];
+              let played = record(room, p, Change { kind: "note", revision: p.revision + 1, points: input.points, values: input.values, sender: subscription.listener.id });
+              let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
+              pending(room, cursor, connection, subscription.listener.id);
+            },
+            "edit" => {
+              match (apply_edit(room, input.points, input.values, subscription.listener.id)) {
+                Ok(revision) => {
+                  let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
+                  pending(room, cursor, connection, subscription.listener.id);
+                },
+                Err(error) => {
+                  connection.close(1008, error.detail);
+                }
+              }
+            },
+            _ => {
+              if (app != "foundry" || !control(room, input.kind)) {
+                connection.close(1008, "Unknown project command.");
+                return;
+              }
+              let sent = connection.send_text(Ack { kind: "ack", seq: input.seq, revision: state.projects.get()[room.at].revision, server_us: (monotonic_ns() - started) / 1000, server_ms: now_unix_ms() }.to_json());
+              factory_pending(room, factory_cursor, connection);
             }
           }
         },
@@ -338,7 +323,7 @@ function put64(bytes: u8[], at: i32, value: i64): u8[] {
 }
 
 function header(bytes: u8[], p: Project, publication: i64, base: i64, count: i32, delta: boolean): u8[] {
-  let out = bytes.with(0, 70 as u8).with(1, 70 as u8).with(2, 2 as u8);
+  let out = bytes.with(0, b'F').with(1, b'F').with(2, 2 as u8);
   if (delta) {
     out = out.with(3, 1 as u8);
   }
@@ -361,28 +346,25 @@ function header(bytes: u8[], p: Project, publication: i64, base: i64, count: i32
 function packets(p: Project): Project {
   let size = p.factory.cargo.len();
   let publication = p.publication + 1;
-  let full: u8[] = __alloc_u8(96 + size * 3);
+  let full = __alloc_u8(96 + size * 3);
   let changed: i32[] = [];
-  let i = 0;
-  while (i < size) {
+  for i in 0..size {
     let state = p.factory.cargo[i];
     let power = p.factory.powered[i];
     full = full.with(96 + i * 3, (state & 255) as u8).with(97 + i * 3, (state >> 8 & 255) as u8).with(98 + i * 3, power as u8);
     if (p.sent_cargo.len() != size || p.sent_cargo[i] != state || p.sent_power[i] != power) {
       changed = changed.append(i);
     }
-    i = i + 1;
   }
   full = header(full, p, publication, p.publication, size, false);
   let delta = full;
   if (changed.len() * 5 < size * 3) {
     delta = __alloc_u8(96 + changed.len() * 5);
-    i = 0;
-    for at in changed {
+    for i in 0..changed.len() {
+      let at = changed[i];
       let state = p.factory.cargo[at];
       delta = delta.with(96 + i * 5, (at & 255) as u8).with(97 + i * 5, (at >> 8 & 255) as u8);
       delta = delta.with(98 + i * 5, (state & 255) as u8).with(99 + i * 5, (state >> 8 & 255) as u8).with(100 + i * 5, p.factory.powered[at] as u8);
-      i = i + 1;
     }
     delta = header(delta, p, publication, p.publication, changed.len(), true);
   }
@@ -402,7 +384,7 @@ function factory_pending(room: Room, cursor: Cell[i64], connection: websocket.Co
   }
   while (p.running && now - p.updated >= foundry.PERIOD && steps < 4) {
     p = Project { ...p, factory: foundry.step(p.cells, p.factory, 256), updated: p.updated + foundry.PERIOD, packet: [] };
-    steps = steps + 1;
+    steps += 1;
   }
   if (steps > 0) {
     p = Project { ...p, step_us: ((monotonic_ns() - started) / 1000 / steps).min(2147483647i64) as i32 };
@@ -415,10 +397,7 @@ function factory_pending(room: Room, cursor: Cell[i64], connection: websocket.Co
     live.notify(room.state.live, p.name, "");
   }
   if (cursor.get() != p.publication) {
-    let bytes = p.packet;
-    if (cursor.get() == p.base_publication) {
-      bytes = p.delta;
-    }
+    let bytes = if (cursor.get() == p.base_publication) { p.delta } else { p.packet };
     if let websocket.Dropped = connection.send_binary(bytes) {
       connection.close(1013, "Factory receiver is too slow.");
       return;
@@ -429,16 +408,22 @@ function factory_pending(room: Room, cursor: Cell[i64], connection: websocket.Co
 
 function control(room: Room, command: string): boolean {
   let p = room.state.projects.get()[room.at];
-  if (command == "pause") {
-    p = Project { ...p, running: false };
-  } else if (command == "resume") {
-    p = Project { ...p, running: true, updated: monotonic_ns() };
-  } else if (command == "step") {
-    p = Project { ...p, running: false, factory: foundry.step(p.cells, p.factory, 256) };
-  } else if (command == "reset") {
-    p = Project { ...p, factory: foundry.configure(p.cells, foundry.factory(p.cells.len()), 256), updated: monotonic_ns() };
-  } else {
-    return false;
+  match (command) {
+    "pause" => {
+      p = Project { ...p, running: false };
+    },
+    "resume" => {
+      p = Project { ...p, running: true, updated: monotonic_ns() };
+    },
+    "step" => {
+      p = Project { ...p, running: false, factory: foundry.step(p.cells, p.factory, 256) };
+    },
+    "reset" => {
+      p = Project { ...p, factory: foundry.configure(p.cells, foundry.factory(p.cells.len()), 256), updated: monotonic_ns() };
+    },
+    _ => {
+      return false;
+    }
   }
   room.state.projects.set(room.state.projects.get().with(room.at, Project { ...p, packet: [] }));
   live.notify(room.state.live, p.name, "");
@@ -461,22 +446,26 @@ function valid_edit(name: string, point: i32, value: i32): boolean {
   if (point < 128) {
     return value <= 1;
   }
-  if (point == 128) {
-    return value >= 40 && value <= 240;
+  match (point) {
+    128 => {
+      return value >= 40 && value <= 240;
+    },
+    129 => {
+      return value <= 3;
+    },
+    130 => {
+      return value >= 100 && value <= 12000;
+    },
+    131 => {
+      return value <= 65;
+    },
+    132 => {
+      return value >= 5 && value <= 40;
+    },
+    _ => {
+      return value == 0;
+    }
   }
-  if (point == 129) {
-    return value <= 3;
-  }
-  if (point == 130) {
-    return value >= 100 && value <= 12000;
-  }
-  if (point == 131) {
-    return value <= 65;
-  }
-  if (point == 132) {
-    return value >= 5 && value <= 40;
-  }
-  return value == 0;
 }
 
 @derive(json.Json, json.FromJson)
@@ -492,24 +481,22 @@ pub function checkpoint(state: State, app: string, request: HttpRequest): Result
   }
   let p = state.projects.get()[target.at];
   let saved = SavedProject { version: 1, application: app, revision: p.revision, cells: p.cells, factory: p.factory, running: p.running, program: p.program };
-  store.save(state.directory, app + "-" + common.query(request, "room", "commons"), saved.to_json()).map_err((e: string): http.HttpError => http.fail(503, e))?;
+  store.save(state.directory, f"{app}-{common.query(request, "room", "commons")}", saved.to_json()).map_err((e: string): http.HttpError => http.fail(503, e))?;
   return Ok(http.json_of(Checkpoint { revision: p.revision, persistent: true }));
 }
 
 function saved_project(state: State, app: string, name: string, initial: Project): Result[Project, http.HttpError] {
-  let Some(value) = store.load(state.directory, app + "-" + name).map_err((e: string): http.HttpError => http.fail(503, e))? else {
+  let Some(value) = store.load(state.directory, f"{app}-{name}").map_err((e: string): http.HttpError => http.fail(503, e))? else {
     return Ok(initial);
   };
   let saved = json.decode[SavedProject](value).map_err((e: json.JsonError): http.HttpError => http.fail(503, e.message()))?;
   if (saved.version != 1 || saved.program.len() != 16 || saved.application != app || saved.revision < 0 || saved.cells.len() != initial.cells.len() || saved.factory.cargo.len() != initial.factory.cargo.len() || saved.factory.powered.len() != initial.factory.powered.len()) {
     return Err(http.fail(503, "The saved project has an unsupported schema."));
   }
-  let i = 0;
-  for value in saved.cells {
-    if (!valid_edit(initial.name, i, value)) {
+  for i in 0..saved.cells.len() {
+    if (!valid_edit(initial.name, i, saved.cells[i])) {
       return Err(http.fail(503, "The saved project contains invalid cells."));
     }
-    i = i + 1;
   }
   for instruction in saved.program {
     if (instruction < 0 || instruction > 143) {
@@ -524,10 +511,7 @@ function saved_project(state: State, app: string, name: string, initial: Project
   if (saved.factory.tick < 0 || saved.factory.produced < 0 || saved.factory.consumed < 0 || saved.factory.removed < 0 || saved.factory.refined < 0) {
     return Err(http.fail(503, "The saved factory contains invalid counters."));
   }
-  let factory = saved.factory;
-  if (factory.cargo.len() > 0) {
-    factory = foundry.configure(saved.cells, factory, 256);
-  }
+  let factory = if (saved.factory.cargo.len() > 0) { foundry.configure(saved.cells, saved.factory, 256) } else { saved.factory };
   return Ok(Project { ...initial, cells: saved.cells, revision: saved.revision, factory: factory, running: saved.running, program: saved.program });
 }
 ```
@@ -545,18 +529,22 @@ struct Preview { revision: i64, width: i32, cells: i32[] }
 pub function preview(state: State, app: string): Result[HttpResponse, http.HttpError] {
   let target = room(state, app, "commons")?;
   let p = state.projects.get()[target.at];
-  if (app == "foundry") {
-    let window: i32[] = [];
-    for y in 8..24 {
-      for x in 8..40 {
-        window = window.append(p.cells[y * 256 + x]);
+  match (app) {
+    "foundry" => {
+      let window: i32[] = [];
+      for y in 8..24 {
+        for x in 8..40 {
+          window = window.append(p.cells[y * 256 + x]);
+        }
       }
+      return Ok(http.json_of(Preview { revision: p.revision, width: 32, cells: window }).with_header("Cache-Control", "no-store"));
+    },
+    "patchbay" => {
+      return Ok(http.json_of(Preview { revision: p.revision, width: 8, cells: p.cells.take(128) }).with_header("Cache-Control", "no-store"));
+    },
+    _ => {
+      return Ok(http.json_of(Preview { revision: p.revision, width: 3, cells: p.cells.take(144) }).with_header("Cache-Control", "no-store"));
     }
-    return Ok(http.json_of(Preview { revision: p.revision, width: 32, cells: window }).with_header("Cache-Control", "no-store"));
   }
-  if (app == "patchbay") {
-    return Ok(http.json_of(Preview { revision: p.revision, width: 8, cells: p.cells.take(128) }).with_header("Cache-Control", "no-store"));
-  }
-  return Ok(http.json_of(Preview { revision: p.revision, width: 3, cells: p.cells.take(144) }).with_header("Cache-Control", "no-store"));
 }
 ```
