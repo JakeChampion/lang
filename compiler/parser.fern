@@ -19365,10 +19365,12 @@ pub function desugar_ranges_block(body: ast.Stmt[]): ast.Stmt[] {
 
 function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
   match (st) {
-    ast.StmtFor(fr) => {
-      let dbody: ast.Stmt[] = desugar_ranges_block(fr.body);
-      let rargs: ast.Expr[] = iter_range_args(fr.iter);
+    ast.StmtFor(written) => {
+      let dbody: ast.Stmt[] = desugar_ranges_block(written.body);
+      let rargs: ast.Expr[] = iter_range_args(written.iter);
       if (rargs.len() == 2) {
+        // A nested `for _` must not step this counter.
+        let fr = ast.StmtFor { ...written, var_name: discard_name(written.var_name, written.line, written.col, 0) };
         let hi_name: string = "$hi_" + fr.var_name;
         let rty: string = range_bound_type(rargs);
         let hivar: ast.Stmt = s_var(hi_name, rty, rargs[1]);
@@ -19391,7 +19393,7 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
         }
         return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
       }
-      return [ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label, line: fr.line, col: fr.col }];
+      return [ast.StmtFor { ...written, body: dbody }];
     },
     ast.StmtIf(f) => {
       return [ast.StmtIf { ...f, cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];

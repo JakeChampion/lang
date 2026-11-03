@@ -1,0 +1,27 @@
+function main(): i32 {
+  let n = 0;
+  for _ in 0..4 {
+    for _ in 0..3 {
+      n += 1;
+    }
+    for _ in 0..=1 {
+      n += 10;
+    }
+  }
+  for _ in 0..2 {
+    for _ in 0..5 {
+      n += 100;
+    }
+  }
+  let x: Option[i32] = Some(1);
+  for _ in 0..200 {
+    match (x) {
+      Some(_) => {
+        n += 1;
+      },
+      None => {}
+    }
+  }
+  print(n.to_string());
+  return 0;
+}
