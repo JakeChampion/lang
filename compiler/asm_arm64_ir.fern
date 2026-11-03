@@ -5862,28 +5862,9 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   s = ssa_x0_forget(s);
   s = s.need("heap");
   s = s.need("buf");
-  if (sym == "__fern_buf_take") {
-    s = s.need("buf_text");
-  } else if (sym == "__fern_buf_take_bytes") {
-    s = s.need("buf_take_bytes");
-  } else if (sym == "__fern_buf_take_bytes_u8") {
-    s = s.need("buf_take_bytes_u8");
-  } else if (sym == "__fern_buf_push_bytes_range") {
-    s = s.need("buf_push_bytes_range");
-  } else if (sym == "__fern_buf_push_bytes_range_u8") {
-    s = s.need("buf_push_bytes_range_u8");
-  } else if (sym == "__fern_buf_push_decimal") {
-    s = s.need("buf_decimal");
-  } else if (sym == "__fern_buf_push_base64") {
-    s = s.need("buf_base64");
-  } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
-    if (util.str_has_suffix(sym, "_u8")) {
-      s = s.need("buf_bytes_u8");
-    } else {
-      s = s.need("buf_bytes");
-    }
-  } else if (util.str_has_suffix(sym, "_u8")) {
-    s = s.need("buf_u8");
+  let extra: string = asmcore.buf_call_need(sym);
+  if (extra != "") {
+    s = s.need(extra);
   }
   s = ssa_load_helper_args(reg_of, ins.args, s);
   s = ssa_bl_sym(s, sym);

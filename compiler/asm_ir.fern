@@ -8387,28 +8387,9 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   s = ssa_call_sym(s, sym);
   s = s.need("heap");
   s = s.need("buf");
-  if (sym == "__fern_buf_take") {
-    s = s.need("buf_text");
-  } else if (sym == "__fern_buf_take_bytes") {
-    s = s.need("buf_take_bytes");
-  } else if (sym == "__fern_buf_take_bytes_u8") {
-    s = s.need("buf_take_bytes_u8");
-  } else if (sym == "__fern_buf_push_bytes_range") {
-    s = s.need("buf_push_bytes_range");
-  } else if (sym == "__fern_buf_push_bytes_range_u8") {
-    s = s.need("buf_push_bytes_range_u8");
-  } else if (sym == "__fern_buf_push_decimal") {
-    s = s.need("buf_decimal");
-  } else if (sym == "__fern_buf_push_base64") {
-    s = s.need("buf_base64");
-  } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
-    if (util.str_has_suffix(sym, "_u8")) {
-      s = s.need("buf_bytes_u8");
-    } else {
-      s = s.need("buf_bytes");
-    }
-  } else if (util.str_has_suffix(sym, "_u8")) {
-    s = s.need("buf_u8");
+  let extra: string = asmcore.buf_call_need(sym);
+  if (extra != "") {
+    s = s.need(extra);
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
@@ -9314,12 +9295,53 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
       while (done[j]) {
         j = j + 1;
       }
-      s = ssa_park(srcs[j], s);
-      parking = true;
-      parked = srcs[j];
+      let k: i32 = ssa_swap_partner(srcs, dsts, done, j);
+      if (k >= 0) {
+        s = s.write("    xchgq " + ssa_reg(srcs[j]) + ", " + ssa_reg(dsts[j]) + "\n");
+        done = done.with(j, true).with(k, true);
+        left = left - 2;
+      } else {
+        s = ssa_park(srcs[j], s);
+        parking = true;
+        parked = srcs[j];
+      }
     }
   }
   return ssa_x0_forget(s);
+}
+
+// The move that closes a two-register cycle with move j, when no other
+// pending move reads either register, so one xchgq can do both.
+function ssa_swap_partner(srcs: i32[], dsts: i32[], done: boolean[], j: i32): i32 {
+  if (!ssa_int_reg(srcs[j]) || !ssa_int_reg(dsts[j])) {
+    return 0 - 1;
+  }
+  let partner: i32 = 0 - 1;
+  for k in 0..srcs.len() {
+    if (ssa_reads_either(srcs, done, k, j, dsts[j])) {
+      if (partner >= 0) {
+        return 0 - 1;
+      }
+      partner = k;
+    }
+  }
+  if (partner >= 0 && ssa_closes_cycle(srcs, dsts, partner, j)) {
+    return partner;
+  }
+  return 0 - 1;
+}
+
+// Whether pending move k reads the source of move j or the register b.
+function ssa_reads_either(srcs: i32[], done: boolean[], k: i32, j: i32, b: i32): boolean {
+  return k != j && !done[k] && (srcs[k] == srcs[j] || srcs[k] == b);
+}
+
+function ssa_closes_cycle(srcs: i32[], dsts: i32[], k: i32, j: i32): boolean {
+  return srcs[k] == dsts[j] && dsts[k] == srcs[j];
+}
+
+function ssa_int_reg(loc: i32): boolean {
+  return loc >= 0 && loc < ssa_fbase();
 }
 
 function ssa_vec_loc(loc: i32, s: asmcore.EmitState): boolean {

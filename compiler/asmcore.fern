@@ -742,6 +742,34 @@ pub function dedupe_weak_defs(asm_text: string): string {
   return text;
 }
 
+// The runtime piece a call to a buffer helper needs, besides heap and buf.
+const BUF_CALL_SYMS: string[] = [
+  "__fern_buf_take", "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8", "__fern_buf_push_bytes_range",
+  "__fern_buf_push_bytes_range_u8", "__fern_buf_push_decimal", "__fern_buf_push_base64",
+];
+
+const BUF_CALL_NEEDS: string[] = [
+  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64",
+];
+
+pub function buf_call_need(sym: string): string {
+  for k in 0..BUF_CALL_SYMS.len() {
+    if (BUF_CALL_SYMS[k] == sym) {
+      return BUF_CALL_NEEDS[k];
+    }
+  }
+  if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
+    if (util.str_has_suffix(sym, "_u8")) {
+      return "buf_bytes_u8";
+    }
+    return "buf_bytes";
+  }
+  if (util.str_has_suffix(sym, "_u8")) {
+    return "buf_u8";
+  }
+  return "";
+}
+
 // The runtime helper each buffer op calls, by IR kind.
 const BUF_KINDS: i32[] = [372, 371, 370, 347, 351, 291, 292, 293, 294, 295, 296, 297, 386, 306, 485, 487, 325, 326, 328];
 

@@ -72,7 +72,7 @@ func TestSelfHostBufCallDirect(t *testing.T) {
 }
 
 func bufCallExchangesOperands(body string) bool {
-	if regexp.MustCompile(`xchgq %rdi, %rsi\n\s+call __fern_buf_push\n`).MatchString(body) {
+	if regexp.MustCompile(`xchgq (%rdi, %rsi|%rsi, %rdi)\n\s+call __fern_buf_push\n`).MatchString(body) {
 		return true
 	}
 	moves := regexp.MustCompile(`movq %rsi, (%r[a-z0-9]+)\n\s+movq %rdi, %rsi\n\s+movq (%r[a-z0-9]+), %rdi\n\s+call __fern_buf_push\n`).FindStringSubmatch(body)
@@ -85,6 +85,7 @@ func TestBufCallOperandExchange(t *testing.T) {
 		want       bool
 	}{
 		{"exchange", "xchgq %rdi, %rsi\n call __fern_buf_push\n", true},
+		{"exchange-reversed", "xchgq %rsi, %rdi\n call __fern_buf_push\n", true},
 		{"scratch-r11", "movq %rsi, %r11\n movq %rdi, %rsi\n movq %r11, %rdi\n call __fern_buf_push\n", true},
 		{"scratch-r10", "movq %rsi, %r10\n movq %rdi, %rsi\n movq %r10, %rdi\n call __fern_buf_push\n", true},
 		{"different-scratch", "movq %rsi, %r11\n movq %rdi, %rsi\n movq %r10, %rdi\n call __fern_buf_push\n", false},
