@@ -18668,7 +18668,7 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
 // entry per field the literal replaces.
-struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[] }
+struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[] }
 
 struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, noret: util.NameIndex, looped: string[] }
 
@@ -18716,7 +18716,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
     },
     ast.StmtVar(v) => {
       if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
-        return LuFacts { ...f, vars: lu_destr_vars(v, f.vars) };
+        return LuFacts { ...f, vars: lu_destr_vars(v, f.vars), unpacked: lu_destr_unpacked(v, f.unpacked) };
       }
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
     },
@@ -18775,6 +18775,22 @@ function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
     }
   }
   return vars;
+}
+
+// The names a destructure of a plain name binds, each with that name as its
+// source. Nested groups are not unpacks of the name itself.
+function lu_destr_unpacked(v: ast.StmtVar, own acc: LuVar[]): LuVar[] {
+  if let ast.ExprIdent(_) = v.init {
+    if (parser.destr_marker_split(v.type_name).at.len() > 0) {
+      return acc;
+    }
+    for nm in split_pattern_names(v.name) {
+      if (!util.is_tuple_type_name(nm)) {
+        acc = acc.append(LuVar { name: nm, init: v.init });
+      }
+    }
+  }
+  return acc;
 }
 
 function lu_nested_vars(group: string, own vars: LuVar[]): LuVar[] {
@@ -18893,6 +18909,14 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   return lu_fresh_expr(e) && !lu_init_borrows(fx, e);
 }
 
+// A name of a local whose each declaration is fresh.
+function lu_fresh_local(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprIdent(id) = e {
+    return lu_fresh_init(fx, id.name);
+  }
+  return false;
+}
+
 // A local declared once, outside a loop, from an own parameter at its last
 // use, and given only fresh values after that.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
@@ -18900,8 +18924,17 @@ function lu_owned_alias(fx: LuFn, name: string): boolean {
     return false;
   }
   for a in fx.facts.assigns {
-    if (a.name == name && !lu_fresh_value(fx, a.init)) {
+    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
       return false;
+    }
+  }
+  // The fields of an own parameter that a destructure takes at its last use
+  // are owned, as the parameter is.
+  for u in fx.facts.unpacked {
+    if (u.name == name) {
+      if let ast.ExprIdent(src) = u.init {
+        return lu_own_param(fx, src.name) && lu_decl_count(fx, src.name) == 0 && lu_is_last(fx, src);
+      }
     }
   }
   let Some(init) = lu_init_of(fx, name) else {
@@ -18919,7 +18952,9 @@ function lu_looped_decls(stmts: ast.Stmt[], in_loop: boolean, own acc: string[])
     match (st) {
       ast.StmtVar(v) => {
         if (in_loop) {
-          acc = acc.append(v.name);
+          for d in lu_fact_stmt(st, lu_empty_facts()).vars {
+            acc = acc.append(d.name);
+          }
         }
       },
       ast.StmtIf(f) => {
@@ -19178,7 +19213,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { occ: [], vars: [], assigns: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [] };
+  return LuFacts { occ: [], vars: [], assigns: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [] };
 }
 
 // A later mention of the name inside the statement that holds the call.

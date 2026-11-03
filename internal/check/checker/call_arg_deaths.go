@@ -302,7 +302,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			aliasInitLocal[name] = true
 		}
 	}
-	for name := range ownedAliases(info, body, ownParam, declCount, order) {
+	for name := range ownedAliases(info, body, ownParam, declCount, order, freshInitLocal) {
 		aliasInitLocal[name] = true
 	}
 	admitted := func(name string) bool {
@@ -841,6 +841,13 @@ func freshInit(info *Info, init ast.Expr) bool {
 	case *ast.TryOp:
 		return freshInit(info, init.Inner)
 	case *ast.Call:
+		if info != nil {
+			// A variant construction from another module has a qualified
+			// callee. It is fresh on the same terms as an unqualified one.
+			if _, isVariant := info.EnumConstructions[init]; isVariant {
+				return info.CallBorrows == nil || !info.CallBorrows(init)
+			}
+		}
 		if _, named := init.Callee.(*ast.Ident); !named {
 			return false
 		}
@@ -855,14 +862,19 @@ func freshInit(info *Info, init ast.Expr) bool {
 
 // ownedAliases names the locals declared once, outside a loop, from an own
 // parameter at its last use, and given only fresh values after that.
-func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder) map[string]bool {
+func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool) map[string]bool {
 	looped := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch n.(type) {
 		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
 			ast.Walk(n, func(m ast.Node) bool {
-				if v, ok := m.(*ast.Var); ok {
-					looped[v.Name] = true
+				switch d := m.(type) {
+				case *ast.Var:
+					looped[d.Name] = true
+				case *ast.Destructure:
+					for _, name := range d.Names {
+						looped[name] = true
+					}
 				}
 				return true
 			})
@@ -872,20 +884,39 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 	stale := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		if asn, ok := n.(*ast.Assign); ok {
-			if t, ok := asn.Target.(*ast.Ident); ok && !freshInit(info, asn.Value) {
+			src, fromLocal := asn.Value.(*ast.Ident)
+			fresh := freshInit(info, asn.Value) || fromLocal && freshLocal[src.Name]
+			if t, ok := asn.Target.(*ast.Ident); ok && !fresh {
 				stale[t.Name] = true
 			}
 		}
 		return true
 	})
+	sole := func(name string) bool {
+		return declCount[name] == 1 && !looped[name] && !stale[name]
+	}
+	ownedAtLastUse := func(e ast.Expr) bool {
+		src, ok := e.(*ast.Ident)
+		return ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src)
+	}
 	out := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
-		v, ok := n.(*ast.Var)
-		if !ok || declCount[v.Name] != 1 || looped[v.Name] || stale[v.Name] {
-			return true
-		}
-		if src, ok := v.Init.(*ast.Ident); ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src) {
-			out[v.Name] = true
+		switch x := n.(type) {
+		case *ast.Var:
+			if sole(x.Name) && ownedAtLastUse(x.Init) {
+				out[x.Name] = true
+			}
+		case *ast.Destructure:
+			// The fields of an own parameter that the destructure takes at
+			// its last use are owned, as the parameter is.
+			if x.AtName != "" || !ownedAtLastUse(x.Init) {
+				return true
+			}
+			for i, name := range x.Names {
+				if sole(name) && (i >= len(x.Nested) || x.Nested[i] == nil) {
+					out[name] = true
+				}
+			}
 		}
 		return true
 	})

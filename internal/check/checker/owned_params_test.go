@@ -281,6 +281,26 @@ function f(c: boolean): i32 {
     }
     return t;
 }`},
+		// The fields of an own parameter that a destructure takes are owned,
+		// also as a method receiver (#14101).
+		{"destructured-field-as-receiver", `
+struct Holder { box: Box, n: i32 }
+function (own b: Box) open(): i32 { return 0; }
+function f(own h: Holder): i32 {
+    let Holder { box, n } = h;
+    return box.open() + n;
+}`},
+		{"destructured-field-given-a-fresh-local", `
+struct Holder { box: Box, n: i32 }
+function step(own b: Box): (Box, i32) { return (b, 1); }
+function f(own h: Holder, c: boolean): i32 {
+    let Holder { box, n } = h;
+    if (c) {
+        let (b2, k) = step(box);
+        box = b2;
+    }
+    return consumeBox(box) + n;
+}`},
 		{"inner-binding-shadows-the-outer", `
 function f(c: boolean): i32 {
     let xs: i32[] = [1];
