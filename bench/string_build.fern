@@ -1,21 +1,17 @@
 import "std/i32";
 
 function build(n: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < n) {
+  let out = "";
+  for i in 0..n {
     out = out + i.to_string() + ",";
-    i = i + 1;
   }
   return out;
 }
 
 function main(): i32 {
-  let total: i64 = 0i64;
-  let r: i32 = 0;
-  while (r < 900) {
-    total = total + build(200).len() as i64;
-    r = r + 1;
+  let total = 0i64;
+  for _ in 0..900 {
+    total += build(200).len() as i64;
   }
   return (total % 97i64) as i32;
 }

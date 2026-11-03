@@ -1727,9 +1727,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     return operator_method(left, [b.right], arith, s);
   }
   if (b.op == "+" && ssasem.is_string(s.values[left])) {
-    if let Some(c) = builtin_slice(b.right, s) {
-      return range_append(left, c, s);
-    }
+    return append_text(b, left, b.right, s, want);
   }
   let right: Value = address_widen(expr(b.right, s, want), want);
   s = right.s;
@@ -1737,6 +1735,29 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     return right;
   }
   return arithmetic(b, left, right.id, s);
+}
+
+// Concatenation is associative and `l + (x + y)` evaluates l, x, y in that
+// order, so it appends x and then y to l: the left operand's buffer grows in
+// place as it does for `(l + x) + y`.
+function append_text(b: ast.ExprBinary, left: i32, part: ast.Expr, s: State, want: typeinfo.Type): Value {
+  if let ast.ExprBinary(inner) = part {
+    if (inner.op == "+" && ssasem.is_string(checked(inner.left, s)) && ssasem.is_string(checked(part, s))) {
+      let head: Value = append_text(b, left, inner.left, s, want);
+      if (!head.s.ok) {
+        return head;
+      }
+      return append_text(b, head.id, inner.right, head.s, want);
+    }
+  }
+  if let Some(c) = builtin_slice(part, s) {
+    return range_append(left, c, s);
+  }
+  let right: Value = address_widen(expr(part, s, want), want);
+  if (!right.s.ok) {
+    return right;
+  }
+  return arithmetic(b, left, right.id, right.s);
 }
 
 function arithmetic(b: ast.ExprBinary, left: i32, right: i32, s: State): Value {

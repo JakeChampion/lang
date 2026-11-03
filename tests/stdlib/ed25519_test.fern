@@ -28,11 +28,11 @@ function verifies(public: [u8], msg: [u8], sig: [u8]): boolean {
 }
 
 function vector(seed: string, msg: string, public: string, sig: string): test.TestOutcome {
-  let m: u8[] = __codec_bytes(hex.decode(msg));
+  let m = __codec_bytes(hex.decode(msg));
   let Ok(k) = ed25519.private_key(__codec_bytes(hex.decode(seed))) else {
     return test.fail("a 32-byte seed was refused");
   };
-  let got: string = hex.encode(k.public_point());
+  let got = hex.encode(k.public_point());
   if (got != public) {
     return test.assert_eq(got, public);
   }
@@ -144,15 +144,15 @@ function test2_sig(): u8[] {
 }
 
 function test_flipped_signature(): test.TestOutcome {
-  let msg: u8[] = __codec_bytes(hex.decode("72"));
-  let sig: u8[] = test2_sig();
+  let msg = __codec_bytes(hex.decode("72"));
+  let sig = test2_sig();
   let at: i32[] = [0, 31, 32, 63];
-  let i: i32 = 0;
+  let i = 0;
   while (i < at.len()) {
     if (verifies(test2_public(), msg, sig.with(at[i], sig[at[i]] ^ 1 as u8))) {
       return test.fail("a flipped signature bit verified");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -208,8 +208,8 @@ function test_key_reused(): test.TestOutcome {
   let Ok(public) = ed25519.public_key(k.public_point()) else {
     return test.fail("the derived public key was refused");
   };
-  let a: u8[] = __codec_bytes(hex.decode("72"));
-  let b: u8[] = __codec_bytes(hex.decode("af82"));
+  let a = __codec_bytes(hex.decode("72"));
+  let b = __codec_bytes(hex.decode("af82"));
   if (hex.encode(k.sign(a)) != hex.encode(test2_sig())) {
     return test.fail("the first signature differs from RFC 8032");
   }
@@ -220,13 +220,13 @@ function test_key_reused(): test.TestOutcome {
 }
 
 function test_public_keys_that_do_not_decode(): test.TestOutcome {
-  let msg: u8[] = __codec_bytes(hex.decode("616263"));
+  let msg = __codec_bytes(hex.decode("616263"));
   let sig: u8[] = __codec_bytes(hex.decode("5866666666666666666666666666666666666666666666666666666666666666"
     + "0100000000000000000000000000000000000000000000000000000000000000"));
   if (!verifies(__codec_bytes(hex.decode("0100000000000000000000000000000000000000000000000000000000000000")), msg, sig)) {
     return test.fail("the canonical identity did not verify");
   }
-  let bad: string = "ed25519: the public key does not encode a curve point";
+  let bad = "ed25519: the public key does not encode a curve point";
   if (refused(ed25519.public_key(__codec_bytes(hex.decode("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")))) != bad) {
     return test.fail("y = p + 1 was built");
   }
@@ -237,7 +237,7 @@ function test_public_keys_that_do_not_decode(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto/ed25519");
+  let r = test.new("std/crypto/ed25519");
   r = r.it("RFC 8032 7.1 TEST 1", test_rfc_1);
   r = r.it("RFC 8032 7.1 TEST 2", test_rfc_2);
   r = r.it("RFC 8032 7.1 TEST 3", test_rfc_3);

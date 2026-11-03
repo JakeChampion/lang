@@ -7,7 +7,9 @@ function never(): boolean {
 }
 
 function emit_case(path: string): i32 {
-  let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
   if (data.len() != 192) {
     return 3;
   }
@@ -16,18 +18,22 @@ function emit_case(path: string): i32 {
   for i in 0..64 {
     let value = data[i * 2] as i32 | data[i * 2 + 1] as i32 << 8;
     if (value >= 32768) {
-      value = value - 65536;
+      value -= 65536;
     }
     coefficients = coefficients.append(value);
     quantizers = quantizers.append(data[128 + i]);
   }
-  let values = match (idct.inverse(coefficients, quantizers, never)) { Ok(v) => v, Err(_) => { return 4; } };
-  let pixels = match (idct.samples(values, never)) { Ok(v) => v, Err(_) => { return 5; } };
+  let Ok(values) = idct.inverse(coefficients, quantizers, never) else {
+    return 4;
+  };
+  let Ok(pixels) = idct.samples(values, never) else {
+    return 5;
+  };
   let samples = "samples";
   let output = "pixels";
   for i in 0..64 {
-    samples = samples + " " + values[i].to_string();
-    output = output + " " + (pixels[i] as i32).to_string();
+    samples += f" {values[i]}";
+    output += f" {pixels[i] as i32}";
   }
   print("begin " + path);
   print(samples);

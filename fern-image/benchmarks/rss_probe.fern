@@ -9,7 +9,9 @@ import "std/i64";
 struct Observation { live: linux_rss.Snapshot, checksum: i32 }
 
 function observe(checksum: i32): Result[Observation, i32] {
-  let live = match (linux_rss.snapshot()) { Ok(v) => v, Err(_) => { return Err(10); } };
+  let Ok(live) = linux_rss.snapshot() else {
+    return Err(10);
+  };
   return Ok(Observation { live: live, checksum: checksum });
 }
 
@@ -23,7 +25,7 @@ function update(image: pixels.Image, count: i32): Result[pixels.Image, i32] {
   let i = 0;
   while (i < count) {
     output = match (pixels.write_pixel(output, i, i, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 })) { Ok(v) => v, Err(_) => { return Err(12); } };
-    i = i + 1;
+    i += 1;
   }
   return Ok(output);
 }
@@ -36,7 +38,7 @@ function pixel_is(image: pixels.Image, x: i32, y: i32, red: u8, alpha: u8): bool
 function unique(count: i32): Result[Observation, i32] {
   let image = update(source()?, count)?;
   let result = observe(count * 17)?;
-  if (!pixel_is(image, count - 1, count - 1, 17 as u8, 128 as u8)) {
+  if (!pixel_is(image, count - 1, count - 1, 17, 128)) {
     return Err(13);
   }
   return Ok(result);
@@ -47,7 +49,7 @@ function shared(count: i32): Result[Observation, i32] {
   let original = source()?;
   let image = update(original, count)?;
   let result = observe(count * 17)?;
-  if (!pixel_is(original, 0, 0, 0 as u8, 0 as u8) || !pixel_is(image, count - 1, count - 1, 17 as u8, 128 as u8)) {
+  if (!pixel_is(original, 0, 0, 0, 0) || !pixel_is(image, count - 1, count - 1, 17, 128)) {
     return Err(14);
   }
   return Ok(result);
@@ -61,18 +63,18 @@ function retained(count: i32): Result[Observation, i32] {
   while (i < count) {
     image = match (pixels.write_pixel(image, i, i, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 })) { Ok(v) => v, Err(_) => { return Err(15); } };
     kept = kept.append(image);
-    i = i + 1;
+    i += 1;
   }
   let result = observe(count * 17)?;
   i = 0;
   while (i < count) {
-    if (!pixel_is(kept[i], i, i, 17 as u8, 128 as u8)) {
+    if (!pixel_is(kept[i], i, i, 17, 128)) {
       return Err(16);
     }
-    if (i + 1 < count && !pixel_is(kept[i], i + 1, i + 1, 0 as u8, 0 as u8)) {
+    if (i + 1 < count && !pixel_is(kept[i], i + 1, i + 1, 0, 0)) {
       return Err(17);
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(result);
 }
@@ -83,22 +85,24 @@ function eager(count: i32, retain: boolean): Result[Observation, i32] {
   let kept: pixels.Image[] = [];
   let i = 0;
   while (i < count) {
-    let output = match (resize.resize(input, 256, 256, resize.Nearest, pixels.default_limits())) { Ok(v) => v, Err(_) => { return Err(18); } };
-    if (!pixel_is(output, 255, 255, 0 as u8, 0 as u8) || output.data.len() != 262144) {
+    let Ok(output) = resize.resize(input, 256, 256, resize.Nearest, pixels.default_limits()) else {
+      return Err(18);
+    };
+    if (!pixel_is(output, 255, 255, 0, 0) || output.data.len() != 262144) {
       return Err(19);
     }
     if (retain) {
       kept = kept.append(output);
     }
-    i = i + 1;
+    i += 1;
   }
   let result = observe(count * 17)?;
   for output in kept {
-    if (!pixel_is(output, 255, 255, 0 as u8, 0 as u8)) {
+    if (!pixel_is(output, 255, 255, 0, 0)) {
       return Err(20);
     }
   }
-  if (!pixel_is(input, 511, 511, 0 as u8, 0 as u8)) {
+  if (!pixel_is(input, 511, 511, 0, 0)) {
     return Err(21);
   }
   return Ok(result);
@@ -110,7 +114,9 @@ function never_cancel(): boolean {
 
 function graph(): Result[pipeline.Graph, i32] {
   let limits = pipeline.default_limits();
-  let graph = match (pipeline.solid(1024, 10000, pixels.RGBA8, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 }, limits)) { Ok(v) => v, Err(_) => { return Err(22); } };
+  let Ok(graph) = pipeline.solid(1024, 10000, pixels.RGBA8, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 }, limits) else {
+    return Err(22);
+  };
   return match (pipeline.bilinear(graph, 512, 20000, limits)) { Ok(v) => Ok(v), Err(_) => Err(23) };
 }
 
@@ -119,7 +125,7 @@ function rows(count: i32, retain: boolean): Result[Observation, i32] {
   let input = graph()?;
   let seed: pixels.Image[] = [];
   let consume = (kept: pixels.Image[], row: pixels.Image): Result[pixels.Image[], i32] => {
-    if (!pixel_is(row, 511, 0, 17 as u8, 128 as u8) || row.data.len() != 2048) {
+    if (!pixel_is(row, 511, 0, 17, 128) || row.data.len() != 2048) {
       return Err(24);
     }
     if (retain) {
@@ -127,13 +133,15 @@ function rows(count: i32, retain: boolean): Result[Observation, i32] {
     }
     return Ok(kept);
   };
-  let result = match (pipeline.fold_rows(input, 10000, count, pipeline.default_limits(), 12288, never_cancel, seed, consume)) { Ok(v) => v, Err(_) => { return Err(25); } };
+  let Ok(result) = pipeline.fold_rows(input, 10000, count, pipeline.default_limits(), 12288, never_cancel, seed, consume) else {
+    return Err(25);
+  };
   if (result.stats.rows != count || result.stats.hits == 0 || result.stats.peak_cache_bytes > 12288) {
     return Err(26);
   }
   let observation = observe(count * 17)?;
   for row in result.value {
-    if (!pixel_is(row, 511, 0, 17 as u8, 128 as u8)) {
+    if (!pixel_is(row, 511, 0, 17, 128)) {
       return Err(27);
     }
   }
@@ -151,17 +159,17 @@ function tiles(count: i32, retain: boolean): Result[Observation, i32] {
       pipeline.default_limits(), 12288, never_cancel,
     )) { Ok(v) => v, Err(_) => { return Err(28); } };
     if (result.stats.rows != 16 || result.stats.hits == 0 || result.image.data.len() != 4096
-      || !pixel_is(result.image, 63, 15, 17 as u8, 128 as u8)) {
+      || !pixel_is(result.image, 63, 15, 17, 128)) {
       return Err(29);
     }
     if (retain) {
       kept = kept.append(result.image);
     }
-    i = i + 1;
+    i += 1;
   }
   let observation = observe(count * 17)?;
   for tile in kept {
-    if (!pixel_is(tile, 63, 15, 17 as u8, 128 as u8)) {
+    if (!pixel_is(tile, 63, 15, 17, 128)) {
       return Err(30);
     }
   }
@@ -174,25 +182,22 @@ function main(): i32 {
     eprint("usage: rss_probe MODE 8|32");
     return 1;
   }
-  let count = 8;
-  if (av[2] == "32") {
-    count = 32;
-  }
-  let before = match (linux_rss.snapshot()) { Ok(v) => v, Err(_) => { return 2; } };
+  let count = if (av[2] == "32") { 32 } else { 8 };
+  let Ok(before) = linux_rss.snapshot() else {
+    return 2;
+  };
   let allocated = __heap_alloc_count();
   let bump = __heap_bump_bytes();
   let work = match (av[1]) { "unique" => unique(count), "shared" => shared(count), "retained" => retained(count), "eager" => eager(count, false), "eager-retained" => eager(count, true), "rows" => rows(count, false), "rows-retained" => rows(count, true), "tiles" => tiles(count, false), "tiles-retained" => tiles(count, true), _ => { return 3; } };
   let observation = match (work) { Ok(v) => v, Err(code) => { return code; } };
   let allocations = __heap_alloc_count() - allocated;
   let fresh = __heap_bump_bytes() - bump;
-  let after = match (linux_rss.snapshot()) { Ok(v) => v, Err(_) => { return 4; } };
-  if (observation.checksum != count * 17 || allocations <= 0i64 || fresh <= 0i64) {
+  let Ok(after) = linux_rss.snapshot() else {
+    return 4;
+  };
+  if (observation.checksum != count * 17 || allocations <= 0 || fresh <= 0) {
     return 5;
   }
-  print("mode=" + av[1] + " count=" + count.to_string() + " checksum=" + observation.checksum.to_string()
-    + " allocations=" + allocations.to_string() + " fresh_bytes=" + fresh.to_string()
-    + " before_rss=" + before.rss_bytes.to_string() + " live_rss=" + observation.live.rss_bytes.to_string()
-    + " live_hwm=" + observation.live.hwm_bytes.to_string() + " after_rss=" + after.rss_bytes.to_string()
-    + " after_hwm=" + after.hwm_bytes.to_string() + " virtual_bytes=" + after.virtual_bytes.to_string());
+  print(f"mode={av[1]} count={count} checksum={observation.checksum} allocations={allocations} fresh_bytes={fresh} before_rss={before.rss_bytes} live_rss={observation.live.rss_bytes} live_hwm={observation.live.hwm_bytes} after_rss={after.rss_bytes} after_hwm={after.hwm_bytes} virtual_bytes={after.virtual_bytes}");
   return 0;
 }

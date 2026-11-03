@@ -5,11 +5,11 @@ import "std/crypto" as crypto;
 import "std/crypto/mlkem768";
 
 function __seq(start: i32): u8[] {
-  let b: u8[] = __alloc_u8(32);
-  let i: i32 = 0;
+  let b = __alloc_u8(32);
+  let i = 0;
   while (i < 32) {
     b = b.with(i, (start + i) as u8);
-    i = i + 1;
+    i += 1;
   }
   return b;
 }
@@ -19,11 +19,11 @@ function __h(b: [u8]): string {
 }
 
 function __flip(b: [u8], at: i32, bit: u8): u8[] {
-  let out: u8[] = __alloc_u8(b.len());
-  let i: i32 = 0;
+  let out = __alloc_u8(b.len());
+  let i = 0;
   while (i < b.len()) {
     out = out.with(i, b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out.with(at, out[at] ^ bit);
 }
@@ -101,7 +101,7 @@ function hex_m(): u8[] {
 }
 
 function test_keygen(): test.TestOutcome {
-  let k: mlkem768.KeyPair = seq_keys();
+  let k = seq_keys();
   if (k.encapsulation_key.len() != 1184 || k.decapsulation_key.len() != 2400) {
     return test.fail("key lengths");
   }
@@ -112,9 +112,9 @@ function test_keygen(): test.TestOutcome {
 }
 
 function test_round_trip(): test.TestOutcome {
-  let k: mlkem768.KeyPair = seq_keys();
-  let s: mlkem768.Encapsulation = encaps(k.encapsulation_key, __seq(64));
-  let ss: string = "9cddd089ffe70e3996e76f7c8d06746df34d07e8657bc0fcf2bb0e1c3084aea1";
+  let k = seq_keys();
+  let s = encaps(k.encapsulation_key, __seq(64));
+  let ss = "9cddd089ffe70e3996e76f7c8d06746df34d07e8657bc0fcf2bb0e1c3084aea1";
   if (s.ciphertext.len() != 1088 || __h(s.ciphertext) != "b4cfbd24cef67afd3764276c6980e0f88f8e9ca57f59b7f12fe1a9c1e72f4710") {
     return test.fail("ciphertext");
   }
@@ -125,15 +125,15 @@ function test_round_trip(): test.TestOutcome {
 }
 
 function test_second_pair(): test.TestOutcome {
-  let k: mlkem768.KeyPair = hex_keys();
+  let k = hex_keys();
   if (__h(k.encapsulation_key) != "f57262661358cde8d3ebf990e5fd1d5b896c992ccfaadb5256b68bbf5943b132") {
     return test.fail("encapsulation key");
   }
   if (__h(k.decapsulation_key) != "46d9cc347f1224aa7292702710039f54af7b01b5a3c38165a8603cccaef4e6db") {
     return test.fail("decapsulation key");
   }
-  let s: mlkem768.Encapsulation = encaps(k.encapsulation_key, hex_m());
-  let ss: string = "e7184a0975ee3470878d2d159ec83129c8aec253d4ee17b4810311d198cd0368";
+  let s = encaps(k.encapsulation_key, hex_m());
+  let ss = "e7184a0975ee3470878d2d159ec83129c8aec253d4ee17b4810311d198cd0368";
   if (__h(s.ciphertext) != "6e777e2cf8054659136a971d9e70252f301226930c19c470ee0688163a63c15b") {
     return test.fail("ciphertext");
   }
@@ -144,13 +144,13 @@ function test_second_pair(): test.TestOutcome {
 }
 
 function test_implicit_rejection(): test.TestOutcome {
-  let k: mlkem768.KeyPair = seq_keys();
-  let ct: u8[] = encaps(k.encapsulation_key, __seq(64)).ciphertext;
+  let k = seq_keys();
+  let ct = encaps(k.encapsulation_key, __seq(64)).ciphertext;
   if (shown(mlkem768.decaps(k.decapsulation_key, __flip(ct, 0, 1 as u8))) != "dcfc80c6db46ff7028e3a4398651c063ae7a42c107a6dc8cb07141861698ab92") {
     return test.fail("first byte");
   }
-  let last: u8[] = __flip(ct, 1087, 0x80 as u8);
-  let j: u8[] = crypto.shake256_new().update(__seq(32)).update(last).reader().squeeze(32).0;
+  let last = __flip(ct, 1087, 0x80 as u8);
+  let j = crypto.shake256_new().update(__seq(32)).update(last).reader().squeeze(32).0;
   if (hex.encode(j) != "7d194c520c0dc58f59ee1712f1242d3cbfbf8cee04bf1d7b64b56904cca784f0") {
     return test.fail("J(z || c)");
   }
@@ -158,8 +158,8 @@ function test_implicit_rejection(): test.TestOutcome {
 }
 
 function test_second_pair_rejection(): test.TestOutcome {
-  let k: mlkem768.KeyPair = hex_keys();
-  let ct: u8[] = encaps(k.encapsulation_key, hex_m()).ciphertext;
+  let k = hex_keys();
+  let ct = encaps(k.encapsulation_key, hex_m()).ciphertext;
   if (shown(mlkem768.decaps(k.decapsulation_key, __flip(ct, 0, 1 as u8))) != "d65ff7d0bb2bd16fa7d929132b763801130c15a507c7f7be9718dc89b5486682") {
     return test.fail("first byte");
   }
@@ -167,8 +167,8 @@ function test_second_pair_rejection(): test.TestOutcome {
 }
 
 function test_lengths(): test.TestOutcome {
-  let k: mlkem768.KeyPair = seq_keys();
-  let ct: u8[] = encaps(k.encapsulation_key, __seq(64)).ciphertext;
+  let k = seq_keys();
+  let ct = encaps(k.encapsulation_key, __seq(64)).ciphertext;
   if (refusal_of_keygen(mlkem768.keygen_derand(__seq(0)[0:31], __seq(32))) != "mlkem768: the seed is 31 bytes, want 32") {
     return test.fail("d");
   }
@@ -188,24 +188,24 @@ function test_lengths(): test.TestOutcome {
 }
 
 function test_modulus_check(): test.TestOutcome {
-  let ek: u8[] = seq_keys().encapsulation_key;
-  let refused: string = "mlkem768: the encapsulation key has a coefficient not below q";
-  let high: u8[] = __flip(ek, 0, ek[0] ^ 0xff).with(1, ek[1] | 0x0f);
+  let ek = seq_keys().encapsulation_key;
+  let refused = "mlkem768: the encapsulation key has a coefficient not below q";
+  let high = __flip(ek, 0, ek[0] ^ 0xff).with(1, ek[1] | 0x0f);
   if (refusal_of_encaps(mlkem768.encaps_derand(high, __seq(64))) != refused) {
     return test.fail("4095");
   }
-  let at_q: u8[] = __flip(ek, 0, ek[0] ^ 0x01).with(1, ek[1] & 0xf0 | 0x0d);
+  let at_q = __flip(ek, 0, ek[0] ^ 0x01).with(1, ek[1] & 0xf0 | 0x0d);
   return test.assert_eq(refusal_of_encaps(mlkem768.encaps_derand(at_q, __seq(64))), refused);
 }
 
 function test_hash_check(): test.TestOutcome {
-  let k: mlkem768.KeyPair = seq_keys();
-  let ct: u8[] = encaps(k.encapsulation_key, __seq(64)).ciphertext;
+  let k = seq_keys();
+  let ct = encaps(k.encapsulation_key, __seq(64)).ciphertext;
   return test.assert_eq(shown(mlkem768.decaps(__flip(k.decapsulation_key, 2336, 1 as u8), ct)), "mlkem768: the decapsulation key's hash of its encapsulation key does not match");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto/mlkem768");
+  let r = test.new("std/crypto/mlkem768");
   r = r.it("keygen", test_keygen);
   r = r.it("encapsulate and decapsulate", test_round_trip);
   r = r.it("second key pair", test_second_pair);

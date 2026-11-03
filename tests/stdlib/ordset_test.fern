@@ -5,17 +5,17 @@ import "std/i32";
 import "core/iter";
 
 function test_of_dedup(): test.TestOutcome {
-  let s: ordset.OrdSet[i32] = ordset.of([3, 1, 2, 3, 1]);
+  let s = ordset.of([3, 1, 2, 3, 1]);
   if (s.len() != 3 || !s.is_valid()) {
     return test.fail("len " + s.len().to_string() + " != 3");
   }
-  let arr: i32[] = s.to_array();
+  let arr = s.to_array();
   return test.assert_true(arr.len() == 3 && arr[0] == 1 && arr[1] == 2 && arr[2] == 3);
 }
 
 function test_insert_is_persistent(): test.TestOutcome {
-  let a: ordset.OrdSet[i32] = ordset.of([1, 2]);
-  let b: ordset.OrdSet[i32] = a.insert(3);
+  let a = ordset.of([1, 2]);
+  let b = a.insert(3);
   if (a.len() != 2 || b.len() != 3) {
     return test.fail("insert mutated receiver");
   }
@@ -24,18 +24,18 @@ function test_insert_is_persistent(): test.TestOutcome {
 
 function test_remove(): test.TestOutcome {
   let s: ordset.OrdSet[i32] = ordset.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 500) {
     s = s.insert(i * 31 % 500);
-    i = i + 1;
+    i += 1;
   }
-  let keep: ordset.OrdSet[i32] = s;
+  let keep = s;
   i = 0;
   while (i < 500) {
     if (i % 2 == 0) {
       s = s.remove(i);
     }
-    i = i + 1;
+    i += 1;
   }
   if (s.len() != 250 || keep.len() != 500 || !s.is_valid()) {
     return test.fail("remove");
@@ -47,8 +47,8 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_order_and_rank(): test.TestOutcome {
-  let s: ordset.OrdSet[i32] = ordset.of([50, 10, 40, 20, 30]);
-  let arr: i32[] = s.to_array();
+  let s = ordset.of([50, 10, 40, 20, 30]);
+  let arr = s.to_array();
   if (arr[0] != 10 || arr[4] != 50) {
     return test.fail("order");
   }
@@ -62,18 +62,18 @@ function test_order_and_rank(): test.TestOutcome {
 }
 
 function test_algebra(): test.TestOutcome {
-  let a: ordset.OrdSet[i32] = ordset.of([1, 2, 3, 4]);
-  let b: ordset.OrdSet[i32] = ordset.of([3, 4, 5, 6]);
-  let u: ordset.OrdSet[i32] = a.union(b);
-  let x: ordset.OrdSet[i32] = a.intersection(b);
-  let d: ordset.OrdSet[i32] = a.difference(b);
+  let a = ordset.of([1, 2, 3, 4]);
+  let b = ordset.of([3, 4, 5, 6]);
+  let u = a.union(b);
+  let x = a.intersection(b);
+  let d = a.difference(b);
   if (u.len() != 6 || x.len() != 2 || d.len() != 2) {
     return test.fail("sizes");
   }
   if (!u.is_valid() || !x.is_valid() || !d.is_valid()) {
     return test.fail("invalid");
   }
-  let ux: i32[] = x.to_array();
+  let ux = x.to_array();
   if (ux[0] != 3 || ux[1] != 4 || !d.contains(1) || d.contains(3)) {
     return test.fail("members");
   }
@@ -84,8 +84,8 @@ function test_algebra(): test.TestOutcome {
 }
 
 function test_filter_strings(): test.TestOutcome {
-  let s: ordset.OrdSet[string] = ordset.of(["pear", "apple", "fig", "apple"]);
-  let arr: string[] = s.to_array();
+  let s = ordset.of(["pear", "apple", "fig", "apple"]);
+  let arr = s.to_array();
   if (arr.len() != 3 || arr[0] != "apple" || arr[2] != "pear") {
     return test.fail("string order");
   }
@@ -95,21 +95,21 @@ function test_filter_strings(): test.TestOutcome {
 
 function test_iteration(): test.TestOutcome {
   let s: ordset.OrdSet[i32] = ordset.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 300) {
     s = s.insert(299 - i);
-    i = i + 1;
+    i += 1;
   }
-  let firsts: i32[] = s.iter().take(2).collect();
-  let total: i32 = 0;
+  let firsts = s.iter().take(2).collect();
+  let total = 0;
   for x in s.iter() {
-    total = total + x;
+    total += x;
   }
   return test.assert_true(firsts.len() == 2 && firsts[0] == 0 && firsts[1] == 1 && total == 44850);
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/ordset");
+  let r = test.new("std/ordset");
   r = r.it("of dedups", test_of_dedup);
   r = r.it("insert is persistent", test_insert_is_persistent);
   r = r.it("remove", test_remove);

@@ -8,6 +8,7 @@
 // ping_pong flows. An unknown method or service is UNIMPLEMENTED, and a
 // request's EchoStatus is echoed as the call's status.
 import "std/i32";
+import "std/result";
 import "std/headers";
 import "std/http";
 import "std/http/grpc";
@@ -21,97 +22,51 @@ import "std/rand";
 
 function payload(size: i32): u8[] {
   unsafe {
-    let body: u8[] = __alloc_u8(size);
+    let body = __alloc_u8(size);
     __arr_set_len(body, size);
-    return protobuf.varint_field(1, 0 as i64).concat(protobuf.bytes_field(2, body));
+    return protobuf.varint_field(1, 0).concat(protobuf.bytes_field(2, body));
   }
 }
 
 function payload_size(fields: protobuf.Field[], number: i32): i32 {
-  match (protobuf.bytes(fields, number)) {
-    Some(bs) => {
-      match (protobuf.decode(bs)) {
-        Ok(inner) => {
-          match (protobuf.bytes(inner, 2)) {
-            Some(body) => {
-              return body.len();
-            },
-            None => {
-              return 0;
-            }
-          }
-        },
-        Err(e) => {
-          return 0;
-        }
-      }
-    },
-    None => {
-      return 0;
-    }
-  }
-  return 0;
+  let Some(bs) = protobuf.bytes(fields, number) else {
+    return 0;
+  };
+  let Ok(inner) = protobuf.decode(bs) else {
+    return 0;
+  };
+  let Some(body) = protobuf.bytes(inner, 2) else {
+    return 0;
+  };
+  return body.len();
 }
 
 function echo_status(fields: protobuf.Field[]): Option[(i32, string)] {
-  match (protobuf.bytes(fields, 7)) {
-    Some(bs) => {
-      match (protobuf.decode(bs)) {
-        Ok(inner) => {
-          let code: i32 = 0;
-          match (protobuf.varint(inner, 1)) {
-            Some(c) => {
-              code = c as i32;
-            },
-            None => {}
-          }
-          let message: string = "";
-          match (protobuf.bytes(inner, 2)) {
-            Some(m) => {
-              message = string_from_bytes_unchecked(m);
-            },
-            None => {}
-          }
-          return Some((code, message));
-        },
-        Err(e) => {
-          return None;
-        }
-      }
-    },
-    None => {
-      return None;
-    }
-  }
-  return None;
+  let Some(bs) = protobuf.bytes(fields, 7) else {
+    return None;
+  };
+  let Ok(inner) = protobuf.decode(bs) else {
+    return None;
+  };
+  let code = match (protobuf.varint(inner, 1)) { Some(c) => c as i32, None => 0 };
+  let message = match (protobuf.bytes(inner, 2)) { Some(m) => string_from_bytes_unchecked(m), None => "" };
+  return Some((code, message));
 }
 
 function messages(body: u8[]): u8[][] {
   let out: u8[][] = [];
-  let rest: u8[] = body;
-  while (true) {
-    match (grpc.next_message(rest)) {
-      Ok(got) => {
-        match (got) {
-          Some(m) => {
-            out = out.append(m.0);
-            rest = m.1;
-          },
-          None => {
-            return out;
-          }
-        }
-      },
-      Err(e) => {
-        return out;
-      }
-    }
+  let rest = body;
+  loop {
+    let Ok(Some(m)) = grpc.next_message(rest) else {
+      return out;
+    };
+    out = out.append(m.0);
+    rest = m.1;
   }
-  return out;
 }
 
 function first_message(body: u8[]): u8[] {
-  let all: u8[][] = messages(body);
+  let all = messages(body);
   if (all.len() == 0) {
     return [];
   }
@@ -121,36 +76,23 @@ function first_message(body: u8[]): u8[] {
 function unary(body: u8[]): HttpResponse {
   match (protobuf.decode(first_message(body))) {
     Ok(fields) => {
-      match (echo_status(fields)) {
-        Some(st) => {
-          return grpc.error(st.0, st.1);
-        },
-        None => {}
+      if let Some(st) = echo_status(fields) {
+        return grpc.error(st.0, st.1);
       }
-      let size: i32 = 0;
-      match (protobuf.varint(fields, 2)) {
-        Some(n) => {
-          size = n as i32;
-        },
-        None => {}
-      }
+      let size = match (protobuf.varint(fields, 2)) { Some(n) => n as i32, None => 0 };
       return grpc.response([protobuf.bytes_field(1, payload(size))], grpc.OK, "");
     },
     Err(e) => {
       return grpc.error(grpc.INVALID_ARGUMENT, e.message());
     }
   }
-  return grpc.error(grpc.INTERNAL, "");
 }
 
 function input_stream(body: u8[]): HttpResponse {
-  let total: i32 = 0;
+  let total = 0;
   for m in messages(body) {
-    match (protobuf.decode(m)) {
-      Ok(fields) => {
-        total = total + payload_size(fields, 1);
-      },
-      Err(e) => {}
+    if let Ok(fields) = protobuf.decode(m) {
+      total += payload_size(fields, 1);
     }
   }
   return grpc.response([protobuf.varint_field(1, total as i64)], grpc.OK, "");
@@ -159,18 +101,9 @@ function input_stream(body: u8[]): HttpResponse {
 function output_responses(fields: protobuf.Field[]): u8[][] {
   let out: u8[][] = [];
   for p in protobuf.repeated(fields, 2) {
-    match (protobuf.decode(p)) {
-      Ok(param) => {
-        let size: i32 = 0;
-        match (protobuf.varint(param, 1)) {
-          Some(n) => {
-            size = n as i32;
-          },
-          None => {}
-        }
-        out = out.append(protobuf.bytes_field(1, payload(size)));
-      },
-      Err(e) => {}
+    if let Ok(param) = protobuf.decode(p) {
+      let size = match (protobuf.varint(param, 1)) { Some(n) => n as i32, None => 0 };
+      out = out.append(protobuf.bytes_field(1, payload(size)));
     }
   }
   return out;
@@ -179,11 +112,8 @@ function output_responses(fields: protobuf.Field[]): u8[][] {
 function output_stream(body: u8[]): HttpResponse {
   match (protobuf.decode(first_message(body))) {
     Ok(fields) => {
-      match (echo_status(fields)) {
-        Some(st) => {
-          return grpc.error(st.0, st.1);
-        },
-        None => {}
+      if let Some(st) = echo_status(fields) {
+        return grpc.error(st.0, st.1);
       }
       return grpc.response(output_responses(fields), grpc.OK, "");
     },
@@ -191,46 +121,33 @@ function output_stream(body: u8[]): HttpResponse {
       return grpc.error(grpc.INVALID_ARGUMENT, e.message());
     }
   }
-  return grpc.error(grpc.INTERNAL, "");
 }
 
 function duplex(req: HttpRequest): HttpResponse {
-  let source: Option[BodySource] = req.body.source;
+  let source = req.body.source;
   let empty: u8[] = [];
-  let carry: Cell[u8[]] = cell_new(empty);
-  let status: Cell[i32] = cell_new(grpc.OK);
-  let message: Cell[string] = cell_new("");
-  let resp: HttpResponse = http.chunks_with_trailers(200, (i: i32): Option[u8[]] => duplex_next(source, carry, status, message), (): HeaderMap => grpc.status(status.get(), message.get()));
+  let carry = cell_new(empty);
+  let status = cell_new(grpc.OK);
+  let message = cell_new("");
+  let resp = http.chunks_with_trailers(200, (i: i32): Option[u8[]] => duplex_next(source, carry, status, message), (): HeaderMap => grpc.status(status.get(), message.get()));
   return HttpResponse { ...resp, headers: grpc.headers() };
 }
 
 function duplex_next(source: Option[BodySource], carry: Cell[u8[]], status: Cell[i32], message: Cell[string]): Option[u8[]] {
-  while (true) {
+  loop {
     match (grpc.next_message(carry.get())) {
-      Ok(got) => {
-        match (got) {
-          Some(m) => {
-            carry.set(m.1);
-            return Some(duplex_reply(m.0, status, message));
-          },
-          None => {
-            match (source) {
-              Some(src) => {
-                match (src.next()) {
-                  Some(chunk) => {
-                    carry.set(carry.get().concat(chunk));
-                  },
-                  None => {
-                    return None;
-                  }
-                }
-              },
-              None => {
-                return None;
-              }
-            }
-          }
-        }
+      Ok(Some(m)) => {
+        carry.set(m.1);
+        return Some(duplex_reply(m.0, status, message));
+      },
+      Ok(None()) => {
+        let Some(src) = source else {
+          return None;
+        };
+        let Some(chunk) = src.next() else {
+          return None;
+        };
+        carry.set(carry.get().concat(chunk));
       },
       Err(e) => {
         status.set(grpc.UNIMPLEMENTED);
@@ -239,18 +156,14 @@ function duplex_next(source: Option[BodySource], carry: Cell[u8[]], status: Cell
       }
     }
   }
-  return None;
 }
 
 function duplex_reply(m: u8[], status: Cell[i32], message: Cell[string]): u8[] {
   match (protobuf.decode(m)) {
     Ok(fields) => {
-      match (echo_status(fields)) {
-        Some(st) => {
-          status.set(st.0);
-          message.set(st.1);
-        },
-        None => {}
+      if let Some(st) = echo_status(fields) {
+        status.set(st.0);
+        message.set(st.1);
       }
       let out: u8[] = [];
       for r in output_responses(fields) {
@@ -264,22 +177,15 @@ function duplex_reply(m: u8[], status: Cell[i32], message: Cell[string]): u8[] {
       return [];
     }
   }
-  return [];
 }
 
 function echoed(req: HttpRequest, resp: HttpResponse): HttpResponse {
-  let out: HttpResponse = resp;
-  match (req.headers.get("x-grpc-test-echo-initial")) {
-    Some(v) => {
-      out = HttpResponse { ...out, headers: out.headers.append("x-grpc-test-echo-initial", v) };
-    },
-    None => {}
+  let out = resp;
+  if let Some(v) = req.headers.get("x-grpc-test-echo-initial") {
+    out = HttpResponse { ...out, headers: out.headers.append("x-grpc-test-echo-initial", v) };
   }
-  match (req.headers.get("x-grpc-test-echo-trailing-bin")) {
-    Some(v) => {
-      out = HttpResponse { ...out, trailers: out.trailers.append("x-grpc-test-echo-trailing-bin", v) };
-    },
-    None => {}
+  if let Some(v) = req.headers.get("x-grpc-test-echo-trailing-bin") {
+    out = HttpResponse { ...out, trailers: out.trailers.append("x-grpc-test-echo-trailing-bin", v) };
   }
   return out;
 }
@@ -292,20 +198,23 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function answer(req: HttpRequest): HttpResponse {
-  if (req.path == "/grpc.testing.TestService/EmptyCall") {
-    return grpc.response([[]], grpc.OK, "");
-  }
-  if (req.path == "/grpc.testing.TestService/UnaryCall") {
-    return unary(req.body_bytes());
-  }
-  if (req.path == "/grpc.testing.TestService/StreamingInputCall") {
-    return input_stream(req.body_bytes());
-  }
-  if (req.path == "/grpc.testing.TestService/StreamingOutputCall") {
-    return output_stream(req.body_bytes());
-  }
-  if (req.path == "/grpc.testing.TestService/FullDuplexCall") {
-    return duplex(req);
+  match (req.path) {
+    "/grpc.testing.TestService/EmptyCall" => {
+      return grpc.response([[]], grpc.OK, "");
+    },
+    "/grpc.testing.TestService/UnaryCall" => {
+      return unary(req.body_bytes());
+    },
+    "/grpc.testing.TestService/StreamingInputCall" => {
+      return input_stream(req.body_bytes());
+    },
+    "/grpc.testing.TestService/StreamingOutputCall" => {
+      return output_stream(req.body_bytes());
+    },
+    "/grpc.testing.TestService/FullDuplexCall" => {
+      return duplex(req);
+    },
+    _ => {}
   }
   if (req.path.starts_with("/grpc.testing.TestService/")) {
     return grpc.error(grpc.UNIMPLEMENTED, "method not implemented");
@@ -314,66 +223,26 @@ function answer(req: HttpRequest): HttpResponse {
 }
 
 function port(): i32 {
-  match (env("PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => {
-          return n;
-        },
-        Err(_) => {
-          return 8080;
-        }
-      }
-    },
-    None => {
-      return 8080;
-    }
-  }
-  return 8080;
+  let Some(p) = env("PORT") else {
+    return 8080;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(8080);
 }
 
 function tls_config(cfg: serve.Config): Result[serve.Config, string] {
-  match (env("TLS_CERT")) {
-    Some(cert_path) => {
-      match (env("TLS_KEY")) {
-        Some(key_path) => {
-          let cert: string = "";
-          match (read_file(cert_path)) {
-            Ok(t) => {
-              cert = t;
-            },
-            Err(e) => {
-              return Err("TLS_CERT could not be read");
-            }
-          }
-          let key: string = "";
-          match (read_file(key_path)) {
-            Ok(t) => {
-              key = t;
-            },
-            Err(e) => {
-              return Err("TLS_KEY could not be read");
-            }
-          }
-          match (identity.from_pem(cert, key)) {
-            Ok(id) => {
-              return Ok(cfg.with_tls(server.config(id, rand.bytes(32))));
-            },
-            Err(e) => {
-              return Err(e.message());
-            }
-          }
-        },
-        None => {
-          return Err("TLS_CERT without TLS_KEY");
-        }
-      }
-    },
-    None => {
-      return Ok(cfg);
-    }
-  }
-  return Ok(cfg);
+  let Some(cert_path) = env("TLS_CERT") else {
+    return Ok(cfg);
+  };
+  let Some(key_path) = env("TLS_KEY") else {
+    return Err("TLS_CERT without TLS_KEY");
+  };
+  let Ok(cert) = read_file(cert_path) else {
+    return Err("TLS_CERT could not be read");
+  };
+  let Ok(key) = read_file(key_path) else {
+    return Err("TLS_KEY could not be read");
+  };
+  return match (identity.from_pem(cert, key)) { Ok(id) => Ok(cfg.with_tls(server.config(id, rand.bytes(32)))), Err(e) => Err(e.message()) };
 }
 
 function main(): i32 {
@@ -386,5 +255,4 @@ function main(): i32 {
       return 2;
     }
   }
-  return 2;
 }

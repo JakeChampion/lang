@@ -1,22 +1,18 @@
 import "std/string";
 
 function haystack(): string {
-  let s: string = "abcdefghijklmnopqrstuvwxyz012345";
-  let k: i32 = 0;
-  while (k < 10) {
+  let s = "abcdefghijklmnopqrstuvwxyz012345";
+  for _ in 0..10 {
     s = s + s;
-    k = k + 1;
   }
   return s;
 }
 
 function main(): i32 {
-  let hay: string = haystack();
-  let acc: i32 = 0;
-  let r: i32 = 0;
-  while (r < 6000) {
-    acc = acc + hay.count_byte(97) + hay.count_byte(98);
-    r = r + 1;
+  let hay = haystack();
+  let acc = 0;
+  for _ in 0..6000 {
+    acc = acc + hay.count_byte(b'a') + hay.count_byte(b'b');
   }
   return acc % 97;
 }

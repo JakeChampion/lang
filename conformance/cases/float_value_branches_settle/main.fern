@@ -1,0 +1,17 @@
+// Float literal branches of value if and match expressions settle to the
+// expected float type, through or-patterns, enum arms and else-if chains.
+enum Value { VBool(boolean), VNum(f64) }
+
+function g(v: Value, n: i32, q: boolean): f64 {
+  let a = match (n) { 0 | 1 => 1.5, 2 => 2.5, _ => 3.5 };
+  let b = match (v) { VBool(x) => if (q) { 1.0 } else { 0.0 }, _ => 4.0 };
+  let c = if (n == 0) { 0.25 } else if (n == 1) { 0.5 } else { 0.75 };
+  return a + b + c;
+}
+
+function main(): i32 {
+  for n in 0..4 {
+    print(f"{g(VBool(true), n, n % 2 == 0)} {g(VNum(1.0), n, false)}");
+  }
+  return 0;
+}

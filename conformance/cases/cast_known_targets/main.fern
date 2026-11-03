@@ -1,0 +1,14 @@
+import "./types";
+
+function accept_pointer(address: usize): void {
+  let item = address as types.Item;
+}
+
+function main(): i32 {
+  let n = 5 as i64;
+  let checked = n as? u8;
+  match (checked) {
+    Some(value) => { return (value as i32) - 5; },
+    None => { return 1; }
+  }
+}

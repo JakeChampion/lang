@@ -14,24 +14,22 @@ function collect(data: [u8], first: i32, count: i32): Result[png.RowFold[pixels.
 }
 
 function agrees(data: [u8], expected: [u8], channels: i32): boolean {
-  let result = match (collect(data, 0, 2)) { Ok(v) => v, Err(_) => { return false; } };
+  let Ok(result) = collect(data, 0, 2) else {
+    return false;
+  };
   if (result.value.len() != 2 || result.plan.layout.width != 2 || result.plan.layout.height != 2) {
     return false;
   }
-  let y = 0;
-  while (y < 2) {
+  for y in 0..2 {
     let row = result.value[y];
     if (row.layout.width != 2 || row.layout.height != 1 || row.layout.stride != channels * 2 || row.data.len() != channels * 2) {
       return false;
     }
-    let x = 0;
-    while (x < row.data.len()) {
+    for x in 0..row.data.len() {
       if (row.data[x] != expected[y * row.data.len() + x]) {
         return false;
       }
-      x = x + 1;
     }
-    y = y + 1;
   }
   return true;
 }
@@ -47,22 +45,22 @@ function filters(): test.TestOutcome {
 
 function selected(): test.TestOutcome {
   let data = fixtures.rgba4();
-  let padded: u8[] = [3 as u8, 7 as u8];
+  let padded: u8[] = [3, 7];
   for byte in data {
     padded = padded.append(byte);
   }
-  padded = padded.append(9 as u8);
-  let result = match (collect(padded[2:padded.len() - 1], 1, 1)) { Ok(v) => v, Err(_) => { return test.fail("row selection"); } };
+  padded = padded.append(9);
+  let Ok(result) = collect(padded[2:padded.len() - 1], 1, 1) else {
+    return test.fail("row selection");
+  };
   let expected = fixtures.rgba_bytes();
   if (result.value.len() != 1 || result.plan.first != 1 || result.plan.count != 1 || result.plan.row_work != 18i64) {
     return test.fail("selection plan");
   }
-  let i = 0;
-  while (i < 8) {
+  for i in 0..8 {
     if (result.value[0].data[i] != expected[8 + i]) {
       return test.fail("prefix dependency");
     }
-    i = i + 1;
   }
   return test.assert_true(true);
 }
@@ -77,13 +75,13 @@ function ownership(): test.TestOutcome {
     }
     return Ok(rows.append(row));
   };
-  let result = match (png.fold_rows(data, 0, 2, pixels.default_limits(), png.default_row_limits(), never_cancel, seed, consume)) { Ok(v) => v, Err(_) => { return test.fail("fold"); } };
+  let Ok(result) = png.fold_rows(data, 0, 2, pixels.default_limits(), png.default_row_limits(), never_cancel, seed, consume) else {
+    return test.fail("fold");
+  };
   let expected = fixtures.rgba_bytes();
-  let good = result.value.len() == 2 && result.value[0].data[0] == 31 as u8 && result.value[0].data[3] == 255 as u8;
-  let i = 0;
-  while (i < 8) {
+  let good = result.value.len() == 2 && result.value[0].data[0] == 31 && result.value[0].data[3] == 255;
+  for i in 0..8 {
     good = good && result.value[1].data[i] == expected[8 + i];
-    i = i + 1;
   }
   return test.assert_true(good && seed.len() == 0 && agrees(data, expected, 4));
 }
@@ -96,26 +94,28 @@ function admission(): test.TestOutcome {
     return Ok(value + 1);
   };
   let limits = png.RowLimits { max_payload_bytes: 184i64, max_row_work: 14i64 };
-  let result = match (png.fold_rows(data, 1, 1, pixels.default_limits(), limits, never_cancel, 0, consume)) { Ok(v) => v, Err(_) => { return test.fail("exact admission"); } };
+  let Ok(result) = png.fold_rows(data, 1, 1, pixels.default_limits(), limits, never_cancel, 0, consume) else {
+    return test.fail("exact admission");
+  };
   let good = result.value == 1 && result.plan.filtered_bytes == 14 && result.plan.row_scratch_bytes == 12i64
     && result.plan.payload_bytes == 184i64 && result.plan.row_work == 14i64 && calls.get() == 1;
   calls.set(0);
   for budget in [
     png.RowLimits { max_payload_bytes: 183i64, max_row_work: 14i64 }, png.RowLimits { max_payload_bytes: 184i64, max_row_work: 13i64 },
-    png.RowLimits { max_payload_bytes: 0i64, max_row_work: 14i64 }, png.RowLimits { max_payload_bytes: 184i64, max_row_work: 0 - 1i64 },
+    png.RowLimits { max_payload_bytes: 0i64, max_row_work: 14i64 }, png.RowLimits { max_payload_bytes: 184i64, max_row_work: -1i64 },
   ] {
     let rejected = match (png.fold_rows(data, 1, 1, pixels.default_limits(), budget, never_cancel, 0, consume)) { Err(png.RowBudget()) => true, _ => false };
     if (!rejected) {
       return test.fail("budget rejection");
     }
   }
-  for first in [0 - 1, 2, 2147483647] {
+  for first in [-1, 2, 2147483647] {
     let rejected = match (png.fold_rows(data, first, 1, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds()) => true, _ => false };
     if (!rejected) {
       return test.fail("first row");
     }
   }
-  for count in [0 - 1, 0, 3, 2147483647] {
+  for count in [-1, 0, 3, 2147483647] {
     let rejected = match (png.fold_rows(data, 0, count, pixels.default_limits(), limits, never_cancel, 0, consume)) { Err(png.RowBounds()) => true, _ => false };
     if (!rejected) {
       return test.fail("row count");
@@ -139,8 +139,12 @@ function consumer_failure(): test.TestOutcome {
 }
 
 function cancellation(): test.TestOutcome {
-  let source = match (pixels.create(300, 3, 1200, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
-  let data = match (png.encode(source, 10000)) { Ok(v) => v, Err(_) => { return test.fail("encode"); } };
+  let Ok(source) = pixels.create(300, 3, 1200, pixels.RGBA8, pixels.default_limits()) else {
+    return test.fail("source");
+  };
+  let Ok(data) = png.encode(source, 10000) else {
+    return test.fail("encode");
+  };
   let polls = cell_new(0);
   let cancelled = (): boolean => {
     polls.set(polls.get() + 1);
@@ -149,8 +153,7 @@ function cancellation(): test.TestOutcome {
   let consume = (value: i32, _row: pixels.Image): Result[i32, string] => Ok(value + 1);
   let control = match (png.fold_rows(data, 0, 3, pixels.default_limits(), png.default_row_limits(), cancelled, 0, consume)) { Ok(v) => v.value == 3, _ => false };
   let total = polls.get();
-  let stop = 1;
-  while (stop <= total) {
+  for stop in 1..=total {
     polls.set(0);
     let cancel_at = (): boolean => {
       polls.set(polls.get() + 1);
@@ -160,7 +163,6 @@ function cancellation(): test.TestOutcome {
     if (!rejected || polls.get() != stop) {
       return test.fail("cancellation phase");
     }
-    stop = stop + 1;
   }
   return test.assert_true(control && total > 10);
 }
@@ -171,7 +173,7 @@ function malformed(): test.TestOutcome {
     calls.set(calls.get() + 1);
     return Ok(value);
   };
-  for data in [fixtures.rgb0().with(33, 1 as u8), fixtures.short_scanline(), fixtures.unsupported()] {
+  for data in [fixtures.rgb0().with(33, 1), fixtures.short_scanline(), fixtures.unsupported()] {
     let rejected = match (png.fold_rows(data, 0, 1, pixels.default_limits(), png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(_)) => true, _ => false };
     if (!rejected) {
       return test.fail("codec error");

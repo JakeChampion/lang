@@ -6,12 +6,12 @@ function test_body_text_lossy_round_trips(): test.TestOutcome {
 }
 
 function test_body_len_matches_string(): test.TestOutcome {
-  let r: HttpResponse = http.ok("hello");
+  let r = http.ok("hello");
   return test.assert_eq(r.body_len(), r.body_text_lossy().len());
 }
 
 function test_body_bytes_matches_string_bytes(): test.TestOutcome {
-  let r: HttpResponse = http.text(201, "hi");
+  let r = http.text(201, "hi");
   return test.assert_eq(r.body_bytes().len(), 2);
 }
 
@@ -20,7 +20,7 @@ function test_empty_body_is_zero_len(): test.TestOutcome {
 }
 
 function test_bytes_constructor_agrees_with_text(): test.TestOutcome {
-  let b: HttpResponse = http.bytes(201, "hi".bytes());
+  let b = http.bytes(201, "hi".bytes());
   return test.assert_eq(b.body_text_lossy(), http.text(201, "hi").body_text_lossy());
 }
 
@@ -29,17 +29,17 @@ function test_bytes_constructor_keeps_status(): test.TestOutcome {
 }
 
 function test_serialized_wire_length_matches_body(): test.TestOutcome {
-  let wire: string = http.serialize_response(http.ok("hello"));
+  let wire = http.serialize_response(http.ok("hello"));
   return test.assert_contains(wire, "Content-Length: 5");
 }
 
 function test_serialized_wire_ends_with_body(): test.TestOutcome {
-  let wire: string = http.serialize_response(http.ok("hello"));
+  let wire = http.serialize_response(http.ok("hello"));
   return test.assert_contains(wire, "\r\n\r\nhello");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("HTTP response body shim");
+  let r = test.new("HTTP response body shim");
   r = r.it("body_text_lossy round-trips", test_body_text_lossy_round_trips);
   r = r.it("body_len matches the string length", test_body_len_matches_string);
   r = r.it("body_bytes matches the string bytes", test_body_bytes_matches_string_bytes);

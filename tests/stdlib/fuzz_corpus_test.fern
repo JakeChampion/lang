@@ -74,7 +74,7 @@ function test_corpus_dir_empty_uses_fallback(r: test.TestRunner): test.TestRunne
   if (dir == "") {
     return rr;
   }
-  let seeds: u8[][] = fuzz.corpus_from_dir_or(dir, ["fallback".bytes()]);
+  let seeds = fuzz.corpus_from_dir_or(dir, ["fallback".bytes()]);
   return rr.it("empty corpus falls back", () => test.assert_eq(seeds.len(), 1));
 }
 
@@ -87,7 +87,7 @@ function test_new_mutators_dont_crash(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("fuzz corpus");
+  let r = test.new("fuzz corpus");
   r = test_corpus_loads_and_runs(r);
   r = r.it(
     "missing corpus dir falls back",

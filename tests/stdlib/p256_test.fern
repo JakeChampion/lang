@@ -48,7 +48,7 @@ function test_scalar_mul(): test.TestOutcome {
   if (times_x(N_MINUS_1, G) != "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296") {
     return test.fail("[n - 1]G");
   }
-  let seven: string = "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4";
+  let seven = "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4";
   if (base(one_hot(31, 7 as u8)) != seven) {
     return test.fail("[7]G");
   }
@@ -81,7 +81,7 @@ function test_scalar_reduce(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto/p256");
+  let r = test.new("std/crypto/p256");
   r = r.it("[k]G", test_base_point);
   r = r.it("[k]Q", test_scalar_mul);
   r = r.it("scalar range", test_scalar_range);

@@ -11,7 +11,7 @@ struct Item { name: string, qty: i32, tags: string[] }
 struct Note { text: Option[string] }
 
 function create(req: HttpRequest): Result[HttpResponse, http.BodyError] {
-  let item: Item = http.body_json[Item](req)?;
+  let item = http.body_json[Item](req)?;
   return Ok(http.json_status(201, item.to_json()));
 }
 
@@ -20,9 +20,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 function test_a_json_body_decodes(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let req: HttpRequest = http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
-  let resp: HttpResponse = handle(req, m);
+  let m = mock_platform.new();
+  let req = http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
+  let resp = handle(req, m);
   match (test.assert_status(resp, 201)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -33,8 +33,8 @@ function test_a_json_body_decodes(): test.TestOutcome {
 }
 
 function test_the_media_type_must_be_json(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_text("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("POST", "/items").with_text("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}"), m);
   match (test.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -47,20 +47,20 @@ function test_the_media_type_must_be_json(): test.TestOutcome {
     },
     Pass => {}
   }
-  let typed: HttpRequest = http.request("POST", "/items").with_text("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}").with_header("Content-Type", "application/vnd.shop+JSON; charset=utf-8");
+  let typed = http.request("POST", "/items").with_text("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}").with_header("Content-Type", "application/vnd.shop+JSON; charset=utf-8");
   return test.assert_status(handle(typed, m), 201);
 }
 
 function test_malformed_json_is_400(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("POST", "/items").with_json("{\"name\":"), m);
   match (test.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  let body: string = resp.body_text_lossy();
+  let body = resp.body_text_lossy();
   if (!body.contains("\"title\":\"Malformed JSON\"") || !body.contains("1:9")) {
     return test.fail("problem body: " + body);
   }
@@ -68,16 +68,16 @@ function test_malformed_json_is_400(): test.TestOutcome {
 }
 
 function test_a_body_that_is_not_utf8_is_400(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let raw: string = string_from_bytes_unchecked([123 as u8, 255 as u8, 125 as u8]);
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_json(raw), m);
+  let m = mock_platform.new();
+  let raw = string_from_bytes_unchecked([123 as u8, 255 as u8, 125 as u8]);
+  let resp = handle(http.request("POST", "/items").with_json(raw), m);
   match (test.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  let body: string = resp.body_text_lossy();
+  let body = resp.body_text_lossy();
   if (!body.contains("body is not valid UTF-8")) {
     return test.fail("problem body: " + body);
   }
@@ -85,19 +85,19 @@ function test_a_body_that_is_not_utf8_is_400(): test.TestOutcome {
 }
 
 function test_the_wrong_shape_is_422(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":\"two\",\"tags\":[]}"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":\"two\",\"tags\":[]}"), m);
   match (test.assert_status(resp, 422)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  let body: string = resp.body_text_lossy();
+  let body = resp.body_text_lossy();
   if (!body.contains("field \\\"qty\\\": expected an integer, got a string")) {
     return test.fail("problem body: " + body);
   }
-  let missing: HttpResponse = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\"}"), m);
+  let missing = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\"}"), m);
   match (test.assert_status(missing, 422)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -147,7 +147,7 @@ function test_decode_reads_text_directly(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("Typed JSON bodies");
+  let r = test.new("Typed JSON bodies");
   r = r.it("a JSON body decodes", test_a_json_body_decodes);
   r = r.it("the media type must be JSON", test_the_media_type_must_be_json);
   r = r.it("malformed JSON is 400", test_malformed_json_is_400);

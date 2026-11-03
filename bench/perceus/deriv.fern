@@ -17,34 +17,28 @@ function pown(a: i64, b: i64): i64 {
   if (b < 0i64) {
     return 0i64;
   }
-  let result: i64 = 1i64;
+  let result = 1i64;
   while (b > 0i64) {
     if (b % 2i64 != 0i64) {
-      result = result * a;
-      b = b - 1i64;
+      result *= a;
+      b -= 1i64;
     }
     if (b > 0i64) {
-      b = b / 2i64;
-      a = a * a;
+      b /= 2i64;
+      a *= a;
     }
   }
   return result;
 }
 
 pub function add(left: Expr, right: Expr): Expr {
-  match (left) {
-    Val(n) => {
-      match (right) {
-        Val(m) => {
-          return Val(n + m);
-        },
-        _ => {}
-      }
-      if (n == 0i64) {
-        return right;
-      }
-    },
-    _ => {}
+  if let Val(n) = left {
+    if let Val(m) = right {
+      return Val(n + m);
+    }
+    if (n == 0i64) {
+      return right;
+    }
   }
   match (right) {
     Val(m) => {
@@ -54,55 +48,37 @@ pub function add(left: Expr, right: Expr): Expr {
       return add(Val(m), left);
     },
     Add(Val(m), f) => {
-      match (left) {
-        Val(n) => {
-          return add(Val(n + m), f);
-        },
-        _ => {}
+      if let Val(n) = left {
+        return add(Val(n + m), f);
       }
       return add(Val(m), add(left, f));
     },
     _ => {}
   }
-  match (left) {
-    Add(f, g) => {
-      return add(f, add(g, right));
-    },
-    _ => {}
+  if let Add(f, g) = left {
+    return add(f, add(g, right));
   }
   return Add(left, right);
 }
 
 pub function mul(left: Expr, right: Expr): Expr {
-  match (left) {
-    Val(n) => {
-      match (right) {
-        Val(m) => {
-          return Val(n * m);
-        },
-        _ => {}
-      }
-      if (n == 0i64) {
-        return Val(0i64);
-      }
-    },
-    _ => {}
+  if let Val(n) = left {
+    if let Val(m) = right {
+      return Val(n * m);
+    }
+    if (n == 0i64) {
+      return Val(0i64);
+    }
   }
-  match (right) {
-    Val(m) => {
-      if (m == 0i64) {
-        return Val(0i64);
-      }
-    },
-    _ => {}
+  if let Val(m) = right {
+    if (m == 0i64) {
+      return Val(0i64);
+    }
   }
-  match (left) {
-    Val(n) => {
-      if (n == 1i64) {
-        return right;
-      }
-    },
-    _ => {}
+  if let Val(n) = left {
+    if (n == 1i64) {
+      return right;
+    }
   }
   match (right) {
     Val(m) => {
@@ -112,67 +88,46 @@ pub function mul(left: Expr, right: Expr): Expr {
       return mul(Val(m), left);
     },
     Mul(Val(m), f) => {
-      match (left) {
-        Val(n) => {
-          return mul(Val(n * m), f);
-        },
-        _ => {}
+      if let Val(n) = left {
+        return mul(Val(n * m), f);
       }
       return mul(Val(m), mul(left, f));
     },
     _ => {}
   }
-  match (left) {
-    Mul(f, g) => {
-      return mul(f, mul(g, right));
-    },
-    _ => {}
+  if let Mul(f, g) = left {
+    return mul(f, mul(g, right));
   }
   return Mul(left, right);
 }
 
 pub function powr(left: Expr, right: Expr): Expr {
-  match (left) {
-    Val(m) => {
-      match (right) {
-        Val(n) => {
-          return Val(pown(m, n));
-        },
-        _ => {}
-      }
-    },
-    _ => {}
+  if let Val(m) = left {
+    if let Val(n) = right {
+      return Val(pown(m, n));
+    }
   }
-  match (right) {
-    Val(n) => {
-      if (n == 0i64) {
-        return Val(1i64);
-      }
-      if (n == 1i64) {
-        return left;
-      }
-    },
-    _ => {}
+  if let Val(n) = right {
+    if (n == 0i64) {
+      return Val(1i64);
+    }
+    if (n == 1i64) {
+      return left;
+    }
   }
-  match (left) {
-    Val(m) => {
-      if (m == 0i64) {
-        return Val(0i64);
-      }
-    },
-    _ => {}
+  if let Val(m) = left {
+    if (m == 0i64) {
+      return Val(0i64);
+    }
   }
   return Pow(left, right);
 }
 
 pub function ln(e: Expr): Expr {
-  match (e) {
-    Val(n) => {
-      if (n == 1i64) {
-        return Val(0i64);
-      }
-    },
-    _ => {}
+  if let Val(n) = e {
+    if (n == 1i64) {
+      return Val(0i64);
+    }
   }
   return Ln(e);
 }
@@ -204,33 +159,14 @@ pub function d(x: string, e: Expr): Expr {
 }
 
 pub function count(e: Expr): i64 {
-  match (e) {
-    Val(_) => {
-      return 1i64;
-    },
-    Var(_) => {
-      return 1i64;
-    },
-    Add(f, g) => {
-      return count(f) + count(g);
-    },
-    Mul(f, g) => {
-      return count(f) + count(g);
-    },
-    Pow(f, g) => {
-      return count(f) + count(g);
-    },
-    Ln(f) => {
-      return count(f);
-    }
-  }
+  return match (e) { Val(_) | Var(_) => 1i64, Add(f, g) | Mul(f, g) | Pow(f, g) => count(f) + count(g), Ln(f) => count(f) };
 }
 
 function nest_aux(s: i32, f: (i32, Expr) => Expr, n: i32, e: Expr): Expr {
   if (n == 0) {
     return e;
   }
-  let next: Expr = f(s - n, e);
+  let next = f(s - n, e);
   return nest_aux(s, f, n - 1, next);
 }
 

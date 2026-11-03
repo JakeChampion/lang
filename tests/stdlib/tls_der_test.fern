@@ -84,11 +84,11 @@ function test_lengths(): test.TestOutcome {
   if (element(der.read(h("020105"), 0)) != "2 0 2 3") {
     return test.fail("short form");
   }
-  let long: string = "048180";
-  let i: i32 = 0;
+  let long = "048180";
+  let i = 0;
   while (i < 128) {
-    long = long + "00";
-    i = i + 1;
+    long += "00";
+    i += 1;
   }
   if (element(der.read(h(long), 0)) != "4 0 3 131") {
     return test.fail("long form");
@@ -109,7 +109,7 @@ function test_lengths(): test.TestOutcome {
 }
 
 function test_children(): test.TestOutcome {
-  let b: u8[] = h("3006020101020102");
+  let b = h("3006020101020102");
   match (der.children(b, first("3006020101020102"))) {
     Ok(c) => {
       if (c.len() != 2 || c[1].from != 7 || c[1].start != 5) {
@@ -178,8 +178,8 @@ function test_oids(): test.TestOutcome {
 }
 
 function test_booleans_and_bits(): test.TestOutcome {
-  let t: Result[boolean, der.DerError] = der.boolean_value(h("0101ff"), first("0101ff"));
-  let f: Result[boolean, der.DerError] = der.boolean_value(h("010100"), first("010100"));
+  let t = der.boolean_value(h("0101ff"), first("0101ff"));
+  let f = der.boolean_value(h("010100"), first("010100"));
   match (t) {
     Ok(v) => {
       if (!v) {
@@ -264,7 +264,7 @@ function test_text(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/der");
+  let r = test.new("std/tls/der");
   r = r.it("lengths and tags", test_lengths);
   r = r.it("children", test_children);
   r = r.it("integers", test_integers);

@@ -6,7 +6,9 @@ function never(): boolean {
 }
 
 function emit_case(path: string): i32 {
-  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let Ok(input) = read_file_bytes(path) else {
+    return 2;
+  };
   let blocks: entropy.CoefficientBlock[] = [];
   let result = entropy.fold_blocks(input, entropy.default_limits(), never, blocks, (kept: entropy.CoefficientBlock[], block: entropy.CoefficientBlock): Result[entropy.CoefficientBlock[], string] => {
     if (block.values.len() != 64) {
@@ -21,14 +23,13 @@ function emit_case(path: string): i32 {
         return 3;
       }
       for block in done.value {
-        let line = "block " + block.component.to_string() + " " + block.x.to_string() + " " + block.y.to_string();
+        let line = f"block {block.component} {block.x} {block.y}";
         for value in block.values {
-          line = line + " " + value.to_string();
+          line += f" {value}";
         }
         print(line);
       }
-      print("ok " + done.header.output_layout.width.to_string() + " " + done.header.output_layout.height.to_string()
-        + " " + done.plan.mcus.to_string() + " " + done.plan.decoded_blocks.to_string() + " " + done.plan.output_blocks.to_string() + " " + done.consumed.to_string());
+      print(f"ok {done.header.output_layout.width} {done.header.output_layout.height} {done.plan.mcus} {done.plan.decoded_blocks} {done.plan.output_blocks} {done.consumed}");
     },
     Err(entropy.BlockDecode(e)) => {
       print("error " + e.to_debug());

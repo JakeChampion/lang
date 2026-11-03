@@ -53,8 +53,8 @@ struct Plan { addr: net.SocketAddr, request: u8[], rate: i64, connections: i32, 
 struct Tally { sent: i64, done: i64, errors: i64, corrected: i64[], raw: i64[], max_us: i64 }
 
 function main(): i32 {
-  let spec: cli.CliSpec = cli.new("fernload", "an open-loop HTTP/1.1 load generator: a fixed request rate over kept connections, latency measured from each request's scheduled time").option("rate", "r", "requests per second over all connections (default 100)").option("connections", "c", "connections kept open (default 16)").option("duration", "d", "seconds to send for (default 10)");
-  let parsed: cli.CliArgs = spec.parse(args());
+  let spec = cli.new("fernload", "an open-loop HTTP/1.1 load generator: a fixed request rate over kept connections, latency measured from each request's scheduled time").option("rate", "r", "requests per second over all connections (default 100)").option("connections", "c", "connections kept open (default 16)").option("duration", "d", "seconds to send for (default 10)");
+  let parsed = spec.parse(args());
   if (parsed.is_error()) {
     eprint("fernload: " + parsed.error_text());
     eprint(spec.usage());
@@ -73,7 +73,6 @@ function main(): i32 {
       return 2;
     }
   }
-  return 2;
 }
 
 function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
@@ -81,81 +80,60 @@ function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
     return Err("not a URL: " + raw);
   };
   if (u.scheme != "http") {
-    return Err("the URL must be http://, not " + u.scheme + "://");
+    return Err(f"the URL must be http://, not {u.scheme}://");
   }
-  let host: string = u.host;
-  if (host == "localhost") {
-    host = "127.0.0.1";
-  }
+  let host = if (u.host == "localhost") { "127.0.0.1" } else { u.host };
   let Ok(ip) = net.ip_parse(host) else {
     return Err("the host must be an IP literal or localhost: " + u.host);
   };
-  let port: i32 = u.port;
-  if (port == 0) {
-    port = 80;
-  }
-  let target: string = u.path;
-  if (target.len() == 0) {
-    target = "/";
-  }
+  let port = if (u.port == 0) { 80 } else { u.port };
+  let target = if (u.path.len() == 0) { "/" } else { u.path };
   if (u.query.len() > 0) {
-    target = target + "?" + u.query;
+    target = f"{target}?{u.query}";
   }
-  let rate: i64 = option_i64(parsed, "rate", 100)?;
-  let connections: i64 = option_i64(parsed, "connections", 16)?;
-  let duration: i64 = option_i64(parsed, "duration", 10)?;
-  let request: string = "GET " + target + " HTTP/1.1\r\nHost: " + u.host + ":" + port.to_string() + "\r\nUser-Agent: fernload\r\n\r\n";
+  let rate = option_i64(parsed, "rate", 100)?;
+  let connections = option_i64(parsed, "connections", 16)?;
+  let duration = option_i64(parsed, "duration", 10)?;
+  let request = f"GET {target} HTTP/1.1\r\nHost: {u.host}:{port}\r\nUser-Agent: fernload\r\n\r\n";
   return Ok(Plan { addr: net.socket_addr(ip, port), request: request.bytes(), rate: rate, connections: connections as i32, duration_ns: duration * 1000000000 });
 }
 
 function option_i64(parsed: cli.CliArgs, name: string, fallback: i64): Result[i64, string] {
-  match (parsed.value(name)) {
-    Some(text) => {
-      match (i32.parse_i32_radix(text, 10)) {
-        Ok(n) => {
-          if (n <= 0) {
-            return Err("--" + name + " must be positive: " + text);
-          }
-          return Ok(n as i64);
-        },
-        Err(_) => {
-          return Err("--" + name + " is not a number: " + text);
-        }
-      }
-    },
-    None => {
-      return Ok(fallback);
-    }
+  let Some(text) = parsed.value(name) else {
+    return Ok(fallback);
+  };
+  let Ok(n) = i32.parse_i32_radix(text, 10) else {
+    return Err(f"--{name} is not a number: {text}");
+  };
+  if (n <= 0) {
+    return Err(f"--{name} must be positive: {text}");
   }
-  return Ok(fallback);
+  return Ok(n as i64);
 }
 
 function run(p: Plan): i32 {
-  let drv: async.RealDriver = async.real_driver();
+  let drv = async.real_driver();
   let conns: Conn[] = [];
-  let i: i32 = 0;
-  while (i < p.connections) {
+  for _ in 0..p.connections {
     conns = conns.append(open(drv, p));
-    i = i + 1;
   }
-  let t: Tally = Tally { sent: 0, done: 0, errors: 0, corrected: zeros(), raw: zeros(), max_us: 0 };
-  let interval_ns: i64 = 1000000000 / p.rate;
-  let start: i64 = monotonic_ns();
-  let end: i64 = start + p.duration_ns;
-  let now: i64 = start;
-  while (true) {
+  let t = Tally { sent: 0, done: 0, errors: 0, corrected: zeros(), raw: zeros(), max_us: 0 };
+  let interval_ns = 1000000000 / p.rate;
+  let start = monotonic_ns();
+  let end = start + p.duration_ns;
+  let now = start;
+  loop {
     now = monotonic_ns();
-    let due: i64 = start + t.sent * interval_ns;
+    let due = start + t.sent * interval_ns;
     while (now < end && due <= now) {
-      let at: i32 = idle(conns);
-      if (at < 0) {
+      let Some(at) = idle(conns) else {
         break;
-      }
+      };
       conns = conns.with(at, send(conns[at], p, due, now));
       t = Tally { ...t, sent: t.sent + 1 };
       due = start + t.sent * interval_ns;
     }
-    let owed: i32 = in_flight(conns);
+    let owed = in_flight(conns);
     if (now >= end && owed == 0) {
       break;
     }
@@ -163,27 +141,23 @@ function run(p: Plan): i32 {
       t = Tally { ...t, errors: t.errors + owed as i64 };
       break;
     }
-    let until: i64 = due;
-    if (now >= end || idle(conns) < 0) {
-      until = end + DRAIN_NS;
-    }
-    let events: i32[] = drv.wait(2 * conns.len(), Some(wait_until(now, until)));
-    let k: i32 = 0;
+    let until = if (now >= end || idle(conns).is_none()) { end + DRAIN_NS } else { due };
+    let events = drv.wait(2 * conns.len(), Some(wait_until(now, until)));
+    let k = 0;
     while (k + 1 < events.len()) {
-      let at: i32 = conn_of(conns, events[k]);
-      if (at >= 0) {
-        let stepped: (Conn, Tally) = step(drv, p, conns[at], events[k + 1], t);
+      if let Some(at) = conn_of(conns, events[k]) {
+        let stepped = step(drv, p, conns[at], events[k + 1], t);
         conns = conns.with(at, stepped.0);
         t = stepped.1;
       }
-      k = k + 2;
+      k += 2;
     }
   }
   for c in conns {
     drv.unwatch(c.fd);
     net.close(c.fd);
   }
-  let behind: i64 = p.duration_ns / interval_ns - t.sent;
+  let behind = p.duration_ns / interval_ns - t.sent;
   if (behind < 0) {
     behind = 0;
   }
@@ -198,7 +172,7 @@ function wait_until(now: i64, until: i64): Duration {
   if (until <= now) {
     return time.DURATION_ZERO;
   }
-  let ns: i64 = until - now;
+  let ns = until - now;
   if (ns > 1000000000) {
     return time.duration_seconds(1);
   }
@@ -207,16 +181,11 @@ function wait_until(now: i64, until: i64): Duration {
 
 function open(drv: async.RealDriver, p: Plan): Conn {
   let none: u8[] = [];
-  match (net.connect_start(p.addr)) {
-    Ok(fd) => {
-      drv.watch(fd, 2);
-      return Conn { fd: fd, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
-    },
-    Err(e) => {
-      return Conn { fd: 0 - 1, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
-    }
-  }
-  return Conn { fd: 0 - 1, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
+  let Ok(fd) = net.connect_start(p.addr) else {
+    return Conn { fd: -1, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
+  };
+  drv.watch(fd, 2);
+  return Conn { fd: fd, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
 }
 
 function reopen(drv: async.RealDriver, p: Plan, c: Conn): Conn {
@@ -227,40 +196,36 @@ function reopen(drv: async.RealDriver, p: Plan, c: Conn): Conn {
   return open(drv, p);
 }
 
-function idle(conns: Conn[]): i32 {
-  let i: i32 = 0;
-  while (i < conns.len()) {
+function idle(conns: Conn[]): Option[i32] {
+  for i in 0..conns.len() {
     if (conns[i].state == IDLE) {
-      return i;
+      return Some(i);
     }
-    i = i + 1;
   }
-  return 0 - 1;
+  return None;
 }
 
 function in_flight(conns: Conn[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for c in conns {
     if (c.state == BUSY) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
 }
 
-function conn_of(conns: Conn[], fd: i32): i32 {
-  let i: i32 = 0;
-  while (i < conns.len()) {
+function conn_of(conns: Conn[], fd: i32): Option[i32] {
+  for i in 0..conns.len() {
     if (conns[i].fd == fd) {
-      return i;
+      return Some(i);
     }
-    i = i + 1;
   }
-  return 0 - 1;
+  return None;
 }
 
 function send(c: Conn, p: Plan, due: i64, now: i64): Conn {
-  let sent: Result[i32, net.NetError] = net.write(c.fd, p.request);
+  let _ = net.write(c.fd, p.request);
   let none: u8[] = [];
   return Conn { ...c, state: BUSY, due_ns: due, sent_ns: now, buf: none };
 }
@@ -278,27 +243,22 @@ function connected(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): Conn {
       drv.watch(c.fd, 1);
       return Conn { ...c, state: IDLE };
     },
-    Err(e) => {
-      match (e) {
-        net.InProgress => {
-          return c;
-        },
-        _ => {
-          return reopen(drv, p, c);
-        }
-      }
+    Err(net.InProgress()) => {
+      return c;
+    },
+    Err(_) => {
+      return reopen(drv, p, c);
     }
   }
-  return c;
 }
 
 function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) {
-  let conn: Conn = c;
-  let tally: Tally = t;
-  while (true) {
-    let scratch: u8[] = __alloc_u8(16384);
-    let n: i32 = tcp_recv_into(conn.fd, scratch);
-    if (n == 0 - eagain()) {
+  let conn = c;
+  let tally = t;
+  loop {
+    let scratch = __alloc_u8(16384);
+    let n = tcp_recv_into(conn.fd, scratch);
+    if (n == -eagain()) {
       return (conn, tally);
     }
     if (n <= 0) {
@@ -316,7 +276,7 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
     }
     match (http.parse_response_framed(conn.buf, "GET", false, http.limits())) {
       http.Complete(f) => {
-        let now: i64 = monotonic_ns();
+        let now = monotonic_ns();
         tally = recorded(tally, (now - conn.due_ns) / 1000, (now - conn.sent_ns) / 1000);
         if (!f.keep_alive) {
           return (reopen(drv, p, conn), tally);
@@ -334,33 +294,24 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
       }
     }
   }
-  return (conn, tally);
 }
 
 function eagain(): i32 {
-  if (target_os() == "darwin") {
-    return 35;
-  }
-  return 11;
+  return match (target_os()) { "darwin" => 35, _ => 11 };
 }
 
 function zeros(): i64[] {
   let out: i64[] = [];
-  let i: i32 = 0;
-  while (i < BUCKETS) {
+  for _ in 0..BUCKETS {
     out = out.append(0);
-    i = i + 1;
   }
   return out;
 }
 
 function recorded(t: Tally, corrected_us: i64, raw_us: i64): Tally {
-  let max_us: i64 = t.max_us;
-  if (corrected_us > max_us) {
-    max_us = corrected_us;
-  }
-  let ci: i32 = bucket(corrected_us);
-  let ri: i32 = bucket(raw_us);
+  let max_us = if (corrected_us > t.max_us) { corrected_us } else { t.max_us };
+  let ci = bucket(corrected_us);
+  let ri = bucket(raw_us);
   return Tally { ...t, done: t.done + 1, corrected: t.corrected.with(ci, t.corrected[ci] + 1), raw: t.raw.with(ri, t.raw[ri] + 1), max_us: max_us };
 }
 
@@ -372,13 +323,13 @@ function bucket(us: i64): i32 {
     return us as i32;
   }
   let e: i32 = 0;
-  let x: i64 = us;
+  let x = us;
   while (x > 0) {
-    x = x / 2;
-    e = e + 1;
+    x /= 2;
+    e += 1;
   }
-  let sub: i32 = (us / (1 as i64 << e - 6) % (PER_EXPONENT as i64)) as i32;
-  let index: i32 = DIRECT + (e - 7) * PER_EXPONENT + sub;
+  let sub = (us / (1 as i64 << e - 6) % (PER_EXPONENT as i64)) as i32;
+  let index = DIRECT + (e - 7) * PER_EXPONENT + sub;
   if (index >= BUCKETS) {
     return BUCKETS - 1;
   }
@@ -389,8 +340,8 @@ function floor_of(index: i32): i64 {
   if (index < DIRECT) {
     return index as i64;
   }
-  let e: i32 = 7 + (index - DIRECT) / PER_EXPONENT;
-  let sub: i32 = (index - DIRECT) % PER_EXPONENT;
+  let e = 7 + (index - DIRECT) / PER_EXPONENT;
+  let sub = (index - DIRECT) % PER_EXPONENT;
   return (PER_EXPONENT + sub) as i64 * (1 as i64 << e - 6);
 }
 
@@ -398,24 +349,22 @@ function percentile(h: i64[], total: i64, per_mille: i64): i64 {
   if (total == 0) {
     return 0;
   }
-  let want: i64 = (total * per_mille + 999) / 1000;
+  let want = (total * per_mille + 999) / 1000;
   if (want < 1) {
     want = 1;
   }
   let seen: i64 = 0;
-  let i: i32 = 0;
-  while (i < h.len()) {
-    seen = seen + h[i];
+  for i in 0..h.len() {
+    seen += h[i];
     if (seen >= want) {
       return floor_of(i);
     }
-    i = i + 1;
   }
   return floor_of(h.len() - 1);
 }
 
 function row(name: string, value: i64): void {
-  print("load/" + name + "\t" + value.to_string());
+  print(f"load/{name}\t{value}");
 }
 
 function report(t: Tally, behind: i64, elapsed_ns: i64): void {
@@ -423,10 +372,7 @@ function report(t: Tally, behind: i64, elapsed_ns: i64): void {
   row("behind", behind);
   row("requests", t.done);
   row("errors", t.errors);
-  let rps: i64 = 0;
-  if (elapsed_ns > 0) {
-    rps = t.done * 1000000000 / elapsed_ns;
-  }
+  let rps = if (elapsed_ns > 0) { t.done * 1000000000 / elapsed_ns } else { 0 };
   row("rps", rps);
   row("p50_us", percentile(t.corrected, t.done, 500));
   row("p90_us", percentile(t.corrected, t.done, 900));

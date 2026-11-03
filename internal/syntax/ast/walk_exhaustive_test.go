@@ -89,9 +89,9 @@ func TestRewriteChildrenHandlesEveryNodeKind(t *testing.T) {
 			n := populate(t, kind, true)
 			switch x := n.(type) {
 			case Stmt:
-				rewriteStmtChildren(x, func(e Expr) Expr { return e })
+				rewriteStmtChildren(x, newRewriter(func(e Expr) Expr { return e }))
 			case Expr:
-				rewriteExprChildren(x, func(e Expr) Expr { return e })
+				rewriteExprChildren(x, newRewriter(func(e Expr) Expr { return e }))
 			}
 		})
 	}

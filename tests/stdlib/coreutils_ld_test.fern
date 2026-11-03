@@ -7,13 +7,13 @@ function none(): i64 {
 }
 
 function hex(f: ld.Format, s: string): string {
-  let p: ld.Parse = f.strtold(s);
+  let p = f.strtold(s);
   return f.hex(p.v, none(), false);
 }
 
 function dec(f: ld.Format, s: string): string {
-  let p: ld.Parse = f.strtold(s);
-  let d: ld.Dec = p.v.dec();
+  let p = f.strtold(s);
+  let d = p.v.dec();
   return d.digits + "e" + (d.dp as i64).to_string();
 }
 
@@ -37,7 +37,7 @@ function shown(v: Option[i64]): string {
 }
 
 function test_x87_stores_its_integer_bit(): test.TestOutcome {
-  let f: ld.Format = ld.x87();
+  let f = ld.x87();
   if (hex(f, "1") != "8p-3") {
     return test.fail("one");
   }
@@ -57,7 +57,7 @@ function test_x87_stores_its_integer_bit(): test.TestOutcome {
 }
 
 function test_binary128_implies_its_leading_one(): test.TestOutcome {
-  let f: ld.Format = ld.binary128();
+  let f = ld.binary128();
   if (hex(f, "1") != "1p+0") {
     return test.fail("one");
   }
@@ -77,7 +77,7 @@ function test_binary128_implies_its_leading_one(): test.TestOutcome {
 }
 
 function test_binary64_is_darwins_long_double(): test.TestOutcome {
-  let f: ld.Format = ld.binary64();
+  let f = ld.binary64();
   if (hex(f, "1") != "1p+0") {
     return test.fail("one");
   }
@@ -94,7 +94,7 @@ function test_binary64_is_darwins_long_double(): test.TestOutcome {
 }
 
 function test_subnormals_reach_where_the_format_ends(): test.TestOutcome {
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   if (hex(q, "1e-4951") != "0.00000000000000008c756d969002p-16382") {
     return test.fail("quad 1e-4951");
   }
@@ -104,14 +104,14 @@ function test_subnormals_reach_where_the_format_ends(): test.TestOutcome {
   if (hex(q, "1e-4966") != "0p+0") {
     return test.fail("quad underflow");
   }
-  let x: ld.Format = ld.x87();
+  let x = ld.x87();
   if (hex(x, "1e-4950") != "0.000000000000003p-16385") {
     return test.fail("x87 1e-4950");
   }
   if (hex(x, "1e-4951") != "0p+0") {
     return test.fail("x87 underflow");
   }
-  let d: ld.Format = ld.binary64();
+  let d = ld.binary64();
   if (hex(d, "1e-320") != "0.00000000007e8p-1022") {
     return test.fail("double 1e-320");
   }
@@ -122,19 +122,19 @@ function test_subnormals_reach_where_the_format_ends(): test.TestOutcome {
 }
 
 function test_overflow_is_the_formats_own(): test.TestOutcome {
-  let d: ld.Format = ld.binary64();
-  let p: ld.Parse = d.strtold("1e309");
+  let d = ld.binary64();
+  let p = d.strtold("1e309");
   if (!p.v.is_inf() || !p.erange) {
     return test.fail("double 1e309");
   }
-  let x: ld.Format = ld.x87();
+  let x = ld.x87();
   if (!x.strtold("1e309").v.is_finite()) {
     return test.fail("x87 1e309");
   }
   if (!x.strtold("1e4933").v.is_inf()) {
     return test.fail("x87 1e4933");
   }
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   if (!q.strtold("1e4932").v.is_finite()) {
     return test.fail("quad 1e4932");
   }
@@ -156,7 +156,7 @@ function test_exact_decimal_is_the_significands_width(): test.TestOutcome {
 }
 
 function test_strtold_reads_what_glibc_reads(): test.TestOutcome {
-  let f: ld.Format = ld.binary128();
+  let f = ld.binary128();
   if (!f.strtold("  -inf").v.is_inf()) {
     return test.fail("inf");
   }
@@ -176,33 +176,33 @@ function test_strtold_reads_what_glibc_reads(): test.TestOutcome {
 }
 
 function test_arithmetic_rounds_once_to_the_format(): test.TestOutcome {
-  let q: ld.Format = ld.binary128();
-  let qs: ld.LD = q.add(q.strtold("0.1").v, q.strtold("0.2").v);
+  let q = ld.binary128();
+  let qs = q.add(q.strtold("0.1").v, q.strtold("0.2").v);
   if (q.hex(qs, none(), false) != "1.3333333333333333333333333334p-2") {
     return test.fail("quad sum");
   }
-  let x: ld.Format = ld.x87();
-  let xs: ld.LD = x.add(x.strtold("0.1").v, x.strtold("0.2").v);
+  let x = ld.x87();
+  let xs = x.add(x.strtold("0.1").v, x.strtold("0.2").v);
   if (x.hex(xs, none(), false) != "9.99999999999999ap-5") {
     return test.fail("x87 sum");
   }
-  let d: ld.Format = ld.binary64();
-  let ds: ld.LD = d.add(d.strtold("0.1").v, d.strtold("0.2").v);
+  let d = ld.binary64();
+  let ds = d.add(d.strtold("0.1").v, d.strtold("0.2").v);
   if (d.hex(ds, none(), false) != "1.3333333333334p-2") {
     return test.fail("double sum");
   }
-  let qm: ld.LD = q.mul(q.strtold("0.1").v, q.from_i64(3 as i64));
+  let qm = q.mul(q.strtold("0.1").v, q.from_i64(3 as i64));
   if (!qm.eq(qs)) {
     return test.fail("quad product");
   }
-  let z: ld.LD = q.sub(qs, qs);
+  let z = q.sub(qs, qs);
   return test.assert_true(z.is_zero() && !z.neg);
 }
 
 function test_specials_and_ordering(): test.TestOutcome {
-  let f: ld.Format = ld.binary128();
-  let one: ld.LD = f.from_i64(1 as i64);
-  let two: ld.LD = f.from_i64(2 as i64);
+  let f = ld.binary128();
+  let one = f.from_i64(1 as i64);
+  let two = f.from_i64(2 as i64);
   if (one.cmp(two) != 0 - 1) {
     return test.fail("less");
   }
@@ -231,7 +231,7 @@ function test_specials_and_ordering(): test.TestOutcome {
 }
 
 function test_hex_precision_rounds_half_to_even(): test.TestOutcome {
-  let x: ld.Format = ld.x87();
+  let x = ld.x87();
   if (x.hex(x.strtold("1.5").v, 0 as i64, false) != "cp-3") {
     return test.fail("x87 1.5");
   }
@@ -241,7 +241,7 @@ function test_hex_precision_rounds_half_to_even(): test.TestOutcome {
   if (x.hex(x.strtold("1").v, 3 as i64, false) != "8.000p-3") {
     return test.fail("x87 padding");
   }
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   if (q.hex(q.strtold("1.5").v, 0 as i64, false) != "2p+0") {
     return test.fail("quad 1.5");
   }
@@ -258,7 +258,7 @@ function test_hex_precision_rounds_half_to_even(): test.TestOutcome {
 }
 
 function test_division_rounds_to_the_format(): test.TestOutcome {
-  let x: ld.Format = ld.x87();
+  let x = ld.x87();
   if (div_hex(x, "1", "3") != "a.aaaaaaaaaaaaaabp-5") {
     return test.fail("x87 a third");
   }
@@ -271,7 +271,7 @@ function test_division_rounds_to_the_format(): test.TestOutcome {
   if (div_hex(x, "1e30", "3") != "8.6a1dbde02ef89eap+95") {
     return test.fail("x87 big");
   }
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   if (div_hex(q, "1", "3") != "1.5555555555555555555555555555p-2") {
     return test.fail("quad a third");
   }
@@ -281,7 +281,7 @@ function test_division_rounds_to_the_format(): test.TestOutcome {
   if (div_hex(q, "1e30", "3") != "1.0d43b7bc05df13d3855555555555p+98") {
     return test.fail("quad big");
   }
-  let d: ld.Format = ld.binary64();
+  let d = ld.binary64();
   if (div_hex(d, "1", "3") != "1.5555555555555p-2") {
     return test.fail("double a third");
   }
@@ -292,10 +292,10 @@ function test_division_rounds_to_the_format(): test.TestOutcome {
 }
 
 function test_division_specials(): test.TestOutcome {
-  let f: ld.Format = ld.binary128();
-  let six: ld.LD = f.from_i64(6 as i64);
-  let two: ld.LD = f.from_i64(2 as i64);
-  let three: ld.LD = f.from_i64(3 as i64);
+  let f = ld.binary128();
+  let six = f.from_i64(6 as i64);
+  let two = f.from_i64(2 as i64);
+  let three = f.from_i64(3 as i64);
   if (!f.div(six, two).eq(three)) {
     return test.fail("exact");
   }
@@ -318,15 +318,15 @@ function test_division_specials(): test.TestOutcome {
 }
 
 function test_round_modes(): test.TestOutcome {
-  let f: ld.Format = ld.x87();
-  let scaled: ld.LD = f.mul(f.strtold("0.0005").v, f.pow10(3));
+  let f = ld.x87();
+  let scaled = f.mul(f.strtold("0.0005").v, f.pow10(3));
   if (f.to_fixed(scaled, 20) != "0.49999999999999999997") {
     return test.fail("the scaled half");
   }
   if (f.to_fixed(f.round_to_int(scaled, ld.round_nearest()), 0) != "1") {
     return test.fail("nearest carries");
   }
-  let v: ld.LD = f.strtold("2.5").v;
+  let v = f.strtold("2.5").v;
   if (f.to_fixed(f.round_to_int(v, ld.round_nearest()), 0) != "3") {
     return test.fail("nearest is not half-even");
   }
@@ -342,7 +342,7 @@ function test_round_modes(): test.TestOutcome {
   if (f.to_fixed(f.round_to_int(v, ld.round_toward_zero()), 0) != "2") {
     return test.fail("toward zero");
   }
-  let n: ld.LD = v.negate();
+  let n = v.negate();
   if (f.to_fixed(f.round_to_int(n, ld.round_up()), 0) != "-2") {
     return test.fail("up negative");
   }
@@ -375,7 +375,7 @@ function test_format_digit_limits(): test.TestOutcome {
 }
 
 function test_whole_conversions(): test.TestOutcome {
-  let f: ld.Format = ld.x87();
+  let f = ld.x87();
   if (f.to_fixed(f.strtold("0.1").v, 25) != "0.1000000000000000000013553") {
     return test.fail("x87 fixed");
   }
@@ -397,7 +397,7 @@ function test_whole_conversions(): test.TestOutcome {
   if (f.to_g(f.zero(false)) != "0") {
     return test.fail("g zero");
   }
-  let d: ld.Format = ld.binary64();
+  let d = ld.binary64();
   return test.assert_eq(d.to_fixed(d.strtold("0.1").v, 25), "0.1000000000000000055511151");
 }
 
@@ -409,10 +409,10 @@ function body(b: ld.Body): string {
 }
 
 function test_huge_precision_is_a_count(): test.TestOutcome {
-  let f: ld.Format = ld.x87();
-  let one: ld.Dec = f.strtold("1").v.dec();
-  let zero: ld.Dec = f.zero(false).dec();
-  let huge: i64 = 2147483640 as i64;
+  let f = ld.x87();
+  let one = f.strtold("1").v.dec();
+  let zero = f.zero(false).dec();
+  let huge = 2147483640 as i64;
   if (body(ld.sci(one, huge, false, false, 0 as i64)) != "1.|2147483640|e+00") {
     return test.fail("e of one");
   }
@@ -431,14 +431,14 @@ function test_huge_precision_is_a_count(): test.TestOutcome {
   if (body(ld.general(zero, huge, true, false, 0 as i64)) != "0.|2147483639|") {
     return test.fail("alt g of zero");
   }
-  let tiny: ld.Dec = f.strtold("9.5367431640625e-07").v.dec();
+  let tiny = f.strtold("9.5367431640625e-07").v.dec();
   if (body(ld.general(tiny, huge, true, false, 0 as i64)) != "9.5367431640625|2147483626|e-07") {
     return test.fail("alt g exponent style");
   }
   if (body(ld.general(one, huge, false, false, 0 as i64)) != "1|0|") {
     return test.fail("g strips instead");
   }
-  let tenth: ld.Dec = f.strtold("0.125").v.dec();
+  let tenth = f.strtold("0.125").v.dec();
   if (body(ld.fixed(tenth, 5 as i64, false, 0 as i64)) != "0.125|2|") {
     return test.fail("f pads past the expansion");
   }
@@ -471,7 +471,7 @@ function test_huge_precision_is_a_count(): test.TestOutcome {
 }
 
 function test_pow10(): test.TestOutcome {
-  let f: ld.Format = ld.x87();
+  let f = ld.x87();
   if (f.to_fixed(f.pow10(0), 0) != "1") {
     return test.fail("ten to the zero");
   }
@@ -481,13 +481,13 @@ function test_pow10(): test.TestOutcome {
   if (f.to_fixed(f.pow10(27), 0) != "1000000000000000000000000000") {
     return test.fail("the last exact one");
   }
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   return test.assert_eq(q.to_fixed(q.pow10(30), 0), "1000000000000000000000000000000");
 }
 
 function test_as_i64(): test.TestOutcome {
-  let f: ld.Format = ld.x87();
-  let min: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
+  let f = ld.x87();
+  let min = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
   if (shown(f.from_i64(7 as i64).as_i64()) != "7") {
     return test.fail("seven");
   }
@@ -527,11 +527,11 @@ function test_as_i64(): test.TestOutcome {
   if (whole(f, "1e30") != "none") {
     return test.fail("far past the type");
   }
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   if (whole(q, "18446744073709551617") != "none") {
     return test.fail("exact but past the type");
   }
-  let d: ld.Format = ld.binary64();
+  let d = ld.binary64();
   return test.assert_eq(whole(d, "9007199254740993"), "9007199254740992");
 }
 
@@ -540,14 +540,14 @@ function next(state: u64): u64 {
 }
 
 function draw(f: ld.Format, seed: u64): ld.LD {
-  let a: u64 = next(seed);
-  let b: u64 = next(a);
-  let c: u64 = next(b);
-  let m: u64 = a >> (b & 63 as u64);
-  let k: i32 = ((c >> 8 as u64) % (51 as u64)) as i32 - 25;
-  let neg: boolean = (c & 1 as u64) == 1 as u64;
+  let a = next(seed);
+  let b = next(a);
+  let c = next(b);
+  let m = a >> (b & 63 as u64);
+  let k = ((c >> 8 as u64) % (51 as u64)) as i32 - 25;
+  let neg = (c & 1 as u64) == 1 as u64;
   if ((c & 2 as u64) == 2 as u64) {
-    let v: ld.LD = f.from_u64(m);
+    let v = f.from_u64(m);
     if (neg) {
       return v.negate();
     }
@@ -573,7 +573,7 @@ function same(x: ld.LD, y: ld.LD): boolean {
 }
 
 function shown_ld(f: ld.Format, v: ld.LD): string {
-  let s: string = f.hex(v, none(), false);
+  let s = f.hex(v, none(), false);
   if (v.neg) {
     return "-" + s;
   }
@@ -581,18 +581,18 @@ function shown_ld(f: ld.Format, v: ld.LD): string {
 }
 
 function paths_agree_in(f: ld.Format, name: string): test.TestOutcome {
-  let seed: u64 = 20260913 as u64;
-  let i: i32 = 0;
+  let seed = 20260913 as u64;
+  let i = 0;
   while (i < 400) {
-    let a: ld.LD = draw(f, seed);
+    let a = draw(f, seed);
     seed = next(next(next(seed)));
-    let b: ld.LD = draw(f, seed);
+    let b = draw(f, seed);
     seed = next(next(next(seed)));
-    i = i + 1;
+    i += 1;
     if (a.is_zero() || b.is_zero()) {
       continue;
     }
-    let pair: string = name + " " + shown_ld(f, a) + " " + shown_ld(f, b);
+    let pair = name + " " + shown_ld(f, a) + " " + shown_ld(f, b);
     if (!same(f.mul(a, b), f.mul_exact(a, b))) {
       return test.fail("mul " + pair);
     }
@@ -613,7 +613,7 @@ function paths_agree_in(f: ld.Format, name: string): test.TestOutcome {
 }
 
 function test_word_and_exact_paths_agree(): test.TestOutcome {
-  let r: test.TestOutcome = paths_agree_in(ld.x87(), "x87");
+  let r = paths_agree_in(ld.x87(), "x87");
   if (!ok(r)) {
     return r;
   }
@@ -625,7 +625,7 @@ function test_word_and_exact_paths_agree(): test.TestOutcome {
 }
 
 function fixed_via_expansion(f: ld.Format, v: ld.LD, prec: i32): string {
-  let sign: string = "";
+  let sign = "";
   if (v.neg) {
     sign = "-";
   }
@@ -633,13 +633,13 @@ function fixed_via_expansion(f: ld.Format, v: ld.LD, prec: i32): string {
 }
 
 function to_fixed_agrees_in(f: ld.Format, name: string): test.TestOutcome {
-  let seed: u64 = 777 as u64;
-  let i: i32 = 0;
+  let seed = 777 as u64;
+  let i = 0;
   while (i < 300) {
-    let v: ld.LD = draw(f, seed);
+    let v = draw(f, seed);
     seed = next(next(next(seed)));
-    let prec: i32 = i % 20;
-    i = i + 1;
+    let prec = i % 20;
+    i += 1;
     if (f.to_fixed(v, prec) != fixed_via_expansion(f, v, prec)) {
       return test.fail(name + " " + shown_ld(f, v) + " at " + prec.to_string());
     }
@@ -648,7 +648,7 @@ function to_fixed_agrees_in(f: ld.Format, name: string): test.TestOutcome {
 }
 
 function test_to_fixed_matches_the_expansion(): test.TestOutcome {
-  let r: test.TestOutcome = to_fixed_agrees_in(ld.x87(), "x87");
+  let r = to_fixed_agrees_in(ld.x87(), "x87");
   if (!ok(r)) {
     return r;
   }
@@ -660,7 +660,7 @@ function test_to_fixed_matches_the_expansion(): test.TestOutcome {
   if (!ok(r)) {
     return r;
   }
-  let x: ld.Format = ld.x87();
+  let x = ld.x87();
   if (x.to_fixed(x.strtold("0.5").v, 0) != "0") {
     return test.fail("half to even");
   }
@@ -694,7 +694,7 @@ function test_to_fixed_matches_the_expansion(): test.TestOutcome {
   if (x.to_fixed(x.strtold("-0.001").v, 2) != "-0.00") {
     return test.fail("negative below the place");
   }
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   if (q.to_fixed(q.strtold("0.1").v, 40) != "0.1000000000000000000000000000000000048148") {
     return test.fail("quad tenth");
   }
@@ -764,7 +764,7 @@ function round_modes_in(f: ld.Format, name: string, big: string): test.TestOutco
 }
 
 function test_round_modes_on_every_format(): test.TestOutcome {
-  let r: test.TestOutcome = round_modes_in(ld.x87(), "x87", "4611686018427387905");
+  let r = round_modes_in(ld.x87(), "x87", "4611686018427387905");
   if (!ok(r)) {
     return r;
   }
@@ -776,8 +776,8 @@ function test_round_modes_on_every_format(): test.TestOutcome {
 }
 
 function test_cmp_abs_on_words(): test.TestOutcome {
-  let q: ld.Format = ld.binary128();
-  let x: ld.Format = ld.x87();
+  let q = ld.binary128();
+  let x = ld.x87();
   if (x.from_u64(1000 as u64).cmp_abs(x.strtold("999.9999").v) != 1) {
     return test.fail("across a binade");
   }
@@ -806,7 +806,7 @@ function test_cmp_abs_on_words(): test.TestOutcome {
 }
 
 function test_dec_word_paths(): test.TestOutcome {
-  let x: ld.Format = ld.x87();
+  let x = ld.x87();
   if (dec(x, "0.5") != "5e0") {
     return test.fail("a half");
   }
@@ -831,7 +831,7 @@ function test_dec_word_paths(): test.TestOutcome {
   if (dec(x, "1e-30") != "1000000000000000000031690123432431452023095418691267303452453424434704697332538552963918294415324172774717226275242865085601806640625e-29") {
     return test.fail("a bigint expansion");
   }
-  let q: ld.Format = ld.binary128();
+  let q = ld.binary128();
   if (dec(q, "0.75") != "75e0") {
     return test.fail("quad three quarters");
   }
@@ -839,7 +839,7 @@ function test_dec_word_paths(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("coreutils/lib/ld");
+  let r = test.new("coreutils/lib/ld");
   r = r.it("x87 stores its integer bit", test_x87_stores_its_integer_bit);
   r = r.it("binary128 implies its leading one", test_binary128_implies_its_leading_one);
   r = r.it("binary64 is Darwin's long double", test_binary64_is_darwins_long_double);

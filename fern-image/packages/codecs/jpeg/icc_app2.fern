@@ -12,9 +12,9 @@ pub function default_limits(): AssemblyLimits {
 }
 
 function identified(bytes: [u8]): boolean {
-  return bytes[0] == 73 as u8 && bytes[1] == 67 as u8 && bytes[2] == 67 as u8 && bytes[3] == 95 as u8
-    && bytes[4] == 80 as u8 && bytes[5] == 82 as u8 && bytes[6] == 79 as u8 && bytes[7] == 70 as u8
-    && bytes[8] == 73 as u8 && bytes[9] == 76 as u8 && bytes[10] == 69 as u8 && bytes[11] == 0 as u8;
+  return bytes[0] == b'I' && bytes[1] == b'C' && bytes[2] == b'C' && bytes[3] == b'_'
+    && bytes[4] == b'P' && bytes[5] == b'R' && bytes[6] == b'O' && bytes[7] == b'F'
+    && bytes[8] == b'I' && bytes[9] == b'L' && bytes[10] == b'E' && bytes[11] == 0;
 }
 
 // Complete admission precedes output allocation and callbacks.
@@ -50,7 +50,7 @@ function admit(payloads: [Payload], limits: AssemblyLimits): Result[i32, App2Err
         return Err(App2Error.Duplicate);
       }
     }
-    bytes = bytes + input.len() as i64 - 14i64;
+    bytes += input.len() as i64 - 14;
     if (bytes > limits.max_profile_bytes as i64 || bytes > 16707345i64) {
       return Err(App2Error.Limit);
     }
@@ -81,7 +81,7 @@ pub function assemble(payloads: [Payload], limits: AssemblyLimits, cancelled: ()
   for sequence in 1..payloads.len() + 1 {
     let at = 0;
     while (at < payloads.len() && payloads[at].bytes[12] as i32 != sequence) {
-      at = at + 1;
+      at += 1;
     }
     if (at == payloads.len()) {
       return Err(App2Error.Missing);
@@ -92,7 +92,7 @@ pub function assemble(payloads: [Payload], limits: AssemblyLimits, cancelled: ()
         return Err(App2Error.Cancelled);
       }
       output = output.with(written, input[index]);
-      written = written + 1;
+      written += 1;
     }
   }
   if (written != bytes) {

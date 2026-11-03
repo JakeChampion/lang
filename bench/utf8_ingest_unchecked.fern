@@ -3,37 +3,35 @@ import "std/utf8" as utf8;
 import "std/string";
 
 function body_bytes(): u8[] {
-  let one: string = "{\"id\":1042,\"name\":\"Ada Lovelace\",\"email\":\"ada@example.com\",\"tags\":[\"engineer\",\"analyst\",\"pioneer\"],\"active\":true,\"score\":99.5,\"note\":\"café — naïve résumé, 中文, 𝄞\"}";
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < 24) {
+  let one = "{\"id\":1042,\"name\":\"Ada Lovelace\",\"email\":\"ada@example.com\",\"tags\":[\"engineer\",\"analyst\",\"pioneer\"],\"active\":true,\"score\":99.5,\"note\":\"café — naïve résumé, 中文, 𝄞\"}";
+  let out = "";
+  for _ in 0..24 {
     out = out + one;
-    i = i + 1;
   }
   return out.bytes();
 }
 
 function main(): i32 {
-  let b: u8[] = body_bytes();
-  let acc: i32 = 0;
-  let round: i32 = 0;
+  let b = body_bytes();
+  let acc = 0;
+  let round = 0;
   while (round < 200) {
     match (Some(string_from_bytes_unchecked(b))) {
       Some(s) => {
         match (json.parse(s)) {
           Ok(_) => {
-            acc = acc + 1;
+            acc += 1;
           },
           Err(_) => {
-            acc = acc + 2;
+            acc += 2;
           }
         }
       },
       None => {
-        acc = acc + 4;
+        acc += 4;
       }
     }
-    round = round + 1;
+    round += 1;
   }
   if (acc == 0) {
     return 1;

@@ -245,6 +245,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"http_request_builder", langSrcAbs(t, "tests/stdlib/http_request_builder_test.fern"), ""},
 		{"http_respond", langSrcAbs(t, "tests/stdlib/http_respond_test.fern"), ""},
 		{"http_router", langSrcAbs(t, "tests/stdlib/http_router_test.fern"), ""},
+		{"try_inferred_generic", langSrcAbs(t, "tests/stdlib/try_inferred_generic_test.fern"), ""},
 		{"http_json_of", langSrcAbs(t, "tests/stdlib/http_json_of_test.fern"), ""},
 		{"http_cors", langSrcAbs(t, "tests/stdlib/http_cors_test.fern"), ""},
 		{"http_auth", langSrcAbs(t, "tests/stdlib/http_auth_test.fern"), ""},

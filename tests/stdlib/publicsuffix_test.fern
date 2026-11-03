@@ -14,9 +14,9 @@ function registrable(host: string): string {
 }
 
 function mismatches(cases: (string, string)[]): string {
-  let out: string = "";
+  let out = "";
   for c in cases {
-    let got: string = registrable(c.0);
+    let got = registrable(c.0);
     if (got != c.1) {
       out = out + c.0 + "=" + got + " ";
     }
@@ -53,8 +53,8 @@ function test_idn_as_alabels(): test.TestOutcome {
 }
 
 function test_public_suffix(): test.TestOutcome {
-  let got: string = publicsuffix.public_suffix("www.example.co.uk") + "|" + publicsuffix.public_suffix("a.b.c.mm") + "|" + publicsuffix.public_suffix("www.www.ck") + "|" + publicsuffix.public_suffix("example") + "|" + publicsuffix.public_suffix("CO.UK.") + "|" + publicsuffix.public_suffix(".com") + "|" + publicsuffix.public_suffix("");
-  let is: string = publicsuffix.is_public_suffix("co.uk").to_string() + publicsuffix.is_public_suffix("example.co.uk").to_string() + publicsuffix.is_public_suffix("test.ck").to_string() + publicsuffix.is_public_suffix("www.ck").to_string() + publicsuffix.is_public_suffix("").to_string();
+  let got = publicsuffix.public_suffix("www.example.co.uk") + "|" + publicsuffix.public_suffix("a.b.c.mm") + "|" + publicsuffix.public_suffix("www.www.ck") + "|" + publicsuffix.public_suffix("example") + "|" + publicsuffix.public_suffix("CO.UK.") + "|" + publicsuffix.public_suffix(".com") + "|" + publicsuffix.public_suffix("");
+  let is = publicsuffix.is_public_suffix("co.uk").to_string() + publicsuffix.is_public_suffix("example.co.uk").to_string() + publicsuffix.is_public_suffix("test.ck").to_string() + publicsuffix.is_public_suffix("www.ck").to_string() + publicsuffix.is_public_suffix("").to_string();
   if (publicsuffix.COUNT < 6000) {
     return test.fail("fewer than 6000 rules bundled");
   }
@@ -62,7 +62,7 @@ function test_public_suffix(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/publicsuffix");
+  let r = test.new("std/publicsuffix");
   r = r.it("mixed case and a leading dot", test_mixed_case_and_leading_dot);
   r = r.it("an unlisted TLD", test_unlisted_tld);
   r = r.it("listed TLDs", test_listed_tlds);

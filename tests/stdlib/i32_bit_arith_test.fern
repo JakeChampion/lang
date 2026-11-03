@@ -26,7 +26,7 @@ function test_count_zeros_zero(): test.TestOutcome {
 }
 
 function test_count_zeros_all_ones(): test.TestOutcome {
-  return test.assert_eq((0 - 1).count_zeros(), 0);
+  return test.assert_eq((-1).count_zeros(), 0);
 }
 
 function test_count_zeros_one(): test.TestOutcome {
@@ -45,7 +45,7 @@ function test_ones_plus_zeros(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/i32 bit + arith");
+  let r = test.new("std/i32 bit + arith");
   r = r.it("abs_diff pos", test_abs_diff_pos);
   r = r.it("abs_diff reversed", test_abs_diff_reversed);
   r = r.it("abs_diff mixed sign", test_abs_diff_mixed_sign);

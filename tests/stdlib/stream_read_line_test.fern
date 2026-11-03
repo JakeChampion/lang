@@ -5,8 +5,8 @@ import "std/stream";
 // of input, and Err for a line that is not UTF-8.
 
 function lines(s: ByteStream): string {
-  let cur: ByteStream = s;
-  let out: string = "";
+  let cur = s;
+  let out = "";
   for _ in 0..10 {
     let (line, next) = cur.read_line();
     cur = next;
@@ -18,7 +18,7 @@ function lines(s: ByteStream): string {
         return out + " end";
       },
       Err(_) => {
-        out = out + "[not UTF-8]";
+        out += "[not UTF-8]";
       }
     }
   }
@@ -43,7 +43,7 @@ function test_bad_utf8_is_an_error_and_reading_goes_on(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("ByteStream.read_line");
+  let r = test.new("ByteStream.read_line");
   r = r.it("lines, then the end", test_lines_and_end);
   r = r.it("the last line loses its CR", test_last_line_loses_its_cr);
   r = r.it("an empty stream is the end", test_empty_stream_is_end);

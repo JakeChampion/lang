@@ -5,7 +5,7 @@ function test_is_ok_string_pass(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  let path: string = dir + "/file.txt";
+  let path = dir + "/file.txt";
   match (write_file(path, "hello")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -45,7 +45,7 @@ function test_is_err_string_ok_fails_with_value(r: test.TestRunner): test.TestRu
   if (dir == "") {
     return rr;
   }
-  let path: string = dir + "/file.txt";
+  let path = dir + "/file.txt";
   match (write_file(path, "data")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -73,7 +73,7 @@ function test_is_ok_eq_string_pass(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  let path: string = dir + "/file.txt";
+  let path = dir + "/file.txt";
   match (write_file(path, "exact-value")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -91,7 +91,7 @@ function test_is_ok_eq_string_wrong_value(r: test.TestRunner): test.TestRunner {
   if (dir == "") {
     return rr;
   }
-  let path: string = dir + "/file.txt";
+  let path = dir + "/file.txt";
   match (write_file(path, "actual")) {
     Err(_) => {
       return rr.it("write fixture", () => test.fail("io"));
@@ -185,7 +185,7 @@ function test_is_err_string_array_ok_embeds_length(r: test.TestRunner): test.Tes
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("Result assertions");
+  let r = test.new("Result assertions");
   r = test_is_ok_string_pass(r);
   r = r.it(
     "is_ok_string on Err fails",

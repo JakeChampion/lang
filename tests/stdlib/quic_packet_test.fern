@@ -14,16 +14,16 @@ function shown_keys(k: packet.Keys): string {
 }
 
 function test_initial_keys(): test.TestOutcome {
-  let got: string = hex.encode(packet.initial_secret(dcid(), true)) + "\n" + shown_keys(packet.initial_keys(dcid(), true)) + "\n" + hex.encode(packet.initial_secret(dcid(), false)) + "\n" + shown_keys(packet.initial_keys(dcid(), false));
+  let got = hex.encode(packet.initial_secret(dcid(), true)) + "\n" + shown_keys(packet.initial_keys(dcid(), true)) + "\n" + hex.encode(packet.initial_secret(dcid(), false)) + "\n" + shown_keys(packet.initial_keys(dcid(), false));
   return test.assert_eq(got, "c00cf151ca5be075ed0ebfb5c80323c42d6b7db67881289af4008f1f6c357aea\n1f369613dd76d5467730efcbe3b1a22d fa044b2f42a3fd3b46fb255c 9f50449e04a0e810283a1e9933adedd2\n3c199828fd139efd216c155ad844cc81fb82fa8d7446fa7d78be803acdda951b\ncf3a5331653c364c88f0f379b6067e37 0ac1493ca1905853b0bba03e c206b8d9b9f0f37644430b490eeaa314");
 }
 
 function zeros(n: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -56,25 +56,25 @@ function opened(wire: u8[], k: packet.Keys, largest: i64): string {
 }
 
 function test_client_initial(): test.TestOutcome {
-  let k: packet.Keys = packet.initial_keys(dcid(), true);
-  let sealed: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: [], token: [], pn: 2 as i64, pn_len: 4 }, client_payload(), k);
-  let same: boolean = hex.encode(sealed) == client_packet();
+  let k = packet.initial_keys(dcid(), true);
+  let sealed = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: [], token: [], pn: 2 as i64, pn_len: 4 }, client_payload(), k);
+  let same = hex.encode(sealed) == client_packet();
   let back: string = opened(__codec_bytes(hex.decode(client_packet())), k, 0 - 1 as i64);
   return test.assert_eq(same.to_string() + " " + sealed.len().to_string() + " | " + back, "true 1200 | dcid 8394c8f03e515708 scid  end 1200 pn 2 payload 1162 reserved true");
 }
 
 function test_server_initial(): test.TestOutcome {
-  let k: packet.Keys = packet.initial_keys(dcid(), false);
-  let payload: u8[] = __codec_bytes(hex.decode("02000000000600405a020000560303eefce7f7b37ba1d1632e96677825ddf73988cfc79825df566dc5430b9a045a1200130100002e00330024001d00209d3c940d89690b84d08a60993c144eca684d1081287c834d5311bcf32bb9da1a002b00020304"));
-  let want: string = "cf000000010008f067a5502a4262b5004075c0d95a482cd0991cd25b0aac406a5816b6394100f37a1c69797554780bb38cc5a99f5ede4cf73c3ec2493a1839b3dbcba3f6ea46c5b7684df3548e7ddeb9c3bf9c73cc3f3bded74b562bfb19fb84022f8ef4cdd93795d77d06edbb7aaf2f58891850abbdca3d20398c276456cbc42158407dd074ee";
-  let sealed: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: [], scid: __codec_bytes(hex.decode("f067a5502a4262b5")), token: [], pn: 1 as i64, pn_len: 2 }, payload, k);
+  let k = packet.initial_keys(dcid(), false);
+  let payload = __codec_bytes(hex.decode("02000000000600405a020000560303eefce7f7b37ba1d1632e96677825ddf73988cfc79825df566dc5430b9a045a1200130100002e00330024001d00209d3c940d89690b84d08a60993c144eca684d1081287c834d5311bcf32bb9da1a002b00020304"));
+  let want = "cf000000010008f067a5502a4262b5004075c0d95a482cd0991cd25b0aac406a5816b6394100f37a1c69797554780bb38cc5a99f5ede4cf73c3ec2493a1839b3dbcba3f6ea46c5b7684df3548e7ddeb9c3bf9c73cc3f3bded74b562bfb19fb84022f8ef4cdd93795d77d06edbb7aaf2f58891850abbdca3d20398c276456cbc42158407dd074ee";
+  let sealed = packet.seal_long(packet.Long { kind: packet.Initial, dcid: [], scid: __codec_bytes(hex.decode("f067a5502a4262b5")), token: [], pn: 1 as i64, pn_len: 2 }, payload, k);
   return test.assert_eq(hex.encode(sealed) + "\n" + opened(sealed, k, 0 as i64), want + "\ndcid  scid f067a5502a4262b5 end 135 pn 1 payload 99 reserved true");
 }
 
 function test_chacha20_short(): test.TestOutcome {
-  let k: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, __codec_bytes(hex.decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b")));
-  let sealed: u8[] = packet.seal_short([], 654360564 as i64, 3, false, false, [1 as u8], k);
-  let back: string = "";
+  let k = packet.keys(keyschedule.ChaCha20Poly1305Sha256, __codec_bytes(hex.decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b")));
+  let sealed = packet.seal_short([], 654360564 as i64, 3, false, false, [1 as u8], k);
+  let back = "";
   match (packet.parse(sealed, 0, 0)) {
     Ok(h) => {
       match (packet.open(sealed, h, k, 654360563 as i64)) {
@@ -94,8 +94,8 @@ function test_chacha20_short(): test.TestOutcome {
 }
 
 function test_retry(): test.TestOutcome {
-  let r: u8[] = packet.retry([], __codec_bytes(hex.decode("f067a5502a4262b5")), dcid(), "token".bytes());
-  let got: string = hex.encode(r) + " " + packet.retry_valid(r, dcid()).to_string() + " " + packet.retry_valid(r, __codec_bytes(hex.decode("8394c8f03e515709"))).to_string();
+  let r = packet.retry([], __codec_bytes(hex.decode("f067a5502a4262b5")), dcid(), "token".bytes());
+  let got = hex.encode(r) + " " + packet.retry_valid(r, dcid()).to_string() + " " + packet.retry_valid(r, __codec_bytes(hex.decode("8394c8f03e515709"))).to_string();
   match (packet.parse(r, 0, 8)) {
     Ok(h) => {
       got = got + " | " + string_from_bytes_unchecked(h.token) + " " + hex.encode(h.tag) + " " + hex.encode(h.scid);
@@ -113,11 +113,11 @@ function test_packet_numbers(): test.TestOutcome {
 }
 
 function test_version_negotiation(): test.TestOutcome {
-  let probe: u8[] = __codec_bytes(hex.decode("c0" + "1a2a3a4a" + "04" + "01020304" + "02" + "0506" + "0000000000000000000000000000000000000000"));
-  let got: string = "";
+  let probe = __codec_bytes(hex.decode("c0" + "1a2a3a4a" + "04" + "01020304" + "02" + "0506" + "0000000000000000000000000000000000000000"));
+  let got = "";
   match (packet.parse(probe, 0, 8)) {
     Ok(h) => {
-      let vn: u8[] = packet.version_negotiation(h);
+      let vn = packet.version_negotiation(h);
       got = hex.encode(vn);
       match (packet.parse(vn, 0, 8)) {
         Ok(back) => {
@@ -126,7 +126,7 @@ function test_version_negotiation(): test.TestOutcome {
               got = got + " offers " + back.versions[0].to_string() + " to " + hex.encode(back.dcid);
             },
             _ => {
-              got = got + " not version negotiation";
+              got += " not version negotiation";
             }
           }
         },
@@ -143,12 +143,12 @@ function test_version_negotiation(): test.TestOutcome {
 }
 
 function test_coalesced(): test.TestOutcome {
-  let ki: packet.Keys = packet.initial_keys(dcid(), false);
-  let kh: packet.Keys = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
-  let a: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: __codec_bytes(hex.decode("0102")), token: [], pn: 0 as i64, pn_len: 1 }, [1 as u8], ki);
-  let b: u8[] = packet.seal_long(packet.Long { kind: packet.Handshake, dcid: dcid(), scid: __codec_bytes(hex.decode("0102")), token: [], pn: 7 as i64, pn_len: 1 }, [1 as u8, 1 as u8], kh);
-  let datagram: u8[] = a.concat(b);
-  let got: string = "";
+  let ki = packet.initial_keys(dcid(), false);
+  let kh = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
+  let a = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: __codec_bytes(hex.decode("0102")), token: [], pn: 0 as i64, pn_len: 1 }, [1 as u8], ki);
+  let b = packet.seal_long(packet.Long { kind: packet.Handshake, dcid: dcid(), scid: __codec_bytes(hex.decode("0102")), token: [], pn: 7 as i64, pn_len: 1 }, [1 as u8, 1 as u8], kh);
+  let datagram = a.concat(b);
+  let got = "";
   match (packet.parse(datagram, 0, 8)) {
     Ok(h1) => {
       got = h1.end.to_string();
@@ -176,11 +176,11 @@ function test_coalesced(): test.TestOutcome {
 }
 
 function test_key_update(): test.TestOutcome {
-  let k0: packet.Keys = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
-  let k1: packet.Keys = k0.updated();
-  let sealed: u8[] = packet.seal_short(__codec_bytes(hex.decode("aabb")), 9 as i64, 1, true, false, [1 as u8, 1 as u8, 1 as u8], k1);
-  let with_new: string = "";
-  let with_old: string = "";
+  let k0 = packet.keys(keyschedule.Aes128GcmSha256, zeros(32));
+  let k1 = k0.updated();
+  let sealed = packet.seal_short(__codec_bytes(hex.decode("aabb")), 9 as i64, 1, true, false, [1 as u8, 1 as u8, 1 as u8], k1);
+  let with_new = "";
+  let with_old = "";
   match (packet.parse(sealed, 0, 2)) {
     Ok(h) => {
       match (packet.open(sealed, h, k1, 8 as i64)) {
@@ -204,13 +204,13 @@ function test_key_update(): test.TestOutcome {
       with_new = e.message();
     }
   }
-  let same_hp: boolean = hex.encode(k0.hp) == hex.encode(k1.hp);
-  let new_key: boolean = hex.encode(k0.key) != hex.encode(k1.key);
+  let same_hp = hex.encode(k0.hp) == hex.encode(k1.hp);
+  let new_key = hex.encode(k0.key) != hex.encode(k1.key);
   return test.assert_eq(with_new + " | " + with_old + " | " + same_hp.to_string() + " " + new_key.to_string(), "9 phase true | packet does not decrypt | true true");
 }
 
 function test_malformed(): test.TestOutcome {
-  let got: string = "";
+  let got = "";
   let cases: string[] = ["", "00", "80", "c000000001", "c0000000011500", "c000000001080102030405060708", "c0000000010000004005", "c0000000010000000100", "f00000000100000102"];
   for c in cases {
     match (packet.parse(__codec_bytes(hex.decode(c)), 0, 8)) {
@@ -226,7 +226,7 @@ function test_malformed(): test.TestOutcome {
 }
 
 function test_error_kinds(): test.TestOutcome {
-  let got: string = "";
+  let got = "";
   match (packet.parse([], 0, 8)) {
     Ok(h) => {
       got = "parsed";
@@ -243,20 +243,20 @@ function test_error_kinds(): test.TestOutcome {
       }
     }
   }
-  let k: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, __codec_bytes(hex.decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b")));
-  let sealed: u8[] = packet.seal_short([], 654360564 as i64, 3, false, false, [1 as u8], k);
-  let last: i32 = sealed.len() - 1;
-  let bad: u8[] = sealed.with(last, (sealed[last] as i32 ^ 1) as u8);
+  let k = packet.keys(keyschedule.ChaCha20Poly1305Sha256, __codec_bytes(hex.decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b")));
+  let sealed = packet.seal_short([], 654360564 as i64, 3, false, false, [1 as u8], k);
+  let last = sealed.len() - 1;
+  let bad = sealed.with(last, (sealed[last] as i32 ^ 1) as u8);
   match (packet.parse(bad, 0, 0)) {
     Ok(h) => {
       match (packet.open(bad, h, k, 654360563 as i64)) {
         Ok(o) => {
-          got = got + " opened";
+          got += " opened";
         },
         Err(e) => {
           match (e) {
             packet.PacketUndecryptable => {
-              got = got + " undecryptable";
+              got += " undecryptable";
             },
             _ => {
               got = got + " " + e.message();
@@ -273,7 +273,7 @@ function test_error_kinds(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/quic/packet");
+  let r = test.new("std/quic/packet");
   r = r.it("Initial keys (RFC 9001 A.1)", test_initial_keys);
   r = r.it("the client Initial (A.2)", test_client_initial);
   r = r.it("the server Initial (A.3)", test_server_initial);

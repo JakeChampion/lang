@@ -7,12 +7,12 @@ import "std/utf8";
 
 function lines(n: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     for b in ("line " + i.to_string() + " of the corpus\n").bytes() {
       out = out.append(b);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -78,9 +78,9 @@ function test_empty_and_metadata(): test.TestOutcome {
 }
 
 function test_refusals(): test.TestOutcome {
-  let cut: string = read(english().slice_snap(0, 120));
-  let window: string = read("11");
-  let limit: string = "";
+  let cut = read(english().slice_snap(0, 120));
+  let window = read("11");
+  let limit = "";
   match (brotli.decompress(__codec_bytes(hex.decode(english())), 100)) {
     Ok(_) => {
       limit = "decoded";
@@ -94,16 +94,16 @@ function test_refusals(): test.TestOutcome {
 
 // Each cut ends inside the meta-block header, or inside a command.
 function test_cuts(): test.TestOutcome {
-  let stream: string = english();
+  let stream = english();
   let cuts: i32[] = [120, 184];
-  let k: i32 = 1;
+  let k = 1;
   while (k <= 52) {
     cuts = cuts.append(k);
-    k = k + 1;
+    k += 1;
   }
-  let wrong: string = "";
+  let wrong = "";
   for cut in cuts {
-    let got: string = read(stream.slice_snap(0, 2 * cut));
+    let got = read(stream.slice_snap(0, 2 * cut));
     if (got != "brotli: truncated") {
       wrong = wrong + " " + cut.to_string() + ": " + got;
     }
@@ -112,7 +112,7 @@ function test_cuts(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/brotli");
+  let r = test.new("std/brotli");
   r = r.it("a small stream", test_text);
   r = r.it("dictionary words and their transforms", test_dictionary);
   r = r.it("qualities 0 to 9", test_qualities);

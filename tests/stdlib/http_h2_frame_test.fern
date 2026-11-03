@@ -39,7 +39,7 @@ function describe(f: frame.Frame): string {
       return "DATA " + d.stream.to_string() + flag(d.end_stream, "END_STREAM") + " " + hex.encode(d.data) + " pad " + d.padding.to_string();
     },
     frame.Headers(h) => {
-      let p: string = "";
+      let p = "";
       match (h.priority) {
         Some(pr) => {
           p = " dep " + pr.dependency.to_string() + " w " + pr.weight.to_string() + flag(pr.exclusive, "exclusive");
@@ -55,7 +55,7 @@ function describe(f: frame.Frame): string {
       return "RST_STREAM " + stream.to_string() + " " + code.to_string();
     },
     frame.Settings(ack, settings) => {
-      let out: string = "SETTINGS" + flag(ack, "ACK");
+      let out = "SETTINGS" + flag(ack, "ACK");
       for s in settings {
         out = out + " " + s.id.to_string() + "=" + s.value.to_string();
       }
@@ -84,7 +84,7 @@ function describe(f: frame.Frame): string {
 }
 
 function round(f: frame.Frame): string {
-  let bytes: u8[] = frame.encode(f);
+  let bytes = frame.encode(f);
   return hex.encode(bytes) + " -> " + read_at(bytes, 0, frame.MAX_FRAME_SIZE);
 }
 
@@ -93,7 +93,7 @@ function test_preface(): test.TestOutcome {
 }
 
 function test_round_trips(): test.TestOutcome {
-  let got: string = round(frame.Data(frame.DataFrame { stream: 1, end_stream: true, data: "hi".bytes(), padding: 0 })) + "\n";
+  let got = round(frame.Data(frame.DataFrame { stream: 1, end_stream: true, data: "hi".bytes(), padding: 0 })) + "\n";
   got = got + round(frame.Headers(frame.HeadersFrame { stream: 3, end_stream: false, end_headers: true, priority: None, block: [130 as u8, 134 as u8], padding: 0 })) + "\n";
   got = got + round(frame.Headers(frame.HeadersFrame { stream: 3, end_stream: true, end_headers: true, priority: Some(frame.Priority { exclusive: true, dependency: 1, weight: 16 }), block: [130 as u8], padding: 0 })) + "\n";
   got = got + round(frame.PriorityFrame(5, frame.Priority { exclusive: false, dependency: 3, weight: 256 })) + "\n";
@@ -105,23 +105,23 @@ function test_round_trips(): test.TestOutcome {
   got = got + round(frame.GoAway(frame.GoAwayFrame { last_stream: 7, code: frame.ENHANCE_YOUR_CALM, debug: "calm".bytes() })) + "\n";
   got = got + round(frame.WindowUpdate(0, 65535)) + "\n";
   got = got + round(frame.Continuation(3, true, [134 as u8])) + "\n";
-  got = got + round(frame.Unknown(frame.UnknownFrame { kind: 11, flags: 3, stream: 0, payload: [9 as u8] }));
+  got += round(frame.Unknown(frame.UnknownFrame { kind: 11, flags: 3, stream: 0, payload: [9 as u8] }));
   return test.assert_eq(got, "000002000100000001" + "6869" + " -> DATA 1 END_STREAM 6869 pad 0 [11]\n" + "000002010400000003" + "8286" + " -> HEADERS 3 END_HEADERS 8286 pad 0 [11]\n" + "000006012500000003" + "800000010f82" + " -> HEADERS 3 END_STREAM END_HEADERS dep 1 w 16 exclusive 82 pad 0 [15]\n" + "000005020000000005" + "00000003ff" + " -> PRIORITY 5 dep 3 w 256 [14]\n" + "000004030000000005" + "00000008" + " -> RST_STREAM 5 8 [13]\n" + "00000c040000000000" + "000300000064" + "00040000ffff" + " -> SETTINGS 3=100 4=65535 [21]\n" + "000000040100000000" + " -> SETTINGS ACK [9]\n" + "000005050400000001" + "0000000282" + " -> PUSH_PROMISE 1 promised 2 END_HEADERS 82 [14]\n" + "000008060100000000" + "0102030405060708" + " -> PING ACK 0102030405060708 [17]\n" + "00000c070000000000" + "000000070000000b" + "63616c6d" + " -> GOAWAY last 7 11 63616c6d [21]\n" + "000004080000000000" + "0000ffff" + " -> WINDOW_UPDATE 0 +65535 [13]\n" + "000001090400000003" + "86" + " -> CONTINUATION 3 END_HEADERS 86 [10]\n" + "0000010b0300000000" + "09" + " -> UNKNOWN 11 flags 3 stream 0 09 [10]");
 }
 
 function test_padding_and_priority(): test.TestOutcome {
-  let got: string = shown("000006000900000001" + "02" + "686921" + "0000") + "|" + shown("000009012c80000003" + "01" + "80000001" + "0f" + "8286" + "00") + "|" + shown("000005020000000005" + "8000000300");
+  let got = shown("000006000900000001" + "02" + "686921" + "0000") + "|" + shown("000009012c80000003" + "01" + "80000001" + "0f" + "8286" + "00") + "|" + shown("000005020000000005" + "8000000300");
   return test.assert_eq(got, "DATA 1 END_STREAM 686921 pad 3 [15]|HEADERS 3 END_HEADERS dep 1 w 16 exclusive 8286 pad 2 [18]|PRIORITY 5 dep 3 w 1 exclusive [14]");
 }
 
 function test_partial(): test.TestOutcome {
-  let whole: u8[] = __codec_bytes(hex.decode("000004080000000000" + "0000ffff" + "000000040100000000"));
-  let got: string = read_at(__codec_bytes(hex.decode("0000040800")), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(__codec_bytes(hex.decode("000004080000000000" + "0000")), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 13, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 22, frame.MIN_FRAME_SIZE);
+  let whole = __codec_bytes(hex.decode("000004080000000000" + "0000ffff" + "000000040100000000"));
+  let got = read_at(__codec_bytes(hex.decode("0000040800")), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(__codec_bytes(hex.decode("000004080000000000" + "0000")), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 13, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 22, frame.MIN_FRAME_SIZE);
   return test.assert_eq(got, "partial|partial|WINDOW_UPDATE 0 +65535 [13]|SETTINGS ACK [9]|partial");
 }
 
 function test_malformed(): test.TestOutcome {
-  let got: string = shown("000002000100000000" + "6869") + "\n";
+  let got = shown("000002000100000000" + "6869") + "\n";
   got = got + shown("000003000800000001" + "036869") + "\n";
   got = got + shown("000000000800000001") + "\n";
   got = got + shown("000003012000000003" + "000000") + "\n";
@@ -140,7 +140,7 @@ function test_malformed(): test.TestOutcome {
   got = got + shown("000003080000000000" + "0000ff") + "\n";
   got = got + shown("000004080000000005" + "00000000") + "\n";
   got = got + shown("000001090400000000" + "86") + "\n";
-  got = got + read_at(__codec_bytes(hex.decode("004001000100000001")), 0, frame.MIN_FRAME_SIZE);
+  got += read_at(__codec_bytes(hex.decode("004001000100000001")), 0, frame.MIN_FRAME_SIZE);
   return test.assert_eq(got, "h2 frame: connection error 1: DATA on stream 0\nh2 frame: connection error 1: padding of 3 bytes in a payload of 3\nh2 frame: connection error 1: a PADDED frame with no pad length\nh2 frame: connection error 6: HEADERS with PRIORITY shorter than its priority\nh2 frame: stream 5 error 6: PRIORITY of 4 bytes\nh2 frame: connection error 6: RST_STREAM of 3 bytes\nh2 frame: connection error 1: SETTINGS on stream 1\nh2 frame: connection error 6: SETTINGS ACK with a payload\nh2 frame: connection error 6: SETTINGS of 5 bytes\nh2 frame: connection error 1: SETTINGS_ENABLE_PUSH of 2\nh2 frame: connection error 3: SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 4096\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 16777216\nh2 frame: connection error 6: PING of 7 bytes\nh2 frame: connection error 1: PING on stream 1\nh2 frame: connection error 6: GOAWAY of 4 bytes\nh2 frame: connection error 6: WINDOW_UPDATE of 3 bytes\nh2 frame: stream 5 error 1: WINDOW_UPDATE of 0\nh2 frame: connection error 1: CONTINUATION on stream 0\nh2 frame: connection error 6: frame of 16385 bytes over the 16384 allowed");
 }
 
@@ -152,7 +152,7 @@ function framed_whole(stream: i32, block: u8[], data: u8[]): string {
 }
 
 function in_one_buffer(stream: i32, block: u8[], data: u8[]): string {
-  let buf: u8[] = frame.headers_room(data.len());
+  let buf = frame.headers_room(data.len());
   for b in block {
     buf = buf.append(b);
   }
@@ -162,14 +162,14 @@ function in_one_buffer(stream: i32, block: u8[], data: u8[]): string {
 function test_headers_data(): test.TestOutcome {
   let small: u8[] = [136 as u8, 190 as u8];
   let large: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < frame.BLOCK_ROOM + 7) {
     large = large.append((64 + i % 32) as u8);
-    i = i + 1;
+    i += 1;
   }
-  let long: u8[] = __alloc_u8(frame.BLOCK_ROOM * 3);
+  let long = __alloc_u8(frame.BLOCK_ROOM * 3);
   let cases: u8[][] = [small, large];
-  let got: string = "";
+  let got = "";
   for block in cases {
     for data in ["hello".bytes(), [], long] {
       if (in_one_buffer(7, block, data) != framed_whole(7, block, data)) {
@@ -178,7 +178,7 @@ function test_headers_data(): test.TestOutcome {
     }
   }
   if (hex.encode(frame.header_into(__alloc_u8(11), 2, frame.DATA, 1, 65537, 300)) != "0000" + "00012c" + "00" + "01" + "00010001") {
-    got = got + "header_into\n";
+    got += "header_into\n";
   }
   return test.assert_eq(got, "");
 }
@@ -188,7 +188,7 @@ function plain(block: string): string {
   let Some(len) = frame.plain_headers_at(buf, 2, frame.MIN_FRAME_SIZE) else {
     return "-";
   };
-  let out: string = len.to_string() + " on " + frame.stream_at(buf, 2).to_string();
+  let out = len.to_string() + " on " + frame.stream_at(buf, 2).to_string();
   if (frame.end_stream_at(buf, 2)) {
     return out + " END_STREAM";
   }
@@ -203,15 +203,15 @@ function __len_or_dash(len: Option[i32]): string {
 }
 
 function test_plain_headers(): test.TestOutcome {
-  let got: string = plain("000002010500000001" + "8286") + "|" + plain("000002010400000003" + "8286") + "|" + plain("0000020105000000") + "|" + plain("000003010500000001" + "82") + "|" + plain("000002000500000001" + "8286") + "|" + plain("000002010100000001" + "8286") + "|" + plain("000003010d00000001" + "008286") + "|" + plain("000007012500000001" + "00000000008286") + "|" + plain("000002010500000000" + "8286") + "|" + plain("000001090400000001" + "86");
-  let big: u8[] = __alloc_u8(frame.MIN_FRAME_SIZE + 1);
-  let over: u8[] = frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: true, end_headers: true, priority: None, block: big, padding: 0 }));
+  let got = plain("000002010500000001" + "8286") + "|" + plain("000002010400000003" + "8286") + "|" + plain("0000020105000000") + "|" + plain("000003010500000001" + "82") + "|" + plain("000002000500000001" + "8286") + "|" + plain("000002010100000001" + "8286") + "|" + plain("000003010d00000001" + "008286") + "|" + plain("000007012500000001" + "00000000008286") + "|" + plain("000002010500000000" + "8286") + "|" + plain("000001090400000001" + "86");
+  let big = __alloc_u8(frame.MIN_FRAME_SIZE + 1);
+  let over = frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: true, end_headers: true, priority: None, block: big, padding: 0 }));
   got = got + "|" + __len_or_dash(frame.plain_headers_at(over, 0, frame.MIN_FRAME_SIZE)) + "|" + __len_or_dash(frame.plain_headers_at(over, 0, frame.MIN_FRAME_SIZE + 1));
   return test.assert_eq(got, "2 on 1 END_STREAM|2 on 3|-|-|-|-|-|-|-|-|-|16385");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/h2/frame");
+  let r = test.new("std/http/h2/frame");
   r = r.it("the plain HEADERS frame a request starts with", test_plain_headers);
   r = r.it("a HEADERS and a DATA frame in one buffer", test_headers_data);
   r = r.it("the client preface", test_preface);

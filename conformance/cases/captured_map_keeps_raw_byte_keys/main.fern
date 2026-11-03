@@ -1,0 +1,18 @@
+// A closure that captures a map keeps the map's keys byte for byte, also
+// when a key holds bytes that are not UTF-8.
+import "core/map";
+
+function main(): i32 {
+  let bytes = __alloc_u8(2);
+  bytes = bytes.with(0, 200 as u8);
+  bytes = bytes.with(1, 201 as u8);
+  let k = string_from_bytes_unchecked(bytes);
+  let entries: Map[string, string] = Map { };
+  entries = entries.insert(k, "v");
+  print(f"before={entries.contains(k)}");
+  let g = () => entries.len();
+  print(f"after-lambda={entries.contains(k)} {g()}");
+  let value = if (false) { entries.get_or(k, "") } else { "" };
+  print(f"after-if={entries.contains(k)} {value}");
+  return 0;
+}

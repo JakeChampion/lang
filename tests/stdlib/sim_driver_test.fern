@@ -4,12 +4,12 @@ import "std/sim";
 import "std/time";
 
 function test_deadline_some_and_none(): test.TestOutcome {
-  let d: sim.Sim = sim.new(7);
+  let d = sim.new(7);
   let fs: async.Future[string][] = [
     sim.future_at(sim.at(time.duration_nanos(40000000)), "late"),
     sim.future_at(sim.at(time.duration_nanos(10000000)), "early"),
   ];
-  let got: Option[string][] = sim.block_on(d, async.with_deadline(sim.at(time.duration_millis(25)), fs)).unwrap_or([]);
+  let got = sim.block_on(d, async.with_deadline(sim.at(time.duration_millis(25)), fs)).unwrap_or([]);
   if (got.len() != 2) {
     return test.fail("with_deadline ended cancelled");
   }
@@ -33,19 +33,19 @@ function test_deadline_some_and_none(): test.TestOutcome {
 }
 
 function test_deadline_all_in_time(): test.TestOutcome {
-  let d: sim.Sim = sim.new(7);
+  let d = sim.new(7);
   let fs: async.Future[i32][] = [
     sim.future_at(sim.at(time.duration_nanos(20000000)), 40),
     sim.future_at(sim.at(time.duration_nanos(5000000)), 2),
   ];
-  let got: Option[i32][] = sim.block_on(d, async.with_deadline(sim.at(time.duration_millis(100)), fs)).unwrap_or([]);
+  let got = sim.block_on(d, async.with_deadline(sim.at(time.duration_millis(100)), fs)).unwrap_or([]);
   if (got.len() != 2) {
     return test.fail("with_deadline ended cancelled");
   }
-  let sum: i32 = 0;
+  let sum = 0;
   match (got[0]) {
     Some(v) => {
-      sum = sum + v;
+      sum += v;
     },
     None => {
       return test.fail("slot 0 timed out");
@@ -53,7 +53,7 @@ function test_deadline_all_in_time(): test.TestOutcome {
   }
   match (got[1]) {
     Some(v) => {
-      sum = sum + v;
+      sum += v;
     },
     None => {
       return test.fail("slot 1 timed out");
@@ -66,7 +66,7 @@ function test_deadline_all_in_time(): test.TestOutcome {
 }
 
 function __tie_winner(seed: i64): i32 {
-  let d: sim.Sim = sim.new(seed);
+  let d = sim.new(seed);
   let fs: async.Future[i32][] = [
     sim.future_at(sim.at(time.duration_nanos(5000000)), 100),
     sim.future_at(sim.at(time.duration_nanos(5000000)), 200),
@@ -100,26 +100,26 @@ function test_race_tie_lower_index(): test.TestOutcome {
 
 // Between tasks the seed breaks a tie: the first task to run on wins the race for `order`.
 function __first_of(seed: i64): i32 {
-  let d: sim.Sim = sim.new(seed);
-  let order: Cell[i32] = cell_new(0 - 1);
-  let at: Instant = sim.at(time.duration_millis(5));
+  let d = sim.new(seed);
+  let order = cell_new(-1);
+  let at = sim.at(time.duration_millis(5));
   let entries: (() => i32)[] = [
     (): i32 => {
-      let moved: boolean = d.advance_to(at);
+      let moved = d.advance_to(at);
       if (order.get() < 0) {
         order.set(0);
       }
       return 0;
     },
     (): i32 => {
-      let moved: boolean = d.advance_to(at);
+      let moved = d.advance_to(at);
       if (order.get() < 0) {
         order.set(1);
       }
       return 1;
     },
   ];
-  let st: async.TaskStatus[i32][] = sim.run_tasks(d, entries, [None, None]);
+  let st = sim.run_tasks(d, entries, [None, None]);
   return order.get();
 }
 
@@ -134,7 +134,7 @@ function test_task_tie_seeded(): test.TestOutcome {
   }
   let saw: i32[] = [0, 0];
   for seed in 1..21 {
-    let w: i32 = __first_of(seed as i64);
+    let w = __first_of(seed as i64);
     saw = saw.with(w, saw[w] + 1);
   }
   if (saw[0] == 0 || saw[1] == 0) {
@@ -144,13 +144,13 @@ function test_task_tie_seeded(): test.TestOutcome {
 }
 
 function test_gather_out_of_order(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
+  let d = sim.new(1);
   let fs: async.Future[i32][] = [
     sim.future_at(sim.at(time.duration_nanos(30000000)), 10),
     sim.future_at(sim.at(time.duration_nanos(10000000)), 20),
     sim.future_at(sim.at(time.duration_nanos(20000000)), 30),
   ];
-  let got: i32[] = sim.block_on(d, async.gather(fs)).unwrap_or([0, 0, 0]);
+  let got = sim.block_on(d, async.gather(fs)).unwrap_or([0, 0, 0]);
   if (got[0] != 10 || got[1] != 20 || got[2] != 30) {
     return test.fail("results not in input order");
   }
@@ -158,9 +158,9 @@ function test_gather_out_of_order(): test.TestOutcome {
 }
 
 function test_chain_resolves_after_resuspensions(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
+  let d = sim.new(1);
   let fs: async.Future[i32][] = [sim.future_chain(sim.at(time.duration_nanos(10000000)), time.duration_nanos(5000000), 3, 9)];
-  let got: i32[] = sim.block_on(d, async.gather(fs)).unwrap_or([0]);
+  let got = sim.block_on(d, async.gather(fs)).unwrap_or([0]);
   if (got[0] != 9) {
     return test.fail("chain resolved to wrong value");
   }
@@ -168,11 +168,11 @@ function test_chain_resolves_after_resuspensions(): test.TestOutcome {
 }
 
 function test_chain_suspension_count(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
-  let f: async.Future[i32] = sim.future_chain(sim.at(time.duration_nanos(10000000)), time.duration_nanos(5000000), 3, 9);
-  let wakes: i32 = 0;
+  let d = sim.new(1);
+  let f = sim.future_chain(sim.at(time.duration_nanos(10000000)), time.duration_nanos(5000000), 3, 9);
+  let wakes = 0;
   let toks: i64[] = [];
-  let guard: i32 = 0;
+  let guard = 0;
   while (guard < 10) {
     match (f) {
       Ready(v) => {
@@ -191,25 +191,25 @@ function test_chain_suspension_count(): test.TestOutcome {
         if let Some(at) = w.until {
           toks = toks.append(at.since(sim.at(time.duration_nanos(0))).as_millis());
         }
-        wakes = wakes + 1;
+        wakes += 1;
         f = resume(async.Wake.TimedOut);
       },
       Cancelled => {
         return test.fail("chain ended cancelled");
       }
     }
-    guard = guard + 1;
+    guard += 1;
   }
   return test.fail("chain never resolved");
 }
 
 function test_time_only_advances_when_driven(): test.TestOutcome {
-  let d: sim.Sim = sim.new(3);
-  let f: async.Future[i32] = sim.future_at(sim.at(time.duration_millis(90)), 1);
+  let d = sim.new(3);
+  let f = sim.future_at(sim.at(time.duration_millis(90)), 1);
   if (d.elapsed().as_nanos() != 0 as i64) {
     return test.fail("making a future moved the clock");
   }
-  let v: i32 = sim.block_on(d, f).unwrap_or(0);
+  let v = sim.block_on(d, f).unwrap_or(0);
   if (v != 1) {
     return test.fail("the future did not resolve");
   }
@@ -217,12 +217,12 @@ function test_time_only_advances_when_driven(): test.TestOutcome {
 }
 
 function __draws(seed: i64): string {
-  let s: sim.Sim = sim.new(seed);
-  let out: string = "";
-  let i: i32 = 0;
+  let s = sim.new(seed);
+  let out = "";
+  let i = 0;
   while (i < 4) {
     out = out + (s.random_i32() & 255).to_string() + " ";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -256,7 +256,7 @@ function test_sweep_finds_first_failing_seed(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/sim driver");
+  let r = test.new("std/sim driver");
   r = r.it("with_deadline some and none", test_deadline_some_and_none);
   r = r.it("with_deadline all in time", test_deadline_all_in_time);
   r = r.it("race tie goes to the lower index", test_race_tie_lower_index);

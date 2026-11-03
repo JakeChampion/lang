@@ -7,8 +7,8 @@ import "std/codec";
 import "std/stream";
 
 function test_framing(): test.TestOutcome {
-  let framed: u8[] = grpc.frame("abc".bytes()).concat(grpc.frame([]));
-  let got: string = hex.encode(framed) + " ";
+  let framed = grpc.frame("abc".bytes()).concat(grpc.frame([]));
+  let got = hex.encode(framed) + " ";
   match (grpc.next_message(framed)) {
     Ok(first) => {
       match (first) {
@@ -21,7 +21,7 @@ function test_framing(): test.TestOutcome {
                   got = got + " " + m2.0.len().to_string() + "/" + m2.1.len().to_string();
                 },
                 None => {
-                  got = got + " none";
+                  got += " none";
                 }
               }
             },
@@ -31,7 +31,7 @@ function test_framing(): test.TestOutcome {
           }
         },
         None => {
-          got = got + "none";
+          got += "none";
         }
       }
     },
@@ -62,7 +62,7 @@ function partial(bytes: u8[]): string {
 }
 
 function test_partial_and_refused(): test.TestOutcome {
-  let got: string = partial(__codec_bytes(hex.decode("00000000"))) + "|" + partial(__codec_bytes(hex.decode("000000000361"))) + "|" + partial(__codec_bytes(hex.decode("0100000000"))) + "|" + partial(__codec_bytes(hex.decode("0080000000")));
+  let got = partial(__codec_bytes(hex.decode("00000000"))) + "|" + partial(__codec_bytes(hex.decode("000000000361"))) + "|" + partial(__codec_bytes(hex.decode("0100000000"))) + "|" + partial(__codec_bytes(hex.decode("0080000000")));
   return test.assert_eq(got, "more|more|compressed message|message length past 2 GiB");
 }
 
@@ -79,8 +79,8 @@ function timeout_text(v: string): string {
 }
 
 function test_timeout(): test.TestOutcome {
-  let got: string = timeout_text("1H") + " " + timeout_text("2M") + " " + timeout_text("3S") + " " + timeout_text("150m") + " " + timeout_text("7u") + " " + timeout_text("99999999n") + " " + timeout_text("1") + " " + timeout_text("123456789S") + " " + timeout_text("1x") + " " + timeout_text("a1S");
-  let none: string = "none";
+  let got = timeout_text("1H") + " " + timeout_text("2M") + " " + timeout_text("3S") + " " + timeout_text("150m") + " " + timeout_text("7u") + " " + timeout_text("99999999n") + " " + timeout_text("1") + " " + timeout_text("123456789S") + " " + timeout_text("1x") + " " + timeout_text("a1S");
+  let none = "none";
   match (grpc.timeout(headers.new())) {
     Some(d) => {
       none = "some";
@@ -95,21 +95,21 @@ function request_with(ct: string): HttpRequest {
 }
 
 function test_is_grpc(): test.TestOutcome {
-  let plain: HttpRequest = HttpRequest { method: "POST", path: "/x", body: stream.empty(), headers: headers.new(), trailers: headers.new() };
-  let got: string = grpc.is_grpc(request_with("application/grpc")).to_string() + " " + grpc.is_grpc(request_with("application/grpc+proto")).to_string() + " " + grpc.is_grpc(request_with("Application/GRPC; charset=x")).to_string() + " " + grpc.is_grpc(request_with("application/json")).to_string() + " " + grpc.is_grpc(request_with("application/grpcx")).to_string() + " " + grpc.is_grpc(plain).to_string();
+  let plain = HttpRequest { method: "POST", path: "/x", body: stream.empty(), headers: headers.new(), trailers: headers.new() };
+  let got = grpc.is_grpc(request_with("application/grpc")).to_string() + " " + grpc.is_grpc(request_with("application/grpc+proto")).to_string() + " " + grpc.is_grpc(request_with("Application/GRPC; charset=x")).to_string() + " " + grpc.is_grpc(request_with("application/json")).to_string() + " " + grpc.is_grpc(request_with("application/grpcx")).to_string() + " " + grpc.is_grpc(plain).to_string();
   return test.assert_eq(got, "true true true false false false");
 }
 
 function test_status_and_responses(): test.TestOutcome {
-  let t: HeaderMap = grpc.status(grpc.DEADLINE_EXCEEDED, "deadline exceeded 100% sure\n");
-  let resp: HttpResponse = grpc.response(["ab".bytes(), "c".bytes()], grpc.OK, "");
-  let err: HttpResponse = grpc.error(grpc.UNIMPLEMENTED, "no such method");
+  let t = grpc.status(grpc.DEADLINE_EXCEEDED, "deadline exceeded 100% sure\n");
+  let resp = grpc.response(["ab".bytes(), "c".bytes()], grpc.OK, "");
+  let err = grpc.error(grpc.UNIMPLEMENTED, "no such method");
   let got: string = t.names.join(",") + " " + t.values.join("|") + " " + resp.status.to_string() + " " + hex.encode(resp.body_bytes()) + " " + resp.trailers.values.join("|") + " " + err.body_bytes().len().to_string() + " " + err.trailers.values.join("|");
   return test.assert_eq(got, "Grpc-Status,Grpc-Message 4|deadline exceeded 100%25 sure%0A 200 00000000026162000000000163 0 0 12|no such method");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/grpc");
+  let r = test.new("std/http/grpc");
   r = r.it("message framing", test_framing);
   r = r.it("partial and refused messages", test_partial_and_refused);
   r = r.it("grpc-timeout", test_timeout);

@@ -1,20 +1,16 @@
 function build(n: i32): i32[] {
   let xs: i32[] = [];
-  let i: i32 = 0;
-  while (i < n) {
+  for i in 0..n {
     xs = xs.append(i * 7);
-    i = i + 1;
   }
   return xs;
 }
 
 function main(): i32 {
-  let total: i64 = 0i64;
-  let r: i32 = 0;
-  while (r < 40) {
-    let xs: i32[] = build(20000);
-    total = total + xs[xs.len() - 1] as i64;
-    r = r + 1;
+  let total = 0i64;
+  for _ in 0..40 {
+    let xs = build(20000);
+    total += xs[xs.len() - 1] as i64;
   }
   return (total % 97i64) as i32;
 }

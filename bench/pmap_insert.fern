@@ -2,25 +2,17 @@ import "std/pmap";
 
 function main(): i32 {
   let m: pmap.PMap[i32, i32] = pmap.new();
-  let i: i32 = 0;
-  while (i < 4000) {
+  for i in 0..4000 {
     m = m.insert(i * 7, i);
-    i = i + 1;
   }
-  let r: i32 = 0;
-  while (r < 20) {
-    let j: i32 = 0;
-    while (j < 4000) {
+  for r in 0..20 {
+    for j in 0..4000 {
       m = m.insert(j * 7, j + r);
-      j = j + 1;
     }
-    r = r + 1;
   }
-  let total: i64 = 0i64;
-  i = 0;
-  while (i < 4000) {
-    total = total + m.get_or(i * 7, 0) as i64;
-    i = i + 1;
+  let total = 0i64;
+  for i in 0..4000 {
+    total += m.get_or(i * 7, 0) as i64;
   }
   return (total % 97i64) as i32;
 }

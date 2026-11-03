@@ -18,8 +18,8 @@ function check_len_nonneg(input: u8[]): test.TestOutcome {
 function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
   match (utf8.from_bytes(input)) {
     Ok(s) => {
-      let once: string = s.to_upper();
-      let twice: string = once.to_upper();
+      let once = s.to_upper();
+      let twice = once.to_upper();
       if (once == twice) {
         return test.pass();
       }
@@ -32,7 +32,7 @@ function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
 }
 
 function check_trim_strips_spaces(input: u8[]): test.TestOutcome {
-  let s: string = string_from_bytes_unchecked(input);
+  let s = string_from_bytes_unchecked(input);
   let trimmed: str = s.trim();
   if (trimmed.len() == 0) {
     return test.pass();
@@ -47,7 +47,7 @@ function check_trim_strips_spaces(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("fuzz examples");
+  let r = test.new("fuzz examples");
 
   r = r.fuzz(
     "trivial",

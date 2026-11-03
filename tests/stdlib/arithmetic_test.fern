@@ -23,13 +23,13 @@ function test_modulo(): test.TestOutcome {
 function test_modulo_table(): test.TestOutcome {
   let inputs: i32[] = [0, 1, 5, 10, 11, 100];
   let expected: i32[] = [0, 1, 5, 0, 1, 0];
-  let i: i32 = 0;
+  let i = 0;
   while (i < inputs.len()) {
-    let got: i32 = inputs[i] % 10;
+    let got = inputs[i] % 10;
     if (got != expected[i]) {
       return test.fail("modulo table mismatch at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -51,7 +51,7 @@ function test_ge(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("arithmetic");
+  let r = test.new("arithmetic");
   r = r.it("addition", test_addition);
   r = r.it("subtraction", test_subtraction);
   r = r.it("multiplication", test_multiplication);

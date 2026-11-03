@@ -2,25 +2,17 @@ import "std/pvec";
 
 function main(): i32 {
   let v: pvec.PVec[i32] = pvec.new();
-  let i: i32 = 0;
-  while (i < 4000) {
+  for i in 0..4000 {
     v = v.append(i);
-    i = i + 1;
   }
-  let r: i32 = 0;
-  while (r < 40) {
-    let j: i32 = 0;
-    while (j < 4000) {
+  for r in 0..40 {
+    for j in 0..4000 {
       v = v.with(j, j + r);
-      j = j + 1;
     }
-    r = r + 1;
   }
-  let total: i64 = 0i64;
-  i = 0;
-  while (i < 4000) {
-    total = total + v.get_or(i, 0) as i64;
-    i = i + 1;
+  let total = 0i64;
+  for i in 0..4000 {
+    total += v.get_or(i, 0) as i64;
   }
   return (total % 97i64) as i32;
 }

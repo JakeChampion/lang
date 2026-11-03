@@ -17,13 +17,13 @@ function copy(input: [u8]): u8[] {
 function blank(count: i32): u8[] {
   let output = __alloc_u8(count);
   for index in 0..count {
-    output = output.with(index, 0 as u8);
+    output = output.with(index, 0);
   }
   return output;
 }
 
 function payload(sequence: i32, total: i32, data: [u8]): icc_app2.Payload {
-  let bytes = [73 as u8, 67 as u8, 67 as u8, 95 as u8, 80 as u8, 82 as u8, 79 as u8, 70 as u8, 73 as u8, 76 as u8, 69 as u8, 0 as u8, sequence as u8, total as u8];
+  let bytes = [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', 0, sequence as u8, total as u8];
   for value in data {
     bytes = bytes.append(value);
   }
@@ -84,7 +84,7 @@ function framing(): test.TestOutcome {
     }
   }
   for index in 0..12 {
-    if (!error([icc_app2.Payload { bytes: good.bytes.with(index, 1 as u8) }], icc_app2.App2Error.Identifier, icc_app2.default_limits())) {
+    if (!error([icc_app2.Payload { bytes: good.bytes.with(index, 1) }], icc_app2.App2Error.Identifier, icc_app2.default_limits())) {
       return test.fail("every identifier byte including its terminator");
     }
   }
@@ -105,7 +105,7 @@ function coherence(): test.TestOutcome {
     }
   }
   let bad = payload(2, 2, [7 as u8]);
-  return test.assert_true(error([payload(1, 2, [1 as u8]), icc_app2.Payload { bytes: bad.bytes.with(11, 1 as u8) }], icc_app2.App2Error.Identifier, icc_app2.default_limits()));
+  return test.assert_true(error([payload(1, 2, [1 as u8]), icc_app2.Payload { bytes: bad.bytes.with(11, 1) }], icc_app2.App2Error.Identifier, icc_app2.default_limits()));
 }
 
 function limits(): test.TestOutcome {
@@ -147,7 +147,7 @@ function cancellation(): test.TestOutcome {
     if (polls.get() != total || match (result) { Err(_) => true, _ => false }) {
       return test.fail("exact absent/empty/copied-byte poll counts");
     }
-    for stop in 1..total + 1 {
+    for stop in 1..=total {
       let count = cell_new(0);
       let result = icc_app2.assemble(input[:], icc_app2.default_limits(), (): boolean => {
         count.set(count.get() + 1);
@@ -166,20 +166,22 @@ function ownership(): test.TestOutcome {
   let shared = cell_new(parts);
   let output = match (icc_app2.assemble(parts[:], icc_app2.default_limits(), (): boolean => {
     let values = shared.get();
-    shared.set(values.with(0, icc_app2.Payload { bytes: values[0].bytes.with(12, 1 as u8).with(14, 99 as u8) }));
+    shared.set(values.with(0, icc_app2.Payload { bytes: values[0].bytes.with(12, 1).with(14, 99) }));
     return false;
   })) { Ok(Some(v)) => v, _ => { return test.fail("COW across outer and inner payload aliases"); } };
-  if (!equal(output[:], [1 as u8, 2 as u8, 3 as u8, 4 as u8]) || parts[0].bytes[12] != 2 as u8 || shared.get()[0].bytes[14] != 99 as u8) {
+  if (!equal(output[:], [1 as u8, 2 as u8, 3 as u8, 4 as u8]) || parts[0].bytes[12] != 2 || shared.get()[0].bytes[14] != 99) {
     return test.fail("callbacks cannot change borrowed sequence or data bytes");
   }
   let retained = cell_new(output);
-  retained.set(retained.get().with(0, 99 as u8));
-  return test.assert_true(output[0] == 1 as u8 && retained.get()[0] == 99 as u8
+  retained.set(retained.get().with(0, 99));
+  return test.assert_true(output[0] == 1 && retained.get()[0] == 99
     && assembled(parts, [1 as u8, 2 as u8, 3 as u8, 4 as u8], icc_app2.default_limits()));
 }
 
 function profile_separation(): test.TestOutcome {
-  let profile = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen offline profile"); } };
+  let Ok(profile) = read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc") else {
+    return test.fail("frozen offline profile");
+  };
   let parts = [payload(3, 3, profile[300:]), payload(1, 3, profile[:1]), payload(2, 3, profile[1:300])];
   let joined = match (icc_app2.assemble(parts[:], icc_app2.default_limits(), never)) { Ok(Some(v)) => v, _ => { return test.fail("complete raw profile bytes"); } };
   if (!equal(joined[:], profile[:]) || match (envelope.inspect(joined[:], envelope.default_limits(), never)) { Err(_) => true, _ => false }) {

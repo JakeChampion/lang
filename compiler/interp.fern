@@ -1543,7 +1543,8 @@ function encoded_value(v: Value): EncodedValue {
     buf_free(h);
     return EncodedValue { ok: false, text: "", edges: [] };
   }
-  let text: string = buf_take(h);
+  // Raw bytes: a string value may hold bytes that are not UTF-8.
+  let text: string = string_from_bytes_unchecked(buf_take_bytes(h));
   buf_free(h);
   return EncodedValue { ok: true, text: text, edges: edges };
 }

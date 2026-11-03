@@ -7,15 +7,15 @@ function fold_order(a: string, b: string): i32 {
 }
 
 function test_string_order(): test.TestOutcome {
-  let lt: boolean = "apple".cmp("banana") < 0;
-  let eq: boolean = "pear".cmp("pear") == 0;
-  let gt: boolean = "pear".cmp("apple") > 0;
+  let lt = "apple".cmp("banana") < 0;
+  let eq = "pear".cmp("pear") == 0;
+  let gt = "pear".cmp("apple") > 0;
   return test.assert_true(lt && eq && gt);
 }
 
 function test_string_order_folded(): test.TestOutcome {
-  let eq: boolean = "Apple".cmp_ignore_ascii_case("apple") == 0;
-  let lt: boolean = "apple".cmp_ignore_ascii_case("Banana") < 0;
+  let eq = "Apple".cmp_ignore_ascii_case("apple") == 0;
+  let lt = "apple".cmp_ignore_ascii_case("Banana") < 0;
   return test.assert_true(eq && lt);
 }
 
@@ -81,7 +81,7 @@ function test_sort_by_key_stable(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("cmp comparator + ci sorts");
+  let r = test.new("cmp comparator + ci sorts");
   r = r.it("string cmp", test_string_order);
   r = r.it("string cmp_ignore_ascii_case", test_string_order_folded);
   r = r.it("sort_strings_desc", test_sort_strings_desc);

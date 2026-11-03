@@ -11,6 +11,12 @@ pub struct ParametricData { function_type: i32, coefficients: i32[] }
 
 pub enum CurveData { Identity, Gamma(i32), Samples(i32[]), Parametric(ParametricData) }
 
+const XYZ_TYPE: i64 = 1482250784;
+
+const CURVE_TYPE: i64 = 1668641398;
+
+const PARAMETRIC_TYPE: i64 = 1885434465;
+
 pub function default_curve_limits(): CurveLimits {
   return CurveLimits { max_bytes: 1048576, max_samples: 4096 };
 }
@@ -43,7 +49,7 @@ pub function read_xyz_triplet(input: [u8], cancelled: () => boolean): Result[Xyz
   if (input.len() != 20) {
     return Err(TagError.Length);
   }
-  prefix(input, 1482250784i64)?;
+  prefix(input, XYZ_TYPE)?;
   if (cancelled()) {
     return Err(TagError.Cancelled);
   }
@@ -67,7 +73,7 @@ pub function read_curve(input: [u8], limits: CurveLimits, cancelled: () => boole
     return Err(TagError.Length);
   }
   let kind = get32(input, 0);
-  if (kind == 1668641398i64) {
+  if (kind == CURVE_TYPE) {
     let count = get32(input, 8);
     if (count > limits.max_samples as i64 || count > 65536i64) {
       return Err(TagError.Limit);
@@ -98,7 +104,7 @@ pub function read_curve(input: [u8], limits: CurveLimits, cancelled: () => boole
     }
     return Ok(CurveData.Samples(values));
   }
-  if (kind != 1885434465i64) {
+  if (kind != PARAMETRIC_TYPE) {
     return Err(TagError.Signature);
   }
   prefix(input, kind)?;

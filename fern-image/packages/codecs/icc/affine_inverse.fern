@@ -64,7 +64,7 @@ function coordinate(data: Parameters, input: f64): f64 {
   }
   let exponent = 1.0 / data.gamma;
   let root = target.high.pow(exponent);
-  root = root + root * (exponent * (target.low / target.high));
+  root += root * (exponent * (target.low / target.high));
   return (root - data.b) / data.a;
 }
 

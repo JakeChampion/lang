@@ -3,57 +3,57 @@ import "std/test";
 
 function test_i64_asc(): test.TestOutcome {
   let arr: i64[] = [3 as i64, 1 as i64, 4 as i64, 1 as i64, 5 as i64, 9 as i64, 2 as i64, 6 as i64];
-  let sorted: i64[] = cmp.sort(arr);
-  let i: i32 = 1;
+  let sorted = cmp.sort(arr);
+  let i = 1;
   while (i < sorted.len()) {
     if (sorted[i] < sorted[i - 1]) {
       return test.fail("not sorted at " + i.to_string() + ": " + sorted[i - 1].to_string() + " > " + sorted[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_i64_desc(): test.TestOutcome {
   let arr: i64[] = [1 as i64, 5 as i64, 2 as i64, 9 as i64, 3 as i64];
-  let sorted: i64[] = cmp.sort_desc(arr);
-  let i: i32 = 1;
+  let sorted = cmp.sort_desc(arr);
+  let i = 1;
   while (i < sorted.len()) {
     if (sorted[i] > sorted[i - 1]) {
       return test.fail("not descending at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_u32_asc(): test.TestOutcome {
   let arr: u32[] = [3u32, 1u32, 4u32, 1u32, 5u32];
-  let sorted: u32[] = cmp.sort(arr);
-  let i: i32 = 1;
+  let sorted = cmp.sort(arr);
+  let i = 1;
   while (i < sorted.len()) {
     if (sorted[i] < sorted[i - 1]) {
       return test.fail("u32 sort wrong at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_u64_asc_with_large_values(): test.TestOutcome {
   let arr: u64[] = [18446744073709551615u64, 0u64, 1u64];
-  let sorted: u64[] = cmp.sort(arr);
+  let sorted = cmp.sort(arr);
   return test.assert_eq(sorted[0], 0u64);
 }
 
 function test_i64_asc_large(): test.TestOutcome {
   let arr: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 100) {
     arr = arr.append((100 - i) as i64);
-    i = i + 1;
+    i += 1;
   }
-  let sorted: i64[] = cmp.sort(arr);
+  let sorted = cmp.sort(arr);
   if (sorted.len() != 100) {
     return test.fail("length changed: " + sorted.len().to_string());
   }
@@ -62,37 +62,37 @@ function test_i64_asc_large(): test.TestOutcome {
     if (sorted[i] != (i + 1) as i64) {
       return test.fail("wrong value at " + i.to_string() + ": " + sorted[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_i64_desc_large(): test.TestOutcome {
   let arr: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 100) {
     arr = arr.append((i + 1) as i64);
-    i = i + 1;
+    i += 1;
   }
-  let sorted: i64[] = cmp.sort_desc(arr);
+  let sorted = cmp.sort_desc(arr);
   i = 0;
   while (i < 100) {
     if (sorted[i] != (100 - i) as i64) {
       return test.fail("desc wrong at " + i.to_string() + ": " + sorted[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_u32_asc_large(): test.TestOutcome {
   let arr: u32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 96) {
     arr = arr.append((i * 61 % 37) as u32);
-    i = i + 1;
+    i += 1;
   }
-  let sorted: u32[] = cmp.sort(arr);
+  let sorted = cmp.sort(arr);
   if (sorted.len() != 96) {
     return test.fail("length changed: " + sorted.len().to_string());
   }
@@ -101,20 +101,20 @@ function test_u32_asc_large(): test.TestOutcome {
     if (sorted[i] < sorted[i - 1]) {
       return test.fail("u32 large not sorted at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_u64_asc_large(): test.TestOutcome {
   let arr: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 79) {
     arr = arr.append((79 - i) as u64);
-    i = i + 1;
+    i += 1;
   }
   arr = arr.append(18446744073709551615u64);
-  let sorted: u64[] = cmp.sort(arr);
+  let sorted = cmp.sort(arr);
   if (sorted.len() != 80) {
     return test.fail("length changed: " + sorted.len().to_string());
   }
@@ -123,7 +123,7 @@ function test_u64_asc_large(): test.TestOutcome {
     if (sorted[i] < sorted[i - 1]) {
       return test.fail("u64 large not sorted at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   if (sorted[0] != 1u64) {
     return test.fail("u64 smallest wrong");
@@ -136,7 +136,7 @@ function test_u64_asc_large(): test.TestOutcome {
 
 function test_i64_empty(): test.TestOutcome {
   let arr: i64[] = [];
-  let sorted: i64[] = cmp.sort(arr);
+  let sorted = cmp.sort(arr);
   if (sorted.len() != 0) {
     return test.fail("empty sort grew: " + sorted.len().to_string());
   }
@@ -145,12 +145,12 @@ function test_i64_empty(): test.TestOutcome {
 
 function test_i64_single(): test.TestOutcome {
   let arr: i64[] = [42 as i64];
-  let sorted: i64[] = cmp.sort(arr);
+  let sorted = cmp.sort(arr);
   return test.assert_eq(sorted[0], 42 as i64);
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("wider sorts");
+  let r = test.new("wider sorts");
   r = r.it("sort_i64_asc", test_i64_asc);
   r = r.it("sort_i64_desc", test_i64_desc);
   r = r.it("sort_u32_asc", test_u32_asc);

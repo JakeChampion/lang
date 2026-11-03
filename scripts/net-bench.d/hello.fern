@@ -19,6 +19,7 @@
 // under the default of 1,000 a TLS connection re-handshakes every
 // thousand requests, which the others never do.
 import "std/i32";
+import "std/result";
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -29,122 +30,62 @@ import "std/tls/verify";
 import "std/rand";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-  if (req.path == "/bulk") {
-    return http.bytes(200, "x".repeat(16777216).bytes());
-  }
-  if (req.path == "/count") {
-    return http.ok(__heap_alloc_count().to_string());
+  match (req.path) {
+    "/bulk" => {
+      return http.bytes(200, "x".repeat(16777216).bytes());
+    },
+    "/count" => {
+      return http.ok(__heap_alloc_count().to_string());
+    },
+    _ => {}
   }
   if (req.body_len() == 0) {
     return http.ok("hello");
   }
-  match (req.body_text()) {
-    Ok(text) => {
-      return http.ok("len=" + text.len().to_string() + " " + text);
-    },
-    Err(e) => {
-      return http.ok("len=" + req.body_len().to_string() + " <not text>");
-    }
-  }
-  return http.ok("");
+  return match (req.body_text()) { Ok(text) => http.ok(f"len={text.len()} {text}"), Err(_) => http.ok(f"len={req.body_len()} <not text>") };
 }
 
 function env_int(name: string, dflt: i32): i32 {
-  match (env(name)) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => {
-          return n;
-        },
-        Err(_) => {
-          return dflt;
-        }
-      }
-    },
-    None => {
-      return dflt;
-    }
-  }
-  return dflt;
+  let Some(p) = env(name) else {
+    return dflt;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(dflt);
 }
 
 function identity_from(cert_path: string, key_path: string): Result[identity.Identity, string] {
-  let cert: string = "";
-  match (read_file(cert_path)) {
-    Ok(text) => {
-      cert = text;
-    },
-    Err(_) => {
-      return Err("cannot read " + cert_path);
-    }
-  }
-  let key: string = "";
-  match (read_file(key_path)) {
-    Ok(text) => {
-      key = text;
-    },
-    Err(_) => {
-      return Err("cannot read " + key_path);
-    }
-  }
-  match (identity.from_pem(cert, key)) {
-    Ok(id) => {
-      return Ok(id);
-    },
-    Err(e) => {
-      return Err(e.message());
-    }
-  }
-  return Err("identity");
+  let Ok(cert) = read_file(cert_path) else {
+    return Err("cannot read " + cert_path);
+  };
+  let Ok(key) = read_file(key_path) else {
+    return Err("cannot read " + key_path);
+  };
+  return match (identity.from_pem(cert, key)) { Ok(id) => Ok(id), Err(e) => Err(e.message()) };
 }
 
 function secured(opts: serve.Config): Result[serve.Config, string] {
-  let cert_path: string = "";
-  match (env("TLS_CERT")) {
-    Some(p) => {
-      cert_path = p;
-    },
-    None => {
-      return Ok(opts);
-    }
+  let Some(cert_path) = env("TLS_CERT") else {
+    return Ok(opts);
+  };
+  let Some(key_path) = env("TLS_KEY") else {
+    return Err("TLS_CERT is set without TLS_KEY");
+  };
+  let id = identity_from(cert_path, key_path)?;
+  let tls = opts.with_tls(client_roots(server.config(id, rand.bytes(32)))?);
+  if (env("H3").is_some()) {
+    return Ok(tls.with_h3());
   }
-  match (env("TLS_KEY")) {
-    Some(key_path) => {
-      let id: identity.Identity = identity_from(cert_path, key_path)?;
-      let tls: serve.Config = opts.with_tls(client_roots(server.config(id, rand.bytes(32)))?);
-      if (env("H3").is_some()) {
-        return Ok(tls.with_h3());
-      }
-      return Ok(tls);
-    },
-    None => {
-      return Err("TLS_CERT is set without TLS_KEY");
-    }
-  }
-  return Ok(opts);
+  return Ok(tls);
 }
 
 function client_roots(cfg: server.Config): Result[server.Config, string] {
-  match (env("TLS_CLIENT_CA")) {
-    Some(path) => {
-      match (verify.roots_from_file(path)) {
-        Ok(roots) => {
-          return Ok(cfg.with_client_roots(roots));
-        },
-        Err(e) => {
-          return Err(e.message());
-        }
-      }
-    },
-    None => {
-      return Ok(cfg);
-    }
-  }
-  return Ok(cfg);
+  let Some(path) = env("TLS_CLIENT_CA") else {
+    return Ok(cfg);
+  };
+  return match (verify.roots_from_file(path)) { Ok(roots) => Ok(cfg.with_client_roots(roots)), Err(e) => Err(e.message()) };
 }
 
 function main(): i32 {
-  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, keep_alive_requests: 1000000000, workers: env_int("WORKERS", 0) };
+  let opts = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, keep_alive_requests: 1000000000, workers: env_int("WORKERS", 0) };
   if (env("H2").is_some()) {
     opts = opts.with_h2();
   }
@@ -157,5 +98,4 @@ function main(): i32 {
       return 2;
     }
   }
-  return 2;
 }

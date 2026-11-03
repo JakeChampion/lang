@@ -57,15 +57,15 @@ function connect(cfg: client.Config, alpn: string[], forge: boolean): Result[Pai
 }
 
 function connect_at(cfg: client.Config, alpn: string[], forge: boolean, now: i64): Result[Pair, tls.TlsError] {
-  let start: client.Step = begin(cfg, now)?;
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), alpn: alpn };
-  let server: handshake.Server = srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?;
-  let s1: handshake.ServerStep = srv(server.read(start.output))?;
+  let start = begin(cfg, now)?;
+  let sc = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), alpn: alpn };
+  let server = srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?;
+  let s1 = srv(server.read(start.output))?;
   if (s1.events.len() == 0) {
     start = rd_at(start.session, s1.output, now)?;
     s1 = srv(s1.server.read(start.output))?;
   }
-  let signed: u8[] = signing(s1.events);
+  let signed = signing(s1.events);
   if (forge) {
     signed = signed.append(0 as u8);
   }
@@ -78,9 +78,9 @@ function connect_at(cfg: client.Config, alpn: string[], forge: boolean, now: i64
       return Err(tls.SignatureInvalid);
     }
   }
-  let s2: handshake.ServerStep = srv(s1.server.signature(sig))?;
-  let c1: client.Step = rd_at(start.session, cat(s1.output, s2.output), now)?;
-  let s3: handshake.ServerStep = srv(s2.server.read(c1.output))?;
+  let s2 = srv(s1.server.signature(sig))?;
+  let c1 = rd_at(start.session, cat(s1.output, s2.output), now)?;
+  let s3 = srv(s2.server.read(c1.output))?;
   if (!c1.session.connected() || !s3.server.connected()) {
     return Err(tls.ClosedEarly);
   }
@@ -128,7 +128,7 @@ function signing(events: handshake.Event[]): u8[] {
 }
 
 function cat(a: u8[], b: u8[]): u8[] {
-  let out: u8[] = a;
+  let out = a;
   for x in b {
     out = out.append(x);
   }
@@ -148,10 +148,10 @@ function outcome(r: Result[Pair, tls.TlsError]): string {
 }
 
 function exchange(s: client.Session, server: handshake.Server): Result[string, tls.TlsError] {
-  let cw: client.Step = s.write("ping".bytes())?;
-  let sr: handshake.ServerStep = srv(server.read(cw.output))?;
-  let sw: handshake.ServerStep = srv(sr.server.write("pong".bytes()))?;
-  let cr: client.Step = rd(cw.session, sw.output)?;
+  let cw = s.write("ping".bytes())?;
+  let sr = srv(server.read(cw.output))?;
+  let sw = srv(sr.server.write("pong".bytes()))?;
+  let cr = rd(cw.session, sw.output)?;
   return Ok(string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data));
 }
 
@@ -168,7 +168,7 @@ function exchanged(s: client.Session, server: handshake.Server): string {
 }
 
 function test_trusted(): test.TestOutcome {
-  let cfg: client.Config = client.config("tls.example", roots(ROOT)).with_alpn(["h2", "http/1.1"]);
+  let cfg = client.config("tls.example", roots(ROOT)).with_alpn(["h2", "http/1.1"]);
   match (connect(cfg, ["http/1.1"], false)) {
     Ok(p) => {
       if (p.session.alpn() != "http/1.1") {
@@ -254,9 +254,9 @@ function test_untrusted(): test.TestOutcome {
 }
 
 function refusal_alert(): Result[string, tls.TlsError] {
-  let start: client.Step = begin(client.config("tls.example", roots(OTHER_ROOT)), WALL_MS)?;
-  let sc: handshake.ServerConfig = handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]);
-  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?.read(start.output))?;
+  let start = begin(client.config("tls.example", roots(OTHER_ROOT)), WALL_MS)?;
+  let sc = handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]);
+  let s1 = srv(srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
   match (signed_with(leaf_seed(), signing(s1.events))) {
     Ok(b) => {
@@ -266,7 +266,7 @@ function refusal_alert(): Result[string, tls.TlsError] {
       return Err(tls.SignatureInvalid);
     }
   }
-  let s2: handshake.ServerStep = srv(s1.server.signature(sig))?;
+  let s2 = srv(s1.server.signature(sig))?;
   match (start.session.read(cat(s1.output, s2.output), time.timestamp_from_unix_millis(WALL_MS))) {
     Ok(step) => {
       return Ok("accepted");
@@ -286,7 +286,7 @@ function refusal_alert(): Result[string, tls.TlsError] {
 }
 
 function test_validity_window(): test.TestOutcome {
-  let cfg: client.Config = client.config("tls.example", roots(ROOT));
+  let cfg = client.config("tls.example", roots(ROOT));
   if (outcome(connect_at(cfg, [], false, NOT_BEFORE_MS - 1000)) != "the peer's certificate is not trusted: tls verify: certificate 0 is not yet valid") {
     return test.fail("before notBefore: " + outcome(connect_at(cfg, [], false, NOT_BEFORE_MS - 1000)));
   }
@@ -349,10 +349,10 @@ function test_save_restore(): test.TestOutcome {
 }
 
 function closes(p: Pair): Result[string, tls.TlsError] {
-  let sc: handshake.ServerStep = srv(p.server.close())?;
-  let seen: client.Step = rd(p.session, sc.output)?;
-  let cc: client.Step = p.session.close()?;
-  let sr: handshake.ServerStep = srv(p.server.read(cc.output))?;
+  let sc = srv(p.server.close())?;
+  let seen = rd(p.session, sc.output)?;
+  let cc = p.session.close()?;
+  let sr = srv(p.server.read(cc.output))?;
   if (seen.closed && sr.events.len() == 1) {
     return Ok("both");
   }
@@ -391,9 +391,9 @@ function has_resume(events: handshake.Event[]): boolean {
 }
 
 function issued(p: Pair): Result[(client.Ticket, u8[]), tls.TlsError] {
-  let t: message.NewSessionTicket = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 99 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
-  let st: handshake.ServerStep = srv(p.server.ticket(t))?;
-  let cr: client.Step = rd(p.session, st.output)?;
+  let t = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 99 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
+  let st = srv(p.server.ticket(t))?;
+  let cr = rd(p.session, st.output)?;
   if (cr.tickets.len() != 1) {
     return Err(tls.HandshakeFailed(handshake.Misuse("tickets")));
   }
@@ -401,15 +401,15 @@ function issued(p: Pair): Result[(client.Ticket, u8[]), tls.TlsError] {
 }
 
 function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, tls.TlsError] {
-  let start: client.Step = begin(cfg, WALL_MS)?;
-  let server: handshake.Server = srv(handshake.server_new(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), rand.bytes(handshake.server_entropy(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807])))))?;
-  let s1: handshake.ServerStep = srv(server.read(start.output))?;
+  let start = begin(cfg, WALL_MS)?;
+  let server = srv(handshake.server_new(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), rand.bytes(handshake.server_entropy(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807])))))?;
+  let s1 = srv(server.read(start.output))?;
   if (!has_resume(s1.events)) {
     return Err(tls.HandshakeFailed(handshake.Misuse("no ticket offered")));
   }
-  let s2: handshake.ServerStep = srv(s1.server.resume(Some(handshake.Resumed { index: 0, psk: psk })))?;
-  let c1: client.Step = rd(start.session, s2.output)?;
-  let s3: handshake.ServerStep = srv(s2.server.read(c1.output))?;
+  let s2 = srv(s1.server.resume(Some(handshake.Resumed { index: 0, psk: psk })))?;
+  let c1 = rd(start.session, s2.output)?;
+  let s3 = srv(s2.server.read(c1.output))?;
   if (!c1.session.connected() || !s3.server.connected() || !c1.session.resumed()) {
     return Err(tls.ClosedEarly);
   }
@@ -421,7 +421,7 @@ function test_resumption(): test.TestOutcome {
     Ok(p) => {
       match (issued(p)) {
         Ok(got) => {
-          let t: client.Ticket = got.0;
+          let t = got.0;
           if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || !t.lifetime.eq(time.duration_seconds(7200)) || hex.encode(t.psk) != hex.encode(got.1)) {
             return test.fail("the ticket kept");
           }
@@ -438,7 +438,7 @@ function test_resumption(): test.TestOutcome {
           if (outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)) != "tls handshake: no ticket offered called out of turn") {
             return test.fail("another name: " + outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)));
           }
-          let stale: client.Ticket = client.Ticket { ...t, received: t.received.sub(time.duration_seconds(7200)) };
+          let stale = client.Ticket { ...t, received: t.received.sub(time.duration_seconds(7200)) };
           return test.assert_eq(outcome(connect_resumed(client.config("tls.example", roots(ROOT)).with_ticket(stale), got.1)), "tls handshake: no ticket offered called out of turn");
         },
         Err(e) => {
@@ -466,9 +466,9 @@ function client_shown(events: handshake.Event[]): Option[handshake.Verification]
 }
 
 function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
-  let start: client.Step = begin(cfg, WALL_MS)?;
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), request_client_certificate: true };
-  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?.read(start.output))?;
+  let start = begin(cfg, WALL_MS)?;
+  let sc = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), request_client_certificate: true };
+  let s1 = srv(srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
   match (signed_with(leaf_seed(), signing(s1.events))) {
     Ok(b) => {
@@ -478,10 +478,10 @@ function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
       return Err(tls.SignatureInvalid);
     }
   }
-  let s2: handshake.ServerStep = srv(s1.server.signature(sig))?;
-  let c1: client.Step = rd(start.session, cat(s1.output, s2.output))?;
-  let s3: handshake.ServerStep = srv(s2.server.read(c1.output))?;
-  let shown: string = "not shown";
+  let s2 = srv(s1.server.signature(sig))?;
+  let c1 = rd(start.session, cat(s1.output, s2.output))?;
+  let s3 = srv(s2.server.read(c1.output))?;
+  let shown = "not shown";
   match (client_shown(s3.events)) {
     Some(v) => {
       shown = "chain " + v.chain.len().to_string();
@@ -489,7 +489,7 @@ function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
         match (verify.client(v.chain, roots(IDENTITY_ROOT), time.timestamp_from_unix(1700000000))) {
           Ok(leaf) => {
             if (verify.signed(leaf, v.scheme, v.signed, v.signature)) {
-              shown = shown + " verified";
+              shown += " verified";
             }
           },
           Err(e) => {
@@ -500,7 +500,7 @@ function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
     },
     None => {}
   }
-  let s4: handshake.ServerStep = srv(s3.server.verdict(true))?;
+  let s4 = srv(s3.server.verdict(true))?;
   if (!c1.session.connected() || !s4.server.connected()) {
     return Err(tls.ClosedEarly);
   }
@@ -520,7 +520,7 @@ function asked_outcome(cfg: client.Config): string {
 }
 
 function test_identity(): test.TestOutcome {
-  let id: identity.Identity = identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
+  let id = identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
   match (identity.from_pem(pem_of(CLIENT_LEAF), CLIENT_PKCS8)) {
     Ok(i) => {
       id = i;
@@ -540,7 +540,7 @@ function pem_of(der_hex: string): string {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/client");
+  let r = test.new("std/tls/client");
   r = r.it("a trusted server", test_trusted);
   r = r.it("names", test_names);
   r = r.it("an untrusted root", test_untrusted);
@@ -567,6 +567,6 @@ function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
 }
 
 function signed_with(key_seed: [u8], msg: [u8]): Result[u8[], ed25519.Ed25519Error] {
-  let k: ed25519.PrivateKey = ed25519.private_key(key_seed)?;
+  let k = ed25519.private_key(key_seed)?;
   return Ok(k.sign(msg));
 }

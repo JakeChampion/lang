@@ -28,6 +28,35 @@ func TestSelfHostStringAppendInPlace(t *testing.T) {
 	}
 }
 
+// The right operand is itself a concatenation, as in `s += f"..."`: each part
+// appends to s, so the loop builds no temporary string.
+const stringAppendNestedSrc = `function main(): i32 {
+    let head = "abc";
+    let tail = "defgh";
+    let s = "";
+    let a1 = __heap_alloc_count();
+    for i in 0..10000 {
+        s += head + tail;
+        s = s + (tail + (head + tail));
+    }
+    let a2 = __heap_alloc_count();
+    if (s.len() != 210000 || head != "abc" || tail != "defgh") { return 1; }
+    if (s[7] as i32 != 104 || s[8] as i32 != 100 || s[13] as i32 != 97 || s[209999] as i32 != 104) { return 2; }
+    if (a2 - a1 >= 1000) { return 3; }
+    return 42;
+}`
+
+func TestSelfHostStringAppendNestedInPlace(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			if stderr, code := cli.exitOf(t, stringAppendNestedSrc, target); code != 42 {
+				t.Errorf("exited %d, want 42 (3 is a temporary string per append)\n%s", code, stderr)
+			}
+		})
+	}
+}
+
 const stringAppendCensusSrc = `function churn(n: i32): i32 {
     let piece: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefgh";
     let out: string = "";

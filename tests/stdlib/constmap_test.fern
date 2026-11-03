@@ -5,27 +5,27 @@ import "std/result";
 
 function keys_of(n: i32): string[] {
   let ks: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     ks = ks.append("checker__symbol_" + i.to_string());
-    i = i + 1;
+    i += 1;
   }
   return ks;
 }
 
 function values_of(n: i32): u64[] {
   let vs: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     vs = vs.append(i as u64 * 2654435761 + 7);
-    i = i + 1;
+    i += 1;
   }
   return vs;
 }
 
 function round_trip(n: i32): string {
-  let ks: string[] = keys_of(n);
-  let vs: u64[] = values_of(n);
+  let ks = keys_of(n);
+  let vs = values_of(n);
   match (constmap.new(ks, vs)) {
     Err(e) => {
       return "build failed: " + e;
@@ -34,12 +34,12 @@ function round_trip(n: i32): string {
       if (m.len() != n) {
         return "len is " + m.len().to_string();
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < n) {
         if (m.map(ks[i]) != vs[i]) {
           return "key " + i.to_string() + " of " + n.to_string() + " maps wrong";
         }
-        i = i + 1;
+        i += 1;
       }
       return "";
     }
@@ -51,13 +51,13 @@ function test_round_trip_1000(): test.TestOutcome {
 }
 
 function test_round_trip_small(): test.TestOutcome {
-  let n: i32 = 1;
+  let n = 1;
   while (n <= 9) {
-    let r: string = round_trip(n);
+    let r = round_trip(n);
     if (r.len() > 0) {
       return test.fail(r);
     }
-    n = n + 1;
+    n += 1;
   }
   return test.assert_eq(round_trip(100), "");
 }
@@ -76,15 +76,15 @@ function test_empty(): test.TestOutcome {
 }
 
 function test_verified(): test.TestOutcome {
-  let n: i32 = 1000;
-  let ks: string[] = keys_of(n);
-  let vs: u64[] = values_of(n);
+  let n = 1000;
+  let ks = keys_of(n);
+  let vs = values_of(n);
   match (constmap.verified_new(ks, vs)) {
     Err(e) => {
       return test.fail("build failed: " + e);
     },
     Ok(m) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < n) {
         if (m.get_or(ks[i], 0) != vs[i] || !m.contains(ks[i])) {
           return test.fail("key " + i.to_string() + " not found or wrong");
@@ -92,7 +92,7 @@ function test_verified(): test.TestOutcome {
         if (m.contains("absent__" + i.to_string()) || m.contains("checker__symbol_" + (i + n).to_string())) {
           return test.fail("absent key " + i.to_string() + " accepted");
         }
-        i = i + 1;
+        i += 1;
       }
       return test.assert_eq(m.get_or("not a key", 99), 99);
     }
@@ -126,7 +126,7 @@ function test_length_mismatch(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/constmap");
+  let r = test.new("std/constmap");
   r = r.it("round trip 1000 keys", test_round_trip_1000);
   r = r.it("round trip small sets", test_round_trip_small);
   r = r.it("empty map", test_empty);

@@ -54,22 +54,22 @@ function response_outcome(wire: string): string {
 }
 
 function test_request_framing_outcomes(): test.TestOutcome {
-  let got: string = request_outcome("GET /a HTTP/1.1\r\nHost: x\r\n\r\n") + "|" + request_outcome("GET /a HTTP/1.1\r\nHo") + "|" + request_outcome("GET /a HTTP/1.1\r\nHo st: x\r\n\r\n");
+  let got = request_outcome("GET /a HTTP/1.1\r\nHost: x\r\n\r\n") + "|" + request_outcome("GET /a HTTP/1.1\r\nHo") + "|" + request_outcome("GET /a HTTP/1.1\r\nHo st: x\r\n\r\n");
   return test.assert_eq(got, "Complete /a|Incomplete|Malformed 400");
 }
 
 function test_request_head_outcomes(): test.TestOutcome {
-  let got: string = head_outcome("GET /b HTTP/1.1\r\nHost: x\r\n\r\n") + "|" + head_outcome("GET /b HTTP/1.1\r\nHo") + "|" + head_outcome("GET /b HTTP/1.1\r\nHo st: x\r\n\r\n");
+  let got = head_outcome("GET /b HTTP/1.1\r\nHost: x\r\n\r\n") + "|" + head_outcome("GET /b HTTP/1.1\r\nHo") + "|" + head_outcome("GET /b HTTP/1.1\r\nHo st: x\r\n\r\n");
   return test.assert_eq(got, "Complete /b|Incomplete|Malformed 400");
 }
 
 function test_response_framing_outcomes(): test.TestOutcome {
-  let got: string = response_outcome("HTTP/1.1 204 No Content\r\n\r\n") + "|" + response_outcome("HTTP/1.1 200 OK\r\nContent-Le") + "|" + response_outcome("HTTP/1.1 2x0 OK\r\n\r\n");
+  let got = response_outcome("HTTP/1.1 204 No Content\r\n\r\n") + "|" + response_outcome("HTTP/1.1 200 OK\r\nContent-Le") + "|" + response_outcome("HTTP/1.1 2x0 OK\r\n\r\n");
   return test.assert_eq(got, "Complete 204|Incomplete|Malformed 400");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("HTTP framing outcome");
+  let r = test.new("HTTP framing outcome");
   r = r.it("request framing gives Complete, Incomplete and Malformed", test_request_framing_outcomes);
   r = r.it("request head gives Complete, Incomplete and Malformed", test_request_head_outcomes);
   r = r.it("response framing gives Complete, Incomplete and Malformed", test_response_framing_outcomes);

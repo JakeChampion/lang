@@ -10,9 +10,9 @@ const P256: string = "ffffffff00000001000000000000000000000000ffffffffffffffffff
 const N384: string = "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
 
 function big(s: string): bigint.BigInt {
-  let v: bigint.BigInt = bigint.zero();
+  let v = bigint.zero();
   for c in s.bytes() {
-    let d: i32 = c as i32 - 48;
+    let d = c as i32 - 48;
     if (c as i32 >= 97) {
       d = c as i32 - 87;
     }
@@ -22,19 +22,19 @@ function big(s: string): bigint.BigInt {
 }
 
 function hex_of(v: bigint.BigInt, bytes: i32): string {
-  let out: string = "";
-  let digits: string = "0123456789abcdef";
-  let i: i32 = 2 * bytes - 1;
+  let out = "";
+  let digits = "0123456789abcdef";
+  let i = 2 * bytes - 1;
   while (i >= 0) {
-    let d: i32 = (v.shr(4 * i).low_u64() & 15 as u64) as i32;
-    out = out + slice_unchecked(digits, d, d + 1);
-    i = i - 1;
+    let d = (v.shr(4 * i).low_u64() & 15 as u64) as i32;
+    out += slice_unchecked(digits, d, d + 1);
+    i -= 1;
   }
   return out;
 }
 
 function reduced(v: bigint.BigInt, p: bigint.BigInt): bigint.BigInt {
-  let r: bigint.BigInt = v.divmod(p).1;
+  let r = v.divmod(p).1;
   if (r.is_negative()) {
     return r.add(p);
   }
@@ -42,22 +42,22 @@ function reduced(v: bigint.BigInt, p: bigint.BigInt): bigint.BigInt {
 }
 
 function values(p: bigint.BigInt, bytes: i32): string[] {
-  let one: bigint.BigInt = bigint.from_u64(1 as u64);
-  let mid: bigint.BigInt = reduced(big("123456789abcdef0fedcba9876543210").mul(big("deadbeefcafef00d1234567890abcdef0123")), p);
+  let one = bigint.from_u64(1 as u64);
+  let mid = reduced(big("123456789abcdef0fedcba9876543210").mul(big("deadbeefcafef00d1234567890abcdef0123")), p);
   return [hex_of(bigint.zero(), bytes), hex_of(one, bytes), hex_of(one.add(one), bytes), hex_of(p.sub(one), bytes), hex_of(p.sub(one).sub(one), bytes), hex_of(mid, bytes), hex_of(reduced(mid.mul(mid), p), bytes), hex_of(p.shr(1), bytes)];
 }
 
 function mismatch(modulus: string, bytes: i32): string {
-  let m: mont.Modulus = mont.modulus(modulus, bytes);
-  let p: bigint.BigInt = big(modulus);
-  let vs: string[] = values(p, bytes);
+  let m = mont.modulus(modulus, bytes);
+  let p = big(modulus);
+  let vs = values(p, bytes);
   for a in vs {
-    let am: i64[] = mont.from_bytes(m, __codec_bytes(hex.decode(a)));
+    let am = mont.from_bytes(m, __codec_bytes(hex.decode(a)));
     if (hex.encode(mont.to_bytes(m, am)) != a) {
       return "round trip " + a;
     }
     for b in vs {
-      let bm: i64[] = mont.from_bytes(m, __codec_bytes(hex.decode(b)));
+      let bm = mont.from_bytes(m, __codec_bytes(hex.decode(b)));
       if (hex.encode(mont.to_bytes(m, mont.mul(m, am, bm))) != hex_of(reduced(big(a).mul(big(b)), p), bytes)) {
         return "mul " + a + " " + b;
       }
@@ -69,7 +69,7 @@ function mismatch(modulus: string, bytes: i32): string {
       }
     }
     if (mont.is_zero(am) == 0 as i64) {
-      let inv: i64[] = mont.inv(m, am);
+      let inv = mont.inv(m, am);
       if (hex.encode(mont.to_bytes(m, mont.mul(m, inv, am))) != hex_of(bigint.from_u64(1 as u64), bytes)) {
         return "inv " + a;
       }
@@ -87,12 +87,12 @@ function test_p384_order(): test.TestOutcome {
 }
 
 function test_in_range(): test.TestOutcome {
-  let m: mont.Modulus = mont.modulus(P256, 32);
-  let p: bigint.BigInt = big(P256);
-  let one: bigint.BigInt = bigint.from_u64(1 as u64);
-  let got: string = "";
+  let m = mont.modulus(P256, 32);
+  let p = big(P256);
+  let one = bigint.from_u64(1 as u64);
+  let got = "";
   for v in [bigint.zero(), one, p.sub(one), p, p.add(one)] {
-    got = got + mont.in_range(m, __codec_bytes(hex.decode(hex_of(v, 32)))).to_string();
+    got += mont.in_range(m, __codec_bytes(hex.decode(hex_of(v, 32)))).to_string();
   }
   return test.assert_eq(got, "01100");
 }
@@ -100,13 +100,13 @@ function test_in_range(): test.TestOutcome {
 function test_select(): test.TestOutcome {
   let a: i64[] = [1 as i64, 2 as i64];
   let b: i64[] = [3 as i64, 4 as i64];
-  let pick: i64[] = mont.select(a, b, 1 as i64);
-  let keep: i64[] = mont.select(a, b, 0 as i64);
+  let pick = mont.select(a, b, 1 as i64);
+  let keep = mont.select(a, b, 0 as i64);
   return test.assert_eq(pick[0].to_string() + pick[1].to_string() + keep[0].to_string() + keep[1].to_string(), "3412");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto/montgomery");
+  let r = test.new("std/crypto/montgomery");
   r = r.it("P-256's field", test_p256_field);
   r = r.it("P-384's order", test_p384_order);
   r = r.it("in_range", test_in_range);

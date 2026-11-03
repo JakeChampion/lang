@@ -1,0 +1,11 @@
+import "../parser";
+import "./rundriver";
+import "../checker";
+
+function main(): i32 {
+  let mod: parser.Module = rundriver.parse_stdin("checker_hint_run");
+  for d in checker.ill_typed_hint(mod) {
+    print(d.message);
+  }
+  return 0;
+}

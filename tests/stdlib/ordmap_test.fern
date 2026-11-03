@@ -30,7 +30,7 @@ function test_insert_get(): test.TestOutcome {
 }
 
 function test_insert_replaces(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(1, 10), (2, 20), (1, 11)]);
+  let m = ordmap.from([(1, 10), (2, 20), (1, 11)]);
   if (m.len() != 2) {
     return test.fail("duplicate key grew the map");
   }
@@ -39,16 +39,16 @@ function test_insert_replaces(): test.TestOutcome {
 
 function test_insert_is_persistent(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 200) {
     m = m.insert(i * 37 % 200, i);
-    i = i + 1;
+    i += 1;
   }
-  let snapshot: ordmap.OrdMap[i32, i32] = m;
+  let snapshot = m;
   i = 0;
   while (i < 200) {
     m = m.insert(i, i + 1000);
-    i = i + 1;
+    i += 1;
   }
   if (snapshot.len() != 200 || m.len() != 200) {
     return test.fail("lengths");
@@ -61,19 +61,19 @@ function test_insert_is_persistent(): test.TestOutcome {
     if (m.get_or(i, -1) != i + 1000) {
       return test.fail("update lost at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(snapshot.is_valid() && m.is_valid());
 }
 
 function test_remove(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 300) {
     m = m.insert(i * 53 % 300, i);
-    i = i + 1;
+    i += 1;
   }
-  let keep: ordmap.OrdMap[i32, i32] = m;
+  let keep = m;
   i = 0;
   while (i < 300) {
     if (i % 3 != 0) {
@@ -82,7 +82,7 @@ function test_remove(): test.TestOutcome {
     if (!m.is_valid()) {
       return test.fail("invalid after removing " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   if (m.len() != 100 || keep.len() != 300) {
     return test.fail("len after remove: " + m.len().to_string());
@@ -94,18 +94,18 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_sorted_iteration(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(5, 50), (1, 10), (4, 40), (2, 20), (3, 30)]);
-  let ks: i32[] = m.keys();
-  let vs: i32[] = m.values();
+  let m = ordmap.from([(5, 50), (1, 10), (4, 40), (2, 20), (3, 30)]);
+  let ks = m.keys();
+  let vs = m.values();
   if (ks.len() != 5 || vs.len() != 5) {
     return test.fail("lengths");
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < 5) {
     if (ks[i] != i + 1 || vs[i] != (i + 1) * 10) {
       return test.fail("order at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   let sum: i32 = m.fold(0, (a: i32, k: i32, v: i32) => a + k * v);
   return test.assert_eq(sum, 550);
@@ -113,10 +113,10 @@ function test_sorted_iteration(): test.TestOutcome {
 
 function test_rank(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 100) {
     m = m.insert(i * 2, i);
-    i = i + 1;
+    i += 1;
   }
   if (m.key_at(0).unwrap_or(-1) != 0 || m.key_at(99).unwrap_or(-1) != 198 || m.key_at(100).is_some()) {
     return test.fail("key_at");
@@ -131,8 +131,8 @@ function test_rank(): test.TestOutcome {
 }
 
 function test_min_max_remove(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(3, 0), (1, 0), (2, 0)]);
-  let r: ordmap.OrdMap[i32, i32] = m.remove_min().remove_max();
+  let m = ordmap.from([(3, 0), (1, 0), (2, 0)]);
+  let r = m.remove_min().remove_max();
   if (r.len() != 1 || !r.contains(2)) {
     return test.fail("remove_min/max");
   }
@@ -140,7 +140,7 @@ function test_min_max_remove(): test.TestOutcome {
 }
 
 function test_update_map_filter(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(1, 1), (2, 2), (3, 3), (4, 4)]);
+  let m = ordmap.from([(1, 1), (2, 2), (3, 3), (4, 4)]);
   let u: ordmap.OrdMap[i32, i32] = m.update(2, 0, (v: i32) => v * 100);
   if (u.get_or(2, -1) != 200 || m.get_or(2, -1) != 2) {
     return test.fail("update");
@@ -163,25 +163,25 @@ function test_update_map_filter(): test.TestOutcome {
 function test_set_algebra(): test.TestOutcome {
   let a: ordmap.OrdMap[i32, i32] = ordmap.new();
   let b: ordmap.OrdMap[i32, i32] = ordmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 500) {
     a = a.insert(i, 1);
-    i = i + 1;
+    i += 1;
   }
   i = 250;
   while (i < 750) {
     b = b.insert(i, 2);
-    i = i + 1;
+    i += 1;
   }
-  let u: ordmap.OrdMap[i32, i32] = a.merge(b);
+  let u = a.merge(b);
   if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 2 || u.get_or(100, -1) != 1 || u.get_or(600, -1) != 2) {
     return test.fail("merge (other wins)");
   }
-  let x: ordmap.OrdMap[i32, i32] = a.intersection(b);
+  let x = a.intersection(b);
   if (x.len() != 250 || !x.is_valid() || x.get_or(300, -1) != 1 || x.contains(100)) {
     return test.fail("intersection");
   }
-  let d: ordmap.OrdMap[i32, i32] = a.difference(b);
+  let d = a.difference(b);
   if (d.len() != 250 || !d.is_valid() || d.contains(300) || !d.contains(100)) {
     return test.fail("difference");
   }
@@ -190,13 +190,13 @@ function test_set_algebra(): test.TestOutcome {
 
 function test_split(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 100) {
     m = m.insert(i, i);
-    i = i + 1;
+    i += 1;
   }
-  let lo: ordmap.OrdMap[i32, i32] = m.split_lt(40);
-  let hi: ordmap.OrdMap[i32, i32] = m.split_gt(40);
+  let lo = m.split_lt(40);
+  let hi = m.split_gt(40);
   if (lo.len() != 40 || hi.len() != 59 || !lo.is_valid() || !hi.is_valid()) {
     return test.fail("split sizes");
   }
@@ -208,11 +208,11 @@ function test_string_keys(): test.TestOutcome {
   m = m.insert("pear", 3);
   m = m.insert("apple", 1);
   m = m.insert("fig", 2);
-  let ks: string[] = m.keys();
+  let ks = m.keys();
   if (ks.len() != 3 || ks[0] != "apple" || ks[1] != "fig" || ks[2] != "pear") {
     return test.fail("string order");
   }
-  let snap: ordmap.OrdMap[string, i32] = m;
+  let snap = m;
   m = m.remove("fig");
   if (snap.len() != 3 || m.len() != 2 || !snap.contains("fig")) {
     return test.fail("string snapshot");
@@ -221,8 +221,8 @@ function test_string_keys(): test.TestOutcome {
 }
 
 function test_for_each(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(2, 20), (1, 10)]);
-  let seen: i32 = 0;
+  let m = ordmap.from([(2, 20), (1, 10)]);
+  let seen = 0;
   function visit(k: i32, v: i32): void {
     seen = seen * 3 + k * 100 + v;
   }
@@ -236,39 +236,39 @@ function lcg(x: i32): i32 {
 
 // The entries that present holds, in key order, as the map should hold them.
 function present_matches(m: ordmap.OrdMap[i32, i32], present: i32[]): boolean {
-  let at: i32 = 0;
-  let count: i32 = 0;
+  let at = 0;
+  let count = 0;
   for e in m.iter() {
     while (at < present.len() && present[at] < 0) {
-      at = at + 1;
+      at += 1;
     }
     if (at >= present.len() || e.0 != at || e.1 != present[at]) {
       return false;
     }
-    at = at + 1;
-    count = count + 1;
+    at += 1;
+    count += 1;
   }
   while (at < present.len()) {
     if (present[at] >= 0) {
       return false;
     }
-    at = at + 1;
+    at += 1;
   }
   return count == m.len();
 }
 
 function rank_matches(m: ordmap.OrdMap[i32, i32], present: i32[], probe: i32): boolean {
-  let below: i32 = 0;
-  let k: i32 = 0;
+  let below = 0;
+  let k = 0;
   while (k < probe) {
     if (present[k] >= 0) {
-      below = below + 1;
+      below += 1;
     }
-    k = k + 1;
+    k += 1;
   }
-  let lo: ordmap.OrdMap[i32, i32] = m.split_lt(probe);
-  let hi: ordmap.OrdMap[i32, i32] = m.split_gt(probe);
-  let hit: i32 = 0;
+  let lo = m.split_lt(probe);
+  let hi = m.split_gt(probe);
+  let hit = 0;
   if (present[probe] >= 0) {
     hit = 1;
     if (m.index_of(probe).unwrap_or(-1) != below || m.key_at(below).unwrap_or(-1) != probe) {
@@ -282,30 +282,30 @@ function rank_matches(m: ordmap.OrdMap[i32, i32], present: i32[], probe: i32): b
 }
 
 function test_random_ops(): test.TestOutcome {
-  let range: i32 = 1200;
+  let range = 1200;
   let present: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < range) {
     present = present.append(-1);
-    i = i + 1;
+    i += 1;
   }
   let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   i = 0;
   while (i < range) {
     m = m.insert(i, i);
     present = present.with(i, i);
-    i = i + 1;
+    i += 1;
   }
   if (!m.is_valid() || !present_matches(m, present)) {
     return test.fail("ascending build");
   }
-  let snap: ordmap.OrdMap[i32, i32] = m;
-  let x: i32 = 7;
-  let step: i32 = 0;
+  let snap = m;
+  let x = 7;
+  let step = 0;
   while (step < 2000) {
     x = lcg(x);
-    let k: i32 = x % range;
-    let op: i32 = x / range % 10;
+    let k = x % range;
+    let op = x / range % 10;
     if (op < 4) {
       m = m.insert(k, step);
       present = present.with(k, step);
@@ -326,7 +326,7 @@ function test_random_ops(): test.TestOutcome {
         return test.fail("rank or split at " + k.to_string() + ", step " + step.to_string());
       }
     }
-    step = step + 1;
+    step += 1;
   }
   if (!m.is_valid() || !present_matches(m, present)) {
     return test.fail("final state");
@@ -337,7 +337,7 @@ function test_random_ops(): test.TestOutcome {
   i = 0;
   while (i < range) {
     m = m.remove(i);
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(m.is_empty() && m.is_valid() && m.iter().next().is_none());
 }
@@ -347,16 +347,16 @@ function url(i: i32): string {
 }
 
 function strings_match(m: ordmap.OrdMap[string, i32], want: string[]): boolean {
-  let ks: string[] = m.keys();
+  let ks = m.keys();
   if (ks.len() != want.len() || m.len() != want.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < ks.len()) {
     if (ks[i] != want[i] || m.get_or(want[i], -1) < 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -364,16 +364,16 @@ function strings_match(m: ordmap.OrdMap[string, i32], want: string[]): boolean {
 function test_shared_prefix_strings(): test.TestOutcome {
   let m: ordmap.OrdMap[string, i32] = ordmap.new();
   let all: string[] = [];
-  let x: i32 = 11;
-  let i: i32 = 0;
+  let x = 11;
+  let i = 0;
   while (i < 1200) {
     x = lcg(x);
-    let k: string = url(x % 2000);
+    let k = url(x % 2000);
     if (!m.contains(k)) {
       all = all.append(k);
     }
     m = m.insert(k, i);
-    i = i + 1;
+    i += 1;
   }
   for k in ["", "a", "ab", "abc", "https://", "https://example.com/items/", "https://example.com/items/1", "été", "zz", "https://example.com/itemz"] {
     if (!m.contains(k)) {
@@ -381,7 +381,7 @@ function test_shared_prefix_strings(): test.TestOutcome {
     }
     m = m.insert(k, 1);
   }
-  let want: string[] = cmp.sort(all);
+  let want = cmp.sort(all);
   if (!m.is_valid() || !strings_match(m, want)) {
     return test.fail("inserted strings");
   }
@@ -398,14 +398,14 @@ function test_shared_prefix_strings(): test.TestOutcome {
     } else {
       kept = kept.append(want[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   if (!m.is_valid() || !strings_match(m, kept)) {
     return test.fail("after removals");
   }
-  let lo: ordmap.OrdMap[string, i32] = m.split_lt("https://example.com/items/3");
-  let hi: ordmap.OrdMap[string, i32] = m.split_gt("https://example.com/items/3");
-  let hit: i32 = 0;
+  let lo = m.split_lt("https://example.com/items/3");
+  let hi = m.split_gt("https://example.com/items/3");
+  let hit = 0;
   if (m.contains("https://example.com/items/3")) {
     hit = 1;
   }
@@ -418,13 +418,13 @@ function test_shared_prefix_strings(): test.TestOutcome {
 function test_wide_integer_keys(): test.TestOutcome {
   let m: ordmap.OrdMap[i64, i32] = ordmap.new();
   let ks: i64[] = [0i64, -1i64, 1i64, 9223372036854775807i64, -9223372036854775807i64 - 1i64, 4294967296i64, -4294967296i64, 255i64, -256i64];
-  let i: i32 = 0;
+  let i = 0;
   for k in ks {
     m = m.insert(k, i);
-    i = i + 1;
+    i += 1;
   }
-  let got: i64[] = m.keys();
-  let want: i64[] = cmp.sort(ks);
+  let got = m.keys();
+  let want = cmp.sort(ks);
   if (!m.is_valid() || got.len() != want.len()) {
     return test.fail("i64 keys");
   }
@@ -433,7 +433,7 @@ function test_wide_integer_keys(): test.TestOutcome {
     if (got[i] != want[i]) {
       return test.fail("i64 order at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   let u: ordmap.OrdMap[u64, i32] = ordmap.new();
   for w in [18446744073709551615u64, 0u64, 9223372036854775808u64, 9223372036854775807u64, 1u64] {
@@ -446,7 +446,7 @@ function test_wide_integer_keys(): test.TestOutcome {
   i = -1000;
   while (i < 1000) {
     n = n.insert(i * 7 % 2003, i);
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(n.is_valid() && n.min_key().unwrap_or(0) < 0 && n.len() == 2000);
 }
@@ -461,35 +461,35 @@ impl cmp.Ord for Rev {
 
 function test_default_prefix_keys(): test.TestOutcome {
   let m: ordmap.OrdMap[Rev, i32] = ordmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 500) {
     m = m.insert(Rev { v: i * 13 % 500 }, i);
-    i = i + 1;
+    i += 1;
   }
   m = m.remove(Rev { v: 7 });
-  let first: Rev = m.min_key().unwrap_or(Rev { v: -1 });
+  let first = m.min_key().unwrap_or(Rev { v: -1 });
   return test.assert_true(m.is_valid() && m.len() == 499 && first.v == 499 && !m.contains(Rev { v: 7 }) && m.get_or(Rev { v: 8 }, -1) >= 0);
 }
 
 function test_lazy_iteration(): test.TestOutcome {
   let m: ordmap.OrdMap[i32, i32] = ordmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 2000) {
     m = m.insert(1999 - i, i);
-    i = i + 1;
+    i += 1;
   }
   let firsts: (i32, i32)[] = m.iter().take(3).collect();
   if (firsts.len() != 3 || firsts[0].0 != 0 || firsts[2].0 != 2) {
     return test.fail("take(3)");
   }
-  let n: i32 = 0;
-  let last: i32 = -1;
+  let n = 0;
+  let last = -1;
   for e in m.iter() {
     if (e.0 <= last) {
       return test.fail("order at " + e.0.to_string());
     }
     last = e.0;
-    n = n + 1;
+    n += 1;
   }
   let empty: ordmap.OrdMap[i32, i32] = ordmap.new();
   return test.assert_true(n == 2000 && m.entries().len() == 2000 && empty.iter().next().is_none());
@@ -497,26 +497,26 @@ function test_lazy_iteration(): test.TestOutcome {
 
 function filled(from: i32, to: i32, v: i32): ordmap.OrdMap[i32, i32] {
   let m: ordmap.OrdMap[i32, i32] = ordmap.new();
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     m = m.insert(i, v);
-    i = i + 1;
+    i += 1;
   }
   return m;
 }
 
 function algebra_ok(a: ordmap.OrdMap[i32, i32], b: ordmap.OrdMap[i32, i32]): boolean {
-  let u: ordmap.OrdMap[i32, i32] = a.merge(b);
-  let x: ordmap.OrdMap[i32, i32] = a.intersection(b);
-  let d: ordmap.OrdMap[i32, i32] = a.difference(b);
+  let u = a.merge(b);
+  let x = a.intersection(b);
+  let d = a.difference(b);
   if (!u.is_valid() || !x.is_valid() || !d.is_valid()) {
     return false;
   }
-  let both: i32 = 0;
+  let both = 0;
   for e in a.iter() {
-    let inb: boolean = b.contains(e.0);
+    let inb = b.contains(e.0);
     if (inb) {
-      both = both + 1;
+      both += 1;
     }
     if (u.get_or(e.0, -1) != (if (inb) { b.get_or(e.0, -1) } else { e.1 })) {
       return false;
@@ -529,9 +529,9 @@ function algebra_ok(a: ordmap.OrdMap[i32, i32], b: ordmap.OrdMap[i32, i32]): boo
 }
 
 function test_set_algebra_sizes(): test.TestOutcome {
-  let big: ordmap.OrdMap[i32, i32] = filled(0, 640, 1);
-  let small: ordmap.OrdMap[i32, i32] = filled(620, 650, 2);
-  let mid: ordmap.OrdMap[i32, i32] = filled(300, 1000, 3);
+  let big = filled(0, 640, 1);
+  let small = filled(620, 650, 2);
+  let mid = filled(300, 1000, 3);
   if (!algebra_ok(big, small) || !algebra_ok(small, big)) {
     return test.fail("one map much smaller");
   }
@@ -539,7 +539,7 @@ function test_set_algebra_sizes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/ordmap");
+  let r = test.new("std/ordmap");
   r = r.it("new is empty", test_new_is_empty);
   r = r.it("insert + get", test_insert_get);
   r = r.it("insert replaces", test_insert_replaces);

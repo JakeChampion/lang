@@ -4,17 +4,17 @@ import "std/string";
 import "std/time";
 
 function test_counter_renders(): test.TestOutcome {
-  let c: metrics.Counter = metrics.counter("jobs_total", "Jobs taken.");
+  let c = metrics.counter("jobs_total", "Jobs taken.");
   c.inc();
   c.add(2 as i64);
-  let reg: metrics.Registry = metrics.registry().with_counter(c);
+  let reg = metrics.registry().with_counter(c);
   return test.assert_eq(reg.render(), "# HELP jobs_total Jobs taken.\n# TYPE jobs_total counter\njobs_total 3\n");
 }
 
 function test_copies_share_the_count(): test.TestOutcome {
-  let c: metrics.Counter = metrics.counter("x_total", "x");
-  let reg: metrics.Registry = metrics.registry().with_counter(c);
-  let again: metrics.Counter = c;
+  let c = metrics.counter("x_total", "x");
+  let reg = metrics.registry().with_counter(c);
+  let again = c;
   again.inc();
   c.inc();
   if (c.get() != 2 as i64) {
@@ -24,7 +24,7 @@ function test_copies_share_the_count(): test.TestOutcome {
 }
 
 function test_gauge_goes_both_ways(): test.TestOutcome {
-  let g: metrics.Gauge = metrics.gauge("open", "Open things.");
+  let g = metrics.gauge("open", "Open things.");
   g.inc();
   g.inc();
   g.dec();
@@ -33,7 +33,7 @@ function test_gauge_goes_both_ways(): test.TestOutcome {
 }
 
 function test_histogram_buckets_are_cumulative(): test.TestOutcome {
-  let h: metrics.Histogram = metrics.histogram("took_seconds", "How long.", [0.1, 1.0]);
+  let h = metrics.histogram("took_seconds", "How long.", [0.1, 1.0]);
   h.observe(0.05);
   h.observe(0.5);
   h.observe(0.1);
@@ -48,19 +48,19 @@ function test_histogram_buckets_are_cumulative(): test.TestOutcome {
 }
 
 function test_labels_and_escaping(): test.TestOutcome {
-  let c: metrics.Counter = metrics.counter("hits_total", "Line one\nline \"two\" \\ back.").with_labels(metrics.labels([metrics.label("path", "/a\"b\\c\nd"), metrics.label("code", "200")]));
+  let c = metrics.counter("hits_total", "Line one\nline \"two\" \\ back.").with_labels(metrics.labels([metrics.label("path", "/a\"b\\c\nd"), metrics.label("code", "200")]));
   c.inc();
-  let want: string = "# HELP hits_total Line one\\nline \"two\" \\\\ back.\n# TYPE hits_total counter\nhits_total{path=\"/a\\\"b\\\\c\\nd\",code=\"200\"} 1\n";
+  let want = "# HELP hits_total Line one\\nline \"two\" \\\\ back.\n# TYPE hits_total counter\nhits_total{path=\"/a\\\"b\\\\c\\nd\",code=\"200\"} 1\n";
   return test.assert_eq(metrics.registry().with_counter(c).render(), want);
 }
 
 function test_head_once_per_name(): test.TestOutcome {
-  let a: metrics.Counter = metrics.counter("hits_total", "Hits.").with_labels(metrics.label("code", "200"));
-  let b: metrics.Counter = a.with_labels(metrics.label("code", "404"));
+  let a = metrics.counter("hits_total", "Hits.").with_labels(metrics.label("code", "200"));
+  let b = a.with_labels(metrics.label("code", "404"));
   a.inc();
   b.inc();
   b.inc();
-  let h: metrics.Histogram = metrics.histogram("d_seconds", "D.", [1.0]).with_labels(metrics.label("m", "GET"));
+  let h = metrics.histogram("d_seconds", "D.", [1.0]).with_labels(metrics.label("m", "GET"));
   h.observe(0.5);
   let want: string = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 1\nhits_total{code=\"404\"} 2\n"
     + "# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{m=\"GET\",le=\"1\"} 1\nd_seconds_bucket{m=\"GET\",le=\"+Inf\"} 1\nd_seconds_sum{m=\"GET\"} 0.5\nd_seconds_count{m=\"GET\"} 1\n";
@@ -68,14 +68,14 @@ function test_head_once_per_name(): test.TestOutcome {
 }
 
 function test_server_metrics_by_method_and_status(): test.TestOutcome {
-  let m: metrics.ServerMetrics = metrics.server_metrics();
+  let m = metrics.server_metrics();
   m = m.request("GET", 200, time.duration_millis(4));
   m = m.request("GET", 200, time.duration_millis(300));
   m = m.request("POST", 404, time.duration_nanos(1));
   m.accepted.inc();
   m.open.inc();
   m.open.dec();
-  let text: string = m.render();
+  let text = m.render();
   if (!text.contains("http_server_request_duration_seconds_bucket{http_request_method=\"GET\",http_response_status_code=\"200\",le=\"0.005\"} 1\n")) {
     return test.fail("the 4 ms request is in the 5 ms bucket: " + text);
   }
@@ -92,19 +92,19 @@ function test_server_metrics_by_method_and_status(): test.TestOutcome {
 }
 
 function test_merge_sums_samples(): test.TestOutcome {
-  let a: string = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 3\n# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 2\nd_seconds_sum 0.25\nd_seconds_count 2\n";
-  let b: string = "# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 1\nd_seconds_sum 1\nd_seconds_count 1\n# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 4\nhits_total{code=\"500\"} 1\n";
-  let want: string = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 7\nhits_total{code=\"500\"} 1\n# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 3\nd_seconds_sum 1.25\nd_seconds_count 3\n";
+  let a = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 3\n# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 2\nd_seconds_sum 0.25\nd_seconds_count 2\n";
+  let b = "# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 1\nd_seconds_sum 1\nd_seconds_count 1\n# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 4\nhits_total{code=\"500\"} 1\n";
+  let want = "# HELP hits_total Hits.\n# TYPE hits_total counter\nhits_total{code=\"200\"} 7\nhits_total{code=\"500\"} 1\n# HELP d_seconds D.\n# TYPE d_seconds histogram\nd_seconds_bucket{le=\"+Inf\"} 3\nd_seconds_sum 1.25\nd_seconds_count 3\n";
   return test.assert_eq(metrics.merge([a, b]), want);
 }
 
 function test_merge_of_one_is_itself(): test.TestOutcome {
-  let h: metrics.Histogram = metrics.histogram("took_seconds", "How long.", [0.1, 1.0]);
+  let h = metrics.histogram("took_seconds", "How long.", [0.1, 1.0]);
   h.observe(0.05);
   h.observe(7.0);
-  let c: metrics.Counter = metrics.counter("jobs_total", "Jobs.");
+  let c = metrics.counter("jobs_total", "Jobs.");
   c.inc();
-  let text: string = metrics.registry().with_counter(c).with_histogram(h).render();
+  let text = metrics.registry().with_counter(c).with_histogram(h).render();
   if (metrics.merge([text]) != text) {
     return test.fail("merged alone:\n" + metrics.merge([text]) + "\nwant:\n" + text);
   }
@@ -121,7 +121,7 @@ function test_frames_split_at_eof(): test.TestOutcome {
 
 function test_scrape_answers(): test.TestOutcome {
   let body: () => string = (): string => "x 1\n";
-  let m: HttpResponse = metrics.scrape("/metrics", body, true);
+  let m = metrics.scrape("/metrics", body, true);
   if (m.status != 200 || m.body_text_lossy() != "x 1\n") {
     return test.fail("/metrics");
   }
@@ -145,7 +145,7 @@ function test_scrape_answers(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/metrics");
+  let r = test.new("std/metrics");
   r = r.it("counter renders", test_counter_renders);
   r = r.it("copies share the count", test_copies_share_the_count);
   r = r.it("gauge goes both ways", test_gauge_goes_both_ways);

@@ -3,7 +3,7 @@ import "std/fetch";
 import "std/async";
 
 function test_plain_pool_reads_as_readable(): test.TestOutcome {
-  let p: fetch.Idle = fetch.idle();
+  let p = fetch.idle();
   if (p.read_interest(7) != 1 || p.read_interest(7) != 1) {
     return test.fail("a plain pool's read asked for more than readability");
   }
@@ -11,7 +11,7 @@ function test_plain_pool_reads_as_readable(): test.TestOutcome {
 }
 
 function test_loop_pool_keeps_a_connection_watched(): test.TestOutcome {
-  let p: fetch.Idle = fetch.idle_shared();
+  let p = fetch.idle_shared();
   if (p.armed(7)) {
     return test.fail("a connection never read was counted as watched");
   }
@@ -31,9 +31,9 @@ function test_loop_pool_keeps_a_connection_watched(): test.TestOutcome {
 }
 
 function test_disarm_asks_again(): test.TestOutcome {
-  let p: fetch.Idle = fetch.idle_shared();
-  let first: i32 = p.read_interest(7);
-  let other: i32 = p.read_interest(9);
+  let p = fetch.idle_shared();
+  let first = p.read_interest(7);
+  let other = p.read_interest(9);
   p.disarm(7);
   if (p.armed(7)) {
     return test.fail("a disarmed connection was still counted as watched");
@@ -55,7 +55,7 @@ function test_interest_bits_strip_the_flags(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("fetch pool");
+  let r = test.new("fetch pool");
   r = r.it("a plain pool reads as readable", test_plain_pool_reads_as_readable);
   r = r.it("a loop's pool keeps a connection watched", test_loop_pool_keeps_a_connection_watched);
   r = r.it("disarm asks again", test_disarm_asks_again);

@@ -10,18 +10,18 @@ function answer(label: string): (HttpRequest, router.Params, platform.Host) => R
 }
 
 function echo_params(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < params.names.len()) {
     out = out + params.names[i] + "=" + params.values[i] + ";";
-    i = i + 1;
+    i += 1;
   }
   return Ok(http.ok(out));
 }
 
 function user_by_id(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-  let id: i32 = params.int("id")?;
-  let missing: string = params.param("nope")?;
+  let id = params.int("id")?;
+  let missing = params.param("nope")?;
   return Ok(http.ok("user " + id.to_string() + missing));
 }
 
@@ -29,7 +29,7 @@ function user_by_id(req: HttpRequest, params: router.Params, plat: platform.Host
 struct Note { id: i32, text: string }
 
 function note_create(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-  let n: Note = http.body_json[Note](req)?;
+  let n = http.body_json[Note](req)?;
   if (n.id < 0) {
     return Err(http.fail(422, "a note's id is not negative"));
   }
@@ -41,7 +41,7 @@ function fixture(): router.Router[platform.Host] {
 }
 
 function status_of(r: router.Router[platform.Host], method: string, path: string): string {
-  let resp: HttpResponse = r.handle(http.request(method, path), platform.host());
+  let resp = r.handle(http.request(method, path), platform.host());
   if (resp.status == 200) {
     return resp.body_text_lossy();
   }
@@ -74,7 +74,7 @@ function refused(pattern: string): string {
 
 function test_patterns_refused(): test.TestOutcome {
   let cases: string[] = ["users", "get /users", "GET users", "/a//b", "/a/{x...}/b", "/a/{$}/b", "/a/{}", "/a/{1x}", "/a/{x}/{x}", "/a/b{c}", "/a?x=1", "/a/b#top"];
-  let got: string = "";
+  let got = "";
   for c in cases {
     got = got + refused(c) + "\n";
   }
@@ -86,63 +86,63 @@ function conflict(first: string, second: string): string {
 }
 
 function test_conflicts(): test.TestOutcome {
-  let got: string = conflict("GET /a", "GET /a") + "\n" + conflict("/a/{x}", "/{y}/b") + "\n" + conflict("GET /a/{x}", "HEAD /a/{x}") + "\n" + conflict("/a/{x}", "/a/b") + "\n" + conflict("/a/", "/a/b/{c}") + "\n" + conflict("/a/", "/a") + "\n" + conflict("GET /a", "POST /a") + "\n" + conflict("/a/{x}", "/a/{$}") + "\n" + conflict("/a/{x...}", "/a/{$}");
+  let got = conflict("GET /a", "GET /a") + "\n" + conflict("/a/{x}", "/{y}/b") + "\n" + conflict("GET /a/{x}", "HEAD /a/{x}") + "\n" + conflict("/a/{x}", "/a/b") + "\n" + conflict("/a/", "/a/b/{c}") + "\n" + conflict("/a/", "/a") + "\n" + conflict("GET /a", "POST /a") + "\n" + conflict("/a/{x}", "/a/{$}") + "\n" + conflict("/a/{x...}", "/a/{$}");
   return test.assert_eq(got, "http router: pattern GET /a conflicts with GET /a\nhttp router: pattern /{y}/b conflicts with /a/{x}\naccepted\naccepted\naccepted\naccepted\naccepted\naccepted\naccepted");
 }
 
 function test_a_refusal_is_kept(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new[platform.Host]().get("/ok", answer("ok")).route("/a//b", answer("x")).route("/a//b", answer("y")).get("/ok", answer("again"));
-  let resp: HttpResponse = r.handle(http.request("GET", "/ok"), platform.host());
-  let got: string = checked(r) + "|" + resp.status.to_string() + " " + resp.body_text_lossy() + "|" + checked(fixture());
+  let r = router.new[platform.Host]().get("/ok", answer("ok")).route("/a//b", answer("x")).route("/a//b", answer("y")).get("/ok", answer("again"));
+  let resp = r.handle(http.request("GET", "/ok"), platform.host());
+  let got = checked(r) + "|" + resp.status.to_string() + " " + resp.body_text_lossy() + "|" + checked(fixture());
   return test.assert_eq(got, "http router: pattern /a//b: empty segment|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"http router: pattern /a//b: empty segment\"}|accepted");
 }
 
 function test_dispatch(): test.TestOutcome {
-  let r: router.Router[platform.Host] = fixture();
-  let got: string = status_of(r, "GET", "/users/42") + "|" + status_of(r, "GET", "/users/me") + "|" + status_of(r, "HEAD", "/users/me") + "|" + status_of(r, "POST", "/users") + "|" + status_of(r, "PUT", "/users") + "|" + status_of(r, "PUT", "/users/42") + "|" + status_of(r, "GET", "/users/") + "|" + status_of(r, "GET", "/nope") + "|" + status_of(r, "GET", "/users/42?x=1");
+  let r = fixture();
+  let got = status_of(r, "GET", "/users/42") + "|" + status_of(r, "GET", "/users/me") + "|" + status_of(r, "HEAD", "/users/me") + "|" + status_of(r, "POST", "/users") + "|" + status_of(r, "PUT", "/users") + "|" + status_of(r, "PUT", "/users/42") + "|" + status_of(r, "GET", "/users/") + "|" + status_of(r, "GET", "/nope") + "|" + status_of(r, "GET", "/users/42?x=1");
   return test.assert_eq(got, "get user|me|me|create|users any|405 allow GET, HEAD, DELETE|404|404|get user");
 }
 
 function test_rest_and_end(): test.TestOutcome {
-  let r: router.Router[platform.Host] = fixture();
-  let got: string = status_of(r, "GET", "/files/a/b.txt") + "|" + status_of(r, "GET", "/files/") + "|" + status_of(r, "GET", "/files") + "|" + status_of(r, "GET", "/static/") + "|" + status_of(r, "GET", "/static/css/x.css") + "|" + status_of(r, "GET", "/static");
+  let r = fixture();
+  let got = status_of(r, "GET", "/files/a/b.txt") + "|" + status_of(r, "GET", "/files/") + "|" + status_of(r, "GET", "/files") + "|" + status_of(r, "GET", "/static/") + "|" + status_of(r, "GET", "/static/css/x.css") + "|" + status_of(r, "GET", "/static");
   return test.assert_eq(got, "file|file|404|static index|static below|404");
 }
 
 function test_params(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new[platform.Host]().route("/{kind}/{id}/{rest...}", echo_params);
-  let a: string = status_of(r, "GET", "/user s/100%41/a b/c");
-  let b: string = status_of(r, "GET", "/x/y/");
+  let r = router.new[platform.Host]().route("/{kind}/{id}/{rest...}", echo_params);
+  let a = status_of(r, "GET", "/user s/100%41/a b/c");
+  let b = status_of(r, "GET", "/x/y/");
   return test.assert_eq(a + "|" + b, "kind=user s;id=100%41;rest=a b/c;|kind=x;id=y;rest=;");
 }
 
 function test_typed_params(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new[platform.Host]().get("/users/{id}", user_by_id);
-  let bad: HttpResponse = r.handle(http.request("GET", "/users/x1"), platform.host());
-  let wide: HttpResponse = r.handle(http.request("GET", "/users/99999999999999999999"), platform.host());
-  let unbound: HttpResponse = r.handle(http.request("GET", "/users/7"), platform.host());
-  let got: string = bad.status.to_string() + " " + bad.body_text_lossy() + "|" + wide.status.to_string() + "|" + unbound.status.to_string() + " " + unbound.body_text_lossy();
+  let r = router.new[platform.Host]().get("/users/{id}", user_by_id);
+  let bad = r.handle(http.request("GET", "/users/x1"), platform.host());
+  let wide = r.handle(http.request("GET", "/users/99999999999999999999"), platform.host());
+  let unbound = r.handle(http.request("GET", "/users/7"), platform.host());
+  let got = bad.status.to_string() + " " + bad.body_text_lossy() + "|" + wide.status.to_string() + "|" + unbound.status.to_string() + " " + unbound.body_text_lossy();
   return test.assert_eq(got, "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"path parameter id is not an integer: x1\"}|400|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"the route binds no path parameter nope\"}");
 }
 
 function test_errors_of_two_types(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new[platform.Host]().post("/notes", note_create);
-  let untyped: HttpResponse = r.handle(http.request("POST", "/notes").with_text("{}"), platform.host());
-  let negative: HttpResponse = r.handle(http.request("POST", "/notes").with_json("{\"id\":-1,\"text\":\"x\"}"), platform.host());
-  let made: HttpResponse = r.handle(http.request("POST", "/notes").with_json("{\"id\":7,\"text\":\"hi\"}"), platform.host());
-  let ct: string = "";
+  let r = router.new[platform.Host]().post("/notes", note_create);
+  let untyped = r.handle(http.request("POST", "/notes").with_text("{}"), platform.host());
+  let negative = r.handle(http.request("POST", "/notes").with_json("{\"id\":-1,\"text\":\"x\"}"), platform.host());
+  let made = r.handle(http.request("POST", "/notes").with_json("{\"id\":7,\"text\":\"hi\"}"), platform.host());
+  let ct = "";
   match (made.headers.get("content-type")) {
     Some(v) => {
       ct = v;
     },
     None => {}
   }
-  let got: string = untyped.status.to_string() + "|" + negative.status.to_string() + " " + negative.body_text_lossy() + "|" + made.status.to_string() + " " + ct + " " + made.body_text_lossy();
+  let got = untyped.status.to_string() + "|" + negative.status.to_string() + " " + negative.body_text_lossy() + "|" + made.status.to_string() + " " + ct + " " + made.body_text_lossy();
   return test.assert_eq(got, "415|422 {\"type\":\"about:blank\",\"title\":\"Unprocessable Entity\",\"status\":422,\"detail\":\"a note's id is not negative\"}|201 application/json {\"id\":7,\"text\":\"hi\"}");
 }
 
 function stamped(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-  let resp: HttpResponse = http.respond(next(req.with_header("x-request-id", "r-1")));
+  let resp = http.respond(next(req.with_header("x-request-id", "r-1")));
   return Ok(resp.with_header("x-request-id", "r-1"));
 }
 
@@ -161,39 +161,39 @@ function gated(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Res
 function whoami(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req1 <- stamped(req, plat);
   use req2 <- gated(req1, plat);
-  let who: string = req2.headers.get("x-request-id").ok_or(http.fail(500, "unstamped"))?;
+  let who = req2.headers.get("x-request-id").ok_or(http.fail(500, "unstamped"))?;
   return Ok(http.ok("request " + who));
 }
 
 function test_middleware_chain(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new[platform.Host]().get("/whoami", whoami);
-  let denied: HttpResponse = r.handle(http.request("GET", "/whoami"), platform.host());
-  let allowed: HttpResponse = r.handle(http.request("GET", "/whoami").with_header("x-token", "t"), platform.host());
-  let stamp: string = "";
+  let r = router.new[platform.Host]().get("/whoami", whoami);
+  let denied = r.handle(http.request("GET", "/whoami"), platform.host());
+  let allowed = r.handle(http.request("GET", "/whoami").with_header("x-token", "t"), platform.host());
+  let stamp = "";
   match (allowed.headers.get("x-request-id")) {
     Some(s) => {
       stamp = s;
     },
     None => {}
   }
-  let denied_stamp: string = "";
+  let denied_stamp = "";
   match (denied.headers.get("x-request-id")) {
     Some(s) => {
       denied_stamp = s;
     },
     None => {}
   }
-  let got: string = denied.status.to_string() + " " + denied.body_text_lossy() + " " + denied_stamp + "|" + allowed.status.to_string() + " " + allowed.body_text_lossy() + " " + stamp;
+  let got = denied.status.to_string() + " " + denied.body_text_lossy() + " " + denied_stamp + "|" + allowed.status.to_string() + " " + allowed.body_text_lossy() + " " + stamp;
   return test.assert_eq(got, "401 {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"no token\"} r-1|200 request r-1 r-1");
 }
 
 function tagged(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-  let resp: HttpResponse = http.respond(next(req.with_header("x-seen", req.headers.get("x-seen").unwrap_or("") + "t")));
+  let resp = http.respond(next(req.with_header("x-seen", req.headers.get("x-seen").unwrap_or("") + "t")));
   return Ok(resp.with_header("x-order", resp.headers.get("x-order").unwrap_or("") + "t"));
 }
 
 function counted(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-  let resp: HttpResponse = http.respond(next(req.with_header("x-seen", req.headers.get("x-seen").unwrap_or("") + "c")));
+  let resp = http.respond(next(req.with_header("x-seen", req.headers.get("x-seen").unwrap_or("") + "c")));
   return Ok(resp.with_header("x-order", resp.headers.get("x-order").unwrap_or("") + "c"));
 }
 
@@ -209,12 +209,12 @@ function seen(req: HttpRequest, params: router.Params, plat: platform.Host): Res
 }
 
 function test_wrapped(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new[platform.Host]().wrap(tagged).wrap(counted).wrap(options_for).get("/seen", seen);
-  let hit: HttpResponse = r.handle(http.request("GET", "/seen"), platform.host());
-  let missed: HttpResponse = r.handle(http.request("GET", "/nope"), platform.host());
-  let wrong: HttpResponse = r.handle(http.request("POST", "/seen"), platform.host());
-  let pre: HttpResponse = r.handle(http.request("OPTIONS", "/seen"), platform.host());
-  let got: string = hit.status.to_string() + " " + hit.body_text_lossy() + " " + hit.headers.get("x-order").unwrap_or("-") + "|" + missed.status.to_string() + " " + missed.headers.get("x-order").unwrap_or("-") + "|" + wrong.status.to_string() + " " + wrong.headers.get("allow").unwrap_or("-") + " " + wrong.headers.get("x-order").unwrap_or("-") + "|" + pre.status.to_string() + " " + pre.headers.get("x-preflight").unwrap_or("-") + " " + pre.headers.get("x-order").unwrap_or("-");
+  let r = router.new[platform.Host]().wrap(tagged).wrap(counted).wrap(options_for).get("/seen", seen);
+  let hit = r.handle(http.request("GET", "/seen"), platform.host());
+  let missed = r.handle(http.request("GET", "/nope"), platform.host());
+  let wrong = r.handle(http.request("POST", "/seen"), platform.host());
+  let pre = r.handle(http.request("OPTIONS", "/seen"), platform.host());
+  let got = hit.status.to_string() + " " + hit.body_text_lossy() + " " + hit.headers.get("x-order").unwrap_or("-") + "|" + missed.status.to_string() + " " + missed.headers.get("x-order").unwrap_or("-") + "|" + wrong.status.to_string() + " " + wrong.headers.get("allow").unwrap_or("-") + " " + wrong.headers.get("x-order").unwrap_or("-") + "|" + pre.status.to_string() + " " + pre.headers.get("x-preflight").unwrap_or("-") + " " + pre.headers.get("x-order").unwrap_or("-");
   return test.assert_eq(got, "200 tc ct|404 ct|405 GET, HEAD ct|204 /seen ct");
 }
 
@@ -224,7 +224,7 @@ function test_handler_closure(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/router");
+  let r = test.new("std/http/router");
   r = r.it("patterns refused", test_patterns_refused);
   r = r.it("conflicts", test_conflicts);
   r = r.it("a refusal is kept", test_a_refusal_is_kept);

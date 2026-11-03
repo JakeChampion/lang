@@ -11,19 +11,19 @@ function mk(k: i32): Frame {
 }
 
 function pick(k: i32): i32 {
-  let a: Frame = mk(k);
+  let a = mk(k);
   if (k == 1) {
     return a.depth;
   }
-  let b: Frame = mk(k + 1);
+  let b = mk(k + 1);
   if (k == 2) {
     return a.depth + b.depth;
   }
-  let c: Frame = mk(k + 2);
+  let c = mk(k + 2);
   if (k == 3) {
     return b.depth + c.depth;
   }
-  let d: Frame = mk(k + 3);
+  let d = mk(k + 3);
   if (k == 4) {
     return c.depth + d.depth;
   }
@@ -31,11 +31,9 @@ function pick(k: i32): i32 {
 }
 
 function main(): i32 {
-  let total: i64 = 0i64;
-  let i: i32 = 0;
-  while (i < 120000) {
-    total = total + pick(i % 6) as i64;
-    i = i + 1;
+  let total = 0i64;
+  for i in 0..120000 {
+    total += pick(i % 6) as i64;
   }
   return (total % 97i64) as i32;
 }

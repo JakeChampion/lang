@@ -158,9 +158,11 @@ c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
 call_result_arg_temp                                 0
 call_type_args_user_type                             0
+captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
 cast_in_tuple                                        0
 cast_int_arith_to_float                              0
+cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
 cell_in_container                                    0
@@ -189,6 +191,7 @@ codec_errors                                         0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
+const_array_methods                                  0
 const_char_comparison                                0
 const_composite                                      0
 const_divisor_lowering                               0
@@ -308,6 +311,7 @@ float_pythagoras                                     0
 float_reduce_in_index_order                          0
 float_to_int_saturating                              0
 float_to_string_parity                               0
+float_value_branches_settle                          0
 float_width_conversion                               0
 for_in_squares                                       0
 for_loop_continue_steps                              0
@@ -315,6 +319,7 @@ for_over_collections                                 0
 for_over_iterator                                    0
 for_over_range_value                                 0
 for_underscore_nested                                0
+for_range_in_lambda_in_header                        0
 foreach_binding_trailing_comma                       0
 foreach_pattern_binding                              0
 format_placeholders                                  0
@@ -323,6 +328,7 @@ fresh_array_through_a_pass_through_callee            0
 fresh_local_return                                   0
 fresh_result_payload_is_owned                        0
 from_empty_bytes                                     0
+fstring_cast_after_interpolation                     0
 fstring_interpolation_char_escape                    0
 fstring_reassign_releases_old                        0
 function_array_element_returned                      0
@@ -626,6 +632,7 @@ optresult_transpose                                  0
 ord_struct_enum                                      0
 override_scalar                                      0
 own_arg_from_call_with_handle_free_borrowed_param    0
+own_arg_in_for_header                                0
 own_arg_redeclared_fresh_local_and_owned_alias       0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0

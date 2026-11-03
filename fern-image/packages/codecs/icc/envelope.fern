@@ -80,7 +80,7 @@ pub function inspect(input: [u8], limits: IccLimits, cancelled: () => boolean): 
     return Err(IccError.Header);
   }
   for index in 100..128 {
-    if (input[index] != 0 as u8) {
+    if (input[index] != 0) {
       return Err(IccError.Header);
     }
   }
@@ -107,7 +107,7 @@ pub function inspect(input: [u8], limits: IccLimits, cancelled: () => boolean): 
       return Err(IccError.Header);
     }
     for position in end as i32..padded as i32 {
-      if (input[position] != 0 as u8) {
+      if (input[position] != 0) {
         return Err(IccError.Layout);
       }
     }
@@ -129,8 +129,8 @@ pub function inspect(input: [u8], limits: IccLimits, cancelled: () => boolean): 
       }
     }
     if (!alias) {
-      covered = covered + padded - offset;
-      unique = unique + 1;
+      covered += padded - offset;
+      unique += 1;
     }
   }
   // Disjoint aligned extents cover the entire data region exactly once.

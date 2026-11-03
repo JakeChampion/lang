@@ -3,7 +3,9 @@ import "std/test";
 
 function valid(): test.TestOutcome {
   let status = "Name:\tprobe\nVmSize:\t  2048 kB\nVmRSS:\t64 kB\nVmHWM:\t128 kB\nThreads:\t1\n";
-  let result = match (linux_rss.parse_status(status)) { Ok(v) => v, Err(_) => { return test.fail("parse"); } };
+  let Ok(result) = linux_rss.parse_status(status) else {
+    return test.fail("parse");
+  };
   let zero = match (linux_rss.parse_status("VmSize: 0 kB\nVmRSS: 0 kB\nVmHWM: 0 kB")) { Ok(v) => v.hwm_bytes == 0i64, _ => false };
   return test.assert_true(result.rss_bytes == 65536i64 && result.hwm_bytes == 131072i64 && result.virtual_bytes == 2097152i64 && zero);
 }

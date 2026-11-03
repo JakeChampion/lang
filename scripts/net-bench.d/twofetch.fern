@@ -12,37 +12,26 @@
 // on one. The caps are lifted for the load generator, one client holding
 // thousands of connections, each with a handler in flight.
 import "std/i32";
+import "std/result";
 import "std/http";
 import "std/serve";
 import "std/platform";
 import "std/fetch";
 
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
-  let first: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
-  let second: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
-  return Ok(http.ok(first.status.to_string() + " " + second.status.to_string()));
+  let first = plat.http(fetch.get("http://8.8.8.8/"))?;
+  let second = plat.http(fetch.get("http://8.8.8.8/"))?;
+  return Ok(http.ok(f"{first.status} {second.status}"));
 }
 
 function port(): i32 {
-  match (env("PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => {
-          return n;
-        },
-        Err(_) => {
-          return 8080;
-        }
-      }
-    },
-    None => {
-      return 8080;
-    }
-  }
-  return 8080;
+  let Some(p) = env("PORT") else {
+    return 8080;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(8080);
 }
 
 function main(): i32 {
-  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, max_in_flight: 16384 };
+  let opts = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, max_in_flight: 16384 };
   return serve.exit_code(serve.supervise(port(), opts, handle));
 }

@@ -1,20 +1,7 @@
 enum Node { Leaf(i32), Label(string), Pair(i32), Empty }
 
 function weigh(n: Node): i32 {
-  match (n) {
-    Leaf(v) => {
-      return v * 2;
-    },
-    Label(s) => {
-      return s.len();
-    },
-    Pair(v) => {
-      return v + 1;
-    },
-    Empty => {
-      return 0;
-    }
-  }
+  return match (n) { Leaf(v) => v * 2, Label(s) => s.len(), Pair(v) => v + 1, Empty => 0 };
 }
 
 function make(k: i32): Node {
@@ -31,11 +18,9 @@ function make(k: i32): Node {
 }
 
 function main(): i32 {
-  let total: i64 = 0i64;
-  let i: i32 = 0;
-  while (i < 900000) {
-    total = total + weigh(make(i)) as i64;
-    i = i + 1;
+  let total = 0i64;
+  for i in 0..900000 {
+    total += weigh(make(i)) as i64;
   }
   return (total % 97i64) as i32;
 }
