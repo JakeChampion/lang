@@ -38,8 +38,10 @@ func buildApk(t *testing.T, dir string, extra ...string) (string, []byte) {
 func TestApkWriter(t *testing.T) {
 	dir := t.TempDir()
 	path, raw := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test")
-	if _, err := os.Stat(filepath.Join(dir, "app.key.pem")); err != nil {
+	if info, err := os.Stat(filepath.Join(dir, "app.key.pem")); err != nil {
 		t.Fatalf("no new key next to the APK: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Errorf("the signing key has permissions %04o, want 0600", info.Mode().Perm())
 	}
 	if _, err := os.Stat(path + ".lib"); err == nil {
 		t.Errorf("the build directory %s.lib is left behind", path)
@@ -117,6 +119,23 @@ func TestApkRefusals(t *testing.T) {
 	if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "is not a P-256 private key in PEM form") {
 		t.Errorf("a bad key: want a refusal, got %v\n%s", err, o)
 	}
+	t.Run("existing-key-link", func(t *testing.T) {
+		target := filepath.Join(dir, "missing-key.pem")
+		key := filepath.Join(dir, "linked-key.pem")
+		if err := os.Symlink(target, key); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"-apk", filepath.Join(dir, "linked.apk"), "-apk-key", key,
+			e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "cannot write") {
+			t.Errorf("an existing key link: want a refusal, got %v\n%s", err, out)
+		}
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Errorf("the key link target changed: %v", err)
+		}
+	})
 }
 
 func readZipEntry(t *testing.T, zr *zip.Reader, name string) []byte {

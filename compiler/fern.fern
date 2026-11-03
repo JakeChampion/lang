@@ -5984,6 +5984,26 @@ function apk_lib_name(entry_path: string): string {
   return out;
 }
 
+function apk_write_key(path: string, pem: string): Result[void, IoError] {
+  match (open_exclusive(path)) {
+    Ok(writer) => {
+      let written: Result[void, IoError] = writer.write(pem);
+      let closed: Result[void, IoError] = writer.close();
+      match (written) {
+        Ok(_) => {
+          return closed;
+        },
+        Err(e) => {
+          return Err(e);
+        }
+      }
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
 // The signing scalar from `path`, or a new one, which it writes there.
 function apk_key(path: string): (u8[], string) {
   match (read_file(path)) {
@@ -5997,7 +6017,7 @@ function apk_key(path: string): (u8[], string) {
     Err(_) => {}
   }
   let d: u8[] = apk.new_scalar();
-  match (write_file(path, apk.key_pem(d))) {
+  match (apk_write_key(path, apk.key_pem(d))) {
     Ok(_) => {
       eprint("fern: wrote a new signing key to " + path + "; sign each update of the app with it");
       return (d, "");
