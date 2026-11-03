@@ -1,5 +1,6 @@
 import "../ssa";
 import "../ssafixed";
+import "../ssalive";
 import "../util";
 
 function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
@@ -39,6 +40,20 @@ function aborting(name: string): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks };
 }
 
+function ret(v: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: v };
+}
+
+// v1 is read only on the slow path, so it is dead after the fast path's call.
+// v5 lives inside the slow block across its call.
+function split_paths(): ssa.SFunc {
+  let b0: ssa.SBlock = ssa.SBlock { id: 0, insts: [inst(1, 0, [], ""), inst(1, 1, [], ""), inst(9, 2, [0, 1], "lt_s")], term: branch(2, 1, 2), preds: [] };
+  let b1: ssa.SBlock = ssa.SBlock { id: 1, insts: [inst(11, 3, [0], "fast"), inst(9, 4, [3, 3], "add")], term: ret(4), preds: [0] };
+  let slow: ssa.SInst[] = [inst(9, 5, [1, 0], "add"), inst(11, 6, [], "slow"), inst(9, 7, [6, 5], "add")];
+  let b2: ssa.SBlock = ssa.SBlock { id: 2, insts: slow, term: ret(7), preds: [0] };
+  return ssa.SFunc { name: "split_paths", nparams: 0, nvals: 8, blocks: [b0, b1, b2], entry: 0, takes_env: false };
+}
+
 function check(ok: boolean, what: string, failures: i32): i32 {
   if (ok) {
     return failures;
@@ -69,18 +84,27 @@ function main(): i32 {
   failures = check(!ssafixed.allows(both, 1, 0, 2) && ssafixed.allows(both, 1, 1, 3), "a joined table keeps its clobbers", failures);
   let ab: ssa.SFunc = aborting("__fern_oob_abort");
   let ret: ssa.SFunc = aborting("every");
-  let aborts: ssa.Alloc = ssa.regalloc_linear_fixed(ab, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ab, false, true));
-  let returns: ssa.Alloc = ssa.regalloc_linear_fixed(ret, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ret, false, true));
+  let aborts: ssa.Alloc = ssa.regalloc_linear_fixed(ab, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ab, false, true), []);
+  let returns: ssa.Alloc = ssa.regalloc_linear_fixed(ret, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(ret, false, true), []);
   failures = check(aborts.reg_of[1] >= 0, "an abort leaves the hot phi a register", failures);
   failures = check(returns.reg_of[1] < 0, "a call that returns spills the hot phi", failures);
   failures = check(!ssa.calls(inst(11, 7, [], "__fern_oob_abort")), "an abort is not a call", failures);
   let g: ssa.SFunc = cold_only();
-  let kept: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false, true));
-  let spilled: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), []);
-  let sized_alloc: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, true, false));
+  let kept: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false, true), []);
+  let spilled: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
+  let sized_alloc: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, true, false), []);
   failures = check(sized_alloc.reg_of[1] < 0, "a size-mode rc call spills the hot phi", failures);
   failures = check(kept.reg_of[1] >= 0, "cold calls leave the hot phi a register", failures);
   failures = check(spilled.reg_of[1] < 0, "calls spill the hot phi", failures);
+  let sp: ssa.SFunc = split_paths();
+  let crossing: boolean[] = ssalive.call_crossers(sp, ssa.hard_call_positions(sp, []));
+  failures = check(crossing.len() == sp.nvals, "call_crossers covers every value", failures);
+  failures = check(!crossing[0] && !crossing[1] && !crossing[3], "a value dead after a call does not cross it", failures);
+  failures = check(crossing[5] && !crossing[6], "a value live across a call in its own block crosses it", failures);
+  let by_live: ssa.Alloc = ssa.regalloc_linear_fixed(sp, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), [], crossing);
+  let by_span: ssa.Alloc = ssa.regalloc_linear_fixed(sp, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
+  failures = check(by_live.reg_of[1] >= 0 && by_live.reg_of[5] < 0, "liveness keeps a register the call does not clobber", failures);
+  failures = check(by_span.reg_of[1] < 0, "an interval over a call spills without liveness", failures);
   print("failures=" + util.i32_to_string(failures));
   return failures;
 }

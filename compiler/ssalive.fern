@@ -279,6 +279,91 @@ function exposed(own up: i32[], def_b: i32[], def_k: i32[], bi: i32, k: i32, val
   return up;
 }
 
+// For each value, whether it is live just after a call that `hard` marks, by
+// position. A value is not live after the call that defines it. Empty when
+// the liveness cannot be computed.
+pub function call_crossers(f: ssa.SFunc, hard: boolean[]): boolean[] {
+  let none: i32[][] = [];
+  for v in 0..f.nvals {
+    none = none.append([]);
+  }
+  let fl: Flow = compute(f, none);
+  if (!fl.ok) {
+    return [];
+  }
+  let w: Walk = Walk { live: __alloc_bool(f.nvals), seen: [], out: __alloc_bool(f.nvals) };
+  let start: i32 = 0;
+  for bi in 0..f.blocks.len() {
+    let b: ssa.SBlock = f.blocks[bi];
+    if (any_hard(hard, start, b.insts.len())) {
+      w = crossers_in(w, live_out_ids(fl, bi), b, start, hard);
+    }
+    start = start + b.insts.len() + 1;
+  }
+  return w.out;
+}
+
+// The values live at one point of a backward walk over a block. `seen` lists
+// each value that was live at some point, so a reset clears only those.
+struct Walk {
+  live: boolean[],
+  seen: i32[],
+  out: boolean[],
+}
+
+function walk_use(own w: Walk, v: i32): Walk {
+  if (v >= 0 && !w.live[v]) {
+    return Walk { ...w, live: w.live.with(v, true), seen: w.seen.append(v) };
+  }
+  return w;
+}
+
+function any_hard(hard: boolean[], start: i32, n: i32): boolean {
+  for k in start..start + n {
+    if (k < hard.len() && hard[k]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function crossers_in(own w: Walk, live_out: i32[], b: ssa.SBlock, start: i32, hard: boolean[]): Walk {
+  for v in live_out {
+    w = walk_use(w, v);
+  }
+  if (b.term.kind_tag == 1) {
+    w = walk_use(w, b.term.value);
+  }
+  if (b.term.kind_tag == 3) {
+    w = walk_use(w, b.term.cond);
+  }
+  let k: i32 = b.insts.len();
+  while (k > 0) {
+    k = k - 1;
+    let ins: ssa.SInst = b.insts[k];
+    if (ins.result >= 0) {
+      w = Walk { ...w, live: w.live.with(ins.result, false) };
+    }
+    if (start + k < hard.len() && hard[start + k]) {
+      for v in w.seen {
+        if (w.live[v]) {
+          w = Walk { ...w, out: w.out.with(v, true) };
+        }
+      }
+    }
+    if (ins.kind_tag != 8) {
+      for arg in ins.args {
+        w = walk_use(w, arg);
+      }
+    }
+  }
+  for v in w.seen {
+    w = Walk { ...w, live: w.live.with(v, false) };
+  }
+  w = Walk { ...w, seen: [] };
+  return w;
+}
+
 pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
   return compute_kept(f, dependencies, []);
 }
