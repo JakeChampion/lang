@@ -25,6 +25,7 @@ Each instruction is in the hint space, so a hardened image runs on a core withou
 | A removed signature faults in the image the in-process assembler writes | the test's direct-image PAC control, which puts `bti c` in place of every `paciasp` and must fault, then puts `nop` in place of every `autiasp` and must run, under QEMU and on the native ARM shard |
 | A removed signature on a runtime frame faults under PAC | the test's runtime frame control, which removes the `paciasp` of `__fern_alloc` alone, under QEMU and on the native ARM shard |
 | A forged function pointer is refused before the branch | `TestSelfHostForwardEdgeCFI` under QEMU |
+| A call past the pad of a shared object's export faults under BTI | `TestSelfHostHardenShared`, which puts `nop` in place of PAC and requires the fault with the property header and a run without it, under QEMU |
 | What a process runs with | `std/mitigations` reads `/proc/self/status`, the auxiliary vector, the memory map flags and `prctl` |
 
 QEMU user mode emulates PAC and BTI, so a QEMU result is emulated evidence.
@@ -33,6 +34,6 @@ BTI enforcement on physical hardware is not yet recorded, because the native run
 
 ## Remaining limits
 
-- A shared object and the Android image carry no property note.
+- The Android image carries no property note, because arm64-android refuses `-harden`.
 - The PAC key is the kernel's per-process key. There is no key rotation on `fork`, which the kernel handles.
 - The physical BTI fault test waits for a runner that requests it, and the physical PAC record covers one host.

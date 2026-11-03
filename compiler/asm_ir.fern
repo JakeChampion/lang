@@ -11506,13 +11506,29 @@ function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
   s = emit_startup_failure(s, ".Lfern_signal_stack_map_failed", aborts.signal_stack_map());
   s = emit_startup_failure(s, ".Lfern_signal_stack_failed", aborts.signal_stack());
   s = emit_startup_failure(s, ".Lfern_fault_handler_failed", aborts.fault_handler());
-  if (s.harden) {
-    s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
-    s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
-    s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
-    s = emit_startup_failure(s, "__fern_cfi_sig_fail", aborts.cfi_sig());
+  return emit_harden_failures(s);
+}
+
+function emit_harden_failures(own s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
   }
-  return s;
+  s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
+  s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
+  s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
+  return emit_startup_failure(s, "__fern_cfi_sig_fail", aborts.cfi_sig());
+}
+
+// A shared object has no startup, so its first export call reads the
+// canary. The export entry calls it with the arguments still in registers.
+function emit_harden_start(own s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  s = s.write("__fern_harden_start:\n    pushq %rdi\n    pushq %rsi\n    pushq %rdx\n    pushq %rcx\n    pushq %r11\n    pushq %rax\n");
+  s = emit_canary_init(s);
+  s = s.write("    popq %rax\n    popq %r11\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    ret\n");
+  return emit_harden_failures(s);
 }
 
 function emit_canary_init(own s: asmcore.EmitState): asmcore.EmitState {
@@ -11713,6 +11729,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_logcat_runtime(s);
   if (s.shared) {
     s = emit_busy_lock_x86(s);
+    s = emit_harden_start(s);
   }
   if (s.rc_free_debug) {
     s = s.write("    .text\n");
