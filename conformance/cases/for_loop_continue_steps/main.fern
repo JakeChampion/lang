@@ -1,0 +1,224 @@
+// A counted or array loop steps after its body, and a `continue` that targets
+// the loop takes the step with it: plain, labelled, from a nested loop, from a
+// match arm, through a label a nested loop reuses. A body that rebinds the
+// counter or defers work steps at the head. Assigning the counter moves the
+// iteration, and a closure sees the counter's last value.
+
+function plain(n: i32): i32 {
+  let t = 0;
+  for i in 0..n {
+    t = t + i;
+  }
+  return t;
+}
+
+function skips(n: i32): i32 {
+  let t = 0;
+  for i in 0..n {
+    if (i % 3 == 0) {
+      continue;
+    }
+    t = t + i;
+  }
+  return t;
+}
+
+function labeled(n: i32): i32 {
+  let t = 0;
+  outer: for i in 0..n {
+    for j in 0..n {
+      if (j > i) {
+        continue outer;
+      }
+      if (j == 2) {
+        continue;
+      }
+      t = t + j * 10 + i;
+    }
+  }
+  return t;
+}
+
+function reused(n: i32): i32 {
+  let t = 0;
+  l: for i in 0..n {
+    l: for j in 0..n {
+      if (j == 1) {
+        continue l;
+      }
+      t = t + 1;
+    }
+    t = t + 100;
+  }
+  return t;
+}
+
+function shadow(n: i32): i32 {
+  let t = 0;
+  for i in 0..n {
+    let i = i * 2;
+    if (i > 4) {
+      continue;
+    }
+    t = t + i;
+  }
+  return t;
+}
+
+function mutate(n: i32): i32 {
+  let c = 0;
+  for j in 0..n {
+    j = j + 3;
+    c = c + 1;
+    if (c > 100) {
+      break;
+    }
+  }
+  return c;
+}
+
+function captures(): i32 {
+  let fs: (() => i32)[] = [];
+  for i in 0..3 {
+    fs = fs.append(() => i);
+  }
+  return fs[0]() * 100 + fs[1]() * 10 + fs[2]();
+}
+
+function wide(): i64 {
+  let t: i64 = 0;
+  for k in 4000000000i64..4000000005i64 {
+    if (k == 4000000002i64) {
+      continue;
+    }
+    t = t + k;
+  }
+  return t;
+}
+
+function negs(): i32 {
+  let t = 0;
+  for i in -3..2 {
+    t = t * 3 + i;
+  }
+  for i in 5..2 {
+    t = t + 1000;
+  }
+  return t;
+}
+
+function early(xs: i32[]): i32 {
+  for i in 0..xs.len() {
+    if (xs[i] == 7) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function matchy(n: i32): i32 {
+  let t = 0;
+  for i in 0..n {
+    let o: Option[i32] = if (i % 2 == 0) { Some(i) } else { None };
+    match (o) {
+      Some(v) => {
+        if (v == 4) {
+          continue;
+        }
+        t = t + v;
+      },
+      None => {
+        continue;
+      }
+    }
+    t = t + 1000;
+  }
+  return t;
+}
+
+function deferred(n: i32): i32 {
+  let t = 0;
+  for i in 0..n {
+    defer { t = t + i; }
+    if (i == 1) {
+      continue;
+    }
+  }
+  return t;
+}
+
+function incl(n: i32): i32 {
+  let t = 0;
+  for i in 0..=n {
+    if (i == 2) {
+      continue;
+    }
+    t = t + i;
+  }
+  return t;
+}
+
+function arr_skip(xs: i32[]): i32 {
+  let t = 0;
+  for x in xs {
+    if (x % 2 == 0) {
+      continue;
+    }
+    t = t * 10 + x;
+  }
+  return t;
+}
+
+function arr_nested(xs: i32[], ys: string[]): i32 {
+  let t = 0;
+  rows: for x in xs {
+    for y in ys {
+      if (y == "stop") {
+        continue rows;
+      }
+      if (y == "skip") {
+        continue;
+      }
+      t = t + x * y.len();
+    }
+    t = t + 1000;
+  }
+  return t;
+}
+
+function first_of(xs: string[]): string {
+  for x in xs {
+    return x;
+  }
+  return "none";
+}
+
+function bytes_up(s: string): i32 {
+  let t = 0;
+  for b in s {
+    if (b == b' ') {
+      continue;
+    }
+    t = t + b as i32;
+  }
+  return t;
+}
+
+function pairs(ps: (i32, string)[]): string {
+  let out = "";
+  for (n, s) in ps {
+    if (n == 2) {
+      continue;
+    }
+    out = out + s + n.to_string();
+  }
+  return out;
+}
+
+function main(): i32 {
+  print(f"{arr_skip([1, 2, 3, 4, 5])} {arr_nested([1, 2], ["ab", "skip", "c", "stop", "zzz"])} {first_of(["q", "r"])} {first_of([])} {bytes_up("a b")} {pairs([(1, "a"), (2, "b"), (3, "c")])}");
+  print(f"{plain(10)} {skips(10)} {labeled(5)} {reused(3)} {shadow(5)} {mutate(10)}");
+  print(f"{captures()} {wide()} {negs()} {early([1, 7, 3])} {early([])} {matchy(8)}");
+  print(f"{incl(5)} {incl(-1)}");
+  return 0;
+}

@@ -19274,6 +19274,57 @@ function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt
   return [ivar, hivar, govar, back, with_loop_label(s_while(e_ident(go_name), wbody), fr.label)];
 }
 
+// A counted loop steps at its latch, as a `while` written by hand does, so a
+// `continue` that targets the loop takes the step with it. `shadowed` records a
+// body that rebinds the counter or defers work, where the step stays at the head.
+struct StepCtx { step: ast.Stmt, var_name: string, label: string, depth: i32, shadowed: boolean }
+
+function step_continues(body: ast.Stmt[], ctx: StepCtx): (ast.Stmt[], StepCtx) {
+  return astwalk.map_stmts_acc(body, ctx, step_continue_stmt, step_continue_expr);
+}
+
+function step_continue_stmt(st: ast.Stmt, ctx: StepCtx): (ast.Stmt, StepCtx, boolean) {
+  match (st) {
+    ast.StmtContinue(c) => {
+      if (c.label.len() == 0 && ctx.depth == 0 || c.label.len() > 0 && c.label == ctx.label) {
+        return (s_block([ctx.step, st]), ctx, true);
+      }
+    },
+    ast.StmtWhile(w) => {
+      let (body, inner) = step_continues(w.body, nested_step(ctx, w.label));
+      return (ast.StmtWhile { ...w, body: body }, StepCtx { ...ctx, shadowed: inner.shadowed }, true);
+    },
+    ast.StmtFor(f) => {
+      let (body, inner) = step_continues(f.body, nested_step(ctx, f.label));
+      let shadowed = inner.shadowed || util.has_str(astwalk.binders_of(st, []), ctx.var_name);
+      return (ast.StmtFor { ...f, body: body }, StepCtx { ...ctx, shadowed: shadowed }, true);
+    },
+    ast.StmtDefer(_) => {
+      return (st, StepCtx { ...ctx, shadowed: true }, true);
+    },
+    _ => {
+      if (util.has_str(astwalk.binders_of(st, []), ctx.var_name)) {
+        return (st, StepCtx { ...ctx, shadowed: true }, false);
+      }
+    }
+  }
+  return (st, ctx, false);
+}
+
+function nested_step(ctx: StepCtx, label: string): StepCtx {
+  if (label == ctx.label) {
+    return StepCtx { ...ctx, label: "", depth: ctx.depth + 1 };
+  }
+  return StepCtx { ...ctx, depth: ctx.depth + 1 };
+}
+
+function step_continue_expr(e: ast.Expr, ctx: StepCtx): (ast.Expr, StepCtx, boolean) {
+  if let ast.ExprLambda(_) = e {
+    return (e, ctx, true);
+  }
+  return (e, ctx, false);
+}
+
 function dr_expr(e: ast.Expr): ast.Expr {
   match (e) {
     ast.ExprLambda(lm) => {
@@ -19317,8 +19368,13 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
         if (range_call_name(fr.iter) == "__range_incl") {
           return inclusive_range_loop(fr, dbody, s_var(fr.var_name, rty, rargs[0]), hivar, hi_name);
         }
-        let ivar: ast.Stmt = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
         let incr: ast.Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
+        let (stepped, plain) = step_continues(dbody, StepCtx { step: incr, var_name: fr.var_name, label: fr.label, depth: 0, shadowed: false });
+        if (!plain.shadowed) {
+          let cond: ast.Expr = e_binary("<", e_ident(fr.var_name), e_ident(hi_name));
+          return [s_var(fr.var_name, rty, rargs[0]), hivar, with_loop_label(s_while(cond, stepped.append(incr)), fr.label)];
+        }
+        let ivar: ast.Stmt = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
         let brk: ast.Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
         let wbody: ast.Stmt[] = [incr, brk];
         let k: i32 = 0;
