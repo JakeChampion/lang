@@ -19358,13 +19358,13 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
       if (r == LU_SETTLED) {
         return false;
       }
-      return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
+      return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name, lu_binding_level(site.frames, aid.name));
     }
   }
   if (lu_later_in(st, aid)) {
     return true;
   }
-  return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
+  return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name, lu_binding_level(site.frames, aid.name));
 }
 
 const LU_CONTINUES: i32 = 0;
@@ -19580,13 +19580,12 @@ function lu_assigns_whole(st: ast.Stmt, name: string): boolean {
   return false;
 }
 
-function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name: string): boolean {
+function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name: string, scope: i32): boolean {
   if (level < 0) {
     return false;
   }
   let f: LuFrame = frames[level];
-  let j: i32 = f.idx + 1;
-  while (j < f.stmts.len()) {
+  for j in f.idx + 1..f.stmts.len() {
     let st: ast.Stmt = f.stmts[j];
     if (lu_assigns_whole(st, name)) {
       // A new value replaces the local before any read of the old one.
@@ -19595,24 +19594,17 @@ function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name
     if (lu_mentions(st, name) > 0) {
       return true;
     }
-    let jumps: LuJumps = lu_jumps(st);
-    for label in jumps.continues {
-      let l: i32 = lu_loop_level(frames, level, label);
-      if (l < 0 || lu_loop_head_live(frames, l, name) || lu_live_from(noret, frames, l - 1, name)) {
-        return true;
-      }
-    }
-    for label in jumps.breaks {
-      let l: i32 = lu_loop_level(frames, level, label);
-      if (l < 0 || lu_live_from(noret, frames, l - 1, name)) {
-        return true;
-      }
+    if (lu_jumps_live(noret, frames, level, lu_jumps(st), name, scope)) {
+      return true;
     }
     let one: ast.Stmt[] = [st];
     if (block_diverges(one, false) || lu_never_returns(noret, st)) {
       return false;
     }
-    j = j + 1;
+  }
+  if (level <= scope) {
+    // The binding ends with the block that declares it.
+    return false;
   }
   if (f.is_loop && lu_loop_head_live(frames, level, name)) {
     return true;
@@ -19620,7 +19612,76 @@ function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name
   if (level == 0) {
     return false;
   }
-  return lu_live_from(noret, frames, level - 1, name);
+  return lu_live_from(noret, frames, level - 1, name, scope);
+}
+
+// Whether a continue or a break of the statement reaches a read of the name.
+// A jump to a loop at or outside the block of the binding leaves the binding.
+function lu_jumps_live(noret: util.NameIndex, frames: LuFrame[], level: i32, jumps: LuJumps, name: string, scope: i32): boolean {
+  for label in jumps.continues {
+    let l: i32 = lu_loop_level(frames, level, label);
+    if (l < 0 || l > scope && (lu_loop_head_live(frames, l, name) || lu_live_from(noret, frames, l - 1, name, scope))) {
+      return true;
+    }
+  }
+  for label in jumps.breaks {
+    let l: i32 = lu_loop_level(frames, level, label);
+    if (l < 0 || l > scope && lu_live_from(noret, frames, l - 1, name, scope)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The level of the innermost frame that binds `name` before the statement that
+// the frame holds: the block that the read binding belongs to. It is -1 when
+// no frame binds `name`, as for a parameter.
+function lu_binding_level(frames: LuFrame[], name: string): i32 {
+  let l: i32 = frames.len() - 1;
+  while (l >= 0) {
+    let f: LuFrame = frames[l];
+    if let ast.StmtFor(fo) = f.head {
+      if (f.is_loop && fo.var_name == name) {
+        return l;
+      }
+    }
+    for j in 0..f.idx {
+      if (lu_binds(f.stmts[j], name)) {
+        return l;
+      }
+    }
+    l = l - 1;
+  }
+  return 0 - 1;
+}
+
+// Whether the statement itself declares `name`, not a statement inside it.
+function lu_binds(st: ast.Stmt, name: string): boolean {
+  for v in lu_fact_stmt(st, lu_empty_facts()).vars {
+    if (v.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether no later read of the name belongs to the binding that `id` reads:
+// no read after `id` inside the block that declares it.
+function lu_is_last_in(fx: LuFn, site: LuSite, id: ast.ExprIdent): boolean {
+  let scope: i32 = lu_binding_level(site.frames, id.name);
+  if (scope < 0) {
+    return lu_is_last(fx, id);
+  }
+  let f: LuFrame = site.frames[scope];
+  for j in f.idx..f.stmts.len() {
+    let facts: LuFacts = astwalk.fold_stmt_nodes(f.stmts[j], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+    for o in facts.occ {
+      if (o.name == id.name && (o.line > id.line || o.line == id.line && o.col > id.col)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
@@ -19654,7 +19715,7 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
   if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
     return false;
   }
-  if (arr && !lu_is_last(fx, aid)) {
+  if (arr && !lu_is_last_in(fx, site, aid)) {
     return false;
   }
   return !lu_live_after(fx, site, call, aid);

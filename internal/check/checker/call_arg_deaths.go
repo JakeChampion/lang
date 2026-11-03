@@ -595,7 +595,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if heldByEnclosingCall(body, c, aid.Name) {
 				continue
 			}
-			if !order.IsLast(aid) && arrayArgPosition(info, c, aid) {
+			if !lastInBinding(body, c, aid, order) && arrayArgPosition(info, c, aid) {
 				continue
 			}
 			if liveAfter(info, body, c, aid, order) {
@@ -1534,7 +1534,7 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 		if settled {
 			return false
 		}
-		return liveFrom(info, frames, len(frames)-1, aid.Name)
+		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 	}
 	later := false
 	ast.Walk(st, func(m ast.Node) bool {
@@ -1546,7 +1546,7 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	if later {
 		return true
 	}
-	return liveFrom(info, frames, len(frames)-1, aid.Name)
+	return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 }
 
 // matchTagLive reports whether the value a match takes from the local name is
@@ -1654,7 +1654,7 @@ func blockStmts(st ast.Stmt) []ast.Stmt {
 	return []ast.Stmt{st}
 }
 
-func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
+func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int) bool {
 	f := frames[level]
 	for j := f.idx + 1; j < len(f.stmts); j++ {
 		st := f.stmts[j]
@@ -1668,13 +1668,19 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
 		jumps := jumpsOf(info, st)
 		for _, label := range jumps.continues {
 			l := loopFrameLevel(frames, level, label)
-			if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name) {
+			if l >= 0 && l <= scope {
+				continue
+			}
+			if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
 				return true
 			}
 		}
 		for _, label := range jumps.breaks {
 			l := loopFrameLevel(frames, level, label)
-			if l < 0 || liveFrom(info, frames, l-1, name) {
+			if l >= 0 && l <= scope {
+				continue
+			}
+			if l < 0 || liveFrom(info, frames, l-1, name, scope) {
 				return true
 			}
 		}
@@ -1682,11 +1688,74 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
 			return false
 		}
 	}
+	if level <= scope {
+		// The binding ends with the block that declares it.
+		return false
+	}
 	if f.loop != nil && loopHeadLive(frames, level, name) {
 		return true
 	}
 	if level == 0 {
 		return false
 	}
-	return liveFrom(info, frames, level-1, name)
+	return liveFrom(info, frames, level-1, name, scope)
+}
+
+// bindingLevel is the level of the innermost frame that binds name before the
+// statement that the frame holds: the block that the read binding belongs to.
+// It is -1 when no frame binds name, as for a parameter.
+func bindingLevel(frames []liveFrame, name string) int {
+	for l := len(frames) - 1; l >= 0; l-- {
+		f := frames[l]
+		switch loop := f.loop.(type) {
+		case *ast.ForEach:
+			if loop.Var == name {
+				return l
+			}
+		case *ast.For:
+			if loop.Init != nil && bindsName(loop.Init, name) {
+				return l
+			}
+		}
+		for j := 0; j < f.idx; j++ {
+			if bindsName(f.stmts[j], name) {
+				return l
+			}
+		}
+	}
+	return -1
+}
+
+// lastInBinding reports whether no later read of name belongs to the binding
+// that aid reads: no read after aid inside the block that declares it.
+func lastInBinding(body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
+	frames := enclosingFrames(body, c)
+	scope := bindingLevel(frames, aid.Name)
+	if scope < 0 {
+		return order.IsLast(aid)
+	}
+	f := frames[scope]
+	at := order.Idx[aid]
+	later := false
+	for _, st := range f.stmts[f.idx:] {
+		ast.Walk(st, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > at {
+				later = true
+			}
+			return !later
+		})
+	}
+	return !later
+}
+
+// bindsName reports whether the statement itself declares name, not a
+// statement nested inside it.
+func bindsName(st ast.Stmt, name string) bool {
+	switch x := st.(type) {
+	case *ast.Var:
+		return x.Name == name
+	case *ast.Destructure:
+		return slices.Contains(x.Names, name)
+	}
+	return false
 }

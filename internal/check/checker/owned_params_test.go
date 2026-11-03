@@ -247,6 +247,50 @@ function f(): i32 {
     }
     return n;
 }`},
+		// Two loops declare the same names. The reads in the second loop
+		// belong to its own bindings (#14100).
+		{"same-name-in-sibling-loops", `
+function step(own xs: i32[]): (i32[], i32) { let n: i32 = xs.len(); return (xs, n); }
+function f(): i32 {
+    let t: i32 = 0;
+    let g: i32[] = [1];
+    for i in 0..2 {
+        let (a, u) = step(g);
+        let (b, v) = step(a);
+        g = b;
+        t = t + u + v;
+    }
+    for j in 0..2 {
+        let (a, u) = step(g);
+        let (b, v) = step(a);
+        g = b;
+        t = t + u + v;
+    }
+    return t + consume(g);
+}`},
+		{"same-name-array-in-sibling-blocks", `
+function f(c: boolean): i32 {
+    let t: i32 = 0;
+    if (c) {
+        let xs: i32[] = [1];
+        t = t + consume(xs);
+    }
+    if (!c) {
+        let xs: i32[] = [2];
+        t = t + consume(xs);
+    }
+    return t;
+}`},
+		{"inner-binding-shadows-the-outer", `
+function f(c: boolean): i32 {
+    let xs: i32[] = [1];
+    let t: i32 = 0;
+    if (c) {
+        let xs: i32[] = [2];
+        t = consume(xs);
+    }
+    return t + xs.len();
+}`},
 	} {
 		wantOK(t, tc.name, ownConsumer+tc.body)
 	}
@@ -286,6 +330,19 @@ function f(): i32 {
     let xs: i32[] = mk();
     defer { let k: i32 = xs.len(); }
     return consume(xs);
+}`},
+		// The call is in a block that later shadows the name, but the read
+		// after the block is of the outer binding (#14100).
+		{"outer-binding-read-after-the-shadowing-block", `
+function f(c: boolean): i32 {
+    let xs: i32[] = [1];
+    let t: i32 = 0;
+    if (c) {
+        t = consume(xs);
+        let xs: i32[] = [2];
+        t = t + xs.len();
+    }
+    return t + xs.len();
 }`},
 		{"destructured-read-again", `
 function step(): (i32[], i32) { return ([1], 2); }
