@@ -3686,7 +3686,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     s = s.write("    ldr x8, [sp], #16\n");
     let nr: i32 = ins.args[0];
     if (s.profile > 0 && imm.konst[nr] && imm.value[nr] == 94i64) {
-      s = s.write(profile_exit_asm(s.profile));
+      s = s.write(profile_exit_asm(s));
       s = s.write("    mov x8, #94\n");
     }
     if (imm.konst[nr]) {
@@ -3701,7 +3701,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
-    s = s.write(profile_exit_asm(s.profile));
+    s = s.write(profile_exit_asm(s));
     s = s.write("    mov x8, #94\n").svc(94).write("    mov x0, #0\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
   }
@@ -6129,7 +6129,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
     }
     dfi = dfi + 1;
   }
-  s = s.write(profile_exit_asm(s.profile));
+  s = s.write(profile_exit_asm(s));
   s = s.write("    mov x0, #134\n    mov x8, #94\n").svc(94);
   s = s.write(dend + ":\n");
   return s;
@@ -6365,7 +6365,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     }
     s = s.write("    mov x0, #0\n");
   }
-  s = s.write(profile_exit_asm(s.profile));
+  s = s.write(profile_exit_asm(s));
   s = s.write("    mov x8, #94\n");
   s = s.svc(94);
   return s;
@@ -7106,7 +7106,7 @@ function quarantine_rc(addr: string, w: string, on: boolean): string {
 // The caller keeps x0 to x2 across the push: a free path can read the
 // box through x0 after its data block is quarantined.
 function quar_push(s: asmcore.EmitState, ptr: string, words: string, poison_at: i32): asmcore.EmitState {
-  s = s.write("    stp x0, x30, [sp, #-16]!\n");
+  s = s.write(rt_save_lr(s, "x0"));
   s = s.write("    stp x1, x2, [sp, #-16]!\n");
   s = s.write("    mov x10, " + words + "\n");
   if (ptr != "x0") {
@@ -7116,7 +7116,7 @@ function quar_push(s: asmcore.EmitState, ptr: string, words: string, poison_at: 
   s = s.write("    mov x2, #" + util.i32_to_string(poison_at) + "\n");
   s = s.write("    bl __fern_quar_push\n");
   s = s.write("    ldp x1, x2, [sp], #16\n");
-  return s.write("    ldp x0, x30, [sp], #16\n");
+  return s.write(rt_restore_lr(s, "x0"));
 }
 
 function quar_addr(reg: string, symbol: string): string {
@@ -7637,7 +7637,7 @@ function san_report_exit(s: asmcore.EmitState): asmcore.EmitState {
   if (s.backtrace) {
     return s.write("    mov x19, #124\n    b __fern_bt_exit\n");
   }
-  return s.write(profile_exit_asm(s.profile) + "    mov x0, #124\n    mov x8, #94\n").svc(94);
+  return s.write(profile_exit_asm(s) + "    mov x0, #124\n    mov x8, #94\n").svc(94);
 }
 
 function bt_strip_signature(s: asmcore.EmitState): asmcore.EmitState {
@@ -7690,7 +7690,7 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    b.ne .Lbt_loop\n");
   s = s.write(".Lbt_done:\n");
   s = s.write("    mov x0, x19\n");
-  s = s.write(profile_exit_asm(s.profile));
+  s = s.write(profile_exit_asm(s));
   s = s.write("    mov x8, #94\n");
   s = s.svc(94);
   s = s.write(".Lbt_hex:\n");
@@ -7821,9 +7821,9 @@ function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
   let l: asmcore.LabelOut = asmcore.fresh_label(s);
   s = l.state.write("    cmp " + words + ", #256\n");
   s = s.write("    b.ls " + l.name + "\n");
-  s = s.write("    stp " + words + ", x30, [sp, #-16]!\n");
+  s = s.write(rt_save_lr(s, words));
   s = s.write("    bl __fern_capw\n");
-  s = s.write("    ldp " + words + ", x30, [sp], #16\n");
+  s = s.write(rt_restore_lr(s, words));
   return s.write(l.name + ":\n");
 }
 
@@ -8374,7 +8374,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
     return emit_bt_exit(s);
   }
   s = s.write("    mov x0, x19\n");
-  s = s.write(profile_exit_asm(s.profile));
+  s = s.write(profile_exit_asm(s));
   s = s.write("    mov x8, #94\n");
   s = s.svc(94);
   return s.write(".size __fern_report, .-__fern_report\n");
@@ -8613,11 +8613,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    add x2, x2, :lo12:__fern_freelist\n");
     s = s.write("    add x1, x2, x1\n");
     if (s.harden) {
-      s = s.write("    stp x0, x30, [sp, #-16]!\n");
+      s = s.write(rt_save_lr(s, "x0"));
       s = s.write("    mov x0, x1\n");
       s = s.write("    bl __fern_freelist_take\n");
       s = s.write("    mov x2, x0\n");
-      s = s.write("    ldp x0, x30, [sp], #16\n");
+      s = s.write(rt_restore_lr(s, "x0"));
       s = s.write("    cbz x2, .Larrbox_miss\n");
     } else {
       s = s.write("    ldr x2, [x1]\n");
@@ -9063,7 +9063,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldur w1, [x0, #-8]\n");
     s = s.write(san_poison_check("w1", "w9", ".Laie_live", s.rc_free_debug));
     s = s.write("    tbnz w1, #31, .Laie_ret\n");
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x19"));
     s = s.write("    stp x20, x21, [sp, #-16]!\n");
     s = s.write("    mov x19, x0\n");
     s = s.write("    ldr x20, [x19]\n");
@@ -9081,7 +9081,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laie_done:\n");
     s = s.write("    mov x0, x19\n");
     s = s.write("    ldp x20, x21, [sp], #16\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x19"));
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
@@ -9204,9 +9204,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x5, x9\n");
     s = s.write("    b.hs .Lsg_large\n");
-    s = s.write("    stp x5, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x5"));
     s = s.write("    bl __fern_capw\n");
-    s = s.write("    ldp x7, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x7"));
     s = s.write("    cmp x6, x7\n");
     s = s.write("    b.hi .Lsg_no\n");
     s = s.write("    b .Lsg_fits\n");
@@ -9277,9 +9277,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x9, #0x10000\n");
     s = s.write("    cmp x6, x9\n");
     s = s.write("    b.hs .Lsgf_large\n");
-    s = s.write("    stp x6, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x6"));
     s = s.write("    bl __fern_capw\n");
-    s = s.write("    ldp x6, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x6"));
     s = s.write("    b .Lsgf_alloc\n");
     s = s.write(".Lsgf_large:\n");
     s = s.write("    mov x9, #1\n");
@@ -9347,11 +9347,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldur w1, [x0, #-8]\n");
     s = s.write(san_poison_check("w1", "w9", ".Lso_live", s.rc_free_debug));
     s = s.write("    tbnz w1, #31, .Lso_view\n");
-    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x0"));
     s = s.write("    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_rc_inc\n");
     s = s.write("    add sp, sp, #16\n");
-    s = s.write("    ldp x0, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x0"));
     s = s.write("    ret\n");
     s = s.write(".Lso_view:\n");
     s = s.write("    sub x1, x0, #8\n");
@@ -9365,10 +9365,10 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr x12, [x12]\n");
     s = s.write("    cmp x1, x12\n");
     s = s.write("    bhs .Lso_ret\n");
-    s = s.write("    stp x0, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x0"));
     s = s.write("    mov x0, #24\n");
     s = s.write("    bl __fern_alloc\n");
-    s = s.write("    ldp x1, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x1"));
     s = s.write("    mov w3, #1\n    str w3, [x0]\n");
     s = mov_borrowed_marker(s, "w3");
     s = s.write("    str w3, [x0, #4]\n");
@@ -9389,7 +9389,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    blo .Laoe_ret\n");
     s = s.write("    cmp x1, x9\n");
     s = s.write("    blo .Laoe_ret\n");
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x19"));
     s = s.write("    stp x20, x21, [sp, #-16]!\n");
     s = s.write("    mov x19, x0\n");
     s = s.write("    ldr x20, [x1]\n");
@@ -9409,7 +9409,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laoe_done:\n");
     s = s.write("    mov x0, x19\n");
     s = s.write("    ldp x20, x21, [sp], #16\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x19"));
     s = s.write(".Laoe_ret:\n");
     s = s.write("    ret\n");
   }
@@ -9570,9 +9570,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    bhs .Larrdec_large\n");
   s = lc_bump_free_words(s, "x1", "x3", "x9");
   if (!s.rc_free_debug) {
-    s = s.write("    stp x1, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x1"));
     s = s.write("    bl __fern_capw\n");
-    s = s.write("    ldp x1, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x1"));
     s = s.write("    b .Larrdec_push\n");
   } else {
     s = quar_push(s, "x2", "x1", 8);
@@ -9673,9 +9673,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    bhs .Lstrfree_fused_large\n");
   s = lc_bump_free_words(s, "x2", "x3", "x10");
   if (!s.rc_free_debug) {
-    s = s.write("    stp x2, x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, "x2"));
     s = s.write("    bl __fern_capw\n");
-    s = s.write("    ldp x2, x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, "x2"));
     s = s.write("    b .Lstrfree_fused_push\n");
   } else {
     s = s.write("    b .Lstrfree_quar\n");
@@ -9684,14 +9684,14 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = lc_bump_free_words(s, "x2", "x3", "x10");
     s = s.write(".Lstrfree_quar:\n");
-    s = s.write("    str x30, [sp, #-16]!\n");
+    s = s.write(rt_save_lr(s, ""));
     s = s.write("    mov x11, x2\n");
     s = s.write("    sub x2, x0, #8\n");
     s = s.write("    sub x2, x2, x1\n");
     s = s.write("    mov x0, x1\n");
     s = s.write("    mov x1, x11\n");
     s = s.write("    bl __fern_quar_push\n");
-    s = s.write("    ldr x30, [sp], #16\n");
+    s = s.write(rt_restore_lr(s, ""));
     s = s.write("    b .Lstrfree_ret\n");
   } else {
     s = s.write("    lsl x2, x2, #3\n");
@@ -10222,11 +10222,11 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
       s = s.write("    adrp x2, __fern_freelist\n");
       s = s.write("    add x2, x2, :lo12:__fern_freelist\n");
       if (s.harden) {
-        s = s.write("    stp x0, x30, [sp, #-16]!\n");
+        s = s.write(rt_save_lr(s, "x0"));
         s = s.write("    add x0, x2, #56\n");
         s = s.write("    bl __fern_freelist_take\n");
         s = s.write("    mov x3, x0\n");
-        s = s.write("    ldp x0, x30, [sp], #16\n");
+        s = s.write(rt_restore_lr(s, "x0"));
         s = s.write("    cbz x3, .Larr_push_fresh\n");
       } else {
         s = s.write("    ldr x3, [x2, #56]\n");
@@ -11684,11 +11684,11 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   ]);
 }
 
-function profile_exit_asm(mode: i32): string {
-  if (mode <= 0) {
+function profile_exit_asm(s: asmcore.EmitState): string {
+  if (s.profile <= 0) {
     return "";
   }
-  return "    stp x0, x30, [sp, #-16]!\n    bl __fern_profile_flush\n    ldp x0, x30, [sp], #16\n";
+  return rt_save_lr(s, "x0") + "    bl __fern_profile_flush\n" + rt_restore_lr(s, "x0");
 }
 
 // A hand-written runtime frame signs its return address under -harden and
@@ -11708,6 +11708,23 @@ function rt_frame_of(s: asmcore.EmitState, bytes: i32): string {
 
 function rt_unframe_of(s: asmcore.EmitState, bytes: i32): string {
   return "    ldp x29, x30, [sp], #" + util.i32_to_string(bytes) + "\n" + rt_pac(s, "autiasp");
+}
+
+// Saves x30 alone or beside `pair` around a call, signed under -harden. Inside
+// a signed frame x30 is signed already, so xpaclri strips it before paciasp.
+function rt_save_lr(s: asmcore.EmitState, pair: string): string {
+  let sign: string = rt_pac(s, "xpaclri") + rt_pac(s, "paciasp");
+  if (pair == "") {
+    return sign + "    str x30, [sp, #-16]!\n";
+  }
+  return sign + "    stp " + pair + ", x30, [sp, #-16]!\n";
+}
+
+function rt_restore_lr(s: asmcore.EmitState, pair: string): string {
+  if (pair == "") {
+    return "    ldr x30, [sp], #16\n" + rt_pac(s, "autiasp");
+  }
+  return "    ldp " + pair + ", x30, [sp], #16\n" + rt_pac(s, "autiasp");
 }
 
 function rt_pac(s: asmcore.EmitState, op: string): string {

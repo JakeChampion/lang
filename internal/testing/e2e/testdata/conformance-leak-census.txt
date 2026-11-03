@@ -1076,6 +1076,7 @@ slice_unchecked_oob                                  0
 slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
+socket_handle_round_trip                             0
 some_branch                                          0
 sort_strings_delegation_wasm                         0
 split_once                                           0

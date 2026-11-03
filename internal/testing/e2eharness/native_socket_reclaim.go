@@ -37,7 +37,7 @@ func NativeSocketFailureProbe(operation string, darwin, zero bool, connectErrno 
     let fd: i32 = tcp_listen(0);
     while (fd >= 0) { sockets = sockets.append(fd); fd = tcp_listen(0); }
     if (fd != -24 || sockets.len() == 0) { return 91; }
-    if (tcp_listen(0) != -24) { return 92; }
+    if (tcp_listen(0).fd != -24) { return 92; }
     let i: i32 = 0;
     while (i < sockets.len()) {
         if (tcp_local_port(sockets[i]) <= 0) { return 93; }

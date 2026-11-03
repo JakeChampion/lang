@@ -97,7 +97,11 @@ func TestSelfHostStrGrowFreshArm64(t *testing.T) {
 		t.Fatalf("arm64: exit %d, want 0", code)
 	}
 	bin := buildBinArm64(t, gcc, t.TempDir(), "census", cli.emit(t, "arm64-linux", strGrowFreshSrc, "FERN_LEAKCHECK=1"))
-	stderr, exit := runWithStdin(t, []string{qemu}, bin, nil)
+	var runner []string
+	if qemu != "" {
+		runner = []string{qemu}
+	}
+	stderr, exit := runWithStdin(t, runner, bin, nil)
 	if exit != 0 {
 		t.Fatalf("arm64 census run: exit %d, want 0\n%s", exit, stderr)
 	}

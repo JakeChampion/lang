@@ -239,6 +239,7 @@ var freshResultBuiltins = map[string]bool{
 	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
+	"tcp_accept": true, "tcp_connect_with": true, "tcp_listen": true, "tcp_listen_with": true,
 }
 
 func (c *checker) signatureResultBorrows(name string) bool {
@@ -366,7 +367,7 @@ func (c *checker) allNoHandleIn(ts []ast.Type, free map[string]bool, seen map[st
 
 // fdHandleNames are the built-in types that own a descriptor. Only the
 // call that opens one makes it, and its close consumes it.
-var fdHandleNames = []string{"Reader", "Writer", "Dir"}
+var fdHandleNames = []string{"Reader", "Writer", "Dir", "Socket"}
 
 func builtinHandle(name string) bool {
 	return slices.Contains(fdHandleNames, name)

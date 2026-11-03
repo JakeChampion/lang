@@ -4438,6 +4438,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if let typeinfo.TypeNever(_) = from {
     return true;
   }
+  if (semtypes.socket_descriptor_transition(from, to)) {
+    return true;
+  }
   if (integer_literal_widens(from, to)) {
     return true;
   }
@@ -4946,20 +4949,20 @@ function builtin_sigs(): string[] {
     "sysctl(i32[]): Result[u8[], IoError]",
     "target_arch(): string",
     "target_os(): string",
-    "tcp_accept(i32): i32",
-    "tcp_addr_into(i32, boolean, u8[]): i32",
-    "tcp_close(i32): i32",
-    "tcp_connect_with(u8[], i32, boolean): i32",
-    "tcp_ktls(i32, i32, i32, u8[]): i32",
-    "tcp_listen(i32): i32",
-    "tcp_listen_with(u8[], i32, i32, boolean): i32",
-    "tcp_local_port(i32): i32",
-    "tcp_pollable(i32): i32",
-    "tcp_recv_into(i32, u8[]): i32",
-    "tcp_send_buf(i32, usize, i32): i32",
-    "tcp_send_bytes(i32, u8[]): i32",
-    "tcp_sendfile(i32, i32, i32): i32",
-    "tcp_socket_ctl(i32, i32, i32): i32",
+    "tcp_accept(Socket): Socket",
+    "tcp_addr_into(Socket, boolean, u8[]): i32",
+    "tcp_close(Socket): i32",
+    "tcp_connect_with(u8[], i32, boolean): Socket",
+    "tcp_ktls(Socket, i32, i32, u8[]): i32",
+    "tcp_listen(i32): Socket",
+    "tcp_listen_with(u8[], i32, i32, boolean): Socket",
+    "tcp_local_port(Socket): i32",
+    "tcp_pollable(Socket): i32",
+    "tcp_recv_into(Socket, u8[]): i32",
+    "tcp_send_buf(Socket, usize, i32): i32",
+    "tcp_send_bytes(Socket, u8[]): i32",
+    "tcp_sendfile(Socket, i32, i32): i32",
+    "tcp_socket_ctl(Socket, i32, i32): i32",
     "temp_dir(string): Result[string, IoError]",
     "termios_get(i32): Result[i64[], IoError]",
     "termios_set(i32, i32, i64[]): Result[void, IoError]",
@@ -21202,11 +21205,13 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   }
   // The built-in close consumes its handle: a descriptor closed once is
   // not a value the program reads again.
-  for h in semtypes.fd_handle_names() {
+  for h in ["Reader", "Writer", "Dir"] {
     let key: string = h + ".close";
     out = out.append(OwnFunc { name: key, flags: [true], arr: [false] });
     names = names.append(key);
   }
+  out = out.append(OwnFunc { name: "tcp_close", flags: [true], arr: [false] });
+  names = names.append("tcp_close");
   methods = methods.append("close");
   for td in mod.trait_decls {
     for m in td.methods {
@@ -21732,6 +21737,7 @@ function ow_fresh_builtins(): string[] {
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
+    "tcp_accept", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "termios_get", "uname_field", "window_size",
     "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",
   ];

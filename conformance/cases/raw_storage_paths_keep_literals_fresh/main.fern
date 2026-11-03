@@ -119,7 +119,7 @@ function check(fd: i32, mode: string): boolean {
 }
 
 function main(): i32 {
-  let fd = tcp_listen(0);
+  let fd: i32 = tcp_listen(0);
   if (fd < 0) {
     return 1;
   }
