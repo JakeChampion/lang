@@ -517,14 +517,15 @@ where a second context exists holds it in its own way:
 | `signal_catch` and its siblings | a signal number | the handler is a fixed stub that sets one flag the program polls; no builtin installs a Fern function as a handler |
 | tasks, `Future` combinators, `std/sim` | values in the one heap | one thread; a task parks only at `__task_park` |
 | wasm `async function` exports and imports | canonical-ABI copies | the export signature admits scalars only |
-| `-shared` exports | C arguments | `__fern_busy`: each export entry takes it and aborts when another thread holds it; a `__c_call` frees it for the call, so a C callback entering an export on the same thread still runs |
+| `-shared` exports | C arguments | `__fern_busy`, a futex lock: each export entry takes it and waits while another thread holds it; a `__c_call` gives it back for the call, so a C callback entering an export on the same thread still runs, and another thread can run while this one is in C |
 
 `TestX86_64SignalPreemption` and its arm64 sibling hold the signal row under
 real preemption. They interrupt heavy count traffic with signals sent from
 outside, and require the same output and the same census as a quiet run.
-`TestSharedLibX86BusyFlag` holds the `-shared` row: two threads inside the
-object at once abort, while threads that take turns and a same-thread
-callback both run.
+`TestSharedLibBusyLock` holds the `-shared` row on x86-64 and arm64. Six
+threads call into the object at once, with heap traffic and same-thread
+callbacks, and each result is correct. A thread that enters while another
+one runs a long call waits for it.
 
 An abort or `exit` ends the process with `exit_group`, not `exit`, so a
 report inside a host's thread takes the whole host down rather than one

@@ -101,21 +101,27 @@ func TestFernFixturesSelfHostWasiHttp(t *testing.T) {
 }
 
 func TestFernFixturesSelfHostX86_64(t *testing.T) {
-	runSelfHostFixtureLegX86_64(t, nil)
+	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", nil)
 }
 
 func TestFernFixturesSelfHostX86_64Quarantine(t *testing.T) {
-	runSelfHostFixtureLegX86_64(t, []string{"FERN_RC_FREE_DEBUG=1"})
+	runSelfHostFixtureLegX86_64(t, "x86-64-linux", "x86_64", []string{"FERN_RC_FREE_DEBUG=1"})
 }
 
-func runSelfHostFixtureLegX86_64(t *testing.T, env []string) {
+// x86-64-android is a static PIE over the Linux syscalls, so it runs where
+// an x86-64-linux binary runs.
+func TestFernFixturesSelfHostX86_64Android(t *testing.T) {
+	runSelfHostFixtureLegX86_64(t, "x86-64-android", "x86_64_android", nil)
+}
+
+func runSelfHostFixtureLegX86_64(t *testing.T, target, backend string, env []string) {
 	requireSelfHostFixtureLeg(t)
 	runner := e2eharness.X86_64Runner(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "x86_64",
+		backend:   backend,
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath, ok := compileSelfHostNative(t, fernBin, "x86-64-linux", env, f, stdlibRoot, failf)
+			binPath, ok := compileSelfHostNative(t, fernBin, target, env, f, stdlibRoot, failf)
 			if !ok {
 				return
 			}

@@ -67,12 +67,28 @@ func TestEnforceSubprocessByTarget(t *testing.T) {
 			if vs[0].Builtin != "subprocess" || vs[0].Capability != "subprocess" {
 				t.Errorf("violation = %+v, want subprocess/subprocess", vs[0])
 			}
-			want := "targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-linux]"
+			want := "targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-android x86-64-linux]"
 			if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, want) {
 				t.Errorf("message does not list the hosted natives (%q): %s", want, msg)
 			}
 			if vs[0].Pos.Line != 2 {
 				t.Errorf("violation position line = %d, want 2", vs[0].Pos.Line)
+			}
+		})
+	}
+}
+
+func TestEnforceIOUringByTarget(t *testing.T) {
+	prog := prepared(t, `function main(): i32 { return ring_new(1) as i32; }`, false)
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "arm64-android", "x86-64-android"} {
+		t.Run(target, func(t *testing.T) {
+			vs := platforms.Enforce(prog, target)
+			if strings.HasSuffix(target, "-linux") {
+				if len(vs) != 0 {
+					t.Fatalf("Linux ring violations: %+v", vs)
+				}
+			} else if len(vs) != 1 || vs[0].Builtin != "ring_new" || vs[0].Capability != "uring" {
+				t.Fatalf("want the io_uring capability refusal: %+v", vs)
 			}
 		})
 	}
@@ -482,7 +498,7 @@ func TestRawMemoryFloorNativeOnly(t *testing.T) {
 			t.Errorf("%s gated on %q; wasm lowers it, so it stays ungated", b, c)
 		}
 	}
-	want := "arm64-android arm64-darwin arm64-linux x86-64-linux"
+	want := "arm64-android arm64-darwin arm64-linux x86-64-android x86-64-linux"
 	if got := strings.Join(platforms.TargetsProviding("rawmem"), " "); got != want {
 		t.Errorf("rawmem providers = %s, want %s", got, want)
 	}

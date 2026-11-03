@@ -2838,11 +2838,20 @@ function print_resource_decl(rd: parser.ResourceDecl): string {
   return out + "resource " + rd.name + ";\n";
 }
 
+// The @import or @callback line of a body-less function.
+function import_attr(fd: parser.FuncDecl): string {
+  if (fd.import_iface == parser.CALLBACK_IFACE) {
+    return "@callback(" + quote_string(fd.import_wit) + ")\n";
+  }
+  if (fd.import_iface.len() > 0) {
+    return "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
+  }
+  return "";
+}
+
 function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_never: boolean, f: Fmt): (string, Fmt) {
   let out: string = "";
-  if (fd.import_iface.len() > 0) {
-    out = out + "@import(" + quote_string(fd.import_iface) + ", " + quote_string(fd.import_wit) + ")\n";
-  }
+  out = out + import_attr(fd);
   if (has_inline_hint) {
     if (inline_never) {
       out = out + "@noinline\n";
@@ -3356,7 +3365,11 @@ function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBin
   let prefix = "";
   for binding in exports {
     if (binding.func_name == fd.name && !binding.c_abi && fd.receiver_name.len() > 0 == binding.method) {
-      prefix = prefix + "@export(" + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n";
+      let attr: string = "@export(";
+      if (binding.jni) {
+        attr = "@jni(";
+      }
+      prefix = prefix + attr + quote_string(binding.iface) + ", " + quote_string(binding.wit) + ")\n";
     }
   }
   let has_hint = cursor < hints.len() && hints[cursor].line == fd.line && hints[cursor].col == fd.col;

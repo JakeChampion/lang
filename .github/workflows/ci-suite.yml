@@ -166,6 +166,12 @@ jobs:
     uses: ./.github/workflows/showcase.yml
     secrets: inherit
 
+  android:
+    name: Android
+    if: fromJSON(inputs.lanes)['android']
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+
   vscode-extension:
     name: VS Code Extension
     if: fromJSON(inputs.lanes)['vscode-extension']
@@ -367,6 +373,17 @@ jobs:
     uses: ./.github/workflows/cancel-on-failure.yml
     with:
       lane: Showcase
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+  reap-android:
+    needs: [android]
+    if: ${{ !cancelled() && needs.android.result == 'failure' && github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/cancel-on-failure.yml
+    with:
+      lane: Android
     permissions:
       actions: write
       contents: read

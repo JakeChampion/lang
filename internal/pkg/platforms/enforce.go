@@ -195,6 +195,8 @@ var gatedBuiltins = map[string]string{
 	"__c_call2": "cabi", "__c_call2_f32": "cabi", "__c_call2_f64": "cabi",
 	"__c_call3": "cabi", "__c_call3_f32": "cabi", "__c_call3_f64": "cabi",
 	"__c_call4": "cabi", "__c_call4_f32": "cabi", "__c_call4_f64": "cabi",
+	"__c_call5": "cabi", "__c_call5_f32": "cabi", "__c_call5_f64": "cabi",
+	"__c_call6": "cabi", "__c_call6_f32": "cabi", "__c_call6_f64": "cabi",
 	"__syscall3": "syscall", "__syscall4": "syscall", "__syscall5": "syscall", "__syscall6": "syscall",
 	"__raw_alloc": "rawmem", "__raw_string": "rawmem", "__raw_arr_box": "rawmem",
 	"__raw_scratch": "rawmem", "__raw_environ": "rawmem", "__raw_splice_pipe": "rawmem",

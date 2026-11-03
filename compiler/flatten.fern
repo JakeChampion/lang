@@ -732,6 +732,15 @@ function module_ids(imports: LoadedModule[]): string[] {
   return out;
 }
 
+// A callback names a function of its own module, so the target is mangled
+// with the declaration.
+function callback_target(fd: parser.FuncDecl, ctx: RewriteCtx): string {
+  if (fd.import_iface == parser.CALLBACK_IFACE) {
+    return mangle_bare(fd.import_wit, ctx);
+  }
+  return fd.import_wit;
+}
+
 function mangle_bare(name: string, ctx: RewriteCtx): string {
   return resolve_bare(name, ctx, false);
 }
@@ -1325,7 +1334,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         bound_modules = bound_modules.append(module);
       }
     }
-    funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, tctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, tctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, tctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, tctx), body: rewrite_block(fd.body, bctx), module: ctx.prefix, bound_modules: bound_modules });
+    funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, import_wit: callback_target(fd, ctx), receiver_type: rewrite_type_name(fd.receiver_type, tctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, tctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, tctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, tctx), body: rewrite_block(fd.body, bctx), module: ctx.prefix, bound_modules: bound_modules });
     i = i + 1;
   }
   let structs: parser.StructDecl[] = [];

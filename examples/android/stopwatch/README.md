@@ -30,7 +30,7 @@ amount.
 | file | what it does |
 |---|---|
 | `stopwatch.fern` | All of the behaviour: the state changes, the text, the colours, when to update next, the burn-in position, the beep times and the settings table. Every function is pure. |
-| `native.fern` | The JNI methods of `Core`. Each one changes JNI types into Fern types and calls `stopwatch.fern`. |
+| `native.fern` | The JNI methods of `Core`, each with `@jni`. Each one changes JNI types into Fern types and calls `stopwatch.fern`. `build.sh` writes `Core.java` from them with `-jni-java`. |
 | `stopwatch_test.fern` | The tests for `stopwatch.fern` (`std/test`). |
 | `java/dev/fern/stopwatch/` | The Android shell: views, touch events, timers and stored values. It asks `Core` for every decision. |
 | `host/HostCheck.java` | Calls every native method in a desktop JVM. |
@@ -56,7 +56,7 @@ apt-get install aapt apksigner zipalign dalvik-exchange android-sdk-platform-23
 ```
 
 The APK has `libfern.so` for `arm64-v8a` (`-target arm64-android`) and for
-`x86_64` emulators (`-target x86-64-linux`). It needs Android 6.0 (API 23)
+`x86_64` emulators (`-target x86-64-android`). It needs Android 6.0 (API 23)
 or later. `build.sh` signs it with a new debug key unless `KEYSTORE` is set.
 
 ## Tests
@@ -64,11 +64,21 @@ or later. `build.sh` signs it with a new debug key unless `KEYSTORE` is set.
 `internal/testing/e2e/android_stopwatch_test.go` runs three checks:
 
 - `TestAndroidStopwatchLogic` runs `stopwatch_test.fern`.
-- `TestAndroidStopwatchExports` checks that each `native` method in
-  `Core.java` has an export, and that the arm64 library is one that
-  Android's loader accepts.
+- `TestAndroidStopwatchExports` checks that each `native` method in the
+  generated `Core.java` has an export, and that the arm64 library is one
+  that Android's loader accepts.
 - `TestAndroidStopwatchHostJVM` loads the host build of `libfern.so` into a
   desktop JVM and runs `HostCheck`.
 
-The Examples CI lane builds the APK and keeps it as the `fern-stopwatch-apk`
-artifact. No test runs the app on a device or an emulator.
+The Android CI lane builds the APK and keeps it as the `fern-stopwatch-apk`
+artifact. Then it runs the APK on an x86-64 emulator with
+`emulator_check.py`. The check requires these results:
+
+- The content is at the screen centre.
+- A tap starts the stopwatch, and a long tap resets it.
+- The settings screen has its rows.
+- logcat shows no crash.
+
+It keeps the screenshots, the view trees and logcat as the
+`fern-stopwatch-emulator` artifact. To run the check on a phone, connect the
+phone with `adb`. Then run the script with the APK and an output directory.

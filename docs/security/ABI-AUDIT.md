@@ -32,7 +32,7 @@ Floats never occupy `d8` to `d15` or a callee-saved vector register.
 
 The platform convention applies at two boundaries.
 A raw syscall (`__syscall3` to `__syscall6`) is the kernel's convention, and `TestSelfHostProfileSyscallABI` pins the numbers per target.
-A foreign call (`__c_call0` to `__c_call4`) goes through one shim per arity (`emit_ccall_shim1` in `compiler/asm_ir.fern`, `emit_ccall_shim1_arm64` in `compiler/asm_arm64_ir.fern`).
+A foreign call (`__c_call0` to `__c_call6`) goes through one shim per arity (`emit_ccall_shim1` in `compiler/asm_ir.fern`, `emit_ccall_shim1_arm64` in `compiler/asm_arm64_ir.fern`).
 
 The shim builds a frame record and loads the callee from the stack entry.
 It loads up to four integer arguments into the platform argument registers, and calls.

@@ -22,8 +22,9 @@ bare `arm64` meaning arm64-Linux. There is no x86-64 Darwin target.
 | ------ | --- | ----------- | ------------- | --- | ------ |
 | arm64-linux | arm64 | linux | ELF | AAPCS64 | primary target |
 | arm64-darwin | arm64 | darwin | Mach-O | AAPCS64 + Apple's syscall vector | the arm64-linux emitter, its text rewritten for XNU (`darwinize` in `asm_arm64_ir.fern`) |
-| arm64-android | arm64 | android | ELF (ET_DYN, PIE) | AAPCS64 | same syscalls as arm64-linux |
+| arm64-android | arm64 | android | ELF (ET_DYN, PIE) | AAPCS64 | same syscalls as arm64-linux; stderr and aborts also go to logcat |
 | x86-64-linux | x86-64 | linux | ELF | System V AMD64 | supported |
+| x86-64-android | x86-64 | android | ELF (ET_DYN, PIE) | System V AMD64 | same syscalls as x86-64-linux; stderr and aborts also go to logcat |
 | wasm32-wasi | wasm32 | wasi | wasm32 module | wasm CC + WASI | a wasi:cli/run component by default |
 | wasm32-wasi-http | wasm32 | wasi-http | component | wasi:http/incoming-handler | proxy world; std/fetch sends through wasi:http/outgoing-handler (docs/WASI-PREVIEW2.md) |
 | arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#6510) |

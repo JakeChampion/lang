@@ -6638,7 +6638,7 @@ function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
   if (at >= 0) {
     return emit_runtime_module(s.runtime_units.mods[at], s.runtime_units.lowered[at], s);
   }
-  let m: parser.Module = rtmodule.load(s.runtime_target, roots);
+  let m: parser.Module = rtmodule.load(asmcore.runtime_files(s, s.runtime_target), roots);
   let lowered: physicalbody.Lowered = s.rt_lower(m);
   return emit_runtime_module(m, lowered, asmcore.with_runtime_unit(s, roots, m, lowered));
 }
@@ -6673,20 +6673,11 @@ function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): 
   s = s.write("\n__fn_" + variant + ":\n");
   s = s.write(rt_frame(s) + "    mov x29, sp\n");
   s = s.write("    ldr x9, [x29, #16]\n");
-  if (n >= 1) {
-    s = s.write("    ldr x0, [x29, #32]\n");
-  }
-  if (n >= 2) {
-    s = s.write("    ldr x1, [x29, #48]\n");
-  }
-  if (n >= 3) {
-    s = s.write("    ldr x2, [x29, #64]\n");
-  }
-  if (n >= 4) {
-    s = s.write("    ldr x3, [x29, #80]\n");
+  for i in 0..n {
+    s = s.write("    ldr x" + util.i32_to_string(i) + ", [x29, #" + util.i32_to_string(32 + 16 * i) + "]\n");
   }
   if (s.shared) {
-    s = s.write(busy_release_arm64());
+    s = s.write(busy_give_arm64());
   }
   s = s.write("    blr x9\n");
   if (s.shared) {
@@ -6703,16 +6694,32 @@ function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): 
 }
 
 pub function busy_take_arm64(): string {
-  return "    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    mov w17, #1\n    swpal w17, w17, [x16]\n    cbnz w17, __fern_busy_abort\n";
+  return "    bl __fern_busy_take\n";
 }
 
-pub function busy_release_arm64(): string {
-  return "    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    stlr wzr, [x16]\n";
+pub function busy_give_arm64(): string {
+  return "    bl __fern_busy_give\n";
+}
+
+// The arm64 form of emit_busy_lock_x86. Both routines keep every register
+// except x16, x17 and the flags.
+function emit_busy_lock_arm64(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
+  s = s.write("__fern_busy_take:\n    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    mov w17, #1\n    swpal w17, w17, [x16]\n    cbnz w17, .Lfern_busy_wait\n    ret\n");
+  s = s.write(".Lfern_busy_wait:\n    stp x0, x1, [sp, #-16]!\n    stp x2, x3, [sp, #-16]!\n    str x8, [sp, #-16]!\n");
+  s = s.write(".Lfern_busy_retry:\n    mov w17, #2\n    swpal w17, w17, [x16]\n    cbz w17, .Lfern_busy_won\n");
+  s = s.write("    mov x0, x16\n    mov x1, #128\n    mov x2, #2\n    mov x3, #0\n    mov x8, #98\n").svc(98);
+  s = s.write("    b .Lfern_busy_retry\n");
+  s = s.write(".Lfern_busy_won:\n    ldr x8, [sp], #16\n    ldp x2, x3, [sp], #16\n    ldp x0, x1, [sp], #16\n    ret\n");
+  s = s.write("__fern_busy_give:\n    adrp x16, __fern_busy\n    add x16, x16, :lo12:__fern_busy\n    swpal wzr, w17, [x16]\n    cmp w17, #2\n    b.eq .Lfern_busy_wake\n    ret\n");
+  s = s.write(".Lfern_busy_wake:\n    stp x0, x1, [sp, #-16]!\n    stp x2, x8, [sp, #-16]!\n");
+  s = s.write("    mov x0, x16\n    mov x1, #129\n    mov x2, #1\n    mov x8, #98\n").svc(98);
+  return s.write("    ldp x2, x8, [sp], #16\n    ldp x0, x1, [sp], #16\n    ret\n");
 }
 
 function emit_ccall_shims_arm64(s: asmcore.EmitState): asmcore.EmitState {
   let ca: i32 = 0;
-  while (ca <= 4) {
+  while (ca <= 6) {
     let cbase: string = "__c_call" + util.i32_to_string(ca);
     if (s.has_need("ccall:" + cbase)) {
       s = emit_ccall_shim1_arm64(s, cbase, ca);
@@ -8319,6 +8326,11 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x0, #2\n");
   s = s.write("    mov x8, #64\n");
   s = s.svc(64);
+  if (asmcore.is_android(s.build_target)) {
+    s = s.write("    str x19, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n");
+    s = s.write("    mov x9, #7\n    str x9, [sp, #-16]!\n    bl __fn___fern_logcat\n");
+    s = s.write("    add sp, sp, #48\n    ldr x19, [sp], #16\n");
+  }
   if (s.backtrace) {
     s = s.write("    b __fern_bt_exit\n");
     s = s.write(".size __fern_report, .-__fern_report\n");
@@ -10057,9 +10069,11 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     s = asmcore.emit_build_manifest(s);
   }
   s = emit_rt_report(s);
+  if (asmcore.is_android(s.build_target)) {
+    s = emit_runtime("__fern_logcat", s);
+  }
   if (s.shared) {
-    s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
-    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);
+    s = emit_busy_lock_arm64(s);
   }
   s = emit_san_uaf_abort(s);
   s = emit_san_waf_abort(s);

@@ -11,7 +11,7 @@ The image layouts are in [IMAGE-PERMISSIONS.md](IMAGE-PERMISSIONS.md), and the h
 | Thread-local storage | None. The runtime has no threads, `clone` serves `fork`-style spawning only, and neither backend touches `%fs` or `tpidr_el0`. Every runtime global is process-global. |
 | Unwind tables | Both native targets emit `.eh_frame` and `.eh_frame_hdr`, and the writer maps them read-only under `PT_GNU_EH_FRAME`. The CFI records every frame, including the signed-return state on arm64. |
 | GNU property note | The arm64-linux `-harden` image carries `PT_GNU_PROPERTY` with the BTI bit. The x86-64 image carries none, because Linux enforces no user-space IBT and the shadow stack is requested through `arch_prctl` ([SHADOW-STACK.md](SHADOW-STACK.md)). |
-| Procedure linkage table | None. Every image is static and every call is direct, apart from the indirect calls the backends emit and check ([CFI.md](CFI.md)). A shared object exports functions through its dynamic symbol table and imports nothing. |
+| Procedure linkage table | None. Every image is static and every call is direct, apart from the indirect calls the backends emit and check ([CFI.md](CFI.md)). A shared object exports functions through its dynamic symbol table. A C import (`@import("liblog.so", "sym")`) adds a `DT_NEEDED` entry, an undefined symbol and a `GLOB_DAT` slot that the loader fills before any call. A call goes through a stub that reads the slot. There is no lazy binding. |
 | Veneers | None. The arm64 assembler refuses a branch out of range instead of inserting a veneer, so no generated code lacks a landing pad or a signature. |
 | Linker-generated stubs | The only stubs are the `-harden` landing-pad stubs, which the compiler emits and which carry the pad themselves. |
 

@@ -167,28 +167,43 @@ pub function get_version(env: usize): i32 {
   return call0(env, 4) as i32;
 }
 
-pub function find_class(env: usize, name: usize): usize {
-  return call1(env, FIND_CLASS, name);
+// The class with the JNI name `name`, such as "java/lang/String".
+pub function find_class(env: usize, name: string): usize {
+  let n: usize = cstr(name);
+  let clazz: usize = call1(env, FIND_CLASS, n);
+  free_buffer(n);
+  return clazz;
 }
 
 pub function get_object_class(env: usize, obj: usize): usize {
   return call1(env, 31, obj);
 }
 
-pub function get_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_METHOD_ID, clazz, name, sig);
+// A method or field ID: the table entry `index` called with C copies of
+// `name` and `sig`, which it frees after the call.
+function member_id(env: usize, index: i32, clazz: usize, name: string, sig: string): usize {
+  let n: usize = cstr(name);
+  let g: usize = cstr(sig);
+  let id: usize = call3(env, index, clazz, n, g);
+  free_buffer(g);
+  free_buffer(n);
+  return id;
 }
 
-pub function get_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_FIELD_ID, clazz, name, sig);
+pub function get_method_id(env: usize, clazz: usize, name: string, sig: string): usize {
+  return member_id(env, GET_METHOD_ID, clazz, name, sig);
 }
 
-pub function get_static_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_STATIC_METHOD_ID, clazz, name, sig);
+pub function get_field_id(env: usize, clazz: usize, name: string, sig: string): usize {
+  return member_id(env, GET_FIELD_ID, clazz, name, sig);
 }
 
-pub function get_static_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_STATIC_FIELD_ID, clazz, name, sig);
+pub function get_static_method_id(env: usize, clazz: usize, name: string, sig: string): usize {
+  return member_id(env, GET_STATIC_METHOD_ID, clazz, name, sig);
+}
+
+pub function get_static_field_id(env: usize, clazz: usize, name: string, sig: string): usize {
+  return member_id(env, GET_STATIC_FIELD_ID, clazz, name, sig);
 }
 
 pub function new_string_utf(env: usize, bytes: usize): usize {
@@ -226,8 +241,11 @@ pub function throw(env: usize, throwable: usize): i32 {
   return call1(env, 13, throwable) as i32;
 }
 
-pub function throw_new(env: usize, clazz: usize, message: usize): i32 {
-  return call2(env, 14, clazz, message) as i32;
+pub function throw_new(env: usize, clazz: usize, message: string): i32 {
+  let m: usize = cstr(message);
+  let r: i32 = call2(env, 14, clazz, m) as i32;
+  free_buffer(m);
+  return r;
 }
 
 pub function exception_occurred(env: usize): usize {

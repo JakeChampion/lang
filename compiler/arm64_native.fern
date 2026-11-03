@@ -4252,7 +4252,7 @@ function arm64_gas_mem(op: string): Arm64Mem {
           ext_has_amt = true;
         }
       }
-    } else {
+    } else if (!arm64_gas_is_page_offset(parts[1])) {
       off = arm64_gas_imm(parts[1]);
     }
   }
@@ -4261,6 +4261,12 @@ function arm64_gas_mem(op: string): Arm64Mem {
     idx_w: idx_w, ext_opt: ext_opt, ext_amt: ext_amt, ext_has_amt: ext_has_amt,
     at: 0 - 1,
   };
+}
+
+// A :lo12: or @PAGEOFF operand is a relocation, and the fixup supplies its
+// value.
+function arm64_gas_is_page_offset(p: string): boolean {
+  return arm64_str_indexof(p, ":lo12:") >= 0 || arm64_str_indexof(p, "@PAGEOFF") >= 0;
 }
 
 function arm64_gas_line_mem(ops: string[]): Arm64Mem {
@@ -8304,6 +8310,10 @@ function arm64_gas_strip_at(tok: string): string {
   return arm64_gas_trim(s);
 }
 
+function arm64_gas_page_load(mnem: string, rest: string, ops: string[]): boolean {
+  return mnem == "ldr" && (arm64_str_indexof(rest, "@PAGEOFF") >= 0 || arm64_str_indexof(rest, ":lo12:") >= 0) && !arm64_gas_is_w(ops[0]);
+}
+
 function arm64_gas_strip_lo12(tok: string): string {
   let s: string = arm64_gas_trim(tok);
   let at: i32 = arm64_str_indexof(s, ":lo12:");
@@ -9123,15 +9133,18 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       pf_kinds = pf_kinds.append(3);
       continue;
     }
-    if (mnem == "ldr" && arm64_str_indexof(rest, "@PAGEOFF") >= 0) {
+    // The page offset of a symbol: @PAGEOFF on Mach-O, :lo12: on ELF. The
+    // fixup scales the offset by 8, so only an x-register load takes it.
+    let lo12: boolean = arm64_str_indexof(rest, ":lo12:") >= 0;
+    if (arm64_gas_page_load(mnem, rest, ops)) {
       let lm: Arm64Mem = arm64_gas_mem_at(ops, 1, lmem);
       let linner: string = ops[1];
       let lb: i32 = arm64_str_indexof(linner, "[");
       let rb: i32 = arm64_str_indexof(linner, "]");
       let lparts: string[] = arm64_gas_operands(slice_unchecked(linner, lb + 1, rb));
-      arm64_push_arr(a.code, arm64_ldr([], arm64_gas_reg(ops[0]), lm.base, 0, arm64_gas_is_w(ops[0])));
+      arm64_push_arr(a.code, arm64_ldr([], arm64_gas_reg(ops[0]), lm.base, 0, false));
       pf_sites = pf_sites.append(buf_len(a.code) - 4);
-      pf_syms = pf_syms.append(arm64_gas_strip_at(lparts[1]));
+      pf_syms = pf_syms.append(arm64_gas_strip_lo12(arm64_gas_strip_at(lparts[1])));
       pf_kinds = pf_kinds.append(1);
       continue;
     }
@@ -9147,6 +9160,10 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       pf_sites = pf_sites.append(buf_len(a.code) - 4);
       pf_syms = pf_syms.append(arm64_gas_strip_lo12(ops[2]));
       pf_kinds = pf_kinds.append(2);
+      continue;
+    }
+    if (lo12) {
+      p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":lo12") };
       continue;
     }
     if (mnem == "and" && arm64_gas_third_is_imm(ops)) {

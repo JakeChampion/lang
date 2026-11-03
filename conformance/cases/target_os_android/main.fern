@@ -1,0 +1,9 @@
+function main(): i32 {
+    if (target_os() == "linux") {
+        print("linux build");
+    } else {
+        print("not a linux build");
+    }
+    print(target_os());
+    return 0;
+}

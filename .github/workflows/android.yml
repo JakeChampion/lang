@@ -1,0 +1,117 @@
+name: Android
+
+# Builds the Android example app and runs it on an emulator. The APK job
+# uses the runner image's Android SDK (ANDROID_HOME) for aapt, d8, zipalign,
+# apksigner and android.jar. The emulator job installs that APK on an x86-64
+# emulator with KVM, and examples/android/stopwatch/emulator_check.py drives
+# it: the content at the screen centre, a tap to start, a long tap to reset,
+# the settings screen, and no crash in logcat. It is the one gate that loads
+# a Fern library with Android's loader. The APK job also builds
+# examples/android/native with fern -apk, an app with no Java code, and
+# examples/android/native/emulator_check.py drives it on the same emulator.
+# The seccomp job checks the syscalls of the fixture corpus against
+# Android's app filter.
+
+# Called from ci.yml rather than triggered: that is the one workflow a pull
+# request or a push to main launches. It decides from the changed files
+# whether this lane runs (its path filter is the lane table's `android`
+# row) and cancels the rest of the run when a lane goes red.
+# `workflow_dispatch` stays so the lane can be run on its own.
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  # gotestsum reads this as --jsonfile: the event stream the
+  # failure-annotation step names the failed tests from.
+  GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
+jobs:
+  apk:
+    name: android-stopwatch-apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: Build the stopwatch APK and the logcat report program
+        run: |
+          make bin/fern
+          examples/android/stopwatch/build.sh
+          ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
+          ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fern-stopwatch-apk
+          path: |
+            build/android-stopwatch/fern-stopwatch.apk
+            build/android-stopwatch/report
+            build/android-stopwatch/fern-native.apk
+          if-no-files-found: error
+
+  emulator:
+    name: android-stopwatch-emulator
+    needs: [apk]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: fern-stopwatch-apk
+          path: build/android-stopwatch
+      - name: Let the emulator use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the APK on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
+            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: fern-stopwatch-emulator
+          path: build/android-stopwatch/emulator
+
+  # Each syscall that an Android image of a fixture can make, against the app
+  # seccomp filter that bionic generates at the AOSP tag in
+  # scripts/android-app-syscalls.py. A syscall outside it kills an app with
+  # SIGSYS on a phone, and nothing else would see it.
+  seccomp:
+    name: android-seccomp-corpus
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      # The filter depends only on the AOSP tag in the script, so a cache hit
+      # does not reach googlesource at all.
+      - name: Restore the Android app filter
+        id: filter
+        uses: actions/cache@v6
+        with:
+          path: build/android-app-syscalls.json
+          key: android-app-syscalls-${{ hashFiles('scripts/android-app-syscalls.py') }}
+      - name: Read the Android app filter from AOSP
+        run: |
+          python3 -B -m unittest discover -s scripts -p test_android_app_syscalls.py
+          mkdir -p build
+          if [ "${{ steps.filter.outputs.cache-hit }}" != "true" ]; then
+            python3 scripts/android-app-syscalls.py build/android-app-syscalls.json
+          fi
+      - name: go test (the corpus against the Android app filter)
+        env:
+          ANDROID_APP_SYSCALLS: ${{ github.workspace }}/build/android-app-syscalls.json
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestAndroidSeccompCorpus$' ./internal/testing/e2e/ -timeout 40m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

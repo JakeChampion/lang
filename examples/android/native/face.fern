@@ -1,0 +1,76 @@
+// The stopwatch face of the native app: seven-segment digits for minutes
+// and seconds, laid out in the middle of the window. It has no Android
+// code, so the tests run on the host.
+
+// The segments of each digit, one bit each: a 1, b 2, c 4, d 8, e 16, f 32
+// and g 64. Segment a is the top bar, and the rest go clockwise, with g in
+// the middle.
+pub function segments(digit: i32): i32 {
+  let masks: i32[] = [63, 6, 91, 79, 102, 109, 125, 7, 127, 111];
+  return masks[digit % 10];
+}
+
+// The four digits of mm:ss for `elapsed_ms`. The minutes stop at 99.
+pub function digits(elapsed_ms: i64): i32[] {
+  let s: i64 = elapsed_ms / 1000i64;
+  let m: i64 = s / 60i64;
+  if (m > 99i64) {
+    m = 99i64;
+  }
+  let sec: i64 = s % 60i64;
+  return [(m / 10i64) as i32, (m % 10i64) as i32, (sec / 10i64) as i32, (sec % 10i64) as i32];
+}
+
+// The milliseconds to the next change of the face.
+pub function next_change_ms(elapsed_ms: i64): i32 {
+  return (1000i64 - elapsed_ms % 1000i64) as i32;
+}
+
+pub struct Rect { x: i32, y: i32, w: i32, h: i32 }
+
+// The segment rectangles of `digit` in the cell at x and y. A segment is
+// `len` long and `t` thick. A cell is len + 2t wide and 2 len + 3t high.
+pub function digit_rects(digit: i32, x: i32, y: i32, len: i32, t: i32): Rect[] {
+  let all: Rect[] = [
+    Rect { x: x + t, y: y, w: len, h: t },
+    Rect { x: x + t + len, y: y + t, w: t, h: len },
+    Rect { x: x + t + len, y: y + 2 * t + len, w: t, h: len },
+    Rect { x: x + t, y: y + 2 * t + 2 * len, w: len, h: t },
+    Rect { x: x, y: y + 2 * t + len, w: t, h: len },
+    Rect { x: x, y: y + t, w: t, h: len },
+    Rect { x: x + t, y: y + t + len, w: len, h: t },
+  ];
+  let mask: i32 = segments(digit);
+  let out: Rect[] = [];
+  for i in 0..7 {
+    if ((mask >> i & 1) == 1) {
+      out = out.append(all[i]);
+    }
+  }
+  return out;
+}
+
+// Every rectangle of the face for `elapsed_ms` in a window of the given
+// size: four digit cells with a colon between the minutes and the seconds.
+pub function face_rects(elapsed_ms: i64, width: i32, height: i32): Rect[] {
+  let len: i32 = width / 9;
+  let t: i32 = len / 5 + 1;
+  let cell: i32 = len + 2 * t;
+  let gap: i32 = t * 2;
+  let colon: i32 = t * 3;
+  let total: i32 = 4 * cell + 2 * gap + colon + gap;
+  let x: i32 = (width - total) / 2;
+  let y: i32 = (height - (2 * len + 3 * t)) / 2;
+  let d: i32[] = digits(elapsed_ms);
+  let out: Rect[] = [];
+  let xs: i32[] = [x, x + cell + gap, x + 2 * cell + 2 * gap + colon + gap, x + 3 * cell + 3 * gap + colon + gap];
+  for i in 0..4 {
+    for r in digit_rects(d[i], xs[i], y, len, t) {
+      out = out.append(r);
+    }
+  }
+  let cx: i32 = x + 2 * cell + gap + gap;
+  out = out.append(Rect { x: cx, y: y + len / 2 + t, w: t, h: t });
+  out = out.append(Rect { x: cx, y: y + len + len / 2 + 2 * t, w: t, h: t });
+  return out;
+}

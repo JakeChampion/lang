@@ -234,7 +234,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     return 1;
   }
   let out: string = "";
-  if (target == "x86-64-linux") {
+  if (desc.isa == "x86-64") {
     out = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
   } else if (target == "arm64-linux" || target == "arm64-android") {
     out = asm_arm64_ir.emit_module_or_error_sub(full, false, sub, 0 as usize);

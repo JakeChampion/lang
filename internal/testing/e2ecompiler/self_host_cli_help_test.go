@@ -76,7 +76,7 @@ func parserFlags(t *testing.T) []string {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
-	for _, fn := range []string{"function run_with_gate(", "function tool_flag(", "function parse_tool_flag("} {
+	for _, fn := range []string{"function run_with_gate(", "function tool_flag(", "function parse_tool_flag(", "function android_flag("} {
 		start := strings.Index(string(src), "\n"+fn)
 		if start < 0 {
 			t.Fatalf("compiler/fern.fern has no %s...", fn)
