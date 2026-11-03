@@ -374,13 +374,14 @@ function packet(s: App, p: lan.Packet, from: net.SocketAddr, now: i64): App {
   send_all(t, st.out);
   match (st.heard) {
     lan.Found(peer) => {
-      log.info("walkie: found peer " + peer.to_string());
+      log.info("walkie: found peer " + peer.to_string() + " at " + from.to_string());
       let (l, out) = lan.pair(t.link, peer, now, rand.bytes(32), rand.bytes(16));
       let u: App = act(App { ...t, link: l, peer_addr: from }, session.PeerFound);
       send_all(u, out);
       return u;
     },
     lan.Verify(sas) => {
+      log.info("walkie: keys are ready");
       let me: i32 = 2;
       let id: i64 = t.link.peer;
       if (lan.initiator(t.link)) {
@@ -390,6 +391,7 @@ function packet(s: App, p: lan.Packet, from: net.SocketAddr, now: i64): App {
       return act(t, session.TransportUp(lan.initiator(t.link), me, 3 - me, id));
     },
     lan.Failed => {
+      log.info("walkie: the key exchange failed");
       return act(t, session.AuthFailed);
     },
     lan.Frame(kind, body) => {

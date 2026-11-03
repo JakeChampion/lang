@@ -65,21 +65,45 @@ function test_two_phones_pair(): test.TestOutcome {
   if (heard_name(found.heard) != "found 5") {
     return test.fail("b heard " + heard_name(found.heard));
   }
-  let (b1, none) = lan.pair(found.link, 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
+  let (b1, hello) = lan.pair(found.link, 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
   let back: lan.Step = lan.heard(a1, packet(lan.encode(lan.BEACON, 9i64, [])), 0i64);
   let (a2, commit) = lan.pair(back.link, 9i64, 0i64, bytes("a key", 32), bytes("a nonce", 16));
   let s1: lan.Step = lan.heard(b1, packet(commit[0]), 1i64);
   let s2: lan.Step = lan.heard(a2, packet(s1.out[0]), 2i64);
   let s3: lan.Step = lan.heard(s1.link, packet(s2.out[0]), 3i64);
-  let names: string = none.len().to_string() + " " + heard_name(s2.heard) + " " + heard_name(s3.heard);
-  return test.assert_eq(names + " " + (s2.link.sas == s3.link.sas && s2.link.sas.len() == 6).to_string() + " " + lan.initiator(s2.link).to_string(), "0 verify verify true true");
+  let names: string = packet(hello[0]).kind.to_string() + " " + heard_name(s2.heard) + " " + heard_name(s3.heard);
+  return test.assert_eq(names + " " + (s2.link.sas == s3.link.sas && s2.link.sas.len() == 6).to_string() + " " + lan.initiator(s2.link).to_string(), "1 verify verify true true");
+}
+
+// The phone that starts the exchange hears no broadcasts. The other phone
+// hears its beacon and sends its own beacon to it directly, again until the
+// exchange starts, so the two still pair.
+function test_pair_when_one_phone_hears_no_broadcast(): test.TestOutcome {
+  let (a, beacons) = lan.beacon(lan.new(5i64), 0i64);
+  let found: lan.Step = lan.heard(lan.new(9i64), packet(beacons[0]), 0i64);
+  let (b, hello) = lan.pair(found.link, 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
+  // The first direct beacon is lost too, and b sends it again.
+  let (b1, again) = lan.resend(b, 600i64);
+  if (again.len() != 1 || again[0] != hello[0]) {
+    return test.fail("b did not send its beacon again");
+  }
+  let s0: lan.Step = lan.heard(a, packet(again[0]), 601i64);
+  if (heard_name(s0.heard) != "found 9") {
+    return test.fail("a heard " + heard_name(s0.heard));
+  }
+  let (a1, commit) = lan.pair(s0.link, 9i64, 601i64, bytes("a key", 32), bytes("a nonce", 16));
+  let s1: lan.Step = lan.heard(b1, packet(commit[0]), 602i64);
+  let s2: lan.Step = lan.heard(a1, packet(s1.out[0]), 603i64);
+  let s3: lan.Step = lan.heard(s1.link, packet(s2.out[0]), 604i64);
+  let (b2, quiet) = lan.resend(s3.link, 2000i64);
+  return test.assert_eq(heard_name(s2.heard) + " " + heard_name(s3.heard) + " " + (s2.link.sas == s3.link.sas).to_string() + " " + quiet.len().to_string(), "verify verify true 0");
 }
 
 // A lost answer makes the peer send its message again, and a copy of a
 // message gets the same answer, so the exchange still finishes.
 function test_lost_messages_are_sent_again(): test.TestOutcome {
   let (a, commit) = lan.pair(lan.new(5i64), 9i64, 0i64, bytes("a key", 32), bytes("a nonce", 16));
-  let (b, none) = lan.pair(lan.new(9i64), 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
+  let (b, hello) = lan.pair(lan.new(9i64), 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
   let s1: lan.Step = lan.heard(b, packet(commit[0]), 1i64);
   // The KEY answer is lost. a sends COMMIT again after RESEND_MS.
   let (a1, again) = lan.resend(a, 600i64);
@@ -99,7 +123,7 @@ function test_lost_messages_are_sent_again(): test.TestOutcome {
 // third phone do not.
 function test_frames_after_confirmation(): test.TestOutcome {
   let (a, commit) = lan.pair(lan.new(5i64), 9i64, 0i64, bytes("a key", 32), bytes("a nonce", 16));
-  let (b, none) = lan.pair(lan.new(9i64), 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
+  let (b, hello) = lan.pair(lan.new(9i64), 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
   let s1: lan.Step = lan.heard(b, packet(commit[0]), 1i64);
   let s2: lan.Step = lan.heard(a, packet(s1.out[0]), 2i64);
   let s3: lan.Step = lan.heard(s1.link, packet(s2.out[0]), 3i64);
@@ -118,7 +142,7 @@ function test_frames_after_confirmation(): test.TestOutcome {
 // A rejected string closes the link and its keys.
 function test_rejected_string_closes(): test.TestOutcome {
   let (a, commit) = lan.pair(lan.new(5i64), 9i64, 0i64, bytes("a key", 32), bytes("a nonce", 16));
-  let (b, none) = lan.pair(lan.new(9i64), 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
+  let (b, hello) = lan.pair(lan.new(9i64), 5i64, 0i64, bytes("b key", 32), bytes("b nonce", 16));
   let s1: lan.Step = lan.heard(b, packet(commit[0]), 1i64);
   let s2: lan.Step = lan.heard(a, packet(s1.out[0]), 2i64);
   let closed: lan.Link = lan.close(s2.link);
@@ -131,6 +155,7 @@ function main(): i32 {
   r = r.it("a packet round-trips", test_packet_round_trip);
   r = r.it("short or foreign datagrams are refused", test_short_or_foreign_datagrams_are_refused);
   r = r.it("two phones pair", test_two_phones_pair);
+  r = r.it("two phones pair when one hears no broadcast", test_pair_when_one_phone_hears_no_broadcast);
   r = r.it("lost messages are sent again", test_lost_messages_are_sent_again);
   r = r.it("frames pass after confirmation", test_frames_after_confirmation);
   r = r.it("a rejected string closes the link", test_rejected_string_closes);
