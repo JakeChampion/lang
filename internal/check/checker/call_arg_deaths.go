@@ -1526,6 +1526,12 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	if repeats {
 		return true
 	}
+	if m, ok := st.(*ast.Match); ok && st != c && nodeHolds(m.Tag, c) {
+		if live, settled := callTagSettles(info, m, aid, order); live || settled {
+			return live
+		}
+		return liveFrom(info, frames, len(frames)-1, aid.Name)
+	}
 	if m, ok := c.(*ast.Match); ok && st == c {
 		live, settled := matchTagLive(info, m, aid.Name)
 		if live {
@@ -1569,6 +1575,41 @@ func matchTagLive(info *Info, m *ast.Match, name string) (live, settled bool) {
 			continue
 		}
 		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name)
+		if armLive {
+			return true, false
+		}
+		if !armSettled {
+			settled = false
+		}
+	}
+	return false, settled
+}
+
+// callTagSettles decides a local that a call in a match tag takes. live
+// reports a later read in the tag, or a read in a guard or an arm before a
+// whole assignment. settled reports that every arm assigns the local whole
+// or leaves the statement, so no later statement reads the taken value.
+func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder) (live, settled bool) {
+	later := false
+	ast.Walk(m.Tag, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
+			later = true
+		}
+		return !later
+	})
+	if later {
+		return true, false
+	}
+	settled = len(m.Arms) > 0
+	for _, arm := range m.Arms {
+		if arm.Guard != nil && StmtReferencesName(arm.Guard, aid.Name) {
+			return true, false
+		}
+		if arm.Body == nil {
+			settled = false
+			continue
+		}
+		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, aid.Name)
 		if armLive {
 			return true, false
 		}
