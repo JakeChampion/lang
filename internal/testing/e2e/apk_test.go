@@ -39,7 +39,7 @@ func buildApk(t *testing.T, dir string, extra ...string) (string, []byte) {
 // library for each ABI, and a v2 signature that verifies.
 func TestApkWriter(t *testing.T) {
 	dir := t.TempDir()
-	path, raw := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test")
+	path, raw := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test", "-apk-min-sdk", "28", "-apk-permission", "RECORD_AUDIO,android.permission.INTERNET")
 	if info, err := os.Stat(filepath.Join(dir, "app.key.pem")); err != nil {
 		t.Fatalf("no new key next to the APK: %v", err)
 	} else if info.Mode().Perm() != 0o600 {
@@ -74,7 +74,7 @@ func TestApkWriter(t *testing.T) {
 		t.Errorf("entries = %s", got)
 	}
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
-	for _, s := range []string{"dev.fern.test", "Fern Stopwatch", "android.app.NativeActivity", "android.app.lib_name", "app"} {
+	for _, s := range []string{"dev.fern.test", "Fern Stopwatch", "android.app.NativeActivity", "android.app.lib_name", "app", "uses-permission", "android.permission.RECORD_AUDIO", "android.permission.INTERNET"} {
 		if !bytes.Contains(man, utf16le(s)) {
 			t.Errorf("the manifest has no string %q", s)
 		}
@@ -87,13 +87,14 @@ func TestApkWriter(t *testing.T) {
 	}
 	if aapt, err := exec.LookPath("aapt"); err == nil {
 		o, err := exec.Command(aapt, "dump", "badging", path).CombinedOutput()
-		if err != nil || !strings.Contains(string(o), "package: name='dev.fern.test'") || !strings.Contains(string(o), "native-code: 'arm64-v8a' 'x86_64'") {
+		if err != nil || !strings.Contains(string(o), "package: name='dev.fern.test'") || !strings.Contains(string(o), "native-code: 'arm64-v8a' 'x86_64'") ||
+			!strings.Contains(string(o), "sdkVersion:'28'") || !strings.Contains(string(o), "uses-permission: name='android.permission.RECORD_AUDIO'") {
 			t.Errorf("aapt dump badging: %v\n%s", err, o)
 		}
 	}
 
 	// The same key gives the same APK.
-	_, again := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test")
+	_, again := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test", "-apk-min-sdk", "28", "-apk-permission", "RECORD_AUDIO,android.permission.INTERNET")
 	if !bytes.Equal(raw, again) {
 		t.Error("two builds with the same key give different APKs")
 	}
@@ -109,6 +110,14 @@ func TestApkRefusals(t *testing.T) {
 		o, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(o), "-apk builds the library for both Android ABIs itself, so it takes no "+flag[0]) {
 			t.Errorf("%v: want a refusal, got %v\n%s", flag, err, o)
+		}
+	}
+	for _, level := range []string{"9", "35", "x"} {
+		args := []string{"-apk", filepath.Join(dir, "z.apk"), "-apk-min-sdk", level, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "-apk-min-sdk takes an API level from 24 to 34") {
+			t.Errorf("-apk-min-sdk %s: want a refusal, got %v\n%s", level, err, o)
 		}
 	}
 	bad := filepath.Join(dir, "bad.pem")

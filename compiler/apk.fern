@@ -11,10 +11,13 @@ import "std/rand";
 
 // `activity` is the Java class of the activity, and `dex` holds the classes
 // of the app, or is empty.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[] }
+// `permissions` are the full names of the permissions the app uses, and
+// `min_sdk` is the lowest API level it runs on.
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32 }
 
 pub struct Lib { abi: string, image: u8[] }
 
+// The default lowest API level: APK Signature Scheme v2 needs Android 7.0.
 pub const MIN_SDK: i32 = 24;
 
 pub const TARGET_SDK: i32 = 34;
@@ -96,14 +99,21 @@ const S_URI: i32 = 12;
 const S_PACKAGE: i32 = 13;
 
 function pool_strings(app: App): string[] {
-  return [
+  let out: string[] = [
     "theme", "label", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
-    "android.intent.action.MAIN", "android.intent.category.LAUNCHER",
+    "android.intent.action.MAIN", "android.intent.category.LAUNCHER", "uses-permission",
   ];
+  for p in app.permissions {
+    out = out.append(p);
+  }
+  return out;
 }
+
+// The pool index of the first permission name, after "uses-permission".
+const S_USES_PERMISSION: i32 = 30;
 
 // The UTF-16 code units of `s`.
 function utf16(s: string): i32[] {
@@ -210,7 +220,10 @@ pub function manifest(app: App): u8[] {
   let s: string[] = pool_strings(app);
   let body: u8[] = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
   body = start(body, 1, 14, [attr_int(S_VERSION_CODE, 16, app.version_code), attr_str(S_VERSION_NAME, 24), Attr { android: false, name: S_PACKAGE, kind: 3, data: 22 }]);
-  body = end(start(body, 2, 15, [attr_int(S_MIN_SDK, 16, MIN_SDK), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, 15);
+  body = end(start(body, 2, 15, [attr_int(S_MIN_SDK, 16, app.min_sdk), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, 15);
+  for k in 0..app.permissions.len() {
+    body = end(start(body, 2, S_USES_PERMISSION, [attr_str(S_NAME, S_USES_PERMISSION + 1 + k)]), 2, S_USES_PERMISSION);
+  }
   let has_code: i32 = 0;
   if (app.dex.len() > 0) {
     has_code = 0 - 1;

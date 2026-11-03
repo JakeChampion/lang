@@ -2324,6 +2324,8 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
       cli_flag("-apk-package", "NAME", "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       cli_flag("-apk-label", "TEXT", "with -apk: the name of the app on the launcher (default LIB)"),
+      cli_flag("-apk-permission", "NAMES", "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission"),
+      cli_flag("-apk-min-sdk", "LEVEL", "with -apk: the lowest Android API level the app runs on (default 24)"),
       cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
@@ -6048,10 +6050,10 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label and key file
 // of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, key: string }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, key: string, permissions: string, min_sdk: string }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-key"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-key", "-apk-permission", "-apk-min-sdk"], name);
 }
 
 function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
@@ -6072,6 +6074,12 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
   }
   if (f.name == "-apk-key") {
     return ApkOpts { ...o, key: f.value };
+  }
+  if (f.name == "-apk-permission") {
+    return ApkOpts { ...o, permissions: f.value };
+  }
+  if (f.name == "-apk-min-sdk") {
+    return ApkOpts { ...o, min_sdk: f.value };
   }
   return o;
 }
@@ -6223,6 +6231,27 @@ function apk_key_path(o: ApkOpts): string {
   return o.out + ".key.pem";
 }
 
+function apk_level_ok(n: i64): boolean {
+  return n >= apk.MIN_SDK as i64 && n <= apk.TARGET_SDK as i64;
+}
+
+// The full names of the -apk-permission list. A name with no dot is in
+// android.permission.
+function apk_permissions(list: string): string[] {
+  let out: string[] = [];
+  if (list.len() == 0) {
+    return out;
+  }
+  for name in list.split(",") {
+    let n: string = name.trim();
+    if (!n.contains(".")) {
+      n = "android.permission." + n;
+    }
+    out = out.append(n);
+  }
+  return out;
+}
+
 // The app of the APK. A @jni class that extends NativeActivity is the
 // activity, and NativeActivity itself is the activity otherwise.
 function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
@@ -6230,7 +6259,10 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   if (activity.len() == 0) {
     activity = "android.app.NativeActivity";
   }
-  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes };
+  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: apk_permissions(o.permissions), min_sdk: apk.MIN_SDK };
+  if (o.min_sdk.len() > 0) {
+    app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
+  }
   if (o.package.len() > 0) {
     app = apk.App { ...app, package: o.package };
   }
@@ -6246,6 +6278,10 @@ function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: st
   let (rest, bad) = apk_build_args(av);
   if (bad.len() > 0) {
     eprint(bad);
+    return 2;
+  }
+  if (o.min_sdk.len() > 0 && !apk_level_ok(size_bytes(o.min_sdk))) {
+    eprint("fern: -apk-min-sdk takes an API level from " + util.i32_to_string(apk.MIN_SDK) + " to " + util.i32_to_string(apk.TARGET_SDK) + " (got \"" + o.min_sdk + "\")");
     return 2;
   }
   let lib: string = apk_lib_name(entry_path);
@@ -6311,7 +6347,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag: boolean = false;
   let shared: boolean = false;
   let export_list: string = "";
-  let apk_opts: ApkOpts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", key: "" };
+  let apk_opts: ApkOpts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", key: "", permissions: "", min_sdk: "" };
   let harden: boolean = false;
   let heap_limit_text: string = "";
   let quarantine_text: string = "";
