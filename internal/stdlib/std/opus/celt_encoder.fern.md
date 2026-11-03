@@ -1,10 +1,10 @@
 # The CELT encoder
 
-This module is the encoder side of CELT, the transform layer of Opus (RFC 6716, section 4.3). It is a port of the float build of `celt_encoder.c` from libopus 1.4. For the same samples and the same settings, it gives the same bits as libopus.
+This module contains the first analysis functions for the CELT encoder, the transform layer of Opus (RFC 6716, section 4.3). It ports the corresponding functions from the float build of `celt_encoder.c` in libopus 1.4. The tests compare their results with libopus. Complete frame encoding remains part of #14083.
 
 ## Model
 
-The encoder works on frames of 2.5 to 20 ms at 48 kHz. For each frame, it analyses the signal, then codes the frame with the shared parts of `std/opus`: the range coder, the energy quantiser, the band coder and the bit allocation.
+The CELT encoder works on frames of 2.5 to 20 ms at 48 kHz. These functions analyse the signal before the range coder, energy quantiser, band coder and bit allocation code the frame.
 
 The analysis functions come first. Each one makes one decision for the frame:
 
