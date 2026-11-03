@@ -249,17 +249,22 @@ function test_key_bundle_creates_one_channel(): test.TestOutcome {
   return test.assert_eq(sizes, "true 0");
 }
 
+function reject_aliased_keys(k: secure.Keys): i32 {
+  let old = k;
+  secure.close_keys(k);
+  let c = secure.channel(old);
+  let (next, frame) = secure.seal_voice(c, "late".as_bytes());
+  let size = frame.len();
+  secure.close(next);
+  return size;
+}
+
 function test_rejected_key_bundle_clears_aliases(): test.TestOutcome {
   let (a, b) = pair(party(true, "alice"), party(false, "bob"));
   let size = 0 - 1;
   match (secure.keys(a)) {
     Some(k) => {
-      let old = k;
-      secure.close_keys(k);
-      let c = secure.channel(old);
-      let (next, frame) = secure.seal_voice(c, "late".as_bytes());
-      size = frame.len();
-      secure.close(next);
+      size = reject_aliased_keys(k);
     },
     None => {}
   }

@@ -228,10 +228,14 @@ pub function channel(k: Keys): Channel {
 
 // Clear a rejected key bundle, for example after a failed string comparison.
 pub function close_keys(k: Keys): void {
-  crypto.erase(take_key(k.send_ctl));
-  crypto.erase(take_key(k.recv_ctl));
-  crypto.erase(take_key(k.send_voice));
-  crypto.erase(take_key(k.recv_voice));
+  let send_ctl = take_key(k.send_ctl);
+  let recv_ctl = take_key(k.recv_ctl);
+  let send_voice = take_key(k.send_voice);
+  let recv_voice = take_key(k.recv_voice);
+  crypto.erase(send_ctl);
+  crypto.erase(recv_ctl);
+  crypto.erase(send_voice);
+  crypto.erase(recv_voice);
 }
 
 // The 12-byte nonce of sequence number `seq`, and the 9 bytes that start a
