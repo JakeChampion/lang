@@ -238,6 +238,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "tcp_close", capability: "tcp" },
     Gate { builtin: "__tcp_close_unchecked", capability: "tcp" },
     Gate { builtin: "__fd_close", capability: "tcp" },
+    Gate { builtin: "__socket_from_fd", capability: "tcp" },
     Gate { builtin: "tcp_pollable", capability: "tcp" },
     Gate { builtin: "tcp_listen_with", capability: "tcp" },
     Gate { builtin: "tcp_socket_ctl", capability: "tcp" },

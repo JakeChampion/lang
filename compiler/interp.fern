@@ -2922,6 +2922,9 @@ function call_host_fs_list(heap: interpheap.Heap, name: string, path: string): V
 }
 
 function call_host_net(name: string, args: Value[]): Value {
+  if (name == "__socket_from_fd") {
+    return arg_at(args, 0);
+  }
   if (util.has_str(["udp_sendto", "udp_sendto_bytes"], name)) {
     return call_host_udp_send(name, args);
   }

@@ -1,0 +1,18 @@
+// __socket_from_fd makes a Socket for a descriptor number that the program
+// did not open as one. Only an unsafe block can call it.
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let opened: Socket = udp_bind(lo, 0);
+  let n: i32 = opened.fd;
+  let same: boolean = false;
+  let closed: i32 = 0 - 1;
+  unsafe {
+    let s: Socket = __socket_from_fd(n);
+    same = s.fd == n;
+    closed = tcp_close(s);
+  }
+  print("same " + same.to_string());
+  print("closed " + closed.to_string());
+  return 0;
+}

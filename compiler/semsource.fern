@@ -3595,6 +3595,9 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (name == "cell_new" && c.args.len() == 1) {
     return cell_construction(c, s, expected);
   }
+  if (name == "__socket_from_fd") {
+    return socket_from_fd(c, s);
+  }
   if ((name == "map_new" || name == "__map_new_i32") && c.args.len() == 1) {
     return map_construction(e, c, s, expected);
   }
@@ -3610,6 +3613,18 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
     return variant_call(e, name, c, s, expected);
   }
   return exiting(name, direct_call(c, s.contracts.list[at], s, statement, expected));
+}
+
+// A Socket runs as its descriptor number, so the conversion is a cast.
+function socket_from_fd(c: ast.ExprCall, s: State): Value {
+  if (c.args.len() != 1) {
+    return refused(s, "call arity");
+  }
+  let fd: Value = expr(c.args[0], s, t_i32());
+  if (!fd.s.ok) {
+    return fd;
+  }
+  return define(fd.s, ssasem.cast(), [fd.id], 0, "", t_handle("Socket"));
 }
 
 // The builtin exit never returns, so the block it ends has no successor.

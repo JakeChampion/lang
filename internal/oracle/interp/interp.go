@@ -1565,6 +1565,7 @@ func New() *Interp {
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["__tcp_close_unchecked"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["__fd_close"] = &Builtin{Fn: builtinTcpClose}
+	i.Builtins["__socket_from_fd"] = &Builtin{Fn: builtinSocketFromFd}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
@@ -1724,6 +1725,17 @@ func tcpSendData(i *Interp, id Number, data []byte) (Value, error) {
 		return Number(errnoOf(err)), nil
 	}
 	return Number(n), nil
+}
+
+// A Socket runs as its descriptor number.
+func builtinSocketFromFd(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__socket_from_fd: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("__socket_from_fd: expected number arg, got %T", args[0])
+	}
+	return args[0], nil
 }
 
 func builtinTcpClose(i *Interp, args []Value) (Value, error) {
