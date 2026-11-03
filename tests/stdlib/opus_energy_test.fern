@@ -1,0 +1,163 @@
+import "std/hash/crc32";
+import "std/opus/energy";
+import "std/opus/range";
+import "std/test";
+
+// Each script codes random frames: the coarse step, the fine step and the final
+// step, and then decodes them from the bytes. The trace holds the bits of each
+// energy and each error. libopus 1.4, in its float build, gave the CRC-32 of each
+// trace, from a C program that makes the same calls.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
+  let (g1, r) = rnd(g);
+  return (g1, lo + (hi - lo) * ((r % 65536) as f32) / 65536.0f32);
+}
+
+function flag(b: boolean): string {
+  if (b) {
+    return "1";
+  }
+  return "0";
+}
+
+function all_bits(xs: [f32], from: i32, to: i32): string {
+  let s: string = "";
+  for i in from..to {
+    s = s + " " + f32_bits(xs[i]).to_string();
+  }
+  return s;
+}
+
+function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let t: crc32.Crc32 = crc32.new();
+  let g: Gen = Gen { x: seed };
+  for k in 0..cases {
+    let (g1, r1) = rnd(g);
+    let lm: i32 = r1 % 4;
+    let (g2, r2) = rnd(g1);
+    let ch: i32 = 1 + r2 % 2;
+    let (g3, r3) = rnd(g2);
+    let start: i32 = 0;
+    if (r3 % 4 == 0) {
+      start = 17;
+    }
+    let (g4, r4) = rnd(g3);
+    let end: i32 = start + 1 + r4 % (21 - start);
+    let (g5, r5) = rnd(g4);
+    let nbytes: i32 = 2 + r5 % 200;
+    let (g6, r6) = rnd(g5);
+    g = g6;
+    if (r6 % 3 == 0) {
+      let (g7, r7) = rnd(g);
+      g = g7;
+      nbytes = 2 + r7 % 8;
+    }
+    let budget: i32 = nbytes * 8;
+    let bands: f32[] = [];
+    let old: f32[] = [];
+    let error: f32[] = [];
+    for i in 0..42 {
+      let (ga, a) = frand(g, 0.0f32 - 12.0f32, 20.0f32);
+      let (gb, b) = frand(ga, 0.0f32 - 30.0f32, 20.0f32);
+      g = gb;
+      bands = bands.append(a);
+      old = old.append(b);
+      error = error.append(0.0f32);
+    }
+    let old0: f32[] = old;
+    let (h1, s1) = rnd(g);
+    let force_intra: boolean = s1 % 5 == 0;
+    let (h2, s2) = rnd(h1);
+    let two_pass: boolean = s2 % 2 == 1;
+    let (h3, s3) = rnd(h2);
+    let loss: i32 = s3 % 30;
+    let (h4, s4) = rnd(h3);
+    let lfe: boolean = s4 % 10 == 0;
+    let (h5, delayed) = frand(h4, 0.0f32, 60.0f32);
+    g = h5;
+    let fine: i32[] = [];
+    let prio: i32[] = [];
+    for i in 0..21 {
+      let (ga, a) = rnd(g);
+      let (gb, b) = rnd(ga);
+      g = gb;
+      fine = fine.append(a % 9);
+      prio = prio.append(b % 2);
+    }
+    let (h6, s6) = rnd(g);
+    g = h6;
+    let left: i32 = s6 % 20;
+    let req: energy.CoarseRequest = energy.CoarseRequest { start: start, end: end, eff_end: end, budget: budget, channels: ch, lm: lm, available_bytes: nbytes, force_intra: force_intra, delayed_intra: delayed, two_pass: two_pass, loss_rate: loss, lfe: lfe };
+    let co: energy.Coarse = energy.quant_coarse_energy(range.encoder(nbytes), req, bands, old, error);
+    t = line(t, "c " + lm.to_string() + " " + ch.to_string() + " " + start.to_string() + " " + end.to_string() + " " + nbytes.to_string() + " " + flag(force_intra) + " " + flag(two_pass) + " " + loss.to_string() + " " + flag(lfe) + " " + left.to_string() + " tell " + co.e.tell_frac().to_string() + " delayed " + f32_bits(co.delayed_intra).to_string());
+    let fi: energy.Fine = energy.quant_fine_energy(co.e, start, end, co.old, co.error, fine, ch);
+    let fz: energy.Fine = energy.quant_energy_finalise(fi.e, start, end, fi.old, fi.error, fine, prio, left, ch);
+    t = line(t, "tell " + fz.e.tell_frac().to_string() + " err " + flag(fz.e.error));
+    t = line(t, "old" + all_bits(fz.old, 0, 42));
+    let es: string = "error";
+    for c in 0..ch {
+      es = es + all_bits(fz.error, start + 21 * c, end + 21 * c);
+    }
+    t = line(t, es);
+    let packet: u8[] = fz.e.done().bytes();
+    let d: range.Decoder = range.decoder(packet);
+    let intra: boolean = false;
+    if (d.tell() + 3 <= budget) {
+      let (d1, b) = d.bit_logp(3);
+      d = d1;
+      intra = b;
+    }
+    let (d2, o2) = energy.unquant_coarse_energy(d, start, end, old0, intra, ch, lm);
+    let (d3, o3) = energy.unquant_fine_energy(d2, start, end, o2, fine, ch);
+    let (d4, o4) = energy.unquant_energy_finalise(d3, start, end, o3, fine, prio, left, ch);
+    t = line(t, "dec " + flag(intra) + " " + d4.tell_frac().to_string() + all_bits(o4, 0, 42));
+  }
+  return t.finish();
+}
+
+function test_short_script(): test.TestOutcome {
+  return test.assert_eq(trace(3u32, 1000), 2303663802u32);
+}
+
+function test_long_script(): test.TestOutcome {
+  return test.assert_eq(trace(5u32, 3000), 2775903897u32);
+}
+
+// Each value that the Laplace coder can code decodes as the same value.
+function test_laplace_round_trip(): test.TestOutcome {
+  let e: range.Encoder = range.encoder(4000);
+  let coded: i32[] = [];
+  for v in 0 - 40..41 {
+    let (e1, c) = energy.laplace_encode(e, v, 72 << 7, 127 << 6);
+    e = e1;
+    coded = coded.append(c);
+  }
+  let d: range.Decoder = range.decoder(e.done().bytes());
+  for c in coded {
+    let (d1, v) = energy.laplace_decode(d, 72 << 7, 127 << 6);
+    d = d1;
+    if (v != c) {
+      return test.fail("coded " + c.to_string() + ", decoded " + v.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/energy");
+  r = r.it("a short script gives the libopus trace", test_short_script);
+  r = r.it("a long script gives the libopus trace", test_long_script);
+  r = r.it("the Laplace coder round trips each value", test_laplace_round_trip);
+  return r.finish();
+}

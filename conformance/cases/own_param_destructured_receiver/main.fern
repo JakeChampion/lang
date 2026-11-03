@@ -1,0 +1,50 @@
+// The fields that a destructure takes from an own parameter are owned, so
+// each one can move into an own method receiver (#14101).
+struct In { v: i32[] }
+struct W { a: In, n: i32 }
+enum E { A(In), B(i32) }
+struct V { e: E, n: i32 }
+
+@noinline function (own a: In) grow(): In { return In { v: a.v.append(1) }; }
+@noinline function (own e: E) size(): i32 {
+  match (e) {
+    A(x) => {
+      return x.v.len();
+    },
+    B(k) => {
+      return k;
+    }
+  }
+}
+@noinline function step(own a: In): (In, i32) { let n: i32 = a.v.len(); return (In { v: a.v.append(n) }, n); }
+
+@noinline function recv_struct(own w: W): W {
+  let W { a: a, n: n } = w;
+  let a2: In = a.grow();
+  return W { a: a2, n: n + 1 };
+}
+
+@noinline function recv_enum(own v: V): i32 {
+  let V { e: e, n: n } = v;
+  return e.size() + n;
+}
+
+@noinline function reassigned(own w: W, c: boolean): i32 {
+  let W { a: a, n: n } = w;
+  if (c) {
+    let (a1, k) = step(a);
+    a = a1;
+  }
+  return a.grow().v.len() + n;
+}
+
+function main(): i32 {
+  let w: W = recv_struct(W { a: In { v: [1, 2] }, n: 1 });
+  let r: i32 = w.a.v.len() + w.n;
+  r = r + recv_enum(V { e: A(In { v: [7, 8, 9] }), n: 4 }) + recv_enum(V { e: B(5), n: 1 });
+  r = r + reassigned(W { a: In { v: [3] }, n: 2 }, true) + reassigned(W { a: In { v: [] }, n: 3 }, false);
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r;
+}

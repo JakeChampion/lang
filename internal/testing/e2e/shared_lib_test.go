@@ -721,9 +721,9 @@ int main(int c, char** v){
 	}
 }
 
-// jni.new_string hands NewStringUTF the bytes of a Fern string and frees its
-// copy, and free_buffer frees a cstr, jvalues or jvalue_alloc buffer. A native
-// method that makes them on every call does not grow the heap.
+// jni.new_string hands NewString the UTF-16 units of a Fern string and frees
+// its copy, and free_buffer frees a cstr, jvalues or jvalue_alloc buffer. A
+// native method that makes them on every call does not grow the heap.
 func TestStdJNIBuffersFree(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
@@ -774,17 +774,20 @@ function main(): i32 { return 0; }`
 #include <stdio.h>
 #include <string.h>
 static long calls = 0;
-static long newstr(void* env, const char* s) {
-  char want[32];
+static long newstr(void* env, const unsigned short* units, long n) {
+  char want[32], got[32];
   snprintf(want, sizeof want, "hello, %ld", calls % 1000);
-  if (strcmp(s, want) != 0) { fprintf(stderr, "got %s, want %s\n", s, want); return -1; }
+  if (n < 0 || n >= (long)sizeof got) { fprintf(stderr, "length %ld\n", n); return -1; }
+  for (long k = 0; k < n; k++) got[k] = (char)units[k];
+  got[n] = 0;
+  if (strcmp(got, want) != 0) { fprintf(stderr, "got %s, want %s\n", got, want); return -1; }
   calls++;
   return calls % 1000 == 0 ? 1000 : calls % 1000;
 }
 int main(int c, char** v){
   void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   void* table[256] = {0};
-  table[167] = (void*)newstr;
+  table[163] = (void*)newstr;
   void* tptr = table; void* env = &tptr;
   long (*p)(void*, long) = (long(*)(void*, long)) dlsym(h, "probe_new_string");
   if(!p) return 101;

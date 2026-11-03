@@ -1,0 +1,72 @@
+// Raw speech audio for the LAN build: 16-bit samples at 16 kHz on the wire.
+// A device can give or take audio at another rate, so a linear resampler
+// converts each direction.
+
+pub const WIRE_RATE: i32 = 16000;
+
+// Samples in one voice frame: 20 ms at the wire rate.
+pub const FRAME: i32 = 320;
+
+// A streaming linear resampler. The next output is at `pos / to` input
+// samples into the input that comes next, where -1 is `prev`, the last input
+// sample before it. Whole numbers keep the place exact across blocks.
+pub struct Resampler { from: i64, to: i64, pos: i64, prev: i32 }
+
+pub function resampler(from_rate: i32, to_rate: i32): Resampler {
+  return Resampler { from: from_rate as i64, to: to_rate as i64, pos: 0i64, prev: 0 };
+}
+
+// The output samples for the input samples `x`, and the resampler for the
+// input that follows them.
+pub function resample(r: Resampler, x: [i32]): (Resampler, i32[]) {
+  let n: i32 = x.len();
+  let out: i32[] = [];
+  if (n == 0) {
+    return (r, out);
+  }
+  let pos: i64 = r.pos;
+  let limit: i64 = (n as i64 - 1i64) * r.to;
+  while (pos < limit) {
+    let i: i32 = ((pos + r.to) / r.to - 1i64) as i32;
+    let frac: i64 = pos - i as i64 * r.to;
+    let a: i32 = r.prev;
+    if (i >= 0) {
+      a = x[i];
+    }
+    let b: i32 = x[i + 1];
+    out = out.append(a + (((b - a) as i64 * frac * 2i64 + r.to) / (2i64 * r.to)) as i32);
+    pos = pos + r.from;
+  }
+  return (Resampler { ...r, pos: pos - n as i64 * r.to, prev: x[n - 1] }, out);
+}
+
+// The samples as 16-bit little-endian bytes. A sample out of range is
+// clipped.
+pub function pack(samples: [i32]): u8[] {
+  let out: u8[] = [];
+  for v in samples {
+    let c: i32 = v;
+    if (c > 32767) {
+      c = 32767;
+    } else if (c < -32768) {
+      c = -32768;
+    }
+    out = out.append((c & 255) as u8).append((c >> 8 & 255) as u8);
+  }
+  return out;
+}
+
+// The samples of 16-bit little-endian bytes. An odd last byte is ignored.
+pub function unpack(b: [u8]): i32[] {
+  let out: i32[] = [];
+  let k: i32 = 0;
+  while (k + 1 < b.len()) {
+    let v: i32 = b[k + 1] as i32 << 8 | b[k] as i32;
+    if (v >= 32768) {
+      v = v - 65536;
+    }
+    out = out.append(v);
+    k = k + 2;
+  }
+  return out;
+}

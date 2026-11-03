@@ -10841,6 +10841,33 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 
+	// A literal based on q that replaces q.f moves q.f into an own
+	// parameter in the literal. A literal in a local's initializer, an
+	// expression statement or a returned value, outside a lambda, takes it
+	// from an owned q, whose later reads the walk refuses. A returned literal
+	// can take it from any q that is not borrowed.
+	admitSupersededFields := func(value ast.Expr, returned bool) {
+		if value == nil {
+			return
+		}
+		top := FieldMoveLiteral(value)
+		ast.Walk(value, func(n ast.Node) bool {
+			if _, ok := n.(*ast.Lambda); ok {
+				return false
+			}
+			sl, ok := n.(*ast.StructLit)
+			if !ok || sl.Base == nil {
+				return true
+			}
+			if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] && (owned[bid.Name] || returned && sl == top) {
+				for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
+					selfMoveArgs[arg] = true
+				}
+			}
+			return true
+		})
+	}
+
 	walkStmt = func(st ast.Stmt, moved movedSet) {
 		switch x := st.(type) {
 		case *ast.Block:
@@ -10863,6 +10890,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return
 				}
 			}
+			admitSupersededFields(x.Init, false)
 			recordExprUses(x.Init, moved)
 		case *ast.ExprStmt:
 			if asn, ok := x.Expr.(*ast.Assign); ok {
@@ -10891,6 +10919,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 				return
 			}
+			admitSupersededFields(x.Expr, false)
 			recordExprUses(x.Expr, moved)
 		case *ast.Defer:
 			// The action runs at the function's exit: a name it consumes is
@@ -10912,13 +10941,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				deferMoved[name] = at
 			}
 		case *ast.Return:
-			if sl := FieldMoveLiteral(x.Value); sl != nil && sl.Base != nil {
-				if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] {
-					for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
-						selfMoveArgs[arg] = true
-					}
-				}
-			}
+			admitSupersededFields(x.Value, true)
 			recordExprUses(x.Value, moved)
 		case *ast.If:
 			recordExprUses(x.Cond, moved)

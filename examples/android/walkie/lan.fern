@@ -1,0 +1,255 @@
+// The transport of the LAN build: UDP datagrams between two phones on the
+// same Wi-Fi network. Each phone sends a beacon to the broadcast address
+// until it hears another phone. Then the two run the key exchange of
+// `secure`, and the users compare the authentication string.
+//
+// A datagram is the byte 247, a kind, the sender's node ID in 8 bytes, and
+// the body. The node with the smaller ID starts the key exchange and is the
+// floor controller. This module does no I/O: the app sends what it gives.
+import "./secure";
+
+pub const PORT: i32 = 47120;
+
+// The port of a second copy of the app on the same phone, which can test
+// discovery and the key exchange. Beacons go to both ports.
+pub const SECOND_PORT: i32 = 47121;
+
+pub const BEACON: i32 = 1;
+
+pub const HANDSHAKE: i32 = 2;
+
+pub const CONTROL: i32 = 3;
+
+pub const VOICE: i32 = 4;
+
+const MAGIC: u8 = 247u8;
+
+// The time between two beacons, and between two sends of a handshake
+// message that has no answer yet.
+pub const RESEND_MS: i64 = 500i64;
+
+pub struct Packet { kind: i32, from: i64, body: u8[] }
+
+pub function encode(kind: i32, from: i64, body: [u8]): u8[] {
+  let out: u8[] = [MAGIC, kind as u8];
+  for k in 0..8 {
+    out = out.append((from >> (56 - 8 * k) as i64 & 255i64) as u8);
+  }
+  for b in body {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// The packet in the first `n` bytes of `b`.
+pub function decode(b: [u8], n: i32): Option[Packet] {
+  if (n < 10 || n > b.len() || b[0] != MAGIC) {
+    return None;
+  }
+  let from: i64 = 0i64;
+  for k in 0..8 {
+    from = from << 8i64 | b[2 + k] as i64;
+  }
+  let body: u8[] = [];
+  for k in 10..n {
+    body = body.append(b[k]);
+  }
+  return Some(Packet { kind: b[1] as i32, from: from, body: body });
+}
+
+pub enum Phase {
+  // Sending beacons, with no peer.
+  Searching,
+  // Running the key exchange with the peer.
+  Pairing,
+  // The keys are ready, and the users compare the authentication string.
+  Verifying,
+  // The users confirmed the string.
+  Ready,
+  // The exchange failed, or a user rejected the string.
+  Closed,
+}
+
+pub struct Link {
+  me: i64,
+  peer: i64,
+  phase: Phase,
+  hs: Option[secure.Handshake],
+  keys: Option[secure.Keys],
+  // The last handshake message from the peer, and this side's last one.
+  last_in: u8[],
+  last_out: u8[],
+  resend_at: i64,
+  sas: string,
+}
+
+pub function new(me: i64): Link {
+  return Link { me: me, peer: 0i64, phase: Searching, hs: None, keys: None, last_in: [], last_out: [], resend_at: 0i64, sas: "" };
+}
+
+pub function initiator(l: Link): boolean {
+  return l.me < l.peer;
+}
+
+// What a packet means to the app.
+pub enum Heard {
+  Nothing,
+  // A beacon of a new peer. The app keeps its address and calls `pair`.
+  Found(i64),
+  // The key exchange is done: the app shows the string.
+  Verify(string),
+  Failed,
+  // A control or voice frame of the peer, for the secure channel.
+  Frame(i32, u8[]),
+}
+
+// The datagrams to send to the peer after a step.
+pub struct Step { link: Link, out: u8[][], heard: Heard }
+
+// The beacon to broadcast, or nothing once a peer is found.
+pub function beacon(l: Link, now: i64): (Link, u8[][]) {
+  match (l.phase) {
+    Searching => {
+      if (now >= l.resend_at) {
+        return (Link { ...l, resend_at: now + RESEND_MS }, [encode(BEACON, l.me, [])]);
+      }
+    },
+    _ => {}
+  }
+  return (l, []);
+}
+
+// Starts the key exchange with `peer`, from 32 random bytes for the key and
+// 16 for the nonce. The side that waits for the first message sends its
+// beacon to the peer directly until that message comes, because the peer
+// possibly did not hear its broadcasts.
+pub function pair(l: Link, peer: i64, now: i64, own random_key: u8[], random_nonce: u8[]): (Link, u8[][]) {
+  let first: boolean = l.me < peer;
+  let h: secure.Handshake = secure.start(first, random_key, random_nonce);
+  let out: u8[] = encode(BEACON, l.me, []);
+  if (first) {
+    out = encode(HANDSHAKE, l.me, secure.first(h));
+  }
+  return (Link { ...l, peer: peer, phase: Pairing, hs: Some(h), last_out: out, resend_at: now + RESEND_MS }, [out]);
+}
+
+// The last handshake message again, when the peer has not answered it.
+pub function resend(l: Link, now: i64): (Link, u8[][]) {
+  match (l.phase) {
+    Pairing => {
+      if (now >= l.resend_at && l.last_out.len() > 0) {
+        return (Link { ...l, resend_at: now + RESEND_MS }, [l.last_out]);
+      }
+    },
+    _ => {}
+  }
+  return (l, []);
+}
+
+function exchange(l: Link, body: u8[], h: secure.Handshake, now: i64): Step {
+  let (h1, reply) = secure.receive(h, body);
+  if (h1.failed) {
+    return Step { link: Link { ...l, phase: Closed, hs: None }, out: [], heard: Failed };
+  }
+  let out: u8[][] = [];
+  let last: u8[] = l.last_out;
+  if (reply.len() > 0) {
+    last = encode(HANDSHAKE, l.me, reply);
+    out = [last];
+  }
+  let next: Link = Link { ...l, last_in: body, last_out: last, resend_at: now + RESEND_MS };
+  if (!h1.done) {
+    return Step { link: Link { ...next, hs: Some(h1) }, out: out, heard: Nothing };
+  }
+  match (secure.keys(h1)) {
+    Some(k) => {
+      let sas: string = k.sas;
+      return Step { link: Link { ...next, phase: Verifying, hs: None, keys: Some(k), sas: sas }, out: out, heard: Verify(sas) };
+    },
+    None => {
+      return Step { link: Link { ...next, phase: Closed, hs: None }, out: out, heard: Failed };
+    }
+  }
+}
+
+function handshake(l: Link, body: u8[], now: i64): Step {
+  if (body == l.last_in) {
+    // The peer did not get this side's answer: send it again.
+    if (l.last_out.len() > 0) {
+      return Step { link: l, out: [l.last_out], heard: Nothing };
+    }
+    return Step { link: l, out: [], heard: Nothing };
+  }
+  match (l.phase) {
+    Pairing => {},
+    _ => {
+      return Step { link: l, out: [], heard: Nothing };
+    }
+  }
+  match (l.hs) {
+    Some(h) => {
+      return exchange(l, body, h, now);
+    },
+    None => {}
+  }
+  return Step { link: l, out: [], heard: Nothing };
+}
+
+// The meaning of packet `p`, and the datagrams to send to the peer.
+pub function heard(l: Link, p: Packet, now: i64): Step {
+  if (p.from == l.me) {
+    return Step { link: l, out: [], heard: Nothing };
+  }
+  match (l.phase) {
+    Searching => {
+      if (p.kind == BEACON || p.kind == HANDSHAKE) {
+        return Step { link: l, out: [], heard: Found(p.from) };
+      }
+      return Step { link: l, out: [], heard: Nothing };
+    },
+    _ => {}
+  }
+  if (p.from != l.peer) {
+    return Step { link: l, out: [], heard: Nothing };
+  }
+  if (p.kind == HANDSHAKE) {
+    return handshake(l, p.body, now);
+  }
+  if (p.kind == CONTROL || p.kind == VOICE) {
+    match (l.phase) {
+      Ready => {
+        return Step { link: l, out: [], heard: Frame(p.kind, p.body) };
+      },
+      _ => {}
+    }
+  }
+  return Step { link: l, out: [], heard: Nothing };
+}
+
+// The users confirmed the string: the channel of the session.
+pub function confirm(l: Link): (Link, Option[secure.Channel]) {
+  match (l.keys) {
+    Some(k) => {
+      return (Link { ...l, phase: Ready, keys: None }, Some(secure.channel(k)));
+    },
+    None => {}
+  }
+  return (l, None);
+}
+
+// A user rejected the string, or the session ended before it was checked.
+pub function close(own l: Link): Link {
+  match (l.keys) {
+    Some(k) => {
+      secure.close_keys(k);
+    },
+    None => {}
+  }
+  match (l.hs) {
+    Some(h) => {
+      secure.close_handshake(h);
+    },
+    None => {}
+  }
+  return Link { ...l, phase: Closed, hs: None, keys: None };
+}

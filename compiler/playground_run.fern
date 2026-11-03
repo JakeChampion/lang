@@ -178,6 +178,9 @@ function run(): i32 {
   if (modloader.report_unresolved(missing, "playground")) {
     return 1;
   }
+  if (report_diags(asmcore.imported_parse_errors(flatten.modules(loaded)), files)) {
+    return 1;
+  }
 
   let merged: parser.Module = flatten.bundle(entry, loaded, target);
   merged = parser.fill_default_args_module(merged);

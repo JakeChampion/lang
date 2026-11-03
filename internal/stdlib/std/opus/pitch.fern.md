@@ -1,0 +1,390 @@
+# The CELT pitch analysis
+
+This module finds the pitch period of a signal, and holds the linear prediction that the analysis and the loss concealment use. It is a port of the float build of `pitch.c` and `celt_lpc.c` from libopus 1.4.
+
+## Model
+
+The pitch search works on a copy of the signal at half the sample rate. A filter of five taps makes the spectrum of that copy flat, so the strong harmonics do not hide the period. Then a coarse search at a quarter of the rate finds the two best candidates. A fine search at half the rate examines the periods near them, and an interpolation can move the result by one sample.
+
+The linear prediction finds the filter of order `p` that predicts each sample from the samples before it. `lpc` gets the filter from the autocorrelation, `fir` gives the error of the prediction, and `iir` makes a signal again from an error signal.
+
+## Contracts
+
+- An offset `at` in an argument is the index of the first value. `fir` and `iir` also read the `ord` values before it.
+- `pitch_search` takes the signals at half the rate that `pitch_downsample` gives. `len` and `max_pitch` are in samples at the full rate, and are multiples of 4. It reads `len / 2` values of `x` and `(len + max_pitch) / 2` values of `y`.
+- `iir` takes an `n` that is a multiple of 4, and an `ord` that is a multiple of 4.
+- The arithmetic is in f32, in the same order as libopus, so the results are the same bits.
+
+## Module assembly
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<correlation>>
+
+<<prediction>>
+
+<<pitch>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// The CELT pitch analysis and linear prediction, ported from libopus 1.4.
+//
+// Copyright (c) 2007-2008 CSIRO
+// Copyright (c) 2007-2010 Xiph.Org Foundation
+// Written by Jean-Marc Valin
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// - Redistributions of source code must retain the above copyright
+// notice, this list of conditions and the following disclaimer.
+//
+// - Redistributions in binary form must reproduce the above copyright
+// notice, this list of conditions and the following disclaimer in the
+// documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+// OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+import "std/opus/modes";
+```
+
+### `correlation`
+
+Each sum adds its products in order, as the unrolled kernels of libopus do.
+
+```fern
+<<correlation>>=
+// The sum of `x[xa + i] * y[ya + i]` for `i` below `n`.
+pub function inner_prod(x: [f32], xa: i32, y: [f32], ya: i32, n: i32): f32 {
+  let s: f32 = 0.0f32;
+  for i in 0..n {
+    s = s + x[xa + i] * y[ya + i];
+  }
+  return s;
+}
+
+pub struct Xcorr { xcorr: f32[], max: f32 }
+
+// The correlation of `x` with `y` at each lag below `max_pitch`, and the
+// largest of them, which is at least 1.
+pub function pitch_xcorr(x: [f32], xa: i32, y: [f32], ya: i32, len: i32, max_pitch: i32): Xcorr {
+  let xcorr: f32[] = [];
+  let max: f32 = 1.0f32;
+  for i in 0..max_pitch {
+    let s: f32 = inner_prod(x, xa, y, ya + i, len);
+    xcorr = xcorr.append(s);
+    if (s > max) {
+      max = s;
+    }
+  }
+  return Xcorr { xcorr: xcorr, max: max };
+}
+
+// The autocorrelation of the `n` values of `x` from `at`, at the lags 0 to
+// `lag`. With `windowed`, the mode window fades both ends over the overlap.
+pub function autocorr(x: [f32], at: i32, windowed: boolean, lag: i32, n: i32): f32[] {
+  let xx: f32[] = [];
+  for i in 0..n {
+    xx = xx.append(x[at + i]);
+  }
+  if (windowed) {
+    for i in 0..modes.OVERLAP {
+      xx = xx.with(i, x[at + i] * modes.WINDOW[i]);
+      xx = xx.with(n - i - 1, x[at + n - i - 1] * modes.WINDOW[i]);
+    }
+  }
+  let fast: i32 = n - lag;
+  let ac: f32[] = pitch_xcorr(xx, 0, xx, 0, fast, lag + 1).xcorr;
+  for k in 0..lag + 1 {
+    let d: f32 = 0.0f32;
+    for i in k + fast..n {
+      d = d + xx[i] * xx[i - k];
+    }
+    ac = ac.with(k, ac[k] + d);
+  }
+  return ac;
+}
+```
+
+### `prediction`
+
+`lpc` is the Levinson-Durbin recursion. It stops when the prediction removes 30 dB of the energy.
+
+```fern
+<<prediction>>=
+const TINY: f32 = 1.000000013351432e-10f32;
+
+const THIRTY_DB: f32 = 0.0010000000474974513f32;
+
+function zeros(n: i32): f32[] {
+  let x: f32[] = [];
+  for i in 0..n {
+    x = x.append(0.0f32);
+  }
+  return x;
+}
+
+// The `p` coefficients of the prediction from the autocorrelation `ac`.
+pub function lpc(ac: [f32], p: i32): f32[] {
+  let a: f32[] = zeros(p);
+  if (!(ac[0] > TINY)) {
+    return a;
+  }
+  let error: f32 = ac[0];
+  for i in 0..p {
+    let rr: f32 = 0.0f32;
+    for j in 0..i {
+      rr = rr + a[j] * ac[i - j];
+    }
+    rr = rr + ac[i + 1];
+    let r: f32 = -(rr / error);
+    a = a.with(i, r);
+    let half: i32 = i + 1 >> 1;
+    for j in 0..half {
+      let t1: f32 = a[j];
+      let t2: f32 = a[i - 1 - j];
+      a = a.with(j, t1 + r * t2);
+      a = a.with(i - 1 - j, t2 + r * t1);
+    }
+    error = error - r * r * error;
+    if (error <= THIRTY_DB * ac[0]) {
+      break;
+    }
+  }
+  return a;
+}
+
+// The error of the prediction `num` of order `ord` for the `n` values of `x`
+// from `at`.
+pub function fir(x: [f32], at: i32, num: [f32], n: i32, ord: i32): f32[] {
+  let y: f32[] = [];
+  for i in 0..n {
+    let s: f32 = x[at + i];
+    for j in 0..ord {
+      s = s + num[ord - 1 - j] * x[at + i + j - ord];
+    }
+    y = y.append(s);
+  }
+  return y;
+}
+
+pub struct Iir { y: f32[], mem: f32[] }
+
+struct Block { y: f32[], out: f32[] }
+
+// One block of four outputs of `iir`, as an FIR of the outputs before it,
+// with the outputs of the block added after.
+function iir_block(x: [f32], at: i32, den: [f32], own y: f32[], own out: f32[], i: i32, ord: i32): Block {
+  let s0: f32 = x[at + i];
+  let s1: f32 = x[at + i + 1];
+  let s2: f32 = x[at + i + 2];
+  let s3: f32 = x[at + i + 3];
+  for j in 0..ord {
+    let d: f32 = den[ord - 1 - j];
+    s0 = s0 + d * y[i + j];
+    s1 = s1 + d * y[i + j + 1];
+    s2 = s2 + d * y[i + j + 2];
+    s3 = s3 + d * y[i + j + 3];
+  }
+  y = y.with(i + ord, -s0);
+  s1 = s1 + y[i + ord] * den[0];
+  y = y.with(i + ord + 1, -s1);
+  s2 = s2 + y[i + ord + 1] * den[0];
+  s2 = s2 + y[i + ord] * den[1];
+  y = y.with(i + ord + 2, -s2);
+  s3 = s3 + y[i + ord + 2] * den[0];
+  s3 = s3 + y[i + ord + 1] * den[1];
+  s3 = s3 + y[i + ord] * den[2];
+  y = y.with(i + ord + 3, -s3);
+  out = out.append(s0).append(s1).append(s2).append(s3);
+  return Block { y: y, out: out };
+}
+
+// The signal from the error `x` of the prediction `den` of order `ord`, for
+// `n` values from `at`. `mem` holds the last `ord` outputs before them, the
+// newest first, and the result holds the new ones.
+pub function iir(x: [f32], at: i32, den: [f32], n: i32, ord: i32, mem: [f32]): Iir {
+  let y: f32[] = zeros(n + ord);
+  for i in 0..ord {
+    y = y.with(i, -mem[ord - 1 - i]);
+  }
+  let out: f32[] = [];
+  let i: i32 = 0;
+  while (i < n - 3) {
+    let Block { y: y1, out: o1 } = iir_block(x, at, den, y, out, i, ord);
+    y = y1;
+    out = o1;
+    i = i + 4;
+  }
+  let next: f32[] = [];
+  for k in 0..ord {
+    next = next.append(out[n - k - 1]);
+  }
+  return Iir { y: out, mem: next };
+}
+```
+
+### `pitch`
+
+`pitch_downsample` gives the copy at half the rate, after the flattening filter. `pitch_search` gives the lag of `y` that matches `x` best, in samples at the full rate. The search steps two samples, and an interpolation can move the result by one sample.
+
+```fern
+<<pitch>>=
+const NOISE_FLOOR: f32 = 1.000100016593933f32;
+
+const LAG_STEP: f32 = 0.00800000037997961f32;
+
+const LAG_DECAY: f32 = 0.8999999761581421f32;
+
+const ZERO_AT: f32 = 0.800000011920929f32;
+
+const XCORR_SCALE: f32 = 9.999999960041972e-13f32;
+
+const INTERPOLATE: f32 = 0.699999988079071f32;
+
+function half_rate(x: [f32], at: i32, n: i32): f32[] {
+  let y: f32[] = [0.25f32 * x[at + 1] + 0.5f32 * x[at]];
+  for i in 1..n {
+    y = y.append(0.25f32 * x[at + 2 * i - 1] + 0.25f32 * x[at + 2 * i + 1] + 0.5f32 * x[at + 2 * i]);
+  }
+  return y;
+}
+
+// The five-tap filter, in place.
+function fir5(own x: f32[], num: [f32], n: i32): f32[] {
+  let m0: f32 = 0.0f32;
+  let m1: f32 = 0.0f32;
+  let m2: f32 = 0.0f32;
+  let m3: f32 = 0.0f32;
+  let m4: f32 = 0.0f32;
+  for i in 0..n {
+    let s: f32 = x[i] + num[0] * m0 + num[1] * m1 + num[2] * m2 + num[3] * m3 + num[4] * m4;
+    m4 = m3;
+    m3 = m2;
+    m2 = m1;
+    m1 = m0;
+    m0 = x[i];
+    x = x.with(i, s);
+  }
+  return x;
+}
+
+// The signal of `channels` channels, from `x0[a0]` and `x1[a1]`, at half
+// the rate and flattened. `len` is the length at the full rate.
+pub function pitch_downsample(x0: [f32], a0: i32, x1: [f32], a1: i32, len: i32, channels: i32): f32[] {
+  let n: i32 = len >> 1;
+  let lp: f32[] = half_rate(x0, a0, n);
+  if (channels == 2) {
+    let lp1: f32[] = half_rate(x1, a1, n);
+    for i in 0..n {
+      lp = lp.with(i, lp[i] + lp1[i]);
+    }
+  }
+  let ac: f32[] = autocorr(lp, 0, false, 4, n);
+  ac = ac.with(0, ac[0] * NOISE_FLOOR);
+  for i in 1..5 {
+    let w: f32 = LAG_STEP * (i as f32);
+    ac = ac.with(i, ac[i] - ac[i] * w * w);
+  }
+  let a: f32[] = lpc(ac, 4);
+  let tmp: f32 = 1.0f32;
+  for i in 0..4 {
+    tmp = LAG_DECAY * tmp;
+    a = a.with(i, a[i] * tmp);
+  }
+  let num: f32[] = [a[0] + ZERO_AT, a[1] + ZERO_AT * a[0], a[2] + ZERO_AT * a[1], a[3] + ZERO_AT * a[2], ZERO_AT * a[3]];
+  return fir5(lp, num, n);
+}
+
+struct Best { num0: f32, den0: f32, p0: i32, num1: f32, den1: f32, p1: i32 }
+
+// The two lags of `xcorr` with the best normalised correlation.
+function find_best_pitch(xcorr: [f32], y: [f32], len: i32, max_pitch: i32): Best {
+  let syy: f32 = 1.0f32;
+  for j in 0..len {
+    syy = syy + y[j] * y[j];
+  }
+  let b: Best = Best { num0: -1.0f32, den0: 0.0f32, p0: 0, num1: -1.0f32, den1: 0.0f32, p1: 1 };
+  for i in 0..max_pitch {
+    if (xcorr[i] > 0.0f32) {
+      let x16: f32 = xcorr[i] * XCORR_SCALE;
+      let num: f32 = x16 * x16;
+      if (num * b.den1 > b.num1 * syy) {
+        if (num * b.den0 > b.num0 * syy) {
+          b = Best { num0: num, den0: syy, p0: i, num1: b.num0, den1: b.den0, p1: b.p0 };
+        } else {
+          b = Best { ...b, num1: num, den1: syy, p1: i };
+        }
+      }
+    }
+    syy = syy + (y[i + len] * y[i + len] - y[i] * y[i]);
+    if (1.0f32 > syy) {
+      syy = 1.0f32;
+    }
+  }
+  return b;
+}
+
+function abs(v: i32): i32 {
+  if (v < 0) {
+    return -v;
+  }
+  return v;
+}
+
+// The period of `x` in `y`, from `len` values of `x[xa]` and
+// `len + max_pitch` values of `y`.
+pub function pitch_search(x: [f32], xa: i32, y: [f32], len: i32, max_pitch: i32): i32 {
+  let lag: i32 = len + max_pitch;
+  let x4: f32[] = [];
+  for j in 0..len >> 2 {
+    x4 = x4.append(x[xa + 2 * j]);
+  }
+  let y4: f32[] = [];
+  for j in 0..lag >> 2 {
+    y4 = y4.append(y[2 * j]);
+  }
+  let coarse: Xcorr = pitch_xcorr(x4, 0, y4, 0, len >> 2, max_pitch >> 2);
+  let b: Best = find_best_pitch(coarse.xcorr, y4, len >> 2, max_pitch >> 2);
+  let half: i32 = max_pitch >> 1;
+  let xcorr: f32[] = zeros(half);
+  for i in 0..half {
+    if (abs(i - 2 * b.p0) <= 2 || abs(i - 2 * b.p1) <= 2) {
+      let s: f32 = inner_prod(x, xa, y, i, len >> 1);
+      if (-1.0f32 > s) {
+        s = -1.0f32;
+      }
+      xcorr = xcorr.with(i, s);
+    }
+  }
+  let fine: Best = find_best_pitch(xcorr, y, len >> 1, half);
+  let offset: i32 = 0;
+  let p: i32 = fine.p0;
+  if (p > 0 && p < half - 1) {
+    let a: f32 = xcorr[p - 1];
+    let m: f32 = xcorr[p];
+    let c: f32 = xcorr[p + 1];
+    if (c - a > INTERPOLATE * (m - a)) {
+      offset = 1;
+    } else if (a - c > INTERPOLATE * (m - c)) {
+      offset = -1;
+    }
+  }
+  return 2 * p - offset;
+}
+```

@@ -9,7 +9,8 @@ const castOperandSrc = `function f(x: i32, r: Result[i32, string]): i64 {
   let d = (-(x as i64)) as u64;
   let e = (-r?) as i64;
   let g = x as i64 + -(x as i64);
-  return a + b + c as i64 + d as i64 + e + g;
+  let h = (-1) as i64;
+  return a + b + c as i64 + d as i64 + e + g + h;
 }
 `
 

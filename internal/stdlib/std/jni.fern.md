@@ -113,6 +113,8 @@ pub const GET_STATIC_METHOD_ID: i32 = 113;
 
 pub const GET_STATIC_FIELD_ID: i32 = 144;
 
+pub const NEW_STRING: i32 = 163;
+
 pub const NEW_STRING_UTF: i32 = 167;
 
 pub const GET_STRING_UTF_LENGTH: i32 = 168;
@@ -210,12 +212,70 @@ pub function new_string_utf(env: usize, bytes: usize): usize {
   return call1(env, NEW_STRING_UTF, bytes);
 }
 
-// A Java string with the contents of `s`. The temporary C string is freed.
+// The code point at byte `i` of `s`, and the number of bytes it takes. A
+// byte that does not start a whole character is U+FFFD, and takes one byte.
+function next_char(s: string, i: i32): (i32, i32) {
+  let b: i32 = s[i] as i32;
+  if (b < 128) {
+    return (b, 1);
+  }
+  let k: i32 = 1;
+  let c: i32 = 0;
+  if (b >= 240 && b < 248) {
+    k = 4;
+    c = b & 7;
+  } else if (b >= 224 && b < 240) {
+    k = 3;
+    c = b & 15;
+  } else if (b >= 192 && b < 224) {
+    k = 2;
+    c = b & 31;
+  }
+  if (k == 1 || i + k > s.len()) {
+    return (65533, 1);
+  }
+  for j in 1..k {
+    let t: i32 = s[i + j] as i32;
+    if (t < 128 || t >= 192) {
+      return (65533, 1);
+    }
+    c = c << 6 | t & 63;
+  }
+  return (c, k);
+}
+
+// Writes UTF-16 unit `u` at index `n` of the buffer `units`, in native byte
+// order, which is little-endian on every Android ABI.
+function put_unit(units: usize, n: i32, u: i32): void {
+  unsafe {
+    __store_u8(units + (2 * n) as usize, u & 255);
+    __store_u8(units + (2 * n + 1) as usize, u >> 8 & 255);
+  }
+}
+
+// A Java string with the contents of `s`. It goes to NewString as UTF-16, so
+// a NUL and a character above U+FFFF keep their meaning: NewStringUTF takes
+// modified UTF-8, which spells both differently from Fern. The temporary
+// buffer is freed.
 pub function new_string(env: usize, s: string): usize {
   unsafe {
-    let bytes: usize = cstr(s);
-    let jstr: usize = new_string_utf(env, bytes);
-    free_buffer(bytes);
+    let units: usize = alloc_buffer(2 * s.len() + 2);
+    let n: i32 = 0;
+    let i: i32 = 0;
+    while (i < s.len()) {
+      let (c, used) = next_char(s, i);
+      i = i + used;
+      if (c >= 65536) {
+        put_unit(units, n, 55296 + (c - 65536 >> 10));
+        put_unit(units, n + 1, 56320 + (c - 65536 & 1023));
+        n = n + 2;
+      } else {
+        put_unit(units, n, c);
+        n = n + 1;
+      }
+    }
+    let jstr: usize = call2(env, NEW_STRING, units, n as usize);
+    free_buffer(units);
     return jstr;
   }
 }
@@ -385,6 +445,26 @@ pub function get_static_double_field(env: usize, clazz: usize, field: usize): f6
   return call2_f64(env, 153, clazz, field);
 }
 
+// A new array of `n` references of class `clazz`, each set to `init`.
+pub function new_object_array(env: usize, n: i32, clazz: usize, init: usize): usize {
+  return call3(env, 172, n as usize, clazz, init);
+}
+
+pub function set_object_array_element(env: usize, array: usize, index: i32, value: usize): usize {
+  return call3(env, 174, array, index as usize, value);
+}
+
+// A String[] of `items`. The local references of the strings are deleted.
+pub function string_array(env: usize, items: string[]): usize {
+  let array: usize = new_object_array(env, items.len(), find_class(env, "java/lang/String"), 0 as usize);
+  for k in 0..items.len() {
+    let s: usize = new_string(env, items[k]);
+    let ignored: usize = set_object_array_element(env, array, k, s);
+    let deleted: usize = delete_local_ref(env, s);
+  }
+  return array;
+}
+
 pub function get_array_length(env: usize, array: usize): i32 {
   return call1(env, 171, array) as i32;
 }
@@ -442,6 +522,12 @@ pub function jvalue_set_f64(args: usize, idx: i32, d: f64): usize {
     __store_i64(args + (idx * 8) as usize, f64_bits(d));
     return args;
   }
+}
+
+// A new object of `clazz`, made by the constructor `ctor` with the jvalue
+// array `args`.
+pub function new_object_a(env: usize, clazz: usize, ctor: usize, args: usize): usize {
+  return call3(env, 30, clazz, ctor, args);
 }
 
 pub function call_object_method_a(env: usize, obj: usize, method: usize, args: usize): usize {

@@ -1,0 +1,57 @@
+// A literal inside a call argument that replaces a field of an own parameter
+// moves the field into an own parameter, as a local's initializer does.
+struct Res { v: i32[] }
+
+@noinline
+function (own r: Res) size(): i32 {
+  return r.v.len();
+}
+
+struct Box { r: Res, n: i32 }
+
+@noinline
+function grow(own r: Res, k: i32): Res {
+  return Res { v: r.v.append(k) };
+}
+
+@noinline
+function bump(own b: Box): Box {
+  return Box { ...b, n: b.n + 1 };
+}
+
+@noinline
+function count(own b: Box): i32 {
+  return b.n * 10 + b.r.size();
+}
+
+@noinline
+function eat(own b: Box): void {
+  let s: i32 = b.r.size();
+}
+
+@noinline
+function step(own b: Box, k: i32): Box {
+  return bump(Box { ...b, r: grow(b.r, k) });
+}
+
+@noinline
+function total(own b: Box, k: i32): i32 {
+  let n: i32 = count(Box { ...b, r: grow(b.r, k) });
+  return n;
+}
+
+@noinline
+function discard(own b: Box, k: i32): void {
+  eat(Box { ...b, r: grow(b.r, k) });
+}
+
+function main(): i32 {
+  let b: Box = step(Box { r: Res { v: [1, 2] }, n: 0 }, 7);
+  let c: Box = step(b, 8);
+  discard(Box { r: Res { v: [4] }, n: 3 }, 5);
+  let r: i32 = total(c, 9);
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r;
+}
