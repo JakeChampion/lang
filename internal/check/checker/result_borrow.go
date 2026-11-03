@@ -264,9 +264,9 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	return false
 }
 
-// A call scrutinee is owned when its result is fresh by signature: a
-// variant, a fresh method, or a function with no borrowed pointer parameter
-// that can hold a handle.
+// A call scrutinee is owned when its result is fresh: a variant, a fresh
+// method, a function with no borrowed pointer parameter that can hold a
+// handle, or a function whose body returns no borrow.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
 		id, isIdent := call.Callee.(*ast.Ident)
@@ -283,7 +283,7 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 		if call.Method != nil {
 			return c.freshMethodResult(call)
 		}
-		return !c.signatureResultBorrows(id.Name)
+		return !c.signatureResultBorrows(id.Name) || c.resultAnalysed[id.Name] && !c.resultBorrows[id.Name]
 	}
 	return inferred(tag)
 }

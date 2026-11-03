@@ -2052,3 +2052,36 @@ function f(): i32 {
     return 0;
 }`)
 }
+
+// A call whose body returns no borrow is an owned scrutinee, in a match and
+// in a let-else, as it is when a let binds it.
+func TestOwnGuardScrutineeOfBodyFreshCall(t *testing.T) {
+	const opener = `
+function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); }
+function take(own s: Socket): i32 { return tcp_close(s); }
+`
+	if err := checkSource(t, opener+`
+function f(l: Socket): i32 {
+    match (accepted(l)) {
+        Ok(s) => { return take(s); },
+        Err(e) => { return e; }
+    }
+    return 0;
+}
+function g(l: Socket): i32 {
+    let Ok(s) = accepted(l) else { return 1; };
+    return take(s);
+}`); err != nil {
+		t.Errorf("a body-fresh scrutinee should own its payload, got: %v", err)
+	}
+	wantE051(t, "scrutinee-returns-its-parameter", `
+function passed(l: Socket): Result[Socket, i32] { return Ok(l); }
+function take(own s: Socket): i32 { return tcp_close(s); }
+function f(l: Socket): i32 {
+    match (passed(l)) {
+        Ok(s) => { return take(s); },
+        Err(e) => { return e; }
+    }
+    return 0;
+}`)
+}
