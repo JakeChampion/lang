@@ -1,0 +1,170 @@
+import "std/hash/crc32";
+import "std/opus/celt";
+import "std/test";
+
+// Each script makes a decoder at a random rate and channel count, and decodes
+// random packets with it: a random frame size, stream channel count, first
+// and last band, and length. Random bytes are a valid CELT frame, so the
+// packets reach each path of the decoder. One packet in 16 starts with two
+// 255 bytes, which sets the silence flag. The trace holds the bits of each
+// sample and the final range of each frame. libopus 1.4, in its float build,
+// gave the CRC-32 of each trace, from a C program that makes the same calls.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+const RATES: i32[] = [48000, 24000, 16000, 12000, 8000];
+
+function all_bits(xs: [f32]): string {
+  let s: string = "";
+  for i in 0..xs.len() {
+    s = s + " " + f32_bits(xs[i]).to_string();
+  }
+  return s;
+}
+
+struct Run { g: Gen, t: crc32.Crc32 }
+
+function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function frame(own g: Gen, own t: crc32.Crc32, own st: celt.Decoder, rate: i32, cc: i32): (Run, celt.Decoder) {
+  let (g1, r1) = rnd(g);
+  let (g2, r2) = rnd(g1);
+  let (g3, r3) = rnd(g2);
+  let lm: i32 = r1 % 4;
+  let c: i32 = 1 + r2 % 2;
+  let start: i32 = 0;
+  if (r3 % 8 == 0) {
+    start = 17;
+  }
+  let (g4, r4) = rnd(g3);
+  g = g4;
+  let end: i32 = 21;
+  if (r4 % 4 == 0) {
+    let (g5, r5) = rnd(g);
+    g = g5;
+    end = 13 + r5 % 9;
+  }
+  if (end <= start) {
+    end = 21;
+  }
+  let (g6, r6) = rnd(g);
+  g = g6;
+  let len: i32 = 0;
+  if (r6 % 4 == 0) {
+    let (g7, r7) = rnd(g);
+    g = g7;
+    len = 2 + r7 % 1274;
+  } else {
+    let (g7, r7) = rnd(g);
+    g = g7;
+    len = 2 + r7 % 120;
+  }
+  let data: u8[] = [];
+  for i in 0..len {
+    let (g8, r8) = rnd(g);
+    g = g8;
+    data = data.append((r8 & 255) as u8);
+  }
+  let (g9, r9) = rnd(g);
+  g = g9;
+  if (r9 % 16 == 0) {
+    data = data.with(0, 255u8);
+    data = data.with(1, 255u8);
+  }
+  let fs: i32 = (120 << lm) / (48000 / rate);
+  let (st1, res) = st.decode(data, celt.Frame { frame_size: fs, stream_channels: c, start: start, end: end });
+  let out: string = "d " + lm.to_string() + " " + c.to_string() + " " + start.to_string() + " " + end.to_string() + " " + len.to_string() + " ";
+  match (res) {
+    Ok(pcm) => {
+      out = out + (pcm.len() / cc).to_string() + " " + st1.rng.to_string() + " |" + all_bits(pcm);
+    },
+    Err(e) => {
+      out = out + "-1 " + st1.rng.to_string() + " | " + e.message();
+    }
+  }
+  return (Run { g: g, t: line(t, out) }, st1);
+}
+
+function script(own g0: Gen, own t0: crc32.Crc32, frames: i32): Run {
+  let (g1, r1) = rnd(g0);
+  let (g2, r2) = rnd(g1);
+  let g: Gen = g2;
+  let rate: i32 = RATES[r1 % 5];
+  let cc: i32 = 1 + r2 % 2;
+  let t: crc32.Crc32 = line(t0, "s " + rate.to_string() + " " + cc.to_string());
+  match (celt.decoder(rate, cc)) {
+    Ok(st) => {
+      let d: celt.Decoder = st;
+      for f in 0..frames {
+        let (r, d1) = frame(g, t, d, rate, cc);
+        g = r.g;
+        t = r.t;
+        d = d1;
+      }
+    },
+    Err(e) => {
+      t = line(t, e.message());
+    }
+  }
+  return Run { g: g, t: t };
+}
+
+function trace(seed: u32, scripts: i32, frames: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let t: crc32.Crc32 = crc32.new();
+  for s in 0..scripts {
+    let Run { g: g1, t: t1 } = script(g, t, frames);
+    g = g1;
+    t = t1;
+  }
+  return t.finish();
+}
+
+function test_short_script(): test.TestOutcome {
+  return test.assert_eq(trace(1u32, 3, 8), 1502802417u32);
+}
+
+function test_long_script(): test.TestOutcome {
+  return test.assert_eq(trace(2u32, 6, 10), 3777869444u32);
+}
+
+function test_bad_arguments(): test.TestOutcome {
+  match (celt.decoder(44100, 1)) {
+    Ok(_) => {
+      return test.fail("a decoder at 44100 Hz");
+    },
+    Err(e) => {}
+  }
+  match (celt.decoder(48000, 1)) {
+    Ok(st) => {
+      let (st1, res) = st.decode([1u8, 2u8, 3u8], celt.Frame { frame_size: 100, stream_channels: 1, start: 0, end: 21 });
+      match (res) {
+        Ok(_) => {
+          return test.fail("a frame of 100 samples");
+        },
+        Err(e) => {
+          return test.assert_eq(e.message(), "bad CELT argument: the frame size 100 is not one that CELT uses");
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/celt");
+  r = r.it("a short script gives the libopus trace", test_short_script);
+  r = r.it("a long script gives the libopus trace", test_long_script);
+  r = r.it("a bad rate or frame size is an error", test_bad_arguments);
+  return r.finish();
+}
