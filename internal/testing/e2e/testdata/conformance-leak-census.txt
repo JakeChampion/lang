@@ -299,6 +299,7 @@ f64_tryop_widen                                      0
 factorial_print                                      0
 fib_recursion                                        0
 field_read_off_a_call_through_a_function_field       0
+fip_range_for_and_value_blocks                       0
 fizzbuzz                                             0
 float_arith_ops                                      0
 float_bit_reinterpret                                0
