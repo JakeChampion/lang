@@ -1,5 +1,5 @@
 # 2026-11-03: PR #14122, a local scripts/perf-bench-selfhost run on its head. Liveness decides which values cross a call,
-# and a small branch splices into its two callers. Native rows shrink 1% to 7%. Two wasm rows grow 1.4% to 1.6%.
+# and a small branch splices into its two callers. Retain the measured reductions and preserve every original higher-cost limit.
 # 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
 # Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
@@ -255,7 +255,7 @@ selfhost/wasm32-wasi/byte_copy_append.emit	571
 selfhost/wasm32-wasi/byte_copy_with.emit	586
 selfhost/wasm32-wasi/call_overhead.emit	119
 selfhost/wasm32-wasi/closure_call.emit	504
-selfhost/wasm32-wasi/deflate_decode.emit	19917
+selfhost/wasm32-wasi/deflate_decode.emit	19608
 selfhost/wasm32-wasi/deflate_encode.emit	11578
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -264,7 +264,7 @@ selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
 selfhost/wasm32-wasi/map_string.emit	14123
-selfhost/wasm32-wasi/ordmap_insert.emit	6771
+selfhost/wasm32-wasi/ordmap_insert.emit	6680
 selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	510
