@@ -1120,6 +1120,45 @@ function step(own a: Asm, v: i32): Asm {
 }`)
 }
 
+// A literal inside a call takes the superseded field as a let initializer
+// does.
+func TestOwnGuardAllowsSupersededFieldMoveInCallArgument(t *testing.T) {
+	const helpers = `
+function size(a: Asm): i32 { return a.cfi.n; }
+function keep(own a: Asm): Asm { return a; }
+function drop(own a: Asm): void {}
+`
+	wantOK(t, "field-move-let-call-argument", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): i32 {
+    let n: i32 = size(Asm { ...a, cfi: record(a.cfi, v) });
+    return n;
+}`)
+	wantOK(t, "field-move-statement-call-argument", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): void {
+    drop(Asm { ...a, cfi: record(a.cfi, v) });
+}`)
+	wantOK(t, "field-move-returned-call-argument", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): Asm {
+    return keep(Asm { ...a, cfi: record(a.cfi, v) });
+}`)
+}
+
+func TestOwnGuardRejectsSupersededFieldMoveInCallArgumentMisuse(t *testing.T) {
+	const helpers = `
+function size(a: Asm): i32 { return a.cfi.n; }
+function keep(own a: Asm): Asm { return a; }
+`
+	wantE050(t, "field-move-call-argument-then-read", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): i32 {
+    let n: i32 = size(Asm { ...a, cfi: record(a.cfi, v) });
+    return n + a.cfi.n;
+}`)
+	wantE051(t, "field-move-call-argument-borrowed-base", fieldMovePrelude+helpers+`
+function step(a: Asm, v: i32): Asm {
+    return keep(Asm { ...a, cfi: record(a.cfi, v) });
+}`)
+}
+
 func TestOwnGuardRejectsSupersededFieldMoveOnBorrowedBase(t *testing.T) {
 	wantE051(t, "field-move-borrowed-base-let", fieldMovePrelude+`
 function step(a: Asm, v: i32): Asm {

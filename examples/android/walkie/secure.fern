@@ -13,11 +13,10 @@
 // in the middle cannot try keys until the authentication strings match. The
 // two users compare the short authentication string at first pairing.
 //
-// Each direction and each channel has its own key: control frames go over a
-// reliable stream, and voice frames over datagrams. A frame is sealed with
-// ChaCha20-Poly1305, and its nonce is its sequence number. A control frame
-// must have the next number. A voice frame can arrive out of order, so it
-// is accepted once inside a window of 64 numbers.
+// Each direction and each channel has its own key. Both channels go over
+// datagrams, which can be lost or reordered. A frame is sealed with
+// ChaCha20-Poly1305, and its nonce is its sequence number. A frame of either
+// channel is accepted once inside a window of 64 numbers.
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
 import "std/crypto/x25519";
@@ -314,51 +313,59 @@ pub function seal_voice(c: Channel, plain: [u8]): (Channel, u8[]) {
   return (c, frame);
 }
 
-// A control frame opens only with the next sequence number, so a replayed,
-// dropped or reordered frame ends the stream.
+// A control frame opens once inside the window, in any order.
 pub function open_control(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
   let w = c.recv_ctl.get();
   match (open_frame(w, CTL, frame)) {
     Some((seq, plain)) => {
-      if (seq != w.next) {
-        return (c, None);
+      match (accept(w, seq)) {
+        Some(next) => {
+          c.recv_ctl.set(next);
+          return (c, Some(plain));
+        },
+        None => {}
       }
-      c.recv_ctl.set(Way { ...w, next: seq + 1 as i64 });
-      return (c, Some(plain));
     },
-    None => {
-      return (c, None);
-    }
+    None => {}
   }
+  return (c, None);
 }
 
-// A voice frame opens once, when its number is above the window or in the
-// window and not seen yet.
+// A voice frame opens once inside the window, in any order.
 pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
   let w = c.recv_voice.get();
   match (open_frame(w, VOICE, frame)) {
     Some((seq, plain)) => {
-      if (seq > w.high) {
-        let seen: boolean[] = w.seen;
-        let shift: i64 = seq - w.high;
-        for k in 0..WINDOW {
-          let from: i64 = k as i64 - shift;
-          seen = seen.with(k, from >= 0 as i64 && w.seen[from as i32]);
-        }
-        c.recv_voice.set(Way { ...w, high: seq, seen: seen.with(0, true) });
-        return (c, Some(plain));
+      match (accept(w, seq)) {
+        Some(next) => {
+          c.recv_voice.set(next);
+          return (c, Some(plain));
+        },
+        None => {}
       }
-      let back: i64 = w.high - seq;
-      if (back >= WINDOW as i64 || w.seen[back as i32]) {
-        return (c, None);
-      }
-      c.recv_voice.set(Way { ...w, seen: w.seen.with(back as i32, true) });
-      return (c, Some(plain));
     },
-    None => {
-      return (c, None);
-    }
+    None => {}
   }
+  return (c, None);
+}
+
+// The receive state after frame `seq`, when its number is above the window,
+// or in the window and not seen yet.
+function accept(w: Way, seq: i64): Option[Way] {
+  if (seq > w.high) {
+    let seen: boolean[] = w.seen;
+    let shift: i64 = seq - w.high;
+    for k in 0..WINDOW {
+      let from: i64 = k as i64 - shift;
+      seen = seen.with(k, from >= 0 as i64 && w.seen[from as i32]);
+    }
+    return Some(Way { ...w, high: seq, seen: seen.with(0, true) });
+  }
+  let back: i64 = w.high - seq;
+  if (back >= WINDOW as i64 || w.seen[back as i32]) {
+    return None;
+  }
+  return Some(Way { ...w, seen: w.seen.with(back as i32, true) });
 }
 
 // Close clears the shared slots before erasure, so old channel copies close too.

@@ -14,12 +14,15 @@ import "./protocol";
 // The floor lease, and how often a speaker renews it.
 pub const LEASE_MS: i32 = 3000;
 
-pub const RENEW_MS: i32 = 1000;
+pub const RENEW_MS: i32 = 500;
 
-pub const HEARTBEAT_MS: i32 = 1000;
+pub const HEARTBEAT_MS: i32 = 500;
 
 // A peer that sends nothing for this long is lost.
 pub const PEER_TIMEOUT_MS: i32 = 5000;
+
+// A peer that does not confirm the string in this time is lost.
+pub const CONFIRM_TIMEOUT_MS: i32 = 60000;
 
 pub enum Mode { Offline, Internet }
 
@@ -86,10 +89,15 @@ pub struct Session {
   owner: i32,
   owner_request: i32,
   owner_until: i64,
-  // The peer holds the floor: the Receiving substate of Listening.
+  // The peer holds the floor: the Receiving substate of Listening. The
+  // non-controller clears it at `receiving_until` when no grant renews it.
   receiving: boolean,
+  receiving_until: i64,
   held: boolean,
   last_heard: i64,
+  // The peer sent a message after this side confirmed the string, so it
+  // confirmed too. Until then, this side sends its Hello again.
+  peer_ready: boolean,
   next_heartbeat: i64,
   heartbeat_seq: i32,
   // The audio codec of this side's voice frames. The peer must use the same.
@@ -97,7 +105,7 @@ pub struct Session {
 }
 
 pub function new(): Session {
-  return Session { state: Idle, mode: Offline, controller: false, me: 0, peer: 0, id: 0 as i64, request: 0, request_at: 0 as i64, next_request: 1, lease_until: 0 as i64, next_renew: 0 as i64, owner: 0, owner_request: 0, owner_until: 0 as i64, receiving: false, held: false, last_heard: 0 as i64, next_heartbeat: 0 as i64, heartbeat_seq: 0, codec: protocol.CODEC_OPUS };
+  return Session { state: Idle, mode: Offline, controller: false, me: 0, peer: 0, id: 0 as i64, request: 0, request_at: 0 as i64, next_request: 1, lease_until: 0 as i64, next_renew: 0 as i64, owner: 0, owner_request: 0, owner_until: 0 as i64, receiving: false, receiving_until: 0 as i64, held: false, last_heard: 0 as i64, peer_ready: false, next_heartbeat: 0 as i64, heartbeat_seq: 0, codec: protocol.CODEC_OPUS };
 }
 
 // The session with the audio codec `codec` for its voice frames.
@@ -193,7 +201,7 @@ pub function step(s: Session, e: Event, now: i64): (Session, Action[]) {
       return stop_talking(Session { ...s, held: false }, []);
     },
     Received(m) => {
-      return received(Session { ...s, last_heard: now }, m, now);
+      return received(Session { ...s, last_heard: now, peer_ready: true }, m, now);
     },
     Tick => {
       return tick(s, now);
@@ -264,7 +272,7 @@ function authenticated(s: Session, now: i64): (Session, Action[]) {
     }
   }
   let hello: protocol.Message = protocol.Hello(protocol.VERSION, s.id, s.codec, 0);
-  return (Session { ...s, state: Listening, last_heard: now, next_heartbeat: now + HEARTBEAT_MS as i64 }, [Send(hello)]);
+  return (Session { ...s, state: Listening, last_heard: now, peer_ready: false, next_heartbeat: now + HEARTBEAT_MS as i64 }, [Send(hello)]);
 }
 
 function ptt_down(s: Session, now: i64): (Session, Action[]) {
@@ -274,6 +282,9 @@ function ptt_down(s: Session, now: i64): (Session, Action[]) {
     _ => {
       return (t, []);
     }
+  }
+  if (!s.peer_ready) {
+    return (s, [Notice("wait for the other phone to confirm the code")]);
   }
   if (s.receiving) {
     return (t, [Notice("the peer is talking")]);
@@ -349,7 +360,7 @@ function received(s: Session, m: protocol.Message, now: i64): (Session, Action[]
       }
       match (s.state) {
         Requesting => {
-          return (Session { ...s, state: Listening, request: 0, receiving: true }, [Notice("the peer is talking")]);
+          return (Session { ...s, state: Listening, request: 0, receiving: true, receiving_until: now + LEASE_MS as i64 }, [Notice("the peer is talking")]);
         },
         _ => {
           return (s, []);
@@ -391,13 +402,17 @@ function granted(s: Session, request: i32, owner: i32, lease: i32, now: i64): (S
     return (s, []);
   }
   if (owner != s.me) {
+    let until: i64 = now + clamp_lease(lease) as i64;
     match (s.state) {
       Transmitting => {
         let (t, acts) = stop_talking(s, []);
-        return (Session { ...t, receiving: true }, acts.append(Notice("the floor went to the peer")));
+        return (Session { ...t, receiving: true, receiving_until: until }, acts.append(Notice("the floor went to the peer")));
+      },
+      Requesting => {
+        return (Session { ...s, state: Listening, request: 0, receiving: true, receiving_until: until }, [Notice("the peer is talking")]);
       },
       _ => {
-        return (Session { ...s, receiving: true }, []);
+        return (Session { ...s, receiving: true, receiving_until: until }, []);
       }
     }
   }
@@ -427,6 +442,16 @@ function granted(s: Session, request: i32, owner: i32, lease: i32, now: i64): (S
   }
 }
 
+function clamp_lease(lease: i32): i32 {
+  if (lease < 0) {
+    return 0;
+  }
+  if (lease > LEASE_MS) {
+    return LEASE_MS;
+  }
+  return lease;
+}
+
 function released(s: Session, request: i32): (Session, Action[]) {
   if (s.controller) {
     if (s.owner == s.peer && s.owner_request == request) {
@@ -441,6 +466,9 @@ function tick(s: Session, now: i64): (Session, Action[]) {
   if (!connected(s)) {
     return (s, []);
   }
+  if (!s.peer_ready) {
+    return wait_for_peer(s, now);
+  }
   if (now - s.last_heard >= PEER_TIMEOUT_MS as i64) {
     return lost(s, "the peer stopped answering");
   }
@@ -454,7 +482,40 @@ function tick(s: Session, now: i64): (Session, Action[]) {
     t = Session { ...t, owner: 0, owner_request: 0, receiving: false };
     acts = acts.append(Send(protocol.PttRelease(s.owner_request)));
   }
-  return renew(t, acts, now);
+  if (!t.controller && t.receiving && now >= t.receiving_until) {
+    t = Session { ...t, receiving: false };
+  }
+  let (r, ask) = ask_again(t, acts, now);
+  return renew(r, ask, now);
+}
+
+// The peer has not confirmed the string, or its messages were lost: the
+// Hello goes again in place of each heartbeat.
+function wait_for_peer(s: Session, now: i64): (Session, Action[]) {
+  if (now - s.last_heard >= CONFIRM_TIMEOUT_MS as i64) {
+    return lost(s, "the other phone did not confirm the code");
+  }
+  if (now < s.next_heartbeat) {
+    return (s, []);
+  }
+  let hello: protocol.Message = protocol.Hello(protocol.VERSION, s.id, s.codec, 0);
+  return (Session { ...s, next_heartbeat: now + HEARTBEAT_MS as i64 }, [Send(hello)]);
+}
+
+// A floor request with no reply goes again as a new request.
+function ask_again(s: Session, acts: Action[], now: i64): (Session, Action[]) {
+  match (s.state) {
+    Requesting => {},
+    _ => {
+      return (s, acts);
+    }
+  }
+  if (s.controller || now < s.request_at + RENEW_MS as i64) {
+    return (s, acts);
+  }
+  let request: i32 = s.next_request;
+  let t: Session = Session { ...s, request: request, request_at: now, next_request: request + 1 };
+  return (t, acts.append(Send(protocol.PttRequest(s.id, s.me, request, now))));
 }
 
 // A speaker renews its lease while it transmits, and stops when the lease
@@ -475,8 +536,9 @@ function renew(s: Session, acts: Action[], now: i64): (Session, Action[]) {
   }
   let t: Session = Session { ...s, next_renew: now + RENEW_MS as i64 };
   if (s.controller) {
+    // The grant tells the peer that the lease goes on.
     let until: i64 = now + LEASE_MS as i64;
-    return (Session { ...t, owner_until: until, lease_until: until }, acts);
+    return (Session { ...t, owner_until: until, lease_until: until }, acts.append(Send(protocol.PttGrant(s.owner_request, s.me, LEASE_MS))));
   }
   // Each attempt has its own deadline and reply. An old grant cannot renew it.
   let request: i32 = s.next_request;

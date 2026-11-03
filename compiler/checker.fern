@@ -12198,17 +12198,7 @@ function match_stmt_own_lambdas(st: ast.Stmt, structs: StructTable, unions: Unio
       }
     }
   }
-  function not_into_lambda(n: ast.Expr): boolean {
-    match (n) {
-      ast.ExprLambda(_) => {
-        return false;
-      },
-      _ => {
-        return true;
-      }
-    }
-  }
-  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_into_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, ow_outside_lambda);
 }
 
 function sugar_unreachable_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): util.Diag[] {
@@ -18508,7 +18498,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret };
+  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret };
   return nested;
 }
 
@@ -21094,19 +21084,43 @@ function ow_loop(body: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): util.Diag[
 }
 
 // A literal based on q that replaces q.f moves q.f into an own parameter in
-// the literal. A returned literal can take it from any q that is not
-// borrowed. A local's initializer takes it only from an owned q, whose later
-// reads the walk refuses.
+// the literal. A literal in a local's initializer, an expression statement or
+// a returned value, outside a lambda, takes it from an owned q, whose later
+// reads the walk refuses. A returned literal can take it from any q that is
+// not borrowed.
 function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): OwnCtx {
-  if let ast.ExprStructLit(sl) = value {
-    if (sl.has_base) {
+  function admit(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprStructLit(sl) = e {
+      if (sl.has_base) {
+        let base: string = ow_ident_name(sl.base);
+        if (base.len() > 0 && !util.has_str(ctx.borrowed, base) && ow_is_owned(ctx, base)) {
+          for f in ow_field_move_fields(base, e, ctx) {
+            acc = acc.append(f);
+          }
+        }
+      }
+    }
+    return acc;
+  }
+  let fields: string[] = astwalk.fold_expr_pruned(value, [], admit, ow_outside_lambda);
+  if (returned) {
+    if let ast.ExprStructLit(sl) = value {
       let base: string = ow_ident_name(sl.base);
-      if (base.len() > 0 && !util.has_str(ctx.borrowed, base) && (returned || ow_is_owned(ctx, base))) {
-        return OwnCtx { ...ctx, admit_fields: ow_field_move_fields(base, value, ctx) };
+      if (sl.has_base && base.len() > 0 && !util.has_str(ctx.borrowed, base)) {
+        for f in ow_field_move_fields(base, value, ctx) {
+          fields = fields.append(f);
+        }
       }
     }
   }
-  return ctx;
+  return OwnCtx { ...ctx, admit_fields: fields };
+}
+
+function ow_outside_lambda(e: ast.Expr): boolean {
+  if let ast.ExprLambda(_) = e {
+    return false;
+  }
+  return true;
 }
 
 function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
@@ -21118,7 +21132,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return ow_record_return(ru_expr(r.value, moved, ow_superseded_ctx(r.value, true, ctx)), r.line, ctx);
     },
     ast.StmtExpr(e) => {
-      return ru_expr(e.value, moved, ctx);
+      return ru_expr(e.value, moved, ow_superseded_ctx(e.value, false, ctx));
     },
     ast.StmtAssign(a) => {
       let actx: OwnCtx = ctx;

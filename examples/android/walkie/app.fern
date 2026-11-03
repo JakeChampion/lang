@@ -3,6 +3,9 @@
 // the six-digit string. Then one holds the button to talk, and the other
 // hears. The voice is raw 16-bit audio at 16 kHz until the Opus encoder is
 // ready.
+//
+// `node` holds the logic. This file does its input and output: the socket,
+// the microphone, the speaker, the touches and the screen.
 import "std/android";
 import "std/android/audio";
 import "std/android/draw";
@@ -10,11 +13,9 @@ import "std/log";
 import "std/net";
 import "std/rand";
 import "./lan";
+import "./node";
 import "./pcm";
-import "./protocol";
 import "./screen";
-import "./secure";
-import "./session";
 
 const MIC: string = "android.permission.RECORD_AUDIO";
 
@@ -22,19 +23,13 @@ struct App {
   ctx: usize,
   window: usize,
   sock: i32,
-  link: lan.Link,
-  peer_addr: net.SocketAddr,
-  chan: Option[secure.Channel],
-  sess: session.Session,
+  node: node.Node,
   mic: audio.Stream,
   spk: audio.Stream,
   capturing: boolean,
   up: pcm.Resampler,
   down: pcm.Resampler,
-  pending: i32[],
-  notice: string,
   pressed: boolean,
-  heard_at: i64,
   drawn: string,
   asked: boolean,
 }
@@ -82,11 +77,9 @@ function open_socket(): (i32, i32) {
   return (-1, lan.PORT);
 }
 
-function fresh(ctx: usize, sock: i32, spk: audio.Stream, notice: string): App {
-  let s0: session.Session = session.with_codec(session.new(), protocol.CODEC_PCM16);
-  let (s1, _) = session.step(s0, session.Start(session.Offline), now_ms());
-  let down: pcm.Resampler = pcm.resampler(pcm.WIRE_RATE, spk.rate);
-  return App { ctx: ctx, window: 0 as usize, sock: sock, link: lan.new(node_id()), peer_addr: any_addr(0), chan: None, sess: s1, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(pcm.WIRE_RATE, pcm.WIRE_RATE), down: down, pending: [], notice: notice, pressed: false, heard_at: 0i64, drawn: "", asked: false };
+function fresh_node(notice: string): node.Node {
+  let n: node.Node = node.new(node_id(), rand.bytes(node.SEED_BYTES), now_ms());
+  return node.Node { ...n, notice: notice };
 }
 
 function app_main(ctx: usize): usize {
@@ -98,8 +91,9 @@ function app_main(ctx: usize): usize {
     notice = "no network: ports " + lan.PORT.to_string() + " and " + lan.SECOND_PORT.to_string() + " are busy";
   }
   android.keep_screen_on(ctx, true);
-  let first: App = fresh(ctx, sock, spk, notice);
-  log.warn("walkie: node " + first.link.me.to_string() + ", port " + port.to_string() + ", socket " + sock.to_string() + ", speaker rate " + spk.rate.to_string());
+  let n: node.Node = fresh_node(notice);
+  log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + sock.to_string() + ", speaker rate " + spk.rate.to_string());
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(pcm.WIRE_RATE, pcm.WIRE_RATE), down: pcm.resampler(pcm.WIRE_RATE, spk.rate), pressed: false, drawn: "", asked: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -110,12 +104,7 @@ function shut(own s: App): void {
   s.mic.close();
   s.spk.stop();
   s.spk.close();
-  match (s.chan) {
-    Some(c) => {
-      secure.close(c);
-    },
-    None => {}
-  }
+  node.close(s.node);
   if (s.sock >= 0) {
     let closed: Result[void, net.NetError] = net.close(s.sock);
   }
@@ -152,9 +141,9 @@ function event(own s: App, e: android.Event): App {
     },
     android.Key(code, action) => {
       if (code == 4 && action == 1) {
-        let (t, _) = session.step(s.sess, session.Leave, now_ms());
+        let n: node.Node = node.leave(s.node, now_ms());
         android.finish(s.ctx);
-        return App { ...s, sess: t };
+        return App { ...s, node: n };
       }
       return s;
     },
@@ -177,351 +166,142 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   if (w == 0) {
     return s;
   }
-  match (s.link.phase) {
+  let now: i64 = now_ms();
+  let down: boolean = action == 0;
+  match (s.node.link.phase) {
     lan.Verifying => {
-      if (action == 0 && screen.contains(screen.same_button(w, h), x, y)) {
-        return confirm(s);
+      if (down && screen.contains(screen.same_button(w, h), x, y)) {
+        return App { ...s, node: node.confirm(s.node, now) };
       }
-      if (action == 0 && screen.contains(screen.differ_button(w, h), x, y)) {
-        return reject(s);
-      }
-      return s;
-    },
-    lan.Closed => {
-      if (action == 0 && screen.contains(screen.talk_button(w, h), x, y)) {
-        return restart(s);
+      if (down && screen.contains(screen.differ_button(w, h), x, y)) {
+        return App { ...s, node: node.reject(s.node, now) };
       }
       return s;
     },
     _ => {}
   }
-  if (ended(s.sess.state)) {
-    if (action == 0 && screen.contains(screen.talk_button(w, h), x, y)) {
+  if (down && screen.contains(screen.talk_button(w, h), x, y)) {
+    if (node.ended(s.node)) {
       return restart(s);
     }
-    return s;
-  }
-  if (action == 0 && screen.contains(screen.talk_button(w, h), x, y)) {
-    return act(App { ...s, pressed: true }, session.PttDown);
+    return App { ...s, pressed: true, node: node.press(s.node, now) };
   }
   if ((action == 1 || action == 3) && s.pressed) {
-    return act(App { ...s, pressed: false }, session.PttUp);
+    return App { ...s, pressed: false, node: node.release(s.node, now) };
   }
   return s;
-}
-
-// The session ended, or lost its peer: a tap searches again.
-function ended(st: session.State): boolean {
-  match (st) {
-    session.Failed => {
-      return true;
-    },
-    session.Reconnecting => {
-      return true;
-    },
-    session.Idle => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
 }
 
 function restart(own s: App): App {
-  match (s.chan) {
-    Some(c) => {
-      secure.close(c);
-    },
-    None => {}
-  }
-  let closed: lan.Link = lan.close(s.link);
-  let t: App = fresh(s.ctx, s.sock, s.spk, "");
-  return App { ...t, window: s.window, mic: s.mic, asked: s.asked };
-}
-
-function confirm(s: App): App {
-  let (l, chan) = lan.confirm(s.link);
-  log.info("walkie: the string is confirmed");
-  return act(App { ...s, link: l, chan: chan }, session.Authenticated);
-}
-
-function reject(own s: App): App {
-  log.info("walkie: the string is rejected");
-  let t: App = App { ...s, link: lan.close(s.link) };
-  return act(t, session.AuthFailed);
-}
-
-// One session event and its actions.
-function act(s: App, e: session.Event): App {
-  let (t, acts) = session.step(s.sess, e, now_ms());
-  let a: App = App { ...s, sess: t };
-  for x in acts {
-    a = action(a, x);
-  }
-  return a;
-}
-
-function action(s: App, a: session.Action): App {
-  match (a) {
-    session.Send(m) => {
-      return send_frame(s, lan.CONTROL, protocol.encode(m));
-    },
-    session.Capture(on) => {
-      return capture(s, on);
-    },
-    session.Notice(text) => {
-      log.info("walkie: " + text);
-      return App { ...s, notice: text };
-    }
-  }
-  return s;
-}
-
-function capture(s: App, on: boolean): App {
-  if (!on) {
-    s.mic.stop();
-    return App { ...s, capturing: false, pending: [] };
-  }
-  if (!android.has_permission(s.ctx, MIC)) {
-    android.request_permissions(s.ctx, [MIC]);
-    let (t, acts) = session.step(s.sess, session.MicLost, now_ms());
-    return App { ...s, sess: t, notice: "allow the microphone, then press again" };
-  }
-  let mic: audio.Stream = s.mic;
-  if (mic.ptr == 0 as usize) {
-    mic = audio.capture(pcm.WIRE_RATE);
-  }
-  if (!mic.start()) {
-    let (t, acts) = session.step(s.sess, session.MicLost, now_ms());
-    return App { ...s, sess: t, mic: mic, notice: "the microphone did not start" };
-  }
-  return App { ...s, mic: mic, capturing: true, pending: [], up: pcm.resampler(mic.rate, pcm.WIRE_RATE) };
-}
-
-function send(s: App, data: u8[]): void {
-  if (s.sock >= 0) {
-    let sent: Result[i32, net.NetError] = net.send_to(s.sock, data, s.peer_addr);
-  }
-}
-
-function send_all(s: App, out: u8[][]): void {
-  for d in out {
-    send(s, d);
-  }
-}
-
-// A sealed control or voice frame to the peer.
-function send_frame(s: App, kind: i32, plain: u8[]): App {
-  match (s.chan) {
-    Some(c) => {
-      let (c1, frame) = match (kind == lan.VOICE) {
-        true => secure.seal_voice(c, plain),
-        false => secure.seal_control(c, plain),
-      };
-      send(s, lan.encode(kind, s.link.me, frame));
-      return App { ...s, chan: Some(c1) };
-    },
-    None => {}
-  }
-  return s;
+  node.close(s.node);
+  return App { ...s, node: fresh_node(""), pressed: false, drawn: "" };
 }
 
 // The network, the timers and the microphone, after each event.
 function pump(s: App, now: i64): App {
   let t: App = receive_all(s, now);
-  let (l1, beacons) = lan.beacon(t.link, now);
-  if (t.sock >= 0) {
-    for b in beacons {
-      for port in [lan.PORT, lan.SECOND_PORT] {
-        let sent: Result[i32, net.NetError] = net.send_to(t.sock, b, net.socket_addr(net.V4([255u8, 255u8, 255u8, 255u8]), port));
-      }
-    }
-  }
-  let (l2, again) = lan.resend(l1, now);
-  t = App { ...t, link: l2 };
-  send_all(t, again);
-  t = act(t, session.Tick);
-  return speak(t);
+  t = App { ...t, node: node.tick(t.node, now) };
+  t = speak(sync_mic(t, now));
+  return flush(t);
 }
 
 function receive_all(s: App, now: i64): App {
   if (s.sock < 0) {
     return s;
   }
-  let t: App = s;
+  let n: node.Node = s.node;
   let buf: u8[] = [];
   for k in 0..2048 {
     buf = buf.append(0u8);
   }
   for k in 0..64 {
-    match (net.recv_from(t.sock, buf)) {
-      Ok((n, from)) => {
-        match (lan.decode(buf, n)) {
-          Some(p) => {
-            t = packet(t, p, from, now);
-          },
-          None => {}
-        }
+    match (net.recv_from(s.sock, buf)) {
+      Ok((len, from)) => {
+        n = node.receive(n, buf, len, from, now);
       },
       Err(_) => {
-        return t;
+        return App { ...s, node: n };
       }
     }
   }
-  return t;
+  return App { ...s, node: n };
 }
 
-function packet(s: App, p: lan.Packet, from: net.SocketAddr, now: i64): App {
-  let st: lan.Step = lan.heard(s.link, p, now);
-  let t: App = App { ...s, link: st.link };
-  send_all(t, st.out);
-  match (st.heard) {
-    lan.Found(peer) => {
-      log.info("walkie: found peer " + peer.to_string() + " at " + from.to_string());
-      let (l, out) = lan.pair(t.link, peer, now, rand.bytes(32), rand.bytes(16));
-      let u: App = act(App { ...t, link: l, peer_addr: from }, session.PeerFound);
-      send_all(u, out);
-      return u;
-    },
-    lan.Verify(sas) => {
-      log.info("walkie: keys are ready");
-      let me: i32 = 2;
-      let id: i64 = t.link.peer;
-      if (lan.initiator(t.link)) {
-        me = 1;
-        id = t.link.me;
-      }
-      return act(t, session.TransportUp(lan.initiator(t.link), me, 3 - me, id));
-    },
-    lan.Failed => {
-      log.info("walkie: the key exchange failed");
-      return act(t, session.AuthFailed);
-    },
-    lan.Frame(kind, body) => {
-      return frame(t, kind, body, now);
-    },
-    lan.Nothing => {}
+// Starts or stops the microphone as the node asks.
+function sync_mic(s: App, now: i64): App {
+  if (s.node.capture == s.capturing) {
+    return s;
   }
-  return t;
-}
-
-function frame(s: App, kind: i32, body: u8[], now: i64): App {
-  match (s.chan) {
-    Some(c) => {
-      if (kind == lan.CONTROL) {
-        let (c1, plain) = secure.open_control(c, body);
-        let t: App = App { ...s, chan: Some(c1) };
-        match (plain) {
-          Some(b) => {
-            match (protocol.decode(b)) {
-              Some(m) => {
-                return act(t, session.Received(m));
-              },
-              None => {}
-            }
-          },
-          None => {}
-        }
-        return t;
-      }
-      let (c2, voice) = secure.open_voice(c, body);
-      let t2: App = App { ...s, chan: Some(c2) };
-      match (voice) {
-        Some(b) => {
-          return play(t2, b, now);
-        },
-        None => {}
-      }
-      return t2;
-    },
-    None => {}
+  if (!s.node.capture) {
+    s.mic.stop();
+    return App { ...s, capturing: false };
   }
-  return s;
+  if (!android.has_permission(s.ctx, MIC)) {
+    android.request_permissions(s.ctx, [MIC]);
+    return App { ...s, node: node.mic_lost(s.node, "allow the microphone, then press again", now) };
+  }
+  let mic: audio.Stream = s.mic;
+  if (mic.ptr == 0 as usize) {
+    mic = audio.capture(pcm.WIRE_RATE);
+  }
+  if (!mic.start()) {
+    return App { ...s, mic: mic, node: node.mic_lost(s.node, "the microphone did not start", now) };
+  }
+  return App { ...s, mic: mic, capturing: true, up: pcm.resampler(mic.rate, pcm.WIRE_RATE) };
 }
 
-function play(s: App, b: u8[], now: i64): App {
-  let (down, samples) = pcm.resample(s.down, pcm.unpack(b));
-  let written: i32 = s.spk.write(samples, 0);
-  return App { ...s, down: down, heard_at: now };
-}
-
-// The microphone samples since the last step, in 20 ms frames.
+// The microphone samples since the last step.
 function speak(s: App): App {
   if (!s.capturing) {
     return s;
   }
-  let raw: i32[] = s.mic.read(s.mic.rate / 10, 0);
-  let (up, wire) = pcm.resample(s.up, raw);
-  let pending: i32[] = s.pending;
-  for v in wire {
-    pending = pending.append(v);
-  }
-  let t: App = App { ...s, up: up };
-  while (pending.len() >= pcm.FRAME) {
-    let head: i32[] = [];
-    let rest: i32[] = [];
-    for k in 0..pending.len() {
-      if (k < pcm.FRAME) {
-        head = head.append(pending[k]);
+  let (up, wire) = pcm.resample(s.up, s.mic.read(s.mic.rate / 10, 0));
+  return App { ...s, up: up, node: node.voice(s.node, wire) };
+}
+
+// Sends the datagrams of the node, plays its frames and writes its log lines.
+function flush(s: App): App {
+  let n: node.Node = s.node;
+  if (s.sock >= 0) {
+    for d in n.out {
+      if (d.broadcast) {
+        for port in [lan.PORT, lan.SECOND_PORT] {
+          let sent: Result[i32, net.NetError] = net.send_to(s.sock, d.data, net.socket_addr(net.V4([255u8, 255u8, 255u8, 255u8]), port));
+        }
       } else {
-        rest = rest.append(pending[k]);
+        let sent: Result[i32, net.NetError] = net.send_to(s.sock, d.data, n.peer_addr);
       }
     }
-    t = send_frame(t, lan.VOICE, pcm.pack(head));
-    pending = rest;
   }
-  return App { ...t, pending: pending };
+  let down: pcm.Resampler = s.down;
+  for f in n.heard {
+    let (d2, samples) = pcm.resample(down, f);
+    let written: i32 = s.spk.write(samples, 0);
+    down = d2;
+  }
+  for l in n.logs {
+    log.info("walkie: " + l);
+  }
+  return App { ...s, down: down, node: node.drained(n) };
 }
 
-// The words of the talk button, and its color.
-function button_face(s: App, now: i64): (string, i32) {
-  match (s.link.phase) {
-    lan.Closed => {
-      return ("TAP TO SEARCH AGAIN", android.rgb(90, 90, 90));
-    },
-    _ => {}
+function button_color(label: string): i32 {
+  if (label == "TALKING") {
+    return android.rgb(40, 170, 80);
   }
-  match (s.sess.state) {
-    session.Transmitting => {
-      return ("TALKING", android.rgb(40, 170, 80));
-    },
-    session.Requesting => {
-      return ("WAIT", android.rgb(200, 160, 30));
-    },
-    session.Listening => {
-      if (s.sess.receiving || now - s.heard_at < 300i64) {
-        return ("LISTENING", android.rgb(40, 110, 200));
-      }
-      return ("HOLD TO TALK", android.rgb(70, 70, 70));
-    },
-    _ => {}
+  if (label == "WAIT" || label == "WAITING") {
+    return android.rgb(200, 160, 30);
   }
-  if (ended(s.sess.state)) {
-    return ("TAP TO SEARCH AGAIN", android.rgb(90, 90, 90));
+  if (label == "LISTENING") {
+    return android.rgb(40, 110, 200);
   }
-  return ("SEARCHING", android.rgb(50, 50, 50));
-}
-
-function status(s: App): string {
-  match (s.link.phase) {
-    lan.Searching => {
-      return "looking for a phone on this Wi-Fi";
-    },
-    lan.Pairing => {
-      return "found a phone: making keys";
-    },
-    lan.Verifying => {
-      return "do both phones show this code?";
-    },
-    lan.Closed => {
-      return "not connected";
-    },
-    lan.Ready => {
-      return "connected";
-    }
+  if (label == "HOLD TO TALK") {
+    return android.rgb(70, 70, 70);
   }
-  return "";
+  if (label == "TAP TO SEARCH AGAIN") {
+    return android.rgb(90, 90, 90);
+  }
+  return android.rgb(50, 50, 50);
 }
 
 // The largest scale up to `cap` at which `text` fits in `w` pixels.
@@ -534,9 +314,10 @@ function fit_scale(text: string, w: i32, cap: i32): i32 {
 }
 
 function draw(s: App): App {
-  let now: i64 = now_ms();
-  let (label, color) = button_face(s, now);
-  let key: string = status(s) + "|" + s.notice + "|" + label + "|" + s.link.sas;
+  let n: node.Node = s.node;
+  let label: string = node.button(n, now_ms());
+  let status: string = node.status(n);
+  let key: string = status + "|" + n.notice + "|" + label + "|" + n.link.sas;
   if (s.window == 0 as usize || key == s.drawn) {
     return s;
   }
@@ -555,19 +336,19 @@ function draw(s: App): App {
   f.fill(0, 0, fw, fh, android.rgb(0, 0, 0));
   f.text(fw / 20, line, "Fern Walkie (LAN)", sc, white);
   let y: i32 = 2 * line;
-  for l in screen.wrap(status(s), chars) {
+  for l in screen.wrap(status, chars) {
     f.text(fw / 20, y, l, sc, android.rgb(160, 160, 160));
     y = y + line;
   }
-  for l in screen.wrap(s.notice, chars) {
+  for l in screen.wrap(n.notice, chars) {
     f.text(fw / 20, y, l, sc, android.rgb(230, 120, 80));
     y = y + line;
   }
-  match (s.link.phase) {
+  match (n.link.phase) {
     lan.Verifying => {
       let big: i32 = sc * 3;
-      let cw: i32 = draw.text_width(s.link.sas, big);
-      f.text((fw - cw) / 2, fh / 5, s.link.sas, big, white);
+      let cw: i32 = draw.text_width(n.link.sas, big);
+      f.text((fw - cw) / 2, fh / 5, n.link.sas, big, white);
       let same: screen.Rect = screen.same_button(fw, fh);
       let differ: screen.Rect = screen.differ_button(fw, fh);
       f.fill(same.x, same.y, same.w, same.h, android.rgb(40, 150, 70));
@@ -578,7 +359,7 @@ function draw(s: App): App {
     _ => {}
   }
   let b: screen.Rect = screen.talk_button(fw, fh);
-  f.fill(b.x, b.y, b.w, b.h, color);
+  f.fill(b.x, b.y, b.w, b.h, button_color(label));
   let bs: i32 = fit_scale(label, b.w * 9 / 10, sc * 2);
   f.text(screen.center_x(b, draw.text_width(label, bs)), b.y + b.h / 2 - draw.text_height(bs) / 2, label, bs, white);
   android.post(f);

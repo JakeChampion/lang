@@ -47,6 +47,12 @@ func TestWalkieSecureChannel(t *testing.T) {
 
 // The LAN transport of the first build: the datagram format, the beacons,
 // and the key exchange with a resend of each lost message.
+// Two nodes of the app on a simulated network that drops and reorders
+// datagrams: pairing, confirmation, the floor and the voice frames.
+func TestWalkieNodes(t *testing.T) {
+	runWalkieTest(t, "node_test.fern")
+}
+
 func TestWalkieLanTransport(t *testing.T) {
 	runWalkieTest(t, "lan_test.fern")
 }
