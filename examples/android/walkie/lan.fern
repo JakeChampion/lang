@@ -10,6 +10,10 @@ import "./secure";
 
 pub const PORT: i32 = 47120;
 
+// The port of a second copy of the app on the same phone, which can test
+// discovery and the key exchange. Beacons go to both ports.
+pub const SECOND_PORT: i32 = 47121;
+
 pub const BEACON: i32 = 1;
 
 pub const HANDSHAKE: i32 = 2;

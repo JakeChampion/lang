@@ -32,6 +32,11 @@ Use it:
    voice. Only one phone can talk at a time.
 5. When the connection is lost, tap the button to search again.
 
+To test discovery and the code check on one phone, build the app a second
+time with another `-apk-package` and `-apk-label`, and install both. The
+second copy opens port 47121, and each copy sends its beacons to both ports.
+Only the app in front gets the microphone, so this does not test voice.
+
 A network that isolates its clients, such as many guest and public
 networks, blocks the beacons. A phone hotspot works: connect the other phone
 to it. Logs go to logcat with the tag `fern`.
