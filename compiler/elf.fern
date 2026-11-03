@@ -266,25 +266,25 @@ function elf_push_zeros(b: usize, n: i32): void {
 }
 
 // Code, data, the dynamic tables, PT_DYNAMIC, the unwind header or its
-// padding, PT_GNU_STACK and PT_GNU_RELRO.
-function elf_so_phnum(): i32 {
-  return 7;
+// padding, PT_GNU_STACK, PT_GNU_RELRO and the optional PT_GNU_PROPERTY.
+function elf_so_phnum(note: boolean): i32 {
+  return 7 + elf_property_phs(note);
 }
 
-pub function elf_text_off_so(): i32 {
-  return elf_align16(elf_eh_size() + elf_so_phnum() * elf_ph_size());
+pub function elf_text_off_so(note: boolean): i32 {
+  return elf_align16(elf_eh_size() + elf_so_phnum(note) * elf_ph_size());
 }
 
-pub function elf_eh_hdr_off_so(text_len: i32): i32 {
-  return elf_align4(elf_text_off_so() + text_len);
+pub function elf_eh_hdr_off_so(text_len: i32, note: boolean): i32 {
+  return elf_align4(elf_text_off_so(note) + text_len);
 }
 
-pub function elf_eh_frame_off_so(text_len: i32, hdr_len: i32): i32 {
-  return elf_align8(elf_eh_hdr_off_so(text_len) + hdr_len);
+pub function elf_eh_frame_off_so(text_len: i32, hdr_len: i32, note: boolean): i32 {
+  return elf_align8(elf_eh_hdr_off_so(text_len, note) + hdr_len);
 }
 
-pub function elf_data_off_so(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-  return elf_page_up(elf_unwind_end(elf_text_off_so(), text_len, hdr_len, eh_len));
+pub function elf_data_off_so(text_len: i32, hdr_len: i32, eh_len: i32, note: boolean): i32 {
+  return elf_page_up(elf_code_end(elf_unwind_end(elf_text_off_so(note), text_len, hdr_len, eh_len), note));
 }
 
 function elf_phdr(buf: i32[], p_type: i32, flags: i32, off: i32, vaddr: i32, filesz: i32, memsz: i32, align: i32): i32[] {
@@ -332,10 +332,11 @@ function elf_so_shstrtab(): i32[] {
   return tab;
 }
 
-pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string): i32[] {
+pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string, note: boolean): i32[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-  let text_off: i32 = elf_text_off_so();
-  let code_end: i32 = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
+  let text_off: i32 = elf_text_off_so(note);
+  let unwind_end: i32 = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
+  let code_end: i32 = elf_code_end(unwind_end, note);
   let page: i32 = elf_page_align();
   let rel_type: i32 = 8;
   if (machine == elf_em_aarch64()) {
@@ -393,7 +394,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
-  buf = elf_le16(buf, elf_so_phnum());
+  buf = elf_le16(buf, elf_so_phnum(note));
   buf = elf_le16(buf, 64);
   buf = elf_le16(buf, shnum);
   buf = elf_le16(buf, shnum - 1);
@@ -404,7 +405,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_phdr(buf, 2, 6, dyn_off, dyn_off + slide, dyn_sz, dyn_sz, 8);
   buf = elf_phdr(buf, 1685382482, 4, tab_file, tab_file + slide, tab_mem, tab_mem, 1);
   if (has_unwind) {
-    let ho: i32 = elf_eh_hdr_off_so(text.len());
+    let ho: i32 = elf_eh_hdr_off_so(text.len(), note);
     buf = elf_phdr(buf, 1685382480, 4, ho, ho, hdr.len(), hdr.len(), 4);
   } else {
     buf = elf_pad_to(buf, buf.len() + elf_ph_size());
@@ -412,12 +413,14 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_le32(buf, 1685382481);
   buf = elf_le32(buf, 6);
   buf = elf_pad_to(buf, buf.len() + 48);
+  buf = elf_property_ph(buf, note, 0, elf_align8(unwind_end));
 
   buf = elf_cat(elf_pad_to(buf, text_off), text);
   if (has_unwind) {
-    buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so(text.len())), hdr);
-    buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so(text.len(), hdr.len())), eh);
+    buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so(text.len(), note)), hdr);
+    buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so(text.len(), hdr.len(), note)), eh);
   }
+  buf = elf_so_note(buf, note, elf_align8(unwind_end));
   buf = elf_cat(elf_pad_to(buf, data_off), data);
   buf = elf_pad_to(buf, rela_off);
   let r: i32 = 0;
@@ -855,6 +858,13 @@ function elf_push_note(img: usize, note: boolean, off: i32): void {
     elf_push_zeros(img, off - buf_len(img));
     elf_push_ints(img, elf_bti_note());
   }
+}
+
+function elf_so_note(own buf: i32[], note: boolean, off: i32): i32[] {
+  if (!note) {
+    return buf;
+  }
+  return elf_cat(elf_pad_to(buf, off), elf_bti_note());
 }
 
 function elf_property_ph(own buf: i32[], note: boolean, base: i32, off: i32): i32[] {

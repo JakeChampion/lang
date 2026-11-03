@@ -975,20 +975,20 @@ function export_func_index(merged: parser.Module, name: string): i32 {
   return 0 - 1;
 }
 
-function export_entries(merged: parser.Module, names: string[], arm64: boolean): string {
+function export_entries(merged: parser.Module, names: string[], arm64: boolean, harden: boolean): string {
   let out: string = "";
   for n in names {
     let f: parser.FuncDecl = merged.funcs[export_func_index(merged, n)];
     if (arm64) {
-      out = out + export_entry_arm64(f);
+      out = out + export_entry_arm64(f, harden);
     } else {
-      out = out + export_entry(f);
+      out = out + export_entry(f, harden);
     }
   }
   return out;
 }
 
-function export_entry(f: parser.FuncDecl): string {
+function export_entry(f: parser.FuncDecl, harden: boolean): string {
   let ints: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
   let srcs: string[] = [];
   let ni: i32 = 0;
@@ -1007,7 +1007,8 @@ function export_entry(f: parser.FuncDecl): string {
       stack = stack + 8;
     }
   }
-  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n" + asm_ir.busy_take_x86();
+  let out: string = "__fern_export_" + f.name + ":\n" + harden_text(harden, "    endbr64\n") + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n" + asm_ir.busy_take_x86();
+  out = out + harden_text(harden, "    cmpq $0, __fern_rng_state(%rip)\n    jne .Lfern_export_ready_" + f.name + "\n    call __fern_harden_start\n.Lfern_export_ready_" + f.name + ":\n");
   let i: i32 = f.params.len() - 1;
   while (i >= 0) {
     out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
@@ -1042,7 +1043,7 @@ function export_arg(src: string, t: string): string {
   return load;
 }
 
-function export_entry_arm64(f: parser.FuncDecl): string {
+function export_entry_arm64(f: parser.FuncDecl, harden: boolean): string {
   let srcs: string[] = [];
   let ni: i32 = 0;
   let nf: i32 = 0;
@@ -1061,7 +1062,8 @@ function export_entry_arm64(f: parser.FuncDecl): string {
     }
   }
   let n: i32 = f.params.len();
-  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n" + asm_arm64_ir.busy_take_arm64();
+  let out: string = "__fern_export_" + f.name + ":\n" + harden_text(harden, "    bti c\n    paciasp\n") + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n" + asm_arm64_ir.busy_take_arm64();
+  out = out + harden_text(harden, "    adrp x16, __fern_rng_state\n    ldr x16, [x16, :lo12:__fern_rng_state]\n    cbnz x16, .Lfern_export_ready_" + f.name + "\n    bl __fern_harden_start\n.Lfern_export_ready_" + f.name + ":\n");
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
@@ -1076,7 +1078,15 @@ function export_entry_arm64(f: parser.FuncDecl): string {
   } else if (f.ret_type == "f32") {
     out = out + "    fmov d0, x0\n    fcvt s0, d0\n";
   }
-  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
+  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n" + harden_text(harden, "    autiasp\n") + "    ret\n";
+}
+
+// The export entry's text that only a -harden build carries.
+function harden_text(harden: boolean, text: string): string {
+  if (harden) {
+    return text;
+  }
+  return "";
 }
 
 function export_arg_arm64(src: string, t: string): string {
@@ -1111,19 +1121,19 @@ function export_widen_arm64(x: string, w: string, t: string): string {
   return "    mov x16, " + x + "\n";
 }
 
-function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string): string {
+function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, note: boolean): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "assembler", p.unknown);
   }
   let text_len: i32 = p.asm.text.len();
-  let tv: i32 = elf.elf_text_off_so();
+  let tv: i32 = elf.elf_text_off_so(note);
   let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
-  let hv: i32 = elf.elf_eh_hdr_off_so(text_len);
-  let ev: i32 = elf.elf_eh_frame_off_so(text_len, hdr_len);
+  let hv: i32 = elf.elf_eh_hdr_off_so(text_len, note);
+  let ev: i32 = elf.elf_eh_frame_off_so(text_len, hdr_len, note);
   let eh: i32[] = arm64_native.arm64_eh_frame(p, tv as i64, ev as i64);
   let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv as i64, ev as i64, hv as i64);
-  let dv: i32 = elf.elf_data_off_so(text_len, hdr.len(), eh.len());
+  let dv: i32 = elf.elf_data_off_so(text_len, hdr.len(), eh.len(), note);
   p = arm64_native.arm64_gas_link(p, tv as i64, dv as i64);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "linker", p.unknown);
@@ -1146,19 +1156,19 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, note);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
 function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
-  let tv: i32 = elf.elf_text_off_so();
+  let tv: i32 = elf.elf_text_off_so(false);
   let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
-  let hv: i32 = elf.elf_eh_hdr_off_so(a.text.len());
-  let ev: i32 = elf.elf_eh_frame_off_so(a.text.len(), hdr_len);
+  let hv: i32 = elf.elf_eh_hdr_off_so(a.text.len(), false);
+  let ev: i32 = elf.elf_eh_frame_off_so(a.text.len(), hdr_len, false);
   let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
   let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
-  let data_at: i32 = elf.elf_data_off_so(a.text.len(), hdr.len(), eh.len());
+  let data_at: i32 = elf.elf_data_off_so(a.text.len(), hdr.len(), eh.len(), false);
   a = x86_native.x86_link(a, tv, data_at);
   if (a.afix_offs.len() > 0 && a.unknown.len() == 0) {
     a = x86_native.X86Asm { ...a, unknown: ["an absolute code address in a shared object: " + a.afix_names[0]] };
@@ -1184,7 +1194,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, false);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -1413,22 +1423,18 @@ function remap_path(remaps: PathRemap[], path: string): string {
   return path;
 }
 
-function harden_refused(harden: boolean, target: string, shared: boolean): boolean {
-  if (!harden || (target == "arm64-linux" || target == "x86-64-linux") && !shared) {
+function harden_refused(harden: boolean, target: string): boolean {
+  if (!harden || target == "arm64-linux" || target == "x86-64-linux") {
     return false;
   }
-  let with: string = "";
-  if (shared) {
-    with = " with -shared";
-  }
-  eprint("fern: -harden is only supported for -target arm64-linux and x86-64-linux executables (got \"" + target + "\"" + with + ")");
+  eprint("fern: -harden is only supported for -target arm64-linux and x86-64-linux (got \"" + target + "\")");
   return true;
 }
 
 // The -harden, -pie, -heap-limit and -quarantine refusals as one answer; the
 // two size values are below zero after their own refusal.
 function switches_refused(harden: boolean, pie: boolean, target: string, shared: boolean, heap_limit: i64, quarantine: i64): boolean {
-  return harden_refused(harden, target, shared) || pie_refused(pie, target, shared) || heap_limit < 0i64 || quarantine < 0i64;
+  return harden_refused(harden, target) || pie_refused(pie, target, shared) || heap_limit < 0i64 || quarantine < 0i64;
 }
 
 function pie_refused(pie: boolean, target: string, shared: boolean): boolean {
@@ -1550,7 +1556,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
-      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
+      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
       cli_flag("-quarantine", "SIZE", "with -sanitize: the byte budget of released blocks held before reuse, 1M to 16G with a K, M or G suffix, or 0 for no bound (default 64M)"),
@@ -5774,11 +5780,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+      out_asm = export_entries(merged, shared_roots, true, harden) + out_asm;
     }
     out_asm = out_asm + bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, harden);
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -5796,10 +5802,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+      out_asm = export_entries(merged, shared_roots, true, false) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, false);
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -5891,7 +5897,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared && out_asm.len() > 0) {
-      out_asm = export_entries(merged, shared_roots, false) + out_asm;
+      out_asm = export_entries(merged, shared_roots, false, harden) + out_asm;
     }
     if (!emit_text && shared) {
       out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");

@@ -6518,13 +6518,29 @@ function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_startup_failure(s, ".Lfern_signal_stack_map_failed", aborts.signal_stack_map());
   s = emit_startup_failure(s, ".Lfern_signal_stack_failed", aborts.signal_stack());
   s = emit_startup_failure(s, ".Lfern_fault_handler_failed", aborts.fault_handler());
-  if (s.harden) {
-    s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
-    s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
-    s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
-    s = emit_startup_failure(s, "__fern_cfi_sig_fail", aborts.cfi_sig());
+  return emit_harden_failures(s);
+}
+
+function emit_harden_failures(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
   }
-  return s;
+  s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
+  s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
+  s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
+  return emit_startup_failure(s, "__fern_cfi_sig_fail", aborts.cfi_sig());
+}
+
+// A shared object has no startup, so its first export call reads the
+// canary. The export entry calls it with the arguments still in registers.
+function emit_harden_start(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.harden) {
+    return s;
+  }
+  s = s.write("__fern_harden_start:\n    stp x0, x1, [sp, #-16]!\n    stp x2, x8, [sp, #-16]!\n");
+  s = emit_canary_init(s);
+  s = s.write("    ldp x2, x8, [sp], #16\n    ldp x0, x1, [sp], #16\n    ret\n");
+  return emit_harden_failures(s);
 }
 
 function emit_canary_init(s: asmcore.EmitState): asmcore.EmitState {
@@ -10060,6 +10076,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
     s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);
+    s = emit_harden_start(s);
   }
   s = emit_san_uaf_abort(s);
   s = emit_san_waf_abort(s);
