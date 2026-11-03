@@ -1,0 +1,98 @@
+---
+title: Coreutils
+description: GNU coreutils reimplemented in Fern, held to byte-for-byte parity with GNU coreutils 9.12 and measured against GNU and uutils.
+---
+
+import CoreutilsBench from "../../components/CoreutilsBench.astro";
+
+The [`coreutils/`][tree] directory reimplements GNU coreutils in Fern. Each
+utility is one Fern program. The project has two requirements:
+
+1. **Byte-for-byte parity with GNU coreutils 9.12.** Each invocation gives
+   the same stdout, the same stderr and the same exit status as GNU. A
+   difference is a bug.
+2. **Faster than GNU on every utility, and faster than uutils (the Rust
+   coreutils) where the language allows it.**
+
+The catalogue has 106 of the 107 utilities in GNU coreutils 9.12. The missing
+utility is `stdbuf`. It is not planned ([#8378][stdbuf]), because it must call
+`setvbuf` in the host libc, and Fern has no FFI.
+
+## Parity
+
+A utility does not have a list of supported flags, because it supports all
+of them. Each flag, each error message and each exit code must agree with
+GNU.
+
+The gate is `internal/testing/coreutils/`. It does not store expected output.
+Each case is an invocation: argv, stdin, environment, and where stdout goes.
+The harness runs the GNU binary and the Fern binary with the case and compares
+the results:
+
+- stdout, byte for byte
+- stderr, byte for byte
+- the exit status, or the signal that stopped the process
+- the file tree after the run, for a utility that changes files
+
+A case cannot record a wrong expectation, because GNU is the expectation.
+
+Some behaviour is different from GNU on purpose, or cannot be the same. The
+[known divergences][divergences] list each one with its cause. The
+[open gaps][gaps] list the work that is not complete.
+
+## Get the utilities
+
+The [nightly release][nightly] has the catalogue as one multicall binary for
+each platform. The binary selects the utility from the name that runs it, and
+the archive includes a symlink for each utility:
+
+```sh
+tar xzf fern-coreutils-linux-x86_64.tar.gz
+./yes | head -2
+```
+
+To build one utility from source:
+
+```sh
+fern -O -target x86-64-linux -o yes coreutils/yes.fern
+```
+
+[`coreutils/README.md`][readme] has the full build, test and bench
+instructions.
+
+## Performance
+
+<CoreutilsBench part="summary" />
+
+`scripts/coreutils-bench` measures each workload with hyperfine. It runs the
+same command for Fern, GNU coreutils 9.12 and uutils 0.0.24 in the C locale.
+All three run on one machine in one run. The self-hosted compiler builds the Fern binaries
+with `-O`. `chcon` and `runcon` use GNU 9.4, because the GNU 9.12 build has no
+SELinux support. The times are wall-clock time, so compare them only inside
+one run.
+[`docs/COREUTILS.md`][perf] explains where Fern loses to GNU and why.
+
+### By utility
+
+A ratio is the time of the other implementation divided by the time of Fern.
+A ratio above 1× is a Fern win. A ratio within about 10% of 1× is not a
+measured difference. Select a column heading to sort the table. Select a
+utility to see each of its workloads.
+
+<CoreutilsBench part="utilities" />
+
+### Every workload
+
+Times are mean wall-clock times in milliseconds. "Failed" means that the
+implementation exited with an error on the workload, so the row has no ratio
+for it.
+
+<CoreutilsBench part="workloads" />
+
+[tree]: https://github.com/JakeChampion/lang/tree/main/coreutils
+[readme]: https://github.com/JakeChampion/lang/blob/main/coreutils/README.md
+[nightly]: https://github.com/JakeChampion/lang/releases/tag/nightly
+[stdbuf]: https://github.com/JakeChampion/lang/issues/8378
+[divergences]: https://github.com/JakeChampion/lang/blob/main/docs/COREUTILS.md#known-divergences
+[gaps]: https://github.com/JakeChampion/lang/blob/main/docs/COREUTILS.md#open-gaps
+[perf]: https://github.com/JakeChampion/lang/blob/main/docs/COREUTILS.md#performance
