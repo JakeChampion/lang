@@ -5656,7 +5656,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("writer_truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
     s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.need("sleep_ms");
@@ -5862,34 +5862,22 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
   s = ssa_x0_forget(s);
   s = s.need("heap");
   s = s.need("buf");
-  if (sym == "__fern_buf_take") {
-    s = s.need("buf_text");
-  } else if (sym == "__fern_buf_take_bytes") {
-    s = s.need("buf_take_bytes");
-  } else if (sym == "__fern_buf_take_bytes_u8") {
-    s = s.need("buf_take_bytes_u8");
-  } else if (sym == "__fern_buf_push_bytes_range") {
-    s = s.need("buf_push_bytes_range");
-  } else if (sym == "__fern_buf_push_bytes_range_u8") {
-    s = s.need("buf_push_bytes_range_u8");
-  } else if (sym == "__fern_buf_push_decimal") {
-    s = s.need("buf_decimal");
-  } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
-    if (util.str_has_suffix(sym, "_u8")) {
-      s = s.need("buf_bytes_u8");
-    } else {
-      s = s.need("buf_bytes");
-    }
-  } else if (util.str_has_suffix(sym, "_u8")) {
-    s = s.need("buf_u8");
+  let extra: string = asmcore.buf_call_need(sym);
+  if (extra != "") {
+    s = s.need(extra);
   }
   s = ssa_load_helper_args(reg_of, ins.args, s);
   s = ssa_bl_sym(s, sym);
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
+// x4 and up hold no value, so those arguments load first, before the moves
+// into x0 to x3 can overwrite their sources.
 function ssa_load_helper_args(reg_of: i32[], args: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let homes: i32[] = [0, 8, 9, 10];
+  for k in homes.len()..args.len() {
+    s = ssa_load(reg_of, args[k], "x" + util.i32_to_string(k), s);
+  }
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let i: i32 = 0;
@@ -5898,12 +5886,7 @@ function ssa_load_helper_args(reg_of: i32[], args: i32[], s: asmcore.EmitState):
     dsts = dsts.append(homes[i]);
     i = i + 1;
   }
-  s = ssa_parallel_moves(srcs, dsts, s);
-  while (i < args.len()) {
-    s = ssa_load(reg_of, args[i], "x" + util.i32_to_string(i), s);
-    i = i + 1;
-  }
-  return s;
+  return ssa_parallel_moves(srcs, dsts, s);
 }
 
 function emit_arm64_op_memcpy(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -5999,6 +5982,9 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (o.kind_tag == 485) {
     s = s.need("buf_decimal");
+  }
+  if (o.kind_tag == 487) {
+    s = s.need("buf_base64");
   }
   s = s.need("heap");
   s = s.need("buf");
@@ -7947,6 +7933,41 @@ function emit_buf_mapped_neon(s: asmcore.EmitState, lm: string): asmcore.EmitSta
   return s.write("    cbz x2, " + lm + "_len\n");
 }
 
+// __fern_buf_push_base64(h, src, lo, hi, alpha) appends four characters of
+// the 64-byte alphabet for each whole group of three bytes in src[lo..hi).
+// ld3 splits 48 bytes into their three byte streams, shifts form the four
+// 6-bit fields, one tbl over the four alphabet registers maps each field, and
+// st4 interleaves the 64 characters. A tail encodes one group at a time.
+function emit_buf_push_base64(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(".globl __fern_buf_push_base64\n.type __fern_buf_push_base64, %function\n__fern_buf_push_base64:\n");
+  s = s.write("    sxtw x2, w2\n    sxtw x3, w3\n    cmp x2, #0\n    csel x2, xzr, x2, lt\n    ldr x5, [x1]\n    cmp x3, x5\n    csel x3, x5, x3, gt\n    subs x3, x3, x2\n    b.le .Lb64_done\n");
+  s = s.write("    mov w6, #0xaaab\n    movk w6, #0xaaaa, lsl #16\n    umull x6, w3, w6\n    lsr x6, x6, #33\n    cbz x6, .Lb64_done\n");
+  s = s.write("    ldr x5, [x4]\n    cmp x5, #64\n    b.lo __fern_oob_abort\n");
+  s = s.write("    add x7, x6, x6, lsl #1\n    lsl x6, x6, #2\n    ldr x9, [x0, #8]\n    add x10, x9, x6\n    ldr x11, [x0, #16]\n    cmp x10, x11\n    b.hi .Lb64_grow\n");
+  s = s.write(".Lb64_fits:\n    str x10, [x0, #8]\n    ldr x12, [x0]\n    add x12, x12, x9\n    add x13, x1, #8\n    add x13, x13, x2\n    add x14, x4, #8\n");
+  s = s.write("    ld1 {v16.16b-v19.16b}, [x14]\n    cmp x7, #48\n    b.lo .Lb64_tail\n");
+  s = s.write("    movi v20.16b, #0x3f\n    movi v21.16b, #0x03\n    movi v22.16b, #0x0f\n");
+  s = s.write(".Lb64_vec:\n    ld3 {v0.16b-v2.16b}, [x13], #48\n    ushr v3.16b, v0.16b, #2\n");
+  s = s.write("    and v4.16b, v0.16b, v21.16b\n    shl v4.16b, v4.16b, #4\n    ushr v5.16b, v1.16b, #4\n    orr v4.16b, v4.16b, v5.16b\n");
+  s = s.write("    and v5.16b, v1.16b, v22.16b\n    shl v5.16b, v5.16b, #2\n    ushr v6.16b, v2.16b, #6\n    orr v5.16b, v5.16b, v6.16b\n");
+  s = s.write("    and v6.16b, v2.16b, v20.16b\n");
+  s = s.write("    tbl v24.16b, {v16.16b-v19.16b}, v3.16b\n    tbl v25.16b, {v16.16b-v19.16b}, v4.16b\n");
+  s = s.write("    tbl v26.16b, {v16.16b-v19.16b}, v5.16b\n    tbl v27.16b, {v16.16b-v19.16b}, v6.16b\n");
+  s = s.write("    st4 {v24.16b-v27.16b}, [x12], #64\n    sub x7, x7, #48\n    cmp x7, #48\n    b.hs .Lb64_vec\n");
+  s = s.write(".Lb64_tail:\n    cbz x7, .Lb64_done\n");
+  s = s.write(".Lb64_one:\n    ldrb w5, [x13]\n    ldrb w8, [x13, #1]\n    ldrb w15, [x13, #2]\n    lsl w5, w5, #16\n    orr w5, w5, w8, lsl #8\n    orr w5, w5, w15\n");
+  s = s.write("    lsr w8, w5, #18\n    ldrb w8, [x14, x8]\n    strb w8, [x12]\n");
+  s = s.write("    ubfx w8, w5, #12, #6\n    ldrb w8, [x14, x8]\n    strb w8, [x12, #1]\n");
+  s = s.write("    ubfx w8, w5, #6, #6\n    ldrb w8, [x14, x8]\n    strb w8, [x12, #2]\n");
+  s = s.write("    and w8, w5, #63\n    ldrb w8, [x14, x8]\n    strb w8, [x12, #3]\n");
+  s = s.write("    add x13, x13, #3\n    add x12, x12, #4\n    subs x7, x7, #3\n    b.ne .Lb64_one\n");
+  s = s.write(".Lb64_done:\n    mov x0, #0\n    ret\n");
+  s = s.write(".Lb64_grow:\n" + rt_frame_of(s, 64) + "    mov x29, sp\n    stp x0, x1, [sp, #16]\n    stp x2, x4, [sp, #32]\n    stp x6, x7, [sp, #48]\n");
+  s = s.write("    mov x1, x10\n    bl __fern_buf_reserve\n    ldp x0, x1, [sp, #16]\n    ldp x2, x4, [sp, #32]\n    ldp x6, x7, [sp, #48]\n" + rt_unframe_of(s, 64));
+  s = s.write("    ldr x9, [x0, #8]\n    add x10, x9, x6\n    b .Lb64_fits\n");
+  return s.write(".size __fern_buf_push_base64, .-__fern_buf_push_base64\n");
+}
+
 // __fern_buf_push_decimal(h, n) appends the decimal digits of the u64 n. It
 // writes them back to front into a stack scratch, two at a time from a table
 // of digit pairs, and divides by 100 with a multiply.
@@ -8854,6 +8875,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".size __fern_buf_push_u64, .-__fern_buf_push_u64\n");
     if (s.has_need("buf_decimal")) {
       s = emit_buf_push_decimal(s);
+    }
+    if (s.has_need("buf_base64")) {
+      s = emit_buf_push_base64(s);
     }
     s = s.write(".globl __fern_buf_len\n");
     s = s.write(".type __fern_buf_len, %function\n");
@@ -11651,17 +11675,27 @@ function profile_exit_asm(mode: i32): string {
 // authenticates it on the way out, as a compiled frame does. The stack
 // pointer is the same at both instructions, so the signature matches.
 function rt_frame(s: asmcore.EmitState): string {
-  if (s.harden) {
-    return "    paciasp\n    stp x29, x30, [sp, #-16]!\n";
-  }
-  return "    stp x29, x30, [sp, #-16]!\n";
+  return rt_frame_of(s, 16);
 }
 
 function rt_unframe(s: asmcore.EmitState): string {
+  return rt_unframe_of(s, 16);
+}
+
+function rt_frame_of(s: asmcore.EmitState, bytes: i32): string {
+  let save: string = "    stp x29, x30, [sp, #-" + util.i32_to_string(bytes) + "]!\n";
   if (s.harden) {
-    return "    ldp x29, x30, [sp], #16\n    autiasp\n";
+    return "    paciasp\n" + save;
   }
-  return "    ldp x29, x30, [sp], #16\n";
+  return save;
+}
+
+function rt_unframe_of(s: asmcore.EmitState, bytes: i32): string {
+  let load: string = "    ldp x29, x30, [sp], #" + util.i32_to_string(bytes) + "\n";
+  if (s.harden) {
+    return load + "    autiasp\n";
+  }
+  return load;
 }
 
 function profile_frame(s: asmcore.EmitState, name: string): asmcore.EmitState {

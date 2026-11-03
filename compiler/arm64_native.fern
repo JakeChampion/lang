@@ -3665,7 +3665,10 @@ function arm64_gas_bad_cond_token(mnem: string, ops: string[]): string {
 }
 
 function arm64_gas_bad_lane(mnem: string, ops: string[], lm: Arm64Mem): string {
-  if (mnem == "ld1" || mnem == "st1" || mnem == "ld1r") {
+  if (arm64_structures(mnem) > 0) {
+    return arm64_gas_bad_multi(mnem, ops, lm);
+  }
+  if (mnem == "ld1r") {
     if (ops.len() != 2) {
       return mnem + ":arity";
     }
@@ -4904,14 +4907,24 @@ function arm64_gas_family_len3_l(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_l_ld(mnem: string): i32 {
-  if (mnem == "ldr") {
-    return arm64_fam_ldst();
+  let c: u8 = mnem[2];
+  if (c == b'1' && mnem == "ld1") {
+    return arm64_fam_vecldst();
   }
-  if (mnem == "ldp") {
+  if (c == b'2' && mnem == "ld2") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'3' && mnem == "ld3") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'4' && mnem == "ld4") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'p' && mnem == "ldp") {
     return arm64_fam_pair();
   }
-  if (mnem == "ld1") {
-    return arm64_fam_vecldst();
+  if (c == b'r' && mnem == "ldr") {
+    return arm64_fam_ldst();
   }
   return 0 - 1;
 }
@@ -5003,14 +5016,24 @@ function arm64_gas_family_len3_s(mnem: string): i32 {
 }
 
 function arm64_gas_family_len3_s_st(mnem: string): i32 {
-  if (mnem == "str") {
-    return arm64_fam_ldst();
+  let c: u8 = mnem[2];
+  if (c == b'1' && mnem == "st1") {
+    return arm64_fam_vecldst();
   }
-  if (mnem == "stp") {
+  if (c == b'2' && mnem == "st2") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'3' && mnem == "st3") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'4' && mnem == "st4") {
+    return arm64_fam_vecldst();
+  }
+  if (c == b'p' && mnem == "stp") {
     return arm64_fam_pair();
   }
-  if (mnem == "st1") {
-    return arm64_fam_vecldst();
+  if (c == b'r' && mnem == "str") {
+    return arm64_fam_ldst();
   }
   return 0 - 1;
 }
@@ -7768,20 +7791,116 @@ function arm64_gas_emit_unscaled(own a: Arm64Asm, mnem: string, ops: string[], l
   return a;
 }
 
+// ld1 to ld4 and st1 to st4 over a list of whole registers, written as
+// {va.T} or {va.T-vb.T}, with an optional post-increment by the bytes moved.
+function arm64_structures(mnem: string): i32 {
+  if (mnem.len() != 3 || mnem[0] != b'l' && mnem[0] != b's' || mnem[1] != b'd' && mnem[1] != b't') {
+    return 0;
+  }
+  if (mnem == "ldr" || mnem == "str") {
+    return 0;
+  }
+  let n: i32 = mnem[2] as i32 - 48;
+  if (n < 1 || n > 4) {
+    return 0;
+  }
+  return n;
+}
+
+struct Arm64VList { first: i32, count: i32, arr: i32 }
+
+function arm64_gas_vlist(tok: string): Arm64VList {
+  let none = Arm64VList { first: 0 - 1, count: 0, arr: 0 - 1 };
+  let t: string = arm64_gas_trim(tok);
+  if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') {
+    return none;
+  }
+  let inner: string = slice_unchecked(t, 1, t.len() - 1) + "";
+  let dash: i32 = arm64_str_indexof(inner, "-");
+  let first: string = inner;
+  let last: string = inner;
+  if (dash >= 0) {
+    first = slice_unchecked(inner, 0, dash) + "";
+    last = slice_unchecked(inner, dash + 1, inner.len()) + "";
+  }
+  let n: i32 = arm64_gas_vreg_any(first);
+  let m: i32 = arm64_gas_vreg_any(last);
+  let arr: i32 = arm64_gas_vreg_arrof(first);
+  if (n < 0 || m < 0 || arr != arm64_gas_vreg_arrof(last)) {
+    return none;
+  }
+  return Arm64VList { first: n, count: (m - n + 32) % 32 + 1, arr: arr };
+}
+
+// The bytes one ld or st of this list moves: 16 a register with Q set, else 8.
+function arm64_vlist_bytes(l: Arm64VList): i32 {
+  if (arm64_gas_arr_q(l.arr)) {
+    return l.count * 16;
+  }
+  return l.count * 8;
+}
+
+// Only the eight vector arrangements fit, so .1q does not. ld2 to ld4
+// take one register a structure, and none takes .1d.
+function arm64_vlist_fits(n: i32, l: Arm64VList): boolean {
+  if (l.first < 0 || l.count > 4 || l.arr > 7) {
+    return false;
+  }
+  return n == 1 || l.count == n && !(arm64_gas_arr_size(l.arr) == 3 && !arm64_gas_arr_q(l.arr));
+}
+
+function arm64_gas_bad_multi(mnem: string, ops: string[], lm: Arm64Mem): string {
+  let l: Arm64VList = arm64_gas_vlist(ops[0]);
+  if (ops.len() != 2 && ops.len() != 3 || !arm64_vlist_fits(arm64_structures(mnem), l)) {
+    return mnem + ":arity";
+  }
+  let m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
+  if (m.base < 0 || m.off != 0 || m.off_reg >= 0) {
+    return arm64_gas_trim(ops[1]);
+  }
+  if (ops.len() == 3 && arm64_gas_imm(ops[2]) != arm64_vlist_bytes(l)) {
+    return arm64_gas_trim(ops[2]);
+  }
+  return "";
+}
+
+// The opcode field of the multiple-structure class: LD4 0000, LD3 0100,
+// LD2 1000, and LD1 over four, three, two or one register 0010, 0110,
+// 1010 and 0111.
+function arm64_multi_opcode(n: i32, count: i32): i32 {
+  if (n > 1) {
+    return [0, 0, 8, 4, 0][n];
+  }
+  return [0, 7, 10, 6, 2][count];
+}
+
+function arm64_gas_emit_multi(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
+  let l: Arm64VList = arm64_gas_vlist(ops[0]);
+  let word: i64 = 0x0c000000 | arm64_multi_opcode(arm64_structures(mnem), l.count) as i64 << 12
+    | (arm64_gas_arr_size(l.arr) & 3) as i64 << 10 | (arm64_gas_mem_at(ops, 1, lm).base & 31) as i64 << 5 | (l.first & 31) as i64;
+  if (mnem[0] == b'l') {
+    word = word | 0x400000;
+  }
+  if (arm64_gas_arr_q(l.arr)) {
+    word = word | 0x40000000;
+  }
+  if (ops.len() == 3) {
+    word = word | 0x800000 | 0x1f0000;
+  }
+  arm64_push_arr(a.code, arm64_le32([], word));
+  return a;
+}
+
 function arm64_gas_emit_vecldst(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
+  if (arm64_structures(mnem) > 0) {
+    return arm64_gas_emit_multi(a, mnem, ops, lm);
+  }
   if (ops.len() != 2) {
     return a;
   }
-  let lbase: i64 = 0x0c407000;
-  if (mnem == "st1") {
-    lbase = 0x0c007000;
-  }
-  if (mnem == "ld1r") {
-    lbase = 0x0d40c000;
-  }
   let lc: i32 = arm64_gas_vlist_one_arr(ops[0]);
   arm64_push_arr(a.code, arm64_vecldst1(
-    [], lbase, arm64_gas_vlist_one(ops[0]),
+    [], 0x0d40c000, arm64_gas_vlist_one(ops[0]),
     arm64_gas_mem_at(ops, 1, lm).base, arm64_gas_arr_size(lc), arm64_gas_arr_q(lc),
   ));
   return a;

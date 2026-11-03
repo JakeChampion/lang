@@ -504,6 +504,7 @@ is the number of slots it leaves.
 | `mulhi_s` | 484 | 2 | 1 |
 | `buf_push_decimal` | 485 | 2 | 1 |
 | `tcp_addr_into` | 486 | 3 | 1 |
+| `buf_push_base64` | 487 | 5 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

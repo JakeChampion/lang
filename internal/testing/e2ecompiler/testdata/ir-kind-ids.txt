@@ -425,3 +425,4 @@ prctl_query=483
 mulhi_s=484
 buf_push_decimal=485
 tcp_addr_into=486
+buf_push_base64=487
