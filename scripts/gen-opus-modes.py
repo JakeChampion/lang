@@ -5,7 +5,8 @@ Usage: gen-opus-modes.py LIBOPUS_DIR
 
 The module holds the static data of the one CELT mode that Opus uses: 48 kHz,
 frames of 960 samples, and an overlap of 120 samples. The data comes from
-celt/modes.c, celt/quant_bands.c and celt/static_modes_float.h. The script reads each table, checks
+celt/modes.c, celt/quant_bands.c and celt/static_modes_float.h, with the
+FFT and MDCT tables. The script reads each table, checks
 its length, and writes it as a Fern constant. The data is part of libopus, so
 the module carries the libopus notice.
 """
@@ -29,7 +30,13 @@ TABLES = [
     ("window120", "static_modes_float.h", "WINDOW", "f32", 120),
     ("eMeans", "quant_bands.c", "E_MEANS", "f32", 25),
     ("e_prob_model", "quant_bands.c", "E_PROB_MODEL", "i32", 4 * 2 * 42),
+    ("fft_twiddles48000_960", "static_modes_float.h", "FFT_TWIDDLES", "f32", 2 * 480),
+    ("mdct_twiddles960", "static_modes_float.h", "MDCT_TWIDDLES", "f32", 1800),
 ]
+
+# The FFT of each MDCT size, from the largest to the smallest. FFT_BITREV
+# holds the bit-reverse tables one after the other.
+FFT_SIZES = [480, 240, 120, 60]
 
 
 def notice(root):
@@ -71,6 +78,40 @@ def fern_value(v, kind):
     return str(int(v, 0))
 
 
+def table(name, kind, vals):
+    """The lines of a Fern array constant."""
+    row = 8 if kind == "f32" else 16
+    lines = ["", f"pub const {name}: {kind}[] = ["]
+    for i in range(0, len(vals), row):
+        lines.append("  " + ", ".join(fern_value(v, kind) for v in vals[i:i + row]) + ",")
+    return lines + ["];"]
+
+
+def fft_states(path):
+    """The size, scale, shift, factors and bit-reverse table of each FFT."""
+    src = path.read_text()
+    scale, shift, factors, bitrev = [], [], [], []
+    for i, n in enumerate(FFT_SIZES):
+        m = re.search(r"fft_state48000_960_" + str(i) + r"\s*=\s*\{(.*?)\};", src, re.S)
+        if m is None:
+            sys.exit(f"gen-opus-modes: no FFT state {i}")
+        body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+        head = [v.strip() for v in body.split("{")[0].split(",") if v.strip()]
+        facs = [v.strip() for v in body.split("{")[1].split("}")[0].split(",") if v.strip()]
+        if int(head[0]) != n or len(facs) != 16:
+            sys.exit(f"gen-opus-modes: FFT state {i} is not of size {n}")
+        scale.append(head[1])
+        shift.append(head[2])
+        factors += facs
+        rev = values(src, f"fft_bitrev{n}")
+        if len(rev) != n:
+            sys.exit(f"gen-opus-modes: fft_bitrev{n} has {len(rev)} values")
+        bitrev += rev
+    return (table("FFT_SIZE", "i32", [str(n) for n in FFT_SIZES]) + table("FFT_SCALE", "f32", scale)
+            + table("FFT_SHIFT", "i32", shift) + table("FFT_FACTORS", "i32", factors)
+            + table("FFT_BITREV", "i32", bitrev))
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -96,17 +137,15 @@ def main():
         "pub const ALLOC_VECTORS: i32 = 11;",
         "",
         "pub const PREEMPH: f32 = 0.85000610f32;",
+        "",
+        "pub const MDCT_SIZE: i32 = 1920;",
     ]
     for cname, fname, name, kind, length in TABLES:
         vals = values((celt / fname).read_text(), cname)
         if len(vals) != length:
             sys.exit(f"gen-opus-modes: {cname} has {len(vals)} values, not {length}")
-        out.append("")
-        out.append(f"pub const {name}: {kind}[] = [")
-        row = 8 if kind == "f32" else 16
-        for i in range(0, length, row):
-            out.append("  " + ", ".join(fern_value(v, kind) for v in vals[i:i + row]) + ",")
-        out.append("];")
+        out += table(name, kind, vals)
+    out += fft_states(celt / "static_modes_float.h")
     OUT.write_text("\n".join(out) + "\n")
 
 

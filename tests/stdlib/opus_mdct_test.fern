@@ -1,0 +1,106 @@
+import "std/hash/crc32";
+import "std/opus/mdct";
+import "std/test";
+
+// Each script runs the forward MDCT of a random block at a random size,
+// stride and offset, then the inverse MDCT of the result over a random
+// synthesis buffer, then the FFT of random complex values. The trace holds
+// the bits of each value. libopus 1.4, in its float build, gave the CRC-32 of
+// each trace, from a C program that makes the same calls.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
+  let (g1, r) = rnd(g);
+  return (g1, lo + (hi - lo) * ((r % 65536) as f32) / 65536.0f32);
+}
+
+struct Fill { g: Gen, xs: f32[] }
+
+function fill(own g: Gen, n: i32, lo: f32, hi: f32): Fill {
+  let xs: f32[] = [];
+  for i in 0..n {
+    let (g1, v) = frand(g, lo, hi);
+    g = g1;
+    xs = xs.append(v);
+  }
+  return Fill { g: g, xs: xs };
+}
+
+function all_bits(xs: [f32], n: i32): string {
+  let s: string = "";
+  for i in 0..n {
+    s = s + " " + f32_bits(xs[i]).to_string();
+  }
+  return s;
+}
+
+function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function mdct_case(own g: Gen, own t: crc32.Crc32): (Gen, crc32.Crc32) {
+  let (g1, shift0) = rnd(g);
+  let (g2, s0) = rnd(g1);
+  let (g3, ia0) = rnd(g2);
+  let shift: i32 = shift0 % 4;
+  let stride: i32 = 1 << s0 % 4;
+  let ia: i32 = ia0 % 3;
+  let (g4, oa0) = rnd(g3);
+  let (g5, sa0) = rnd(g4);
+  let oa: i32 = oa0 % stride;
+  let sa: i32 = sa0 % 3;
+  let n2: i32 = 960 >> shift;
+  let input: Fill = fill(g5, ia + n2 + 120, -1000.0f32, 1000.0f32);
+  let out: f32[] = [];
+  for i in 0..stride * n2 {
+    out = out.append(0.0f32);
+  }
+  let syn: Fill = fill(input.g, sa + n2 + 120, -1000.0f32, 1000.0f32);
+  let freq: f32[] = mdct.forward(input.xs, ia, out, oa, shift, stride);
+  t = line(t, "f " + shift.to_string() + " " + stride.to_string() + " " + ia.to_string() + " " + oa.to_string() + " " + sa.to_string() + " |" + all_bits(freq, stride * n2));
+  let time: f32[] = mdct.backward(freq, oa, syn.xs, sa, shift, stride);
+  t = line(t, "b |" + all_bits(time, sa + n2 + 120));
+  return (syn.g, t);
+}
+
+function fft_case(own g: Gen, own t: crc32.Crc32): (Gen, crc32.Crc32) {
+  let (g1, s0) = rnd(g);
+  let s: i32 = s0 % 4;
+  let n: i32 = 480 >> s;
+  let input: Fill = fill(g1, 2 * n, -1.0f32, 1.0f32);
+  t = line(t, "t " + s.to_string() + " |" + all_bits(mdct.fft(input.xs, s), 2 * n));
+  return (input.g, t);
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let t: crc32.Crc32 = crc32.new();
+  for c in 0..cases {
+    let (g1, t1) = mdct_case(g, t);
+    let (g2, t2) = fft_case(g1, t1);
+    g = g2;
+    t = t2;
+  }
+  return t.finish();
+}
+
+function test_short_script(): test.TestOutcome {
+  return test.assert_eq(trace(1u32, 12), 4174967540u32);
+}
+
+function test_long_script(): test.TestOutcome {
+  return test.assert_eq(trace(2u32, 100), 3191413574u32);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/mdct");
+  r = r.it("a short script gives the libopus trace", test_short_script);
+  r = r.it("a long script gives the libopus trace", test_long_script);
+  return r.finish();
+}
