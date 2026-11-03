@@ -1509,6 +1509,15 @@ a = b = c = 7;
 return a + b + c;
 }
 `},
+	{"fstring-literal-spelling", `function f(c: char): string {
+return c.to_string();
+}
+function main(): i32 {
+let n: i32 = 5;
+print(f"{n.to_string().pad_start(3, ' ')}x {f(b'x' as char)} {0x1F} {1_000} {2.5e3}");
+return 0;
+}
+`},
 	{"compound-assign-written-form", `function main(): i32 {
 let x: i32 = 1;
 x += 1;
