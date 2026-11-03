@@ -1277,11 +1277,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["unix_listen"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{}},
-		Result: ast.NumberType{},
+		Result: sock,
 	}
 	c.info.FuncSigs["unix_connect"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
-		Result: ast.NumberType{},
+		Result: sock,
 	}
 	c.info.FuncSigs["reactor_new"] = &ast.FuncType{
 		Params: []ast.Type{},
@@ -1331,6 +1331,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{sock},
 		Result: ast.NumberType{},
 	}
+	c.info.FuncSigs["__tcp_close_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{sock},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["__fd_close"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
 		Params: []ast.Type{sock},
 		Result: ast.NumberType{},
@@ -1361,26 +1369,26 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["udp_bind"] = &ast.FuncType{
 		Params: []ast.Type{u8s, ast.NumberType{}},
-		Result: ast.NumberType{},
+		Result: sock,
 	}
 	c.info.FuncSigs["udp_bind_with"] = &ast.FuncType{
 		Params: []ast.Type{u8s, ast.NumberType{}, ast.BoolType{}},
-		Result: ast.NumberType{},
+		Result: sock,
 	}
 	c.info.FuncSigs["udp_connect"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}},
+		Params: []ast.Type{sock, u8s, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["udp_sendto"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}, ast.StringType{}},
+		Params: []ast.Type{sock, u8s, ast.NumberType{}, ast.StringType{}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["udp_sendto_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}, u8s},
+		Params: []ast.Type{sock, u8s, ast.NumberType{}, u8s},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["udp_recvfrom"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, u8s, u8s},
+		Params: []ast.Type{sock, u8s, u8s},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["read_file"] = &ast.FuncType{
@@ -9124,6 +9132,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
 	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
+	"__fd_close": true, "__tcp_close_unchecked": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
 	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true,
@@ -10832,6 +10841,33 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 
+	// A literal based on q that replaces q.f moves q.f into an own
+	// parameter in the literal. A literal in a local's initializer, an
+	// expression statement or a returned value, outside a lambda, takes it
+	// from an owned q, whose later reads the walk refuses. A returned literal
+	// can take it from any q that is not borrowed.
+	admitSupersededFields := func(value ast.Expr, returned bool) {
+		if value == nil {
+			return
+		}
+		top := FieldMoveLiteral(value)
+		ast.Walk(value, func(n ast.Node) bool {
+			if _, ok := n.(*ast.Lambda); ok {
+				return false
+			}
+			sl, ok := n.(*ast.StructLit)
+			if !ok || sl.Base == nil {
+				return true
+			}
+			if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] && (owned[bid.Name] || returned && sl == top) {
+				for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
+					selfMoveArgs[arg] = true
+				}
+			}
+			return true
+		})
+	}
+
 	walkStmt = func(st ast.Stmt, moved movedSet) {
 		switch x := st.(type) {
 		case *ast.Block:
@@ -10854,6 +10890,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return
 				}
 			}
+			admitSupersededFields(x.Init, false)
 			recordExprUses(x.Init, moved)
 		case *ast.ExprStmt:
 			if asn, ok := x.Expr.(*ast.Assign); ok {
@@ -10882,6 +10919,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 				return
 			}
+			admitSupersededFields(x.Expr, false)
 			recordExprUses(x.Expr, moved)
 		case *ast.Defer:
 			// The action runs at the function's exit: a name it consumes is
@@ -10903,13 +10941,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				deferMoved[name] = at
 			}
 		case *ast.Return:
-			if sl := FieldMoveLiteral(x.Value); sl != nil && sl.Base != nil {
-				if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] {
-					for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
-						selfMoveArgs[arg] = true
-					}
-				}
-			}
+			admitSupersededFields(x.Value, true)
 			recordExprUses(x.Value, moved)
 		case *ast.If:
 			recordExprUses(x.Cond, moved)

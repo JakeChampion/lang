@@ -81,6 +81,8 @@ func TestFormatUnsignedLargeLiteral(t *testing.T) {
 	}
 }
 
+// A cast is a postfix, so the parentheses around a prefix operand or a
+// negative literal stay: `-x as T` reads as `-(x as T)` (#14102).
 func TestFormatIfElseIndents(t *testing.T) {
 	got := formatSrc(t, `function f(n: i32): i32 { if (n == 0) { return 1; } else { return n; } }`)
 	want := strings.Join([]string{

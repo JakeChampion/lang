@@ -47,112 +47,112 @@ function opt_utc(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [+FORMAT]\n";
   out = out + "  or:  " + gnu.prog() + " [-u|--utc|--universal] [MMDDhhmm[[CC]YY][.ss]]\n";
-  out = out + "Display date and time in the given FORMAT.\n";
-  out = out + "With -s, or with [MMDDhhmm[[CC]YY][.ss]], set the date and time.\n";
-  out = out + "\n";
-  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
-  out = out + "  -d, --date=STRING          display time described by STRING, not 'now'\n";
-  out = out + "      --debug                annotate the parsed date,\n";
-  out = out + "                              and warn about questionable usage to stderr\n";
-  out = out + "  -f, --file=DATEFILE        like --date; once for each line of DATEFILE\n";
-  out = out + "  -I[FMT], --iso-8601[=FMT]  output date/time in ISO 8601 format.\n";
-  out = out + "                               FMT='date' for date only (the default),\n";
-  out = out + "                               'hours', 'minutes', 'seconds', or 'ns'\n";
-  out = out + "                               for date and time to the indicated precision.\n";
-  out = out + "                               Example: 2006-08-14T02:34:56-06:00\n";
-  out = out + "  --resolution               output the available resolution of timestamps\n";
-  out = out + "                               Example: 0.000000001\n";
-  out = out + "  -R, --rfc-email            output date and time in RFC 5322 format.\n";
-  out = out + "                               Example: Mon, 14 Aug 2006 02:34:56 -0600\n";
-  out = out + "      --rfc-3339=FMT         output date/time in RFC 3339 format.\n";
-  out = out + "                               FMT='date', 'seconds', or 'ns'\n";
-  out = out + "                               for date and time to the indicated precision.\n";
-  out = out + "                               Example: 2006-08-14 02:34:56-06:00\n";
-  out = out + "  -r, --reference=FILE       display the last modification time of FILE\n";
-  out = out + "  -s, --set=STRING           set time described by STRING\n";
-  out = out + "  -u, --utc, --universal     print or set Coordinated Universal Time (UTC)\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "All options that specify the date to display are mutually exclusive.\n";
-  out = out + "I.e.: --date, --file, --reference, --resolution.\n";
-  out = out + "\n";
-  out = out + "FORMAT controls the output.  Interpreted sequences are:\n";
-  out = out + "\n";
-  out = out + "  %%   a literal %\n";
-  out = out + "  %a   locale's abbreviated weekday name (e.g., Sun)\n";
-  out = out + "  %A   locale's full weekday name (e.g., Sunday)\n";
-  out = out + "  %b   locale's abbreviated month name (e.g., Jan)\n";
-  out = out + "  %B   locale's full month name (e.g., January)\n";
-  out = out + "  %c   locale's date and time (e.g., Thu Mar  3 23:05:25 2005)\n";
-  out = out + "  %C   century; like %Y, except omit last two digits (e.g., 20)\n";
-  out = out + "  %d   day of month (e.g., 01)\n";
-  out = out + "  %D   date; same as %m/%d/%y\n";
-  out = out + "  %e   day of month, space padded; same as %_d\n";
-  out = out + "  %F   full date; like %+4Y-%m-%d\n";
-  out = out + "  %g   last two digits of year of ISO week number (see %G)\n";
-  out = out + "  %G   year of ISO week number (see %V); normally useful only with %V\n";
-  out = out + "  %h   same as %b\n";
-  out = out + "  %H   hour (00..23)\n";
-  out = out + "  %I   hour (01..12)\n";
-  out = out + "  %j   day of year (001..366)\n";
-  out = out + "  %k   hour, space padded ( 0..23); same as %_H\n";
-  out = out + "  %l   hour, space padded ( 1..12); same as %_I\n";
-  out = out + "  %m   month (01..12)\n";
-  out = out + "  %M   minute (00..59)\n";
-  out = out + "  %n   a newline\n";
-  out = out + "  %N   nanoseconds (000000000..999999999)\n";
-  out = out + "  %p   locale's equivalent of either AM or PM; blank if not known\n";
-  out = out + "  %P   like %p, but lower case\n";
-  out = out + "  %q   quarter of year (1..4)\n";
-  out = out + "  %r   locale's 12-hour clock time (e.g., 11:11:04 PM)\n";
-  out = out + "  %R   24-hour hour and minute; same as %H:%M\n";
-  out = out + "  %s   seconds since the Epoch (1970-01-01 00:00 UTC)\n";
-  out = out + "  %S   second (00..60)\n";
-  out = out + "  %t   a tab\n";
-  out = out + "  %T   time; same as %H:%M:%S\n";
-  out = out + "  %u   day of week (1..7); 1 is Monday\n";
-  out = out + "  %U   week number of year, with Sunday as first day of week (00..53)\n";
-  out = out + "  %V   ISO week number, with Monday as first day of week (01..53)\n";
-  out = out + "  %w   day of week (0..6); 0 is Sunday\n";
-  out = out + "  %W   week number of year, with Monday as first day of week (00..53)\n";
-  out = out + "  %x   locale's date representation (e.g., 12/31/99)\n";
-  out = out + "  %X   locale's time representation (e.g., 23:13:48)\n";
-  out = out + "  %y   last two digits of year (00..99)\n";
-  out = out + "  %Y   year\n";
-  out = out + "  %z   +hhmm numeric time zone (e.g., -0400)\n";
-  out = out + "  %:z  +hh:mm numeric time zone (e.g., -04:00)\n";
-  out = out + "  %::z  +hh:mm:ss numeric time zone (e.g., -04:00:00)\n";
-  out = out + "  %:::z  numeric time zone with : to necessary precision (e.g., -04, +05:30)\n";
-  out = out + "  %Z   alphabetic time zone abbreviation (e.g., EDT)\n";
-  out = out + "\n";
-  out = out + "By default, date pads numeric fields with zeroes.\n";
-  out = out + "The following optional flags may follow '%':\n";
-  out = out + "\n";
-  out = out + "  -  (hyphen) do not pad the field\n";
-  out = out + "  _  (underscore) pad with spaces\n";
-  out = out + "  0  (zero) pad with zeros\n";
-  out = out + "  +  pad with zeros, and put '+' before future years with >4 digits\n";
-  out = out + "  ^  use upper case if possible\n";
-  out = out + "  #  use opposite case if possible\n";
-  out = out + "\n";
-  out = out + "After any flags comes an optional field width, as a decimal number;\n";
-  out = out + "then an optional modifier, which is either\n";
-  out = out + "E to use the locale's alternate representations if available, or\n";
-  out = out + "O to use the locale's alternate numeric symbols if available.\n";
-  out = out + "\n";
-  out = out + "Examples:\n";
-  out = out + "Convert seconds since the Epoch (1970-01-01 UTC) to a date\n";
-  out = out + "  $ date --date='@2147483647'\n";
-  out = out + "\n";
-  out = out + "Show the time on the west coast of the US (use tzselect(1) to find TZ)\n";
-  out = out + "  $ TZ='America/Los_Angeles' date\n";
-  out = out + "\n";
-  out = out + "Show the local time for 9AM next Friday on the west coast of the US\n";
-  out = out + "  $ date --date='TZ=\"America/Los_Angeles\" 09:00 next Fri'\n";
+  out += "Display date and time in the given FORMAT.\n";
+  out += "With -s, or with [MMDDhhmm[[CC]YY][.ss]], set the date and time.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "  -d, --date=STRING          display time described by STRING, not 'now'\n";
+  out += "      --debug                annotate the parsed date,\n";
+  out += "                              and warn about questionable usage to stderr\n";
+  out += "  -f, --file=DATEFILE        like --date; once for each line of DATEFILE\n";
+  out += "  -I[FMT], --iso-8601[=FMT]  output date/time in ISO 8601 format.\n";
+  out += "                               FMT='date' for date only (the default),\n";
+  out += "                               'hours', 'minutes', 'seconds', or 'ns'\n";
+  out += "                               for date and time to the indicated precision.\n";
+  out += "                               Example: 2006-08-14T02:34:56-06:00\n";
+  out += "  --resolution               output the available resolution of timestamps\n";
+  out += "                               Example: 0.000000001\n";
+  out += "  -R, --rfc-email            output date and time in RFC 5322 format.\n";
+  out += "                               Example: Mon, 14 Aug 2006 02:34:56 -0600\n";
+  out += "      --rfc-3339=FMT         output date/time in RFC 3339 format.\n";
+  out += "                               FMT='date', 'seconds', or 'ns'\n";
+  out += "                               for date and time to the indicated precision.\n";
+  out += "                               Example: 2006-08-14 02:34:56-06:00\n";
+  out += "  -r, --reference=FILE       display the last modification time of FILE\n";
+  out += "  -s, --set=STRING           set time described by STRING\n";
+  out += "  -u, --utc, --universal     print or set Coordinated Universal Time (UTC)\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "All options that specify the date to display are mutually exclusive.\n";
+  out += "I.e.: --date, --file, --reference, --resolution.\n";
+  out += "\n";
+  out += "FORMAT controls the output.  Interpreted sequences are:\n";
+  out += "\n";
+  out += "  %%   a literal %\n";
+  out += "  %a   locale's abbreviated weekday name (e.g., Sun)\n";
+  out += "  %A   locale's full weekday name (e.g., Sunday)\n";
+  out += "  %b   locale's abbreviated month name (e.g., Jan)\n";
+  out += "  %B   locale's full month name (e.g., January)\n";
+  out += "  %c   locale's date and time (e.g., Thu Mar  3 23:05:25 2005)\n";
+  out += "  %C   century; like %Y, except omit last two digits (e.g., 20)\n";
+  out += "  %d   day of month (e.g., 01)\n";
+  out += "  %D   date; same as %m/%d/%y\n";
+  out += "  %e   day of month, space padded; same as %_d\n";
+  out += "  %F   full date; like %+4Y-%m-%d\n";
+  out += "  %g   last two digits of year of ISO week number (see %G)\n";
+  out += "  %G   year of ISO week number (see %V); normally useful only with %V\n";
+  out += "  %h   same as %b\n";
+  out += "  %H   hour (00..23)\n";
+  out += "  %I   hour (01..12)\n";
+  out += "  %j   day of year (001..366)\n";
+  out += "  %k   hour, space padded ( 0..23); same as %_H\n";
+  out += "  %l   hour, space padded ( 1..12); same as %_I\n";
+  out += "  %m   month (01..12)\n";
+  out += "  %M   minute (00..59)\n";
+  out += "  %n   a newline\n";
+  out += "  %N   nanoseconds (000000000..999999999)\n";
+  out += "  %p   locale's equivalent of either AM or PM; blank if not known\n";
+  out += "  %P   like %p, but lower case\n";
+  out += "  %q   quarter of year (1..4)\n";
+  out += "  %r   locale's 12-hour clock time (e.g., 11:11:04 PM)\n";
+  out += "  %R   24-hour hour and minute; same as %H:%M\n";
+  out += "  %s   seconds since the Epoch (1970-01-01 00:00 UTC)\n";
+  out += "  %S   second (00..60)\n";
+  out += "  %t   a tab\n";
+  out += "  %T   time; same as %H:%M:%S\n";
+  out += "  %u   day of week (1..7); 1 is Monday\n";
+  out += "  %U   week number of year, with Sunday as first day of week (00..53)\n";
+  out += "  %V   ISO week number, with Monday as first day of week (01..53)\n";
+  out += "  %w   day of week (0..6); 0 is Sunday\n";
+  out += "  %W   week number of year, with Monday as first day of week (00..53)\n";
+  out += "  %x   locale's date representation (e.g., 12/31/99)\n";
+  out += "  %X   locale's time representation (e.g., 23:13:48)\n";
+  out += "  %y   last two digits of year (00..99)\n";
+  out += "  %Y   year\n";
+  out += "  %z   +hhmm numeric time zone (e.g., -0400)\n";
+  out += "  %:z  +hh:mm numeric time zone (e.g., -04:00)\n";
+  out += "  %::z  +hh:mm:ss numeric time zone (e.g., -04:00:00)\n";
+  out += "  %:::z  numeric time zone with : to necessary precision (e.g., -04, +05:30)\n";
+  out += "  %Z   alphabetic time zone abbreviation (e.g., EDT)\n";
+  out += "\n";
+  out += "By default, date pads numeric fields with zeroes.\n";
+  out += "The following optional flags may follow '%':\n";
+  out += "\n";
+  out += "  -  (hyphen) do not pad the field\n";
+  out += "  _  (underscore) pad with spaces\n";
+  out += "  0  (zero) pad with zeros\n";
+  out += "  +  pad with zeros, and put '+' before future years with >4 digits\n";
+  out += "  ^  use upper case if possible\n";
+  out += "  #  use opposite case if possible\n";
+  out += "\n";
+  out += "After any flags comes an optional field width, as a decimal number;\n";
+  out += "then an optional modifier, which is either\n";
+  out += "E to use the locale's alternate representations if available, or\n";
+  out += "O to use the locale's alternate numeric symbols if available.\n";
+  out += "\n";
+  out += "Examples:\n";
+  out += "Convert seconds since the Epoch (1970-01-01 UTC) to a date\n";
+  out += "  $ date --date='@2147483647'\n";
+  out += "\n";
+  out += "Show the time on the west coast of the US (use tzselect(1) to find TZ)\n";
+  out += "  $ TZ='America/Los_Angeles' date\n";
+  out += "\n";
+  out += "Show the local time for 9AM next Friday on the west coast of the US\n";
+  out += "  $ date --date='TZ=\"America/Los_Angeles\" 09:00 next Fri'\n";
   return out;
 }
 
@@ -173,33 +173,33 @@ function rfc_3339_formats(): string[] {
 }
 
 function adjust_resolution(fmt: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  let start: i32 = 0;
+  let out = "";
+  let i = 0;
+  let start = 0;
   while (i < fmt.len()) {
     if (fmt[i] as i32 == 37) {
       if (i + 2 < fmt.len() && fmt[i + 1] as i32 == 45 && fmt[i + 2] as i32 == 78) {
         out = out + slice_unchecked(fmt, start, i) + "%" + res_width(clock_resolution()).to_string() + "N";
-        i = i + 3;
+        i += 3;
         start = i;
         continue;
       }
       if (i + 1 < fmt.len() && fmt[i + 1] as i32 == 37) {
-        i = i + 2;
+        i += 2;
         continue;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out + slice_unchecked(fmt, start, fmt.len());
 }
 
 function res_width(res: i64): i32 {
-  let digits: i32 = 9;
-  let r: i64 = 10 as i64;
+  let digits = 9;
+  let r = 10 as i64;
   while (r <= res) {
-    digits = digits - 1;
-    r = r * (10 as i64);
+    digits -= 1;
+    r *= 10 as i64;
   }
   return digits;
 }
@@ -207,11 +207,11 @@ function res_width(res: i64): i32 {
 struct Show { zone: tz.Zone, tzstring: string, has_tz: boolean, format: string, debug: boolean }
 
 function show_date(o: io_buffered.BufWriter, s: Show, sec: i64, nsec: i64): (boolean, io_buffered.BufWriter) {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   if (s.debug) {
     w = gnu.error_out(w, "output format: " + gnu.quote(s.format));
   }
-  let year: i64 = timefmt.break_time(s.zone, sec).year - 1900 as i64;
+  let year = timefmt.break_time(s.zone, sec).year - 1900 as i64;
   if (year > 2147483647 as i64 || year < 0 as i64 - 2147483648 as i64) {
     w = gnu.error_out(w, "time " + gnu.quote(sec.to_string()) + " is out of range");
     return (false, gnu.put(w, "\n"));
@@ -224,20 +224,20 @@ function trace_bytes(r: datetime.ByteResult): void {
   if (r.result.dbg.len() == 0 && r.tail.len() == 0) {
     return;
   }
-  let w: Writer = stderr();
+  let w = stderr();
   w.write(r.result.dbg);
   w.write_bytes(r.tail);
 }
 
 function parse_bytes(s: Show, text: [u8], hint: i64): datetime.ByteResult {
-  let ns: i64 = now_ns();
+  let ns = now_ns();
   return datetime.parse_full_bytes(text, s.zone, s.tzstring, s.has_tz, ns / (1000000000 as i64), ns % (1000000000 as i64), hint, s.debug);
 }
 
 function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_buffered.BufWriter) {
-  let w: io_buffered.BufWriter = o;
-  let shown: string = name;
-  let r: Reader = stdin();
+  let w = o;
+  let shown = name;
+  let r = stdin();
   if (name == "-") {
     shown = "standard input";
   } else {
@@ -250,9 +250,9 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
       }
     }
   }
-  let ok: boolean = true;
+  let ok = true;
   let hint: i64 = 0;
-  let lr: io_buffered.ByteLineReader = io_buffered.byte_line_reader_new(r, 10, 65536);
+  let lr = io_buffered.byte_line_reader_new(r, 10, 65536);
   while (true) {
     let next: (Option[u8[]], io_buffered.ByteLineReader) = (None, lr);
     match (lr.next_line_bytes()) {
@@ -267,18 +267,18 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
     match (next.0) {
       Some(full) => {
         let line: [u8] = full[:];
-        let nul: i32 = __memchr_bytes(full, 0, 0);
+        let nul = __memchr_bytes(full, 0, 0);
         if (nul >= 0) {
           line = line[:nul];
         }
-        let raw: datetime.ByteResult = parse_bytes(s, line, hint);
-        let res: datetime.Result = raw.result;
+        let raw = parse_bytes(s, line, hint);
+        let res = raw.result;
         hint = res.hint;
         trace_bytes(raw);
         if (!res.ok) {
-          let end: i32 = line.len();
+          let end = line.len();
           if (end > 0 && line[end - 1] as i32 == 10) {
-            end = end - 1;
+            end -= 1;
           }
           w = gnu.error_out(w, "invalid date " + gnu.quote_bytes(array.slice(full, 0, end)));
           ok = false;
@@ -319,22 +319,22 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("", "uct", opt_utc()));
   opts = opts.append(gnu.flag("u", "utc", opt_utc()));
   opts = opts.append(gnu.flag("", "universal", opt_utc()));
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "date", help_text(), 1);
-  let datestr: string = "";
-  let has_date: boolean = false;
-  let discarded_date: boolean = false;
-  let set_datestr: string = "";
-  let set_date: boolean = false;
-  let discarded_set: boolean = false;
-  let format: string = "";
-  let has_format: boolean = false;
-  let debug: boolean = false;
-  let resolution: boolean = false;
-  let batch_file: string = "";
-  let has_batch: boolean = false;
-  let reference: string = "";
-  let has_reference: boolean = false;
-  let utc: boolean = false;
+  let g = gnu.getopt_new(args(), opts, "date", help_text(), 1);
+  let datestr = "";
+  let has_date = false;
+  let discarded_date = false;
+  let set_datestr = "";
+  let set_date = false;
+  let discarded_set = false;
+  let format = "";
+  let has_format = false;
+  let debug = false;
+  let resolution = false;
+  let batch_file = "";
+  let has_batch = false;
+  let reference = "";
+  let has_reference = false;
+  let utc = false;
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -358,7 +358,7 @@ pub function main(): i32 {
           format = rfc_3339_formats()[gnu.argmatch(m.value, names, "--rfc-3339")];
           has_format = true;
         } else if (m.id == opt_iso()) {
-          let which: i32 = 2;
+          let which = 2;
           if (m.has_value) {
             which = gnu.argmatch(m.value, time_spec_names(), "--iso-8601");
           }
@@ -385,18 +385,18 @@ pub function main(): i32 {
       }
     }
   }
-  let specified: i32 = 0;
+  let specified = 0;
   if (has_date) {
-    specified = specified + 1;
+    specified += 1;
   }
   if (has_batch) {
-    specified = specified + 1;
+    specified += 1;
   }
   if (has_reference) {
-    specified = specified + 1;
+    specified += 1;
   }
   if (resolution) {
-    specified = specified + 1;
+    specified += 1;
   }
   if (specified > 1) {
     gnu.die_usage("the options to specify dates for printing are mutually exclusive", 1);
@@ -410,9 +410,9 @@ pub function main(): i32 {
   if (discarded_set && debug) {
     gnu.error("only using last of multiple -s options");
   }
-  let operands: string[] = g.operands();
-  let operand: string = "";
-  let has_operand: boolean = false;
+  let operands = g.operands();
+  let operand = "";
+  let has_operand = false;
   if (operands.len() > 0) {
     if (operands.len() > 1) {
       gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
@@ -438,8 +438,8 @@ pub function main(): i32 {
       format = "%a %b %e %H:%M:%S %Z %Y";
     }
   }
-  let tzstring: string = "";
-  let has_tz: boolean = false;
+  let tzstring = "";
+  let has_tz = false;
   match (env("TZ")) {
     Some(v) => {
       tzstring = v;
@@ -451,12 +451,12 @@ pub function main(): i32 {
     tzstring = "UTC0";
     has_tz = true;
   }
-  let zone: tz.Zone = tz.local_zone();
+  let zone = tz.local_zone();
   if (utc) {
     zone = tz.zone_from_tz(tzstring);
   }
-  let s: Show = Show { zone: zone, tzstring: tzstring, has_tz: has_tz, format: adjust_resolution(format), debug: debug };
-  let o: io_buffered.BufWriter = gnu.out_new();
+  let s = Show { zone: zone, tzstring: tzstring, has_tz: has_tz, format: adjust_resolution(format), debug: debug };
+  let o = gnu.out_new();
   if (has_batch) {
     let b: (boolean, io_buffered.BufWriter) = batch(o, s, batch_file);
     gnu.finish_with(b.1, 1);
@@ -467,8 +467,8 @@ pub function main(): i32 {
   }
   let when_sec: i64 = 0;
   let when_nsec: i64 = 0;
-  let valid: boolean = true;
-  let shown: string = datestr;
+  let valid = true;
+  let shown = datestr;
   if (specified == 0 && !set_date) {
     if (has_operand) {
       set_date = true;
@@ -477,7 +477,7 @@ pub function main(): i32 {
       valid = pt.0;
       when_sec = pt.1;
     } else {
-      let ns: i64 = now_ns();
+      let ns = now_ns();
       when_sec = ns / (1000000000 as i64);
       when_nsec = ns % (1000000000 as i64);
     }
@@ -492,15 +492,15 @@ pub function main(): i32 {
       }
     }
   } else if (resolution) {
-    let res: i64 = clock_resolution();
+    let res = clock_resolution();
     when_sec = res / (1000000000 as i64);
     when_nsec = res % (1000000000 as i64);
   } else {
     if (set_date) {
       shown = set_datestr;
     }
-    let raw: datetime.ByteResult = parse_bytes(s, shown.as_bytes(), 0);
-    let r: datetime.Result = raw.result;
+    let raw = parse_bytes(s, shown.as_bytes(), 0);
+    let r = raw.result;
     trace_bytes(raw);
     valid = r.ok;
     when_sec = r.sec;
@@ -509,7 +509,7 @@ pub function main(): i32 {
   if (!valid) {
     gnu.die(o, "invalid date " + gnu.quote(shown), 1);
   }
-  let ok: boolean = true;
+  let ok = true;
   if (set_date) {
     match (clock_set(when_sec, when_nsec)) {
       Ok(_) => {},

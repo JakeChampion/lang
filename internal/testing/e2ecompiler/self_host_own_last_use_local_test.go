@@ -23,6 +23,102 @@ func TestSelfHostOwnLastUseLocal(t *testing.T) {
 	}
 }
 
+// Locals of the same name in sibling blocks each move at their own last use
+// (#14100), and the moves leave the heap balanced.
+func TestSelfHostOwnSiblingScopeNames(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_sibling_scope_names", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 86 {
+				t.Fatalf("exit %d, want 86 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
+// The fields that a destructure takes from an own parameter move into own
+// method receivers (#14101), and the moves leave the heap balanced.
+func TestSelfHostOwnDestructuredReceiver(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_destructured_receiver", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 27 {
+				t.Fatalf("exit %d, want 27 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
+// An alias that takes a local at its last use moves into an own method
+// receiver after a self-update of that local (#14109), and the moves leave
+// the heap balanced.
+func TestSelfHostOwnAliasAfterSelfUpdate(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_alias_after_self_update", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 19 {
+				t.Fatalf("exit %d, want 19 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
+// A local's initializer that replaces a field of an own parameter moves the
+// field (#14111), and the moves leave the heap balanced.
+func TestSelfHostOwnSupersededFieldLet(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_superseded_field_let", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 24 {
+				t.Fatalf("exit %d, want 24 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
+// A literal inside a call argument moves the field it replaces, on three
+// targets, with a balanced census.
+func TestSelfHostOwnSupersededFieldArgument(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_superseded_field_argument", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 25 {
+				t.Fatalf("exit %d, want 25 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
 const ownLastUseReassignSrc = `struct W { d: i32[], n: i32 }
 @noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
 @noinline function mkw(n: i32): W { return W { d: [n], n: n }; }

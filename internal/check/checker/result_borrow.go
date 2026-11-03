@@ -39,6 +39,10 @@ func (c *checker) computeResultBorrows(prog *ast.Program) {
 }
 
 func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
+	// A scalar result is a copy, so it cannot borrow from a parameter.
+	if fn.ReturnType != nil && definitelyScalar(fn.ReturnType) {
+		return false
+	}
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
 	for _, p := range fn.Params {
 		if !p.Own && p.Type != nil && ast.IsPointerType(p.Type) {
@@ -240,6 +244,7 @@ var freshResultBuiltins = map[string]bool{
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
 	"tcp_accept": true, "tcp_connect_with": true, "tcp_listen": true, "tcp_listen_with": true,
+	"udp_bind": true, "udp_bind_with": true, "unix_connect": true, "unix_listen": true,
 }
 
 func (c *checker) signatureResultBorrows(name string) bool {

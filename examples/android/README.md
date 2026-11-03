@@ -54,6 +54,20 @@ The compiler exports each method under its JNI symbol, so `-export` is not
 necessary. `-jni-java DIR` writes the Java class of each bound class under
 `DIR`, with its `native` declarations and the `System.loadLibrary` call.
 
+The class argument can be a Java class head, so that a class implements a
+listener interface or extends a framework class. For example,
+`@jni("dev.fern.demo.Tick implements java.lang.Runnable", "void run()")`.
+Name the head on one method of the class. The other methods of the class
+can give the name alone. Give an object type of a method with its full name,
+such as `android.content.Intent`. `String` and `Object` are the two
+exceptions.
+
+`-jni-dex FILE` writes the bound classes to a DEX file, with no Java source.
+Each class gets a public constructor and a static initializer that calls
+`System.loadLibrary`. `fern -apk` uses this flag. An app with `@jni` classes
+gets `classes.dex`, and a class that extends `android.app.NativeActivity` is
+its activity. `tests/android/dex` is an example that the emulator lane runs.
+
 To call back into the JVM, use `std/jni`. Its typed wrappers, such as
 `jni.get_version`, `jni.find_class` and `jni.get_int_field`, use
 `jni.call0/1/2/3`. The lookups take Fern strings, for example

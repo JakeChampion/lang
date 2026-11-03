@@ -640,12 +640,18 @@ own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
 own_loop_takes_and_rebinds_each_round                0
+own_param_alias_after_self_update                    0
 own_param_array_move                                 0
 own_param_assign_target                              0
 own_param_branch_transfer                            0
+own_param_destructured_receiver                      0
 own_param_last_use_local                             0
 own_param_payloadless_variant                        0
 own_param_rebound_on_every_branch                    0
+own_param_scalar_helper_result                       0
+own_param_sibling_scope_names                        0
+own_param_superseded_field_argument                  0
+own_param_superseded_field_let                       0
 own_parameter_compared_then_moved                    0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
@@ -1077,6 +1083,7 @@ slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
 socket_handle_round_trip                             0
+socket_udp_round_trip                                0
 some_branch                                          0
 sort_strings_delegation_wasm                         0
 split_once                                           0

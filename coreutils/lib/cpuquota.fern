@@ -3,7 +3,7 @@ import "std/u64";
 import "./gnu";
 
 pub function count(text: string): u64 {
-  let fields: string[] = text.fields();
+  let fields = text.fields();
   if (fields.len() != 2 || fields[0] == "max") {
     return 0 as u64;
   }
@@ -12,7 +12,7 @@ pub function count(text: string): u64 {
   if (quota.1 != 0 || period.1 != 0 || quota.0 == 0 as u64 || period.0 == 0 as u64) {
     return 0 as u64;
   }
-  let n: u64 = quota.0 / period.0;
+  let n = quota.0 / period.0;
   if (quota.0 % period.0 >= period.0 / (2 as u64) + period.0 % (2 as u64)) {
     n = n + 1 as u64;
   }
@@ -34,7 +34,7 @@ pub function path(cgroups: string): string {
 pub function current(): u64 {
   match (read_file("/proc/self/cgroup")) {
     Ok(groups) => {
-      let file: string = path(groups);
+      let file = path(groups);
       if (file != "") {
         match (read_file(file)) {
           Ok(text) => {

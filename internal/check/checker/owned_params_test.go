@@ -167,6 +167,12 @@ function consume(own xs: i32[]): i32 { return xs[0]; }
 function consumeBox(own b: Box): i32 { return 0; }
 `
 
+// ownHandle declares a struct with a method that consumes its receiver, so
+// the struct is a user-defined handle.
+const ownHandle = `struct Res { v: i32[], n: i32 }
+function (own r: Res) step(): (Res, boolean) { return (r, false); }
+`
+
 func wantE051(t *testing.T, name, src string) {
 	t.Helper()
 	err := checkSource(t, src)
@@ -247,6 +253,109 @@ function f(): i32 {
     }
     return n;
 }`},
+		// Two loops declare the same names. The reads in the second loop
+		// belong to its own bindings (#14100).
+		{"same-name-in-sibling-loops", `
+function step(own xs: i32[]): (i32[], i32) { let n: i32 = xs.len(); return (xs, n); }
+function f(): i32 {
+    let t: i32 = 0;
+    let g: i32[] = [1];
+    for i in 0..2 {
+        let (a, u) = step(g);
+        let (b, v) = step(a);
+        g = b;
+        t = t + u + v;
+    }
+    for j in 0..2 {
+        let (a, u) = step(g);
+        let (b, v) = step(a);
+        g = b;
+        t = t + u + v;
+    }
+    return t + consume(g);
+}`},
+		{"same-name-array-in-sibling-blocks", `
+function f(c: boolean): i32 {
+    let t: i32 = 0;
+    if (c) {
+        let xs: i32[] = [1];
+        t = t + consume(xs);
+    }
+    if (!c) {
+        let xs: i32[] = [2];
+        t = t + consume(xs);
+    }
+    return t;
+}`},
+		// The fields of an own parameter that a destructure takes are owned,
+		// also as a method receiver (#14101).
+		{"destructured-field-as-receiver", `
+struct Holder { box: Box, n: i32 }
+function (own b: Box) open(): i32 { return 0; }
+function f(own h: Holder): i32 {
+    let Holder { box, n } = h;
+    return box.open() + n;
+}`},
+		{"destructured-field-given-a-fresh-local", `
+struct Holder { box: Box, n: i32 }
+function step(own b: Box): (Box, i32) { return (b, 1); }
+function f(own h: Holder, c: boolean): i32 {
+    let Holder { box, n } = h;
+    if (c) {
+        let (b2, k) = step(box);
+        box = b2;
+    }
+    return consumeBox(box) + n;
+}`},
+		// A scalar result is a copy, so the array built from it is fresh
+		// (#14104).
+		{"fresh-array-from-a-scalar-helper", `
+struct Wv { v: i32[] }
+function at(w: Wv, j: i32): i32 { return w.v[j]; }
+function copyOf(w: Wv): i32[] {
+    let out: i32[] = [];
+    for j in 0..w.v.len() {
+        out = out.append(at(w, j));
+    }
+    return out;
+}
+function f(w: Wv): i32 {
+    return consume(copyOf(w));
+}`},
+		// An alias that takes a local at its last use can move a handle type,
+		// after a self-update of that local (#14109).
+		{"alias-after-a-self-update", ownHandle + `
+function f(own r0: Res): i32 {
+    let r1: Res = r0;
+    r1 = Res { ...r1, n: 1 };
+    let r2: Res = r1;
+    let (r3, k) = r2.step();
+    r2 = r3;
+    return r2.n;
+}`},
+		{"alias-of-an-unpack-after-a-self-update", ownHandle + `
+function split(own r: Res): (Res, boolean) { return (r, true); }
+function f(own r0: Res): i32 {
+    let (r1, k) = split(r0);
+    if (k) { r1 = Res { ...r1, n: r1.n + 1 }; }
+    let r2: Res = r1;
+    if (r2.n > 0) {
+        let (r3, j) = r2.step();
+        r2 = r3;
+    }
+    let (r4, m) = r2.step();
+    return r4.n;
+}`},
+		{"inner-binding-shadows-the-outer", `
+function f(c: boolean): i32 {
+    let xs: i32[] = [1];
+    let t: i32 = 0;
+    if (c) {
+        let xs: i32[] = [2];
+        t = consume(xs);
+    }
+    return t + xs.len();
+}`},
 	} {
 		wantOK(t, tc.name, ownConsumer+tc.body)
 	}
@@ -286,6 +395,47 @@ function f(): i32 {
     let xs: i32[] = mk();
     defer { let k: i32 = xs.len(); }
     return consume(xs);
+}`},
+		// The call is in a block that later shadows the name, but the read
+		// after the block is of the outer binding (#14100).
+		{"outer-binding-read-after-the-shadowing-block", `
+function f(c: boolean): i32 {
+    let xs: i32[] = [1];
+    let t: i32 = 0;
+    if (c) {
+        t = consume(xs);
+        let xs: i32[] = [2];
+        t = t + xs.len();
+    }
+    return t + xs.len();
+}`},
+		// The helper gives back the array of its parameter, which the
+		// caller still holds (#14104).
+		{"helper-result-is-the-parameter-array", `
+struct Wv { v: i32[] }
+function inner(w: Wv): i32[] { return w.v; }
+function f(w: Wv): i32 {
+    return consume(inner(w));
+}`},
+		// An alias of a handle type moves only when it takes its source at
+		// the last use and is given only owned values (#14109).
+		{"alias-whose-source-is-read-again", ownHandle + `
+function f(own r0: Res): i32 {
+    let r1: Res = r0;
+    r1 = Res { ...r1, n: 1 };
+    let r2: Res = r1;
+    let (r3, k) = r2.step();
+    return r3.n + r1.n;
+}`},
+		{"alias-given-a-borrowed-value", ownHandle + `
+struct Hold { r: Res }
+function f(own r0: Res, h: Hold): i32 {
+    let r1: Res = r0;
+    r1 = Res { ...r1, n: 1 };
+    let r2: Res = r1;
+    r2 = h.r;
+    let (r3, k) = r2.step();
+    return r3.n;
 }`},
 		{"destructured-read-again", `
 function step(): (i32[], i32) { return ([1], 2); }
@@ -950,7 +1100,71 @@ function step(own a: Asm, v: i32): Asm {
 }`)
 }
 
+// A let initializer takes the superseded field as a return does (#14111).
+func TestOwnGuardAllowsSupersededFieldMoveOnLet(t *testing.T) {
+	wantOK(t, "field-move-let-form", fieldMovePrelude+`
+function step(own a: Asm, v: i32): Asm {
+    let b: Asm = Asm { ...a, cfi: record(a.cfi, v) };
+    return b;
+}`)
+}
+
+// The base stays owned by the walk, so a read of the moved field after the
+// literal is a use after move (#14111).
+func TestOwnGuardRejectsReadAfterSupersededFieldMoveOnLet(t *testing.T) {
+	wantE050(t, "field-move-let-then-read", fieldMovePrelude+`
+function step(own a: Asm, v: i32): Asm {
+    let b: Asm = Asm { ...a, cfi: record(a.cfi, v) };
+    let n: i32 = a.cfi.n;
+    return b;
+}`)
+}
+
+// A literal inside a call takes the superseded field as a let initializer
+// does.
+func TestOwnGuardAllowsSupersededFieldMoveInCallArgument(t *testing.T) {
+	const helpers = `
+function size(a: Asm): i32 { return a.cfi.n; }
+function keep(own a: Asm): Asm { return a; }
+function drop(own a: Asm): void {}
+`
+	wantOK(t, "field-move-let-call-argument", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): i32 {
+    let n: i32 = size(Asm { ...a, cfi: record(a.cfi, v) });
+    return n;
+}`)
+	wantOK(t, "field-move-statement-call-argument", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): void {
+    drop(Asm { ...a, cfi: record(a.cfi, v) });
+}`)
+	wantOK(t, "field-move-returned-call-argument", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): Asm {
+    return keep(Asm { ...a, cfi: record(a.cfi, v) });
+}`)
+}
+
+func TestOwnGuardRejectsSupersededFieldMoveInCallArgumentMisuse(t *testing.T) {
+	const helpers = `
+function size(a: Asm): i32 { return a.cfi.n; }
+function keep(own a: Asm): Asm { return a; }
+`
+	wantE050(t, "field-move-call-argument-then-read", fieldMovePrelude+helpers+`
+function step(own a: Asm, v: i32): i32 {
+    let n: i32 = size(Asm { ...a, cfi: record(a.cfi, v) });
+    return n + a.cfi.n;
+}`)
+	wantE051(t, "field-move-call-argument-borrowed-base", fieldMovePrelude+helpers+`
+function step(a: Asm, v: i32): Asm {
+    return keep(Asm { ...a, cfi: record(a.cfi, v) });
+}`)
+}
+
 func TestOwnGuardRejectsSupersededFieldMoveOnBorrowedBase(t *testing.T) {
+	wantE051(t, "field-move-borrowed-base-let", fieldMovePrelude+`
+function step(a: Asm, v: i32): Asm {
+    let b: Asm = Asm { ...a, cfi: record(a.cfi, v) };
+    return b;
+}`)
 	wantE051(t, "field-move-borrowed-base", fieldMovePrelude+`
 function step(a: Asm, v: i32): Asm {
     a = Asm { ...a, cfi: record(a.cfi, v) };
@@ -2003,5 +2217,79 @@ function g(own names: string[]): i32 {
         if (name == "bad") { return 0; }
     }
     return n;
+}`)
+}
+
+func TestOwnGuardCallInMatchTagKeepsBindingScope(t *testing.T) {
+	const settle = `struct R { items: i32[], n: i32 }
+function settle(own r: R): Result[i32, R] { return Err(r); }
+`
+	wantOK(t, "call-tag-in-sibling-blocks", settle+`
+function scoped(c: boolean): i32 {
+    let n: i32 = 0;
+    if (c) {
+        let r: R = R { items: [1], n: 1 };
+        match (settle(r)) { Ok(k) => { n = k; }, Err(after) => { n = after.n; } }
+    }
+    if (!c) {
+        let r: R = R { items: [2], n: 2 };
+        match (settle(r)) { Ok(k) => { n = k; }, Err(after) => { n = after.n; } }
+    }
+    return n;
+}`)
+	wantE051(t, "call-tag-keeps-outer-binding-live", settle+`
+function scoped(c: boolean): i32 {
+    let r: R = R { items: [1], n: 1 };
+    if (c) {
+        match (settle(r)) { Ok(k) => {}, Err(after) => {} }
+    }
+    return r.n;
+}`)
+}
+
+// A call in a match tag takes its argument when every arm gives the local a
+// new value or leaves, as the give-back idiom does in a loop (#14106).
+func TestOwnGuardCallInMatchTagRebinds(t *testing.T) {
+	const settle = `
+struct R { items: i32[], n: i32 }
+function settle(own r: R): Result[i32, R] { return Err(R { items: r.items, n: r.n + 1 }); }
+`
+	if err := checkSource(t, settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (true) {
+        if (r.n > 3) {
+            return r.n;
+        }
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => { r = after; }
+        }
+    }
+    return 0;
+}`); err != nil {
+		t.Errorf("a call in a match tag whose arms rebind or leave should take its argument, got: %v", err)
+	}
+	wantE051(t, "call-in-match-tag-arm-reads-the-local", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (true) {
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => { let m: i32 = r.n; r = after; }
+        }
+    }
+    return 0;
+}`)
+	wantE051(t, "call-in-match-tag-arm-falls-through", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (r.n < 3) {
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => {}
+        }
+    }
+    return 0;
 }`)
 }

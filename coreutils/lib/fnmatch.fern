@@ -46,12 +46,12 @@ function fn_name[P: ByteInput](p: P, lo: i32, hi: i32, expected: string): boolea
   if (hi - lo != expected.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < expected.len()) {
     if (p.byte_at(lo + i) != expected[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -64,8 +64,8 @@ function fn_verdict(hit: boolean): i32 {
 }
 
 function fn_class[P: ByteInput](p: P, lo: i32, hi: i32, c: i32): i32 {
-  let alpha: boolean = c >= 65 && c <= 90 || c >= 97 && c <= 122;
-  let digit: boolean = c >= 48 && c <= 57;
+  let alpha = c >= 65 && c <= 90 || c >= 97 && c <= 122;
+  let digit = c >= 48 && c <= 57;
   if (fn_name(p, lo, hi, "alpha")) {
     return fn_verdict(alpha);
   }
@@ -102,44 +102,44 @@ function fn_class[P: ByteInput](p: P, lo: i32, hi: i32, c: i32): i32 {
   if (fn_name(p, lo, hi, "xdigit")) {
     return fn_verdict(digit || c >= 65 && c <= 70 || c >= 97 && c <= 102);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
-  let n: i32 = p.byte_count();
-  let i: i32 = start + 1;
-  let negate: boolean = false;
+  let n = p.byte_count();
+  let i = start + 1;
+  let negate = false;
   if (i < n && (p.byte_at(i) as i32 == 33 || p.byte_at(i) as i32 == 94)) {
     negate = true;
-    i = i + 1;
+    i += 1;
   }
-  let hit: boolean = false;
-  let first: boolean = true;
+  let hit = false;
+  let first = true;
   while (true) {
     if (i >= n) {
-      return 0 - 2;
+      return -2;
     }
-    let c: i32 = p.byte_at(i) as i32;
+    let c = p.byte_at(i) as i32;
     if (c == 93 && !first) {
-      i = i + 1;
+      i += 1;
       break;
     }
     first = false;
     if (c == 91 && i + 1 < n && (p.byte_at(i + 1) as i32 == 58 || target_os() != "darwin" && (p.byte_at(i + 1) as i32 == 46 || p.byte_at(i + 1) as i32 == 61))) {
-      let kind: i32 = p.byte_at(i + 1) as i32;
-      let body: i32 = i + 2;
-      let j: i32 = body;
+      let kind = p.byte_at(i + 1) as i32;
+      let body = i + 2;
+      let j = body;
       while (j + 1 < n && !(p.byte_at(j) as i32 == kind && p.byte_at(j + 1) as i32 == 93)) {
-        j = j + 1;
+        j += 1;
       }
       if (j + 1 >= n) {
-        return 0 - 1;
+        return -1;
       }
       i = j + 2;
       if (kind == 58) {
-        let cls: i32 = fn_class(p, body, j, ch);
+        let cls = fn_class(p, body, j, ch);
         if (cls < 0) {
-          return 0 - 1;
+          return -1;
         }
         if (cls > 0) {
           hit = true;
@@ -147,23 +147,23 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
         continue;
       }
       if (j - body != 1) {
-        return 0 - 1;
+        return -1;
       }
-      let lo: i32 = p.byte_at(body) as i32;
+      let lo = p.byte_at(body) as i32;
       let r: (i32, boolean) = fn_range(p, i, lo, ch, hit);
       i = r.0;
       hit = r.1;
       continue;
     }
-    let lo2: i32 = c;
+    let lo2 = c;
     if (c == 92) {
       if (i + 1 >= n) {
-        return 0 - 2;
+        return -2;
       }
       lo2 = p.byte_at(i + 1) as i32;
-      i = i + 2;
+      i += 2;
     } else {
-      i = i + 1;
+      i += 1;
     }
     let r2: (i32, boolean) = fn_range(p, i, lo2, ch, hit);
     i = r2.0;
@@ -179,14 +179,14 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
 }
 
 function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean): (i32, boolean) {
-  let n: i32 = p.byte_count();
-  let i: i32 = at;
+  let n = p.byte_count();
+  let i = at;
   if (i + 1 < n && p.byte_at(i) as i32 == 45 && p.byte_at(i + 1) as i32 != 93) {
-    let hi: i32 = p.byte_at(i + 1) as i32;
-    i = i + 2;
+    let hi = p.byte_at(i + 1) as i32;
+    i += 2;
     if (hi == 92 && i < n) {
       hi = p.byte_at(i) as i32;
-      i = i + 1;
+      i += 1;
     }
     if (ch >= lo && ch <= hi) {
       return (i, true);
@@ -200,26 +200,26 @@ function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean): 
 }
 
 function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i32 {
-  let pi: i32 = pi0;
-  let si: i32 = si0;
-  let pn: i32 = p.byte_count();
-  let sn: i32 = s.byte_count();
+  let pi = pi0;
+  let si = si0;
+  let pn = p.byte_count();
+  let sn = s.byte_count();
   while (pi < pn) {
-    let c: i32 = p.byte_at(pi) as i32;
+    let c = p.byte_at(pi) as i32;
     if (c == 42) {
       while (pi < pn && p.byte_at(pi) as i32 == 42) {
-        pi = pi + 1;
+        pi += 1;
       }
       if (pi >= pn) {
         return 1;
       }
-      let k: i32 = si;
+      let k = si;
       while (k <= sn) {
-        let r: i32 = fn_match(p, pi, s, k);
+        let r = fn_match(p, pi, s, k);
         if (r != 0) {
           return r;
         }
-        k = k + 1;
+        k += 1;
       }
       return 0;
     }
@@ -227,8 +227,8 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
       if (si >= sn) {
         return 0;
       }
-      pi = pi + 1;
-      si = si + 1;
+      pi += 1;
+      si += 1;
       continue;
     }
     if (c == 92) {
@@ -238,38 +238,38 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
       if (si >= sn || s.byte_at(si) as i32 != p.byte_at(pi + 1) as i32) {
         return 0;
       }
-      pi = pi + 2;
-      si = si + 1;
+      pi += 2;
+      si += 1;
       continue;
     }
     if (c == 91) {
       if (si >= sn) {
         return 0;
       }
-      let b: i32 = fn_bracket(p, pi, s.byte_at(si) as i32);
-      if (b == 0 - 1) {
-        return 0 - 1;
+      let b = fn_bracket(p, pi, s.byte_at(si) as i32);
+      if (b == -1) {
+        return -1;
       }
-      if (b == 0 - 2) {
+      if (b == -2) {
         if (s.byte_at(si) as i32 != 91) {
           return 0;
         }
-        pi = pi + 1;
-        si = si + 1;
+        pi += 1;
+        si += 1;
         continue;
       }
       if (b == 0) {
         return 0;
       }
       pi = b;
-      si = si + 1;
+      si += 1;
       continue;
     }
     if (si >= sn || s.byte_at(si) as i32 != c) {
       return 0;
     }
-    pi = pi + 1;
-    si = si + 1;
+    pi += 1;
+    si += 1;
   }
   return fn_verdict(si == sn);
 }
@@ -279,7 +279,7 @@ pub function fnmatch(pat: string, s: string): boolean {
 }
 
 pub function fnmatch_bytes(pat: [u8], s: [u8]): boolean {
-  let r: i32 = fn_match(BytesInput { data: pat }, 0, BytesInput { data: s }, 0);
+  let r = fn_match(BytesInput { data: pat }, 0, BytesInput { data: s }, 0);
   return r > 0;
 }
 

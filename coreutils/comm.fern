@@ -36,28 +36,28 @@ function opt_zero(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE1 FILE2\n";
-  out = out + "Compare sorted files FILE1 and FILE2 line by line.\n";
-  out = out + "\n";
-  out = out + "When FILE1 or FILE2 (not both) is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "With no options, produce three-column output.  Column one contains\n";
-  out = out + "lines unique to FILE1, column two contains lines unique to FILE2,\n";
-  out = out + "and column three contains lines common to both files.\n";
-  out = out + "\n";
-  out = out + "  -1                      suppress column 1 (lines unique to FILE1)\n";
-  out = out + "  -2                      suppress column 2 (lines unique to FILE2)\n";
-  out = out + "  -3                      suppress column 3 (lines that appear in both files)\n";
-  out = out + "\n";
-  out = out + "  --check-order           check that the input is correctly sorted, even\n";
-  out = out + "                            if all input lines are pairable\n";
-  out = out + "  --nocheck-order         do not check that the input is correctly sorted\n";
-  out = out + "  --output-delimiter=STR  separate columns with STR\n";
-  out = out + "  --total                 output a summary\n";
-  out = out + "  -z, --zero-terminated   line delimiter is NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Compare sorted files FILE1 and FILE2 line by line.\n";
+  out += "\n";
+  out += "When FILE1 or FILE2 (not both) is -, read standard input.\n";
+  out += "\n";
+  out += "With no options, produce three-column output.  Column one contains\n";
+  out += "lines unique to FILE1, column two contains lines unique to FILE2,\n";
+  out += "and column three contains lines common to both files.\n";
+  out += "\n";
+  out += "  -1                      suppress column 1 (lines unique to FILE1)\n";
+  out += "  -2                      suppress column 2 (lines unique to FILE2)\n";
+  out += "  -3                      suppress column 3 (lines that appear in both files)\n";
+  out += "\n";
+  out += "  --check-order           check that the input is correctly sorted, even\n";
+  out += "                            if all input lines are pairable\n";
+  out += "  --nocheck-order         do not check that the input is correctly sorted\n";
+  out += "  --output-delimiter=STR  separate columns with STR\n";
+  out += "  --total                 output a summary\n";
+  out += "  -z, --zero-terminated   line delimiter is NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -74,17 +74,17 @@ function order_disabled(): i32 {
 }
 
 function cmp_lines(a: u8[], alo: i32, ahi: i32, b: u8[], blo: i32, bhi: i32): i32 {
-  let la: i32 = ahi - alo;
-  let lb: i32 = bhi - blo;
-  let n: i32 = la;
+  let la = ahi - alo;
+  let lb = bhi - blo;
+  let n = la;
   if (lb < n) {
     n = lb;
   }
-  n = n - 1;
-  let i: i32 = __mismatch_bytes(a, alo, b, blo, n);
+  n -= 1;
+  let i = __mismatch_bytes(a, alo, b, blo, n);
   if (i < n) {
     if (a[alo + i] as i32 < b[blo + i] as i32) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
@@ -92,7 +92,7 @@ function cmp_lines(a: u8[], alo: i32, ahi: i32, b: u8[], blo: i32, bhi: i32): i3
     return 1;
   }
   if (la < lb) {
-    return 0 - 1;
+    return -1;
   }
   return 0;
 }
@@ -118,15 +118,15 @@ function status_error(): i32 {
 }
 
 function next_line_slow(r: Reader, chunk0: u8[], pos0: i32, eof0: boolean, term: i32): (u8[], u8[], i32, boolean, i32, string) {
-  let chunk: u8[] = chunk0;
-  let pos: i32 = pos0;
-  let eof: boolean = eof0;
-  let carry: usize = buf_new(chunk.len() - pos);
+  let chunk = chunk0;
+  let pos = pos0;
+  let eof = eof0;
+  let carry = buf_new(chunk.len() - pos);
   while (true) {
-    let j: i32 = __memchr_bytes(chunk, term, pos);
+    let j = __memchr_bytes(chunk, term, pos);
     if (j >= 0) {
       buf_push_bytes_range(carry, chunk, pos, j + 1);
-      let line: u8[] = buf_take_bytes(carry);
+      let line = buf_take_bytes(carry);
       buf_free(carry);
       return (line, chunk, j + 1, eof, status_line(), "");
     }
@@ -137,7 +137,7 @@ function next_line_slow(r: Reader, chunk0: u8[], pos0: i32, eof0: boolean, term:
     if (eof) {
       if (buf_len(carry) > 0) {
         buf_push_byte(carry, term);
-        let line: u8[] = buf_take_bytes(carry);
+        let line = buf_take_bytes(carry);
         buf_free(carry);
         return (line, chunk, pos, eof, status_line(), "");
       }
@@ -166,7 +166,7 @@ function next_line_slow(r: Reader, chunk0: u8[], pos0: i32, eof0: boolean, term:
 struct Cfg { only1: boolean, only2: boolean, both: boolean, sep: string, check: i32, total: boolean, term: i32 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("1", "", opt_only1()));
   opts = opts.append(gnu.flag("2", "", opt_only2()));
@@ -177,15 +177,15 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("", "total", opt_total()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
 
-  let cfg: Cfg = Cfg { only1: true, only2: true, both: true, sep: "\t", check: order_default(), total: false, term: 10 };
-  let delim_specified: boolean = false;
-  let delim_given: string = "";
+  let cfg = Cfg { only1: true, only2: true, both: true, sep: "\t", check: order_default(), total: false, term: 10 };
+  let delim_specified = false;
+  let delim_given = "";
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "comm", help_text(), 1);
+  let g = gnu.getopt_new(argv, opts, "comm", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
-    let done: boolean = false;
+    let done = false;
     match (r.0) {
       Some(m) => {
         if (m.id == opt_only1()) {
@@ -209,7 +209,7 @@ pub function main(): i32 {
           }
           delim_given = m.value;
           delim_specified = true;
-          let sep: string = m.value;
+          let sep = m.value;
           if (sep.len() == 0) {
             sep = string_from_bytes_unchecked([0 as u8]);
           }
@@ -225,7 +225,7 @@ pub function main(): i32 {
     }
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() < 1) {
     gnu.error("missing operand");
     gnu.try_help(1);
@@ -238,10 +238,10 @@ pub function main(): i32 {
     gnu.error("extra operand " + gnu.quote(operands[2]));
     gnu.try_help(1);
   }
-  let name1: string = operands[0];
-  let name2: string = operands[1];
+  let name1 = operands[0];
+  let name2 = operands[1];
 
-  let r1: Reader = stdin();
+  let r1 = stdin();
   if (name1 != "-") {
     match (open_reader(name1)) {
       Ok(f) => {
@@ -253,7 +253,7 @@ pub function main(): i32 {
       }
     }
   }
-  let r2: Reader = stdin();
+  let r2 = stdin();
   if (name2 != "-") {
     match (open_reader(name2)) {
       Ok(f) => {
@@ -269,74 +269,74 @@ pub function main(): i32 {
 }
 
 function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg: Cfg): i32 {
-  let out: io_buffered.BufWriter = gnu.out_with(write_block());
-  let h: usize = out.handle();
-  let block: i32 = write_block();
-  let term: i32 = cfg.term;
-  let shared: boolean = name1 == "-" && name2 == "-";
+  let out = gnu.out_with(write_block());
+  let h = out.handle();
+  let block = write_block();
+  let term = cfg.term;
+  let shared = name1 == "-" && name2 == "-";
 
   let chunk1: u8[] = [];
-  let pos1: i32 = 0;
-  let eof1: boolean = false;
+  let pos1 = 0;
+  let eof1 = false;
   let chunk2: u8[] = [];
-  let pos2: i32 = 0;
-  let eof2: boolean = false;
+  let pos2 = 0;
+  let eof2 = false;
 
   let cur1: u8[] = [];
-  let lo1: i32 = 0;
-  let hi1: i32 = 0;
+  let lo1 = 0;
+  let hi1 = 0;
   let cur2: u8[] = [];
-  let lo2: i32 = 0;
-  let hi2: i32 = 0;
-  let have1: boolean = false;
-  let have2: boolean = false;
+  let lo2 = 0;
+  let hi2 = 0;
+  let have1 = false;
+  let have2 = false;
   let back1a: u8[] = [];
-  let alo1: i32 = 0;
-  let ahi1: i32 = 0;
+  let alo1 = 0;
+  let ahi1 = 0;
   let back1b: u8[] = [];
-  let blo1: i32 = 0;
-  let bhi1: i32 = 0;
+  let blo1 = 0;
+  let bhi1 = 0;
   let back2a: u8[] = [];
-  let alo2: i32 = 0;
-  let ahi2: i32 = 0;
+  let alo2 = 0;
+  let ahi2 = 0;
   let back2b: u8[] = [];
-  let blo2: i32 = 0;
-  let bhi2: i32 = 0;
-  let read1: i32 = 0;
-  let read2: i32 = 0;
+  let blo2 = 0;
+  let bhi2 = 0;
+  let read1 = 0;
+  let read2 = 0;
 
-  let show1: boolean = cfg.only1;
-  let show2: boolean = cfg.only2;
-  let show3: boolean = cfg.both;
-  let pre2: string = "";
+  let show1 = cfg.only1;
+  let show2 = cfg.only2;
+  let show3 = cfg.both;
+  let pre2 = "";
   if (cfg.only1) {
     pre2 = cfg.sep;
   }
-  let pre3: string = "";
+  let pre3 = "";
   if (cfg.only1) {
-    pre3 = pre3 + cfg.sep;
+    pre3 += cfg.sep;
   }
   if (cfg.only2) {
-    pre3 = pre3 + cfg.sep;
+    pre3 += cfg.sep;
   }
 
-  let seen_unpairable: boolean = false;
-  let issued1: boolean = false;
-  let issued2: boolean = false;
-  let t0: u64 = 0 as u64;
-  let t1: u64 = 0 as u64;
-  let t2: u64 = 0 as u64;
+  let seen_unpairable = false;
+  let issued1 = false;
+  let issued2 = false;
+  let t0 = 0 as u64;
+  let t1 = 0 as u64;
+  let t2 = 0 as u64;
 
-  let need1: boolean = true;
-  let need2: boolean = true;
+  let need1 = true;
+  let need2 = true;
   while (true) {
     if (need1) {
       need1 = false;
       let line: u8[] = [];
-      let llo: i32 = 0;
-      let lhi: i32 = 0;
-      let st: i32 = status_line();
-      let j: i32 = __memchr_bytes(chunk1, term, pos1);
+      let llo = 0;
+      let lhi = 0;
+      let st = status_line();
+      let j = __memchr_bytes(chunk1, term, pos1);
       if (j >= 0) {
         line = chunk1;
         llo = pos1;
@@ -365,7 +365,7 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
         lo1 = llo;
         hi1 = lhi;
         have1 = true;
-        read1 = read1 + 1;
+        read1 += 1;
       } else {
         cur1 = [];
         lo1 = 0;
@@ -373,7 +373,7 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
         have1 = false;
       }
       if (read1 >= 2 && should_check(cfg, seen_unpairable, issued1)) {
-        let order: i32 = cmp_lines(back1b, blo1, bhi1, cur1, lo1, hi1);
+        let order = cmp_lines(back1b, blo1, bhi1, cur1, lo1, hi1);
         if (!have1) {
           order = cmp_lines(back1a, alo1, ahi1, back1b, blo1, bhi1);
         }
@@ -391,10 +391,10 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
     if (need2) {
       need2 = false;
       let line: u8[] = [];
-      let llo: i32 = 0;
-      let lhi: i32 = 0;
-      let st: i32 = status_line();
-      let j: i32 = __memchr_bytes(chunk2, term, pos2);
+      let llo = 0;
+      let lhi = 0;
+      let st = status_line();
+      let j = __memchr_bytes(chunk2, term, pos2);
       if (j >= 0) {
         line = chunk2;
         llo = pos2;
@@ -423,7 +423,7 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
         lo2 = llo;
         hi2 = lhi;
         have2 = true;
-        read2 = read2 + 1;
+        read2 += 1;
       } else {
         cur2 = [];
         lo2 = 0;
@@ -431,7 +431,7 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
         have2 = false;
       }
       if (read2 >= 2 && should_check(cfg, seen_unpairable, issued2)) {
-        let order: i32 = cmp_lines(back2b, blo2, bhi2, cur2, lo2, hi2);
+        let order = cmp_lines(back2b, blo2, bhi2, cur2, lo2, hi2);
         if (!have2) {
           order = cmp_lines(back2a, alo2, ahi2, back2b, blo2, bhi2);
         }
@@ -450,15 +450,15 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
       break;
     }
 
-    let order: i32 = 0;
+    let order = 0;
     if (!have1) {
       order = 1;
     } else if (!have2) {
-      order = 0 - 1;
+      order = -1;
     } else {
       order = cmp_lines(cur1, lo1, hi1, cur2, lo2, hi2);
     }
-    let class: i32 = 3;
+    let class = 3;
     if (order < 0) {
       class = 1;
     } else if (order > 0) {
@@ -474,7 +474,7 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
         t1 = t1 + 1 as u64;
       }
     }
-    let wrote: boolean = false;
+    let wrote = false;
     if (class == 1) {
       if (show1) {
         buf_push_bytes_range(h, cur1, lo1, hi1);
@@ -543,7 +543,7 @@ function should_check(cfg: Cfg, seen_unpairable: boolean, issued: boolean): bool
 }
 
 function disorder(o: io_buffered.BufWriter, cfg: Cfg, which: i32): io_buffered.BufWriter {
-  let msg: string = "file " + which.to_string() + " is not in sorted order";
+  let msg = "file " + which.to_string() + " is not in sorted order";
   if (cfg.check == order_enabled()) {
     gnu.die(o, msg, 1);
   }

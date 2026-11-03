@@ -49,39 +49,39 @@ function opt_blank_fields(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " OPTION... [FILE]...\n";
-  out = out + "Print selected parts of lines from each FILE to standard output.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -b, --bytes=LIST        select only these bytes\n";
-  out = out + "  -c, --characters=LIST   select only these characters\n";
-  out = out + "  -d, --delimiter=DELIM   use DELIM instead of TAB for field delimiter\n";
-  out = out + "  -f, --fields=LIST       select only these fields;  also print any line\n";
-  out = out + "                            that contains no delimiter character, unless\n";
-  out = out + "                            the -s option is specified\n";
-  out = out + "  -n, --no-partial        with -b, do not split multibyte characters\n";
-  out = out + "  -w, --whitespace-delimited[=trimmed]  use whitespace as the field delimiter\n";
-  out = out + "  -F LIST                 shorthand for -w -O ' ' -f LIST\n";
-  out = out + "      --complement        complement the set of selected bytes, characters\n";
-  out = out + "                            or fields\n";
-  out = out + "  -s, --only-delimited    do not print lines not containing delimiters\n";
-  out = out + "  -O, --output-delimiter=STRING  use STRING as the output delimiter\n";
-  out = out + "                            the default is to use the input delimiter\n";
-  out = out + "  -z, --zero-terminated   line delimiter is NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Use one, and only one of -b, -c or -f.  Each LIST is made up of one\n";
-  out = out + "range, or many ranges separated by commas.  Selected input is written\n";
-  out = out + "in the same order that it is read, and is written exactly once.\n";
-  out = out + "Each range is one of:\n";
-  out = out + "\n";
-  out = out + "  N     N'th byte, character or field, counted from 1\n";
-  out = out + "  N-    from N'th byte, character or field, to end of line\n";
-  out = out + "  N-M   from N'th to M'th (included) byte, character or field\n";
-  out = out + "  -M    from first to M'th (included) byte, character or field\n";
+  out += "Print selected parts of lines from each FILE to standard output.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -b, --bytes=LIST        select only these bytes\n";
+  out += "  -c, --characters=LIST   select only these characters\n";
+  out += "  -d, --delimiter=DELIM   use DELIM instead of TAB for field delimiter\n";
+  out += "  -f, --fields=LIST       select only these fields;  also print any line\n";
+  out += "                            that contains no delimiter character, unless\n";
+  out += "                            the -s option is specified\n";
+  out += "  -n, --no-partial        with -b, do not split multibyte characters\n";
+  out += "  -w, --whitespace-delimited[=trimmed]  use whitespace as the field delimiter\n";
+  out += "  -F LIST                 shorthand for -w -O ' ' -f LIST\n";
+  out += "      --complement        complement the set of selected bytes, characters\n";
+  out += "                            or fields\n";
+  out += "  -s, --only-delimited    do not print lines not containing delimiters\n";
+  out += "  -O, --output-delimiter=STRING  use STRING as the output delimiter\n";
+  out += "                            the default is to use the input delimiter\n";
+  out += "  -z, --zero-terminated   line delimiter is NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Use one, and only one of -b, -c or -f.  Each LIST is made up of one\n";
+  out += "range, or many ranges separated by commas.  Selected input is written\n";
+  out += "in the same order that it is read, and is written exactly once.\n";
+  out += "Each range is one of:\n";
+  out += "\n";
+  out += "  N     N'th byte, character or field, counted from 1\n";
+  out += "  N-    from N'th byte, character or field, to end of line\n";
+  out += "  N-M   from N'th to M'th (included) byte, character or field\n";
+  out += "  -M    from first to M'th (included) byte, character or field\n";
   return out;
 }
 
@@ -114,14 +114,14 @@ struct Ranges { los: u64[], his: u64[] }
 function parse_list(spec: string, fields: boolean): Ranges {
   let los: u64[] = [];
   let his: u64[] = [];
-  let i: i32 = 0;
-  let initial: u64 = 1 as u64;
-  let value: u64 = 0 as u64;
-  let lhs: boolean = false;
-  let rhs: boolean = false;
-  let dash: boolean = false;
+  let i = 0;
+  let initial = 1 as u64;
+  let value = 0 as u64;
+  let lhs = false;
+  let rhs = false;
+  let dash = false;
   while (true) {
-    let c: i32 = 0 - 1;
+    let c: i32 = -1;
     if (i < spec.len()) {
       c = spec[i] as i32;
     }
@@ -138,7 +138,7 @@ function parse_list(spec: string, fields: boolean): Ranges {
         initial = value;
       }
       value = 0 as u64;
-      i = i + 1;
+      i += 1;
     } else if (c < 0 || c == 44 || is_blank(c)) {
       if (dash) {
         dash = false;
@@ -167,7 +167,7 @@ function parse_list(spec: string, fields: boolean): Ranges {
       if (c < 0) {
         break;
       }
-      i = i + 1;
+      i += 1;
       lhs = false;
       rhs = false;
     } else if (is_digit(c)) {
@@ -176,7 +176,7 @@ function parse_list(spec: string, fields: boolean): Ranges {
       } else {
         lhs = true;
       }
-      let over: boolean = false;
+      let over = false;
       match (value.checked_mul(10 as u64)) {
         Some(m) => {
           match (m.checked_add((c - 48) as u64)) {
@@ -196,17 +196,17 @@ function parse_list(spec: string, fields: boolean): Ranges {
         over = true;
       }
       if (over) {
-        let from: i32 = i;
+        let from = i;
         while (from > 0 && is_digit(spec[from - 1] as i32)) {
-          from = from - 1;
+          from -= 1;
         }
-        let end: i32 = i;
+        let end = i;
         while (end < spec.len() && is_digit(spec[end] as i32)) {
-          end = end + 1;
+          end += 1;
         }
         gnu.die_usage(too_large_word(fields) + " " + gnu.quote(slice_unchecked(spec, from, end) + "") + " is too large", 1);
       }
-      i = i + 1;
+      i += 1;
     } else {
       gnu.die_usage(bad_value_word(fields) + " " + gnu.quote(slice_unchecked(spec, i, spec.len()) + ""), 1);
     }
@@ -243,34 +243,34 @@ function bad_value_word(fields: boolean): string {
 }
 
 function merge(r: Ranges): Ranges {
-  let los: u64[] = r.los;
-  let his: u64[] = r.his;
-  let i: i32 = 1;
+  let los = r.los;
+  let his = r.his;
+  let i = 1;
   while (i < los.len()) {
-    let lo: u64 = los[i];
-    let hi: u64 = his[i];
-    let j: i32 = i - 1;
+    let lo = los[i];
+    let hi = his[i];
+    let j = i - 1;
     while (j >= 0 && los[j] > lo) {
       los = los.with(j + 1, los[j]);
       his = his.with(j + 1, his[j]);
-      j = j - 1;
+      j -= 1;
     }
     los = los.with(j + 1, lo);
     his = his.with(j + 1, hi);
-    i = i + 1;
+    i += 1;
   }
   let outl: u64[] = [];
   let outh: u64[] = [];
   i = 0;
   while (i < los.len()) {
-    let lo: u64 = los[i];
-    let hi: u64 = his[i];
-    let k: i32 = i + 1;
+    let lo = los[i];
+    let hi = his[i];
+    let k = i + 1;
     while (k < los.len() && los[k] <= hi) {
       if (his[k] > hi) {
         hi = his[k];
       }
-      k = k + 1;
+      k += 1;
     }
     outl = outl.append(lo);
     outh = outh.append(hi);
@@ -282,15 +282,15 @@ function merge(r: Ranges): Ranges {
 function complement_of(r: Ranges): Ranges {
   let los: u64[] = [];
   let his: u64[] = [];
-  let prev: u64 = 0 as u64;
-  let i: i32 = 0;
+  let prev = 0 as u64;
+  let i = 0;
   while (i < r.los.len()) {
     if (r.los[i] > prev + 1 as u64) {
       los = los.append(prev + 1 as u64);
       his = his.append(r.los[i] - 1 as u64);
     }
     prev = r.his[i];
-    i = i + 1;
+    i += 1;
   }
   if (prev < u64_max()) {
     los = los.append(prev + 1 as u64);
@@ -302,7 +302,7 @@ function complement_of(r: Ranges): Ranges {
 struct Settings { r: Ranges, fields: boolean, delim: i32, term: i32, suppress: boolean, out_delim: u8[], out_delim_set: boolean, ws: boolean, trim: boolean }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("b", "bytes", opt_bytes()));
   opts = opts.append(gnu.valued("c", "characters", opt_chars()));
@@ -316,28 +316,28 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
   opts = opts.append(gnu.valued("F", "", opt_blank_fields()));
 
-  let spec: string = "";
-  let mode: i32 = 0;
-  let delim: i32 = 9;
-  let delim_set: boolean = false;
-  let term: i32 = 10;
-  let suppress: boolean = false;
-  let complement: boolean = false;
+  let spec = "";
+  let mode = 0;
+  let delim = 9;
+  let delim_set = false;
+  let term = 10;
+  let suppress = false;
+  let complement = false;
   let out_delim: u8[] = [];
-  let out_delim_set: boolean = false;
-  let ws: boolean = false;
-  let ws_set: boolean = false;
-  let trim: boolean = false;
-  let space_out: boolean = false;
+  let out_delim_set = false;
+  let ws = false;
+  let ws_set = false;
+  let trim = false;
+  let space_out = false;
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "cut", help_text(), 1);
+  let g = gnu.getopt_new(argv, opts, "cut", help_text(), 1);
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
         if (m.id == opt_bytes() || m.id == opt_chars() || m.id == opt_fields() || m.id == opt_blank_fields()) {
-          let want: i32 = 1;
+          let want = 1;
           if (m.id == opt_fields() || m.id == opt_blank_fields()) {
             want = 2;
           }
@@ -401,7 +401,7 @@ pub function main(): i32 {
   if (delim_set && !ws_set) {
     ws = false;
   }
-  let r: Ranges = parse_list(spec, mode == 2);
+  let r = parse_list(spec, mode == 2);
   if (complement) {
     r = complement_of(r);
   }
@@ -412,7 +412,7 @@ pub function main(): i32 {
     }
   }
 
-  let files: string[] = g.operands();
+  let files = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -420,36 +420,36 @@ pub function main(): i32 {
 }
 
 function run(files: string[], s: Settings): i32 {
-  let o: io_buffered.BufWriter = gnu.out_with(block_size());
-  let h: usize = o.handle();
-  let ok: boolean = true;
-  let one_record: boolean = s.fields && s.delim == s.term;
+  let o = gnu.out_with(block_size());
+  let h = o.handle();
+  let ok = true;
+  let one_record = s.fields && s.delim == s.term;
 
-  let fi: i32 = 0;
-  let have_reader: boolean = false;
-  let is_stdin: boolean = false;
-  let name: string = "";
-  let r: Reader = stdin();
+  let fi = 0;
+  let have_reader = false;
+  let is_stdin = false;
+  let name = "";
+  let r = stdin();
   let chunk: u8[] = [];
-  let pos: i32 = 0;
-  let delimat: i32 = 0 - 1;
-  let carry: usize = buf_new(0);
-  let tail: boolean = false;
-  let done: boolean = false;
-  let rec_idx: u64 = 1 as u64;
-  let rec_k: i32 = 0;
-  let rec_printed: boolean = false;
-  let rec_open: boolean = false;
-  let rec_ri: i32 = 0;
-  let join_runs: boolean = s.out_delim.len() == 1 && s.out_delim[0] as i32 == s.delim;
-  let first_sel: boolean = s.r.los.len() > 0 && s.r.los[0] <= 1 as u64;
+  let pos = 0;
+  let delimat: i32 = -1;
+  let carry = buf_new(0);
+  let tail = false;
+  let done = false;
+  let rec_idx = 1 as u64;
+  let rec_k = 0;
+  let rec_printed = false;
+  let rec_open = false;
+  let rec_ri = 0;
+  let join_runs = s.out_delim.len() == 1 && s.out_delim[0] as i32 == s.delim;
+  let first_sel = s.r.los.len() > 0 && s.r.los[0] <= 1 as u64;
 
   while (true) {
     if (pos >= chunk.len()) {
       chunk = [];
       pos = 0;
       tail = false;
-      let got: boolean = false;
+      let got = false;
       while (!got) {
         if (!have_reader) {
           if (rec_open) {
@@ -467,13 +467,13 @@ function run(files: string[], s: Settings): i32 {
             got = true;
           } else {
             name = files[fi];
-            fi = fi + 1;
+            fi += 1;
             is_stdin = name == "-";
             if (is_stdin) {
               r = stdin();
               have_reader = true;
             } else {
-              let opened: boolean = false;
+              let opened = false;
               match (open_reader(name)) {
                 Ok(f) => {
                   r = f;
@@ -489,7 +489,7 @@ function run(files: string[], s: Settings): i32 {
           }
         } else {
           let piece: u8[] = [];
-          let read_ok: boolean = true;
+          let read_ok = true;
           match (r.read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
@@ -527,7 +527,7 @@ function run(files: string[], s: Settings): i32 {
       continue;
     }
 
-    let j: i32 = __memchr_bytes(chunk, s.term, pos);
+    let j = __memchr_bytes(chunk, s.term, pos);
     if (j < 0) {
       if (!tail) {
         buf_push_bytes_range(carry, chunk, pos, chunk.len());
@@ -537,10 +537,10 @@ function run(files: string[], s: Settings): i32 {
       j = chunk.len() - 1;
     }
 
-    let buf: u8[] = chunk;
-    let lo: i32 = pos;
-    let hi: i32 = j + 1;
-    let carried: boolean = buf_len(carry) > 0;
+    let buf = chunk;
+    let lo = pos;
+    let hi = j + 1;
+    let carried = buf_len(carry) > 0;
     if (carried) {
       buf_push_bytes_range(carry, chunk, pos, j + 1);
       buf = buf_take_bytes(carry);
@@ -548,19 +548,19 @@ function run(files: string[], s: Settings): i32 {
       hi = buf.len();
     }
     pos = j + 1;
-    let terminated: boolean = !tail;
-    let body: i32 = hi;
+    let terminated = !tail;
+    let body = hi;
     if (terminated) {
       body = hi - 1;
     }
 
     if (!s.fields) {
-      let len: u64 = (body - lo) as u64;
-      let printed: boolean = false;
-      let k: i32 = 0;
+      let len = (body - lo) as u64;
+      let printed = false;
+      let k = 0;
       while (k < s.r.los.len() && s.r.los[k] <= len) {
-        let a: u64 = s.r.los[k];
-        let b: u64 = s.r.his[k];
+        let a = s.r.los[k];
+        let b = s.r.his[k];
         if (b > len) {
           b = len;
         }
@@ -571,7 +571,7 @@ function run(files: string[], s: Settings): i32 {
           buf_push_bytes_range(h, buf, lo + a as i32 - 1, lo + b as i32);
           printed = true;
         }
-        k = k + 1;
+        k += 1;
       }
       buf_push_byte(h, s.term);
     } else if (one_record) {
@@ -582,7 +582,7 @@ function run(files: string[], s: Settings): i32 {
         }
       } else {
         while (rec_ri < s.r.los.len() && s.r.his[rec_ri] < rec_idx) {
-          rec_ri = rec_ri + 1;
+          rec_ri += 1;
         }
         if (rec_ri < s.r.los.len() && s.r.los[rec_ri] <= rec_idx) {
           if (rec_printed) {
@@ -592,23 +592,23 @@ function run(files: string[], s: Settings): i32 {
           rec_printed = true;
         }
         rec_idx = rec_idx + 1 as u64;
-        rec_k = rec_k + 1;
+        rec_k += 1;
         rec_open = true;
       }
     } else if (s.ws) {
-      let a: i32 = lo;
-      let z: i32 = body;
+      let a = lo;
+      let z = body;
       if (s.trim) {
         while (a < z && is_blank_byte(buf[a] as i32)) {
-          a = a + 1;
+          a += 1;
         }
         while (z > a && is_blank_byte(buf[z - 1] as i32)) {
-          z = z - 1;
+          z -= 1;
         }
       }
-      let wb: i32 = a;
+      let wb = a;
       while (wb < z && !is_blank_byte(buf[wb] as i32)) {
-        wb = wb + 1;
+        wb += 1;
       }
       if (wb >= z) {
         if (s.r.los.len() == 0) {
@@ -618,17 +618,17 @@ function run(files: string[], s: Settings): i32 {
           buf_push_byte(h, s.term);
         }
       } else {
-        let widx: u64 = 1 as u64;
-        let wri: i32 = 0;
-        let wprinted: boolean = false;
-        let wp: i32 = a;
+        let widx = 1 as u64;
+        let wri = 0;
+        let wprinted = false;
+        let wp = a;
         while (true) {
-          let we: i32 = wp;
+          let we = wp;
           while (we < z && !is_blank_byte(buf[we] as i32)) {
-            we = we + 1;
+            we += 1;
           }
           while (wri < s.r.los.len() && s.r.his[wri] < widx) {
-            wri = wri + 1;
+            wri += 1;
           }
           if (wri < s.r.los.len() && s.r.los[wri] <= widx) {
             if (wprinted) {
@@ -640,9 +640,9 @@ function run(files: string[], s: Settings): i32 {
           if (we >= z || wri >= s.r.los.len()) {
             break;
           }
-          let wn: i32 = we;
+          let wn = we;
           while (wn < z && is_blank_byte(buf[wn] as i32)) {
-            wn = wn + 1;
+            wn += 1;
           }
           wp = wn;
           widx = widx + 1 as u64;
@@ -650,7 +650,7 @@ function run(files: string[], s: Settings): i32 {
         buf_push_byte(h, s.term);
       }
     } else {
-      let nd: i32 = delimat;
+      let nd = delimat;
       if (carried) {
         nd = __memchr_bytes(buf, s.delim, 0);
       } else if (nd >= 0 && nd < lo) {
@@ -664,20 +664,20 @@ function run(files: string[], s: Settings): i32 {
           buf_push_byte(h, s.term);
         }
       } else {
-        let p: i32 = lo;
-        let idx: u64 = 1 as u64;
-        let ri: i32 = 0;
-        let printed: boolean = false;
-        let run: i32 = 0 - 1;
+        let p = lo;
+        let idx = 1 as u64;
+        let ri = 0;
+        let printed = false;
+        let run: i32 = -1;
         while (true) {
-          let e: i32 = body;
-          let last: boolean = true;
+          let e = body;
+          let last = true;
           if (nd >= 0 && nd < body) {
             e = nd;
             last = false;
           }
           while (ri < s.r.los.len() && s.r.his[ri] < idx) {
-            ri = ri + 1;
+            ri += 1;
           }
           if (ri < s.r.los.len() && s.r.los[ri] <= idx) {
             if (run < 0) {
@@ -688,12 +688,12 @@ function run(files: string[], s: Settings): i32 {
             }
             if (!join_runs) {
               buf_push_bytes_range(h, buf, run, e);
-              run = 0 - 1;
+              run = -1;
             }
             printed = true;
           } else if (run >= 0) {
             buf_push_bytes_range(h, buf, run, p - 1);
-            run = 0 - 1;
+            run = -1;
           }
           if (last || ri >= s.r.los.len()) {
             break;
@@ -704,7 +704,7 @@ function run(files: string[], s: Settings): i32 {
         }
         if (run >= 0) {
           buf_push_bytes_range(h, buf, run, body);
-          run = 0 - 1;
+          run = -1;
         }
         buf_push_byte(h, s.term);
       }

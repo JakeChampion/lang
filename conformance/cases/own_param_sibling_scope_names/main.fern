@@ -1,0 +1,60 @@
+// Locals of the same name in sibling blocks are separate bindings, so each
+// one can move into an own parameter at its own last use (#14100).
+struct W { d: i32[], n: i32 }
+
+@noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
+@noinline function grow(own xs: i32[], v: i32): i32[] { return xs.append(v); }
+@noinline function mkw(n: i32): W { return W { d: [n, n], n: n }; }
+@noinline function step(own w: W): (W, i32) { let n: i32 = w.n; return (W { d: w.d, n: n + 1 }, n); }
+
+@noinline function sibling_loops(n: i32): i32 {
+  let g: W = mkw(n);
+  let t: i32 = 0;
+  for i in 0..3 {
+    let (a, u) = step(g);
+    let (b, v) = step(a);
+    g = b;
+    t = t + u + v;
+  }
+  for j in 0..2 {
+    let (a, u) = step(g);
+    let (b, v) = step(a);
+    g = b;
+    t = t + u + v;
+  }
+  return t + eat(g);
+}
+
+@noinline function sibling_arrays(c: boolean): i32 {
+  let t: i32 = 0;
+  if (c) {
+    let xs: i32[] = [1];
+    let ys: i32[] = grow(xs, 2);
+    t = t + ys.len();
+  }
+  for k in 0..2 {
+    let xs: i32[] = [k];
+    let ys: i32[] = grow(xs, 3);
+    t = t + ys.len();
+  }
+  return t;
+}
+
+@noinline function shadowed(c: boolean): i32 {
+  let xs: i32[] = [1, 2, 3];
+  let t: i32 = 0;
+  if (c) {
+    let xs: i32[] = [4];
+    let ys: i32[] = grow(xs, 5);
+    t = ys.len();
+  }
+  return t + xs.len();
+}
+
+function main(): i32 {
+  let r: i32 = sibling_loops(1) + sibling_arrays(true) + sibling_arrays(false) + shadowed(true) + shadowed(false);
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r % 100;
+}

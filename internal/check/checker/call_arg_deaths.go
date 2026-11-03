@@ -257,20 +257,17 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 	})
 	var fieldSelections map[string]int
 	var fieldReads map[[2]string]int
-	unpackInitLocal := map[string]bool{}
-	ast.Walk(body, func(n ast.Node) bool {
-		v, isVar := n.(*ast.Var)
-		if !isVar || declCount[v.Name] != 1 {
-			return true
-		}
-		fa, isField := v.Init.(*ast.FieldAccess)
+	// An unpack reads the one field of a fresh local or an own parameter that
+	// nothing else reads, from a holder that each mention selects a field of.
+	unpack := func(e ast.Expr) bool {
+		fa, isField := e.(*ast.FieldAccess)
 		if !isField {
-			return true
+			return false
 		}
 		hid, isID := fa.Target.(*ast.Ident)
 		// An own parameter holds its fields as a fresh local does.
 		if !isID || !(freshInitLocal[hid.Name] && declCount[hid.Name] == 1) && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
-			return true
+			return false
 		}
 		if fieldSelections == nil {
 			fieldSelections = map[string]int{}
@@ -285,7 +282,11 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 				return true
 			})
 		}
-		if fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name] == occurrences[hid.Name] {
+		return fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name] == occurrences[hid.Name]
+	}
+	unpackInitLocal := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if v, isVar := n.(*ast.Var); isVar && declCount[v.Name] == 1 && unpack(v.Init) {
 			unpackInitLocal[v.Name] = true
 		}
 		return true
@@ -302,7 +303,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			aliasInitLocal[name] = true
 		}
 	}
-	for name := range ownedAliases(info, body, ownParam, declCount, order) {
+	for name := range ownedAliases(info, body, ownParam, declCount, order, freshInitLocal) {
 		aliasInitLocal[name] = true
 	}
 	admitted := func(name string) bool {
@@ -595,7 +596,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if heldByEnclosingCall(body, c, aid.Name) {
 				continue
 			}
-			if !order.IsLast(aid) && arrayArgPosition(info, c, aid) {
+			if !lastInBinding(body, c, aid, order) && arrayArgPosition(info, c, aid) {
 				continue
 			}
 			if liveAfter(info, body, c, aid, order) {
@@ -688,9 +689,10 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		return true
 	})
 	unadmitted := map[string]bool{}
+	moveAdmitted := moveAdmission(info, body, isParam, ownParam, declCount, occurrences, order, admitted, unpack)
 	for _, dies := range out {
 		for name := range dies {
-			if !admitted(name) {
+			if !isParam[name] && !moveAdmitted[name] {
 				unadmitted[name] = true
 			}
 		}
@@ -841,6 +843,13 @@ func freshInit(info *Info, init ast.Expr) bool {
 	case *ast.TryOp:
 		return freshInit(info, init.Inner)
 	case *ast.Call:
+		if info != nil {
+			// A variant construction from another module has a qualified
+			// callee. It is fresh on the same terms as an unqualified one.
+			if _, isVariant := info.EnumConstructions[init]; isVariant {
+				return info.CallBorrows == nil || !info.CallBorrows(init)
+			}
+		}
 		if _, named := init.Callee.(*ast.Ident); !named {
 			return false
 		}
@@ -853,39 +862,152 @@ func freshInit(info *Info, init ast.Expr) bool {
 	return false
 }
 
-// ownedAliases names the locals declared once, outside a loop, from an own
-// parameter at its last use, and given only fresh values after that.
-func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder) map[string]bool {
+// moveAdmission names the locals that can move into an own parameter: each
+// admitted local, and each alias `let a = b`, declared once outside a loop,
+// that takes an owned b at its last use and is given only owned values after
+// that. An owned value is a fresh value, an unpack, an owned name, or a
+// self-update `T { ...a, f: v }`.
+func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]bool, declCount, occurrences map[string]int, order IdentOrder, admitted func(string) bool, unpack func(ast.Expr) bool) map[string]bool {
+	looped := loopedDecls(body)
+	aliasOf := map[string]*ast.Ident{}
+	assigns := map[string][]ast.Expr{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			if src, ok := x.Init.(*ast.Ident); ok && declCount[x.Name] == 1 && !looped[x.Name] && order.IsLast(src) {
+				aliasOf[x.Name] = src
+			}
+		case *ast.Assign:
+			if t, ok := x.Target.(*ast.Ident); ok {
+				assigns[t.Name] = append(assigns[t.Name], x.Value)
+			}
+		}
+		return true
+	})
+	in := map[string]bool{}
+	for name := range occurrences {
+		if !isParam[name] && (admitted(name) || aliasOf[name] != nil) {
+			in[name] = true
+		}
+	}
+	// A name that only matches on a fresh call bind: the match takes the
+	// result, so the payload is owned.
+	freshBound := map[string]bool{}
+	staleBound := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if m, ok := n.(*ast.Match); ok {
+			_, named := m.Tag.(*ast.Ident)
+			fresh := !named && freshInit(info, m.Tag)
+			for _, arm := range m.Arms {
+				for _, b := range arm.Bindings {
+					if fresh {
+						freshBound[b] = true
+					} else {
+						staleBound[b] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	owned := func(name string) bool {
+		return ownParam[name] && declCount[name] == 0 || freshBound[name] && !staleBound[name] && !isParam[name] && declCount[name] == 0 || in[name]
+	}
+	valueOwned := func(target string, v ast.Expr) bool {
+		if freshInit(info, v) || unpack(v) {
+			return true
+		}
+		switch x := v.(type) {
+		case *ast.Ident:
+			return owned(x.Name)
+		case *ast.StructLit:
+			b, ok := x.Base.(*ast.Ident)
+			return ok && b.Name == target
+		}
+		return false
+	}
+	for changed := true; changed; {
+		changed = false
+		for name := range in {
+			if admitted(name) {
+				continue
+			}
+			keep := aliasOf[name] != nil && owned(aliasOf[name].Name)
+			for _, v := range assigns[name] {
+				keep = keep && valueOwned(name, v)
+			}
+			if !keep {
+				delete(in, name)
+				changed = true
+			}
+		}
+	}
+	return in
+}
+
+// loopedDecls names the locals that a declaration inside a loop binds.
+func loopedDecls(body *ast.Block) map[string]bool {
 	looped := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch n.(type) {
 		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
 			ast.Walk(n, func(m ast.Node) bool {
-				if v, ok := m.(*ast.Var); ok {
-					looped[v.Name] = true
+				switch d := m.(type) {
+				case *ast.Var:
+					looped[d.Name] = true
+				case *ast.Destructure:
+					for _, name := range d.Names {
+						looped[name] = true
+					}
 				}
 				return true
 			})
 		}
 		return true
 	})
+	return looped
+}
+
+// ownedAliases names the locals declared once, outside a loop, from an own
+// parameter at its last use, and given only fresh values after that.
+func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool) map[string]bool {
+	looped := loopedDecls(body)
 	stale := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		if asn, ok := n.(*ast.Assign); ok {
-			if t, ok := asn.Target.(*ast.Ident); ok && !freshInit(info, asn.Value) {
+			src, fromLocal := asn.Value.(*ast.Ident)
+			fresh := freshInit(info, asn.Value) || fromLocal && freshLocal[src.Name]
+			if t, ok := asn.Target.(*ast.Ident); ok && !fresh {
 				stale[t.Name] = true
 			}
 		}
 		return true
 	})
+	sole := func(name string) bool {
+		return declCount[name] == 1 && !looped[name] && !stale[name]
+	}
+	ownedAtLastUse := func(e ast.Expr) bool {
+		src, ok := e.(*ast.Ident)
+		return ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src)
+	}
 	out := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
-		v, ok := n.(*ast.Var)
-		if !ok || declCount[v.Name] != 1 || looped[v.Name] || stale[v.Name] {
-			return true
-		}
-		if src, ok := v.Init.(*ast.Ident); ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src) {
-			out[v.Name] = true
+		switch x := n.(type) {
+		case *ast.Var:
+			if sole(x.Name) && ownedAtLastUse(x.Init) {
+				out[x.Name] = true
+			}
+		case *ast.Destructure:
+			// The fields of an own parameter that the destructure takes at
+			// its last use are owned, as the parameter is.
+			if x.AtName != "" || !ownedAtLastUse(x.Init) {
+				return true
+			}
+			for i, name := range x.Names {
+				if sole(name) && (i >= len(x.Nested) || x.Nested[i] == nil) {
+					out[name] = true
+				}
+			}
 		}
 		return true
 	})
@@ -1526,6 +1648,12 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	if repeats {
 		return true
 	}
+	if m, ok := st.(*ast.Match); ok && st != c && nodeHolds(m.Tag, c) {
+		if live, settled := callTagSettles(info, m, aid, order); live || settled {
+			return live
+		}
+		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
+	}
 	if m, ok := c.(*ast.Match); ok && st == c {
 		live, settled := matchTagLive(info, m, aid.Name)
 		if live {
@@ -1534,7 +1662,7 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 		if settled {
 			return false
 		}
-		return liveFrom(info, frames, len(frames)-1, aid.Name)
+		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 	}
 	later := false
 	ast.Walk(st, func(m ast.Node) bool {
@@ -1546,7 +1674,7 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	if later {
 		return true
 	}
-	return liveFrom(info, frames, len(frames)-1, aid.Name)
+	return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 }
 
 // matchTagLive reports whether the value a match takes from the local name is
@@ -1569,6 +1697,41 @@ func matchTagLive(info *Info, m *ast.Match, name string) (live, settled bool) {
 			continue
 		}
 		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name)
+		if armLive {
+			return true, false
+		}
+		if !armSettled {
+			settled = false
+		}
+	}
+	return false, settled
+}
+
+// callTagSettles decides a local that a call in a match tag takes. live
+// reports a later read in the tag, or a read in a guard or an arm before a
+// whole assignment. settled reports that every arm assigns the local whole
+// or leaves the statement, so no later statement reads the taken value.
+func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder) (live, settled bool) {
+	later := false
+	ast.Walk(m.Tag, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
+			later = true
+		}
+		return !later
+	})
+	if later {
+		return true, false
+	}
+	settled = len(m.Arms) > 0
+	for _, arm := range m.Arms {
+		if arm.Guard != nil && StmtReferencesName(arm.Guard, aid.Name) {
+			return true, false
+		}
+		if arm.Body == nil {
+			settled = false
+			continue
+		}
+		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, aid.Name)
 		if armLive {
 			return true, false
 		}
@@ -1654,7 +1817,7 @@ func blockStmts(st ast.Stmt) []ast.Stmt {
 	return []ast.Stmt{st}
 }
 
-func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
+func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int) bool {
 	f := frames[level]
 	for j := f.idx + 1; j < len(f.stmts); j++ {
 		st := f.stmts[j]
@@ -1668,13 +1831,19 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
 		jumps := jumpsOf(info, st)
 		for _, label := range jumps.continues {
 			l := loopFrameLevel(frames, level, label)
-			if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name) {
+			if l >= 0 && l <= scope {
+				continue
+			}
+			if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
 				return true
 			}
 		}
 		for _, label := range jumps.breaks {
 			l := loopFrameLevel(frames, level, label)
-			if l < 0 || liveFrom(info, frames, l-1, name) {
+			if l >= 0 && l <= scope {
+				continue
+			}
+			if l < 0 || liveFrom(info, frames, l-1, name, scope) {
 				return true
 			}
 		}
@@ -1682,11 +1851,74 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
 			return false
 		}
 	}
+	if level <= scope {
+		// The binding ends with the block that declares it.
+		return false
+	}
 	if f.loop != nil && loopHeadLive(frames, level, name) {
 		return true
 	}
 	if level == 0 {
 		return false
 	}
-	return liveFrom(info, frames, level-1, name)
+	return liveFrom(info, frames, level-1, name, scope)
+}
+
+// bindingLevel is the level of the innermost frame that binds name before the
+// statement that the frame holds: the block that the read binding belongs to.
+// It is -1 when no frame binds name, as for a parameter.
+func bindingLevel(frames []liveFrame, name string) int {
+	for l := len(frames) - 1; l >= 0; l-- {
+		f := frames[l]
+		switch loop := f.loop.(type) {
+		case *ast.ForEach:
+			if loop.Var == name {
+				return l
+			}
+		case *ast.For:
+			if loop.Init != nil && bindsName(loop.Init, name) {
+				return l
+			}
+		}
+		for j := 0; j < f.idx; j++ {
+			if bindsName(f.stmts[j], name) {
+				return l
+			}
+		}
+	}
+	return -1
+}
+
+// lastInBinding reports whether no later read of name belongs to the binding
+// that aid reads: no read after aid inside the block that declares it.
+func lastInBinding(body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
+	frames := enclosingFrames(body, c)
+	scope := bindingLevel(frames, aid.Name)
+	if scope < 0 {
+		return order.IsLast(aid)
+	}
+	f := frames[scope]
+	at := order.Idx[aid]
+	later := false
+	for _, st := range f.stmts[f.idx:] {
+		ast.Walk(st, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > at {
+				later = true
+			}
+			return !later
+		})
+	}
+	return !later
+}
+
+// bindsName reports whether the statement itself declares name, not a
+// statement nested inside it.
+func bindsName(st ast.Stmt, name string) bool {
+	switch x := st.(type) {
+	case *ast.Var:
+		return x.Name == name
+	case *ast.Destructure:
+		return slices.Contains(x.Names, name)
+	}
+	return false
 }

@@ -7,14 +7,14 @@ import "core/map";
 import "./lib/gnu";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [FILE]\n";
-  out = out + "Write totally ordered list consistent with the partial ordering in FILE.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "      --help     display this help and exit\n";
-  out = out + "      --version  output version information and exit\n";
+  out += "Write totally ordered list consistent with the partial ordering in FILE.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "      --help     display this help and exit\n";
+  out += "      --version  output version information and exit\n";
   return out;
 }
 
@@ -29,12 +29,12 @@ impl cmp.Eq for Name {
     if (self.hi - self.lo != other.hi - other.lo) {
       return false;
     }
-    let i: i32 = 0;
+    let i = 0;
     while (i < self.hi - self.lo) {
       if (self.data[self.lo + i] != other.data[other.lo + i]) {
         return false;
       }
-      i = i + 1;
+      i += 1;
     }
     return true;
   }
@@ -42,19 +42,19 @@ impl cmp.Eq for Name {
 
 impl cmp.Ord for Name {
   function cmp(self: Name, other: Name): i32 {
-    let i: i32 = 0;
-    let n: i32 = self.hi - self.lo;
-    let m: i32 = other.hi - other.lo;
+    let i = 0;
+    let n = self.hi - self.lo;
+    let m = other.hi - other.lo;
     while (i < n && i < m) {
-      let a: u8 = self.data[self.lo + i];
-      let b: u8 = other.data[other.lo + i];
+      let a = self.data[self.lo + i];
+      let b = other.data[other.lo + i];
       if (a < b) {
         return -1;
       }
       if (a > b) {
         return 1;
       }
-      i = i + 1;
+      i += 1;
     }
     if (n < m) {
       return -1;
@@ -71,15 +71,15 @@ function intern(text: u8[]): (Name[], i32[]) {
   let ids: i32[] = [];
   let index: Map[i32, i32] = map_new(1024);
   let next: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < text.len()) {
     if (is_separator(text[i] as i32)) {
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let j: i32 = i;
-    let end: i32 = -1;
-    let hash: u32 = 2166136261 as u32;
+    let j = i;
+    let end = -1;
+    let hash = 2166136261 as u32;
     while (j < text.len() && !is_separator(text[j] as i32)) {
       if (end < 0) {
         if (text[j] == 0 as u8) {
@@ -88,14 +88,14 @@ function intern(text: u8[]): (Name[], i32[]) {
           hash = (hash ^ text[j] as u32) * (16777619 as u32);
         }
       }
-      j = j + 1;
+      j += 1;
     }
     if (end < 0) {
       end = j;
     }
-    let name: Name = Name { data: text, lo: i, hi: end, id: names.len() };
-    let first: i32 = index.get_or(hash as i32, -1);
-    let found: i32 = first;
+    let name = Name { data: text, lo: i, hi: end, id: names.len() };
+    let first = index.get_or(hash as i32, -1);
+    let found = first;
     while (found >= 0 && !names[found].eq(name)) {
       found = next[found];
     }
@@ -114,7 +114,7 @@ function intern(text: u8[]): (Name[], i32[]) {
 
 function byte_order(names: Name[]): i32[] {
   let order: i32[] = [];
-  let sorted: Name[] = cmp.sort(names);
+  let sorted = cmp.sort(names);
   for name in sorted {
     order = order.append(name.id);
   }
@@ -128,7 +128,7 @@ function put_name(out: io_buffered.BufWriter, name: Name): io_buffered.BufWriter
 }
 
 function error_name(name: Name): void {
-  let b: usize = buf_new(name.hi - name.lo + 32);
+  let b = buf_new(name.hi - name.lo + 32);
   buf_push(b, gnu.prog() + ": ");
   buf_push_bytes_range(b, name.data, name.lo, name.hi);
   buf_push_byte(b, 10);
@@ -138,39 +138,39 @@ function error_name(name: Name): void {
 
 function run(text: u8[], fname: string): i32 {
   let interned: (Name[], i32[]) = intern(text);
-  let names: Name[] = interned.0;
-  let ids: i32[] = interned.1;
+  let names = interned.0;
+  let ids = interned.1;
   if (ids.len() % 2 == 1) {
     gnu.error(fname + ": input contains an odd number of tokens");
     return 1;
   }
-  let n: i32 = names.len();
+  let n = names.len();
 
   let count: i32[] = [];
   let head: i32[] = [];
   let chain_next: i32[] = [];
   let inchain: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < n) {
     count = count.append(0);
-    head = head.append(0 - 1);
-    chain_next = chain_next.append(0 - 1);
+    head = head.append(-1);
+    chain_next = chain_next.append(-1);
     inchain = inchain.append(0);
-    v = v + 1;
+    v += 1;
   }
   let edge_to: i32[] = [];
   let edge_next: i32[] = [];
-  let t: i32 = 0;
+  let t = 0;
   while (t < ids.len()) {
-    let a: i32 = ids[t];
-    let b: i32 = ids[t + 1];
+    let a = ids[t];
+    let b = ids[t + 1];
     if (a != b) {
       edge_to = edge_to.append(b);
       edge_next = edge_next.append(head[a]);
       head = head.with(a, edge_to.len() - 1);
       count = count.with(b, count[b] + 1);
     }
-    t = t + 2;
+    t += 2;
   }
 
   let seeds: Name[] = [];
@@ -179,30 +179,30 @@ function run(text: u8[], fname: string): i32 {
     if (count[v] == 0) {
       seeds = seeds.append(names[v]);
     }
-    v = v + 1;
+    v += 1;
   }
-  let sorted_seeds: Name[] = cmp.sort(seeds);
+  let sorted_seeds = cmp.sort(seeds);
   let queue: i32[] = [];
-  let qh: i32 = 0;
-  let s: i32 = 0;
+  let qh = 0;
+  let s = 0;
   while (s < sorted_seeds.len()) {
     queue = queue.append(sorted_seeds[s].id);
-    s = s + 1;
+    s += 1;
   }
   let order: i32[] = [];
 
-  let remaining: i32 = n;
-  let status: i32 = 0;
-  let o: io_buffered.BufWriter = gnu.out_new();
+  let remaining = n;
+  let status = 0;
+  let o = gnu.out_new();
   while (remaining > 0) {
     while (qh < queue.len()) {
-      let w: i32 = queue[qh];
-      qh = qh + 1;
+      let w = queue[qh];
+      qh += 1;
       o = put_name(o, names[w]);
-      remaining = remaining - 1;
-      let e: i32 = head[w];
+      remaining -= 1;
+      let e = head[w];
       while (e >= 0) {
-        let to: i32 = edge_to[e];
+        let to = edge_to[e];
         count = count.with(to, count[to] - 1);
         if (count[to] == 0) {
           queue = queue.append(to);
@@ -219,13 +219,13 @@ function run(text: u8[], fname: string): i32 {
     if (order.len() == 0) {
       order = byte_order(names);
     }
-    let chain_head: i32 = 0 - 1;
-    let found: boolean = false;
+    let chain_head: i32 = -1;
+    let found = false;
     while (!found) {
-      let k: i32 = 0;
+      let k = 0;
       while (k < n && !found) {
-        let node: i32 = order[k];
-        k = k + 1;
+        let node = order[k];
+        k += 1;
         if (count[node] == 0) {
           continue;
         }
@@ -233,8 +233,8 @@ function run(text: u8[], fname: string): i32 {
           chain_head = node;
           continue;
         }
-        let e2: i32 = head[node];
-        let prev: i32 = 0 - 1;
+        let e2 = head[node];
+        let prev: i32 = -1;
         while (e2 >= 0 && edge_to[e2] != chain_head) {
           prev = e2;
           e2 = edge_next[e2];
@@ -248,7 +248,7 @@ function run(text: u8[], fname: string): i32 {
           chain_head = node;
           continue;
         }
-        let c: i32 = chain_head;
+        let c = chain_head;
         while (true) {
           error_name(names[c]);
           if (c == node) {
@@ -268,10 +268,10 @@ function run(text: u8[], fname: string): i32 {
         found = true;
       }
     }
-    let c2: i32 = chain_head;
+    let c2 = chain_head;
     while (c2 >= 0) {
-      let nx: i32 = chain_next[c2];
-      chain_next = chain_next.with(c2, 0 - 1);
+      let nx = chain_next[c2];
+      chain_next = chain_next.with(c2, -1);
       inchain = inchain.with(c2, 0);
       c2 = nx;
     }
@@ -281,12 +281,12 @@ function run(text: u8[], fname: string): i32 {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let operands: string[] = gnu.parse_standard_options_only(argv, "tsort", help_text(), 1);
+  let argv = args();
+  let operands = gnu.parse_standard_options_only(argv, "tsort", help_text(), 1);
   if (operands.len() > 1) {
     gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
   }
-  let path: string = "-";
+  let path = "-";
   if (operands.len() == 1) {
     path = operands[0];
   }

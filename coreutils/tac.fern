@@ -15,17 +15,17 @@ function opt_separator(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Write each FILE to standard output, last line first.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -b, --before             attach the separator before instead of after\n";
-  out = out + "  -r, --regex              interpret the separator as a regular expression\n";
-  out = out + "  -s, --separator=STRING   use STRING as the separator instead of newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Write each FILE to standard output, last line first.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -b, --before             attach the separator before instead of after\n";
+  out += "  -r, --regex              interpret the separator as a regular expression\n";
+  out += "  -s, --separator=STRING   use STRING as the separator instead of newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -48,10 +48,10 @@ function write_out(o: Out, data: u8[]): void {
 }
 
 function join_prefix(front: u8[], back: u8[], end: i32): u8[] {
-  let h: usize = buf_new(front.len() + end);
+  let h = buf_new(front.len() + end);
   buf_push_bytes_range(h, front, 0, front.len());
   buf_push_bytes_range(h, back, 0, end);
-  let result: u8[] = buf_take_bytes(h);
+  let result = buf_take_bytes(h);
   buf_free(h);
   return result;
 }
@@ -62,11 +62,11 @@ function fail(o: Out, msg: string): Out {
 }
 
 function find_plain(s: Settings, w: u8[], bound: i32): i32 {
-  let n: i32 = s.sep.len();
-  let first: i32 = s.sep[0] as i32;
-  let k: i32 = bound - n;
+  let n = s.sep.len();
+  let first = s.sep[0] as i32;
+  let k = bound - n;
   while (k >= 0) {
-    let j: i32 = __rmemchr_bytes(w, first, k);
+    let j = __rmemchr_bytes(w, first, k);
     if (j < 0) {
       break;
     }
@@ -75,7 +75,7 @@ function find_plain(s: Settings, w: u8[], bound: i32): i32 {
     }
     k = j - 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function initial_read_size(): i64 {
@@ -85,17 +85,17 @@ function initial_read_size(): i64 {
 struct Src { r: Reader, held: u8[], seekable: boolean }
 
 function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, u8[], boolean) {
-  let out: Out = o;
+  let out = o;
   let empty: u8[] = [];
   if (!src.seekable) {
-    let lo: i32 = at as i32;
-    let hi: i32 = lo + n as i32;
+    let lo = at as i32;
+    let hi = lo + n as i32;
     if (hi > src.held.len()) {
       hi = src.held.len();
     }
-    let h: usize = buf_new(hi - lo);
+    let h = buf_new(hi - lo);
     buf_push_bytes_range(h, src.held, lo, hi);
-    let bytes: u8[] = buf_take_bytes(h);
+    let bytes = buf_take_bytes(h);
     buf_free(h);
     return (out, bytes, true);
   }
@@ -106,8 +106,8 @@ function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, u8[]
     }
   }
   let got: u8[] = [];
-  let h: usize = 0 as usize;
-  let used: i64 = 0 as i64;
+  let h = 0 as usize;
+  let used = 0 as i64;
   while (used < n) {
     match (src.r.read_chunk_bytes((n - used) as i32)) {
       Ok(c) => {
@@ -141,18 +141,18 @@ function read_block(src: Src, name: string, at: i64, n: i64, o: Out): (Out, u8[]
 }
 
 function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): Out {
-  let out: Out = o;
-  let h: usize = o.buf;
+  let out = o;
+  let h = o.buf;
   if (size < 1 as i64) {
     return out;
   }
-  let block: i64 = initial_read_size();
-  let saved: i64 = size % block;
+  let block = initial_read_size();
+  let saved = size % block;
   if (saved == 0 as i64) {
     saved = block;
   }
-  let file_pos: i64 = size - saved;
-  let w: u8[] = src.held;
+  let file_pos = size - saved;
+  let w = src.held;
   if (!src.seekable && !s.regex) {
     file_pos = 0 as i64;
   } else {
@@ -163,30 +163,30 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
     }
     w = rb.1;
   }
-  let past_end: i32 = w.len();
-  let bound: i32 = past_end;
-  let first_time: boolean = true;
-  let plain: boolean = !s.regex && !s.before && s.sep.len() == 1;
-  let sepb: i32 = 0;
+  let past_end = w.len();
+  let bound = past_end;
+  let first_time = true;
+  let plain = !s.regex && !s.before && s.sep.len() == 1;
+  let sepb = 0;
   if (plain) {
     sepb = s.sep[0] as i32;
   }
   while (true) {
     if (plain && !first_time && bound > 0) {
-      let j: i32 = __rmemchr_bytes(w, sepb, bound - 1);
+      let j = __rmemchr_bytes(w, sepb, bound - 1);
       while (j >= 0 && past_end - j - 1 < write_size() - buf_len(h)) {
         buf_push_bytes_range(h, w, j + 1, past_end);
         past_end = j + 1;
         bound = j;
         if (j == 0) {
-          j = 0 - 1;
+          j = -1;
         } else {
           j = __rmemchr_bytes(w, sepb, j - 1);
         }
       }
     }
-    let m0: i32 = 0;
-    let m1: i32 = 0;
+    let m0 = 0;
+    let m1 = 0;
     if (s.regex) {
       let m: (i32, i32) = s.re.search_back_bytes(w, bound);
       m0 = m.0;
@@ -195,9 +195,9 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
       m0 = find_plain(s, w, bound);
       m1 = m0 + s.sep.len();
     }
-    let lo: i32 = 0;
-    let last: boolean = true;
-    let emit: boolean = true;
+    let lo = 0;
+    let last = true;
+    let emit = true;
     if (m0 >= 0) {
       last = false;
       lo = m1;
@@ -208,10 +208,10 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
       }
     } else if (file_pos > 0 as i64) {
       if (past_end as i64 > block) {
-        block = block * (2 as i64);
+        block *= 2 as i64;
       }
       if (file_pos >= block) {
-        file_pos = file_pos - block;
+        file_pos -= block;
       } else {
         block = file_pos;
         file_pos = 0 as i64;
@@ -221,9 +221,9 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
       if (!next.2) {
         return out;
       }
-      let n: i32 = next.1.len();
+      let n = next.1.len();
       w = join_prefix(next.1, w, past_end);
-      let straddle: i32 = n + s.sep.len() - 1;
+      let straddle = n + s.sep.len() - 1;
       if (s.regex) {
         bound = n + past_end;
       } else if (n + bound < straddle) {
@@ -235,17 +235,17 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
       continue;
     }
     if (emit && lo < past_end) {
-      let avail: i32 = write_size() - buf_len(h);
+      let avail = write_size() - buf_len(h);
       if (past_end - lo < avail) {
         buf_push_bytes_range(h, w, lo, past_end);
       } else {
         buf_push_bytes_range(h, w, lo, lo + avail);
         write_out(out, buf_take_bytes(h));
-        let from: i32 = lo + avail;
+        let from = lo + avail;
         while (past_end - from >= write_size()) {
           buf_push_bytes_range(h, w, from, from + write_size());
           write_out(out, buf_take_bytes(h));
-          from = from + write_size();
+          from += write_size();
         }
         if (from < past_end) {
           buf_push_bytes_range(h, w, from, past_end);
@@ -263,7 +263,7 @@ function tac_backward(src: Src, name: string, size: i64, o: Out, s: Settings): O
 }
 
 function hold_stream(r: Reader, name: string, o: Out): (Out, u8[], boolean) {
-  let h: usize = buf_new(65536);
+  let h = buf_new(65536);
   while (true) {
     match (r.read_chunk_bytes(65536)) {
       Ok(c) => {
@@ -279,16 +279,16 @@ function hold_stream(r: Reader, name: string, o: Out): (Out, u8[], boolean) {
       }
     }
   }
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return (o, bytes, true);
 }
 
 function tac_file(path: string, o: Out, s: Settings): Out {
-  let out: Out = o;
-  let is_stdin: boolean = path == "-";
-  let name: string = path;
-  let r: Reader = stdin();
+  let out = o;
+  let is_stdin = path == "-";
+  let name = path;
+  let r = stdin();
   if (is_stdin) {
     name = "standard input";
   } else {
@@ -301,8 +301,8 @@ function tac_file(path: string, o: Out, s: Settings): Out {
       }
     }
   }
-  let size: i64 = 0 as i64;
-  let seekable: boolean = false;
+  let size = 0 as i64;
+  let seekable = false;
   match (r.seek(0 as i64, 2)) {
     Ok(n) => {
       size = n;
@@ -310,7 +310,7 @@ function tac_file(path: string, o: Out, s: Settings): Out {
     },
     Err(_) => {}
   }
-  let src: Src = Src { r: r, held: [], seekable: true };
+  let src = Src { r: r, held: [], seekable: true };
   if (!seekable) {
     let h: (Out, u8[], boolean) = hold_stream(r, name, out);
     out = h.0;
@@ -330,16 +330,16 @@ function tac_file(path: string, o: Out, s: Settings): Out {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "before", opt_before()));
   opts = opts.append(gnu.flag("r", "regex", opt_regex()));
   opts = opts.append(gnu.valued("s", "separator", opt_separator()));
 
-  let sep: string = "\n";
-  let before: boolean = false;
-  let regex: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "tac", help_text(), 1);
+  let sep = "\n";
+  let before = false;
+  let regex = false;
+  let g = gnu.getopt_new(argv, opts, "tac", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -359,7 +359,7 @@ pub function main(): i32 {
     }
   }
 
-  let re: bre.Bre = bre.bre_compile("");
+  let re = bre.bre_compile("");
   if (regex) {
     if (sep.len() == 0) {
       gnu.error("separator cannot be empty");
@@ -373,21 +373,21 @@ pub function main(): i32 {
   } else if (sep.len() == 0) {
     sep = "\x00";
   }
-  let s: Settings = Settings { sep: sep.bytes(), before: before, regex: regex, re: re };
+  let s = Settings { sep: sep.bytes(), before: before, regex: regex, re: re };
 
-  let files: string[] = g.operands();
+  let files = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
-  let out: Out = Out { w: stdout(), buf: buf_new(write_size()), ok: true };
-  let read_stdin: boolean = false;
-  let i: i32 = 0;
+  let out = Out { w: stdout(), buf: buf_new(write_size()), ok: true };
+  let read_stdin = false;
+  let i = 0;
   while (i < files.len()) {
     if (files[i] == "-") {
       read_stdin = true;
     }
     out = tac_file(files[i], out, s);
-    i = i + 1;
+    i += 1;
   }
   if (buf_len(out.buf) > 0) {
     write_out(out, buf_take_bytes(out.buf));

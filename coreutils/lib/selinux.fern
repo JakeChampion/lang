@@ -6,14 +6,14 @@ import "./gnu";
 pub function enabled(): boolean {
   match (read_file("/proc/self/mounts")) {
     Ok(text) => {
-      let lines: string[] = text.lines();
-      let i: i32 = 0;
+      let lines = text.lines();
+      let i = 0;
       while (i < lines.len()) {
-        let f: string[] = lines[i].fields();
+        let f = lines[i].fields();
         if (f.len() >= 3 && f[2] == "selinuxfs") {
           return true;
         }
-        i = i + 1;
+        i += 1;
       }
       return false;
     },
@@ -24,9 +24,9 @@ pub function enabled(): boolean {
 }
 
 pub function trim_context(text: string): string {
-  let n: i32 = text.len();
+  let n = text.len();
   while (n > 0 && text[n - 1] as i32 == 0) {
-    n = n - 1;
+    n -= 1;
   }
   return slice_unchecked(text, 0, n) + "";
 }
@@ -52,7 +52,7 @@ pub function file_context(path: string, follow: boolean): Result[string, IoError
   let got: Result[string, IoError] = if (follow) { getxattr(path, "security.selinux") } else { lgetxattr(path, "security.selinux") };
   match (got) {
     Ok(v) => {
-      let ctx: string = trim_context(v);
+      let ctx = trim_context(v);
       if (ctx.len() == 0) {
         return Err(Unsupported);
       }
@@ -68,7 +68,7 @@ pub function set_file_context(path: string, ctx: string, follow: boolean): Resul
   if (target_os() == "darwin") {
     return Err(Unsupported);
   }
-  let value: string = ctx + "\x00";
+  let value = ctx + "\x00";
   let put: Result[void, IoError] = if (follow) { setxattr(path, "security.selinux", value) } else { lsetxattr(path, "security.selinux", value) };
   match (put) {
     Ok(_) => {
@@ -92,12 +92,12 @@ pub function set_file_context(path: string, ctx: string, follow: boolean): Resul
 
 pub function merge_context(ctx: string, comps: string[], set: boolean[]): Result[string, string[]] {
   let parts: string[] = ["", "", "", ""];
-  let has_range: boolean = false;
-  let colons: i32 = 0;
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let has_range = false;
+  let colons = 0;
+  let start = 0;
+  let i = 0;
   while (i < ctx.len()) {
-    let b: i32 = ctx[i] as i32;
+    let b = ctx[i] as i32;
     if (b == 10 || b == 9 || b == 13 || b == 32) {
       return Err(["failed to create security context: " + gnu.quote(ctx) + ": Invalid argument"]);
     }
@@ -106,14 +106,14 @@ pub function merge_context(ctx: string, comps: string[], set: boolean[]): Result
         parts = parts.with(colons, slice_unchecked(ctx, start, i) + "");
         start = i + 1;
       }
-      colons = colons + 1;
+      colons += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (colons < 2 || colons > 5) {
     return Err(["failed to create security context: " + gnu.quote(ctx) + ": Invalid argument"]);
   }
-  let last: i32 = colons;
+  let last = colons;
   if (last > 3) {
     last = 3;
   }
@@ -136,7 +136,7 @@ pub function merge_context(ctx: string, comps: string[], set: boolean[]): Result
   if (errs.len() > 0) {
     return Err(errs);
   }
-  let out: string = parts[0] + ":" + parts[1] + ":" + parts[2];
+  let out = parts[0] + ":" + parts[1] + ":" + parts[2];
   if (has_range) {
     out = out + ":" + parts[3];
   }
@@ -144,16 +144,16 @@ pub function merge_context(ctx: string, comps: string[], set: boolean[]): Result
 }
 
 function component_ok(v: string, is_range: boolean): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.len()) {
-    let b: i32 = v[i] as i32;
+    let b = v[i] as i32;
     if (b == 9 || b == 10 || b == 13) {
       return false;
     }
     if (!is_range && (b == 58 || b == 32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

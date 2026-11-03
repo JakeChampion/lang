@@ -314,7 +314,7 @@ function mark_group_done(p: P, n: i32): P {
 }
 
 function add_node(p: P, n: Node): (P, i32) {
-  let out: P = P { ...p, nodes: p.nodes.append(n) };
+  let out = P { ...p, nodes: p.nodes.append(n) };
   return (out, out.nodes.len() - 1);
 }
 
@@ -331,7 +331,7 @@ function at_end(p: P): boolean {
 
 function byte_at(p: P, k: i32): i32 {
   if (k >= p.pat.len()) {
-    return 0 - 1;
+    return -1;
   }
   return p.pat.at(k);
 }
@@ -345,14 +345,14 @@ function is_digit(b: i32): boolean {
 }
 
 function class_name_table(name: string): u8[] {
-  let t: u8[] = __alloc_u8(256);
-  let b: i32 = 0;
-  let known: boolean = false;
+  let t = __alloc_u8(256);
+  let b = 0;
+  let known = false;
   while (b < 256) {
     if (class_has(name, b)) {
       t = t.with(b, 1 as u8);
     }
-    b = b + 1;
+    b += 1;
   }
   known = is_class_name(name);
   if (!known) {
@@ -452,9 +452,9 @@ function bracket_class(p: P, lo: i32, hi: i32): string {
   let names: string[] = ["alpha", "digit", "alnum", "upper", "lower", "space", "blank", "punct", "print", "graph", "cntrl", "xdigit"];
   for name in names {
     if (name.len() == hi - lo) {
-      let i: i32 = 0;
+      let i = 0;
       while (i < name.len() && byte_at(p, lo + i) == name[i] as i32) {
-        i = i + 1;
+        i += 1;
       }
       if (i == name.len()) {
         return name;
@@ -467,17 +467,17 @@ function bracket_class(p: P, lo: i32, hi: i32): string {
 function bracket_item(p: P, k: i32): BItem {
   let none: u8[] = [];
   if (byte_at(p, k) == 91) {
-    let kind: i32 = byte_at(p, k + 1);
+    let kind = byte_at(p, k + 1);
     if (kind == 58 && p.emacs) {
       kind = 0;
     }
     if (kind == 58 || kind == 46 || kind == 61) {
-      let close: i32 = find_close(p, k + 2, kind);
+      let close = find_close(p, k + 2, kind);
       if (close < 0) {
         return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ebrack(), next: k };
       }
       if (kind == 58) {
-        let t: u8[] = class_name_table(bracket_class(p, k + 2, close));
+        let t = class_name_table(bracket_class(p, k + 2, close));
         if (t.len() == 0) {
           return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ectype(), next: k };
         }
@@ -486,7 +486,7 @@ function bracket_item(p: P, k: i32): BItem {
       if (close - k - 2 != 1) {
         return BItem { byte: 0, kind: bi_byte(), table: none, err: err_ecollate(), next: k };
       }
-      let which: i32 = bi_collate();
+      let which = bi_collate();
       if (kind == 61) {
         which = bi_equiv();
       }
@@ -497,20 +497,20 @@ function bracket_item(p: P, k: i32): BItem {
 }
 
 function find_close(p: P, from: i32, kind: i32): i32 {
-  let k: i32 = from;
+  let k = from;
   while (k + 1 < p.pat.len()) {
     if (byte_at(p, k) == kind && byte_at(p, k + 1) == 93) {
       return k;
     }
-    k = k + 1;
+    k += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function parse_bracket(p0: P): (P, i32) {
-  let p: P = p0;
-  let t: u8[] = __alloc_u8(256);
-  let negate: boolean = false;
+  let p = p0;
+  let t = __alloc_u8(256);
+  let negate = false;
   if (byte_at(p, p.i) == 94) {
     negate = true;
     p = P { ...p, i: p.i + 1 };
@@ -518,9 +518,9 @@ function parse_bracket(p0: P): (P, i32) {
   if (at_end(p)) {
     return (fail(p, err_badpat()), 0);
   }
-  let first: boolean = true;
+  let first = true;
   while (true) {
-    let b: i32 = byte_at(p, p.i);
+    let b = byte_at(p, p.i);
     if (b < 0) {
       return (fail(p, err_ebrack()), 0);
     }
@@ -537,30 +537,30 @@ function parse_bracket(p0: P): (P, i32) {
     }
   }
   if (negate) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < 256) {
       if (t[k] as i32 == 0) {
         t = t.with(k, 1 as u8);
       } else {
         t = t.with(k, 0 as u8);
       }
-      k = k + 1;
+      k += 1;
     }
   }
-  let idx: i32 = p.classes.len() / 256;
-  let cs: u8[] = p.classes;
-  let j: i32 = 0;
+  let idx = p.classes.len() / 256;
+  let cs = p.classes;
+  let j = 0;
   while (j < 256) {
     cs = cs.append(t[j]);
-    j = j + 1;
+    j += 1;
   }
   return (P { ...p, classes: cs }, idx);
 }
 
 function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
-  let p: P = p0;
-  let t: u8[] = t0;
-  let lo: BItem = bracket_item(p, p.i);
+  let p = p0;
+  let t = t0;
+  let lo = bracket_item(p, p.i);
   if (lo.err.len() > 0) {
     return (fail(p, lo.err), t);
   }
@@ -574,7 +574,7 @@ function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
   if (!range_ok(lo)) {
     return (fail(p, err_erange()), t);
   }
-  let hi: BItem = bracket_item(p, p.i + 1);
+  let hi = bracket_item(p, p.i + 1);
   if (hi.err.len() > 0) {
     return (fail(p, hi.err), t);
   }
@@ -582,10 +582,10 @@ function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
     return (fail(p, err_erange()), t);
   }
   p = P { ...p, i: hi.next };
-  let b: i32 = lo.byte;
+  let b = lo.byte;
   while (b <= hi.byte) {
     t = t.with(b, 1 as u8);
-    b = b + 1;
+    b += 1;
   }
   if (byte_at(p, p.i) == 45 && byte_at(p, p.i + 1) != 93 && byte_at(p, p.i + 1) >= 0) {
     return (fail(p, err_erange()), t);
@@ -594,38 +594,38 @@ function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
 }
 
 function union_table(t0: u8[], other: u8[]): u8[] {
-  let t: u8[] = t0;
-  let k: i32 = 0;
+  let t = t0;
+  let k = 0;
   while (k < 256) {
     if (other[k] as i32 != 0) {
       t = t.with(k, 1 as u8);
     }
-    k = k + 1;
+    k += 1;
   }
   return t;
 }
 
 function shorthand_table(p0: P, which: i32): (P, i32) {
-  let t: u8[] = __alloc_u8(256);
-  let b: i32 = 0;
+  let t = __alloc_u8(256);
+  let b = 0;
   while (b < 256) {
     if (shorthand_has(which, b)) {
       t = t.with(b, 1 as u8);
     }
-    b = b + 1;
+    b += 1;
   }
-  let idx: i32 = p0.classes.len() / 256;
-  let cs: u8[] = p0.classes;
-  let j: i32 = 0;
+  let idx = p0.classes.len() / 256;
+  let cs = p0.classes;
+  let j = 0;
   while (j < 256) {
     cs = cs.append(t[j]);
-    j = j + 1;
+    j += 1;
   }
   return (P { ...p0, classes: cs }, idx);
 }
 
 function shorthand_has(which: i32, b: i32): boolean {
-  let word: boolean = is_alpha(b) || is_digit(b) || b == 95;
+  let word = is_alpha(b) || is_digit(b) || b == 95;
   if (which == 0) {
     return word;
   }
@@ -639,31 +639,31 @@ function shorthand_has(which: i32, b: i32): boolean {
 }
 
 function any_table(p0: P): (P, i32) {
-  let idx: i32 = p0.classes.len() / 256;
-  let cs: u8[] = p0.classes;
-  let skip: i32 = 0;
+  let idx = p0.classes.len() / 256;
+  let cs = p0.classes;
+  let skip = 0;
   if (p0.emacs) {
     skip = 10;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < 256) {
     if (j == skip) {
       cs = cs.append(0 as u8);
     } else {
       cs = cs.append(1 as u8);
     }
-    j = j + 1;
+    j += 1;
   }
   return (P { ...p0, classes: cs }, idx);
 }
 
 function parse_alt(p0: P): (P, i32) {
-  let outer: i32 = p0.done;
+  let outer = p0.done;
   let r: (P, i32) = parse_branch(p0);
-  let p: P = r.0;
-  let left: i32 = r.1;
+  let p = r.0;
+  let left = r.1;
   while (p.err.len() == 0 && esc_at(p, p.i, 124)) {
-    let sofar: i32 = p.done;
+    let sofar = p.done;
     p = P { ...p, i: p.i + 2, done: outer };
     let r2: (P, i32) = parse_branch(p);
     p = P { ...r2.0, done: r2.0.done | sofar };
@@ -675,8 +675,8 @@ function parse_alt(p0: P): (P, i32) {
 }
 
 function parse_branch(p0: P): (P, i32) {
-  let p: P = p0;
-  let cur: i32 = 0 - 1;
+  let p = p0;
+  let cur: i32 = -1;
   while (true) {
     if (p.err.len() > 0) {
       return (p, empty_node(p, cur));
@@ -712,8 +712,8 @@ function empty_node(p: P, cur: i32): i32 {
 
 function parse_piece(p0: P, first: boolean): (P, i32) {
   let r: (P, i32) = parse_atom(p0, first);
-  let p: P = r.0;
-  let node: i32 = r.1;
+  let p = r.0;
+  let node = r.1;
   if (p.err.len() > 0 || p.nodes[node].kind == nd_bol() || p.nodes[node].kind == nd_assert()) {
     return (p, node);
   }
@@ -775,12 +775,12 @@ function op_width(p: P): i32 {
 }
 
 function parse_interval(p0: P, node: i32): (P, i32) {
-  let p: P = P { ...p0, i: p0.i + 2 };
+  let p = P { ...p0, i: p0.i + 2 };
   let lo: (i32, i32) = read_count(p, p.i);
-  let min: i32 = lo.0;
-  let k: i32 = lo.1;
-  let max: i32 = min;
-  let comma: boolean = false;
+  let min = lo.0;
+  let k = lo.1;
+  let max = min;
+  let comma = false;
   if (byte_at(p, k) == 44) {
     comma = true;
     let hi: (i32, i32) = read_count(p, k + 1);
@@ -807,19 +807,19 @@ function parse_interval(p0: P, node: i32): (P, i32) {
 }
 
 function has_close_brace(p: P, from: i32): boolean {
-  let k: i32 = from;
+  let k = from;
   while (k + 1 < p.pat.len()) {
     if (esc_at(p, k, 125)) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
 
 function read_count(p: P, from: i32): (i32, i32) {
-  let k: i32 = from;
-  let v: i32 = 0 - 1;
+  let k = from;
+  let v: i32 = -1;
   while (is_digit(byte_at(p, k))) {
     if (v < 0) {
       v = 0;
@@ -827,7 +827,7 @@ function read_count(p: P, from: i32): (i32, i32) {
     if (v <= dup_max()) {
       v = v * 10 + (byte_at(p, k) - 48);
     }
-    k = k + 1;
+    k += 1;
   }
   return (v, k);
 }
@@ -845,7 +845,7 @@ function valid_interval(min: i32, max: i32, comma: boolean): boolean {
   if (max < 0) {
     return true;
   }
-  let lo: i32 = min;
+  let lo = min;
   if (lo < 0) {
     lo = 0;
   }
@@ -853,8 +853,8 @@ function valid_interval(min: i32, max: i32, comma: boolean): boolean {
 }
 
 function parse_atom(p0: P, first: boolean): (P, i32) {
-  let p: P = p0;
-  let b: i32 = byte_at(p, p.i);
+  let p = p0;
+  let b = byte_at(p, p.i);
   if (b == 94 && first) {
     p = P { ...p, i: p.i + 1 };
     return add_node(p, Node { kind: nd_bol(), a: 0, b: 0, c: 0 });
@@ -891,8 +891,8 @@ function dollar_is_anchor(p: P, next: i32): boolean {
 }
 
 function parse_escape(p0: P): (P, i32) {
-  let p: P = p0;
-  let c: i32 = byte_at(p, p.i + 1);
+  let p = p0;
+  let c = byte_at(p, p.i + 1);
   if (c < 0) {
     return (fail(p, err_eescape()), 0);
   }
@@ -909,13 +909,13 @@ function parse_escape(p0: P): (P, i32) {
     }
     return add_node(p, Node { kind: nd_backref(), a: c - 48, b: 0, c: 0 });
   }
-  let sh: i32 = shorthand_index(c);
+  let sh = shorthand_index(c);
   if (sh >= 0) {
     p = P { ...p, i: p.i + 2 };
     let st: (P, i32) = shorthand_table(p, sh);
     return add_node(st.0, Node { kind: nd_class(), a: st.1, b: 0, c: 0 });
   }
-  let az: i32 = assert_index(c);
+  let az = assert_index(c);
   if (az >= 0) {
     p = P { ...p, i: p.i + 2 };
     return add_node(p, Node { kind: nd_assert(), a: az, b: 0, c: 0 });
@@ -937,7 +937,7 @@ function shorthand_index(c: i32): i32 {
   if (c == 83) {
     return 3;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function assert_index(c: i32): i32 {
@@ -959,13 +959,13 @@ function assert_index(c: i32): i32 {
   if (c == 39) {
     return assert_buf_end();
   }
-  return 0 - 1;
+  return -1;
 }
 
 function parse_group(p0: P): (P, i32) {
-  let n: i32 = p0.ngroups + 1;
+  let n = p0.ngroups + 1;
   let r: (P, i32) = parse_alt(P { ...p0, ngroups: n });
-  let p: P = r.0;
+  let p = r.0;
   if (p.err.len() > 0) {
     return (p, 0);
   }
@@ -986,21 +986,21 @@ function emit(c: C, in: Inst): C {
 }
 
 function patch_a(c: C, at: i32, target: i32): C {
-  let in: Inst = c.insts[at];
+  let in = c.insts[at];
   return C { ...c, insts: c.insts.with(at, Inst { ...in, a: target }) };
 }
 
 function patch_b(c: C, at: i32, target: i32): C {
-  let in: Inst = c.insts[at];
+  let in = c.insts[at];
   return C { ...c, insts: c.insts.with(at, Inst { ...in, b: target }) };
 }
 
 function compile_node(c0: C, nodes: Node[], node: i32): C {
-  let c: C = c0;
+  let c = c0;
   if (c.err.len() > 0) {
     return c;
   }
-  let n: Node = nodes[node];
+  let n = nodes[node];
   if (n.kind == nd_empty()) {
     return c;
   }
@@ -1035,7 +1035,7 @@ function compile_node(c0: C, nodes: Node[], node: i32): C {
 }
 
 function compile_group(c: C, nodes: Node[], n: Node, optional: boolean): C {
-  let flag: i32 = 0;
+  let flag = 0;
   if (optional) {
     flag = 1;
   }
@@ -1043,9 +1043,9 @@ function compile_group(c: C, nodes: Node[], n: Node, optional: boolean): C {
 }
 
 function compile_alt(c0: C, nodes: Node[], n: Node): C {
-  let split: i32 = c0.insts.len();
-  let c: C = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
-  let first: i32 = c.insts.len();
+  let split = c0.insts.len();
+  let c = emit(c0, Inst { op: op_split(), a: 0, b: 0 });
+  let first = c.insts.len();
   c = patch_a(c, split, first);
   c = compile_node(c, nodes, n.a);
   if (c.insts.len() == first && c.err.len() == 0) {
@@ -1055,7 +1055,7 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
     }
     return patch_b(c, split, c.insts.len());
   }
-  let jump: i32 = c.insts.len();
+  let jump = c.insts.len();
   c = emit(c, Inst { op: op_jmp(), a: 0, b: 0 });
   c = patch_b(c, split, c.insts.len());
   c = compile_node(c, nodes, n.b);
@@ -1066,7 +1066,7 @@ function compile_alt(c0: C, nodes: Node[], n: Node): C {
 }
 
 function compile_rep(c0: C, nodes: Node[], n: Node): C {
-  let c: C = compile_copies(c0, nodes, n.a, rep_min(n));
+  let c = compile_copies(c0, nodes, n.a, rep_min(n));
   if (c.err.len() > 0) {
     return c;
   }
@@ -1077,7 +1077,7 @@ function compile_rep(c0: C, nodes: Node[], n: Node): C {
 }
 
 function compile_optional_copy(c: C, nodes: Node[], body: i32): C {
-  let n: Node = nodes[body];
+  let n = nodes[body];
   if (n.kind == nd_group()) {
     return compile_group(c, nodes, n, true);
   }
@@ -1089,7 +1089,7 @@ function compile_copies(c0: C, nodes: Node[], body: i32, times: i32): C {
     return c0;
   }
   let empty: Inst[] = [];
-  let one: C = compile_node(C { insts: empty, nmarks: 0, err: "" }, nodes, body);
+  let one = compile_node(C { insts: empty, nmarks: 0, err: "" }, nodes, body);
   if (one.err.len() > 0) {
     return C { ...c0, err: one.err };
   }
@@ -1100,17 +1100,17 @@ function splice(c: C, body: Inst[], times: i32, slot0: i32, slots: i32): C {
   if (c.insts.len() + body.len() * times > inst_max()) {
     return C { ...c, err: err_esize() };
   }
-  let out: Inst[] = c.insts;
-  let t: i32 = 0;
+  let out = c.insts;
+  let t = 0;
   while (t < times) {
-    let base: i32 = out.len();
-    let slot_base: i32 = slot0 + slots * t;
-    let k: i32 = 0;
+    let base = out.len();
+    let slot_base = slot0 + slots * t;
+    let k = 0;
     while (k < body.len()) {
       out = out.append(relocate(body[k], base, slot_base));
-      k = k + 1;
+      k += 1;
     }
-    t = t + 1;
+    t += 1;
   }
   return C { ...c, insts: out };
 }
@@ -1139,9 +1139,9 @@ function rep_min(n: Node): i32 {
 }
 
 function compile_star(c0: C, nodes: Node[], body: i32): C {
-  let slot: i32 = c0.nmarks;
-  let c: C = C { ...c0, nmarks: slot + 1 };
-  let top: i32 = c.insts.len();
+  let slot = c0.nmarks;
+  let c = C { ...c0, nmarks: slot + 1 };
+  let top = c.insts.len();
   c = emit(c, Inst { op: op_split(), a: 0, b: 0 });
   c = patch_a(c, top, c.insts.len());
   c = emit(c, Inst { op: op_mark(), a: slot, b: 0 });
@@ -1149,7 +1149,7 @@ function compile_star(c0: C, nodes: Node[], body: i32): C {
   if (c.err.len() > 0) {
     return c;
   }
-  let progress: i32 = c.insts.len();
+  let progress = c.insts.len();
   c = emit(c, Inst { op: op_progress(), a: slot, b: 0 });
   c = emit(c, Inst { op: op_jmp(), a: top, b: 0 });
   return patch_b(patch_b(c, top, c.insts.len()), progress, c.insts.len());
@@ -1159,31 +1159,31 @@ function compile_optionals(c0: C, nodes: Node[], body: i32, count: i32): C {
   if (count <= 0) {
     return c0;
   }
-  let base: i32 = c0.insts.len();
-  let c: C = c0;
-  let k: i32 = 0;
+  let base = c0.insts.len();
+  let c = c0;
+  let k = 0;
   while (k < count) {
     c = emit(c, Inst { op: op_split(), a: base + k + 1, b: 0 });
-    k = k + 1;
+    k += 1;
   }
   c = compile_optional_copy(c, nodes, body);
   c = patch_b(c, base + count - 1, c.insts.len());
-  let j: i32 = 2;
+  let j = 2;
   while (j <= count && c.err.len() == 0) {
     c = compile_node(c, nodes, body);
     c = patch_b(c, base + count - j, c.insts.len());
-    j = j + 1;
+    j += 1;
   }
   return c;
 }
 
 function has_backref(nodes: Node[]): boolean {
-  let k: i32 = 0;
+  let k = 0;
   while (k < nodes.len()) {
     if (nodes[k].kind == nd_backref()) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
@@ -1210,7 +1210,7 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   let none_first: u8[] = [];
   let no_alts: u8[][] = [];
   let no_seen: i32[] = [];
-  let p: P = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
+  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
   let r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {
@@ -1221,7 +1221,7 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
     return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen, dfa: dfa_cache(), bclass: none_first, reps: no_seen, cx_lo: false, cx_nl: false, cx_word: false };
   }
   let empty: Inst[] = [];
-  let c: C = C { insts: empty, nmarks: 0, err: "" };
+  let c = C { insts: empty, nmarks: 0, err: "" };
   c = compile_node(C { ...c, insts: empty }, p.nodes, r.1);
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
@@ -1231,30 +1231,30 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   let fm: (u8[], boolean) = fastmap(c.insts, p.classes);
   let pre: (u8[], boolean, i32) = prefix_scan(c.insts);
   let tail: (boolean, boolean) = literal_tail(c.insts, pre.2);
-  let alts: u8[][] = no_alts;
+  let alts = no_alts;
   if (pre.0.len() == 0) {
     alts = branch_literals(c.insts);
   }
-  let cx_nl: boolean = syntax.newline_anchor && has_op(c.insts, op_bol());
-  let cx_word: boolean = reads_word(c.insts);
-  let bclass: u8[] = byte_classes(c.insts, p.classes, cx_nl || syntax.newline_anchor && has_op(c.insts, op_eol()), cx_word);
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), 0 - 1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word };
+  let cx_nl = syntax.newline_anchor && has_op(c.insts, op_bol());
+  let cx_word = reads_word(c.insts);
+  let bclass = byte_classes(c.insts, p.classes, cx_nl || syntax.newline_anchor && has_op(c.insts, op_eol()), cx_word);
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word };
 }
 
 function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
-  let t: u8[] = __alloc_u8(256);
-  let seen: i32[] = fill(insts.len(), 0);
+  let t = __alloc_u8(256);
+  let seen = fill(insts.len(), 0);
   let work: i32[] = [0];
-  let empty_ok: boolean = false;
-  let top: i32 = 1;
+  let empty_ok = false;
+  let top = 1;
   while (top > 0) {
-    top = top - 1;
-    let pc: i32 = work[top];
+    top -= 1;
+    let pc = work[top];
     if (seen[pc] != 0) {
       continue;
     }
     seen = seen.with(pc, 1);
-    let in: Inst = insts[pc];
+    let in = insts[pc];
     if (in.op == op_char()) {
       t = t.with(in.a, 1 as u8);
     } else if (in.op == op_class()) {
@@ -1266,14 +1266,14 @@ function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
       empty_ok = true;
     } else if (in.op == op_jmp()) {
       work = push_at(work, top, in.a);
-      top = top + 1;
+      top += 1;
     } else if (in.op == op_split()) {
       work = push_at(work, top, in.a);
       work = push_at(work, top + 1, in.b);
-      top = top + 2;
+      top += 2;
     } else {
       work = push_at(work, top, pc + 1);
-      top = top + 1;
+      top += 1;
     }
   }
   return (t, empty_ok);
@@ -1287,46 +1287,46 @@ function push_at(own a: i32[], at: i32, v: i32): i32[] {
 }
 
 function class_table(classes: u8[], idx: i32): u8[] {
-  let t: u8[] = __alloc_u8(256);
-  let b: i32 = 0;
+  let t = __alloc_u8(256);
+  let b = 0;
   while (b < 256) {
     t = t.with(b, classes[idx * 256 + b]);
-    b = b + 1;
+    b += 1;
   }
   return t;
 }
 
 function all_bytes(): u8[] {
-  let t: u8[] = __alloc_u8(256);
-  let b: i32 = 0;
+  let t = __alloc_u8(256);
+  let b = 0;
   while (b < 256) {
     t = t.with(b, 1 as u8);
-    b = b + 1;
+    b += 1;
   }
   return t;
 }
 
 function prefix_scan(insts: Inst[]): (u8[], boolean, i32) {
-  let i: i32 = 0;
-  let bol: boolean = false;
+  let i = 0;
+  let bol = false;
   if (i < insts.len() && insts[i].op == op_bol()) {
     bol = true;
-    i = i + 1;
+    i += 1;
   }
   let bs: u8[] = [];
   while (i < insts.len() && insts[i].op == op_char()) {
     bs = bs.append(insts[i].a as u8);
-    i = i + 1;
+    i += 1;
   }
   return (bs, bol, i);
 }
 
 function literal_tail(insts: Inst[], at: i32): (boolean, boolean) {
-  let i: i32 = at;
-  let eol: boolean = false;
+  let i = at;
+  let eol = false;
   if (i < insts.len() && insts[i].op == op_eol()) {
     eol = true;
-    i = i + 1;
+    i += 1;
   }
   if (i + 1 != insts.len() || insts[i].op != op_match()) {
     return (false, false);
@@ -1341,23 +1341,23 @@ function alt_max(): i32 {
 function branch_literals(insts: Inst[]): u8[][] {
   let none: u8[][] = [];
   let out: u8[][] = [];
-  let seen: i32[] = fill(insts.len(), 0);
+  let seen = fill(insts.len(), 0);
   let work: i32[] = [0];
-  let top: i32 = 1;
+  let top = 1;
   while (top > 0) {
-    top = top - 1;
-    let pc: i32 = work[top];
+    top -= 1;
+    let pc = work[top];
     if (seen[pc] != 0) {
       continue;
     }
     seen = seen.with(pc, 1);
-    let in: Inst = insts[pc];
+    let in = insts[pc];
     if (in.op == op_char()) {
       let bs: u8[] = [];
-      let k: i32 = pc;
+      let k = pc;
       while (k < insts.len() && insts[k].op == op_char()) {
         bs = bs.append(insts[k].a as u8);
-        k = k + 1;
+        k += 1;
       }
       out = out.append(bs);
       if (out.len() > alt_max()) {
@@ -1365,14 +1365,14 @@ function branch_literals(insts: Inst[]): u8[][] {
       }
     } else if (in.op == op_jmp()) {
       work = push_at(work, top, in.a);
-      top = top + 1;
+      top += 1;
     } else if (in.op == op_split()) {
       work = push_at(work, top, in.a);
       work = push_at(work, top + 1, in.b);
-      top = top + 2;
+      top += 2;
     } else if (in.op == op_save() || in.op == op_mark() || in.op == op_progress() || in.op == op_bol() || in.op == op_eol() || in.op == op_assert()) {
       work = push_at(work, top, pc + 1);
-      top = top + 1;
+      top += 1;
     } else {
       return none;
     }
@@ -1381,28 +1381,28 @@ function branch_literals(insts: Inst[]): u8[][] {
 }
 
 function find_any_literal(text: Input, lits: u8[][], lo: i32, hi: i32): i32 {
-  let best: i32 = 0 - 1;
-  let i: i32 = 0;
+  let best: i32 = -1;
+  let i = 0;
   while (i < lits.len()) {
-    let at: i32 = find_literal(text, lits[i], lo, hi);
+    let at = find_literal(text, lits[i], lo, hi);
     if (at >= 0 && (best < 0 || at < best)) {
       best = at;
       if (best == lo) {
         return best;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return best;
 }
 
 function any_bytes_at(text: Input, at: i32, lits: u8[][], hi: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < lits.len()) {
     if (at + lits[i].len() <= hi && bytes_at(text, at, lits[i])) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -1410,22 +1410,22 @@ function any_bytes_at(text: Input, at: i32, lits: u8[][], hi: i32): boolean {
 function bytes_at(text: Input, at: i32, lit: u8[]): boolean {
   match (text) {
     Text(t, _) => {
-      let k: i32 = 0;
+      let k = 0;
       while (k < lit.len()) {
         if (t[at + k] as i32 != lit[k] as i32) {
           return false;
         }
-        k = k + 1;
+        k += 1;
       }
       return true;
     },
     Bytes(b, _) => {
-      let k: i32 = 0;
+      let k = 0;
       while (k < lit.len()) {
         if (b[at + k] != lit[k]) {
           return false;
         }
-        k = k + 1;
+        k += 1;
       }
       return true;
     }
@@ -1436,14 +1436,14 @@ function find_literal(text: Input, lit: u8[], lo: i32, hi: i32): i32 {
   if (lit.len() == 0) {
     return lo;
   }
-  let first: i32 = lit[0] as i32;
-  let last: i32 = hi - lit.len();
-  let i: i32 = lo;
+  let first = lit[0] as i32;
+  let last = hi - lit.len();
+  let i = lo;
   if (hi == text.len()) {
     while (true) {
-      let j: i32 = text.find_byte(first, i);
+      let j = text.find_byte(first, i);
       if (j < 0 || j > last) {
-        return 0 - 1;
+        return -1;
       }
       if (bytes_at(text, j, lit)) {
         return j;
@@ -1455,9 +1455,9 @@ function find_literal(text: Input, lit: u8[], lo: i32, hi: i32): i32 {
     if (text.at(i) as i32 == first && bytes_at(text, i, lit)) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 struct M { text: Input, lo: i32, hi: i32, re: Bre, target: i32, caps: i32[], marks: i32[], have_zw: boolean, zw_caps: i32[] }
@@ -1470,7 +1470,7 @@ function is_word_at(text: Input, k: i32, lo: i32, hi: i32): boolean {
   if (k < lo || k >= hi) {
     return false;
   }
-  let b: i32 = text.at(k) as i32;
+  let b = text.at(k) as i32;
   return is_alpha(b) || is_digit(b) || b == 95;
 }
 
@@ -1489,8 +1489,8 @@ function eol_holds(re: Bre, text: Input, pos: i32, hi: i32): boolean {
 }
 
 function assert_holds(text: Input, which: i32, pos: i32, lo: i32, hi: i32): boolean {
-  let before: boolean = is_word_at(text, pos - 1, lo, hi);
-  let after: boolean = is_word_at(text, pos, lo, hi);
+  let before = is_word_at(text, pos - 1, lo, hi);
+  let after = is_word_at(text, pos, lo, hi);
   if (which == assert_wordb()) {
     return before != after;
   }
@@ -1517,18 +1517,18 @@ function byte_matches(re: Bre, in: Inst, b: i32): boolean {
 }
 
 function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
-  let m: M = m0;
-  let pc: i32 = pc0;
-  let pos: i32 = pos0;
-  let zw: boolean = zw0;
+  let m = m0;
+  let pc = pc0;
+  let pos = pos0;
+  let zw = zw0;
   while (true) {
-    let in: Inst = m.re.insts[pc];
+    let in = m.re.insts[pc];
     if (in.op == op_char()) {
       if (pos >= m.hi || m.text.at(pos) as i32 != in.a) {
         return (false, m);
       }
-      pc = pc + 1;
-      pos = pos + 1;
+      pc += 1;
+      pos += 1;
       zw = false;
       continue;
     }
@@ -1536,8 +1536,8 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
       if (pos >= m.hi || !class_has_byte(m.re, in.a, m.text.at(pos) as i32)) {
         return (false, m);
       }
-      pc = pc + 1;
-      pos = pos + 1;
+      pc += 1;
+      pos += 1;
       zw = false;
       continue;
     }
@@ -1561,7 +1561,7 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
       if (!bol_holds(m.re, m.text, pos, m.lo)) {
         return (false, m);
       }
-      pc = pc + 1;
+      pc += 1;
       zw = true;
       continue;
     }
@@ -1569,7 +1569,7 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
       if (!eol_holds(m.re, m.text, pos, m.hi)) {
         return (false, m);
       }
-      pc = pc + 1;
+      pc += 1;
       zw = true;
       continue;
     }
@@ -1577,7 +1577,7 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
       if (!assert_holds(m.text, in.a, pos, m.lo, m.hi)) {
         return (false, m);
       }
-      pc = pc + 1;
+      pc += 1;
       zw = true;
       continue;
     }
@@ -1585,22 +1585,22 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
       if (m.marks[in.a] == pos) {
         pc = in.b;
       } else {
-        pc = pc + 1;
+        pc += 1;
       }
       continue;
     }
     if (in.op == op_backref()) {
-      let s: i32 = m.caps[(in.a - 1) * 2];
-      let e: i32 = m.caps[(in.a - 1) * 2 + 1];
+      let s = m.caps[(in.a - 1) * 2];
+      let e = m.caps[(in.a - 1) * 2 + 1];
       if (s < 0 || e < 0) {
         return (false, m);
       }
-      let n: i32 = e - s;
+      let n = e - s;
       if (pos + n > m.hi || !m.text.same_range(pos, s, n)) {
         return (false, m);
       }
-      pc = pc + 1;
-      pos = pos + n;
+      pc += 1;
+      pos += n;
       if (n > 0) {
         zw = false;
       }
@@ -1620,7 +1620,7 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
     return step(r.1, in.b, pos, zw);
   }
   if (in.op == op_save()) {
-    let old: i32[] = m0.caps;
+    let old = m0.caps;
     let r2: (boolean, M) = step(M { ...m0, caps: regs_at_save(slice_i32(old, 0, old.len()), in, pos, m0.re.ngroups) }, pc + 1, pos, zw);
     if (r2.0) {
       return r2;
@@ -1628,7 +1628,7 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
     return (false, M { ...r2.1, caps: old });
   }
   if (in.op == op_mark()) {
-    let oldm: i32 = m0.marks[in.a];
+    let oldm = m0.marks[in.a];
     let r3: (boolean, M) = step(M { ...m0, marks: m0.marks.with(in.a, pos) }, pc + 1, pos, zw);
     if (r3.0) {
       return r3;
@@ -1639,26 +1639,26 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
 }
 
 function regs_at_save(own caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
-  let slot: i32 = in.a;
+  let slot = in.a;
   if (slot % 2 == 0) {
-    return caps.with(slot, pos).with(slot + 1, 0 - 1);
+    return caps.with(slot, pos).with(slot + 1, -1);
   }
-  let n: i32 = ngroups * 2;
+  let n = ngroups * 2;
   if (caps[slot - 1] < pos) {
-    let ended: i32[] = caps.with(slot, pos);
-    let k: i32 = 0;
+    let ended = caps.with(slot, pos);
+    let k = 0;
     while (k < n) {
       ended = ended.with(n + k, ended[k]);
-      k = k + 1;
+      k += 1;
     }
     return ended;
   }
-  if (in.b == 1 && caps[n + slot - 1] != 0 - 1) {
-    let back: i32[] = caps;
-    let j: i32 = 0;
+  if (in.b == 1 && caps[n + slot - 1] != -1) {
+    let back = caps;
+    let j = 0;
     while (j < n) {
       back = back.with(j, back[n + j]);
-      j = j + 1;
+      j += 1;
     }
     return back;
   }
@@ -1667,10 +1667,10 @@ function regs_at_save(own caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] 
 
 function fresh_caps(n: i32): i32[] {
   let c: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < n) {
-    c = c.append(0 - 1);
-    k = k + 1;
+    c = c.append(-1);
+    k += 1;
   }
   return c;
 }
@@ -1683,9 +1683,9 @@ function (re: Bre) match_at(text: Input, start: i32, hi: i32): i32 {
   if (!re.backref) {
     return dfa_run(re, text, start, 0, hi, false);
   }
-  let m: BreMatch = exec_at(re, text, start, 0, hi);
+  let m = exec_at(re, text, start, 0, hi);
   if (!m.matched) {
-    return 0 - 1;
+    return -1;
   }
   return m.end;
 }
@@ -1728,36 +1728,36 @@ function cx_search(): i32 {
 }
 
 function has_op(insts: Inst[], op: i32): boolean {
-  let k: i32 = 0;
+  let k = 0;
   while (k < insts.len()) {
     if (insts[k].op == op) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
 
 function reads_lo(insts: Inst[]): boolean {
-  let k: i32 = 0;
+  let k = 0;
   while (k < insts.len()) {
-    let in: Inst = insts[k];
+    let in = insts[k];
     if (in.op == op_bol() || in.op == op_assert() && in.a == assert_buf_start()) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
 
 function reads_word(insts: Inst[]): boolean {
-  let k: i32 = 0;
+  let k = 0;
   while (k < insts.len()) {
-    let in: Inst = insts[k];
+    let in = insts[k];
     if (in.op == op_assert() && in.a != assert_buf_start() && in.a != assert_buf_end()) {
       return true;
     }
-    k = k + 1;
+    k += 1;
   }
   return false;
 }
@@ -1767,59 +1767,59 @@ function is_word_byte(b: i32): boolean {
 }
 
 function byte_classes(insts: Inst[], classes: u8[], newline: boolean, word: boolean): u8[] {
-  let cls: u8[] = __alloc_u8(256);
-  let chars: u8[] = __alloc_u8(256);
-  let tables: u8[] = __alloc_u8(classes.len() / 256 + 1);
-  let k: i32 = 0;
+  let cls = __alloc_u8(256);
+  let chars = __alloc_u8(256);
+  let tables = __alloc_u8(classes.len() / 256 + 1);
+  let k = 0;
   while (k < insts.len()) {
-    let in: Inst = insts[k];
+    let in = insts[k];
     if (in.op == op_char() && chars[in.a] as i32 == 0) {
       chars = chars.with(in.a, 1 as u8);
-      cls = split_classes(cls, classes, 0 - 1, in.a);
+      cls = split_classes(cls, classes, -1, in.a);
     } else if (in.op == op_class() && tables[in.a] as i32 == 0) {
       tables = tables.with(in.a, 1 as u8);
       cls = split_classes(cls, classes, in.a, 0);
     }
-    k = k + 1;
+    k += 1;
   }
   if (newline && chars[10] as i32 == 0) {
-    cls = split_classes(cls, classes, 0 - 1, 10);
+    cls = split_classes(cls, classes, -1, 10);
   }
   if (word) {
-    cls = split_classes(cls, classes, 0 - 2, 0);
+    cls = split_classes(cls, classes, -2, 0);
   }
   return cls;
 }
 
 function split_classes(own cls: u8[], classes: u8[], idx: i32, byte: i32): u8[] {
-  let remap: i32[] = fill(512, 0 - 1);
-  let next: i32 = 0;
-  let out: u8[] = cls;
-  let b: i32 = 0;
+  let remap = fill(512, -1);
+  let next = 0;
+  let out = cls;
+  let b = 0;
   while (b < 256) {
-    let inside: i32 = 0;
-    if (idx >= 0 && classes[idx * 256 + b] as i32 != 0 || idx == 0 - 2 && is_word_byte(b) || idx == 0 - 1 && b == byte) {
+    let inside = 0;
+    if (idx >= 0 && classes[idx * 256 + b] as i32 != 0 || idx == -2 && is_word_byte(b) || idx == -1 && b == byte) {
       inside = 1;
     }
-    let key: i32 = out[b] as i32 * 2 + inside;
+    let key = out[b] as i32 * 2 + inside;
     if (remap[key] < 0) {
       remap = remap.with(key, next);
-      next = next + 1;
+      next += 1;
     }
     out = out.with(b, remap[key] as u8);
-    b = b + 1;
+    b += 1;
   }
   return out;
 }
 
 function class_reps(cls: u8[]): i32[] {
   let reps: i32[] = [];
-  let b: i32 = 0;
+  let b = 0;
   while (b < 256) {
     if (cls[b] as i32 == reps.len()) {
       reps = reps.append(b);
     }
-    b = b + 1;
+    b += 1;
   }
   return reps;
 }
@@ -1835,27 +1835,27 @@ function ctx_at(re: Bre, text: Input, pos: i32, lo: i32): i32 {
 }
 
 function ctx_after(re: Bre, b: i32): i32 {
-  let c: i32 = 0;
+  let c = 0;
   if (re.cx_nl && b == 10) {
-    c = c + cx_nl();
+    c += cx_nl();
   }
   if (re.cx_word && is_word_byte(b)) {
-    c = c + cx_word();
+    c += cx_word();
   }
   return c;
 }
 
 function dfa_zw_holds(re: Bre, in: Inst, ctx: i32, sym: i32): boolean {
-  let at_lo: boolean = ctx % 2 == 1;
+  let at_lo = ctx % 2 == 1;
   if (in.op == op_bol()) {
     return at_lo || ctx / 2 % 2 == 1;
   }
   if (in.op == op_eol()) {
     return sym == dfa_end() || re.newline_anchor && sym == 10;
   }
-  let before: boolean = ctx / 4 % 2 == 1;
-  let after: boolean = sym != dfa_end() && is_word_byte(sym);
-  let which: i32 = in.a;
+  let before = ctx / 4 % 2 == 1;
+  let after = sym != dfa_end() && is_word_byte(sym);
+  let which = in.a;
   if (which == assert_wordb()) {
     return before != after;
   }
@@ -1875,19 +1875,19 @@ function dfa_zw_holds(re: Bre, in: Inst, ctx: i32, sym: i32): boolean {
 }
 
 function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boolean): i32 {
-  let row: i32 = re.reps.len() + 1;
-  let endc: i32 = row - 1;
-  let d: Dfa = dfa_take(re);
-  let key: i32 = ctx_at(re, text, start, lo);
+  let row = re.reps.len() + 1;
+  let endc = row - 1;
+  let d = dfa_take(re);
+  let key = ctx_at(re, text, start, lo);
   if (search) {
-    key = key + cx_search();
+    key += cx_search();
   }
   d = dfa_intern(d, key, [0], row);
-  let s: i32 = d.found;
-  let best: i32 = 0 - 1;
-  let pos: i32 = start;
-  let is_text: boolean = false;
-  let raw_t: string = "";
+  let s = d.found;
+  let best: i32 = -1;
+  let pos = start;
+  let is_text = false;
+  let raw_t = "";
   let raw_b: u8[] = [];
   match (text) {
     Text(t, _) => {
@@ -1899,7 +1899,7 @@ function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boo
     }
   }
   while (true) {
-    let col: i32 = endc;
+    let col = endc;
     if (pos < hi) {
       if (is_text) {
         col = re.bclass[raw_t[pos] as i32] as i32;
@@ -1907,7 +1907,7 @@ function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boo
         col = re.bclass[raw_b[pos] as i32] as i32;
       }
     }
-    let e: i32 = d.trans[s * row + col];
+    let e = d.trans[s * row + col];
     if (e < 0) {
       d = dfa_step(d, re, s, col);
       e = d.found;
@@ -1922,94 +1922,94 @@ function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boo
     if (col == endc || s == 0) {
       break;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   dfa_put(re, d);
   return best;
 }
 
 function dfa_step(own d0: Dfa, re: Bre, s: i32, col: i32): Dfa {
-  let row: i32 = re.reps.len() + 1;
-  let sym: i32 = dfa_end();
+  let row = re.reps.len() + 1;
+  let sym = dfa_end();
   if (col < re.reps.len()) {
     sym = re.reps[col];
   }
-  let key: i32 = d0.sets[d0.offs[s]];
-  let d: Dfa = dfa_closure(d0, re, s, sym);
-  let bit: i32 = d.found;
-  let pcs: i32[] = d.out;
+  let key = d0.sets[d0.offs[s]];
+  let d = dfa_closure(d0, re, s, sym);
+  let bit = d.found;
+  let pcs = d.out;
   let none: i32[] = [];
   d = Dfa { ...d, out: none };
-  let next: i32 = 0;
+  let next = 0;
   if (pcs.len() > 0) {
-    let nkey: i32 = ctx_after(re, sym);
+    let nkey = ctx_after(re, sym);
     if (key >= cx_search()) {
-      nkey = nkey + cx_search();
+      nkey += cx_search();
     }
-    let epoch: i32 = d.epoch;
+    let epoch = d.epoch;
     d = dfa_intern(d, nkey, pcs, row);
     next = d.found;
     if (d.epoch != epoch) {
       return Dfa { ...d, found: next * 2 + bit };
     }
   }
-  let cell: i32 = next * 2 + bit;
+  let cell = next * 2 + bit;
   return Dfa { ...d, trans: d.trans.with(s * row + col, cell), found: cell };
 }
 
 function dfa_closure(own d0: Dfa, re: Bre, s: i32, sym: i32): Dfa {
-  let d: Dfa = d0;
-  let gen: i32 = d.gen + 1;
+  let d = d0;
+  let gen = d.gen + 1;
   if (d.seen.len() == 0 || gen > 100000000) {
     d = Dfa { ...d, seen: fill(re.insts.len() + 1, 0) };
     gen = 1;
   }
-  let base: i32 = gen * 4;
-  let off: i32 = d.offs[s];
-  let key: i32 = d.sets[off];
-  let len: i32 = d.sets[off + 1];
-  let ctx: i32 = key % cx_search();
+  let base = gen * 4;
+  let off = d.offs[s];
+  let key = d.sets[off];
+  let len = d.sets[off + 1];
+  let ctx = key % cx_search();
   let stack: i32[] = [];
-  let sp: i32 = 0;
+  let sp = 0;
   while (sp < len) {
     stack = stack.append(d.sets[off + 1 + len - sp]);
-    sp = sp + 1;
+    sp += 1;
   }
   let out: i32[] = [];
-  let matched: i32 = 0;
+  let matched = 0;
   while (sp > 0) {
-    sp = sp - 1;
-    let pc: i32 = stack[sp];
-    let mark: i32 = stamp_bits(d.seen[pc], base);
+    sp -= 1;
+    let pc = stack[sp];
+    let mark = stamp_bits(d.seen[pc], base);
     if (mark % 2 == 1) {
       continue;
     }
     d = Dfa { ...d, seen: d.seen.with(pc, base + mark + 1) };
-    let in: Inst = re.insts[pc];
-    let op: i32 = in.op;
+    let in = re.insts[pc];
+    let op = in.op;
     if (op == op_char() || op == op_class()) {
-      let nx: i32 = stamp_bits(d.seen[pc + 1], base);
+      let nx = stamp_bits(d.seen[pc + 1], base);
       if (sym != dfa_end() && nx < 2 && byte_matches(re, in, sym)) {
         d = Dfa { ...d, seen: d.seen.with(pc + 1, base + nx + 2) };
         out = out.append(pc + 1);
       }
     } else if (op == op_jmp()) {
       stack = push_at(stack, sp, in.a);
-      sp = sp + 1;
+      sp += 1;
     } else if (op == op_split()) {
       stack = push_at(stack, sp, in.b);
       stack = push_at(stack, sp + 1, in.a);
-      sp = sp + 2;
+      sp += 2;
     } else if (op == op_match()) {
       matched = 1;
     } else if (op == op_bol() || op == op_eol() || op == op_assert()) {
       if (dfa_zw_holds(re, in, ctx, sym)) {
         stack = push_at(stack, sp, pc + 1);
-        sp = sp + 1;
+        sp += 1;
       }
     } else {
       stack = push_at(stack, sp, pc + 1);
-      sp = sp + 1;
+      sp += 1;
     }
   }
   if (key >= cx_search() && sym != dfa_end() && stamp_bits(d.seen[0], base) < 2) {
@@ -2026,22 +2026,22 @@ function stamp_bits(v: i32, base: i32): i32 {
 }
 
 function dfa_hash(key: i32, pcs: i32[]): i32 {
-  let h: i32 = key + 7;
-  let k: i32 = 0;
+  let h = key + 7;
+  let k = 0;
   while (k < pcs.len()) {
     h = (h * 31 + pcs[k] + 1) % 1000003;
-    k = k + 1;
+    k += 1;
   }
   return h;
 }
 
 function dfa_hash_at(sets: i32[], off: i32): i32 {
-  let h: i32 = sets[off] + 7;
-  let len: i32 = sets[off + 1];
-  let k: i32 = 0;
+  let h = sets[off] + 7;
+  let len = sets[off + 1];
+  let k = 0;
   while (k < len) {
     h = (h * 31 + sets[off + 2 + k] + 1) % 1000003;
-    k = k + 1;
+    k += 1;
   }
   return h;
 }
@@ -2050,42 +2050,42 @@ function dfa_same(sets: i32[], off: i32, key: i32, pcs: i32[]): boolean {
   if (sets[off] != key || sets[off + 1] != pcs.len()) {
     return false;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < pcs.len()) {
     if (sets[off + 2 + k] != pcs[k]) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return true;
 }
 
 function dfa_intern(own d0: Dfa, key: i32, pcs: i32[], row: i32): Dfa {
-  let d: Dfa = d0;
-  let i: i32 = dfa_hash(key, pcs) % d.slots.len();
+  let d = d0;
+  let i = dfa_hash(key, pcs) % d.slots.len();
   while (d.slots[i] != 0) {
-    let id: i32 = d.slots[i] - 1;
+    let id = d.slots[i] - 1;
     if (dfa_same(d.sets, d.offs[id], key, pcs)) {
       return Dfa { ...d, found: id };
     }
     i = (i + 1) % d.slots.len();
   }
   if (d.trans.len() + row > dfa_max_cells() || d.sets.len() + pcs.len() + 2 > dfa_max_words()) {
-    let fresh: Dfa = dfa_reset(d.epoch + 1, row);
+    let fresh = dfa_reset(d.epoch + 1, row);
     return dfa_intern(Dfa { ...fresh, seen: d.seen, gen: d.gen }, key, pcs, row);
   }
-  let id2: i32 = d.offs.len();
+  let id2 = d.offs.len();
   d = Dfa { ...d, offs: d.offs.append(d.sets.len()), slots: d.slots.with(i, id2 + 1) };
   d = Dfa { ...d, sets: d.sets.append(key).append(pcs.len()) };
-  let k: i32 = 0;
+  let k = 0;
   while (k < pcs.len()) {
     d = Dfa { ...d, sets: d.sets.append(pcs[k]) };
-    k = k + 1;
+    k += 1;
   }
-  let c: i32 = 0;
+  let c = 0;
   while (c < row) {
     d = Dfa { ...d, trans: d.trans.append(0 - 1) };
-    c = c + 1;
+    c += 1;
   }
   if (d.offs.len() * 2 > d.slots.len()) {
     d = Dfa { ...d, slots: dfa_rehash(d.sets, d.offs, d.slots.len() * 2) };
@@ -2094,38 +2094,38 @@ function dfa_intern(own d0: Dfa, key: i32, pcs: i32[], row: i32): Dfa {
 }
 
 function dfa_rehash(sets: i32[], offs: i32[], size: i32): i32[] {
-  let slots: i32[] = fill(size, 0);
-  let id: i32 = 0;
+  let slots = fill(size, 0);
+  let id = 0;
   while (id < offs.len()) {
-    let i: i32 = dfa_hash_at(sets, offs[id]) % size;
+    let i = dfa_hash_at(sets, offs[id]) % size;
     while (slots[i] != 0) {
       i = (i + 1) % size;
     }
     slots = slots.with(i, id + 1);
-    id = id + 1;
+    id += 1;
   }
   return slots;
 }
 
 function dfa_reset(epoch: i32, row: i32): Dfa {
   let none: i32[] = [];
-  let d: Dfa = Dfa { trans: none, sets: none, offs: none, slots: fill(16, 0), found: 0, epoch: epoch, seen: none, gen: 0, out: none };
+  let d = Dfa { trans: none, sets: none, offs: none, slots: fill(16, 0), found: 0, epoch: epoch, seen: none, gen: 0, out: none };
   let empty: i32[] = [];
-  return dfa_intern(d, 0 - 1, empty, row);
+  return dfa_intern(d, -1, empty, row);
 }
 
 function dfa_take(re: Bre): Dfa {
-  let trans: i32[] = re.dfa.trans.get();
+  let trans = re.dfa.trans.get();
   let none: i32[] = [];
   if (trans.len() == 0) {
     return dfa_reset(0, re.reps.len() + 1);
   }
   re.dfa.trans.set(none);
-  let sets: i32[] = re.dfa.sets.get();
+  let sets = re.dfa.sets.get();
   re.dfa.sets.set(none);
-  let offs: i32[] = re.dfa.offs.get();
+  let offs = re.dfa.offs.get();
   re.dfa.offs.set(none);
-  let slots: i32[] = re.dfa.slots.get();
+  let slots = re.dfa.slots.get();
   re.dfa.slots.set(none);
   return Dfa { trans: trans, sets: sets, offs: offs, slots: slots, found: 0, epoch: 0, seen: none, gen: 0, out: none };
 }
@@ -2138,19 +2138,19 @@ function dfa_put(re: Bre, own d: Dfa): void {
 }
 
 function (re: Bre) search_from_input(text: Input, lo: i32, hi: i32): (i32, i32) {
-  let start: i32 = lo;
+  let start = lo;
   while (start <= hi) {
     start = next_start(re, text, start, hi);
     if (start < 0) {
       break;
     }
-    let end: i32 = re.match_at(text, start, hi);
+    let end = re.match_at(text, start, hi);
     if (end >= 0) {
       return (start, end);
     }
-    start = start + 1;
+    start += 1;
   }
-  return (0 - 1, 0 - 1);
+  return (-1, -1);
 }
 
 function next_start(re: Bre, text: Input, pos: i32, hi: i32): i32 {
@@ -2163,36 +2163,36 @@ function next_start(re: Bre, text: Input, pos: i32, hi: i32): i32 {
   if (re.empty_ok) {
     return pos;
   }
-  let i: i32 = pos;
+  let i = pos;
   if (hi == text.len()) {
     i = text.scan_set(pos, re.first);
   } else {
     while (i < hi && re.first[text.at(i) as i32] as i32 == 0) {
-      i = i + 1;
+      i += 1;
     }
   }
   if (i >= hi) {
-    return 0 - 1;
+    return -1;
   }
   return i;
 }
 
 function (re: Bre) search_back_input(text: Input, hi: i32): (i32, i32) {
-  let start: i32 = hi - 1;
+  let start = hi - 1;
   while (start >= 0) {
     if (can_start_at(re, text, start, hi)) {
-      let end: i32 = re.match_at(text, start, hi);
+      let end = re.match_at(text, start, hi);
       if (end >= 0) {
         return (start, end);
       }
     }
-    start = start - 1;
+    start -= 1;
   }
-  return (0 - 1, 0 - 1);
+  return (-1, -1);
 }
 
 function can_start_at(re: Bre, text: Input, pos: i32, hi: i32): boolean {
-  let n: i32 = re.pre.len();
+  let n = re.pre.len();
   if (n > 0) {
     return pos + n <= hi && bytes_at(text, pos, re.pre);
   }
@@ -2210,8 +2210,8 @@ function (re: Bre) search_input(text: Input): boolean {
 }
 
 function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
-  let n: i32 = re.pre.len();
-  let pinned: boolean = !re.newline_anchor;
+  let n = re.pre.len();
+  let pinned = !re.newline_anchor;
   if (re.literal && (pinned || !re.pre_bol && !re.pre_eol)) {
     if (hi - lo < n) {
       return false;
@@ -2227,7 +2227,7 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
     }
     return find_literal(text, re.pre, lo, hi) >= 0;
   }
-  let from: i32 = lo;
+  let from = lo;
   if (n > 0) {
     if (hi - lo < n) {
       return false;
@@ -2237,26 +2237,26 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
         return false;
       }
     } else {
-      let at: i32 = find_literal(text, re.pre, lo, hi);
+      let at = find_literal(text, re.pre, lo, hi);
       if (at < 0) {
         return false;
       }
       from = at;
     }
   } else if (re.alts.len() > 0) {
-    let first_at: i32 = find_any_literal(text, re.alts, lo, hi);
+    let first_at = find_any_literal(text, re.alts, lo, hi);
     if (first_at < 0) {
       return false;
     }
     from = first_at;
   }
   if (re.backref) {
-    let i: i32 = from;
+    let i = from;
     while (i <= hi) {
       if (can_start_at(re, text, i, hi) && exec_backtrack(re, text, i, lo, hi).matched) {
         return true;
       }
-      i = i + 1;
+      i += 1;
     }
     return false;
   }
@@ -2268,7 +2268,7 @@ function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
     return exec_backtrack(re, text, start, lo, hi);
   }
   let no: i32[] = [];
-  let end: i32 = dfa_run(re, text, start, lo, hi, false);
+  let end = dfa_run(re, text, start, lo, hi, false);
   if (end < 0) {
     return BreMatch { matched: false, end: 0, starts: no, ends: no };
   }
@@ -2280,9 +2280,9 @@ function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
 
 function exec_backtrack(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
   let no: i32[] = [];
-  let end: i32 = hi;
+  let end = hi;
   while (end >= start) {
-    let m: M = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 4), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
+    let m = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 4), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
     let r: (boolean, M) = step(m, 0, start, false);
     if (r.0) {
       return caps_to_match(r.1.caps, re, start, end);
@@ -2290,17 +2290,17 @@ function exec_backtrack(re: Bre, text: Input, start: i32, lo: i32, hi: i32): Bre
     if (r.1.have_zw) {
       return caps_to_match(r.1.zw_caps, re, start, end);
     }
-    end = end - 1;
+    end -= 1;
   }
   return BreMatch { matched: false, end: 0, starts: no, ends: no };
 }
 
 function zw_stamp(gen: i32): i32 {
-  return 0 - gen - 2;
+  return -gen - 2;
 }
 
 function visit(): i32 {
-  return 0 - 2;
+  return -2;
 }
 
 function mark_base(re: Bre): i32 {
@@ -2318,112 +2318,112 @@ function zero_width_holds(re: Bre, text: Input, in: Inst, pos: i32, lo: i32, hi:
 }
 
 function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, hi: i32): BreMatch {
-  let nregs: i32 = re.ngroups * 4;
-  let w: i32 = mark_base(re) + re.nmarks;
-  let ni: i32 = re.insts.len();
-  let seen: i32[] = re.seen0;
-  let cap: i32[] = fresh_caps(w);
-  let stack: i32[] = fill(4 * ni * (nregs + 2) + 2, 0);
-  let pcs: i32[] = fill(ni, 0);
-  let caps: i32[] = fill(ni * w, 0);
-  let n: i32 = 0;
-  let npcs: i32[] = fill(ni, 0);
-  let ncaps: i32[] = fill(ni * w, 0);
-  let nn: i32 = 0;
-  let match_at: i32 = 0 - 1;
+  let nregs = re.ngroups * 4;
+  let w = mark_base(re) + re.nmarks;
+  let ni = re.insts.len();
+  let seen = re.seen0;
+  let cap = fresh_caps(w);
+  let stack = fill(4 * ni * (nregs + 2) + 2, 0);
+  let pcs = fill(ni, 0);
+  let caps = fill(ni * w, 0);
+  let n = 0;
+  let npcs = fill(ni, 0);
+  let ncaps = fill(ni * w, 0);
+  let nn = 0;
+  let match_at: i32 = -1;
   let best: i32[] = [];
-  let pos: i32 = start;
-  let seeding: boolean = true;
+  let pos = start;
+  let seeding = true;
   while (true) {
-    let sources: i32 = 1;
+    let sources = 1;
     if (!seeding) {
-      let tp: i32[] = pcs;
+      let tp = pcs;
       pcs = npcs;
       npcs = tp;
-      let tc: i32[] = caps;
+      let tc = caps;
       caps = ncaps;
       ncaps = tc;
       n = nn;
       nn = 0;
-      match_at = 0 - 1;
+      match_at = -1;
       sources = n;
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < sources) {
-      let pc0: i32 = 0;
-      let gen: i32 = start;
+      let pc0 = 0;
+      let gen = start;
       if (!seeding) {
-        let in0: Inst = re.insts[pcs[k]];
+        let in0 = re.insts[pcs[k]];
         if (in0.op == op_match()) {
           if (pos == end && best.len() == 0) {
             best = slice_i32(caps, k * w, w);
           }
-          k = k + 1;
+          k += 1;
           continue;
         }
         if (!steps(re, in0, text, pos, end)) {
-          k = k + 1;
+          k += 1;
           continue;
         }
-        let j: i32 = 0;
+        let j = 0;
         while (j < w) {
           cap = cap.with(j, caps[k * w + j]);
-          j = j + 1;
+          j += 1;
         }
         pc0 = pcs[k] + 1;
         gen = pos + 1;
       }
       stack = stack.with(0, pc0 * 2).with(1, visit());
-      let sp: i32 = 2;
+      let sp = 2;
       while (sp > 0) {
-        sp = sp - 2;
-        let x: i32 = stack[sp];
-        let y: i32 = stack[sp + 1];
+        sp -= 2;
+        let x = stack[sp];
+        let y = stack[sp + 1];
         if (y != visit()) {
           cap = cap.with(x, y);
           continue;
         }
-        let pc: i32 = x >> 1;
-        let zb: i32 = x & 1;
-        let entry: i32 = entry_kind(seen[pc], gen, zb);
+        let pc = x >> 1;
+        let zb = x & 1;
+        let entry = entry_kind(seen[pc], gen, zb);
         if (entry == 0) {
           continue;
         }
-        let over: boolean = entry == 2;
+        let over = entry == 2;
         if (zb == 1) {
           seen = seen.with(pc, zw_stamp(gen));
         } else {
           seen = seen.with(pc, gen);
         }
-        let in: Inst = re.insts[pc];
-        let op: i32 = in.op;
+        let in = re.insts[pc];
+        let op = in.op;
         if (op == op_split()) {
           stack = stack.with(sp, in.b * 2 + zb).with(sp + 1, visit()).with(sp + 2, in.a * 2 + zb).with(sp + 3, visit());
-          sp = sp + 4;
+          sp += 4;
         } else if (op == op_save()) {
-          let r: i32 = undo_from(in);
-          let r_end: i32 = undo_to(in, nregs);
+          let r = undo_from(in);
+          let r_end = undo_to(in, nregs);
           while (r < r_end) {
             stack = stack.with(sp, r).with(sp + 1, cap[r]);
-            sp = sp + 2;
-            r = r + 1;
+            sp += 2;
+            r += 1;
           }
           cap = regs_at_save(cap, in, gen, re.ngroups);
           stack = stack.with(sp, (pc + 1) * 2 + zb).with(sp + 1, visit());
-          sp = sp + 2;
+          sp += 2;
         } else if (op == op_mark()) {
-          let slot: i32 = mark_base(re) + in.a;
+          let slot = mark_base(re) + in.a;
           stack = stack.with(sp, slot).with(sp + 1, cap[slot]).with(sp + 2, (pc + 1) * 2 + zb).with(sp + 3, visit());
-          sp = sp + 4;
+          sp += 4;
           cap = cap.with(slot, gen);
         } else if (passes_through(op)) {
-          let nv: i32 = successor(re, in, pc, zb, cap, text, gen, lo, hi);
+          let nv = successor(re, in, pc, zb, cap, text, gen, lo, hi);
           if (nv >= 0) {
             stack = stack.with(sp, nv).with(sp + 1, visit());
-            sp = sp + 2;
+            sp += 2;
           }
         } else if (!over || op == op_match()) {
-          let row: i32 = nn;
+          let row = nn;
           if (over) {
             row = match_at;
           } else {
@@ -2431,16 +2431,16 @@ function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, 
               match_at = nn;
             }
             npcs = npcs.with(nn, pc);
-            nn = nn + 1;
+            nn += 1;
           }
-          let j2: i32 = 0;
+          let j2 = 0;
           while (j2 < w) {
             ncaps = ncaps.with(row * w + j2, cap[j2]);
-            j2 = j2 + 1;
+            j2 += 1;
           }
         }
       }
-      k = k + 1;
+      k += 1;
     }
     if (seeding) {
       seeding = false;
@@ -2449,7 +2449,7 @@ function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, 
     if (pos >= end) {
       break;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return caps_to_match(best, re, start, end);
 }
@@ -2468,7 +2468,7 @@ function entry_kind(was: i32, gen: i32, zb: i32): i32 {
     }
     return 1;
   }
-  if (was < 0 - 1 && was == zw_stamp(gen)) {
+  if (was < -1 && was == zw_stamp(gen)) {
     return 2;
   }
   return 1;
@@ -2505,25 +2505,25 @@ function successor(re: Bre, in: Inst, pc: i32, zb: i32, cap: i32[], text: Input,
   if (zero_width_holds(re, text, in, pos, lo, hi)) {
     return (pc + 1) * 2 + 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function slice_i32(a: i32[], from: i32, n: i32): i32[] {
   let out: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < n) {
     out = out.append(a[from + k]);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function fill(n: i32, v: i32): i32[] {
   let a: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < n) {
     a = a.append(v);
-    k = k + 1;
+    k += 1;
   }
   return a;
 }
@@ -2531,11 +2531,11 @@ function fill(n: i32, v: i32): i32[] {
 function caps_to_match(caps: i32[], re: Bre, start: i32, end: i32): BreMatch {
   let starts: i32[] = [start];
   let ends: i32[] = [end];
-  let g: i32 = 0;
+  let g = 0;
   while (g < re.ngroups) {
     starts = starts.append(caps[g * 2]);
     ends = ends.append(caps[g * 2 + 1]);
-    g = g + 1;
+    g += 1;
   }
   return BreMatch { matched: true, end: end, starts: starts, ends: ends };
 }

@@ -35,6 +35,8 @@ on:
       - "cmd/fern/**"
       - "web/**"
       - "site/**"
+      # The coreutils page renders the newest bench log.
+      - "docs/coreutils-log/**"
       # Docs site loads this grammar for ```fern highlighting.
       - "editors/vscode/syntaxes/**"
       # EVERY internal package, not an enumeration of the ones somebody

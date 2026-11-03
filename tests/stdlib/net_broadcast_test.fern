@@ -1,0 +1,94 @@
+import "std/net";
+import "std/test";
+
+// Linux routes 127.255.255.255 as the broadcast address of the loopback
+// network. A send there needs SO_BROADCAST, and then the datagram reaches a
+// socket bound to the wildcard address.
+
+function bound(ip: net.IpAddr): i32 {
+  match (net.udp_socket(net.socket_addr(ip, 0))) {
+    Ok(s) => {
+      return s;
+    },
+    Err(_) => {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+function port_of(sock: i32): i32 {
+  match (net.local_addr(sock)) {
+    Ok(a) => {
+      return a.port;
+    },
+    Err(_) => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function sent(sock: i32, port: i32): boolean {
+  let to: net.SocketAddr = net.socket_addr(net.V4([127u8, 255u8, 255u8, 255u8]), port);
+  match (net.send_to(sock, [104u8, 105u8], to)) {
+    Ok(n) => {
+      return n == 2;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function test_broadcast_needs_the_option(): test.TestOutcome {
+  let rx: i32 = bound(net.V4([0u8, 0u8, 0u8, 0u8]));
+  let tx: i32 = bound(net.V4([0u8, 0u8, 0u8, 0u8]));
+  if (rx < 0 || tx < 0) {
+    return test.fail("no UDP socket");
+  }
+  let port: i32 = port_of(rx);
+  if (sent(tx, port)) {
+    return test.fail("a broadcast went out without SO_BROADCAST");
+  }
+  match (net.set_broadcast(tx, true)) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("set_broadcast refused");
+    }
+  }
+  if (!sent(tx, port)) {
+    return test.fail("the broadcast did not go out");
+  }
+  let buf: u8[] = [0u8, 0u8, 0u8, 0u8];
+  match (net.recv(rx, buf)) {
+    Ok(n) => {
+      if (n != 2 || buf[0] != 104u8 || buf[1] != 105u8) {
+        return test.fail("the broadcast arrived as " + n.to_string() + " bytes");
+      }
+    },
+    Err(_) => {
+      return test.fail("the broadcast did not arrive");
+    }
+  }
+  match (net.set_broadcast(tx, false)) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("set_broadcast(false) refused");
+    }
+  }
+  let again: boolean = sent(tx, port);
+  let a: Result[void, net.NetError] = net.close(rx);
+  let b: Result[void, net.NetError] = net.close(tx);
+  if (again) {
+    return test.fail("a broadcast went out after the option was cleared");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/net broadcast");
+  r = r.it("a broadcast needs set_broadcast", test_broadcast_needs_the_option);
+  return r.finish();
+}

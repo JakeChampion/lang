@@ -5,31 +5,31 @@ import "./lib/gnu";
 import "./lib/pwdb";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [USERNAME]...\n";
-  out = out + "Print group memberships for each USERNAME or, if no USERNAME is specified, for\n";
-  out = out + "the current process (which may differ if the groups database has changed).\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print group memberships for each USERNAME or, if no USERNAME is specified, for\n";
+  out += "the current process (which may differ if the groups database has changed).\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 pub struct Line { out: io_buffered.BufWriter, text: string, ok: boolean }
 
 function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
-  let names: Option[string][] = pwdb.group_names(gids);
-  let text: string = "";
-  let ok: boolean = true;
-  let w: io_buffered.BufWriter = o;
-  let i: i32 = 0;
+  let names = pwdb.group_names(gids);
+  let text = "";
+  let ok = true;
+  let w = o;
+  let i = 0;
   while (i < gids.len()) {
     if (i > 0) {
-      text = text + " ";
+      text += " ";
     }
     match (names[i]) {
       Some(n) => {
-        text = text + n;
+        text += n;
       },
       None => {
         w = gnu.put(w, text);
@@ -39,26 +39,26 @@ function names_of(o: io_buffered.BufWriter, gids: i64[]): Line {
         ok = false;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Line { out: w, text: text, ok: ok };
 }
 
 pub function main(): i32 {
-  let operands: string[] = gnu.parse_standard_options_only(args(), "groups", help_text(), 1);
-  let o: io_buffered.BufWriter = gnu.out_new();
-  let ok: boolean = true;
+  let operands = gnu.parse_standard_options_only(args(), "groups", help_text(), 1);
+  let o = gnu.out_new();
+  let ok = true;
   if (operands.len() == 0) {
-    let l: Line = names_of(o, pwdb.process_groups());
+    let l = names_of(o, pwdb.process_groups());
     o = gnu.put(l.out, l.text + "\n");
     ok = l.ok;
   } else {
-    let i: i32 = 0;
+    let i = 0;
     while (i < operands.len()) {
       match (pwdb.user_by_name(operands[i])) {
         Some(u) => {
           o = gnu.put(o, operands[i] + " : ");
-          let ul: Line = names_of(o, pwdb.group_list(u.name, u.gid));
+          let ul = names_of(o, pwdb.group_list(u.name, u.gid));
           o = gnu.put(ul.out, ul.text + "\n");
           if (!ul.ok) {
             ok = false;
@@ -69,7 +69,7 @@ pub function main(): i32 {
           ok = false;
         }
       }
-      i = i + 1;
+      i += 1;
     }
   }
   gnu.finish(o);

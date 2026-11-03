@@ -74,53 +74,53 @@ function walk_logical(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... CONTEXT FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... [-u USER] [-r ROLE] [-l RANGE] [-t TYPE] FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
-  out = out + "Change the SELinux security context of each FILE to CONTEXT.\n";
-  out = out + "With --reference, change the security context of each FILE to that of RFILE.\n";
-  out = out + "\n";
-  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
-  out = out + "      --dereference\n";
-  out = out + "         affect the referent of each symbolic link (this is\n";
-  out = out + "         the default), rather than the symbolic link itself\n";
-  out = out + "  -h, --no-dereference\n";
-  out = out + "         affect symbolic links instead of any referenced file\n";
-  out = out + "  -u, --user=USER\n";
-  out = out + "         set user USER in the target security context\n";
-  out = out + "  -r, --role=ROLE\n";
-  out = out + "         set role ROLE in the target security context\n";
-  out = out + "  -t, --type=TYPE\n";
-  out = out + "         set type TYPE in the target security context\n";
-  out = out + "  -l, --range=RANGE\n";
-  out = out + "         set range RANGE in the target security context\n";
-  out = out + "      --no-preserve-root\n";
-  out = out + "         do not treat '/' specially (the default)\n";
-  out = out + "      --preserve-root\n";
-  out = out + "         fail to operate recursively on '/'\n";
-  out = out + "      --reference=RFILE\n";
-  out = out + "         use RFILE's security context rather than specifying a CONTEXT value\n";
-  out = out + "  -R, --recursive\n";
-  out = out + "         operate on files and directories recursively\n";
-  out = out + "  -v, --verbose\n";
-  out = out + "         output a diagnostic for every file processed\n";
-  out = out + "\n";
-  out = out + "The following options modify how a hierarchy is traversed when the -R\n";
-  out = out + "option is also specified.  If more than one is specified, only the final\n";
-  out = out + "one takes effect. -P is the default.\n";
-  out = out + "\n";
-  out = out + "  -H\n";
-  out = out + "         if a command line argument is a symlink to a directory, traverse it\n";
-  out = out + "  -L\n";
-  out = out + "         traverse every symbolic link to a directory encountered\n";
-  out = out + "  -P\n";
-  out = out + "         do not traverse any symbolic links\n";
-  out = out + "\n";
-  out = out + "      --help\n";
-  out = out + "         display this help and exit\n";
-  out = out + "      --version\n";
-  out = out + "         output version information and exit\n";
+  out += "Change the SELinux security context of each FILE to CONTEXT.\n";
+  out += "With --reference, change the security context of each FILE to that of RFILE.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "      --dereference\n";
+  out += "         affect the referent of each symbolic link (this is\n";
+  out += "         the default), rather than the symbolic link itself\n";
+  out += "  -h, --no-dereference\n";
+  out += "         affect symbolic links instead of any referenced file\n";
+  out += "  -u, --user=USER\n";
+  out += "         set user USER in the target security context\n";
+  out += "  -r, --role=ROLE\n";
+  out += "         set role ROLE in the target security context\n";
+  out += "  -t, --type=TYPE\n";
+  out += "         set type TYPE in the target security context\n";
+  out += "  -l, --range=RANGE\n";
+  out += "         set range RANGE in the target security context\n";
+  out += "      --no-preserve-root\n";
+  out += "         do not treat '/' specially (the default)\n";
+  out += "      --preserve-root\n";
+  out += "         fail to operate recursively on '/'\n";
+  out += "      --reference=RFILE\n";
+  out += "         use RFILE's security context rather than specifying a CONTEXT value\n";
+  out += "  -R, --recursive\n";
+  out += "         operate on files and directories recursively\n";
+  out += "  -v, --verbose\n";
+  out += "         output a diagnostic for every file processed\n";
+  out += "\n";
+  out += "The following options modify how a hierarchy is traversed when the -R\n";
+  out += "option is also specified.  If more than one is specified, only the final\n";
+  out += "one takes effect. -P is the default.\n";
+  out += "\n";
+  out += "  -H\n";
+  out += "         if a command line argument is a symlink to a directory, traverse it\n";
+  out += "  -L\n";
+  out += "         traverse every symbolic link to a directory encountered\n";
+  out += "  -P\n";
+  out += "         do not traverse any symbolic links\n";
+  out += "\n";
+  out += "      --help\n";
+  out += "         display this help and exit\n";
+  out += "      --version\n";
+  out += "         output version information and exit\n";
   return out;
 }
 
@@ -161,10 +161,10 @@ function scan_options(): (Settings, string[], boolean, string) {
   opts = opts.append(gnu.flag("H", "", opt_comfollow()));
   opts = opts.append(gnu.flag("L", "", opt_logical()));
   opts = opts.append(gnu.flag("P", "", opt_physical()));
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "chcon", help_text(), 1);
-  let s: Settings = Settings { recursive: false, preserve_root: false, verbose: false, walk: walk_physical(), deref: 0 - 1, referent: true, context: "", component: false, comps: ["", "", "", ""], set: [false, false, false, false] };
-  let has_reference: boolean = false;
-  let reference: string = "";
+  let g = gnu.getopt_new(args(), opts, "chcon", help_text(), 1);
+  let s = Settings { recursive: false, preserve_root: false, verbose: false, walk: walk_physical(), deref: 0 - 1, referent: true, context: "", component: false, comps: ["", "", "", ""], set: [false, false, false, false] };
+  let has_reference = false;
+  let reference = "";
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -192,7 +192,7 @@ function scan_options(): (Settings, string[], boolean, string) {
           has_reference = true;
           reference = m.value;
         } else if (m.id == opt_user() || m.id == opt_role() || m.id == opt_type() || m.id == opt_range()) {
-          let k: i32 = component_index(m.id);
+          let k = component_index(m.id);
           s = Settings { ...s, component: true, comps: s.comps.with(k, m.value), set: s.set.with(k, true) };
         }
       },
@@ -205,7 +205,7 @@ function scan_options(): (Settings, string[], boolean, string) {
 }
 
 function resolve_traversal(s0: Settings): Settings {
-  let s: Settings = s0;
+  let s = s0;
   if (s.recursive) {
     if (s.walk == walk_physical()) {
       if (s.deref == 1) {
@@ -235,11 +235,11 @@ function is_root_dir(info: FileStat): boolean {
 }
 
 function refuse_root(st0: St, path: string): St {
-  let same: string = "";
+  let same = "";
   if (path != "/") {
     same = " (same as '/')";
   }
-  let st: St = fail(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  let st = fail(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
   return fail(st, "use --no-preserve-root to override this failsafe");
 }
 
@@ -248,13 +248,13 @@ function is_dir_mode(m: u32): boolean {
 }
 
 function change_one(st0: St, s: Settings, path: string, shown: string): St {
-  let st: St = st0;
+  let st = st0;
   if (s.verbose) {
     st = St { ...st, out: st.out.fwrite("changing security context of " + gnu.quotea(path) + "\n") };
   }
-  let target: string = s.context;
+  let target = s.context;
   if (s.component) {
-    let cur: string = "";
+    let cur = "";
     match (selinux.file_context(path, s.referent)) {
       Ok(c) => {
         cur = c;
@@ -292,9 +292,9 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
 }
 
 function process(st0: St, s: Settings, path: string, shown: string, top: boolean): St {
-  let st: St = st0;
-  let follow: boolean = s.walk == walk_logical() || top && s.walk == walk_comfollow();
-  let looked: Result[FileStat, IoError] = lstat(path);
+  let st = st0;
+  let follow = s.walk == walk_logical() || top && s.walk == walk_comfollow();
+  let looked = lstat(path);
   if (follow) {
     looked = stat(path);
   }
@@ -311,15 +311,15 @@ function process(st0: St, s: Settings, path: string, shown: string, top: boolean
       }
       match (read_dir(path)) {
         Ok(names) => {
-          let i: i32 = 0;
+          let i = 0;
           while (i < names.len()) {
-            let child: string = fts.child_path(path, names[i]);
-            let child_shown: string = names[i];
+            let child = fts.child_path(path, names[i]);
+            let child_shown = names[i];
             if (s.walk == walk_logical()) {
               child_shown = child;
             }
             st = process(st, s, child, child_shown, false);
-            i = i + 1;
+            i += 1;
           }
         },
         Err(e) => {
@@ -336,12 +336,12 @@ function process(st0: St, s: Settings, path: string, shown: string, top: boolean
 
 pub function main(): i32 {
   let scanned: (Settings, string[], boolean, string) = scan_options();
-  let s: Settings = resolve_traversal(scanned.0);
-  let operands: string[] = scanned.1;
-  let has_reference: boolean = scanned.2;
-  let reference: string = scanned.3;
+  let s = resolve_traversal(scanned.0);
+  let operands = scanned.1;
+  let has_reference = scanned.2;
+  let reference = scanned.3;
 
-  let need: i32 = 2;
+  let need = 2;
   if (has_reference || s.component) {
     need = 1;
   }
@@ -370,12 +370,12 @@ pub function main(): i32 {
     gnu.die_usage("conflicting security context specifiers given", 1);
   }
 
-  let st: St = St { out: gnu.stdio_new(), status: 0 };
-  let i: i32 = 0;
+  let st = St { out: gnu.stdio_new(), status: 0 };
+  let i = 0;
   while (i < operands.len()) {
-    let name: string = fts.trim(operands[i]);
+    let name = fts.trim(operands[i]);
     st = process(st, s, name, name, true);
-    i = i + 1;
+    i += 1;
   }
   st.out.close_stdout();
   return st.status;

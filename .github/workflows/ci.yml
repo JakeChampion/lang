@@ -131,6 +131,7 @@ jobs:
                 "compiler/**",
                 "web/**",
                 "site/**",
+                "docs/coreutils-log/**",
                 "scripts/check-site-examples",
                 "editors/vscode/syntaxes/**",
                 "internal/**",
@@ -187,6 +188,7 @@ jobs:
               ] },
               "android": { "paths": [
                 "examples/android/**",
+                "tests/android/**",
                 "compiler/**",
                 "internal/stdlib/**",
                 "bootstrap/**",

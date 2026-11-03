@@ -75,7 +75,7 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     }
     return 0 - 36;
   }
-  if (op == 1 || op == 2) {
+  if (op == 1 || op == 2 || op == 9) {
     let v: usize = __raw_scratch(4);
     __raw_store8(v, 0, arg & 255);
     __raw_store8(v, 1, 0);
@@ -83,6 +83,9 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     __raw_store8(v, 3, 0);
     if (op == 1) {
       return __syscall5(105, fd as i64, 6, 1, v as i64, 4) as i32;
+    }
+    if (op == 9) {
+      return __syscall5(105, fd as i64, 65535, 32, v as i64, 4) as i32;
     }
     return __syscall5(105, fd as i64, 65535, 8, v as i64, 4) as i32;
   }

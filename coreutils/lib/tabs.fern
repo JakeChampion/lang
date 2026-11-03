@@ -18,15 +18,15 @@ function is_blank(c: i32): boolean {
 }
 
 pub function (t: Tabs) parse(stops: string): Tabs {
-  let out: Tabs = t;
-  let i: i32 = 0;
-  let have: boolean = false;
-  let value: u64 = 0 as u64;
-  let want_extend: boolean = false;
-  let want_increment: boolean = false;
-  let ok: boolean = true;
+  let out = t;
+  let i = 0;
+  let have = false;
+  let value = 0 as u64;
+  let want_extend = false;
+  let want_increment = false;
+  let ok = true;
   while (i < stops.len()) {
-    let c: i32 = stops[i] as i32;
+    let c = stops[i] as i32;
     if (c == 44 || is_blank(c)) {
       if (have) {
         out = commit(out, value, want_extend, want_increment);
@@ -51,7 +51,7 @@ pub function (t: Tabs) parse(stops: string): Tabs {
         value = 0 as u64;
         have = true;
       }
-      let over: boolean = false;
+      let over = false;
       match (value.checked_mul(10 as u64)) {
         Some(m) => {
           match (m.checked_add((c - 48) as u64)) {
@@ -68,10 +68,10 @@ pub function (t: Tabs) parse(stops: string): Tabs {
         }
       }
       if (over) {
-        let from: i32 = digits_start(stops, i);
-        let end: i32 = i;
+        let from = digits_start(stops, i);
+        let end = i;
         while (end < stops.len() && is_digit(stops[end] as i32)) {
-          end = end + 1;
+          end += 1;
         }
         gnu.error("tab stop is too large " + gnu.quote(slice_unchecked(stops, from, end) + ""));
         ok = false;
@@ -82,7 +82,7 @@ pub function (t: Tabs) parse(stops: string): Tabs {
       gnu.error("tab size contains invalid character(s): " + gnu.quote(slice_unchecked(stops, i, stops.len()) + ""));
       exit(1);
     }
-    i = i + 1;
+    i += 1;
   }
   if (have && ok) {
     out = commit(out, value, want_extend, want_increment);
@@ -94,9 +94,9 @@ pub function (t: Tabs) parse(stops: string): Tabs {
 }
 
 function digits_start(stops: string, i: i32): i32 {
-  let from: i32 = i;
+  let from = i;
   while (from > 0 && is_digit(stops[from - 1] as i32)) {
-    from = from - 1;
+    from -= 1;
   }
   return from;
 }
@@ -120,8 +120,8 @@ function commit(t: Tabs, value: u64, want_extend: boolean, want_increment: boole
 }
 
 pub function (t: Tabs) finish(): Tabs {
-  let prev: u64 = 0 as u64;
-  let i: i32 = 0;
+  let prev = 0 as u64;
+  let i = 0;
   while (i < t.list.len()) {
     if (t.list[i] == 0 as u64) {
       gnu.error("tab size cannot be 0");
@@ -132,14 +132,14 @@ pub function (t: Tabs) finish(): Tabs {
       exit(1);
     }
     prev = t.list[i];
-    i = i + 1;
+    i += 1;
   }
   if (t.extend != 0 as u64 && t.increment != 0 as u64) {
     gnu.error("'/' specifier is mutually exclusive with '+'");
     exit(1);
   }
   if (t.list.len() == 0) {
-    let uniform: u64 = 8 as u64;
+    let uniform = 8 as u64;
     if (t.extend != 0 as u64) {
       uniform = t.extend;
     } else if (t.increment != 0 as u64) {
@@ -157,18 +157,18 @@ pub function (t: Tabs) next_column(column: u64, idx: i32): (u64, i32) {
   if (t.size != 0 as u64) {
     return (column + (t.size - column % t.size), idx);
   }
-  let i: i32 = idx;
+  let i = idx;
   while (i < t.list.len()) {
     if (column < t.list[i]) {
       return (t.list[i], i);
     }
-    i = i + 1;
+    i += 1;
   }
   if (t.extend != 0 as u64) {
     return (column + (t.extend - column % t.extend), i);
   }
   if (t.increment != 0 as u64) {
-    let last: u64 = 0 as u64;
+    let last = 0 as u64;
     if (t.list.len() > 0) {
       last = t.list[t.list.len() - 1];
     }

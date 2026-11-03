@@ -1,0 +1,374 @@
+import "std/crypto";
+import "std/crypto/chacha20poly1305";
+import "std/test";
+import "./secure";
+
+// Fixed random bytes for a repeatable test.
+function bytes(seed: string, n: i32): u8[] {
+  let h: u8[] = crypto.sha256(seed.as_bytes());
+  let out: u8[] = [];
+  for k in 0..n {
+    out = out.append(h[k % 32]);
+  }
+  return out;
+}
+
+function party(initiator: boolean, name: string): secure.Handshake {
+  return secure.start(initiator, bytes(name + " key", 32), bytes(name + " nonce", 16));
+}
+
+// A full handshake between `a` (the initiator) and `b`.
+function pair(a: secure.Handshake, b: secure.Handshake): (secure.Handshake, secure.Handshake) {
+  let (b1, key_msg) = secure.receive(b, secure.first(a));
+  let (a1, reveal) = secure.receive(a, key_msg);
+  let (b2, none) = secure.receive(b1, reveal);
+  return (a1, b2);
+}
+
+function channels(a: secure.Handshake, b: secure.Handshake): (secure.Channel, secure.Channel) {
+  let (ha, hb) = pair(a, b);
+  match (secure.keys(ha)) {
+    Some(ka) => {
+      match (secure.keys(hb)) {
+        Some(kb) => {
+          return (secure.channel(ka), secure.channel(kb));
+        },
+        None => {}
+      }
+    },
+    None => {}
+  }
+  return (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "" }), secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "x" }));
+}
+
+function opened(o: Option[u8[]]): string {
+  match (o) {
+    Some(b) => {
+      return "ok:" + string_from_bytes_unchecked(b);
+    },
+    None => {
+      return "refused";
+    }
+  }
+}
+
+function test_handshake_agrees(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let (a1, f1) = secure.seal_control(a, "hello".as_bytes());
+  let (b1, got) = secure.open_control(b, f1);
+  let (b2, f2) = secure.seal_control(b1, "back".as_bytes());
+  let (a2, back) = secure.open_control(a1, f2);
+  return test.assert_eq(opened(got) + " " + opened(back) + " " + (a.sas == b.sas && a.sas.len() == 6).to_string(), "ok:hello ok:back true");
+}
+
+// A third party in the middle makes one handshake with each side. The two
+// sides then show different authentication strings.
+function test_man_in_the_middle_shows_different_strings(): test.TestOutcome {
+  let (a, m1) = channels(party(true, "alice"), party(false, "mallory one"));
+  let (m2, b) = channels(party(true, "mallory two"), party(false, "bob"));
+  return test.assert_eq((a.sas == b.sas).to_string(), "false");
+}
+
+function test_reveal_must_match_commitment(): test.TestOutcome {
+  let a: secure.Handshake = party(true, "alice");
+  let (b1, key_msg) = secure.receive(party(false, "bob"), secure.first(a));
+  let other: secure.Handshake = party(true, "mallory");
+  let other_commit = secure.first(other);
+  let (other1, reveal) = secure.receive(other, key_msg);
+  let (b2, none) = secure.receive(b1, reveal);
+  secure.close_handshake(a);
+  secure.close_handshake(other1);
+  return test.assert_eq(b2.failed.to_string() + " " + b2.done.to_string(), "true false");
+}
+
+function test_changed_frame_is_refused(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let (a1, f) = secure.seal_control(a, "push".as_bytes());
+  let bad: u8[] = f.with(f.len() - 1, f[f.len() - 1] ^ 1 as u8);
+  let (b1, got) = secure.open_control(b, bad);
+  return test.assert_eq(opened(got), "refused");
+}
+
+// A control frame opens in any order, and after a lost one. A copy of a
+// frame is refused.
+function test_control_replay_is_refused_and_order_is_free(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let (a1, f1) = secure.seal_control(a, "one".as_bytes());
+  let (a2, f2) = secure.seal_control(a1, "two".as_bytes());
+  let (a3, f3) = secure.seal_control(a2, "three".as_bytes());
+  let (a4, f4) = secure.seal_control(a3, "four".as_bytes());
+  let (b1, second) = secure.open_control(b, f2);
+  let (b2, first) = secure.open_control(b1, f1);
+  let (b3, again) = secure.open_control(b2, f2);
+  let (b4, fourth) = secure.open_control(b3, f4);
+  return test.assert_eq(opened(second) + " " + opened(first) + " " + opened(again) + " " + opened(fourth), "ok:two ok:one refused ok:four");
+}
+
+function test_voice_window(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let frames: u8[][] = [];
+  for k in 0..100 {
+    let (next, f) = secure.seal_voice(a, ("v" + k.to_string()).as_bytes());
+    a = next;
+    frames = frames.append(f);
+  }
+  let out: string = "";
+  let order: i32[] = [5, 3, 4, 3, 90, 30, 26, 89, 5];
+  for i in order {
+    let (next, got) = secure.open_voice(b, frames[i]);
+    b = next;
+    out = out + opened(got) + " ";
+  }
+  return test.assert_eq(out, "ok:v5 ok:v3 ok:v4 refused ok:v90 ok:v30 refused ok:v89 refused ");
+}
+
+function test_channels_are_separate(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let (a1, ctl) = secure.seal_control(a, "floor".as_bytes());
+  let (b1, as_voice) = secure.open_voice(b, ctl);
+  let (a2, voice) = secure.seal_voice(a1, "audio".as_bytes());
+  let (b2, as_ctl) = secure.open_control(b1, voice);
+  return test.assert_eq(opened(as_voice) + " " + opened(as_ctl), "refused refused");
+}
+
+// Acceptance test G: a third phone with its own handshake can neither read
+// the voice of the pair nor put a frame into it.
+function test_third_party_cannot_read_or_inject(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let (x, y) = channels(party(true, "eve"), party(false, "eve two"));
+  let (a1, voice) = secure.seal_voice(a, "secret".as_bytes());
+  let (y1, read) = secure.open_voice(y, voice);
+  let (x1, forged) = secure.seal_voice(x, "inject".as_bytes());
+  let (b1, injected) = secure.open_voice(b, forged);
+  return test.assert_eq(opened(read) + " " + opened(injected), "refused refused");
+}
+
+function test_wrong_order_handshake_fails(): test.TestOutcome {
+  let b: secure.Handshake = party(false, "bob");
+  let (b1, reply) = secure.receive(b, [18 as u8]);
+  return test.assert_eq(b1.failed.to_string() + " " + reply.len().to_string(), "true 0");
+}
+
+function test_close_consumes_the_channel(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let sas: string = a.sas;
+  secure.close(a);
+  secure.close(b);
+  return test.assert_eq(sas.len(), 6);
+}
+
+function test_sender_aliases_share_the_sequence(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let old = a;
+  let (a1, one) = secure.seal_control(a, "one".as_bytes());
+  let (a2, two) = secure.seal_control(old, "two".as_bytes());
+  let (b1, first) = secure.open_control(b, one);
+  let (b2, second) = secure.open_control(b1, two);
+  secure.close(a2);
+  secure.close(b2);
+  return test.assert_eq(opened(first) + " " + opened(second), "ok:one ok:two");
+}
+
+function test_receiver_aliases_cannot_replay_a_frame(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let old = b;
+  let (a1, voice) = secure.seal_voice(a, "voice".as_bytes());
+  let (b1, first) = secure.open_voice(b, voice);
+  let (b2, again) = secure.open_voice(old, voice);
+  secure.close(a1);
+  secure.close(b2);
+  return test.assert_eq(opened(first) + " " + opened(again), "ok:voice refused");
+}
+
+function test_close_invalidates_channel_aliases(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let old = a;
+  let (b1, voice) = secure.seal_control(b, "voice".as_bytes());
+  secure.close(a);
+  let (a1, outgoing) = secure.seal_control(old, "late".as_bytes());
+  let (a2, incoming) = secure.open_control(a1, voice);
+  secure.close(a2);
+  secure.close(b1);
+  return test.assert_eq(outgoing.len().to_string() + " " + opened(incoming), "0 refused");
+}
+
+function test_ephemeral_key_is_used_once(): test.TestOutcome {
+  let (a, b) = pair(party(true, "alice"), party(false, "bob"));
+  let first = false;
+  let second = false;
+  match (secure.keys(a)) {
+    Some(k) => {
+      first = true;
+      secure.close(secure.channel(k));
+    },
+    None => {}
+  }
+  match (secure.keys(a)) {
+    Some(k) => {
+      second = true;
+      secure.close(secure.channel(k));
+    },
+    None => {}
+  }
+  secure.close_handshake(b);
+  return test.assert_eq(first.to_string() + " " + second.to_string(), "true false");
+}
+
+function test_failed_handshake_clears_aliases(): test.TestOutcome {
+  let b = party(false, "bob");
+  let old = b;
+  let (failed, _) = secure.receive(b, [18 as u8]);
+  return test.assert_eq(failed.failed.to_string() + " " + old.private.get().len().to_string(), "true 0");
+}
+
+function test_cancelled_handshake_clears_aliases(): test.TestOutcome {
+  let a = party(true, "alice");
+  let old = a;
+  secure.close_handshake(a);
+  let (stopped, _) = secure.receive(old, [17 as u8]);
+  return test.assert_eq(old.private.get().len().to_string() + " " + stopped.failed.to_string(), "0 true");
+}
+
+function test_invalid_nonce_does_not_keep_a_private_key(): test.TestOutcome {
+  let a = secure.start(true, bytes("key", 32), []);
+  return test.assert_eq(a.failed.to_string() + " " + a.private.get().len().to_string(), "true 0");
+}
+
+function test_key_bundle_creates_one_channel(): test.TestOutcome {
+  let (a, b) = pair(party(true, "alice"), party(false, "bob"));
+  let sizes = "missing";
+  match (secure.keys(a)) {
+    Some(k) => {
+      let first = secure.channel(k);
+      let second = secure.channel(k);
+      let (c1, good) = secure.seal_control(first, "one".as_bytes());
+      let (c2, refused) = secure.seal_control(second, "two".as_bytes());
+      sizes = (good.len() > 0).to_string() + " " + refused.len().to_string();
+      secure.close(c1);
+      secure.close(c2);
+    },
+    None => {}
+  }
+  secure.close_handshake(b);
+  return test.assert_eq(sizes, "true 0");
+}
+
+function reject_aliased_keys(k: secure.Keys): i32 {
+  let old = k;
+  secure.close_keys(k);
+  let c = secure.channel(old);
+  let (next, frame) = secure.seal_voice(c, "late".as_bytes());
+  let size = frame.len();
+  secure.close(next);
+  return size;
+}
+
+function test_rejected_key_bundle_clears_aliases(): test.TestOutcome {
+  let (a, b) = pair(party(true, "alice"), party(false, "bob"));
+  let size = 0 - 1;
+  match (secure.keys(a)) {
+    Some(k) => {
+      size = reject_aliased_keys(k);
+    },
+    None => {}
+  }
+  secure.close_handshake(b);
+  return test.assert_eq(size, 0);
+}
+
+function voice_at(c: secure.Channel, seq: i64): u8[] {
+  let head: u8[] = [secure.VOICE as u8];
+  let nonce: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8];
+  for k in 0..8 {
+    let byte = (seq >> (56 - 8 * k) as i64 & 255 as i64) as u8;
+    head = head.append(byte);
+    nonce = nonce.append(byte);
+  }
+  match (chacha20poly1305.key(c.send_voice.get().key)) {
+    Ok(key) => {
+      match (key.seal(nonce, "boundary".as_bytes(), head)) {
+        Ok(sealed) => {
+          for byte in sealed {
+            head = head.append(byte);
+          }
+          return head;
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return [];
+}
+
+function test_sequence_boundaries_do_not_change_the_window(): test.TestOutcome {
+  let (a, b) = channels(party(true, "alice"), party(false, "bob"));
+  let refused = 0;
+  for seq in [0 - 1 as i64, 9223372036854775807i64] {
+    let frame = voice_at(a, seq);
+    let (_, got) = secure.open_voice(b, frame);
+    if (frame.len() >= 25 && opened(got) == "refused") {
+      refused = refused + 1;
+    }
+  }
+  let (a1, good) = secure.seal_voice(a, "ok".as_bytes());
+  let (b1, got) = secure.open_voice(b, good);
+  secure.close(a1);
+  secure.close(b1);
+  return test.assert_eq(refused.to_string() + " " + opened(got), "2 ok:ok");
+}
+
+function test_initiator_must_commit_before_a_key_reply(): test.TestOutcome {
+  let a = party(true, "alice");
+  let other = party(true, "other");
+  let (b, key_msg) = secure.receive(party(false, "bob"), secure.first(other));
+  let (failed, _) = secure.receive(a, key_msg);
+  secure.close_handshake(other);
+  secure.close_handshake(b);
+  return test.assert_eq(failed.failed.to_string() + " " + failed.private.get().len().to_string(), "true 0");
+}
+
+function test_handshake_aliases_cannot_reuse_a_key_reply(): test.TestOutcome {
+  let a = party(true, "alice");
+  let old = a;
+  let (b, key_msg) = secure.receive(party(false, "bob"), secure.first(a));
+  let (ready, _) = secure.receive(a, key_msg);
+  let (failed, _) = secure.receive(old, key_msg);
+  let derived = false;
+  match (secure.keys(ready)) {
+    Some(k) => {
+      derived = true;
+      secure.close(secure.channel(k));
+    },
+    None => {}
+  }
+  secure.close_handshake(b);
+  return test.assert_eq(failed.failed.to_string() + " " + derived.to_string(), "true false");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("walkie secure channel");
+  r = r.it("the handshake agrees on keys and on the string", test_handshake_agrees);
+  r = r.it("a party in the middle shows different strings", test_man_in_the_middle_shows_different_strings);
+  r = r.it("the reveal must match the commitment", test_reveal_must_match_commitment);
+  r = r.it("a changed frame is refused", test_changed_frame_is_refused);
+  r = r.it("a control frame opens once, in any order", test_control_replay_is_refused_and_order_is_free);
+  r = r.it("voice frames open once inside the window", test_voice_window);
+  r = r.it("a frame of one channel does not open on the other", test_channels_are_separate);
+  r = r.it("a third party cannot read or inject", test_third_party_cannot_read_or_inject);
+  r = r.it("a handshake message out of order fails", test_wrong_order_handshake_fails);
+  r = r.it("close takes the channel and its keys", test_close_consumes_the_channel);
+  r = r.it("sender aliases share the sequence", test_sender_aliases_share_the_sequence);
+  r = r.it("receiver aliases cannot replay a frame", test_receiver_aliases_cannot_replay_a_frame);
+  r = r.it("close invalidates channel aliases", test_close_invalidates_channel_aliases);
+  r = r.it("the ephemeral key is used once", test_ephemeral_key_is_used_once);
+  r = r.it("a failed handshake clears aliases", test_failed_handshake_clears_aliases);
+  r = r.it("a cancelled handshake clears aliases", test_cancelled_handshake_clears_aliases);
+  r = r.it("an invalid nonce keeps no private key", test_invalid_nonce_does_not_keep_a_private_key);
+  r = r.it("a key bundle creates one channel", test_key_bundle_creates_one_channel);
+  r = r.it("a rejected key bundle clears aliases", test_rejected_key_bundle_clears_aliases);
+  r = r.it("sequence boundaries leave the replay window intact", test_sequence_boundaries_do_not_change_the_window);
+  r = r.it("the initiator commits before a key reply", test_initiator_must_commit_before_a_key_reply);
+  r = r.it("handshake aliases cannot reuse a key reply", test_handshake_aliases_cannot_reuse_a_key_reply);
+  return r.finish();
+}

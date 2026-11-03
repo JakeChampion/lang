@@ -6,47 +6,47 @@ import "./lib/gnu";
 import "./lib/utmp";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
-  out = out + "Output who is currently logged in according to FILE.\n";
+  out += "Output who is currently logged in according to FILE.\n";
   out = out + "If FILE is not specified, use " + utmp.default_path() + ".  /var/log/wtmp as FILE is common.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 pub function main(): i32 {
-  let operands: string[] = gnu.parse_standard_options_only(args(), "users", help_text(), 1);
+  let operands = gnu.parse_standard_options_only(args(), "users", help_text(), 1);
   if (operands.len() > 1) {
     gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
   }
-  let path: string = utmp.default_path();
+  let path = utmp.default_path();
   if (operands.len() == 1) {
     path = operands[0];
   }
-  let entries: utmp.Entry[] = utmp.read_logins(path);
+  let entries = utmp.read_logins(path);
   let names: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < entries.len()) {
     names = names.append(entries[i].name());
-    i = i + 1;
+    i += 1;
   }
   names = cmp.sort(names);
   if (names.len() == 0) {
     gnu.finish(gnu.out_new());
     return 0;
   }
-  let line: string = "";
+  let line = "";
   i = 0;
   while (i < names.len()) {
     if (i > 0) {
-      line = line + " ";
+      line += " ";
     }
-    line = line + names[i];
-    i = i + 1;
+    line += names[i];
+    i += 1;
   }
-  let o: io_buffered.BufWriter = gnu.put(gnu.out_new(), line + "\n");
+  let o = gnu.put(gnu.out_new(), line + "\n");
   gnu.finish(o);
   return 0;
 }

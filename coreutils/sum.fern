@@ -13,16 +13,16 @@ function opt_sysv(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Print a 16-bit checksum and a block count for each FILE.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -r              use BSD sum algorithm (the default), use 1K blocks\n";
-  out = out + "  -s, --sysv      use System V sum algorithm, use 512 bytes blocks\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print a 16-bit checksum and a block count for each FILE.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -r              use BSD sum algorithm (the default), use 1K blocks\n";
+  out += "  -s, --sysv      use System V sum algorithm, use 512 bytes blocks\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -60,7 +60,7 @@ function read_size(): i32 {
 }
 
 function sum_reader(own r: Reader, sysv: boolean, owned: boolean): Tally {
-  let c: Ctx = ctx_new(sysv);
+  let c = ctx_new(sysv);
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -98,7 +98,7 @@ function sum_path(path: string, sysv: boolean): Tally {
 }
 
 function pad(s: string, width: i32, zero: boolean): string {
-  let n: i32 = width - s.len();
+  let n = width - s.len();
   if (n <= 0) {
     return s;
   }
@@ -109,7 +109,7 @@ function pad(s: string, width: i32, zero: boolean): string {
 }
 
 function line_for(t: Tally, sysv: boolean, name: string, named: boolean): string {
-  let out: string = "";
+  let out = "";
   if (sysv) {
     out = t.checksum.to_string() + " " + t.blocks.to_string();
   } else {
@@ -122,13 +122,13 @@ function line_for(t: Tally, sysv: boolean, name: string, named: boolean): string
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("r", "", opt_bsd()));
   opts = opts.append(gnu.flag("s", "sysv", opt_sysv()));
 
-  let sysv: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "sum", help_text(), 1);
+  let sysv = false;
+  let g = gnu.getopt_new(argv, opts, "sum", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -142,17 +142,17 @@ pub function main(): i32 {
     }
   }
 
-  let operands: string[] = g.operands();
-  let named: boolean = operands.len() > 0;
+  let operands = g.operands();
+  let named = operands.len() > 0;
   if (!named) {
     operands = ["-"];
   }
 
-  let out: io_buffered.BufWriter = gnu.out_new();
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let out = gnu.out_new();
+  let ok = true;
+  let i = 0;
   while (i < operands.len()) {
-    let t: Tally = sum_path(operands[i], sysv);
+    let t = sum_path(operands[i], sysv);
     if (t.failed) {
       ok = false;
       match (t.err) {
@@ -164,7 +164,7 @@ pub function main(): i32 {
     } else {
       out = gnu.flush(gnu.put(out, line_for(t, sysv, operands[i], named)));
     }
-    i = i + 1;
+    i += 1;
   }
   gnu.close_stdout(out, false);
   if (!ok) {
