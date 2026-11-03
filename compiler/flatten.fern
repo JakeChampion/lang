@@ -8,7 +8,7 @@ import "./platforms";
 
 pub struct ImportedEnum { name: string, prefix: string }
 
-pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], enumnames: string[], imported_enums: ImportedEnum[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[], type_params: string[] }
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], enumnames: string[], imported_enums: ImportedEnum[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[], type_params: string[], own_variants: string[] }
 
 function imported_enum_prefix(name: string, ctx: RewriteCtx): string {
   for en in ctx.imported_enums {
@@ -897,13 +897,29 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
   }
   let br: i32 = first_bracket(tn);
   if (br < 0) {
-    return mangle_bare(tn, ctx);
+    return bare_type(tn, ctx);
   }
   let base: str = slice_unchecked(tn, 0, br);
   if (declname_index_of(base + "", ctx) >= 0) {
     return ctx.prefix + "__" + base + slice_unchecked(tn, br, tn.len());
   }
   return tn;
+}
+
+// A variant under a built-in type's name does not take that name in a type.
+function bare_type(tn: string, ctx: RewriteCtx): string {
+  let builtin: boolean = parser.is_reserved_struct_name(tn) || parser.is_reserved_enum_name(tn);
+  if (builtin && (util.has_str(ctx.own_variants, tn) || declname_index_of(tn, ctx) < 0)) {
+    return tn;
+  }
+  return mangle_bare(tn, ctx);
+}
+
+function rewrite_variant_name(tn: string, ctx: RewriteCtx): string {
+  if (first_dot(tn) < 0 && first_bracket(tn) < 0) {
+    return mangle_bare(tn, ctx);
+  }
+  return rewrite_type_name(tn, ctx);
 }
 
 function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
@@ -917,7 +933,7 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
       if (pv.has_lit_cond) {
         cond = rewrite_expr(cond, ctx);
       }
-      return ast.PatVariant { ...pv, type_name: rewrite_type_name(pv.type_name, ctx), nested: nested, lit_cond: cond };
+      return ast.PatVariant { ...pv, type_name: rewrite_variant_name(pv.type_name, ctx), nested: nested, lit_cond: cond };
     },
     _ => {
       return p;
@@ -1324,7 +1340,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
       declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: param_names(fd),
       enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
-      reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets,
+      reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants,
     };
     let bound_modules: string[] = [];
     for module in fd.bound_modules {
@@ -1389,7 +1405,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
   for binding in mod.exports {
     exports = exports.append(parser.ExportBinding { ...binding, func_name: mangle_bare(binding.func_name, ctx) });
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, exports: exports, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: [], enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, exports: exports, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: [], enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
 }
 
 function rewrite_trait_ref(spelling: string, ctx: RewriteCtx): string {
@@ -1499,7 +1515,7 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
     }
     i = i + 1;
   }
-  let ctx: RewriteCtx = RewriteCtx { type_params: [], modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+  let ctx: RewriteCtx = RewriteCtx { type_params: [], modnames: mod_names(mod), modprefixes: import_prefixes(mod, ids, pfxs), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1572,7 +1588,18 @@ function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: str
     variant_scope: scope,
     reexport_keys: reexport_keys,
     reexport_targets: reexport_targets,
+    own_variants: variant_names(mod),
   };
+}
+
+function variant_names(mod: parser.Module): string[] {
+  let names: string[] = [];
+  for sd in mod.structs {
+    if (sd.enum_owner.len() > 0) {
+      names = names.append(sd.name);
+    }
+  }
+  return names;
 }
 
 struct TraitDefaultIn { key: string, params: string[], consts: string[], method: parser.FuncDecl }
@@ -2235,7 +2262,7 @@ function main(): i32 {
   ivm = ivm.append("test__Fail");
   let rxk: string[] = [];
   let rxt: string[] = [];
-  let ctx: RewriteCtx = RewriteCtx { type_params: [], modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], imported_enums: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
+  let ctx: RewriteCtx = RewriteCtx { type_params: [], modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], imported_enums: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt, own_variants: [] };
   if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") {
     return 90;
   }
@@ -2304,7 +2331,7 @@ function main(): i32 {
   rxk2 = rxk2.append("lexer__Token");
   let rxt2: string[] = [];
   rxt2 = rxt2.append("orig__Token");
-  let rctx: RewriteCtx = RewriteCtx { type_params: [], modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], imported_enums: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk2, reexport_targets: rxt2 };
+  let rctx: RewriteCtx = RewriteCtx { type_params: [], modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], enumnames: [], imported_enums: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk2, reexport_targets: rxt2, own_variants: [] };
   if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") {
     return 97;
   }
@@ -2320,7 +2347,7 @@ function main(): i32 {
   edn = edn.append("Wrap");
   let een: string[] = [];
   een = een.append("E");
-  let ectx: RewriteCtx = RewriteCtx { type_params: [], modnames: mn, modprefixes: mn, prefix: "lx", declnames: edn, declnames_mangled: build_mangled_names("lx", edn), dn_head: build_declname_head(edn), dn_next: build_declname_next(edn), locals: [], enumnames: een, imported_enums: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt };
+  let ectx: RewriteCtx = RewriteCtx { type_params: [], modnames: mn, modprefixes: mn, prefix: "lx", declnames: edn, declnames_mangled: build_mangled_names("lx", edn), dn_head: build_declname_head(edn), dn_next: build_declname_next(edn), locals: [], enumnames: een, imported_enums: [], ivar_names: ivn, ivar_mangled: ivm, variant_scope: mn, reexport_keys: rxk, reexport_targets: rxt, own_variants: [] };
   if (rewrite_type_name("E.Wrap", ectx) != "lx__E.lx__Wrap") {
     return 220;
   }
