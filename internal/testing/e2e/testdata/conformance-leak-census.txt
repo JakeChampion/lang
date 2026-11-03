@@ -310,6 +310,7 @@ float_pythagoras                                     0
 float_reduce_in_index_order                          0
 float_to_int_saturating                              0
 float_to_string_parity                               0
+float_value_branches_settle                          0
 float_width_conversion                               0
 for_in_squares                                       0
 for_loop_continue_steps                              0

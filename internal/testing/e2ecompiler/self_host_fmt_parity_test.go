@@ -1509,6 +1509,14 @@ a = b = c = 7;
 return a + b + c;
 }
 `},
+	{"float-value-if-in-enum-arm", `enum Value { VBool(boolean), VNum(f64) }
+function g(v: Value, n: i32, q: boolean): f64 {
+let a = match (n) { 0 | 1 => 1.5, 2 => 2.5, _ => 3.5 };
+let b = match (v) { VBool(x) => if (q) { 1.0 } else { 0.0 }, _ => 4.0 };
+let c = if (n == 0) { 0.25 } else if (n == 1) { 0.5 } else { 0.75 };
+return a + b + c;
+}
+`},
 	{"fstring-literal-spelling", `function f(c: char): string {
 return c.to_string();
 }

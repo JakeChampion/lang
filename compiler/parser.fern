@@ -24990,7 +24990,7 @@ function settle_if_branches(f: ast.StmtIf): ast.Stmt {
   if (!chained) {
     nelse = settle_branch_body(f.else_body);
   }
-  return s_if(f.cond, settle_branch_body(f.then_body), nelse);
+  return ast.StmtIf { ...f, then_body: settle_branch_body(f.then_body), else_body: nelse };
 }
 
 function match_arms_float_settleable(m: ast.StmtMatch): boolean {
@@ -25010,12 +25010,10 @@ function match_arms_float_settleable(m: ast.StmtMatch): boolean {
 
 function settle_match_arms(m: ast.StmtMatch): ast.Stmt {
   let arms: ast.MatchArm[] = [];
-  let a: i32 = 0;
-  while (a < m.arms.len()) {
-    arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: settle_branch_body(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
-    a = a + 1;
+  for arm in m.arms {
+    arms = arms.append(ast.MatchArm { ...arm, body: settle_branch_body(arm.body) });
   }
-  return s_match_origin(m.scrutinee, arms, m.line, m.col, m.origin);
+  return ast.StmtMatch { ...m, arms: arms };
 }
 
 function settle_float_value_branches(e: ast.Expr): ast.Expr {
