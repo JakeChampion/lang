@@ -1,3 +1,5 @@
+# 2026-11-03: PR #14122, perf-aarch64 job 126271937197 on 747f6b7a. All 21 aarch64 findings are reductions:
+# .text shrinks 1.0% to 6.0% and .ir 1.1% to 3.3%. The higher-cost limits stay as they were.
 # 2026-11-03: PR #14122, a local scripts/perf-bench run on its head. Liveness decides which values cross a call,
 # and a small branch splices into its two callers. The x86_64 .text rows shrink 1% to 7%, and three .ir rows 1% to 2%.
 # 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
@@ -497,9 +499,9 @@ aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
 aarch64/deflate_decode.ir	35961899
-aarch64/deflate_decode.text	13839
+aarch64/deflate_decode.text	13560
 aarch64/deflate_encode.ir	44105319
-aarch64/deflate_encode.text	7910
+aarch64/deflate_encode.text	7829
 aarch64/enum_match.text	1112
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -513,15 +515,15 @@ aarch64/map_int.text	8504
 aarch64/map_int.ir	23869629
 aarch64/map_probe_chain.text	8514
 aarch64/map_probe_chain.ir	233221143
-aarch64/map_string.text	9599
+aarch64/map_string.text	9422
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
-aarch64/ordmap_insert.text	5873
+aarch64/ordmap_insert.text	5741
 aarch64/ordmap_insert.ir	95978671
-aarch64/pmap_insert.text	3242
+aarch64/pmap_insert.text	3204
 aarch64/pmap_insert.ir	63996220
-aarch64/pvec_with.text	3202
-aarch64/pvec_with.ir	59221804
+aarch64/pvec_with.text	3167
+aarch64/pvec_with.ir	58556365
 aarch64/record_update.text	1513
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1686
@@ -529,9 +531,9 @@ aarch64/sort_inplace.text	1686
 aarch64/sort_inplace.ir	43684079
 aarch64/sort_ints.text	2175
 aarch64/sort_ints.ir	30178876
-aarch64/sort_strings.text	3594
-aarch64/sort_strings.ir	105486307
-aarch64/string_build.text	2361
+aarch64/sort_strings.text	3451
+aarch64/sort_strings.ir	104358797
+aarch64/string_build.text	2241
 aarch64/string_build.ir	47221466
 aarch64/string_count_byte.text	1445
 aarch64/string_count_byte.ir	295207223
@@ -539,17 +541,17 @@ aarch64/string_find_byte.text	1843
 aarch64/string_find_byte.ir	55921279
 aarch64/string_rfind_byte.text	1965
 aarch64/string_rfind_byte.ir	55941911
-aarch64/string_scan.text	2565
+aarch64/string_scan.text	2442
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1132
 aarch64/string_slice.ir	43620107
-aarch64/struct_drop.text	2671
+aarch64/struct_drop.text	2549
 aarch64/struct_drop.ir	222380901
 aarch64/tokenize.text	1388
 aarch64/tokenize.ir	38350109
-aarch64/utf8_ingest_unchecked.text	8656
+aarch64/utf8_ingest_unchecked.text	8158
 aarch64/utf8_ingest_unchecked.ir	2689511
-aarch64/utf8_ingest_validated.text	9261
+aarch64/utf8_ingest_validated.text	8706
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
@@ -564,14 +566,14 @@ x86_64/perceus_rbtree.ir	51343623
 x86_64/perceus_rbtree_ck.text	2893
 x86_64/perceus_rbtree_ck.ir	51100263
 aarch64/perceus_cfold.text	2178
-aarch64/perceus_cfold.ir	62299589
-aarch64/perceus_deriv.text	3026
-aarch64/perceus_deriv.ir	83086981
+aarch64/perceus_cfold.ir	61031992
+aarch64/perceus_deriv.text	2976
+aarch64/perceus_deriv.ir	80353384
 aarch64/perceus_nqueens.text	1805
 aarch64/perceus_nqueens.ir	106638432
-aarch64/perceus_rbtree.text	3158
-aarch64/perceus_rbtree.ir	57613716
-aarch64/perceus_rbtree_ck.text	3251
-aarch64/perceus_rbtree_ck.ir	57034038
+aarch64/perceus_rbtree.text	3080
+aarch64/perceus_rbtree.ir	56811156
+aarch64/perceus_rbtree_ck.text	3169
+aarch64/perceus_rbtree_ck.ir	56271318
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
