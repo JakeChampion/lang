@@ -1,1 +1,1 @@
-match on non-enum value `i32[]` only accepts literal patterns or `_`
+match on non-enum value `i32[]` only accepts literal patterns, a binding name, or `_`
