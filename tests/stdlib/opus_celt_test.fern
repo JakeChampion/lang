@@ -6,7 +6,8 @@ import "std/test";
 // random packets with it: a random frame size, stream channel count, first
 // and last band, and length. Random bytes are a valid CELT frame, so the
 // packets reach each path of the decoder. One packet in 16 starts with two
-// 255 bytes, which sets the silence flag. The trace holds the bits of each
+// 255 bytes, which sets the silence flag. One frame in 5 is lost, and the
+// decoder conceals it. The trace holds the bits of each
 // sample and the final range of each frame. libopus 1.4, in its float build,
 // gave the CRC-32 of each trace, from a C program that makes the same calls.
 
@@ -78,6 +79,13 @@ function frame(own g: Gen, own t: crc32.Crc32, own st: celt.Decoder, rate: i32, 
     data = data.with(0, 255u8);
     data = data.with(1, 255u8);
   }
+  let (g10, r10) = rnd(g);
+  g = g10;
+  if (r10 % 5 == 0) {
+    data = [];
+    len = 0;
+    start = 0;
+  }
   let fs: i32 = (120 << lm) / (48000 / rate);
   let (st1, res) = st.decode(data, celt.Frame { frame_size: fs, stream_channels: c, start: start, end: end });
   let out: string = "d " + lm.to_string() + " " + c.to_string() + " " + start.to_string() + " " + end.to_string() + " " + len.to_string() + " ";
@@ -128,11 +136,11 @@ function trace(seed: u32, scripts: i32, frames: i32): u32 {
 }
 
 function test_short_script(): test.TestOutcome {
-  return test.assert_eq(trace(1u32, 3, 8), 1502802417u32);
+  return test.assert_eq(trace(1u32, 3, 8), 766233686u32);
 }
 
 function test_long_script(): test.TestOutcome {
-  return test.assert_eq(trace(2u32, 6, 10), 3777869444u32);
+  return test.assert_eq(trace(2u32, 6, 10), 2184491256u32);
 }
 
 function test_bad_arguments(): test.TestOutcome {
@@ -161,10 +169,42 @@ function test_bad_arguments(): test.TestOutcome {
   return test.pass();
 }
 
+// A loss that starts with a hybrid frame has no pitch period for the CELT
+// frame after it. libopus reads past its excitation buffer there, and this
+// decoder makes noise.
+function test_loss_after_a_hybrid_loss(): test.TestOutcome {
+  match (celt.decoder(48000, 1)) {
+    Ok(st) => {
+      let (st1, a) = st.decode([7u8, 99u8, 200u8, 13u8], celt.Frame { frame_size: 960, stream_channels: 1, start: 0, end: 21 });
+      let (st2, b) = st1.decode([9u8, 17u8, 33u8], celt.Frame { frame_size: 960, stream_channels: 1, start: 0, end: 21 });
+      let (st3, c) = st2.decode_lost(celt.Frame { frame_size: 480, stream_channels: 1, start: 17, end: 21 });
+      let (st4, d) = st3.decode_lost(celt.Frame { frame_size: 960, stream_channels: 1, start: 0, end: 21 });
+      match (d) {
+        Ok(pcm) => {
+          for v in pcm {
+            if (!(v >= -1.0f32 && v <= 1.0f32)) {
+              return test.fail("a concealed sample is " + v.to_string());
+            }
+          }
+          return test.assert_eq(pcm.len(), 960);
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("std/opus/celt");
   r = r.it("a short script gives the libopus trace", test_short_script);
   r = r.it("a long script gives the libopus trace", test_long_script);
   r = r.it("a bad rate or frame size is an error", test_bad_arguments);
+  r = r.it("a CELT loss after a hybrid loss makes noise", test_loss_after_a_hybrid_loss);
   return r.finish();
 }

@@ -6,7 +6,7 @@ This module decodes CELT frames (RFC 6716, section 4.3). It is a port of the flo
 
 A `Decoder` keeps the state between frames: the energy of each band, the synthesis memory of each channel, the pitch postfilter, and the de-emphasis filter. Each call to `decode` reads one frame from a range decoder and gives its samples.
 
-A frame is 120, 240, 480 or 960 samples at 48 kHz. The decoder reads the header flags, the coarse energy, the time-frequency resolution, the spread, the allocation, the fine energy, and then the band shapes through `std/opus/bands`. It scales each band by its energy, runs the inverse MDCT of `std/opus/mdct`, and applies the pitch postfilter and the de-emphasis.
+A frame is 120, 240, 480 or 960 samples at 48 kHz. The decoder reads the header flags, the coarse energy, the time-frequency resolution, the spread and the allocation. Then it reads the fine energy and the band shapes through `std/opus/bands`. It scales each band by its energy, runs the inverse MDCT of `std/opus/mdct`, and applies the pitch postfilter and the de-emphasis.
 
 The Opus layer can set some values for each frame: the number of channels in the stream, the first band (17 in hybrid frames), and the last band (smaller for narrower audio). A stream of one channel can play on two channels, and a stream of two channels can play on one.
 
@@ -14,7 +14,7 @@ The Opus layer can set some values for each frame: the number of channels in the
 
 - `decoder` takes a sample rate of 48000, 24000, 16000, 12000 or 8000, and 1 or 2 channels. At a rate below 48000, the decoder keeps one sample in each `48000 / rate`.
 - `Frame.frame_size` is the number of samples at the sample rate of the decoder.
-- The packet of a frame has 2 to 1275 bytes.
+- The packet of a frame has at most 1275 bytes. A packet of 0 or 1 byte is a lost frame, and the decoder conceals it.
 - The samples are f32 values in the range -1 to 1, and the channels are interleaved.
 - The arithmetic is in f32, in the same order as libopus, so the results are the same bits. The decoder calls `exp` and `sqrt` of `std/f64` where libopus calls the C library.
 
@@ -35,6 +35,8 @@ The Opus layer can set some values for each frame: the number of channels in the
 <<postfilter>>
 
 <<synthesis>>
+
+<<loss concealment>>
 
 <<frame>>
 ```
@@ -79,6 +81,7 @@ import "std/opus/bands";
 import "std/opus/energy";
 import "std/opus/mdct";
 import "std/opus/modes";
+import "std/opus/pitch";
 import "std/opus/range";
 import "std/opus/rate";
 import "std/opus/vq";
@@ -403,7 +406,7 @@ function denormalise_bands(x: [f32], log_e: [f32], e_at: i32, start0: i32, end0:
 
 ### `anti-collapse`
 
-A transient frame codes each band as `M` short blocks. When a block of a band gets no pulses, its energy collapses to zero. The anti-collapse step fills each such block with noise at the level of the energy that the band lost, and then makes the band unit length again.
+A transient frame codes each band as `M` short blocks. When a block of a band gets no pulses, its energy collapses to zero. The anti-collapse step fills each such block with noise at the level of the lost energy. Then it makes the band unit length again.
 
 ```fern
 <<anti-collapse>>=
@@ -641,9 +644,253 @@ function deemphasis(own st: Decoder, n: i32): (Decoder, f32[]) {
 }
 ```
 
+### `loss concealment`
+
+A lost frame continues the signal. For the first frames of a loss, the decoder finds the pitch period of the last output. It repeats the last period of the prediction error with a decay. Then the prediction filter makes a signal of that error. The energy of the result is at most the energy of the period that it repeats. The comb filter of the last frame and a mirror of the overlap let the next frame blend in.
+
+The decoder makes noise at the energy of each band in three cases. These are a loss of 100 ms or more, a loss at the start of a stream, and a hybrid frame. A loss can start with a hybrid frame and continue with a CELT frame. Then the decoder has no pitch period, and it also makes noise. In that case libopus reads past the end of its excitation buffer.
+
+In the noise, the energy falls by 1.5 dB in the first lost frame, and by 0.5 dB in each frame after it. It does not fall below the background noise.
+
+```fern
+<<loss concealment>>=
+const MAX_PERIOD: i32 = 1024;
+
+const PLC_PITCH_LAG_MAX: i32 = 720;
+
+const PLC_PITCH_LAG_MIN: i32 = 100;
+
+const FADE: f32 = 0.800000011920929f32;
+
+const KEEP: f32 = 0.20000000298023224f32;
+
+// The pitch period of the output history of each channel.
+function plc_pitch(mem: [f32], channels: i32): i32 {
+  let lp: f32[] = pitch.pitch_downsample(mem, 0, mem, MEM, DECODE_BUFFER_SIZE, channels);
+  let found: i32 = pitch.pitch_search(lp, PLC_PITCH_LAG_MAX >> 1, lp, DECODE_BUFFER_SIZE - PLC_PITCH_LAG_MAX, PLC_PITCH_LAG_MAX - PLC_PITCH_LAG_MIN);
+  return PLC_PITCH_LAG_MAX - found;
+}
+
+// The noise of one channel, a unit shape in each band.
+function noise_bands(seed0: u32, start: i32, end: i32, lm: i32): Filled {
+  let n: i32 = modes.SHORT_MDCT_SIZE << lm;
+  let x: f32[] = filled(n, 0.0f32);
+  let seed: u32 = seed0;
+  for i in start..end {
+    let at: i32 = modes.EBANDS[i] << lm;
+    let len: i32 = modes.EBANDS[i + 1] - modes.EBANDS[i] << lm;
+    let band: f32[] = [];
+    for j in 0..len {
+      seed = bands.lcg_rand(seed);
+      band = band.append((seed as i32 >> 20) as f32);
+    }
+    let unit: f32[] = vq.renormalise_vector(band, len, 1.0f32);
+    for j in 0..len {
+      x = x.with(at + j, unit[j]);
+    }
+  }
+  return Filled { x: x, seed: seed };
+}
+
+function conceal_noise(own st: Decoder, f: Frame, lm: i32): Decoder {
+  let n: i32 = modes.SHORT_MDCT_SIZE << lm;
+  let eff_end: i32 = f.end;
+  if (eff_end < f.start) {
+    eff_end = f.start;
+  }
+  let mem: f32[] = age(st.mem, st.channels, n);
+  let decay: f32 = 0.5f32;
+  if (st.loss_duration == 0) {
+    decay = 1.5f32;
+  }
+  let old: f32[] = st.old_band_e;
+  for c in 0..st.channels {
+    for i in f.start..f.end {
+      let k: i32 = c * modes.BANDS + i;
+      old = old.with(k, max16(st.background_log_e[k], old[k] - decay));
+    }
+  }
+  let x: Filled = noise_bands(st.rng, f.start, eff_end, lm);
+  let y: Filled = Filled { x: filled(n, 0.0f32), seed: x.seed };
+  if (st.channels == 2) {
+    y = noise_bands(x.seed, f.start, eff_end, lm);
+  }
+  let syn: Synthesis = Synthesis { start: f.start, end: eff_end, channels: st.channels, transient: false, lm: lm, silence: false };
+  return synthesis(Decoder { ...st, mem: mem, rng: y.seed, old_band_e: old }, x.x, y.x, syn);
+}
+
+// The prediction error of the last `MAX_PERIOD` samples of one channel, from
+// `exc[LPC_ORDER]`, with the samples before them.
+struct Excitation { exc: f32[], lpc: f32[], decay: f32 }
+
+function excitation(st: Decoder, at: i32, c: i32, exc_length: i32): Excitation {
+  let exc: f32[] = [];
+  for i in 0..MAX_PERIOD + LPC_ORDER {
+    exc = exc.append(st.mem[at + DECODE_BUFFER_SIZE - MAX_PERIOD - LPC_ORDER + i]);
+  }
+  let a: f32[] = [];
+  for i in 0..LPC_ORDER {
+    a = a.append(st.lpc[c * LPC_ORDER + i]);
+  }
+  if (st.loss_duration == 0) {
+    let ac: f32[] = pitch.autocorr(exc, LPC_ORDER, true, LPC_ORDER, MAX_PERIOD);
+    ac = ac.with(0, ac[0] * 1.000100016593933f32);
+    let k: f32 = 0.00800000037997961f32 * 0.00800000037997961f32;
+    for i in 1..LPC_ORDER + 1 {
+      ac = ac.with(i, ac[i] - ac[i] * k * (i as f32) * (i as f32));
+    }
+    a = pitch.lpc(ac, LPC_ORDER);
+  }
+  let from: i32 = LPC_ORDER + MAX_PERIOD - exc_length;
+  let err: f32[] = pitch.fir(exc, from, a, exc_length, LPC_ORDER);
+  for i in 0..exc_length {
+    exc = exc.with(from + i, err[i]);
+  }
+  let e1: f32 = 1.0f32;
+  let e2: f32 = 1.0f32;
+  let half: i32 = exc_length >> 1;
+  for i in 0..half {
+    let v1: f32 = exc[LPC_ORDER + MAX_PERIOD - half + i];
+    e1 = e1 + v1 * v1;
+    let v2: f32 = exc[LPC_ORDER + MAX_PERIOD - 2 * half + i];
+    e2 = e2 + v2 * v2;
+  }
+  if (e2 < e1) {
+    e1 = e2;
+  }
+  return Excitation { exc: exc, lpc: a, decay: ((e1 / e2) as f64).sqrt() as f32 };
+}
+
+// The energy of `len` samples of `x` from `at`.
+function energy_of(x: [f32], at: i32, len: i32): f32 {
+  let s: f32 = 0.0f32;
+  for i in 0..len {
+    s = s + x[at + i] * x[at + i];
+  }
+  return s;
+}
+
+// The attenuation of the concealed samples whose energy is more than the
+// energy `s1` of the samples that they repeat.
+function limit_energy(own buf: f32[], at: i32, len: i32, s1: f32): f32[] {
+  let s2: f32 = energy_of(buf, at, len);
+  if (!(s1 > KEEP * s2)) {
+    for i in 0..len {
+      buf = buf.with(at + i, 0.0f32);
+    }
+    return buf;
+  }
+  if (s1 < s2) {
+    let ratio: f32 = (((s1 + 1.0f32) / (s2 + 1.0f32)) as f64).sqrt() as f32;
+    for i in 0..len {
+      let g: f32 = ratio;
+      if (i < modes.OVERLAP) {
+        g = 1.0f32 - modes.WINDOW[i] * (1.0f32 - ratio);
+      }
+      buf = buf.with(at + i, g * buf[at + i]);
+    }
+  }
+  return buf;
+}
+
+// The comb filter of the last frame, applied in the opposite sense to the
+// overlap, then the mirror of the overlap for the next frame.
+function blend_overlap(own buf: f32[], at: i32, st: Decoder): f32[] {
+  let x: i32 = at + DECODE_BUFFER_SIZE;
+  let etmp: f32[] = [];
+  let g: f32 = -st.postfilter_gain;
+  let t: i32 = st.postfilter_period;
+  if (t < COMBFILTER_MINPERIOD) {
+    t = COMBFILTER_MINPERIOD;
+  }
+  let g0: f32 = g * GAINS[3 * st.postfilter_tapset];
+  let g1: f32 = g * GAINS[3 * st.postfilter_tapset + 1];
+  let g2: f32 = g * GAINS[3 * st.postfilter_tapset + 2];
+  for i in 0..modes.OVERLAP {
+    let p: i32 = x + i;
+    if (g == 0.0f32) {
+      etmp = etmp.append(buf[p]);
+    } else {
+      etmp = etmp.append(buf[p] + g0 * buf[p - t] + g1 * (buf[p - t + 1] + buf[p - t - 1]) + g2 * (buf[p - t + 2] + buf[p - t - 2]));
+    }
+  }
+  for i in 0..modes.OVERLAP / 2 {
+    buf = buf.with(x + i, modes.WINDOW[i] * etmp[modes.OVERLAP - 1 - i] + modes.WINDOW[modes.OVERLAP - i - 1] * etmp[i]);
+  }
+  return buf;
+}
+
+// One channel of the pitch-based concealment.
+function conceal_channel(own st: Decoder, c: i32, n: i32, pitch_index: i32, fade: f32): Decoder {
+  let at: i32 = c * MEM;
+  let exc_length: i32 = 2 * pitch_index;
+  if (exc_length > MAX_PERIOD) {
+    exc_length = MAX_PERIOD;
+  }
+  let e: Excitation = excitation(st, at, c, exc_length);
+  let buf: f32[] = st.mem;
+  for i in 0..DECODE_BUFFER_SIZE - n {
+    buf = buf.with(at + i, buf[at + i + n]);
+  }
+  let offset: i32 = MAX_PERIOD - pitch_index;
+  let len: i32 = n + modes.OVERLAP;
+  let attenuation: f32 = fade * e.decay;
+  let s1: f32 = 0.0f32;
+  let j: i32 = 0;
+  for i in 0..len {
+    if (j >= pitch_index) {
+      j = j - pitch_index;
+      attenuation = attenuation * e.decay;
+    }
+    buf = buf.with(at + DECODE_BUFFER_SIZE - n + i, attenuation * e.exc[LPC_ORDER + offset + j]);
+    let v: f32 = buf[at + DECODE_BUFFER_SIZE - MAX_PERIOD - n + offset + j];
+    s1 = s1 + v * v;
+    j = j + 1;
+  }
+  let lpc_mem: f32[] = [];
+  for i in 0..LPC_ORDER {
+    lpc_mem = lpc_mem.append(buf[at + DECODE_BUFFER_SIZE - n - 1 - i]);
+  }
+  let out: pitch.Iir = pitch.iir(buf, at + DECODE_BUFFER_SIZE - n, e.lpc, len, LPC_ORDER, lpc_mem);
+  for i in 0..len {
+    buf = buf.with(at + DECODE_BUFFER_SIZE - n + i, out.y[i]);
+  }
+  buf = limit_energy(buf, at + DECODE_BUFFER_SIZE - n, len, s1);
+  buf = blend_overlap(buf, at, st);
+  let lpc: f32[] = st.lpc;
+  for i in 0..LPC_ORDER {
+    lpc = lpc.with(c * LPC_ORDER + i, e.lpc[i]);
+  }
+  return Decoder { ...st, mem: buf, lpc: lpc };
+}
+
+// The concealment of one lost frame into the synthesis memory.
+function conceal(own st: Decoder, f: Frame, lm: i32): Decoder {
+  let n: i32 = modes.SHORT_MDCT_SIZE << lm;
+  let duration: i32 = st.loss_duration + (1 << lm);
+  if (duration > 10000) {
+    duration = 10000;
+  }
+  if (st.loss_duration >= 40 || f.start != 0 || st.skip_plc || st.loss_duration != 0 && st.last_pitch_index == 0) {
+    return Decoder { ...conceal_noise(st, f, lm), loss_duration: duration };
+  }
+  let pitch_index: i32 = st.last_pitch_index;
+  let fade: f32 = FADE;
+  if (st.loss_duration == 0) {
+    pitch_index = plc_pitch(st.mem, st.channels);
+    fade = 1.0f32;
+  }
+  let out: Decoder = Decoder { ...st, last_pitch_index: pitch_index };
+  for c in 0..st.channels {
+    out = conceal_channel(out, c, n, pitch_index, fade);
+  }
+  return Decoder { ...out, loss_duration: duration };
+}
+```
+
 ### `frame`
 
-`decode` reads one frame. The steps are in the same order as the bit stream: the header, the coarse energy, the TF changes, the spread, the dynamic allocation, the trim, the allocation, the fine energy, the band shapes, the anti-collapse bit, and the final energy bits.
+`decode` reads one frame, in the order of the bit stream. First it reads the header, the coarse energy, the TF changes, the spread, the dynamic allocation and the trim. Then it reads the allocation, the fine energy, the band shapes, the anti-collapse bit and the final energy bits.
 
 ```fern
 <<frame>>=
@@ -856,8 +1103,8 @@ function problem(st: Decoder, len: i32, f: Frame): string {
   if (lm_of(f.frame_size * st.downsample) < 0) {
     return "the frame size " + f.frame_size.to_string() + " is not one that CELT uses";
   }
-  if (len < 2 || len > MAX_PACKET) {
-    return "a CELT packet has 2 to 1275 bytes, not " + len.to_string();
+  if (len > MAX_PACKET) {
+    return "a CELT packet has at most 1275 bytes, not " + len.to_string();
   }
   if (f.stream_channels != 1 && f.stream_channels != 2) {
     return "a CELT stream has 1 or 2 channels";
@@ -877,6 +1124,10 @@ pub function (own st: Decoder) decode_with(own d: range.Decoder, len: i32, f: Fr
   }
   let lm: i32 = lm_of(f.frame_size * st.downsample);
   let n: i32 = modes.SHORT_MDCT_SIZE << lm;
+  if (len <= 1) {
+    let (st0, pcm0) = deemphasis(conceal(st, f, lm), n);
+    return (st0, Ok(pcm0));
+  }
   let skip: boolean = st.loss_duration != 0;
   let s: Shapes = shapes(Decoder { ...st, skip_plc: skip }, d, len, f, lm);
   let h: Header = s.h;
@@ -896,5 +1147,10 @@ pub function (own st: Decoder) decode_with(own d: range.Decoder, len: i32, f: Fr
 // Decodes the frame in `packet`.
 pub function (own st: Decoder) decode(packet: [u8], f: Frame): (Decoder, Result[f32[], CeltError]) {
   return st.decode_with(range.decoder(packet), packet.len(), f);
+}
+
+// Conceals a lost frame.
+pub function (own st: Decoder) decode_lost(f: Frame): (Decoder, Result[f32[], CeltError]) {
+  return st.decode([], f);
 }
 ```
