@@ -63,6 +63,79 @@ function main(): i32 {
 
 const hardenWant = "15 14 17 6"
 
+const hardenFramesSrc = `import "std/string";
+import "std/crypto";
+import "std/hash/cksum";
+import "std/hash/crc32";
+import "std/crypto/aes_gcm";
+
+function sealed_len(): u64 {
+  let plain: u8[] = "hardened frames".bytes();
+  match (aes_gcm.key("0123456789abcdef".bytes())) {
+    Ok(k) => {
+      match (k.seal("0123456789ab".bytes(), plain, "".bytes())) {
+        Ok(sealed) => {
+          match (k.open("0123456789ab".bytes(), sealed, "".bytes())) {
+            Ok(back) => {
+              if (crc32.of(back) == crc32.of(plain)) { return sealed.len() as u64; }
+              return 0 as u64;
+            },
+            Err(e) => { return 1 as u64; }
+          }
+        },
+        Err(e) => { return 2 as u64; }
+      }
+    },
+    Err(e) => { return 3 as u64; }
+  }
+  return 4 as u64;
+}
+
+function main(): i32 {
+  let abc: u8[] = "abc".bytes();
+  let b: usize = buf_new(4);
+  buf_push_decimal(b, cksum.of(abc) as u64);
+  buf_push(b, " ");
+  buf_push_decimal(b, crc32.of(abc) as u64);
+  buf_push(b, " ");
+  buf_push_decimal(b, crypto.sha256(abc)[0] as u64);
+  buf_push(b, " ");
+  buf_push_decimal(b, crypto.sha1(abc)[0] as u64);
+  buf_push(b, " ");
+  buf_push_decimal(b, sealed_len());
+  buf_push(b, " ");
+  buf_push_bytes_range(b, "framed bytes".bytes(), 0, 6);
+  if (args().len() > 9) {
+    let r: ProcessResult = subprocess("/bin/true", [], "");
+    buf_push_decimal(b, r.exit_code as u64);
+  }
+  print(buf_take(b));
+  return 0;
+}
+`
+
+const hardenFramesWant = "1219131554 891568578 186 169 31 framed"
+
+// hardenFrameHelpers are the hand-written runtime helpers that hardenFramesSrc
+// links. The ones it also runs have a PAC control each.
+var hardenFrameHelpers = []struct {
+	label string
+	runs  bool
+}{
+	{"__fern_buf_push_decimal:", true},
+	{"__fern_buf_push_bytes_range_u8:", true},
+	{"__fern_crc32_cksum_data:", true},
+	{"__fern_aes_expand_key:", true},
+	{"__fern_aes_ctr32:", false},
+	{"__fern_ghash:", false},
+	{"__fern_aes_gcm_seal_into:", true},
+	{"__fern_aes_gcm_open_into:", true},
+	{"__fern_sha256_hw_blocks:", true},
+	{"__fern_sha1_hw_blocks:", true},
+	{"__fn___fern_subprocess:", false},
+	{"__fern_oob_abort_leaf:", false},
+}
+
 const hardenAbortSrc = `@noinline
 function pick(xs: i32[], i: i32): i32 {
   return xs[i];
@@ -319,6 +392,66 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		}
 	})
 
+	t.Run("runtime-frames", func(t *testing.T) {
+		frames := filepath.Join(dir, "frames.fern")
+		if err := os.WriteFile(frames, []byte(hardenFramesSrc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		build := func(out string, flags ...string) {
+			t.Helper()
+			args := append(append([]string{}, flags...), "-target", "arm64-linux", "-o", out, frames, stdlib)
+			if msg, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
+				t.Fatalf("compile %v: %v\n%s", flags, err, msg)
+			}
+		}
+		asm := filepath.Join(dir, "frames.s")
+		bin := filepath.Join(dir, "frames")
+		build(asm, "-harden", "-emit", "asm")
+		build(bin, "-harden")
+		if out := runHardened(t, qemu, bin); out != hardenFramesWant {
+			t.Fatalf("the -harden frames image printed %q, want %q", out, hardenFramesWant)
+		}
+		raw, err := os.ReadFile(asm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		for _, h := range hardenFrameHelpers {
+			if !strings.Contains(text, "\n"+h.label+"\n") {
+				t.Errorf("the frames program does not link %s", strings.TrimSuffix(h.label, ":"))
+			}
+		}
+		for _, fault := range unsignedFrames(text) {
+			t.Errorf("-harden frame without a signature: %s", fault)
+		}
+		if !authenticated {
+			t.Log("PAC enforcement of the runtime frames remains unverified on this host")
+			return
+		}
+		for _, h := range hardenFrameHelpers {
+			if !h.runs {
+				continue
+			}
+			at := strings.Index(text, "\n"+h.label+"\n")
+			sig := strings.Index(text[at:], "    paciasp\n")
+			if at < 0 || sig < 0 {
+				t.Fatalf("%s has no paciasp", h.label)
+			}
+			name := strings.TrimSuffix(h.label, ":")
+			unsigned := text[:at+sig] + text[at+sig+len("    paciasp\n"):]
+			s := filepath.Join(dir, "unsigned"+name+".s")
+			out := filepath.Join(dir, "unsigned"+name)
+			if err := os.WriteFile(s, []byte(unsigned), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if msg, err := exec.Command(armgcc, "-nostdlib", "-static", "-o", out, s).CombinedOutput(); err != nil {
+				t.Fatalf("link %s: %v\n%s", name, err, msg)
+			}
+			expectHardenSignal(t, qemu, out, syscall.SIGSEGV, syscall.SIGILL)
+		}
+		t.Logf("PAC runtime frame controls passed (%s)", mode)
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"-harden", "-target", "arm64-darwin", "-emit", "asm", "-o", filepath.Join(dir, "x.s"), src, stdlib},
@@ -330,6 +463,81 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			}
 		}
 	})
+}
+
+// unsignedFrames lists each frame in arm64 -harden text that saves the
+// return address with no paciasp before it, or restores it with no autiasp
+// before the exit. The startup frame never returns, so it is exempt.
+func unsignedFrames(text string) []string {
+	lines := strings.Split(text, "\n")
+	var faults []string
+	fn := ""
+	for i, line := range lines {
+		op := strings.TrimSpace(line)
+		if strings.HasSuffix(op, ":") && !strings.HasPrefix(op, ".L") {
+			fn = strings.TrimSuffix(op, ":")
+		}
+		switch {
+		case strings.HasPrefix(op, "stp x29, x30,"):
+			if fn != "_start" && !signedBefore(lines, i) {
+				faults = append(faults, fn+": "+op)
+			}
+		case strings.HasPrefix(op, "ldp x29, x30,"):
+			if !authenticatedAfter(lines, i) {
+				faults = append(faults, fn+": "+op)
+			}
+		}
+	}
+	return faults
+}
+
+func signedBefore(lines []string, at int) bool {
+	for j := at - 1; j >= 0; j-- {
+		op := strings.TrimSpace(lines[j])
+		if op == "paciasp" {
+			return true
+		}
+		if op == "ret" || strings.HasSuffix(op, ":") {
+			return false
+		}
+	}
+	return false
+}
+
+func authenticatedAfter(lines []string, at int) bool {
+	for _, line := range lines[at+1:] {
+		op := strings.TrimSpace(line)
+		if op == "autiasp" {
+			return true
+		}
+		if op == "ret" || strings.HasPrefix(op, "b ") || strings.HasPrefix(op, "br ") || strings.HasSuffix(op, ":") {
+			return false
+		}
+	}
+	return false
+}
+
+func TestHardenUnsignedFrames(t *testing.T) {
+	cases := []struct {
+		name, text string
+		faults     int
+	}{
+		{"signed", "f:\n    paciasp\n    stp x29, x30, [sp, #-48]!\n    ldp x29, x30, [sp], #48\n    autiasp\n    ret\n", 0},
+		{"signed-after-sub", "f:\n    paciasp\n    sub sp, sp, #224\n    stp x29, x30, [sp, #0]\n    ldp x29, x30, [sp, #0]\n    add sp, sp, #224\n    autiasp\n    ret\n", 0},
+		{"local-entry", "f:\n    ret\n.Lgrow:\n    paciasp\n    stp x29, x30, [sp, #-64]!\n    ldp x29, x30, [sp], #64\n    autiasp\n    b .Lback\n", 0},
+		{"startup", "_start:\n.Lkept:\n    stp x29, x30, [sp, #-16]!\n    bl __fn_main\n", 0},
+		{"unsigned-save", "f:\n    stp x29, x30, [sp, #-48]!\n    ldp x29, x30, [sp], #48\n    autiasp\n    ret\n", 1},
+		{"signature-of-another-function", "f:\n    paciasp\n    ret\ng:\n    stp x29, x30, [sp, #-16]!\n    ldp x29, x30, [sp], #16\n    autiasp\n    ret\n", 1},
+		{"unauthenticated-ret", "f:\n    paciasp\n    stp x29, x30, [sp, #-48]!\n    ldp x29, x30, [sp], #48\n    ret\n", 1},
+		{"unauthenticated-tail-call", "f:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n    ldp x29, x30, [sp], #16\n    b g\n", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unsignedFrames(tc.text); len(got) != tc.faults {
+				t.Errorf("unsignedFrames = %q, want %d faults", got, tc.faults)
+			}
+		})
+	}
 }
 
 func cpuEnforces(qemu, flag string) bool {
@@ -380,7 +588,7 @@ func expectSIGILL(t *testing.T, qemu, bin string) {
 
 func expectHardenSignal(t *testing.T, qemu, bin string, signals ...syscall.Signal) {
 	t.Helper()
-	out, err := runArm64Bin(qemu, bin).CombinedOutput()
+	out, err := withoutCoreDump(runArm64Bin(qemu, bin)).CombinedOutput()
 	ee, ok := err.(*exec.ExitError)
 	if !ok {
 		t.Fatalf("%s: err=%v, want signals %v\n%s", filepath.Base(bin), err, signals, out)
