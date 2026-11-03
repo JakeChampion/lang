@@ -18,6 +18,7 @@ An `Encoder` and a `Decoder` are values. Each call takes the coder as `own` and 
 - `uint` takes a total of 2 or more.
 - `bits` and `raw` take from 1 to 25 raw bits.
 - After `done`, `bytes` gives the packet. It has `storage` bytes, with zeros between the two streams.
+- A `Coder` holds an encoder or a decoder. Its calls take the value to write, and give the value that was written or read.
 - `error` is true when the encoder has no more space. It is also true when the decoder finds a value that the encoder cannot make. Neither coder stops at an error, but the data after it is not valid.
 
 ## Module assembly
@@ -31,6 +32,8 @@ An `Encoder` and a `Decoder` are values. Each call takes the coder as `own` and 
 <<encoder>>
 
 <<decoder>>
+
+<<either side>>
 ```
 
 ### `module introduction`
@@ -476,5 +479,76 @@ pub function (own d: Decoder) raw(n: i32): (Decoder, u32) {
   }
   let v: u32 = window & (1u32 << n as u32) - 1u32;
   return (Decoder { ...d, end_offs: end_offs, end_window: window >> n as u32, nend_bits: available - n, nbits_total: d.nbits_total + n }, v);
+}
+```
+
+### `either side`
+
+CELT codes some decisions in code that the encoder and the decoder share. A `Coder` lets that code run once for both sides. On the encoding side, each call writes the value it gets and gives it back. On the decoding side, each call ignores that value and gives the value that it reads.
+
+```fern
+<<either side>>=
+pub enum Coder {
+  Encoding(Encoder),
+  Decoding(Decoder),
+}
+
+pub function (c: Coder) encoding(): boolean {
+  match (c) {
+    Encoding(_) => {
+      return true;
+    },
+    Decoding(_) => {
+      return false;
+    }
+  }
+}
+
+pub function (c: Coder) tell(): i32 {
+  match (c) {
+    Encoding(e) => {
+      return e.tell();
+    },
+    Decoding(d) => {
+      return d.tell();
+    }
+  }
+}
+
+pub function (c: Coder) tell_frac(): i32 {
+  match (c) {
+    Encoding(e) => {
+      return e.tell_frac();
+    },
+    Decoding(d) => {
+      return d.tell_frac();
+    }
+  }
+}
+
+// A bit that is true with the probability 1 / 2 to the power `logp`.
+pub function (own c: Coder) bit(v: boolean, logp: i32): (Coder, boolean) {
+  match (c) {
+    Encoding(e) => {
+      return (Encoding(e.bit_logp(v, logp)), v);
+    },
+    Decoding(d) => {
+      let (d1, b) = d.bit_logp(logp);
+      return (Decoding(d1), b);
+    }
+  }
+}
+
+// A value less than `ft`, with an equal probability for each value.
+pub function (own c: Coder) uint_of(v: u32, ft: u32): (Coder, u32) {
+  match (c) {
+    Encoding(e) => {
+      return (Encoding(e.uint(v, ft)), v);
+    },
+    Decoding(d) => {
+      let (d1, u) = d.uint(ft);
+      return (Decoding(d1), u);
+    }
+  }
 }
 ```
