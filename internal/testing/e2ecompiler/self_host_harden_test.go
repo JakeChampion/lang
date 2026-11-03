@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -449,6 +450,19 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			}
 			expectHardenSignal(t, qemu, out, syscall.SIGSEGV, syscall.SIGILL)
 		}
+		compact := regexp.MustCompile(`(?m)^    paciasp\n(    (stp x[0-9]+, x30|str x30), \[sp, #-16\]!\n)`)
+		if !compact.MatchString(text) {
+			t.Fatal("the frames program has no signed compact save of x30")
+		}
+		s := filepath.Join(dir, "unsigned-compact.s")
+		out := filepath.Join(dir, "unsigned-compact")
+		if err := os.WriteFile(s, []byte(compact.ReplaceAllString(text, "$1")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if msg, err := exec.Command(armgcc, "-nostdlib", "-static", "-o", out, s).CombinedOutput(); err != nil {
+			t.Fatalf("link unsigned-compact: %v\n%s", err, msg)
+		}
+		expectHardenSignal(t, qemu, out, syscall.SIGSEGV, syscall.SIGILL)
 		t.Logf("PAC runtime frame controls passed (%s)", mode)
 	})
 
@@ -465,9 +479,10 @@ func TestSelfHostHardenArm64(t *testing.T) {
 	})
 }
 
-// unsignedFrames lists each frame in arm64 -harden text that saves the
-// return address with no paciasp before it, or restores it with no autiasp
-// before the exit. The startup frame never returns, so it is exempt.
+// unsignedFrames lists each stack save of x30 in arm64 -harden text with no
+// paciasp before it, and each restore with no autiasp before the next exit.
+// It also lists a paciasp that signs x30 again while it is still signed.
+// The startup frame never returns, so it is exempt.
 func unsignedFrames(text string) []string {
 	lines := strings.Split(text, "\n")
 	var faults []string
@@ -478,26 +493,48 @@ func unsignedFrames(text string) []string {
 			fn = strings.TrimSuffix(op, ":")
 		}
 		switch {
-		case strings.HasPrefix(op, "stp x29, x30,"):
+		case savesLR(op, "stp", "str"):
 			if fn != "_start" && !signedBefore(lines, i) {
 				faults = append(faults, fn+": "+op)
 			}
-		case strings.HasPrefix(op, "ldp x29, x30,"):
+		case savesLR(op, "ldp", "ldr"):
 			if !authenticatedAfter(lines, i) {
 				faults = append(faults, fn+": "+op)
+			}
+		case op == "paciasp":
+			if signedBefore(lines, i) {
+				faults = append(faults, fn+": paciasp of a signed x30")
 			}
 		}
 	}
 	return faults
 }
 
+// savesLR matches a frame record of x29 and x30, and a push or pop of x30
+// alone or in a pair. A plain offset store of x30 is a spill of a value.
+func savesLR(op, pair, single string) bool {
+	if strings.HasPrefix(op, pair+" x29, x30,") {
+		return true
+	}
+	if !strings.HasPrefix(op, pair+" ") && !strings.HasPrefix(op, single+" x30,") {
+		return false
+	}
+	push := strings.Contains(op, "x30, [sp, #-") && strings.HasSuffix(op, "]!")
+	return push || strings.Contains(op, "x30, [sp], #")
+}
+
+// signedBefore reports whether x30 still holds a signature from a paciasp
+// earlier in the same block.
 func signedBefore(lines []string, at int) bool {
 	for j := at - 1; j >= 0; j-- {
 		op := strings.TrimSpace(lines[j])
 		if op == "paciasp" {
 			return true
 		}
-		if op == "ret" || strings.HasSuffix(op, ":") {
+		if op == "ret" || op == "autiasp" || op == "xpaclri" || strings.HasSuffix(op, ":") {
+			return false
+		}
+		if strings.HasPrefix(op, "bl ") || strings.HasPrefix(op, "blr ") || strings.HasPrefix(op, "mov x30,") || savesLR(op, "ldp", "ldr") {
 			return false
 		}
 	}
@@ -530,6 +567,15 @@ func TestHardenUnsignedFrames(t *testing.T) {
 		{"signature-of-another-function", "f:\n    paciasp\n    ret\ng:\n    stp x29, x30, [sp, #-16]!\n    ldp x29, x30, [sp], #16\n    autiasp\n    ret\n", 1},
 		{"unauthenticated-ret", "f:\n    paciasp\n    stp x29, x30, [sp, #-48]!\n    ldp x29, x30, [sp], #48\n    ret\n", 1},
 		{"unauthenticated-tail-call", "f:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n    ldp x29, x30, [sp], #16\n    b g\n", 1},
+		{"signed-pair", "f:\n    paciasp\n    stp x0, x30, [sp, #-16]!\n    bl g\n    ldp x0, x30, [sp], #16\n    autiasp\n    ret\n", 0},
+		{"signed-single", "f:\n    paciasp\n    str x30, [sp, #-16]!\n    bl g\n    ldr x30, [sp], #16\n    autiasp\n    ret\n", 0},
+		{"unsigned-pair", "f:\n    stp x19, x30, [sp, #-16]!\n    bl g\n    ldp x19, x30, [sp], #16\n    ret\n", 2},
+		{"unsigned-single", "f:\n    str x30, [sp, #-16]!\n    bl g\n    ldr x30, [sp], #16\n    ret\n", 2},
+		{"other-register-pair", "f:\n    stp x0, x1, [sp, #-16]!\n    ldp x0, x1, [sp], #16\n    ret\n", 0},
+		{"signed-twice", "f:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n    paciasp\n    stp x6, x30, [sp, #-16]!\n    bl g\n    ldp x6, x30, [sp], #16\n    autiasp\n    ldp x29, x30, [sp], #16\n    autiasp\n    ret\n", 1},
+		{"stripped-then-signed", "f:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n    xpaclri\n    paciasp\n    stp x6, x30, [sp, #-16]!\n    bl g\n    ldp x6, x30, [sp], #16\n    autiasp\n    ldp x29, x30, [sp], #16\n    autiasp\n    ret\n", 0},
+		{"signed-after-call", "f:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n    bl g\n    paciasp\n    str x30, [sp, #-16]!\n    bl h\n    ldr x30, [sp], #16\n    autiasp\n    ldp x29, x30, [sp], #16\n    autiasp\n    ret\n", 0},
+		{"spilled-value", "f:\n    str x30, [sp, #112]\n    ldr x30, [sp, #112]\n    ret\n", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
