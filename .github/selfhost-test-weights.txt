@@ -35,6 +35,11 @@
 # Each update uses max(existing, ceil(1.5 * measured seconds)). No weight decreases.
 # The worker deadline and the test selection rules stay unchanged.
 
+# Twenty-three rows raised or added on 2026-11-03 from run 41668392373's audit
+# (ceil of 1.5 times the measurement). x86_64 shard 2 of that run and shard 4
+# of main run 41663582561 (#14112) timed out on tests of about two minutes
+# that had the default weight of 1.
+
 # 2026-11-01: Completed x86-64 observations from run 41253378891 supply raises.
 # Each value uses max(existing, ceil(1.5 * measured seconds)). No weight decreases.
 # The run failed. Interrupted and unobserved tests retain their prior weights.
@@ -604,7 +609,7 @@ TestSelfHostCapsPathIdentityWithoutProcessDirectory 16
 TestSelfHostCapsRules 12
 TestSelfHostCapsTraitDefaultDifferentialX86_64 7
 TestSelfHostCaptureAfterLastWrite 101
-TestSelfHostCaptureContractRewritesX86_64 17
+TestSelfHostCaptureContractRewritesX86_64 161
 TestSelfHostCaptureFreeFnValue 7
 TestSelfHostCaptureLambdaWasmIR 3
 TestSelfHostCaptureLambdaX86IR 4
@@ -614,6 +619,7 @@ TestSelfHostCastX86_64 3
 TestSelfHostCatBytes 40
 TestSelfHostCellArrayMethods 8
 TestSelfHostCellBytes 28
+TestSelfHostCellReadBorrows 201
 TestSelfHostCellWasmIR 6
 TestSelfHostCertifiesATokenJoinedFromTwoArms 6
 TestSelfHostChainedFnArgCallIRArm64 6
@@ -755,13 +761,13 @@ TestSelfHostCondBranch 125
 TestSelfHostConditionalValueReleaseArm64 7
 TestSelfHostConditionalValueReleaseWasm 7
 TestSelfHostConditionalValueReleaseX86_64 7
-TestSelfHostConstAggregateArm64PIE 2
+TestSelfHostConstAggregateArm64PIE 170
 TestSelfHostConstAggregateIRX86_64 8
 TestSelfHostConstAggregateWasmIR 3
 TestSelfHostConstArm64 6
 TestSelfHostConstDivisorRuntimeX86_64 4
 TestSelfHostConstDivisorShapesX86_64 4
-TestSelfHostConstEvaluationErrors 2
+TestSelfHostConstEvaluationErrors 176
 TestSelfHostConstEvaluationValid 7
 TestSelfHostConstExprFoldShape 4
 TestSelfHostConstExprFoldWasm 6
@@ -775,15 +781,16 @@ TestSelfHostConstRefCheckX86_64 2
 TestSelfHostConstStringIR 8
 TestSelfHostConstX86_64 3
 TestSelfHostConstZeroExtendedFormX86_64 4
+TestSelfHostConstantJoinSplit 127
 TestSelfHostConstfoldArm64 37
 TestSelfHostConstfoldWasm 14
 TestSelfHostConstfoldX86_64 14
-TestSelfHostConstructionRetainMatrixX86_64 10
+TestSelfHostConstructionRetainMatrixX86_64 108
 TestSelfHostConstructorLeafUnionMember 58
 TestSelfHostConstructorLeafUnionMemberOff 2
 TestSelfHostConstructorLeafWide 55
 TestSelfHostConstructorLeafWideOff 83
-TestSelfHostConstructorLeaves 15
+TestSelfHostConstructorLeaves 116
 TestSelfHostConstructorLeavesOff 71
 TestSelfHostConsumedAppendReclaimArm64 4
 TestSelfHostConsumedAppendReclaimWasmIR 3
@@ -816,6 +823,7 @@ TestSelfHostCountedHandbackBorrowedX86_64 5
 TestSelfHostCountedParamReleaseX86_64 4
 TestSelfHostCountedStringView 115
 TestSelfHostCoverEdgesAndLambdas 19
+TestSelfHostCoverFeedsChangeRisk 108
 TestSelfHostCoverFromEnvironment 91
 TestSelfHostCoverInferredValueBlocks 7
 TestSelfHostCoverMultilineValueBlockCounters 5
@@ -1305,7 +1313,7 @@ TestSelfHostFnArrayFieldConstructionWasm 3
 TestSelfHostFnArrayFieldConstructionX86_64 3
 TestSelfHostFnKeyEnumIRX86_64 3
 TestSelfHostFnLocalAliasArgX86_64 4
-TestSelfHostFnLocalCallInfersItsResult 4
+TestSelfHostFnLocalCallInfersItsResult 96
 TestSelfHostFnParamShadowsModuleFn 3
 TestSelfHostFnPayloadVariantIR 5
 TestSelfHostFnPayloadVariantIRWasm 5
@@ -1632,12 +1640,13 @@ TestSelfHostInlineAttribute 6
 TestSelfHostInlineKeepsReadWordOwner 7
 TestSelfHostInlineLeaf 101
 TestSelfHostInlineOpaqueReturnSummary 12
-TestSelfHostInlineReaderLeaf 2
+TestSelfHostInlineReaderLeaf 108
 TestSelfHostInlineReaderLeafBounds 6
 TestSelfHostInlineReadinessSharedCall 2
 TestSelfHostInlineScalarArrayLeaf 98
 TestSelfHostInlineScalarArrayLeafBounds 5
 TestSelfHostInlineScalarRecordLeaves 2
+TestSelfHostInlineShortCircuitLeaf 206
 TestSelfHostInlineStrParams 2
 TestSelfHostInlineUpdater 99
 TestSelfHostInnerMulAddBits 13
@@ -1804,6 +1813,8 @@ TestSelfHostLeakCheckAgreesX86_64 4
 TestSelfHostLeakMatrixIRArm64 44
 TestSelfHostLeakMatrixX86_64 52
 TestSelfHostLenReceiverIRX86_64 3
+TestSelfHostLentArrayBracket 204
+TestSelfHostLentArrayKernel 98
 TestSelfHostLentOwnerCallIRArm64 5
 TestSelfHostLentOwnerCallIRX86_64 5
 TestSelfHostLentOwnerCallWasmIR 8
@@ -2275,7 +2286,7 @@ TestSelfHostOutputReplacesExecutable 17
 TestSelfHostOverBudgetPerModuleIR 6
 TestSelfHostOverBudgetProgramsRunX86_64 139
 TestSelfHostOverBudgetRoutesIRArm64 248
-TestSelfHostOverReleaseReportArm64 95
+TestSelfHostOverReleaseReportArm64 407
 TestSelfHostOverflowArith 5
 TestSelfHostOwnBorrowedParamArgArm64 4
 TestSelfHostOwnBorrowedParamArgLeakCheck 6
@@ -2605,6 +2616,7 @@ TestSelfHostRegexModuleIR 28
 TestSelfHostRegexUTF8 9
 TestSelfHostRelatedLabelSerialization 2
 TestSelfHostReleaseEntry 16
+TestSelfHostReleaseUniqueTail 124
 TestSelfHostRemapPathPrefix 10
 TestSelfHostRemoveDirAllIR 4
 TestSelfHostRemoveDirAllIRWasm 3
@@ -2691,6 +2703,7 @@ TestSelfHostSHA1HW 9
 TestSelfHostSHA256HW 9
 TestSelfHostSSAABIEviction 4
 TestSelfHostSSABackendAgreesWithNative 16
+TestSelfHostSSABackendRefusesOtherTargets 115
 TestSelfHostSSABranchForwarding 9
 TestSelfHostSSACarriesAgreeWithInterp 2
 TestSelfHostSSACarriesReadTheFlags 2
@@ -2729,6 +2742,7 @@ TestSelfHostSSAPhysicalRCRejects 62
 TestSelfHostSSARegisterConstraints 6
 TestSelfHostSSARegisterForm 4
 TestSelfHostSSAResultTakesDyingOperandRegister 55
+TestSelfHostSSASelectsAreConditionalMoves 96
 TestSelfHostSSASemantic 495
 TestSelfHostSSASemanticIRArm64 10
 TestSelfHostSSASemanticIRWasm 10
@@ -2736,6 +2750,7 @@ TestSelfHostSSASemanticIRX86_64 10
 TestSelfHostSSASlotOperation 3
 TestSelfHostSSASpillCost 4
 TestSelfHostSSASpilledImmediateMultiply 6
+TestSelfHostSSASpilledResultIsReadFromScratch 113
 TestSelfHostSSATailCall 6
 TestSelfHostSSAUnits 519
 TestSelfHostSSAUnitsIRArm64 10
@@ -3329,13 +3344,13 @@ TestSelfHostSyscallLeavesDarwinizedArm64 5
 TestSelfHostSysinfoIR 4
 TestSelfHostSysinfoIRArm64 4
 TestSelfHostSysinfoIRArm64Darwin 4
-TestSelfHostTCPSendBuf 4
+TestSelfHostTCPSendBuf 98
 TestSelfHostTCPSendBytes 85
 TestSelfHostTCPSendBytesFaults 100
 TestSelfHostTZifUTF8 8
 TestSelfHostTabsBytes 13
 TestSelfHostTacBytes 21
-TestSelfHostTailArrayAllocation 3
+TestSelfHostTailArrayAllocation 139
 TestSelfHostTargetCapabilityDifferentialX86_64 8
 TestSelfHostTargetNameFoldsOnTheModloadDriverX86_64 3
 TestSelfHostTaskCombinators 9
@@ -3410,6 +3425,7 @@ TestSelfHostTraitsX86_64 14
 TestSelfHostTransformSizeAbortWASM 6
 TestSelfHostTransitiveDepsDifferentialX86_64 6
 TestSelfHostTreeshakeBareNameKeepsFreeFunctionOnly 62
+TestSelfHostTreeshakeDropImplKeepsOnlyDropImpls 110
 TestSelfHostTreeshakeFieldReadKeepsNoMethodX86_64 5
 TestSelfHostTreeshakeKeepsDisplayToStringX86_64 5
 TestSelfHostTreeshakeKeepsDropFinalizerX86_64 4
@@ -3706,7 +3722,7 @@ TestSelfHostVoidBareReturnIR 4
 TestSelfHostVoidLambdaStatementMatch 5
 TestSelfHostVoidPayloadMatchIR 4
 TestSelfHostWasiCliHandlerProgramBuilds 109
-TestSelfHostWasiHttpByteBodies 29
+TestSelfHostWasiHttpByteBodies 136
 TestSelfHostWasiHttpByteWriterCleanup 74
 TestSelfHostWasiHttpCoreTrapsOnExit 104
 TestSelfHostWasiHttpOutgoing 98
@@ -3728,7 +3744,7 @@ TestSelfHostWasmAsyncImportRefusals 5
 TestSelfHostWasmAsyncStream 6
 TestSelfHostWasmBinary 10
 TestSelfHostWasmBinaryComponentCoreShapes 4
-TestSelfHostWasmBufferRuntimeNeeds 2
+TestSelfHostWasmBufferRuntimeNeeds 94
 TestSelfHostWasmClosedHandle 5
 TestSelfHostWasmComponent 3
 TestSelfHostWasmComponentAdapter 3
