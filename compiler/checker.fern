@@ -14245,6 +14245,22 @@ function variant_payload_dests(c: ast.ExprCall, dest: typeinfo.Type, s: Scope, d
   return out;
 }
 
+function array_builtin_arity(method: string, view: boolean): i32 {
+  if (method == "len") {
+    return 0;
+  }
+  if (view) {
+    return -1;
+  }
+  if (method == "with") {
+    return 2;
+  }
+  if (method == "append" || method == "truncate") {
+    return 1;
+  }
+  return -1;
+}
+
 function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: typeinfo.Type): util.Diag[] {
   out = util.append_diags(out, e032_call_check(c, s));
   match (c.callee) {
@@ -14507,19 +14523,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
             }
           }
-          let abw: i32 = 0 - 1;
-          if (mfa.field == "len") {
-            abw = 0;
-          }
-          if (!ar.view && mfa.field == "append") {
-            abw = 1;
-          }
-          if (!ar.view && mfa.field == "with") {
-            abw = 2;
-          }
-          if (!ar.view && mfa.field == "truncate") {
-            abw = 1;
-          }
+          let abw: i32 = array_builtin_arity(mfa.field, ar.view);
           if (abw >= 0 && c.args.len() != abw) {
             out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", abw, c.args.len(), "argument"), c.line, c.col));
           }
