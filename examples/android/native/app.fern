@@ -100,6 +100,6 @@ function draw(s: App): App {
   for r in face.face_rects(elapsed_ms(s), f.width, f.height) {
     f.fill(r.x, r.y, r.w, r.h, color);
   }
-  f.post();
+  android.post(f);
   return s;
 }

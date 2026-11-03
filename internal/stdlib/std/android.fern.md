@@ -8,7 +8,7 @@ NativeActivity loads the app library and calls its `ANativeActivity_onCreate` ex
 
 The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern value. It gives each event to the `step` function of the app. When `timeout` milliseconds go by with no event, it gives `Tick`. The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back.
 
-The app draws the pixels itself: `lock` gives the pixels of the window, and `post` shows them.
+The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it.
 
 ## Contracts
 
@@ -36,6 +36,7 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 ```fern
 <<module introduction>>=
 // This module runs an Android app with no Java code, through NativeActivity.
+import "std/android/draw";
 ```
 
 ### `C functions`
@@ -487,11 +488,11 @@ pub function keep_screen_on(ctx: usize, on: boolean): void {
 
 ### `windows`
 
-A frame has 4 bytes for each pixel, in the order red, green, blue and alpha. `rgb` gives the pixel word of a color. `ANativeWindow_Buffer` has the width at 0, the height at 4, the stride in pixels at 8, and the pixels at 16. It is 48 bytes.
+`ANativeWindow_Buffer` has the width at 0, the height at 4, the stride in pixels at 8, and the pixels at 16. It is 48 bytes. `std/android/draw` draws on the frame of a locked window, and this module re-exports its `Frame` and `rgb`.
 
 ```fern
 <<windows>>=
-pub struct Frame { window: usize, buffer: usize, bits: usize, width: i32, height: i32, stride: i32 }
+pub use "std/android/draw".{Frame, rgb};
 
 pub function (w: Window) width(): i32 {
   return c_window_width(w.ptr);
@@ -501,27 +502,22 @@ pub function (w: Window) height(): i32 {
   return c_window_height(w.ptr);
 }
 
-// The pixel word of an opaque color.
-pub function rgb(r: i32, g: i32, b: i32): i32 {
-  return 0 - 16777216 | (b & 255) << 16 | (g & 255) << 8 | r & 255;
-}
-
 // Locks the pixels of the window for drawing. The frame has width 0 when
 // the window cannot give its pixels.
-pub function (w: Window) lock(): Frame {
+pub function (w: Window) lock(): draw.Frame {
   unsafe {
     let set: i32 = c_window_set_geometry(w.ptr, 0, 0, 1);
     let buffer: usize = __alloc(48);
     if (c_window_lock(w.ptr, buffer, 0 as usize) != 0) {
       __free(buffer, 48);
-      return Frame { window: w.ptr, buffer: 0 as usize, bits: 0 as usize, width: 0, height: 0, stride: 0 };
+      return draw.Frame { window: w.ptr, buffer: 0 as usize, bits: 0 as usize, width: 0, height: 0, stride: 0 };
     }
-    return Frame { window: w.ptr, buffer: buffer, bits: __load_ptr(buffer + 16 as usize), width: __load_i32(buffer), height: __load_i32(buffer + 4 as usize), stride: __load_i32(buffer + 8 as usize) };
+    return draw.Frame { window: w.ptr, buffer: buffer, bits: __load_ptr(buffer + 16 as usize), width: __load_i32(buffer), height: __load_i32(buffer + 4 as usize), stride: __load_i32(buffer + 8 as usize) };
   }
 }
 
-// Shows the pixels of the frame and unlocks the window.
-pub function (f: Frame) post(): void {
+// Shows the pixels of the frame and unlocks its window.
+pub function post(f: draw.Frame): void {
   if (f.buffer == 0 as usize) {
     return;
   }
@@ -529,40 +525,5 @@ pub function (f: Frame) post(): void {
   unsafe {
     __free(f.buffer, 48);
   }
-}
-
-// Fills the rectangle at x and y, of width w and height h, with the pixel
-// word `color`. The part outside the frame is not drawn.
-pub function (f: Frame) fill(x: i32, y: i32, w: i32, h: i32, color: i32): void {
-  let x0: i32 = clamp(x, 0, f.width);
-  let y0: i32 = clamp(y, 0, f.height);
-  let x1: i32 = clamp(x + w, 0, f.width);
-  let y1: i32 = clamp(y + h, 0, f.height);
-  if (x1 <= x0 || y1 <= y0) {
-    return;
-  }
-  unsafe {
-    let first: usize = f.bits + ((y0 * f.stride + x0) * 4) as usize;
-    let i: i32 = 0;
-    while (i < x1 - x0) {
-      __store_i32(first + (i * 4) as usize, color);
-      i = i + 1;
-    }
-    let row: i32 = y0 + 1;
-    while (row < y1) {
-      __memcpy(f.bits + ((row * f.stride + x0) * 4) as usize, first, (x1 - x0) * 4);
-      row = row + 1;
-    }
-  }
-}
-
-function clamp(v: i32, lo: i32, hi: i32): i32 {
-  if (v < lo) {
-    return lo;
-  }
-  if (v > hi) {
-    return hi;
-  }
-  return v;
 }
 ```
