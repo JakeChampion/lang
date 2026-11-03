@@ -301,6 +301,21 @@ function f(own h: Holder, c: boolean): i32 {
     }
     return consumeBox(box) + n;
 }`},
+		// A scalar result is a copy, so the array built from it is fresh
+		// (#14104).
+		{"fresh-array-from-a-scalar-helper", `
+struct Wv { v: i32[] }
+function at(w: Wv, j: i32): i32 { return w.v[j]; }
+function copyOf(w: Wv): i32[] {
+    let out: i32[] = [];
+    for j in 0..w.v.len() {
+        out = out.append(at(w, j));
+    }
+    return out;
+}
+function f(w: Wv): i32 {
+    return consume(copyOf(w));
+}`},
 		{"inner-binding-shadows-the-outer", `
 function f(c: boolean): i32 {
     let xs: i32[] = [1];
@@ -363,6 +378,14 @@ function f(c: boolean): i32 {
         t = t + xs.len();
     }
     return t + xs.len();
+}`},
+		// The helper gives back the array of its parameter, which the
+		// caller still holds (#14104).
+		{"helper-result-is-the-parameter-array", `
+struct Wv { v: i32[] }
+function inner(w: Wv): i32[] { return w.v; }
+function f(w: Wv): i32 {
+    return consume(inner(w));
 }`},
 		{"destructured-read-again", `
 function step(): (i32[], i32) { return ([1], 2); }
