@@ -518,6 +518,27 @@ _start:
     orr x5, x8, x5, lsl #8
     ubfx x8, x5, #35, #5
     ubfx x8, x5, #0, #5
+    cmhi v2.16b, v21.16b, v1.16b
+    cmhi v4.16b, v23.16b, v3.16b
+    uminv b5, v2.16b
+    umov w5, v5.b[0]
+    ushr v2.8h, v1.8h, #8
+    shl v1.8h, v1.8h, #8
+    ushr v1.8h, v1.8h, #3
+    ushr v2.4s, v1.4s, #16
+    shl v1.4s, v1.4s, #16
+    ushr v1.4s, v1.4s, #6
+    ushr v2.2d, v1.2d, #32
+    shl v1.2d, v1.2d, #32
+    ushr v1.2d, v1.2d, #12
+    tbl v1.16b, {v1.16b}, v24.16b
+    dup v20.16b, w9
+    dup v23.16b, w15
+    add v3.16b, v3.16b, v21.16b
+    sub v1.16b, v0.16b, v20.16b
+    rev x5, x5
+    ld1 {v24.16b}, [x16]
+    st1 {v1.16b}, [x12]
 Lend:
     ret
 `

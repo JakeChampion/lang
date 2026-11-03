@@ -3728,12 +3728,13 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true, false);
   }
   if (mnem == "vpbroadcastb" || mnem == "vpbroadcastd" || mnem == "vbroadcastsd") {
-    let bd: i32 = x86_gas_ymm(dst);
+    let bv: i32 = x86_gas_vreg(dst);
     let bx: i32 = x86_gas_xmm(src);
-    if (bd < 0 || bx < 0) {
+    if (bv < 0 || bx < 0 || mnem == "vbroadcastsd" && bv < 16) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    x86_push_arr(a.code, x86_vex([], bd >= 8, false, bx >= 8, 2, false, 0, true, 1));
+    let bd: i32 = bv & 15;
+    x86_push_arr(a.code, x86_vex([], bd >= 8, false, bx >= 8, 2, false, 0, bv >= 16, 1));
     buf_push_byte(a.code, x86_broadcast_op(mnem));
     buf_push_byte(a.code, x86_modrm(3, bd, bx));
     return a;
@@ -3800,9 +3801,23 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 
 // The opcode of each VEX three-operand integer and FMA instruction: 256 plus
 // the 0F opcode, or 512 plus the 0F38 opcode.
-const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb"];
+const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd"];
 
-const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359];
+const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501];
+
+// Each shift by an immediate: its 0F opcode times 8, plus the /digit.
+const VEX_SHIFT_NAMES: string[] = ["vpsrlw", "vpsrlq", "vpsllq"];
+
+const VEX_SHIFT_OPS: i32[] = [906, 922, 926];
+
+function x86_vex_shift_imm(mnem: string): i32 {
+  for k in 0..VEX_SHIFT_NAMES.len() {
+    if (VEX_SHIFT_NAMES[k] == mnem) {
+      return VEX_SHIFT_OPS[k];
+    }
+  }
+  return 0 - 1;
+}
 
 function x86_vex_three_op(mnem: string): i32 {
   if (mnem.len() >= 4 && mnem[0] == b'v') {
@@ -3834,10 +3849,11 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
   if (v1 < 0 || vd < 0 || v1 >= 16 != vd >= 16) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  if (mnem == "vpsrlw") {
+  let shift: i32 = x86_vex_shift_imm(mnem);
+  if (shift >= 0) {
     x86_push_arr(a.code, x86_vex([], false, false, (v1 & 15) >= 8, 1, false, vd & 15, vd >= 16, 1));
-    buf_push_byte(a.code, 113);
-    buf_push_byte(a.code, x86_modrm(3, 2, v1 & 15));
+    buf_push_byte(a.code, shift / 8);
+    buf_push_byte(a.code, x86_modrm(3, shift % 8, v1 & 15));
     buf_push_byte(a.code, x86_gas_atoi(ops[0]) & 255);
     return a;
   }
@@ -6654,7 +6670,7 @@ function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
 
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
-  if (x86_vex_three_op(mnem) >= 0 || mnem == "vpsrlw") {
+  if (x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
   let bmi: MnemVerdict = x86_gas_bmi_verdict(v, mnem);

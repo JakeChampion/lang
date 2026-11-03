@@ -8011,6 +8011,42 @@ function base32_spread(at: i32): string {
   return out;
 }
 
+// Each pass checks 16 characters against the two ranges and packs them to 10
+// bytes with shifts at halfword, word and doubleword width. A store writes 16
+// bytes, so the reserve keeps 16 bytes past the decoded length.
+function emit_buf_decode_base32(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(".globl __fern_buf_decode_base32\n.type __fern_buf_decode_base32, %function\n__fern_buf_decode_base32:\n");
+  s = s.write("    sxtw x2, w2\n    sxtw x3, w3\n    cmp x2, #0\n    csel x2, xzr, x2, lt\n    ldr x5, [x1]\n    cmp x3, x5\n    csel x3, x5, x3, gt\n    sub x7, x3, x2\n    cmp x7, #8\n    b.lt .Ld32_none\n");
+  s = s.write("    ldr x5, [x4]\n    cmp x5, #4\n    b.lo __fern_oob_abort\n");
+  s = s.write("    lsr x6, x7, #3\n    add x6, x6, x6, lsl #2\n    add x6, x6, #16\n    ldr x9, [x0, #8]\n    add x10, x9, x6\n    ldr x11, [x0, #16]\n    cmp x10, x11\n    b.hi .Ld32_grow\n");
+  s = s.write(".Ld32_fits:\n    ldr x12, [x0]\n    add x12, x12, x9\n    add x14, x1, #8\n    add x13, x14, x2\n    lsr x7, x7, #3\n    lsl x7, x7, #3\n");
+  s = s.write("    ldrb w9, [x4, #8]\n    ldrb w10, [x4, #9]\n    ldrb w11, [x4, #10]\n    ldrb w15, [x4, #11]\n    cmp x7, #16\n    b.lo .Ld32_group\n");
+  s = s.write("    dup v20.16b, w9\n    dup v21.16b, w10\n    dup v22.16b, w11\n    dup v23.16b, w15\n");
+  s = s.write("    adrp x16, .Ld32_order\n    add x16, x16, :lo12:.Ld32_order\n    ld1 {v24.16b}, [x16]\n");
+  s = s.write(".Ld32_vec:\n    ld1 {v0.16b}, [x13]\n    sub v1.16b, v0.16b, v20.16b\n    cmhi v2.16b, v21.16b, v1.16b\n");
+  s = s.write("    sub v3.16b, v0.16b, v22.16b\n    cmhi v4.16b, v23.16b, v3.16b\n    add v3.16b, v3.16b, v21.16b\n");
+  s = s.write("    and v1.16b, v1.16b, v2.16b\n    and v3.16b, v3.16b, v4.16b\n    orr v1.16b, v1.16b, v3.16b\n    orr v2.16b, v2.16b, v4.16b\n");
+  s = s.write("    uminv b5, v2.16b\n    umov w5, v5.b[0]\n    cbz w5, .Ld32_group\n");
+  s = s.write("    ushr v2.8h, v1.8h, #8\n    shl v1.8h, v1.8h, #8\n    ushr v1.8h, v1.8h, #3\n    orr v1.16b, v1.16b, v2.16b\n");
+  s = s.write("    ushr v2.4s, v1.4s, #16\n    shl v1.4s, v1.4s, #16\n    ushr v1.4s, v1.4s, #6\n    orr v1.16b, v1.16b, v2.16b\n");
+  s = s.write("    ushr v2.2d, v1.2d, #32\n    shl v1.2d, v1.2d, #32\n    ushr v1.2d, v1.2d, #12\n    orr v1.16b, v1.16b, v2.16b\n");
+  s = s.write("    tbl v1.16b, {v1.16b}, v24.16b\n    st1 {v1.16b}, [x12]\n");
+  s = s.write("    add x12, x12, #10\n    add x13, x13, #16\n    sub x7, x7, #16\n    cmp x7, #16\n    b.hs .Ld32_vec\n");
+  s = s.write(".Ld32_group:\n    cmp x7, #8\n    b.lo .Ld32_stop\n    mov x5, #0\n    mov x6, #0\n");
+  s = s.write(".Ld32_char:\n    ldrb w8, [x13, x6]\n    sub w16, w8, w9\n    cmp w16, w10\n    b.lo .Ld32_val\n");
+  s = s.write("    sub w16, w8, w11\n    cmp w16, w15\n    b.hs .Ld32_stop\n    add w16, w16, w10\n");
+  s = s.write(".Ld32_val:\n    orr x5, x16, x5, lsl #5\n    add x6, x6, #1\n    cmp x6, #8\n    b.lo .Ld32_char\n");
+  s = s.write("    lsl x5, x5, #24\n    rev x5, x5\n    str x5, [x12]\n    add x12, x12, #5\n    add x13, x13, #8\n    sub x7, x7, #8\n    b .Ld32_group\n");
+  s = s.write(".Ld32_stop:\n    ldr x9, [x0]\n    sub x9, x12, x9\n    str x9, [x0, #8]\n    sub x0, x13, x14\n    ret\n");
+  s = s.write(".Ld32_none:\n    mov x0, x2\n    ret\n");
+  s = s.write(".Ld32_grow:\n" + rt_frame_of(s, 64) + "    mov x29, sp\n    stp x0, x1, [sp, #16]\n    stp x2, x4, [sp, #32]\n    str x7, [sp, #48]\n");
+  s = s.write("    mov x1, x10\n    bl __fern_buf_reserve\n    ldp x0, x1, [sp, #16]\n    ldp x2, x4, [sp, #32]\n    ldr x7, [sp, #48]\n" + rt_unframe_of(s, 64));
+  s = s.write("    ldr x9, [x0, #8]\n    b .Ld32_fits\n");
+  s = s.write(".size __fern_buf_decode_base32, .-__fern_buf_decode_base32\n");
+  s = s.write("    .section .rodata\n.Ld32_order:\n    .byte 4, 3, 2, 1, 0, 12, 11, 10, 9, 8, 255, 255, 255, 255, 255, 255\n");
+  return s.write("    .text\n");
+}
+
 // __fern_buf_push_decimal(h, n) appends the decimal digits of the u64 n. It
 // writes them back to front into a stack scratch, two at a time from a table
 // of digit pairs, and divides by 100 with a multiply.
@@ -8924,6 +8960,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     }
     if (s.has_need("buf_base32")) {
       s = emit_buf_push_base32(s);
+    }
+    if (s.has_need("buf_decode32")) {
+      s = emit_buf_decode_base32(s);
     }
     s = s.write(".globl __fern_buf_len\n");
     s = s.write(".type __fern_buf_len, %function\n");
