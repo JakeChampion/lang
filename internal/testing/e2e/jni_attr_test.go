@@ -199,7 +199,7 @@ public class Check {
 		t.Fatal(err)
 	}
 	classes := filepath.Join(dir, "classes")
-	if out, err := exec.Command(javac, "-d", classes, filepath.Join(javaDir, "dev", "fern", "strtest", "Strings.java"), checkPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(javac, "-encoding", "UTF-8", "-d", classes, filepath.Join(javaDir, "dev", "fern", "strtest", "Strings.java"), checkPath).CombinedOutput(); err != nil {
 		t.Fatalf("javac: %v\n%s", err, out)
 	}
 	out, err := exec.Command(java, "-Djava.library.path="+dir, "-cp", classes, "dev.fern.strtest.Check").CombinedOutput()
