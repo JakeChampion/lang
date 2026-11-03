@@ -11,28 +11,28 @@ import "std/peg";
 import "core/map";
 
 function nested(depth: i32): string {
-  let s: string = "";
-  let i: i32 = 0;
+  let s = "";
+  let i = 0;
   while (i < depth) {
-    s = s + "[";
-    i = i + 1;
+    s += "[";
+    i += 1;
   }
   i = 0;
   while (i < depth) {
-    s = s + "]";
-    i = i + 1;
+    s += "]";
+    i += 1;
   }
   return s;
 }
 
 function parens(depth: i32): string {
-  let s: string = "";
+  let s = "";
   for i in 0..depth {
-    s = s + "(";
+    s += "(";
   }
-  s = s + "x";
+  s += "x";
   for i in 0..depth {
-    s = s + ")";
+    s += ")";
   }
   return s;
 }
@@ -138,15 +138,15 @@ function test_number_parse_is_bounded(): test.TestOutcome {
 }
 
 function test_format_width_is_bounded(): test.TestOutcome {
-  let wide: string = format.format("{:2000000000}", ["x"]);
+  let wide = format.format("{:2000000000}", ["x"]);
   if (wide.len() != 1000000) {
     return test.fail("a two-billion width padded to " + wide.len().to_string());
   }
-  let wrapped: string = format.format("{:99999999999999}", ["x"]);
+  let wrapped = format.format("{:99999999999999}", ["x"]);
   if (wrapped.len() != 1000000) {
     return test.fail("a fourteen-digit width padded to " + wrapped.len().to_string());
   }
-  let precise: string = format.format("{:.99999999999}", ["1.5"]);
+  let precise = format.format("{:.99999999999}", ["1.5"]);
   if (precise.len() > 1000010) {
     return test.fail("an eleven-digit precision produced " + precise.len().to_string() + " bytes");
   }
@@ -181,7 +181,7 @@ function utf8_never_crashes(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std parse limits");
+  let r = test.new("std parse limits");
   r = r.it("json depth limit", test_json_depth_limit);
   r = r.it("peg depth limit", test_peg_depth_limit);
   r = r.it("invalid utf8 is refused", test_invalid_utf8_is_refused);

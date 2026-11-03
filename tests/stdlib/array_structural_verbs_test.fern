@@ -3,7 +3,7 @@ import "std/test";
 
 function test_reverse(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5];
-  let r: i32[] = array.reverse(xs);
+  let r = array.reverse(xs);
   if (r.len() != 5) {
     return test.fail("reverse changed length");
   }
@@ -25,7 +25,7 @@ function test_reverse_single(): test.TestOutcome {
 
 function test_take(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5];
-  let t: i32[] = array.take(xs, 2);
+  let t = array.take(xs, 2);
   if (t.len() != 2) {
     return test.fail("take(2) should yield 2 elements");
   }
@@ -44,7 +44,7 @@ function test_take_over_len(): test.TestOutcome {
 
 function test_drop(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5];
-  let d: i32[] = array.drop(xs, 3);
+  let d = array.drop(xs, 3);
   if (d.len() != 2) {
     return test.fail("drop(3) should leave 2 elements");
   }
@@ -84,7 +84,7 @@ function test_drop_zero(): test.TestOutcome {
 
 function test_take_drop_complement(): test.TestOutcome {
   let xs: i32[] = [10, 20, 30, 40];
-  let joined: i32[] = array.concat(array.take(xs, 1), array.drop(xs, 1));
+  let joined = array.concat(array.take(xs, 1), array.drop(xs, 1));
   if (joined.len() != 4) {
     return test.fail("take ++ drop changed length");
   }
@@ -97,7 +97,7 @@ function test_take_drop_complement(): test.TestOutcome {
 function test_concat(): test.TestOutcome {
   let a: i32[] = [1, 2];
   let b: i32[] = [3, 4, 5];
-  let c: i32[] = array.concat(a, b);
+  let c = array.concat(a, b);
   if (c.len() != 5) {
     return test.fail("concat length wrong");
   }
@@ -119,12 +119,12 @@ function test_concat_empty(): test.TestOutcome {
 function test_concat_method(): test.TestOutcome {
   let a: i32[] = [1, 2];
   let b: i32[] = [3];
-  let c: i32[] = a.concat(b);
+  let c = a.concat(b);
   return test.assert_eq(c.len(), 3);
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("array structural verbs");
+  let r = test.new("array structural verbs");
   r = r.it("reverse", test_reverse);
   r = r.it("reverse empty", test_reverse_empty);
   r = r.it("reverse single", test_reverse_single);

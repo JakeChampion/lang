@@ -91,7 +91,7 @@ function test_string_sort(): test.TestOutcome {
 }
 
 function test_string_debug_multibyte(): test.TestOutcome {
-  let s: string = "a\"é\nb";
+  let s = "a\"é\nb";
   return test.assert_eq(s.to_debug(), "\"a\\\"é\\nb\"");
 }
 
@@ -99,9 +99,9 @@ function test_string_debug_multibyte(): test.TestOutcome {
 function prefix_ordered[T: cmp.Ord](xs: T[], offset: i32): boolean {
   for a in xs {
     for b in xs {
-      let c: i32 = a.cmp(b);
-      let wa: u64 = a.cmp_prefix(offset);
-      let wb: u64 = b.cmp_prefix(offset);
+      let c = a.cmp(b);
+      let wa = a.cmp_prefix(offset);
+      let wb = b.cmp_prefix(offset);
       if (c < 0 && wa > wb || c == 0 && wa != wb) {
         return false;
       }
@@ -114,7 +114,7 @@ function test_integer_prefixes(): test.TestOutcome {
   let i32s: i32[] = [-2147483647 - 1, -65536, -1, 0, 1, 255, 256, 2147483647];
   let i64s: i64[] = [-9223372036854775807i64 - 1i64, -4294967296i64, -1i64, 0i64, 1i64, 9223372036854775807i64];
   let u64s: u64[] = [0u64, 1u64, 9223372036854775807u64, 9223372036854775808u64, 18446744073709551615u64];
-  let ok: boolean = prefix_ordered(i32s, 0) && prefix_ordered(i64s, 0) && prefix_ordered(u64s, 0) && prefix_ordered([false, true], 0);
+  let ok = prefix_ordered(i32s, 0) && prefix_ordered(i64s, 0) && prefix_ordered(u64s, 0) && prefix_ordered([false, true], 0);
   return test.assert_true(ok && 5.cmp_shared(6) == 0);
 }
 
@@ -131,7 +131,7 @@ function test_string_prefixes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("core/cmp helpers");
+  let r = test.new("core/cmp helpers");
   r = r.it("min", test_min);
   r = r.it("max", test_max);
   r = r.it("clamp above hi", test_clamp_hi);

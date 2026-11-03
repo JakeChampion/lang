@@ -7,7 +7,7 @@ function le_word(bytes: u8[], v: i64): u8[] {
   let i: i32 = 0;
   while (i < 8) {
     bytes = bytes.append((v >> 8 * i & 255i64) as u8);
-    i = i + 1;
+    i += 1;
   }
   return bytes;
 }
@@ -28,7 +28,7 @@ function auxv_sample(): u8[] {
 }
 
 function image_with(line: string): u8[] {
-  let img: u8[] = "ELF junk before ".bytes();
+  let img = "ELF junk before ".bytes();
   for c in ("FERNBUILD1 " + line + "\nmore junk\n").bytes() {
     img = img.append(c);
   }
@@ -36,7 +36,7 @@ function image_with(line: string): u8[] {
 }
 
 function test_build_line(): test.TestOutcome {
-  let line: string = "target=x86-64-linux profile=hardened harden=1 pie=1 sanitize=0 backtrace=1 size=0 shared=0 heap_limit=17179869184";
+  let line = "target=x86-64-linux profile=hardened harden=1 pie=1 sanitize=0 backtrace=1 size=0 shared=0 heap_limit=17179869184";
   match (mitigations.build_line(image_with(line))) {
     Some(found) => {
       return test.assert_eq(found, line);
@@ -99,7 +99,7 @@ function test_parse_build_error(): test.TestOutcome {
 }
 
 function test_manifest_rows(): test.TestOutcome {
-  let rows: mitigations.Status[] = mitigations.manifest();
+  let rows = mitigations.manifest();
   if (target_os() != "linux") {
     return test.assert_eq(rows.len().to_string(), "5");
   }
@@ -110,7 +110,7 @@ function test_manifest_rows(): test.TestOutcome {
     return test.fail("the row order");
   }
   for row in rows {
-    let line: string = row.line();
+    let line = row.line();
     if (!line.contains(" compiled=") || !line.contains(" verified=")) {
       return test.fail("the line shape: " + line);
     }
@@ -122,7 +122,7 @@ function test_manifest_rows(): test.TestOutcome {
 }
 
 function test_auxv_keys(): test.TestOutcome {
-  let b: u8[] = auxv_sample();
+  let b = auxv_sample();
   match (mitigations.auxv_value(b, 16i64)) {
     Some(v) => {
       if (v != (1i64 << 30 | 1i64 << 31 | 7i64)) {
@@ -147,12 +147,12 @@ function test_auxv_keys(): test.TestOutcome {
 }
 
 function test_auxv_stops_at_null(): test.TestOutcome {
-  let b: u8[] = auxv_sample();
+  let b = auxv_sample();
   return test.assert_true(mitigations.auxv_value(b, 51i64).is_none());
 }
 
 function test_auxv_truncated(): test.TestOutcome {
-  let b: u8[] = auxv_sample();
+  let b = auxv_sample();
   if (mitigations.auxv_value(b[0:40], 26i64).is_some()) {
     return test.fail("a truncated pair answered");
   }
@@ -164,7 +164,7 @@ function test_auxv_truncated(): test.TestOutcome {
 }
 
 function test_feature_tokens(): test.TestOutcome {
-  let arm: string = "processor\t: 0\nBogoMIPS\t: 50.00\nFeatures\t: fp asimd paca pacg btix mte\nCPU implementer\t: 0x41\n";
+  let arm = "processor\t: 0\nBogoMIPS\t: 50.00\nFeatures\t: fp asimd paca pacg btix mte\nCPU implementer\t: 0x41\n";
   if (mitigations.feature_listed(arm, "paca").to_string() != "yes") {
     return test.fail("paca");
   }
@@ -177,7 +177,7 @@ function test_feature_tokens(): test.TestOutcome {
   if (mitigations.feature_listed(arm, "fp").to_string() != "yes") {
     return test.fail("fp at the line start");
   }
-  let x86: string = "processor\t: 0\nflags\t\t: fpu nx user_shstk ibt\nbugs\t\t: spectre_v1\n";
+  let x86 = "processor\t: 0\nflags\t\t: fpu nx user_shstk ibt\nbugs\t\t: spectre_v1\n";
   if (mitigations.feature_listed(x86, "user_shstk").to_string() != "yes") {
     return test.fail("user_shstk");
   }
@@ -198,7 +198,7 @@ function test_feature_unknown_without_a_line(): test.TestOutcome {
 }
 
 function test_thread_features(): test.TestOutcome {
-  let status: string = "Name:\tprog\nx86_Thread_features:\tshstk\nx86_Thread_features_locked:\t\n";
+  let status = "Name:\tprog\nx86_Thread_features:\tshstk\nx86_Thread_features_locked:\t\n";
   match (mitigations.thread_features(status)) {
     Some(f) => {
       if (f.len() != 1 || f[0] != "shstk") {
@@ -209,7 +209,7 @@ function test_thread_features(): test.TestOutcome {
       return test.fail("line missing");
     }
   }
-  let locked_only: string = "Name:\tprog\nx86_Thread_features_locked:\tshstk\n";
+  let locked_only = "Name:\tprog\nx86_Thread_features_locked:\tshstk\n";
   if (mitigations.thread_features(locked_only).is_some()) {
     return test.fail("the locked line counted");
   }
@@ -220,7 +220,7 @@ function test_thread_features(): test.TestOutcome {
 }
 
 function test_mapping_flag(): test.TestOutcome {
-  let smaps: string = "00400000-00401000 r-xp 00000000 00:00 0\nSize: 4 kB\nVmFlags: rd ex mr me\n00401000-00402000 rw-p 00000000 00:00 0\nVmFlags: rd wr mr mw me bt\n";
+  let smaps = "00400000-00401000 r-xp 00000000 00:00 0\nSize: 4 kB\nVmFlags: rd ex mr me\n00401000-00402000 rw-p 00000000 00:00 0\nVmFlags: rd wr mr mw me bt\n";
   if (mitigations.mapping_flag(smaps, "bt").to_string() != "yes") {
     return test.fail("bt on the second mapping");
   }
@@ -234,8 +234,8 @@ function test_mapping_flag(): test.TestOutcome {
 }
 
 function test_report_rows(): test.TestOutcome {
-  let rows: mitigations.Support[] = mitigations.report();
-  let names: string = "";
+  let rows = mitigations.report();
+  let names = "";
   for row in rows {
     names = names + row.name + " ";
     for cell in [row.cpu.to_string(), row.kernel.to_string(), row.process.to_string()] {
@@ -243,7 +243,7 @@ function test_report_rows(): test.TestOutcome {
         return test.fail(row.name + " cell " + cell);
       }
     }
-    let line: string = row.line();
+    let line = row.line();
     if (!line.starts_with(row.name + " cpu=")) {
       return test.fail("line " + line);
     }
@@ -258,7 +258,7 @@ function test_report_rows(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/mitigations");
+  let r = test.new("std/mitigations");
   r = r.it("auxv keys", test_auxv_keys);
   r = r.it("auxv stops at AT_NULL", test_auxv_stops_at_null);
   r = r.it("auxv truncated", test_auxv_truncated);

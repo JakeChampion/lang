@@ -32,7 +32,7 @@ function test_filter_empty(): test.TestOutcome {
 }
 
 function test_filter_capture(): test.TestOutcome {
-  let threshold: i32 = 3;
+  let threshold = 3;
   let xs: i32[] = [1, 2, 3, 4, 5];
   let big: i32[] = array.filter(xs, (n: i32): boolean => n > threshold);
   return test.assert_eq(big.len() * 100 + big[0] + big[1], 209);
@@ -115,12 +115,12 @@ function test_find_none(): test.TestOutcome {
 function test_enumerate(): test.TestOutcome {
   let xs: i32[] = [10, 20, 30];
   let pairs: (i32, i32)[] = array.enumerate(xs);
-  let acc: i32 = 0;
-  let i: i32 = 0;
+  let acc = 0;
+  let i = 0;
   while (i < pairs.len()) {
     let p: (i32, i32) = pairs[i];
     acc = acc + p.0 + p.1;
-    i = i + 1;
+    i += 1;
   }
   return test.assert_eq(acc, 63);
 }
@@ -207,7 +207,7 @@ function test_find_map_none(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("array combinators");
+  let r = test.new("array combinators");
   r = r.it("map", test_map);
   r = r.it("map empty", test_map_empty);
   r = r.it("map change type", test_map_change_type);

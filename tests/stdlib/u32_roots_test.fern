@@ -55,11 +55,11 @@ function test_log2_floor(): test.TestOutcome {
   if ((1 as u32).log2_floor() != 0) {
     return test.fail("1 -> 0");
   }
-  return test.assert_true((0 as u32).log2_floor() == 0 - 1);
+  return test.assert_true((0 as u32).log2_floor() == -1);
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/u32 roots");
+  let r = test.new("std/u32 roots");
   r = r.it("sqrt_floor", test_sqrt_floor);
   r = r.it("sqrt_floor large", test_sqrt_floor_large);
   r = r.it("is_power_of_2", test_is_power_of_2);

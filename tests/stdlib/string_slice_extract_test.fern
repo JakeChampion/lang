@@ -62,14 +62,14 @@ function test_split_once_missing(): test.TestOutcome {
 }
 
 function test_remove_prefix(): test.TestOutcome {
-  let hit: boolean = "unhappy".remove_prefix("un") == "happy";
-  let miss: boolean = "happy".remove_prefix("un") == "happy";
+  let hit = "unhappy".remove_prefix("un") == "happy";
+  let miss = "happy".remove_prefix("un") == "happy";
   return test.assert_true(hit && miss);
 }
 
 function test_remove_suffix(): test.TestOutcome {
-  let hit: boolean = "file.txt".remove_suffix(".txt") == "file";
-  let miss: boolean = "file.txt".remove_suffix(".md") == "file.txt";
+  let hit = "file.txt".remove_suffix(".txt") == "file";
+  let miss = "file.txt".remove_suffix(".md") == "file.txt";
   return test.assert_true(hit && miss);
 }
 
@@ -96,14 +96,14 @@ function test_strip_quotes_none(): test.TestOutcome {
 }
 
 function test_common_prefix(): test.TestOutcome {
-  let ok: boolean = "foobar".common_prefix("foobaz") == "fooba";
-  let none: boolean = "abc".common_prefix("xyz") == "";
+  let ok = "foobar".common_prefix("foobaz") == "fooba";
+  let none = "abc".common_prefix("xyz") == "";
   return test.assert_true(ok && none);
 }
 
 function test_common_suffix(): test.TestOutcome {
-  let ok: boolean = "running".common_suffix("jumping") == "ing";
-  let none: boolean = "abc".common_suffix("xyz") == "";
+  let ok = "running".common_suffix("jumping") == "ing";
+  let none = "abc".common_suffix("xyz") == "";
   return test.assert_true(ok && none);
 }
 
@@ -150,7 +150,7 @@ function test_chunks(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/string slice + extract");
+  let r = test.new("std/string slice + extract");
   r = r.it("before", test_before);
   r = r.it("before missing", test_before_missing);
   r = r.it("after", test_after);

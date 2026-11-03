@@ -60,7 +60,7 @@ function test_ends_with(): test.TestOutcome {
 }
 
 function test_set_membership(): test.TestOutcome {
-  let s: pset.PSet[Point] = pset.of([p(1, 2), p(3, 4), p(1, 2)]);
+  let s = pset.of([p(1, 2), p(3, 4), p(1, 2)]);
   if (s.len() != 2) {
     return test.fail("pset.of kept a duplicate");
   }
@@ -68,12 +68,12 @@ function test_set_membership(): test.TestOutcome {
 }
 
 function test_set_remove(): test.TestOutcome {
-  let s: pset.PSet[Point] = pset.of([p(1, 2), p(3, 4)]);
+  let s = pset.of([p(1, 2), p(3, 4)]);
   return test.assert_eq_array(s.remove(p(1, 2)).to_array(), [p(3, 4)]);
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("Eq-bound verbs on a derived element");
+  let r = test.new("Eq-bound verbs on a derived element");
   r = r.it("all_equal", test_all_equal);
   r = r.it("dedup", test_dedup);
   r = r.it("distinct", test_distinct);

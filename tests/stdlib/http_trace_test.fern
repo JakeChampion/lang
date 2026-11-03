@@ -7,7 +7,7 @@ import "std/i32";
 const EXAMPLE: string = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
 function counter(): () => i32 {
-  let n: Cell[i32] = cell_new(0);
+  let n = cell_new(0);
   return (): i32 => {
     n.set(n.get() + 1);
     return n.get();
@@ -15,11 +15,11 @@ function counter(): () => i32 {
 }
 
 function fields(pairs: string[]): HeaderMap {
-  let h: HeaderMap = headers.new();
-  let i: i32 = 0;
+  let h = headers.new();
+  let i = 0;
   while (i + 1 < pairs.len()) {
     h = h.append(pairs[i], pairs[i + 1]);
-    i = i + 2;
+    i += 2;
   }
   return h;
 }
@@ -76,7 +76,7 @@ function test_malformed_traceparents_are_refused(): test.TestOutcome {
 }
 
 function test_tracestate_is_kept_only_when_well_formed(): test.TestOutcome {
-  let good: string = "";
+  let good = "";
   match (trace.parse_state("congo=t61rcWkgMzE, ,rojo=00f067aa0ba902b7,tenant@vendor=x")) {
     Ok(s) => {
       good = s;
@@ -98,10 +98,10 @@ function test_tracestate_is_kept_only_when_well_formed(): test.TestOutcome {
     }
   }
   let many: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 33) {
     many = many.append("k" + i.to_string() + "=v");
-    i = i + 1;
+    i += 1;
   }
   match (trace.parse_state(many.join(","))) {
     Ok(s) => {
@@ -143,11 +143,11 @@ function test_from_headers_reads_one_traceparent(): test.TestOutcome {
 }
 
 function test_a_server_continues_or_starts_the_trace(): test.TestOutcome {
-  let continued: trace.Context = trace.continue_from(fields(["traceparent", EXAMPLE, "tracestate", "rojo=1"]), counter());
+  let continued = trace.continue_from(fields(["traceparent", EXAMPLE, "tracestate", "rojo=1"]), counter());
   if (continued.trace_id != "4bf92f3577b34da6a3ce929d0e0e4736" || continued.span_id != "0000000100000002" || continued.state != "rojo=1") {
     return test.fail("continued: " + continued.header() + " " + continued.state);
   }
-  let started: trace.Context = trace.continue_from(fields(["traceparent", "garbage"]), counter());
+  let started = trace.continue_from(fields(["traceparent", "garbage"]), counter());
   if (started.header() != "00-00000001000000020000000300000004-0000000500000006-03") {
     return test.fail("started: " + started.header());
   }
@@ -156,18 +156,18 @@ function test_a_server_continues_or_starts_the_trace(): test.TestOutcome {
 }
 
 function test_inject_writes_the_span_onward(): test.TestOutcome {
-  let c: trace.Context = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
-  let h: HeaderMap = c.inject(fields(["tracestate", "stale=1", "accept", "*/*"]));
-  let parent: string = h.get("traceparent").unwrap_or("");
+  let c = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
+  let h = c.inject(fields(["tracestate", "stale=1", "accept", "*/*"]));
+  let parent = h.get("traceparent").unwrap_or("");
   if (parent != EXAMPLE || h.has("tracestate")) {
     return test.fail("injected " + parent);
   }
-  let with_state: HeaderMap = trace.Context { ...c, state: "rojo=1" }.inject(headers.new());
+  let with_state = trace.Context { ...c, state: "rojo=1" }.inject(headers.new());
   return test.assert_eq(with_state.get("tracestate").unwrap_or(""), "rojo=1");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/trace");
+  let r = test.new("std/http/trace");
   r = r.it("the spec's example round-trips", test_the_spec_example_round_trips);
   r = r.it("malformed traceparents are refused", test_malformed_traceparents_are_refused);
   r = r.it("tracestate is kept only when well formed", test_tracestate_is_kept_only_when_well_formed);

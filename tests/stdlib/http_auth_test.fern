@@ -25,17 +25,17 @@ function summary(resp: HttpResponse): string {
 }
 
 function test_bearer_accepted(): test.TestOutcome {
-  let resp: HttpResponse = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "bearer s3cret")));
+  let resp = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "bearer s3cret")));
   return test.assert_eq(summary(resp), "200 - you are alice");
 }
 
 function test_bearer_missing_refused_and_malformed(): test.TestOutcome {
-  let missing: HttpResponse = http.respond(whoami(http.request("GET", "/me")));
-  let other: HttpResponse = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Basic abc")));
-  let refused: HttpResponse = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer nope")));
-  let malformed: HttpResponse = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer a b")));
-  let empty: HttpResponse = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer ")));
-  let got: string = summary(missing) + "\n" + summary(other) + "\n" + summary(refused) + "\n" + summary(malformed) + "\n" + summary(empty);
+  let missing = http.respond(whoami(http.request("GET", "/me")));
+  let other = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Basic abc")));
+  let refused = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer nope")));
+  let malformed = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer a b")));
+  let empty = http.respond(whoami(http.request("GET", "/me").with_header("Authorization", "Bearer ")));
+  let got = summary(missing) + "\n" + summary(other) + "\n" + summary(refused) + "\n" + summary(malformed) + "\n" + summary(empty);
   return test.assert_eq(got, "401 Bearer {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"a bearer token is required\"}\n401 Bearer {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"a bearer token is required\"}\n401 Bearer error=\"invalid_token\" {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"the bearer token was not accepted\"}\n400 Bearer error=\"invalid_request\" {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"the bearer token is malformed\"}\n401 Bearer {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"a bearer token is required\"}");
 }
 
@@ -56,34 +56,34 @@ function basic_header(text: string): string {
 }
 
 function test_basic_accepted_with_a_colon_in_the_password(): test.TestOutcome {
-  let resp: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss"))));
+  let resp = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss"))));
   return test.assert_eq(summary(resp), "200 - hello bob");
 }
 
 function test_basic_missing_refused_and_malformed(): test.TestOutcome {
-  let challenge: string = "Basic realm=\"api \\\"v2\\\"\", charset=\"UTF-8\"";
-  let missing: HttpResponse = http.respond(admin(http.request("GET", "/admin")));
-  let refused: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:wrong"))));
-  let no_colon: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob"))));
-  let not_b64: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", "Basic %%%")));
-  let got: string = summary(missing) + "\n" + summary(refused) + "\n" + summary(no_colon) + "\n" + summary(not_b64);
+  let challenge = "Basic realm=\"api \\\"v2\\\"\", charset=\"UTF-8\"";
+  let missing = http.respond(admin(http.request("GET", "/admin")));
+  let refused = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:wrong"))));
+  let no_colon = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob"))));
+  let not_b64 = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", "Basic %%%")));
+  let got = summary(missing) + "\n" + summary(refused) + "\n" + summary(no_colon) + "\n" + summary(not_b64);
   return test.assert_eq(got, "401 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"credentials are required\"}\n401 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"the credentials were not accepted\"}\n400 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"the basic credential is malformed\"}\n400 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"the basic credential is malformed\"}");
 }
 
 function test_basic_with_a_control_character_is_malformed(): test.TestOutcome {
-  let nul: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", "Basic Ym9iAHg6cGE6c3M=")));
-  let crlf: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss\r\n"))));
-  let tab: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss\t"))));
+  let nul = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", "Basic Ym9iAHg6cGE6c3M=")));
+  let crlf = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss\r\n"))));
+  let tab = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss\t"))));
   return test.assert_eq(nul.status.to_string() + " " + crlf.status.to_string() + " " + tab.status.to_string(), "400 400 400");
 }
 
 function test_credential_and_token_eq(): test.TestOutcome {
-  let got: string = auth.credential(http.request("GET", "/").with_header("Authorization", "  BEARER  abc  "), "Bearer").unwrap_or("-") + "|" + auth.credential(http.request("GET", "/").with_header("Authorization", "Bearerabc"), "Bearer").unwrap_or("-") + "|" + auth.token_eq("abc", "abc").to_string() + auth.token_eq("abc", "abd").to_string() + auth.token_eq("abc", "abcd").to_string() + auth.token_eq("", "").to_string();
+  let got = auth.credential(http.request("GET", "/").with_header("Authorization", "  BEARER  abc  "), "Bearer").unwrap_or("-") + "|" + auth.credential(http.request("GET", "/").with_header("Authorization", "Bearerabc"), "Bearer").unwrap_or("-") + "|" + auth.token_eq("abc", "abc").to_string() + auth.token_eq("abc", "abd").to_string() + auth.token_eq("abc", "abcd").to_string() + auth.token_eq("", "").to_string();
   return test.assert_eq(got, "abc|-|truefalsefalsetrue");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/auth");
+  let r = test.new("std/http/auth");
   r = r.it("a bearer token accepted", test_bearer_accepted);
   r = r.it("a bearer token missing, refused and malformed", test_bearer_missing_refused_and_malformed);
   r = r.it("a basic credential with a colon in the password", test_basic_accepted_with_a_colon_in_the_password);

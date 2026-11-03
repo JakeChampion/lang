@@ -8,10 +8,10 @@ import "std/option";
 
 function bytes(xs: i32[]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     out = out.append(xs[i] as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -22,10 +22,10 @@ function joined(ss: string[]): string {
 
 function ips(xs: net.IpAddr[]): string {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     out = out.append(xs[i].to_string());
-    i = i + 1;
+    i += 1;
   }
   return out.join(" ");
 }
@@ -100,7 +100,7 @@ function test_encode_name(): test.TestOutcome {
 }
 
 function test_query_on_the_wire(): test.TestOutcome {
-  let q: u8[] = encoded(dns.query(4660, "vm.example.com", dns.TYPE_A));
+  let q = encoded(dns.query(4660, "vm.example.com", dns.TYPE_A));
   if (q.len() != 32) {
     return test.fail("12 header + 20 question bytes");
   }
@@ -117,8 +117,8 @@ function test_query_on_the_wire(): test.TestOutcome {
 }
 
 function test_edns_opt_record(): test.TestOutcome {
-  let q: dns.Message = dns.with_edns(dns.query(1, "vm.example.com", dns.TYPE_AAAA));
-  let b: u8[] = encoded(q);
+  let q = dns.with_edns(dns.query(1, "vm.example.com", dns.TYPE_AAAA));
+  let b = encoded(q);
   if (b.len() != 32 + 11) {
     return test.fail("OPT is the root, a type, a class, a TTL and an empty rdata: 11 bytes");
   }
@@ -250,12 +250,12 @@ function test_decode_rejects(): test.TestOutcome {
 }
 
 function test_round_trip(): test.TestOutcome {
-  let v6: net.IpAddr = net.ipv6_loopback();
-  let q: dns.Question = dns.Question { name: "host.example", qtype: dns.TYPE_AAAA, qclass: dns.CLASS_IN };
-  let cname: dns.Record = dns.Record { name: "host.example", rtype: dns.TYPE_CNAME, rclass: dns.CLASS_IN, ttl: 300, data: CNAME("real.example") };
-  let aaaa: dns.Record = dns.Record { name: "real.example", rtype: dns.TYPE_AAAA, rclass: dns.CLASS_IN, ttl: 300, data: AAAA(v6) };
-  let txt: dns.Record = dns.Record { name: "real.example", rtype: 16, rclass: dns.CLASS_IN, ttl: 1, data: Raw(bytes([2, 104, 105])) };
-  let ns: dns.Record = dns.Record { name: "example", rtype: dns.TYPE_PTR, rclass: dns.CLASS_IN, ttl: 7, data: PTR("ns.example") };
+  let v6 = net.ipv6_loopback();
+  let q = dns.Question { name: "host.example", qtype: dns.TYPE_AAAA, qclass: dns.CLASS_IN };
+  let cname = dns.Record { name: "host.example", rtype: dns.TYPE_CNAME, rclass: dns.CLASS_IN, ttl: 300, data: CNAME("real.example") };
+  let aaaa = dns.Record { name: "real.example", rtype: dns.TYPE_AAAA, rclass: dns.CLASS_IN, ttl: 300, data: AAAA(v6) };
+  let txt = dns.Record { name: "real.example", rtype: 16, rclass: dns.CLASS_IN, ttl: 1, data: Raw(bytes([2, 104, 105])) };
+  let ns = dns.Record { name: "example", rtype: dns.TYPE_PTR, rclass: dns.CLASS_IN, ttl: 7, data: PTR("ns.example") };
   let m: dns.Message = dns.Message {
     id: 65535, response: true, opcode: 0, authoritative: true, truncated: true,
     recursion_desired: false, recursion_available: true, rcode: dns.RCODE_NAME_ERROR,
@@ -313,7 +313,7 @@ function test_round_trip(): test.TestOutcome {
 function test_records_after_cname(): test.TestOutcome {
   match (decoded(reply(0, 4660))) {
     Some(m) => {
-      let a: dns.Answer = dns.records_for(m, "VM.EXAMPLE.COM.", dns.TYPE_A);
+      let a = dns.records_for(m, "VM.EXAMPLE.COM.", dns.TYPE_A);
       if (a.canonical != "www.example.com") {
         return test.fail("the chain ends at the A record's owner");
       }
@@ -327,7 +327,7 @@ function test_records_after_cname(): test.TestOutcome {
 
 function test_answer_statuses(): test.TestOutcome {
   let checks: i32[] = [3, 2, 5, 1];
-  let i: i32 = 0;
+  let i = 0;
   while (i < checks.len()) {
     match (decoded(reply(checks[i], 4660))) {
       Some(m) => {
@@ -336,7 +336,7 @@ function test_answer_statuses(): test.TestOutcome {
             return test.fail("an error rcode is no answer");
           },
           Err(e) => {
-            let want: string = "Name or service not known";
+            let want = "Name or service not known";
             if (checks[i] == 2) {
               want = "Name server failed";
             } else if (checks[i] == 5) {
@@ -354,7 +354,7 @@ function test_answer_statuses(): test.TestOutcome {
         return test.fail("the reply decodes");
       }
     }
-    i = i + 1;
+    i += 1;
   }
   let m: i32[] = [18, 52, 129, 128, 0, 1, 0, 1, 0, 0, 0, 0];
   m = m.concat([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]);
@@ -389,11 +389,11 @@ function test_answer_statuses(): test.TestOutcome {
 function test_answers_question(): test.TestOutcome {
   match (decoded(reply(0, 4660))) {
     Some(m) => {
-      let q: dns.Question = dns.Question { name: "Vm.Example.Com.", qtype: dns.TYPE_A, qclass: dns.CLASS_IN };
+      let q = dns.Question { name: "Vm.Example.Com.", qtype: dns.TYPE_A, qclass: dns.CLASS_IN };
       if (!m.answers_question(q)) {
         return test.fail("the same question, whatever the case and the trailing dot");
       }
-      let other: dns.Question = dns.Question { name: "vm.example.com", qtype: dns.TYPE_AAAA, qclass: dns.CLASS_IN };
+      let other = dns.Question { name: "vm.example.com", qtype: dns.TYPE_AAAA, qclass: dns.CLASS_IN };
       if (m.answers_question(other)) {
         return test.fail("another type is another question");
       }
@@ -410,7 +410,7 @@ function hosts_fixture(): string {
 }
 
 function test_hosts_parse(): test.TestOutcome {
-  let es: dns.HostsEntry[] = dns.parse_hosts(hosts_fixture());
+  let es = dns.parse_hosts(hosts_fixture());
   if (es.len() != 4) {
     return test.fail("four lines carry an address and a name");
   }
@@ -424,7 +424,7 @@ function test_hosts_parse(): test.TestOutcome {
 }
 
 function test_hosts_lookup(): test.TestOutcome {
-  let es: dns.HostsEntry[] = dns.parse_hosts(hosts_fixture());
+  let es = dns.parse_hosts(hosts_fixture());
   if (ips(dns.hosts_lookup(es, "localhost")) != "127.0.0.1 ::1") {
     return test.fail("every address of a name, both families, in file order");
   }
@@ -441,7 +441,7 @@ function test_hosts_lookup(): test.TestOutcome {
 }
 
 function test_hosts_canonical(): test.TestOutcome {
-  let es: dns.HostsEntry[] = dns.parse_hosts(hosts_fixture());
+  let es = dns.parse_hosts(hosts_fixture());
   match (dns.hosts_canonical(es, "vm")) {
     Some(n) => {
       if (n != "Vm.Corp.Example") {
@@ -476,7 +476,7 @@ function resolv_fixture(): string {
 }
 
 function test_resolv_conf_fixture(): test.TestOutcome {
-  let rc: dns.ResolvConf = dns.parse_resolv_conf(resolv_fixture(), "vm.corp.example");
+  let rc = dns.parse_resolv_conf(resolv_fixture(), "vm.corp.example");
   if (rc.nameservers.len() != 3) {
     return test.fail("three nameservers; the one with a zone is skipped");
   }
@@ -493,7 +493,7 @@ function test_resolv_conf_fixture(): test.TestOutcome {
 }
 
 function test_resolv_conf_defaults(): test.TestOutcome {
-  let rc: dns.ResolvConf = dns.parse_resolv_conf("", "vm.corp.example");
+  let rc = dns.parse_resolv_conf("", "vm.corp.example");
   if (rc.nameservers.len() != 1 || rc.nameservers[0].to_string() != "127.0.0.1:53") {
     return test.fail("no nameserver means 127.0.0.1");
   }
@@ -503,7 +503,7 @@ function test_resolv_conf_defaults(): test.TestOutcome {
   if (rc.ndots != 1 || rc.timeout.as_millis() != 5000 as i64 || rc.attempts != 2 || rc.rotate) {
     return test.fail("ndots 1, 5 s, 2 attempts, no rotation");
   }
-  let bare: dns.ResolvConf = dns.parse_resolv_conf("", "vm");
+  let bare = dns.parse_resolv_conf("", "vm");
   if (bare.search.len() != 0) {
     return test.fail("a hostname without a domain gives no search list");
   }
@@ -511,18 +511,18 @@ function test_resolv_conf_defaults(): test.TestOutcome {
 }
 
 function test_resolv_conf_caps(): test.TestOutcome {
-  let rc: dns.ResolvConf = dns.parse_resolv_conf("search a.example b.example\ndomain corp.\noptions ndots:99 timeout:99 attempts:99\n", "vm");
+  let rc = dns.parse_resolv_conf("search a.example b.example\ndomain corp.\noptions ndots:99 timeout:99 attempts:99\n", "vm");
   if (joined(rc.search) != "corp") {
     return test.fail("the last of domain / search wins");
   }
   if (rc.ndots != 15 || rc.timeout.as_millis() != 30000 as i64 || rc.attempts != 5) {
     return test.fail("ndots caps at 15, timeout at 30 s, attempts at 5");
   }
-  let low: dns.ResolvConf = dns.parse_resolv_conf("options timeout:0 attempts:0 ndots:x\n", "vm");
+  let low = dns.parse_resolv_conf("options timeout:0 attempts:0 ndots:x\n", "vm");
   if (low.timeout.as_millis() != 1000 as i64 || low.attempts != 1 || low.ndots != 1) {
     return test.fail("timeout and attempts floor at 1; a non-number keeps the default");
   }
-  let many: dns.ResolvConf = dns.parse_resolv_conf("nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n", "vm");
+  let many = dns.parse_resolv_conf("nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n", "vm");
   if (many.nameservers.len() != 3) {
     return test.fail("at most three nameservers");
   }
@@ -534,7 +534,7 @@ function conf_with(search: string[], ndots: i32): dns.ResolvConf {
 }
 
 function test_search_candidates(): test.TestOutcome {
-  let rc: dns.ResolvConf = conf_with(["a.example", "b.example"], 1);
+  let rc = conf_with(["a.example", "b.example"], 1);
   if (joined(dns.search_candidates("vm", rc)) != "vm.a.example vm.b.example vm") {
     return test.fail("fewer dots than ndots: search first");
   }
@@ -678,7 +678,7 @@ function test_search_all_nxdomain(): test.TestOutcome {
 }
 
 function test_lookup_records_with_walks_the_plan(): test.TestOutcome {
-  let rc: dns.ResolvConf = conf_with(["servfail", "ok2"], 1);
+  let rc = conf_with(["servfail", "ok2"], 1);
   match (dns.lookup_records_with(rc, "nx", dns.TYPE_A, (q: string): Result[dns.Answer, dns.DnsError] => scripted(suffix_of(q)))) {
     Ok(a) => {
       return test.assert_eq(a.canonical, "ok2");
@@ -697,12 +697,12 @@ function suffix_of(q: string): string {
 }
 
 function has_loopback(xs: net.IpAddr[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i].is_loopback()) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -720,40 +720,40 @@ function addr(s: string): net.IpAddr {
 
 function addrs(ss: string[]): net.IpAddr[] {
   let out: net.IpAddr[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ss.len()) {
     out = out.append(addr(ss[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function sources(ss: string[]): Option[net.IpAddr][] {
   let out: Option[net.IpAddr][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ss.len()) {
     if (ss[i] == "") {
       out = out.append(None);
     } else {
       out = out.append(Some(addr(ss[i])));
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function shown(ips: net.IpAddr[]): string {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ips.len()) {
     out = out.append(ips[i].to_string());
-    i = i + 1;
+    i += 1;
   }
   return out.join(" ");
 }
 
 function policy_is(s: string, precedence: i32, label: i32): boolean {
-  let p: dns.Policy = dns.policy_of(addr(s));
+  let p = dns.policy_of(addr(s));
   return p.precedence == precedence && p.label == label;
 }
 
@@ -807,23 +807,23 @@ function test_common_prefix(): test.TestOutcome {
 }
 
 function test_order_rules(): test.TestOutcome {
-  let v6_over_v4: net.IpAddr[] = dns.order_addresses(addrs(["93.184.216.34", "2001:db8::1"]), sources(["10.0.0.1", "2001:db8::2"]));
+  let v6_over_v4 = dns.order_addresses(addrs(["93.184.216.34", "2001:db8::1"]), sources(["10.0.0.1", "2001:db8::2"]));
   if (shown(v6_over_v4) != "2001:db8::1 93.184.216.34") {
     return test.fail("rule 6: a global IPv6 address (40) before an IPv4 one (35)");
   }
-  let loopback_first: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8::1", "::1"]), sources(["2001:db8::2", "::1"]));
+  let loopback_first = dns.order_addresses(addrs(["2001:db8::1", "::1"]), sources(["2001:db8::2", "::1"]));
   if (shown(loopback_first) != "::1 2001:db8::1") {
     return test.fail("rule 6: loopback (50) before a global address");
   }
-  let label_match: net.IpAddr[] = dns.order_addresses(addrs(["fd00::1", "2001:db8::1"]), sources(["2001:db8::5", "2001:db8::5"]));
+  let label_match = dns.order_addresses(addrs(["fd00::1", "2001:db8::1"]), sources(["2001:db8::5", "2001:db8::5"]));
   if (shown(label_match) != "2001:db8::1 fd00::1") {
     return test.fail("rule 5: the destination whose label matches its source's");
   }
-  let scope_match: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8::1", "fe80::1"]), sources(["fe80::9", "fe80::9"]));
+  let scope_match = dns.order_addresses(addrs(["2001:db8::1", "fe80::1"]), sources(["fe80::9", "fe80::9"]));
   if (shown(scope_match) != "fe80::1 2001:db8::1") {
     return test.fail("rule 2: the destination whose scope matches its source's");
   }
-  let longest: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8:2::1", "2001:db8:1::1"]), sources(["2001:db8:1::9", "2001:db8:1::9"]));
+  let longest = dns.order_addresses(addrs(["2001:db8:2::1", "2001:db8:1::1"]), sources(["2001:db8:1::9", "2001:db8:1::9"]));
   if (shown(longest) != "2001:db8:1::1 2001:db8:2::1") {
     return test.fail("rule 9: the longest prefix in common with the source");
   }
@@ -831,15 +831,15 @@ function test_order_rules(): test.TestOutcome {
 }
 
 function test_order_unusable_and_stable(): test.TestOutcome {
-  let no_v6_route: net.IpAddr[] = dns.order_addresses(addrs(["2001:db8::1", "93.184.216.34"]), sources(["", "10.0.0.1"]));
+  let no_v6_route = dns.order_addresses(addrs(["2001:db8::1", "93.184.216.34"]), sources(["", "10.0.0.1"]));
   if (shown(no_v6_route) != "93.184.216.34 2001:db8::1") {
     return test.fail("rule 1: a destination with no source goes last");
   }
-  let tied: net.IpAddr[] = dns.order_addresses(addrs(["93.184.216.34", "93.184.216.35", "93.184.216.33"]), sources(["10.0.0.1", "10.0.0.1", "10.0.0.1"]));
+  let tied = dns.order_addresses(addrs(["93.184.216.34", "93.184.216.35", "93.184.216.33"]), sources(["10.0.0.1", "10.0.0.1", "10.0.0.1"]));
   if (shown(tied) != "93.184.216.34 93.184.216.35 93.184.216.33") {
     return test.fail("rule 10: what the rules leave tied keeps the server's order");
   }
-  let none: net.IpAddr[] = dns.order_addresses(addrs([]), sources([]));
+  let none = dns.order_addresses(addrs([]), sources([]));
   return test.assert_eq(none.len(), 0);
 }
 
@@ -860,8 +860,8 @@ function pair_fails_with(a: Result[dns.Answer, dns.DnsError], aaaa: Result[dns.A
 }
 
 function test_combine_pair(): test.TestOutcome {
-  let a: Result[dns.Answer, dns.DnsError] = answer_of("www.example", A(addr("93.184.216.34")), dns.TYPE_A);
-  let aaaa: Result[dns.Answer, dns.DnsError] = answer_of("www6.example", AAAA(addr("2001:db8::1")), dns.TYPE_AAAA);
+  let a = answer_of("www.example", A(addr("93.184.216.34")), dns.TYPE_A);
+  let aaaa = answer_of("www6.example", AAAA(addr("2001:db8::1")), dns.TYPE_AAAA);
   match (dns.combine_pair(a, aaaa)) {
     Ok(both) => {
       if (both.canonical != "www.example" || both.records.len() != 2) {
@@ -895,20 +895,20 @@ function test_combine_pair(): test.TestOutcome {
 }
 
 function test_interleave_families(): test.TestOutcome {
-  let v6_leads: net.IpAddr[] = dns.interleave_families(addrs(["2001:db8::1", "2001:db8::2", "93.184.216.34", "2001:db8::3", "93.184.216.35"]));
+  let v6_leads = dns.interleave_families(addrs(["2001:db8::1", "2001:db8::2", "93.184.216.34", "2001:db8::3", "93.184.216.35"]));
   if (shown(v6_leads) != "2001:db8::1 93.184.216.34 2001:db8::2 93.184.216.35 2001:db8::3") {
     return test.fail("the first address's family leads and the families alternate, each in its own order");
   }
-  let v4_leads: net.IpAddr[] = dns.interleave_families(addrs(["93.184.216.34", "2001:db8::1", "93.184.216.35"]));
+  let v4_leads = dns.interleave_families(addrs(["93.184.216.34", "2001:db8::1", "93.184.216.35"]));
   if (shown(v4_leads) != "93.184.216.34 2001:db8::1 93.184.216.35") {
     return test.fail("an IPv4 address first leads with IPv4");
   }
-  let none: net.IpAddr[] = dns.interleave_families(addrs([]));
+  let none = dns.interleave_families(addrs([]));
   return test.assert_eq(none.len(), 0);
 }
 
 function test_dial_options(): test.TestOutcome {
-  let o: dns.DialOptions = dns.dial_options();
+  let o = dns.dial_options();
   if (o.fallback.as_millis() != 300 as i64 || o.timeout.as_millis() != 10000 as i64) {
     return test.fail("300 ms between attempts, ten seconds in all");
   }
@@ -963,11 +963,11 @@ function test_nat64_prefix_of(): test.TestOutcome {
 }
 
 function test_synthesize(): test.TestOutcome {
-  let wk: dns.Nat64Prefix = dns.Nat64Prefix { bytes: addr("64:ff9b::").bytes(), bits: 96 };
+  let wk = dns.Nat64Prefix { bytes: addr("64:ff9b::").bytes(), bits: 96 };
   if (!dns.synthesize(wk, addr("192.0.2.1")).eq(addr("64:ff9b::c000:201"))) {
     return test.fail("under the well-known prefix the address fills the last four bytes");
   }
-  let p64: dns.Nat64Prefix = dns.Nat64Prefix { bytes: addr("2001:db8:1:2::").bytes(), bits: 64 };
+  let p64 = dns.Nat64Prefix { bytes: addr("2001:db8:1:2::").bytes(), bits: 64 };
   if (!dns.synthesize(p64, addr("192.0.2.1")).eq(addr("2001:db8:1:2:c0:2:100:0"))) {
     return test.fail("under a /64 prefix byte 8 stays zero and the address follows it");
   }
@@ -1013,7 +1013,7 @@ function test_live_resolve(): test.TestOutcome {
 }
 
 function test_live_resolver(): test.TestOutcome {
-  let names: dns.Resolver = dns.resolver();
+  let names = dns.resolver();
   match (names.resolve_plain("192.0.2.1")) {
     Ok(xs) => {
       if (ips(xs) != "192.0.2.1") {
@@ -1050,17 +1050,17 @@ function test_live_resolver(): test.TestOutcome {
   let Ok(home) = net.ip_parse("127.0.0.1") else {
     return test.fail("127.0.0.1 parses");
   };
-  let first: Option[net.IpAddr] = names.source(home);
-  let probed: i32 = names.seen.get().routes.len();
-  let copy: dns.Resolver = names;
-  let again: Option[net.IpAddr] = copy.source(home);
-  let same: boolean = first.is_some() == again.is_some();
-  let kept: boolean = probed > 0 && names.seen.get().routes.len() == probed;
+  let first = names.source(home);
+  let probed = names.seen.get().routes.len();
+  let copy = names;
+  let again = copy.source(home);
+  let same = first.is_some() == again.is_some();
+  let kept = probed > 0 && names.seen.get().routes.len() == probed;
   return test.assert_eq(kept.to_string() + " " + same.to_string() + " " + names.conf().ndots.to_string(), "true true " + dns.system_conf().ndots.to_string());
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/dns");
+  let r = test.new("std/dns");
   r = r.it("a name on the wire", test_encode_name);
   r = r.it("an A query on the wire", test_query_on_the_wire);
   r = r.it("EDNS0: the OPT record", test_edns_opt_record);

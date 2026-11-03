@@ -2,7 +2,7 @@ import "std/test";
 import "core/cmp" as cmp;
 
 function near(a: f64, b: f64): boolean {
-  let d: f64 = a - b;
+  let d = a - b;
   if (d < 0.0) {
     d = 0.0 - d;
   }
@@ -11,7 +11,7 @@ function near(a: f64, b: f64): boolean {
 
 function test_ascending(): test.TestOutcome {
   let xs: f64[] = [3.5, 1.2, 4.8, 1.1, 5.9, 2.6];
-  let asc: f64[] = cmp.sort(xs);
+  let asc = cmp.sort(xs);
   if (!near(asc[0], 1.1)) {
     return test.fail("min first");
   }
@@ -23,7 +23,7 @@ function test_ascending(): test.TestOutcome {
 
 function test_descending(): test.TestOutcome {
   let xs: f64[] = [3.5, 1.2, 4.8, 1.1, 5.9, 2.6];
-  let desc: f64[] = cmp.sort_desc(xs);
+  let desc = cmp.sort_desc(xs);
   if (!near(desc[0], 5.9)) {
     return test.fail("max first");
   }
@@ -32,7 +32,7 @@ function test_descending(): test.TestOutcome {
 
 function test_immutable(): test.TestOutcome {
   let xs: f64[] = [3.5, 1.2, 4.8];
-  let sorted: f64[] = cmp.sort(xs);
+  let sorted = cmp.sort(xs);
   if (!near(xs[0], 3.5)) {
     return test.fail("input mutated");
   }
@@ -50,7 +50,7 @@ function test_edge_cases(): test.TestOutcome {
 
 function test_negatives(): test.TestOutcome {
   let neg: f64[] = [0.0 - 1.0, 2.0, 0.0 - 3.0, 0.0];
-  let nasc: f64[] = cmp.sort(neg);
+  let nasc = cmp.sort(neg);
   if (!near(nasc[0], 0.0 - 3.0)) {
     return test.fail("most negative first");
   }
@@ -58,7 +58,7 @@ function test_negatives(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("cmp.sort f64");
+  let r = test.new("cmp.sort f64");
   r = r.it("ascending", test_ascending);
   r = r.it("descending", test_descending);
   r = r.it("immutable", test_immutable);

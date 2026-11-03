@@ -4,7 +4,7 @@ import "std/http";
 const HEAD: string = "POST /up HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n";
 
 function walked(body: string, limits: http.HttpLimits): string {
-  let wire: string = HEAD + body;
+  let wire = HEAD + body;
   match (http.parse_request_framed_from(wire.bytes(), 0, limits, http.framed_none())) {
     http.Complete(f) => {
       return "ok:" + string_from_bytes_unchecked(f.request.body_bytes()) + "|" + fields(f.request.trailers) + "|rest=" + (wire.len() - f.len).to_string();
@@ -23,12 +23,12 @@ function walked(body: string, limits: http.HttpLimits): string {
 }
 
 function decoded(body: string, piece: i32, limits: http.HttpLimits): string {
-  let bytes: u8[] = body.bytes();
-  let d: http.ChunkDecoder = http.chunk_decoder(limits);
+  let bytes = body.bytes();
+  let d = http.chunk_decoder(limits);
   let data: u8[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < bytes.len() || at == 0) {
-    let end: i32 = bytes.len();
+    let end = bytes.len();
     if (piece > 0 && at + piece < end) {
       end = at + piece;
     }
@@ -54,28 +54,28 @@ function decoded(body: string, piece: i32, limits: http.HttpLimits): string {
 
 function slice_bytes(bytes: u8[], from: i32, end: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     out = out.append(bytes[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function fields(h: HeaderMap): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < h.names.len()) {
     out = out + h.names[i] + "=" + h.values[i] + ";";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function agree(body: string, limits: http.HttpLimits): string {
-  let want: string = walked(body, limits);
+  let want = walked(body, limits);
   for piece in [0, 1, 3, 7] {
-    let got: string = decoded(body, piece, limits);
+    let got = decoded(body, piece, limits);
     if (got != want) {
       return "piece " + piece.to_string() + ": " + got + " != " + want;
     }
@@ -88,7 +88,7 @@ function limits(): http.HttpLimits {
 }
 
 function test_extensions_trailers_and_a_pipelined_request(): test.TestOutcome {
-  let body: string = "5;ext=\"x\"\r\nhello\r\n06\r\n world\r\n0\r\nX-Sum: 11\r\n\r\nGET /next HTTP/1.1\r\nHost: h\r\n\r\n";
+  let body = "5;ext=\"x\"\r\nhello\r\n06\r\n world\r\n0\r\nX-Sum: 11\r\n\r\nGET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   return test.assert_eq(agree(body, limits()), "ok:hello world|X-Sum=11;|rest=31");
 }
 
@@ -125,18 +125,18 @@ function test_a_bare_lf(): test.TestOutcome {
 }
 
 function test_a_chunk_past_the_body_cap(): test.TestOutcome {
-  let small: http.HttpLimits = http.HttpLimits { ...limits(), body: 4 };
+  let small = http.HttpLimits { ...limits(), body: 4 };
   return test.assert_eq(agree("5\r\nhello\r\n0\r\n\r\n", small), "refused:413");
 }
 
 function test_chunks_adding_up_past_the_body_cap(): test.TestOutcome {
-  let small: http.HttpLimits = http.HttpLimits { ...limits(), body: 8 };
+  let small = http.HttpLimits { ...limits(), body: 8 };
   return test.assert_eq(agree("5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n", small), "refused:413");
 }
 
 function test_a_size_line_past_the_framing_budget(): test.TestOutcome {
-  let tight: http.HttpLimits = http.HttpLimits { ...limits(), header_bytes: 48 };
-  let ext: string = "5;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=b\r\n";
+  let tight = http.HttpLimits { ...limits(), header_bytes: 48 };
+  let ext = "5;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=b\r\n";
   return test.assert_eq(agree(ext + "hello\r\n0\r\n\r\n", tight), "refused:431");
 }
 
@@ -164,7 +164,7 @@ function test_data_is_answered_before_its_crlf(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("http.ChunkDecoder against the parser");
+  let r = test.new("http.ChunkDecoder against the parser");
   r = r.it("extensions, trailers and a pipelined request", test_extensions_trailers_and_a_pipelined_request);
   r = r.it("sizes with leading zeros", test_sizes_with_leading_zeros);
   r = r.it("an empty body", test_empty_body);

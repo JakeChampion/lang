@@ -78,8 +78,8 @@ function test_sign_predicates(): test.TestOutcome {
 }
 
 function test_saturating(): test.TestOutcome {
-  let MAX: i64 = 9223372036854775807 as i64;
-  let MIN: i64 = 0 as i64 - 9223372036854775807 - 1;
+  let MAX = 9223372036854775807 as i64;
+  let MIN = 0 as i64 - 9223372036854775807 - 1;
   if (MAX.saturating_add(1 as i64) != MAX) {
     return test.fail("add overflow");
   }
@@ -90,7 +90,7 @@ function test_saturating(): test.TestOutcome {
 }
 
 function test_checked(): test.TestOutcome {
-  let MAX: i64 = 9223372036854775807 as i64;
+  let MAX = 9223372036854775807 as i64;
   match (MAX.checked_add(1 as i64)) {
     Some(v) => {
       return test.fail("expected None on overflow");
@@ -108,7 +108,7 @@ function test_checked(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/i64");
+  let r = test.new("std/i64");
   r = r.it("abs", test_abs);
   r = r.it("min", test_min);
   r = r.it("max", test_max);

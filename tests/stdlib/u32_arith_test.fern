@@ -46,12 +46,12 @@ function test_rotl(): test.TestOutcome {
 }
 
 function test_rotr_roundtrip(): test.TestOutcome {
-  let x: u32 = 0xDEADBEEF as u32;
+  let x = 0xDEADBEEF as u32;
   return test.assert_eq(rotl(rotr(x, 13 as u32), 13 as u32).to_string(), (0xDEADBEEF as u32).to_string());
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/u32 wrapping arithmetic");
+  let r = test.new("std/u32 wrapping arithmetic");
   r = r.it("wrap add", test_wrap_add);
   r = r.it("wrap add two high", test_wrap_add_two_high);
   r = r.it("wrap sub", test_wrap_sub);

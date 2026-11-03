@@ -4,14 +4,14 @@ import "std/hex";
 import "std/codec";
 
 function test_varints(): test.TestOutcome {
-  let got: string = hex.encode(protobuf.encode_varint(1 as i64)) + " " + hex.encode(protobuf.encode_varint(150 as i64)) + " " + hex.encode(protobuf.encode_varint(0 as i64 - 1 as i64));
+  let got = hex.encode(protobuf.encode_varint(1 as i64)) + " " + hex.encode(protobuf.encode_varint(150 as i64)) + " " + hex.encode(protobuf.encode_varint(0 as i64 - 1 as i64));
   return test.assert_eq(got, "01 9601 ffffffffffffffffff01");
 }
 
 function test_guide_message(): test.TestOutcome {
   match (protobuf.decode(__codec_bytes(hex.decode("089601")))) {
     Ok(fields) => {
-      let v: string = "none";
+      let v = "none";
       match (protobuf.varint(fields, 1)) {
         Some(n) => {
           v = n.to_string();
@@ -28,18 +28,18 @@ function test_guide_message(): test.TestOutcome {
 }
 
 function test_fields(): test.TestOutcome {
-  let inner: u8[] = protobuf.varint_field(1, 27182 as i64);
-  let msg: u8[] = protobuf.string_field(2, "testing").concat(protobuf.bytes_field(3, inner)).concat(protobuf.bytes_field(4, "a".bytes())).concat(protobuf.bytes_field(4, "bc".bytes())).concat(__codec_bytes(hex.decode("2d04000000")));
+  let inner = protobuf.varint_field(1, 27182 as i64);
+  let msg = protobuf.string_field(2, "testing").concat(protobuf.bytes_field(3, inner)).concat(protobuf.bytes_field(4, "a".bytes())).concat(protobuf.bytes_field(4, "bc".bytes())).concat(__codec_bytes(hex.decode("2d04000000")));
   match (protobuf.decode(msg)) {
     Ok(fields) => {
-      let text: string = "";
+      let text = "";
       match (protobuf.bytes(fields, 2)) {
         Some(bs) => {
           text = string_from_bytes_unchecked(bs);
         },
         None => {}
       }
-      let size: string = "none";
+      let size = "none";
       match (protobuf.bytes(fields, 3)) {
         Some(bs) => {
           match (protobuf.decode(bs)) {
@@ -58,8 +58,8 @@ function test_fields(): test.TestOutcome {
         },
         None => {}
       }
-      let reps: u8[][] = protobuf.repeated(fields, 4);
-      let fixed: string = "";
+      let reps = protobuf.repeated(fields, 4);
+      let fixed = "";
       for f in fields {
         if (f.number == 5) {
           fixed = f.wire.to_string() + ":" + f.word.to_string();
@@ -75,7 +75,7 @@ function test_fields(): test.TestOutcome {
 }
 
 function test_zigzag(): test.TestOutcome {
-  let got: string = protobuf.zigzag(0 as i64).to_string() + " " + protobuf.zigzag(0 as i64 - 1 as i64).to_string() + " " + protobuf.zigzag(1 as i64).to_string() + " " + protobuf.zigzag(0 as i64 - 2 as i64).to_string() + " " + protobuf.unzigzag(4294967294 as i64).to_string() + " " + protobuf.unzigzag(4294967295 as i64).to_string();
+  let got = protobuf.zigzag(0 as i64).to_string() + " " + protobuf.zigzag(0 as i64 - 1 as i64).to_string() + " " + protobuf.zigzag(1 as i64).to_string() + " " + protobuf.zigzag(0 as i64 - 2 as i64).to_string() + " " + protobuf.unzigzag(4294967294 as i64).to_string() + " " + protobuf.unzigzag(4294967295 as i64).to_string();
   return test.assert_eq(got, "0 1 2 3 2147483647 -2147483648");
 }
 
@@ -92,12 +92,12 @@ function fault(bytes_hex: string): string {
 }
 
 function test_faults(): test.TestOutcome {
-  let got: string = fault("08") + "|" + fault("1205616263") + "|" + fault("0b") + "|" + fault("00") + "|" + fault("ffffffffffffffffffff01") + "|" + fault("0f01");
+  let got = fault("08") + "|" + fault("1205616263") + "|" + fault("0b") + "|" + fault("00") + "|" + fault("ffffffffffffffffffff01") + "|" + fault("0f01");
   return test.assert_eq(got, "byte 1: field 1: unexpected end of varint|byte 1: field 2: length 5 exceeds 3 remaining bytes|byte 0: field 1: unsupported group wire type 3|byte 0: invalid field number 0|byte 9: varint exceeds 64 bits|byte 0: field 1: invalid wire type 7");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/protobuf");
+  let r = test.new("std/protobuf");
   r = r.it("varints", test_varints);
   r = r.it("the guide's message", test_guide_message);
   r = r.it("strings, embedded, repeated and fixed fields", test_fields);

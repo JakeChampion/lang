@@ -49,7 +49,7 @@ function test_eq_i32_pass(): test.TestOutcome {
 }
 
 function test_eq_i32_fail_message(): test.TestOutcome {
-  let o: test.TestOutcome = test.assert_eq(4, 5);
+  let o = test.assert_eq(4, 5);
   match (o) {
     Fail(msg) => {
       if (!msg.contains("expected \"5\"")) {
@@ -67,7 +67,7 @@ function test_eq_i32_fail_message(): test.TestOutcome {
 }
 
 function test_eq_fail_quotes_empty_actual(): test.TestOutcome {
-  let o: test.TestOutcome = test.assert_eq("", "x");
+  let o = test.assert_eq("", "x");
   match (o) {
     Fail(msg) => {
       if (!msg.contains("expected \"x\"")) {
@@ -140,7 +140,7 @@ function test_eq_string_pass(): test.TestOutcome {
 }
 
 function test_eq_string_fail(): test.TestOutcome {
-  let o: test.TestOutcome = test.assert_eq("a", "b");
+  let o = test.assert_eq("a", "b");
   return expect_fail_containing(o, "assert_eq");
 }
 
@@ -190,7 +190,7 @@ function test_eq_i32_array_pass(): test.TestOutcome {
 }
 
 function test_eq_i32_array_fail_index(): test.TestOutcome {
-  let o: test.TestOutcome = test.assert_eq_array([1, 2, 3], [1, 9, 3]);
+  let o = test.assert_eq_array([1, 2, 3], [1, 9, 3]);
   return expect_fail_containing(o, "index 1");
 }
 
@@ -287,10 +287,10 @@ function test_in_range_f32_fail(): test.TestOutcome {
 
 // core/cmp orders NaN above every other value, as assert_le does.
 function test_in_range_f32_nan_orders_last(): test.TestOutcome {
-  let z: f32 = 0.0 as f32;
-  let nan: f32 = z / z;
-  let one: f32 = 1.0 as f32;
-  let half: f32 = 0.5 as f32;
+  let z = 0.0 as f32;
+  let nan = z / z;
+  let one = 1.0 as f32;
+  let half = 0.5 as f32;
   let o: test.TestOutcome = expect_fail_containing(
     test.assert_in_range(nan, z, one), "\"NaN\" > upper bound",
   );
@@ -362,7 +362,7 @@ function test_fail_returns_fail(): test.TestOutcome {
 }
 
 function test_dropped_it_result_still_counts(): test.TestOutcome {
-  let sub: test.TestRunner = test.new_quiet("dropped-it");
+  let sub = test.new_quiet("dropped-it");
   sub.it("dropped pass", test_pass_returns_pass);
   sub.it("dropped fail", test_fail_returns_fail_case);
   if (sub.emitted.get() != 2) {
@@ -375,9 +375,9 @@ function test_dropped_it_result_still_counts(): test.TestOutcome {
 }
 
 function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
-  let sub: test.TestRunner = test.new_quiet("unused-subsuite");
+  let sub = test.new_quiet("unused-subsuite");
   sub = sub.it("parent pass", test_pass_returns_pass);
-  let child: test.TestRunner = sub.subsuite("child");
+  let child = sub.subsuite("child");
   child = child.it("child pass", test_pass_returns_pass);
   child = child.it("child fail", test_fail_returns_fail_case);
   if (sub.emitted.get() != 3) {
@@ -390,17 +390,17 @@ function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
 }
 
 function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
-  let kept: test.TestRunner = test.new_quiet("kept");
+  let kept = test.new_quiet("kept");
   kept = kept.it("kept pass", test_pass_returns_pass);
   if (kept.finish() != 0) {
     return test.fail("assigned all-passing child exited non-zero");
   }
-  let dropped: test.TestRunner = test.new_quiet("dropped-exit");
+  let dropped = test.new_quiet("dropped-exit");
   dropped.it("dropped pass", test_pass_returns_pass);
   if (dropped.finish() != 1) {
     return test.fail("a dropped passing result exited 0");
   }
-  let bad: test.TestRunner = test.new_quiet("dropped-exit-fail");
+  let bad = test.new_quiet("dropped-exit-fail");
   bad.it("dropped fail", test_fail_returns_fail_case);
   return test.assert_eq(bad.finish(), 1);
 }
@@ -469,7 +469,7 @@ function test_assert_header_pass(): test.TestOutcome {
 }
 
 function test_assert_header_fail(): test.TestOutcome {
-  let wrong: test.TestOutcome = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
+  let wrong = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
   match (wrong) {
     Fail(m) => {
       return test.fail(m);
@@ -586,7 +586,7 @@ function test_is_ok_eq_fail(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("runner self-test");
+  let r = test.new("runner self-test");
   r = r.it("assert_status pass", test_assert_status_pass);
   r = r.it("assert_status fail names both", test_assert_status_fail);
   r = r.it("assert_header pass", test_assert_header_pass);

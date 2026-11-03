@@ -146,7 +146,7 @@ function test_encode_array_round_trip(): test.TestOutcome {
 }
 
 function test_encode_scalars(): test.TestOutcome {
-  let ok: boolean = true;
+  let ok = true;
   match (json.parse("true")) {
     Ok(v) => {
       ok = ok && json.encode(v) == "true";
@@ -187,7 +187,7 @@ function test_encode_string_escape(): test.TestOutcome {
 }
 
 function test_encode_string_escape_all(): test.TestOutcome {
-  let j: string = "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\"";
+  let j = "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\"";
   match (json.parse(j)) {
     Ok(v) => {
       return test.assert_eq(json.encode(v), j);
@@ -213,17 +213,17 @@ function test_parse_string_decode_paths(): test.TestOutcome {
   if (__reencode("\"x\\u00e9y\\ud83d\\ude00z\"") != "\"xéy😀z\"") {
     return test.fail("astral/bmp decode: " + __reencode("\"x\\u00e9y\\ud83d\\ude00z\""));
   }
-  let fffd: string = string_from_bytes_unchecked([239 as u8, 191 as u8, 189 as u8]);
-  let lone: string = __reencode("\"a\\ud83db\"");
+  let fffd = string_from_bytes_unchecked([239 as u8, 191 as u8, 189 as u8]);
+  let lone = __reencode("\"a\\ud83db\"");
   if (lone != "\"a" + fffd + "b\"") {
     return test.fail("lone surrogate decode: " + lone);
   }
-  let long_in: string = "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
+  let long_in = "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"";
   return test.assert_eq(__reencode(long_in), long_in);
 }
 
 function test_encode_nested_round_trip(): test.TestOutcome {
-  let j: string = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
+  let j = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
   match (json.parse(j)) {
     Ok(v) => {
       return test.assert_eq(json.encode(v), j);
@@ -270,7 +270,7 @@ function test_parse_error_byte_render(): test.TestOutcome {
 function test_parse_unescaped_control(): test.TestOutcome {
   let raw: string[] = ["\"a\tb\"", "[\"x\", \"c\nd\"]", "{\"k\r\": 1}", "\"a\\n\tb\""];
   let want: i32[] = [2, 8, 3, 4];
-  let i: i32 = 0;
+  let i = 0;
   while (i < raw.len()) {
     match (json.parse(raw[i])) {
       Ok(_) => {
@@ -282,7 +282,7 @@ function test_parse_unescaped_control(): test.TestOutcome {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   match (json.parse("\"a\\tb\"")) {
     Ok(v) => {
@@ -295,16 +295,16 @@ function test_parse_unescaped_control(): test.TestOutcome {
 }
 
 function nest(n: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < n) {
-    out = out + "[";
-    i = i + 1;
+    out += "[";
+    i += 1;
   }
   i = 0;
   while (i < n) {
-    out = out + "]";
-    i = i + 1;
+    out += "]";
+    i += 1;
   }
   return out;
 }
@@ -336,7 +336,7 @@ function test_get_f64(): test.TestOutcome {
     Ok(v) => {
       match (json.get_f64(v, "x")) {
         Some(f) => {
-          let d: f64 = f - 3.5;
+          let d = f - 3.5;
           if (d < 0.0) {
             d = 0.0 - d;
           }
@@ -358,7 +358,7 @@ function test_get_f64_exp(): test.TestOutcome {
     Ok(v) => {
       match (json.get_f64(v, "x")) {
         Some(f) => {
-          let d: f64 = f - 1500.0;
+          let d = f - 1500.0;
           if (d < 0.0) {
             d = 0.0 - d;
           }
@@ -442,13 +442,13 @@ function __i64_decode(lit: string): string {
 
 function test_i64_bounds(): test.TestOutcome {
   let lits: string[] = ["0", "-0", "-42", "9223372036854775807", "-9223372036854775808", "9223372036854775808", "-9223372036854775809", "1.5"];
-  let got: string = "";
-  let dec: string = "";
+  let got = "";
+  let dec = "";
   for lit in lits {
     got = got + __i64_get(lit) + " ";
     dec = dec + __i64_decode(lit) + " ";
   }
-  let want: string = "0 0 -42 9223372036854775807 -9223372036854775808 <none> <none> <none> ";
+  let want = "0 0 -42 9223372036854775807 -9223372036854775808 <none> <none> <none> ";
   if (got != want) {
     return test.assert_eq(got, want);
   }
@@ -478,7 +478,7 @@ function test_pretty_scalars_and_empties(): test.TestOutcome {
 function test_pretty_structure(): test.TestOutcome {
   match (json.parse("{\"a\":1,\"b\":[10,20]}")) {
     Ok(v) => {
-      let p: string = json.encode_pretty(v, 2);
+      let p = json.encode_pretty(v, 2);
       if (!p.contains("\n")) {
         return test.fail("no newline");
       }
@@ -497,7 +497,7 @@ function test_pretty_structure(): test.TestOutcome {
 }
 
 function test_pretty_roundtrip(): test.TestOutcome {
-  let src: string = "{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{}}";
+  let src = "{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{}}";
   match (json.parse(src)) {
     Ok(v) => {
       match (json.parse(json.encode_pretty(v, 4))) {
@@ -520,7 +520,7 @@ function test_escape_named(): test.TestOutcome {
 }
 
 function test_escape_control_bytes(): test.TestOutcome {
-  let s: string = string_from_bytes_unchecked([1 as u8, 31 as u8]);
+  let s = string_from_bytes_unchecked([1 as u8, 31 as u8]);
   return test.assert_eq(json.escape(s), "\\u0001\\u001f");
 }
 
@@ -532,12 +532,12 @@ function test_escape_passthrough(): test.TestOutcome {
 }
 
 function test_escape_matches_encoder(): test.TestOutcome {
-  let raw: string = "x\x02\"y\\z\n";
+  let raw = "x\x02\"y\\z\n";
   return test.assert_eq("\"" + json.escape(raw) + "\"", json.encode(JString(raw)));
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/json roundtrip");
+  let r = test.new("std/json roundtrip");
   r = r.it("escape named", test_escape_named);
   r = r.it("escape control bytes", test_escape_control_bytes);
   r = r.it("escape passthrough", test_escape_passthrough);

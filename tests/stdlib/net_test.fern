@@ -23,12 +23,12 @@ function kind(text: string): string {
 }
 
 function kinds(texts: string[]): string {
-  let out: string = "";
+  let out = "";
   for t in texts {
     if (out.len() > 0) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + kind(t);
+    out += kind(t);
   }
   return out;
 }
@@ -93,11 +93,11 @@ function test_embedded_v4(): test.TestOutcome {
 }
 
 function quad(text: string): string {
-  let said: string = "no";
+  let said = "no";
   if (net.is_ipv4(text)) {
     said = "yes";
   }
-  let parsed: boolean = false;
+  let parsed = false;
   match (net.ipv4_parse(text)) {
     Ok(a) => {
       parsed = true;
@@ -114,12 +114,12 @@ function quad(text: string): string {
 }
 
 function test_is_ipv4_agrees_with_the_parser(): test.TestOutcome {
-  let out: string = "";
+  let out = "";
   for t in ["127.0.0.1", "255.255.255.255", "0.0.0.0", "1.2.3", "1.2.3.4.5", "1.2.3.4.", ".1.2.3.4", "01.2.3.4", "1.2.3.256", "1..2.3", "2130706433", "127.1", "a.b.c.d", "", "1.2.3.4 "] {
     if (out.len() > 0) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + quad(t);
+    out += quad(t);
   }
   return test.assert_eq(out, "yes yes yes no no no no no no no no no no no no");
 }
@@ -143,7 +143,7 @@ function test_parse_errors(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/net");
+  let r = test.new("std/net");
   r = r.it("each parser reports what it refused", test_parse_errors);
   r = r.it("is_ipv4 agrees with the parser", test_is_ipv4_agrees_with_the_parser);
   r = r.it("public addresses are global", test_public_addresses);

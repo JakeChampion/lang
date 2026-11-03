@@ -51,7 +51,7 @@ function test_consteq(): test.TestOutcome {
 }
 
 function test_hmac_verify(): test.TestOutcome {
-  let mac: u8[] = crypto.hmac_sha256("key".as_bytes(), "The quick brown fox jumps over the lazy dog".as_bytes());
+  let mac = crypto.hmac_sha256("key".as_bytes(), "The quick brown fox jumps over the lazy dog".as_bytes());
   return test.assert_true(
     crypto.hmac_sha256_verify("key".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(), mac)
       && !crypto.hmac_sha256_verify("wrongkey".bytes(), "The quick brown fox jumps over the lazy dog".as_bytes(), mac),
@@ -101,22 +101,22 @@ function test_pbkdf2_verify(): test.TestOutcome {
   if (crypto.pbkdf2_sha256_verify("wrongpw".as_bytes(), "salt".bytes(), 1, stored)) {
     return test.fail("wrong password accepted");
   }
-  let tampered: u8[] = stored.with(31, stored[31] ^ 1 as u8);
+  let tampered = stored.with(31, stored[31] ^ 1 as u8);
   return test.assert_false(crypto.pbkdf2_sha256_verify("password".as_bytes(), "salt".bytes(), 1, tampered));
 }
 
 function __hkdf_byte_rep(b: i32, n: i32): u8[] {
   let a: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     a = a.append(b as u8);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
 
 function test_hkdf_tc1(): test.TestOutcome {
-  let ikm: u8[] = __hkdf_byte_rep(11, 22);
+  let ikm = __hkdf_byte_rep(11, 22);
   let salt: u8[] = [
     0 as u8, 1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8,
     6 as u8, 7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8,
@@ -132,7 +132,7 @@ function test_hkdf_tc1(): test.TestOutcome {
 }
 
 function test_hkdf_tc3_empty(): test.TestOutcome {
-  let ikm: u8[] = __hkdf_byte_rep(11, 22);
+  let ikm = __hkdf_byte_rep(11, 22);
   let e: u8[] = [];
   return test.assert_eq(
     hex.encode(crypto.hkdf_sha256(e, ikm, e, 42)),
@@ -141,10 +141,10 @@ function test_hkdf_tc3_empty(): test.TestOutcome {
 }
 
 function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
-  let ikm: u8[] = __hkdf_byte_rep(11, 22);
-  let salt: u8[] = __hkdf_byte_rep(0, 13);
-  let info: u8[] = __hkdf_byte_rep(255, 4);
-  let prk: u8[] = crypto.hkdf_sha256_extract(salt, ikm);
+  let ikm = __hkdf_byte_rep(11, 22);
+  let salt = __hkdf_byte_rep(0, 13);
+  let info = __hkdf_byte_rep(255, 4);
+  let prk = crypto.hkdf_sha256_extract(salt, ikm);
   return test.assert_true(crypto.consteq(
     crypto.hkdf_sha256_expand(prk, info, 40),
     crypto.hkdf_sha256(salt, ikm, info, 40),
@@ -172,10 +172,10 @@ function test_hmac_sha256_bytes_message(): test.TestOutcome {
 }
 
 function test_hkdf_sha384(): test.TestOutcome {
-  let ikm: u8[] = __hkdf_byte_rep(11, 22);
-  let salt: u8[] = __codec_bytes(hex.decode("000102030405060708090a0b0c"));
-  let info: u8[] = __codec_bytes(hex.decode("f0f1f2f3f4f5f6f7f8f9"));
-  let prk: u8[] = crypto.hkdf_sha384_extract(salt, ikm);
+  let ikm = __hkdf_byte_rep(11, 22);
+  let salt = __codec_bytes(hex.decode("000102030405060708090a0b0c"));
+  let info = __codec_bytes(hex.decode("f0f1f2f3f4f5f6f7f8f9"));
+  let prk = crypto.hkdf_sha384_extract(salt, ikm);
   if (hex.encode(prk) != "704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade") {
     return test.fail("extract");
   }
@@ -260,22 +260,22 @@ function test_shake256_a3(): test.TestOutcome {
 }
 
 function test_shake_streaming(): test.TestOutcome {
-  let msg: u8[] = __a3x200();
-  let r: crypto.ShakeReader = crypto.shake128_new().update(msg[0:77]).update(msg[77:200]).reader();
+  let msg = __a3x200();
+  let r = crypto.shake128_new().update(msg[0:77]).update(msg[77:200]).reader();
   let out: u8[] = [];
   let sizes: i32[] = [1, 167, 1, 200, 143];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 5) {
     let next: (u8[], crypto.ShakeReader) = r.squeeze(sizes[i]);
     out = out.concat(next.0);
     r = next.1;
-    i = i + 1;
+    i += 1;
   }
   return test.assert_eq(hex.encode(out), hex.encode(crypto.shake128(msg, 512)));
 }
 
 function test_totp_rfc6238(): test.TestOutcome {
-  let key: u8[] = "12345678901234567890123456789012".bytes();
+  let key = "12345678901234567890123456789012".bytes();
   if (crypto.totp_sha256(key, 59, 30, 8) != 46119246) {
     return test.fail("T=59");
   }
@@ -289,7 +289,7 @@ function test_totp_rfc6238(): test.TestOutcome {
 }
 
 function test_hotp_and_digits(): test.TestOutcome {
-  let key: u8[] = "12345678901234567890123456789012".bytes();
+  let key = "12345678901234567890123456789012".bytes();
   if (crypto.hotp_sha256(key, 1, 8) != 46119246) {
     return test.fail("hotp c=1");
   }
@@ -297,19 +297,19 @@ function test_hotp_and_digits(): test.TestOutcome {
 }
 
 function test_erase_accepts_owned_bytes(): test.TestOutcome {
-  let key: u8[] = crypto.sha256("secret".as_bytes());
+  let key = crypto.sha256("secret".as_bytes());
   if (key.len() != 32) {
     return test.fail("digest length " + key.len().to_string());
   }
   crypto.erase(key);
-  let empty: u8[] = __alloc_u8(0);
+  let empty = __alloc_u8(0);
   crypto.erase(empty);
   crypto.erase([7 as u8]);
   return test.pass();
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto");
+  let r = test.new("std/crypto");
   r = r.it("sha256 empty", test_sha256_empty);
   r = r.it("sha256 abc", test_sha256_abc);
   r = r.it("sha256 pangram", test_sha256_pangram);

@@ -56,20 +56,20 @@ function trace_signature(): u8[] {
 
 function app_data(): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 50) {
     out = out.append(i as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function cat(a: u8[], b: u8[]): u8[] {
-  let out: u8[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -79,17 +79,17 @@ function zeros(n: i32): u8[] {
 }
 
 function pattern(start: i32, n: i32): u8[] {
-  let out: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let out = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     out = out.with(i, (start + i * 7 & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function trace_hello(): message.ClientHello {
-  let rec: u8[] = client_hello_record();
+  let rec = client_hello_record();
   match (message.decode(message.Raw { kind: 1, bytes: rec.drop(5) })) {
     Ok(m) => {
       match (m) {
@@ -121,30 +121,30 @@ function trace_client(): Result[handshake.ClientStep, handshake.HandshakeError] 
 }
 
 function event_names(events: handshake.Event[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < events.len()) {
     match (events[i]) {
       handshake.VerifyServer(v) => {
-        out = out + " verify";
+        out += " verify";
       },
       handshake.SignNeeded(s) => {
-        out = out + " sign";
+        out += " sign";
       },
       handshake.Connected => {
-        out = out + " connected";
+        out += " connected";
       },
       handshake.PeerClosed => {
-        out = out + " closed";
+        out += " closed";
       },
       handshake.Ticket(t) => {
-        out = out + " ticket";
+        out += " ticket";
       },
       handshake.ResumeOffered(o) => {
-        out = out + " resume";
+        out += " resume";
       },
       handshake.VerifyClient(v) => {
-        out = out + " client";
+        out += " client";
       },
       handshake.Crypto(k) => {
         out = out + " crypto" + k.level.to_string();
@@ -153,20 +153,20 @@ function event_names(events: handshake.Event[]): string {
         out = out + " secret" + t.level.to_string();
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function verification(events: handshake.Event[]): handshake.Verification {
-  let i: i32 = 0;
+  let i = 0;
   while (i < events.len()) {
     match (events[i]) {
       handshake.VerifyServer(v) => {
         return v;
       },
       _ => {
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -174,14 +174,14 @@ function verification(events: handshake.Event[]): handshake.Verification {
 }
 
 function signing(events: handshake.Event[]): handshake.Signing {
-  let i: i32 = 0;
+  let i = 0;
   while (i < events.len()) {
     match (events[i]) {
       handshake.SignNeeded(s) => {
         return s;
       },
       _ => {
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -211,7 +211,7 @@ function test_client_trace(): test.TestOutcome {
           if (event_names(step.events) != " verify" || step.output.len() != 0) {
             return test.fail("events" + event_names(step.events));
           }
-          let v: handshake.Verification = verification(step.events);
+          let v = verification(step.events);
           if (v.chain.len() != 1 || hex.encode(v.chain[0]) != hex.encode(server_certificate()) || v.scheme != 0x0804) {
             return test.fail("chain and scheme");
           }
@@ -292,21 +292,21 @@ function client_reads(c: handshake.Client): test.TestOutcome {
 function test_client_trace_dribbled(): test.TestOutcome {
   match (trace_client()) {
     Ok(start) => {
-      let input: u8[] = cat(cat(server_hello_record(), [20 as u8, 3 as u8, 3 as u8, 0 as u8, 1 as u8, 1 as u8]), server_flight_record());
-      let c: handshake.Client = start.client;
-      let names: string = "";
-      let i: i32 = 0;
+      let input = cat(cat(server_hello_record(), [20 as u8, 3 as u8, 3 as u8, 0 as u8, 1 as u8, 1 as u8]), server_flight_record());
+      let c = start.client;
+      let names = "";
+      let i = 0;
       while (i < input.len()) {
         match (c.read([input[i]])) {
           Ok(step) => {
             c = step.client;
-            names = names + event_names(step.events);
+            names += event_names(step.events);
           },
           Err(e) => {
             return test.fail("byte " + i.to_string() + ": " + e.message());
           }
         }
-        i = i + 1;
+        i += 1;
       }
       if (names != " verify") {
         return test.fail(names);
@@ -328,8 +328,8 @@ function test_client_trace_dribbled(): test.TestOutcome {
 }
 
 function test_server_trace(): test.TestOutcome {
-  let config: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([server_certificate()], [0x0804]), suites: [keyschedule.Aes128GcmSha256], groups: [keyshare.X25519] };
-  let entropy: u8[] = cat(__codec_bytes(hex.decode("a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e26928")), __codec_bytes(hex.decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e")));
+  let config = handshake.ServerConfig { ...handshake.server_config([server_certificate()], [0x0804]), suites: [keyschedule.Aes128GcmSha256], groups: [keyshare.X25519] };
+  let entropy = cat(__codec_bytes(hex.decode("a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e26928")), __codec_bytes(hex.decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e")));
   match (handshake.server_new(config, entropy)) {
     Ok(s) => {
       match (s.read(client_hello_record())) {
@@ -337,7 +337,7 @@ function test_server_trace(): test.TestOutcome {
           if (hex.encode(step.output) != hex.encode(server_hello_record())) {
             return test.fail("ServerHello record");
           }
-          let sg: handshake.Signing = signing(step.events);
+          let sg = signing(step.events);
           if (sg.scheme != 0x0804 || step.server.server_name != "server") {
             return test.fail("scheme and server name");
           }
@@ -374,14 +374,14 @@ function ed_public(): u8[] {
 }
 
 function handshake_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): Result[Pair, handshake.HandshakeError] {
-  let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
-  let server: handshake.Server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
-  let s1: handshake.ServerStep = server.read(start.output)?;
+  let start = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
+  let server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
+  let s1 = server.read(start.output)?;
   if (s1.events.len() == 0) {
     start = start.client.read(s1.output)?;
     s1 = s1.server.read(start.output)?;
   }
-  let sg: handshake.Signing = signing(s1.events);
+  let sg = signing(s1.events);
   let sig: u8[] = [];
   match (signed_with(seed(), sg.signed)) {
     Ok(b) => {
@@ -391,11 +391,11 @@ function handshake_between(cc: handshake.ClientConfig, sc: handshake.ServerConfi
       return Err(handshake.Misuse("sign"));
     }
   }
-  let s2: handshake.ServerStep = s1.server.signature(sig)?;
-  let c1: handshake.ClientStep = start.client.read(cat(s1.output, s2.output))?;
-  let v: handshake.Verification = verification(c1.events);
-  let c2: handshake.ClientStep = c1.client.verdict(v.chain.len() == 1 && verified_by(v.chain[0], v.signed, v.signature))?;
-  let s3: handshake.ServerStep = s2.server.read(c2.output)?;
+  let s2 = s1.server.signature(sig)?;
+  let c1 = start.client.read(cat(s1.output, s2.output))?;
+  let v = verification(c1.events);
+  let c2 = c1.client.verdict(v.chain.len() == 1 && verified_by(v.chain[0], v.signed, v.signature))?;
+  let s3 = s2.server.read(c2.output)?;
   if (!c2.client.connected() || !s3.server.connected()) {
     return Err(handshake.Misuse("not connected"));
   }
@@ -466,8 +466,8 @@ function test_round_trips(): test.TestOutcome {
 }
 
 function test_defaults_and_alpn(): test.TestOutcome {
-  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["h2", "http/1.1"] };
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1", "h2"] };
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["h2", "http/1.1"] };
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1", "h2"] };
   match (handshake_between(cc, sc)) {
     Ok(p) => {
       return test.assert_eq(p.server.server_name + " " + p.server.alpn + " " + p.client.alpn + " " + exchange(p), "example.com http/1.1 http/1.1 ping pong");
@@ -492,8 +492,8 @@ function refused(r: Result[Pair, handshake.HandshakeError]): string {
 }
 
 function test_hello_retry(): test.TestOutcome {
-  let cc: handshake.ClientConfig = handshake.client_config("example.com");
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
+  let cc = handshake.client_config("example.com");
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
   match (handshake_between(cc, sc)) {
     Ok(p) => {
       return test.assert_eq(exchange(p), "ping pong");
@@ -506,9 +506,9 @@ function test_hello_retry(): test.TestOutcome {
 }
 
 function test_two_shares(): test.TestOutcome {
-  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), shares: 2 };
-  let only_x25519: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
-  let answered: string = "";
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), shares: 2 };
+  let only_x25519 = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
+  let answered = "";
   match (handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))) {
     Ok(start) => {
       match (handshake.server_new(only_x25519, pattern(2, handshake.server_entropy(only_x25519)))) {
@@ -532,7 +532,7 @@ function test_two_shares(): test.TestOutcome {
       return test.fail(e.message());
     }
   }
-  let x25519: string = "";
+  let x25519 = "";
   match (handshake_between(cc, only_x25519)) {
     Ok(p) => {
       x25519 = exchange(p);
@@ -541,7 +541,7 @@ function test_two_shares(): test.TestOutcome {
       x25519 = e.message();
     }
   }
-  let hybrid: string = "";
+  let hybrid = "";
   match (handshake_between(cc, handshake.server_config([ed_public()], [0x0807]))) {
     Ok(p) => {
       hybrid = exchange(p);
@@ -562,7 +562,7 @@ function retry_record(group: i32, cookie: u8[]): u8[] {
 }
 
 function default_client(): Result[handshake.ClientStep, handshake.HandshakeError] {
-  let cc: handshake.ClientConfig = handshake.client_config("example.com");
+  let cc = handshake.client_config("example.com");
   return handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)));
 }
 
@@ -571,7 +571,7 @@ function test_retry_cookie(): test.TestOutcome {
     Ok(start) => {
       match (start.client.read(retry_record(0x001d, [0 as u8, 2 as u8, 7 as u8, 7 as u8]))) {
         Ok(step) => {
-          let shape: string = second_hello_shape(step.output);
+          let shape = second_hello_shape(step.output);
           if (shape != "x25519 32 cookie 00020707") {
             return test.fail(shape);
           }
@@ -600,7 +600,7 @@ function second_hello_shape(rec: u8[]): string {
               shares = v;
             }
           }
-          let cookie: string = "none";
+          let cookie = "none";
           if let Some(c) = message.find(h.extensions, message.EXT_COOKIE) {
             cookie = hex.encode(c);
           }
@@ -650,8 +650,8 @@ function test_retry_refusals(): test.TestOutcome {
   if (client_refusal(retry_record(0x0018, [])) != "40 tls handshake: the server asks for a group this client cannot make") {
     return test.fail("an unimplemented group");
   }
-  let cc: handshake.ClientConfig = handshake.client_config("example.com");
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
+  let cc = handshake.client_config("example.com");
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
   match (default_client()) {
     Ok(start) => {
       match (handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))) {
@@ -704,7 +704,7 @@ function test_refused_certificate(): test.TestOutcome {
               return test.fail("accepted");
             },
             Err(e) => {
-              let rec: u8[] = step.client.alert(e);
+              let rec = step.client.alert(e);
               return test.assert_eq(e.alert().to_string() + " " + rec.len().to_string() + " " + (rec[0] as i32).to_string(), "42 24 23");
             }
           }
@@ -744,28 +744,28 @@ function test_client_refusals(): test.TestOutcome {
   if (client_refusal(server_flight_record()) != "10 tls handshake: unexpected record of type 23") {
     return test.fail("encrypted before ServerHello");
   }
-  let flight: u8[] = server_flight_record();
+  let flight = server_flight_record();
   if (client_refusal(cat(server_hello_record(), flight.with(100, flight[100] ^ 1 as u8))) != "20 tls record: the record does not verify") {
     return test.fail("tampered flight");
   }
-  let sh: u8[] = server_hello_record();
+  let sh = server_hello_record();
   return test.assert_eq(client_refusal(sh.with(5 + 4 + 2 + 32 + 1 + 1, 0x04 as u8)), "47 tls handshake: illegal cipher suite");
 }
 
 function hello_without(kind: i32, add: message.Extension[]): u8[] {
-  let h: message.ClientHello = trace_hello();
+  let h = trace_hello();
   let exts: message.Extension[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.extensions.len()) {
     if (h.extensions[i].kind != kind) {
       exts = exts.append(h.extensions[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < add.len()) {
     exts = exts.append(add[i]);
-    i = i + 1;
+    i += 1;
   }
   return record.frame(record.Handshake, 0x0301, message.encode(message.ClientHelloMsg(message.ClientHello { ...h, extensions: exts })));
 }
@@ -799,7 +799,7 @@ function test_server_refusals(): test.TestOutcome {
   if (server_refusal(hello_without(message.EXT_SIGNATURE_ALGORITHMS, [])) != "109 tls handshake: missing signature_algorithms") {
     return test.fail("no signature_algorithms");
   }
-  let stray: message.Extension = message.ext_key_shares([message.KeyShareEntry { group: 0x001d, key: pattern(3, 32) }, message.KeyShareEntry { group: 0x11ec, key: pattern(4, 1216) }]);
+  let stray = message.ext_key_shares([message.KeyShareEntry { group: 0x001d, key: pattern(3, 32) }, message.KeyShareEntry { group: 0x11ec, key: pattern(4, 1216) }]);
   if (server_refusal(hello_without(message.EXT_KEY_SHARE, [stray])) != "47 tls handshake: illegal key share for a group not in supported_groups") {
     return test.fail("a share outside supported_groups");
   }
@@ -856,13 +856,13 @@ function signed(content: u8[]): u8[] {
 }
 
 function ticketed(p: Pair): Result[handshake.Resumption, handshake.HandshakeError] {
-  let t: message.NewSessionTicket = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 1234 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
-  let st: handshake.ServerStep = p.server.ticket(t)?;
-  let cr: handshake.ClientStep = p.client.read(st.output)?;
+  let t = message.NewSessionTicket { lifetime: 7200 as u32, age_add: 1234 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
+  let st = p.server.ticket(t)?;
+  let cr = p.client.read(st.output)?;
   if (event_names(cr.events) != " ticket") {
     return Err(handshake.Misuse("ticket event"));
   }
-  let psk: u8[] = cr.client.resumption_psk(t.nonce)?;
+  let psk = cr.client.resumption_psk(t.nonce)?;
   if (hex.encode(psk) != hex.encode(st.server.resumption_psk(t.nonce)?)) {
     return Err(handshake.Misuse("psk"));
   }
@@ -870,9 +870,9 @@ function ticketed(p: Pair): Result[handshake.Resumption, handshake.HandshakeErro
 }
 
 function resume_with(cc: handshake.ClientConfig, sc: handshake.ServerConfig, answer: Option[handshake.Resumed]): Result[Pair, handshake.HandshakeError] {
-  let start: handshake.ClientStep = handshake.client_start(cc, pattern(3, handshake.client_entropy(cc)))?;
-  let server: handshake.Server = handshake.server_new(sc, pattern(4, handshake.server_entropy(sc)))?;
-  let s1: handshake.ServerStep = server.read(start.output)?;
+  let start = handshake.client_start(cc, pattern(3, handshake.client_entropy(cc)))?;
+  let server = handshake.server_new(sc, pattern(4, handshake.server_entropy(sc)))?;
+  let s1 = server.read(start.output)?;
   if (s1.events.len() == 0) {
     start = start.client.read(s1.output)?;
     s1 = s1.server.read(start.output)?;
@@ -880,17 +880,17 @@ function resume_with(cc: handshake.ClientConfig, sc: handshake.ServerConfig, ans
   if (event_names(s1.events) != " resume") {
     return Err(handshake.Misuse("resume event:" + event_names(s1.events)));
   }
-  let s2: handshake.ServerStep = s1.server.resume(answer)?;
-  let out: u8[] = s2.output;
+  let s2 = s1.server.resume(answer)?;
+  let out = s2.output;
   if (event_names(s2.events) == " sign") {
     s2 = s2.server.signature(signed(signing(s2.events).signed))?;
     out = cat(out, s2.output);
   }
-  let c1: handshake.ClientStep = start.client.read(out)?;
+  let c1 = start.client.read(out)?;
   if (event_names(c1.events) == " verify") {
     c1 = c1.client.verdict(true)?;
   }
-  let s3: handshake.ServerStep = s2.server.read(c1.output)?;
+  let s3 = s2.server.read(c1.output)?;
   if (!c1.client.connected() || !s3.server.connected()) {
     return Err(handshake.Misuse("not connected"));
   }
@@ -900,7 +900,7 @@ function resume_with(cc: handshake.ClientConfig, sc: handshake.ServerConfig, ans
 function resumed_pair(cc: handshake.ClientConfig, sc: handshake.ServerConfig, answer: Option[handshake.Resumed]): string {
   match (resume_with(cc, sc, answer)) {
     Ok(p) => {
-      let how: string = "full";
+      let how = "full";
       if (p.client.resumed() && p.server.resumed()) {
         how = "resumed";
       } else if (p.client.resumed() || p.server.resumed()) {
@@ -916,9 +916,9 @@ function resumed_pair(cc: handshake.ClientConfig, sc: handshake.ServerConfig, an
 }
 
 function test_resumption(): test.TestOutcome {
-  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["http/1.1"] };
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1"] };
-  let r: handshake.Resumption = handshake.Resumption { identity: [], psk: [], suite: keyschedule.Aes128GcmSha256, obfuscated_age: 0 as u32 };
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["http/1.1"] };
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1"] };
+  let r = handshake.Resumption { identity: [], psk: [], suite: keyschedule.Aes128GcmSha256, obfuscated_age: 0 as u32 };
   match (handshake_between(cc, sc)) {
     Ok(p) => {
       match (ticketed(p)) {
@@ -934,19 +934,19 @@ function test_resumption(): test.TestOutcome {
       return test.fail(e.message());
     }
   }
-  let offering: handshake.ClientConfig = handshake.ClientConfig { ...cc, resume: Some(r) };
+  let offering = handshake.ClientConfig { ...cc, resume: Some(r) };
   let taken: Option[handshake.Resumed] = Some(handshake.Resumed { index: 0, psk: r.psk });
   if (resumed_pair(offering, sc, taken) != "resumed example.com http/1.1 ping pong") {
     return test.fail("resumed: " + resumed_pair(offering, sc, taken));
   }
-  let retry: handshake.ServerConfig = handshake.ServerConfig { ...sc, groups: [keyshare.X25519] };
+  let retry = handshake.ServerConfig { ...sc, groups: [keyshare.X25519] };
   if (resumed_pair(offering, retry, taken) != "resumed example.com http/1.1 ping pong") {
     return test.fail("after a retry: " + resumed_pair(offering, retry, taken));
   }
   if (resumed_pair(offering, sc, None) != "full example.com http/1.1 ping pong") {
     return test.fail("declined: " + resumed_pair(offering, sc, None));
   }
-  let wrong: u8[] = r.psk;
+  let wrong = r.psk;
   wrong = wrong.with(0, (wrong[0] as i32 ^ 1) as u8);
   if (resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong })) != "51 tls handshake: the peer's Finished does not verify") {
     return test.fail("wrong psk: " + resumed_pair(offering, sc, Some(handshake.Resumed { index: 0, psk: wrong })));
@@ -955,8 +955,8 @@ function test_resumption(): test.TestOutcome {
 }
 
 function test_resumption_refusals(): test.TestOutcome {
-  let r: handshake.Resumption = handshake.Resumption { identity: "t".bytes(), psk: pattern(9, 32), suite: keyschedule.Aes128GcmSha256, obfuscated_age: 0 as u32 };
-  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), suites: [keyschedule.Aes256GcmSha384], resume: Some(r) };
+  let r = handshake.Resumption { identity: "t".bytes(), psk: pattern(9, 32), suite: keyschedule.Aes128GcmSha256, obfuscated_age: 0 as u32 };
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), suites: [keyschedule.Aes256GcmSha384], resume: Some(r) };
   match (handshake.client_start(cc, pattern(3, handshake.client_entropy(cc)))) {
     Ok(step) => {
       return test.fail("a ticket under a suite not offered");
@@ -967,8 +967,8 @@ function test_resumption_refusals(): test.TestOutcome {
       }
     }
   }
-  let offer: message.Extension = message.ext_pre_shared_key(message.OfferedPsks { identities: [message.PskIdentity { identity: "t".bytes(), obfuscated_age: 0 as u32 }], binders: [zeros(32)] });
-  let share: message.KeyShareEntry = message.KeyShareEntry { group: 0x001d, key: pattern(7, 32) };
+  let offer = message.ext_pre_shared_key(message.OfferedPsks { identities: [message.PskIdentity { identity: "t".bytes(), obfuscated_age: 0 as u32 }], binders: [zeros(32)] });
+  let share = message.KeyShareEntry { group: 0x001d, key: pattern(7, 32) };
   let base: message.Extension[] = [message.ext_supported_versions([message.TLS13]), message.ext_supported_groups([0x001d]), message.ext_key_shares([share]), message.ext_signature_algorithms([0x0807])];
   if (hello_refusal(base.append(offer)) != "109 tls handshake: missing psk_key_exchange_modes") {
     return test.fail("without modes: " + hello_refusal(base.append(offer)));
@@ -977,7 +977,7 @@ function test_resumption_refusals(): test.TestOutcome {
 }
 
 function hello_refusal(exts: message.Extension[]): string {
-  let h: message.ClientHello = message.ClientHello { random: pattern(8, 32), session_id: [], cipher_suites: [0x1301], extensions: exts };
+  let h = message.ClientHello { random: pattern(8, 32), session_id: [], cipher_suites: [0x1301], extensions: exts };
   match (handshake.server_new(handshake.server_config([ed_public()], [0x0807]), pattern(2, handshake.server_entropy(handshake.server_config([ed_public()], [0x0807]))))) {
     Ok(s) => {
       match (s.read(record.frame(record.Handshake, 0x0301, message.encode(message.ClientHelloMsg(h))))) {
@@ -1011,36 +1011,36 @@ function client_verification(events: handshake.Event[]): Option[handshake.Verifi
 struct Shown { pair: Pair, report: string }
 
 function client_auth(cc: handshake.ClientConfig, sc: handshake.ServerConfig, accept: boolean): Result[Shown, handshake.HandshakeError] {
-  let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
-  let s1: handshake.ServerStep = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?.read(start.output)?;
-  let s2: handshake.ServerStep = s1.server.signature(signed(signing(s1.events).signed))?;
-  let c1: handshake.ClientStep = start.client.read(cat(s1.output, s2.output))?;
-  let c2: handshake.ClientStep = c1.client.verdict(true)?;
-  let out: u8[] = c2.output;
-  let shown: string = "unsigned";
+  let start = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
+  let s1 = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?.read(start.output)?;
+  let s2 = s1.server.signature(signed(signing(s1.events).signed))?;
+  let c1 = start.client.read(cat(s1.output, s2.output))?;
+  let c2 = c1.client.verdict(true)?;
+  let out = c2.output;
+  let shown = "unsigned";
   if (event_names(c2.events) == " sign") {
-    let sg: handshake.Signing = signing(c2.events);
+    let sg = signing(c2.events);
     shown = "signed " + sg.scheme.to_string();
     c2 = c2.client.signature(signed(sg.signed))?;
     out = cat(out, c2.output);
   }
-  let s3: handshake.ServerStep = s2.server.read(out)?;
-  let chain_len: i32 = 0;
-  let asked: boolean = false;
+  let s3 = s2.server.read(out)?;
+  let chain_len = 0;
+  let asked = false;
   match (client_verification(s3.events)) {
     Some(v) => {
       asked = true;
       chain_len = v.chain.len();
       shown = shown + " chain " + v.chain.len().to_string();
       if (v.chain.len() > 0 && verified_by(ed_public(), v.signed, v.signature)) {
-        shown = shown + " verified";
+        shown += " verified";
       }
     },
     None => {
-      shown = shown + " not asked";
+      shown += " not asked";
     }
   }
-  let s4: handshake.ServerStep = s3;
+  let s4 = s3;
   if (asked) {
     s4 = s3.server.verdict(accept)?;
   }
@@ -1063,15 +1063,15 @@ function client_auth_outcome(cc: handshake.ClientConfig, sc: handshake.ServerCon
 }
 
 function test_client_certificate(): test.TestOutcome {
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), request_client_certificate: true };
-  let with_chain: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), chain: [ed_public()], sign_schemes: [0x0807] };
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), request_client_certificate: true };
+  let with_chain = handshake.ClientConfig { ...handshake.client_config("example.com"), chain: [ed_public()], sign_schemes: [0x0807] };
   if (client_auth_outcome(with_chain, sc, true) != "signed 2055 chain 1 verified ping pong") {
     return test.fail("with a chain: " + client_auth_outcome(with_chain, sc, true));
   }
   if (client_auth_outcome(handshake.client_config("example.com"), sc, true) != "unsigned chain 0 ping pong") {
     return test.fail("without: " + client_auth_outcome(handshake.client_config("example.com"), sc, true));
   }
-  let rsa_only: handshake.ClientConfig = handshake.ClientConfig { ...with_chain, sign_schemes: [0x0401] };
+  let rsa_only = handshake.ClientConfig { ...with_chain, sign_schemes: [0x0401] };
   if (client_auth_outcome(rsa_only, sc, true) != "unsigned chain 0 ping pong") {
     return test.fail("no scheme in common: " + client_auth_outcome(rsa_only, sc, true));
   }
@@ -1082,8 +1082,8 @@ function test_client_certificate(): test.TestOutcome {
 }
 
 function test_client_certificate_resumed(): test.TestOutcome {
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), request_client_certificate: true };
-  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), chain: [ed_public()], sign_schemes: [0x0807] };
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), request_client_certificate: true };
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), chain: [ed_public()], sign_schemes: [0x0807] };
   match (client_auth(cc, sc, true)) {
     Ok(t) => {
       match (ticketed(t.pair)) {
@@ -1158,10 +1158,10 @@ function transport_parameters(data: u8[]): message.Extension {
 struct QuicPair { client: handshake.Client, server: handshake.Server, client_events: handshake.Event[], server_events: handshake.Event[], output: i32 }
 
 function quic_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): Result[QuicPair, handshake.HandshakeError] {
-  let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
-  let server: handshake.Server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
-  let s1: handshake.ServerStep = server.read_crypto(0, crypto_at(start.events, 0))?;
-  let sg: handshake.Signing = signing(s1.events);
+  let start = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
+  let server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
+  let s1 = server.read_crypto(0, crypto_at(start.events, 0))?;
+  let sg = signing(s1.events);
   let sig: u8[] = [];
   match (signed_with(seed(), sg.signed)) {
     Ok(b) => {
@@ -1171,23 +1171,23 @@ function quic_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): R
       return Err(handshake.Misuse("sign"));
     }
   }
-  let s2: handshake.ServerStep = s1.server.signature(sig)?;
-  let c1: handshake.ClientStep = start.client.read_crypto(0, crypto_at(s1.events, 0))?;
-  let c2: handshake.ClientStep = c1.client.read_crypto(1, cat(crypto_at(s1.events, 1), crypto_at(s2.events, 1)))?;
-  let v: handshake.Verification = verification(c2.events);
-  let c3: handshake.ClientStep = c2.client.verdict(v.chain.len() == 1 && verified_by(v.chain[0], v.signed, v.signature))?;
-  let s3: handshake.ServerStep = s2.server.read_crypto(1, crypto_at(c3.events, 1))?;
+  let s2 = s1.server.signature(sig)?;
+  let c1 = start.client.read_crypto(0, crypto_at(s1.events, 0))?;
+  let c2 = c1.client.read_crypto(1, cat(crypto_at(s1.events, 1), crypto_at(s2.events, 1)))?;
+  let v = verification(c2.events);
+  let c3 = c2.client.verdict(v.chain.len() == 1 && verified_by(v.chain[0], v.signed, v.signature))?;
+  let s3 = s2.server.read_crypto(1, crypto_at(c3.events, 1))?;
   if (!c3.client.connected() || !s3.server.connected()) {
     return Err(handshake.Misuse("not connected"));
   }
-  let output: i32 = start.output.len() + s1.output.len() + s2.output.len() + c1.output.len() + c2.output.len() + c3.output.len() + s3.output.len();
-  let ce: handshake.Event[] = cat_events(cat_events(start.events, c1.events), cat_events(c2.events, c3.events));
-  let se: handshake.Event[] = cat_events(cat_events(s1.events, s2.events), s3.events);
+  let output = start.output.len() + s1.output.len() + s2.output.len() + c1.output.len() + c2.output.len() + c3.output.len() + s3.output.len();
+  let ce = cat_events(cat_events(start.events, c1.events), cat_events(c2.events, c3.events));
+  let se = cat_events(cat_events(s1.events, s2.events), s3.events);
   return Ok(QuicPair { client: c3.client, server: s3.server, client_events: ce, server_events: se, output: output });
 }
 
 function cat_events(a: handshake.Event[], b: handshake.Event[]): handshake.Event[] {
-  let out: handshake.Event[] = a;
+  let out = a;
   for e in b {
     out = out.append(e);
   }
@@ -1208,8 +1208,8 @@ function test_quic_handshake(): test.TestOutcome {
       }
       let levels: i32[] = [1, 2];
       for level in levels {
-        let cw: u8[] = secret_at(p.client_events, level, true);
-        let cr: u8[] = secret_at(p.client_events, level, false);
+        let cw = secret_at(p.client_events, level, true);
+        let cr = secret_at(p.client_events, level, false);
         if (cw.len() == 0 || cr.len() == 0 || !cw.eq(secret_at(p.server_events, level, false)) || !cr.eq(secret_at(p.server_events, level, true))) {
           return test.fail("secrets at level " + level.to_string() + " do not match crosswise");
         }
@@ -1227,13 +1227,13 @@ function test_quic_handshake(): test.TestOutcome {
 }
 
 function test_quic_refusals(): test.TestOutcome {
-  let tp: message.Extension = transport_parameters([7 as u8]);
+  let tp = transport_parameters([7 as u8]);
   match (quic_between(quic_client(["h3"], [tp]), quic_server(["h3"], [tp]))) {
     Ok(p) => {
-      let got: string = refused_step(p.client.read([1 as u8])) + "|" + refused_step(p.client.write("x".bytes())) + "|" + refused_step(p.client.read_crypto(0, [1 as u8])) + "|" + refused_server(p.server.read_crypto(1, [1 as u8])) + "|" + refused_server(p.server.write_framed([1 as u8, 2 as u8]));
+      let got = refused_step(p.client.read([1 as u8])) + "|" + refused_step(p.client.write("x".bytes())) + "|" + refused_step(p.client.read_crypto(0, [1 as u8])) + "|" + refused_server(p.server.read_crypto(1, [1 as u8])) + "|" + refused_server(p.server.write_framed([1 as u8, 2 as u8]));
       match (p.client.save()) {
         Ok(_) => {
-          got = got + "|saved";
+          got += "|saved";
         },
         Err(e) => {
           got = got + "|" + e.message();
@@ -1255,9 +1255,9 @@ function test_quic_refusals(): test.TestOutcome {
       return test.fail(e.message());
     }
   }
-  let no_params: string = refused_quic(quic_client(["h3"], []), quic_server(["h3"], [tp]));
-  let server_no_params: string = refused_quic(quic_client(["h3"], [tp]), quic_server(["h3"], []));
-  let no_alpn: string = refused_quic(quic_client([], [tp]), quic_server([], [tp]));
+  let no_params = refused_quic(quic_client(["h3"], []), quic_server(["h3"], [tp]));
+  let server_no_params = refused_quic(quic_client(["h3"], [tp]), quic_server(["h3"], []));
+  let no_alpn = refused_quic(quic_client([], [tp]), quic_server([], [tp]));
   return test.assert_eq(no_params + "|" + server_no_params + "|" + no_alpn, "109 tls handshake: missing quic_transport_parameters|109 tls handshake: missing quic_transport_parameters|120 tls handshake: no application protocol in common");
 }
 
@@ -1301,7 +1301,7 @@ function refused_server(r: Result[handshake.ServerStep, handshake.HandshakeError
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/handshake");
+  let r = test.new("std/tls/handshake");
   r = r.it("the client's side of RFC 8448", test_client_trace);
   r = r.it("the trace a byte at a time", test_client_trace_dribbled);
   r = r.it("the server's ServerHello of RFC 8448", test_server_trace);
@@ -1339,7 +1339,7 @@ function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
 }
 
 function signed_with(key_seed: [u8], msg: [u8]): Result[u8[], ed25519.Ed25519Error] {
-  let k: ed25519.PrivateKey = ed25519.private_key(key_seed)?;
+  let k = ed25519.private_key(key_seed)?;
   return Ok(k.sign(msg));
 }
 

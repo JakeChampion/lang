@@ -69,10 +69,10 @@ function client_config(name: string, alpn: string[]): conn.Config {
 
 function entropy(seed: i32, n: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append((seed + i * 7 & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -84,19 +84,19 @@ function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
 }
 
 function start_at(cc: conn.Config, sc: conn.Config, unix_ms: i64): Result[Pair, string] {
-  let c: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(unix_ms))?;
+  let c = conn.client(cc, entropy(1, conn.client_entropy(cc)), START, time.timestamp_from_unix_millis(unix_ms))?;
   return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false });
 }
 
 function noted(who: string, c: conn.Conn): string {
-  let out: string = "";
+  let out = "";
   for e in c.events {
     match (e) {
       conn.Connected => {
         out = out + who + " connected; ";
       },
       conn.Closed(why) => {
-        let side: string = "local";
+        let side = "local";
         if (why.remote) {
           side = "remote";
         }
@@ -124,7 +124,7 @@ function noted(who: string, c: conn.Conn): string {
 function to_server(p: Pair, d: u8[]): Pair {
   match (p.server) {
     Some(s) => {
-      let step: conn.Conn = s.receive(d, at_ns(p.now));
+      let step = s.receive(d, at_ns(p.now));
       return Pair { ...p, server: Some(step.events_taken()), log: p.log + noted("server", step) };
     },
     None => {
@@ -148,15 +148,15 @@ function to_server(p: Pair, d: u8[]): Pair {
 }
 
 function to_client(p: Pair, d: u8[]): Pair {
-  let step: conn.Conn = p.client.receive(d, at_ns(p.now));
+  let step = p.client.receive(d, at_ns(p.now));
   return Pair { ...p, client: step.events_taken(), log: p.log + noted("client", step) };
 }
 
 function exchange(p: Pair): (Pair, boolean) {
-  let c: conn.Conn = p.client.transmit(at_ns(p.now));
-  let out: u8[][] = c.datagrams();
+  let c = p.client.transmit(at_ns(p.now));
+  let out = c.datagrams();
   c = c.sent();
-  let cur: Pair = Pair { ...p, client: c, client_sent: p.client_sent + out.len() };
+  let cur = Pair { ...p, client: c, client_sent: p.client_sent + out.len() };
   for d in in_order(cur, out) {
     let (next, lost) = carried(cur);
     cur = next;
@@ -164,11 +164,11 @@ function exchange(p: Pair): (Pair, boolean) {
       cur = to_server(cur, d);
     }
   }
-  let moved: boolean = out.len() > 0;
+  let moved = out.len() > 0;
   match (cur.server) {
     Some(s) => {
-      let s2: conn.Conn = s.transmit(at_ns(cur.now));
-      let sout: u8[][] = s2.datagrams();
+      let s2 = s.transmit(at_ns(cur.now));
+      let sout = s2.datagrams();
       s2 = s2.sent();
       cur = Pair { ...cur, server: Some(s2), server_sent: cur.server_sent + sout.len() };
       for d in in_order(cur, sout) {
@@ -188,7 +188,7 @@ function exchange(p: Pair): (Pair, boolean) {
 }
 
 function carried(p: Pair): (Pair, boolean) {
-  let n: i32 = p.carried + 1;
+  let n = p.carried + 1;
   return (Pair { ...p, carried: n }, p.lose_every > 0 && n % p.lose_every == 0);
 }
 
@@ -197,33 +197,33 @@ function in_order(p: Pair, out: u8[][]): u8[][] {
     return out;
   }
   let back: u8[][] = [];
-  let i: i32 = out.len() - 1;
+  let i = out.len() - 1;
   while (i >= 0) {
     back = back.append(out[i]);
-    i = i - 1;
+    i -= 1;
   }
   return back;
 }
 
 function settle(p: Pair, rounds: i32, until: i64): Pair {
-  let cur: Pair = p;
-  let i: i32 = 0;
+  let cur = p;
+  let i = 0;
   while (i < rounds) {
     let (next, moved) = exchange(cur);
     cur = next;
     if (!moved) {
       cur = tick(cur, until);
     }
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
 
 function tick(p: Pair, until: i64): Pair {
-  let due: i64 = due_ns(p.client.deadline());
+  let due = due_ns(p.client.deadline());
   match (p.server) {
     Some(s) => {
-      let d: i64 = due_ns(s.deadline());
+      let d = due_ns(s.deadline());
       if (d != 0 && (due == 0 || d < due)) {
         due = d;
       }
@@ -233,15 +233,15 @@ function tick(p: Pair, until: i64): Pair {
   if (due == 0 || due > until) {
     return p;
   }
-  let now: i64 = due;
+  let now = due;
   if (now < p.now) {
     now = p.now;
   }
-  let cs: conn.Conn = p.client.tick(at_ns(now));
-  let cur: Pair = Pair { ...p, now: now, client: cs.events_taken(), log: p.log + noted("client", cs) };
+  let cs = p.client.tick(at_ns(now));
+  let cur = Pair { ...p, now: now, client: cs.events_taken(), log: p.log + noted("client", cs) };
   match (cur.server) {
     Some(s) => {
-      let ss: conn.Conn = s.tick(at_ns(now));
+      let ss = s.tick(at_ns(now));
       return Pair { ...cur, server: Some(ss.events_taken()), log: cur.log + noted("server", ss) };
     },
     None => {
@@ -264,9 +264,9 @@ function server_of(p: Pair): conn.Conn {
 function test_handshake(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
-      let s: conn.Conn = server_of(p);
-      let idle: string = "-";
+      let p = settle(p0, 12, 10000 * MS);
+      let s = server_of(p);
+      let idle = "-";
       if let Some(pp) = p.client.peer_params() {
         idle = pp.max_idle_timeout.to_string();
       }
@@ -281,17 +281,17 @@ function test_handshake(): test.TestOutcome {
 function test_amplification(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let c: conn.Conn = p0.client.transmit(at_ns(0 as i64));
-      let out: u8[][] = c.datagrams();
+      let c = p0.client.transmit(at_ns(0 as i64));
+      let out = c.datagrams();
       c = c.sent();
-      let p: Pair = to_server(Pair { ...p0, client: c }, out[0]);
-      let s: conn.Conn = server_of(p);
-      let s2: conn.Conn = s.transmit(at_ns(0 as i64));
-      let sout: u8[][] = s2.datagrams();
+      let p = to_server(Pair { ...p0, client: c }, out[0]);
+      let s = server_of(p);
+      let s2 = s.transmit(at_ns(0 as i64));
+      let sout = s2.datagrams();
       s2 = s2.sent();
-      let total: i32 = 0;
+      let total = 0;
       for d in sout {
-        total = total + d.len();
+        total += d.len();
       }
       return test.assert_eq(out[0].len().to_string() + " in, at most " + (total <= 3 * out[0].len()).to_string(), "1200 in, at most true");
     },
@@ -304,7 +304,7 @@ function test_amplification(): test.TestOutcome {
 function test_lost_datagram(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let p: Pair = settle(Pair { ...p0, drop_server: 1 }, 20, 10000 * MS);
+      let p = settle(Pair { ...p0, drop_server: 1 }, 20, 10000 * MS);
       return test.assert_eq(p.log + "| resent at " + (p.now / MS).to_string() + "ms", "client connected; server connected; | resent at 1ms");
     },
     Err(e) => {
@@ -316,7 +316,7 @@ function test_lost_datagram(): test.TestOutcome {
 function test_lost_flight(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let p: Pair = settle(Pair { ...p0, drop_server: 2 }, 30, 10000 * MS);
+      let p = settle(Pair { ...p0, drop_server: 2 }, 30, 10000 * MS);
       return test.assert_eq(p.log + "| after a probe " + (p.now >= 999 * MS).to_string(), "client connected; server connected; | after a probe true");
     },
     Err(e) => {
@@ -328,7 +328,7 @@ function test_lost_flight(): test.TestOutcome {
 function test_untrusted(): test.TestOutcome {
   match (start(client_config("other.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       return test.assert_eq(p.log, "client closed local 298 tls handshake: the peer's certificate was refused; server closed remote 298 tls handshake: the peer's certificate was refused; ");
     },
     Err(e) => {
@@ -340,7 +340,7 @@ function test_untrusted(): test.TestOutcome {
 function verdict_at(unix_ms: i64): string {
   match (start_at(client_config("tls.example", ["h3"]), server_config(["h3"]), unix_ms)) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       return p.client.connected().to_string();
     },
     Err(e) => {
@@ -350,14 +350,14 @@ function verdict_at(unix_ms: i64): string {
 }
 
 function test_validity_window(): test.TestOutcome {
-  let got: string = verdict_at(NOT_BEFORE_MS - 1000) + " " + verdict_at(NOT_BEFORE_MS + 1000) + " " + verdict_at(NOT_AFTER_MS - 1000) + " " + verdict_at(NOT_AFTER_MS + 1000);
+  let got = verdict_at(NOT_BEFORE_MS - 1000) + " " + verdict_at(NOT_BEFORE_MS + 1000) + " " + verdict_at(NOT_AFTER_MS - 1000) + " " + verdict_at(NOT_AFTER_MS + 1000);
   return test.assert_eq(got, "false true true false");
 }
 
 function test_expired(): test.TestOutcome {
   match (start_at(client_config("tls.example", ["h3"]), server_config(["h3"]), NOT_AFTER_MS + 1000)) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       return test.assert_eq(p.log, "client closed local 298 tls handshake: the peer's certificate was refused; server closed remote 298 tls handshake: the peer's certificate was refused; ");
     },
     Err(e) => {
@@ -369,7 +369,7 @@ function test_expired(): test.TestOutcome {
 function test_no_protocol(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["hq-interop"]))) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       return test.assert_eq(p.log, "server closed local 376 tls handshake: no application protocol in common; client closed remote 376 tls handshake: no application protocol in common; ");
     },
     Err(e) => {
@@ -381,7 +381,7 @@ function test_no_protocol(): test.TestOutcome {
 function test_close(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       p = Pair { ...p, client: p.client.close(256 as i64, "bye", true, at_ns(p.now)), log: "" };
       p = settle(p, 12, 20000 * MS);
       return test.assert_eq(p.log + "| " + p.client.done().to_string() + " " + server_of(p).done().to_string(), "server closed remote 256 bye; client closed local 256 bye; | true true");
@@ -393,21 +393,21 @@ function test_close(): test.TestOutcome {
 }
 
 function test_retry(): test.TestOutcome {
-  let cc: conn.Config = client_config("tls.example", ["h3"]);
+  let cc = client_config("tls.example", ["h3"]);
   match (start(cc, server_config(["h3"]))) {
     Ok(p0) => {
-      let c: conn.Conn = p0.client.transmit(at_ns(0 as i64));
-      let out: u8[][] = c.datagrams();
+      let c = p0.client.transmit(at_ns(0 as i64));
+      let out = c.datagrams();
       c = c.sent();
-      let first: packet.Header = header_of(out[0]);
-      let r: u8[] = packet.retry(first.scid, __codec_bytes(hex.decode("0102030405060708")), first.dcid, "fern-token".bytes());
-      let bad: u8[] = packet.retry(first.scid, __codec_bytes(hex.decode("0a0b0c0d0e0f0001")), __codec_bytes(hex.decode("00")), "nope".bytes());
-      let c2: conn.Conn = c.receive(bad, at_ns(0 as i64)).receive(r, at_ns(0 as i64));
-      let c3: conn.Conn = c2.tick(at_ns(1000 * MS)).transmit(at_ns(1000 * MS));
-      let out2: u8[][] = c3.datagrams();
+      let first = header_of(out[0]);
+      let r = packet.retry(first.scid, __codec_bytes(hex.decode("0102030405060708")), first.dcid, "fern-token".bytes());
+      let bad = packet.retry(first.scid, __codec_bytes(hex.decode("0a0b0c0d0e0f0001")), __codec_bytes(hex.decode("00")), "nope".bytes());
+      let c2 = c.receive(bad, at_ns(0 as i64)).receive(r, at_ns(0 as i64));
+      let c3 = c2.tick(at_ns(1000 * MS)).transmit(at_ns(1000 * MS));
+      let out2 = c3.datagrams();
       c3 = c3.sent();
-      let again: packet.Header = header_of(out2[0]);
-      let opened: string = "no";
+      let again = header_of(out2[0]);
+      let opened = "no";
       match (packet.open(out2[0], again, packet.initial_keys(again.dcid, true), 0 - 1 as i64)) {
         Ok(o) => {
           opened = "pn " + o.pn.to_string();
@@ -438,7 +438,7 @@ function header_of(d: u8[]): packet.Header {
 function test_idle(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       p = Pair { ...p, log: "" };
       p = settle(p, 20, 100000 * MS);
       return test.assert_eq(p.log + "| " + (p.now >= 30000 * MS).to_string(), "client closed local 0 idle timeout; server closed local 0 idle timeout; | true");
@@ -452,7 +452,7 @@ function test_idle(): test.TestOutcome {
 struct Echo { p: Pair, size: i32, got: u8[], fin: boolean, server_done: boolean }
 
 function echo_round(e: Echo, until: i64): Echo {
-  let cur: Echo = e;
+  let cur = e;
   if let Ok(c) = cur.p.client.read(0 as i64) {
     cur = Echo { ...cur, p: Pair { ...cur.p, client: c.0 }, got: cur.got.concat(c.1), fin: cur.fin || c.2 };
   }
@@ -470,13 +470,13 @@ function echoed(e: Echo, s: conn.Conn): Echo {
   if (e.server_done) {
     return e;
   }
-  let r: conn.Conn = s.read_into(0 as i64);
+  let r = s.read_into(0 as i64);
   if (r.refused() != "") {
     return e;
   }
-  let data: u8[] = r.read_data();
-  let fin: boolean = r.read_fin();
-  let w: conn.Conn = r.read_taken().written(0 as i64, data, fin);
+  let data = r.read_data();
+  let fin = r.read_fin();
+  let w = r.read_taken().written(0 as i64, data, fin);
   if (w.refused() != "") {
     return e;
   }
@@ -484,14 +484,14 @@ function echoed(e: Echo, s: conn.Conn): Echo {
 }
 
 function streamed(p0: Pair, size: i32, rounds: i32): Result[Echo, string] {
-  let p: Pair = settle(p0, 12, 10000 * MS);
+  let p = settle(p0, 12, 10000 * MS);
   let (c, id) = p.client.open_stream(false)?;
-  let w: conn.Conn = c.write(id, entropy(5, size), true)?;
-  let e: Echo = Echo { p: Pair { ...p, client: w }, size: size, got: [], fin: false, server_done: false };
-  let i: i32 = 0;
+  let w = c.write(id, entropy(5, size), true)?;
+  let e = Echo { p: Pair { ...p, client: w }, size: size, got: [], fin: false, server_done: false };
+  let i = 0;
   while (i < rounds && !e.fin) {
     e = echo_round(e, e.p.now + 60000 * MS);
-    i = i + 1;
+    i += 1;
   }
   return Ok(e);
 }
@@ -499,12 +499,12 @@ function streamed(p0: Pair, size: i32, rounds: i32): Result[Echo, string] {
 function echo_report(r: Result[Echo, string]): string {
   match (r) {
     Ok(e) => {
-      let same: boolean = e.got.len() == e.size;
-      let want: u8[] = entropy(5, e.size);
-      let i: i32 = 0;
+      let same = e.got.len() == e.size;
+      let want = entropy(5, e.size);
+      let i = 0;
       while (same && i < e.size) {
         same = e.got[i] == want[i];
-        i = i + 1;
+        i += 1;
       }
       return e.got.len().to_string() + " back, same " + same.to_string() + ", fin " + e.fin.to_string() + ", streams left " + e.p.client.buffered(0 as i64).to_string();
     },
@@ -515,8 +515,8 @@ function echo_report(r: Result[Echo, string]): string {
 }
 
 function stream_configs(): (conn.Config, conn.Config) {
-  let cc: conn.Config = client_config("tls.example", ["h3"]).with_streams(4 as i64, 4 as i64, 4000 as i64, 6000 as i64);
-  let sc: conn.Config = server_config(["h3"]).with_streams(4 as i64, 4 as i64, 4000 as i64, 6000 as i64);
+  let cc = client_config("tls.example", ["h3"]).with_streams(4 as i64, 4 as i64, 4000 as i64, 6000 as i64);
+  let sc = server_config(["h3"]).with_streams(4 as i64, 4 as i64, 4000 as i64, 6000 as i64);
   return (cc, sc);
 }
 
@@ -536,7 +536,7 @@ function test_stream_echo_lossy(): test.TestOutcome {
   let (cc, sc) = stream_configs();
   match (start(cc, sc)) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       return test.assert_eq(echo_report(streamed(Pair { ...p, lose_every: 7, reorder: true }, 20000, 2000)), "20000 back, same true, fin true, streams left 0");
     },
     Err(e) => {
@@ -549,14 +549,14 @@ function test_bare_refusals(): test.TestOutcome {
   let (cc, sc) = stream_configs();
   match (start(cc, sc)) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       let Ok(o) = p.client.open_stream(false) else {
         return test.fail("no stream");
       };
-      let id: i64 = o.1;
-      let none: i64 = 1000 as i64;
+      let id = o.1;
+      let none = 1000 as i64;
       let seen: string[] = [];
-      let c: conn.Conn = o.0.written(none, [1u8], false);
+      let c = o.0.written(none, [1u8], false);
       seen = seen.append(c.refused());
       c = c.read_into(none);
       seen = seen.append(c.refused());
@@ -587,7 +587,7 @@ function test_bare_refusals(): test.TestOutcome {
 function test_no_streams(): test.TestOutcome {
   match (start(client_config("tls.example", ["h3"]), server_config(["h3"]))) {
     Ok(p0) => {
-      let p: Pair = settle(p0, 12, 10000 * MS);
+      let p = settle(p0, 12, 10000 * MS);
       match (p.client.open_stream(false)) {
         Ok(_) => {
           return test.fail("opened a stream the server does not allow");
@@ -614,7 +614,7 @@ function updated_ack(p: Pair, datagrams: u8[][]): boolean {
   let Some(k) = p.client.spaces[2].recv else {
     return false;
   };
-  let want: i64 = p.client.spaces[2].next_pn;
+  let want = p.client.spaces[2].next_pn;
   for d in datagrams {
     let Ok(h) = packet.parse(d, 0, 8) else {
       continue;
@@ -643,10 +643,10 @@ function test_peer_key_update_ack(): test.TestOutcome {
   let Ok(p0) = start(cc, sc) else {
     return test.fail("start");
   };
-  let p: Pair = settle(p0, 12, 10000 * MS);
-  let step: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
-  let after: conn.Conn = step.transmit(at_ns(p.now));
-  let out: u8[][] = after.datagrams();
+  let p = settle(p0, 12, 10000 * MS);
+  let step = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
+  let after = step.transmit(at_ns(p.now));
+  let out = after.datagrams();
   after = after.sent();
   return test.assert_eq(updated_ack(p, out).to_string(), "true");
 }
@@ -656,9 +656,9 @@ function test_peer_key_update_stream(): test.TestOutcome {
   let Ok(p0) = start(cc, sc) else {
     return test.fail("start");
   };
-  let p: Pair = settle(p0, 12, 10000 * MS);
-  let f: frames.Frame = frames.StreamFrame(frames.StreamData { stream: 0 as i64, offset: 0 as i64, data: entropy(5, 3), fin: true });
-  let step: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(f)), at_ns(p.now));
+  let p = settle(p0, 12, 10000 * MS);
+  let f = frames.StreamFrame(frames.StreamData { stream: 0 as i64, offset: 0 as i64, data: entropy(5, 3), fin: true });
+  let step = server_of(p).receive(peer_update(p, frames.encode(f)), at_ns(p.now));
   let Ok(r) = step.read(0 as i64) else {
     return test.fail("updated-key STREAM was not delivered");
   };
@@ -669,10 +669,10 @@ function phase_packet(p: Pair, pn: i64, generations: i32): u8[] {
   let Some(k) = p.client.spaces[2].send else {
     return [];
   };
-  let i: i32 = 0;
+  let i = 0;
   while (i < generations) {
     k = k.updated();
-    i = i + 1;
+    i += 1;
   }
   return packet.seal_short(server_of(p).scid, pn, 2, generations % 2 == 1, false, frames.encode(frames.Ping), k);
 }
@@ -706,23 +706,23 @@ function test_local_key_update(): test.TestOutcome {
   if (initial.client.update_keys(at_ns(initial.now)).is_ok()) {
     return test.fail("updated before confirmation");
   }
-  let p: Pair = settle(initial, 12, 10000 * MS);
-  let old: conn.Conn = server_of(p);
+  let p = settle(initial, 12, 10000 * MS);
+  let old = server_of(p);
   let Ok(updated) = old.update_keys(at_ns(p.now)) else {
     return test.fail("confirmed, acknowledged update refused");
   };
   if (updated.update_keys(at_ns(p.now)).is_ok()) {
     return test.fail("second update before acknowledgement");
   }
-  let queued: conn.Conn = conn.Conn { ...updated, pending: updated.pending.append(frames.Ping) };
-  let cur: Pair = Pair { ...p, server: Some(queued) };
-  let i: i32 = 0;
+  let queued = conn.Conn { ...updated, pending: updated.pending.append(frames.Ping) };
+  let cur = Pair { ...p, server: Some(queued) };
+  let i = 0;
   while (i < 4) {
     let (next, _) = exchange(cur);
     cur = next;
-    i = i + 1;
+    i += 1;
   }
-  let s: conn.Conn = server_of(cur);
+  let s = server_of(cur);
   return test.assert_eq(s.key_phase.to_string() + " " + cur.client.key_phase.to_string() + " " + s.key_awaiting_peer.to_string() + " " + old.key_phase.to_string(), "true true false false");
 }
 
@@ -730,20 +730,20 @@ function test_key_update_reordering(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let pn: i64 = p.client.spaces[2].next_pn;
-  let old: conn.Conn = server_of(p);
-  let promoted: conn.Conn = old.receive(phase_packet(p, pn + 3, 1), at_ns(p.now));
-  let reordered: conn.Conn = promoted.receive(phase_packet(p, pn + 1, 0), at_ns(p.now));
+  let pn = p.client.spaces[2].next_pn;
+  let old = server_of(p);
+  let promoted = old.receive(phase_packet(p, pn + 3, 1), at_ns(p.now));
+  let reordered = promoted.receive(phase_packet(p, pn + 1, 0), at_ns(p.now));
   if (reordered.failed_auth != 0 || !received_pn(reordered, pn + 1) || close_code(reordered) != 0 - 1 as i64) {
     return test.fail("old reordered packet refused");
   }
-  let expired: conn.Conn = reordered.tick(at_ns(reordered.key_discard_at));
-  let without_tick: conn.Conn = reordered.receive(phase_packet(p, pn + 2, 0), at_ns(reordered.key_discard_at));
+  let expired = reordered.tick(at_ns(reordered.key_discard_at));
+  let without_tick = reordered.receive(phase_packet(p, pn + 2, 0), at_ns(reordered.key_discard_at));
   if (without_tick.failed_auth != 1 || received_pn(without_tick, pn + 2)) {
     return test.fail("expired old keys used before tick");
   }
-  let dropped: conn.Conn = expired.receive(phase_packet(p, pn + 2, 0), at_ns(reordered.key_discard_at));
-  let boundary: conn.Conn = expired.receive(phase_packet(p, pn, 1), at_ns(reordered.key_discard_at));
+  let dropped = expired.receive(phase_packet(p, pn + 2, 0), at_ns(reordered.key_discard_at));
+  let boundary = expired.receive(phase_packet(p, pn, 1), at_ns(reordered.key_discard_at));
   return test.assert_eq(reordered.key_phase.to_string() + " " + reordered.key_previous_max.to_string() + " " + expired.key_previous_recv.is_none().to_string() + " " + dropped.failed_auth.to_string() + " " + old.key_phase.to_string() + " " + close_code(boundary).to_string(), "true " + (pn + 1).to_string() + " true 1 false 14");
 }
 
@@ -751,10 +751,10 @@ function test_forged_key_phase(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let s: conn.Conn = server_of(p);
-  let wire: u8[] = phase_packet(p, p.client.spaces[2].next_pn, 1);
-  let corrupt: u8[] = wire.with(wire.len() - 1, (wire[wire.len() - 1] as i32 ^ 1) as u8);
-  let rejected: conn.Conn = s.receive(corrupt, at_ns(p.now));
+  let s = server_of(p);
+  let wire = phase_packet(p, p.client.spaces[2].next_pn, 1);
+  let corrupt = wire.with(wire.len() - 1, (wire[wire.len() - 1] as i32 ^ 1) as u8);
+  let rejected = s.receive(corrupt, at_ns(p.now));
   let Some(before) = s.key_next_recv else {
     return test.fail("uncached next key");
   };
@@ -768,9 +768,9 @@ function test_unconfirmed_key_update(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let s: conn.Conn = server_of(p);
-  let unconfirmed: conn.Conn = conn.Conn { ...s, recovery: recovery.Recovery { ...s.recovery, handshake_confirmed: false } };
-  let rejected: conn.Conn = unconfirmed.receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
+  let s = server_of(p);
+  let unconfirmed = conn.Conn { ...s, recovery: recovery.Recovery { ...s.recovery, handshake_confirmed: false } };
+  let rejected = unconfirmed.receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
   return test.assert_eq(close_code(rejected).to_string(), "14");
 }
 
@@ -778,9 +778,9 @@ function test_double_key_update(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
-  let ready: conn.Conn = first.tick(at_ns(first.key_generate_at));
-  let rejected: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), at_ns(first.key_generate_at));
+  let first = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
+  let ready = first.tick(at_ns(first.key_generate_at));
+  let rejected = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), at_ns(first.key_generate_at));
   return test.assert_eq(first.key_unacked.to_string() + " " + close_code(rejected).to_string(), "true 14");
 }
 
@@ -788,12 +788,12 @@ function test_second_key_update(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
-  let acked: conn.Conn = first.transmit(at_ns(p.now));
-  let _: u8[][] = acked.datagrams();
+  let first = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
+  let acked = first.transmit(at_ns(p.now));
+  let _ = acked.datagrams();
   acked = acked.sent();
-  let ready: conn.Conn = acked.tick(at_ns(first.key_generate_at));
-  let second: conn.Conn = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), at_ns(first.key_generate_at));
+  let ready = acked.tick(at_ns(first.key_generate_at));
+  let second = ready.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), at_ns(first.key_generate_at));
   return test.assert_eq(acked.key_unacked.to_string() + " " + ready.key_next_recv.is_some().to_string() + " " + second.key_phase.to_string() + " " + second.spaces[2].largest_recv.to_string() + " " + close_code(second).to_string(), "false true false " + (p.client.spaces[2].next_pn + 1).to_string() + " -1");
 }
 
@@ -801,9 +801,9 @@ function test_key_generation_timer(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let first: conn.Conn = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
-  let invalid: conn.Conn = first.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), at_ns(p.now));
-  let ready: conn.Conn = invalid.tick(at_ns(first.key_generate_at));
+  let first = server_of(p).receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
+  let invalid = first.receive(phase_packet(p, p.client.spaces[2].next_pn + 1, 2), at_ns(p.now));
+  let ready = invalid.tick(at_ns(first.key_generate_at));
   return test.assert_eq(first.key_next_recv.is_none().to_string() + " " + invalid.key_next_recv.is_none().to_string() + " " + (invalid.key_generate_at == first.key_generate_at).to_string() + " " + invalid.failed_auth.to_string() + " " + ready.key_next_recv.is_some().to_string() + " " + ready.key_generate_at.to_string(), "true true true 1 true 0");
 }
 
@@ -811,8 +811,8 @@ function test_nonmonotonic_key_update(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let s: conn.Conn = server_of(p);
-  let rejected: conn.Conn = s.receive(phase_packet(p, s.spaces[2].largest_recv, 1), at_ns(p.now));
+  let s = server_of(p);
+  let rejected = s.receive(phase_packet(p, s.spaces[2].largest_recv, 1), at_ns(p.now));
   return test.assert_eq(close_code(rejected).to_string(), "14");
 }
 
@@ -820,11 +820,11 @@ function test_key_authentication_limit(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let s: conn.Conn = conn.Conn { ...server_of(p), failed_auth: 4503599627370495 as i64 };
-  let bytes: u8[] = phase_packet(p, p.client.spaces[2].next_pn, 1);
-  let bad: u8[] = bytes.with(bytes.len() - 1, (bytes[bytes.len() - 1] as i32 ^ 1) as u8);
-  let closed: conn.Conn = s.receive(bad, at_ns(p.now));
-  let again: conn.Conn = closed.receive(bytes, at_ns(p.now));
+  let s = conn.Conn { ...server_of(p), failed_auth: 4503599627370495 as i64 };
+  let bytes = phase_packet(p, p.client.spaces[2].next_pn, 1);
+  let bad = bytes.with(bytes.len() - 1, (bytes[bytes.len() - 1] as i32 ^ 1) as u8);
+  let closed = s.receive(bad, at_ns(p.now));
+  let again = closed.receive(bytes, at_ns(p.now));
   return test.assert_eq(closed.failed_auth.to_string() + " " + close_code(closed).to_string() + " " + again.key_phase.to_string() + " " + s.failed_auth.to_string(), "4503599627370496 15 false 4503599627370495");
 }
 
@@ -832,20 +832,20 @@ function test_key_encryption_limit(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let s: conn.Conn = server_of(p);
-  let near: conn.Conn = conn.Conn { ...s, key_sent: 8388607 as i64, pending: s.pending.append(frames.Ping) };
-  let rotated: conn.Conn = near.transmit(at_ns(p.now));
-  let out: u8[][] = rotated.datagrams();
+  let s = server_of(p);
+  let near = conn.Conn { ...s, key_sent: 8388607 as i64, pending: s.pending.append(frames.Ping) };
+  let rotated = near.transmit(at_ns(p.now));
+  let out = rotated.datagrams();
   rotated = rotated.sent();
   if (out.len() == 0 || !rotated.key_phase || rotated.key_sent != 1) {
     return test.fail("did not rotate before confidentiality limit");
   }
-  let blocked: conn.Conn = conn.Conn { ...near, recovery: recovery.Recovery { ...near.recovery, handshake_confirmed: false } };
-  let closed: conn.Conn = blocked.transmit(at_ns(p.now));
-  let last: u8[][] = closed.datagrams();
+  let blocked = conn.Conn { ...near, recovery: recovery.Recovery { ...near.recovery, handshake_confirmed: false } };
+  let closed = blocked.transmit(at_ns(p.now));
+  let last = closed.datagrams();
   closed = closed.sent();
-  let exhausted: conn.Conn = closed.receive([], at_ns(p.now)).transmit(at_ns(p.now));
-  let extra: u8[][] = exhausted.datagrams();
+  let exhausted = closed.receive([], at_ns(p.now)).transmit(at_ns(p.now));
+  let extra = exhausted.datagrams();
   return test.assert_eq(close_code(closed).to_string() + " " + closed.key_sent.to_string() + " " + (last.len() > 0).to_string() + " " + extra.len().to_string() + " " + exhausted.key_sent.to_string() + " " + near.key_sent.to_string(), "15 8388608 true 0 8388608 8388607");
 }
 
@@ -853,14 +853,14 @@ function test_chacha_authentication_limit(): test.TestOutcome {
   let Ok(p) = key_pair() else {
     return test.fail("pair");
   };
-  let chacha: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, entropy(9, 32));
-  let s: conn.Conn = conn.Conn { ...server_of(p), key_next_recv: Some(chacha), failed_auth: 68719476735 as i64 };
-  let closed: conn.Conn = s.receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
+  let chacha = packet.keys(keyschedule.ChaCha20Poly1305Sha256, entropy(9, 32));
+  let s = conn.Conn { ...server_of(p), key_next_recv: Some(chacha), failed_auth: 68719476735 as i64 };
+  let closed = s.receive(peer_update(p, frames.encode(frames.Ping)), at_ns(p.now));
   return test.assert_eq(closed.failed_auth.to_string() + " " + close_code(closed).to_string() + " " + closed.key_phase.to_string() + " " + s.failed_auth.to_string(), "68719476736 15 false 68719476735");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/quic/conn");
+  let r = test.new("std/quic/conn");
   r = r.it("a handshake in memory", test_handshake);
   r = r.it("the anti-amplification limit", test_amplification);
   r = r.it("a lost datagram, by time threshold", test_lost_datagram);

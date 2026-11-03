@@ -8,11 +8,11 @@ import "std/headers";
 import "std/utf8";
 
 function req(fields: string[]): HttpRequest {
-  let r: HttpRequest = http.request("GET", "/doc");
-  let i: i32 = 0;
+  let r = http.request("GET", "/doc");
+  let i = 0;
   while (i + 1 < fields.len()) {
     r = HttpRequest { ...r, headers: r.headers.append(fields[i], fields[i + 1]) };
-    i = i + 2;
+    i += 2;
   }
   return r;
 }
@@ -38,7 +38,7 @@ function field(r: HttpResponse, name: string): string {
 }
 
 function summary(r: HttpResponse): string {
-  let body: u8[] = r.body_bytes();
+  let body = r.body_bytes();
   if (field(r, "Content-Encoding") == "gzip") {
     match (deflate.gunzip(body, 1048576)) {
       Ok(out) => {
@@ -69,8 +69,8 @@ function summary(r: HttpResponse): string {
       }
     }
   }
-  let text: string = utf8.from_bytes_lossy(body);
-  let read: string = body.len().to_string();
+  let text = utf8.from_bytes_lossy(body);
+  let read = body.len().to_string();
   if (text == page()) {
     read = "same";
   }
@@ -78,19 +78,19 @@ function summary(r: HttpResponse): string {
 }
 
 function test_gzip_chosen(): test.TestOutcome {
-  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), html(), compress.options());
+  let r = compress.response(req(["Accept-Encoding", "gzip"]), html(), compress.options());
   return test.assert_eq(summary(r) + " " + (r.body_len() < page().len()).to_string(), "gzip Accept-Encoding same true");
 }
 
 function test_zstd(): test.TestOutcome {
-  let o: compress.Options = compress.options();
-  let both: string = summary(compress.response(req(["Accept-Encoding", "gzip, deflate, zstd"]), html(), o));
-  let ranked: string = summary(compress.response(req(["Accept-Encoding", "zstd;q=0.5, gzip"]), html(), o));
+  let o = compress.options();
+  let both = summary(compress.response(req(["Accept-Encoding", "gzip, deflate, zstd"]), html(), o));
+  let ranked = summary(compress.response(req(["Accept-Encoding", "zstd;q=0.5, gzip"]), html(), o));
   return test.assert_eq(both + " | " + ranked, "zstd Accept-Encoding same | gzip Accept-Encoding same");
 }
 
 function test_brotli(): test.TestOutcome {
-  let o: compress.Options = compress.options();
+  let o = compress.options();
   let tie = summary(compress.response(req(["Accept-Encoding", "gzip, zstd, br"]), html(), o));
   let ranked = summary(compress.response(req(["Accept-Encoding", "br;q=0.2, gzip"]), html(), o));
   let refused = summary(compress.response(req(["Accept-Encoding", "br;q=0, gzip"]), html(), o));
@@ -98,35 +98,35 @@ function test_brotli(): test.TestOutcome {
 }
 
 function test_identity(): test.TestOutcome {
-  let o: compress.Options = compress.options();
-  let none: string = summary(compress.response(req([]), html(), o));
-  let refused: string = summary(compress.response(req(["Accept-Encoding", "gzip;q=0"]), html(), o));
-  let ranked: string = summary(compress.response(req(["Accept-Encoding", "identity, gzip;q=0.5"]), html(), o));
-  let alias: string = summary(compress.response(req(["Accept-Encoding", "x-gzip"]), html(), o));
+  let o = compress.options();
+  let none = summary(compress.response(req([]), html(), o));
+  let refused = summary(compress.response(req(["Accept-Encoding", "gzip;q=0"]), html(), o));
+  let ranked = summary(compress.response(req(["Accept-Encoding", "identity, gzip;q=0.5"]), html(), o));
+  let alias = summary(compress.response(req(["Accept-Encoding", "x-gzip"]), html(), o));
   return test.assert_eq(none + " | " + refused + " | " + ranked + " | " + alias, "- Accept-Encoding same | - Accept-Encoding same | - Accept-Encoding same | gzip Accept-Encoding same");
 }
 
 function test_unwritten_coding(): test.TestOutcome {
-  let o: compress.Options = compress.Options { ...compress.options(), codings: ["deflate", "gzip"] };
+  let o = compress.Options { ...compress.options(), codings: ["deflate", "gzip"] };
   return test.assert_eq(summary(compress.response(req(["Accept-Encoding", "deflate, gzip"]), html(), o)), "gzip Accept-Encoding same");
 }
 
 function test_vary_kept(): test.TestOutcome {
-  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), html().with_header("Vary", "Cookie"), compress.options());
+  let r = compress.response(req(["Accept-Encoding", "gzip"]), html().with_header("Vary", "Cookie"), compress.options());
   return test.assert_eq(field(r, "Vary"), "Cookie, Accept-Encoding");
 }
 
 function test_validators(): test.TestOutcome {
-  let o: compress.Options = compress.options();
-  let a: HttpRequest = req(["Accept-Encoding", "gzip"]);
-  let strong: HttpResponse = compress.response(a, html().with_header("ETag", "\"v1\"").with_header("Accept-Ranges", "bytes"), o);
-  let weak: HttpResponse = compress.response(a, html().with_header("ETag", "W/\"v1\""), o);
+  let o = compress.options();
+  let a = req(["Accept-Encoding", "gzip"]);
+  let strong = compress.response(a, html().with_header("ETag", "\"v1\"").with_header("Accept-Ranges", "bytes"), o);
+  let weak = compress.response(a, html().with_header("ETag", "W/\"v1\""), o);
   return test.assert_eq(field(strong, "ETag") + " " + field(strong, "Accept-Ranges") + " " + field(weak, "ETag"), "W/\"v1\" - W/\"v1\"");
 }
 
 function test_left_alone(): test.TestOutcome {
-  let o: compress.Options = compress.options();
-  let a: HttpRequest = req(["Accept-Encoding", "gzip"]);
+  let o = compress.options();
+  let a = req(["Accept-Encoding", "gzip"]);
   let cases: HttpResponse[] = [
     http.ok("short").with_content_type("text/plain"),
     http.ok(page()).with_content_type("image/png"),
@@ -137,9 +137,9 @@ function test_left_alone(): test.TestOutcome {
     HttpResponse { ...html(), status: 304 },
     HttpResponse { ...html(), body: BodyFile("/srv/page.html") },
   ];
-  let out: string = "";
+  let out = "";
   for c in cases {
-    let r: HttpResponse = compress.response(a, c, o);
+    let r = compress.response(a, c, o);
     out = out + field(r, "Content-Encoding") + field(r, "Vary") + " ";
   }
   return test.assert_eq(out, "-- -- -- br- -- -- -- -- ");
@@ -147,27 +147,27 @@ function test_left_alone(): test.TestOutcome {
 
 function test_incompressible(): test.TestOutcome {
   let noise: u8[] = [];
-  let x: i32 = 7;
+  let x = 7;
   while (noise.len() < 4096) {
     x = x * 1103515245 + 12345 & 2147483647;
     noise = noise.append((x >> 16 & 255) as u8);
   }
-  let resp: HttpResponse = HttpResponse { ...http.ok(""), body: BodyBytes(noise) }.with_content_type("application/octet-stream+json");
-  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), resp, compress.options());
+  let resp = HttpResponse { ...http.ok(""), body: BodyBytes(noise) }.with_content_type("application/octet-stream+json");
+  let r = compress.response(req(["Accept-Encoding", "gzip"]), resp, compress.options());
   return test.assert_eq(field(r, "Content-Encoding") + " " + field(r, "Vary") + " " + r.body_len().to_string(), "- Accept-Encoding 4096");
 }
 
 function test_min_size(): test.TestOutcome {
-  let o: compress.Options = compress.Options { ...compress.options(), min_size: 4096 };
-  let r: HttpResponse = compress.response(req(["Accept-Encoding", "gzip"]), html(), o);
+  let o = compress.Options { ...compress.options(), min_size: 4096 };
+  let r = compress.response(req(["Accept-Encoding", "gzip"]), html(), o);
   return test.assert_eq(summary(r), "- - same");
 }
 
 function test_compressible(): test.TestOutcome {
   let types: string[] = ["text/css", "Text/HTML; charset=utf-8", "application/json", "application/ld+json", "image/svg+xml", "application/wasm", "font/ttf", "image/png", "application/octet-stream", "font/woff2", "video/mp4"];
-  let out: string = "";
+  let out = "";
   for t in types {
-    out = out + compress.compressible(t).to_string().slice_snap(0, 1);
+    out += compress.compressible(t).to_string().slice_snap(0, 1);
   }
   return test.assert_eq(out, "tttttttffff");
 }
@@ -182,7 +182,7 @@ function test_middleware(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/compress");
+  let r = test.new("std/http/compress");
   r = r.it("gzip when the client accepts it", test_gzip_chosen);
   r = r.it("zstd preferred on a tie", test_zstd);
   r = r.it("Brotli preference and quality", test_brotli);

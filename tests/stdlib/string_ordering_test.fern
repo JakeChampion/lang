@@ -54,24 +54,24 @@ function test_byte_order_digits(): test.TestOutcome {
 }
 
 function test_vars(): test.TestOutcome {
-  let a: string = "alpha";
-  let b: string = "beta";
+  let a = "alpha";
+  let b = "beta";
   return test.assert_true(a < b && b > a && a <= a);
 }
 
 function test_long_operands(): test.TestOutcome {
-  let a: string = "the quick brown fox jumps over the lazy dog";
-  let b: string = "the quick brown fox jumps over the lazy dogs";
+  let a = "the quick brown fox jumps over the lazy dog";
+  let b = "the quick brown fox jumps over the lazy dogs";
   return test.assert_true(a < b && b > a);
 }
 
 function test_computed_operand(): test.TestOutcome {
-  let a: string = "ab";
+  let a = "ab";
   return test.assert_true(a + "c" < "abd" && "abb" < a + "c");
 }
 
 function test_ord_agrees_lt(): test.TestOutcome {
-  return test.assert_eq("abc".cmp("abd"), 0 - 1);
+  return test.assert_eq("abc".cmp("abd"), -1);
 }
 
 function test_ord_agrees_gt(): test.TestOutcome {
@@ -88,18 +88,18 @@ function test_string_ord_agrees(): test.TestOutcome {
 
 function test_sort_matches_operator(): test.TestOutcome {
   let s = cmp.sort(["pear", "Apple", "banana", "apple"]);
-  let i: i32 = 1;
+  let i = 1;
   while (i < s.len()) {
     if (!(s[i - 1] < s[i])) {
       return test.fail("cmp.sort produced an order the `<` operator disagrees with");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(s[0] == "Apple");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("string ordering operators");
+  let r = test.new("string ordering operators");
   r = r.it("first differing byte", test_first_diff_byte);
   r = r.it("first differing byte >", test_first_diff_byte_gt);
   r = r.it("first differing byte off", test_first_diff_byte_false);

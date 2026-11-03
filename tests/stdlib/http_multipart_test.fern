@@ -19,38 +19,38 @@ function sample_after(b: multipart.Builder): multipart.Builder {
 }
 
 function scripted(bytes: u8[], k: i32): BodySource {
-  let at: Cell[i32] = cell_new(0);
+  let at = cell_new(0);
   return BodySource {
     next: (): Option[u8[]] => {
-      let from: i32 = at.get();
+      let from = at.get();
       if (from >= bytes.len()) {
         return None;
       }
-      let to: i32 = from + k;
+      let to = from + k;
       if (to > bytes.len()) {
         to = bytes.len();
       }
       at.set(to);
       let out: u8[] = [];
-      let i: i32 = from;
+      let i = from;
       while (i < to) {
         out = out.append(bytes[i]);
-        i = i + 1;
+        i += 1;
       }
       return Some(out);
     },
     fault: no_fault(),
-    send: (b: u8[]): i32 => 0 - 95,
+    send: (b: u8[]): i32 => -95,
   };
 }
 
 function streamed(ct: string, bytes: u8[], k: i32): HttpRequest {
-  let h: HeaderMap = headers.new().set("content-type", ct);
+  let h = headers.new().set("content-type", ct);
   return HttpRequest { method: "POST", path: "/upload", body: stream.from_source(scripted(bytes, k)), headers: h, trailers: headers.new() };
 }
 
 function buffered(ct: string, body: string): HttpRequest {
-  let h: HeaderMap = headers.new();
+  let h = headers.new();
   if (ct.len() > 0) {
     h = h.set("content-type", ct);
   }
@@ -58,7 +58,7 @@ function buffered(ct: string, body: string): HttpRequest {
 }
 
 function show(bytes: u8[]): string {
-  let out: string = "";
+  let out = "";
   for b in bytes {
     out = out + (b as i32).to_string() + ".";
   }
@@ -71,7 +71,7 @@ function dump(req: HttpRequest, limits: multipart.Limits): string {
       return s;
     },
     Err(e) => {
-      let resp: HttpResponse = e.to_response();
+      let resp = e.to_response();
       return resp.status.to_string() + " " + e.message();
     }
   }
@@ -79,8 +79,8 @@ function dump(req: HttpRequest, limits: multipart.Limits): string {
 }
 
 function dump_result(req: HttpRequest, limits: multipart.Limits): Result[string, multipart.MultipartError] {
-  let out: string = "";
-  let r: multipart.Reader = multipart.open(req, limits)?;
+  let out = "";
+  let r = multipart.open(req, limits)?;
   while (true) {
     match (r.next()?) {
       NextPart(part, r1) => {
@@ -103,23 +103,23 @@ function test_whole_parts(): test.TestOutcome {
 }
 
 function test_split_delimiter(): test.TestOutcome {
-  let got: string = "";
-  let j: i32 = 1;
+  let got = "";
+  let j = 1;
   while (j < 15) {
-    let n: i32 = 4096 - j - head_len();
-    let pad: u8[] = array_fill(n, 120 as u8);
-    let b: multipart.Builder = sample_after(multipart.builder_with("xYzBoundary").file("pad", "pad.bin", "application/octet-stream", pad));
+    let n = 4096 - j - head_len();
+    let pad = array_fill(n, 120 as u8);
+    let b = sample_after(multipart.builder_with("xYzBoundary").file("pad", "pad.bin", "application/octet-stream", pad));
     if (b.body.len() < 4096 - j + 2 + 2) {
       return test.fail("the padded body is too short to split the delimiter");
     }
-    let want: string = "pad|pad.bin|application/octet-stream|" + show(pad) + "\n" + EXPECTED;
+    let want = "pad|pad.bin|application/octet-stream|" + show(pad) + "\n" + EXPECTED;
     if (dump(streamed(b.content_type(), b.bytes(), j), multipart.limits()) != want) {
       got = got + "read " + j.to_string() + " ";
     }
     if (field_names(streamed(b.content_type(), b.bytes(), j)) != "ann,bob absent") {
       got = got + "skip " + j.to_string() + " ";
     }
-    j = j + 1;
+    j += 1;
   }
   return test.assert_eq(got, "");
 }
@@ -131,10 +131,10 @@ function head_len(): i32 {
 
 function array_fill(n: i32, b: u8): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(b);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -152,40 +152,40 @@ function test_pieces(): test.TestOutcome {
 }
 
 function pieces_result(req: HttpRequest): Result[string, multipart.MultipartError] {
-  let r: multipart.Reader = multipart.open(req, multipart.limits())?;
-  let first: string = "";
-  let reads: i32 = 0;
+  let r = multipart.open(req, multipart.limits())?;
+  let first = "";
+  let reads = 0;
   match (r.next()?) {
     NextPart(part, r1) => {
       r = r1;
-      let done: boolean = false;
+      let done = false;
       while (!done) {
         let piece: (u8[], boolean, multipart.Reader) = r.read(2)?;
-        first = first + string_from_bytes_unchecked(piece.0);
+        first += string_from_bytes_unchecked(piece.0);
         done = piece.1;
         r = piece.2;
-        reads = reads + 1;
+        reads += 1;
       }
     },
     NoMoreParts => {
       return Ok("no first part");
     }
   }
-  let second: string = "";
+  let second = "";
   match (r.next()?) {
     NextPart(part, r1) => {
       let piece: (u8[], boolean, multipart.Reader) = r1.read(4)?;
       second = string_from_bytes_unchecked(piece.0);
       r = piece.2;
       let rest: (u8[], multipart.Reader) = r.content()?;
-      second = second + string_from_bytes_unchecked(rest.0);
+      second += string_from_bytes_unchecked(rest.0);
       r = rest.1;
     },
     NoMoreParts => {
       return Ok("no second part");
     }
   }
-  let third: string = "";
+  let third = "";
   match (r.next()?) {
     NextPart(part, r1) => {
       let got: (u8[], multipart.Reader) = r1.content()?;
@@ -196,7 +196,7 @@ function pieces_result(req: HttpRequest): Result[string, multipart.MultipartErro
       return Ok("no third part");
     }
   }
-  let fourth: string = "";
+  let fourth = "";
   match (r.next()?) {
     NextPart(part, r1) => {
       let got: (u8[], multipart.Reader) = r1.content()?;
@@ -217,25 +217,25 @@ function pieces_result(req: HttpRequest): Result[string, multipart.MultipartErro
 }
 
 function test_preamble_and_padding(): test.TestOutcome {
-  let body: string = "this is the preamble\r\n--B  \r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--B\t\r\ncontent-disposition: form-data; name=b\r\nX-Extra: yes\r\n\r\n\r\n--B--\r\nepilogue";
+  let body = "this is the preamble\r\n--B  \r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--B\t\r\ncontent-disposition: form-data; name=b\r\nX-Extra: yes\r\n\r\n\r\n--B--\r\nepilogue";
   return test.assert_eq(dump(buffered("multipart/form-data; boundary=B", body), multipart.limits()), "a|||49.\nb|||\n");
 }
 
 function test_refused(): test.TestOutcome {
-  let l: multipart.Limits = multipart.limits();
-  let got: string = dump(buffered("", ""), l) + "|" + dump(buffered("application/json", "{}"), l) + "|" + dump(buffered("multipart/form-data", "--B\r\n"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "nothing here"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "--Bx\r\n"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "--B\r\nnot a header\r\n\r\n1\r\n--B--\r\n"), l);
+  let l = multipart.limits();
+  let got = dump(buffered("", ""), l) + "|" + dump(buffered("application/json", "{}"), l) + "|" + dump(buffered("multipart/form-data", "--B\r\n"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "nothing here"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "--Bx\r\n"), l) + "|" + dump(buffered("multipart/form-data; boundary=B", "--B\r\nnot a header\r\n\r\n1\r\n--B--\r\n"), l);
   return test.assert_eq(got, "415 expected a Content-Type of multipart/form-data|415 expected multipart/form-data, got application/json|400 the Content-Type names no boundary|400 malformed multipart body: no boundary found|400 malformed multipart body: a part is not terminated|400 malformed multipart body: a boundary line does not end in CRLF|400 malformed multipart body: a part header has no name");
 }
 
 function test_caps(): test.TestOutcome {
-  let b: multipart.Builder = sample();
-  let req: HttpRequest = b.request("POST", "/upload");
-  let base: multipart.Limits = multipart.limits();
-  let parts: string = dump(b.request("POST", "/upload"), multipart.Limits { ...base, parts: 3 });
-  let part: string = dump(b.request("POST", "/upload"), multipart.Limits { ...base, part_bytes: 6 });
-  let total: string = dump(b.request("POST", "/upload"), multipart.Limits { ...base, total_bytes: 100 });
-  let head: string = dump(b.request("POST", "/upload"), multipart.Limits { ...base, header_bytes: 40 });
-  let fits: string = dump(b.request("POST", "/upload"), multipart.Limits { parts: 4, part_bytes: 24, total_bytes: 1000, header_bytes: 120 });
+  let b = sample();
+  let req = b.request("POST", "/upload");
+  let base = multipart.limits();
+  let parts = dump(b.request("POST", "/upload"), multipart.Limits { ...base, parts: 3 });
+  let part = dump(b.request("POST", "/upload"), multipart.Limits { ...base, part_bytes: 6 });
+  let total = dump(b.request("POST", "/upload"), multipart.Limits { ...base, total_bytes: 100 });
+  let head = dump(b.request("POST", "/upload"), multipart.Limits { ...base, header_bytes: 40 });
+  let fits = dump(b.request("POST", "/upload"), multipart.Limits { parts: 4, part_bytes: 24, total_bytes: 1000, header_bytes: 120 });
   return test.assert_eq(parts + "|" + part + "|" + total + "|" + head + "|" + (fits == EXPECTED).to_string(), "413 more than 3 parts|413 a part is past 6 bytes|413 the body is past 100 bytes|431 a part's headers are past 40 bytes|true");
 }
 
@@ -246,14 +246,14 @@ function test_fields(): test.TestOutcome {
 function field_names(req: HttpRequest): string {
   match (multipart.fields(req, multipart.limits())) {
     Ok(m) => {
-      let names: string = "";
+      let names = "";
       match (m.get("name")) {
         Some(vs) => {
           names = vs.join(",");
         },
         None => {}
       }
-      let photo: string = "absent";
+      let photo = "absent";
       match (m.get("photo")) {
         Some(vs) => {
           photo = "present";
@@ -270,23 +270,23 @@ function field_names(req: HttpRequest): string {
 }
 
 function test_quoted_params(): test.TestOutcome {
-  let body: string = "--B;1\r\nContent-Disposition: form-data; filename=\"c;\\\"d\\\\e.txt\"; name=\"a;b\"\r\n\r\n1\r\n--B;1--\r\n";
-  let raw: string = dump(buffered("multipart/form-data; charset=utf-8; boundary=\"B;1\"", body), multipart.limits());
-  let b: multipart.Builder = multipart.builder_with("B").file("x;y", "a;b\\c.txt", "text/plain", "1".bytes());
-  let built: string = dump(b.request("POST", "/upload"), multipart.limits());
+  let body = "--B;1\r\nContent-Disposition: form-data; filename=\"c;\\\"d\\\\e.txt\"; name=\"a;b\"\r\n\r\n1\r\n--B;1--\r\n";
+  let raw = dump(buffered("multipart/form-data; charset=utf-8; boundary=\"B;1\"", body), multipart.limits());
+  let b = multipart.builder_with("B").file("x;y", "a;b\\c.txt", "text/plain", "1".bytes());
+  let built = dump(b.request("POST", "/upload"), multipart.limits());
   return test.assert_eq(raw + "|" + built, "a;b|c;\"d\\e.txt||49.\n|x;y|a;b\\c.txt|text/plain|49.\n");
 }
 
 function test_builder_output(): test.TestOutcome {
-  let b: multipart.Builder = multipart.builder_with("B").field("q\"x", "1").file("f", "a.txt", "text/plain", "hi".bytes());
-  let want: string = "--B\r\nContent-Disposition: form-data; name=\"q%22x\"\r\n\r\n1\r\n--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--B--\r\n";
-  let random: multipart.Builder = multipart.builder();
-  let distinct: boolean = random.boundary != multipart.builder().boundary && random.boundary.len() == 32;
+  let b = multipart.builder_with("B").field("q\"x", "1").file("f", "a.txt", "text/plain", "hi".bytes());
+  let want = "--B\r\nContent-Disposition: form-data; name=\"q%22x\"\r\n\r\n1\r\n--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"a.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--B--\r\n";
+  let random = multipart.builder();
+  let distinct = random.boundary != multipart.builder().boundary && random.boundary.len() == 32;
   return test.assert_eq(string_from_bytes_unchecked(b.bytes()) + "|" + b.content_type() + "|" + distinct.to_string(), want + "|multipart/form-data; boundary=B|true");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/multipart");
+  let r = test.new("std/http/multipart");
   r = r.it("whole parts", test_whole_parts);
   r = r.it("a delimiter split between two pulls", test_split_delimiter);
   r = r.it("pieces of a part", test_pieces);

@@ -27,11 +27,11 @@ function test_empty_vacuous(): test.TestOutcome {
 }
 
 function test_all_match(): test.TestOutcome {
-  return test.assert_true(![0 - 1, 0 - 2, 0 - 3].none(is_neg));
+  return test.assert_true(![-1, -2, -3].none(is_neg));
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/array none");
+  let r = test.new("std/array none");
   r = r.it("none true", test_none_true);
   r = r.it("none false", test_none_false);
   r = r.it("free fn", test_free_fn);

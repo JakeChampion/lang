@@ -36,11 +36,11 @@ function test_absent_in_range(): test.TestOutcome {
 }
 
 function test_absent_below(): test.TestOutcome {
-  return test.assert_true(idx([1, 3, 5].binary_search(0)) == 0 - 1);
+  return test.assert_true(idx([1, 3, 5].binary_search(0)) == -1);
 }
 
 function test_absent_above(): test.TestOutcome {
-  return test.assert_true(idx([1, 3, 5].binary_search(20)) == 0 - 1);
+  return test.assert_true(idx([1, 3, 5].binary_search(20)) == -1);
 }
 
 function test_free_fn(): test.TestOutcome {
@@ -63,7 +63,7 @@ function test_single(): test.TestOutcome {
   if (idx([42].binary_search(42)) != 0) {
     return test.fail("single found");
   }
-  return test.assert_true(idx([42].binary_search(1)) == 0 - 1);
+  return test.assert_true(idx([42].binary_search(1)) == -1);
 }
 
 function test_strings(): test.TestOutcome {
@@ -75,7 +75,7 @@ function test_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/array binary_search");
+  let r = test.new("std/array binary_search");
   r = r.it("found middle", test_found_middle);
   r = r.it("found first", test_found_first);
   r = r.it("found last", test_found_last);
