@@ -134,7 +134,7 @@ function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
 function garbled(packet: [u8]): u8[] {
   let out: u8[] = [];
   for i in 0..packet.len() {
-    out = out.append((packet[i] as i32 ^ (i * 37 + 11) & 255) as u8);
+    out = out.append((packet[i] as i32 ^ i * 37 + 11 & 255) as u8);
   }
   return out;
 }

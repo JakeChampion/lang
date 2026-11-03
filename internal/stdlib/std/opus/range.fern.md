@@ -73,13 +73,21 @@ A symbol is 8 bits. The range has 32 bits, and the top bit is free to hold a car
 ```fern
 <<shared>>=
 const SYM_MAX: u32 = 255u32;
+
 const ALL: u32 = 4294967295u32;
+
 const CODE_TOP: u32 = 2147483648u32;
+
 const CODE_BOT: u32 = 8388608u32;
+
 const CODE_SHIFT: i32 = 23;
+
 const CODE_EXTRA: i32 = 7;
+
 const UINT_BITS: i32 = 8;
+
 const WINDOW_SIZE: i32 = 32;
+
 const FRAC_CORRECTION: i32[] = [35733, 38967, 42495, 46340, 50535, 55109, 60097, 65535];
 
 // The number of bits in `v`, which must not be 0.
@@ -177,11 +185,11 @@ function normalize(own e: Encoder): Encoder {
 
 // Codes the symbol from `fl` up to `fh` out of a total of `ft`.
 pub function (own e: Encoder) encode(fl: i32, fh: i32, ft: i32): Encoder {
-  let r: u32 = e.rng / ft as u32;
+  let r: u32 = e.rng / (ft as u32);
   if (fl > 0) {
-    e = Encoder { ...e, val: e.val + (e.rng - r * (ft - fl) as u32), rng: r * (fh - fl) as u32 };
+    e = Encoder { ...e, val: e.val + (e.rng - r * ((ft - fl) as u32)), rng: r * ((fh - fl) as u32) };
   } else {
-    e = Encoder { ...e, rng: e.rng - r * (ft - fh) as u32 };
+    e = Encoder { ...e, rng: e.rng - r * ((ft - fh) as u32) };
   }
   return normalize(e);
 }
@@ -191,9 +199,9 @@ pub function (own e: Encoder) encode_bin(fl: i32, fh: i32, bits: i32): Encoder {
   let r: u32 = e.rng >> bits as u32;
   let ft: i32 = 1 << bits;
   if (fl > 0) {
-    e = Encoder { ...e, val: e.val + (e.rng - r * (ft - fl) as u32), rng: r * (fh - fl) as u32 };
+    e = Encoder { ...e, val: e.val + (e.rng - r * ((ft - fl) as u32)), rng: r * ((fh - fl) as u32) };
   } else {
-    e = Encoder { ...e, rng: e.rng - r * (ft - fh) as u32 };
+    e = Encoder { ...e, rng: e.rng - r * ((ft - fh) as u32) };
   }
   return normalize(e);
 }
@@ -376,7 +384,7 @@ pub function (d: Decoder) tell_frac(): i32 {
 // The cumulative frequency of the next symbol, out of a total of `ft`. The
 // caller finds the symbol and then calls `update` with the same `ft`.
 pub function (own d: Decoder) decode(ft: i32): (Decoder, i32) {
-  let ext: u32 = d.rng / ft as u32;
+  let ext: u32 = d.rng / (ft as u32);
   let s: u32 = d.val / ext + 1u32;
   let f: i32 = ft;
   if (s < ft as u32) {
@@ -399,10 +407,10 @@ pub function (own d: Decoder) decode_bin(bits: i32): (Decoder, i32) {
 
 // Moves past the symbol from `fl` up to `fh` that `decode` found.
 pub function (own d: Decoder) update(fl: i32, fh: i32, ft: i32): Decoder {
-  let s: u32 = d.ext * (ft - fh) as u32;
+  let s: u32 = d.ext * ((ft - fh) as u32);
   let rng: u32 = d.rng - s;
   if (fl > 0) {
-    rng = d.ext * (fh - fl) as u32;
+    rng = d.ext * ((fh - fl) as u32);
   }
   return renormalize(Decoder { ...d, val: d.val - s, rng: rng });
 }
@@ -421,12 +429,12 @@ pub function (own d: Decoder) bit_logp(logp: i32): (Decoder, boolean) {
 pub function (own d: Decoder) icdf(table: [u8], ftb: i32): (Decoder, i32) {
   let r: u32 = d.rng >> ftb as u32;
   let t: u32 = d.rng;
-  let s: u32 = r * table[0] as u32;
+  let s: u32 = r * (table[0] as u32);
   let k: i32 = 0;
   while (d.val < s) {
     k = k + 1;
     t = s;
-    s = r * table[k] as u32;
+    s = r * (table[k] as u32);
   }
   return (renormalize(Decoder { ...d, val: d.val - s, rng: t - s }), k);
 }
@@ -443,7 +451,7 @@ pub function (own d: Decoder) uint(ft: u32): (Decoder, u32) {
   let f: i32 = (top >> low as u32) as i32 + 1;
   let (d2, s) = d.decode(f);
   let (d3, rest) = d2.update(s, s + 1, f).raw(low);
-  let t: u32 = (s as u32) << low as u32 | rest;
+  let t: u32 = s as u32 << low as u32 | rest;
   if (t <= top) {
     return (d3, t);
   }
