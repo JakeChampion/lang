@@ -3570,12 +3570,14 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
 }
 
 function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.ExprCall): typeinfo.Type {
-  let us: UnionSig = match (s.lookup_union(union_name)) { Some(sig) => sig, None => {
-    if (union_name == "Result" || union_name == "Option") {
-      return builtin_ctor_type(union_name, name, c, s);
-    }
-    return t_union(union_name);
-  } };
+  let us: UnionSig = match (s.lookup_union(union_name)) {
+    Some(sig) => sig, None => {
+      if (union_name == "Result" || union_name == "Option") {
+        return builtin_ctor_type(union_name, name, c, s);
+      }
+      return t_union(union_name);
+    },
+  };
   if (us.type_params.len() == 0) {
     return t_union(union_name);
   }

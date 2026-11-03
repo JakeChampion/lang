@@ -1079,65 +1079,82 @@ func isSingleLineStmt(s ast.Stmt) bool {
 	return false
 }
 
-func (f *formatter) formatBranch(e ast.Expr) {
+// formatBranch writes an if branch whose brace opens on line open.
+func (f *formatter) formatBranch(e ast.Expr, open int) {
 	if be, ok := e.(*ast.BlockExpr); ok {
-		f.formatBlockExpr(be)
+		f.formatValueBody(be.P.Line, be.Stmts, be.Tail)
 		return
 	}
-	f.b.WriteString("{ ")
-	f.formatExpr(e, 0)
-	f.b.WriteString(" }")
+	f.formatValueBody(open, nil, e)
 }
 
-func (f *formatter) formatElseBranch(e ast.Expr, chained bool) {
+func (f *formatter) formatElseBranch(e ast.Expr, chained bool, open int) {
 	f.b.WriteString(" else ")
 	if chained {
 		f.formatExpr(e, 0)
 		return
 	}
-	f.formatBranch(e)
+	f.formatBranch(e, open)
 }
 
 func (f *formatter) formatArmBody(e ast.Expr) {
 	if be, ok := e.(*ast.BlockExpr); ok {
-		f.formatBlockExpr(be)
+		f.formatValueBody(be.P.Line, be.Stmts, be.Tail)
 		return
 	}
 	f.formatExpr(e, precLowest)
 }
 
-func (f *formatter) formatBlockExpr(be *ast.BlockExpr) {
-	if f.spansLines(be.Stmts) {
-		f.formatBlockExprLines(be)
+// formatValueBody writes a value block as it was written: on one line, or
+// with one statement on each line when its items start after the line open.
+func (f *formatter) formatValueBody(open int, stmts []ast.Stmt, tail ast.Expr) {
+	last := 0
+	if tail != nil {
+		last = firstLine(tail)
+	} else if len(stmts) > 0 {
+		last = stmts[len(stmts)-1].Pos().Line
+	}
+	f.formatBody(stmts, tail, f.spansLines(stmts) || f.keepListLines(open, last))
+}
+
+func (f *formatter) formatBody(stmts []ast.Stmt, tail ast.Expr, lines bool) {
+	if lines {
+		f.formatBodyLines(stmts, tail)
 		return
 	}
 	f.b.WriteString("{ ")
-	for _, s := range be.Stmts {
+	for _, s := range stmts {
 		f.formatStmt(s, 0)
 		f.b.WriteByte(' ')
 	}
-	if be.Tail != nil {
-		f.formatExpr(be.Tail, 0)
+	if tail != nil {
+		f.formatExpr(tail, 0)
 		f.b.WriteByte(' ')
 	}
 	f.b.WriteByte('}')
 }
 
-func (f *formatter) formatBlockExprLines(be *ast.BlockExpr) {
+func (f *formatter) formatBodyLines(stmts []ast.Stmt, tail ast.Expr) {
 	depth := f.depth
 	f.b.WriteString("{\n")
-	for _, s := range be.Stmts {
-		f.indent(depth + 1)
-		f.formatStmt(s, depth+1)
-		f.b.WriteByte('\n')
-	}
-	if be.Tail != nil {
+	f.formatStmtLines(stmts, depth+1, false)
+	if tail != nil {
+		ln := firstLine(tail)
+		if len(stmts) > 0 {
+			f.b.WriteByte('\n')
+			if f.blankBefore(ln) {
+				f.b.WriteByte('\n')
+			}
+		}
+		f.drainLeading(ln, depth+1)
 		f.indent(depth + 1)
 		f.depth = depth + 1
-		f.formatExpr(be.Tail, 0)
+		f.formatExpr(tail, 0)
 		f.depth = depth
-		f.b.WriteByte('\n')
+		f.emitTrailing(ln)
+		f.emitTrailing(lastLine(tail))
 	}
+	f.b.WriteByte('\n')
 	f.indent(depth)
 	f.b.WriteByte('}')
 }
@@ -1355,7 +1372,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 			f.b.WriteString("defer ")
 		}
 		if be, ok := x.Expr.(*ast.BlockExpr); ok {
-			f.formatBlockExpr(be)
+			f.formatBody(be.Stmts, be.Tail, f.spansLines(be.Stmts))
 		} else {
 			f.formatExpr(x.Expr, precLowest)
 			f.b.WriteByte(';')
@@ -1959,8 +1976,8 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteString("if (")
 		f.formatExpr(x.Cond, 0)
 		f.b.WriteString(") ")
-		f.formatBranch(x.Then)
-		f.formatElseBranch(x.Else, x.ElseChained)
+		f.formatBranch(x.Then, x.ThenOpen.Line)
+		f.formatElseBranch(x.Else, x.ElseChained, x.ElseOpen.Line)
 		if needsParens {
 			f.b.WriteByte(')')
 		}
@@ -1979,33 +1996,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteString(" = ")
 			f.formatHeaderExpr(x.Tag)
 			f.b.WriteByte(' ')
-			f.formatBranch(x.Arms[0].Body)
-			f.formatElseBranch(x.Arms[len(x.Arms)-1].Body, x.ElseChained)
+			f.formatBranch(x.Arms[0].Body, x.ThenOpen.Line)
+			f.formatElseBranch(x.Arms[len(x.Arms)-1].Body, x.ElseChained, x.ElseOpen.Line)
 			break
 		}
-		f.b.WriteString("match (")
-		f.formatExpr(x.Tag, precLowest)
-		f.b.WriteString(") { ")
-		exprArms := x.Arms
-		for i := 0; i < len(exprArms); i++ {
-			arm := exprArms[i]
-			if i > 0 {
-				f.b.WriteString(", ")
-			}
-			f.formatExprArmPattern(arm)
-			for i+1 < len(exprArms) && exprArms[i+1].AltCont {
-				i++
-				f.b.WriteString(" | ")
-				f.formatExprArmPattern(exprArms[i])
-			}
-			if arm.Guard != nil {
-				f.b.WriteString(" when ")
-				f.formatExpr(arm.Guard, precLowest)
-			}
-			f.b.WriteString(" => ")
-			f.formatArmBody(arm.Body)
-		}
-		f.b.WriteString(" }")
+		f.formatMatchExpr(x)
 	case *ast.StructLit:
 		f.b.WriteString(x.TypeName)
 		if x.TypeArgsWritten {
@@ -2120,8 +2115,93 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte(')')
 		}
 	case *ast.BlockExpr:
-		f.formatBlockExpr(x)
+		f.formatValueBody(x.P.Line, x.Stmts, x.Tail)
 	}
+}
+
+// formatMatchExpr writes one arm group on each line when the arms were
+// written on lines after the brace that opens them, or when an arm group
+// does not fit on one line.
+func (f *formatter) formatMatchExpr(x *ast.MatchExpr) {
+	f.b.WriteString("match (")
+	f.formatExpr(x.Tag, precLowest)
+	f.b.WriteString(") {")
+	var groups []int
+	for i, arm := range x.Arms {
+		if i == 0 || !arm.AltCont {
+			groups = append(groups, i)
+		}
+	}
+	if n := len(groups); n > 0 && (f.keepListLines(x.ArmsOpen.Line, x.Arms[groups[n-1]].P.Line) || f.armsSpanLines(x.Arms, groups)) {
+		f.writeArmLines(x.Arms, groups)
+		return
+	}
+	f.b.WriteByte(' ')
+	for g, i := range groups {
+		if g > 0 {
+			f.b.WriteString(", ")
+		}
+		f.formatExprArmGroup(x.Arms, i)
+	}
+	f.b.WriteString(" }")
+}
+
+func (f *formatter) armsSpanLines(arms []*ast.MatchExprArm, groups []int) bool {
+	saved, ci := f.b, f.ci
+	defer func() { f.b, f.ci = saved, ci }()
+	for _, i := range groups {
+		f.b = strings.Builder{}
+		f.formatExprArmGroup(arms, i)
+		if strings.Contains(f.b.String(), "\n") {
+			return true
+		}
+	}
+	return false
+}
+
+// writeArmLines keeps arm groups written on one source line together, but an
+// arm group that spans lines ends its line.
+func (f *formatter) writeArmLines(arms []*ast.MatchExprArm, groups []int) {
+	f.b.WriteByte('\n')
+	f.depth++
+	for g := 0; g < len(groups); {
+		ln := arms[groups[g]].P.Line
+		f.drainLeading(ln, f.depth)
+		f.indent(f.depth)
+		spans := false
+		h := g
+		for ; h < len(groups) && (h == g || arms[groups[h]].P.Line == ln && !spans); h++ {
+			if h > g {
+				f.b.WriteString(", ")
+			}
+			start := f.b.Len()
+			f.formatExprArmGroup(arms, groups[h])
+			spans = strings.Contains(f.b.String()[start:], "\n")
+		}
+		f.b.WriteByte(',')
+		f.emitTrailing(ln)
+		f.b.WriteByte('\n')
+		g = h
+	}
+	f.depth--
+	f.indent(f.depth)
+	f.b.WriteByte('}')
+}
+
+// formatExprArmGroup writes arm i and the or-pattern arms that follow it.
+func (f *formatter) formatExprArmGroup(arms []*ast.MatchExprArm, i int) {
+	arm := arms[i]
+	f.formatExprArmPattern(arm)
+	for j := i + 1; j < len(arms) && arms[j].AltCont; j++ {
+		f.b.WriteString(" | ")
+		f.formatExprArmPattern(arms[j])
+	}
+	if arm.Guard != nil {
+		f.b.WriteString(" when ")
+		f.formatExpr(arm.Guard, precLowest)
+	}
+	f.b.WriteString(" => ")
+	f.formatArmBody(arm.Body)
 }
 
 func writtenName(name string) string {

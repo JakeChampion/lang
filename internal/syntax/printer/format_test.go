@@ -396,12 +396,15 @@ func TestFormatBlockExprBranchSpansLines(t *testing.T) {
     }
     s
   } else { 0 };
-  let y: i32 = match (c) { true => {
-    {
-      let q = 4;
-    }
-    5
-  }, false => 0 };
+  let y: i32 = match (c) {
+    true => {
+      {
+        let q = 4;
+      }
+      5
+    },
+    false => 0,
+  };
   return x + y;
 }
 `

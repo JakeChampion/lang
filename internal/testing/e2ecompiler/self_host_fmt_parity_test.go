@@ -1947,6 +1947,133 @@ function hold(c: own Conn): i32 { return 0; }
 
 function main(): i32 { return 0; }
 `},
+	{"value-layout-repro", `enum Shape { Circle(f64), Square(f64), Rect(f64, f64), Empty }
+
+function area(s: Shape, k: i32): f64 {
+  let a = match (s) {
+    // round
+    Circle(r) => 3.14159 * r * r,
+    Square(w) => w * w,
+    Rect(w, h) => w * h, // two sides
+    Empty => 0.0,
+  };
+  let b = if (k > 0) {
+    let t = a * 2.0;
+    t + 1.0
+  } else {
+    a
+  };
+  let c = match (k) { 0 => 1.0, _ => 2.0 };
+  return a + b + c;
+}
+
+function main(): i32 { return 0; }
+`},
+	{"value-match-or-guard", `enum Op { Add, Sub, Mul, Div }
+
+function rank(o: Op, n: i32): i32 {
+  return match (o) {
+    Add | Sub => 1,
+    Mul when n > 0 => 2,
+    _ => 3,
+  };
+}
+
+function lit(k: i32): i32 {
+  return match (k) {
+    0 | 1 => 10,  // small
+    2 => 11, 3 => 12,
+    4 when k > 100 => 13,
+    _ => 14,
+  };
+}
+
+function main(): i32 { return 0; }
+`},
+	{"value-match-block-arm", `function grow(k: i32): i32 {
+  let v = match (k) {
+    0 => {
+      let z = k + 1;
+      // doubled
+      z * 2
+    },
+    _ => {
+      grow(0);
+
+      k
+    },
+  };
+  return v;
+}
+
+function main(): i32 { return 0; }
+`},
+	{"value-match-nested", `enum Shape { Circle(f64), Square(f64) }
+
+function size(s: Shape, k: i32): f64 {
+  return match (s) {
+    Circle(r) => match (k) {
+      0 => r,
+      _ => r * 2.0,
+    },
+    Square(w) => w,
+  };
+}
+
+function tup(a: i32, b: i32): i32 {
+  return match ((a, b)) {
+    (0, _) => 1,
+    (_, 0) => 2,
+    _ => 3,
+  };
+}
+
+function main(): i32 { return 0; }
+`},
+	{"value-if-chain", `function sign(k: i32): i32 {
+  let s = if (k > 0) {
+    1
+  } else if (k < 0) {
+    -1  // negative
+  } else {
+    0
+  };
+  return s;
+}
+
+function unwrap(o: Option[i32], q: Option[i32]): i32 {
+  let v = if let Some(x) = o {
+    let y = x * 2;
+    y
+  } else if let Some(z) = q {
+    z
+  } else {
+    0
+  };
+  return v;
+}
+
+function main(): i32 { return 0; }
+`},
+	{"value-arm-spans-lines", `function f(c: boolean): i32 {
+  let y: i32 = match (c) { true => { { let q = 4; } 5 }, false => 0 };
+  return y;
+}
+
+function main(): i32 { return 0; }
+`},
+	{"value-one-line", `function pick(k: i32, o: Option[i32]): i32 {
+  let a = match (k) { 0 => 1, _ => 2 };
+  let b = if (k > 0) { let t = k * 2; t + 1 } else { k };
+  let c = if let Some(x) = o { x } else { 0 };
+  let d = match (pick(
+    k, o,
+  )) { 0 => 1, _ => 2 };
+  return a + b + c + d;
+}
+
+function main(): i32 { return 0; }
+`},
 }
 
 func typeChecks(src string) error {
