@@ -1587,6 +1587,11 @@ pub function set_nonblocking(sock: i32, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 3, on);
 }
 
+// Lets a UDP socket send to a broadcast address, such as 255.255.255.255.
+pub function set_broadcast(sock: i32, on: boolean): Result[void, NetError] {
+  return __socket_ctl(sock, 9, on);
+}
+
 pub function send_queue(sock: i32): Result[i32, NetError] {
   return __socket_count(tcp_socket_ctl(sock, 6, 0));
 }
