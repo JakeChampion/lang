@@ -486,20 +486,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 0 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 1 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 2 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 3 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 4 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 5 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 6 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 7 }
-          - { runner: ubuntu-24.04, host: x86_64, nshard: 9, shard: 8 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 0 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 1 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 2 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 3 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 4 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 5 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 6 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 7 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 8 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 10, shard: 9 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 35 # Setup, residual tests and cleanup surround the unchanged 28-minute workers.
     steps:
       - uses: actions/checkout@v7 # for the ../../examples + ../../internal/stdlib data files the tests read
       - uses: ./.github/actions/setup-fern
@@ -624,12 +625,12 @@ jobs:
           merge-multiple: true
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=9 aarch64=2
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=10 aarch64=2
       - name: why did a shard leave no outcome
         if: failure() && steps.verify.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 30
+        run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 35
       - name: audit shard weights against measured durations
         if: ${{ !cancelled() }}
         continue-on-error: true
