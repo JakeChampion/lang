@@ -1563,6 +1563,8 @@ func New() *Interp {
 	i.Builtins["timer_fd"] = &Builtin{Fn: builtinTimerFd}
 	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
+	i.Builtins["__tcp_close_unchecked"] = &Builtin{Fn: builtinTcpClose}
+	i.Builtins["__fd_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}

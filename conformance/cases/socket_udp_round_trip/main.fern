@@ -1,0 +1,20 @@
+// udp_bind returns a Socket like the TCP builtins do, the udp_* builtins
+// borrow it, and tcp_close consumes it.
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let a: Socket = udp_bind(lo, 0);
+  let b: Socket = udp_bind(lo, 0);
+  if (a.fd < 0 || b.fd < 0) {
+    print("bind failed");
+    return 1;
+  }
+  print("sent " + udp_sendto_bytes(a, lo, tcp_local_port(b), [104u8, 105u8]).to_string());
+  let buf: u8[] = [0u8, 0u8, 0u8, 0u8];
+  let from: u8[] = __alloc_u8(19);
+  let got: i32 = udp_recvfrom(b, buf, from);
+  print("received " + got.to_string() + ": " + buf[0].to_string() + " " + buf[1].to_string());
+  let closed: i32 = tcp_close(a) + tcp_close(b);
+  print("closed " + closed.to_string());
+  return 0;
+}

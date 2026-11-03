@@ -12951,7 +12951,7 @@ function fs_builtins(): string[] {
 
 function socket_builtins(): string[] {
   return [
-    "tcp_accept", "tcp_close", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
+    "tcp_accept", "tcp_close", "__tcp_close_unchecked", "__fd_close", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "tcp_local_port", "tcp_pollable", "tcp_recv_into", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_socket_ctl", "tcp_addr_into",
     "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes",
   ];
