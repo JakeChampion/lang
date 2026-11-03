@@ -1,0 +1,262 @@
+import "std/hash/crc32";
+import "std/hex";
+import "std/opus/range";
+import "std/test";
+
+// Each script is a list of random calls. The trace of a script names each
+// call, the bits used after it, the packet, and each decoded value and
+// decoder state. libopus 1.4 gave the CRC-32 of each trace, from a C program
+// that makes the same calls in the same order.
+
+struct Op { op: i32, a: u32, b: u32, c: u32 }
+
+const TABLE: u8[] = [200u8, 150u8, 90u8, 40u8, 10u8, 0u8];
+
+function next(x: u32): u32 {
+  return x * 1664525u32 + 1013904223u32;
+}
+
+function make_op(own x: u32): (u32, Op) {
+  x = next(x);
+  let op: i32 = ((x >> 16u32) % 6u32) as i32;
+  let a: u32 = 0u32;
+  let b: u32 = 0u32;
+  let c: u32 = 0u32;
+  if (op == 0) {
+    x = next(x);
+    c = 2u32 + (x >> 8u32) % 65534u32;
+    x = next(x);
+    a = (x >> 8u32) % c;
+    x = next(x);
+    b = a + 1u32 + (x >> 8u32) % (c - a);
+  } else if (op == 1) {
+    x = next(x);
+    c = 1u32 + (x >> 8u32) % 15u32;
+    let ft: u32 = 1u32 << c;
+    x = next(x);
+    a = (x >> 8u32) % ft;
+    x = next(x);
+    b = a + 1u32 + (x >> 8u32) % (ft - a);
+  } else if (op == 2) {
+    x = next(x);
+    c = 1u32 + (x >> 8u32) % 15u32;
+    x = next(x);
+    a = (x >> 8u32) % 2u32;
+  } else if (op == 3) {
+    x = next(x);
+    a = (x >> 8u32) % 6u32;
+  } else if (op == 4) {
+    x = next(x);
+    c = x | 2u32;
+    x = next(x);
+    if ((x >> 8u32) % 2u32 == 1u32) {
+      x = next(x);
+      c = 2u32 + (x >> 8u32) % 300u32;
+    }
+    x = next(x);
+    a = x % c;
+  } else {
+    x = next(x);
+    c = 1u32 + (x >> 8u32) % 25u32;
+    x = next(x);
+    a = x & (1u32 << c) - 1u32;
+  }
+  return (x, Op { op: op, a: a, b: b, c: c });
+}
+
+function script(seed: u32, n: i32): Op[] {
+  let x: u32 = seed;
+  let ops: Op[] = [];
+  for i in 0..n {
+    let (y, o) = make_op(x);
+    x = y;
+    ops = ops.append(o);
+  }
+  return ops;
+}
+
+function encode_op(own e: range.Encoder, o: Op): range.Encoder {
+  if (o.op == 0) {
+    return e.encode(o.a as i32, o.b as i32, o.c as i32);
+  }
+  if (o.op == 1) {
+    return e.encode_bin(o.a as i32, o.b as i32, o.c as i32);
+  }
+  if (o.op == 2) {
+    return e.bit_logp(o.a == 1u32, o.c as i32);
+  }
+  if (o.op == 3) {
+    return e.icdf(o.a as i32, TABLE, 8);
+  }
+  if (o.op == 4) {
+    return e.uint(o.a, o.c);
+  }
+  return e.bits(o.a, o.c as i32);
+}
+
+function decode_op(own d: range.Decoder, o: Op): (range.Decoder, u32) {
+  if (o.op == 0) {
+    let (d1, f) = d.decode(o.c as i32);
+    return (d1.update(o.a as i32, o.b as i32, o.c as i32), f as u32);
+  }
+  if (o.op == 1) {
+    let (d1, f) = d.decode_bin(o.c as i32);
+    return (d1.update(o.a as i32, o.b as i32, 1 << o.c as i32), f as u32);
+  }
+  if (o.op == 2) {
+    let (d1, bit) = d.bit_logp(o.c as i32);
+    if (bit) {
+      return (d1, 1u32);
+    }
+    return (d1, 0u32);
+  }
+  if (o.op == 3) {
+    let (d1, s) = d.icdf(TABLE, 8);
+    return (d1, s as u32);
+  }
+  if (o.op == 4) {
+    return d.uint(o.c);
+  }
+  return d.raw(o.c as i32);
+}
+
+function flag(b: boolean): string {
+  if (b) {
+    return "1";
+  }
+  return "0";
+}
+
+function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function garbled(packet: [u8]): u8[] {
+  let out: u8[] = [];
+  for i in 0..packet.len() {
+    out = out.append((packet[i] as i32 ^ (i * 37 + 11) & 255) as u8);
+  }
+  return out;
+}
+
+// The CRC-32 of the trace of a script of `n` calls on a packet of `size`
+// bytes. `patch` replaces the first 2 bits with 3, and `garble` changes each
+// byte before the decoder reads it.
+function trace(seed: u32, n: i32, size: i32, patch: boolean, garble: boolean): u32 {
+  let ops: Op[] = script(seed, n);
+  let c: crc32.Crc32 = crc32.new();
+  let e: range.Encoder = range.encoder(size);
+  for i in 0..n {
+    e = encode_op(e, ops[i]);
+    c = line(c, "e " + i.to_string() + " " + e.tell().to_string() + " " + e.tell_frac().to_string());
+  }
+  if (patch) {
+    e = e.patch_initial_bits(3u32, 2);
+  }
+  e = e.done();
+  c = line(c, "err " + flag(e.error));
+  let packet: u8[] = e.bytes();
+  c = line(c, "bytes " + hex.encode(packet));
+  if (garble) {
+    packet = garbled(packet);
+  }
+  let d: range.Decoder = range.decoder(packet);
+  for i in 0..n {
+    let (d1, v) = decode_op(d, ops[i]);
+    d = d1;
+    c = line(c, "d " + i.to_string() + " " + v.to_string() + " " + d.tell().to_string() + " " + d.tell_frac().to_string() + " " + d.rng.to_string() + " " + d.val.to_string() + " op" + ops[i].op.to_string());
+  }
+  c = line(c, "derr " + flag(d.error));
+  return c.finish();
+}
+
+function test_short_script_bytes(): test.TestOutcome {
+  let e: range.Encoder = range.encoder(64);
+  for o in script(1u32, 20) {
+    e = encode_op(e, o);
+  }
+  e = e.done();
+  return test.assert_eq(hex.encode(e.bytes()), "42995358f0b1c45800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000033197190ea90b1460a0");
+}
+
+function test_short_script(): test.TestOutcome {
+  return test.assert_eq(trace(1u32, 20, 64, false, false), 1670736401u32);
+}
+
+function test_full_packet(): test.TestOutcome {
+  return test.assert_eq(trace(7u32, 300, 64, false, false), 3838820323u32);
+}
+
+function test_patch_initial_bits(): test.TestOutcome {
+  return test.assert_eq(trace(17u32, 40, 100, true, false), 2611040236u32);
+}
+
+function test_long_script(): test.TestOutcome {
+  return test.assert_eq(trace(13u32, 1000, 4000, false, false), 40523995u32);
+}
+
+// This script carries into a buffered 255 byte.
+function test_carry(): test.TestOutcome {
+  return test.assert_eq(trace(104u32, 60, 200, false, false), 3786572801u32);
+}
+
+function test_garbled_short(): test.TestOutcome {
+  return test.assert_eq(trace(41u32, 80, 30, true, true), 173184293u32);
+}
+
+function test_garbled_long(): test.TestOutcome {
+  return test.assert_eq(trace(53u32, 2000, 3000, false, true), 4201151761u32);
+}
+
+function test_round_trip(): test.TestOutcome {
+  let ops: Op[] = script(99u32, 500);
+  let e: range.Encoder = range.encoder(4000);
+  for o in ops {
+    e = encode_op(e, o);
+  }
+  let d: range.Decoder = range.decoder(e.done().bytes());
+  for o in ops {
+    let (d1, v) = decode_op(d, o);
+    d = d1;
+    let ok: boolean = v == o.a;
+    if (o.op <= 1) {
+      ok = v >= o.a && v < o.b;
+    }
+    if (!ok) {
+      return test.fail("call " + o.op.to_string() + " decoded " + v.to_string() + ", not " + o.a.to_string());
+    }
+  }
+  return test.assert_eq(d.error, false);
+}
+
+// 513 values need 10 bits: 129 range steps of 4 raw values each. A step of
+// 128 with the raw value 3 gives 515, which is too large.
+function test_uint_out_of_range(): test.TestOutcome {
+  let e: range.Encoder = range.encoder(8);
+  e = e.encode(128, 129, 129).bits(3u32, 2).done();
+  let (d, v) = range.decoder(e.bytes()).uint(513u32);
+  return test.assert_eq(v.to_string() + " " + flag(d.error), "512 1");
+}
+
+function test_tell_starts_at_one_bit(): test.TestOutcome {
+  let e: range.Encoder = range.encoder(4);
+  let d: range.Decoder = range.decoder([0u8, 0u8, 0u8, 0u8]);
+  let all: string = e.tell().to_string() + " " + e.tell_frac().to_string() + " " + d.tell().to_string() + " " + d.tell_frac().to_string();
+  return test.assert_eq(all, "1 8 1 8");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/range");
+  r = r.it("a short script gives the libopus bytes", test_short_script_bytes);
+  r = r.it("a short script gives the libopus trace", test_short_script);
+  r = r.it("a full packet gives the libopus trace", test_full_packet);
+  r = r.it("patch_initial_bits gives the libopus trace", test_patch_initial_bits);
+  r = r.it("a long script gives the libopus trace", test_long_script);
+  r = r.it("a carry goes through a buffered 255 byte", test_carry);
+  r = r.it("a short garbled packet decodes as in libopus", test_garbled_short);
+  r = r.it("a long garbled packet decodes as in libopus", test_garbled_long);
+  r = r.it("each call decodes what was encoded", test_round_trip);
+  r = r.it("uint flags a value out of range", test_uint_out_of_range);
+  r = r.it("tell starts at one bit", test_tell_starts_at_one_bit);
+  return r.finish();
+}
