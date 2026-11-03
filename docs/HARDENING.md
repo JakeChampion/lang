@@ -84,6 +84,11 @@ faults, instead of being followed. Leaf functions without a frame never
 store x30, so they need no signature. The backtrace walk strips the
 signature (`xpaclri`) before printing a saved return address.
 
+The hand-written runtime helpers sign their frames in the same way.
+Each helper builds its frame through `rt_frame_of` and `rt_unframe_of` in
+`compiler/asm_arm64_ir.fern`, for each frame size. The startup frame in
+`_start` is the only frame without a signature, because it never returns.
+
 `bti`, `paciasp`, `autiasp` and `xpaclri` are all in the hint space, so each
 is a NOP on a core without the feature. The ARMv8.2-A baseline does not
 change: a hardened binary runs everywhere an unhardened one does, with the
@@ -155,6 +160,11 @@ so they carry no canary. The hand-written runtime frames carry none either.
 Both images must contain the BTI property note and produce the expected output.
 The test checks PAC and BTI instructions in the in-process image.
 A `-backtrace` abort must print plain code addresses without signature bits.
+
+The `runtime-frames` case of the test links each hand-written runtime frame. It
+requires a `paciasp` before each frame store and an `autiasp` before each exit.
+For each helper that runs, a PAC control removes only that signature. The
+control must fault.
 
 `TestSelfHostForwardEdgeCFI` builds the control under `-harden` and under
 `-harden -pie` on both targets and counts the pads. It then runs three
