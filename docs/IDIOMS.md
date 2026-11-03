@@ -196,6 +196,8 @@ Keep `+` when it joins two strings and nothing more.
 ### Write literals as the reader thinks of them
 
 - Write `-1`, not `0 - 1`.
+- Write `-5i64` for a negative literal of another width, not `-5 as i64`.
+  The cast binds tighter than the minus, so `-5 as i64` is `-(5 as i64)`.
 - Write `b'a'` for a byte, not `97`. Write `'a'` for a `char`.
 - Write `x += 1`, not `x = x + 1`. The same applies to `-=`, `*=` and the
   other compound operators.

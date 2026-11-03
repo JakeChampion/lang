@@ -65,7 +65,7 @@ function test_assert_elapsed_lt_fail_message(): test.TestOutcome {
 
 function test_negative_sleep_is_immediate(): test.TestOutcome {
   let start = clock.instant();
-  sleep_ms(-(5 as i64));
+  sleep_ms(-5i64);
   return test.assert_elapsed_lt(start, time.duration_millis(50));
 }
 

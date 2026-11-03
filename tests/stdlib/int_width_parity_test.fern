@@ -123,7 +123,7 @@ function test_digits(): test.TestOutcome {
 }
 
 function test_reverse_digits_palindrome(): test.TestOutcome {
-  if ((-(1230 as i64)).reverse_digits() != -(321 as i64) || !(12321 as i64).is_palindrome()) {
+  if ((-1230i64).reverse_digits() != -321i64 || !(12321 as i64).is_palindrome()) {
     return test.fail("i64");
   }
   if ((1230 as u32).reverse_digits() != 321 as u32 || (1230 as u32).is_palindrome()) {
@@ -169,14 +169,14 @@ function test_ordinal_pluralize(): test.TestOutcome {
 }
 
 function test_percent_of_round_down_to(): test.TestOutcome {
-  if ((-(1 as i64)).percent_of(3 as i64) != -(33 as i64) || (50 as u32).percent_of(200 as u32) != 25 as u32) {
+  if ((-1i64).percent_of(3 as i64) != -33i64 || (50 as u32).percent_of(200 as u32) != 25 as u32) {
     return test.fail("percent_of");
   }
   let max64: u64 = 18446744073709551615;
   if (max64.percent_of(max64) != 100 as u64) {
     return test.fail("u64 percent_of at MAX");
   }
-  if ((-(7 as i64)).round_down_to(5 as i64) != -(10 as i64) || (17 as u32).round_down_to(5 as u32) != 15 as u32) {
+  if ((-7i64).round_down_to(5 as i64) != -10i64 || (17 as u32).round_down_to(5 as u32) != 15 as u32) {
     return test.fail("round_down_to");
   }
   return test.assert_eq((17 as u64).round_down_to(5 as u64), 15 as u64);
