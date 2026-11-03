@@ -183,6 +183,66 @@ function main(): i32 {
 }
 `
 
+const bufPushBase64Probe = `function alphabet(shift: i32): u8[] {
+    let out: u8[] = [];
+    let k: i32 = 0;
+    while (k < 64) {
+        let c: i32 = 48 + (k + shift) % 64;
+        out = out.append(c as u8);
+        k = k + 1;
+    }
+    return out;
+}
+function reference(b: usize, bs: u8[], lo: i32, hi: i32, t: u8[]): void {
+    let i: i32 = lo;
+    if (i < 0) { i = 0; }
+    let end: i32 = hi;
+    if (end > bs.len()) { end = bs.len(); }
+    while (i + 3 <= end) {
+        let v: i32 = bs[i] as i32 << 16 | bs[i + 1] as i32 << 8 | bs[i + 2] as i32;
+        buf_push_byte(b, t[v >> 18 & 63] as i32);
+        buf_push_byte(b, t[v >> 12 & 63] as i32);
+        buf_push_byte(b, t[v >> 6 & 63] as i32);
+        buf_push_byte(b, t[v & 63] as i32);
+        i = i + 3;
+    }
+}
+function check(b: usize, bs: u8[], lo: i32, hi: i32, t: u8[]): i32 {
+    buf_push_base64(b, bs, lo, hi, t);
+    let got: string = buf_take(b);
+    reference(b, bs, lo, hi, t);
+    if (got != buf_take(b)) { return 1; }
+    return 0;
+}
+function main(): i32 {
+    let b: usize = buf_new(1);
+    let bs: u8[] = [];
+    let k: i32 = 0;
+    while (k < 160) {
+        bs = bs.append((k * 37 + 11 ^ k >> 2) as u8);
+        k = k + 1;
+    }
+    let plain: u8[] = alphabet(0);
+    let rolled: u8[] = alphabet(29);
+    let lo: i32 = 0;
+    while (lo < 7) {
+        let hi: i32 = lo;
+        while (hi <= 160) {
+            if (check(b, bs, lo, hi, plain) != 0) { return 10 + lo; }
+            if (check(b, bs, lo, hi, rolled) != 0) { return 20 + lo; }
+            hi = hi + 1;
+        }
+        lo = lo + 1;
+    }
+    if (check(b, bs, 0 - 5, 9999, plain) != 0) { return 2; }
+    buf_push_byte(b, 61);
+    buf_push_base64(b, [77u8, 97u8, 110u8], 0, 3, plain);
+    if (buf_take(b) != "=CF5^") { return 3; }
+    buf_free(b);
+    return 0;
+}
+`
+
 func TestBufBuilder(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	probes := []struct {
@@ -194,6 +254,7 @@ func TestBufBuilder(t *testing.T) {
 		{"nested", bufNestedProbe},
 		{"push-u64", bufPushU64Probe},
 		{"push-decimal", bufPushDecimalProbe},
+		{"push-base64", bufPushBase64Probe},
 	}
 	for _, p := range probes {
 		t.Run(p.name, func(t *testing.T) {

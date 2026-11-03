@@ -34,6 +34,18 @@ function twice(x: i32): i32 {
   return x * 2;
 }
 
+function check_base64_growth(): boolean {
+  let b: usize = buf_new(1);
+  let source: u8[] = [65u8, 65u8, 65u8];
+  let alphabet: u8[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".bytes();
+  for i in 0..8 {
+    buf_push_base64(b, source, 0, source.len(), alphabet);
+  }
+  let encoded: string = buf_take(b);
+  buf_free(b);
+  return encoded == "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB";
+}
+
 function main(): i32 {
   let k: i32 = 5;
   let add: (i32) => i32 = (x: i32): i32 => x + k;
@@ -44,6 +56,7 @@ function main(): i32 {
   }
   let xs: i32[] = [1, 2, 3].map(twice);
   print(apply(add, 10).to_string() + " " + apply(twice, 7).to_string() + " " + total.to_string() + " " + xs[2].to_string());
+  if (!check_base64_growth()) { return 1; }
   return 0;
 }
 `
@@ -198,6 +211,10 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if !bytes.Contains(text, []byte("__fern_alloc:\n    paciasp\n    stp x29, x30, [sp, #-16]!\n")) {
 			t.Fatal("the -harden text does not sign the return address of the hand-written __fern_alloc frame")
 		}
+		const growSignature = ".Lb64_grow:\n    paciasp\n"
+		if !bytes.Contains(text, []byte(growSignature)) {
+			t.Fatal("the -harden base64 grow frame does not sign its return address")
+		}
 		if enforced {
 			var kept []string
 			for _, line := range strings.Split(string(text), "\n") {
@@ -240,6 +257,9 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		unsignedRuntime := strings.Replace(string(text), "__fern_alloc:\n    paciasp\n", "__fern_alloc:\n", 1)
 		expectHardenSignal(t, qemu, link("unsigned-runtime", []byte(unsignedRuntime)), syscall.SIGSEGV, syscall.SIGILL)
 		t.Logf("PAC runtime frame control passed (%s)", mode)
+		unsignedGrowth := strings.Replace(string(text), growSignature, ".Lb64_grow:\n", 1)
+		expectHardenSignal(t, qemu, link("unsigned-base64-growth", []byte(unsignedGrowth)), syscall.SIGSEGV, syscall.SIGILL)
+		t.Logf("PAC base64 grow frame control passed (%s)", mode)
 	})
 
 	t.Run("mixed-link", func(t *testing.T) {
@@ -302,11 +322,10 @@ func TestSelfHostHardenArm64(t *testing.T) {
 	t.Run("refusals", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"-harden", "-target", "arm64-darwin", "-emit", "asm", "-o", filepath.Join(dir, "x.s"), src, stdlib},
-			{"-harden", "-shared", "-target", "arm64-linux", "-o", filepath.Join(dir, "x.so"), src, stdlib},
-			{"-harden", "-shared", "-target", "x86-64-linux", "-o", filepath.Join(dir, "x86.so"), src, stdlib},
+			{"-harden", "-target", "arm64-android", "-o", filepath.Join(dir, "android"), src, stdlib},
 		} {
 			msg, err := exec.Command(cli, args...).CombinedOutput()
-			if err == nil || !strings.Contains(string(msg), "-harden is only supported for -target arm64-linux and x86-64-linux executables") {
+			if err == nil || !strings.Contains(string(msg), "-harden is only supported for -target arm64-linux and x86-64-linux (got") {
 				t.Errorf("%v: want the -harden refusal, got err=%v\n%s", args, err, msg)
 			}
 		}

@@ -2,7 +2,7 @@ import "std/string";
 import "std/io_buffered";
 import "./gnu";
 
-pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, alpha_bytes: i32, dec: usize }
+pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, alpha_bytes: i32, dec: usize, alphabet64: u8[] }
 
 struct Chars { v: i64, n: i32 }
 
@@ -35,7 +35,11 @@ function tables(alphabet: string): (usize, usize) {
 
 function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean): Codec {
   let t: (usize, usize) = tables(alphabet);
-  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, alpha_bytes: alphabet.len() + 8, dec: t.1 };
+  let alphabet64: u8[] = [];
+  if (bits == 6 && alphabet.len() == 64 && !rev) {
+    alphabet64 = alphabet.bytes();
+  }
+  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, alpha_bytes: alphabet.len() + 8, dec: t.1, alphabet64: alphabet64 };
 }
 
 function also_decodes(c: Codec, extra: string): Codec {
@@ -444,6 +448,48 @@ function open_input(has_file: boolean, file: string): Reader {
   return stdin();
 }
 
+// Whole groups of three bytes go to the base64 kernel, a line at a time. A
+// group that crosses the end of a line goes out one character at a time.
+function encode64(h: usize, bs: u8[], whole: i32, alphabet: u8[], wrap: i64, col0: i64): i64 {
+  if (wrap <= 0 as i64) {
+    buf_push_base64(h, bs, 0, whole, alphabet);
+    return col0;
+  }
+  let col: i64 = col0;
+  let i: i32 = 0;
+  while (i < whole) {
+    let g: i32 = (whole - i) / 3;
+    if ((wrap - col) / (4 as i64) < g as i64) {
+      g = ((wrap - col) / (4 as i64)) as i32;
+    }
+    buf_push_base64(h, bs, i, i + g * 3, alphabet);
+    i = i + g * 3;
+    col = col + (g * 4) as i64;
+    if (col == wrap) {
+      buf_push_byte(h, 10);
+      col = 0 as i64;
+    } else if (i < whole) {
+      col = group_across(h, bs, i, alphabet, wrap, col);
+      i = i + 3;
+    }
+  }
+  return col;
+}
+
+function group_across(h: usize, bs: u8[], i: i32, alphabet: u8[], wrap: i64, col0: i64): i64 {
+  let v: i32 = bs[i] as i32 << 16 | bs[i + 1] as i32 << 8 | bs[i + 2] as i32;
+  let col: i64 = col0;
+  for shift in [18, 12, 6, 0] {
+    buf_push_byte(h, alphabet[v >> shift & 63] as i32);
+    col = col + 1 as i64;
+    if (col == wrap) {
+      buf_push_byte(h, 10);
+      col = 0 as i64;
+    }
+  }
+  return col;
+}
+
 function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
   unsafe {
     let out: io_buffered.BufWriter = o;
@@ -475,7 +521,12 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
       let bs: u8[] = chunk;
       let i: i32 = 0;
       let p: i32 = pack_bytes(c);
-      if (p > 0) {
+      if (c.alphabet64.len() == 64) {
+        let whole3: i32 = n - n % 3;
+        col = encode64(out.handle(), bs, whole3, c.alphabet64, wrap, col);
+        i = whole3;
+        out = gnu.settle(out);
+      } else if (p > 0) {
         let h: usize = out.handle();
         let whole: i32 = n - n % p;
         while (i < whole) {

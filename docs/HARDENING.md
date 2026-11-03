@@ -1,7 +1,7 @@
 # Binary hardening (`-harden`)
 
 Status: [reference] shipped. `-harden` is opt-in on arm64-linux and
-x86-64-linux executables.
+x86-64-linux executables and shared objects.
 
 `fern -harden -target arm64-linux -o OUT FILE.fern` builds an executable that
 turns on three protections:
@@ -108,6 +108,27 @@ segment by the load delta before the first function runs. `-harden` and
 pins the headers, the output, and on x86-64 a different base across two
 runs. The record is `docs/security/PIE.md`.
 
+## Shared objects
+
+`-harden` composes with `-shared` on both Linux targets. A shared object
+has no `_start`, so the first call of an export reads the canary and seeds
+the free-list pick through `__fern_harden_start`. The helper keeps the
+argument registers. The busy flag admits one export call at a time, so the
+read runs once.
+
+On arm64 every export entry starts with `bti c` and `paciasp`, and its
+return authenticates. The object carries `PT_GNU_PROPERTY` with the BTI
+bit. The dynamic loader guards its pages only when every object in the
+process asks for BTI. On x86-64 every export entry starts with `endbr64`.
+The shadow stack belongs to the host process, so a shared object does not
+ask for it.
+
+`TestSelfHostHardenShared` loads each object into a C host and calls the
+export twice. On arm64 the host is built with `-mbranch-protection=standard`.
+A call past the pad must fault, and the same call into a copy without the
+property header must run. Both copies have `nop` in place of the PAC
+instructions, so the fault comes from BTI alone.
+
 ## Forward-edge control-flow integrity
 
 Under `-harden` a function value points at a stub. The stub is `endbr64`
@@ -175,6 +196,9 @@ build whose prologue overwrites the canary slot. The overwritten build must
 print the mismatch cause and exit 134. The controls print their sum. A build
 without `-harden` must not reference the canary.
 
+On arm64 every canary load in the in-process image must reach the word that
+the startup fills.
+
 The test uses a compiler for the native host architecture.
 It runs on the native ARM self-host shards without an x86 compiler.
 It also runs with QEMU on the x86 self-host shards.
@@ -212,13 +236,6 @@ with it active. It reads the kernel's own records and infers nothing from the em
 - **Speculation barriers**: none are emitted. Speculation attacks are outside
   the threat model (`docs/security/GUARANTEES.md`), because a Fern process
   runs only the code it was compiled from.
-- **The runtime's hand-written frames** (the `__fern_*` helpers written as
-  assembly text in `asm_arm64_ir.fern`) still store an unsigned return
-  address. Compiled Fern functions, and the runtime helpers written in Fern,
-  are signed.
-- **`-shared`**: a shared object's property note is combined with its host's
-  by the dynamic loader. The `.so` writer would need the note, and every
-  export entry a `bti c`.
 - **arm64-android**: the PIE image writer has no fourth program header yet.
 - **arm64-darwin**: Apple's arm64e ABI, not BTI, is the mechanism there.
 - **x86-64 IBT**: the kernel enforces no user-space IBT. The `endbr64`

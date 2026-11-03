@@ -61,4 +61,4 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostForwardEdgeCFI|TestSelf
 - The backward edge is the stack canary and, on arm64, the signed return address. The x86-64 shadow stack is SEC-030.
 - The runtime's own indirect branches, the signal trampolines and the C shim, do not check their targets. Their targets are stubs or C code.
 - The x86-64 image carries no IBT property note, and Linux enforces no user-space IBT ([SHADOW-STACK.md](SHADOW-STACK.md)).
-- A `-shared` object refuses `-harden`, so an export reached through the dynamic loader has no stub.
+- An export of a `-shared` object is reached through the dynamic loader, not through a function value. Its entry carries the landing pad and no signature word, and the host's call is not checked.

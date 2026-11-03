@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 type abortCase struct {
@@ -16,7 +19,35 @@ type abortCase struct {
 	wantErr  string
 }
 
+func base64AlphabetSource(length int) string {
+	alphabet := strings.TrimSuffix(strings.Repeat("0u8,", length), ",")
+	return `function main(): i32 { let b: usize = buf_new(1); buf_push_base64(b, [255u8, 255u8, 255u8], 0, 3, [` + alphabet + `]); buf_free(b); return 0; }`
+}
+
 var abortCases = []abortCase{
+	{
+		name:     "base64_alphabet_empty",
+		src:      base64AlphabetSource(0),
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "base64_alphabet_one",
+		src:      base64AlphabetSource(1),
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "base64_alphabet_short",
+		src:      base64AlphabetSource(63),
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "base64_alphabet_no_groups",
+		src:      `function main(): i32 { let b: usize = buf_new(1); buf_push_base64(b, [255u8, 255u8], 0, 2, []); let n: i32 = buf_len(b); buf_free(b); return n; }`,
+		wantExit: 0,
+	},
 	{
 		name:     "array_negative_index",
 		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[0 - 1]; }`,
@@ -130,6 +161,40 @@ func runAbortCases(t *testing.T, target, backend string, run func(bin string) *e
 func TestX86_64AbortMessages(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	runAbortCases(t, "x86-64-linux", "", func(bin string) *exec.Cmd { return runX86Bin(qemu, bin) })
+}
+
+func TestArm64DarwinAbortMessages(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("requires Apple Silicon")
+	}
+	runAbortCases(t, "arm64-darwin", "", func(bin string) *exec.Cmd { return exec.Command(bin) })
+}
+
+func TestBase64AlphabetInterpreterBounds(t *testing.T) {
+	for _, kind := range []string{"oracle", "self-host"} {
+		t.Run(kind, func(t *testing.T) {
+			bin := buildLangBinForInterp(t)
+			if kind == "self-host" {
+				bin = e2eharness.SelfHostCLI(t)
+			}
+			for _, tc := range abortCases {
+				if !strings.HasPrefix(tc.name, "base64_alphabet_") {
+					continue
+				}
+				t.Run(tc.name, func(t *testing.T) {
+					src := filepath.Join(t.TempDir(), "main.fern")
+					if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					cmd := exec.Command(bin, "-interp", src, e2eharness.SelfHostStdlibRoot(t))
+					out, _ := cmd.CombinedOutput()
+					if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != tc.wantExit || !strings.Contains(string(out), tc.wantErr) {
+						t.Fatalf("want exit %d and %q, got %v\n%s", tc.wantExit, tc.wantErr, cmd.ProcessState, out)
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestArm64AbortMessages(t *testing.T) {

@@ -4804,6 +4804,7 @@ function builtin_sigs(): string[] {
     "buf_len(usize): i32",
     "buf_new(i32): usize",
     "buf_push(usize, string): void",
+    "buf_push_base64(usize, u8[], i32, i32, u8[]): void",
     "buf_push_byte(usize, i32): void",
     "buf_push_bytes_expanded(usize, u8[], u8[]): void",
     "buf_push_bytes_filtered(usize, u8[], u8[]): void",
@@ -11422,6 +11423,15 @@ function slit_descend(e: ast.Expr): boolean {
   return true;
 }
 
+// A built-in handle comes from the call that opens it. A struct the
+// program declares with the same name is its own type.
+function slit_forges_handle(sl: ast.ExprStructLit, structs: StructTable): boolean {
+  if let Some(_) = find_struct_sig(structs, sl.type_name) {
+    return false;
+  }
+  return util.has_str(semtypes.fd_handle_names(), sl.type_name);
+}
+
 function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.Diag[] {
   let out: util.Diag[] = [];
   for field_value in sl.field_values {
@@ -11429,6 +11439,9 @@ function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.D
   }
   if (lit_names_no_struct(sl.type_name, structs)) {
     out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
+  }
+  if (slit_forges_handle(sl, structs)) {
+    out = out.append(dg_at("E099", "a " + sl.type_name + " cannot be built from a literal: only the call that opens it makes one", sl.line, sl.col));
   }
   if let Some(usig) = find_struct_sig(structs, sl.type_name) {
     let fi: i32 = 0;
@@ -21128,7 +21141,7 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   }
   // The built-in close consumes its handle: a descriptor closed once is
   // not a value the program reads again.
-  for h in ["Reader", "Writer", "Dir"] {
+  for h in semtypes.fd_handle_names() {
     let key: string = h + ".close";
     out = out.append(OwnFunc { name: key, flags: [true], arr: [false] });
     names = names.append(key);
@@ -21357,7 +21370,7 @@ function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[
   if (name == "Option" || name == "Result" || util.has_str(seen, name)) {
     return true;
   }
-  if (dx.consuming.has(name) || util.has_str(["Reader", "Writer", "Dir"], name)) {
+  if (dx.consuming.has(name) || util.has_str(semtypes.fd_handle_names(), name)) {
     return false;
   }
   return ow_decl_holds_no_handle(name, dx, seen.append(name));

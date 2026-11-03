@@ -66,14 +66,21 @@ int main(int c, char** v) {
 
 func buildImportLib(t *testing.T, target, src string, exports ...string) (string, []byte) {
 	t.Helper()
+	return buildImportLibFlags(t, target, src, nil, exports...)
+}
+
+func buildImportLibFlags(t *testing.T, target, src string, flags []string, exports ...string) (string, []byte) {
+	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lib.fern")
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	so := filepath.Join(dir, "libimp.so")
-	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", target, "-shared", "-export", strings.Join(exports, ","),
+	args := append([]string{}, flags...)
+	args = append(args, "-target", target, "-shared", "-export", strings.Join(exports, ","),
 		"-o", so, path, e2eharness.SelfHostStdlibRoot(t))
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
 	cmd.Env = e2eharness.ChildEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -85,6 +92,15 @@ func buildImportLib(t *testing.T, target, src string, exports ...string) (string
 // The loader of the host fills each import slot, so a Fern library calls
 // getpid and strlen in the host's libc.
 func TestSharedCImportsCallLibc(t *testing.T) {
+	testSharedCImportsCallLibc(t, false)
+}
+
+func TestSharedHardenedCImportsCallLibc(t *testing.T) {
+	testSharedCImportsCallLibc(t, true)
+}
+
+func testSharedCImportsCallLibc(t *testing.T, harden bool) {
+	t.Helper()
 	type leg struct {
 		target     string
 		machine    elf.Machine
@@ -111,7 +127,11 @@ func TestSharedCImportsCallLibc(t *testing.T) {
 			if l.machine == elf.EM_AARCH64 {
 				e2eharness.Arm64CLibc(t, l.cc)
 			}
-			so, out := buildImportLib(t, l.target, libcImportSrc, "pid", "len", "mapped")
+			var flags []string
+			if harden {
+				flags = []string{"-harden"}
+			}
+			so, out := buildImportLibFlags(t, l.target, libcImportSrc, flags, "pid", "len", "mapped")
 			if so == "" {
 				t.Fatalf("build: %s", out)
 			}
@@ -120,6 +140,20 @@ func TestSharedCImportsCallLibc(t *testing.T) {
 				t.Fatal(err)
 			}
 			sharedImageCheck(t, raw, l.machine)
+			if l.machine == elf.EM_AARCH64 {
+				f, err := elf.NewFile(bytes.NewReader(raw))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				property := false
+				for _, p := range f.Progs {
+					property = property || p.Type == elf.PT_GNU_PROPERTY
+				}
+				if property != harden {
+					t.Fatalf("GNU property present=%t, harden=%t", property, harden)
+				}
+			}
 			dir := t.TempDir()
 			cpath := filepath.Join(dir, "load.c")
 			if err := os.WriteFile(cpath, []byte(libcImportLoader), 0o644); err != nil {

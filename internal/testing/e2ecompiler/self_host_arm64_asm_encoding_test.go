@@ -492,6 +492,19 @@ _start:
     ld1r {v23.16b}, [x9]
     ld1 {v23.4s}, [x9]
     st1 {v23.2d}, [x9]
+    // The multiple-structure forms over a register list, with and without a
+    // post-increment by the bytes moved, and tbl over a table of registers.
+    ld1 {v16.16b-v19.16b}, [x14]
+    ld1 {v20.4s-v21.4s}, [x9]
+    ld1 {v20.2d-v22.2d}, [x9], #48
+    st1 {v23.16b-v24.16b}, [x9]
+    ld3 {v0.16b-v2.16b}, [x13], #48
+    st3 {v0.8b-v2.8b}, [x13]
+    ld2 {v4.8h-v5.8h}, [x9], #32
+    st4 {v24.16b-v27.16b}, [x12], #64
+    ld4 {v24.4s-v27.4s}, [x12]
+    tbl v24.16b, {v16.16b-v19.16b}, v3.16b
+    tbl v24.8b, {v16.16b-v17.16b}, v3.8b
 Lend:
     ret
 `

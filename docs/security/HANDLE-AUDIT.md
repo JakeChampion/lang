@@ -72,6 +72,7 @@ The `tcp_*` descriptors are plain `i32` values and still reach the hazard.
 
 | Pattern | Code | Case |
 |---|---|---|
+| A struct literal of a built-in `Reader`, `Writer` or `Dir`, with or without a spread | `E099` | `diag_e099` |
 | A second close of a built-in `Reader` | `E050` | `diag_e050_builtin_reader_closed_twice` |
 | A write to a built-in `Writer` after its close | `E051` | `diag_e051_builtin_writer_written_after_close` |
 | A function that returns `Some(h)` of a borrowed `h`, its result passed to an `own` parameter | `E051` | `diag_e051_variant_result_borrows_its_payload` |
