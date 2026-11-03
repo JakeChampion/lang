@@ -291,47 +291,57 @@ pub function call_crossers(f: ssa.SFunc, hard: boolean[]): boolean[] {
   if (!fl.ok) {
     return [];
   }
-  let live: boolean[] = __alloc_bool(f.nvals);
-  let out: boolean[] = __alloc_bool(f.nvals);
-  let seen: i32[] = [];
+  let w: Cross = Cross { live: __alloc_bool(f.nvals), out: __alloc_bool(f.nvals) };
   let start: i32 = 0;
   for bi in 0..f.blocks.len() {
     let b: ssa.SBlock = f.blocks[bi];
     if (any_hard(hard, start, b.insts.len())) {
-      seen = live_out_ids(fl, bi);
-      for v in seen {
-        live = live.with(v, true);
-      }
-      seen = seen.append(term_use(b.term));
-      live = mark_live(live, term_use(b.term));
-      let k: i32 = b.insts.len();
-      while (k > 0) {
-        k = k - 1;
-        let ins: ssa.SInst = b.insts[k];
-        if (ins.result >= 0) {
-          live = live.with(ins.result, false);
-        }
-        if (start + k < hard.len() && hard[start + k]) {
-          for v in seen {
-            if (v >= 0 && live[v]) {
-              out = out.with(v, true);
-            }
-          }
-        }
-        if (ins.kind_tag != 8) {
-          for arg in ins.args {
-            if (arg >= 0 && !live[arg]) {
-              live = live.with(arg, true);
-              seen = seen.append(arg);
-            }
-          }
-        }
-      }
-      for v in seen {
-        live = mark_dead(live, v);
-      }
+      w = crossers_in(w, live_out_ids(fl, bi), b, start, hard);
     }
     start = start + b.insts.len() + 1;
+  }
+  return w.out;
+}
+
+// `live` is all false between blocks. The walk of one block lists each value
+// it marks live, and clears them at its end.
+struct Cross { live: boolean[], out: boolean[] }
+
+function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, hard: boolean[]): Cross {
+  let live: boolean[] = w.live;
+  let out: boolean[] = w.out;
+  let seen: i32[] = live_out.append(term_use(b.term));
+  for v in seen {
+    live = mark_live(live, v);
+  }
+  let k: i32 = b.insts.len();
+  while (k > 0) {
+    k = k - 1;
+    let ins: ssa.SInst = b.insts[k];
+    live = mark_dead(live, ins.result);
+    if (start + k < hard.len() && hard[start + k]) {
+      out = marked_live(out, live, seen);
+    }
+    if (ins.kind_tag != 8) {
+      for arg in ins.args {
+        if (arg >= 0 && !live[arg]) {
+          live = live.with(arg, true);
+          seen = seen.append(arg);
+        }
+      }
+    }
+  }
+  for v in seen {
+    live = mark_dead(live, v);
+  }
+  return Cross { live: live, out: out };
+}
+
+function marked_live(own out: boolean[], live: boolean[], seen: i32[]): boolean[] {
+  for v in seen {
+    if (v >= 0 && live[v]) {
+      out = out.with(v, true);
+    }
   }
   return out;
 }
