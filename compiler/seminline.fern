@@ -646,7 +646,42 @@ function shared_spliceable(f: ssasem.Func, calls: i32, cycle: i32): boolean {
 }
 
 function shared_body(f: ssasem.Func, calls: i32, cycle: i32, unnamed: boolean): boolean {
-  return cycle < 0 && record_leaf(f) || unnamed && shared_spliceable(f, calls, cycle);
+  return cycle < 0 && record_leaf(f) || unnamed && (shared_spliceable(f, calls, cycle) || small_branch(f, calls, cycle));
+}
+
+// A small body with no loop that two callers share is spliced into both. It
+// returns no box, so a call to it saves no box and is spliced whatever its
+// caller does with the result.
+function small_branch(f: ssasem.Func, calls: i32, cycle: i32): boolean {
+  return calls > 1 && calls <= max_shared_callers() && cycle < 0 && !lends_view(f) && small_branch_body(f);
+}
+
+function small_branch_body(f: ssasem.Func): boolean {
+  return spliceable(f, max_shared_insts()) && !loops(f.graph) && !returns_boxes(f) && !record_leaf(f);
+}
+
+function shared_limit(f: ssasem.Func): i32 {
+  if (returns_boxes(f)) {
+    return max_reuse_shared_insts();
+  }
+  return max_shared_insts();
+}
+
+// A body called once stays out of a shared host that it would grow past the
+// host's own limit, so that the host can still be spliced into its callers.
+function kept_out(funcs: ssasem.Func[], callees: i32[][], calls: i32[], shared: boolean[], own once: boolean[]): boolean[] {
+  for h in 0..funcs.len() {
+    if (!shared[h]) {
+      continue;
+    }
+    let host: i32 = count_insts(funcs[h].graph);
+    for g in callees[h] {
+      if (g >= 0 && g != h && once[g] && !shared[g] && calls[g] == 1 && host + count_insts(funcs[g].graph) > shared_limit(funcs[h])) {
+        once = once.with(g, false);
+      }
+    }
+  }
+  return once;
 }
 
 function small_shared_body(f: ssasem.Func): boolean {
@@ -750,7 +785,8 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       once = s.once;
     }
     let ctors: boolean[] = constructor_leaves(out.funcs, s);
-    once = grown_unpackers(out, s, ctors, grown_forced(out, s, once));
+    s = Spliceable { ...s, once: kept_out(out.funcs, callees, s.calls, s.shared, s.once) };
+    once = kept_out(out.funcs, callees, s.calls, s.shared, grown_unpackers(out, s, ctors, grown_forced(out, s, once)));
     let ready: boolean[] = [];
     let j: i32 = 0;
     while (j < out.funcs.len()) {
@@ -1719,7 +1755,7 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
       if (at >= 0 && ctors[at] && !shared[at] && !literal_args(f.graph.blocks[bi], k)) {
         at = 0 - 1;
       }
-      if (at >= 0 && shared[at]) {
+      if (at >= 0 && shared[at] && !small_branch_body(funcs[at])) {
         f = renamed(f, swap);
         swap = [];
         let r: i32 = f.graph.blocks[bi].insts[k].result;
