@@ -5525,8 +5525,16 @@ function __snapshot_pipe(opts: Config): Option[Pipe] {
   }
   match (pipe()) {
     Ok(q) => {
-      tcp_socket_ctl(q.w.fd, 3, 1);
-      return Some(q);
+      match (q.w.set_nonblocking(true)) {
+        Ok(_) => {
+          return Some(q);
+        },
+        Err(e) => {
+          q.r.close();
+          q.w.close();
+          return None;
+        }
+      }
     },
     Err(e) => {
       return None;

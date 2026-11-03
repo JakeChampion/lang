@@ -3232,7 +3232,7 @@ function is_handle_method(kind: string, name: string): boolean {
     return true;
   }
   if (kind == "Writer") {
-    return util.has_str(["write", "write_some", "write_bytes", "write_some_bytes", "splice_forever", "truncate"], name);
+    return util.has_str(["write", "write_some", "write_bytes", "write_some_bytes", "splice_forever", "truncate", "set_nonblocking"], name);
   }
   return util.has_str(["read_chunk", "read_chunk_bytes", "splice_to", "copy_range_to", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name);
 }
@@ -3360,7 +3360,27 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
   if (name == "truncate") {
     return void_result_value(w.truncate(arg_i64(args, 0)));
   }
+  if (name == "set_nonblocking") {
+    return writer_nonblocking(w, arg_bool(args, 0));
+  }
   return writer_fd_method(w, name, args);
+}
+
+// The pinned stage0 has no Writer.set_nonblocking, so this sets the same flag
+// through the socket control operation.
+function writer_nonblocking(w: Writer, on: boolean): Value {
+  let arg: i32 = 0;
+  if (on) {
+    arg = 1;
+  }
+  let rc: i32 = 0;
+  unsafe {
+    rc = tcp_socket_ctl(__socket_from_fd(w.fd), 3, arg);
+  }
+  if (rc < 0) {
+    return io_err_value(Other("", "fcntl failed", 0 - rc));
+  }
+  return ok_value(v_tuple([]));
 }
 
 function writer_fd_method(w: Writer, name: string, args: Value[]): Value {

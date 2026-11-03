@@ -2082,6 +2082,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	registerStructMethod("Writer", "truncate",
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, voidIoResult)
+	registerStructMethod("Writer", "set_nonblocking", []ast.Type{ast.BoolType{}}, voidIoResult)
 	registerStructMethod("Reader", "fsync", nil, voidIoResult)
 	registerStructMethod("Writer", "fsync", nil, voidIoResult)
 	registerStructMethod("Reader", "fdatasync", nil, voidIoResult)
