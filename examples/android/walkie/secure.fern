@@ -1,0 +1,297 @@
+// The secure channel of the walkie-talkie: an authenticated key exchange,
+// a short authentication string, and sealed frames.
+//
+// The key exchange has three messages, with ephemeral X25519 keys:
+//
+// 1. The initiator sends a commitment: the SHA-256 of its public key and a
+//    nonce.
+// 2. The responder sends its public key and a nonce.
+// 3. The initiator sends its public key and nonce, and the responder checks
+//    them against the commitment.
+//
+// The initiator commits before it sees the responder's key, so a third party
+// in the middle cannot try keys until the authentication strings match. The
+// two users compare the short authentication string at first pairing.
+//
+// Each direction and each channel has its own key: control frames go over a
+// reliable stream, and voice frames over datagrams. A frame is sealed with
+// ChaCha20-Poly1305, and its nonce is its sequence number. A control frame
+// must have the next number. A voice frame can arrive out of order, so it
+// is accepted once inside a window of 64 numbers.
+import "std/crypto";
+import "std/crypto/chacha20poly1305";
+import "std/crypto/x25519";
+
+const M_COMMIT: i32 = 16;
+
+const M_KEY: i32 = 17;
+
+const M_REVEAL: i32 = 18;
+
+pub const CTL: i32 = 1;
+
+pub const VOICE: i32 = 2;
+
+const WINDOW: i32 = 64;
+
+pub struct Handshake { initiator: boolean, private: u8[], public: u8[], nonce: u8[], commit: u8[], peer_key: u8[], peer_nonce: u8[], done: boolean, failed: boolean }
+
+pub struct Keys { send_ctl: u8[], recv_ctl: u8[], send_voice: u8[], recv_voice: u8[], sas: string }
+
+// One direction of one channel: its key and its sequence state. For a voice
+// receiver, `high` is the highest number seen and `seen` marks the numbers
+// below it in the window.
+struct Way { key: u8[], next: i64, high: i64, seen: boolean[] }
+
+pub struct Channel { send_ctl: Way, recv_ctl: Way, send_voice: Way, recv_voice: Way, sas: string }
+
+function cat(a: u8[], b: [u8]): u8[] {
+  for x in b {
+    a = a.append(x);
+  }
+  return a;
+}
+
+function text(s: string): u8[] {
+  let out: u8[] = [];
+  for i in 0..s.len() {
+    out = out.append(s[i]);
+  }
+  return out;
+}
+
+function part(b: u8[], from: i32, n: i32): u8[] {
+  let out: u8[] = [];
+  for i in from..from + n {
+    out = out.append(b[i]);
+  }
+  return out;
+}
+
+function commitment(public: [u8], nonce: [u8]): u8[] {
+  return crypto.sha256(cat(cat(text("walkie commit"), public), nonce));
+}
+
+// A handshake from 32 random bytes for the private key and 16 for the nonce.
+pub function start(initiator: boolean, random_key: u8[], random_nonce: u8[]): Handshake {
+  let public: u8[] = [];
+  match (x25519.public_key(random_key)) {
+    Ok(p) => {
+      public = p;
+    },
+    Err(_) => {}
+  }
+  return Handshake { initiator: initiator, private: random_key, public: public, nonce: random_nonce, commit: [], peer_key: [], peer_nonce: [], done: false, failed: public.len() != 32 };
+}
+
+// The initiator's first message.
+pub function first(h: Handshake): u8[] {
+  return cat([M_COMMIT as u8], commitment(h.public, h.nonce));
+}
+
+// The handshake after message `m`, and the reply to send, which is empty
+// when there is none. `done` is set when the keys are ready.
+pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
+  if (h.done || h.failed || m.len() == 0) {
+    return (Handshake { ...h, failed: true }, []);
+  }
+  let t: i32 = m[0] as i32;
+  if (!h.initiator && t == M_COMMIT && m.len() == 33 && h.commit.len() == 0) {
+    let reply: u8[] = cat(cat([M_KEY as u8], h.public), h.nonce);
+    return (Handshake { ...h, commit: part(m, 1, 32) }, reply);
+  }
+  if (h.initiator && t == M_KEY && m.len() == 49 && h.peer_key.len() == 0) {
+    let reveal: u8[] = cat(cat([M_REVEAL as u8], h.public), h.nonce);
+    return (Handshake { ...h, peer_key: part(m, 1, 32), peer_nonce: part(m, 33, 16), done: true }, reveal);
+  }
+  if (!h.initiator && t == M_REVEAL && m.len() == 49 && h.commit.len() == 32 && h.peer_key.len() == 0) {
+    let key: u8[] = part(m, 1, 32);
+    let nonce: u8[] = part(m, 33, 16);
+    if (commitment(key, nonce) != h.commit) {
+      return (Handshake { ...h, failed: true }, []);
+    }
+    return (Handshake { ...h, peer_key: key, peer_nonce: nonce, done: true }, []);
+  }
+  return (Handshake { ...h, failed: true }, []);
+}
+
+// The keys of a finished handshake, and its short authentication string:
+// six decimal digits that both users read out.
+pub function keys(h: Handshake): Option[Keys] {
+  if (!h.done || h.failed) {
+    return None;
+  }
+  let shared: u8[] = [];
+  match (x25519.x25519(h.private, h.peer_key)) {
+    Ok(s) => {
+      shared = s;
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+  let mine: u8[] = cat(h.public, h.nonce);
+  let theirs: u8[] = cat(h.peer_key, h.peer_nonce);
+  let first_part: u8[] = theirs;
+  let second_part: u8[] = mine;
+  if (h.initiator) {
+    first_part = mine;
+    second_part = theirs;
+  }
+  let transcript: u8[] = crypto.sha256(cat(cat(text("walkie v1"), first_part), second_part));
+  let prk: u8[] = crypto.hkdf_sha256_extract(transcript, shared);
+  crypto.erase(shared);
+  let i2r_ctl: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r control"), 32);
+  let r2i_ctl: u8[] = crypto.hkdf_sha256_expand(prk, text("r2i control"), 32);
+  let i2r_voice: u8[] = crypto.hkdf_sha256_expand(prk, text("i2r voice"), 32);
+  let r2i_voice: u8[] = crypto.hkdf_sha256_expand(prk, text("r2i voice"), 32);
+  let sas_bytes: u8[] = crypto.hkdf_sha256_expand(prk, text("sas"), 4);
+  crypto.erase(prk);
+  let n: i64 = (sas_bytes[0] as i64 << 24 as i64 | sas_bytes[1] as i64 << 16 as i64 | sas_bytes[2] as i64 << 8 as i64 | sas_bytes[3] as i64) % (1000000 as i64);
+  let sas: string = n.to_string();
+  while (sas.len() < 6) {
+    sas = "0" + sas;
+  }
+  if (h.initiator) {
+    return Some(Keys { send_ctl: i2r_ctl, recv_ctl: r2i_ctl, send_voice: i2r_voice, recv_voice: r2i_voice, sas: sas });
+  }
+  return Some(Keys { send_ctl: r2i_ctl, recv_ctl: i2r_ctl, send_voice: r2i_voice, recv_voice: i2r_voice, sas: sas });
+}
+
+function way(key: u8[]): Way {
+  let seen: boolean[] = [];
+  for k in 0..WINDOW {
+    seen = seen.append(false);
+  }
+  return Way { key: key, next: 0 as i64, high: 0 - 1 as i64, seen: seen };
+}
+
+pub function channel(k: Keys): Channel {
+  return Channel { send_ctl: way(k.send_ctl), recv_ctl: way(k.recv_ctl), send_voice: way(k.send_voice), recv_voice: way(k.recv_voice), sas: k.sas };
+}
+
+// The 12-byte nonce of sequence number `seq`, and the 9 bytes that start a
+// frame: the channel and the number. Those bytes are the associated data, so
+// a frame cannot move to the other channel.
+function head(kind: i32, seq: i64): u8[] {
+  let out: u8[] = [kind as u8];
+  for k in 0..8 {
+    out = out.append((seq >> (56 - 8 * k) as i64 & 255 as i64) as u8);
+  }
+  return out;
+}
+
+function nonce(seq: i64): u8[] {
+  let out: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8];
+  for k in 0..8 {
+    out = out.append((seq >> (56 - 8 * k) as i64 & 255 as i64) as u8);
+  }
+  return out;
+}
+
+function seal_way(w: Way, kind: i32, plain: [u8]): (Way, u8[]) {
+  let h: u8[] = head(kind, w.next);
+  match (chacha20poly1305.key(w.key)) {
+    Ok(key) => {
+      match (key.seal(nonce(w.next), plain, h)) {
+        Ok(sealed) => {
+          return (Way { ...w, next: w.next + 1 as i64 }, cat(h, sealed));
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return (w, []);
+}
+
+// The plain bytes of `frame` on this way, without the replay check.
+function open_frame(w: Way, kind: i32, frame: [u8]): Option[(i64, u8[])] {
+  if (frame.len() < 9 + 16 || frame[0] as i32 != kind) {
+    return None;
+  }
+  let seq: i64 = 0 as i64;
+  for k in 1..9 {
+    seq = seq << 8 as i64 | frame[k] as i64;
+  }
+  match (chacha20poly1305.key(w.key)) {
+    Ok(key) => {
+      match (key.open(nonce(seq), frame[9:frame.len()], frame[0:9])) {
+        Ok(plain) => {
+          return Some((seq, plain));
+        },
+        Err(_) => {}
+      }
+    },
+    Err(_) => {}
+  }
+  return None;
+}
+
+pub function seal_control(c: Channel, plain: [u8]): (Channel, u8[]) {
+  let (w, frame) = seal_way(c.send_ctl, CTL, plain);
+  return (Channel { ...c, send_ctl: w }, frame);
+}
+
+pub function seal_voice(c: Channel, plain: [u8]): (Channel, u8[]) {
+  let (w, frame) = seal_way(c.send_voice, VOICE, plain);
+  return (Channel { ...c, send_voice: w }, frame);
+}
+
+// A control frame opens only with the next sequence number, so a replayed,
+// dropped or reordered frame ends the stream.
+pub function open_control(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
+  match (open_frame(c.recv_ctl, CTL, frame)) {
+    Some((seq, plain)) => {
+      if (seq != c.recv_ctl.next) {
+        return (c, None);
+      }
+      return (Channel { ...c, recv_ctl: Way { ...c.recv_ctl, next: seq + 1 as i64 } }, Some(plain));
+    },
+    None => {
+      return (c, None);
+    }
+  }
+}
+
+// A voice frame opens once, when its number is above the window or in the
+// window and not seen yet.
+pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
+  match (open_frame(c.recv_voice, VOICE, frame)) {
+    Some((seq, plain)) => {
+      let w: Way = c.recv_voice;
+      if (seq > w.high) {
+        let seen: boolean[] = w.seen;
+        let shift: i64 = seq - w.high;
+        for k in 0..WINDOW {
+          let from: i64 = k as i64 - shift;
+          seen = seen.with(k, from >= 0 as i64 && w.seen[from as i32]);
+        }
+        return (Channel { ...c, recv_voice: Way { ...w, high: seq, seen: seen.with(0, true) } }, Some(plain));
+      }
+      let back: i64 = w.high - seq;
+      if (back >= WINDOW as i64 || w.seen[back as i32]) {
+        return (c, None);
+      }
+      return (Channel { ...c, recv_voice: Way { ...w, seen: w.seen.with(back as i32, true) } }, Some(plain));
+    },
+    None => {
+      return (c, None);
+    }
+  }
+}
+
+// Clears the keys of a closed session. The channel is consumed, so each key
+// is erased through its last reference.
+pub function close(own c: Channel): void {
+  let Channel { send_ctl: sc, recv_ctl: rc, send_voice: sv, recv_voice: rv, sas: _ } = c;
+  erase_way(sc);
+  erase_way(rc);
+  erase_way(sv);
+  erase_way(rv);
+}
+
+function erase_way(own w: Way): void {
+  let Way { key, next: _, high: _, seen: _ } = w;
+  crypto.erase(key);
+}

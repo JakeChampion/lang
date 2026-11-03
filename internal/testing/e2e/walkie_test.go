@@ -38,3 +38,9 @@ func runWalkieTest(t *testing.T, name string) {
 func TestWalkieSessionEngine(t *testing.T) {
 	runWalkieTest(t, "session_test.fern")
 }
+
+// The secure channel: the key exchange, the short authentication string,
+// sealed frames, replays and a third party (acceptance test G).
+func TestWalkieSecureChannel(t *testing.T) {
+	runWalkieTest(t, "secure_test.fern")
+}
