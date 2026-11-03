@@ -7,17 +7,11 @@ function main(): i32 {
   let key = __codec_bytes(hex.decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"));
   let before = __heap_alloc_count();
   let sum = 0;
-  let i = 0;
-  while (i < 64) {
-    match (x25519.public_key(key)) {
-      Ok(out) => {
-        sum = sum + out[i % 32] as i32;
-      },
-      Err(_) => {
-        return 1;
-      }
-    }
-    i = i + 1;
+  for i in 0..64 {
+    let Ok(out) = x25519.public_key(key) else {
+      return 1;
+    };
+    sum += out[i % 32] as i32;
   }
   let allocations = __heap_alloc_count() - before;
   print(allocations.to_string());

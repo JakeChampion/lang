@@ -2,6 +2,7 @@
 // request with a small body, so each conformance case sees a server that
 // takes the request it sends and answers the frames it checks.
 import "std/i32";
+import "std/result";
 import "std/http";
 import "std/platform";
 import "std/serve";
@@ -11,72 +12,32 @@ import "std/rand";
 
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   if (req.method == "POST") {
-    return http.text(200, "took " + req.body_bytes().len().to_string() + " bytes");
+    return http.text(200, f"took {req.body_bytes().len()} bytes");
   }
   return http.ok("hello");
 }
 
 function port(): i32 {
-  match (env("PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => {
-          return n;
-        },
-        Err(_) => {
-          return 8080;
-        }
-      }
-    },
-    None => {
-      return 8080;
-    }
-  }
-  return 8080;
+  let Some(p) = env("PORT") else {
+    return 8080;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(8080);
 }
 
 function tls_config(cfg: serve.Config): Result[serve.Config, string] {
-  match (env("TLS_CERT")) {
-    Some(cert_path) => {
-      match (env("TLS_KEY")) {
-        Some(key_path) => {
-          let cert: string = "";
-          match (read_file(cert_path)) {
-            Ok(t) => {
-              cert = t;
-            },
-            Err(e) => {
-              return Err("TLS_CERT could not be read");
-            }
-          }
-          let key: string = "";
-          match (read_file(key_path)) {
-            Ok(t) => {
-              key = t;
-            },
-            Err(e) => {
-              return Err("TLS_KEY could not be read");
-            }
-          }
-          match (identity.from_pem(cert, key)) {
-            Ok(id) => {
-              return Ok(cfg.with_tls(server.config(id, rand.bytes(32))));
-            },
-            Err(e) => {
-              return Err(e.message());
-            }
-          }
-        },
-        None => {
-          return Err("TLS_CERT without TLS_KEY");
-        }
-      }
-    },
-    None => {
-      return Ok(cfg);
-    }
-  }
-  return Ok(cfg);
+  let Some(cert_path) = env("TLS_CERT") else {
+    return Ok(cfg);
+  };
+  let Some(key_path) = env("TLS_KEY") else {
+    return Err("TLS_CERT without TLS_KEY");
+  };
+  let Ok(cert) = read_file(cert_path) else {
+    return Err("TLS_CERT could not be read");
+  };
+  let Ok(key) = read_file(key_path) else {
+    return Err("TLS_KEY could not be read");
+  };
+  return match (identity.from_pem(cert, key)) { Ok(id) => Ok(cfg.with_tls(server.config(id, rand.bytes(32)))), Err(e) => Err(e.message()) };
 }
 
 function main(): i32 {
@@ -89,5 +50,4 @@ function main(): i32 {
       return 2;
     }
   }
-  return 2;
 }

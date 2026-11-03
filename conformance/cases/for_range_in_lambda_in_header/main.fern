@@ -1,0 +1,33 @@
+// A range `for` inside a lambda is lowered wherever the lambda is written,
+// here in a match scrutinee and in an `if` condition.
+import "core/cmp";
+
+function run(f: (i32) => void): Result[i32, string] {
+  f(4);
+  return Ok(1);
+}
+
+function main(): i32 {
+  let total = cell_new(0);
+  match (run((n: i32): void => {
+    for at in 0..n {
+      total.set(total.get() + at);
+    }
+  })) {
+    Ok(r) => {
+      print(f"ok {r} {total.get()}");
+    },
+    Err(e) => {
+      print(e);
+    },
+  }
+  let seen = cell_new(0);
+  if (run((n: i32): void => {
+    for k in 1..=n {
+      seen.set(seen.get() + k);
+    }
+  }) == Ok(1)) {
+    print(f"if {seen.get()}");
+  }
+  return 0;
+}

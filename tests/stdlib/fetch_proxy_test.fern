@@ -20,15 +20,15 @@ function via(p: fetch.ProxyEnv, u: string): string {
 }
 
 function routes(p: fetch.ProxyEnv, urls: string[]): string {
-  let out: string = "";
+  let out = "";
   for u in urls {
     if (out.len() > 0) {
-      out = out + " ";
+      out += " ";
     }
     if (via(p, u) == PROXY) {
-      out = out + "proxy";
+      out += "proxy";
     } else {
-      out = out + "direct";
+      out += "direct";
     }
   }
   return out;
@@ -39,7 +39,7 @@ function test_no_proxy_configured(): test.TestOutcome {
 }
 
 function test_each_scheme_has_its_proxy(): test.TestOutcome {
-  let both: fetch.ProxyEnv = fetch.proxies(PROXY, "http://tls-proxy.example:8080", "skip.example");
+  let both = fetch.proxies(PROXY, "http://tls-proxy.example:8080", "skip.example");
   if (via(both, "http://example.com/") != PROXY || via(both, "https://example.com/") != "http://tls-proxy.example:8080" || via(both, "https://skip.example/") != "direct") {
     return test.fail("both set: " + via(both, "http://example.com/") + " " + via(both, "https://example.com/") + " " + via(both, "https://skip.example/"));
   }
@@ -79,7 +79,7 @@ function test_an_address_entry_matches_that_address(): test.TestOutcome {
 }
 
 function test_global_literals_still_match_address_rules(): test.TestOutcome {
-  let p: fetch.ProxyEnv = skipping("127.0.0.1,8.8.8.8:8080,1.1.1.0/24");
+  let p = skipping("127.0.0.1,8.8.8.8:8080,1.1.1.0/24");
   return test.assert_eq(routes(p, ["http://8.8.8.8:8080/", "http://8.8.8.8/", "http://1.1.1.1/", "http://[::ffff:1.1.1.1]/", "http://8.8.4.4/", "http://[2606:4700::1111]/"]), "direct proxy direct direct proxy proxy");
 }
 
@@ -100,52 +100,52 @@ function test_a_bad_block_or_port_matches_nothing(): test.TestOutcome {
 }
 
 function test_only_the_lowercase_variable_is_read(): test.TestOutcome {
-  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None, None, None);
+  let p = fetch.proxy_env_from(Some(PROXY), None, None, None, None, None);
   return test.assert_eq(p.http_proxy + "|" + p.https_proxy + "|" + p.no_proxy, PROXY + "||");
 }
 
 function test_no_proxy_under_request_method(): test.TestOutcome {
-  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some(PROXY), Some(PROXY), Some("a.example"), None, Some("GET"));
+  let p = fetch.proxy_env_from(Some(PROXY), Some(PROXY), Some(PROXY), Some("a.example"), None, Some("GET"));
   return test.assert_eq(p.http_proxy + "|" + p.https_proxy + "|" + p.no_proxy, "||a.example");
 }
 
 function test_no_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
-  let lower: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, Some("a.example"), Some("b.example"), None);
-  let upper: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None, Some("b.example"), None);
+  let lower = fetch.proxy_env_from(Some(PROXY), None, None, Some("a.example"), Some("b.example"), None);
+  let upper = fetch.proxy_env_from(Some(PROXY), None, None, None, Some("b.example"), None);
   return test.assert_eq(lower.no_proxy + "|" + upper.no_proxy, "a.example|b.example");
 }
 
 function test_https_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
-  let lower: fetch.ProxyEnv = fetch.proxy_env_from(None, Some("http://a:1"), Some("http://b:2"), None, None, None);
-  let upper: fetch.ProxyEnv = fetch.proxy_env_from(None, None, Some("http://b:2"), None, None, None);
+  let lower = fetch.proxy_env_from(None, Some("http://a:1"), Some("http://b:2"), None, None, None);
+  let upper = fetch.proxy_env_from(None, None, Some("http://b:2"), None, None, None);
   return test.assert_eq(lower.https_proxy + "|" + upper.https_proxy, "http://a:1|http://b:2");
 }
 
 function allocations(p: fetch.ProxyEnv, u: string, n: i32): i64 {
-  let warm: string = via(p, u);
-  let before: i64 = __heap_alloc_count();
-  let i: i32 = 0;
+  let warm = via(p, u);
+  let before = __heap_alloc_count();
+  let i = 0;
   while (i < n) {
-    let picked: string = via(p, u);
-    i = i + 1;
+    let picked = via(p, u);
+    i += 1;
   }
   return __heap_alloc_count() - before;
 }
 
 function test_a_no_proxy_list_is_read_once(): test.TestOutcome {
-  let long: fetch.ProxyEnv = skipping("a.example, .b.example, c.example:8080, 10.0.0.0/8, fd00::/8, 192.168.1.5, [fe80::1%eth0], d.example, e.example, f.example, g.example, h.example, i.example, j.example, k.example, 172.16.0.0/12, l.example, m.example, n.example, o.example");
+  let long = skipping("a.example, .b.example, c.example:8080, 10.0.0.0/8, fd00::/8, 192.168.1.5, [fe80::1%eth0], d.example, e.example, f.example, g.example, h.example, i.example, j.example, k.example, 172.16.0.0/12, l.example, m.example, n.example, o.example");
   if (routes(long, ["http://www.example.com/", "http://x.b.example/", "http://10.1.2.3/", "http://[fd12::1]/", "http://o.example/"]) != "proxy direct direct direct direct") {
     return test.fail("the long list routes wrongly");
   }
-  let name: i64 = allocations(long, "http://www.example.com/", 50) - allocations(skipping(""), "http://www.example.com/", 50);
+  let name = allocations(long, "http://www.example.com/", 50) - allocations(skipping(""), "http://www.example.com/", 50);
   // Both lists need an address value for a CIDR rule. An empty list can
   // avoid that allocation, so it is not a control for reading the list.
-  let address: i64 = allocations(long, "http://11.0.0.1/", 50) - allocations(skipping("0.0.0.0/32"), "http://11.0.0.1/", 50);
+  let address = allocations(long, "http://11.0.0.1/", 50) - allocations(skipping("0.0.0.0/32"), "http://11.0.0.1/", 50);
   return test.assert_eq(name.to_string() + " " + address.to_string(), "0 0");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/fetch proxies");
+  let r = test.new("std/fetch proxies");
   r = r.it("a no_proxy list is read once", test_a_no_proxy_list_is_read_once);
   r = r.it("no proxy configured", test_no_proxy_configured);
   r = r.it("each scheme has its proxy", test_each_scheme_has_its_proxy);

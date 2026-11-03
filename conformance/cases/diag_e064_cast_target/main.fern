@@ -1,0 +1,5 @@
+function main(): i32 {
+  let x = 5;
+  let a = x as Byte;
+  return 0;
+}

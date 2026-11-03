@@ -1,12 +1,12 @@
 import "std/test";
 
 function test_exit_zero_pass(): test.TestOutcome {
-  let res: ProcessResult = subprocess("true", [], "");
+  let res = subprocess("true", [], "");
   return test.assert_exit_zero(res);
 }
 
 function test_exit_zero_fail_reports(): test.TestOutcome {
-  let res: ProcessResult = subprocess("false", [], "");
+  let res = subprocess("false", [], "");
   match (test.assert_exit_zero(res)) {
     Pass => {
       return test.fail("non-zero exit should fail");
@@ -18,12 +18,12 @@ function test_exit_zero_fail_reports(): test.TestOutcome {
 }
 
 function test_exit_nonzero_pass(): test.TestOutcome {
-  let res: ProcessResult = subprocess("false", [], "");
+  let res = subprocess("false", [], "");
   return test.assert_exit_nonzero(res);
 }
 
 function test_exit_nonzero_zero_fails(): test.TestOutcome {
-  let res: ProcessResult = subprocess("true", [], "");
+  let res = subprocess("true", [], "");
   match (test.assert_exit_nonzero(res)) {
     Pass => {
       return test.fail("exit 0 should fail nonzero check");
@@ -106,7 +106,7 @@ function test_stderr_line_count_pass(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("process output shortcuts");
+  let r = test.new("process output shortcuts");
   r = r.it("exit_zero pass", test_exit_zero_pass);
   r = r.it("exit_zero on non-zero fails", test_exit_zero_fail_reports);
   r = r.it("exit_nonzero pass", test_exit_nonzero_pass);

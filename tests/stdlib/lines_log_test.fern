@@ -1,7 +1,7 @@
 import "std/test";
 
 function test_lines_match(): test.TestOutcome {
-  let actual: string = "line 1\nline 2\nline 3\n";
+  let actual = "line 1\nline 2\nline 3\n";
   return test.assert_lines_eq(actual, ["line 1", "line 2", "line 3"]);
 }
 
@@ -40,7 +40,7 @@ function test_lines_empty_input(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("lines+log");
+  let r = test.new("lines+log");
 
   r = r.log("phase 1: positive cases");
   r = r.it("lines match", test_lines_match);

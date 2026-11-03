@@ -21,7 +21,7 @@ function test_nan_after_every_number(): test.TestOutcome {
   if (nan64().cmp(1.0) != 1) {
     return test.fail("nan should sort after 1.0");
   }
-  if (1.0.cmp(nan64()) != 0 - 1) {
+  if (1.0.cmp(nan64()) != -1) {
     return test.fail("1.0 should sort before nan");
   }
   if (nan64().cmp(inf64()) != 1) {
@@ -48,7 +48,7 @@ function test_eq_agrees_with_cmp(): test.TestOutcome {
 }
 
 function test_operators_stay_ieee(): test.TestOutcome {
-  let n: f64 = nan64();
+  let n = nan64();
   if (n == n) {
     return test.fail("the == operator must stay IEEE (false for NaN)");
   }
@@ -59,7 +59,7 @@ function test_operators_stay_ieee(): test.TestOutcome {
 }
 
 function test_sort_is_deterministic(): test.TestOutcome {
-  let s: f64[] = cmp.sort([3.0, nan64(), 1.0, 2.0]);
+  let s = cmp.sort([3.0, nan64(), 1.0, 2.0]);
   if (s[0].is_nan()) {
     return test.fail("nan must not sort first");
   }
@@ -102,7 +102,7 @@ function test_f32_placement(): test.TestOutcome {
 }
 
 function test_f32_sort(): test.TestOutcome {
-  let s: f32[] = cmp.sort([2.0, nan32(), 1.0]);
+  let s = cmp.sort([2.0, nan32(), 1.0]);
   if (s[0] != 1.0 || s[1] != 2.0) {
     return test.fail("f32 numbers ahead of the NaN");
   }
@@ -110,7 +110,7 @@ function test_f32_sort(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("core/cmp NaN total order");
+  let r = test.new("core/cmp NaN total order");
   r = r.it("NaN sorts after every number", test_nan_after_every_number);
   r = r.it("every NaN is one value", test_nans_are_one_value);
   r = r.it("Eq agrees with cmp", test_eq_agrees_with_cmp);

@@ -43,7 +43,7 @@ function test_bytes_parse_keeps_the_request(): test.TestOutcome {
 }
 
 function test_text_and_bytes_agree(): test.TestOutcome {
-  let wire: string = wire_post();
+  let wire = wire_post();
   match (http.parse_request(wire)) {
     Ok(a) => {
       match (http.parse_request_bytes(wire.bytes())) {
@@ -84,11 +84,11 @@ function test_bare_request_has_no_headers(): test.TestOutcome {
 }
 
 function fields(n: i32): string {
-  let block: string = "";
-  let i: i32 = 0;
+  let block = "";
+  let i = 0;
   while (i < n) {
     block = block + "X-" + i.to_string() + ": " + i.to_string() + "\r\n";
-    i = i + 1;
+    i += 1;
   }
   return block;
 }
@@ -97,15 +97,15 @@ function repeat(s: string, n: i32): string {
   if (n <= 0) {
     return "";
   }
-  let out: string = s;
-  let len: i32 = 1;
+  let out = s;
+  let len = 1;
   while (len * 2 <= n) {
-    out = out + out;
-    len = len * 2;
+    out += out;
+    len *= 2;
   }
   while (len < n) {
-    out = out + s;
-    len = len + 1;
+    out += s;
+    len += 1;
   }
   return out;
 }
@@ -115,7 +115,7 @@ function line_of(line_len: i32): string {
 }
 
 function block_of(block_len: i32): string {
-  let line: string = "GET / HTTP/1.1\r\nHost: h\r\n";
+  let line = "GET / HTTP/1.1\r\nHost: h\r\n";
   return line + "X: " + repeat("v", block_len - line.len() - 3) + "\r\n\r\n";
 }
 
@@ -167,14 +167,14 @@ function test_caps_admit_what_fits(): test.TestOutcome {
 }
 
 function refused(wire: string): boolean {
-  let text: boolean = true;
+  let text = true;
   match (http.parse_request(wire)) {
     Ok(_) => {
       text = false;
     },
     Err(_) => {}
   }
-  let bytes: boolean = true;
+  let bytes = true;
   match (http.parse_request_bytes(wire.bytes())) {
     Ok(_) => {
       bytes = false;
@@ -404,7 +404,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
       return test.fail("a chunked request refused");
     }
   }
-  let wire: string = wire_chunked() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire = wire_chunked() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (framed(wire)) {
     Some(f) => {
       if (f.len != wire_chunked().len()) {
@@ -634,7 +634,7 @@ function test_refusal_statuses(): test.TestOutcome {
 }
 
 function test_expect_continue(): test.TestOutcome {
-  let head: string = "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
+  let head = "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
   if (framing_of(head) != 3) {
     return test.fail("headers alone do not ask for 100");
   }
@@ -689,14 +689,14 @@ function refusal_of(text: string): string {
 }
 
 function test_parse_names_why_it_refused(): test.TestOutcome {
-  let short: string = refusal_of("GET / HTTP/1.1\r\nHost: h\r\n");
-  let waits: string = refusal_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n");
-  let bad: string = refusal_of("GET / HTTP/1.1\r\n\r\n");
+  let short = refusal_of("GET / HTTP/1.1\r\nHost: h\r\n");
+  let waits = refusal_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n");
+  let bad = refusal_of("GET / HTTP/1.1\r\n\r\n");
   return test.assert_eq(short + " | " + waits + " | " + bad, "the request is incomplete | the request waits for 100 Continue before sending its body | the request is malformed (status 400)");
 }
 
 function test_framed_length_covers_headers_and_body(): test.TestOutcome {
-  let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (framed(wire)) {
     Some(f) => {
       if (f.request.path != "/echo") {
@@ -712,7 +712,7 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 }
 
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
-  let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (http.parse_request_framed_from(wire.bytes(), wire_post().len(), http.limits(), http.framed_none())) {
     http.Complete(f) => {
       if (f.request.path != "/next") {
@@ -761,19 +761,19 @@ function framed_differs(a: http.HttpFramed, b: http.HttpFramed): string {
   if (a.request.headers.len() != b.request.headers.len() || a.request.trailers.len() != b.request.trailers.len()) {
     return "field counts: " + a.request.headers.len().to_string() + " against " + b.request.headers.len().to_string();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.request.headers.len()) {
     if (a.request.headers.names[i] != b.request.headers.names[i] || a.request.headers.values[i] != b.request.headers.values[i]) {
       return "field " + i.to_string() + ": " + a.request.headers.names[i] + ": " + a.request.headers.values[i] + " against " + b.request.headers.names[i] + ": " + b.request.headers.values[i];
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < a.request.trailers.len()) {
     if (a.request.trailers.names[i] != b.request.trailers.names[i] || a.request.trailers.values[i] != b.request.trailers.values[i]) {
       return "trailer " + i.to_string();
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -799,15 +799,15 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
     "GET /other HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n",
     "GET /other HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n",
   ];
-  let whole: http.HttpFramed = http.framed_none();
-  let kept: http.HttpFramed = http.framed_none();
-  let i: i32 = 0;
+  let whole = http.framed_none();
+  let kept = http.framed_none();
+  let i = 0;
   while (i < wires.len()) {
     match (framed(wires[i])) {
       Some(alone) => {
         match (framed_after(wires[i], whole)) {
           Some(f) => {
-            let d: string = framed_differs(f, alone);
+            let d = framed_differs(f, alone);
             if (d != "") {
               return test.fail("request " + i.to_string() + " after the one before it: " + d);
             }
@@ -819,7 +819,7 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
         }
         match (framed_after(wires[i], kept)) {
           Some(f) => {
-            let d: string = framed_differs(f, alone);
+            let d = framed_differs(f, alone);
             if (d != "") {
               return test.fail("request " + i.to_string() + " after what a serve loop kept: " + d);
             }
@@ -834,7 +834,7 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
         return test.fail("request " + i.to_string() + " did not frame");
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -842,7 +842,7 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
 function test_framed_kept_drops_the_body(): test.TestOutcome {
   match (framed(wire_post())) {
     Some(f) => {
-      let k: http.HttpFramed = http.framed_kept(f);
+      let k = http.framed_kept(f);
       if (k.request.body_len() != 0) {
         return test.fail("the kept request has a body of " + k.request.body_len().to_string());
       }
@@ -886,7 +886,7 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
     "GET / HTTP/1.7\r\nHost: h\r\n\r\n",
   ];
   let want: boolean[] = [true, false, true, false, true, false, true, false, false, false, false, true];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cases.len()) {
     match (persists(cases[i])) {
       Some(k) => {
@@ -898,18 +898,18 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
         return test.fail("refused: " + cases[i]);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_serialize_names_the_connection(): test.TestOutcome {
-  let r: HttpResponse = http.ok("ok");
-  let kept: string = http.serialize_response_conn(r, true);
+  let r = http.ok("ok");
+  let kept = http.serialize_response_conn(r, true);
   if (kept.contains("Connection:")) {
     return test.fail("a persisting HTTP/1.1 response named Connection: " + kept);
   }
-  let closed: string = http.serialize_response_conn(r, false);
+  let closed = http.serialize_response_conn(r, false);
   if (!closed.contains("\r\nConnection: close\r\n")) {
     return test.fail("a closing response did not say close: " + closed);
   }
@@ -917,13 +917,13 @@ function test_serialize_names_the_connection(): test.TestOutcome {
 }
 
 function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
-  let wire: u8[] = wire_post().bytes();
+  let wire = wire_post().bytes();
   match (http.parse_request_bytes(wire)) {
     Ok(req) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < wire.len()) {
         wire = wire.with(i, 120 as u8);
-        i = i + 1;
+        i += 1;
       }
       if (req.path != "/echo") {
         return test.fail("the path aliased the wire buffer");
@@ -1173,7 +1173,7 @@ function test_chunk_extension_grammar(): test.TestOutcome {
 }
 
 function test_empty_line_before_the_request(): test.TestOutcome {
-  let wire: string = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
+  let wire = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
   match (http.parse_request_framed(wire.bytes())) {
     http.Complete(f) => {
       if (f.request.path != "/a") {
@@ -1228,11 +1228,11 @@ function header_of(wire: string, name: string): string {
 }
 
 function test_header_value_must_be_utf8(): test.TestOutcome {
-  let accented: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: José\r\n\r\n";
+  let accented = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: José\r\n\r\n";
   if (header_of(accented, "x-name") != "José") {
     return test.fail("UTF-8 value: " + header_of(accented, "x-name"));
   }
-  let broken: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: " + string_from_bytes_unchecked([74 as u8, 255 as u8]) + "\r\n\r\n";
+  let broken = "GET / HTTP/1.1\r\nHost: h\r\nX-Name: " + string_from_bytes_unchecked([74 as u8, 255 as u8]) + "\r\n\r\n";
   if (!refused(broken)) {
     return test.fail("an ill-formed value was accepted");
   }
@@ -1259,7 +1259,7 @@ function test_path_escapes_must_be_utf8(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("HTTP request bytes");
+  let r = test.new("HTTP request bytes");
   r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
   r = r.it("text and bytes agree", test_text_and_bytes_agree);
   r = r.it("bare request has no headers", test_bare_request_has_no_headers);

@@ -3,7 +3,7 @@ import "std/string";
 import "std/table" as table;
 
 function test_pad_end_matches_table(): test.TestOutcome {
-  let row: string = "café".pad_end(6, ' ') + "x\n" + "a".pad_end(6, ' ') + "y";
+  let row = "café".pad_end(6, ' ') + "x\n" + "a".pad_end(6, ' ') + "y";
   return test.assert_eq(row, table.render([["café", "x"], ["a", "y"]]));
 }
 
@@ -32,7 +32,7 @@ function test_codepoint_count(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/string widths");
+  let r = test.new("std/string widths");
   r = r.it("pad_end matches table", test_pad_end_matches_table);
   r = r.it("pad_start counts code points", test_pad_start_counts_code_points);
   r = r.it("multibyte fill", test_multibyte_fill);

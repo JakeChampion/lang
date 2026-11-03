@@ -37,7 +37,7 @@ function signed(input: [u8], at: i32): i32 {
 function bits(input: [u8], at: i32): i64 {
   let result = 0i64;
   for index in 0..8 {
-    result = result | input[at + index] as i64 << (index * 8) as i64;
+    result |= input[at + index] as i64 << (index * 8) as i64;
   }
   return result;
 }
@@ -47,8 +47,10 @@ function error_name(error: inverse.InvertError): string {
 }
 
 function emit(path: string): i32 {
-  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
-  if (input.len() < 32 || input[0] != 70 as u8 || input[1] != 68 as u8 || input[2] != 73 as u8 || input[3] != 49 as u8) {
+  let Ok(input) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (input.len() < 32 || input[0] != b'F' || input[1] != b'D' || input[2] != b'I' || input[3] != b'1') {
     return 3;
   }
   let kind = signed(input, 4);
@@ -69,10 +71,10 @@ function emit(path: string): i32 {
   });
   match (result) {
     Ok(value) => {
-      print("iid " + path + " dispatch ok " + polls.get().to_string() + " " + f64_bits(value).to_string());
+      print(f"iid {path} dispatch ok {polls.get()} {f64_bits(value)}");
     },
     Err(error) => {
-      print("iid " + path + " dispatch error " + error_name(error) + " " + polls.get().to_string());
+      print(f"iid {path} dispatch error {error_name(error)} {polls.get()}");
     }
   }
   let direct_polls = cell_new(0);
@@ -82,10 +84,10 @@ function emit(path: string): i32 {
   });
   match (direct) {
     Ok(value) => {
-      print("iid " + path + " direct ok " + direct_polls.get().to_string() + " " + f64_bits(value).to_string());
+      print(f"iid {path} direct ok {direct_polls.get()} {f64_bits(value)}");
     },
     Err(error) => {
-      print("iid " + path + " direct error " + error_name(error) + " " + direct_polls.get().to_string());
+      print(f"iid {path} direct error {error_name(error)} {direct_polls.get()}");
     }
   }
   return 0;

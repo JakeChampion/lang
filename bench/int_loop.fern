@@ -1,9 +1,7 @@
 function main(): i32 {
-  let sum: i64 = 0i64;
-  let i: i64 = 0i64;
-  while (i < 3000000i64) {
-    sum = sum + i;
-    i = i + 1i64;
+  let sum = 0i64;
+  for i in 0i64..3000000i64 {
+    sum += i;
   }
   return (sum % 97i64) as i32;
 }

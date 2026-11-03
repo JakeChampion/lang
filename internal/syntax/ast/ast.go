@@ -1255,6 +1255,8 @@ type IfExpr struct {
 	IsFloat bool
 	// ElseChained records that the else was written `else if`.
 	ElseChained bool
+	// ThenOpen and ElseOpen are the braces that open the branches.
+	ThenOpen, ElseOpen Position
 }
 
 type StructLit struct {
@@ -1703,6 +1705,9 @@ type MatchExpr struct {
 	StructMatch string
 	// ElseChained records that an if-let's else was written `else if`.
 	ElseChained bool
+	// ArmsOpen is the brace that opens the arms. ThenOpen and ElseOpen are
+	// the braces that open the branches of an if-let.
+	ArmsOpen, ThenOpen, ElseOpen Position
 }
 
 type MatchExprArm struct {

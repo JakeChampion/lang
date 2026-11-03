@@ -23,7 +23,7 @@ function bytes(h: string): u8[] {
 // One vector. A key, nonce or tag size the module does not take must be
 // refused, so a valid vector of such a size passes only through an error.
 function check(key: string, iv: string, aad: string, msg: string, sealed: string, want: i32, supported: boolean, id: i32): string {
-  let tc: string = "tc " + id.to_string() + ": ";
+  let tc = "tc " + id.to_string() + ": ";
   let Ok(k) = chacha20poly1305.key(bytes(key)) else {
     if (supported) {
       return tc + "key refused";
@@ -52,7 +52,7 @@ function check(key: string, iv: string, aad: string, msg: string, sealed: string
 }
 
 function test_group_1(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f", "070000004041424344454647", "50515253c0c1c2c3c4c5c6c7", "4c616469657320616e642047656e746c656d656e206f662074686520636c617373206f66202739393a204966204920636f756c64206f6666657220796f75206f6e6c79206f6e652074697020666f7220746865206675747572652c2073756e73637265656e20776f756c642062652069742e", "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e26a7e902ecbd0600691", 1, true, 1);
   if (r != "") {
     return test.fail(r);
@@ -1321,7 +1321,7 @@ function test_group_1(): test.TestOutcome {
 }
 
 function test_group_2(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "", "", "", "", 0, false, 317);
   if (r != "") {
     return test.fail(r);
@@ -1330,7 +1330,7 @@ function test_group_2(): test.TestOutcome {
 }
 
 function test_group_3(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "0001020304050607", "", "", "", 0, false, 318);
   if (r != "") {
     return test.fail(r);
@@ -1339,7 +1339,7 @@ function test_group_3(): test.TestOutcome {
 }
 
 function test_group_4(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "000102030405060708090a", "", "", "", 0, false, 319);
   if (r != "") {
     return test.fail(r);
@@ -1348,7 +1348,7 @@ function test_group_4(): test.TestOutcome {
 }
 
 function test_group_5(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "000102030405060708090a0b0c", "", "", "", 0, false, 320);
   if (r != "") {
     return test.fail(r);
@@ -1357,7 +1357,7 @@ function test_group_5(): test.TestOutcome {
 }
 
 function test_group_6(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "000102030405060708090a0b0c0d", "", "", "", 0, false, 321);
   if (r != "") {
     return test.fail(r);
@@ -1366,7 +1366,7 @@ function test_group_6(): test.TestOutcome {
 }
 
 function test_group_7(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "000102030405060708090a0b0c0d0e0f", "", "", "", 0, false, 322);
   if (r != "") {
     return test.fail(r);
@@ -1375,7 +1375,7 @@ function test_group_7(): test.TestOutcome {
 }
 
 function test_group_8(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "000102030405060708090a0b0c0d0e0f1011121314151617", "", "", "", 0, false, 323);
   if (r != "") {
     return test.fail(r);
@@ -1384,7 +1384,7 @@ function test_group_8(): test.TestOutcome {
 }
 
 function test_group_9(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "000102030405060708090a0b0c0d0e0f10111213", "", "", "", 0, false, 324);
   if (r != "") {
     return test.fail(r);
@@ -1393,7 +1393,7 @@ function test_group_9(): test.TestOutcome {
 }
 
 function test_group_10(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f", "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "", "", "", 0, false, 325);
   if (r != "") {
     return test.fail(r);
@@ -1402,7 +1402,7 @@ function test_group_10(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("wycheproof chacha20-poly1305");
+  let r = test.new("wycheproof chacha20-poly1305");
   r = r.it("keySize 256 ivSize 96 tagSize 128", test_group_1);
   r = r.it("keySize 256 ivSize 0 tagSize 128 (refused)", test_group_2);
   r = r.it("keySize 256 ivSize 64 tagSize 128 (refused)", test_group_3);

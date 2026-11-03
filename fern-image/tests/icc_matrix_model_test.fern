@@ -74,7 +74,7 @@ function replace(input: [u8], signature: i64, data: u8[]): u8[] {
       output = output.append(b);
     }
     while (output.len() % 4 != 0) {
-      output = output.append(0 as u8);
+      output = output.append(0);
     }
   }
   return put32(output, 0, output.len() as i64);
@@ -109,7 +109,9 @@ function same(a: [i32], b: [i32]): boolean {
 }
 
 function profiles(): test.TestOutcome {
-  let data = match (read(frozen())) { Ok(value) => value, _ => { return test.fail("frozen profile selection"); } };
+  let Ok(data) = read(frozen()) else {
+    return test.fail("frozen profile selection");
+  };
   let expected = [28576, 25239, 9375, 14581, 46983, 3972, 912, 6361, 46787];
   if (!same(data.matrix[:], expected[:]) || data.info.device_class != envelope.DeviceClass.Display || data.info.preferred_intent != envelope.Intent.Perceptual || data.requested_intent != envelope.Intent.Relative || data.info.unique_elements != 9) {
     return test.fail("exact columns and explicit request independent of header preference");
@@ -169,7 +171,9 @@ function required_tags(): test.TestOutcome {
 function curves(): test.TestOutcome {
   let input = frozen();
   for values in [[], [512], [0, 65535], [65535, 0, 32768]] {
-    let result = match (read(replace(input, 0x72545243i64, curv(values[:])))) { Ok(value) => value, _ => { return test.fail("all qualified curv forms"); } };
+    let Ok(result) = read(replace(input, 0x72545243i64, curv(values[:]))) else {
+      return test.fail("all qualified curv forms");
+    };
     if (values.len() == 0 && match (result.red) { tag_data.Identity => false, _ => true }) {
       return test.fail("identity wire data");
     }
@@ -200,7 +204,7 @@ function every_cancel(): test.TestOutcome {
   if (total < 30) {
     return test.fail("nonvacuous layered cancellation coverage");
   }
-  for stop in 1..total + 1 {
+  for stop in 1..=total {
     let count = cell_new(0);
     let result = matrix_model.read(input[:], envelope.Intent.Relative, matrix_model.default_limits(), (): boolean => {
       count.set(count.get() + 1);
@@ -217,13 +221,13 @@ function ownership(): test.TestOutcome {
   let input = frozen();
   let shared = cell_new(input);
   let data = match (matrix_model.read(input[:], envelope.Intent.Relative, matrix_model.default_limits(), (): boolean => {
-    shared.set(shared.get().with(36, 0 as u8));
+    shared.set(shared.get().with(36, 0));
     return false;
   })) { Ok(value) => value, _ => { return test.fail("input alias COW during callbacks"); } };
   let alias = data.matrix.with(0, -1);
   let red = match (data.red) { tag_data.Parametric(p) => p.coefficients, _ => [] };
   let changed = red.with(0, 65536);
-  if (input[36] != 97 as u8 || shared.get()[36] != 0 as u8 || data.matrix[0] != 28576 || alias[0] != -1 || red[0] != 157286 || changed[0] != 65536) {
+  if (input[36] != 97 || shared.get()[36] != 0 || data.matrix[0] != 28576 || alias[0] != -1 || red[0] != 157286 || changed[0] != 65536) {
     return test.fail("owned coefficient and matrix snapshots");
   }
   return test.assert_true(rejects(shared.get()[:], matrix_model.ModelError.Envelope(envelope.IccError.Signature)) && match (read(input[:])) { Ok(value) => same(value.matrix[:], data.matrix[:]), _ => false });
@@ -238,7 +242,9 @@ function order_and_sign(): test.TestOutcome {
   let at = offset(input, 0x7258595ai64);
   let signed = put32(put32(put32(swapped, at + 8, 2147483648i64), at + 12, 2147483647i64), at + 16, 4294967295i64);
   for intent in 0..4 {
-    let value = match (read(put32(put32(signed, 12, 1935896178i64), 64, intent as i64))) { Ok(value) => value, _ => { return test.fail("unordered entries and all header preferences"); } };
+    let Ok(value) = read(put32(put32(signed, 12, 1935896178i64), 64, intent as i64)) else {
+      return test.fail("unordered entries and all header preferences");
+    };
     if (value.matrix[0] != -2147483648 || value.matrix[3] != 2147483647 || value.matrix[6] != -1 || value.requested_intent != envelope.Intent.Relative || value.info.device_class != envelope.DeviceClass.Input) {
       return test.fail("signed raw columns without adaptation or clipping");
     }

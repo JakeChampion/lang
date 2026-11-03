@@ -1,0 +1,38 @@
+import "std/test";
+import "std/http";
+import "std/json";
+
+@derive(json.Json, json.FromJson)
+struct Note { id: i32, text: string }
+
+// `n` takes its type from `?` on a generic call, so `json_of_status` is
+// instantiated at `Note`, not at the Result around it.
+function made(req: HttpRequest): Result[HttpResponse, http.BodyError] {
+  let n = http.body_json[Note](req)?;
+  return Ok(http.json_of_status(201, n));
+}
+
+function test_payload_instantiates_the_callee(): test.TestOutcome {
+  let req = http.request("POST", "/notes").with_json("{\"id\":7,\"text\":\"hi\"}");
+  match (made(req)) {
+    Ok(resp) => {
+      return test.assert_eq(resp.status.to_string() + " " + resp.body_text_lossy(), "201 {\"id\":7,\"text\":\"hi\"}");
+    },
+    Err(e) => {
+      return test.fail("the JSON body did not decode");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_error_passes_through(): test.TestOutcome {
+  let req = http.request("POST", "/notes").with_text("{}");
+  return test.assert_eq(made(req).is_err(), true);
+}
+
+function main(): i32 {
+  let r = test.new("try on an inferred generic call");
+  r = r.it("the payload instantiates the callee", test_payload_instantiates_the_callee);
+  r = r.it("an error passes through ?", test_error_passes_through);
+  return r.finish();
+}

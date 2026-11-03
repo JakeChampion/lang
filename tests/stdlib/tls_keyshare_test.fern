@@ -5,26 +5,26 @@ import "std/crypto";
 import "std/tls/keyshare";
 
 function pattern(start: i32, n: i32): u8[] {
-  let out: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let out = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     out = out.with(i, (start + i & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function cat(a: [u8], b: [u8]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     out = out.append(a[i]);
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -127,8 +127,8 @@ function test_groups(): test.TestOutcome {
 }
 
 function test_p256_mlkem_exchange(): test.TestOutcome {
-  let client_draw: u8[] = cat(p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"), pattern(0x40, 64));
-  let server_draw: u8[] = cat(p256_draw("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"), pattern(0xa0, 32));
+  let client_draw = cat(p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"), pattern(0x40, 64));
+  let server_draw = cat(p256_draw("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"), pattern(0xa0, 32));
   let other: u8[] = [];
   match (keyshare.server_share(keyshare.X25519MlKem768, p256_hybrid_client_public(), hybrid_server_entropy())) {
     Ok(x) => {
@@ -151,7 +151,7 @@ function test_p256_mlkem_exchange(): test.TestOutcome {
           if (sha256(cat(s.public[65:1153], [])) != sha256(cat(other[0:1088], []))) {
             return test.fail("the ciphertext is not the X25519 hybrid's");
           }
-          let want: string = rfc5903_shared() + hybrid_shared().slice_snap(0, 64);
+          let want = rfc5903_shared() + hybrid_shared().slice_snap(0, 64);
           if (hex.encode(s.shared_secret) != want) {
             return test.fail("the server's secret: " + hex.encode(s.shared_secret));
           }
@@ -231,10 +231,10 @@ function test_p256_rfc5903(): test.TestOutcome {
 
 function test_p256_reduction(): test.TestOutcome {
   let ff: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 40) {
     ff = ff.append(255 as u8);
-    i = i + 1;
+    i += 1;
   }
   match (p256_client(ff)) {
     Ok(c) => {
@@ -258,8 +258,8 @@ function test_p256_reduction(): test.TestOutcome {
 }
 
 function test_p256_refusals(): test.TestOutcome {
-  let draw: u8[] = p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433");
-  let off: u8[] = __codec_bytes(hex.decode(rfc5903_gr()));
+  let draw = p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433");
+  let off = __codec_bytes(hex.decode(rfc5903_gr()));
   off = off.with(64, off[64] ^ 1 as u8);
   if (server_refusal(keyshare.server_share(keyshare.Secp256r1, off, draw)) != "tls keyshare: the peer's secp256r1 point is not an uncompressed point on the curve") {
     return test.fail("a point off the curve");
@@ -357,7 +357,7 @@ function test_hybrid_tampered_ciphertext(): test.TestOutcome {
     Ok(c) => {
       match (keyshare.server_share(keyshare.X25519MlKem768, c.public, hybrid_server_entropy())) {
         Ok(s) => {
-          let bad: u8[] = s.public.with(0, s.public[0] ^ 1 as u8);
+          let bad = s.public.with(0, s.public[0] ^ 1 as u8);
           match (c.shared_secret(bad)) {
             Ok(got) => {
               if (got.len() != 64 || hex.encode(got) == hybrid_shared()) {
@@ -404,7 +404,7 @@ function test_lengths(): test.TestOutcome {
 }
 
 function test_low_order(): test.TestOutcome {
-  let zero: u8[] = __alloc_u8(32);
+  let zero = __alloc_u8(32);
   if (server_refusal(keyshare.server_share(keyshare.X25519, zero, pattern(0x80, 32))) != "tls keyshare: the peer's X25519 key is of low order") {
     return test.fail("server");
   }
@@ -425,7 +425,7 @@ function test_low_order(): test.TestOutcome {
 function test_bad_encapsulation_key(): test.TestOutcome {
   match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
     Ok(c) => {
-      let bad: u8[] = c.public.with(0, 0xff as u8).with(1, c.public[1] | 0x0f as u8);
+      let bad = c.public.with(0, 0xff as u8).with(1, c.public[1] | 0x0f as u8);
       return test.assert_eq(server_refusal(keyshare.server_share(keyshare.X25519MlKem768, bad, hybrid_server_entropy())), "tls keyshare: the peer's ML-KEM encapsulation key is not reduced");
     },
     Err(e) => {
@@ -436,7 +436,7 @@ function test_bad_encapsulation_key(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/keyshare");
+  let r = test.new("std/tls/keyshare");
   r = r.it("groups", test_groups);
   r = r.it("X25519 shares of RFC 8448", test_x25519_trace);
   r = r.it("X25519MLKEM768 client share", test_hybrid_client_share);

@@ -7,11 +7,11 @@ import "std/net";
 import "std/result";
 
 function req(fields: string[]): HttpRequest {
-  let r: HttpRequest = http.request("GET", "/");
-  let i: i32 = 0;
+  let r = http.request("GET", "/");
+  let i = 0;
   while (i + 1 < fields.len()) {
     r = HttpRequest { ...r, headers: r.headers.append(fields[i], fields[i + 1]) };
-    i = i + 2;
+    i += 2;
   }
   return r;
 }
@@ -41,7 +41,7 @@ function node(n: Option[forwarded.NodeId]): string {
 function hops_of(fields: string[]): string {
   match (forwarded.hops(req(fields).headers)) {
     Some(hs) => {
-      let out: string = "";
+      let out = "";
       for h in hs {
         out = out + "[" + node(h.from) + " " + node(h.by) + " " + opt(h.host) + " " + opt(h.proto) + "]";
       }
@@ -54,20 +54,20 @@ function hops_of(fields: string[]): string {
 }
 
 function test_rfc_examples(): test.TestOutcome {
-  let got: string = hops_of(["Forwarded", "for=\"_gazonk\""]);
-  got = got + hops_of(["Forwarded", "For=\"[2001:db8:cafe::17]:4711\""]);
-  got = got + hops_of(["Forwarded", "for=192.0.2.60;proto=http;by=203.0.113.43"]);
-  got = got + hops_of(["Forwarded", "for=192.0.2.43, for=198.51.100.17", "forwarded", "for=unknown;ext=x"]);
+  let got = hops_of(["Forwarded", "for=\"_gazonk\""]);
+  got += hops_of(["Forwarded", "For=\"[2001:db8:cafe::17]:4711\""]);
+  got += hops_of(["Forwarded", "for=192.0.2.60;proto=http;by=203.0.113.43"]);
+  got += hops_of(["Forwarded", "for=192.0.2.43, for=198.51.100.17", "forwarded", "for=unknown;ext=x"]);
   return test.assert_eq(got, "[_gazonk - - -][[2001:db8:cafe::17]:4711 - - -][192.0.2.60 203.0.113.43 - http][192.0.2.43 - - -][198.51.100.17 - - -][unknown - - -]");
 }
 
 function test_quoting(): test.TestOutcome {
-  let got: string = hops_of(["Forwarded", "for=192.0.2.1;host=\"a.example;b,c\", for=\"unknown:_p1\""]);
+  let got = hops_of(["Forwarded", "for=192.0.2.1;host=\"a.example;b,c\", for=\"unknown:_p1\""]);
   return test.assert_eq(got, "[192.0.2.1 - a.example;b,c -][unknown:_p1 - - -]");
 }
 
 function test_malformed(): test.TestOutcome {
-  let got: string = "";
+  let got = "";
   for v in ["for=[2001:db8::1]", "for=192.0.2.1;for=192.0.2.2", "for=\"192.0.2.1:123456\"", "proto=1http", "for=", "for=\"_\"", "for", "for=\"2001:db8::1\"", "for=192.0.2.1, by"] {
     got = got + hops_of(["Forwarded", v]) + " ";
   }
@@ -82,9 +82,9 @@ function test_node_parse_error(): test.TestOutcome {
 }
 
 function test_write(): test.TestOutcome {
-  let h: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("[2001:db8::1]:443").ok(), host: Some("example.com"), proto: Some("https") };
-  let obf: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("_x").ok(), by: forwarded.node_parse("192.0.2.9").ok() };
-  let text: string = h.to_string();
+  let h = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("[2001:db8::1]:443").ok(), host: Some("example.com"), proto: Some("https") };
+  let obf = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("_x").ok(), by: forwarded.node_parse("192.0.2.9").ok() };
+  let text = h.to_string();
   return test.assert_eq(text + " | " + obf.to_string() + " | " + hops_of(["Forwarded", text]), "for=\"[2001:db8::1]:443\";host=example.com;proto=https | for=_x;by=192.0.2.9 | [[2001:db8::1]:443 - example.com https]");
 }
 
@@ -104,7 +104,7 @@ function trusted(blocks: string[]): forwarded.Trust {
 }
 
 function client_of(peer: string, blocks: string[], fields: string[]): string {
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse(peer).ok());
+  let m = mock_platform.new().with_peer(net.socket_addr_parse(peer).ok());
   return shown(forwarded.client(req(fields), m, trusted(blocks)));
 }
 
@@ -117,35 +117,35 @@ function test_one_proxy(): test.TestOutcome {
 }
 
 function test_chain_and_forgery(): test.TestOutcome {
-  let chain: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=198.51.100.7;proto=https", "Forwarded", "for=10.0.0.9;proto=http"]);
-  let forged: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=10.9.9.9, for=192.0.2.60;proto=https"]);
-  let all: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=10.0.0.1, for=10.0.0.2"]);
+  let chain = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=198.51.100.7;proto=https", "Forwarded", "for=10.0.0.9;proto=http"]);
+  let forged = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=10.9.9.9, for=192.0.2.60;proto=https"]);
+  let all = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=10.0.0.1, for=10.0.0.2"]);
   return test.assert_eq(chain + " | " + forged + " | " + all, "198.51.100.7 https - | 192.0.2.60 https - | 10.0.0.1 - -");
 }
 
 function test_edges(): test.TestOutcome {
-  let bad: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=192.0.2.60;for=192.0.2.61"]);
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1").ok());
-  let hidden: forwarded.Client = forwarded.client(req(["Forwarded", "for=_hidden"]), m, trusted(["10.0.0.0/8"]));
-  let no_ip: boolean = false;
+  let bad = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=192.0.2.60;for=192.0.2.61"]);
+  let m = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1").ok());
+  let hidden = forwarded.client(req(["Forwarded", "for=_hidden"]), m, trusted(["10.0.0.0/8"]));
+  let no_ip = false;
   match (hidden.ip()) {
     Some(ip) => {},
     None => {
       no_ip = true;
     }
   }
-  let unknown: string = client_of("", ["10.0.0.0/8"], ["Host", "h", "Forwarded", "for=192.0.2.60"]);
+  let unknown = client_of("", ["10.0.0.0/8"], ["Host", "h", "Forwarded", "for=192.0.2.60"]);
   return test.assert_eq(bad + " | " + node(hidden.node) + " " + no_ip.to_string() + " | " + unknown, "10.0.0.5:1 - - | _hidden true | - - h");
 }
 
 function test_legacy(): test.TestOutcome {
-  let t: forwarded.Trust = forwarded.Trust { ...trusted(["10.0.0.0/8"]), legacy: true };
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1").ok());
+  let t = forwarded.Trust { ...trusted(["10.0.0.0/8"]), legacy: true };
+  let m = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1").ok());
   let fields: string[] = ["X-Forwarded-For", "203.0.113.1, 10.0.0.3", "X-Forwarded-Proto", "https", "X-Forwarded-Host", "shop.example"];
-  let on: string = shown(forwarded.client(req(fields), m, t));
-  let off: string = shown(forwarded.client(req(fields), m, trusted(["10.0.0.0/8"])));
-  let both: string = shown(forwarded.client(req(["Forwarded", "for=192.0.2.60", "X-Forwarded-For", "203.0.113.1"]), m, t));
-  let v6: string = shown(forwarded.client(req(["X-Forwarded-For", "2001:db8::7, [2001:db8::8]:443"]), m, t));
+  let on = shown(forwarded.client(req(fields), m, t));
+  let off = shown(forwarded.client(req(fields), m, trusted(["10.0.0.0/8"])));
+  let both = shown(forwarded.client(req(["Forwarded", "for=192.0.2.60", "X-Forwarded-For", "203.0.113.1"]), m, t));
+  let v6 = shown(forwarded.client(req(["X-Forwarded-For", "2001:db8::7, [2001:db8::8]:443"]), m, t));
   return test.assert_eq(on + " | " + off + " | " + both + " | " + v6, "203.0.113.1 https shop.example | 10.0.0.5:1 - - | 192.0.2.60 - - | [2001:db8::8]:443 - -");
 }
 
@@ -179,7 +179,7 @@ function in_block(block: string, ip: string): string {
 }
 
 function test_prefix(): test.TestOutcome {
-  let got: string = in_block("172.16.0.0/12", "172.31.255.255") + " " + in_block("172.16.0.0/12", "172.32.0.0") + " " + in_block("2001:db8::/32", "2001:db8:ffff::1") + " " + in_block("2001:db8::/32", "2001:db9::1");
+  let got = in_block("172.16.0.0/12", "172.31.255.255") + " " + in_block("172.16.0.0/12", "172.32.0.0") + " " + in_block("2001:db8::/32", "2001:db8:ffff::1") + " " + in_block("2001:db8::/32", "2001:db9::1");
   got = got + " " + in_block("10.0.0.0/8", "::ffff:10.1.2.3") + " " + in_block("10.0.0.0/8", "2001:db8::1") + " " + in_block("0.0.0.0/0", "203.0.113.1") + " " + in_block("192.0.2.7", "192.0.2.8");
   got = got + " " + in_block("10.0.0.0/7", "11.0.0.0") + " " + in_block("11.0.0.0/7", "10.0.0.0") + " " + in_block("10.128.0.0/9", "10.127.0.0");
   got = got + " " + in_block("::ffff:10.0.0.1", "10.0.0.1") + " " + in_block("::ffff:10.0.0.0/104", "10.9.9.9") + " " + in_block("::ffff:10.0.0.0/104", "11.0.0.1") + " " + in_block("::ffff:0:0/96", "::ffff:192.0.2.1") + " " + in_block("::/0", "192.0.2.1") + " " + in_block("10.0.0.0/8", "2001:db8::a00:1");
@@ -187,9 +187,9 @@ function test_prefix(): test.TestOutcome {
 }
 
 function test_hop_of(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("192.0.2.7:5000").ok());
-  let r: HttpRequest = req(["Host", "example.com", "Forwarded", "for=198.51.100.1"]);
-  let out: HttpRequest = r.with_hop(forwarded.hop_of(r, m, "https"));
+  let m = mock_platform.new().with_peer(net.socket_addr_parse("192.0.2.7:5000").ok());
+  let r = req(["Host", "example.com", "Forwarded", "for=198.51.100.1"]);
+  let out = r.with_hop(forwarded.hop_of(r, m, "https"));
   return test.assert_eq(out.headers.get_all("forwarded").join(" / "), "for=198.51.100.1 / for=\"192.0.2.7:5000\";host=example.com;proto=https");
 }
 
@@ -223,33 +223,33 @@ function bytes_of(xs: i32[]): u8[] {
 }
 
 function test_proxy_v1(): test.TestOutcome {
-  let got: string = "";
+  let got = "";
   for t in ["PROXY TCP4 192.0.2.1 198.51.100.2 56324 443\r\nGET /", "PROXY TCP6 2001:db8::1 2001:db8::2 4000 443\r\n", "PROXY UNKNOWN\r\n", "PROXY TCP4 192.0", "PRO", "GET / HTTP/1.1\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 99999 443\r\n", "PROXY TCP4 2001:db8::1 2001:db8::2 1 2\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 1\r\n", "PROXY TCP4 192.0.2.1 999.999.999.999 56324 443\r\n", "PROXY TCP4 192.0.2.1 2001:db8::2 56324 443\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 56324 99999\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 0080 443\r\n", "PROXY TCP4 192.0.2.1 198.51.100.2 0 443\r\n"] {
     got = got + proxied(t.bytes()) + " | ";
   }
-  let long: string = "PROXY UNKNOWN ";
+  let long = "PROXY UNKNOWN ";
   while (long.len() < 120) {
-    long = long + "x";
+    long += "x";
   }
   return test.assert_eq(got + proxied(long.bytes()), "192.0.2.1:56324 45 | [2001:db8::1]:4000 45 | - 15 | short | short | bad | bad | bad | bad | bad | bad | bad | bad | 192.0.2.1:0 41 | bad");
 }
 
 function test_proxy_v2(): test.TestOutcome {
   let sig: i32[] = [13, 10, 13, 10, 0, 13, 10, 81, 85, 73, 84, 10];
-  let v4: i32[] = sig.concat([33, 17, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
-  let tlv: i32[] = sig.concat([33, 17, 0, 15, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187, 4, 0, 0]);
-  let v6: i32[] = sig.concat([33, 33, 0, 36, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 15, 160, 1, 187]);
-  let local: i32[] = sig.concat([32, 0, 0, 0]);
-  let short: i32[] = sig.concat([33, 17, 0, 12, 192, 0]);
-  let bad: i32[] = sig.concat([17, 17, 0, 0]);
-  let transport: i32[] = sig.concat([33, 31, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
-  let unspec: i32[] = sig.concat([33, 16, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
-  let got: string = proxied(bytes_of(v4)) + " | " + proxied(bytes_of(tlv)) + " | " + proxied(bytes_of(v6)) + " | " + proxied(bytes_of(local)) + " | " + proxied(bytes_of(short)) + " | " + proxied(bytes_of(bad)) + " | " + proxied(bytes_of(transport)) + " | " + proxied(bytes_of(unspec));
+  let v4 = sig.concat([33, 17, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
+  let tlv = sig.concat([33, 17, 0, 15, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187, 4, 0, 0]);
+  let v6 = sig.concat([33, 33, 0, 36, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 15, 160, 1, 187]);
+  let local = sig.concat([32, 0, 0, 0]);
+  let short = sig.concat([33, 17, 0, 12, 192, 0]);
+  let bad = sig.concat([17, 17, 0, 0]);
+  let transport = sig.concat([33, 31, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
+  let unspec = sig.concat([33, 16, 0, 12, 192, 0, 2, 1, 198, 51, 100, 2, 220, 4, 1, 187]);
+  let got = proxied(bytes_of(v4)) + " | " + proxied(bytes_of(tlv)) + " | " + proxied(bytes_of(v6)) + " | " + proxied(bytes_of(local)) + " | " + proxied(bytes_of(short)) + " | " + proxied(bytes_of(bad)) + " | " + proxied(bytes_of(transport)) + " | " + proxied(bytes_of(unspec));
   return test.assert_eq(got, "192.0.2.1:56324 28 | 192.0.2.1:56324 31 | [2001:db8::1]:4000 52 | - 16 | short | bad | bad | - 28");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/forwarded");
+  let r = test.new("std/http/forwarded");
   r = r.it("RFC 7239's examples", test_rfc_examples);
   r = r.it("quoted values and obfuscated ports", test_quoting);
   r = r.it("malformed elements leave the list unread", test_malformed);

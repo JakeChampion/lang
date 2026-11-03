@@ -2,7 +2,7 @@ import "std/test";
 import "std/array";
 
 function near(a: f64, b: f64): boolean {
-  let d: f64 = a - b;
+  let d = a - b;
   if (d < 0.0) {
     d = 0.0 - d;
   }
@@ -37,7 +37,7 @@ function test_diff_negatives(): test.TestOutcome {
 
 function test_diff_inverts_cumsum(): test.TestOutcome {
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
-  let d2: f64[] = xs.cumsum().adjacent_diff();
+  let d2 = xs.cumsum().adjacent_diff();
   if (!near(d2[0], 2.0)) {
     return test.fail("recover 2");
   }
@@ -56,7 +56,7 @@ function test_edge_cases(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/array f64 cumprod/diff");
+  let r = test.new("std/array f64 cumprod/diff");
   r = r.it("cumprod", test_cumprod);
   r = r.it("diff", test_diff);
   r = r.it("diff negatives", test_diff_negatives);

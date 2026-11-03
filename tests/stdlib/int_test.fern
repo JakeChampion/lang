@@ -2,9 +2,9 @@ import "std/i32";
 import "std/test";
 
 function test_to_string_zero(): test.TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < 120) {
-    let s: string = i.to_string();
+    let s = i.to_string();
     match (i32.parse_i32_radix(s, 10)) {
       Ok(n) => {
         if (n != i || s[s.len() - 1] != (48 + i % 10) as u8) {
@@ -15,7 +15,7 @@ function test_to_string_zero(): test.TestOutcome {
         return test.fail("to_string " + s);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.assert_eq(0.to_string(), "0");
 }
@@ -49,7 +49,7 @@ function parsed(s: string, base: i32): string {
 }
 
 function test_parse_overflow_none(): test.TestOutcome {
-  let got: string = parsed("2147483647", 10) + " " + parsed("2147483648", 10) + " " + parsed("-2147483648", 10) + " " + parsed("-2147483649", 10) + " " + parsed("99999999999999999999", 10) + " " + parsed("7fffffff", 16) + " " + parsed("80000000", 16) + " " + parsed("-80000000", 16);
+  let got = parsed("2147483647", 10) + " " + parsed("2147483648", 10) + " " + parsed("-2147483648", 10) + " " + parsed("-2147483649", 10) + " " + parsed("99999999999999999999", 10) + " " + parsed("7fffffff", 16) + " " + parsed("80000000", 16) + " " + parsed("-80000000", 16);
   return test.assert_eq(got, "2147483647 None -2147483648 None None 2147483647 None -2147483648");
 }
 
@@ -174,7 +174,7 @@ function test_roundtrip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("core/int");
+  let r = test.new("core/int");
   r = r.it("to_string zero", test_to_string_zero);
   r = r.it("to_string positive", test_to_string_pos);
   r = r.it("to_string negative", test_to_string_neg);

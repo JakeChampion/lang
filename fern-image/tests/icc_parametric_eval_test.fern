@@ -123,8 +123,12 @@ function ownership_and_cancellation(): test.TestOutcome {
 }
 
 function frozen_wire(): test.TestOutcome {
-  let profile = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen offline profile"); } };
-  let curve = match (tag_data.read_curve(profile[520:552], tag_data.default_curve_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("exact frozen curve reader"); } };
+  let Ok(profile) = read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc") else {
+    return test.fail("frozen offline profile");
+  };
+  let Ok(curve) = tag_data.read_curve(profile[520:552], tag_data.default_curve_limits(), never) else {
+    return test.fail("exact frozen curve reader");
+  };
   return test.assert_true(match (curve) { tag_data.Parametric(data) => match (parametric_eval.evaluate(data, 0.5, never)) { Ok(v) => near(v, 0.21404519268810552, 0.000000000001), Err(_) => false }, _ => false });
 }
 

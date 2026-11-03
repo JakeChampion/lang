@@ -4,6 +4,7 @@
 // upload echoed back, a compressed body, a static file with its
 // validators and a response that says how long it may be cached.
 import "std/i32";
+import "std/result";
 import "std/http";
 import "std/http/router";
 import "std/http/static";
@@ -28,17 +29,15 @@ function missing(req: HttpRequest, params: router.Params, plat: platform.Host): 
 }
 
 function echo(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-  let body: string = req.body_text()?;
+  let body = req.body_text()?;
   return Ok(http.text(200, body));
 }
 
 function essay(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req2 <- compress.compressed(req);
-  let text: string = "";
-  let i: i32 = 0;
-  while (i < 40) {
-    text = text + "Line " + i.to_string() + ": the quick brown fox jumps over the lazy dog.\n";
-    i = i + 1;
+  let text = "";
+  for i in 0..40 {
+    text += f"Line {i}: the quick brown fox jumps over the lazy dog.\n";
   }
   return Ok(http.text(200, text).with_header("Content-Type", "text/plain; charset=utf-8"));
 }
@@ -52,34 +51,14 @@ function fresh(req: HttpRequest, params: router.Params, plat: platform.Host): Re
 }
 
 function www(plat: platform.Host): string {
-  match (plat.env("WWW")) {
-    Some(dir) => {
-      return dir;
-    },
-    None => {
-      return "www";
-    }
-  }
-  return "www";
+  return match (plat.env("WWW")) { Some(dir) => dir, None => "www" };
 }
 
 function port(): i32 {
-  match (env("PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => {
-          return n;
-        },
-        Err(_) => {
-          return 8080;
-        }
-      }
-    },
-    None => {
-      return 8080;
-    }
-  }
-  return 8080;
+  let Some(p) = env("PORT") else {
+    return 8080;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(8080);
 }
 
 function routes(): router.Router[platform.Host] {

@@ -1,21 +1,19 @@
 function view_len(s: string): i64 {
-  let total: i64 = 0i64;
-  let i: i32 = 0;
+  let total = 0i64;
+  let i = 0;
   while (i + 16 <= s.len()) {
     let part: str = slice_unchecked(s, i, i + 16);
-    total = total + part.len() as i64;
-    i = i + 4;
+    total += part.len() as i64;
+    i += 4;
   }
   return total;
 }
 
 function main(): i32 {
-  let src: string = "the quick brown fox jumps over the lazy dog, repeatedly and at length";
-  let total: i64 = 0i64;
-  let r: i32 = 0;
-  while (r < 60000) {
-    total = total + view_len(src);
-    r = r + 1;
+  let src = "the quick brown fox jumps over the lazy dog, repeatedly and at length";
+  let total = 0i64;
+  for _ in 0..60000 {
+    total += view_len(src);
   }
   return (total % 97i64) as i32;
 }

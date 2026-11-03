@@ -54,12 +54,12 @@ function test_beyond_i32(): test.TestOutcome {
 }
 
 function test_rejections(): test.TestOutcome {
-  let got: string = refusal("") + " | " + refusal("5") + " | " + refusal("1h 5x") + " | " + refusal("h");
+  let got = refusal("") + " | " + refusal("5") + " | " + refusal("1h 5x") + " | " + refusal("h");
   return test.assert_eq(got, "\"\" is not a duration such as \"1h 30m\": stopped at byte 0 | \"5\" is not a duration such as \"1h 30m\": stopped at byte 1 | \"1h 5x\" is not a duration such as \"1h 30m\": stopped at byte 4 | \"h\" is not a duration such as \"1h 30m\": stopped at byte 0");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/format parse_duration");
+  let r = test.new("std/format parse_duration");
   r = r.it("single units", test_single_units);
   r = r.it("multi part", test_multi_part);
   r = r.it("beyond i32", test_beyond_i32);

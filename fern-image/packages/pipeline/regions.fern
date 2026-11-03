@@ -60,14 +60,16 @@ pub function cached_plan(graph: pipeline.Graph, region: Region, limits: pipeline
     || region.y as i64 + region.height as i64 > metadata.height as i64) {
     return Err(pipeline.PipelineError.Bounds);
   }
-  let stride = match (region.width *? pixels.channels(metadata.format)) { Some(v) => v, None => { return Err(pipeline.Pixel(pixels.Overflow)); } };
+  let Some(stride) = region.width *? pixels.channels(metadata.format) else {
+    return Err(pipeline.Pixel(pixels.Overflow));
+  };
   let output_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes };
   let layout = match (pixels.checked_layout(region.width, region.height, stride, metadata.format, output_limits)) { Ok(v) => v, Err(pixels.Limit()) => { return Err(pipeline.Budget); }, Err(e) => { return Err(pipeline.Pixel(e)); } };
   let row_scratch = pipeline.required_scratch(graph, limits)?;
   let row_samples = pipeline.required_samples(graph, limits)?;
   let setup_samples = pipeline.required_setup_samples(graph, limits)?;
-  let scratch: i64 = row_scratch as i64 + layout.bytes as i64 * 2 + cache_bytes as i64;
-  let samples: i64 = setup_samples as i64 + row_samples as i64 * (region.height as i64) + region.width as i64 * (region.height as i64);
+  let scratch = row_scratch as i64 + layout.bytes as i64 * 2 + cache_bytes as i64;
+  let samples = setup_samples as i64 + row_samples as i64 * (region.height as i64) + region.width as i64 * (region.height as i64);
   if (scratch > limits.max_scratch_bytes as i64 || samples > limits.max_samples as i64) {
     return Err(pipeline.Budget);
   }
@@ -86,19 +88,15 @@ pub function render_tile(graph: pipeline.Graph, region: Region, limits: pipeline
     request.layout.width, request.layout.height, request.layout.stride, request.layout.format,
     pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_scratch_bytes },
   )) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
-  let y = 0;
-  while (y < region.height) {
+  for y in 0..region.height {
     let row = pipeline.render_row(graph, region.y + y, limits, cancelled)?;
-    let x = 0;
-    while (x < region.width) {
+    for x in 0..region.width {
       if (x % 64 == 0 && cancelled()) {
         return Err(pipeline.Cancelled);
       }
       let pixel = match (pixels.read_pixel(row, region.x + x, 0)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
       tile = match (pixels.write_pixel(tile, x, y, pixel)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
-      x = x + 1;
     }
-    y = y + 1;
   }
   return Ok(tile);
 }
@@ -125,19 +123,17 @@ function render_cached_tile_mode(graph: pipeline.Graph, region: Region, limits: 
   )) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
   let consume = (state: TileState, row: pixels.Image): Result[TileState, pipeline.PipelineError] => {
     let tile = state.image;
-    let x = 0;
-    while (x < region.width) {
+    for x in 0..region.width {
       if (x % 64 == 0 && cancelled()) {
         return Err(pipeline.Cancelled);
       }
       let pixel = match (pixels.read_pixel(row, region.x + x, 0)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
       tile = match (pixels.write_pixel(tile, x, state.row, pixel)) { Ok(v) => v, Err(e) => { return Err(pipeline.Pixel(e)); } };
-      x = x + 1;
     }
     return Ok(TileState { image: tile, row: state.row + 1 });
   };
   let state = TileState { image: tile, row: 0 };
   let folded = if (fused) { pipeline.fold_rows_fused(graph, region.y, region.height, limits, cache_bytes, cancelled, state, consume) } else { pipeline.fold_rows(graph, region.y, region.height, limits, cache_bytes, cancelled, state, consume) };
-  let result = match (folded) { Ok(v) => v, Err(pipeline.GraphFailure(e)) => { return Err(e); }, Err(pipeline.ConsumerFailure(e)) => { return Err(e); } };
+  let result = match (folded) { Ok(v) => v, Err(pipeline.GraphFailure(e)) | Err(pipeline.ConsumerFailure(e)) => { return Err(e); } };
   return Ok(CachedTile { image: result.value.image, stats: result.stats });
 }

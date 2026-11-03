@@ -16,12 +16,10 @@ function same(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }
@@ -34,17 +32,25 @@ function collect(data: [u8], first: i32, count: i32): Result[png.RowFold[pixels.
 
 function goldens(): test.TestOutcome {
   for data in [fixtures.rgb0(), fixtures.rgb1(), fixtures.rgb2(), fixtures.rgb3(), fixtures.rgb4(), fixtures.rgba0(), fixtures.rgba1(), fixtures.rgba2(), fixtures.rgba3(), fixtures.rgba4()] {
-    let expected = match (png.decode(data, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("eager"); } };
+    let Ok(expected) = png.decode(data, pixels.default_limits()) else {
+      return test.fail("eager");
+    };
     let padded: u8[] = [3, 7];
     for byte in data {
       padded = padded.append(byte);
     }
-    padded = padded.append(9 as u8);
+    padded = padded.append(9);
     let selected = match (collect(padded[2:padded.len() - 1], 1, 1)) { Ok(v) => v.value, Err(_) => { return test.fail("lent selection"); } };
     let rows = match (collect(data, 0, 2)) { Ok(v) => v.value, Err(_) => { return test.fail("fold"); } };
-    let decoder = match (png.open_incremental_rows(data, pixels.default_limits(), png.default_row_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("session"); } };
-    let last = match (decoder.read(1, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("prefix"); } };
-    let repeated = match (decoder.read(1, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("repeat"); } };
+    let Ok(decoder) = png.open_incremental_rows(data, pixels.default_limits(), png.default_row_limits(), never_cancel) else {
+      return test.fail("session");
+    };
+    let Ok(last) = decoder.read(1, never_cancel) else {
+      return test.fail("prefix");
+    };
+    let Ok(repeated) = decoder.read(1, never_cancel) else {
+      return test.fail("repeat");
+    };
     let rejected = match (decoder.read(0, never_cancel)) { Err(png.DecoderAccess()) => true, _ => false };
     let stride = expected.layout.stride;
     if (selected.len() != 1 || !same(selected[0].data, expected.data[stride:])
@@ -59,12 +65,20 @@ function goldens(): test.TestOutcome {
 function admission(): test.TestOutcome {
   let data = fixtures.rgb0();
   let limits = png.RowLimits { max_payload_bytes: 16662i64, max_row_work: 119i64 };
-  let plan = match (png.inspect_incremental_rows(data, pixels.default_limits(), limits)) { Ok(v) => v, Err(_) => { return test.fail("plan"); } };
-  let old = match (png.inspect_rows(data, pixels.default_limits(), png.default_row_limits())) { Ok(v) => v, Err(_) => { return test.fail("legacy plan"); } };
-  let decoder = match (png.open_incremental_rows(data, pixels.default_limits(), limits, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("exact admission"); } };
-  let low = match (decoder.read(0 - 1, never_cancel)) { Err(png.DecoderBounds()) => true, _ => false };
+  let Ok(plan) = png.inspect_incremental_rows(data, pixels.default_limits(), limits) else {
+    return test.fail("plan");
+  };
+  let Ok(old) = png.inspect_rows(data, pixels.default_limits(), png.default_row_limits()) else {
+    return test.fail("legacy plan");
+  };
+  let Ok(decoder) = png.open_incremental_rows(data, pixels.default_limits(), limits, never_cancel) else {
+    return test.fail("exact admission");
+  };
+  let low = match (decoder.read(-1, never_cancel)) { Err(png.DecoderBounds()) => true, _ => false };
   let high = match (decoder.read(2, never_cancel)) { Err(png.DecoderBounds()) => true, _ => false };
-  let row = match (decoder.read(0, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("bounds preserve cursor"); } };
+  let Ok(row) = decoder.read(0, never_cancel) else {
+    return test.fail("bounds preserve cursor");
+  };
   let good = plan.payload_bytes == 16662i64 && plan.row_scratch_bytes == 27i64 && plan.row_work == 119i64
     && plan.filtered_bytes == 14 && old.payload_bytes == 184i64 && old.row_work == 14i64 && low && high && row.data.len() == 6;
   for budget in [png.RowLimits { ...limits, max_payload_bytes: 16661i64 }, png.RowLimits { ...limits, max_row_work: 118i64 }] {
@@ -105,15 +119,17 @@ function graph_rows(graph: pipeline.Graph, cache: i32, fused: boolean): Result[p
 
 function graph_goldens(): test.TestOutcome {
   for data in [fixtures.rgb4(), fixtures.rgba4()] {
-    let mask = 0;
-    while (mask < 8) {
+    for mask in 0..8 {
       for fused in [false, true] {
-        let graph = match (provider.incremental_source(data, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
-        let eager = match (png.decode(data, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("decode"); } };
-        let widths: i32[] = [3, 5, 2];
-        let heights: i32[] = [3, 4, 5];
-        let i = 0;
-        while (i < 3) {
+        let Ok(graph) = provider.incremental_source(data, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) else {
+          return test.fail("graph");
+        };
+        let Ok(eager) = png.decode(data, pixels.default_limits()) else {
+          return test.fail("decode");
+        };
+        let widths = [3, 5, 2];
+        let heights = [3, 4, 5];
+        for i in 0..3 {
           let filter = resize.Nearest;
           if ((mask & 1 << i) == 0) {
             graph = match (pipeline.nearest(graph, widths[i], heights[i], pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("nearest"); } };
@@ -122,16 +138,17 @@ function graph_goldens(): test.TestOutcome {
             graph = match (pipeline.bilinear(graph, widths[i], heights[i], pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("bilinear"); } };
           }
           eager = match (resize.resize(eager, widths[i], heights[i], filter, pixels.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("reference resize"); } };
-          i = i + 1;
         }
-        let cache = match (pipeline.required_cache(graph, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("cache"); } };
-        let rows = match (graph_rows(graph, cache, fused)) { Ok(v) => v, Err(_) => { return test.fail("rows"); } };
-        let y = 0;
-        while (y < 5) {
+        let Ok(cache) = pipeline.required_cache(graph, pipeline.default_limits()) else {
+          return test.fail("cache");
+        };
+        let Ok(rows) = graph_rows(graph, cache, fused) else {
+          return test.fail("rows");
+        };
+        for y in 0..5 {
           if (!same(rows[y].data, eager.data[y * eager.layout.stride:(y + 1) * eager.layout.stride])) {
             return test.fail("graph bytes");
           }
-          y = y + 1;
         }
         let crop = regions.Region { x: 1, y: 1, width: 1, height: 2 };
         let tile = if (fused) { regions.render_cached_tile_fused(graph, crop, pipeline.default_limits(), cache, never_cancel) } else { regions.render_cached_tile(graph, crop, pipeline.default_limits(), cache, never_cancel) };
@@ -142,7 +159,6 @@ function graph_goldens(): test.TestOutcome {
           return test.fail("crop bytes");
         }
       }
-      mask = mask + 1;
     }
   }
   return test.assert_true(true);
@@ -150,21 +166,19 @@ function graph_goldens(): test.TestOutcome {
 
 function wide_rows(): test.TestOutcome {
   for data in [wide.wide_rgb(), wide.wide_rgba()] {
-    let folded = match (collect(data, 0, 5)) { Ok(v) => v, Err(_) => { return test.fail("wide fold"); } };
+    let Ok(folded) = collect(data, 0, 5) else {
+      return test.fail("wide fold");
+    };
     if (folded.value.len() != 5 || folded.plan.layout.width != 11111 || folded.plan.layout.stride <= 32768) {
       return test.fail("wide layout");
     }
-    let y = 0;
-    while (y < 5) {
+    for y in 0..5 {
       let row = folded.value[y];
-      let x = 0;
-      while (x < row.data.len()) {
+      for x in 0..row.data.len() {
         if (row.data[x] != wide.expected(y, x)) {
           return test.fail("independent wide golden");
         }
-        x = x + 1;
       }
-      y = y + 1;
     }
   }
   return test.assert_true(true);
@@ -172,9 +186,13 @@ function wide_rows(): test.TestOutcome {
 
 function ownership_reentry(): test.TestOutcome {
   let input = fixtures.rgba4();
-  let decoder = match (png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("open"); } };
-  let graph = match (provider.incremental_source(input, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("graph"); } };
-  input = input.with(0, 0 as u8);
+  let Ok(decoder) = png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), never_cancel) else {
+    return test.fail("open");
+  };
+  let Ok(graph) = provider.incremental_source(input, pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) else {
+    return test.fail("graph");
+  };
+  input = input.with(0, 0);
   let entered = cell_new(false);
   let denied = cell_new(false);
   let cancel = (): boolean => {
@@ -184,17 +202,25 @@ function ownership_reentry(): test.TestOutcome {
     }
     return false;
   };
-  let first = match (decoder.read(0, cancel)) { Ok(v) => v, Err(_) => { return test.fail("outer read"); } };
-  let changed = pixels.Image { ...first, data: first.data.with(0, 42 as u8) };
-  let repeated = match (decoder.read(0, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("repeat"); } };
-  let last = match (decoder.read(1, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("last"); } };
+  let Ok(first) = decoder.read(0, cancel) else {
+    return test.fail("outer read");
+  };
+  let changed = pixels.Image { ...first, data: first.data.with(0, 42) };
+  let Ok(repeated) = decoder.read(0, never_cancel) else {
+    return test.fail("repeat");
+  };
+  let Ok(last) = decoder.read(1, never_cancel) else {
+    return test.fail("last");
+  };
   let expected = fixtures.rgba_bytes();
   if (!denied.get() || !same(first.data, expected[:8]) || !same(repeated.data, first.data)
-    || !same(last.data, expected[8:]) || changed.data[0] != 42 as u8 || input[0] != 0 as u8) {
+    || !same(last.data, expected[8:]) || changed.data[0] != 42 || input[0] != 0) {
     return test.fail("ownership");
   }
   for fused in [false, true] {
-    let rows = match (graph_rows(graph, 16, fused)) { Ok(v) => v, Err(_) => { return test.fail("fresh graph session"); } };
+    let Ok(rows) = graph_rows(graph, 16, fused) else {
+      return test.fail("fresh graph session");
+    };
     if (rows.len() != 2 || !same(rows[0].data, first.data) || !same(rows[1].data, last.data)) {
       return test.fail("captured input");
     }
@@ -215,8 +241,7 @@ function cancellation(): test.TestOutcome {
   if (!measured || total < 8) {
     return test.fail("poll baseline");
   }
-  let stop = 1;
-  while (stop <= total) {
+  for stop in 1..=total {
     polls.set(0);
     let cancel = (): boolean => {
       polls.set(polls.get() + 1);
@@ -226,9 +251,10 @@ function cancellation(): test.TestOutcome {
     if (!rejected) {
       return test.fail("exhaustive cancellation");
     }
-    stop = stop + 1;
   }
-  let decoder = match (png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("terminal session"); } };
+  let Ok(decoder) = png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), never_cancel) else {
+    return test.fail("terminal session");
+  };
   let cancel = (): boolean => true;
   let initial = match (decoder.read(0, cancel)) { Err(png.DecoderCancelled()) => true, _ => false };
   let terminal = match (decoder.read(0, never_cancel)) { Err(png.DecoderCancelled()) => true, _ => false };
@@ -250,10 +276,14 @@ function wide_cancellation(): test.TestOutcome {
     polls.set(polls.get() + 1);
     return false;
   };
-  let decoder = match (png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), count)) { Ok(v) => v, Err(_) => { return test.fail("wide session"); } };
+  let Ok(decoder) = png.open_incremental_rows(input, pixels.default_limits(), png.default_row_limits(), count) else {
+    return test.fail("wide session");
+  };
   let setup = polls.get();
   polls.set(0);
-  let first = match (decoder.read(0, count)) { Ok(v) => v, Err(_) => { return test.fail("wide row baseline"); } };
+  let Ok(first) = decoder.read(0, count) else {
+    return test.fail("wide row baseline");
+  };
   let row_polls = polls.get();
   if (first.data.len() <= 32768 || setup < 128 || row_polls < 128) {
     return test.fail("wide poll phases");
@@ -277,7 +307,9 @@ function graph_admission(): test.TestOutcome {
   let input = fixtures.rgb0();
   let codec_limits = png.RowLimits { max_payload_bytes: 16662i64, max_row_work: 119i64 };
   let limits = pipeline.Limits { max_pixels: 4, max_row_bytes: 6, max_scratch_bytes: 16674, max_nodes: 1, max_samples: 123 };
-  let graph = match (provider.incremental_source(input, pixels.default_limits(), codec_limits, limits)) { Ok(v) => v, Err(_) => { return test.fail("exact graph"); } };
+  let Ok(graph) = provider.incremental_source(input, pixels.default_limits(), codec_limits, limits) else {
+    return test.fail("exact graph");
+  };
   let scratch = match (pipeline.required_scratch(graph, limits)) { Ok(v) => v == 16662, _ => false };
   let setup = match (pipeline.required_setup_samples(graph, limits)) { Ok(v) => v == 119, _ => false };
   let cache = match (pipeline.required_cache(graph, limits)) { Ok(v) => v == 12, _ => false };
@@ -286,7 +318,9 @@ function graph_admission(): test.TestOutcome {
   let memory = match (pipeline.fold_rows(graph, 0, 2, pipeline.Limits { ...limits, max_scratch_bytes: 16673 }, 12, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
   let work = match (pipeline.fold_rows(graph, 0, 2, pipeline.Limits { ...limits, max_samples: 122 }, 12, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
   let short_cache = match (pipeline.fold_rows(graph, 0, 2, limits, 11, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
-  let invalid = match (provider.incremental_source(fixtures.bad_final_filter(), pixels.default_limits(), png.default_row_limits(), pipeline.default_limits())) { Ok(v) => v, Err(_) => { return test.fail("deferred validation"); } };
+  let Ok(invalid) = provider.incremental_source(fixtures.bad_final_filter(), pixels.default_limits(), png.default_row_limits(), pipeline.default_limits()) else {
+    return test.fail("deferred validation");
+  };
   let before_open = match (pipeline.fold_rows(invalid, 0, 1, pipeline.default_limits(), 0, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.Budget())) => true, _ => false };
   let after_open = match (pipeline.fold_rows(invalid, 0, 1, pipeline.default_limits(), 12, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => e == "PNG Scanline", _ => false };
   return test.assert_true(scratch && setup && cache && exact && memory && work && short_cache && before_open && after_open);

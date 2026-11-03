@@ -11,11 +11,11 @@ function bad_utf8(): u8[] {
 }
 
 function failed(why: StreamFault): BodySource {
-  let fault: Cell[Option[StreamFault]] = cell_new(Some(why));
+  let fault = cell_new(Some(why));
   return BodySource {
     next: (): Option[u8[]] => None,
     fault: fault,
-    send: (bytes: u8[]): i32 => 0 - 95,
+    send: (bytes: u8[]): i32 => -95,
   };
 }
 
@@ -56,7 +56,7 @@ function test_response_body_text_refuses_bad_utf8(): test.TestOutcome {
 }
 
 function test_response_body_text_reports_a_stream_fault(): test.TestOutcome {
-  let resp: HttpResponse = HttpResponse { ...http.ok(""), body: BodyStream(stream.from_source(failed(StreamTooLarge))) };
+  let resp = HttpResponse { ...http.ok(""), body: BodyStream(stream.from_source(failed(StreamTooLarge))) };
   match (resp.body_text()) {
     Ok(text) => {
       return test.fail("read " + text);
@@ -73,17 +73,17 @@ function test_response_body_text_lossy_replaces_bad_utf8(): test.TestOutcome {
 }
 
 function test_with_bytes_sets_the_length(): test.TestOutcome {
-  let req: HttpRequest = http.request("POST", "/").with_bytes(bad_utf8());
+  let req = http.request("POST", "/").with_bytes(bad_utf8());
   return test.assert_eq(req.headers.get("content-length").unwrap_or("-") + " " + req.body_bytes().len().to_string(), "3 3");
 }
 
 function test_with_text_sets_the_length_in_bytes(): test.TestOutcome {
-  let req: HttpRequest = http.request("POST", "/").with_text("é");
+  let req = http.request("POST", "/").with_text("é");
   return test.assert_eq(req.headers.get("content-length").unwrap_or("-"), "2");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("HTTP body text");
+  let r = test.new("HTTP body text");
   r = r.it("request body_text reads UTF-8", test_request_body_text_reads_utf8);
   r = r.it("request body_text refuses bad UTF-8", test_request_body_text_refuses_bad_utf8);
   r = r.it("request body_text_lossy replaces bad UTF-8", test_request_body_text_lossy_replaces_bad_utf8);

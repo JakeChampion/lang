@@ -3,7 +3,7 @@ import "std/cli" as cli;
 import "std/option";
 
 function spec(): cli.CliSpec {
-  let s: cli.CliSpec = cli.new("greet", "print a greeting");
+  let s = cli.new("greet", "print a greeting");
   s = s.option("name", "n", "who to greet");
   s = s.flag("shout", "s", "upper-case the greeting");
   s = s.flag("verbose", "v", "explain what is happening");
@@ -11,38 +11,38 @@ function spec(): cli.CliSpec {
 }
 
 function test_option_long(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "--name", "Ada"]);
+  let a = spec().parse(["greet", "--name", "Ada"]);
   return test.assert_eq(a.value_or("name", "world"), "Ada");
 }
 
 function test_option_equals(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "--name=Bob"]);
+  let a = spec().parse(["greet", "--name=Bob"]);
   return test.assert_eq(a.value_or("name", "world"), "Bob");
 }
 
 function test_option_short(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "-n", "Cy"]);
+  let a = spec().parse(["greet", "-n", "Cy"]);
   return test.assert_eq(a.value_or("name", "world"), "Cy");
 }
 
 function test_bool_flag(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "--shout"]);
-  let b: cli.CliArgs = spec().parse(["greet", "-s"]);
+  let a = spec().parse(["greet", "--shout"]);
+  let b = spec().parse(["greet", "-s"]);
   return test.assert_true(a.is_set("shout") && b.is_set("shout"));
 }
 
 function test_positionals(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "--name", "Ada", "one", "two"]);
+  let a = spec().parse(["greet", "--name", "Ada", "one", "two"]);
   return test.assert_eq_array(a.operands(), ["one", "two"]);
 }
 
 function test_end_of_options(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "--", "--name", "-s"]);
+  let a = spec().parse(["greet", "--", "--name", "-s"]);
   return test.assert_true(a.operands().len() == 2 && !a.is_set("name") && !a.is_set("shout"));
 }
 
 function test_value_or_default(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet"]);
+  let a = spec().parse(["greet"]);
   return test.assert_true(a.value_or("name", "world") == "world" && !a.is_set("shout"));
 }
 
@@ -59,37 +59,37 @@ function test_value_on_bool_errors(): test.TestOutcome {
 }
 
 function test_usage_lists_flags(): test.TestOutcome {
-  let u: string = spec().usage();
+  let u = spec().usage();
   return test.assert_true(u.contains("--name") && u.contains("--shout") && u.contains("greet"));
 }
 
 function test_short_glued_value(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "-n5"]);
+  let a = spec().parse(["greet", "-n5"]);
   return test.assert_eq(a.value_or("name", "x"), "5");
 }
 
 function test_short_bundled_bools(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "-vs"]);
+  let a = spec().parse(["greet", "-vs"]);
   return test.assert_true(a.is_set("verbose") && a.is_set("shout"));
 }
 
 function test_short_bundle_ending_valued(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "-vn5"]);
+  let a = spec().parse(["greet", "-vn5"]);
   return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5");
 }
 
 function test_short_bundle_next_token_value(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "-vn", "5"]);
+  let a = spec().parse(["greet", "-vn", "5"]);
   return test.assert_true(a.is_set("verbose") && a.value_or("name", "x") == "5" && a.operands().len() == 0);
 }
 
 function test_short_lone_dash_is_positional(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "-"]);
+  let a = spec().parse(["greet", "-"]);
   return test.assert_true(a.operands().len() == 1 && !a.is_error());
 }
 
 function test_short_multibyte_unknown(): test.TestOutcome {
-  let a: cli.CliArgs = spec().parse(["greet", "-é"]);
+  let a = spec().parse(["greet", "-é"]);
   if (!a.is_error()) {
     return test.fail("expected an unknown-option error");
   }
@@ -97,7 +97,7 @@ function test_short_multibyte_unknown(): test.TestOutcome {
 }
 
 function test_color_red(): test.TestOutcome {
-  let red: string = cli.red("x");
+  let red = cli.red("x");
   if (cli.color_enabled()) {
     return test.assert_true(red[0] == 27 && red.contains("31m") && red.contains("x"));
   }
@@ -105,7 +105,7 @@ function test_color_red(): test.TestOutcome {
 }
 
 function test_color_bold(): test.TestOutcome {
-  let b: string = cli.bold("hi");
+  let b = cli.bold("hi");
   if (cli.color_enabled()) {
     return test.assert_true(b[0] == 27 && b.contains("1m") && b.contains("hi"));
   }
@@ -113,16 +113,16 @@ function test_color_bold(): test.TestOutcome {
 }
 
 function spec_cmds(): cli.CliSpec {
-  let deploy: cli.CliSpec = cli.new("deploy", "push the build");
+  let deploy = cli.new("deploy", "push the build");
   deploy = deploy.option("env", "e", "target environment");
-  let s: cli.CliSpec = cli.new("tool", "ship things");
+  let s = cli.new("tool", "ship things");
   s = s.flag("verbose", "v", "explain what is happening");
   s = s.option("name", "n", "who to ship as");
   return s.command(deploy);
 }
 
 function test_subcommand_parses(): test.TestOutcome {
-  let a: cli.CliArgs = spec_cmds().parse(["tool", "-v", "deploy", "--env", "prod", "x"]);
+  let a = spec_cmds().parse(["tool", "-v", "deploy", "--env", "prod", "x"]);
   if (a.is_error()) {
     return test.fail(a.error_text());
   }
@@ -130,7 +130,7 @@ function test_subcommand_parses(): test.TestOutcome {
 }
 
 function test_unknown_command_errors(): test.TestOutcome {
-  let a: cli.CliArgs = spec_cmds().parse(["tool", "launch"]);
+  let a = spec_cmds().parse(["tool", "launch"]);
   if (!a.is_error()) {
     return test.fail("expected an unknown-command error");
   }
@@ -138,12 +138,12 @@ function test_unknown_command_errors(): test.TestOutcome {
 }
 
 function test_no_subcommand_is_none(): test.TestOutcome {
-  let a: cli.CliArgs = spec_cmds().parse(["tool", "-v"]);
+  let a = spec_cmds().parse(["tool", "-v"]);
   return test.assert_true(!a.is_error() && a.subcommand().is_none() && a.is_set("verbose"));
 }
 
 function test_subcommand_scopes_flags(): test.TestOutcome {
-  let a: cli.CliArgs = spec_cmds().parse(["tool", "deploy", "--name", "x"]);
+  let a = spec_cmds().parse(["tool", "deploy", "--name", "x"]);
   if (!a.is_error()) {
     return test.fail("expected an unknown-option error");
   }
@@ -151,7 +151,7 @@ function test_subcommand_scopes_flags(): test.TestOutcome {
 }
 
 function test_usage_lists_commands(): test.TestOutcome {
-  let u: string = spec_cmds().usage();
+  let u = spec_cmds().usage();
   return test.assert_true(u.contains("<command>") && u.contains("Commands:") && u.contains("deploy") && u.contains("push the build"));
 }
 
@@ -193,7 +193,7 @@ function test_completion_unknown_shell(): test.TestOutcome {
 }
 
 function test_completion_quotes_help(): test.TestOutcome {
-  let s: cli.CliSpec = cli.new("q", "quoting");
+  let s = cli.new("q", "quoting");
   s = s.flag("it", "", "don't break");
   match (s.completion("fish")) {
     Some(c) => {
@@ -206,7 +206,7 @@ function test_completion_quotes_help(): test.TestOutcome {
 }
 
 function test_manpage_sections(): test.TestOutcome {
-  let m: string = spec().manpage("1");
+  let m = spec().manpage("1");
   return test.assert_true(m.contains(".TH \"greet\" \"1\"")
     && m.contains(".SH NAME\ngreet \\- print a greeting")
     && m.contains(".SH SYNOPSIS\n\\fBgreet\\fR [options] [args]")
@@ -215,37 +215,37 @@ function test_manpage_sections(): test.TestOutcome {
 }
 
 function test_manpage_flags(): test.TestOutcome {
-  let m: string = spec().manpage("1");
+  let m = spec().manpage("1");
   return test.assert_true(m.contains(".TP\n\\fB\\-n\\fR, \\fB\\-\\-name\\fR \\fI<value>\\fR\nwho to greet")
     && m.contains(".TP\n\\fB\\-s\\fR, \\fB\\-\\-shout\\fR\nupper-case the greeting")
     && !m.contains("\\-\\-shout\\fR \\fI<value>"));
 }
 
 function test_manpage_commands(): test.TestOutcome {
-  let m: string = spec_cmds().manpage("8");
+  let m = spec_cmds().manpage("8");
   return test.assert_true(m.contains(".TH \"tool\" \"8\"")
     && m.contains("\\fBtool\\fR [options] <command> [args]")
     && m.contains(".SH COMMANDS\n.TP\n\\fBdeploy\\fR\npush the build"));
 }
 
 function test_manpage_roff_escapes_backslash(): test.TestOutcome {
-  let s: cli.CliSpec = cli.new("bs", "escaping");
+  let s = cli.new("bs", "escaping");
   s = s.flag("win", "", "a \\ separator");
-  let m: string = s.manpage("1");
+  let m = s.manpage("1");
   return test.assert_true(m.contains("a \\\\ separator") && !m.contains("a \\ separator"));
 }
 
 function test_manpage_roff_escapes_leading_dot(): test.TestOutcome {
-  let s: cli.CliSpec = cli.new("dot", ".config tool");
+  let s = cli.new("dot", ".config tool");
   s = s.flag("run", "", "./build first");
-  let m: string = s.manpage("1");
+  let m = s.manpage("1");
   return test.assert_true(m.contains(".SH DESCRIPTION\n\\&.config tool")
     && m.contains("\\&./build first")
     && !m.contains("\n./build first"));
 }
 
 function test_usage_spec_leaf(): test.TestOutcome {
-  let k: string = spec().usage_spec();
+  let k = spec().usage_spec();
   return test.assert_eq(k, "bin \"greet\"\n"
     + "about \"print a greeting\"\n"
     + "flag \"-n --name <name>\" help=\"who to greet\"\n"
@@ -255,7 +255,7 @@ function test_usage_spec_leaf(): test.TestOutcome {
 }
 
 function test_usage_spec_commands(): test.TestOutcome {
-  let k: string = spec_cmds().usage_spec();
+  let k = spec_cmds().usage_spec();
   return test.assert_true(k.contains("bin \"tool\"\n")
     && k.contains("cmd \"deploy\" help=\"push the build\" {\n  flag ")
     && k.contains("\n  arg \"[args]...\" var=#true\n}\n")
@@ -263,13 +263,13 @@ function test_usage_spec_commands(): test.TestOutcome {
 }
 
 function test_usage_spec_quotes(): test.TestOutcome {
-  let s: cli.CliSpec = cli.new("q", "");
+  let s = cli.new("q", "");
   s = s.flag("raw", "", "keep \"as is\", C:\\path");
   return test.assert_eq(s.usage_spec(), "bin \"q\"\nflag \"--raw\" help=\"keep \\\"as is\\\", C:\\\\path\"\narg \"[args]...\" var=#true\n");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/cli");
+  let r = test.new("std/cli");
   r = r.it("option --long V", test_option_long);
   r = r.it("option --long=V", test_option_equals);
   r = r.it("option -short V", test_option_short);

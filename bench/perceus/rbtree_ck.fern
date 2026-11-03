@@ -6,14 +6,7 @@ pub enum Tree { Leaf, Node(Color, Tree, i64, boolean, Tree) }
 pub enum Trees { NoTrees, Cons(Tree, Trees) }
 
 pub function fold(t: Tree, acc: i64, f: (i64, boolean, i64) => i64): i64 {
-  match (t) {
-    Leaf => {
-      return acc;
-    },
-    Node(_, l, k, v, r) => {
-      return fold(r, f(k, v, fold(l, acc, f)), f);
-    }
-  }
+  return match (t) { Leaf => acc, Node(_, l, k, v, r) => fold(r, f(k, v, fold(l, acc, f)), f) };
 }
 
 function balance1(kv: i64, vv: boolean, t: Tree, s: Tree): Tree {
@@ -94,14 +87,7 @@ function ins(t: Tree, kx: i64, vx: boolean): Tree {
 }
 
 function set_black(t: Tree): Tree {
-  match (t) {
-    Node(_, l, k, v, r) => {
-      return Node(Black, l, k, v, r);
-    },
-    _ => {
-      return t;
-    }
-  }
+  return match (t) { Node(_, l, k, v, r) => Node(Black, l, k, v, r), _ => t };
 }
 
 pub function insert(t: Tree, k: i64, v: boolean): Tree {
@@ -115,7 +101,7 @@ function make_tree_aux(freq: i64, n: i64, t: Tree, acc: Trees): Trees {
   if (n <= 0i64) {
     return Cons(t, acc);
   }
-  let next: Tree = insert(t, n, n % 10i64 == 0i64);
+  let next = insert(t, n, n % 10i64 == 0i64);
   if (n % freq == 0i64) {
     return make_tree_aux(freq, n - 1i64, next, Cons(next, acc));
   }
@@ -136,12 +122,5 @@ pub function count_true(t: Tree): i64 {
 }
 
 pub function count_head(trees: Trees): i64 {
-  match (trees) {
-    Cons(t, _) => {
-      return count_true(t);
-    },
-    NoTrees => {
-      return count_true(Leaf);
-    }
-  }
+  return match (trees) { Cons(t, _) => count_true(t), NoTrees => count_true(Leaf) };
 }

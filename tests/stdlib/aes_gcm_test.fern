@@ -29,12 +29,12 @@ function zeros(n: i32): u8[] {
 }
 
 function test_block128(): test.TestOutcome {
-  let rk: u8[] = __aes_expand_key(__codec_bytes(hex.decode("000102030405060708090a0b0c0d0e0f")));
+  let rk = __aes_expand_key(__codec_bytes(hex.decode("000102030405060708090a0b0c0d0e0f")));
   return test.assert_eq(hex.encode(__aes_ctr32(rk, __codec_bytes(hex.decode("00112233445566778899aabbccddeeff")), zeros(16))), "69c4e0d86a7b0430d8cdb78070b4c55a");
 }
 
 function test_block256(): test.TestOutcome {
-  let rk: u8[] = __aes_expand_key(__codec_bytes(hex.decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")));
+  let rk = __aes_expand_key(__codec_bytes(hex.decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")));
   return test.assert_eq(hex.encode(__aes_ctr32(rk, __codec_bytes(hex.decode("00112233445566778899aabbccddeeff")), zeros(16))), "8ea2b7ca516745bfeafc49904b496089");
 }
 
@@ -150,8 +150,8 @@ function sealed255(): string {
 }
 
 function test_255_bytes(): test.TestOutcome {
-  let key: u8[] = __codec_bytes(hex.decode("504cae995b35bdd93579f9e580109f8a"));
-  let nonce: u8[] = __codec_bytes(hex.decode("053f345b77676adbfa3035f1"));
+  let key = __codec_bytes(hex.decode("504cae995b35bdd93579f9e580109f8a"));
+  let nonce = __codec_bytes(hex.decode("053f345b77676adbfa3035f1"));
   if (shown(seal_bytes(key, nonce, __codec_bytes(hex.decode(plain255())), aad64())) != sealed255()) {
     return test.fail("seal disagrees with crypto/cipher");
   }
@@ -178,23 +178,23 @@ function forged(r: Result[u8[], aead.AeadError]): boolean {
 }
 
 function test_open_refuses(): test.TestOutcome {
-  let key: u8[] = __codec_bytes(hex.decode(k3()));
-  let sealed: u8[] = __codec_bytes(hex.decode(sealed4()));
-  let last: i32 = sealed.len() - 1;
+  let key = __codec_bytes(hex.decode(k3()));
+  let sealed = __codec_bytes(hex.decode(sealed4()));
+  let last = sealed.len() - 1;
   if (!forged(open_bytes(key, iv3(), sealed.with(last, sealed[last] ^ 1 as u8), aad3()))) {
     return test.fail("a flipped tag bit opened");
   }
   if (!forged(open_bytes(key, iv3(), sealed.with(0, sealed[0] ^ 128 as u8), aad3()))) {
     return test.fail("a flipped ciphertext bit opened");
   }
-  let aad: u8[] = aad3();
+  let aad = aad3();
   if (!forged(open_bytes(key, iv3(), sealed, aad.with(19, aad[19] ^ 2 as u8)))) {
     return test.fail("a flipped additional-data bit opened");
   }
   if (!forged(open_bytes(key.with(0, key[0] ^ 1 as u8), iv3(), sealed, aad3()))) {
     return test.fail("another key opened");
   }
-  let nonce: u8[] = iv3();
+  let nonce = iv3();
   if (!forged(open_bytes(key, nonce.with(11, nonce[11] ^ 1 as u8), sealed, aad3()))) {
     return test.fail("another nonce opened");
   }
@@ -250,9 +250,9 @@ function test_prepared_key(): test.TestOutcome {
 // GCM test case 4 in place: iv cafebabe with the sequence number facedbaddecaf888 folded in is the case's nonce,
 // and the aad sits ahead of the text in the one buffer.
 function laid4(): u8[] {
-  let buf: u8[] = __alloc_u8(20 + 60 + 16);
-  let aad: u8[] = aad3();
-  let pt: u8[] = p60();
+  let buf = __alloc_u8(20 + 60 + 16);
+  let aad = aad3();
+  let pt = p60();
   for i in 0..20 {
     buf = buf.with(i, aad[i]);
   }
@@ -273,7 +273,7 @@ function seq4(): u64 {
 // Seals the laid-out case under seal_seq, flips byte flip of the result when it is not negative, and opens it
 // under open_seq.
 function round_trip4(k: aes_gcm.Key, seal_seq: u64, flip: i32, open_seq: u64): Result[u8[], aead.AeadError] {
-  let sealed: u8[] = k.seal_in_place(iv4(), seal_seq, laid4(), 0, 20, 20, 60)?;
+  let sealed = k.seal_in_place(iv4(), seal_seq, laid4(), 0, 20, 20, 60)?;
   if (flip >= 0) {
     sealed = sealed.with(flip, sealed[flip] ^ 1 as u8);
   }
@@ -306,7 +306,7 @@ function test_in_place_refuses(): test.TestOutcome {
   let Ok(k) = aes_gcm.key(__codec_bytes(hex.decode(k3()))) else {
     return test.fail("key");
   };
-  let forged: string = "aead: the message does not verify";
+  let forged = "aead: the message does not verify";
   if (opened4(round_trip4(k, seq4(), 0 - 1, seq4() + 1 as u64)) != forged) {
     return test.fail("the next sequence number");
   }
@@ -323,7 +323,7 @@ function test_in_place_refuses(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto/aes_gcm");
+  let r = test.new("std/crypto/aes_gcm");
   r = r.it("aes-128 block, FIPS-197 C.1", test_block128);
   r = r.it("aes-256 block, FIPS-197 C.3", test_block256);
   r = r.it("seal, GCM test case 1", test_case1);

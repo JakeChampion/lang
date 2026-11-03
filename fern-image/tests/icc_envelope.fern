@@ -12,8 +12,10 @@ function error_name(error: envelope.IccError): string {
 }
 
 function emit(path: string): i32 {
-  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
-  if (input.len() < 16 || input[0] != 70 as u8 || input[1] != 73 as u8 || input[2] != 67 as u8 || input[3] != 49 as u8) {
+  let Ok(input) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (input.len() < 16 || input[0] != b'F' || input[1] != b'I' || input[2] != b'C' || input[3] != b'1') {
     return 3;
   }
   let stop = signed(input, 12);
@@ -27,7 +29,7 @@ function emit(path: string): i32 {
   });
   match (result) {
     Err(error) => {
-      print("icc " + path + " error " + error_name(error) + " " + polls.get().to_string());
+      print(f"icc {path} error {error_name(error)} {polls.get()}");
     },
     Ok(info) => {
       let kind = match (info.device_class) { envelope.DeviceClass.Input => 0, envelope.DeviceClass.Display => 1 };
@@ -39,9 +41,9 @@ function emit(path: string): i32 {
       for tag in info.tags {
         fields = fields.append(tag.signature).append(tag.offset as i64).append(tag.size as i64).append(tag.type_signature);
       }
-      let text = "icc " + path + " ok " + polls.get().to_string();
+      let text = f"icc {path} ok {polls.get()}";
       for field in fields {
-        text = text + " " + field.to_string();
+        text += f" {field}";
       }
       print(text);
     }

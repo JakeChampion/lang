@@ -78,7 +78,7 @@ function test_at_f64_outside_tolerance(): test.TestOutcome {
 
 function test_at_f64_nan_actual_fails(): test.TestOutcome {
   let z: f64 = 0.0;
-  let nan: f64 = z / z;
+  let nan = z / z;
   match (test.assert_at_f64([1.0, nan, 3.0], 1, 2.0, 100.0)) {
     Pass => {
       return test.fail("NaN element should fail");
@@ -94,7 +94,7 @@ function test_at_f64_nan_actual_fails(): test.TestOutcome {
 
 function test_at_f64_nan_expected_fails(): test.TestOutcome {
   let z: f64 = 0.0;
-  let nan: f64 = z / z;
+  let nan = z / z;
   match (test.assert_at_f64([1.0, 2.0], 0, nan, 0.001)) {
     Pass => {
       return test.fail("NaN expected should fail");
@@ -137,7 +137,7 @@ function test_at_f32_outside_tolerance(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("assert_at wider widths");
+  let r = test.new("assert_at wider widths");
   r = r.it("at_u32 pass", test_at_u32_pass);
   r = r.it("at_u32 wrong value diag", test_at_u32_wrong_value);
   r = r.it("at_u32 out of bounds", test_at_u32_out_of_bounds);

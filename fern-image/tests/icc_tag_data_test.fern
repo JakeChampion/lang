@@ -46,12 +46,16 @@ function rejects(input: [u8], error: tag_data.TagError): boolean {
 
 function xyz_values(): test.TestOutcome {
   for value in [-2147483648, -65536, -1, 0, 1, 65536, 2147483647] {
-    let result = match (tag_data.read_xyz_triplet(xyz([value, 2147483647, -2147483648]), never)) { Ok(v) => v, Err(_) => { return test.fail("exact XYZ signed wire values"); } };
+    let Ok(result) = tag_data.read_xyz_triplet(xyz([value, 2147483647, -2147483648]), never) else {
+      return test.fail("exact XYZ signed wire values");
+    };
     if (result.x != value || result.y != 2147483647 || result.z != -2147483648) {
       return test.fail("signed fixed-point extremes remain integer numerators");
     }
   }
-  let real = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen profile"); } };
+  let Ok(real) = read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc") else {
+    return test.fail("frozen profile");
+  };
   return test.assert_true(match (tag_data.read_xyz_triplet(real[460:480], never)) { Ok(v) => v.x == 28576 && v.y == 14581 && v.z == 912, Err(_) => false });
 }
 
@@ -96,7 +100,9 @@ function parametric_forms(): test.TestOutcome {
       }
     }
   }
-  let real = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen profile"); } };
+  let Ok(real) = read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc") else {
+    return test.fail("frozen profile");
+  };
   return test.assert_true(match (tag_data.read_curve(real[520:552], tag_data.default_curve_limits(), never)) { Ok(tag_data.Parametric(v)) => v.function_type == 3 && v.coefficients.len() == 5 && v.coefficients[0] == 157286, _ => false });
 }
 
@@ -107,7 +113,7 @@ function framing(): test.TestOutcome {
         return test.fail("every incomplete payload rejects");
       }
     }
-    if (!rejects(input.append(0 as u8), tag_data.TagError.Length) || !rejects(input.with(4, 1 as u8), tag_data.TagError.Reserved)) {
+    if (!rejects(input.append(0), tag_data.TagError.Length) || !rejects(input.with(4, 1), tag_data.TagError.Reserved)) {
       return test.fail("exact bytes and common reserved fields");
     }
   }
@@ -118,9 +124,9 @@ function framing(): test.TestOutcome {
     }
   }
   return test.assert_true(rejects(parametric(5, []), tag_data.TagError.Function)
-    && rejects(parametric(0, [1]).with(11, 1 as u8), tag_data.TagError.Reserved)
-    && rejects(curve([]).with(0, 0 as u8), tag_data.TagError.Signature)
-    && match (tag_data.read_xyz_triplet(input.with(4, 1 as u8), never)) { Err(tag_data.TagError.Reserved()) => true, _ => false });
+    && rejects(parametric(0, [1]).with(11, 1), tag_data.TagError.Reserved)
+    && rejects(curve([]).with(0, 0), tag_data.TagError.Signature)
+    && match (tag_data.read_xyz_triplet(input.with(4, 1), never)) { Err(tag_data.TagError.Reserved()) => true, _ => false });
 }
 
 function limits(): test.TestOutcome {
@@ -144,7 +150,7 @@ function ownership(): test.TestOutcome {
   let input = curve([1, 65535]);
   let shared = cell_new(input);
   let output = match (tag_data.read_curve(input, tag_data.default_curve_limits(), (): boolean => {
-    shared.set(shared.get().with(12, 255 as u8));
+    shared.set(shared.get().with(12, 255));
     return false;
   })) { Ok(tag_data.Samples(v)) => v, _ => { return test.fail("borrowed input COW"); } };
   let changed = output.with(0, 19);
@@ -152,7 +158,7 @@ function ownership(): test.TestOutcome {
   let parameters = match (tag_data.read_curve(parametric(1, [1, -1, 3]), tag_data.default_curve_limits(), never)) { Ok(tag_data.Parametric(v)) => v, _ => { return test.fail("owned parameter data"); } };
   let changed_parameters = parameters.coefficients.with(0, 9);
   return test.assert_true(output[0] == 1 && output[1] == 65535 && fresh[0] == 1 && changed[0] == 19
-    && input[12] == 0 as u8 && shared.get()[12] == 255 as u8 && parameters.coefficients[0] == 1 && changed_parameters[0] == 9);
+    && input[12] == 0 && shared.get()[12] == 255 && parameters.coefficients[0] == 1 && changed_parameters[0] == 9);
 }
 
 function cancellation(): test.TestOutcome {
@@ -169,7 +175,7 @@ function cancellation(): test.TestOutcome {
     if (match (success) { Ok(_) => false, Err(_) => true } || total.get() < 2) {
       return test.fail("curve poll coverage");
     }
-    for stop in 1..total.get() + 1 {
+    for stop in 1..=total.get() {
       let polls = cell_new(0);
       let result = tag_data.read_curve(input, tag_data.default_curve_limits(), (): boolean => {
         polls.set(polls.get() + 1);

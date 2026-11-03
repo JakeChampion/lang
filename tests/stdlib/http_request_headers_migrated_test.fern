@@ -14,7 +14,7 @@ function body_text(req: HttpRequest): string {
 }
 
 function test_parsed_headers_reachable_on_req(): test.TestOutcome {
-  let wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
+  let wire = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.assert_is_some_eq(
@@ -30,7 +30,7 @@ function test_parsed_headers_reachable_on_req(): test.TestOutcome {
 }
 
 function test_parsed_header_count_is_3(): test.TestOutcome {
-  let wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
+  let wire = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.assert_eq(req.headers.len(), 3);
@@ -43,7 +43,7 @@ function test_parsed_header_count_is_3(): test.TestOutcome {
 }
 
 function test_duplicate_header_insertion_order(): test.TestOutcome {
-  let wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+  let wire = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.assert_eq_array(
@@ -59,7 +59,7 @@ function test_duplicate_header_insertion_order(): test.TestOutcome {
 }
 
 function test_missing_header_returns_none(): test.TestOutcome {
-  let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+  let wire = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.assert_is_none(req.headers.get("X-Absent"));
@@ -72,7 +72,7 @@ function test_missing_header_returns_none(): test.TestOutcome {
 }
 
 function test_get_all_on_missing_is_empty(): test.TestOutcome {
-  let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
+  let wire = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.assert_eq(req.headers.get_all("X-Absent").len(), 0);
@@ -85,7 +85,7 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
 }
 
 function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
-  let wire: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
+  let wire = "GET / HTTP/1.1\r\nHost: h\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.assert_eq(body_text(req), "");
@@ -98,7 +98,7 @@ function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
 }
 
 function test_duplicate_content_length_rejected(): test.TestOutcome {
-  let wire: string = "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!";
+  let wire = "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.fail("duplicate Content-Length must be rejected");
@@ -111,7 +111,7 @@ function test_duplicate_content_length_rejected(): test.TestOutcome {
 }
 
 function test_transfer_encoding_rejected(): test.TestOutcome {
-  let wire: string = "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
+  let wire = "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
   match (http.parse_request(wire)) {
     Ok(req) => {
       return test.fail("Transfer-Encoding beside Content-Length must be rejected");
@@ -124,7 +124,7 @@ function test_transfer_encoding_rejected(): test.TestOutcome {
 }
 
 function test_http_header_value_via_headermap(): test.TestOutcome {
-  let block: string = "Host: example.com\r\nContent-Type:  application/json  ";
+  let block = "Host: example.com\r\nContent-Type:  application/json  ";
   return test.assert_is_some_eq(
     http.header_value(block, "content-type"),
     "application/json",
@@ -168,7 +168,7 @@ function test_no_headers_at_all_has_no_headers(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("HTTP request headers (migrated)");
+  let r = test.new("HTTP request headers (migrated)");
   r = r.it(
     "Content-Type reachable case-insensitively",
     test_parsed_headers_reachable_on_req,
