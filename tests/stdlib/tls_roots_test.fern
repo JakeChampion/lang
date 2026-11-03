@@ -36,8 +36,8 @@ function outcome(r: Result[x509.Certificate, verify.VerifyError]): string {
 }
 
 function test_bundle_file(dir: string): test.TestOutcome {
-  let path: string = dir + "/bundle.pem";
-  let text: string = "# test roots\n" + pem.encode("CERTIFICATE", rsa_root()) + pem.encode("CERTIFICATE", ec_root());
+  let path = dir + "/bundle.pem";
+  let text = "# test roots\n" + pem.encode("CERTIFICATE", rsa_root()) + pem.encode("CERTIFICATE", ec_root());
   match (write_file(path, text)) {
     Ok(_) => {},
     Err(_) => {
@@ -59,7 +59,7 @@ function test_bundle_file(dir: string): test.TestOutcome {
 }
 
 function test_unreadable(dir: string): test.TestOutcome {
-  let empty: string = dir + "/empty.pem";
+  let empty = dir + "/empty.pem";
   match (write_file(empty, "no certificates here\n")) {
     Ok(_) => {},
     Err(_) => {
@@ -100,7 +100,7 @@ function test_system_roots(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/verify roots");
+  let r = test.new("std/tls/verify roots");
   let (dir, rr) = test.must_temp_dir(r, "tls-roots");
   if (dir == "") {
     return rr.finish();

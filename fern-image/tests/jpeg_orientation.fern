@@ -21,8 +21,10 @@ function error_name(value: orientation.OrientError): string {
 }
 
 function emit(path: string): i32 {
-  let bytes = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
-  if (bytes.len() < 44 || bytes[0] != 70 as u8 || bytes[1] != 79 as u8 || bytes[2] != 82 as u8 || bytes[3] != 49 as u8) {
+  let Ok(bytes) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (bytes.len() < 44 || bytes[0] != 70 || bytes[1] != 79 || bytes[2] != 82 || bytes[3] != 49) {
     return 3;
   }
   let channels = signed_word(bytes, 20);
@@ -47,17 +49,16 @@ function emit(path: string): i32 {
   });
   match (result) {
     Ok(image) => {
-      let admitted = match (plan) { Ok(v) => v, Err(_) => { return 5; } };
-      match (write_file_bytes(path + ".pixels.raw", image.data)) {
-        Ok(_) => {},
-        Err(_) => {
-          return 6;
-        }
+      let Ok(admitted) = plan else {
+        return 5;
+      };
+      if let Err(_) = write_file_bytes(path + ".pixels.raw", image.data) {
+        return 6;
       }
-      print("orientation " + path + " ok " + image.layout.width.to_string() + " " + image.layout.height.to_string() + " " + image.layout.stride.to_string() + " " + channels.to_string() + " " + image.layout.bytes.to_string() + " " + admitted.input_bytes.to_string() + " " + admitted.planned_bytes.to_string() + " " + polls.get().to_string());
+      print(f"orientation {path} ok {image.layout.width} {image.layout.height} {image.layout.stride} {channels} {image.layout.bytes} {admitted.input_bytes} {admitted.planned_bytes} {polls.get()}");
     },
     Err(error) => {
-      print("orientation " + path + " error " + error_name(error) + " " + polls.get().to_string());
+      print(f"orientation {path} error {error_name(error)} {polls.get()}");
     }
   }
   return 0;

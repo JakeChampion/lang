@@ -16,22 +16,22 @@ function check_reverse_idempotent(input: u8[]): test.TestOutcome {
 }
 
 function check_to_lower_no_upper(input: u8[]): test.TestOutcome {
-  let s: string = string_from_bytes_unchecked(input);
-  let lowered: string = s.to_lower();
-  let i: i32 = 0;
+  let s = string_from_bytes_unchecked(input);
+  let lowered = s.to_lower();
+  let i = 0;
   while (i < lowered.len()) {
-    let b: i32 = lowered[i] as i32;
+    let b = lowered[i] as i32;
     if (b >= 65 && b <= 90) {
       return test.fail("uppercase byte " + b.to_string()
         + " at " + i.to_string() + " after to_lower");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("fuzz shrink");
+  let r = test.new("fuzz shrink");
 
   r = r.fuzz_shrink(
     "len non-negative",

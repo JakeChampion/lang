@@ -16,6 +16,7 @@
 // a page of connection details. The protocol ALPN agreed on follows the
 // socket cases' answers when there is one.
 import "std/i32";
+import "std/result";
 import "std/fetch";
 import "std/http";
 import "std/string";
@@ -30,31 +31,15 @@ import "core/int";
 struct Outcome { answer: string, tickets: client.Ticket[], resumed: boolean }
 
 function setting(name: string, fallback: string): string {
-  match (env(name)) {
-    Some(v) => {
-      return v;
-    },
-    None => {
-      return fallback;
-    }
-  }
-  return fallback;
+  return match (env(name)) { Some(v) => v, None => fallback };
 }
 
 function port_of(name: string): i32 {
-  match (i32.parse_i32_radix(setting(name, "0"), 10)) {
-    Ok(n) => {
-      return n;
-    },
-    Err(_) => {
-      return 0;
-    }
-  }
-  return 0;
+  return i32.parse_i32_radix(setting(name, "0"), 10).unwrap_or(0);
 }
 
 function first_line(body: string): string {
-  let lines: string[] = body.lines_non_empty();
+  let lines = body.lines_non_empty();
   if (lines.len() == 0) {
     return "<empty>";
   }
@@ -64,54 +49,29 @@ function first_line(body: string): string {
 function line(answer: Result[HttpResponse, fetch.FetchError]): string {
   match (answer) {
     Ok(resp) => {
-      match (resp.body_text()) {
-        Ok(text) => {
-          return resp.status.to_string() + " " + first_line(text);
-        },
-        Err(_) => {
-          return resp.status.to_string() + " <not utf-8>";
-        }
+      if let Ok(text) = resp.body_text() {
+        return f"{resp.status} {first_line(text)}";
       }
+      return f"{resp.status} <not utf-8>";
     },
     Err(e) => {
       return "error " + e.message();
     }
   }
-  return "";
 }
 
 function identity_from(cert_path: string, key_path: string): Result[identity.Identity, string] {
-  let cert: string = "";
-  match (read_file(cert_path)) {
-    Ok(text) => {
-      cert = text;
-    },
-    Err(_) => {
-      return Err("cannot read " + cert_path);
-    }
-  }
-  let key: string = "";
-  match (read_file(key_path)) {
-    Ok(text) => {
-      key = text;
-    },
-    Err(_) => {
-      return Err("cannot read " + key_path);
-    }
-  }
-  match (identity.from_pem(cert, key)) {
-    Ok(id) => {
-      return Ok(id);
-    },
-    Err(e) => {
-      return Err(e.message());
-    }
-  }
-  return Err("identity");
+  let Ok(cert) = read_file(cert_path) else {
+    return Err("cannot read " + cert_path);
+  };
+  let Ok(key) = read_file(key_path) else {
+    return Err("cannot read " + key_path);
+  };
+  return match (identity.from_pem(cert, key)) { Ok(id) => Ok(id), Err(e) => Err(e.message()) };
 }
 
 function answered(raw: u8[]): string {
-  let text: string = string_from_bytes_unchecked(raw);
+  let text = string_from_bytes_unchecked(raw);
   if (!text.starts_with("HTTP/1.")) {
     return "no response";
   }
@@ -125,30 +85,24 @@ function answered(raw: u8[]): string {
 }
 
 function exchange(conn: client.Connection): Result[(client.Connection, u8[]), tls.TlsError] {
-  let c: client.Connection = conn.write("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
+  let c = conn.write("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
   let out: u8[] = [];
-  let going: boolean = true;
-  while (going) {
-    let got: client.Received = c.read(time.duration_seconds(10 as i64))?;
-    let i: i32 = 0;
-    while (i < got.data.len()) {
-      out = out.append(got.data[i]);
-      i = i + 1;
-    }
+  loop {
+    let got = c.read(time.duration_seconds(10))?;
+    out = out.concat(got.data);
     c = got.conn;
-    going = !got.ended;
+    if (got.ended) {
+      break;
+    }
   }
   return Ok((c, out));
 }
 
 function over(cfg: client.Config, port: i32): Result[Outcome, tls.TlsError] {
-  let conn: client.Connection = client.connect("localhost", port, cfg, time.duration_seconds(10 as i64))?;
+  let conn = client.connect("localhost", port, cfg, time.duration_seconds(10))?;
   let (c, raw) = exchange(conn)?;
   c.close();
-  let alpn: string = "";
-  if (c.session.alpn().len() > 0) {
-    alpn = " " + c.session.alpn();
-  }
+  let alpn = if (c.session.alpn().len() > 0) { " " + c.session.alpn() } else { "" };
   return Ok(Outcome { answer: answered(raw) + alpn, tickets: c.tickets, resumed: c.session.resumed() });
 }
 
@@ -158,16 +112,13 @@ function describe(r: Result[Outcome, tls.TlsError], resumption: boolean): string
       if (!resumption) {
         return o.answer;
       }
-      if (o.resumed) {
-        return "resumed " + o.answer;
-      }
-      return "fresh " + o.answer;
+      let state = if (o.resumed) { "resumed" } else { "fresh" };
+      return f"{state} {o.answer}";
     },
     Err(e) => {
       return "error " + e.message();
     }
   }
-  return "";
 }
 
 function millis_since(started: Instant): string {
@@ -175,24 +126,15 @@ function millis_since(started: Instant): string {
 }
 
 function bulk(base: string): string {
-  let started: Instant = clock.instant();
-  let roomy: http.HttpLimits = http.HttpLimits { ...http.limits(), body: 17 * 1048576 };
-  match (fetch.send(fetch.get(base + "/bulk").with_limits(roomy))) {
-    Ok(resp) => {
-      return resp.body_bytes().len().to_string() + " bytes " + millis_since(started) + " ms";
-    },
-    Err(e) => {
-      return "error " + e.message();
-    }
-  }
-  return "";
+  let started = clock.instant();
+  let roomy = http.HttpLimits { ...http.limits(), body: 17 * 1048576 };
+  return match (fetch.send(fetch.get(base + "/bulk").with_limits(roomy))) { Ok(resp) => f"{resp.body_bytes().len()} bytes {millis_since(started)} ms", Err(e) => "error " + e.message() };
 }
 
 function handshakes(cfg: client.Config, port: i32): string {
-  let started: Instant = clock.instant();
-  let n: i32 = 0;
-  while (n < 20) {
-    match (client.connect("localhost", port, cfg, time.duration_seconds(10 as i64))) {
+  let started = clock.instant();
+  for _ in 0..20 {
+    match (client.connect("localhost", port, cfg, time.duration_seconds(10))) {
       Ok(c) => {
         c.close();
       },
@@ -200,41 +142,28 @@ function handshakes(cfg: client.Config, port: i32): string {
         return "error " + e.message();
       }
     }
-    n = n + 1;
   }
-  return "20 in " + millis_since(started) + " ms";
+  return f"20 in {millis_since(started)} ms";
 }
 
 function main(): i32 {
-  let base: string = setting("BASE", "https://localhost:8443");
+  let base = setting("BASE", "https://localhost:8443");
   print("get: " + line(fetch.send(fetch.get(base + "/hello"))));
-  let roots: verify.Roots = verify.roots([]);
-  match (verify.roots_from_file(setting("CA", "ca.pem"))) {
-    Ok(r) => {
-      roots = r;
-    },
-    Err(e) => {
-      print("roots: " + e.message());
-      return 2;
-    }
-  }
-  let cfg: client.Config = client.config("localhost", roots).with_alpn(["http/1.1"]);
-  let port: i32 = port_of("PORT");
-  let first: Result[Outcome, tls.TlsError] = over(cfg, port);
+  let roots = match (verify.roots_from_file(setting("CA", "ca.pem"))) { Ok(r) => r, Err(e) => { print("roots: " + e.message()); return 2; } };
+  let cfg = client.config("localhost", roots).with_alpn(["http/1.1"]);
+  let port = port_of("PORT");
+  let first = over(cfg, port);
   print("socket: " + describe(first, false));
-  match (first) {
-    Ok(o) => {
-      if (o.tickets.len() == 0) {
-        print("resume: no ticket");
-      } else {
-        print("resume: " + describe(over(cfg.with_ticket(o.tickets[0]), port), true));
-      }
-    },
-    Err(_) => {
-      print("resume: not tried");
+  if let Ok(o) = first {
+    if (o.tickets.len() == 0) {
+      print("resume: no ticket");
+    } else {
+      print("resume: " + describe(over(cfg.with_ticket(o.tickets[0]), port), true));
     }
+  } else {
+    print("resume: not tried");
   }
-  let mtls: i32 = port_of("MTLS_PORT");
+  let mtls = port_of("MTLS_PORT");
   match (identity_from(setting("CLIENT_CERT", "client.pem"), setting("CLIENT_KEY", "client.key"))) {
     Ok(id) => {
       print("mtls: " + describe(over(cfg.with_identity(id), mtls), false));
@@ -243,19 +172,13 @@ function main(): i32 {
       print("mtls: " + e);
     }
   }
-  match (over(cfg, mtls)) {
-    Ok(o) => {
-      print("nocert: accepted " + o.answer);
-    },
-    Err(_) => {
-      print("nocert: refused");
-    }
+  if let Ok(o) = over(cfg, mtls) {
+    print("nocert: accepted " + o.answer);
+  } else {
+    print("nocert: refused");
   }
-  match (env("BULK")) {
-    Some(_) => {
-      print("bulk: " + bulk(base));
-    },
-    None => {}
+  if (env("BULK").is_some()) {
+    print("bulk: " + bulk(base));
   }
   print("handshakes: " + handshakes(cfg, port));
   return 0;

@@ -1,26 +1,26 @@
 import "std/test";
 
 function test_interp_returns_exit_code(fern_bin: string): test.TestOutcome {
-  let src: string = "function main(): i32 { return 7; }";
-  let r: ProcessResult = subprocess(fern_bin, ["-interp", "-"], src);
+  let src = "function main(): i32 { return 7; }";
+  let r = subprocess(fern_bin, ["-interp", "-"], src);
   return test.assert_exit(r, 7);
 }
 
 function test_interp_stdout_contains(fern_bin: string): test.TestOutcome {
-  let src: string = "function main(): i32 { print(\"from-fern-test\"); return 0; }";
-  let r: ProcessResult = subprocess(fern_bin, ["-interp", "-"], src);
+  let src = "function main(): i32 { print(\"from-fern-test\"); return 0; }";
+  let r = subprocess(fern_bin, ["-interp", "-"], src);
   return test.assert_process(r, 0, "from-fern-test");
 }
 
 function test_check_passes_clean_program(fern_bin: string): test.TestOutcome {
-  let src: string = "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(2, 3); }";
-  let r: ProcessResult = subprocess(fern_bin, ["-check", "-"], src);
+  let src = "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { return add(2, 3); }";
+  let r = subprocess(fern_bin, ["-check", "-"], src);
   return test.assert_exit(r, 0);
 }
 
 function test_check_rejects_type_error(fern_bin: string): test.TestOutcome {
-  let src: string = "function main(): i32 { return \"not an int\"; }";
-  let r: ProcessResult = subprocess(fern_bin, ["-check", "-"], src);
+  let src = "function main(): i32 { return \"not an int\"; }";
+  let r = subprocess(fern_bin, ["-check", "-"], src);
   if (r.exit_code == 0) {
     return test.fail("expected non-zero exit on type error, got 0");
   }
@@ -31,22 +31,22 @@ function test_check_rejects_type_error(fern_bin: string): test.TestOutcome {
 }
 
 function test_interp_reads_a_file(fern_bin: string, dir: string): test.TestOutcome {
-  let src_path: string = dir + "/prog.fern";
-  let src: string = "function main(): i32 { print(\"file-mode\"); return 42; }";
+  let src_path = dir + "/prog.fern";
+  let src = "function main(): i32 { print(\"file-mode\"); return 42; }";
   match (write_file(src_path, src)) {
     Ok(_) => {},
     Err(_) => {
       return test.fail("write_file failed for " + src_path);
     }
   }
-  let r: ProcessResult = subprocess(fern_bin, ["-interp", src_path], "");
+  let r = subprocess(fern_bin, ["-interp", src_path], "");
   return test.assert_process(r, 42, "file-mode");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("fern binary e2e");
+  let r = test.new("fern binary e2e");
 
-  let fern_bin: string = "";
+  let fern_bin = "";
   match (env("FERN_BIN")) {
     Some(p) => {
       fern_bin = p;
@@ -65,7 +65,7 @@ function main(): i32 {
     return r.finish();
   }
 
-  let dir: string = "";
+  let dir = "";
   match (temp_dir("fern-e2e")) {
     Ok(d) => {
       dir = d;

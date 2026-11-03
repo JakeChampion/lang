@@ -6,21 +6,21 @@ import "std/hash/sysv_sum";
 import "std/string";
 
 function __pseudo(): u8[] {
-  let b: u8[] = __alloc_u8(10003);
-  let i: i32 = 0;
+  let b = __alloc_u8(10003);
+  let i = 0;
   while (i < 10003) {
     b = b.with(i, (i * 7 + 3 & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
   return b;
 }
 
 function __thousand_a(): string {
-  let b: u8[] = __alloc_u8(1000);
-  let i: i32 = 0;
+  let b = __alloc_u8(1000);
+  let i = 0;
   while (i < 1000) {
     b = b.with(i, 97 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(b);
 }
@@ -32,7 +32,7 @@ function test_cksum_vectors(): test.TestOutcome {
   if (cksum.of("abc".as_bytes()) != 1219131554) {
     return test.fail("abc");
   }
-  let c: cksum.Cksum = cksum.new().update("abc".as_bytes());
+  let c = cksum.new().update("abc".as_bytes());
   if (c.byte_count() != 3 as u64) {
     return test.fail("len");
   }
@@ -40,8 +40,8 @@ function test_cksum_vectors(): test.TestOutcome {
 }
 
 function test_cksum_finish_is_a_read(): test.TestOutcome {
-  let c: cksum.Cksum = cksum.new().update("ab".as_bytes());
-  let mid: u32 = c.finish();
+  let c = cksum.new().update("ab".as_bytes());
+  let mid = c.finish();
   c = c.update("c".as_bytes());
   if (mid != 2072780115) {
     return test.fail("mid");
@@ -50,12 +50,12 @@ function test_cksum_finish_is_a_read(): test.TestOutcome {
 }
 
 function test_cksum_seven_byte_updates(): test.TestOutcome {
-  let msg: u8[] = __pseudo();
-  let c: cksum.Cksum = cksum.new();
-  let i: i32 = 0;
+  let msg = __pseudo();
+  let c = cksum.new();
+  let i = 0;
   while (i + 7 <= 10003) {
     c = c.update(msg[i:i + 7]);
-    i = i + 7;
+    i += 7;
   }
   c = c.update(msg[i:10003]);
   if (c.finish() != 741291487) {
@@ -68,24 +68,24 @@ function test_cksum_seven_byte_updates(): test.TestOutcome {
 }
 
 function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
-  let msg: string = string_from_bytes_unchecked(__pseudo());
+  let msg = string_from_bytes_unchecked(__pseudo());
   let cuts: i32[] = [1, 15, 16, 17, 31, 47, 63, 64, 65, 113, 191, 1009];
-  let c: cksum.Cksum = cksum.new();
-  let at: i32 = 0;
-  let k: i32 = 0;
+  let c = cksum.new();
+  let at = 0;
+  let k = 0;
   while (at < 10003) {
-    let take: i32 = cuts[k % cuts.len()];
+    let take = cuts[k % cuts.len()];
     if (at + take > 10003) {
       take = 10003 - at;
     }
     c = c.update(slice_unchecked(msg, at, at + take).as_bytes());
-    at = at + take;
-    k = k + 1;
+    at += take;
+    k += 1;
   }
   if (c.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  let viabytes: cksum.Cksum = cksum.new().update(__pseudo());
+  let viabytes = cksum.new().update(__pseudo());
   if (c.finish() != viabytes.finish()) {
     return test.fail("chunked string vs table");
   }
@@ -99,18 +99,18 @@ function test_bsd_sum(): test.TestOutcome {
   if (bsd_sum.of("abc".as_bytes()) != 16556) {
     return test.fail("abc");
   }
-  let msg: u8[] = __pseudo();
-  let s: bsd_sum.BsdSum = bsd_sum.new();
-  let i: i32 = 0;
+  let msg = __pseudo();
+  let s = bsd_sum.new();
+  let i = 0;
   while (i + 7 <= 10003) {
     s = s.update(msg[i:i + 7]);
-    i = i + 7;
+    i += 7;
   }
   s = s.update(msg[i:10003]);
   if (s.finish() != 21454) {
     return test.fail("chunked");
   }
-  let array_sum: bsd_sum.BsdSum = bsd_sum.new().update(msg);
+  let array_sum = bsd_sum.new().update(msg);
   if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array BSD kernel");
   }
@@ -130,18 +130,18 @@ function test_sysv_sum(): test.TestOutcome {
   if (sysv_sum.of("abc".as_bytes()) != 294) {
     return test.fail("abc");
   }
-  let msg: u8[] = __pseudo();
-  let s: sysv_sum.SysvSum = sysv_sum.new();
-  let i: i32 = 0;
+  let msg = __pseudo();
+  let s = sysv_sum.new();
+  let i = 0;
   while (i + 7 <= 10003) {
     s = s.update(msg[i:i + 7]);
-    i = i + 7;
+    i += 7;
   }
   s = s.update(msg[i:10003]);
   if (s.finish() != 29049) {
     return test.fail("chunked");
   }
-  let array_sum: sysv_sum.SysvSum = sysv_sum.new().update(msg);
+  let array_sum = sysv_sum.new().update(msg);
   if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array System V kernel");
   }
@@ -155,22 +155,22 @@ function test_sysv_sum(): test.TestOutcome {
 }
 
 function __chunk(msg: u8[], from: i32, n: i32): string {
-  let b: u8[] = __alloc_u8(n);
-  let k: i32 = 0;
+  let b = __alloc_u8(n);
+  let k = 0;
   while (k < n) {
     b = b.with(k, msg[from + k]);
-    k = k + 1;
+    k += 1;
   }
   return string_from_bytes_unchecked(b);
 }
 
 function test_sysv_sum_string_updates(): test.TestOutcome {
-  let msg: u8[] = __pseudo();
-  let s: sysv_sum.SysvSum = sysv_sum.new();
-  let i: i32 = 0;
+  let msg = __pseudo();
+  let s = sysv_sum.new();
+  let i = 0;
   while (i + 7 <= 10003) {
     s = s.update(__chunk(msg, i, 7).as_bytes());
-    i = i + 7;
+    i += 7;
   }
   s = s.update(__chunk(msg, i, 10003 - i).as_bytes());
   if (s.finish() != 29049) {
@@ -179,19 +179,19 @@ function test_sysv_sum_string_updates(): test.TestOutcome {
   if (s.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  let b: sysv_sum.SysvSum = sysv_sum.new().update(msg);
+  let b = sysv_sum.new().update(msg);
   return test.assert_eq(s.finish(), b.finish());
 }
 
 function test_block_counts(): test.TestOutcome {
-  let b: u8[] = __alloc_u8(1025);
-  let i: i32 = 0;
+  let b = __alloc_u8(1025);
+  let i = 0;
   while (i < 1025) {
     b = b.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
-  let r: bsd_sum.BsdSum = bsd_sum.new().update(b);
-  let s: sysv_sum.SysvSum = sysv_sum.new().update(b);
+  let r = bsd_sum.new().update(b);
+  let s = sysv_sum.new().update(b);
   if (r.blocks() != 2 as u64) {
     return test.fail("bsd 1025 -> 2");
   }
@@ -210,7 +210,7 @@ function test_xxh64(): test.TestOutcome {
     hundred = hundred.append(hundred.len() as u8);
   }
   let ins: u8[][] = ["".bytes(), "a".bytes(), "abc".bytes(), "Nobody inspects the spammish repetition".bytes(), hundred];
-  let got: string = "";
+  let got = "";
   for b in ins {
     got = got + hash.xxh64(b, 0).to_string() + "/" + hash.xxh64(b, 2654435761).to_string() + " ";
   }
@@ -218,7 +218,7 @@ function test_xxh64(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/hash checksums");
+  let r = test.new("std/hash checksums");
   r = r.it("cksum vectors", test_cksum_vectors);
   r = r.it("cksum finish is a read", test_cksum_finish_is_a_read);
   r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);

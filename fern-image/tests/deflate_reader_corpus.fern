@@ -15,12 +15,10 @@ function same(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }
@@ -47,9 +45,11 @@ function drain(input: u8[], chunk_size: i32): Result[Drained, deflate.InflateRea
 }
 
 function inspect(path: string, index: i32): i32 {
-  let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
   let eager = deflate.inflate(data, 131072);
-  let prefix = "index=" + index.to_string();
+  let prefix = f"index={index}";
   let expected_error = "";
   let expected: u8[] = [];
   let consumed = 0;
@@ -93,15 +93,12 @@ function inspect(path: string, index: i32): i32 {
   }
   if (expected_error != "") {
     let eager_error = match (eager) { Err(e) => error_name(e), _ => "unexpected" };
-    print(prefix + " status=error error=" + expected_error + " eager_error=" + eager_error);
+    print(f"{prefix} status=error error={expected_error} eager_error={eager_error}");
   } else {
-    match (write_file_bytes(path + ".raw", expected)) {
-      Ok(_) => {},
-      Err(_) => {
-        return 9;
-      }
+    if let Err(_) = write_file_bytes(path + ".raw", expected) {
+      return 9;
     }
-    print(prefix + " status=ok bytes=" + expected.len().to_string() + " consumed=" + consumed.to_string());
+    print(f"{prefix} status=ok bytes={expected.len()} consumed={consumed}");
   }
   return 0;
 }
@@ -111,13 +108,11 @@ function main(): i32 {
   if (av.len() < 2 || av.len() > 9) {
     return 1;
   }
-  let i = 1;
-  while (i < av.len()) {
+  for i in 1..av.len() {
     let code = inspect(av[i], i - 1);
     if (code != 0) {
       return code;
     }
-    i = i + 1;
   }
   return 0;
 }

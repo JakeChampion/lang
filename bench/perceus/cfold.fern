@@ -8,7 +8,7 @@ pub function mk_expr(n: i32, v: i64): Expr {
     }
     return Val(v);
   }
-  let previous: i64 = v - 1i64;
+  let previous = v - 1i64;
   if (previous < 0i64) {
     previous = 0i64;
   }
@@ -16,46 +16,22 @@ pub function mk_expr(n: i32, v: i64): Expr {
 }
 
 function append_add(e0: Expr, e3: Expr): Expr {
-  match (e0) {
-    Add(e1, e2) => {
-      return Add(e1, append_add(e2, e3));
-    },
-    _ => {
-      return Add(e0, e3);
-    }
-  }
+  return match (e0) { Add(e1, e2) => Add(e1, append_add(e2, e3)), _ => Add(e0, e3) };
 }
 
 function append_mul(e0: Expr, e3: Expr): Expr {
-  match (e0) {
-    Mul(e1, e2) => {
-      return Mul(e1, append_mul(e2, e3));
-    },
-    _ => {
-      return Mul(e0, e3);
-    }
-  }
+  return match (e0) { Mul(e1, e2) => Mul(e1, append_mul(e2, e3)), _ => Mul(e0, e3) };
 }
 
 pub function reassoc(e: Expr): Expr {
-  match (e) {
-    Add(e1, e2) => {
-      return append_add(reassoc(e1), reassoc(e2));
-    },
-    Mul(e1, e2) => {
-      return append_mul(reassoc(e1), reassoc(e2));
-    },
-    _ => {
-      return e;
-    }
-  }
+  return match (e) { Add(e1, e2) => append_add(reassoc(e1), reassoc(e2)), Mul(e1, e2) => append_mul(reassoc(e1), reassoc(e2)), _ => e };
 }
 
 pub function cfold(e: Expr): Expr {
   match (e) {
     Add(e1, e2) => {
-      let left: Expr = cfold(e1);
-      let right: Expr = cfold(e2);
+      let left = cfold(e1);
+      let right = cfold(e2);
       match (left) {
         Val(a) => {
           match (right) {
@@ -79,8 +55,8 @@ pub function cfold(e: Expr): Expr {
       }
     },
     Mul(e1, e2) => {
-      let left: Expr = cfold(e1);
-      let right: Expr = cfold(e2);
+      let left = cfold(e1);
+      let right = cfold(e2);
       match (left) {
         Val(a) => {
           match (right) {
@@ -110,18 +86,5 @@ pub function cfold(e: Expr): Expr {
 }
 
 pub function eval(e: Expr): i64 {
-  match (e) {
-    Var(_) => {
-      return 0i64;
-    },
-    Val(v) => {
-      return v;
-    },
-    Add(l, r) => {
-      return eval(l) + eval(r);
-    },
-    Mul(l, r) => {
-      return eval(l) * eval(r);
-    }
-  }
+  return match (e) { Var(_) => 0i64, Val(v) => v, Add(l, r) => eval(l) + eval(r), Mul(l, r) => eval(l) * eval(r) };
 }

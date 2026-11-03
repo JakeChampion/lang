@@ -9,16 +9,16 @@ function alphabet(): string[] {
 }
 
 function build(input: u8[]): string {
-  let alpha: string[] = alphabet();
-  let out: string = "";
-  let n: i32 = input.len();
+  let alpha = alphabet();
+  let out = "";
+  let n = input.len();
   if (n > 64) {
     n = 64;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    out = out + alpha[input[i] as i32 % alpha.len()];
-    i = i + 1;
+    out += alpha[input[i] as i32 % alpha.len()];
+    i += 1;
   }
   return out;
 }
@@ -31,12 +31,12 @@ function ok(name: string, produced: string): string {
 }
 
 function ok_all(name: string, produced: string[]): string {
-  let i: i32 = 0;
+  let i = 0;
   for part in produced {
     if (!utf8.is_valid(part)) {
       return name + " produced an invalid UTF-8 element at index " + i.to_string();
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -51,8 +51,8 @@ function first_fail(results: string[]): test.TestOutcome {
 }
 
 function check_byte_counts(input: u8[]): test.TestOutcome {
-  let s: string = build(input);
-  let n: i32 = 0;
+  let s = build(input);
+  let n = 0;
   if (s.len() > 0) {
     n = input.len() * 7 % (s.len() + 1);
   }
@@ -71,9 +71,9 @@ function check_byte_counts(input: u8[]): test.TestOutcome {
 }
 
 function check_slice_expression(input: u8[]): test.TestOutcome {
-  let s: string = build(input);
-  let lo: i32 = 0;
-  let hi: i32 = 0;
+  let s = build(input);
+  let lo = 0;
+  let hi = 0;
   if (s.len() > 0) {
     lo = input.len() * 3 % (s.len() + 1);
     hi = input.len() * 5 % (s.len() + 1);
@@ -92,8 +92,8 @@ function check_slice_expression(input: u8[]): test.TestOutcome {
 }
 
 function check_width_ops(input: u8[]): test.TestOutcome {
-  let s: string = build(input);
-  let w: i32 = input.len() * 3 % 24;
+  let s = build(input);
+  let w = input.len() * 3 % 24;
   return first_fail([
     ok("pad_start", s.pad_start(w, 'é')),
     ok("pad_end", s.pad_end(w, '中')),
@@ -104,7 +104,7 @@ function check_width_ops(input: u8[]): test.TestOutcome {
 }
 
 function check_case_and_style(input: u8[]): test.TestOutcome {
-  let s: string = build(input);
+  let s = build(input);
   return first_fail([
     ok("to_upper", s.to_upper()),
     ok("to_lower", s.to_lower()),
@@ -129,7 +129,7 @@ function chars_as_strings(s: string): string[] {
 }
 
 function check_split_and_trim(input: u8[]): test.TestOutcome {
-  let s: string = build(input);
+  let s = build(input);
   return first_fail([
     ok_all("split", s.split("é")),
     ok_all("lines", s.lines()),
@@ -145,7 +145,7 @@ function check_split_and_trim(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("utf8 validity is preserved by std/string");
+  let r = test.new("utf8 validity is preserved by std/string");
 
   let seeds: u8[][] = [
     "".bytes(),

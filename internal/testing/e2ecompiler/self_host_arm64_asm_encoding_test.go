@@ -505,6 +505,19 @@ _start:
     ld4 {v24.4s-v27.4s}, [x12]
     tbl v24.16b, {v16.16b-v19.16b}, v3.16b
     tbl v24.8b, {v16.16b-v17.16b}, v3.8b
+    tbl v2.16b, {v0.16b-v1.16b}, v20.16b
+    tbl v27.16b, {v16.16b-v17.16b}, v7.16b
+    ld1 {v0.16b-v1.16b}, [x13]
+    ld1 {v24.16b-v25.16b}, [x15]
+    ld1 {v20.16b-v23.16b}, [x15], #64
+    st1 {v26.16b-v27.16b}, [x12], #32
+    ushl v2.8h, v2.8h, v24.8h
+    ushl v5.8h, v5.8h, v24.8h
+    uzp1 v6.16b, v2.16b, v3.16b
+    uzp1 v7.16b, v4.16b, v5.16b
+    orr x5, x8, x5, lsl #8
+    ubfx x8, x5, #35, #5
+    ubfx x8, x5, #0, #5
 Lend:
     ret
 `

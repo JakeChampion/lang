@@ -4,7 +4,7 @@ import "std/log";
 
 function main(): i32 {
   log.warn("about to index past the end");
-  let xs: i32[] = [1, 2, 3];
-  let i: i32 = xs.len() + 2;
+  let xs = [1, 2, 3];
+  let i = xs.len() + 2;
   return xs[i];
 }

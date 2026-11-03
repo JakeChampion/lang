@@ -51,11 +51,11 @@ function test_log2_floor(): test.TestOutcome {
   if ((1 as i64).log2_floor() != 0) {
     return test.fail("1 -> 0");
   }
-  return test.assert_true((0 as i64).log2_floor() == 0 - 1);
+  return test.assert_true((0 as i64).log2_floor() == -1);
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/i64 intdiv");
+  let r = test.new("std/i64 intdiv");
   r = r.it("is_multiple_of", test_is_multiple_of);
   r = r.it("next_power_of_2", test_next_power_of_2);
   r = r.it("next_power_of_2 cap", test_next_power_of_2_cap);

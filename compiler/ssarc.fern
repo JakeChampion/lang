@@ -5753,6 +5753,9 @@ function builder_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lower
   if (ins.str == "buf_push_base64") {
     return Lowered { found: true, r: emit(r, ir.op_buf_push_base64()) };
   }
+  if (ins.str == "buf_push_base32") {
+    return Lowered { found: true, r: emit(r, ir.op_buf_push_base32()) };
+  }
   if (ins.str == "buf_len") {
     return Lowered { found: true, r: emit(r, ir.op_buf_len()) };
   }

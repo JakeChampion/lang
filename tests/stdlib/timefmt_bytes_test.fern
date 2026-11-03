@@ -6,35 +6,35 @@ function equal(a: u8[], b: u8[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function exercise(): i32 {
-  let z: tz.Zone = tz.utc_zone();
+  let z = tz.utc_zone();
   let source: u8[] = [255 as u8, 37 as u8, 89 as u8, 226 as u8, 130 as u8];
-  let raw: timefmt.Format = timefmt.compile_bytes(source);
+  let raw = timefmt.compile_bytes(source);
   source = source.with(0, 65 as u8);
   let want: u8[] = [255 as u8, 49 as u8, 57 as u8, 55 as u8, 48 as u8, 226 as u8, 130 as u8];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8) {
     if (!equal(timefmt.format_bytes(raw, z, 0, 0), want)) {
       return 1;
     }
-    let text: string = timefmt.format(raw, z, 0, 0);
+    let text = timefmt.format(raw, z, 0, 0);
     if (text != "�1970�" || !utf8.is_valid(text)) {
       return 2;
     }
-    i = i + 1;
+    i += 1;
   }
-  let unicode: timefmt.Format = timefmt.compile("é€🙂%Y|%5é|%^8é|%:é");
-  let expected: string = "é€🙂1970|  %5é|    %^8é|%:é";
+  let unicode = timefmt.compile("é€🙂%Y|%5é|%^8é|%:é");
+  let expected = "é€🙂1970|  %5é|    %^8é|%:é";
   if (timefmt.format(unicode, z, 0, 0) != expected) {
     return 3;
   }
@@ -50,9 +50,9 @@ function exercise(): i32 {
       all = all.append(i as u8);
     }
     bytes = bytes.append(i as u8);
-    i = i + 1;
+    i += 1;
   }
-  let compiled: timefmt.Format = timefmt.compile_bytes(all);
+  let compiled = timefmt.compile_bytes(all);
   if (!equal(timefmt.format_bytes(compiled, z, 0, 0), bytes)) {
     return 5;
   }
@@ -63,13 +63,13 @@ function exercise(): i32 {
 }
 
 function main(): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8) {
-    let result: i32 = exercise();
+    let result = exercise();
     if (result != 0) {
       return result;
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }

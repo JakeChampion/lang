@@ -16,7 +16,7 @@ function image(width: i32, height: i32, padding: i32, format: pixels.Format): pi
   let layout = pixels.Layout { width: width, height: height, stride: stride, format: format, bytes: stride * height };
   let bytes = __alloc_u8(layout.bytes);
   for i in 0..bytes.len() {
-    bytes = bytes.with(i, 251 as u8);
+    bytes = bytes.with(i, 251);
   }
   for y in 0..height {
     for x in 0..width {
@@ -33,7 +33,9 @@ function mappings(): test.TestOutcome {
   for format in [pixels.RGB8, pixels.RGBA8] {
     let source = image(3, 2, 5, format);
     for i in 0..8 {
-      let output = match (orientation.apply(source, directions()[i], orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("orientation mapping"); } };
+      let Ok(output) = orientation.apply(source, directions()[i], orientation.default_limits(), never) else {
+        return test.fail("orientation mapping");
+      };
       let width = if (i < 4) { 3 } else { 2 };
       let height = if (i < 4) { 2 } else { 3 };
       if (output.layout.width != width || output.layout.height != height || output.layout.stride != width * pixels.channels(format) || output.data.len() != 6 * pixels.channels(format)) {
@@ -57,9 +59,13 @@ function shapes(): test.TestOutcome {
       for height in [1, 3, 8] {
         let source = image(width, height, 3, format);
         for value in directions() {
-          let output = match (orientation.apply(source, value, orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("degenerate dimensions"); } };
+          let Ok(output) = orientation.apply(source, value, orientation.default_limits(), never) else {
+            return test.fail("degenerate dimensions");
+          };
           let undo = match (value) { exif.RightTop => exif.LeftBottom, exif.LeftBottom => exif.RightTop, _ => value };
-          let restored = match (orientation.apply(output, undo, orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("inverse mapping"); } };
+          let Ok(restored) = orientation.apply(output, undo, orientation.default_limits(), never) else {
+            return test.fail("inverse mapping");
+          };
           if (restored.layout.width != width || restored.layout.height != height) {
             return test.fail("inverse dimensions");
           }
@@ -122,7 +128,9 @@ function invalid(): test.TestOutcome {
     return test.fail("invalid source callback");
   }
   let limits = orientation.OrientLimits { output: pixels.Limits { max_pixels: 6, max_bytes: 24 }, max_planned_bytes: 58 };
-  let plan = match (orientation.inspect(source, exif.RightTop, limits)) { Ok(v) => v, Err(_) => { return test.fail("exact plan"); } };
+  let Ok(plan) = orientation.inspect(source, exif.RightTop, limits) else {
+    return test.fail("exact plan");
+  };
   return test.assert_true(plan.input_bytes == 34 && plan.output_bytes == 24 && plan.planned_bytes == 58 && plan.layout.width == 2 && plan.layout.height == 3);
 }
 
@@ -143,7 +151,7 @@ function cancellation(): test.TestOutcome {
     if (count.get() != expected) {
       return test.fail("declared cancellation schedule");
     }
-    for stop in 1..count.get() + 1 {
+    for stop in 1..=count.get() {
       let current = cell_new(0);
       match (orientation.apply(source, value, orientation.default_limits(), (): boolean => {
         current.set(current.get() + 1);
@@ -169,18 +177,20 @@ function ownership(): test.TestOutcome {
   let output = match (orientation.apply(source.get(), exif.RightTop, orientation.default_limits(), (): boolean => {
     polls.set(polls.get() + 1);
     let current = source.get();
-    source.set(pixels.Image { layout: current.layout, data: current.data.with(12, 255 as u8) });
+    source.set(pixels.Image { layout: current.layout, data: current.data.with(12, 255) });
     return false;
   })) { Ok(v) => v, Err(_) => { return test.fail("alias callback"); } };
-  if (output.data[0] != saved.data[12] || source.get().data[12] != 255 as u8 || saved.data[12] == 255 as u8) {
+  if (output.data[0] != saved.data[12] || source.get().data[12] != 255 || saved.data[12] == 255) {
     return test.fail("borrowed source isolation");
   }
   let retained = output;
-  output = pixels.Image { layout: output.layout, data: output.data.with(0, 255 as u8) };
-  if (retained.data[0] != saved.data[12] || output.data[0] != 255 as u8) {
+  output = pixels.Image { layout: output.layout, data: output.data.with(0, 255) };
+  if (retained.data[0] != saved.data[12] || output.data[0] != 255) {
     return test.fail("owned output isolation");
   }
-  let fresh = match (orientation.apply(saved, exif.RightTop, orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fresh operation"); } };
+  let Ok(fresh) = orientation.apply(saved, exif.RightTop, orientation.default_limits(), never) else {
+    return test.fail("fresh operation");
+  };
   return test.assert_true(fresh.data[0] == retained.data[0] && polls.get() == 6);
 }
 

@@ -10,8 +10,10 @@ function never_cancel(): boolean {
 
 function configuration(): i32 {
   for name in ["memory.max", "memory.swap.max", "cpu.max", "pids.max", "memory.peak", "memory.events"] {
-    let value = match (read_file("/sys/fs/cgroup/" + name)) { Ok(v) => v, Err(_) => { return 2; } };
-    print("cgroup " + name + "\n" + value);
+    let Ok(value) = read_file("/sys/fs/cgroup/" + name) else {
+      return 2;
+    };
+    print(f"cgroup {name}\n{value}");
   }
   return 0;
 }
@@ -20,63 +22,67 @@ function retained(count: i32): Result[pixels.Image[], i32] {
   if (count == 0) {
     return Ok([]);
   }
-  let image = match (pixels.create(512, 512, 2048, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return Err(3); } };
+  let Ok(image) = pixels.create(512, 512, 2048, pixels.RGBA8, pixels.default_limits()) else {
+    return Err(3);
+  };
   let kept: pixels.Image[] = [];
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     image = match (pixels.write_pixel(image, i, i, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 })) { Ok(v) => v, Err(_) => { return Err(4); } };
     kept = kept.append(image);
-    i = i + 1;
   }
   return Ok(kept);
 }
 
 function valid_image(): i32 {
-  let image = match (pixels.create(16, 16, 64, pixels.RGBA8, pixels.default_limits())) { Ok(v) => v, Err(_) => { return 5; } };
+  let Ok(image) = pixels.create(16, 16, 64, pixels.RGBA8, pixels.default_limits()) else {
+    return 5;
+  };
   image = match (pixels.write_pixel(image, 15, 15, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 })) { Ok(v) => v, Err(_) => { return 6; } };
-  let encoded = match (png.encode(image, 4096)) { Ok(v) => v, Err(_) => { return 7; } };
-  let decoded = match (png.decode(encoded, pixels.default_limits())) { Ok(v) => v, Err(_) => { return 8; } };
-  let pixel = match (pixels.read_pixel(decoded, 15, 15)) { Ok(v) => v, Err(_) => { return 9; } };
-  if (decoded.data.len() != image.data.len() || pixel.r != 17 as u8 || pixel.g != 23 as u8 || pixel.b != 99 as u8 || pixel.a != 128 as u8) {
+  let Ok(encoded) = png.encode(image, 4096) else {
+    return 7;
+  };
+  let Ok(decoded) = png.decode(encoded, pixels.default_limits()) else {
+    return 8;
+  };
+  let Ok(pixel) = pixels.read_pixel(decoded, 15, 15) else {
+    return 9;
+  };
+  if (decoded.data.len() != image.data.len() || pixel.r != 17 || pixel.g != 23 || pixel.b != 99 || pixel.a != 128) {
     return 10;
   }
-  let i = 0;
-  while (i < image.data.len()) {
+  for i in 0..image.data.len() {
     if (decoded.data[i] != image.data[i]) {
       return 10;
     }
-    i = i + 1;
   }
   return 0;
 }
 
 function work(mode: string): i32 {
-  let count = 0;
-  if (mode == "oom") {
-    count = 128;
-  }
-  if (mode == "pressure-busy" || mode == "pressure-cancel") {
-    count = 48;
-  }
+  let count = match (mode) { "oom" => 128, "pressure-busy" | "pressure-cancel" => 48, _ => 0 };
   let kept = match (retained(count)) { Ok(v) => v, Err(code) => { return code; } };
   if (mode == "oom") {
     return 11;
   }
   let limits = pipeline.default_limits();
-  let graph = match (pipeline.solid(1024, 10000, pixels.RGBA8, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 }, limits)) { Ok(v) => v, Err(_) => { return 12; } };
+  let Ok(graph) = pipeline.solid(1024, 10000, pixels.RGBA8, pixels.Pixel { r: 17, g: 23, b: 99, a: 128 }, limits) else {
+    return 12;
+  };
   graph = match (pipeline.bilinear(graph, 512, 20000, limits)) { Ok(v) => v, Err(_) => { return 13; } };
   if (configuration() != 0) {
     return 14;
   }
-  print("ready mode=" + mode);
+  print(f"ready mode={mode}");
   let i = 0;
-  while (true) {
+  loop {
     if (kept.len() != count) {
       return 15;
     }
     for image in kept {
-      let pixel = match (pixels.read_pixel(image, 0, 0)) { Ok(v) => v, Err(_) => { return 16; } };
-      if (pixel.r != 17 as u8 || image.data.len() != 1048576) {
+      let Ok(pixel) = pixels.read_pixel(image, 0, 0) else {
+        return 16;
+      };
+      if (pixel.r != 17 || image.data.len() != 1048576) {
         return 17;
       }
     }
@@ -98,14 +104,18 @@ function work(mode: string): i32 {
           return 18;
         }
       }
-      if (kept.len() != 48 || kept[47].data.len() != 1048576 || kept[47].data[0] != 17 as u8) {
+      if (kept.len() != 48 || kept[47].data.len() != 1048576 || kept[47].data[0] != 17) {
         return 18;
       }
       return 0;
     }
-    let tile = match (regions.render_cached_tile(graph, region, limits, 12288, never_cancel)) { Ok(v) => v, Err(_) => { return 19; } };
-    let pixel = match (pixels.read_pixel(tile.image, 63, 15)) { Ok(v) => v, Err(_) => { return 20; } };
-    if (pixel.r != 17 as u8 || pixel.g != 23 as u8 || pixel.b != 99 as u8 || pixel.a != 128 as u8 || tile.stats.rows != 16) {
+    let Ok(tile) = regions.render_cached_tile(graph, region, limits, 12288, never_cancel) else {
+      return 19;
+    };
+    let Ok(pixel) = pixels.read_pixel(tile.image, 63, 15) else {
+      return 20;
+    };
+    if (pixel.r != 17 || pixel.g != 23 || pixel.b != 99 || pixel.a != 128 || tile.stats.rows != 16) {
       return 21;
     }
     if (mode == "valid") {
@@ -113,7 +123,6 @@ function work(mode: string): i32 {
     }
     i = (i + 1) % 1000;
   }
-  return 22;
 }
 
 function main(): i32 {
@@ -121,8 +130,12 @@ function main(): i32 {
   if (av.len() != 2 || av[1] != "valid" && av[1] != "oom" && av[1] != "busy" && av[1] != "pressure-busy" && av[1] != "pressure-cancel") {
     return 1;
   }
-  let maximum = match (read_file("/sys/fs/cgroup/memory.max")) { Ok(v) => v, Err(_) => { return 24; } };
-  let swap = match (read_file("/sys/fs/cgroup/memory.swap.max")) { Ok(v) => v, Err(_) => { return 24; } };
+  let Ok(maximum) = read_file("/sys/fs/cgroup/memory.max") else {
+    return 24;
+  };
+  let Ok(swap) = read_file("/sys/fs/cgroup/memory.swap.max") else {
+    return 24;
+  };
   if (maximum != "67108864\n" || swap != "0\n") {
     return 24;
   }
@@ -133,6 +146,6 @@ function main(): i32 {
   if (configuration() != 0) {
     return 23;
   }
-  print("ok mode=" + av[1]);
+  print(f"ok mode={av[1]}");
   return 0;
 }

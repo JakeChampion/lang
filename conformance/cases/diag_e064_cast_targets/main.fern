@@ -1,0 +1,8 @@
+function main(): i32 {
+  let a = 5 as Wibble;
+  let b = 5 as? i8;
+  let c = (0 as usize) as Missing[];
+  let d = 5 as? Option[Absent];
+  let f = (() => { let value = 5 as Hidden; return 0; });
+  return 0;
+}

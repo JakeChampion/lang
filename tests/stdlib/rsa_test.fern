@@ -122,11 +122,11 @@ function test_pss_2049_sha512(): test.TestOutcome {
 }
 
 function test_refusals(): test.TestOutcome {
-  let other: u8[] = "fern rsa verification!".bytes();
+  let other = "fern rsa verification!".bytes();
   if (pkcs1(k2048_n(), sha2.Sha256, other, k2048_pkcs1_sha256()) || pss(k2048_n(), sha2.Sha256, other, k2048_pss_sha256())) {
     return test.fail("a signature over another message verified");
   }
-  let flipped: u8[] = __codec_bytes(hex.decode(k2048_pss_sha256()));
+  let flipped = __codec_bytes(hex.decode(k2048_pss_sha256()));
   flipped = flipped.with(100, flipped[100] ^ 1 as u8);
   if (pss(k2048_n(), sha2.Sha256, message(), hex.encode(flipped))) {
     return test.fail("a flipped bit verified");
@@ -166,7 +166,7 @@ function test_bad_keys(): test.TestOutcome {
       }
     }
   }
-  let bad_exponent: string = "rsa: the exponent must be odd, at least 3 and at most 64 bits";
+  let bad_exponent = "rsa: the exponent must be odd, at least 3 and at most 64 bits";
   if (key_refusal(k2048_n(), "010000") != bad_exponent) {
     return test.fail("an even exponent was accepted");
   }
@@ -176,17 +176,17 @@ function test_bad_keys(): test.TestOutcome {
   if (key_refusal(k2048_n(), "010000000000000001") != bad_exponent) {
     return test.fail("a 65-bit exponent was accepted");
   }
-  let huge: string = "c3";
-  let i: i32 = 0;
+  let huge = "c3";
+  let i = 0;
   while (i < 2049) {
-    huge = huge + "00";
-    i = i + 1;
+    huge += "00";
+    i += 1;
   }
   return test.assert_eq(key_refusal(huge + "01", "010001"), "rsa: the modulus is 16408 bits, want at most 16384");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto/rsa");
+  let r = test.new("std/crypto/rsa");
   r = r.it("pkcs1 2048-bit sha256", test_pkcs1_2048_sha256);
   r = r.it("pkcs1 2048-bit sha384", test_pkcs1_2048_sha384);
   r = r.it("pkcs1 2048-bit sha512", test_pkcs1_2048_sha512);

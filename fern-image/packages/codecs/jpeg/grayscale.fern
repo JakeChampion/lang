@@ -23,8 +23,12 @@ function write_block(own image: pixels.Image, block: entropy.CoefficientBlock, v
   if (values.len() != 64 || block.x < 0 || block.y < 0) {
     return Err(DecodeStorage(pixels.Storage));
   }
-  let left = match (block.x *? 8) { Some(v) => v, None => { return Err(DecodeStorage(pixels.Overflow)); } };
-  let top = match (block.y *? 8) { Some(v) => v, None => { return Err(DecodeStorage(pixels.Overflow)); } };
+  let Some(left) = block.x *? 8 else {
+    return Err(DecodeStorage(pixels.Overflow));
+  };
+  let Some(top) = block.y *? 8 else {
+    return Err(DecodeStorage(pixels.Overflow));
+  };
   if (left >= image.layout.width || top >= image.layout.height) {
     return Err(DecodeStorage(pixels.Bounds));
   }
@@ -53,7 +57,10 @@ pub function decode(input: [u8], limits: entropy.BlockLimits, cancelled: () => b
     return Err(DecodeUnsupported);
   }
   let component = inspection.header.components[0];
-  let quantizers = match (inspection.header.quantization[component.quant_table]) { Some(t) => t.values, None => { return Err(DecodeEntropy(entropy.EntropyHeader(header.Table))); } };
+  let Some(table) = inspection.header.quantization[component.quant_table] else {
+    return Err(DecodeEntropy(entropy.EntropyHeader(header.Table)));
+  };
+  let quantizers = table.values;
   if (cancelled()) {
     return Err(DecodeCancelled);
   }
@@ -67,7 +74,9 @@ pub function decode(input: [u8], limits: entropy.BlockLimits, cancelled: () => b
     if (block.component != component.id) {
       return Err(DecodeStorage(pixels.Storage));
     }
-    let frame = match (slot.get()) { Some(v) => v, None => { return Err(DecodeStorage(pixels.Storage)); } };
+    let Some(frame) = slot.get() else {
+      return Err(DecodeStorage(pixels.Storage));
+    };
     slot.set(None);
     let values = match (idct.reconstruct(block.values, quantizers, cancelled)) { Ok(v) => v, Err(e) => { return Err(transform_error(e)); } };
     let next = write_block(pixels.Image { layout: frame.layout, data: frame.data }, block, values, cancelled)?;

@@ -38,7 +38,7 @@ function test_vector_2(): test.TestOutcome {
 }
 
 function test_iterated_once(): test.TestOutcome {
-  let nine: u8[] = __codec_bytes(hex.decode("0900000000000000000000000000000000000000000000000000000000000000"));
+  let nine = __codec_bytes(hex.decode("0900000000000000000000000000000000000000000000000000000000000000"));
   return test.assert_eq(shown(x25519.x25519(nine, nine)), "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079");
 }
 
@@ -50,7 +50,7 @@ function test_public_keys(): test.TestOutcome {
 }
 
 function test_exchange(): test.TestOutcome {
-  let shared: string = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
+  let shared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
   if (shown(x25519.x25519(alice(), __codec_bytes(hex.decode("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")))) != shared) {
     return test.fail("alice's side");
   }
@@ -65,7 +65,7 @@ function test_non_canonical(): test.TestOutcome {
 }
 
 function test_low_order(): test.TestOutcome {
-  let refused: string = "x25519: the peer key is of low order";
+  let refused = "x25519: the peer key is of low order";
   if (shown(x25519.x25519(alice(), __codec_bytes(hex.decode("0000000000000000000000000000000000000000000000000000000000000000")))) != refused) {
     return test.fail("u = 0 was not refused");
   }
@@ -80,7 +80,7 @@ function test_lengths(): test.TestOutcome {
 }
 
 function test_public_key_matches_ladder(): test.TestOutcome {
-  let nine: u8[] = __codec_bytes(hex.decode("0900000000000000000000000000000000000000000000000000000000000000"));
+  let nine = __codec_bytes(hex.decode("0900000000000000000000000000000000000000000000000000000000000000"));
   let scalars: string[] = [
     "0000000000000000000000000000000000000000000000000000000000000000",
     "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
@@ -89,7 +89,7 @@ function test_public_key_matches_ladder(): test.TestOutcome {
     "0123456789abcdeffedcba98765432100f1e2d3c4b5a69788796a5b4c3d2e1f0",
   ];
   for h in scalars {
-    let k: u8[] = __codec_bytes(hex.decode(h));
+    let k = __codec_bytes(hex.decode(h));
     match (x25519.public_key(k)) {
       Ok(pk) => {
         match (x25519.x25519(k, nine)) {
@@ -112,7 +112,7 @@ function test_public_key_matches_ladder(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto/x25519");
+  let r = test.new("std/crypto/x25519");
   r = r.it("RFC 7748 5.2 vector 1", test_vector_1);
   r = r.it("RFC 7748 5.2 vector 2", test_vector_2);
   r = r.it("RFC 7748 5.2 iterated once", test_iterated_once);

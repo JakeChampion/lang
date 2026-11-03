@@ -2709,6 +2709,7 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
 	}
+	thenOpen := p.peek().Pos
 	thenE, err := p.parseBranchBody()
 	if err != nil {
 		return nil, err
@@ -2721,13 +2722,14 @@ func (p *parser) parseIfExpr() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE, ElseChained: true}, nil
+		return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE, ElseChained: true, ThenOpen: thenOpen}, nil
 	}
+	elseOpen := p.peek().Pos
 	elseE, err := p.parseBranchBody()
 	if err != nil {
 		return nil, err
 	}
-	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE}, nil
+	return &ast.IfExpr{P: kw.Pos, Cond: cond, Then: thenE, Else: elseE, ThenOpen: thenOpen, ElseOpen: elseOpen}, nil
 }
 
 // parseIfLetExpr uses the shared pattern arms and requires a value on each path.
@@ -2747,6 +2749,7 @@ func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	thenOpen := p.peek().Pos
 	then, err := p.parseBranchBody()
 	if err != nil {
 		return nil, err
@@ -2755,6 +2758,7 @@ func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
 		return nil, err
 	}
 	var els ast.Expr
+	elseOpen := p.peek().Pos
 	chained := p.match(lexer.Keyword, "if")
 	if chained {
 		els, err = p.parseIfExpr()
@@ -2774,7 +2778,7 @@ func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
 	}
 	arms := flatExprArms(raw)
 	arms = append(arms, &ast.MatchExprArm{P: pos, IsWildcard: true, Body: els})
-	return &ast.MatchExpr{P: pos, Tag: src, Arms: arms, Origin: ast.OriginIfLet, ElseChained: chained}, nil
+	return &ast.MatchExpr{P: pos, Tag: src, Arms: arms, Origin: ast.OriginIfLet, ElseChained: chained, ThenOpen: thenOpen, ElseOpen: elseOpen}, nil
 }
 
 func (p *parser) parseBranchBody() (ast.Expr, error) {
@@ -3979,10 +3983,11 @@ func (p *parser) parseMatchExpr() (ast.Expr, error) {
 	if _, err := p.expect(lexer.Punct, ")"); err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(lexer.Punct, "{"); err != nil {
+	open, err := p.expect(lexer.Punct, "{")
+	if err != nil {
 		return nil, err
 	}
-	m := &ast.MatchExpr{P: kw.Pos, Tag: tag}
+	m := &ast.MatchExpr{P: kw.Pos, Tag: tag, ArmsOpen: open.Pos}
 	var raw []exprRawArm
 	for !p.match(lexer.Punct, "}") {
 		armRaw, err := p.parseExprRawArms()

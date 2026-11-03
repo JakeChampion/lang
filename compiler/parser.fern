@@ -596,7 +596,7 @@ pub function no_match_sugar(): ast.MatchSugar {
   let no_struct: ast.StructArm[] = [];
   let no_lit: ast.LitArm[] = [];
   let no_arms: ast.MatchArm[] = [];
-  return ast.MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, arms: no_arms, line: 0, col: 0, origin: "", else_chained: false };
+  return ast.MatchSugar { scrut: e_unknown(""), tup: no_tup, strct: no_struct, lits: no_lit, arms: no_arms, line: 0, col: 0, origin: "", else_chained: false, arms_open: 0 };
 }
 
 function s_if_match(body: ast.Stmt[], sugar: ast.MatchSugar): ast.Stmt {
@@ -679,16 +679,16 @@ function s_assign_at(target: string, value: ast.Expr, line: i32, col: i32, targe
 
 function s_match(scrutinee: ast.Expr, arms: ast.MatchArm[]): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "", sugar: no_sugar, else_chained: false };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: 0, col: 0, origin: "", sugar: no_sugar, else_chained: false, arms_open: 0 };
 }
 
 function s_match_at(scrutinee: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: no_sugar, else_chained: false };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: no_sugar, else_chained: false, arms_open: 0 };
 }
 
 function s_match_sugared(scrutinee: ast.Expr, arms: ast.MatchArm[], sugar: ast.MatchArm[], line: i32, col: i32): ast.Stmt {
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: sugar, else_chained: false };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: "", sugar: sugar, else_chained: false, arms_open: 0 };
 }
 
 function array_builder_elem(t: string): string {
@@ -928,11 +928,11 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
 
 function s_match_origin(scrutinee: ast.Expr, arms: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
   let no_sugar: ast.MatchArm[] = [];
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar, else_chained: false };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: no_sugar, else_chained: false, arms_open: 0 };
 }
 
 function s_match_origin_sugared(scrutinee: ast.Expr, arms: ast.MatchArm[], sugar: ast.MatchArm[], line: i32, col: i32, origin: string): ast.Stmt {
-  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: sugar, else_chained: false };
+  return ast.StmtMatch { scrutinee: scrutinee, arms: arms, line: line, col: col, origin: origin, sugar: sugar, else_chained: false, arms_open: 0 };
 }
 
 function p_variant(type_name: string, binding: string): ast.Pattern {
@@ -3923,7 +3923,7 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
     p = er_p;
     if (p.peek_punct() == ";") {
       p = p.advance();
-      leading = leading.append(s_expr(er_expr));
+      leading = leading.append(with_stmt_line(s_expr(er_expr), before.peek_line()));
       continue;
     }
     if (p.peek_punct() != "}") {
@@ -4120,7 +4120,25 @@ function parse_match_expr(p: Par): IfChain {
   let mkline: i32 = p.peek_line();
   let mkcol: i32 = p.peek_col();
   let (sr_expr, sr_p) = parse_paren_head(p.advance());
-  p = sr_p.expect("{");
+  let mc: IfChain = parse_match_expr_arms(sr_p.expect("{"), sr_expr, mkline, mkcol);
+  return IfChain { ...mc, stmt: with_arms_open(mc.stmt, sr_p.peek_line()) };
+}
+
+function with_arms_open(st: ast.Stmt, line: i32): ast.Stmt {
+  match (st) {
+    ast.StmtIf(i) => {
+      return ast.StmtIf { ...i, sugar: ast.MatchSugar { ...i.sugar, arms_open: line } };
+    },
+    ast.StmtMatch(m) => {
+      return ast.StmtMatch { ...m, arms_open: line };
+    },
+    _ => {
+      return st;
+    }
+  }
+}
+
+function parse_match_expr_arms(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol: i32): IfChain {
   let rt: string = "i32";
   if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
     let etarms: ast.TupArm[] = [];
@@ -5103,7 +5121,7 @@ pub function struct_record_source(st: ast.Stmt): Option[ast.StmtMatch] {
   if let ast.StmtIf(f) = st {
     let sg: ast.MatchSugar = f.sugar;
     if (sg.arms.len() > 0) {
-      return Some(ast.StmtMatch { scrutinee: sg.scrut, arms: sg.arms, sugar: [], line: sg.line, col: sg.col, origin: sg.origin, else_chained: sg.else_chained });
+      return Some(ast.StmtMatch { scrutinee: sg.scrut, arms: sg.arms, sugar: [], line: sg.line, col: sg.col, origin: sg.origin, else_chained: sg.else_chained, arms_open: sg.arms_open });
     }
   }
   return None;
@@ -8596,7 +8614,7 @@ pub function builtin_function_names(): string[] {
     "clock_resolution", "clock_set",
     "wasm_pollable_drop", "wasm_block", "wasm_poll",
     "map_new", "__map_new_i32", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked",
-    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_len",
+    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_len",
     "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_clear", "buf_free",
     "cell_new",
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
@@ -8995,6 +9013,14 @@ function renamed_receivers(decls: FuncDecl[]): string[] {
   return out;
 }
 
+function const_type(name: string, fns: MFns): string {
+  let k = fns.pix.find(name);
+  if (k >= 0 && fns.decls[fns.pat[k]].is_const) {
+    return fns.decls[fns.pat[k]].ret_type;
+  }
+  return "";
+}
+
 function bg_find(fns: MFns, name: string): i32 {
   let e: i32 = fns.ghead[util.hash_bucket(name, fns.ghead.len())];
   while (e >= 0) {
@@ -9190,6 +9216,16 @@ function plain_type_spelling(s: string): boolean {
     i = i + 1;
   }
   return true;
+}
+
+// The type of `e?` when `e` has the type spelled t: the payload of an Option
+// or the Ok type of a Result, or "" when t is neither.
+function try_payload_spelling(t: string): string {
+  let tr = parse_type_ref(t);
+  if (tr.array_depth == 0 && (tr.base == "Option" || tr.base == "Result") && tr.args.len() > 0) {
+    return render_type_ref(tr.args[0]);
+  }
+  return "";
 }
 
 pub function parse_type_ref(sin: string): TypeRef {
@@ -11100,7 +11136,11 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       return et + "[]";
     },
     ast.ExprIdent(id) => {
-      return env.elook(id.name);
+      let local = env.elook(id.name);
+      if (local.len() > 0) {
+        return local;
+      }
+      return const_type(id.name, funcs);
     },
     ast.ExprSlice(sl) => {
       let source: string = mono_infer(sl.array, env, funcs);
@@ -11147,6 +11187,9 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       }
       if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
         return "Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]";
+      }
+      if (u.op == "try_") {
+        return try_payload_spelling(mono_infer(u.operand, env, funcs));
       }
       return mono_infer(u.operand, env, funcs);
     },
@@ -19393,22 +19436,20 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
         }
         return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
       }
-      return [ast.StmtFor { ...written, body: dbody }];
+      return [ast.StmtFor { ...written, iter: dr_expr(written.iter), body: dbody }];
     },
     ast.StmtIf(f) => {
-      return [ast.StmtIf { ...f, cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
+      return [ast.StmtIf { ...f, cond: dr_expr(f.cond), then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
     },
     ast.StmtWhile(w) => {
-      return [ast.StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop }];
+      return [ast.StmtWhile { ...w, cond: dr_expr(w.cond), body: desugar_ranges_block(w.body) }];
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
-      let a: i32 = 0;
-      while (a < m.arms.len()) {
-        arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
-        a = a + 1;
+      for arm in m.arms {
+        arms = arms.append(ast.MatchArm { ...arm, body: desugar_ranges_block(arm.body), guard: dr_expr(arm.guard) });
       }
-      return [ast.StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms }];
+      return [ast.StmtMatch { ...m, scrutinee: dr_expr(m.scrutinee), arms: arms }];
     },
     ast.StmtDefer(d) => {
       return [ast.StmtDefer { action: desugar_ranges_one(d.action)[0], on_error: d.on_error, line: d.line }];
@@ -24980,7 +25021,7 @@ function settle_if_branches(f: ast.StmtIf): ast.Stmt {
   if (!chained) {
     nelse = settle_branch_body(f.else_body);
   }
-  return s_if(f.cond, settle_branch_body(f.then_body), nelse);
+  return ast.StmtIf { ...f, then_body: settle_branch_body(f.then_body), else_body: nelse };
 }
 
 function match_arms_float_settleable(m: ast.StmtMatch): boolean {
@@ -25000,12 +25041,10 @@ function match_arms_float_settleable(m: ast.StmtMatch): boolean {
 
 function settle_match_arms(m: ast.StmtMatch): ast.Stmt {
   let arms: ast.MatchArm[] = [];
-  let a: i32 = 0;
-  while (a < m.arms.len()) {
-    arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: settle_branch_body(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
-    a = a + 1;
+  for arm in m.arms {
+    arms = arms.append(ast.MatchArm { ...arm, body: settle_branch_body(arm.body) });
   }
-  return s_match_origin(m.scrutinee, arms, m.line, m.col, m.origin);
+  return ast.StmtMatch { ...m, arms: arms };
 }
 
 function settle_float_value_branches(e: ast.Expr): ast.Expr {

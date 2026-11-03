@@ -22,7 +22,7 @@ function bytes(h: string): u8[] {
 // One vector. The module refuses a low-order public key, which Wycheproof
 // marks acceptable with an all-zero shared secret.
 function check(priv: string, pk: string, shared: string, want: i32, id: i32): string {
-  let tc: string = "tc " + id.to_string() + ": ";
+  let tc = "tc " + id.to_string() + ": ";
   match (x25519.x25519(bytes(priv), bytes(pk))) {
     Ok(s) => {
       if (hex.encode(s) != shared) {
@@ -39,7 +39,7 @@ function check(priv: string, pk: string, shared: string, want: i32, id: i32): st
 }
 
 function test_group_1(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("c8a9d5a91091ad851c668b0736c1c9a02936c0d3ad62670858088047ba057475", "504a36999f489cd2fdbc08baff3d88fa00569ba986cba22548ffde80f9806829", "436a2c040cf45fea9b29a0cb81b1f41458f863d0d61b453d0a982720d6d61320", 1, 1);
   if (r != "") {
     return test.fail(r);
@@ -300,7 +300,7 @@ function test_group_1(): test.TestOutcome {
 }
 
 function test_group_2(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("c8fe0df92ae68a03023fc0c9adb9557d31be7feed0d3ab36c558143daf4dbb40", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "0000000000000000000000000000000000000000000000000000000000000000", 2, 65);
   if (r != "") {
     return test.fail(r);
@@ -561,7 +561,7 @@ function test_group_2(): test.TestOutcome {
 }
 
 function test_group_3(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("90b150d462de512056d5bd55173074969b496f262fb6916b733f6263a8078971", "a8b9c7372118a53a9de9eaf0868e3b1a3d88e81cb2e407ff7125e9f5c5088715", "f86cc7bf1be49574fc97a074282e9bb5cd238e002bc8e9a7b8552b2d60eccb52", 2, 129);
   if (r != "") {
     return test.fail(r);
@@ -822,7 +822,7 @@ function test_group_3(): test.TestOutcome {
 }
 
 function test_group_4(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("c85f954b85bc102aca799671793452176538d077862ee45e0b253619767dff42", "21f86d123c923a92aaf2563df94b5b5c93874f5b7ab9954aaa53e3d72f0ff67e", "7fc28781631410c5a6f25c9cfd91ec0a848adb7a9eb40bc5b495d0f4753f2260", 2, 193);
   if (r != "") {
     return test.fail(r);
@@ -1083,7 +1083,7 @@ function test_group_4(): test.TestOutcome {
 }
 
 function test_group_5(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("88eb7775dacc32b045ceb35f261b3616315efa98b780e08c79d544edadb5467d", "1833619516b80db0c05b225509e6698df028d83b66ed6bac6f0f6308970d2c7d", "a3cf3d81ec56896a68fca0da6335171d0c622568738c0db26fe117033726a049", 2, 257);
   if (r != "") {
     return test.fail(r);
@@ -1344,7 +1344,7 @@ function test_group_5(): test.TestOutcome {
 }
 
 function test_group_6(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("e08ffa45efbe1f96584c76254554adb9177b58ed09609a6ce499e5bd22d35c45", "82ae48dcf59bc5e469f9a11b18a32d4753ac818692dfae27d675411a2272b363", "e831d6cee95ca1b4c96bb89457562fff36cb4d08b81da89b810b425ecdbafd78", 1, 321);
   if (r != "") {
     return test.fail(r);
@@ -1605,7 +1605,7 @@ function test_group_6(): test.TestOutcome {
 }
 
 function test_group_7(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("a8b64b8ed397773b8290425ca5c2f7c3e50fac7a4781bd4a54c133781c9a1360", "ff0f15adeab334afeda3916785ddd38d252dce9876c2357b643b5dc2c06a3b1d", "9f04e42c1b2f311d87e1470a4708bba25ac6ffd3f7b486f9b6b502ecbb2c004e", 1, 385);
   if (r != "") {
     return test.fail(r);
@@ -1866,7 +1866,7 @@ function test_group_7(): test.TestOutcome {
 }
 
 function test_group_8(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("20596e1dc56596823d37698dfa699c79874aaefde797f863ef92135980fb2043", "6d3cd623f26a7453fa05a01ae758ba84d3c58d93d60ce32735a15e0d053d5b12", "7c3219b3c1fae1f95590ac843efd2084a1f4bd3efa2f592f022032db64ebcd77", 1, 449);
   if (r != "") {
     return test.fail(r);
@@ -2127,7 +2127,7 @@ function test_group_8(): test.TestOutcome {
 }
 
 function test_group_9(): test.TestOutcome {
-  let r: string = "";
+  let r = "";
   r = check("4855555555555555555555555555555555555555555555555555555555555555", "3e3e7708ef72a6dd78d858025089765b1c30a19715ac19e8d917067d208e0666", "63ef7d1c586476ec78bb7f747e321e01102166bf967a9ea9ba9741f49d439510", 1, 513);
   if (r != "") {
     return test.fail(r);
@@ -2156,7 +2156,7 @@ function test_group_9(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("wycheproof x25519");
+  let r = test.new("wycheproof x25519");
   r = r.it("vectors 1 to 64", test_group_1);
   r = r.it("vectors 65 to 128", test_group_2);
   r = r.it("vectors 129 to 192", test_group_3);

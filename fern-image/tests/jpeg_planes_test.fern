@@ -12,16 +12,16 @@ function never(): boolean {
 }
 
 function zero_stream(): u8[] {
-  return headers.synthetic_header().append(0 as u8).append(15 as u8).append(255 as u8).append(217 as u8);
+  return headers.synthetic_header().append(0).append(15).append(255).append(217);
 }
 
-function marker_at(input: [u8], wanted: i32): i32 {
+function marker_at(input: [u8], wanted: i32): Option[i32] {
   for i in 2..input.len() - 1 {
-    if (input[i] == 255 as u8 && input[i + 1] as i32 == wanted) {
-      return i;
+    if (input[i] == 255 && input[i + 1] as i32 == wanted) {
+      return Some(i);
     }
   }
-  return 0 - 1;
+  return None;
 }
 
 function rejected(input: [u8], limits: planes.PlaneLimits, error: planes.PlaneError): boolean {
@@ -29,7 +29,9 @@ function rejected(input: [u8], limits: planes.PlaneLimits, error: planes.PlaneEr
 }
 
 function reference(input: [u8], values: (i32) => u8[]): boolean {
-  let image = match (planes.decode(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return false; } };
+  let Ok(image) = planes.decode(input, planes.default_limits(), never) else {
+    return false;
+  };
   let bytes = 0;
   for i in 0..image.planes.len() {
     let plane = image.planes[i];
@@ -40,24 +42,28 @@ function reference(input: [u8], values: (i32) => u8[]): boolean {
     }
     for at in 0..wanted.len() {
       let delta = plane.data[at] as i32 - wanted[at] as i32;
-      if (delta < 0 - 1 || delta > 1) {
+      if (delta < -1 || delta > 1) {
         return false;
       }
     }
-    bytes = bytes + plane.data.len();
+    bytes += plane.data.len();
   }
   return bytes == image.plan.bytes;
 }
 
 function zero_and_layout(): test.TestOutcome {
   let input = zero_stream();
-  let plan = match (planes.inspect(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("zero plan"); } };
+  let Ok(plan) = planes.inspect(input, planes.default_limits(), never) else {
+    return test.fail("zero plan");
+  };
   if (plan.width != 17 || plan.height != 9 || plan.bytes != 153 || plan.planes.len() != 1 || plan.blocks.output_blocks != 6) {
     return test.fail("logical component layout");
   }
-  let image = match (planes.decode(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("zero plane"); } };
+  let Ok(image) = planes.decode(input, planes.default_limits(), never) else {
+    return test.fail("zero plane");
+  };
   for value in image.planes[0].data {
-    if (value != 128 as u8) {
+    if (value != 128) {
       return test.fail("independent zero coefficients");
     }
   }
@@ -76,7 +82,9 @@ function reference_images(): test.TestOutcome {
     || !reference(streams.restart_rgb420(), expected.restart_rgb420)) {
     return test.fail("independent component sample observations");
   }
-  let image = match (planes.decode(streams.restart_rgb420(), planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("subsampled image"); } };
+  let Ok(image) = planes.decode(streams.restart_rgb420(), planes.default_limits(), never) else {
+    return test.fail("subsampled image");
+  };
   if (image.plan.width != 35 || image.plan.height != 33 || image.plan.max_horizontal != 2 || image.plan.max_vertical != 2 || image.plan.bytes != 1767 || image.planes.len() != 3) {
     return test.fail("4:2:0 layout");
   }
@@ -97,7 +105,9 @@ function sampling_ids_and_tables(): test.TestOutcome {
     || !reference(streams.single_sampling(), expected.single_sampling)) {
     return test.fail("sampling and identifier references");
   }
-  let fractional = match (planes.decode(streams.fractional_sampling(), planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("fractional sampling"); } };
+  let Ok(fractional) = planes.decode(streams.fractional_sampling(), planes.default_limits(), never) else {
+    return test.fail("fractional sampling");
+  };
   let widths = [17, 12, 6];
   let ids = [7, 2, 9];
   for i in 0..3 {
@@ -107,15 +117,18 @@ function sampling_ids_and_tables(): test.TestOutcome {
     }
   }
   let input = zero_stream();
-  let quantizer = marker_at(input, 219);
-  let frame = marker_at(input, 192);
-  if (quantizer < 0 || frame < 0) {
+  let Some(quantizer) = marker_at(input, 219) else {
     return test.fail("table control offsets");
-  }
-  let changed = input.with(quantizer + 4, 3 as u8).with(frame + 12, 3 as u8);
-  let image = match (planes.decode(changed, planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("quantizer destination 3"); } };
+  };
+  let Some(frame) = marker_at(input, 192) else {
+    return test.fail("table control offsets");
+  };
+  let changed = input.with(quantizer + 4, 3).with(frame + 12, 3);
+  let Ok(image) = planes.decode(changed, planes.default_limits(), never) else {
+    return test.fail("quantizer destination 3");
+  };
   for value in image.planes[0].data {
-    if (value != 128 as u8) {
+    if (value != 128) {
       return test.fail("quantizer selection");
     }
   }
@@ -166,54 +179,59 @@ function late_errors(): test.TestOutcome {
       }
     }
   }
-  if (!rejected(input.with(input.len() - 3, 14 as u8), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyPadding))
-    || !rejected(input.append(0 as u8), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyTrailing))) {
+  if (!rejected(input.with(input.len() - 3, 14), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyPadding))
+    || !rejected(input.append(0), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyTrailing))) {
     return test.fail("padding and exact final consumption");
   }
   let rgb = streams.restart_rgb420();
-  let restart = marker_at(rgb, 208);
-  if (restart < 0) {
+  let Some(restart) = marker_at(rgb, 208) else {
     return test.fail("restart offset");
-  }
-  if (!rejected(rgb.with(restart + 1, 213 as u8), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyRestart))) {
+  };
+  if (!rejected(rgb.with(restart + 1, 213), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyRestart))) {
     return test.fail("late restart failure");
   }
   let base = streams.category_boundaries();
-  let info = match (header.parse(base, header.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("coefficient control header"); } };
-  let frame = marker_at(base, 192);
+  let Ok(info) = header.parse(base, header.default_limits(), never) else {
+    return test.fail("coefficient control header");
+  };
+  let Some(frame) = marker_at(base, 192) else {
+    return test.fail("frame marker");
+  };
   let large: u8[] = [];
   for value in base[:info.entropy_offset] {
     large = large.append(value);
   }
-  large = large.with(frame + 5, 0 as u8).with(frame + 6, 136 as u8).with(frame + 7, 0 as u8).with(frame + 8, 8 as u8);
+  large = large.with(frame + 5, 0).with(frame + 6, 136).with(frame + 7, 0).with(frame + 8, 8);
   for i in 0..17 {
-    large = large.append(191 as u8).append(248 as u8);
+    large = large.append(191).append(248);
   }
-  large = large.append(255 as u8).append(217 as u8);
+  large = large.append(255).append(217);
   return test.assert_true(rejected(large, planes.default_limits(), planes.PlaneTransform(idct.Coefficient)));
 }
 
 function ownership(): test.TestOutcome {
   let source = zero_stream();
-  let backing = [9 as u8];
+  let backing: u8[] = [9];
   for value in source {
     backing = backing.append(value);
   }
-  backing = backing.append(8 as u8);
+  backing = backing.append(8);
   let view = backing[1:backing.len() - 1];
   let shared = cell_new(backing);
   let first = match (planes.decode(view, planes.default_limits(), (): boolean => {
-    shared.set(shared.get().with(1, 0 as u8));
+    shared.set(shared.get().with(1, 0));
     return false;
   })) { Ok(v) => v, _ => { return test.fail("input window"); } };
-  backing = backing.with(1, 0 as u8);
-  if (view[0] != 255 as u8 || backing[1] != 0 as u8 || shared.get()[1] != 0 as u8) {
+  backing = backing.with(1, 0);
+  if (view[0] != 255 || backing[1] != 0 || shared.get()[1] != 0) {
     return test.fail("borrowed encoded view");
   }
   let retained = first.planes[0].data;
-  let changed = retained.with(0, 7 as u8);
-  let fresh = match (planes.decode(view, planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("fresh planes"); } };
-  return test.assert_true(retained[0] == 128 as u8 && changed[0] == 7 as u8 && fresh.planes[0].data[0] == 128 as u8);
+  let changed = retained.with(0, 7);
+  let Ok(fresh) = planes.decode(view, planes.default_limits(), never) else {
+    return test.fail("fresh planes");
+  };
+  return test.assert_true(retained[0] == 128 && changed[0] == 7 && fresh.planes[0].data[0] == 128);
 }
 
 function cancellation(): test.TestOutcome {
@@ -233,7 +251,7 @@ function cancellation(): test.TestOutcome {
     if (total < 20) {
       return test.fail("missing cancellation polls");
     }
-    for stop in 1..total + 1 {
+    for stop in 1..=total {
       let seen = cell_new(0);
       let cancel = (): boolean => {
         seen.set(seen.get() + 1);

@@ -5,7 +5,7 @@ import "std/headers";
 import "std/stream";
 
 function posted(ct: string, body: string): HttpRequest {
-  let r: HttpRequest = http.request("POST", "/login").with_text(body);
+  let r = http.request("POST", "/login").with_text(body);
   if (ct.len() == 0) {
     return r;
   }
@@ -15,7 +15,7 @@ function posted(ct: string, body: string): HttpRequest {
 function outcome(r: Result[form.Form, form.FormError]): string {
   match (r) {
     Ok(f) => {
-      let out: string = "";
+      let out = "";
       for v in f.get_all("a") {
         out = out + "a=" + v + ";";
       }
@@ -26,12 +26,12 @@ function outcome(r: Result[form.Form, form.FormError]): string {
         None => {}
       }
       if (f.has("c")) {
-        out = out + "c;";
+        out += "c;";
       }
       return out;
     },
     Err(e) => {
-      let resp: HttpResponse = e.to_response();
+      let resp = e.to_response();
       return resp.status.to_string() + " " + resp.body_text_lossy();
     }
   }
@@ -39,20 +39,20 @@ function outcome(r: Result[form.Form, form.FormError]): string {
 }
 
 function test_fields(): test.TestOutcome {
-  let got: string = outcome(form.parse(posted("application/x-www-form-urlencoded", "a=1&b=x+y%21&a=3&c")));
+  let got = outcome(form.parse(posted("application/x-www-form-urlencoded", "a=1&b=x+y%21&a=3&c")));
   return test.assert_eq(got, "a=1;a=3;b=x y!;c;");
 }
 
 function test_media_type(): test.TestOutcome {
-  let with_charset: string = outcome(form.parse(posted("Application/X-WWW-Form-Urlencoded; charset=UTF-8", "a=1")));
-  let json: string = outcome(form.parse(posted("application/json", "{}")));
-  let none: string = outcome(form.parse(posted("", "a=1")));
+  let with_charset = outcome(form.parse(posted("Application/X-WWW-Form-Urlencoded; charset=UTF-8", "a=1")));
+  let json = outcome(form.parse(posted("application/json", "{}")));
+  let none = outcome(form.parse(posted("", "a=1")));
   return test.assert_eq(with_charset + "|" + json + "|" + none, "a=1;|415 {\"type\":\"about:blank\",\"title\":\"Unsupported Media Type\",\"status\":415,\"detail\":\"expected application/x-www-form-urlencoded, got application/json\"}|415 {\"type\":\"about:blank\",\"title\":\"Unsupported Media Type\",\"status\":415,\"detail\":\"expected a Content-Type of application/x-www-form-urlencoded\"}");
 }
 
 function test_not_utf8(): test.TestOutcome {
-  let h: HeaderMap = headers.new().set("content-type", "application/x-www-form-urlencoded");
-  let req: HttpRequest = HttpRequest { method: "POST", path: "/login", body: stream.from_bytes([97 as u8, 61 as u8, 255 as u8]), headers: h, trailers: headers.new() };
+  let h = headers.new().set("content-type", "application/x-www-form-urlencoded");
+  let req = HttpRequest { method: "POST", path: "/login", body: stream.from_bytes([97 as u8, 61 as u8, 255 as u8]), headers: h, trailers: headers.new() };
   return test.assert_eq(outcome(form.parse(req)), "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"body is not valid UTF-8\"}");
 }
 
@@ -61,7 +61,7 @@ function test_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/form");
+  let r = test.new("std/http/form");
   r = r.it("fields", test_fields);
   r = r.it("the media type", test_media_type);
   r = r.it("a body that is not UTF-8", test_not_utf8);

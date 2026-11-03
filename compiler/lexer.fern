@@ -601,7 +601,7 @@ pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[
         out = out.append(eof_tok(offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
       },
       TokNumber(x) => {
-        out = out.append(number_tok(x.text, x.suffix, x.is_float, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
+        out = out.append(TokNumber { ...x, line: offset_line(base_line, x.line), col: offset_col(base_col, x.line, x.col) });
       },
       TokIdent(x) => {
         out = out.append(ident_tok(x.name, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));

@@ -41,12 +41,12 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 function test_json_body_is_created(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let req: HttpRequest = http.request("POST", "/items").with_json("{\"n\": 1}");
+  let m = mock_platform.new();
+  let req = http.request("POST", "/items").with_json("{\"n\": 1}");
   if (req.body_len() != 8) {
     return test.fail("body length: " + req.body_len().to_string());
   }
-  let resp: HttpResponse = handle(req, m);
+  let resp = handle(req, m);
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -78,8 +78,8 @@ function test_json_body_is_created(): test.TestOutcome {
 }
 
 function test_body_without_its_type_is_refused(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_text("{}"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("POST", "/items").with_text("{}"), m);
   match (test.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -90,8 +90,8 @@ function test_body_without_its_type_is_refused(): test.TestOutcome {
 }
 
 function test_header_names_the_caller(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m);
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -105,29 +105,29 @@ function test_header_names_the_caller(): test.TestOutcome {
 }
 
 function test_bare_request_has_nothing(): test.TestOutcome {
-  let req: HttpRequest = http.request("GET", "/whoami");
+  let req = http.request("GET", "/whoami");
   if (req.headers.len() != 0 || req.body_len() != 0 || req.trailers.len() != 0) {
     return test.fail("a bare request carries something");
   }
-  let m: mock_platform.MockPlatform = mock_platform.new();
+  let m = mock_platform.new();
   return test.assert_status(handle(req, m), 401);
 }
 
 function test_query_reads_by_name(): test.TestOutcome {
-  let req: HttpRequest = http.request("GET", "/search?q=a%26b%3Dc&tag=x&page=2&tag=y+z&flag");
-  let got: string = req.query("q").unwrap_or("-") + "|" + req.query("page").unwrap_or("-") + "|" + req.query("flag").unwrap_or("-") + "|" + req.query("missing").unwrap_or("-") + "|" + req.query_all("tag").join(",") + "|" + req.query_all("missing").len().to_string();
+  let req = http.request("GET", "/search?q=a%26b%3Dc&tag=x&page=2&tag=y+z&flag");
+  let got = req.query("q").unwrap_or("-") + "|" + req.query("page").unwrap_or("-") + "|" + req.query("flag").unwrap_or("-") + "|" + req.query("missing").unwrap_or("-") + "|" + req.query_all("tag").join(",") + "|" + req.query_all("missing").len().to_string();
   match (test.assert_eq(got, "a&b=c|2||-|x,y z|0")) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  let bare: HttpRequest = http.request("GET", "/search");
+  let bare = http.request("GET", "/search");
   return test.assert_eq(bare.query("search").unwrap_or("-") + bare.query_all("q").len().to_string(), "-0");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("HTTP request builder");
+  let r = test.new("HTTP request builder");
   r = r.it("a JSON body is created", test_json_body_is_created);
   r = r.it("a body without its type is refused", test_body_without_its_type_is_refused);
   r = r.it("a header names the caller", test_header_names_the_caller);

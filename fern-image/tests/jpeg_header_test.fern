@@ -24,26 +24,28 @@ function segment(marker: i32, payload: [u8]): u8[] {
   return append_bytes([255 as u8, marker as u8, (length >> 8) as u8, (length & 255) as u8], payload);
 }
 
-function marker_at(input: [u8], wanted: i32): i32 {
+function marker_at(input: [u8], wanted: i32): Option[i32] {
   let at = 2;
   while (at + 4 <= input.len()) {
     if (input[at + 1] as i32 == wanted) {
-      return at;
+      return Some(at);
     }
     let length = input[at + 2] as i32 << 8 | input[at + 3] as i32;
     if (length < 2) {
-      return 0;
+      return None;
     }
-    at = at + length + 2;
+    at += length + 2;
   }
-  return 0;
+  return None;
 }
 
 function reference_headers(): test.TestOutcome {
   let samples = [fixtures.gray(), fixtures.rgb444(), fixtures.rgb422(), fixtures.rgb420()];
   let i = 0;
   for input in samples {
-    let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("reference header " + i.to_string()); } };
+    let Ok(parsed) = header.parse(input, header.default_limits(), never_cancel) else {
+      return test.fail(f"reference header {i}");
+    };
     let count = if (i == 0) { 1 } else { 3 };
     let offset = if (i == 0) { 328 } else { 623 };
     let horizontal = if (i >= 2) { 2 } else { 1 };
@@ -53,16 +55,20 @@ function reference_headers(): test.TestOutcome {
       || parsed.components.len() != count || parsed.scan.len() != count || parsed.entropy_offset != offset
       || parsed.components[0].horizontal != horizontal || parsed.components[0].vertical != vertical
       || parsed.restart_interval != 0 || parsed.metadata_bytes != 14 || parsed.segment_count != (if (i == 0) { 6 } else { 9 })) {
-      return test.fail("reference metadata " + i.to_string());
+      return test.fail(f"reference metadata {i}");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function optimized_and_unsupported(): test.TestOutcome {
-  let gray = match (header.parse(fixtures.gray_optimized(), header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("optimized grayscale"); } };
-  let rgb = match (header.parse(fixtures.rgb420_optimized(), header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("optimized RGB"); } };
+  let Ok(gray) = header.parse(fixtures.gray_optimized(), header.default_limits(), never_cancel) else {
+    return test.fail("optimized grayscale");
+  };
+  let Ok(rgb) = header.parse(fixtures.rgb420_optimized(), header.default_limits(), never_cancel) else {
+    return test.fail("optimized RGB");
+  };
   let dc = match (gray.huffman[0]) { Some(value) => value, None => { return test.fail("sparse DC"); } };
   let ac = match (gray.huffman[2]) { Some(value) => value, None => { return test.fail("sparse AC"); } };
   return test.assert_true(gray.output_layout.width == 1 && gray.output_layout.height == 1 && gray.output_layout.bytes == 3
@@ -73,13 +79,13 @@ function optimized_and_unsupported(): test.TestOutcome {
 
 function truncation(): test.TestOutcome {
   for input in [fixtures.gray(), fixtures.rgb444(), fixtures.synthetic_header()] {
-    let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("fixture"); } };
-    let end = 0;
-    while (end < parsed.entropy_offset) {
+    let Ok(parsed) = header.parse(input, header.default_limits(), never_cancel) else {
+      return test.fail("fixture");
+    };
+    for end in 0..parsed.entropy_offset {
       if (!rejected(input[:end], header.Truncated)) {
-        return test.fail("truncated prefix " + end.to_string());
+        return test.fail(f"truncated prefix {end}");
       }
-      end = end + 1;
     }
   }
   return test.pass();
@@ -87,20 +93,24 @@ function truncation(): test.TestOutcome {
 
 function framing(): test.TestOutcome {
   let input = fixtures.synthetic_header();
-  if (!rejected(input.with(0, 0 as u8), header.Signature)
-    || !rejected(input.with(1, 0 as u8), header.Signature)
-    || !rejected(input.with(2, 0 as u8), header.Marker)
-    || !rejected(input.with(3, 0 as u8), header.Marker)
-    || !rejected(input.with(3, 208 as u8), header.Marker)
-    || !rejected(input.with(3, 216 as u8), header.Order)
-    || !rejected(input.with(3, 217 as u8), header.Order)
-    || !rejected(input.with(3, 193 as u8), header.Unsupported)
-    || !rejected(input.with(4, 0 as u8).with(5, 1 as u8), header.Length)
-    || !rejected(input.with(4, 255 as u8).with(5, 255 as u8), header.Truncated)) {
+  if (!rejected(input.with(0, 0), header.Signature)
+    || !rejected(input.with(1, 0), header.Signature)
+    || !rejected(input.with(2, 0), header.Marker)
+    || !rejected(input.with(3, 0), header.Marker)
+    || !rejected(input.with(3, 208), header.Marker)
+    || !rejected(input.with(3, 216), header.Order)
+    || !rejected(input.with(3, 217), header.Order)
+    || !rejected(input.with(3, 193), header.Unsupported)
+    || !rejected(input.with(4, 0).with(5, 1), header.Length)
+    || !rejected(input.with(4, 255).with(5, 255), header.Truncated)) {
     return test.fail("marker or length rejection");
   }
-  let frame = marker_at(input, 192);
-  let scan = marker_at(input, 218);
+  let Some(frame) = marker_at(input, 192) else {
+    return test.fail("frame marker");
+  };
+  let Some(scan) = marker_at(input, 218) else {
+    return test.fail("scan marker");
+  };
   let duplicate = append_bytes(append_bytes(append_bytes([], input[:scan]), input[frame:scan]), input[scan:]);
   let no_frame = append_bytes(append_bytes([], input[:frame]), input[scan:]);
   return test.assert_true(rejected(duplicate, header.Order) && rejected(no_frame, header.Order));
@@ -108,21 +118,27 @@ function framing(): test.TestOutcome {
 
 function frame_fields(): test.TestOutcome {
   let input = fixtures.synthetic_header();
-  let at = marker_at(input, 192) + 4;
-  if (!rejected(input.with(at, 12 as u8), header.Unsupported)
-    || !rejected(input.with(at + 1, 0 as u8).with(at + 2, 0 as u8), header.Unsupported)
-    || !rejected(input.with(at + 3, 0 as u8).with(at + 4, 0 as u8), header.Frame)
-    || !rejected(input.with(at + 5, 4 as u8), header.Unsupported)
-    || !rejected(input.with(at + 7, 0 as u8), header.Frame)
-    || !rejected(input.with(at + 7, 81 as u8), header.Frame)
-    || !rejected(input.with(at + 8, 4 as u8), header.Frame)
-    || !rejected(input.with(at + 1, 255 as u8).with(at + 2, 255 as u8).with(at + 3, 255 as u8).with(at + 4, 255 as u8), header.Limit)) {
+  let Some(frame) = marker_at(input, 192) else {
+    return test.fail("frame marker");
+  };
+  let at = frame + 4;
+  if (!rejected(input.with(at, 12), header.Unsupported)
+    || !rejected(input.with(at + 1, 0).with(at + 2, 0), header.Unsupported)
+    || !rejected(input.with(at + 3, 0).with(at + 4, 0), header.Frame)
+    || !rejected(input.with(at + 5, 4), header.Unsupported)
+    || !rejected(input.with(at + 7, 0), header.Frame)
+    || !rejected(input.with(at + 7, 81), header.Frame)
+    || !rejected(input.with(at + 8, 4), header.Frame)
+    || !rejected(input.with(at + 1, 255).with(at + 2, 255).with(at + 3, 255).with(at + 4, 255), header.Limit)) {
     return test.fail("frame field rejection");
   }
   let rgb = fixtures.rgb444();
-  let start = marker_at(rgb, 192) + 4;
+  let Some(rgb_frame) = marker_at(rgb, 192) else {
+    return test.fail("frame marker");
+  };
+  let start = rgb_frame + 4;
   if (!rejected(rgb.with(start + 9, rgb[start + 6]), header.Frame)
-    || !rejected(rgb.with(start + 7, 68 as u8).with(start + 10, 68 as u8).with(start + 13, 68 as u8), header.Unsupported)) {
+    || !rejected(rgb.with(start + 7, 68).with(start + 10, 68).with(start + 13, 68), header.Unsupported)) {
     return test.fail("component labels or MCU blocks");
   }
   return test.pass();
@@ -130,85 +146,112 @@ function frame_fields(): test.TestOutcome {
 
 function quantization(): test.TestOutcome {
   let input = fixtures.synthetic_header();
-  let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("fixture"); } };
+  let Ok(parsed) = header.parse(input, header.default_limits(), never_cancel) else {
+    return test.fail("fixture");
+  };
   let table = match (parsed.quantization[0]) { Some(value) => value, None => { return test.fail("quantizers"); } };
-  let i = 0;
-  while (i < 64) {
+  for i in 0..64 {
     if (table.values[i] as i32 != i + 1) {
       return test.fail("zig-zag order");
     }
-    i = i + 1;
   }
-  if (!rejected(input.with(6, 16 as u8), header.Unsupported)
-    || !rejected(input.with(6, 4 as u8), header.Table)
-    || !rejected(input.with(7, 0 as u8), header.Table)) {
+  if (!rejected(input.with(6, 16), header.Unsupported)
+    || !rejected(input.with(6, 4), header.Table)
+    || !rejected(input.with(7, 0), header.Table)) {
     return test.fail("quantization table rejection");
   }
-  let scan = marker_at(input, 218);
-  let redefined = append_bytes([], input[2:71]).with(5, 99 as u8);
+  let Some(scan) = marker_at(input, 218) else {
+    return test.fail("scan marker");
+  };
+  let redefined = append_bytes([], input[2:71]).with(5, 99);
   let replacement = append_bytes(append_bytes(append_bytes([], input[:scan]), redefined), input[scan:]);
-  let again = match (header.parse(replacement, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("redefinition"); } };
+  let Ok(again) = header.parse(replacement, header.default_limits(), never_cancel) else {
+    return test.fail("redefinition");
+  };
   let updated = match (again.quantization[0]) { Some(value) => value, None => { return test.fail("updated quantizers"); } };
-  return test.assert_true(updated.values[0] == 99 as u8 && table.values[0] == 1 as u8);
+  return test.assert_true(updated.values[0] == 99 && table.values[0] == 1);
 }
 
 function huffman_tables(): test.TestOutcome {
   let input = fixtures.synthetic_header();
-  let at = marker_at(input, 196) + 4;
-  if (!rejected(input.with(at, 32 as u8), header.Table)
-    || !rejected(input.with(at, 2 as u8), header.Unsupported)
-    || !rejected(input.with(at + 1, 3 as u8), header.Table)
-    || !rejected(input.with(at + 1, 2 as u8), header.Table)
-    || !rejected(input.with(at + 1, 0 as u8), header.Table)
-    || !rejected(input.with(at + 17, 12 as u8), header.Table)
-    || !rejected(input.with(at + 35, 11 as u8), header.Table)
-    || !rejected(input.with(at + 35, 16 as u8), header.Table)) {
+  let Some(table) = marker_at(input, 196) else {
+    return test.fail("Huffman table marker");
+  };
+  let at = table + 4;
+  if (!rejected(input.with(at, 32), header.Table)
+    || !rejected(input.with(at, 2), header.Unsupported)
+    || !rejected(input.with(at + 1, 3), header.Table)
+    || !rejected(input.with(at + 1, 2), header.Table)
+    || !rejected(input.with(at + 1, 0), header.Table)
+    || !rejected(input.with(at + 17, 12), header.Table)
+    || !rejected(input.with(at + 35, 11), header.Table)
+    || !rejected(input.with(at + 35, 16), header.Table)) {
     return test.fail("Huffman table rejection");
   }
-  let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("fixture"); } };
+  let Ok(parsed) = header.parse(input, header.default_limits(), never_cancel) else {
+    return test.fail("fixture");
+  };
   let dc = match (parsed.huffman[0]) { Some(value) => value, None => { return test.fail("DC table"); } };
   let ac = match (parsed.huffman[2]) { Some(value) => value, None => { return test.fail("AC table"); } };
-  return test.assert_true(dc.counts.len() == 16 && dc.counts[0] == 1 as u8 && dc.symbols.len() == 1
-    && dc.symbols[0] == 0 as u8 && ac.symbols[0] == 0 as u8);
+  return test.assert_true(dc.counts.len() == 16 && dc.counts[0] == 1 && dc.symbols.len() == 1
+    && dc.symbols[0] == 0 && ac.symbols[0] == 0);
 }
 
 function scan_fields(): test.TestOutcome {
   let input = fixtures.synthetic_header();
-  let scan = marker_at(input, 218);
+  let Some(scan) = marker_at(input, 218) else {
+    return test.fail("scan marker");
+  };
   let at = scan + 4;
-  if (!rejected(input.with(at, 0 as u8), header.Scan)
-    || !rejected(input.with(at + 1, 2 as u8), header.Scan)
-    || !rejected(input.with(at + 2, 32 as u8), header.Unsupported)
-    || !rejected(input.with(at + 2, 2 as u8), header.Unsupported)
-    || !rejected(input.with(at + 3, 1 as u8), header.Unsupported)
-    || !rejected(input.with(at + 4, 62 as u8), header.Unsupported)
-    || !rejected(input.with(at + 5, 1 as u8), header.Unsupported)
-    || !rejected(input.with(at + 2, 17 as u8), header.Table)) {
+  if (!rejected(input.with(at, 0), header.Scan)
+    || !rejected(input.with(at + 1, 2), header.Scan)
+    || !rejected(input.with(at + 2, 32), header.Unsupported)
+    || !rejected(input.with(at + 2, 2), header.Unsupported)
+    || !rejected(input.with(at + 3, 1), header.Unsupported)
+    || !rejected(input.with(at + 4, 62), header.Unsupported)
+    || !rejected(input.with(at + 5, 1), header.Unsupported)
+    || !rejected(input.with(at + 2, 17), header.Table)) {
     return test.fail("scan field rejection");
   }
   let no_quant = append_bytes(append_bytes([], input[:2]), input[71:]);
   let no_codes = append_bytes(append_bytes([], input[:71]), input[111:]);
   let rgb = fixtures.rgb444();
-  let start = marker_at(rgb, 218) + 4;
-  let frame = marker_at(rgb, 192) + 4;
-  let renamed = rgb.with(frame + 6, 2 as u8).with(frame + 9, 1 as u8).with(start + 1, 2 as u8).with(start + 3, 1 as u8);
-  let ordered = match (header.parse(renamed, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("renamed frame and scan components"); } };
+  let Some(scan_marker) = marker_at(rgb, 218) else {
+    return test.fail("scan marker");
+  };
+  let Some(frame_marker) = marker_at(rgb, 192) else {
+    return test.fail("frame marker");
+  };
+  let start = scan_marker + 4;
+  let frame = frame_marker + 4;
+  let renamed = rgb.with(frame + 6, 2).with(frame + 9, 1).with(start + 1, 2).with(start + 3, 1);
+  let Ok(ordered) = header.parse(renamed, header.default_limits(), never_cancel) else {
+    return test.fail("renamed frame and scan components");
+  };
   return test.assert_true(ordered.scan[0].id == 2 && ordered.scan[1].id == 1
     && rejected(no_quant, header.Table) && rejected(no_codes, header.Table)
     && rejected(rgb.with(start + 3, rgb[start + 1]), header.Scan)
-    && rejected(rgb.with(start, 1 as u8), header.Unsupported));
+    && rejected(rgb.with(start, 1), header.Unsupported));
 }
 
 function scan_component_order(): test.TestOutcome {
   let original = fixtures.rgb444();
-  let frame = marker_at(original, 192) + 4;
-  let scan = marker_at(original, 218) + 4;
-  let ids: u8[] = [201 as u8, 7 as u8, 33 as u8];
+  let Some(frame_marker) = marker_at(original, 192) else {
+    return test.fail("frame marker");
+  };
+  let Some(scan_marker) = marker_at(original, 218) else {
+    return test.fail("scan marker");
+  };
+  let frame = frame_marker + 4;
+  let scan = scan_marker + 4;
+  let ids: u8[] = [201, 7, 33];
   let input = original;
   for i in 0..3 {
     input = input.with(frame + 6 + 3 * i, ids[i]).with(scan + 1 + 2 * i, ids[i]);
   }
-  let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("frame-order identifiers"); } };
+  let Ok(parsed) = header.parse(input, header.default_limits(), never_cancel) else {
+    return test.fail("frame-order identifiers");
+  };
   for i in 0..3 {
     if (parsed.components[i].id != ids[i] as i32 || parsed.scan[i].id != ids[i] as i32) {
       return test.fail("identifier identity");
@@ -220,7 +263,7 @@ function scan_component_order(): test.TestOutcome {
         if (a == b || a == c || b == c || a == 0 && b == 1 && c == 2) {
           continue;
         }
-        let order: i32[] = [a, b, c];
+        let order = [a, b, c];
         let changed = input;
         for i in 0..3 {
           changed = changed.with(scan + 1 + 2 * i, ids[order[i]]).with(scan + 2 + 2 * i, input[scan + 2 + 2 * order[i]]);
@@ -236,12 +279,14 @@ function scan_component_order(): test.TestOutcome {
 
 function metadata_restart_and_fill(): test.TestOutcome {
   let input = fixtures.synthetic_header();
-  let extra = append_bytes(append_bytes([], input[:2]), segment(225, [69 as u8, 120 as u8, 105 as u8, 102 as u8, 0 as u8]));
+  let extra = append_bytes(append_bytes([], input[:2]), segment(225, [b'E', b'x', b'i', b'f', 0]));
   extra = append_bytes(extra, segment(254, [17 as u8, 255 as u8, 216 as u8]));
   extra = append_bytes(extra, segment(221, [18 as u8, 52 as u8]));
-  extra = extra.append(255 as u8);
+  extra = extra.append(255);
   extra = append_bytes(extra, input[2:]);
-  let parsed = match (header.parse(extra, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("APP, COM, DRI, fill"); } };
+  let Ok(parsed) = header.parse(extra, header.default_limits(), never_cancel) else {
+    return test.fail("APP, COM, DRI, fill");
+  };
   if (parsed.restart_interval != 4660 || parsed.metadata_bytes != 8 || parsed.segment_count != 7
     || parsed.entropy_offset != input.len() + 23) {
     return test.fail("segment accounting");
@@ -283,21 +328,17 @@ function hard_caps(): test.TestOutcome {
     return test.fail("hard input cap");
   }
   let fill = __alloc_u8(1048577);
-  let i = 0;
-  while (i < fill.len()) {
-    fill = fill.with(i, 255 as u8);
-    i = i + 1;
+  for i in 0..fill.len() {
+    fill = fill.with(i, 255);
   }
-  fill = fill.with(1, 216 as u8);
+  fill = fill.with(1, 216);
   let header_limit = match (header.parse(fill, limits, never_cancel)) { Err(header.Limit()) => true, _ => false };
   if (!header_limit) {
     return test.fail("hard header cap");
   }
-  let many: u8[] = [255 as u8, 216 as u8];
-  i = 0;
-  while (i < 4097) {
+  let many: u8[] = [255, 216];
+  for _ in 0..4097 {
     many = append_bytes(many, segment(224, []));
-    i = i + 1;
   }
   return test.assert_true(match (header.parse(many, limits, never_cancel)) { Err(header.Limit()) => true, _ => false });
 }
@@ -316,8 +357,7 @@ function cancellation(): test.TestOutcome {
     Ok(_) => {}
   }
   let total = observed.get();
-  let stop = 1;
-  while (stop <= total) {
+  for stop in 1..=total {
     let polls = cell_new(0);
     let cancelled = (): boolean => {
       polls.set(polls.get() + 1);
@@ -325,9 +365,8 @@ function cancellation(): test.TestOutcome {
     };
     let result = match (header.parse(input, header.default_limits(), cancelled)) { Err(header.Cancelled()) => true, _ => false };
     if (!result || polls.get() != stop) {
-      return test.fail("cancellation poll " + stop.to_string());
+      return test.fail(f"cancellation poll {stop}");
     }
-    stop = stop + 1;
   }
   return test.assert_true(total > 300);
 }
@@ -335,15 +374,19 @@ function cancellation(): test.TestOutcome {
 function ownership_and_scope(): test.TestOutcome {
   let input = fixtures.synthetic_header();
   let padded = append_bytes(append_bytes([77 as u8, 88 as u8], input), [99 as u8]);
-  let parsed = match (header.parse(padded[2:2 + input.len()], header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("lent window"); } };
+  let Ok(parsed) = header.parse(padded[2:2 + input.len()], header.default_limits(), never_cancel) else {
+    return test.fail("lent window");
+  };
   let quant = match (parsed.quantization[0]) { Some(value) => value, None => { return test.fail("quantizers"); } };
-  let changed = quant.values.with(0, 99 as u8);
-  padded = padded.with(9, 87 as u8);
-  if (quant.values[0] != 1 as u8 || changed[0] != 99 as u8 || input[7] != 1 as u8) {
+  let changed = quant.values.with(0, 99);
+  padded = padded.with(9, 87);
+  if (quant.values[0] != 1 || changed[0] != 99 || input[7] != 1) {
     return test.fail("owned table isolation");
   }
-  let incomplete = input.append(255 as u8).append(0 as u8).append(255 as u8).append(216 as u8);
-  let again = match (header.parse(incomplete, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("entropy is outside header scope"); } };
+  let incomplete = input.append(255).append(0).append(255).append(216);
+  let Ok(again) = header.parse(incomplete, header.default_limits(), never_cancel) else {
+    return test.fail("entropy is outside header scope");
+  };
   return test.assert_true(again.entropy_offset == input.len() && parsed.entropy_offset == input.len());
 }
 

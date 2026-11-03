@@ -1,18 +1,16 @@
 import "std/i32";
 import "std/string";
 
-pub function read(maximum: i32): i32 {
-  let argv: string[] = args();
+pub function read(maximum: i32): Option[i32] {
+  let argv = args();
   if (argv.len() != 2) {
-    return -1;
+    return None;
   }
-  match (i32.parse_i32(argv[1])) {
-    Ok(n) => {
-      if (n >= 0 && n <= maximum) {
-        return n;
-      }
-    },
-    Err(_) => {}
+  let Ok(n) = i32.parse_i32(argv[1]) else {
+    return None;
+  };
+  if (n < 0 || n > maximum) {
+    return None;
   }
-  return -1;
+  return Some(n);
 }

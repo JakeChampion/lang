@@ -18,7 +18,7 @@ function due_ns(r: recovery.Recovery): i64 {
       return at.since(START).as_nanos();
     },
     None => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -32,7 +32,7 @@ function ack(low: i64, high: i64): frames.Ack {
 }
 
 function pns(ps: recovery.Sent[]): string {
-  let out: string = "";
+  let out = "";
   for p in ps {
     out = out + p.pn.to_string() + ",";
   }
@@ -40,11 +40,11 @@ function pns(ps: recovery.Sent[]): string {
 }
 
 function sending(r: recovery.Recovery, from: i64, to: i64, at: i64): recovery.Recovery {
-  let cur: recovery.Recovery = r;
-  let pn: i64 = from;
+  let cur = r;
+  let pn = from;
   while (pn <= to) {
     cur = cur.on_sent(recovery.APPLICATION, sent(pn, at));
-    pn = pn + 1;
+    pn += 1;
   }
   return cur;
 }
@@ -54,44 +54,44 @@ function acked(r: recovery.Recovery, a: frames.Ack, now: i64, largest: i64): rec
 }
 
 function test_rtt(): test.TestOutcome {
-  let r: recovery.Recovery = recovery.new(1200, true).confirmed();
-  let before: string = r.pto(recovery.INITIAL).as_millis().to_string();
+  let r = recovery.new(1200, true).confirmed();
+  let before = r.pto(recovery.INITIAL).as_millis().to_string();
   r = sending(r, 0 as i64, 0 as i64, 0 as i64);
   r = acked(r, ack(0 as i64, 0 as i64), 100 * MS, 0 as i64);
-  let first: string = r.smoothed().as_millis().to_string() + "/" + r.pto(recovery.INITIAL).as_millis().to_string();
+  let first = r.smoothed().as_millis().to_string() + "/" + r.pto(recovery.INITIAL).as_millis().to_string();
   r = sending(r, 1 as i64, 1 as i64, 100 * MS);
   r = acked(r, ack(0 as i64, 1 as i64), 300 * MS, 1 as i64);
   return test.assert_eq(before + " | " + first + " | " + r.smoothed().as_millis().to_string(), "999 | 100/300 | 112");
 }
 
 function test_thresholds(): test.TestOutcome {
-  let r: recovery.Recovery = sending(recovery.new(1200, true).confirmed(), 0 as i64, 4 as i64, 0 as i64);
-  let o: recovery.Recovery = acked(r, ack(4 as i64, 4 as i64), 10 * MS, 4 as i64);
-  let timer: i64 = due_ns(o);
-  let later: recovery.Recovery = o.on_timeout(at_ns(timer));
-  let taken: recovery.Recovery = later.outcome_taken();
+  let r = sending(recovery.new(1200, true).confirmed(), 0 as i64, 4 as i64, 0 as i64);
+  let o = acked(r, ack(4 as i64, 4 as i64), 10 * MS, 4 as i64);
+  let timer = due_ns(o);
+  let later = o.on_timeout(at_ns(timer));
+  let taken = later.outcome_taken();
   return test.assert_eq("acked " + pns(o.acked) + " lost " + pns(o.lost) + " timer " + (timer / 1000).to_string() + "us then acked " + pns(later.acked) + " lost " + pns(later.lost) + "; taken " + pns(taken.acked) + pns(taken.lost), "acked 4, lost 0,1, timer 11250us then acked  lost 2,3,; taken ");
 }
 
 function test_probe_timeout(): test.TestOutcome {
-  let r: recovery.Recovery = recovery.new(1200, true).on_sent(recovery.INITIAL, sent(0 as i64, 0 as i64));
-  let t1: i64 = due_ns(r);
-  let o: recovery.Recovery = r.on_timeout(at_ns(t1));
-  let t2: i64 = due_ns(o);
-  let early: recovery.Recovery = r.on_timeout(at_ns(t1 - 1));
+  let r = recovery.new(1200, true).on_sent(recovery.INITIAL, sent(0 as i64, 0 as i64));
+  let t1 = due_ns(r);
+  let o = r.on_timeout(at_ns(t1));
+  let t2 = due_ns(o);
+  let early = r.on_timeout(at_ns(t1 - 1));
   return test.assert_eq((t1 / MS).to_string() + "ms probe " + o.probe.to_string() + ", then " + (t2 / MS).to_string() + "ms; early " + early.probe.to_string(), "999ms probe 0, then 1998ms; early -1");
 }
 
 function test_window(): test.TestOutcome {
-  let r: recovery.Recovery = recovery.new(1200, true).confirmed();
-  let start: string = r.window().to_string();
+  let r = recovery.new(1200, true).confirmed();
+  let start = r.window().to_string();
   r = sending(r, 0 as i64, 0 as i64, 0 as i64);
   r = acked(r, ack(0 as i64, 0 as i64), 20 * MS, 0 as i64);
-  let grown: string = r.window().to_string();
+  let grown = r.window().to_string();
   r = sending(r, 1 as i64, 4 as i64, 20 * MS);
   r = acked(r, ack(4 as i64, 4 as i64), 40 * MS, 4 as i64);
-  let halved: string = r.window().to_string();
-  let p: recovery.Recovery = sending(recovery.new(1200, true).confirmed(), 0 as i64, 0 as i64, 0 as i64);
+  let halved = r.window().to_string();
+  let p = sending(recovery.new(1200, true).confirmed(), 0 as i64, 0 as i64, 0 as i64);
   p = acked(p, ack(0 as i64, 0 as i64), 10 * MS, 0 as i64);
   p = p.on_sent(recovery.APPLICATION, sent(1 as i64, 10 * MS)).on_sent(recovery.APPLICATION, sent(2 as i64, 900 * MS));
   p = sending(p, 3 as i64, 5 as i64, 900 * MS);
@@ -100,16 +100,16 @@ function test_window(): test.TestOutcome {
 }
 
 function test_refusal_and_discard(): test.TestOutcome {
-  let r: recovery.Recovery = sending(recovery.new(1200, false), 0 as i64, 1 as i64, 0 as i64);
-  let refused: recovery.Recovery = r.on_ack(recovery.APPLICATION, ack(0 as i64, 5 as i64), time.DURATION_ZERO, at_ns(MS), 1 as i64);
-  let bad: string = refused.refused.to_string() + " " + pns(refused.acked) + "/" + refused.outcome_taken().refused.to_string();
-  let in_flight: string = r.in_flight().to_string() + " " + r.window().to_string();
-  let d: recovery.Recovery = r.discard(recovery.APPLICATION);
+  let r = sending(recovery.new(1200, false), 0 as i64, 1 as i64, 0 as i64);
+  let refused = r.on_ack(recovery.APPLICATION, ack(0 as i64, 5 as i64), time.DURATION_ZERO, at_ns(MS), 1 as i64);
+  let bad = refused.refused.to_string() + " " + pns(refused.acked) + "/" + refused.outcome_taken().refused.to_string();
+  let in_flight = r.in_flight().to_string() + " " + r.window().to_string();
+  let d = r.discard(recovery.APPLICATION);
   return test.assert_eq(bad + " | " + in_flight + " | " + d.in_flight().to_string() + " " + d.window().to_string(), "10 /0 | true 9600 | false 12000");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/quic/recovery");
+  let r = test.new("std/quic/recovery");
   r = r.it("the RTT estimate", test_rtt);
   r = r.it("packet and time thresholds", test_thresholds);
   r = r.it("the probe timeout", test_probe_timeout);

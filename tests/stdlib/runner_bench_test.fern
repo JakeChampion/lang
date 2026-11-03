@@ -2,25 +2,25 @@ import "std/test";
 import "std/time";
 
 function workload_tiny(): void {
-  let i: i32 = 0;
-  let sum: i32 = 0;
+  let i = 0;
+  let sum = 0;
   while (i < 100) {
-    sum = sum + i;
-    i = i + 1;
+    sum += i;
+    i += 1;
   }
 }
 
 function workload_string_build(): void {
-  let s: string = "";
-  let i: i32 = 0;
+  let s = "";
+  let i = 0;
   while (i < 50) {
-    s = s + "x";
-    i = i + 1;
+    s += "x";
+    i += 1;
   }
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("bench harness");
+  let r = test.new("bench harness");
 
   r = r.bench("tiny arithmetic loop", 20, workload_tiny);
   r = r.bench("string build (50 chars)", 10, workload_string_build);

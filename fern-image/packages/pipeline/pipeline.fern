@@ -60,14 +60,13 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
     return Err(InvalidGraph);
   }
   let costs: Cost[] = [];
-  let i = 0;
-  while (i < graph.nodes.len()) {
+  for i in 0..graph.nodes.len() {
     let node = graph.nodes[i];
     if (node.width <= 0 || node.height <= 0) {
       return Err(PipelineError.Dimensions);
     }
-    let pixels_count: i64 = node.width as i64 * (node.height as i64);
-    let row_bytes: i64 = node.width as i64 * (pixels.channels(node.format) as i64);
+    let pixels_count = node.width as i64 * (node.height as i64);
+    let row_bytes = node.width as i64 * (pixels.channels(node.format) as i64);
     if (pixels_count > limits.max_pixels as i64 || row_bytes > limits.max_row_bytes as i64) {
       return Err(Budget);
     }
@@ -78,15 +77,12 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
           || pixels.channels(image.layout.format) != pixels.channels(node.format)) {
           return Err(InvalidGraph);
         }
-        match (pixels.read_pixel(image, 0, 0)) {
-          Ok(_) => {},
-          Err(e) => {
-            return Err(Pixel(e));
-          }
+        if let Err(e) = pixels.read_pixel(image, 0, 0) {
+          return Err(Pixel(e));
         }
       },
       SolidSource(pixel) => {
-        if (pixels.channels(node.format) == 3 && pixel.a != 255 as u8) {
+        if (pixels.channels(node.format) == 3 && pixel.a != 255) {
           return Err(Pixel(pixels.Alpha));
         }
       },
@@ -94,10 +90,7 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
         if (spec.storage_bytes < 0 || spec.scratch_bytes < 0 || spec.samples_per_row < node.width || spec.setup_samples < 0) {
           return Err(Budget);
         }
-        let min_cache = 0i64;
-        if let ForwardRows = spec.access {
-          min_cache = row_bytes * 2;
-        }
+        let min_cache = match (spec.access) { ForwardRows => row_bytes * 2, RandomRows => 0 };
         cost = Cost {
           scratch: cost.scratch + spec.storage_bytes as i64 + spec.scratch_bytes as i64,
           samples: spec.samples_per_row as i64, setup_samples: spec.setup_samples as i64, min_cache: min_cache, providers: 1,
@@ -111,10 +104,7 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
           return Err(InvalidGraph);
         }
         let prior = costs[parent];
-        let min_cache = prior.min_cache;
-        if (min_cache > 0i64) {
-          min_cache = min_cache + row_bytes * 2;
-        }
+        let min_cache = if (prior.min_cache > 0) { prior.min_cache + row_bytes * 2 } else { prior.min_cache };
         cost = Cost {
           scratch: cost.scratch + prior.scratch, samples: cost.samples + prior.samples,
           setup_samples: prior.setup_samples, min_cache: min_cache, providers: prior.providers,
@@ -128,12 +118,9 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
         if (pixels.channels(node.format) != pixels.channels(input.format)) {
           return Err(InvalidGraph);
         }
-        let input_bytes: i64 = input.width as i64 * (pixels.channels(input.format) as i64);
+        let input_bytes = input.width as i64 * (pixels.channels(input.format) as i64);
         let prior = costs[parent];
-        let min_cache = prior.min_cache;
-        if (min_cache > 0i64) {
-          min_cache = min_cache + row_bytes * 2;
-        }
+        let min_cache = if (prior.min_cache > 0) { prior.min_cache + row_bytes * 2 } else { prior.min_cache };
         cost = Cost {
           scratch: cost.scratch + input_bytes + prior.scratch,
           samples: cost.samples + prior.samples * 2,
@@ -145,7 +132,6 @@ function analyze(graph: Graph, limits: Limits): Result[Cost, PipelineError] {
       return Err(Budget);
     }
     costs = costs.append(cost);
-    i = i + 1;
   }
   return Ok(costs[costs.len() - 1]);
 }
@@ -215,14 +201,12 @@ pub function required_cache(graph: Graph, limits: Limits): Result[i32, PipelineE
 function fill_row(node: Node, limits: Limits, cancelled: () => boolean, sample: (i32) => Result[pixels.Pixel, PipelineError]): Result[pixels.Image, PipelineError] {
   let row_limits = pixels.Limits { max_pixels: limits.max_pixels, max_bytes: limits.max_row_bytes };
   let row = match (pixels.create(node.width, 1, node.width * pixels.channels(node.format), node.format, row_limits)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
-  let x = 0;
-  while (x < node.width) {
+  for x in 0..node.width {
     if (x % 64 == 0 && cancelled()) {
       return Err(Cancelled);
     }
     let pixel = sample(x)?;
     row = match (pixels.write_pixel(row, x, 0, pixel)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
-    x = x + 1;
   }
   return Ok(row);
 }
@@ -235,10 +219,7 @@ function render_bilinear(graph: Graph, node: Node, parent: i32, y: i32, limits: 
   let input = graph.nodes[parent];
   let axis = match (resize.bilinear_axis(y, input.height, node.height)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
   let first = render_node(graph, parent, axis.first, limits, providers, cache, cancelled)?;
-  let second = first;
-  if (axis.second != axis.first) {
-    second = render_node(graph, parent, axis.second, limits, providers, cache, cancelled)?;
-  }
+  let second = if (axis.second != axis.first) { render_node(graph, parent, axis.second, limits, providers, cache, cancelled)? } else { first };
   let sample = (x: i32): Result[pixels.Pixel, PipelineError] => {
     let horizontal = match (resize.bilinear_axis(x, input.width, node.width)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
     let a = read(first, horizontal.first, 0)?;
@@ -254,11 +235,11 @@ function nearest_chain(graph: Graph, at: i32): NearestChain {
   let cursor = at;
   let depth = 0;
   let width_sum = 0i64;
-  while (true) {
+  loop {
     match (graph.nodes[cursor].operation) {
       NearestSource(parent) => {
-        width_sum = width_sum + graph.nodes[cursor].width as i64;
-        depth = depth + 1;
+        width_sum += graph.nodes[cursor].width as i64;
+        depth += 1;
         cursor = parent;
       },
       _ => {
@@ -276,13 +257,11 @@ function nearest_coordinate(graph: Graph, at: i32, root: i32, index: i32, vertic
       return Err(Cancelled);
     }
     let node = graph.nodes[cursor];
-    let parent = match (node.operation) { NearestSource(v) => v, _ => { return Err(InvalidGraph); } };
-    let from = graph.nodes[parent].width;
-    let to = node.width;
-    if (vertical) {
-      from = graph.nodes[parent].height;
-      to = node.height;
-    }
+    let NearestSource(parent) = node.operation else {
+      return Err(InvalidGraph);
+    };
+    let from = if (vertical) { graph.nodes[parent].height } else { graph.nodes[parent].width };
+    let to = if (vertical) { node.height } else { node.width };
     mapped = match (resize.nearest_index(mapped, from, to)) { Ok(v) => v, Err(e) => { return Err(Pixel(e)); } };
     cursor = parent;
   }
@@ -355,12 +334,10 @@ function cache_get(cache: Option[Cell[RowCache]], at: i32, y: i32): Option[pixel
 
 function cache_remove(state: RowCache, at: i32): RowCache {
   let entries: CacheEntry[] = [];
-  let i = 0;
-  while (i < state.entries.len()) {
+  for i in 0..state.entries.len() {
     if (i != at) {
       entries = entries.append(state.entries[i]);
     }
-    i = i + 1;
   }
   return RowCache { ...state, entries: entries, bytes: state.bytes - state.entries[at].row.layout.bytes };
 }
@@ -373,15 +350,13 @@ function cache_put(cache: Option[Cell[RowCache]], at: i32, y: i32, row: pixels.I
     }
     let count = 0;
     let first = 0;
-    let i = 0;
-    while (i < state.entries.len()) {
+    for i in 0..state.entries.len() {
       if (state.entries[i].node == at) {
         if (count == 0) {
           first = i;
         }
-        count = count + 1;
+        count += 1;
       }
-      i = i + 1;
     }
     if (count == 2) {
       state = cache_remove(state, first);
@@ -391,14 +366,8 @@ function cache_put(cache: Option[Cell[RowCache]], at: i32, y: i32, row: pixels.I
     }
     let entries = state.entries.append(CacheEntry { node: at, y: y, row: row });
     let bytes = state.bytes + row.layout.bytes;
-    let peak_bytes = state.stats.peak_cache_bytes;
-    let peak_entries = state.stats.peak_cache_entries;
-    if (bytes > peak_bytes) {
-      peak_bytes = bytes;
-    }
-    if (entries.len() > peak_entries) {
-      peak_entries = entries.len();
-    }
+    let peak_bytes = if (bytes > state.stats.peak_cache_bytes) { bytes } else { state.stats.peak_cache_bytes };
+    let peak_entries = if (entries.len() > state.stats.peak_cache_entries) { entries.len() } else { state.stats.peak_cache_entries };
     cell.set(RowCache {
       ...state, entries: entries, bytes: bytes,
       stats: RowStats { ...state.stats, peak_cache_bytes: peak_bytes, peak_cache_entries: peak_entries },
@@ -408,15 +377,12 @@ function cache_put(cache: Option[Cell[RowCache]], at: i32, y: i32, row: pixels.I
 
 function provider_sessions(graph: Graph, cancelled: () => boolean): Result[ProviderSession[], PipelineError] {
   let cursor = graph.nodes.len() - 1;
-  while (true) {
+  loop {
     if (cancelled()) {
       return Err(Cancelled);
     }
     match (graph.nodes[cursor].operation) {
-      NearestSource(parent) => {
-        cursor = parent;
-      },
-      BilinearSource(parent) => {
+      NearestSource(parent) | BilinearSource(parent) => {
         cursor = parent;
       },
       ProviderSource(spec) => {
@@ -424,7 +390,7 @@ function provider_sessions(graph: Graph, cancelled: () => boolean): Result[Provi
         if (cancelled()) {
           return Err(Cancelled);
         }
-        return Ok([ProviderSession { node: cursor, provider: provider, last: cell_new(0 - 1) }]);
+        return Ok([ProviderSession { node: cursor, provider: provider, last: cell_new(-1) }]);
       },
       _ => {
         return Ok([]);
@@ -443,11 +409,8 @@ function provider_row(row: SourceRow, node: Node, y: i32): Result[pixels.Image, 
   if (image.layout.stride != bytes || image.layout.bytes != bytes || image.data.len() != bytes) {
     return Err(Pixel(pixels.Storage));
   }
-  match (pixels.read_pixel(image, 0, 0)) {
-    Ok(_) => {},
-    Err(e) => {
-      return Err(Pixel(e));
-    }
+  if let Err(e) = pixels.read_pixel(image, 0, 0) {
+    return Err(Pixel(e));
   }
   return Ok(image);
 }
@@ -502,10 +465,7 @@ pub function render_row(graph: Graph, y: i32, limits: Limits, cancelled: () => b
   if (cost.min_cache > 0i64) {
     return Err(AccessPattern);
   }
-  let providers: ProviderSession[] = [];
-  if (cost.providers > 0) {
-    providers = provider_sessions(graph, cancelled)?;
-  }
+  let providers = if (cost.providers > 0) { provider_sessions(graph, cancelled)? } else { [] };
   return render_node(graph, output, y, limits, providers, None, cancelled);
 }
 
@@ -551,13 +511,11 @@ function fold_rows_mode[S, E](graph: Graph, first: i32, count: i32, limits: Limi
     providers = match (provider_sessions(graph, cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
   }
   let value = value;
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     let row = match (render_node(graph, output, first + i, limits, providers, Some(cache), cancelled)) { Ok(v) => v, Err(e) => { return Err(GraphFailure(e)); } };
     value = match (consume(value, row)) { Ok(next) => next, Err(e) => { return Err(ConsumerFailure(e)); } };
     let state = cache.get();
     cache.set(RowCache { ...state, stats: RowStats { ...state.stats, rows: state.stats.rows + 1 } });
-    i = i + 1;
   }
   return Ok(RowFold[S] { value: value, stats: cache.get().stats });
 }

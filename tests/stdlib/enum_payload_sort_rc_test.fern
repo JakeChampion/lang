@@ -3,10 +3,10 @@ import "std/test";
 
 function make_names(k: i32): Result[string[], i32] {
   let a: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < k) {
     a = a.append("item_" + (k - i).to_string());
-    i = i + 1;
+    i += 1;
   }
   return Ok(a);
 }
@@ -16,29 +16,29 @@ function by_bytes(a: string, b: string): i32 {
 }
 
 function ascending(xs: string[]): boolean {
-  let i: i32 = 1;
+  let i = 1;
   while (i < xs.len()) {
     if (xs[i - 1].cmp(xs[i]) > 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function test_match_payload_sort(): test.TestOutcome {
-  let rounds: i32 = 0;
+  let rounds = 0;
   while (rounds < 24) {
-    let k: i32 = 1;
+    let k = 1;
     while (k <= 8) {
       match (make_names(k)) {
         Ok(names) => {
-          let sorted: string[] = cmp.sort_by(names, by_bytes);
-          let churn: string = "x";
-          let c: i32 = 0;
+          let sorted = cmp.sort_by(names, by_bytes);
+          let churn = "x";
+          let c = 0;
           while (c < 40) {
-            churn = churn + "yyyy";
-            c = c + 1;
+            churn += "yyyy";
+            c += 1;
           }
           if (sorted.len() != k) {
             return test.fail("length changed after sort: got " + sorted.len().to_string() + " want " + k.to_string());
@@ -51,20 +51,20 @@ function test_match_payload_sort(): test.TestOutcome {
           return test.fail("unexpected Err");
         }
       }
-      k = k + 1;
+      k += 1;
     }
-    rounds = rounds + 1;
+    rounds += 1;
   }
   return test.pass();
 }
 
 function test_empty_payload_sort(): test.TestOutcome {
-  let rounds: i32 = 0;
+  let rounds = 0;
   while (rounds < 64) {
     match (make_names(0)) {
       Ok(names) => {
-        let sorted: string[] = cmp.sort_by(names, by_bytes);
-        let s: string = "a" + "b" + "c";
+        let sorted = cmp.sort_by(names, by_bytes);
+        let s = "a" + "b" + "c";
         if (sorted.len() != 0) {
           return test.fail("empty sort grew");
         }
@@ -76,13 +76,13 @@ function test_empty_payload_sort(): test.TestOutcome {
         return test.fail("unexpected Err");
       }
     }
-    rounds = rounds + 1;
+    rounds += 1;
   }
   return test.pass();
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("enum payload sort RC (#5311)");
+  let r = test.new("enum payload sort RC (#5311)");
   r = r.it("match-extracted array into consuming sort", test_match_payload_sort);
   r = r.it("empty extracted array into consuming sort", test_empty_payload_sort);
   return r.finish();

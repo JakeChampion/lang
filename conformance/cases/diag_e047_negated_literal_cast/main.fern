@@ -1,0 +1,5 @@
+function main(): i32 {
+  let ok = -1 as u8;
+  let bad = (-1) as u8;
+  return ok as i32 + bad as i32;
+}

@@ -28,11 +28,11 @@ function passed(deadline: Option[Instant]): boolean {
 
 // When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
 function wait_until(deadline: Option[Instant]): Option[Instant] {
-  let most: Duration = time.duration_millis(100);
+  let most = time.duration_millis(100);
   let Some(at) = deadline else {
     return Some(now().add(most));
   };
-  let left: Duration = at.since(now()).add(time.duration_millis(1));
+  let left = at.since(now()).add(time.duration_millis(1));
   if (left.cmp(time.duration_millis(1)) < 0) {
     return Some(now().add(time.duration_millis(1)));
   }
@@ -43,23 +43,23 @@ function wait_until(deadline: Option[Instant]): Option[Instant] {
 }
 
 function answer(req: HttpRequest): HttpResponse {
-  let body: string = req.method + " " + req.path + " " + req.body.data.len().to_string();
+  let body = f"{req.method} {req.path} {req.body.data.len()}";
   print("fern h3 server: answered " + body);
   return HttpResponse { status: 200, body: BodyText(body), headers: headers.new().append("content-type", "text/plain"), trailers: headers.new().append("x-served-by", "fern"), background: None };
 }
 
 function served(s: Server, c: h3q.Conn): Server {
-  let evs: h3q.Event[] = c.events;
-  let cur: h3q.Conn = c.events_taken();
-  let answered: i32 = s.answered;
+  let evs = c.events;
+  let cur = c.events_taken();
+  let answered = s.answered;
   for e in evs {
     match (e) {
       h3q.Requested(id, req) => {
         cur = cur.respond(id, answer(req));
-        answered = answered + 1;
+        answered += 1;
       },
       h3q.Ended(why) => {
-        print("fern h3 server: ended code=" + why.code.to_string() + " remote=" + why.remote.to_string() + " reason=" + why.reason);
+        print(f"fern h3 server: ended code={why.code} remote={why.remote} reason={why.reason}");
       },
       _ => {}
     }
@@ -68,11 +68,9 @@ function served(s: Server, c: h3q.Conn): Server {
 }
 
 function copied(buf: u8[], n: i32): u8[] {
-  let out: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
-  while (i < n) {
+  let out = __alloc_u8(n);
+  for i in 0..n {
     out = out.with(i, buf[i]);
-    i = i + 1;
   }
   return out;
 }
@@ -105,30 +103,29 @@ function received(s: Server, d: u8[], from: net.SocketAddr): Server {
 }
 
 function drained(s: Server, buf: u8[]): Server {
-  let cur: Server = s;
-  while (true) {
+  let cur = s;
+  loop {
     let Ok(got) = net.recv_from(cur.sock, buf) else {
       return cur;
     };
     cur = received(cur, copied(buf, got.0), got.1);
   }
-  return cur;
 }
 
 function sent(s: Server, c: h3q.Conn): Server {
-  let cur: Server = s;
+  let cur = s;
   if (passed(c.deadline())) {
     cur = served(cur, c.tick(now()));
   }
   let Some(ticked) = cur.current else {
     return cur;
   };
-  let next: h3q.Conn = ticked.transmit(now());
-  let out: u8[][] = next.datagrams();
+  let next = ticked.transmit(now());
+  let out = next.datagrams();
   next = next.sent();
   if let Some(to) = cur.peer {
     for d in out {
-      let r: Result[i32, net.NetError] = net.send_to(cur.sock, d, to);
+      let _ = net.send_to(cur.sock, d, to);
     }
   }
   return Server { ...cur, current: Some(next) };
@@ -145,28 +142,28 @@ function bound(port: string, cert: string, key: string): Option[Server] {
     eprint("bad identity");
     return None;
   };
-  let cfg: conn.Config = h3q.transport(conn.config([]).server_side(id));
+  let cfg = h3q.transport(conn.config([]).server_side(id));
   let Ok(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
     return None;
   };
   let Ok(sock) = net.udp_socket(addr) else {
     return None;
   };
-  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let _ = net.set_nonblocking(sock, true);
   return Some(Server { cfg: cfg, sock: sock, current: None, peer: None, answered: 0 });
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let Some(s0) = bound(argv[1], argv[2], argv[3]) else {
     return 2;
   };
   print("fern h3 server: listening");
-  let buf: u8[] = __alloc_u8(65536);
-  let s: Server = s0;
-  let started: Instant = now();
+  let buf = __alloc_u8(65536);
+  let s = s0;
+  let started = now();
   while (now().since(started).cmp(time.duration_seconds(20)) < 0) {
-    let woke: async.Wake = async.wait_any([s.sock, 1], wait_for(s));
+    let _ = async.wait_any([s.sock, 1], wait_for(s));
     s = drained(s, buf);
     if let Some(c) = s.current {
       s = sent(s, c);

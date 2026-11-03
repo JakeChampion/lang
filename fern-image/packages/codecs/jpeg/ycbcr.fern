@@ -5,13 +5,13 @@ import "core/cmp";
 pub enum ConvertError { Shape, Limit, Cancelled }
 
 function channel(value: i64): u8 {
-  if (value <= 0i64) {
-    return 0 as u8;
+  if (value <= 0) {
+    return 0;
   }
-  if (value >= 25500000i64) {
-    return 255 as u8;
+  if (value >= 25500000) {
+    return 255;
   }
-  return ((value + 50000i64) / 100000i64) as u8;
+  return ((value + 50000) / 100000) as u8;
 }
 
 // JFIF 1.02 page 3 decimal equations, evaluated in exact hundred-thousandths.
@@ -32,7 +32,9 @@ pub function convert_row(y: [u8], cb: [u8], cr: [u8], max_output_bytes: i32, can
   if (y.len() <= 0 || y.len() != cb.len() || y.len() != cr.len()) {
     return Err(ConvertError.Shape);
   }
-  let bytes = match (y.len() *? 3) { Some(v) => v, None => { return Err(ConvertError.Limit); } };
+  let Some(bytes) = y.len() *? 3 else {
+    return Err(ConvertError.Limit);
+  };
   if (max_output_bytes <= 0 || bytes > max_output_bytes || bytes > 67108864) {
     return Err(ConvertError.Limit);
   }

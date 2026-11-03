@@ -4,21 +4,21 @@ import "std/hex";
 import "std/string";
 
 function __pseudo(): u8[] {
-  let b: u8[] = __alloc_u8(10003);
-  let i: i32 = 0;
+  let b = __alloc_u8(10003);
+  let i = 0;
   while (i < 10003) {
     b = b.with(i, (i * 7 + 3 & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
   return b;
 }
 
 function __thousand_a(): string {
-  let b: u8[] = __alloc_u8(1000);
-  let i: i32 = 0;
+  let b = __alloc_u8(1000);
+  let i = 0;
   while (i < 1000) {
     b = b.with(i, 97 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(b);
 }
@@ -43,27 +43,27 @@ function test_bytes_len(): test.TestOutcome {
 }
 
 function test_million_a_chunked(): test.TestOutcome {
-  let h: crypto.Blake2b = crypto.blake2b_new(64);
-  let chunk: string = __thousand_a();
-  let i: i32 = 0;
+  let h = crypto.blake2b_new(64);
+  let chunk = __thousand_a();
+  let i = 0;
   while (i < 1000) {
     h = h.update(chunk.as_bytes());
-    i = i + 1;
+    i += 1;
   }
   return test.assert_eq(hex.encode(h.finish()), "98fb3efb7206fd19ebf69b6f312cf7b64e3b94dbe1a17107913975a793f177e1d077609d7fba363cbba00d05f7aa4e4fa8715d6428104c0a75643b0ff3fd3eaf");
 }
 
 function test_seven_byte_updates(): test.TestOutcome {
-  let msg: u8[] = __pseudo();
-  let h: crypto.Blake2b = crypto.blake2b_new(64);
-  let i: i32 = 0;
+  let msg = __pseudo();
+  let h = crypto.blake2b_new(64);
+  let i = 0;
   while (i + 7 <= 10003) {
     h = h.update(msg[i:i + 7]);
-    i = i + 7;
+    i += 7;
   }
   h = h.update(msg[i:10003]);
-  let chunked: string = hex.encode(h.finish());
-  let whole: string = hex.encode(crypto.blake2b_new(64).update(msg).finish());
+  let chunked = hex.encode(h.finish());
+  let whole = hex.encode(crypto.blake2b_new(64).update(msg).finish());
   if (chunked != "6088e8a2fde1d069eb0051accb83d114530aeb1a3ccd94ed6765a6d05d793de246a85a5b86a9725270b6403edf2f0db75189b920a4ad4ce54efb03a99df700c0") {
     return test.fail("chunked: " + chunked);
   }
@@ -71,7 +71,7 @@ function test_seven_byte_updates(): test.TestOutcome {
 }
 
 function test_update_bytes_and_oneshot(): test.TestOutcome {
-  let via_bytes: string = hex.encode(crypto.blake2b_new(64).update("abc".bytes()).finish());
+  let via_bytes = hex.encode(crypto.blake2b_new(64).update("abc".bytes()).finish());
   if (via_bytes != hex.encode(crypto.blake2b("abc".as_bytes(), 64))) {
     return test.fail("one-shot differs: " + via_bytes);
   }
@@ -95,7 +95,7 @@ function test_digest_lengths(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto BLAKE2b");
+  let r = test.new("std/crypto BLAKE2b");
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);

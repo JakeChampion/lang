@@ -50,7 +50,7 @@ function test_parse_iso_error(): test.TestOutcome {
 }
 
 function test_iso_round_trip(): test.TestOutcome {
-  let s: string = time.date_of(2024, 12, 31).format_iso();
+  let s = time.date_of(2024, 12, 31).format_iso();
   match (time.date_parse_iso(s)) {
     Ok(d) => {
       return test.assert_true(d.year == 2024 && d.month == 12 && d.day == 31);
@@ -112,7 +112,7 @@ function test_duration_to_string_negative(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/time iso + span");
+  let r = test.new("std/time iso + span");
   r = r.it("format_iso", test_format_iso);
   r = r.it("format_iso pad year", test_format_iso_pad_year);
   r = r.it("parse_iso ok", test_parse_iso_ok);

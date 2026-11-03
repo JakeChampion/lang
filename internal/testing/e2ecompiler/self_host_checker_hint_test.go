@@ -125,6 +125,18 @@ function main(): i32 { return take(if (true) { ({ 1 }) } else { 2.5 }); }`, 0},
 function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { Full(2.5) }; match (b) { Full(v) => { if (v > 0.5) { return 1; } }, Empty => {} } return 0; }`, 0},
 		{"value-if-literal-local-arm", `function main(): i32 { let c: boolean = true; let x = 1; let y = if (c) { x } else { 2.5 }; if (y > 0.5) { return 1; } return 0; }`, 0},
 		{"value-if-literal-local-tuple-elem", `function main(): i32 { let c: boolean = true; let x = 1; let t = if (c) { (x, 2) } else { (3.5, 4) }; if (t.0 > 0.5) { return 1; } return 0; }`, 0},
+		{"generic-impl-operator-result", `import "core/ops";
+struct Pair[T] { a: T, b: T }
+impl[T] ops.Add for Pair[T] { function add(self: Pair[T], o: Pair[T]): Pair[T] { return Pair { a: o.a, b: self.b }; } }
+impl[T] ops.Neg for Pair[T] { function neg(self: Pair[T]): Pair[T] { return Pair { a: self.b, b: self.a }; } }
+function main(): i32 { let p: Pair[i32] = Pair { a: 1, b: 2 }; let q = -(p + p); if (q.a != 2) { return 1; } return 0; }`, 0},
+		{"stdlib-generic-impl-operator-result", `import "std/simd" as simd;
+function main(): i32 {
+  let one: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
+  let back = one + one - one;
+  if (back.hi != 1.0) { return 1; }
+  return 0;
+}`, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(dir, tc.name+".fern")
@@ -213,6 +225,37 @@ function main(): i32 {
 				t.Errorf("diagnostic = %s, want %q and no internal error", out, want)
 			}
 		})
+	}
+}
+
+// The hint must type the module that the check typed. On a well-typed module it
+// therefore finds no statement and falls back to the module-level message.
+func TestSelfHostCheckerHintQualifiesSharedVariants(t *testing.T) {
+	interpBin := buildLangBinForInterp(t)
+	driver, err := filepath.Abs("../../../compiler/drivers/checker_hint_run.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := `enum A { Shared, OnlyA }
+enum B { Shared, OnlyB }
+function pick(): A { return Shared; }
+function main(): i32 { return 0; }
+`
+	path := filepath.Join(t.TempDir(), "shared.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(interpBin, "-check", path).CombinedOutput(); err != nil {
+		t.Fatalf("native checker rejected the program, so this test pins nothing: %v\n%s", err, out)
+	}
+	cmd := exec.Command(interpBin, "-interp", driver)
+	cmd.Stdin = strings.NewReader(src)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hint driver: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "rejected this module without a diagnostic") || strings.Contains(string(out), "could not type this statement") {
+		t.Errorf("hint = %s, want the module-level fallback and no statement", out)
 	}
 }
 

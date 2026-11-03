@@ -4,23 +4,23 @@ import "std/option";
 import "std/i32";
 
 function test_of_dedup(): test.TestOutcome {
-  let s: pset.PSet[i32] = pset.of([3, 1, 2, 3, 1]);
+  let s = pset.of([3, 1, 2, 3, 1]);
   if (s.len() != 3 || !s.is_valid()) {
     return test.fail("len " + s.len().to_string() + " != 3");
   }
-  let arr: i32[] = s.to_array();
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let arr = s.to_array();
+  let total = 0;
+  let i = 0;
   while (i < arr.len()) {
-    total = total + arr[i];
-    i = i + 1;
+    total += arr[i];
+    i += 1;
   }
   return test.assert_true(arr.len() == 3 && total == 6);
 }
 
 function test_insert_is_persistent(): test.TestOutcome {
-  let a: pset.PSet[i32] = pset.of([1, 2]);
-  let b: pset.PSet[i32] = a.insert(3);
+  let a = pset.of([1, 2]);
+  let b = a.insert(3);
   if (a.len() != 2 || b.len() != 3) {
     return test.fail("insert mutated receiver");
   }
@@ -29,18 +29,18 @@ function test_insert_is_persistent(): test.TestOutcome {
 
 function test_remove(): test.TestOutcome {
   let s: pset.PSet[i32] = pset.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 1000) {
     s = s.insert(i * 31 % 1000);
-    i = i + 1;
+    i += 1;
   }
-  let keep: pset.PSet[i32] = s;
+  let keep = s;
   i = 0;
   while (i < 1000) {
     if (i % 2 == 0) {
       s = s.remove(i);
     }
-    i = i + 1;
+    i += 1;
   }
   if (s.len() != 500 || keep.len() != 1000 || !s.is_valid() || !keep.is_valid()) {
     return test.fail("remove");
@@ -52,11 +52,11 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_algebra(): test.TestOutcome {
-  let a: pset.PSet[i32] = pset.of([1, 2, 3, 4]);
-  let b: pset.PSet[i32] = pset.of([3, 4, 5, 6]);
-  let u: pset.PSet[i32] = a.union(b);
-  let x: pset.PSet[i32] = a.intersection(b);
-  let d: pset.PSet[i32] = a.difference(b);
+  let a = pset.of([1, 2, 3, 4]);
+  let b = pset.of([3, 4, 5, 6]);
+  let u = a.union(b);
+  let x = a.intersection(b);
+  let d = a.difference(b);
   if (u.len() != 6 || x.len() != 2 || d.len() != 2) {
     return test.fail("sizes");
   }
@@ -73,7 +73,7 @@ function test_algebra(): test.TestOutcome {
 }
 
 function test_filter_fold_strings(): test.TestOutcome {
-  let s: pset.PSet[string] = pset.of(["pear", "apple", "fig", "apple"]);
+  let s = pset.of(["pear", "apple", "fig", "apple"]);
   if (s.len() != 3 || !s.contains("fig") || s.contains("kiwi")) {
     return test.fail("string members");
   }
@@ -86,7 +86,7 @@ function test_filter_fold_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/pset");
+  let r = test.new("std/pset");
   r = r.it("of dedups", test_of_dedup);
   r = r.it("insert is persistent", test_insert_is_persistent);
   r = r.it("remove", test_remove);

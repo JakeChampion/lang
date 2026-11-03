@@ -2213,6 +2213,50 @@ function emit_buf_push_base64(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    .section .text\n");
 }
 
+// Each pass reads four groups of five bytes as two 32-byte loads, so each
+// 128-bit lane holds one group. A load may pass hi but not the array's end. vpshufb puts the two bytes under each 5-bit
+// field in a word, and vpmulhuw shifts each word right by its own amount.
+function emit_buf_push_base32(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_buf_push_base32:\n");
+  s = s.write("    movslq %edx, %rdx\n    movslq %ecx, %rcx\n    xorl %eax, %eax\n    testq %rdx, %rdx\n    cmovsq %rax, %rdx\n");
+  s = s.write("    movq (%rsi), %rax\n    cmpq %rax, %rcx\n    cmovgq %rax, %rcx\n    subq %rdx, %rcx\n    jle .Lb32_done\n");
+  s = s.write("    movl %ecx, %eax\n    movl $3435973837, %r9d\n    imulq %r9, %rax\n    shrq $34, %rax\n    testq %rax, %rax\n    jz .Lb32_done\n");
+  s = s.write("    cmpq $32, (%r8)\n    jb __fern_oob_abort\n");
+  s = s.write("    leaq (%rax,%rax,4), %r10\n    shlq $3, %rax\n    movq 8(%rdi), %r11\n    leaq (%r11,%rax), %r9\n    cmpq 16(%rdi), %r9\n    ja .Lb32_grow\n");
+  s = s.write(".Lb32_fits:\n    movq %r9, 8(%rdi)\n    movq (%rdi), %rdi\n    addq %r11, %rdi\n    movq (%rsi), %rcx\n    leaq -23(%rsi,%rcx), %rcx\n    leaq 8(%rsi,%rdx), %rsi\n");
+  s = s.write("    cmpq $20, %r10\n    jb .Lb32_tail\n    cmpq %rcx, %rsi\n    ja .Lb32_tail\n");
+  s = s.write("    vbroadcasti128 8(%r8), %ymm8\n    vbroadcasti128 24(%r8), %ymm9\n");
+  s = s.write("    vmovdqu .Lb32_shuffle(%rip), %ymm12\n    vmovdqu .Lb32_shift(%rip), %ymm13\n");
+  s = s.write("    movl $2031647, %eax\n    movd %eax, %xmm14\n    vpbroadcastd %xmm14, %ymm14\n");
+  s = s.write("    movl $16, %eax\n    movd %eax, %xmm6\n    vpbroadcastb %xmm6, %ymm6\n");
+  s = s.write("    movl $112, %eax\n    movd %eax, %xmm5\n    vpbroadcastb %xmm5, %ymm5\n");
+  s = s.write(".Lb32_vec:\n    vmovdqu -6(%rsi), %ymm0\n    vmovdqu -1(%rsi), %ymm1\n");
+  s = s.write("    vpshufb %ymm12, %ymm0, %ymm0\n    vpshufb %ymm12, %ymm1, %ymm1\n");
+  s = s.write("    vpmulhuw %ymm13, %ymm0, %ymm0\n    vpmulhuw %ymm13, %ymm1, %ymm1\n");
+  s = s.write("    vpand %ymm14, %ymm0, %ymm0\n    vpand %ymm14, %ymm1, %ymm1\n    vpackuswb %ymm1, %ymm0, %ymm0\n");
+  s = s.write("    vpaddusb %ymm5, %ymm0, %ymm1\n    vpshufb %ymm1, %ymm8, %ymm3\n");
+  s = s.write("    vpsubb %ymm6, %ymm0, %ymm0\n    vpaddusb %ymm5, %ymm0, %ymm1\n    vpshufb %ymm1, %ymm9, %ymm4\n    vpor %ymm4, %ymm3, %ymm3\n");
+  s = s.write("    vmovdqu %ymm3, (%rdi)\n    addq $20, %rsi\n    addq $32, %rdi\n    subq $20, %r10\n    cmpq $20, %r10\n    jb .Lb32_vec_end\n    cmpq %rcx, %rsi\n    jbe .Lb32_vec\n.Lb32_vec_end:\n    vzeroupper\n");
+  s = s.write(".Lb32_tail:\n    testq %r10, %r10\n    jz .Lb32_done\n");
+  s = s.write(".Lb32_one:\n    movzbl (%rsi), %eax\n    shlq $32, %rax\n    movzbl 1(%rsi), %ecx\n    shll $24, %ecx\n    orq %rcx, %rax\n");
+  s = s.write("    movzbl 2(%rsi), %ecx\n    shll $16, %ecx\n    orq %rcx, %rax\n    movzbl 3(%rsi), %ecx\n    shll $8, %ecx\n    orq %rcx, %rax\n    movzbl 4(%rsi), %ecx\n    orq %rcx, %rax\n");
+  for k in 0..8 {
+    let shift: i32 = 35 - k * 5;
+    s = s.write("    movq %rax, %rcx\n    shrq $" + util.i32_to_string(shift) + ", %rcx\n    andl $31, %ecx\n    movzbl 8(%r8,%rcx), %ecx\n    movb %cl, " + util.i32_to_string(k) + "(%rdi)\n");
+  }
+  s = s.write("    addq $5, %rsi\n    addq $8, %rdi\n    subq $5, %r10\n    jnz .Lb32_one\n");
+  s = s.write(".Lb32_done:\n    xorl %eax, %eax\n    ret\n");
+  s = s.write(".Lb32_grow:\n    pushq %rdi\n    pushq %rsi\n    pushq %rdx\n    pushq %r8\n    pushq %r10\n    pushq %rax\n    subq $8, %rsp\n    movq %r9, %rsi\n    call __fern_buf_reserve\n");
+  s = s.write("    addq $8, %rsp\n    popq %rax\n    popq %r10\n    popq %r8\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    movq 8(%rdi), %r11\n    leaq (%r11,%rax), %r9\n    jmp .Lb32_fits\n");
+  s = s.write("    .section .rodata\n.Lb32_shuffle:\n");
+  s = s.write("    .byte 7, 6, 7, 6, 8, 7, 8, 7, 9, 8, 10, 9, 10, 9, 128, 10\n");
+  s = s.write("    .byte 1, 0, 1, 0, 2, 1, 2, 1, 3, 2, 4, 3, 4, 3, 128, 4\n");
+  s = s.write(".Lb32_shift:\n");
+  s = s.write("    .byte 32, 0, 0, 4, 128, 0, 0, 16, 0, 2, 64, 0, 0, 8, 0, 1\n");
+  s = s.write("    .byte 32, 0, 0, 4, 128, 0, 0, 16, 0, 2, 64, 0, 0, 8, 0, 1\n");
+  return s.write("    .section .text\n");
+}
+
 // __fern_buf_push_decimal(h, n) appends the decimal digits of the u64 n. It
 // writes them back to front into a stack scratch, two at a time from a table
 // of digit pairs, and divides by 100 with a multiply.
@@ -3968,6 +4012,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("buf_base64")) {
       s = emit_buf_push_base64(s);
+    }
+    if (s.has_need("buf_base32")) {
+      s = emit_buf_push_base32(s);
     }
     s = s.write("__fern_buf_len:\n");
     s = s.write("    movq 8(%rdi), %rax\n");
@@ -8402,13 +8449,7 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     dsts = dsts.append(ssa_buf_arg_reg(a));
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  s = ssa_call_sym(s, sym);
-  s = s.need("heap");
-  s = s.need("buf");
-  let extra: string = asmcore.buf_call_need(sym);
-  if (extra != "") {
-    s = s.need(extra);
-  }
+  s = ssa_call_sym(s, sym).buf_needs(sym);
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
@@ -10807,39 +10848,13 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
 }
 
 function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 296) {
-    s = s.need("buf_text");
-  }
-  if (o.kind_tag == 347) {
-    s = s.need("buf_take_bytes" + asmcore.packed_suffix(ir.is_packed(o)));
-  }
-  if (o.kind_tag == 351) {
-    s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
-  }
-  if (o.kind_tag == 485) {
-    s = s.need("buf_decimal");
-  }
-  if (o.kind_tag == 487) {
-    s = s.need("buf_base64");
-  }
   let k: i32 = asmcore.buf_arity(o.kind_tag);
   while (k > 0) {
     k = k - 1;
     s = s.write("    popq " + ssa_arg_regs()[k] + "\n");
   }
   let sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
-  s = s.write("    call " + sym + "\n    pushq %rax\n");
-  s = s.need("heap");
-  if (o.kind_tag >= 370 && o.kind_tag <= 372) {
-    if (sym != asmcore.buf_helper(o.kind_tag)) {
-      s = s.need("buf_bytes_u8");
-    } else {
-      s = s.need("buf_bytes");
-    }
-  } else if (o.kind_tag != 347 && o.kind_tag != 351 && sym != asmcore.buf_helper(o.kind_tag)) {
-    s = s.need("buf_u8");
-  }
-  return s.need("buf");
+  return s.write("    call " + sym + "\n    pushq %rax\n").buf_needs(sym);
 }
 
 function const_text_u32(t: string): boolean {

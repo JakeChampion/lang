@@ -2,8 +2,8 @@ import "std/test";
 import "std/time" as time;
 
 function test_is_leap_year(): test.TestOutcome {
-  let yes: boolean = time.is_leap_year(2000) && time.is_leap_year(2024);
-  let no: boolean = !time.is_leap_year(1900) && !time.is_leap_year(2100) && !time.is_leap_year(2023);
+  let yes = time.is_leap_year(2000) && time.is_leap_year(2024);
+  let no = !time.is_leap_year(1900) && !time.is_leap_year(2100) && !time.is_leap_year(2023);
   return test.assert_true(yes && no);
 }
 
@@ -23,9 +23,9 @@ function test_is_valid_true(): test.TestOutcome {
 }
 
 function test_is_valid_false(): test.TestOutcome {
-  let f1: boolean = !time.date_of(2023, 2, 29).is_valid();
-  let f2: boolean = !time.date_of(2024, 13, 1).is_valid();
-  let f3: boolean = !time.date_of(2024, 4, 31).is_valid();
+  let f1 = !time.date_of(2023, 2, 29).is_valid();
+  let f2 = !time.date_of(2024, 13, 1).is_valid();
+  let f3 = !time.date_of(2024, 4, 31).is_valid();
   return test.assert_true(f1 && f2 && f3);
 }
 
@@ -45,7 +45,7 @@ function test_add_days_year_boundary(): test.TestOutcome {
 }
 
 function test_add_days_backward(): test.TestOutcome {
-  let d = time.date_of(2024, 1, 1).add_days(0 - 1);
+  let d = time.date_of(2024, 1, 1).add_days(-1);
   return test.assert_true(d.year == 2023 && d.month == 12 && d.day == 31);
 }
 
@@ -58,15 +58,15 @@ function test_days_since_leap_feb(): test.TestOutcome {
 }
 
 function test_day_of_year(): test.TestOutcome {
-  let jan1: boolean = time.date_of(2024, 1, 1).day_of_year() == 1;
-  let dec31_leap: boolean = time.date_of(2024, 12, 31).day_of_year() == 366;
-  let dec31_plain: boolean = time.date_of(2023, 12, 31).day_of_year() == 365;
+  let jan1 = time.date_of(2024, 1, 1).day_of_year() == 1;
+  let dec31_leap = time.date_of(2024, 12, 31).day_of_year() == 366;
+  let dec31_plain = time.date_of(2023, 12, 31).day_of_year() == 365;
   return test.assert_true(jan1 && dec31_leap && dec31_plain);
 }
 
 function test_weekday(): test.TestOutcome {
-  let mon: boolean = time.date_of(2024, 1, 1).weekday() == 1;
-  let thu: boolean = time.date_of(1970, 1, 1).weekday() == 4;
+  let mon = time.date_of(2024, 1, 1).weekday() == 1;
+  let thu = time.date_of(1970, 1, 1).weekday() == 4;
   return test.assert_true(mon && thu);
 }
 
@@ -79,7 +79,7 @@ function test_format_iso_zero_pad(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/time calendar");
+  let r = test.new("std/time calendar");
   r = r.it("is_leap_year", test_is_leap_year);
   r = r.it("days_in_month feb", test_days_in_month_feb);
   r = r.it("days_in_month others", test_days_in_month_others);

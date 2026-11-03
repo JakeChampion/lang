@@ -5,7 +5,7 @@ import "std/io";
 function test_temp_dir_returns_abs_path(): test.TestOutcome {
   match (temp_dir("fs-ops")) {
     Ok(dir) => {
-      let ok: boolean = dir.starts_with("/") || dir.starts_with("\\");
+      let ok = dir.starts_with("/") || dir.starts_with("\\");
       match (remove_dir_all(dir)) {
         Ok(_) => {},
         Err(_) => {}
@@ -23,10 +23,10 @@ function test_temp_dir_returns_abs_path(): test.TestOutcome {
 }
 
 function test_temp_file_round_trip(): test.TestOutcome {
-  let made: Result[io.TempFile, IoError] = io.temp_file("fs-ops");
+  let made = io.temp_file("fs-ops");
   match (made) {
     Ok(t) => {
-      let path: string = t.path;
+      let path = t.path;
       match (t.file.write("abc")) {
         Ok(_) => {},
         Err(_) => {
@@ -39,7 +39,7 @@ function test_temp_file_round_trip(): test.TestOutcome {
           return test.fail("close of the temp file failed");
         }
       }
-      let got: string = "";
+      let got = "";
       match (read_file(path)) {
         Ok(text) => {
           got = text;
@@ -102,7 +102,7 @@ function test_read_dir_lists_what_we_wrote(): test.TestOutcome {
       }
       match (read_dir(dir)) {
         Ok(names) => {
-          let sorted: string[] = cmp.sort(names);
+          let sorted = cmp.sort(names);
           match (remove_dir_all(dir)) {
             Ok(_) => {},
             Err(_) => {}
@@ -128,8 +128,8 @@ function test_read_dir_lists_what_we_wrote(): test.TestOutcome {
 function test_remove_file_removes_a_single_file(): test.TestOutcome {
   match (temp_dir("rmfile-fixture")) {
     Ok(dir) => {
-      let keep: string = dir + "/keep.txt";
-      let doomed: string = dir + "/doomed.txt";
+      let keep = dir + "/keep.txt";
+      let doomed = dir + "/doomed.txt";
       match (write_file(keep, "keep")) {
         Ok(_) => {},
         Err(_) => {
@@ -191,7 +191,7 @@ function test_remove_file_on_missing_target_is_an_error(): test.TestOutcome {
 function test_create_dir_all_builds_a_missing_chain(): test.TestOutcome {
   match (temp_dir("mkdirp-fixture")) {
     Ok(dir) => {
-      let leaf: string = dir + "/one/two/three";
+      let leaf = dir + "/one/two/three";
       match (create_dir_all(leaf)) {
         Ok(_) => {},
         Err(_) => {
@@ -266,7 +266,7 @@ function test_create_dir_all_on_existing_path_is_ok(): test.TestOutcome {
 function test_create_dir_all_under_a_file_is_an_error(): test.TestOutcome {
   match (temp_dir("mkdirp-notdir")) {
     Ok(dir) => {
-      let blocker: string = dir + "/blocker";
+      let blocker = dir + "/blocker";
       match (write_file(blocker, "x")) {
         Ok(_) => {},
         Err(_) => {
@@ -314,7 +314,7 @@ function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("filesystem ops");
+  let r = test.new("filesystem ops");
   r = r.it("temp_dir returns absolute path", test_temp_dir_returns_abs_path);
   r = r.it("temp_file round trip", test_temp_file_round_trip);
   r = r.it("temp_file refuses a separator", test_temp_file_refuses_a_separator);

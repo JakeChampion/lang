@@ -4,21 +4,21 @@ import "std/hex";
 import "std/string";
 
 function __pseudo(): u8[] {
-  let b: u8[] = __alloc_u8(10003);
-  let i: i32 = 0;
+  let b = __alloc_u8(10003);
+  let i = 0;
   while (i < 10003) {
     b = b.with(i, (i * 7 + 3 & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
   return b;
 }
 
 function __thousand_a(): string {
-  let b: u8[] = __alloc_u8(1000);
-  let i: i32 = 0;
+  let b = __alloc_u8(1000);
+  let i = 0;
   while (i < 1000) {
     b = b.with(i, 97 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(b);
 }
@@ -43,27 +43,27 @@ function test_bytes_len(): test.TestOutcome {
 }
 
 function test_million_a_chunked(): test.TestOutcome {
-  let h: crypto.Sha512 = crypto.sha512_new();
-  let chunk: string = __thousand_a();
-  let i: i32 = 0;
+  let h = crypto.sha512_new();
+  let chunk = __thousand_a();
+  let i = 0;
   while (i < 1000) {
     h = h.update(chunk.as_bytes());
-    i = i + 1;
+    i += 1;
   }
   return test.assert_eq(hex.encode(h.finish()), "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b");
 }
 
 function test_seven_byte_updates(): test.TestOutcome {
-  let msg: u8[] = __pseudo();
-  let h: crypto.Sha512 = crypto.sha512_new();
-  let i: i32 = 0;
+  let msg = __pseudo();
+  let h = crypto.sha512_new();
+  let i = 0;
   while (i + 7 <= 10003) {
     h = h.update(msg[i:i + 7]);
-    i = i + 7;
+    i += 7;
   }
   h = h.update(msg[i:10003]);
-  let chunked: string = hex.encode(h.finish());
-  let whole: string = hex.encode(crypto.sha512_new().update(msg).finish());
+  let chunked = hex.encode(h.finish());
+  let whole = hex.encode(crypto.sha512_new().update(msg).finish());
   if (chunked != "436cf1f167ed2199d3b6b342af4b1a8c727741672ba32805c492d67fa5eb6a13f9c06cf79b29c167ea5df115f296a84d824c5db2fcb4a8e815893b12566e6d36") {
     return test.fail("chunked: " + chunked);
   }
@@ -71,7 +71,7 @@ function test_seven_byte_updates(): test.TestOutcome {
 }
 
 function test_update_bytes_and_oneshot(): test.TestOutcome {
-  let via_bytes: string = hex.encode(crypto.sha512_new().update("abc".bytes()).finish());
+  let via_bytes = hex.encode(crypto.sha512_new().update("abc".bytes()).finish());
   if (via_bytes != hex.encode(crypto.sha512("abc".as_bytes()))) {
     return test.fail("one-shot differs: " + via_bytes);
   }
@@ -79,7 +79,7 @@ function test_update_bytes_and_oneshot(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/crypto SHA-512");
+  let r = test.new("std/crypto SHA-512");
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);

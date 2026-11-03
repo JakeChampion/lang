@@ -13,8 +13,8 @@ function test_f64_division_by_negative(): test.TestOutcome {
 }
 
 function test_f32_precision_loss(): test.TestOutcome {
-  let f: f32 = 0.1 as f32;
-  let sum: f32 = f + f + f;
+  let f = 0.1 as f32;
+  let sum = f + f + f;
   return test.assert_eq_f32_near(sum, 0.3 as f32, 0.0001 as f32);
 }
 
@@ -24,13 +24,13 @@ function test_f64_exact_equality_on_integral(): test.TestOutcome {
 
 function test_nan_detection(): test.TestOutcome {
   let z: f64 = 0.0;
-  let nan: f64 = z / z;
+  let nan = z / z;
   return test.assert_is_nan_f64(nan);
 }
 
 function test_nan_compares_unequal_to_itself(): test.TestOutcome {
   let z: f64 = 0.0;
-  let nan: f64 = z / z;
+  let nan = z / z;
   if (nan == nan) {
     return test.fail("NaN compared equal to itself");
   }
@@ -38,15 +38,15 @@ function test_nan_compares_unequal_to_itself(): test.TestOutcome {
 }
 
 function test_f32_bits_round_trip(): test.TestOutcome {
-  let x: f32 = 1.0 as f32;
-  let bits: i32 = f32_bits(x);
+  let x = 1.0 as f32;
+  let bits = f32_bits(x);
   return test.assert_eq(bits, 1065353216);
 }
 
 function test_f32_from_bits_round_trips(): test.TestOutcome {
-  let x: f32 = 3.14 as f32;
-  let bits: i32 = f32_bits(x);
-  let back: f32 = f32_from_bits(bits);
+  let x = 3.14 as f32;
+  let bits = f32_bits(x);
+  let back = f32_from_bits(bits);
   return test.assert_eq_f32_near(back, x, 0.000001 as f32);
 }
 
@@ -84,7 +84,7 @@ function test_to_string_paths(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("floats");
+  let r = test.new("floats");
   r = r.it("f64 addition", test_f64_addition);
   r = r.it("f64 multiplication", test_f64_multiplication);
   r = r.it("f64 division by negative", test_f64_division_by_negative);

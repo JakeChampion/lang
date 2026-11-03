@@ -126,23 +126,23 @@ function show(r: Result[time.Timestamp, time.TimeParseError]): string {
 }
 
 function test_parse_asctime(): test.TestOutcome {
-  let a: string = show(time.http_date_parse("Sun Nov  6 08:49:37 1994"));
-  let b: string = show(time.http_date_parse("Sun Nov 06 08:49:37 1994"));
+  let a = show(time.http_date_parse("Sun Nov  6 08:49:37 1994"));
+  let b = show(time.http_date_parse("Sun Nov 06 08:49:37 1994"));
   return test.assert_eq(a + "|" + b, "Sun, 06 Nov 1994 08:49:37 GMT|Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
 function test_parse_rfc850(): test.TestOutcome {
   let now = time.timestamp_from_unix(1791768000 as i64);
-  let without: string = show(time.http_date_parse("Sunday, 06-Nov-94 08:49:37 GMT"));
-  let with_now: string = show(time.http_date_parse_at("Sunday, 06-Nov-94 08:49:37 GMT", now));
+  let without = show(time.http_date_parse("Sunday, 06-Nov-94 08:49:37 GMT"));
+  let with_now = show(time.http_date_parse_at("Sunday, 06-Nov-94 08:49:37 GMT", now));
   return test.assert_eq(without + "|" + with_now, "\"Sunday, 06-Nov-94 08:49:37 GMT\" is not an HTTP-date|Sun, 06 Nov 1994 08:49:37 GMT");
 }
 
 function test_rfc850_year_window(): test.TestOutcome {
   let now = time.timestamp_from_unix(1791768000 as i64);
-  let a: string = show(time.http_date_parse_at("Friday, 01-Jan-76 00:00:00 GMT", now));
-  let b: string = show(time.http_date_parse_at("Saturday, 01-Jan-77 00:00:00 GMT", now));
-  let c: string = show(time.http_date_parse_at("Thursday, 01-Jan-26 00:00:00 GMT", now));
+  let a = show(time.http_date_parse_at("Friday, 01-Jan-76 00:00:00 GMT", now));
+  let b = show(time.http_date_parse_at("Saturday, 01-Jan-77 00:00:00 GMT", now));
+  let c = show(time.http_date_parse_at("Thursday, 01-Jan-26 00:00:00 GMT", now));
   return test.assert_eq(a + "|" + b + "|" + c, "Wed, 01 Jan 2076 00:00:00 GMT|Sat, 01 Jan 1977 00:00:00 GMT|Thu, 01 Jan 2026 00:00:00 GMT");
 }
 
@@ -166,7 +166,7 @@ function test_parse_leap_second(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/time http-date");
+  let r = test.new("std/time http-date");
   r = r.it("format canonical", test_format_canonical);
   r = r.it("format epoch", test_format_epoch);
   r = r.it("format drops subsecond", test_format_drops_subsecond);

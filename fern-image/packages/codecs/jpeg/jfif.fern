@@ -19,11 +19,11 @@ function declaration(input: [u8], start: i32, end: i32): Result[AppFields, JfifE
   if (end - start < 14) {
     return Err(JfifError.Declaration);
   }
-  if (input[start] != 74 as u8 || input[start + 1] != 70 as u8 || input[start + 2] != 73 as u8
-    || input[start + 3] != 70 as u8 || input[start + 4] != 0 as u8) {
+  if (input[start] != b'J' || input[start + 1] != b'F' || input[start + 2] != b'I'
+    || input[start + 3] != b'F' || input[start + 4] != 0) {
     return Err(JfifError.Declaration);
   }
-  if (input[start + 5] != 1 as u8 || input[start + 6] > 2 as u8) {
+  if (input[start + 5] != 1 || input[start + 6] > 2) {
     return Err(JfifError.Version);
   }
   let units = input[start + 7] as i32;
@@ -55,20 +55,20 @@ function metadata(input: [u8], stop: i32, cancelled: () => boolean): Result[AppF
     if (cancelled()) {
       return Err(JfifError.Cancelled);
     }
-    if (input[at] != 255 as u8) {
+    if (input[at] != 255) {
       return Err(JfifError.Header(header.JpegError.Marker));
     }
-    while (at < stop && input[at] == 255 as u8) {
+    while (at < stop && input[at] == 255) {
       if (cancelled()) {
         return Err(JfifError.Cancelled);
       }
-      at = at + 1;
+      at += 1;
     }
     if (at + 3 > stop) {
       return Err(JfifError.Header(header.JpegError.Truncated));
     }
     let marker = input[at] as i32;
-    at = at + 1;
+    at += 1;
     let length = be16(input, at);
     if (length < 2 || length > stop - at) {
       return Err(JfifError.Header(header.JpegError.Length));

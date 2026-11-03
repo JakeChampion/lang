@@ -6,22 +6,16 @@ function (b: Blk) put(i: i32, v: u8): Blk {
 
 function main(): i32 {
   let buf: u8[] = [];
-  let n: i32 = 0;
-  while (n < 4096) {
+  for _ in 0..4096 {
     buf = buf.append(0u8);
-    n = n + 1;
   }
-  let b: Blk = Blk { buf: buf, note: "a refcounted field the update carries", n: 0 };
-  let total: i64 = 0i64;
-  let r: i32 = 0;
-  while (r < 400) {
-    let i: i32 = 0;
-    while (i < 4096) {
+  let b = Blk { buf: buf, note: "a refcounted field the update carries", n: 0 };
+  let total = 0i64;
+  for r in 0..400 {
+    for i in 0..4096 {
       b = b.put(i, ((i + r) % 251) as u8);
-      i = i + 1;
     }
-    total = total + b.buf[r % 4096] as i64;
-    r = r + 1;
+    total += b.buf[r % 4096] as i64;
   }
   return (total % 97i64) as i32;
 }

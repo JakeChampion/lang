@@ -91,7 +91,7 @@ function test_parse_multibyte_and_growth(): test.TestOutcome {
 }
 
 function test_doc_multi_record(): test.TestOutcome {
-  let rows: string[][] = __csv_rows("a,b,c\n1,2,3");
+  let rows = __csv_rows("a,b,c\n1,2,3");
   if (rows.len() != 2) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -102,7 +102,7 @@ function test_doc_multi_record(): test.TestOutcome {
 }
 
 function test_doc_embedded_newline(): test.TestOutcome {
-  let rows: string[][] = __csv_rows("\"a,b\",\"line1\nline2\",z");
+  let rows = __csv_rows("\"a,b\",\"line1\nline2\",z");
   if (rows.len() != 1) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -110,7 +110,7 @@ function test_doc_embedded_newline(): test.TestOutcome {
 }
 
 function test_doc_crlf_and_trailing(): test.TestOutcome {
-  let rows: string[][] = __csv_rows("a,b\r\nc,d\r\n");
+  let rows = __csv_rows("a,b\r\nc,d\r\n");
   if (rows.len() != 2) {
     return test.fail("row count " + rows.len().to_string());
   }
@@ -126,7 +126,7 @@ function test_doc_empty_and_trailing_field(): test.TestOutcome {
 
 function test_doc_serialize_roundtrip(): test.TestOutcome {
   let rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
-  let back: string[][] = __csv_rows(csv.serialize(rows));
+  let back = __csv_rows(csv.serialize(rows));
   if (back.len() != 2) {
     return test.fail("row count");
   }
@@ -162,7 +162,7 @@ function test_malformed_fields(): test.TestOutcome {
     csv.ParseErrorKind.UnclosedQuote,
   ];
   for i in 0..inputs.len() {
-    let outcome: test.TestOutcome = expect_error(inputs[i], offsets[i], kinds[i]);
+    let outcome = expect_error(inputs[i], offsets[i], kinds[i]);
     match (outcome) {
       test.TestOutcome.Fail(_) => {
         return outcome;
@@ -190,7 +190,7 @@ function test_single_record_boundary(): test.TestOutcome {
 }
 
 function test_document_error_offset(): test.TestOutcome {
-  let outcome: test.TestOutcome = expect_error("a,b\r\n\"c\"z", 8, csv.ParseErrorKind.UnexpectedByteAfterQuote(122 as u8));
+  let outcome = expect_error("a,b\r\n\"c\"z", 8, csv.ParseErrorKind.UnexpectedByteAfterQuote(122 as u8));
   match (outcome) {
     test.TestOutcome.Fail(_) => {
       return outcome;
@@ -205,7 +205,7 @@ function test_record_roundtrip_corpus(): test.TestOutcome {
   for a in cells {
     for b in cells {
       let row: string[] = [a, b];
-      let outcome: test.TestOutcome = test.assert_eq_array(__csv_fields(csv.join(row)), row);
+      let outcome = test.assert_eq_array(__csv_fields(csv.join(row)), row);
       match (outcome) {
         test.TestOutcome.Fail(_) => {
           return outcome;
@@ -218,7 +218,7 @@ function test_record_roundtrip_corpus(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/csv");
+  let r = test.new("std/csv");
   r = r.it("escape plain", test_escape_plain);
   r = r.it("escape comma", test_escape_comma);
   r = r.it("escape quote", test_escape_quote);

@@ -39,7 +39,9 @@ function rejected_rows(data: [u8], limits: pixels.Limits, incremental: boolean):
 function rejected_provider(data: u8[], limits: pixels.Limits, expected: png.PngError, incremental: boolean): string {
   let source = if (incremental) { provider.incremental_source(data, limits, png.default_row_limits(), pipeline.default_limits()) } else { provider.source(data, limits, png.default_row_limits(), pipeline.default_limits()) };
   let graph = match (source) { Ok(v) => v, Err(pipeline.ProviderFailure(e)) => { return if (e == "PNG " + expected.to_debug()) { error_name(expected) } else { "unexpected" }; }, Err(_) => { return "unexpected"; } };
-  let cache = match (pipeline.required_cache(graph, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return "unexpected"; } };
+  let Ok(cache) = pipeline.required_cache(graph, pipeline.default_limits()) else {
+    return "unexpected";
+  };
   let consume = (value: i32, _row: pixels.Image): Result[i32, string] => Ok(value);
   return match (pipeline.fold_rows_fused(graph, 0, 1, pipeline.default_limits(), cache, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => if (e == "PNG " + expected.to_debug()) { error_name(expected) } else { "unexpected" }, _ => "unexpected" };
 }
@@ -61,32 +63,40 @@ function graph_bytes(graph: pipeline.Graph, height: i32, cache: i32, fused: bool
 }
 
 function inspect(path: string, index: i32): i32 {
-  let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
-  let prefix = "index=" + index.to_string();
+  let Ok(data) = read_file_bytes(path) else {
+    return 2;
+  };
+  let prefix = f"index={index}";
   let limits = pixels.Limits { max_pixels: 65536, max_bytes: 262144 };
-  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => {
-    print(prefix + " status=error error=" + error_name(e) + " row_error=" + rejected_rows(data, limits, false) + " provider_error=" + rejected_provider(data, limits, e, false)
-      + " incremental_error=" + rejected_rows(data, limits, true) + " incremental_provider_error=" + rejected_provider(data, limits, e, true));
-    return 0;
-  } };
-  let rows = match (row_bytes(data, 0, image.layout.height, limits, false)) { Ok(v) => v, Err(_) => { return 6; } };
-  let incremental_rows = match (row_bytes(data, 0, image.layout.height, limits, true)) { Ok(v) => v, Err(_) => { return 17; } };
+  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => { print(f"{prefix} status=error error={error_name(e)} row_error={rejected_rows(data, limits, false)} provider_error={rejected_provider(data, limits, e, false)} incremental_error={rejected_rows(data, limits, true)} incremental_provider_error={rejected_provider(data, limits, e, true)}"); return 0; } };
+  let Ok(rows) = row_bytes(data, 0, image.layout.height, limits, false) else {
+    return 6;
+  };
+  let Ok(incremental_rows) = row_bytes(data, 0, image.layout.height, limits, true) else {
+    return 17;
+  };
   let first = image.layout.height / 2;
   let count = image.layout.height - first;
   if (count > 2) {
     count = 2;
   }
-  let selected = match (row_bytes(data, first, count, limits, false)) { Ok(v) => v, Err(_) => { return 7; } };
-  let incremental_selected = match (row_bytes(data, first, count, limits, true)) { Ok(v) => v, Err(_) => { return 18; } };
+  let Ok(selected) = row_bytes(data, first, count, limits, false) else {
+    return 7;
+  };
+  let Ok(incremental_selected) = row_bytes(data, first, count, limits, true) else {
+    return 18;
+  };
   for incremental in [false, true] {
     let source = if (incremental) { provider.incremental_source(data, limits, png.default_row_limits(), pipeline.default_limits()) } else { provider.source(data, limits, png.default_row_limits(), pipeline.default_limits()) };
-    let graph = match (source) { Ok(v) => v, Err(_) => { return 10; } };
-    let depth = 0;
-    while (depth < 2) {
+    let Ok(graph) = source else {
+      return 10;
+    };
+    for _ in 0..2 {
       graph = match (pipeline.nearest(graph, image.layout.width, image.layout.height, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return 11; } };
-      depth = depth + 1;
     }
-    let cache = match (pipeline.required_cache(graph, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return 12; } };
+    let Ok(cache) = pipeline.required_cache(graph, pipeline.default_limits()) else {
+      return 12;
+    };
     let crop_x = image.layout.width / 2;
     let crop_width = image.layout.width - crop_x;
     if (crop_width > 2) {
@@ -95,63 +105,42 @@ function inspect(path: string, index: i32): i32 {
     let region = regions.Region { x: crop_x, y: first, width: crop_width, height: count };
     for fused in [false, true] {
       let suffix = if (incremental) { ".incremental" } else { "" };
-      suffix = suffix + (if (fused) { ".fused" } else { ".legacy" });
-      let bytes = match (graph_bytes(graph, image.layout.height, cache, fused)) { Ok(v) => v, Err(_) => { return 13; } };
+      suffix += if (fused) { ".fused" } else { ".legacy" };
+      let Ok(bytes) = graph_bytes(graph, image.layout.height, cache, fused) else {
+        return 13;
+      };
       let tile_result = if (fused) { regions.render_cached_tile_fused(graph, region, pipeline.default_limits(), cache, never_cancel) } else { regions.render_cached_tile(graph, region, pipeline.default_limits(), cache, never_cancel) };
       let tile = match (tile_result) { Ok(v) => v.image, Err(_) => { return 14; } };
-      match (write_file_bytes(path + suffix + ".graph.raw", bytes)) {
-        Ok(_) => {},
-        Err(_) => {
-          return 15;
-        }
+      if let Err(_) = write_file_bytes(f"{path}{suffix}.graph.raw", bytes) {
+        return 15;
       }
-      match (write_file_bytes(path + suffix + ".tile.raw", tile.data)) {
-        Ok(_) => {},
-        Err(_) => {
-          return 16;
-        }
+      if let Err(_) = write_file_bytes(f"{path}{suffix}.tile.raw", tile.data) {
+        return 16;
       }
     }
   }
-  let encoded = match (png.encode(image, 1048576)) { Ok(v) => v, Err(_) => { return 3; } };
-  match (write_file_bytes(path + ".raw", image.data)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 4;
-    }
+  let Ok(encoded) = png.encode(image, 1048576) else {
+    return 3;
+  };
+  if let Err(_) = write_file_bytes(path + ".raw", image.data) {
+    return 4;
   }
-  match (write_file_bytes(path + ".encoded.png", encoded)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 5;
-    }
+  if let Err(_) = write_file_bytes(path + ".encoded.png", encoded) {
+    return 5;
   }
-  match (write_file_bytes(path + ".rows.raw", rows)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 8;
-    }
+  if let Err(_) = write_file_bytes(path + ".rows.raw", rows) {
+    return 8;
   }
-  match (write_file_bytes(path + ".selected.raw", selected)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 9;
-    }
+  if let Err(_) = write_file_bytes(path + ".selected.raw", selected) {
+    return 9;
   }
-  match (write_file_bytes(path + ".incremental.rows.raw", incremental_rows)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 19;
-    }
+  if let Err(_) = write_file_bytes(path + ".incremental.rows.raw", incremental_rows) {
+    return 19;
   }
-  match (write_file_bytes(path + ".incremental.selected.raw", incremental_selected)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 20;
-    }
+  if let Err(_) = write_file_bytes(path + ".incremental.selected.raw", incremental_selected) {
+    return 20;
   }
-  print(prefix + " status=ok width=" + image.layout.width.to_string() + " height=" + image.layout.height.to_string()
-    + " channels=" + pixels.channels(image.layout.format).to_string() + " first=" + first.to_string() + " count=" + count.to_string());
+  print(f"{prefix} status=ok width={image.layout.width} height={image.layout.height} channels={pixels.channels(image.layout.format)} first={first} count={count}");
   return 0;
 }
 
@@ -160,13 +149,11 @@ function main(): i32 {
   if (av.len() < 2 || av.len() > 17) {
     return 1;
   }
-  let i = 1;
-  while (i < av.len()) {
+  for i in 1..av.len() {
     let result = inspect(av[i], i - 1);
     if (result != 0) {
       return result;
     }
-    i = i + 1;
   }
   return 0;
 }

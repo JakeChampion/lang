@@ -131,7 +131,7 @@ function cancellation(): test.TestOutcome {
     values = values.append(index * 65535 / 128);
   }
   for (curve, count) in [(tag_data.Identity, 2), (tag_data.Gamma(512), 2), (tag_data.Samples(values), 5)] {
-    for stop in 1..count + 1 {
+    for stop in 1..=count {
       let polls = cell_new(0);
       let result = curv_inverse.invert(curve, 0.5, curv_eval.default_limits(), (): boolean => {
         polls.set(polls.get() + 1);
@@ -150,7 +150,7 @@ function ordinary(values: [i32], input: f64): f64 {
   let target = input * 65535.0;
   let index = 0;
   while (index < values.len() - 1 && values[index + 1] as f64 <= target) {
-    index = index + 1;
+    index += 1;
   }
   if (index == values.len() - 1) {
     return 1.0;
