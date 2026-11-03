@@ -14,10 +14,10 @@ import (
 )
 
 type compileRequest struct {
-	src, out, target, emit, backend, embed, export, jniJava, qemu string
-	runIt, shared, debug, sanitize, cover, optimize, harden       bool
-	backtrace, size                                               *bool
-	progArgs                                                      []string
+	src, out, target, emit, backend, embed, export, jniJava, jniDex, qemu string
+	runIt, shared, debug, sanitize, cover, optimize, harden               bool
+	backtrace, size                                                       *bool
+	progArgs                                                              []string
 }
 
 func compileArgs(r compileRequest, out, stdlib string) []string {
@@ -25,7 +25,7 @@ func compileArgs(r compileRequest, out, stdlib string) []string {
 	if out != "" {
 		args = append(args, "-o", out)
 	}
-	for _, f := range []struct{ name, val string }{{"-emit", r.emit}, {"-backend", r.backend}, {"-embed", r.embed}, {"-export", r.export}, {"-jni-java", r.jniJava}} {
+	for _, f := range []struct{ name, val string }{{"-emit", r.emit}, {"-backend", r.backend}, {"-embed", r.embed}, {"-export", r.export}, {"-jni-java", r.jniJava}, {"-jni-dex", r.jniDex}} {
 		if f.val != "" {
 			args = append(args, f.name, f.val)
 		}

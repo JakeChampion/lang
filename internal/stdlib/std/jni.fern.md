@@ -444,6 +444,12 @@ pub function jvalue_set_f64(args: usize, idx: i32, d: f64): usize {
   }
 }
 
+// A new object of `clazz`, made by the constructor `ctor` with the jvalue
+// array `args`.
+pub function new_object_a(env: usize, clazz: usize, ctor: usize, args: usize): usize {
+  return call3(env, 30, clazz, ctor, args);
+}
+
 pub function call_object_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
   return call3(env, 36, obj, method, args);
 }

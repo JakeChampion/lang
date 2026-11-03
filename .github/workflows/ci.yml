@@ -187,6 +187,7 @@ jobs:
               ] },
               "android": { "paths": [
                 "examples/android/**",
+                "tests/android/**",
                 "compiler/**",
                 "internal/stdlib/**",
                 "bootstrap/**",

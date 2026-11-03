@@ -9,6 +9,9 @@ name: Android
 # a Fern library with Android's loader. The APK job also builds
 # examples/android/native with fern -apk, an app with no Java code, and
 # examples/android/native/emulator_check.py drives it on the same emulator.
+# tests/android/dex is an app with @jni classes in the classes.dex that fern
+# -apk writes, and its check requires that ART loads, constructs and binds
+# them.
 # The seccomp job checks the syscalls of the fixture corpus against
 # Android's app filter.
 
@@ -40,6 +43,7 @@ jobs:
           examples/android/stopwatch/build.sh
           ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
           ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
       - uses: actions/upload-artifact@v7
         with:
           name: fern-stopwatch-apk
@@ -47,6 +51,7 @@ jobs:
             build/android-stopwatch/fern-stopwatch.apk
             build/android-stopwatch/report
             build/android-stopwatch/fern-native.apk
+            build/android-stopwatch/fern-dextest.apk
           if-no-files-found: error
 
   emulator:
@@ -75,6 +80,7 @@ jobs:
           script: |
             python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native
+            python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

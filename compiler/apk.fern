@@ -9,7 +9,9 @@ import "std/crypto/sha2";
 import "std/hash/crc32";
 import "std/rand";
 
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string }
+// `activity` is the Java class of the activity, and `dex` holds the classes
+// of the app, or is empty.
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[] }
 
 pub struct Lib { abi: string, image: u8[] }
 
@@ -98,7 +100,7 @@ function pool_strings(app: App): string[] {
     "theme", "label", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category",
-    app.package, app.label, app.version_name, "android.app.NativeActivity", "android.app.lib_name", app.lib,
+    app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
     "android.intent.action.MAIN", "android.intent.category.LAUNCHER",
   ];
 }
@@ -209,7 +211,11 @@ pub function manifest(app: App): u8[] {
   let body: u8[] = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
   body = start(body, 1, 14, [attr_int(S_VERSION_CODE, 16, app.version_code), attr_str(S_VERSION_NAME, 24), Attr { android: false, name: S_PACKAGE, kind: 3, data: 22 }]);
   body = end(start(body, 2, 15, [attr_int(S_MIN_SDK, 16, MIN_SDK), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, 15);
-  body = start(body, 3, 16, [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, 23), attr_int(S_HAS_CODE, 18, 0)]);
+  let has_code: i32 = 0;
+  if (app.dex.len() > 0) {
+    has_code = 0 - 1;
+  }
+  body = start(body, 3, 16, [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, 23), attr_int(S_HAS_CODE, 18, has_code)]);
   body = start(body, 4, 17, [attr_str(S_LABEL, 23), attr_str(S_NAME, 25), attr_int(S_EXPORTED, 18, 0 - 1), attr_int(S_CONFIG_CHANGES, 17, 1184)]);
   body = end(start(body, 5, 18, [attr_str(S_NAME, 26), attr_str(S_VALUE, 27)]), 5, 18);
   body = start(body, 6, 19, []);
@@ -512,6 +518,9 @@ pub function write(app: App, libs: Lib[], d: [u8]): u8[] {
 
 function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   let entries: Entry[] = [Entry { name: "AndroidManifest.xml", data: manifest(app) }];
+  if (app.dex.len() > 0) {
+    entries = entries.append(Entry { name: "classes.dex", data: app.dex });
+  }
   for l in libs {
     entries = entries.append(Entry { name: "lib/" + l.abi + "/lib" + app.lib + ".so", data: l.image });
   }
