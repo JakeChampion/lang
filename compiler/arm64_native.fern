@@ -9125,7 +9125,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badreg) };
     }
     let badldst: string = arm64_gas_bad_ldst_reg(mnem, ops, lmem);
-    if (badldst.len() > 0) {
+    if (badldst.len() > 0 && badreg.len() == 0) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badldst) };
     }
     let badvec: string = arm64_gas_bad_vec_token(mnem, ops, lmem);
