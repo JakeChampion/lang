@@ -64,6 +64,8 @@ The compiler itself has four such functions on x86-64, with frames up to 8120 by
 
 The `-harden` flag adds a stack canary on arm64-linux and x86-64-linux.
 The hardening reference in `docs/HARDENING.md` describes the layout, the startup read, and the failure path.
+`TestSelfHostStackCanary` requires every canary load in the in-process arm64 image to reach the word that the startup fills.
+Before #14051 the in-process assembler encoded these loads at the wrong offset, so they read another word.
 
 ## Regression evidence
 

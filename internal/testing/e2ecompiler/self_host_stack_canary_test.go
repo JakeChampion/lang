@@ -2,14 +2,18 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"debug/elf"
 	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // keep holds twelve call results live across calls, so it has a frame with
@@ -69,18 +73,23 @@ func smashCanary(t *testing.T, asm, target string) string {
 }
 
 func TestSelfHostStackCanary(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	x86gcc, _ := x86_64Tooling(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux canary fault controls require a Linux host")
+	}
+	cli := e2eharness.SelfHostCLI(t)
+	stdlib := e2eharness.SelfHostStdlibRoot(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
-			gcc := x86gcc
+			var gcc string
 			var run func(bin string) *exec.Cmd
 			if target == "arm64-linux" {
 				arm64gcc, qemu := arm64Tooling(t)
 				gcc = arm64gcc
 				run = func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) }
 			} else {
-				run = func(bin string) *exec.Cmd { return runX86_64Bin(cli.runner, bin) }
+				x86gcc, runner := x86_64Tooling(t)
+				gcc = x86gcc
+				run = func(bin string) *exec.Cmd { return runX86_64Bin(runner, bin) }
 			}
 			dir := t.TempDir()
 			src := filepath.Join(dir, "keep.fern")
@@ -90,8 +99,8 @@ func TestSelfHostStackCanary(t *testing.T) {
 			emit := func(name string, flags ...string) string {
 				t.Helper()
 				out := filepath.Join(dir, name)
-				args := append(append([]string{}, flags...), "-target", target, "-o", out, src, cli.stdlib)
-				cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+				args := append(append([]string{}, flags...), "-target", target, "-o", out, src, stdlib)
+				cmd := exec.Command(cli, args...)
 				cmd.Env = childEnv()
 				if text, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("self-host CLI %v: %v\n%s", args, err, text)
@@ -128,6 +137,10 @@ func TestSelfHostStackCanary(t *testing.T) {
 				}
 				if target == "arm64-linux" {
 					arm64CanaryLoadsArePageOffsets(t, bin)
+					want := strings.Count(string(hardened), ", :lo12:__fern_canary]")
+					if got := arm64CanaryLoads(t, bin); got != want {
+						t.Fatalf("the image has %d loads of __fern_canary, want the %d its text has", got, want)
+					}
 				}
 			})
 			for _, tc := range []struct {
@@ -191,4 +204,53 @@ func arm64CanaryLoadsArePageOffsets(t *testing.T, bin string) {
 	if loads == 0 {
 		t.Errorf("no adrp+ldr canary load in the hardened image")
 	}
+}
+
+// arm64CanaryLoads counts the adrp and ldr pairs in the image's code that
+// load the word the startup's adrp and add pair fills with getrandom.
+func arm64CanaryLoads(t *testing.T, bin string) int {
+	t.Helper()
+	f, err := elf.Open(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var code []byte
+	var base uint64
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_LOAD && p.Flags&elf.PF_X != 0 {
+			code = make([]byte, p.Filesz)
+			if _, err := p.ReadAt(code, 0); err != nil {
+				t.Fatal(err)
+			}
+			base = p.Vaddr
+		}
+	}
+	word := func(i int) uint32 { return binary.LittleEndian.Uint32(code[i:]) }
+	page := func(i int) uint64 {
+		w := word(i)
+		imm := int64(int32((w>>5&0x7ffff)<<2|w>>29&3) << 11 >> 11)
+		return uint64(int64((base+uint64(i))&^0xfff) + imm<<12)
+	}
+	canary := uint64(0)
+	for i := 0; i+12 <= len(code); i += 4 {
+		// adrp x0; add x0, x0, #lo12; mov x1, #16 is the startup's getrandom.
+		if word(i)&0x9f00001f == 0x90000000 && word(i+4)&0xffc003ff == 0x91000000 && word(i+8) == 0xd2800201 {
+			canary = page(i) + uint64(word(i+4)>>10&0xfff)
+		}
+	}
+	if canary == 0 {
+		t.Fatal("the image has no canary read at startup")
+	}
+	n := 0
+	for i := 0; i+8 <= len(code); i += 4 {
+		r := word(i) & 31
+		if word(i)&0x9f000000 != 0x90000000 || word(i+4)&0xffc003ff != 0xf9400000|r<<5|r {
+			continue
+		}
+		if page(i)+uint64(word(i+4)>>10&0xfff)*8 == canary {
+			n++
+		}
+	}
+	return n
 }
