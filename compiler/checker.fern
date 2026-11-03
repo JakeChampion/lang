@@ -12682,6 +12682,22 @@ function unsettled_int_literal(e: ast.Expr): boolean {
   return false;
 }
 
+// A number, or a number under one or more unary minuses: `5`, `-5`, `-(-5)`.
+function bare_numeric_literal(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(_) => {
+      return true;
+    },
+    ast.ExprUnary(u) => {
+      return u.op == "-" && bare_numeric_literal(u.operand);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
 function int_literal_tree(e: ast.Expr): boolean {
   return parser.int_literal_tree(e);
 }
@@ -14919,7 +14935,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       }
     }
     let tgt: typeinfo.Type = s.resolve_type(slice_unchecked(u.op, 3, u.op.len()) + "");
-    if let ast.ExprNumber(_) = u.operand {
+    if (bare_numeric_literal(u.operand)) {
       out = util.append_diags(out, int_dest_range_diags(u.operand, tgt));
     }
     out = util.append_diags(out, cast_diags(u, tgt, check_expr(u.operand, s), s));
