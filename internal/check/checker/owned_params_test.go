@@ -2180,3 +2180,77 @@ function g(own names: string[]): i32 {
     return n;
 }`)
 }
+
+func TestOwnGuardCallInMatchTagKeepsBindingScope(t *testing.T) {
+	const settle = `struct R { items: i32[], n: i32 }
+function settle(own r: R): Result[i32, R] { return Err(r); }
+`
+	wantOK(t, "call-tag-in-sibling-blocks", settle+`
+function scoped(c: boolean): i32 {
+    let n: i32 = 0;
+    if (c) {
+        let r: R = R { items: [1], n: 1 };
+        match (settle(r)) { Ok(k) => { n = k; }, Err(after) => { n = after.n; } }
+    }
+    if (!c) {
+        let r: R = R { items: [2], n: 2 };
+        match (settle(r)) { Ok(k) => { n = k; }, Err(after) => { n = after.n; } }
+    }
+    return n;
+}`)
+	wantE051(t, "call-tag-keeps-outer-binding-live", settle+`
+function scoped(c: boolean): i32 {
+    let r: R = R { items: [1], n: 1 };
+    if (c) {
+        match (settle(r)) { Ok(k) => {}, Err(after) => {} }
+    }
+    return r.n;
+}`)
+}
+
+// A call in a match tag takes its argument when every arm gives the local a
+// new value or leaves, as the give-back idiom does in a loop (#14106).
+func TestOwnGuardCallInMatchTagRebinds(t *testing.T) {
+	const settle = `
+struct R { items: i32[], n: i32 }
+function settle(own r: R): Result[i32, R] { return Err(R { items: r.items, n: r.n + 1 }); }
+`
+	if err := checkSource(t, settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (true) {
+        if (r.n > 3) {
+            return r.n;
+        }
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => { r = after; }
+        }
+    }
+    return 0;
+}`); err != nil {
+		t.Errorf("a call in a match tag whose arms rebind or leave should take its argument, got: %v", err)
+	}
+	wantE051(t, "call-in-match-tag-arm-reads-the-local", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (true) {
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => { let m: i32 = r.n; r = after; }
+        }
+    }
+    return 0;
+}`)
+	wantE051(t, "call-in-match-tag-arm-falls-through", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (r.n < 3) {
+        match (settle(r)) {
+            Ok(n) => { return n; },
+            Err(after) => {}
+        }
+    }
+    return 0;
+}`)
+}
