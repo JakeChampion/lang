@@ -1,0 +1,223 @@
+import "std/f64";
+import "std/hash/crc32";
+import "std/opus/bands";
+import "std/opus/modes";
+import "std/opus/range";
+import "std/opus/rate";
+import "std/test";
+
+// Each script codes random frames of random band shapes: it allocates the bits,
+// codes the bands, and then decodes the frame from its bytes. The trace holds
+// the bits of each value, each collapse mask and the seed. libopus 1.4, in its
+// float build, gave the CRC-32 of each trace, from a C program that makes the
+// same calls.
+
+const TF: i32[] = [0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -2, 1, 0, 1, -1, 0, -2, 0, -3, 2, 0, 1, -1, 0, -2, 0, -3, 3, 0, 1, -1];
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function rndu(own g: Gen): (Gen, u32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, x >> 8u32);
+}
+
+function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
+  let (g1, r) = rnd(g);
+  return (g1, lo + (hi - lo) * ((r % 65536) as f32) / 65536.0f32);
+}
+
+function dump(t: string, xs: [f32], lo: i32, hi: i32): string {
+  let s: string = t;
+  for i in lo..hi {
+    s = s + " " + f32_bits(xs[i]).to_string();
+  }
+  return s;
+}
+
+function zeros(n: i32): f32[] {
+  let out: f32[] = [];
+  for i in 0..n {
+    out = out.append(0.0f32);
+  }
+  return out;
+}
+
+function flag(b: boolean): string {
+  if (b) {
+    return "1";
+  }
+  return "0";
+}
+
+function out(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function trace(seed0: u32, cases: i32): u32 {
+  let t: crc32.Crc32 = crc32.new();
+  let g: Gen = Gen { x: seed0 };
+  for k in 0..cases {
+    let (g1, r1) = rnd(g);
+    let lm: i32 = r1 % 4;
+    let (g2, r2) = rnd(g1);
+    let ch: i32 = 1 + r2 % 2;
+    let (g3, r3) = rnd(g2);
+    let start: i32 = 0;
+    if (r3 % 4 == 0) {
+      start = 17;
+    }
+    let (g4, r4) = rnd(g3);
+    let end: i32 = start + 2 + r4 % (20 - start);
+    if (end > 21) {
+      end = 21;
+    }
+    let m: i32 = 1 << lm;
+    let n: i32 = 120 * m;
+    let (g5, r5) = rnd(g4);
+    let nbytes: i32 = 8 + r5 % 300;
+    g = g5;
+    let shortb: boolean = false;
+    if (lm > 0) {
+      let (g6, r6) = rnd(g);
+      g = g6;
+      shortb = r6 % 2 == 1;
+    }
+    let (g7, r7) = rnd(g);
+    let tfsel: i32 = r7 % 2;
+    let (g8, r8) = rnd(g7);
+    let spread: i32 = r8 % 4;
+    let (g9, r9) = rnd(g8);
+    let complexity: i32 = r9 % 11;
+    let (g10, r10) = rnd(g9);
+    let disable_inv: boolean = r10 % 2 == 1;
+    let (g11, seed) = rndu(g10);
+    g = g11;
+    let xs: f32[] = zeros(960);
+    let ys: f32[] = zeros(960);
+    let band_e: f32[] = zeros(42);
+    for c in 0..ch {
+      for i in 0..21 {
+        let s: f32 = 0.0f32;
+        let lo: i32 = m * modes.EBANDS[i];
+        let hi: i32 = m * modes.EBANDS[i + 1];
+        let v: f32[] = [];
+        for j in lo..hi {
+          let (gj, a) = frand(g, -1.0f32, 1.0f32);
+          g = gj;
+          v = v.append(a);
+          s = s + a * a;
+        }
+        let gn: f32 = 1.0f32 / (((s + 1.0e-15f32) as f64).sqrt() as f32);
+        for j in lo..hi {
+          if (c == 0) {
+            xs = xs.with(j, v[j - lo] * gn);
+          } else {
+            ys = ys.with(j, v[j - lo] * gn);
+          }
+        }
+        let (ge, e) = frand(g, 0.01f32, 100.0f32);
+        g = ge;
+        band_e = band_e.with(i + 21 * c, e);
+      }
+    }
+    let tf_res: i32[] = [];
+    let sb: i32 = 0;
+    if (shortb) {
+      sb = 1;
+    }
+    for i in 0..21 {
+      let (gt, rt) = rnd(g);
+      g = gt;
+      tf_res = tf_res.append(TF[lm * 8 + 4 * sb + 2 * tfsel + rt % 2]);
+    }
+    let offsets: i32[] = [];
+    let cap: i32[] = [];
+    for i in 0..21 {
+      offsets = offsets.append(0);
+      let nb: i32 = modes.EBANDS[i + 1] - modes.EBANDS[i] << lm;
+      cap = cap.append((modes.CACHE_CAPS[21 * (2 * lm + ch - 1) + i] + 64) * ch * nb >> 2);
+    }
+    let (g12, r12) = rnd(g);
+    let trim: i32 = r12 % 11;
+    let (g13, r13) = rnd(g12);
+    let intensity: i32 = start + r13 % (end + 1 - start);
+    g = g13;
+    let dual: boolean = false;
+    if (ch == 2) {
+      let (g14, r14) = rnd(g);
+      g = g14;
+      dual = r14 % 2 == 1;
+    }
+    let total: i32 = nbytes * 8 << 3;
+    let enc: range.Coder = range.Encoding(range.encoder(nbytes));
+    let areq: rate.Request = rate.Request { start: start, end: end, offsets: offsets, cap: cap, alloc_trim: trim, intensity: intensity, dual_stereo: dual, total: total - enc.tell_frac() - 1, channels: ch, lm: lm, prev: 0, signal_bandwidth: 20 };
+    let (c1, a) = rate.compute_allocation(enc, areq);
+    let breq: bands.Request = bands.Request { start: start, end: end, short_blocks: shortb, spread: spread, dual_stereo: a.dual_stereo, intensity: a.intensity, tf_res: tf_res, total_bits: total, balance: a.balance, lm: lm, coded_bands: a.coded_bands, pulses: a.pulses, seed: seed, complexity: complexity, disable_inv: disable_inv, channels: ch };
+    let ys_in: f32[] = ys;
+    if (ch == 1) {
+      ys_in = zeros(960);
+    }
+    let res: bands.Result = bands.quant_all_bands(c1, breq, xs, ys_in, band_e);
+    let line: string = "c " + lm.to_string() + " " + ch.to_string() + " " + start.to_string() + " " + end.to_string() + " " + nbytes.to_string() + " " + flag(shortb) + " " + spread.to_string() + " " + complexity.to_string() + " " + flag(disable_inv) + " coded " + a.coded_bands.to_string() + " tell " + res.c.tell_frac().to_string() + " seed " + res.seed.to_string() + " |";
+    for i in start..end {
+      for c in 0..ch {
+        line = line + " " + res.collapse_masks[i * ch + c].to_string();
+      }
+    }
+    t = out(t, line);
+    t = out(t, dump("ex", res.x, m * modes.EBANDS[start], m * modes.EBANDS[end]));
+    if (ch == 2) {
+      t = out(t, dump("ey", res.y, m * modes.EBANDS[start], m * modes.EBANDS[end]));
+    }
+    let packet: u8[] = [];
+    match (res.c) {
+      range.Encoding(e) => {
+        packet = e.done().bytes();
+      },
+      range.Decoding(_) => {}
+    }
+    let dec: range.Coder = range.Decoding(range.decoder(packet));
+    let dreq: rate.Request = rate.Request { ...areq, intensity: 0, dual_stereo: false, total: total - dec.tell_frac() - 1, prev: 0, signal_bandwidth: 0 };
+    let (c2, da) = rate.compute_allocation(dec, dreq);
+    let dbreq: bands.Request = bands.Request { ...breq, dual_stereo: da.dual_stereo, intensity: da.intensity, balance: da.balance, coded_bands: da.coded_bands, pulses: da.pulses };
+    let dres: bands.Result = bands.quant_all_bands(c2, dbreq, zeros(960), zeros(960), band_e);
+    let dline: string = "d coded " + da.coded_bands.to_string() + " tell " + dres.c.tell_frac().to_string() + " seed " + dres.seed.to_string() + " |";
+    for i in start..end {
+      for c in 0..ch {
+        dline = dline + " " + dres.collapse_masks[i * ch + c].to_string();
+      }
+    }
+    t = out(t, dline);
+    t = out(t, dump("dx", dres.x, m * modes.EBANDS[start], m * modes.EBANDS[end]));
+    if (ch == 2) {
+      t = out(t, dump("dy", dres.y, m * modes.EBANDS[start], m * modes.EBANDS[end]));
+    }
+  }
+  return t.finish();
+}
+
+function test_short_script(): test.TestOutcome {
+  return test.assert_eq(trace(2u32, 50), 2843130025u32);
+}
+
+function test_long_script(): test.TestOutcome {
+  return test.assert_eq(trace(3u32, 200), 1604355642u32);
+}
+
+function test_bitexact_helpers(): test.TestOutcome {
+  let all: string = bands.bitexact_cos(0).to_string() + " " + bands.bitexact_cos(16384).to_string() + " " + bands.bitexact_log2tan(23170, 23170).to_string() + " " + bands.isqrt32(1000000u32).to_string();
+  return test.assert_eq(all, "-32768 16554 0 1000");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/bands");
+  r = r.it("a short script gives the libopus trace", test_short_script);
+  r = r.it("a long script gives the libopus trace", test_long_script);
+  r = r.it("the integer helpers give the libopus values", test_bitexact_helpers);
+  return r.finish();
+}
