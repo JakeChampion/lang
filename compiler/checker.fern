@@ -14471,6 +14471,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[0], s));
           }
           if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
+            let wit: typeinfo.Type = check_expr(c.args[0], s);
+            if (!is_unknown(wit) && !settles_to_dest(c.args[0], t_i32(), s) && !coercible(wit, t_i32(), s)) {
+              out = out.append(dg_at("E038", "argument 1 to \"with\": expected i32, got " + type_label(wit), expr_line(c.args[0]), expr_col(c.args[0])));
+            }
             let wvt: typeinfo.Type = check_expr(c.args[1], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
             if (!is_unknown(wvt) && !settles_to_dest(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
