@@ -23355,6 +23355,12 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
           }
           return out;
         },
+        ast.ExprLambda(_) => {
+          if (parser.is_value_block(c)) {
+            return out;
+          }
+          return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not make an indirect call (not proven allocation-free)", c.line, c.col));
+        },
         _ => {
           return out.append(dg_at("E053", "`" + fx.kw + "` function \"" + fx.fname + "\" may not make an indirect call (not proven allocation-free)", c.line, c.col));
         }
@@ -23372,7 +23378,55 @@ function e053_own_exprs(stmt: ast.Stmt, fx: E053Ctx, cur: Scope): util.Diag[] {
   function at_node(n: ast.Expr, own out: util.Diag[]): util.Diag[] {
     return e053_at_node(n, fx, cur, out);
   }
-  return astwalk.fold_stmt_own(stmt, no_diags(), at_node);
+  let bounds: ast.Expr[] = range_header_bounds(stmt);
+  if (bounds.len() > 0) {
+    let out: util.Diag[] = no_diags();
+    for b in bounds {
+      out = astwalk.fold_expr_pruned(b, out, at_node, outside_value_block);
+    }
+    return out;
+  }
+  return astwalk.fold_stmt_own_pruned(stmt, no_diags(), at_node, outside_value_block);
+}
+
+// A range `for` lowers to a counted loop, so its header calls nothing.
+function range_header_bounds(stmt: ast.Stmt): ast.Expr[] {
+  if let ast.StmtFor(fr) = stmt {
+    if let ast.ExprCall(c) = fr.iter {
+      if let ast.ExprIdent(id) = c.callee {
+        if ((id.name == "__range" || id.name == "__range_incl") && c.args.len() == 2) {
+          return c.args;
+        }
+      }
+    }
+  }
+  return [];
+}
+
+function outside_value_block(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    return !parser.is_value_block(c);
+  }
+  return true;
+}
+
+function value_block_at(e: ast.Expr, own acc: ast.ExprCall[]): ast.ExprCall[] {
+  if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c)) {
+      return acc.append(c);
+    }
+  }
+  return acc;
+}
+
+function e053_value_blocks(stmt: ast.Stmt, fx: E053Ctx, cur: Scope): util.Diag[] {
+  let out: util.Diag[] = no_diags();
+  let none: ast.ExprCall[] = [];
+  let blocks = astwalk.fold_stmt_own_pruned(stmt, none, value_block_at, outside_value_block);
+  for vb in blocks {
+    out = util.append_diags(out, e053_stmts(parser.vb_body(vb), fx, cur));
+  }
+  return out;
 }
 
 function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
@@ -23389,6 +23443,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
       _ => {}
     }
     out = util.append_diags(out, e053_own_exprs(stmt, fx, cur));
+    out = util.append_diags(out, e053_value_blocks(stmt, fx, cur));
     match (stmt) {
       ast.StmtIf(f) => {
         out = util.append_diags(out, e053_stmts(f.then_body, fx, cur));
