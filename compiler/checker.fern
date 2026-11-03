@@ -4807,6 +4807,7 @@ function builtin_sigs(): string[] {
     "buf_len(usize): i32",
     "buf_new(i32): usize",
     "buf_push(usize, string): void",
+    "buf_push_base32(usize, u8[], i32, i32, u8[]): void",
     "buf_push_base64(usize, u8[], i32, i32, u8[]): void",
     "buf_push_byte(usize, i32): void",
     "buf_push_bytes_expanded(usize, u8[], u8[]): void",
