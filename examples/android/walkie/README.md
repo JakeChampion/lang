@@ -28,6 +28,16 @@ Control frames and voice frames have their own keys in each direction, and
 ChaCha20-Poly1305 seals them. A voice frame opens once, inside a window of 64
 sequence numbers.
 
+Channel copies share their counters, replay window and key slots. Use one
+event loop for all operations on a channel. Closing a channel invalidates
+every copy. The counter stops before signed overflow.
+
+Call `keys` once after the exchange. It clears the ephemeral private key.
+Compare the bundle's `sas` with the peer before calling `channel`. Call
+`close_keys` if the comparison fails. Call `close_handshake` on a cancelled
+exchange and `close` when the session ends. Do not retain raw secret arrays
+outside these handles.
+
 ## The floor
 
 One peer is the floor controller: the Wi-Fi Direct group owner, or the first

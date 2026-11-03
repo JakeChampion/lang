@@ -34,16 +34,27 @@ pub const VOICE: i32 = 2;
 
 const WINDOW: i32 = 64;
 
-pub struct Handshake { initiator: boolean, private: u8[], public: u8[], nonce: u8[], commit: u8[], peer_key: u8[], peer_nonce: u8[], done: boolean, failed: boolean }
+const MAX_SEQUENCE: i64 = 9223372036854775807i64;
 
-pub struct Keys { send_ctl: u8[], recv_ctl: u8[], send_voice: u8[], recv_voice: u8[], sas: string }
+const FRESH: i32 = 0;
+
+const COMMITTED: i32 = 1;
+
+const READY: i32 = 2;
+
+const CLOSED: i32 = 3;
+
+pub struct Handshake { initiator: boolean, private: Cell[u8[]], phase: Cell[i32], public: u8[], nonce: u8[], commit: u8[], peer_key: u8[], peer_nonce: u8[], done: boolean, failed: boolean }
+
+pub struct Keys { send_ctl: Cell[u8[]], recv_ctl: Cell[u8[]], send_voice: Cell[u8[]], recv_voice: Cell[u8[]], sas: string }
 
 // One direction of one channel: its key and its sequence state. For a voice
 // receiver, `high` is the highest number seen and `seen` marks the numbers
 // below it in the window.
 struct Way { key: u8[], next: i64, high: i64, seen: boolean[] }
 
-pub struct Channel { send_ctl: Way, recv_ctl: Way, send_voice: Way, recv_voice: Way, sas: string }
+// Copies share sequence state and keys. Use a channel from one event loop.
+pub struct Channel { send_ctl: Cell[Way], recv_ctl: Cell[Way], send_voice: Cell[Way], recv_voice: Cell[Way], sas: string }
 
 function cat(a: u8[], b: [u8]): u8[] {
   for x in b {
@@ -73,7 +84,7 @@ function commitment(public: [u8], nonce: [u8]): u8[] {
 }
 
 // A handshake from 32 random bytes for the private key and 16 for the nonce.
-pub function start(initiator: boolean, random_key: u8[], random_nonce: u8[]): Handshake {
+pub function start(initiator: boolean, own random_key: u8[], random_nonce: u8[]): Handshake {
   let public: u8[] = [];
   match (x25519.public_key(random_key)) {
     Ok(p) => {
@@ -81,48 +92,82 @@ pub function start(initiator: boolean, random_key: u8[], random_nonce: u8[]): Ha
     },
     Err(_) => {}
   }
-  return Handshake { initiator: initiator, private: random_key, public: public, nonce: random_nonce, commit: [], peer_key: [], peer_nonce: [], done: false, failed: public.len() != 32 };
+  let h = Handshake { initiator: initiator, private: cell_new(random_key), phase: cell_new(FRESH), public: public, nonce: random_nonce, commit: [], peer_key: [], peer_nonce: [], done: false, failed: public.len() != 32 || random_nonce.len() != 16 };
+  if (h.failed) {
+    erase_private(h);
+  }
+  return h;
+}
+
+function erase_private(h: Handshake): void {
+  h.phase.set(CLOSED);
+  let secret = h.private.get();
+  h.private.set([]);
+  crypto.erase(secret);
+}
+
+// Abort also clears the key in every copy of this handshake.
+pub function close_handshake(own h: Handshake): void {
+  erase_private(h);
+}
+
+function refused(h: Handshake): (Handshake, u8[]) {
+  erase_private(h);
+  return (Handshake { ...h, failed: true }, []);
 }
 
 // The initiator's first message.
 pub function first(h: Handshake): u8[] {
+  if (!h.initiator || h.failed || h.done || h.phase.get() > COMMITTED || h.private.get().len() != 32) {
+    return [];
+  }
+  h.phase.set(COMMITTED);
   return cat([M_COMMIT as u8], commitment(h.public, h.nonce));
 }
 
 // The handshake after message `m`, and the reply to send, which is empty
 // when there is none. `done` is set when the keys are ready.
 pub function receive(h: Handshake, m: u8[]): (Handshake, u8[]) {
-  if (h.done || h.failed || m.len() == 0) {
-    return (Handshake { ...h, failed: true }, []);
+  if (h.done || h.failed || m.len() == 0 || h.private.get().len() != 32) {
+    return refused(h);
   }
   let t: i32 = m[0] as i32;
-  if (!h.initiator && t == M_COMMIT && m.len() == 33 && h.commit.len() == 0) {
+  if (!h.initiator && t == M_COMMIT && m.len() == 33 && h.phase.get() == FRESH) {
     let reply: u8[] = cat(cat([M_KEY as u8], h.public), h.nonce);
+    h.phase.set(COMMITTED);
     return (Handshake { ...h, commit: part(m, 1, 32) }, reply);
   }
-  if (h.initiator && t == M_KEY && m.len() == 49 && h.peer_key.len() == 0) {
+  if (h.initiator && t == M_KEY && m.len() == 49 && h.phase.get() == COMMITTED) {
     let reveal: u8[] = cat(cat([M_REVEAL as u8], h.public), h.nonce);
+    h.phase.set(READY);
     return (Handshake { ...h, peer_key: part(m, 1, 32), peer_nonce: part(m, 33, 16), done: true }, reveal);
   }
-  if (!h.initiator && t == M_REVEAL && m.len() == 49 && h.commit.len() == 32 && h.peer_key.len() == 0) {
+  if (!h.initiator && t == M_REVEAL && m.len() == 49 && h.phase.get() == COMMITTED && h.commit.len() == 32) {
     let key: u8[] = part(m, 1, 32);
     let nonce: u8[] = part(m, 33, 16);
     if (commitment(key, nonce) != h.commit) {
-      return (Handshake { ...h, failed: true }, []);
+      return refused(h);
     }
+    h.phase.set(READY);
     return (Handshake { ...h, peer_key: key, peer_nonce: nonce, done: true }, []);
   }
-  return (Handshake { ...h, failed: true }, []);
+  return refused(h);
 }
 
 // The keys of a finished handshake, and its short authentication string:
 // six decimal digits that both users read out.
 pub function keys(h: Handshake): Option[Keys] {
-  if (!h.done || h.failed) {
+  if (!h.done || h.failed || h.phase.get() != READY) {
     return None;
   }
+  // Take the shared slot before derivation. No handshake copy can use it again.
+  h.phase.set(CLOSED);
+  let secret = h.private.get();
+  h.private.set([]);
+  let result = x25519.x25519(secret, h.peer_key);
+  crypto.erase(secret);
   let shared: u8[] = [];
-  match (x25519.x25519(h.private, h.peer_key)) {
+  match (result) {
     Ok(s) => {
       shared = s;
     },
@@ -153,12 +198,12 @@ pub function keys(h: Handshake): Option[Keys] {
     sas = "0" + sas;
   }
   if (h.initiator) {
-    return Some(Keys { send_ctl: i2r_ctl, recv_ctl: r2i_ctl, send_voice: i2r_voice, recv_voice: r2i_voice, sas: sas });
+    return Some(Keys { send_ctl: cell_new(i2r_ctl), recv_ctl: cell_new(r2i_ctl), send_voice: cell_new(i2r_voice), recv_voice: cell_new(r2i_voice), sas: sas });
   }
-  return Some(Keys { send_ctl: r2i_ctl, recv_ctl: i2r_ctl, send_voice: r2i_voice, recv_voice: i2r_voice, sas: sas });
+  return Some(Keys { send_ctl: cell_new(r2i_ctl), recv_ctl: cell_new(i2r_ctl), send_voice: cell_new(r2i_voice), recv_voice: cell_new(i2r_voice), sas: sas });
 }
 
-function way(key: u8[]): Way {
+function way(own key: u8[]): Way {
   let seen: boolean[] = [];
   for k in 0..WINDOW {
     seen = seen.append(false);
@@ -166,8 +211,27 @@ function way(key: u8[]): Way {
   return Way { key: key, next: 0 as i64, high: 0 - 1 as i64, seen: seen };
 }
 
+function take_key(slot: Cell[u8[]]): u8[] {
+  let key = slot.get();
+  slot.set([]);
+  return key;
+}
+
+// A key bundle creates one channel. Copies see the same drained slots.
 pub function channel(k: Keys): Channel {
-  return Channel { send_ctl: way(k.send_ctl), recv_ctl: way(k.recv_ctl), send_voice: way(k.send_voice), recv_voice: way(k.recv_voice), sas: k.sas };
+  let send_ctl = take_key(k.send_ctl);
+  let recv_ctl = take_key(k.recv_ctl);
+  let send_voice = take_key(k.send_voice);
+  let recv_voice = take_key(k.recv_voice);
+  return Channel { send_ctl: cell_new(way(send_ctl)), recv_ctl: cell_new(way(recv_ctl)), send_voice: cell_new(way(send_voice)), recv_voice: cell_new(way(recv_voice)), sas: k.sas };
+}
+
+// Clear a rejected key bundle, for example after a failed string comparison.
+pub function close_keys(k: Keys): void {
+  crypto.erase(take_key(k.send_ctl));
+  crypto.erase(take_key(k.recv_ctl));
+  crypto.erase(take_key(k.send_voice));
+  crypto.erase(take_key(k.recv_voice));
 }
 
 // The 12-byte nonce of sequence number `seq`, and the 9 bytes that start a
@@ -190,6 +254,9 @@ function nonce(seq: i64): u8[] {
 }
 
 function seal_way(w: Way, kind: i32, plain: [u8]): (Way, u8[]) {
+  if (w.next < 0 as i64 || w.next == MAX_SEQUENCE) {
+    return (w, []);
+  }
   let h: u8[] = head(kind, w.next);
   match (chacha20poly1305.key(w.key)) {
     Ok(key) => {
@@ -214,6 +281,9 @@ function open_frame(w: Way, kind: i32, frame: [u8]): Option[(i64, u8[])] {
   for k in 1..9 {
     seq = seq << 8 as i64 | frame[k] as i64;
   }
+  if (seq < 0 as i64 || seq == MAX_SEQUENCE) {
+    return None;
+  }
   match (chacha20poly1305.key(w.key)) {
     Ok(key) => {
       match (key.open(nonce(seq), frame[9:frame.len()], frame[0:9])) {
@@ -229,24 +299,28 @@ function open_frame(w: Way, kind: i32, frame: [u8]): Option[(i64, u8[])] {
 }
 
 pub function seal_control(c: Channel, plain: [u8]): (Channel, u8[]) {
-  let (w, frame) = seal_way(c.send_ctl, CTL, plain);
-  return (Channel { ...c, send_ctl: w }, frame);
+  let (w, frame) = seal_way(c.send_ctl.get(), CTL, plain);
+  c.send_ctl.set(w);
+  return (c, frame);
 }
 
 pub function seal_voice(c: Channel, plain: [u8]): (Channel, u8[]) {
-  let (w, frame) = seal_way(c.send_voice, VOICE, plain);
-  return (Channel { ...c, send_voice: w }, frame);
+  let (w, frame) = seal_way(c.send_voice.get(), VOICE, plain);
+  c.send_voice.set(w);
+  return (c, frame);
 }
 
 // A control frame opens only with the next sequence number, so a replayed,
 // dropped or reordered frame ends the stream.
 pub function open_control(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
-  match (open_frame(c.recv_ctl, CTL, frame)) {
+  let w = c.recv_ctl.get();
+  match (open_frame(w, CTL, frame)) {
     Some((seq, plain)) => {
-      if (seq != c.recv_ctl.next) {
+      if (seq != w.next) {
         return (c, None);
       }
-      return (Channel { ...c, recv_ctl: Way { ...c.recv_ctl, next: seq + 1 as i64 } }, Some(plain));
+      c.recv_ctl.set(Way { ...w, next: seq + 1 as i64 });
+      return (c, Some(plain));
     },
     None => {
       return (c, None);
@@ -257,9 +331,9 @@ pub function open_control(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
 // A voice frame opens once, when its number is above the window or in the
 // window and not seen yet.
 pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
-  match (open_frame(c.recv_voice, VOICE, frame)) {
+  let w = c.recv_voice.get();
+  match (open_frame(w, VOICE, frame)) {
     Some((seq, plain)) => {
-      let w: Way = c.recv_voice;
       if (seq > w.high) {
         let seen: boolean[] = w.seen;
         let shift: i64 = seq - w.high;
@@ -267,13 +341,15 @@ pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
           let from: i64 = k as i64 - shift;
           seen = seen.with(k, from >= 0 as i64 && w.seen[from as i32]);
         }
-        return (Channel { ...c, recv_voice: Way { ...w, high: seq, seen: seen.with(0, true) } }, Some(plain));
+        c.recv_voice.set(Way { ...w, high: seq, seen: seen.with(0, true) });
+        return (c, Some(plain));
       }
       let back: i64 = w.high - seq;
       if (back >= WINDOW as i64 || w.seen[back as i32]) {
         return (c, None);
       }
-      return (Channel { ...c, recv_voice: Way { ...w, seen: w.seen.with(back as i32, true) } }, Some(plain));
+      c.recv_voice.set(Way { ...w, seen: w.seen.with(back as i32, true) });
+      return (c, Some(plain));
     },
     None => {
       return (c, None);
@@ -281,14 +357,19 @@ pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
   }
 }
 
-// Clears the keys of a closed session. The channel is consumed, so each key
-// is erased through its last reference.
+// Close clears the shared slots before erasure, so old channel copies close too.
 pub function close(own c: Channel): void {
   let Channel { send_ctl: sc, recv_ctl: rc, send_voice: sv, recv_voice: rv, sas: _ } = c;
-  erase_way(sc);
-  erase_way(rc);
-  erase_way(sv);
-  erase_way(rv);
+  close_way(sc);
+  close_way(rc);
+  close_way(sv);
+  close_way(rv);
+}
+
+function close_way(state: Cell[Way]): void {
+  let old = state.get();
+  state.set(Way { key: [], next: 0 as i64, high: 0 - 1 as i64, seen: [] });
+  erase_way(old);
 }
 
 function erase_way(own w: Way): void {
