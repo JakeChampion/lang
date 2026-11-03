@@ -78,8 +78,19 @@ def boot_without_freezer():
     time.sleep(5)
 
 
+def launch(package):
+    """Starts a copy, or brings its task to the front.
+
+    Every start uses the launcher intent, so the root intent of the task and
+    the intent that brings it forward are the same. Android then moves the
+    task to the front and keeps the running activity. A start with a different
+    intent adds a second activity to the task, and its app_main opens a second
+    node that finds both ports busy."""
+    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", package + ACTIVITY)
+
+
 def to_front(package):
-    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-f", "0x10200000", "-n", package + ACTIVITY)
+    launch(package)
     time.sleep(1.5)
 
 
@@ -133,9 +144,9 @@ def run(apk, second_apk, out):
         adb("install", "-r", "-g", a)
         adb("shell", "pm", "grant", package, "android.permission.RECORD_AUDIO")
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", FIRST + ACTIVITY)
+    launch(FIRST)
     wait_for("the first copy starts", lambda log: pid(FIRST) != "" and any(START.search(line) and START.search(line).group(1) == "47120" for line in lines_of(log, pid(FIRST))))
-    adb("shell", "am", "start", "-W", "-n", SECOND + ACTIVITY)
+    launch(SECOND)
     wait_for("the second copy starts", lambda log: pid(SECOND) != "" and any(START.search(line) and START.search(line).group(1) == "47121" for line in lines_of(log, pid(SECOND))))
     a, b = pid(FIRST), pid(SECOND)
     for p in (a, b):
