@@ -1,3 +1,5 @@
+# 2026-11-03: PR #14122, a local scripts/perf-bench run on its head. Liveness decides which values cross a call,
+# and a small branch splices into its two callers. The x86_64 .text rows shrink 1% to 7%, and three .ir rows 1% to 2%.
 # 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
 # Preserve the preceding limits and the measured lower ordmap instruction limits.
 # 2026-11-02: PR #14022 run41414136189 measures the matching native x86 wins.
@@ -209,7 +211,7 @@ x86_64/closure_call.text	916
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	33837238
-x86_64/deflate_decode.text	12993
+x86_64/deflate_decode.text	12766
 x86_64/deflate_encode.ir	42207169
 x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	886
@@ -223,11 +225,11 @@ x86_64/map_int.text	8478
 x86_64/map_int.ir	24563319
 x86_64/map_probe_chain.text	8482
 x86_64/map_probe_chain.ir	241010587
-x86_64/map_string.text	9419
+x86_64/map_string.text	9267
 x86_64/map_string.ir	53037751	2
-x86_64/ordmap_insert.text	5498
+x86_64/ordmap_insert.text	5377
 x86_64/ordmap_insert.ir	81070676
-x86_64/pmap_insert.text	2973
+x86_64/pmap_insert.text	2906
 x86_64/pmap_insert.ir	53294866
 x86_64/pvec_with.text	2951
 x86_64/pvec_with.ir	55174232
@@ -237,9 +239,9 @@ x86_64/sort_inplace.text	1497
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1964
 x86_64/sort_ints.ir	28152806
-x86_64/sort_strings.text	3230
-x86_64/sort_strings.ir	105033157
-x86_64/string_build.text	1991
+x86_64/sort_strings.text	3096
+x86_64/sort_strings.ir	103809647
+x86_64/string_build.text	1883
 x86_64/string_build.ir	43427016
 x86_64/string_count_byte.text	1180
 x86_64/string_count_byte.ir	135589355
@@ -247,17 +249,17 @@ x86_64/string_find_byte.text	1535
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1699
 x86_64/string_rfind_byte.ir	43695768
-x86_64/string_scan.text	2239
+x86_64/string_scan.text	2125
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	895
 x86_64/string_slice.ir	38460093
-x86_64/struct_drop.text	2413
+x86_64/struct_drop.text	2300
 x86_64/struct_drop.ir	205020598
 x86_64/tokenize.text	1198
 x86_64/tokenize.ir	37860093
-x86_64/utf8_ingest_unchecked.text	8244
+x86_64/utf8_ingest_unchecked.text	7713
 x86_64/utf8_ingest_unchecked.ir	2207993
-x86_64/utf8_ingest_validated.text	8897
+x86_64/utf8_ingest_validated.text	8297
 x86_64/utf8_ingest_validated.ir	5262594
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -553,14 +555,14 @@ aarch64/utf8_ingest_validated.ir	6229114
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1915
 x86_64/perceus_cfold.ir	54520496
-x86_64/perceus_deriv.text	2720
-x86_64/perceus_deriv.ir	67372410
+x86_64/perceus_deriv.text	2683
+x86_64/perceus_deriv.ir	66585210
 x86_64/perceus_nqueens.text	1555
 x86_64/perceus_nqueens.ir	92759479
-x86_64/perceus_rbtree.text	2872
-x86_64/perceus_rbtree.ir	52232903
-x86_64/perceus_rbtree_ck.text	2976
-x86_64/perceus_rbtree_ck.ir	51779463
+x86_64/perceus_rbtree.text	2794
+x86_64/perceus_rbtree.ir	51343623
+x86_64/perceus_rbtree_ck.text	2893
+x86_64/perceus_rbtree_ck.ir	51100263
 aarch64/perceus_cfold.text	2178
 aarch64/perceus_cfold.ir	62299589
 aarch64/perceus_deriv.text	3026
