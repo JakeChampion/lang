@@ -7834,9 +7834,10 @@ function arm64_vlist_bytes(l: Arm64VList): i32 {
   return l.count * 8;
 }
 
-// ld2 to ld4 take one register a structure, and none takes .1d.
+// Only the eight vector arrangements fit, so .1q does not. ld2 to ld4
+// take one register a structure, and none takes .1d.
 function arm64_vlist_fits(n: i32, l: Arm64VList): boolean {
-  if (l.first < 0 || l.count > 4) {
+  if (l.first < 0 || l.count > 4 || l.arr > 7) {
     return false;
   }
   return n == 1 || l.count == n && !(arm64_gas_arr_size(l.arr) == 3 && !arm64_gas_arr_q(l.arr));
