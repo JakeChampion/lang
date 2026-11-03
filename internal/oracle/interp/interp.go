@@ -6416,7 +6416,8 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
 		for _, arm := range x.Arms {
-			if !arm.IsWildcard {
+			binder := arm.BareBinder()
+			if !arm.IsWildcard && binder == "" {
 				if arm.Literal == nil {
 					continue
 				}
@@ -6429,6 +6430,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 				}
 			}
 			armEnv := newEnv(e)
+			if binder != "" {
+				armEnv.declare(binder, tag)
+			}
 			if arm.AtBinding != "" {
 				armEnv.declare(arm.AtBinding, tag)
 			}
@@ -7232,7 +7236,8 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			return nil, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
 		for _, arm := range x.Arms {
-			if !arm.IsWildcard {
+			binder := arm.BareBinder()
+			if !arm.IsWildcard && binder == "" {
 				if arm.Literal == nil {
 					continue
 				}
@@ -7245,6 +7250,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				}
 			}
 			armEnv := newEnv(env)
+			if binder != "" {
+				armEnv.declare(binder, tag)
+			}
 			if arm.AtBinding != "" {
 				armEnv.declare(arm.AtBinding, tag)
 			}

@@ -4639,10 +4639,41 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, layout: i32, arms
       return wildcard_arm(a, arms, entry, join, count, scope, ty);
     },
     ast.PatVariant(pv) => {
+      if (owner == "" && ast.bare_binder(pv).len() > 0) {
+        return binder_arm(a, pv, scrut, arms, entry, join, count, scope, ty);
+      }
       return variant_arm(a, pv, scrut, owner, layout, arms, entry, join, count, scope, closing, ty);
     }
   }
   return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
+}
+
+// A bare name arm on a non-enum scrutinee is a `_` arm that also binds the value.
+function binder_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
+  let g: Gathered = parts(arms);
+  let s: State = arms.s;
+  let pred: i32 = s.cur.id;
+  let id: i32 = s.next_block;
+  if (!a.has_guard) {
+    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
+    let bound: State = binder_bound(a, pv, scrut, open(State { ...s, vals: entry }, id, [pred]), scope);
+    return collect(g, arm_body(a.body, bound, join, count, scope, ty));
+  }
+  let next: i32 = id + 1;
+  s = terminate(State { ...s, next_block: next + 1 }, t_br(id));
+  let gate: Gate = guard_gate(a, binder_bound(a, pv, scrut, open(State { ...s, vals: entry }, id, [pred]), scope), next);
+  if (!gate.s.ok) {
+    return gathered(gate.s, g);
+  }
+  let from: i32 = gate.from;
+  let done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
+  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [from]) };
+  return collect(g, done);
+}
+
+function binder_bound(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, s: State, scope: checker.Scope): State {
+  let bound: State = bind(at_bound(pv, scrut, s), ast.bare_binder(pv), scrut);
+  return State { ...bound, scope: checker.arm_scope(a, scope, bound.values[scrut]) };
 }
 
 function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
@@ -4734,10 +4765,16 @@ function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner:
   return s;
 }
 
-function only_wildcards(m: ast.StmtMatch): boolean {
+// Every arm of a match on a non-enum value is `_` or a bare binding name.
+function only_binders(m: ast.StmtMatch): boolean {
   for a in m.arms {
-    if let ast.PatWildcard(_) = a.pattern {} else {
-      return false;
+    match (a.pattern) {
+      ast.PatWildcard(_) => {},
+      ast.PatVariant(pv) => {
+        if (ast.bare_binder(pv).len() == 0) {
+          return false;
+        }
+      }
     }
   }
   return m.arms.len() > 0;
@@ -4759,7 +4796,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   let layout: i32 = union_layout(s, owner);
   let variants: semrecords.Variant[] = laid_variants(s, whole, layout);
   m = inhabited_arms(m, whole, variants);
-  if ((owner == "" || layout == 0) && !only_wildcards(m)) {
+  if ((owner == "" || layout == 0) && !only_binders(m)) {
     return no_chain(fail(s, "unsupported match scrutinee"));
   }
   let closes: i32 = 0 - 1;

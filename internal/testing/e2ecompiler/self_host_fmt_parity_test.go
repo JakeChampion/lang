@@ -2074,6 +2074,34 @@ function main(): i32 { return 0; }
 
 function main(): i32 { return 0; }
 `},
+	{"literal-match-binding-arm", `function f(k: i32): i32 {
+  return match (k) { 0 => 10, n when n > 100 => n, _ => 14 };
+}
+
+function g(k: i32): i32 {
+  match (k) {
+    n when n > 100 => {
+      return n;
+    },
+    0 => {
+      return 10;
+    },
+    _ => {
+      return 14;
+    }
+  }
+}
+
+function h(s: string): i32 {
+  return match (s) { "a" => 1, other => other.len() };
+}
+
+function w(k: i32): i32 {
+  return match (k) { 0 => 10, _ when k > 100 => k, _ => 14 };
+}
+
+function main(): i32 { return 0; }
+`},
 }
 
 func typeChecks(src string) error {

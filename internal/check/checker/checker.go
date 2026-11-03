@@ -12377,10 +12377,10 @@ func (c *checker) checkMatchArms(n *ast.Match, s *scope) {
 	sawWildcard := false
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
-			if i != len(n.Arms)-1 {
-				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
-			}
 			if arm.Guard == nil {
+				if i != len(n.Arms)-1 {
+					c.errIrrefutableArmNotLast(arm.P, "")
+				}
 				sawWildcard = true
 			}
 			if arm.Guard != nil {
@@ -12512,24 +12512,28 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 	sawWildcard := false
 	var closing []ast.Expr
 	for i, arm := range n.Arms {
-		if arm.IsWildcard {
-			if i != len(n.Arms)-1 {
-				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
-			}
+		if binder := arm.BareBinder(); binder != "" || arm.IsWildcard {
 			if arm.Guard == nil {
+				if i != len(n.Arms)-1 {
+					c.errIrrefutableArmNotLast(arm.P, binder)
+				}
 				sawWildcard = true
 			}
+			armScope := newScope(s)
+			if binder != "" {
+				armScope.set(binder, tagT)
+			}
 			if arm.Guard != nil {
-				gt := c.checkExpr(arm.Guard, s)
+				gt := c.checkExpr(arm.Guard, armScope)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			c.checkBlock(arm.Body, s)
+			c.checkBlock(arm.Body, armScope)
 			continue
 		}
 		if arm.Literal == nil {
-			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns, a binding name, or `_`", tagT)
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -12576,6 +12580,16 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 	if !sawWildcard && !closesBool(tagT, closing) {
 		c.errfCode(n.P, "E030", "%s", literalMatchNotExhaustive(tagT))
 	}
+}
+
+// errIrrefutableArmNotLast reports an unguarded arm that matches every value
+// and is not the last arm. binder is "" for a `_` arm.
+func (c *checker) errIrrefutableArmNotLast(pos ast.Position, binder string) {
+	if binder == "" {
+		c.errfCode(pos, "E026", "wildcard `_` arm must be last in the match")
+		return
+	}
+	c.errfCode(pos, "E026", "binding arm `%s` matches every value and must be last in the match", binder)
 }
 
 func closesBool(tagT ast.Type, lits []ast.Expr) bool {
@@ -12807,24 +12821,28 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
 	}
 	for i, arm := range n.Arms {
-		if arm.IsWildcard {
-			if i != len(n.Arms)-1 {
-				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
-			}
+		if binder := arm.BareBinder(); binder != "" || arm.IsWildcard {
 			if arm.Guard == nil {
+				if i != len(n.Arms)-1 {
+					c.errIrrefutableArmNotLast(arm.P, binder)
+				}
 				sawWildcard = true
 			}
+			armScope := newScope(s)
+			if binder != "" {
+				armScope.set(binder, tagT)
+			}
 			if arm.Guard != nil {
-				gt := c.checkExpr(arm.Guard, s)
+				gt := c.checkExpr(arm.Guard, armScope)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.P)
+			unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
 			continue
 		}
 		if arm.Literal == nil {
-			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns, a binding name, or `_`", tagT)
 			continue
 		}
 		if arm.Guard == nil && arm.RangeHi == nil && arm.AtBinding == "" {
@@ -13160,10 +13178,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 	}
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
-			if i != len(n.Arms)-1 {
-				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
-			}
 			if arm.Guard == nil {
+				if i != len(n.Arms)-1 {
+					c.errIrrefutableArmNotLast(arm.P, "")
+				}
 				sawWildcard = true
 			}
 			if arm.Guard != nil {

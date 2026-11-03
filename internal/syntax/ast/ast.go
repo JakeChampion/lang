@@ -1742,6 +1742,24 @@ func (a *MatchExprArm) Binders() []string {
 	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
 }
 
+// BareBinder is the name a bare arm pattern binds the scrutinee to when the
+// match is on a non-enum value, or "" when the pattern is not a bare name.
+func (a *MatchArm) BareBinder() string {
+	return bareBinder(a.VariantName, a.VariantModule, a.NamedFields, a.IsWildcard, a.Bindings, a.Payloads, a.Literal, a.TupleElems)
+}
+
+// BareBinder is MatchArm.BareBinder for an expression arm.
+func (a *MatchExprArm) BareBinder() string {
+	return bareBinder(a.VariantName, a.VariantModule, a.NamedFields, a.IsWildcard, a.Bindings, a.Payloads, a.Literal, a.TupleElems)
+}
+
+func bareBinder(name, module string, named, wild bool, bindings []string, payloads []*TuplePatElem, lit Expr, tuple []TuplePatElem) string {
+	if name == "" || module != "" || named || wild || len(bindings) > 0 || payloads != nil || lit != nil || tuple != nil {
+		return ""
+	}
+	return name
+}
+
 func armBinders(bindings []string, atBinding string, tupleElems []TuplePatElem, payloads []*TuplePatElem) []string {
 	out := appendNonEmpty(nil, bindings...)
 	out = appendNonEmpty(out, atBinding)

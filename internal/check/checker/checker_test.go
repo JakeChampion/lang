@@ -3526,6 +3526,47 @@ func TestMatchWildcardCoversMissingVariants(t *testing.T) {
 	}
 }
 
+func TestLiteralMatchBindingArm(t *testing.T) {
+	for _, src := range []string{
+		`function f(k: i32): i32 { return match (k) { 0 => 10, n when n > 100 => n, _ => 14 }; }`,
+		`function f(k: i32): i32 { match (k) { n when n > 100 => { return n; }, 0 => { return 10; }, _ => { return 14; } } }`,
+		`function f(k: i32): i32 { return match (k) { n when n > 0 => n * 2, _ => 0 }; }`,
+		`function f(k: i32): i32 { return match (k) { 0 => 1, n => n + 1 }; }`,
+		`function f(s: string): i32 { return match (s) { "a" => 1, other => other.len() }; }`,
+		`function f(k: i32): i32 { return match (k) { 0 => 10, _ when k > 100 => k, _ => 14 }; }`,
+		`function f(o: Option[i32], c: boolean): i32 { match (o) { _ when c => { return 1; }, Some(x) => { return x; }, None => { return 0; } } }`,
+	} {
+		if err := checkSource(t, src); err != nil {
+			t.Errorf("binding arm wrongly rejected: %v\n%s", err, src)
+		}
+	}
+	for _, c := range []struct {
+		src  string
+		code string
+		msg  string
+	}{
+		{`function f(k: i32): i32 { return match (k) { n => n, 0 => 1 }; }`, "E026", "binding arm `n` matches every value and must be last"},
+		{`function f(k: i32): i32 { match (k) { n => { return n; }, _ => { return 1; } } }`, "E026", "binding arm `n` matches every value and must be last"},
+		{`function f(k: i32): i32 { return match (k) { _ => 1, 0 => 0 }; }`, "E026", "wildcard `_` arm must be last"},
+		{`function f(k: i32): i32 { return match (k) { 0 => 1, n when n > 2 => n }; }`, "E030", "not exhaustive"},
+		{`function f(o: Option[i32], c: boolean): i32 { match (o) { Some(x) => { return x; }, _ when c => { return 1; } } }`, "E030", ""},
+		{`function f(k: i32): string { return match (k) { 0 => "z", n => n }; }`, "E031", ""},
+		{`function f(k: i32): i32 { return match (k) { m.n => 1, _ => 0 }; }`, "E035", "literal patterns, a binding name, or `_`"},
+	} {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected %s for:\n%s", c.code, c.src)
+			continue
+		}
+		if got := firstErrCode(err); got != c.code {
+			t.Errorf("code = %q, want %s: %v\n%s", got, c.code, err, c.src)
+		}
+		if c.msg != "" && !strings.Contains(err.Error(), c.msg) {
+			t.Errorf("message %q lacks %q", err.Error(), c.msg)
+		}
+	}
+}
+
 func TestStringLiteralMatchAccepted(t *testing.T) {
 	src := `function classify(s: string): i32 {
 			match (s) {

@@ -187,6 +187,20 @@ pub function expr_line(e: Expr): i32 {
   return 0;
 }
 
+// bare_binder is the name a bare arm pattern binds the scrutinee to when
+// the match is on a non-enum value, or "" when the pattern is not a bare name.
+pub function bare_binder(pv: PatVariant): string {
+  if (pv.type_name.len() == 0 || pv.binding.len() > 0 || pv.extra_bindings.len() > 0 || pv.nested.len() > 0 || pv.field_names.len() > 0 || pv.has_lit_cond || pv.tup_kinds.len() > 0 || pv.rest_written) {
+    return "";
+  }
+  for i in 0..pv.type_name.len() {
+    if (pv.type_name[i] == b'.') {
+      return "";
+    }
+  }
+  return pv.type_name;
+}
+
 pub function expr_ty(e: Expr): string {
   match (e) {
     ExprNumber(n) => {
