@@ -84,10 +84,11 @@ faults, instead of being followed. Leaf functions without a frame never
 store x30, so they need no signature. The backtrace walk strips the
 signature (`xpaclri`) before printing a saved return address.
 
-The hand-written runtime helpers sign their frames in the same way.
-Each helper builds its frame through `rt_frame_of` and `rt_unframe_of` in
-`compiler/asm_arm64_ir.fern`, for each frame size. The startup frame in
-`_start` is the only frame without a signature, because it never returns.
+The hand-written runtime helpers that save an `x29/x30` frame record sign
+that record in the same way. They use `rt_frame_of` and `rt_unframe_of` in
+`compiler/asm_arm64_ir.fern` for each frame size. The subprocess helper signs
+before its explicit stack adjustment and authenticates after the restore.
+The startup record in `_start` has no signature because it never returns.
 
 `bti`, `paciasp`, `autiasp` and `xpaclri` are all in the hint space, so each
 is a NOP on a core without the feature. The ARMv8.2-A baseline does not
@@ -161,10 +162,10 @@ Both images must contain the BTI property note and produce the expected output.
 The test checks PAC and BTI instructions in the in-process image.
 A `-backtrace` abort must print plain code addresses without signature bits.
 
-The `runtime-frames` case of the test links each hand-written runtime frame. It
-requires a `paciasp` before each frame store and an `autiasp` before each exit.
-For each helper that runs, a PAC control removes only that signature. The
-control must fault.
+The `runtime-frames` case links the frame records listed in issue #14052 and
+the subprocess record. It checks `x29/x30` stores and restores for PAC.
+For each helper that runs, a PAC control removes only its signature.
+The control must fault. This audit does not check other forms of `x30` saves.
 
 `TestSelfHostForwardEdgeCFI` builds the control under `-harden` and under
 `-harden -pie` on both targets and counts the pads. It then runs three
@@ -222,10 +223,11 @@ with it active. It reads the kernel's own records and infers nothing from the em
 - **Speculation barriers**: none are emitted. Speculation attacks are outside
   the threat model (`docs/security/GUARANTEES.md`), because a Fern process
   runs only the code it was compiled from.
-- **The runtime's hand-written frames** (the `__fern_*` helpers written as
-  assembly text in `asm_arm64_ir.fern`) still store an unsigned return
-  address. Compiled Fern functions, and the runtime helpers written in Fern,
-  are signed.
+- **Compact runtime saves of `x30`**: some helper paths save `x30` alone or
+  with another register, without a signature at that save. Examples include
+  `__fn___fern_arr_inc_elems` and `__fn___fern_arr_own_elems`.
+  The `x29/x30` frame record audit does not establish PAC coverage for these
+  paths. Compiled Fern frames and runtime `x29/x30` records are signed.
 - **`-shared`**: a shared object's property note is combined with its host's
   by the dynamic loader. The `.so` writer would need the note, and every
   export entry a `bti c`.
