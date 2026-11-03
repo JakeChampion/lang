@@ -10,32 +10,32 @@ function block_bytes(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [STRING]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "Repeatedly write a line with all the STRINGs on it, or 'y'.\n";
-  out = out + "\n";
-  out = out + "      --help     display this help and exit\n";
-  out = out + "      --version  output version information and exit\n";
+  out += "Repeatedly write a line with all the STRINGs on it, or 'y'.\n";
+  out += "\n";
+  out += "      --help     display this help and exit\n";
+  out += "      --version  output version information and exit\n";
   return out;
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let operands: string[] = gnu.parse_standard_options_only(argv, "yes", help_text(), 1);
-  let line: string = "y";
+  let argv = args();
+  let operands = gnu.parse_standard_options_only(argv, "yes", help_text(), 1);
+  let line = "y";
   if (operands.len() > 0) {
     line = operands.join(" ");
   }
-  line = line + "\n";
+  line += "\n";
 
-  let copies: i32 = block_bytes() / line.len();
+  let copies = block_bytes() / line.len();
   if (copies < 1) {
     copies = 1;
   }
-  let block: string = line.repeat(copies);
+  let block = line.repeat(copies);
 
-  let w: Writer = stdout();
+  let w = stdout();
   match (w.splice_forever(block)) {
     Err(Unsupported()) => {},
     Err(e) => {

@@ -1,0 +1,179 @@
+// The control messages of the walkie-talkie protocol, and their encoding.
+// A message is one byte of type, then its fields in network byte order.
+// The secure channel carries each encoded message in one sealed frame.
+
+pub const VERSION: i32 = 1;
+
+pub const CODEC_OPUS: i32 = 1;
+
+// Raw 16-bit samples at 16 kHz, for the LAN build until the Opus encoder is
+// ready.
+pub const CODEC_PCM16: i32 = 2;
+
+pub enum Message {
+  // version, session ID, codec, capability bits
+  Hello(i32, i64, i32, i32),
+  // session ID, participant ID, request ID, timestamp in milliseconds
+  PttRequest(i64, i32, i32, i64),
+  // request ID, floor owner, lease in milliseconds
+  PttGrant(i32, i32, i32),
+  // request ID, floor owner
+  PttDeny(i32, i32),
+  // request ID
+  PttRelease(i32),
+  // session ID, sequence number
+  Heartbeat(i64, i32),
+  // reason code
+  Bye(i32),
+  // reason code
+  Error(i32),
+}
+
+// Reason codes of Bye and Error.
+pub const REASON_LEAVE: i32 = 1;
+
+pub const REASON_VERSION: i32 = 2;
+
+pub const REASON_TIMEOUT: i32 = 3;
+
+pub const REASON_PROTOCOL: i32 = 4;
+
+pub const REASON_CODEC: i32 = 5;
+
+const T_HELLO: i32 = 1;
+
+const T_REQUEST: i32 = 2;
+
+const T_GRANT: i32 = 3;
+
+const T_DENY: i32 = 4;
+
+const T_RELEASE: i32 = 5;
+
+const T_HEARTBEAT: i32 = 6;
+
+const T_BYE: i32 = 7;
+
+const T_ERROR: i32 = 8;
+
+function put8(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8);
+}
+
+function put16(out: u8[], v: i32): u8[] {
+  return put8(put8(out, v >> 8), v);
+}
+
+function put32(out: u8[], v: i32): u8[] {
+  return put16(put16(out, v >> 16), v);
+}
+
+function put64(out: u8[], v: i64): u8[] {
+  return put32(put32(out, (v >> 32) as i32), (v & 4294967295i64) as i32);
+}
+
+pub function encode(m: Message): u8[] {
+  match (m) {
+    Hello(version, session, codec, caps) => {
+      return put32(put8(put64(put16(put8([], T_HELLO), version), session), codec), caps);
+    },
+    PttRequest(session, participant, request, ts) => {
+      return put64(put32(put32(put64(put8([], T_REQUEST), session), participant), request), ts);
+    },
+    PttGrant(request, owner, lease) => {
+      return put32(put32(put32(put8([], T_GRANT), request), owner), lease);
+    },
+    PttDeny(request, owner) => {
+      return put32(put32(put8([], T_DENY), request), owner);
+    },
+    PttRelease(request) => {
+      return put32(put8([], T_RELEASE), request);
+    },
+    Heartbeat(session, seq) => {
+      return put32(put64(put8([], T_HEARTBEAT), session), seq);
+    },
+    Bye(reason) => {
+      return put16(put8([], T_BYE), reason);
+    },
+    Error(reason) => {
+      return put16(put8([], T_ERROR), reason);
+    }
+  }
+}
+
+// A cursor over the bytes of a message. A read past the end sets `bad`.
+struct Cursor { b: u8[], at: i32, bad: boolean }
+
+function take(r: Cursor, n: i32): (Cursor, i64) {
+  if (r.at + n > r.b.len()) {
+    return (Cursor { ...r, bad: true }, 0 as i64);
+  }
+  let v: i64 = 0 as i64;
+  for k in 0..n {
+    v = v << 8 as i64 | r.b[r.at + k] as i64;
+  }
+  return (Cursor { ...r, at: r.at + n }, v);
+}
+
+function take32(r: Cursor): (Cursor, i32) {
+  let (next, v) = take(r, 4);
+  return (next, v as i32);
+}
+
+// The message in `b`, or None when `b` is not one whole message.
+pub function decode(b: u8[]): Option[Message] {
+  if (b.len() == 0) {
+    return None;
+  }
+  let r: Cursor = Cursor { b: b, at: 1, bad: false };
+  let t: i32 = b[0] as i32;
+  let m: Message = Bye(0);
+  if (t == T_HELLO) {
+    let (r1, version) = take(r, 2);
+    let (r2, session) = take(r1, 8);
+    let (r3, codec) = take(r2, 1);
+    let (r4, caps) = take32(r3);
+    r = r4;
+    m = Hello(version as i32, session, codec as i32, caps);
+  } else if (t == T_REQUEST) {
+    let (r1, session) = take(r, 8);
+    let (r2, participant) = take32(r1);
+    let (r3, request) = take32(r2);
+    let (r4, ts) = take(r3, 8);
+    r = r4;
+    m = PttRequest(session, participant, request, ts);
+  } else if (t == T_GRANT) {
+    let (r1, request) = take32(r);
+    let (r2, owner) = take32(r1);
+    let (r3, lease) = take32(r2);
+    r = r3;
+    m = PttGrant(request, owner, lease);
+  } else if (t == T_DENY) {
+    let (r1, request) = take32(r);
+    let (r2, owner) = take32(r1);
+    r = r2;
+    m = PttDeny(request, owner);
+  } else if (t == T_RELEASE) {
+    let (r1, request) = take32(r);
+    r = r1;
+    m = PttRelease(request);
+  } else if (t == T_HEARTBEAT) {
+    let (r1, session) = take(r, 8);
+    let (r2, seq) = take32(r1);
+    r = r2;
+    m = Heartbeat(session, seq);
+  } else if (t == T_BYE || t == T_ERROR) {
+    let (r1, reason) = take(r, 2);
+    r = r1;
+    m = Bye(reason as i32);
+    if (t == T_ERROR) {
+      m = Error(reason as i32);
+    }
+  } else {
+    return None;
+  }
+  if (r.bad || r.at != b.len()) {
+    return None;
+  }
+  return Some(m);
+}

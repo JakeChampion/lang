@@ -1521,7 +1521,8 @@ let c = (-1.5) as i32;
 let d = -(2.5 as i32);
 let e = (-(x as i64)) as u64;
 let h = (-r?) as i64;
-return a + b + (c + d) as i64 + e as i64 + h;
+let k = (-1) as i64;
+return a + b + (c + d) as i64 + e as i64 + h + k;
 }
 `},
 	{"float-value-if-in-enum-arm", `enum Value { VBool(boolean), VNum(f64) }

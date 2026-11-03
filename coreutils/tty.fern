@@ -15,13 +15,13 @@ function write_status(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
-  out = out + "Print the file name of the terminal connected to standard input.\n";
-  out = out + "\n";
-  out = out + "  -s, --silent, --quiet   print nothing, only return an exit status\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print the file name of the terminal connected to standard input.\n";
+  out += "\n";
+  out += "  -s, --silent, --quiet   print nothing, only return an exit status\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -30,8 +30,8 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("s", "silent", opt_silent()));
   opts = opts.append(gnu.flag("", "quiet", opt_silent()));
 
-  let silent: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "tty", help_text(), usage_status()).exit_failure(write_status());
+  let silent = false;
+  let g = gnu.getopt_new(args(), opts, "tty", help_text(), usage_status()).exit_failure(write_status());
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -45,7 +45,7 @@ pub function main(): i32 {
     }
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() > 0) {
     gnu.die_usage("extra operand " + gnu.quote(operands[0]), usage_status());
   }

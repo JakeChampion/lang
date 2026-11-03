@@ -58,35 +58,35 @@ function opt_verbose(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [-T] TARGET LINK_NAME\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... TARGET\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... TARGET... DIRECTORY\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY TARGET...\n";
-  out = out + "Create a link to each TARGET, hard by default.\n";
-  out = out + "\n";
-  out = out + "      --backup[=CONTROL]      back up each existing destination\n";
-  out = out + "  -b                          like --backup, taking no argument\n";
-  out = out + "  -d, -F, --directory         allow a hard link to a directory\n";
-  out = out + "  -f, --force                 remove existing destinations\n";
-  out = out + "  -i, --interactive           prompt before removing a destination\n";
-  out = out + "  -L, --logical               follow a TARGET that is a symbolic link\n";
-  out = out + "  -n, --no-dereference        treat a LINK_NAME that is a symbolic link\n";
-  out = out + "                                to a directory as a normal file\n";
-  out = out + "  -P, --physical              hard-link the symbolic link itself\n";
-  out = out + "  -r, --relative              with -s, store the target relative to the link\n";
-  out = out + "  -s, --symbolic              make symbolic links\n";
-  out = out + "  -S, --suffix=SUFFIX         the simple backup suffix, instead of '~'\n";
-  out = out + "  -t, --target-directory=DIRECTORY  create the links in DIRECTORY\n";
-  out = out + "  -T, --no-target-directory   treat LINK_NAME as a normal file always\n";
-  out = out + "  -v, --verbose               print each link as it is made\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
-  out = out + "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
-  out = out + "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
-  out = out + "simple), simple/never.\n";
+  out += "Create a link to each TARGET, hard by default.\n";
+  out += "\n";
+  out += "      --backup[=CONTROL]      back up each existing destination\n";
+  out += "  -b                          like --backup, taking no argument\n";
+  out += "  -d, -F, --directory         allow a hard link to a directory\n";
+  out += "  -f, --force                 remove existing destinations\n";
+  out += "  -i, --interactive           prompt before removing a destination\n";
+  out += "  -L, --logical               follow a TARGET that is a symbolic link\n";
+  out += "  -n, --no-dereference        treat a LINK_NAME that is a symbolic link\n";
+  out += "                                to a directory as a normal file\n";
+  out += "  -P, --physical              hard-link the symbolic link itself\n";
+  out += "  -r, --relative              with -s, store the target relative to the link\n";
+  out += "  -s, --symbolic              make symbolic links\n";
+  out += "  -S, --suffix=SUFFIX         the simple backup suffix, instead of '~'\n";
+  out += "  -t, --target-directory=DIRECTORY  create the links in DIRECTORY\n";
+  out += "  -T, --no-target-directory   treat LINK_NAME as a normal file always\n";
+  out += "  -v, --verbose               print each link as it is made\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
+  out += "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
+  out += "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
+  out += "simple), simple/never.\n";
   return out;
 }
 
@@ -131,16 +131,16 @@ function stat_info(path: string, follow: boolean): StatInfo {
 }
 
 function same_entry(cfg: Cfg, src: string, dest: string): boolean {
-  let s: StatInfo = stat_info(src, cfg.symbolic || cfg.deref_src);
-  let d: StatInfo = stat_info(dest, false);
+  let s = stat_info(src, cfg.symbolic || cfg.deref_src);
+  let d = stat_info(dest, false);
   if (!s.ok || !d.ok || s.dev != d.dev || s.ino != d.ino) {
     return false;
   }
   if (gnu.base_name(src) != gnu.base_name(dest)) {
     return false;
   }
-  let sd: StatInfo = stat_info(gnu.dir_name(src), true);
-  let dd: StatInfo = stat_info(gnu.dir_name(dest), true);
+  let sd = stat_info(gnu.dir_name(src), true);
+  let dd = stat_info(gnu.dir_name(dest), true);
   return sd.ok && dd.ok && sd.dev == dd.dev && sd.ino == dd.ino;
 }
 
@@ -149,15 +149,15 @@ function hard_link_no_arrow(n: i32): boolean {
 }
 
 function create_failure(cfg: Cfg, dest: string, shown_target: string, e: IoError): string {
-  let text: string = gnu.io_error_text(e);
+  let text = gnu.io_error_text(e);
   if (cfg.symbolic) {
-    let arrow: string = "";
+    let arrow = "";
     if (errno.of(e) == errno.ENAMETOOLONG || shown_target.len() == 0) {
       arrow = " -> " + gnu.quotea(shown_target);
     }
     return "failed to create symbolic link " + gnu.quotea(dest) + arrow + ": " + text;
   }
-  let harrow: string = "";
+  let harrow = "";
   if (!hard_link_no_arrow(errno.of(e))) {
     harrow = " => " + gnu.quotea(shown_target);
   }
@@ -197,7 +197,7 @@ function darwin_slash_refusal(cfg: Cfg, src: string, path: string): Option[IoErr
   if (!ends_in_slash(src) && !ends_in_slash(path)) {
     return None;
   }
-  let r: Result[FileStat, IoError] = lstat(src);
+  let r = lstat(src);
   if (cfg.deref_src) {
     r = stat(src);
   }
@@ -219,10 +219,10 @@ function ends_in_slash(p: string): boolean {
 }
 
 function temp_link(cfg: Cfg, src: string, text: string, dest: string): Result[string, IoError] {
-  let dir: string = gnu.dir_name(dest);
-  let n: i32 = 0;
+  let dir = gnu.dir_name(dest);
+  let n = 0;
   while (n < 1000) {
-    let path: string = gnu.join_path(dir, ".ln-tmp" + n.to_string());
+    let path = gnu.join_path(dir, ".ln-tmp" + n.to_string());
     match (make_link(cfg, src, text, path)) {
       None => {
         return Ok(path);
@@ -233,7 +233,7 @@ function temp_link(cfg: Cfg, src: string, text: string, dest: string): Result[st
         }
       }
     }
-    n = n + 1;
+    n += 1;
   }
   return Err(AlreadyExists(dest));
 }
@@ -241,12 +241,12 @@ function temp_link(cfg: Cfg, src: string, text: string, dest: string): Result[st
 struct Replaced { ok: boolean, backup: string, out: io_buffered.BufWriter }
 
 function replace_existing(cfg: Cfg, target: string, src: string, text: string, shown: string, dest: string, err: IoError, o: io_buffered.BufWriter): Replaced {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   if (errno.of(err) != errno.EEXIST || !cfg.force && !cfg.interactive && !cfg.backups) {
     w = gnu.error_out(w, create_failure(cfg, dest, shown, err));
     return Replaced { ok: false, backup: "", out: w };
   }
-  let dst: StatInfo = stat_info(dest, false);
+  let dst = stat_info(dest, false);
   if (dst.ok && dst.is_dir) {
     w = gnu.error_out(w, gnu.quotef(dest) + ": cannot overwrite directory");
     return Replaced { ok: false, backup: "", out: w };
@@ -261,7 +261,7 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
       return Replaced { ok: false, backup: "", out: w };
     }
   }
-  let tmp_path: string = "";
+  let tmp_path = "";
   match (temp_link(cfg, src, text, dest)) {
     Ok(p) => {
       tmp_path = p;
@@ -271,7 +271,7 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
       return Replaced { ok: false, backup: "", out: w };
     }
   }
-  let backup: string = "";
+  let backup = "";
   if (cfg.backups) {
     backup = gnu.backup_name(dest, cfg.control, cfg.suffix);
     match (rename(dest, backup)) {
@@ -310,18 +310,18 @@ function drop_temp(path: string): void {
 struct LinkOut { status: i32, out: io_buffered.BufWriter }
 
 function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWriter): LinkOut {
-  let w: io_buffered.BufWriter = o;
-  let text: string = target;
+  let w = o;
+  let text = target;
   if (cfg.symbolic && cfg.relative) {
     text = relativise(target, dest);
   }
-  let shown: string = target;
+  let shown = target;
   if (cfg.symbolic) {
     shown = text;
   }
-  let src: string = target;
+  let src = target;
   if (!cfg.symbolic) {
-    let st: StatInfo = stat_info(target, cfg.deref_src);
+    let st = stat_info(target, cfg.deref_src);
     if (!st.ok) {
       w = gnu.error_out(w, "failed to access " + gnu.quotea(target) + ": " + st.err);
       return LinkOut { status: 1, out: w };
@@ -335,11 +335,11 @@ function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWrite
     }
   }
 
-  let backup: string = "";
+  let backup = "";
   match (make_link(cfg, src, text, dest)) {
     None => {},
     Some(err) => {
-      let r: Replaced = replace_existing(cfg, target, src, text, shown, dest, err, w);
+      let r = replace_existing(cfg, target, src, text, shown, dest, err, w);
       w = r.out;
       if (!r.ok) {
         return LinkOut { status: 1, out: w };
@@ -348,11 +348,11 @@ function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWrite
     }
   }
   if (cfg.verbose) {
-    let line: string = "";
+    let line = "";
     if (backup.len() > 0) {
       line = gnu.quotea(backup) + " ~ ";
     }
-    let arrow: string = " => ";
+    let arrow = " => ";
     if (cfg.symbolic) {
       arrow = " -> ";
     }
@@ -362,7 +362,7 @@ function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWrite
 }
 
 function require_directory(dir: string, follow: boolean): void {
-  let st: StatInfo = stat_info(dir, follow);
+  let st = stat_info(dir, follow);
   if (!st.ok) {
     gnu.error("target " + gnu.quotea(dir) + ": " + st.err);
     exit(1);
@@ -374,7 +374,7 @@ function require_directory(dir: string, follow: boolean): void {
 }
 
 function check_target_directory(dir: string): void {
-  let st: StatInfo = stat_info(dir, true);
+  let st = stat_info(dir, true);
   if (!st.ok) {
     gnu.error("failed to access " + gnu.quotea(dir) + ": " + st.err);
     exit(1);
@@ -407,9 +407,9 @@ function option_table(): gnu.Opt[] {
 struct Scan { cfg: Cfg, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  let cfg: Cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: target_os() == "darwin", hard_dir: false, relative: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
-  let s: Scan = Scan { cfg: cfg, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
-  let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "ln", help_text(), 1);
+  let cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: target_os() == "darwin", hard_dir: false, relative: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
+  let s = Scan { cfg: cfg, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
+  let g = gnu.getopt_new(argv, option_table(), "ln", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -426,7 +426,7 @@ function scan_options(argv: string[]): (Scan, string[]) {
 }
 
 function apply_option(s: Scan, m: gnu.OptMatch): Scan {
-  let c: Cfg = s.cfg;
+  let c = s.cfg;
   if (m.id == opt_backup()) {
     if (m.has_value) {
       return Scan { ...s, cfg: Cfg { ...c, backups: true }, control_given: true, control_text: m.value };
@@ -449,7 +449,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: Cfg { ...c, interactive: true, force: false } };
   }
   if (m.id == opt_suffix()) {
-    let suf: string = c.suffix;
+    let suf = c.suffix;
     if (gnu.usable_suffix(m.value)) {
       suf = m.value;
     }
@@ -479,7 +479,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
 }
 
 function from_environment(s: Scan): Cfg {
-  let c: Cfg = s.cfg;
+  let c = s.cfg;
   if (!c.backups) {
     return c;
   }
@@ -493,7 +493,7 @@ function from_environment(s: Scan): Cfg {
       None => {}
     }
   }
-  let control: i32 = gnu.backup_existing();
+  let control = gnu.backup_existing();
   if (s.control_given) {
     if (s.control_text.len() > 0) {
       control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
@@ -516,13 +516,13 @@ function from_environment(s: Scan): Cfg {
 
 pub function main(): i32 {
   let scanned: (Scan, string[]) = scan_options(args());
-  let s: Scan = scanned.0;
-  let operands: string[] = scanned.1;
+  let s = scanned.0;
+  let operands = scanned.1;
   if (s.have_target_dir && s.no_target_dir) {
     gnu.error("cannot combine --target-directory and --no-target-directory");
     return 1;
   }
-  let cfg: Cfg = from_environment(s);
+  let cfg = from_environment(s);
   if (cfg.relative && !cfg.symbolic) {
     gnu.error("cannot do --relative without --symbolic");
     return 1;
@@ -531,10 +531,10 @@ pub function main(): i32 {
     gnu.die_usage("missing file operand", 1);
   }
 
-  let o: io_buffered.BufWriter = gnu.out_new();
+  let o = gnu.out_new();
   if (s.have_target_dir) {
     require_directory(s.target_dir, !cfg.no_deref);
-    let r0: LinkOut = link_into(cfg, operands, operands.len(), s.target_dir, o);
+    let r0 = link_into(cfg, operands, operands.len(), s.target_dir, o);
     return finish(r0.out, r0.status);
   }
   if (s.no_target_dir) {
@@ -544,40 +544,40 @@ pub function main(): i32 {
     if (operands.len() > 2) {
       gnu.die_usage("extra operand " + gnu.quotea(operands[2]), 1);
     }
-    let r1: LinkOut = do_link(cfg, operands[0], operands[1], o);
+    let r1 = do_link(cfg, operands[0], operands[1], o);
     return finish(r1.out, r1.status);
   }
   if (operands.len() == 1) {
-    let r2: LinkOut = do_link(cfg, operands[0], "./" + gnu.base_name(operands[0]), o);
+    let r2 = do_link(cfg, operands[0], "./" + gnu.base_name(operands[0]), o);
     return finish(r2.out, r2.status);
   }
   if (operands.len() == 2) {
-    let last: string = operands[1];
-    let st: StatInfo = stat_info(last, !cfg.no_deref);
+    let last = operands[1];
+    let st = stat_info(last, !cfg.no_deref);
     if (st.ok && st.is_dir) {
-      let r3: LinkOut = link_into(cfg, operands, 1, last, o);
+      let r3 = link_into(cfg, operands, 1, last, o);
       return finish(r3.out, r3.status);
     }
-    let r4: LinkOut = do_link(cfg, operands[0], last, o);
+    let r4 = do_link(cfg, operands[0], last, o);
     return finish(r4.out, r4.status);
   }
-  let dir: string = operands[operands.len() - 1];
+  let dir = operands[operands.len() - 1];
   require_directory(dir, !cfg.no_deref);
-  let r5: LinkOut = link_into(cfg, operands, operands.len() - 1, dir, o);
+  let r5 = link_into(cfg, operands, operands.len() - 1, dir, o);
   return finish(r5.out, r5.status);
 }
 
 function link_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_buffered.BufWriter): LinkOut {
-  let w: io_buffered.BufWriter = o;
-  let status: i32 = 0;
-  let i: i32 = 0;
+  let w = o;
+  let status = 0;
+  let i = 0;
   while (i < count) {
-    let r: LinkOut = do_link(cfg, operands[i], gnu.join_path(dir, gnu.base_name(operands[i])), w);
+    let r = do_link(cfg, operands[i], gnu.join_path(dir, gnu.base_name(operands[i])), w);
     w = r.out;
     if (r.status != 0) {
       status = 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return LinkOut { status: status, out: w };
 }

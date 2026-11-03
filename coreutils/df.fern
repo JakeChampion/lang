@@ -92,31 +92,31 @@ function declare_options(): gnu.Opt[] {
 }
 
 function help_text(): string {
-  let out: string = "";
-  out = out + "Usage: df [OPTION]... [FILE]...\n";
-  out = out + "Show information about the file system on which each FILE resides,\n";
-  out = out + "or all file systems by default.\n\n";
-  out = out + "  -a, --all             include pseudo, duplicate, inaccessible file systems\n";
-  out = out + "  -B, --block-size=SIZE  scale sizes by SIZE before printing them\n";
-  out = out + "  -h, --human-readable  print sizes in powers of 1024\n";
-  out = out + "  -H, --si              print sizes in powers of 1000\n";
-  out = out + "  -i, --inodes          list inode information instead of block usage\n";
-  out = out + "  -k                    like --block-size=1K\n";
-  out = out + "  -l, --local           limit listing to local file systems\n";
-  out = out + "      --no-sync         do not invoke sync before getting usage info (default)\n";
-  out = out + "      --output[=FIELD_LIST]  use the output format defined by FIELD_LIST\n";
-  out = out + "  -P, --portability     use the POSIX output format\n";
-  out = out + "      --sync            invoke sync before getting usage info\n";
-  out = out + "      --total           produce a grand total\n";
-  out = out + "  -t, --type=TYPE       limit listing to file systems of type TYPE\n";
-  out = out + "  -T, --print-type      print file system type\n";
-  out = out + "  -x, --exclude-type=TYPE   limit listing to file systems not of type TYPE\n";
-  out = out + "  -v                    (ignored)\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n\n";
-  out = out + "FIELD_LIST is a comma-separated list of columns to be included.  Valid\n";
-  out = out + "field names are: 'source', 'fstype', 'itotal', 'iused', 'iavail', 'ipcent',\n";
-  out = out + "'size', 'used', 'avail', 'pcent', 'file' and 'target'.\n";
+  let out = "";
+  out += "Usage: df [OPTION]... [FILE]...\n";
+  out += "Show information about the file system on which each FILE resides,\n";
+  out += "or all file systems by default.\n\n";
+  out += "  -a, --all             include pseudo, duplicate, inaccessible file systems\n";
+  out += "  -B, --block-size=SIZE  scale sizes by SIZE before printing them\n";
+  out += "  -h, --human-readable  print sizes in powers of 1024\n";
+  out += "  -H, --si              print sizes in powers of 1000\n";
+  out += "  -i, --inodes          list inode information instead of block usage\n";
+  out += "  -k                    like --block-size=1K\n";
+  out += "  -l, --local           limit listing to local file systems\n";
+  out += "      --no-sync         do not invoke sync before getting usage info (default)\n";
+  out += "      --output[=FIELD_LIST]  use the output format defined by FIELD_LIST\n";
+  out += "  -P, --portability     use the POSIX output format\n";
+  out += "      --sync            invoke sync before getting usage info\n";
+  out += "      --total           produce a grand total\n";
+  out += "  -t, --type=TYPE       limit listing to file systems of type TYPE\n";
+  out += "  -T, --print-type      print file system type\n";
+  out += "  -x, --exclude-type=TYPE   limit listing to file systems not of type TYPE\n";
+  out += "  -v                    (ignored)\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n\n";
+  out += "FIELD_LIST is a comma-separated list of columns to be included.  Valid\n";
+  out += "field names are: 'source', 'fstype', 'itotal', 'iused', 'iavail', 'ipcent',\n";
+  out += "'size', 'used', 'avail', 'pcent', 'file' and 'target'.\n";
   return out;
 }
 
@@ -207,12 +207,12 @@ function dummy_type(kind: string): boolean {
 }
 
 function remote_mount(m: MountEntry): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.source.len()) {
     if (m.source[i] as i32 == 58) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (m.source.len() > 1 && m.source[0] as i32 == 47 && m.source[1] as i32 == 47) {
     return m.fstype == "smbfs" || m.fstype == "smb3" || m.fstype == "cifs";
@@ -245,14 +245,14 @@ function block_label(size: u64, base: u64, with_b: boolean, bare: boolean): stri
 }
 
 function exact_power(n: u64, base: u64): i32 {
-  let e: i32 = 0;
-  let d: u64 = base;
+  let e = 0;
+  let d = base;
   while (d <= n && n % d == 0 as u64) {
-    e = e + 1;
+    e += 1;
     if (d > n / base) {
       break;
     }
-    d = d * base;
+    d *= base;
   }
   return e;
 }
@@ -265,15 +265,15 @@ function rescale(n: u64, from: u64, to: u64): u64 {
     return n * (from / to);
   }
   if (to % from == 0 as u64) {
-    let d: u64 = to / from;
-    let q: u64 = n / d;
+    let d = to / from;
+    let q = n / d;
     if (n % d != 0 as u64) {
       q = q + 1 as u64;
     }
     return q;
   }
-  let p: u64 = n * from;
-  let r: u64 = p / to;
+  let p = n * from;
+  let r = p / to;
   if (p % to != 0 as u64) {
     r = r + 1 as u64;
   }
@@ -295,11 +295,11 @@ function show_inodes(c: Conf, n: u64): string {
 }
 
 function percent(used: u64, avail: u64): string {
-  let total: u64 = used + avail;
+  let total = used + avail;
   if (total == 0 as u64) {
     return "-";
   }
-  let q: u64 = used * (100 as u64) / total;
+  let q = used * (100 as u64) / total;
   if (used * (100 as u64) % total != 0 as u64) {
     q = q + 1 as u64;
   }
@@ -356,7 +356,7 @@ function header_of(c: Conf, f: i32): string {
 }
 
 function cell_of(c: Conf, r: Row, f: i32): string {
-  let label_in_source: boolean = has_field(c.fields, fld_source());
+  let label_in_source = has_field(c.fields, fld_source());
   if (f == fld_source()) {
     if (r.total) {
       if (label_in_source) {
@@ -416,109 +416,109 @@ function cell_of(c: Conf, r: Row, f: i32): string {
 
 function spaces(n: i32): string {
   let bs: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     bs = bs.append(32 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bs);
 }
 
 function grand_total(rows: Row[]): Row {
-  let blk: u64 = 0 as u64;
-  let free: u64 = 0 as u64;
-  let avail: u64 = 0 as u64;
-  let files: u64 = 0 as u64;
-  let ffree: u64 = 0 as u64;
-  let i: i32 = 0;
+  let blk = 0 as u64;
+  let free = 0 as u64;
+  let avail = 0 as u64;
+  let files = 0 as u64;
+  let ffree = 0 as u64;
+  let i = 0;
   while (i < rows.len()) {
     if (rows[i].u.ok) {
       blk = blk + rows[i].u.blocks * rows[i].u.bsize;
       free = free + rows[i].u.bfree * rows[i].u.bsize;
       avail = avail + rows[i].u.bavail * rows[i].u.bsize;
-      files = files + rows[i].u.files;
-      ffree = ffree + rows[i].u.ffree;
+      files += rows[i].u.files;
+      ffree += rows[i].u.ffree;
     }
-    i = i + 1;
+    i += 1;
   }
   return Row { dev: "total", dir: "-", kind: "-", file: "-", u: Usage { ok: true, bsize: 1 as u64, blocks: blk, bfree: free, bavail: avail, files: files, ffree: ffree }, total: true };
 }
 
 function print_table(c: Conf, rows: Row[]): void {
-  let out: gnu.Stdio = gnu.stdio_new();
+  let out = gnu.stdio_new();
 
   let cells: string[] = [];
   let widths: i32[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < c.fields.len()) {
-    let h: string = header_of(c, c.fields[fi]);
+    let h = header_of(c, c.fields[fi]);
     cells = cells.append(h);
-    let w: i32 = field_min(c.fields[fi]);
+    let w = field_min(c.fields[fi]);
     if (h.len() > w) {
       w = h.len();
     }
     widths = widths.append(w);
-    fi = fi + 1;
+    fi += 1;
   }
-  let ri: i32 = 0;
+  let ri = 0;
   while (ri < rows.len()) {
     fi = 0;
     while (fi < c.fields.len()) {
-      let v: string = cell_of(c, rows[ri], c.fields[fi]);
+      let v = cell_of(c, rows[ri], c.fields[fi]);
       cells = cells.append(v);
       if (v.len() > widths[fi]) {
         widths = widths.with(fi, v.len());
       }
-      fi = fi + 1;
+      fi += 1;
     }
-    ri = ri + 1;
+    ri += 1;
   }
 
-  let line: i32 = 0;
-  let n: i32 = rows.len() + 1;
+  let line = 0;
+  let n = rows.len() + 1;
   while (line < n) {
-    let text: string = "";
+    let text = "";
     fi = 0;
     while (fi < c.fields.len()) {
-      let cell: string = cells[line * c.fields.len() + fi];
-      let pad: i32 = widths[fi] - cell.len();
+      let cell = cells[line * c.fields.len() + fi];
+      let pad = widths[fi] - cell.len();
       if (fi > 0) {
-        text = text + " ";
+        text += " ";
       }
       if (field_left(c.fields[fi])) {
-        text = text + cell;
+        text += cell;
         if (fi + 1 < c.fields.len()) {
-          text = text + spaces(pad);
+          text += spaces(pad);
         }
       } else {
         text = text + spaces(pad) + cell;
       }
-      fi = fi + 1;
+      fi += 1;
     }
     out = out.fwrite(text + "\n");
-    line = line + 1;
+    line += 1;
   }
   out.close_stdout();
 }
 
 function has_field(fields: i32[], f: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < fields.len()) {
     if (fields[i] == f) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function type_listed(names: string[], kind: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == kind) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -553,23 +553,23 @@ function state_dropped(): i32 {
 }
 
 function list_all(c: Conf): Row[] {
-  let mounts: MountEntry[] = read_mounts();
+  let mounts = read_mounts();
   let state: i32[] = [];
   let seen_key: i64[] = [];
   let seen_name: string[] = [];
   let seen_live: boolean[] = [];
   let seen_row: i32[] = [];
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < mounts.len()) {
-    let m: MountEntry = mounts[i];
+    let m = mounts[i];
     if (!c.all && dummy_type(m.fstype)) {
       state = state.append(state_dropped());
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let key: i64 = 0 as i64;
-    let known: boolean = false;
+    let key = 0 as i64;
+    let known = false;
     match (stat(m.target)) {
       Ok(st) => {
         key = st.dev;
@@ -579,18 +579,18 @@ function list_all(c: Conf): Row[] {
     }
     if (!known) {
       state = state.append(state_alias());
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let live: boolean = m.dev == key;
-    let found: i32 = 0 - 1;
-    let j: i32 = 0;
+    let live = m.dev == key;
+    let found: i32 = -1;
+    let j = 0;
     while (j < seen_key.len()) {
       if (seen_key[j] == key) {
         found = j;
         break;
       }
-      j = j + 1;
+      j += 1;
     }
     if (found < 0) {
       seen_key = seen_key.append(key);
@@ -609,15 +609,15 @@ function list_all(c: Conf): Row[] {
     } else {
       state = state.append(state_alias());
     }
-    i = i + 1;
+    i += 1;
   }
 
   let rows: Row[] = [];
   i = 0;
   while (i < mounts.len()) {
-    let mt: MountEntry = mounts[i];
-    let st: i32 = state[i];
-    i = i + 1;
+    let mt = mounts[i];
+    let st = state[i];
+    i += 1;
     if (st == state_dropped()) {
       continue;
     }
@@ -627,7 +627,7 @@ function list_all(c: Conf): Row[] {
     if (!c.all && st != state_kept()) {
       continue;
     }
-    let u: Usage = no_usage();
+    let u = no_usage();
     if (st != state_alias()) {
       match (statfs(mt.target)) {
         Ok(fs) => {
@@ -651,20 +651,20 @@ function under(dir: string, path: string): boolean {
   if (path.len() < dir.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < dir.len()) {
     if (path[i] != dir[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return path.len() == dir.len() || path[dir.len()] as i32 == 47;
 }
 
 function drop_trailing_slashes(s: string): string {
-  let n: i32 = s.len();
+  let n = s.len();
   while (n > 1 && s[n - 1] as i32 == 47) {
-    n = n - 1;
+    n -= 1;
   }
   return slice_unchecked(s, 0, n) + "";
 }
@@ -693,40 +693,40 @@ function mount_has_device(m: MountEntry, devno: i64): boolean {
 
 function find_mount(mounts: MountEntry[], path: string, is_block: boolean, devno: i64): i32 {
   if (is_block) {
-    let i: i32 = 0;
+    let i = 0;
     while (i < mounts.len()) {
       if (mounts[i].source == path) {
         return i;
       }
-      i = i + 1;
+      i += 1;
     }
   }
-  let best: i32 = 0 - 1;
-  let best_len: i32 = 0 - 1;
-  let j: i32 = 0;
+  let best: i32 = -1;
+  let best_len: i32 = -1;
+  let j = 0;
   if (path.len() > 0 && path[0] == b'/') {
     while (j < mounts.len()) {
-      let m: MountEntry = mounts[j];
+      let m = mounts[j];
       if (m.fstype != "lofs" && prefer_operand_mount(mounts, best, m)
         && under(m.target, path) && m.target.len() >= best_len) {
         best = j;
         best_len = m.target.len();
       }
-      j = j + 1;
+      j += 1;
     }
   }
   if (best >= 0 && mount_has_device(mounts[best], devno)) {
     return best;
   }
-  best = 0 - 1;
+  best = -1;
   j = 0;
   while (j < mounts.len()) {
-    let m: MountEntry = mounts[j];
+    let m = mounts[j];
     if (m.dev == devno && m.fstype != "lofs" && prefer_operand_mount(mounts, best, m)
       && mount_has_device(m, devno)) {
       best = j;
     }
-    j = j + 1;
+    j += 1;
   }
   return best;
 }
@@ -746,16 +746,16 @@ function is_block_device(mode: u32): boolean {
 }
 
 function list_operands(c: Conf, names: string[]): (Row[], boolean) {
-  let mounts: MountEntry[] = read_mounts();
+  let mounts = read_mounts();
   let rows: Row[] = [];
-  let failed: boolean = false;
-  let i: i32 = 0;
+  let failed = false;
+  let i = 0;
   while (i < names.len()) {
-    let name: string = names[i];
-    i = i + 1;
-    let mode: u32 = 0 as u32;
-    let devno: i64 = 0 as i64;
-    let have: boolean = false;
+    let name = names[i];
+    i += 1;
+    let mode = 0 as u32;
+    let devno = 0 as i64;
+    let have = false;
     match (stat(name)) {
       Ok(st) => {
         mode = st.mode;
@@ -770,22 +770,22 @@ function list_operands(c: Conf, names: string[]): (Row[], boolean) {
     if (!have) {
       continue;
     }
-    let path: string = resolve(name);
-    let block: boolean = is_block_device(mode);
-    let idx: i32 = find_mount(mounts, path, block, devno);
+    let path = resolve(name);
+    let block = is_block_device(mode);
+    let idx = find_mount(mounts, path, block, devno);
     if (idx < 0) {
       continue;
     }
-    let m: MountEntry = mounts[idx];
+    let m = mounts[idx];
     if (!selected(c, m)) {
       continue;
     }
-    let probe: string = name;
+    let probe = name;
     if (block && m.source == path) {
       probe = m.target;
     }
-    let u: Usage = no_usage();
-    let bad: boolean = false;
+    let u = no_usage();
+    let bad = false;
     match (statfs(probe)) {
       Ok(fs) => {
         u = usage_of(fs);
@@ -805,21 +805,21 @@ function list_operands(c: Conf, names: string[]): (Row[], boolean) {
 }
 
 function parse_fields(have: i32[], spec: string): i32[] {
-  let names: string[] = field_names();
-  let out: i32[] = have;
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let names = field_names();
+  let out = have;
+  let start = 0;
+  let i = 0;
   while (i <= spec.len()) {
     if (i == spec.len() || spec[i] as i32 == 44) {
-      let word: string = slice_unchecked(spec, start, i) + "";
-      let f: i32 = 0 - 1;
-      let j: i32 = 0;
+      let word = slice_unchecked(spec, start, i) + "";
+      let f: i32 = -1;
+      let j = 0;
       while (j < names.len()) {
         if (names[j] == word) {
           f = j;
           break;
         }
-        j = j + 1;
+        j += 1;
       }
       if (f < 0) {
         gnu.die_usage("option --output: field " + gnu.quote(word) + " unknown", 1);
@@ -830,7 +830,7 @@ function parse_fields(have: i32[], spec: string): i32[] {
       out = out.append(f);
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -859,32 +859,32 @@ function all_fields(): i32[] {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let opts: gnu.Opt[] = declare_options();
+  let argv = args();
+  let opts = declare_options();
 
-  let unit: blocks.Unit = blocks.default_unit();
-  let all: boolean = false;
-  let inodes: boolean = false;
-  let local: boolean = false;
-  let posix: boolean = false;
-  let print_type: boolean = false;
-  let total: boolean = false;
-  let output: boolean = false;
+  let unit = blocks.default_unit();
+  let all = false;
+  let inodes = false;
+  let local = false;
+  let posix = false;
+  let print_type = false;
+  let total = false;
+  let output = false;
   let fields: i32[] = [];
   let include: string[] = [];
   let exclude: string[] = [];
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "df", help_text(), 1);
+  let g = gnu.getopt_new(argv, opts, "df", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
-    let done: boolean = false;
+    let done = false;
     match (r.0) {
       Some(m) => {
         if (m.id == opt_all()) {
           all = true;
         } else if (m.id == opt_block_size()) {
-          let n: blocks.Num = blocks.parse_num(m.value, false, true, false);
+          let n = blocks.parse_num(m.value, false, true, false);
           if (n.status != blocks.size_ok()) {
             blocks.die_size(n.status, blocks.option_name(m, "--block-size", "-B"), m.value);
           }
@@ -916,7 +916,7 @@ pub function main(): i32 {
           }
         }
         if (output && (inodes || posix || print_type)) {
-          let which: string = "-T";
+          let which = "-T";
           if (inodes) {
             which = "-i";
           } else if (posix) {
@@ -934,13 +934,13 @@ pub function main(): i32 {
     }
   }
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < include.len()) {
     if (type_listed(exclude, include[i])) {
       gnu.error("file system type " + gnu.quote(include[i]) + " both selected and excluded");
       exit(1);
     }
-    i = i + 1;
+    i += 1;
   }
 
   if (!unit.chosen) {
@@ -950,15 +950,15 @@ pub function main(): i32 {
       unit = blocks.env_unit(["DF_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
     }
   }
-  let label: string = block_label(unit.block_size, unit.base, unit.with_b, unit.show_suffix);
-  let suffix: string = "";
-  let isuffix: string = "";
+  let label = block_label(unit.block_size, unit.base, unit.with_b, unit.show_suffix);
+  let suffix = "";
+  let isuffix = "";
   if (unit.show_suffix) {
     suffix = blocks.unit_text(unit.block_size, unit.base, unit.with_b);
     isuffix = blocks.unit_text(1 as u64, unit.base, unit.with_b);
   }
 
-  let c: Conf = Conf { block_size: unit.block_size, suffix: suffix, isuffix: isuffix, human: unit.human, label: label, inodes: inodes, posix: posix, print_type: print_type, all: all, local: local, total: total, output: output, fields: [], include: include, exclude: exclude };
+  let c = Conf { block_size: unit.block_size, suffix: suffix, isuffix: isuffix, human: unit.human, label: label, inodes: inodes, posix: posix, print_type: print_type, all: all, local: local, total: total, output: output, fields: [], include: include, exclude: exclude };
   if (output) {
     if (fields.len() == 0) {
       fields = all_fields();
@@ -968,9 +968,9 @@ pub function main(): i32 {
     c = Conf { ...c, fields: default_fields(c) };
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   let rows: Row[] = [];
-  let failed: boolean = false;
+  let failed = false;
   if (operands.len() > 0) {
     let got: (Row[], boolean) = list_operands(c, operands);
     rows = got.0;

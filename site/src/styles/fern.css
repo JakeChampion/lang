@@ -14,6 +14,7 @@
  *   4. Landing        — splash hero + the landing-only components
  *                       (install card, facet rail, spec sheet).
  *   5. Playground     — the embedded live-snippet figure.
+ *   6. Coreutils      — the bench tables on the coreutils page.
  *
  * Everything degrades: the webfonts are `display=swap` with real
  * fallback stacks, and every reveal animation is disabled under
@@ -804,4 +805,141 @@ site-search dialog h2 {
 .fern-playground header a:hover {
   text-decoration: underline;
   text-underline-offset: 0.25em;
+}
+
+/* ---------------------------------------------------------------- *
+ * 6. Coreutils bench tables
+ * ---------------------------------------------------------------- */
+
+.fern-bench {
+  margin-block: 1rem 2rem;
+}
+
+.fern-bench__filter {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.fern-bench__filter input {
+  font: inherit;
+  font-size: var(--sl-text-sm);
+  padding: 0.3rem 0.6rem;
+  border: var(--fern-rule);
+  border-radius: 0.35rem;
+  background: var(--sl-color-bg);
+  color: var(--sl-color-white);
+  max-width: 100%;
+}
+
+.fern-bench__scroll {
+  overflow-x: auto;
+}
+
+.fern-bench__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--sl-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.fern-bench__table th,
+.fern-bench__table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: var(--fern-rule);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.fern-bench__table th:first-child {
+  text-align: start;
+  white-space: normal;
+  font-weight: 400;
+}
+
+.fern-bench__table thead th {
+  font-family: var(--fern-font-mono);
+  font-size: var(--sl-text-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sl-color-gray-3);
+  border-bottom: 1px solid var(--sl-color-gray-4);
+}
+
+.fern-bench__table thead th {
+  white-space: normal;
+  vertical-align: bottom;
+}
+
+.fern-bench__table thead button {
+  all: unset;
+  cursor: pointer;
+}
+
+.fern-bench a {
+  color: var(--sl-color-text-accent);
+}
+
+.fern-bench__table thead button:focus-visible {
+  outline: 2px solid var(--fern-spore);
+  outline-offset: 2px;
+}
+
+.fern-bench__table th[aria-sort="ascending"] button::after {
+  content: " ↑";
+}
+
+.fern-bench__table th[aria-sort="descending"] button::after {
+  content: " ↓";
+}
+
+.fern-bench .is-win {
+  color: var(--sl-color-green-high);
+}
+
+.fern-bench .is-loss {
+  color: var(--sl-color-red-high);
+}
+
+.fern-bench .is-even {
+  color: var(--sl-color-gray-3);
+}
+
+.fern-bench__util {
+  border-bottom: var(--fern-rule);
+}
+
+.fern-bench__util summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  padding-block: 0.5rem;
+  cursor: pointer;
+}
+
+.fern-bench__util summary::-webkit-details-marker {
+  display: none;
+}
+
+.fern-bench__util summary code::before {
+  content: "▸ ";
+  color: var(--fern-spore);
+}
+
+.fern-bench__util[open] summary code::before {
+  content: "▾ ";
+}
+
+.fern-bench__meta {
+  font-family: var(--fern-font-mono);
+  font-size: var(--sl-text-xs);
+  color: var(--sl-color-gray-3);
+}
+
+.fern-bench__util .fern-bench__table {
+  margin-bottom: 1rem;
 }

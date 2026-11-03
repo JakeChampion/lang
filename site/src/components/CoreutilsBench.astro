@@ -1,0 +1,179 @@
+---
+// The coreutils performance tables, built from the newest bench log in
+// docs/coreutils-log/ at build time.
+
+import { loadBench } from "../lib/coreutils-bench.mjs";
+
+interface Props {
+  part: "summary" | "utilities" | "workloads";
+}
+
+const { part } = Astro.props;
+const bench = loadBench();
+const s = bench.summary;
+const repo = "https://github.com/JakeChampion/lang/blob/main";
+
+const x = (r: number | null) => (r === null ? "—" : `${r.toFixed(2)}×`);
+// Within about 10% of 1 is not a measured difference (docs/COREUTILS.md).
+const tone = (r: number | null) =>
+  r === null ? "" : r >= 1.1 ? "is-win" : r <= 0.9 ? "is-loss" : "is-even";
+const ms = (v: number | null) => (v === null ? "failed" : v.toFixed(2));
+const slug = (name: string) => `bench-${name === "[" ? "bracket" : name}`;
+const pct = (n: number, d: number) => `${Math.round((100 * n) / d)}%`;
+---
+
+{part === "summary" && (
+<div class="fern-panel fern-spec not-content">
+  <span class="fern-label fern-spec__caption">{bench.date} · Linux x86-64</span>
+  <dl class="fern-spec__list">
+    <dt>Workloads</dt>
+    <dd>{s.rows} over {s.utilities} utilities</dd>
+    <dt>Faster than GNU</dt>
+    <dd>{s.fasterThanGnu} of {s.comparedGnu} ({pct(s.fasterThanGnu, s.comparedGnu)})</dd>
+    <dt>Faster than uutils</dt>
+    <dd>{s.fasterThanUutils} of {s.comparedUutils} ({pct(s.fasterThanUutils, s.comparedUutils)})</dd>
+    <dt>Median workload</dt>
+    <dd>{x(s.medianGnu)} GNU, {x(s.medianUutils)} uutils</dd>
+    <dt>Beat GNU on every workload</dt>
+    <dd>{s.everyRowBeatsGnu} of {s.utilities} utilities</dd>
+  </dl>
+  <p class="fern-spec__note">
+    Source: <a href={`${repo}/docs/coreutils-log/${bench.file}`}>docs/coreutils-log/{bench.file}</a>
+  </p>
+</div>
+)}
+
+{part === "utilities" && (
+<div class="fern-bench not-content">
+  <label class="fern-bench__filter">
+    <span class="fern-label">Filter</span>
+    <input type="search" placeholder="utility name" data-bench-filter />
+  </label>
+  <div class="fern-bench__scroll">
+    <table class="fern-bench__table" data-bench-table>
+      <thead>
+        <tr>
+          <th scope="col" aria-sort="ascending"><button type="button" data-sort="name">Utility</button></th>
+          <th scope="col"><button type="button" data-sort="rows">Workloads</button></th>
+          <th scope="col"><button type="button" data-sort="mg">GNU median</button></th>
+          <th scope="col"><button type="button" data-sort="wg">GNU worst</button></th>
+          <th scope="col"><button type="button" data-sort="mu">uutils median</button></th>
+          <th scope="col"><button type="button" data-sort="beats">Beats GNU on</button></th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          bench.utilities.map((u) => (
+            <tr
+              data-name={u.name}
+              data-rows={u.rows.length}
+              data-mg={u.medianGnu ?? -1}
+              data-wg={u.worstGnu ?? -1}
+              data-mu={u.medianUutils ?? -1}
+              data-beats={u.winsGnu / u.rows.length}
+            >
+              <th scope="row"><a href={`#${slug(u.name)}`}><code>{u.name}</code></a></th>
+              <td>{u.rows.length}</td>
+              <td class={tone(u.medianGnu)}>{x(u.medianGnu)}</td>
+              <td class={tone(u.worstGnu)}>{x(u.worstGnu)}</td>
+              <td class={tone(u.medianUutils)}>{x(u.medianUutils)}</td>
+              <td>{u.winsGnu} of {u.rows.length}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+</div>
+)}
+
+{part === "workloads" && (
+<div class="fern-bench not-content">
+  {
+    bench.utilities.map((u) => (
+      <details class="fern-bench__util" id={slug(u.name)}>
+        <summary>
+          <code>{u.name}</code>
+          <span class="fern-bench__meta">
+            {`${u.rows.length} ${u.rows.length === 1 ? "workload" : "workloads"} · median `}
+            <span class={tone(u.medianGnu)}>{x(u.medianGnu)}</span> GNU
+          </span>
+        </summary>
+        <div class="fern-bench__scroll">
+          <table class="fern-bench__table">
+            <thead>
+              <tr>
+                <th scope="col">Workload</th>
+                <th scope="col">Fern ms</th>
+                <th scope="col">GNU ms</th>
+                <th scope="col">uutils ms</th>
+                <th scope="col">vs GNU</th>
+                <th scope="col">vs uutils</th>
+              </tr>
+            </thead>
+            <tbody>
+              {u.rows.map((r) => (
+                <tr>
+                  <th scope="row">{r.workload}</th>
+                  <td>{ms(r.fern)}</td>
+                  <td>{ms(r.gnu)}</td>
+                  <td>{ms(r.uutils)}</td>
+                  <td class={tone(r.vsGnu)}>{x(r.vsGnu)}</td>
+                  <td class={tone(r.vsUutils)}>{x(r.vsUutils)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    ))
+  }
+</div>
+)}
+
+<script>
+  const table = document.querySelector<HTMLTableElement>("[data-bench-table]");
+  const filter = document.querySelector<HTMLInputElement>("[data-bench-filter]");
+
+  if (table && filter) {
+    const body = table.tBodies[0];
+    const rows = [...body.rows];
+
+    filter.addEventListener("input", () => {
+      const q = filter.value.trim().toLowerCase();
+      for (const r of rows) r.hidden = !r.dataset.name!.toLowerCase().includes(q);
+    });
+
+    for (const button of table.querySelectorAll<HTMLButtonElement>("[data-sort]")) {
+      button.addEventListener("click", () => {
+        const key = button.dataset.sort!;
+        const th = button.closest("th")!;
+        // The first select on a number column sorts best first.
+        const dir =
+          th.getAttribute("aria-sort") === "ascending"
+            ? "descending"
+            : th.getAttribute("aria-sort") === "descending" || key === "name"
+              ? "ascending"
+              : "descending";
+        for (const other of table.querySelectorAll("thead th")) other.removeAttribute("aria-sort");
+        th.setAttribute("aria-sort", dir);
+        const sign = dir === "ascending" ? 1 : -1;
+        rows.sort((a, b) =>
+          key === "name"
+            ? sign * a.dataset.name!.localeCompare(b.dataset.name!)
+            : sign * (Number(a.dataset[key]) - Number(b.dataset[key])),
+        );
+        body.append(...rows);
+      });
+    }
+  }
+
+  // A link to a utility's workloads opens its section.
+  function openTarget() {
+    const id = decodeURIComponent(location.hash.slice(1));
+    const el = id ? document.getElementById(id) : null;
+    if (el instanceof HTMLDetailsElement) el.open = true;
+  }
+  addEventListener("hashchange", openTarget);
+  openTarget();
+</script>

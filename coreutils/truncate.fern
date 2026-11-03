@@ -44,30 +44,30 @@ function rm_rup(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " OPTION... FILE...\n";
-  out = out + "Shrink or extend the size of each FILE to the specified size\n";
-  out = out + "\n";
-  out = out + "A FILE argument that does not exist is created.\n";
-  out = out + "\n";
-  out = out + "If a FILE is larger than the specified size, the extra data is lost.\n";
-  out = out + "If a FILE is shorter, it is extended and the sparse extended part (hole)\n";
-  out = out + "reads as zero bytes.\n";
-  out = out + "\n";
-  out = out + "  -c, --no-create        do not create any files\n";
-  out = out + "  -o, --io-blocks        treat SIZE as number of IO blocks instead of bytes\n";
-  out = out + "  -r, --reference=RFILE  base size on RFILE\n";
-  out = out + "  -s, --size=SIZE        set or adjust the file size by SIZE bytes\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "The SIZE argument is an integer and optional unit (example: 10K is 10*1024).\n";
-  out = out + "Units are K,M,G,T,P,E,Z,Y,R,Q (powers of 1024) or KB,MB,... (powers of 1000).\n";
-  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
-  out = out + "\n";
-  out = out + "SIZE may also be prefixed by one of the following modifying characters:\n";
-  out = out + "'+' extend by, '-' reduce by, '<' at most, '>' at least,\n";
-  out = out + "'/' round down to multiple of, '%' round up to multiple of.\n";
+  out += "Shrink or extend the size of each FILE to the specified size\n";
+  out += "\n";
+  out += "A FILE argument that does not exist is created.\n";
+  out += "\n";
+  out += "If a FILE is larger than the specified size, the extra data is lost.\n";
+  out += "If a FILE is shorter, it is extended and the sparse extended part (hole)\n";
+  out += "reads as zero bytes.\n";
+  out += "\n";
+  out += "  -c, --no-create        do not create any files\n";
+  out += "  -o, --io-blocks        treat SIZE as number of IO blocks instead of bytes\n";
+  out += "  -r, --reference=RFILE  base size on RFILE\n";
+  out += "  -s, --size=SIZE        set or adjust the file size by SIZE bytes\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "The SIZE argument is an integer and optional unit (example: 10K is 10*1024).\n";
+  out += "Units are K,M,G,T,P,E,Z,Y,R,Q (powers of 1024) or KB,MB,... (powers of 1000).\n";
+  out += "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  out += "\n";
+  out += "SIZE may also be prefixed by one of the following modifying characters:\n";
+  out += "'+' extend by, '-' reduce by, '<' at most, '>' at least,\n";
+  out += "'/' round down to multiple of, '%' round up to multiple of.\n";
   return out;
 }
 
@@ -122,20 +122,20 @@ function suffix_power(c: i32): i32 {
 struct Digits { value: i64, end: i32, over: boolean }
 
 function scan_digits(s: string): Digits {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
-  let start: i32 = i;
-  let v: i64 = 0 as i64;
-  let over: boolean = false;
+  let start = i;
+  let v = 0 as i64;
+  let over = false;
   while (i < s.len() && gnu.is_digit(s[i] as i32)) {
-    let d: i64 = (s[i] as i32 - 48) as i64;
+    let d = (s[i] as i32 - 48) as i64;
     if (neg) {
       d = 0 as i64 - d;
     }
@@ -154,7 +154,7 @@ function scan_digits(s: string): Digits {
         over = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (i == start) {
     return Digits { value: 0 as i64, end: 0, over: false };
@@ -163,9 +163,9 @@ function scan_digits(s: string): Digits {
 }
 
 function scale(v: i64, base: i64, power: i32): (i64, boolean) {
-  let out: i64 = v;
-  let over: boolean = false;
-  let k: i32 = 0;
+  let out = v;
+  let over = false;
+  let k = 0;
   while (k < power) {
     match (out.checked_mul(base)) {
       Some(m) => {
@@ -175,16 +175,16 @@ function scale(v: i64, base: i64, power: i32): (i64, boolean) {
         over = true;
       }
     }
-    k = k + 1;
+    k += 1;
   }
   return (out, over);
 }
 
 function parse_len(s: string): Parsed {
-  let d: Digits = scan_digits(s);
-  let v: i64 = d.value;
-  let over: boolean = d.over;
-  let p: i32 = d.end;
+  let d = scan_digits(s);
+  let v = d.value;
+  let over = d.over;
+  let p = d.end;
   if (p == 0) {
     if (s.len() == 0 || suffix_power(s[0] as i32) == 0) {
       return Parsed { value: 0 as i64, status: st_invalid() };
@@ -192,8 +192,8 @@ function parse_len(s: string): Parsed {
     v = 1 as i64;
   }
   if (p < s.len() && suffix_power(s[p] as i32) > 0) {
-    let base: i64 = 1024 as i64;
-    let eaten: i32 = 1;
+    let base = 1024 as i64;
+    let eaten = 1;
     if (p + 2 < s.len() && s[p + 1] as i32 == 105 && s[p + 2] as i32 == 66) {
       eaten = 3;
     } else if (p + 1 < s.len() && (s[p + 1] as i32 == 66 || s[p + 1] as i32 == 68)) {
@@ -203,7 +203,7 @@ function parse_len(s: string): Parsed {
     let scaled: (i64, boolean) = scale(v, base, suffix_power(s[p] as i32));
     v = scaled.0;
     over = over || scaled.1;
-    p = p + eaten;
+    p += eaten;
   }
   if (p != s.len()) {
     return Parsed { value: 0 as i64, status: st_invalid() };
@@ -217,13 +217,13 @@ function parse_len(s: string): Parsed {
 struct Size { rel: i32, value: i64 }
 
 function parse_size(text: string): Size {
-  let i: i32 = 0;
+  let i = 0;
   while (i < text.len() && gnu.is_blank(text[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let rel: i32 = rm_abs();
+  let rel = rm_abs();
   if (i < text.len()) {
-    let c: i32 = text[i] as i32;
+    let c = text[i] as i32;
     if (c == 60) {
       rel = rm_max();
     } else if (c == 62) {
@@ -234,20 +234,20 @@ function parse_size(text: string): Size {
       rel = rm_rup();
     }
     if (rel != rm_abs()) {
-      i = i + 1;
+      i += 1;
       while (i < text.len() && gnu.is_blank(text[i] as i32)) {
-        i = i + 1;
+        i += 1;
       }
     }
   }
-  let rest: string = slice_unchecked(text, i, text.len()) + "";
+  let rest = slice_unchecked(text, i, text.len()) + "";
   if (rest.len() > 0 && (rest[0] as i32 == 43 || rest[0] as i32 == 45)) {
     if (rel != rm_abs()) {
       gnu.die_usage("multiple relative modifiers specified", 1);
     }
     rel = rm_rel();
   }
-  let p: Parsed = parse_len(rest);
+  let p = parse_len(rest);
   if (p.status == st_overflow()) {
     gnu.error("Invalid number: " + gnu.quote(rest) + ": " + gnu.eoverflow_text());
     exit(1);
@@ -274,7 +274,7 @@ function scale_blocks(cfg: Cfg, info: Info, name: string): (i64, boolean) {
   if (!cfg.io_blocks) {
     return (cfg.size, true);
   }
-  let bs: i64 = block_size(info);
+  let bs = block_size(info);
   if (cfg.size < i64.MIN / bs || i64.MAX / bs < cfg.size) {
     gnu.error("overflow in " + cfg.size.to_string() + " * " + bs.to_string() + " byte blocks for file " + gnu.quotea(name));
     return (0 as i64, false);
@@ -283,7 +283,7 @@ function scale_blocks(cfg: Cfg, info: Info, name: string): (i64, boolean) {
 }
 
 function round_up(fsize: i64, ssize: i64): i64 {
-  let q: i64 = fsize / ssize;
+  let q = fsize / ssize;
   if (fsize % ssize != 0 as i64) {
     q = q + 1 as i64;
   }
@@ -293,14 +293,14 @@ function round_up(fsize: i64, ssize: i64): i64 {
 struct Target { size: i64, ok: boolean }
 
 function relative_target(cfg: Cfg, info: Info, ssize: i64, name: string): Target {
-  let fsize: i64 = info.size;
+  let fsize = info.size;
   if (cfg.has_ref) {
     fsize = cfg.ref_size;
   } else if (fsize < 0 as i64) {
     gnu.error(gnu.quotea(name) + " has unusable, apparently negative size");
     return Target { size: 0 as i64, ok: false };
   }
-  let nsize: i64 = fsize;
+  let nsize = fsize;
   if (cfg.rel == rm_min()) {
     nsize = fsize.max(ssize);
   } else if (cfg.rel == rm_max()) {
@@ -329,7 +329,7 @@ function relative_target(cfg: Cfg, info: Info, ssize: i64, name: string): Target
 }
 
 function measure(w: Writer, cfg: Cfg, name: string): (Info, boolean) {
-  let needed: boolean = cfg.io_blocks || cfg.rel != rm_abs() && !cfg.has_ref;
+  let needed = cfg.io_blocks || cfg.rel != rm_abs() && !cfg.has_ref;
   if (!needed) {
     return (Info { size: 0 as i64, blksize: 0 as i64 }, true);
   }
@@ -349,9 +349,9 @@ function resize(w: Writer, cfg: Cfg, info: Info, name: string): boolean {
   if (!scaled.1) {
     return false;
   }
-  let nsize: i64 = scaled.0;
+  let nsize = scaled.0;
   if (cfg.rel != rm_abs()) {
-    let t: Target = relative_target(cfg, info, scaled.0, name);
+    let t = relative_target(cfg, info, scaled.0, name);
     if (!t.ok) {
       return false;
     }
@@ -392,7 +392,7 @@ function do_file(cfg: Cfg, name: string): boolean {
   }
   match (open_appender(name)) {
     Ok(w) => {
-      let ok: boolean = false;
+      let ok = false;
       let got: (Info, boolean) = measure(w, cfg, name);
       if (got.1) {
         ok = resize(w, cfg, got.0, name);
@@ -416,8 +416,8 @@ function scan_options(): (Scan, string[]) {
   opts = opts.append(gnu.valued("r", "reference", opt_reference()));
   opts = opts.append(gnu.valued("s", "size", opt_size()));
 
-  let s: Scan = Scan { size: Size { rel: rm_abs(), value: 0 as i64 }, size_given: false, ref_text: "", ref_given: false, no_create: false, io_blocks: false };
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "truncate", help_text(), 1);
+  let s = Scan { size: Size { rel: rm_abs(), value: 0 as i64 }, size_given: false, ref_text: "", ref_given: false, no_create: false, io_blocks: false };
+  let g = gnu.getopt_new(args(), opts, "truncate", help_text(), 1);
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -456,7 +456,7 @@ function reference_size(name: string): i64 {
 
 pub function main(): i32 {
   let scanned: (Scan, string[]) = scan_options();
-  let s: Scan = scanned.0;
+  let s = scanned.0;
 
   if (!s.size_given && !s.ref_given) {
     gnu.die_usage("you must specify either '--size' or '--reference'", 1);
@@ -472,28 +472,28 @@ pub function main(): i32 {
     exit(1);
   }
 
-  let operands: string[] = scanned.1;
+  let operands = scanned.1;
   if (operands.len() == 0) {
     gnu.die_usage("missing file operand", 1);
   }
 
-  let ref_size: i64 = 0 as i64;
+  let ref_size = 0 as i64;
   if (s.ref_given) {
     ref_size = reference_size(s.ref_text);
   }
-  let value: i64 = s.size.value;
+  let value = s.size.value;
   if (!s.size_given) {
     value = ref_size;
   }
 
-  let cfg: Cfg = Cfg { rel: s.size.rel, size: value, ref_size: ref_size, has_ref: s.ref_given, no_create: s.no_create, io_blocks: s.io_blocks };
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let cfg = Cfg { rel: s.size.rel, size: value, ref_size: ref_size, has_ref: s.ref_given, no_create: s.no_create, io_blocks: s.io_blocks };
+  let ok = true;
+  let i = 0;
   while (i < operands.len()) {
     if (!do_file(cfg, operands[i])) {
       ok = false;
     }
-    i = i + 1;
+    i += 1;
   }
   if (ok) {
     return 0;

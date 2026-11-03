@@ -1,0 +1,599 @@
+// The DEX writer of fern -apk: Java classes whose methods are native
+// methods, for an app with no Java source. Each class gets a public
+// constructor with no arguments, which calls the constructor of its
+// superclass, and a static initializer, which calls System.loadLibrary. ART
+// then binds each native method to its Java_ export in that library.
+//
+// The file is the DEX 035 format: the header, the sorted ID sections, then
+// the code, the type lists, the strings, the class data and the map.
+import "std/crypto";
+import "std/string";
+import "./util";
+
+pub struct Method { name: string, is_static: boolean, ret: string, params: string[] }
+
+pub struct Class { name: string, superclass: string, interfaces: string[], methods: Method[] }
+
+// The DEX descriptor of Java type `t`: "int" is "I", "java.lang.String" is
+// "Ljava/lang/String;", and "int[]" is "[I". "String" and "Object" name
+// their java.lang classes.
+pub function descriptor(t: string): string {
+  if (t.ends_with("[]")) {
+    return "[" + descriptor(slice_unchecked(t, 0, t.len() - 2) + "");
+  }
+  let java: string[] = ["void", "boolean", "byte", "char", "short", "int", "long", "float", "double"];
+  let dex: string[] = ["V", "Z", "B", "C", "S", "I", "J", "F", "D"];
+  let k: i32 = util.index_of_str(java, t);
+  if (k >= 0) {
+    return dex[k];
+  }
+  if (t == "String" || t == "Object") {
+    return "Ljava/lang/" + t + ";";
+  }
+  return "L" + t.replace(".", "/") + ";";
+}
+
+function shorty_char(d: string): string {
+  if (d[0] == b'L' || d[0] == b'[') {
+    return "L";
+  }
+  return slice_unchecked(d, 0, 1) + "";
+}
+
+function shorty(ret: string, params: string[]): string {
+  let out: string = shorty_char(ret);
+  for p in params {
+    out = out + shorty_char(p);
+  }
+  return out;
+}
+
+// Bytes, little-endian.
+
+function put8(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8);
+}
+
+function put16(out: u8[], v: i32): u8[] {
+  return put8(put8(out, v), v >> 8);
+}
+
+function put32(out: u8[], v: i32): u8[] {
+  return put16(put16(out, v), v >> 16);
+}
+
+function uleb(out: u8[], v: i32): u8[] {
+  let x: i32 = v;
+  while (x >= 128) {
+    out = put8(out, x & 127 | 128);
+    x = x >> 7;
+  }
+  return put8(out, x);
+}
+
+function cat(out: u8[], b: [u8]): u8[] {
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function pad4(out: u8[]): u8[] {
+  while (out.len() % 4 != 0) {
+    out = out.append(0 as u8);
+  }
+  return out;
+}
+
+function set32(b: u8[], at: i32, v: i32): u8[] {
+  return b.with(at, (v & 255) as u8).with(at + 1, (v >> 8 & 255) as u8).with(at + 2, (v >> 16 & 255) as u8).with(at + 3, (v >> 24 & 255) as u8);
+}
+
+// A proto: the return descriptor and the parameter descriptors.
+struct Proto { ret: string, params: string[] }
+
+// A method ID: the class, the proto and the name.
+struct MethodId { class: string, proto: Proto, name: string }
+
+function proto_key(p: Proto): string {
+  let out: string = p.ret + "(";
+  for d in p.params {
+    out = out + d + ",";
+  }
+  return out + ")";
+}
+
+function add_str(xs: string[], s: string): string[] {
+  if (util.has_str(xs, s)) {
+    return xs;
+  }
+  return xs.append(s);
+}
+
+function v_proto(): Proto {
+  return Proto { ret: "V", params: [] };
+}
+
+function load_proto(): Proto {
+  return Proto { ret: "V", params: ["Ljava/lang/String;"] };
+}
+
+// Every method ID the classes need: the natives, the two constructors of
+// each class, the constructor of each superclass and System.loadLibrary.
+function method_ids(classes: Class[]): MethodId[] {
+  let out: MethodId[] = [MethodId { class: "Ljava/lang/System;", proto: load_proto(), name: "loadLibrary" }];
+  let supers: string[] = [];
+  for c in classes {
+    out = out.append(MethodId { class: c.name, proto: v_proto(), name: "<clinit>" });
+    out = out.append(MethodId { class: c.name, proto: v_proto(), name: "<init>" });
+    for m in c.methods {
+      out = out.append(MethodId { class: c.name, proto: Proto { ret: m.ret, params: m.params }, name: m.name });
+    }
+    if (!util.has_str(supers, c.superclass)) {
+      supers = supers.append(c.superclass);
+      out = out.append(MethodId { class: c.superclass, proto: v_proto(), name: "<init>" });
+    }
+  }
+  return out;
+}
+
+struct Tables { strings: string[], types: string[], protos: Proto[], methods: MethodId[] }
+
+// The sorted string, type, proto and method sections.
+function tables(classes: Class[], library: string): Tables {
+  let ids: MethodId[] = method_ids(classes);
+  let types: string[] = ["Ljava/lang/String;", "V"];
+  let protos: Proto[] = [];
+  let keys: string[] = [];
+  for m in ids {
+    types = add_str(types, m.class);
+    types = add_str(types, m.proto.ret);
+    for p in m.proto.params {
+      types = add_str(types, p);
+    }
+    if (!util.has_str(keys, proto_key(m.proto))) {
+      keys = keys.append(proto_key(m.proto));
+      protos = protos.append(m.proto);
+    }
+  }
+  for c in classes {
+    for i in c.interfaces {
+      types = add_str(types, i);
+    }
+  }
+  let strings: string[] = add_str(types, library);
+  for m in ids {
+    strings = add_str(add_str(strings, m.name), shorty(m.proto.ret, m.proto.params));
+  }
+  strings = sort_strings(strings);
+  types = sort_strings(types);
+  let t: Tables = Tables { strings: strings, types: types, protos: sort_protos(protos, types), methods: [] };
+  return Tables { ...t, methods: sort_methods(ids, t) };
+}
+
+function type_idx(types: string[], d: string): i32 {
+  return util.index_of_str(types, d);
+}
+
+// Insertion sorts, each stable: an element goes before the first one that
+// it sorts before.
+
+function sort_strings(xs: string[]): string[] {
+  let out: string[] = [];
+  for x in xs {
+    let next: string[] = [];
+    let placed: boolean = false;
+    for y in out {
+      if (!placed && x < y) {
+        next = next.append(x);
+        placed = true;
+      }
+      next = next.append(y);
+    }
+    if (!placed) {
+      next = next.append(x);
+    }
+    out = next;
+  }
+  return out;
+}
+
+function sort_protos(xs: Proto[], types: string[]): Proto[] {
+  let out: Proto[] = [];
+  for x in xs {
+    let next: Proto[] = [];
+    let placed: boolean = false;
+    for y in out {
+      if (!placed && proto_after(types, y, x)) {
+        next = next.append(x);
+        placed = true;
+      }
+      next = next.append(y);
+    }
+    if (!placed) {
+      next = next.append(x);
+    }
+    out = next;
+  }
+  return out;
+}
+
+function sort_methods(xs: MethodId[], t: Tables): MethodId[] {
+  let out: MethodId[] = [];
+  for x in xs {
+    let next: MethodId[] = [];
+    let placed: boolean = false;
+    for y in out {
+      if (!placed && method_after(t, y, x)) {
+        next = next.append(x);
+        placed = true;
+      }
+      next = next.append(y);
+    }
+    if (!placed) {
+      next = next.append(x);
+    }
+    out = next;
+  }
+  return out;
+}
+
+function sort_entries(xs: Entry[]): Entry[] {
+  let out: Entry[] = [];
+  for x in xs {
+    let next: Entry[] = [];
+    let placed: boolean = false;
+    for y in out {
+      if (!placed && x.idx < y.idx) {
+        next = next.append(x);
+        placed = true;
+      }
+      next = next.append(y);
+    }
+    if (!placed) {
+      next = next.append(x);
+    }
+    out = next;
+  }
+  return out;
+}
+
+// Protos sort by return type, then by their parameter lists.
+function proto_after(types: string[], a: Proto, b: Proto): boolean {
+  let ra: i32 = type_idx(types, a.ret);
+  let rb: i32 = type_idx(types, b.ret);
+  if (ra != rb) {
+    return ra > rb;
+  }
+  let n: i32 = a.params.len();
+  if (b.params.len() < n) {
+    n = b.params.len();
+  }
+  for k in 0..n {
+    let pa: i32 = type_idx(types, a.params[k]);
+    let pb: i32 = type_idx(types, b.params[k]);
+    if (pa != pb) {
+      return pa > pb;
+    }
+  }
+  return a.params.len() > b.params.len();
+}
+
+function proto_idx(t: Tables, p: Proto): i32 {
+  for k in 0..t.protos.len() {
+    if (proto_key(t.protos[k]) == proto_key(p)) {
+      return k;
+    }
+  }
+  return 0 - 1;
+}
+
+// Method IDs sort by class, then name, then proto.
+function method_after(t: Tables, a: MethodId, b: MethodId): boolean {
+  let ca: i32 = type_idx(t.types, a.class);
+  let cb: i32 = type_idx(t.types, b.class);
+  if (ca != cb) {
+    return ca > cb;
+  }
+  let na: i32 = util.index_of_str(t.strings, a.name);
+  let nb: i32 = util.index_of_str(t.strings, b.name);
+  if (na != nb) {
+    return na > nb;
+  }
+  return proto_idx(t, a.proto) > proto_idx(t, b.proto);
+}
+
+function method_idx(t: Tables, class: string, name: string, p: Proto): i32 {
+  for k in 0..t.methods.len() {
+    let m: MethodId = t.methods[k];
+    if (m.class == class && m.name == name && proto_key(m.proto) == proto_key(p)) {
+      return k;
+    }
+  }
+  return 0 - 1;
+}
+
+function str_idx(t: Tables, s: string): i32 {
+  return util.index_of_str(t.strings, s);
+}
+
+// The constructor: invoke-direct {v0} on the superclass constructor, then
+// return-void.
+function init_code(out: u8[], super_init: i32): u8[] {
+  out = put32(put16(put16(put16(put16(out, 1), 1), 1), 0), 0);
+  return put16(put16(put16(put16(put32(out, 4), 4208), super_init), 0), 14);
+}
+
+// The static initializer: const-string v0, then invoke-static {v0} on
+// System.loadLibrary, then return-void.
+function clinit_code(out: u8[], library: i32, load: i32): u8[] {
+  out = put32(put16(put16(put16(put16(out, 1), 0), 1), 0), 0);
+  return put16(put16(put16(put16(put16(put16(put32(out, 6), 26), library), 4209), load), 0), 14);
+}
+
+struct Entry { idx: i32, flags: i32, code: i32 }
+
+function encode_methods(out: u8[], es: Entry[]): u8[] {
+  let last: i32 = 0;
+  for e in sort_entries(es) {
+    out = uleb(uleb(uleb(out, e.idx - last), e.flags), e.code);
+    last = e.idx;
+  }
+  return out;
+}
+
+const ACC_PUBLIC: i32 = 1;
+
+const ACC_STATIC: i32 = 8;
+
+const ACC_NATIVE: i32 = 256;
+
+const ACC_CONSTRUCTOR: i32 = 65536;
+
+const HEADER: i32 = 112;
+
+struct MapItem { kind: i32, count: i32, off: i32 }
+
+// The data section as it grows, from file offset `at`, and the offsets of
+// its items.
+struct Layout { at: i32, data: u8[], code_off: i32[], lists_at: i32, proto_params: i32[], iface_lists: i32[], strings_at: i32, string_off: i32[], class_data_at: i32, class_data: i32[] }
+
+function here(l: Layout): i32 {
+  return l.at + l.data.len();
+}
+
+// The static initializer and the constructor of each class, in that order.
+function lay_code(l: Layout, t: Tables, classes: Class[], library: string): Layout {
+  let load: i32 = method_idx(t, "Ljava/lang/System;", "loadLibrary", load_proto());
+  for c in classes {
+    l = Layout { ...l, code_off: l.code_off.append(here(l)) };
+    l = Layout { ...l, data: pad4(clinit_code(l.data, str_idx(t, library), load)) };
+    l = Layout { ...l, code_off: l.code_off.append(here(l)) };
+    l = Layout { ...l, data: pad4(init_code(l.data, method_idx(t, c.superclass, "<init>", v_proto()))) };
+  }
+  return l;
+}
+
+// One type list, and its offset, or 0 for an empty list, which is not
+// written.
+function lay_list(l: Layout, t: Tables, ds: string[]): (Layout, i32) {
+  if (ds.len() == 0) {
+    return (l, 0);
+  }
+  let at: i32 = here(l);
+  let data: u8[] = put32(l.data, ds.len());
+  for d in ds {
+    data = put16(data, type_idx(t.types, d));
+  }
+  return (Layout { ...l, data: pad4(data) }, at);
+}
+
+// The parameter list of each proto, then each class's interfaces.
+function lay_lists(l: Layout, t: Tables, classes: Class[]): Layout {
+  l = Layout { ...l, lists_at: here(l) };
+  for p in t.protos {
+    let (next, at) = lay_list(l, t, p.params);
+    l = Layout { ...next, proto_params: next.proto_params.append(at) };
+  }
+  for c in classes {
+    let (next, at) = lay_list(l, t, c.interfaces);
+    l = Layout { ...next, iface_lists: next.iface_lists.append(at) };
+  }
+  return l;
+}
+
+function nonzero(xs: i32[]): i32 {
+  let n: i32 = 0;
+  for x in xs {
+    if (x != 0) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
+function lay_strings(l: Layout, t: Tables): Layout {
+  l = Layout { ...l, strings_at: here(l) };
+  for s in t.strings {
+    l = Layout { ...l, string_off: l.string_off.append(here(l)), data: put8(cat(uleb(l.data, s.len()), s.as_bytes()), 0) };
+  }
+  return l;
+}
+
+// The class data of `c`: no fields, the two constructors and the static
+// natives as direct methods, and the instance natives as virtual methods.
+function class_data_of(out: u8[], t: Tables, c: Class, clinit: i32, init: i32): u8[] {
+  let direct: Entry[] = [
+    Entry { idx: method_idx(t, c.name, "<clinit>", v_proto()), flags: ACC_STATIC | ACC_CONSTRUCTOR, code: clinit },
+    Entry { idx: method_idx(t, c.name, "<init>", v_proto()), flags: ACC_PUBLIC | ACC_CONSTRUCTOR, code: init },
+  ];
+  let virtual: Entry[] = [];
+  for m in c.methods {
+    let idx: i32 = method_idx(t, c.name, m.name, Proto { ret: m.ret, params: m.params });
+    if (m.is_static) {
+      direct = direct.append(Entry { idx: idx, flags: ACC_PUBLIC | ACC_STATIC | ACC_NATIVE, code: 0 });
+    } else {
+      virtual = virtual.append(Entry { idx: idx, flags: ACC_PUBLIC | ACC_NATIVE, code: 0 });
+    }
+  }
+  out = uleb(uleb(uleb(uleb(out, 0), 0), direct.len()), virtual.len());
+  return encode_methods(encode_methods(out, direct), virtual);
+}
+
+function lay_class_data(l: Layout, t: Tables, classes: Class[]): Layout {
+  l = Layout { ...l, class_data_at: here(l) };
+  for ci in 0..classes.len() {
+    let at: i32 = here(l);
+    l = Layout { ...l, class_data: l.class_data.append(at), data: class_data_of(l.data, t, classes[ci], l.code_off[2 * ci], l.code_off[2 * ci + 1]) };
+  }
+  return Layout { ...l, data: pad4(l.data) };
+}
+
+// The offsets of the string, type, proto, method and class sections.
+function id_offsets(t: Tables): i32[] {
+  let strings: i32 = HEADER;
+  let types: i32 = strings + 4 * t.strings.len();
+  let protos: i32 = types + 4 * t.types.len();
+  let methods: i32 = protos + 12 * t.protos.len();
+  return [strings, types, protos, methods, methods + 8 * t.methods.len()];
+}
+
+// The map list, at the end of the data, with each section that is not empty.
+function lay_map(l: Layout, t: Tables, nc: i32): Layout {
+  let ns: i32 = t.strings.len();
+  let at: i32[] = id_offsets(t);
+  let items: MapItem[] = [
+    MapItem { kind: 0, count: 1, off: 0 },
+    MapItem { kind: 1, count: ns, off: at[0] },
+    MapItem { kind: 2, count: t.types.len(), off: at[1] },
+    MapItem { kind: 3, count: t.protos.len(), off: at[2] },
+    MapItem { kind: 5, count: t.methods.len(), off: at[3] },
+    MapItem { kind: 6, count: nc, off: at[4] },
+    MapItem { kind: 8193, count: 2 * nc, off: l.at },
+    MapItem { kind: 4097, count: nonzero(l.proto_params) + nonzero(l.iface_lists), off: l.lists_at },
+    MapItem { kind: 8194, count: ns, off: l.strings_at },
+    MapItem { kind: 8192, count: nc, off: l.class_data_at },
+    MapItem { kind: 4096, count: 1, off: here(l) },
+  ];
+  let kept: MapItem[] = [];
+  for it in items {
+    if (it.count > 0) {
+      kept = kept.append(it);
+    }
+  }
+  let data: u8[] = put32(l.data, kept.len());
+  for it in kept {
+    data = put32(put32(put16(put16(data, it.kind), 0), it.count), it.off);
+  }
+  return Layout { ...l, data: data };
+}
+
+function ids(l: Layout, t: Tables, classes: Class[]): u8[] {
+  let out: u8[] = [];
+  for o in l.string_off {
+    out = put32(out, o);
+  }
+  for d in t.types {
+    out = put32(out, str_idx(t, d));
+  }
+  for k in 0..t.protos.len() {
+    let p: Proto = t.protos[k];
+    out = put32(put32(put32(out, str_idx(t, shorty(p.ret, p.params))), type_idx(t.types, p.ret)), l.proto_params[k]);
+  }
+  for m in t.methods {
+    out = put32(put16(put16(out, type_idx(t.types, m.class)), proto_idx(t, m.proto)), str_idx(t, m.name));
+  }
+  for ci in 0..classes.len() {
+    let c: Class = classes[ci];
+    out = put32(put32(put32(put32(out, type_idx(t.types, c.name)), ACC_PUBLIC), type_idx(t.types, c.superclass)), l.iface_lists[ci]);
+    out = put32(put32(put32(put32(out, 0 - 1), 0), l.class_data[ci]), 0);
+  }
+  return out;
+}
+
+// The header, with zeros for the checksum and the signature.
+function header(t: Tables, nc: i32, size: i32, data_off: i32, map_at: i32): u8[] {
+  let at: i32[] = id_offsets(t);
+  let head: u8[] = cat([], "dex\n035".as_bytes()).append(0 as u8);
+  head = put32(head, 0);
+  for k in 0..20 {
+    head = head.append(0 as u8);
+  }
+  head = put32(put32(put32(put32(head, size), HEADER), 305419896), 0);
+  head = put32(put32(put32(put32(head, 0), map_at), t.strings.len()), at[0]);
+  head = put32(put32(put32(put32(head, t.types.len()), at[1]), t.protos.len()), at[2]);
+  head = put32(put32(put32(put32(head, 0), 0), t.methods.len()), at[3]);
+  return put32(put32(put32(put32(head, nc), at[4]), size - data_off), data_off);
+}
+
+// The DEX file of `classes`. `library` is the name that each static
+// initializer gives to System.loadLibrary.
+pub function write(classes: Class[], library: string): u8[] {
+  let t: Tables = tables(classes, library);
+  let nc: i32 = classes.len();
+  let data_off: i32 = id_offsets(t)[4] + 32 * nc;
+  let l: Layout = Layout { at: data_off, data: [], code_off: [], lists_at: 0, proto_params: [], iface_lists: [], strings_at: 0, string_off: [], class_data_at: 0, class_data: [] };
+  l = lay_class_data(lay_strings(lay_lists(lay_code(l, t, classes, library), t, classes), t), t, classes);
+  let map_at: i32 = here(l);
+  l = lay_map(l, t, nc);
+  let size: i32 = here(l);
+  let file: u8[] = cat(cat(header(t, nc, size, data_off, map_at), ids(l, t, classes)), l.data);
+  let sig: u8[] = crypto.sha1(file[32:file.len()]);
+  for k in 0..20 {
+    file = file.with(12 + k, sig[k]);
+  }
+  return set32(file, 8, adler32(file[12:file.len()]));
+}
+
+function adler32(b: [u8]): i32 {
+  let a: i64 = 1 as i64;
+  let s: i64 = 0 as i64;
+  for x in b {
+    a = (a + x as i64) % (65521 as i64);
+    s = (s + a) % (65521 as i64);
+  }
+  return (s << 16 as i64 | a) as i32;
+}
+
+function get32(b: [u8], at: i32): i32 {
+  return b[at] as i32 | b[at + 1] as i32 << 8 | b[at + 2] as i32 << 16 | b[at + 3] as i32 << 24;
+}
+
+// The descriptor of type `idx` in DEX file `b`.
+function type_name(b: [u8], idx: i32): string {
+  let string_idx: i32 = get32(b, get32(b, 68) + 4 * idx);
+  let at: i32 = get32(b, get32(b, 60) + 4 * string_idx);
+  let n: i32 = 0;
+  let len: i32 = 1;
+  for k in 0..5 {
+    if (len == k + 1) {
+      n = n | (b[at + k] as i32 & 127) << 7 * k;
+      if (b[at + k] as i32 >= 128) {
+        len = k + 2;
+      }
+    }
+  }
+  let out: string = "";
+  for k in at + len..at + len + n {
+    out = out + string_from_bytes_unchecked([b[k]]);
+  }
+  return out;
+}
+
+// The Java name of the first class in DEX file `b` whose superclass is
+// `superclass`, a Java name, or "" when there is none.
+pub function subclass_of(b: [u8], superclass: string): string {
+  if (b.len() < 112) {
+    return "";
+  }
+  let want: string = descriptor(superclass);
+  let defs: i32 = get32(b, 100);
+  for k in 0..get32(b, 96) {
+    let at: i32 = defs + 32 * k;
+    if (type_name(b, get32(b, at + 8)) == want) {
+      let d: string = type_name(b, get32(b, at));
+      return slice_unchecked(d, 1, d.len() - 1).replace("/", ".");
+    }
+  }
+  return "";
+}

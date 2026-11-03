@@ -1,12 +1,12 @@
 import "./gnu";
 
 pub function tail_start(s: u8[], n: u64, term: i32): i32 {
-  let pos: i32 = s.len();
-  let left: u64 = n + 1 as u64;
+  let pos = s.len();
+  let left = n + 1 as u64;
   while (left > 0 as u64) {
     pos = __rmemchr_bytes(s, term, pos - 1);
     if (pos < 0) {
-      return 0 - 1;
+      return -1;
     }
     left = left - 1 as u64;
   }
@@ -62,7 +62,7 @@ pub function hold_drop(own h: Hold, n: u64): Hold {
     }
     left = left - available as u64;
     blocks = blocks.with(first, []);
-    first = first + 1;
+    first += 1;
     offset = 0;
   }
   if (first > 0 && first >= blocks.len() / 2) {
@@ -70,7 +70,7 @@ pub function hold_drop(own h: Hold, n: u64): Hold {
     let i = first;
     while (i < blocks.len()) {
       kept = kept.append(blocks[i]);
-      i = i + 1;
+      i += 1;
     }
     blocks = kept;
     first = 0;
@@ -99,7 +99,7 @@ pub function hold_cut(h: Hold, n: u64, term: i32): u64 {
     }
     walked = walked + (chunk.len() - start) as u64;
     start = 0;
-    i = i + 1;
+    i += 1;
   }
   return h.n;
 }
@@ -118,7 +118,7 @@ pub function hold_write(h: Hold, o: gnu.Stream, n: u64): gnu.Stream {
     out = gnu.stream_put_bytes_range(out, chunk, start, start + size);
     left = left - size as u64;
     start = 0;
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

@@ -18,49 +18,49 @@ function ver_order(c: i32): i32 {
     return c;
   }
   if (c == 126) {
-    return 0 - 1;
+    return -1;
   }
   return c + 256;
 }
 
 function verrevcmp[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0: i32, b1: i32): i32 {
-  let a: i32 = a0;
-  let b: i32 = b0;
+  let a = a0;
+  let b = b0;
   while (a < a1 || b < b1) {
-    let first_diff: i32 = 0;
+    let first_diff = 0;
     while (a < a1 && !gnu.is_digit(ta.byte_at(a) as i32) || b < b1 && !gnu.is_digit(tb.byte_at(b) as i32)) {
-      let ca: i32 = 0;
+      let ca = 0;
       if (a < a1) {
         ca = ver_order(ta.byte_at(a) as i32);
       }
-      let cb: i32 = 0;
+      let cb = 0;
       if (b < b1) {
         cb = ver_order(tb.byte_at(b) as i32);
       }
       if (ca != cb) {
         return ca - cb;
       }
-      a = a + 1;
-      b = b + 1;
+      a += 1;
+      b += 1;
     }
     while (a < a1 && ta.byte_at(a) as i32 == 48) {
-      a = a + 1;
+      a += 1;
     }
     while (b < b1 && tb.byte_at(b) as i32 == 48) {
-      b = b + 1;
+      b += 1;
     }
     while (a < a1 && b < b1 && gnu.is_digit(ta.byte_at(a) as i32) && gnu.is_digit(tb.byte_at(b) as i32)) {
       if (first_diff == 0) {
         first_diff = ta.byte_at(a) as i32 - tb.byte_at(b) as i32;
       }
-      a = a + 1;
-      b = b + 1;
+      a += 1;
+      b += 1;
     }
     if (a < a1 && gnu.is_digit(ta.byte_at(a) as i32)) {
       return 1;
     }
     if (b < b1 && gnu.is_digit(tb.byte_at(b) as i32)) {
-      return 0 - 1;
+      return -1;
     }
     if (first_diff != 0) {
       return first_diff;
@@ -70,39 +70,39 @@ function verrevcmp[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0: i32,
 }
 
 function file_prefixlen[T: byte_input.Input](text: T, from: i32, end: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     if (text.byte_at(i) as i32 == 46 && i > from) {
       if (suffix_runs_to_end(text, i, end)) {
         return i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return end;
 }
 
 function suffix_runs_to_end[T: byte_input.Input](text: T, at: i32, end: i32): boolean {
-  let i: i32 = at;
+  let i = at;
   while (i < end) {
     if (text.byte_at(i) as i32 != 46) {
       return false;
     }
-    i = i + 1;
+    i += 1;
     if (i >= end) {
       return false;
     }
-    let c: i32 = text.byte_at(i) as i32;
+    let c = text.byte_at(i) as i32;
     if (!is_alpha_b(c) && c != 126) {
       return false;
     }
-    i = i + 1;
+    i += 1;
     while (i < end) {
-      let d: i32 = text.byte_at(i) as i32;
+      let d = text.byte_at(i) as i32;
       if (!is_alnum_b(d) && d != 126) {
         break;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return true;
@@ -117,33 +117,33 @@ function compare_inputs[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0:
     if (b0 == b1) {
       return 0;
     }
-    return 0 - 1;
+    return -1;
   }
   if (b0 == b1) {
     return 1;
   }
   if (ta.byte_at(a0) as i32 == 46) {
     if (tb.byte_at(b0) as i32 != 46) {
-      return 0 - 1;
+      return -1;
     }
-    let adot: boolean = a1 - a0 == 1;
-    let bdot: boolean = b1 - b0 == 1;
+    let adot = a1 - a0 == 1;
+    let bdot = b1 - b0 == 1;
     if (adot) {
       if (bdot) {
         return 0;
       }
-      return 0 - 1;
+      return -1;
     }
     if (bdot) {
       return 1;
     }
-    let add: boolean = a1 - a0 == 2 && ta.byte_at(a0 + 1) as i32 == 46;
-    let bdd: boolean = b1 - b0 == 2 && tb.byte_at(b0 + 1) as i32 == 46;
+    let add = a1 - a0 == 2 && ta.byte_at(a0 + 1) as i32 == 46;
+    let bdd = b1 - b0 == 2 && tb.byte_at(b0 + 1) as i32 == 46;
     if (add) {
       if (bdd) {
         return 0;
       }
-      return 0 - 1;
+      return -1;
     }
     if (bdd) {
       return 1;
@@ -151,10 +151,10 @@ function compare_inputs[T: byte_input.Input](ta: T, a0: i32, a1: i32, tb: T, b0:
   } else if (tb.byte_at(b0) as i32 == 46) {
     return 1;
   }
-  let ap: i32 = file_prefixlen(ta, a0, a1);
-  let bp: i32 = file_prefixlen(tb, b0, b1);
-  let one_pass: boolean = ap == a1 && bp == b1;
-  let r: i32 = verrevcmp(ta, a0, ap, tb, b0, bp);
+  let ap = file_prefixlen(ta, a0, a1);
+  let bp = file_prefixlen(tb, b0, b1);
+  let one_pass = ap == a1 && bp == b1;
+  let r = verrevcmp(ta, a0, ap, tb, b0, bp);
   if (r != 0 || one_pass) {
     return r;
   }

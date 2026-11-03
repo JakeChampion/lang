@@ -1,0 +1,45 @@
+// A NativeActivity app with @jni classes, for the emulator check of the DEX
+// writer of fern -apk. On create, it loads its Ping class through the class
+// loader of the activity, constructs one, and calls its native method. The
+// call reaches the Fern export only when ART has loaded the class, run its
+// static initializer and bound the method. The result goes to logcat.
+import "std/jni";
+import "std/log";
+
+@jni("dev.fern.dextest.Main extends android.app.NativeActivity", "void noteCreated()")
+pub function note_created(env: usize, thiz: usize): void {
+  log.warn("dextest: activity class bound");
+}
+
+@jni("dev.fern.dextest.Ping implements java.lang.Runnable", "int ping(int)")
+pub function ping(env: usize, thiz: usize, n: i32): i32 {
+  return n * 6;
+}
+
+@jni("dev.fern.dextest.Ping", "void run()")
+pub function run(env: usize, thiz: usize): void {}
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  unsafe {
+    let env: usize = __load_ptr(activity + 16 as usize);
+    let obj: usize = __load_ptr(activity + 24 as usize);
+    let activity_class: usize = jni.get_object_class(env, obj);
+    let note: usize = jni.get_method_id(env, activity_class, "noteCreated", "()V");
+    let no_args: usize = jni.jvalue_alloc(0);
+    let ignored: usize = jni.call_void_method_a(env, obj, note, no_args);
+    let loader_of: usize = jni.get_method_id(env, activity_class, "getClassLoader", "()Ljava/lang/ClassLoader;");
+    let loader: usize = jni.call_object_method_a(env, obj, loader_of, no_args);
+    let load: usize = jni.get_method_id(env, jni.get_object_class(env, loader), "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+    let name: usize = jni.jvalues([jni.new_string(env, "dev.fern.dextest.Ping")]);
+    let ping_class: usize = jni.call_object_method_a(env, loader, load, name);
+    let ctor: usize = jni.get_method_id(env, ping_class, "<init>", "()V");
+    let pinger: usize = jni.new_object_a(env, ping_class, ctor, no_args);
+    let ping_method: usize = jni.get_method_id(env, ping_class, "ping", "(I)I");
+    let seven: usize = jni.jvalues([7 as usize]);
+    let got: i32 = jni.call_int_method_a(env, pinger, ping_method, seven);
+    log.warn("dextest: ping " + got.to_string());
+    jni.free_buffer(no_args);
+    jni.free_buffer(name);
+    jni.free_buffer(seven);
+  }
+}

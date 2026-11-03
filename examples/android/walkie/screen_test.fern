@@ -1,0 +1,70 @@
+import "std/test";
+import "./screen";
+
+function overlap(a: screen.Rect, b: screen.Rect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+function inside(r: screen.Rect, w: i32, h: i32): boolean {
+  return r.x >= 0 && r.y >= 0 && r.x + r.w <= w && r.y + r.h <= h && r.w > 0 && r.h > 0;
+}
+
+// On a phone screen and on a small one, the buttons fit and do not overlap.
+function test_buttons_fit_and_do_not_overlap(): test.TestOutcome {
+  for size in [[1080, 2400], [720, 1280], [320, 480]] {
+    let w: i32 = size[0];
+    let h: i32 = size[1];
+    let talk: screen.Rect = screen.talk_button(w, h);
+    let same: screen.Rect = screen.same_button(w, h);
+    let differ: screen.Rect = screen.differ_button(w, h);
+    if (!inside(talk, w, h) || !inside(same, w, h) || !inside(differ, w, h)) {
+      return test.fail("a button is off the screen at " + w.to_string() + "x" + h.to_string());
+    }
+    if (overlap(talk, same) || overlap(talk, differ) || overlap(same, differ)) {
+      return test.fail("buttons overlap at " + w.to_string() + "x" + h.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function test_contains_is_half_open(): test.TestOutcome {
+  let r: screen.Rect = screen.Rect { x: 10, y: 20, w: 5, h: 5 };
+  let s: string = screen.contains(r, 10.0f32, 20.0f32).to_string() + " " + screen.contains(r, 15.0f32, 22.0f32).to_string() + " " + screen.contains(r, 14.5f32, 24.9f32).to_string();
+  return test.assert_eq(s, "true false true");
+}
+
+// At the scale, LINE_CHARS characters of 15 pixels fit in 90% of the width.
+function test_text_scale(): test.TestOutcome {
+  let s: string = "";
+  for w in [899, 1080, 1440, 200] {
+    let sc: i32 = screen.text_scale(w, 15);
+    let n: i32 = screen.line_chars(w, 15, sc);
+    s = s + sc.to_string() + ":" + n.to_string() + ":" + (n * 15 * sc <= w * 9 / 10).to_string() + " ";
+  }
+  return test.assert_eq(s, "2:26:true 3:21:true 4:21:true 1:12:true ");
+}
+
+function joined(lines: string[]): string {
+  let s: string = "";
+  for l in lines {
+    s = s + "[" + l + "]";
+  }
+  return s;
+}
+
+// Lines break at spaces, and a word longer than a line is cut.
+function test_wrap(): test.TestOutcome {
+  let a: string = joined(screen.wrap("looking for a phone on this Wi-Fi", 20));
+  let b: string = joined(screen.wrap("abcdefghijkl xy", 5));
+  let c: string = joined(screen.wrap("", 5));
+  return test.assert_eq(a + " " + b + " " + c, "[looking for a phone][on this Wi-Fi] [abcde][fghij][kl xy] ");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("walkie screen");
+  r = r.it("the buttons fit and do not overlap", test_buttons_fit_and_do_not_overlap);
+  r = r.it("contains is half-open", test_contains_is_half_open);
+  r = r.it("the text scale follows the width", test_text_scale);
+  r = r.it("text wraps at spaces", test_wrap);
+  return r.finish();
+}

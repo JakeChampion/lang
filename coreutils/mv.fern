@@ -107,38 +107,38 @@ function update_skips(u: i32): boolean {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [-T] SOURCE DEST\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... SOURCE... DIRECTORY\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... -t DIRECTORY SOURCE...\n";
-  out = out + "Rename SOURCE to DEST, or move every SOURCE into DIRECTORY.\n";
-  out = out + "\n";
-  out = out + "      --backup[=CONTROL]      back up each existing destination\n";
-  out = out + "  -b                          like --backup, taking no argument\n";
-  out = out + "      --debug                 explain how each file is moved; implies -v\n";
-  out = out + "      --exchange              exchange source and destination\n";
-  out = out + "  -f, --force                 do not prompt before overwriting\n";
-  out = out + "  -i, --interactive           prompt before overwriting\n";
-  out = out + "  -n, --no-clobber            do not overwrite an existing file\n";
-  out = out + "      --no-copy               fail rather than copy across filesystems\n";
-  out = out + "      --strip-trailing-slashes  drop any trailing slashes from each SOURCE\n";
-  out = out + "  -S, --suffix=SUFFIX         the simple backup suffix, instead of '~'\n";
-  out = out + "  -t, --target-directory=DIRECTORY  move every SOURCE into DIRECTORY\n";
-  out = out + "  -T, --no-target-directory   treat DEST as a normal file always\n";
-  out = out + "      --update[=UPDATE]       which existing destinations are replaced:\n";
-  out = out + "                                all, none, none-fail, or older (the default)\n";
-  out = out + "  -u                          like --update=older\n";
-  out = out + "  -v, --verbose               print each move as it is made\n";
-  out = out + "  -Z, --context               give the destination the default SELinux type\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Only the LAST of -i, -f and -n on the command line takes effect.\n";
-  out = out + "\n";
-  out = out + "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
-  out = out + "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
-  out = out + "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
-  out = out + "simple), simple/never.\n";
+  out += "Rename SOURCE to DEST, or move every SOURCE into DIRECTORY.\n";
+  out += "\n";
+  out += "      --backup[=CONTROL]      back up each existing destination\n";
+  out += "  -b                          like --backup, taking no argument\n";
+  out += "      --debug                 explain how each file is moved; implies -v\n";
+  out += "      --exchange              exchange source and destination\n";
+  out += "  -f, --force                 do not prompt before overwriting\n";
+  out += "  -i, --interactive           prompt before overwriting\n";
+  out += "  -n, --no-clobber            do not overwrite an existing file\n";
+  out += "      --no-copy               fail rather than copy across filesystems\n";
+  out += "      --strip-trailing-slashes  drop any trailing slashes from each SOURCE\n";
+  out += "  -S, --suffix=SUFFIX         the simple backup suffix, instead of '~'\n";
+  out += "  -t, --target-directory=DIRECTORY  move every SOURCE into DIRECTORY\n";
+  out += "  -T, --no-target-directory   treat DEST as a normal file always\n";
+  out += "      --update[=UPDATE]       which existing destinations are replaced:\n";
+  out += "                                all, none, none-fail, or older (the default)\n";
+  out += "  -u                          like --update=older\n";
+  out += "  -v, --verbose               print each move as it is made\n";
+  out += "  -Z, --context               give the destination the default SELinux type\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Only the LAST of -i, -f and -n on the command line takes effect.\n";
+  out += "\n";
+  out += "The backup suffix is '~' unless -S or SIMPLE_BACKUP_SUFFIX says otherwise,\n";
+  out += "and the control is --backup's argument or VERSION_CONTROL: none/off,\n";
+  out += "numbered/t, existing/nil (numbered if a numbered backup is there, else\n";
+  out += "simple), simple/never.\n";
   return out;
 }
 
@@ -180,14 +180,14 @@ function dest_path(dest: string): string {
 }
 
 function dest_present(dest: string): boolean {
-  let st: StatInfo = lstat_info(dest);
+  let st = lstat_info(dest);
   if (st.ok) {
     return true;
   }
   if (st.errnum != errno.ENOTDIR || target_os() == "darwin") {
     return false;
   }
-  let bare: string = gnu.strip_slashes(dest);
+  let bare = gnu.strip_slashes(dest);
   if (bare == dest) {
     return false;
   }
@@ -209,8 +209,8 @@ function same_entry(a: string, b: string): boolean {
   if (gnu.base_name(a) != gnu.base_name(b)) {
     return false;
   }
-  let ad: StatInfo = stat_info(gnu.dir_name(a));
-  let bd: StatInfo = stat_info(gnu.dir_name(b));
+  let ad = stat_info(gnu.dir_name(a));
+  let bd = stat_info(gnu.dir_name(b));
   return ad.ok && bd.ok && ad.dev == bd.dev && ad.ino == bd.ino;
 }
 
@@ -242,19 +242,19 @@ function move_failure(src: string, dest: string, n: i32, text: string): string {
 struct Move { raw_src: string, raw_dest: string, src: string, dest: string }
 
 function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
-  let m: Move = m0;
-  let present: boolean = dest_present(m.raw_dest);
+  let w = o;
+  let m = m0;
+  let present = dest_present(m.raw_dest);
   if (present && allow_into && stat_info(m.raw_dest).is_dir) {
-    let into: string = gnu.join_path(m.dest, gnu.base_name(m.src));
+    let into = gnu.join_path(m.dest, gnu.base_name(m.src));
     return do_move(cfg, Move { raw_src: m.src, raw_dest: into, src: m.src, dest: into }, false, w);
   }
   if (cfg.exchange) {
     return exchange_pair(cfg, m, w);
   }
 
-  let rename_errnum: i32 = errno.EEXIST;
-  let rename_err: string = "File exists";
+  let rename_errnum = errno.EEXIST;
+  let rename_err = "File exists";
   if (!present) {
     match (rename_noreplace(m.raw_src, m.raw_dest)) {
       Ok(_) => {
@@ -281,19 +281,19 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
       rename_err = "File exists";
     }
   } else {
-    let skipped: MoveOut = refuse_existing(cfg, m.dest, w);
+    let skipped = refuse_existing(cfg, m.dest, w);
     if (skipped.status >= 0) {
       return skipped;
     }
     w = skipped.out;
   }
 
-  let s: StatInfo = lstat_info(m.src);
+  let s = lstat_info(m.src);
   if (!s.ok) {
     w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.src) + ": " + s.err);
     return MoveOut { status: 1, out: w };
   }
-  let d: StatInfo = lstat_info(dest_path(m.dest));
+  let d = lstat_info(dest_path(m.dest));
   if (!d.ok) {
     if (d.errnum != errno.ENOENT) {
       w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.dest) + ": " + d.err);
@@ -306,7 +306,7 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
     return MoveOut { status: 1, out: w };
   }
 
-  let skipped2: MoveOut = refuse_existing(cfg, m.dest, w);
+  let skipped2 = refuse_existing(cfg, m.dest, w);
   if (skipped2.status >= 0) {
     return skipped2;
   }
@@ -318,7 +318,7 @@ function lacks_noreplace(n: i32): boolean {
 }
 
 function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   if (same_file(cfg, m.src, m.dest, s, d)) {
     w = gnu.error_out(w, gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + " are the same file");
     return MoveOut { status: 1, out: w };
@@ -340,7 +340,7 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
     w = gnu.error_out(w, "cannot overwrite directory " + gnu.quotea(m.dest) + " with non-directory " + gnu.quotea(m.src));
     return MoveOut { status: 1, out: w };
   }
-  let backup: string = "";
+  let backup = "";
   if (cfg.backups) {
     backup = gnu.backup_name(m.dest, cfg.control, cfg.suffix);
     match (rename(dest_path(m.dest), backup)) {
@@ -372,7 +372,7 @@ function inter_device_failure(src: string, dest: string, text: string): string {
 }
 
 function clear_target(dest: string): Option[string] {
-  let info: StatInfo = lstat_info(dest);
+  let info = lstat_info(dest);
   if (!info.ok) {
     return None;
   }
@@ -397,8 +397,8 @@ function clear_target(dest: string): Option[string] {
 }
 
 function drop_source(cfg: Cfg, path: string, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
-  let info: StatInfo = lstat_info(path);
+  let w = o;
+  let info = lstat_info(path);
   if (!info.ok) {
     w = gnu.error_out(w, "cannot remove " + gnu.quotea(path) + ": " + info.err);
     return MoveOut { status: 1, out: w };
@@ -414,15 +414,15 @@ function drop_source(cfg: Cfg, path: string, o: io_buffered.BufWriter): MoveOut 
         return MoveOut { status: 1, out: w };
       }
     }
-    let i: i32 = 0;
-    let status: i32 = 0;
+    let i = 0;
+    let status = 0;
     while (i < names.len()) {
-      let below: MoveOut = drop_source(cfg, gnu.join_path(path, names[i]), w);
+      let below = drop_source(cfg, gnu.join_path(path, names[i]), w);
       w = below.out;
       if (below.status != 0) {
         status = 1;
       }
-      i = i + 1;
+      i += 1;
     }
     if (status != 0) {
       return MoveOut { status: status, out: w };
@@ -449,9 +449,9 @@ function drop_source(cfg: Cfg, path: string, o: io_buffered.BufWriter): MoveOut 
 }
 
 function removed_line(cfg: Cfg, path: string, is_dir: boolean, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   if (cfg.verbose) {
-    let what: string = "removed ";
+    let what = "removed ";
     if (is_dir) {
       what = "removed directory ";
     }
@@ -461,7 +461,7 @@ function removed_line(cfg: Cfg, path: string, is_dir: boolean, o: io_buffered.Bu
 }
 
 function move_across(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   match (clear_target(dest_path(m.dest))) {
     Some(text) => {
       w = gnu.error_out(w, inter_device_failure(m.src, m.dest, text));
@@ -469,8 +469,8 @@ function move_across(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter
     },
     None => {}
   }
-  let ccfg: copy.Cfg = copy.Cfg { ...copy.cfg_new(), attrs: copy.attrs_all(), recursive: true, deref: copy.deref_never(), verbose: cfg.verbose, verbose_style: copy.vstyle_move(), announced_backup: backup };
-  let cst: copy.State = copy.copy_one(ccfg, copy.state_new(w), m.src, dest_path(m.dest), true);
+  let ccfg = copy.Cfg { ...copy.cfg_new(), attrs: copy.attrs_all(), recursive: true, deref: copy.deref_never(), verbose: cfg.verbose, verbose_style: copy.vstyle_move(), announced_backup: backup };
+  let cst = copy.copy_one(ccfg, copy.state_new(w), m.src, dest_path(m.dest), true);
   w = cst.out;
   if (cst.status != 0) {
     return MoveOut { status: cst.status, out: w };
@@ -479,9 +479,9 @@ function move_across(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter
 }
 
 function verbose(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
+  let w = o;
   if (cfg.verbose) {
-    let line: string = "renamed " + gnu.quotea(m.src) + " -> " + gnu.quotea(m.dest);
+    let line = "renamed " + gnu.quotea(m.src) + " -> " + gnu.quotea(m.dest);
     if (backup.len() > 0) {
       line = line + " (backup: " + gnu.quotea(backup) + ")";
     }
@@ -491,13 +491,13 @@ function verbose(cfg: Cfg, m: Move, backup: string, o: io_buffered.BufWriter): M
 }
 
 function exchange_pair(cfg: Cfg, m: Move, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
-  let s: StatInfo = lstat_info(m.src);
+  let w = o;
+  let s = lstat_info(m.src);
   if (!s.ok) {
     return MoveOut { status: 1, out: gnu.error_out(w, "cannot stat " + gnu.quotea(m.src) + ": " + s.err) };
   }
-  let dest: string = dest_path(m.dest);
-  let d: StatInfo = lstat_info(dest);
+  let dest = dest_path(m.dest);
+  let d = lstat_info(dest);
   if (same_file(cfg, m.src, m.dest, s, d)) {
     return MoveOut { status: 1, out: gnu.error_out(w, gnu.quotea(m.src) + " and " + gnu.quotea(m.dest) + " are the same file") };
   }
@@ -522,7 +522,7 @@ function refuse_existing(cfg: Cfg, dest: string, o: io_buffered.BufWriter): Move
     return MoveOut { status: 1, out: gnu.error_out(o, "not replacing " + gnu.quotea(dest)) };
   }
   if (cfg.update == update_none()) {
-    let w: io_buffered.BufWriter = o;
+    let w = o;
     if (cfg.debug) {
       w = gnu.put(w, "skipped " + gnu.quotea(dest) + "\n");
     }
@@ -539,7 +539,7 @@ function newer(s: StatInfo, d: StatInfo): boolean {
 }
 
 function require_directory(what: string, dir: string): void {
-  let st: StatInfo = stat_info(dir);
+  let st = stat_info(dir);
   if (!st.ok) {
     gnu.error(what + " " + gnu.quotea(dir) + ": " + st.err);
     exit(1);
@@ -573,9 +573,9 @@ function option_table(): gnu.Opt[] {
 struct Scan { cfg: Cfg, backup_given: boolean, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  let cfg: Cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, debug: false, exchange: false, backups: false, control: gnu.backup_existing(), suffix: "~", no_copy: false };
-  let s: Scan = Scan { cfg: cfg, backup_given: false, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
-  let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "mv", help_text(), 1);
+  let cfg = Cfg { ask: ask_yes(), update: update_all(), strip: false, verbose: false, debug: false, exchange: false, backups: false, control: gnu.backup_existing(), suffix: "~", no_copy: false };
+  let s = Scan { cfg: cfg, backup_given: false, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
+  let g = gnu.getopt_new(argv, option_table(), "mv", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -592,7 +592,7 @@ function scan_options(argv: string[]): (Scan, string[]) {
 }
 
 function apply_option(s: Scan, m: gnu.OptMatch): Scan {
-  let c: Cfg = s.cfg;
+  let c = s.cfg;
   if (m.id == opt_backup()) {
     if (m.has_value) {
       return Scan { ...s, cfg: Cfg { ...c, backups: true }, backup_given: true, control_given: true, control_text: m.value };
@@ -627,7 +627,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
     return Scan { ...s, cfg: Cfg { ...c, strip: true } };
   }
   if (m.id == opt_suffix()) {
-    let suf: string = c.suffix;
+    let suf = c.suffix;
     if (gnu.usable_suffix(m.value)) {
       suf = m.value;
     }
@@ -653,7 +653,7 @@ function apply_option(s: Scan, m: gnu.OptMatch): Scan {
 }
 
 function from_environment(s: Scan): Cfg {
-  let c: Cfg = s.cfg;
+  let c = s.cfg;
   if (!c.backups) {
     return c;
   }
@@ -667,7 +667,7 @@ function from_environment(s: Scan): Cfg {
       None => {}
     }
   }
-  let control: i32 = gnu.backup_existing();
+  let control = gnu.backup_existing();
   if (s.control_given) {
     if (s.control_text.len() > 0) {
       control = gnu.argmatch_valued(s.control_text, gnu.backup_names(), gnu.backup_values(), "backup type");
@@ -690,10 +690,10 @@ function from_environment(s: Scan): Cfg {
 
 pub function main(): i32 {
   let scanned: (Scan, string[]) = scan_options(args());
-  let s: Scan = scanned.0;
-  let operands: string[] = scanned.1;
+  let s = scanned.0;
+  let operands = scanned.1;
 
-  let least: i32 = 2;
+  let least = 2;
   if (s.have_target_dir) {
     least = 1;
   }
@@ -707,16 +707,16 @@ pub function main(): i32 {
     gnu.error("cannot combine --target-directory (-t) and --no-target-directory (-T)");
     return 1;
   }
-  let settled: Scan = s;
+  let settled = s;
   if (settled.cfg.ask == ask_never()) {
     settled = Scan { ...settled, cfg: Cfg { ...settled.cfg, update: update_none() } };
   }
   if (settled.backup_given && (settled.cfg.exchange || update_skips(settled.cfg.update))) {
     gnu.die_usage("cannot combine --backup with --exchange, -n, or --update=none-fail", 1);
   }
-  let cfg: Cfg = from_environment(settled);
+  let cfg = from_environment(settled);
 
-  let o: io_buffered.BufWriter = gnu.out_new();
+  let o = gnu.out_new();
   if (s.have_target_dir) {
     require_directory("target directory", s.target_dir);
     return finish(move_into(cfg, operands, operands.len(), s.target_dir, o));
@@ -730,7 +730,7 @@ pub function main(): i32 {
   if (operands.len() == 2) {
     return finish(do_move(cfg, pair(cfg, operands[0], operands[1]), true, o));
   }
-  let dir: string = operands[operands.len() - 1];
+  let dir = operands[operands.len() - 1];
   require_directory("target", dir);
   return finish(move_into(cfg, operands, operands.len() - 1, dir, o));
 }
@@ -747,18 +747,18 @@ function pair(cfg: Cfg, src: string, dest: string): Move {
 }
 
 function move_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_buffered.BufWriter): MoveOut {
-  let w: io_buffered.BufWriter = o;
-  let status: i32 = 0;
-  let i: i32 = 0;
+  let w = o;
+  let status = 0;
+  let i = 0;
   while (i < count) {
-    let src: string = stripped(cfg, operands[i]);
-    let dest: string = gnu.join_path(dir, gnu.base_name(src));
-    let r: MoveOut = do_move(cfg, Move { raw_src: src, raw_dest: dest, src: src, dest: dest }, false, w);
+    let src = stripped(cfg, operands[i]);
+    let dest = gnu.join_path(dir, gnu.base_name(src));
+    let r = do_move(cfg, Move { raw_src: src, raw_dest: dest, src: src, dest: dest }, false, w);
     w = r.out;
     if (r.status != 0) {
       status = 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return MoveOut { status: status, out: w };
 }

@@ -111,62 +111,62 @@ function opt_digit(d: i32): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Paginate or columnate FILE(s) for printing.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  +FIRST_PAGE[:LAST_PAGE], --pages=FIRST_PAGE[:LAST_PAGE]\n";
-  out = out + "                    begin [stop] printing with page FIRST_[LAST_]PAGE\n";
-  out = out + "  -COLUMN, --columns=COLUMN\n";
-  out = out + "                    output COLUMN columns and print columns down,\n";
-  out = out + "                    unless -a is used\n";
-  out = out + "  -a, --across      print columns across rather than down\n";
-  out = out + "  -c, --show-control-chars\n";
-  out = out + "                    use hat notation (^G) and octal backslash notation\n";
-  out = out + "  -d, --double-space\n";
-  out = out + "                    double space the output\n";
-  out = out + "  -D, --date-format=FORMAT\n";
-  out = out + "                    use FORMAT for the header date\n";
-  out = out + "  -e[CHAR[WIDTH]], --expand-tabs[=CHAR[WIDTH]]\n";
-  out = out + "                    expand input CHARs (TABs) to tab WIDTH (8)\n";
-  out = out + "  -F, -f, --form-feed\n";
-  out = out + "                    use form feeds instead of newlines to separate pages\n";
-  out = out + "  -h, --header=HEADER\n";
-  out = out + "                    use a centered HEADER instead of filename\n";
-  out = out + "  -i[CHAR[WIDTH]], --output-tabs[=CHAR[WIDTH]]\n";
-  out = out + "                    replace spaces with CHARs (TABs) to tab WIDTH (8)\n";
-  out = out + "  -J, --join-lines  merge full lines, turns off -W line truncation\n";
-  out = out + "  -l, --length=PAGE_LENGTH\n";
-  out = out + "                    set the page length to PAGE_LENGTH (66) lines\n";
-  out = out + "  -m, --merge       print all files in parallel, one in each column\n";
-  out = out + "  -n[SEP[DIGITS]], --number-lines[=SEP[DIGITS]]\n";
-  out = out + "                    number lines, use DIGITS (5) digits, then SEP (TAB)\n";
-  out = out + "  -N, --first-line-number=NUMBER\n";
-  out = out + "                    start counting with NUMBER at 1st line printed\n";
-  out = out + "  -o, --indent=MARGIN\n";
-  out = out + "                    offset each line with MARGIN (zero) spaces\n";
-  out = out + "  -r, --no-file-warnings\n";
-  out = out + "                    omit warning when a file cannot be opened\n";
-  out = out + "  -s[CHAR], --separator[=CHAR]\n";
-  out = out + "                    separate columns by a single character\n";
-  out = out + "  -S[STRING], --sep-string[=STRING]\n";
-  out = out + "                    separate columns by STRING\n";
-  out = out + "  -t, --omit-header  omit page headers and trailers\n";
-  out = out + "  -T, --omit-pagination\n";
-  out = out + "                    omit page headers and trailers, eliminate any\n";
-  out = out + "                    pagination by form feeds set in input files\n";
-  out = out + "  -v, --show-nonprinting\n";
-  out = out + "                    use octal backslash notation\n";
-  out = out + "  -w, --width=PAGE_WIDTH\n";
-  out = out + "                    set page width to PAGE_WIDTH (72) characters for\n";
-  out = out + "                    multiple text-column output only\n";
-  out = out + "  -W, --page-width=PAGE_WIDTH\n";
-  out = out + "                    set page width to PAGE_WIDTH (72) characters always,\n";
-  out = out + "                    truncate lines\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Paginate or columnate FILE(s) for printing.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  +FIRST_PAGE[:LAST_PAGE], --pages=FIRST_PAGE[:LAST_PAGE]\n";
+  out += "                    begin [stop] printing with page FIRST_[LAST_]PAGE\n";
+  out += "  -COLUMN, --columns=COLUMN\n";
+  out += "                    output COLUMN columns and print columns down,\n";
+  out += "                    unless -a is used\n";
+  out += "  -a, --across      print columns across rather than down\n";
+  out += "  -c, --show-control-chars\n";
+  out += "                    use hat notation (^G) and octal backslash notation\n";
+  out += "  -d, --double-space\n";
+  out += "                    double space the output\n";
+  out += "  -D, --date-format=FORMAT\n";
+  out += "                    use FORMAT for the header date\n";
+  out += "  -e[CHAR[WIDTH]], --expand-tabs[=CHAR[WIDTH]]\n";
+  out += "                    expand input CHARs (TABs) to tab WIDTH (8)\n";
+  out += "  -F, -f, --form-feed\n";
+  out += "                    use form feeds instead of newlines to separate pages\n";
+  out += "  -h, --header=HEADER\n";
+  out += "                    use a centered HEADER instead of filename\n";
+  out += "  -i[CHAR[WIDTH]], --output-tabs[=CHAR[WIDTH]]\n";
+  out += "                    replace spaces with CHARs (TABs) to tab WIDTH (8)\n";
+  out += "  -J, --join-lines  merge full lines, turns off -W line truncation\n";
+  out += "  -l, --length=PAGE_LENGTH\n";
+  out += "                    set the page length to PAGE_LENGTH (66) lines\n";
+  out += "  -m, --merge       print all files in parallel, one in each column\n";
+  out += "  -n[SEP[DIGITS]], --number-lines[=SEP[DIGITS]]\n";
+  out += "                    number lines, use DIGITS (5) digits, then SEP (TAB)\n";
+  out += "  -N, --first-line-number=NUMBER\n";
+  out += "                    start counting with NUMBER at 1st line printed\n";
+  out += "  -o, --indent=MARGIN\n";
+  out += "                    offset each line with MARGIN (zero) spaces\n";
+  out += "  -r, --no-file-warnings\n";
+  out += "                    omit warning when a file cannot be opened\n";
+  out += "  -s[CHAR], --separator[=CHAR]\n";
+  out += "                    separate columns by a single character\n";
+  out += "  -S[STRING], --sep-string[=STRING]\n";
+  out += "                    separate columns by STRING\n";
+  out += "  -t, --omit-header  omit page headers and trailers\n";
+  out += "  -T, --omit-pagination\n";
+  out += "                    omit page headers and trailers, eliminate any\n";
+  out += "                    pagination by form feeds set in input files\n";
+  out += "  -v, --show-nonprinting\n";
+  out += "                    use octal backslash notation\n";
+  out += "  -w, --width=PAGE_WIDTH\n";
+  out += "                    set page width to PAGE_WIDTH (72) characters for\n";
+  out += "                    multiple text-column output only\n";
+  out += "  -W, --page-width=PAGE_WIDTH\n";
+  out += "                    set page width to PAGE_WIDTH (72) characters always,\n";
+  out += "                    truncate lines\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -210,7 +210,7 @@ function append_bytes(h: usize, bytes: u8[]): void {
 }
 
 function take_bytes(h: usize): u8[] {
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return bytes;
 }
@@ -227,14 +227,14 @@ function (l: Line) ws(n: i32, c: Cfg): Line {
 }
 
 function push_spaces(h: usize, n: i32): void {
-  let left: i32 = n;
+  let left = n;
   while (left > 0) {
-    let k: i32 = left;
+    let k = left;
     if (k > 64) {
       k = 64;
     }
     buf_push_range(h, "                                                                ", 0, k);
-    left = left - k;
+    left -= k;
   }
 }
 
@@ -246,18 +246,18 @@ function (l: Line) flush(c: Cfg): Line {
   if (l.pend <= 0) {
     return l;
   }
-  let p: i32 = l.pos - l.pend;
-  let rem: i32 = l.pend;
-  let tw: i32 = c.out_tab_width;
-  let stop: boolean = false;
+  let p = l.pos - l.pend;
+  let rem = l.pend;
+  let tw = c.out_tab_width;
+  let stop = false;
   while (rem > 1 && p >= 0 && !stop) {
-    let h: i32 = tw - p % tw;
+    let h = tw - p % tw;
     if (rem < h) {
       stop = true;
     } else {
       buf_push_byte(l.buf, c.out_tab);
-      p = p + h;
-      rem = rem - h;
+      p += h;
+      rem -= h;
     }
   }
   push_spaces(l.buf, rem);
@@ -265,25 +265,25 @@ function (l: Line) flush(c: Cfg): Line {
 }
 
 function (l: Line) put(s: string, width: i32, c: Cfg): Line {
-  let f: Line = l.flush(c);
+  let f = l.flush(c);
   buf_push(f.buf, s);
   return Line { ...f, pos: f.pos + width };
 }
 
 function (l: Line) put_byte(b: i32, width: i32, c: Cfg): Line {
-  let f: Line = l.flush(c);
+  let f = l.flush(c);
   buf_push_byte(f.buf, b);
   return Line { ...f, pos: f.pos + width };
 }
 
 function (l: Line) put_range(bytes: u8[], from: i32, to: i32, width: i32, c: Cfg): Line {
-  let f: Line = l.flush(c);
+  let f = l.flush(c);
   buf_push_bytes_range(f.buf, bytes, from, to);
   return Line { ...f, pos: f.pos + width };
 }
 
 function (l: Line) put_clump(b: i32, c: Cfg): Line {
-  let f: Line = l.flush(c);
+  let f = l.flush(c);
   if (is_print(b) || !c.nonprint && !c.ctrl) {
     buf_push_byte(f.buf, b);
   } else if (!c.nonprint && c.ctrl && (b < 32 || b == 127)) {
@@ -328,7 +328,7 @@ function src_fill(s: Src): Src {
       return Src { ...s, buf: chunk, pos: 0, eof: chunk.len() == 0, nlat: __memchr_bytes(chunk, 10, 0), ffat: __memchr_bytes(chunk, 12, 0) };
     },
     Err(e) => {
-      let message: string = gnu.io_error_text(e);
+      let message = gnu.io_error_text(e);
       match (s.r.stat()) {
         Ok(st) => {
           if (st.is_dir) {
@@ -347,7 +347,7 @@ function finish_record(carry: usize, chunk: u8[], from: i32, to: i32): u8[] {
   if (carry == 0 as usize && from == to) {
     return [];
   }
-  let h: usize = carry;
+  let h = carry;
   if (h == 0 as usize) {
     h = buf_new(to - from);
   }
@@ -358,8 +358,8 @@ function finish_record(carry: usize, chunk: u8[], from: i32, to: i32): u8[] {
 struct Record { src: Src, line: boolean, ff: boolean, text: u8[] }
 
 function src_line(s0: Src): Record {
-  let s: Src = s0;
-  let carry: usize = 0 as usize;
+  let s = s0;
+  let carry = 0 as usize;
   while (true) {
     if (s.pos >= s.buf.len()) {
       if (s.eof) {
@@ -377,8 +377,8 @@ function src_line(s0: Src): Record {
     if (s.ffat >= 0 && s.ffat < s.pos) {
       s = Src { ...s, ffat: __memchr_bytes(s.buf, 12, s.pos) };
     }
-    let end: i32 = s.nlat;
-    let is_ff: boolean = false;
+    let end = s.nlat;
+    let is_ff = false;
     if (s.ffat >= 0 && (end < 0 || s.ffat < end)) {
       end = s.ffat;
       is_ff = true;
@@ -391,7 +391,7 @@ function src_line(s0: Src): Record {
       s = Src { ...s, pos: s.buf.len() };
       continue;
     }
-    let text: u8[] = finish_record(carry, s.buf, s.pos, end);
+    let text = finish_record(carry, s.buf, s.pos, end);
     s = Src { ...s, pos: end + 1 };
     if (is_ff) {
       if (s.pos >= s.buf.len() && !s.eof) {
@@ -407,25 +407,25 @@ function src_line(s0: Src): Record {
 }
 
 function parse_int(s: string): (i64, boolean) {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
-  let start: i32 = i;
-  let v: i64 = 0 as i64;
-  let sat: boolean = false;
+  let start = i;
+  let v = 0 as i64;
+  let sat = false;
   while (i < s.len() && gnu.is_digit(s[i] as i32)) {
     if (v > 900000000000000000 as i64) {
       sat = true;
     } else {
       v = v * (10 as i64) + (s[i] as i32 - 48) as i64;
     }
-    i = i + 1;
+    i += 1;
   }
   if (i == start || i < s.len()) {
     return (0 as i64, false);
@@ -464,7 +464,7 @@ function num_text(status: i32): string {
 
 function getnum(value: string, stem: string, min: i64): i32 {
   let r: (i64, boolean) = parse_int(value);
-  let st: i32 = num_fault(r.0, r.1, min);
+  let st = num_fault(r.0, r.1, min);
   if (st != 0) {
     gnu.error(stem + ": " + gnu.quote(value) + num_text(st));
     exit(1);
@@ -473,8 +473,8 @@ function getnum(value: string, stem: string, min: i64): i32 {
 }
 
 function char_width(value: string, letter: string, defchar: i32, defwidth: i32): (i32, i32) {
-  let ch: i32 = defchar;
-  let rest: string = value;
+  let ch = defchar;
+  let rest = value;
   if (value.len() > 0 && !gnu.is_digit(value[0] as i32)) {
     ch = value[0] as i32;
     rest = slice_unchecked(value, 1, value.len()) + "";
@@ -483,13 +483,13 @@ function char_width(value: string, letter: string, defchar: i32, defwidth: i32):
     return (ch, defwidth);
   }
   let r: (i64, boolean) = parse_int(rest);
-  let bad: boolean = !r.1 || r.0 < 1 as i64 || r.0 > 2147483647 as i64;
-  let i: i32 = 0;
+  let bad = !r.1 || r.0 < 1 as i64 || r.0 > 2147483647 as i64;
+  let i = 0;
   while (i < rest.len()) {
     if (!gnu.is_digit(rest[i] as i32)) {
       bad = true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (bad) {
     gnu.die_usage("'-" + letter + "' extra characters or invalid number in the argument: " + gnu.quote(rest), 1);
@@ -498,9 +498,9 @@ function char_width(value: string, letter: string, defchar: i32, defwidth: i32):
 }
 
 function parse_range(arg: string, what: string): (u64, u64, i32) {
-  let head: string = arg;
-  let tail: string = "";
-  let ranged: boolean = false;
+  let head = arg;
+  let tail = "";
+  let ranged = false;
   if let Some(colon) = arg.index_of(":") {
     head = slice_unchecked(arg, 0, colon) + "";
     tail = slice_unchecked(arg, colon + 1, arg.len()) + "";
@@ -515,7 +515,7 @@ function parse_range(arg: string, what: string): (u64, u64, i32) {
     gnu.error("invalid " + what + " argument " + gnu.quote(arg));
     exit(1);
   }
-  let last: u64 = 18446744073709551615 as u64;
+  let last = 18446744073709551615 as u64;
   if (!ranged) {
     if (f.1 != 0) {
       return (0 as u64, 0 as u64, 1);
@@ -546,14 +546,14 @@ function parse_range(arg: string, what: string): (u64, u64, i32) {
 }
 
 function header_width(s: [u8]): i32 {
-  let w: i32 = 0;
-  let i: i32 = 0;
+  let w = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b >= 32 && b != 127) {
-      w = w + 1;
+      w += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
@@ -566,22 +566,22 @@ function header_date_format(has_date: boolean, fmt: string): timefmt.Format {
 }
 
 function header_text(c: Cfg, name: string, t: i64, nsec: i64, page: u64): u8[] {
-  let date: u8[] = timefmt.format_bytes(c.date_fmt, c.zone, t, nsec);
-  let nm: string = name;
+  let date = timefmt.format_bytes(c.date_fmt, c.zone, t, nsec);
+  let nm = name;
   if (c.has_header) {
     nm = c.header;
   }
-  let tail: string = "Page " + page.to_string();
-  let avail: i32 = c.page_width - header_width(date) - header_width(nm.as_bytes()) - tail.len();
-  let lhs: i32 = avail / 2;
-  let rhs: i32 = avail - avail / 2;
+  let tail = "Page " + page.to_string();
+  let avail = c.page_width - header_width(date) - header_width(nm.as_bytes()) - tail.len();
+  let lhs = avail / 2;
+  let rhs = avail - avail / 2;
   if (lhs < 1) {
     lhs = 1;
   }
   if (rhs < 1) {
     rhs = 1;
   }
-  let h: usize = buf_new(date.len() + nm.len() + tail.len() + lhs + rhs);
+  let h = buf_new(date.len() + nm.len() + tail.len() + lhs + rhs);
   append_bytes(h, date);
   push_spaces(h, lhs);
   buf_push(h, nm);
@@ -595,16 +595,16 @@ function col_start(c: Cfg, i: i32): i32 {
 }
 
 function put_sep(l0: Line, c: Cfg): Line {
-  let l: Line = l0;
-  let k: i32 = 0;
+  let l = l0;
+  let k = 0;
   while (k < c.sep.len()) {
-    let b: i32 = c.sep[k] as i32;
+    let b = c.sep[k] as i32;
     if (b == 32 || b == 9 && c.truncate && c.sep.len() == 1) {
       l = l.space(c);
     } else {
       l = l.put_byte(b, 1, c);
     }
-    k = k + 1;
+    k += 1;
   }
   return l;
 }
@@ -620,55 +620,55 @@ function tab_span(b: i32, c: Cfg): i32 {
 }
 
 function put_tab(l0: Line, c: Cfg, cs: i32, span: i32, b: i32): (Line, i32) {
-  let local: i32 = l0.pos - cs;
+  let local = l0.pos - cs;
   if (local < 0) {
     local = 0;
   }
-  let target: i32 = l0.pos + (span - local % span);
-  let l: Line = l0;
+  let target = l0.pos + (span - local % span);
+  let l = l0;
   if (c.untabify) {
-    let n: i32 = target - l.pos;
+    let n = target - l.pos;
     while (n > 0) {
       l = l.space(c);
-      n = n - 1;
+      n -= 1;
     }
     return (l, target);
   }
   if (c.columns > 1 && !c.tab_literal) {
     return (l.to(target, c), target);
   }
-  let f: Line = l.flush(c);
+  let f = l.flush(c);
   buf_push_byte(f.buf, b);
   return (Line { ...f, pos: target }, target);
 }
 
 function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
-  let l: Line = l0;
-  let d: i32 = c.num_digits;
+  let l = l0;
+  let d = c.num_digits;
   if (n >= 0 as i64 && d >= 1 && d <= 18) {
-    let v: u64 = n as u64;
-    let len: i32 = gnu.decimal_len(v);
-    let zeros: i32 = 0;
+    let v = n as u64;
+    let len = gnu.decimal_len(v);
+    let zeros = 0;
     if (len > d) {
-      let p: u64 = 1 as u64;
-      let k: i32 = 0;
+      let p = 1 as u64;
+      let k = 0;
       while (k < d) {
-        p = p * (10 as u64);
-        k = k + 1;
+        p *= 10 as u64;
+        k += 1;
       }
-      v = v % p;
+      v %= p;
       zeros = d - gnu.decimal_len(v);
       len = d;
     }
-    let f: Line = l.to(cs + d - len, c).flush(c);
+    let f = l.to(cs + d - len, c).flush(c);
     while (zeros > 0) {
       buf_push_byte(f.buf, 48);
-      zeros = zeros - 1;
+      zeros -= 1;
     }
     buf_push_decimal(f.buf, v);
     l = Line { ...f, pos: f.pos + len };
   } else {
-    let s: string = n.to_string();
+    let s = n.to_string();
     if (s.len() > c.num_digits) {
       s = slice_unchecked(s, s.len() - c.num_digits, s.len()) + "";
     }
@@ -676,11 +676,11 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
     l = l.put(s, s.len(), c);
   }
   if (c.num_sep == 9) {
-    let target: i32 = cs + c.num_width;
+    let target = cs + c.num_width;
     if (c.columns > 1 && !c.tab_literal) {
       return l.to(target, c);
     }
-    let f: Line = l.flush(c);
+    let f = l.flush(c);
     buf_push_byte(f.buf, 9);
     return Line { ...f, pos: target };
   }
@@ -689,8 +689,8 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
 }
 
 function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boolean): Line {
-  let cs: i32 = col_start(c, i);
-  let l: Line = l0;
+  let cs = col_start(c, i);
+  let l = l0;
   if (i == 0) {
     l = l.to(cs, c);
   } else if (c.truncate) {
@@ -702,38 +702,38 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
     l = put_sep(l, c);
   }
   l = l.flush(c);
-  let origin: i32 = l.pos;
+  let origin = l.pos;
   if (c.truncate) {
     origin = cs;
   }
-  let text_start: i32 = origin;
+  let text_start = origin;
   if (numbered) {
     l = put_number(l, c, origin, n);
     text_start = l.pos;
   }
-  let limit: i32 = 0;
+  let limit = 0;
   if (c.truncate) {
-    let avail: i32 = c.chars_per_column;
+    let avail = c.chars_per_column;
     if (numbered) {
-      avail = avail - c.num_width;
+      avail -= c.num_width;
       if (avail < 1) {
         avail = 1;
       }
     }
     limit = text_start + avail;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < txt.len()) {
-    let j: i32 = k;
+    let j = k;
     while (j < txt.len()) {
-      let pb: i32 = txt[j] as i32;
+      let pb = txt[j] as i32;
       if (pb < 33 || pb > 126 || pb == c.in_tab) {
         break;
       }
-      j = j + 1;
+      j += 1;
     }
     if (j > k) {
-      let width: i32 = j - k;
+      let width = j - k;
       if (c.truncate && l.pos + width > limit) {
         width = limit - l.pos;
         if (width <= 0) {
@@ -745,29 +745,29 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
       k = j;
       continue;
     }
-    let b: i32 = txt[k] as i32;
-    let span: i32 = tab_span(b, c);
+    let b = txt[k] as i32;
+    let span = tab_span(b, c);
     if (span > 0) {
-      let local: i32 = l.pos - origin;
+      let local = l.pos - origin;
       if (local < 0) {
         local = 0;
       }
-      let target: i32 = l.pos + (span - local % span);
+      let target = l.pos + (span - local % span);
       if (c.truncate && target > limit) {
         return l;
       }
       let r: (Line, i32) = put_tab(l, c, origin, span, b);
       l = r.0;
-      k = k + 1;
+      k += 1;
       continue;
     }
-    let width: i32 = clump_width(b, c);
-    let start: i32 = text_start;
+    let width = clump_width(b, c);
+    let start = text_start;
     if (numbered && c.truncate && !c.merge) {
       start = origin;
     }
     if (width < 0 && (l.pos <= start || k == 0)) {
-      k = k + 1;
+      k += 1;
       continue;
     }
     if (c.truncate && l.pos + width > limit) {
@@ -778,32 +778,32 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
     } else {
       l = l.put_clump(b, c);
     }
-    k = k + 1;
+    k += 1;
   }
   return l;
 }
 
 function row_into(out: usize, c: Cfg, texts: u8[][], nums: i64[], numbered: boolean): void {
-  let l: Line = line_on(out);
+  let l = line_on(out);
   if (c.num_prefix > 0 && nums.len() > 0) {
     l = l.to(c.offset, c);
     l = put_number(l, c, c.offset, nums[0]);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < texts.len()) {
-    let num: i64 = 0 as i64;
+    let num = 0 as i64;
     if (i < nums.len()) {
       num = nums[i];
     }
-    let want: boolean = numbered && c.num_prefix == 0;
+    let want = numbered && c.num_prefix == 0;
     l = put_column(l, c, i, texts[i], num, want);
-    i = i + 1;
+    i += 1;
   }
   buf_push_byte(out, 10);
 }
 
 function wrap32(n: i64): i64 {
-  let v: i64 = n;
+  let v = n;
   while (v > 2147483647 as i64) {
     v = v - 4294967296 as i64;
   }
@@ -815,12 +815,12 @@ function wrap32(n: i64): i64 {
 
 function column_lengths(n: i32, c: Cfg): i32[] {
   let out: i32[] = [];
-  let k: i32 = c.columns;
-  let rows: i32 = (n + k - 1) / k;
-  let full: i32 = n % k;
-  let i: i32 = 0;
+  let k = c.columns;
+  let rows = (n + k - 1) / k;
+  let full = n % k;
+  let i = 0;
   while (i < k) {
-    let len: i32 = rows;
+    let len = rows;
     if (full > 0 && i >= full) {
       len = rows - 1;
     }
@@ -828,17 +828,17 @@ function column_lengths(n: i32, c: Cfg): i32[] {
       len = 0;
     }
     out = out.append(len);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
-  let count: i32 = 0;
-  let n: i32 = lines.len();
+  let count = 0;
+  let n = lines.len();
   if (c.columns == 1 && !c.merge) {
-    let verbatim: boolean = !c.numbering && c.offset == 0 && !c.ctrl && !c.nonprint && !c.truncate && !c.untabify && !c.tabify;
-    let i: i32 = 0;
+    let verbatim = !c.numbering && c.offset == 0 && !c.ctrl && !c.nonprint && !c.truncate && !c.untabify && !c.tabify;
+    let i = 0;
     while (i < n) {
       if (verbatim && __memchr_bytes(lines[i], 8, 0) < 0) {
         append_bytes(out, lines[i]);
@@ -847,30 +847,30 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
         put_column(line_on(out), c, 0, lines[i], wrap32(first_no + i as i64), c.numbering);
         buf_push_byte(out, 10);
       }
-      count = count + 1;
+      count += 1;
       if (c.double_space) {
         buf_push_byte(out, 10);
-        count = count + 1;
+        count += 1;
       }
-      i = i + 1;
+      i += 1;
     }
     return count;
   }
-  let rows: i32 = (n + c.columns - 1) / c.columns;
-  let lens: i32[] = column_lengths(n, c);
+  let rows = (n + c.columns - 1) / c.columns;
+  let lens = column_lengths(n, c);
   let starts: i32[] = [];
-  let acc: i32 = 0;
-  let j: i32 = 0;
+  let acc = 0;
+  let j = 0;
   while (j < c.columns) {
     starts = starts.append(acc);
-    acc = acc + lens[j];
-    j = j + 1;
+    acc += lens[j];
+    j += 1;
   }
-  let r: i32 = 0;
+  let r = 0;
   while (r < rows) {
     let texts: u8[][] = [];
     let nums: i64[] = [];
-    let col: i32 = 0;
+    let col = 0;
     while (col < c.columns) {
       let idx: i32 = 0 - 1;
       if (c.across) {
@@ -886,43 +886,43 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
       } else {
         texts = texts.append(lines[idx]);
         nums = nums.append(wrap32(first_no + idx as i64));
-        col = col + 1;
+        col += 1;
       }
     }
     row_into(out, c, texts, nums, c.numbering);
-    count = count + 1;
+    count += 1;
     if (c.double_space && (r + 1 < rows || !c.omit_header || c.across)) {
       buf_push_byte(out, 10);
-      count = count + 1;
+      count += 1;
     }
-    r = r + 1;
+    r += 1;
   }
   return count;
 }
 
 function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_no: i64): i32 {
-  let count: i32 = 0;
-  let nrows: i32 = 0;
+  let count = 0;
+  let nrows = 0;
   if (width > 0) {
     nrows = rows.len() / width;
   }
-  let r: i32 = 0;
+  let r = 0;
   while (r < nrows) {
     let texts: u8[][] = [];
     let nums: i64[] = [];
-    let col: i32 = 0;
+    let col = 0;
     while (col < row_widths[r]) {
       texts = texts.append(rows[r * width + col]);
       nums = nums.append(wrap32(first_no + r as i64));
-      col = col + 1;
+      col += 1;
     }
     row_into(out, c, texts, nums, c.numbering);
-    count = count + 1;
+    count += 1;
     if (c.double_space) {
       buf_push_byte(out, 10);
-      count = count + 1;
+      count += 1;
     }
-    r = r + 1;
+    r += 1;
   }
   return count;
 }
@@ -931,11 +931,11 @@ function page_head(out: usize, c: Cfg, page: u64, name: string, t: i64, nsec: i6
   if (c.omit_header) {
     return;
   }
-  let lead: Line = line_on(out).to(c.offset, c);
+  let lead = line_on(out).to(c.offset, c);
   lead = lead.flush(c);
   buf_push(out, "\n\n");
-  let head: Line = line_on(out).to(c.offset, c);
-  let header: u8[] = header_text(c, name, t, nsec, page);
+  let head = line_on(out).to(c.offset, c);
+  let header = header_text(c, name, t, nsec, page);
   head = head.put_range(header, 0, header.len(), 0, c);
   buf_push(out, "\n\n\n");
 }
@@ -948,11 +948,11 @@ function page_tail(out: usize, c: Cfg, lines: i32): void {
     buf_push_byte(out, 12);
     return;
   }
-  let body_lines: i32 = c.page_length - 10;
+  let body_lines = c.page_length - 10;
   if (c.double_space) {
     body_lines = rows_per_page(c) * 2;
   }
-  let pad: i32 = body_lines - lines;
+  let pad = body_lines - lines;
   if (pad > 0) {
     buf_push(out, "\n".repeat(pad));
   }
@@ -969,8 +969,8 @@ function open_src(c: Cfg, name: string): (Src, boolean) {
   if (name == "-") {
     return (Src { r: stdin(), name: "-", is_stdin: true, open: true, buf: [], pos: 0, eof: false, fatal: false, nlat: 0 - 1, ffat: 0 - 1, mtime: now_seconds(), mnsec: 0 as i64 }, true);
   }
-  let mt: i64 = 0 as i64;
-  let ns: i64 = 0 as i64;
+  let mt = 0 as i64;
+  let ns = 0 as i64;
   match (stat(name)) {
     Ok(st) => {
       mt = st.mtime;
@@ -992,12 +992,12 @@ function open_src(c: Cfg, name: string): (Src, boolean) {
 }
 
 function rows_per_page(c: Cfg): i32 {
-  let body: i32 = c.page_length;
+  let body = c.page_length;
   if (!c.omit_header) {
     body = c.page_length - 10;
   }
   if (c.double_space) {
-    body = body / 2;
+    body /= 2;
   }
   if (body < 1) {
     body = 1;
@@ -1006,7 +1006,7 @@ function rows_per_page(c: Cfg): i32 {
 }
 
 function page_warning(c: Cfg, pages: u64, o0: io_buffered.BufWriter): io_buffered.BufWriter {
-  let total: u64 = pages;
+  let total = pages;
   if (total == 0 as u64) {
     total = 1 as u64;
   }
@@ -1021,29 +1021,29 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
   if (!opened.1) {
     return Job { o: o0, ok: false, fatal: false };
   }
-  let s: Src = opened.0;
-  let o: io_buffered.BufWriter = o0;
-  let ok: boolean = ok0;
-  let paginate: boolean = !c.omit_header;
-  let cap: i32 = rows_per_page(c) * c.columns;
-  let page: u64 = 1 as u64;
-  let pages: u64 = 0 as u64;
-  let line_no: i64 = 1 as i64;
-  let rebased: boolean = false;
-  let stale: boolean = false;
-  let boundary_end: boolean = false;
-  let eof: boolean = false;
-  let fatal: boolean = false;
-  let hdr_name: string = name;
+  let s = opened.0;
+  let o = o0;
+  let ok = ok0;
+  let paginate = !c.omit_header;
+  let cap = rows_per_page(c) * c.columns;
+  let page = 1 as u64;
+  let pages = 0 as u64;
+  let line_no = 1 as i64;
+  let rebased = false;
+  let stale = false;
+  let boundary_end = false;
+  let eof = false;
+  let fatal = false;
+  let hdr_name = name;
   if (s.is_stdin) {
     hdr_name = "";
   }
   while (page <= c.last_page) {
     let lines: u8[][] = [];
-    let broke: boolean = false;
-    let first: boolean = true;
+    let broke = false;
+    let first = true;
     while (lines.len() < cap && !broke && !eof) {
-      let record: Record = src_line(s);
+      let record = src_line(s);
       s = record.src;
       if (s.fatal) {
         fatal = true;
@@ -1066,7 +1066,7 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
     stale = lines.len() == cap && !broke;
     boundary_end = broke || lines.len() == cap;
     pages = pages + 1 as u64;
-    let printing: boolean = page >= c.first_page;
+    let printing = page >= c.first_page;
     if (printing && !rebased) {
       rebased = true;
       if (c.has_first_line) {
@@ -1074,7 +1074,7 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
       }
     }
     if (printing) {
-      let h: usize = o.handle();
+      let h = o.handle();
       page_head(h, c, page, hdr_name, s.mtime, s.mnsec);
       page_tail(h, c, body_into(h, c, lines, line_no));
       o = gnu.settle(o);
@@ -1099,12 +1099,12 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
 }
 
 function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: boolean): Job {
-  let o: io_buffered.BufWriter = o0;
-  let ok: boolean = ok0;
+  let o = o0;
+  let ok = ok0;
   let srcs: Src[] = [];
   let slot: i32[] = [];
-  let stdin_slot: i32 = 0 - 1;
-  let i: i32 = 0;
+  let stdin_slot: i32 = -1;
+  let i = 0;
   while (i < names.len()) {
     let opened: (Src, boolean) = open_src(c, names[i]);
     if (opened.1) {
@@ -1120,9 +1120,9 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     } else {
       ok = false;
     }
-    i = i + 1;
+    i += 1;
   }
-  let width: i32 = slot.len();
+  let width = slot.len();
   if (width == 0) {
     return Job { o: o, ok: ok, fatal: false };
   }
@@ -1132,42 +1132,42 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
   while (i < width) {
     eofs = eofs.append(false);
     full = full.append(false);
-    i = i + 1;
+    i += 1;
   }
-  let rows: i32 = rows_per_page(c);
-  let page: u64 = 1 as u64;
-  let pages: u64 = 0 as u64;
-  let line_no: i64 = 1 as i64;
-  let rebased: boolean = false;
-  let fatal: boolean = false;
-  let now: i64 = now_seconds();
-  let alive: boolean = true;
+  let rows = rows_per_page(c);
+  let page = 1 as u64;
+  let pages = 0 as u64;
+  let line_no = 1 as i64;
+  let rebased = false;
+  let fatal = false;
+  let now = now_seconds();
+  let alive = true;
   while (page <= c.last_page && alive) {
     let held: boolean[] = [];
-    let active: i32 = 0;
+    let active = 0;
     i = 0;
     while (i < width) {
       held = held.append(false);
       if (!eofs[i]) {
-        active = active + 1;
+        active += 1;
       }
-      i = i + 1;
+      i += 1;
     }
     let cells: u8[][] = [];
     let row_widths: i32[] = [];
-    let filled: i32 = 0;
-    let page_ff: boolean = false;
-    let r: i32 = 0;
+    let filled = 0;
+    let page_ff = false;
+    let r = 0;
     while (r < rows) {
       let row: u8[][] = [];
-      let any: boolean = false;
-      let col: i32 = 0;
+      let any = false;
+      let col = 0;
       while (col < width) {
         let cell: u8[] = [];
-        let present: boolean = false;
+        let present = false;
         if (!held[col] && !eofs[col]) {
-          let k: i32 = slot[col];
-          let got: Record = src_line(srcs[k]);
+          let k = slot[col];
+          let got = src_line(srcs[k]);
           if (full[col] && got.ff && !got.line && !got.src.fatal) {
             got = src_line(got.src);
           }
@@ -1184,10 +1184,10 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
             if (got.ff) {
               held = held.with(col, true);
               page_ff = true;
-              active = active - 1;
+              active -= 1;
             } else if (!got.line || got.src.eof && got.src.pos >= got.src.buf.len()) {
               eofs = eofs.with(col, true);
-              active = active - 1;
+              active -= 1;
             }
           }
         }
@@ -1195,7 +1195,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
           break;
         }
         row = row.append(cell);
-        col = col + 1;
+        col += 1;
         if (any && active == 0) {
           break;
         }
@@ -1206,7 +1206,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         }
         break;
       }
-      let col2: i32 = 0;
+      let col2 = 0;
       row_widths = row_widths.append(row.len());
       while (col2 < width) {
         if (col2 < row.len()) {
@@ -1214,10 +1214,10 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         } else {
           cells = cells.append([]);
         }
-        col2 = col2 + 1;
+        col2 += 1;
       }
-      filled = filled + 1;
-      r = r + 1;
+      filled += 1;
+      r += 1;
     }
     if (fatal || filled == 0 && !page_ff) {
       break;
@@ -1226,11 +1226,11 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       i = 0;
       while (i < width) {
         full = full.with(i, !held[i] && !eofs[i]);
-        i = i + 1;
+        i += 1;
       }
     }
     pages = pages + 1 as u64;
-    let printing: boolean = page >= c.first_page;
+    let printing = page >= c.first_page;
     if (printing && !rebased) {
       rebased = true;
       if (c.has_first_line) {
@@ -1238,7 +1238,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       }
     }
     if (printing) {
-      let h: usize = o.handle();
+      let h = o.handle();
       page_head(h, c, page, "", now, 0 as i64);
       page_tail(h, c, merge_body_into(h, c, cells, width, row_widths, line_no));
       o = gnu.settle(o);
@@ -1286,17 +1286,17 @@ function build_opts(): gnu.Opt[] {
   opts = opts.append(gnu.valued("W", "page-width", opt_pagewidth()));
   opts = opts.append(gnu.flag("f", "", opt_formfeed()));
   opts = opts.append(gnu.flag("b", "", opt_balance()));
-  let d: i32 = 0;
+  let d = 0;
   while (d < 10) {
     opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
-    d = d + 1;
+    d += 1;
   }
   return opts;
 }
 
 function getnum_first_line(value: string): i32 {
   let r: (i64, boolean) = parse_int(value);
-  let bad: i32 = 0;
+  let bad = 0;
   if (!r.1) {
     bad = 1;
   } else if (r.0 > 2147483647 as i64 || r.0 < 0 as i64 - 2147483648 as i64) {
@@ -1310,62 +1310,62 @@ function getnum_first_line(value: string): i32 {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let g: gnu.Getopt = gnu.getopt_new(argv, build_opts(), "pr", help_text(), 1).return_in_order();
+  let argv = args();
+  let g = gnu.getopt_new(argv, build_opts(), "pr", help_text(), 1).return_in_order();
 
-  let columns: i32 = 1;
-  let col_str: string = "";
-  let have_columns: boolean = false;
-  let across: boolean = false;
-  let merge: boolean = false;
-  let ctrl: boolean = false;
-  let nonprint: boolean = false;
-  let double_space: boolean = false;
-  let date_fmt: string = "";
-  let has_date: boolean = false;
-  let untabify: boolean = false;
-  let in_tab: i32 = 9;
-  let in_tab_width: i32 = 8;
-  let want_tabify: boolean = false;
-  let out_tab: i32 = 9;
-  let out_tab_width: i32 = 8;
-  let form_feed: boolean = false;
-  let header: string = "";
-  let has_header: boolean = false;
-  let join: boolean = false;
-  let page_length: i32 = 66;
-  let numbering: boolean = false;
-  let num_sep: i32 = 9;
-  let num_digits: i32 = 5;
-  let first_line: i32 = 1;
-  let has_first_line: boolean = false;
-  let offset: i32 = 0;
-  let nowarn: boolean = false;
-  let sep: string = "";
-  let s_given: boolean = false;
-  let s_value: string = "";
-  let big_s_given: boolean = false;
-  let big_s_value: string = "";
-  let omit_header: boolean = false;
-  let omit_pagination: boolean = false;
-  let w_given: boolean = false;
-  let w_value: i32 = 72;
-  let big_w_given: boolean = false;
-  let big_w_value: i32 = 72;
-  let first_page: u64 = 1 as u64;
-  let last_page: u64 = 18446744073709551615 as u64;
-  let have_range: boolean = false;
+  let columns = 1;
+  let col_str = "";
+  let have_columns = false;
+  let across = false;
+  let merge = false;
+  let ctrl = false;
+  let nonprint = false;
+  let double_space = false;
+  let date_fmt = "";
+  let has_date = false;
+  let untabify = false;
+  let in_tab = 9;
+  let in_tab_width = 8;
+  let want_tabify = false;
+  let out_tab = 9;
+  let out_tab_width = 8;
+  let form_feed = false;
+  let header = "";
+  let has_header = false;
+  let join = false;
+  let page_length = 66;
+  let numbering = false;
+  let num_sep = 9;
+  let num_digits = 5;
+  let first_line = 1;
+  let has_first_line = false;
+  let offset = 0;
+  let nowarn = false;
+  let sep = "";
+  let s_given = false;
+  let s_value = "";
+  let big_s_given = false;
+  let big_s_value = "";
+  let omit_header = false;
+  let omit_pagination = false;
+  let w_given = false;
+  let w_value = 72;
+  let big_w_given = false;
+  let big_w_value = 72;
+  let first_page = 1 as u64;
+  let last_page = 18446744073709551615 as u64;
+  let have_range = false;
   let files: string[] = [];
 
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
-    let stop: boolean = false;
+    let stop = false;
     match (res.0) {
       Some(m) => {
         if (m.id == gnu.operand_id()) {
-          let tok: string = m.value;
-          let taken: boolean = false;
+          let tok = m.value;
+          let taken = false;
           if (!have_range && tok.len() > 0 && tok[0] as i32 == 43) {
             let rr: (u64, u64, i32) = parse_range(slice_unchecked(tok, 1, tok.len()) + "", "+");
             if (rr.2 == 0) {
@@ -1391,7 +1391,7 @@ pub function main(): i32 {
           col_str = m.value;
           have_columns = true;
         } else if (m.id >= opt_digit(0) && m.id <= opt_digit(9)) {
-          col_str = col_str + slice_unchecked("0123456789", m.id - opt_digit(0), m.id - opt_digit(0) + 1);
+          col_str += slice_unchecked("0123456789", m.id - opt_digit(0), m.id - opt_digit(0) + 1);
           have_columns = true;
         } else if (m.id == opt_across()) {
           across = true;
@@ -1464,16 +1464,16 @@ pub function main(): i32 {
       break;
     }
   }
-  let rest: string[] = g.operands();
-  let ri: i32 = 0;
+  let rest = g.operands();
+  let ri = 0;
   while (ri < rest.len()) {
     files = files.append(rest[ri]);
-    ri = ri + 1;
+    ri += 1;
   }
 
   if (have_columns) {
     let cn: (i64, boolean) = parse_int(col_str);
-    let st: i32 = num_fault(cn.0, cn.1, 1 as i64);
+    let st = num_fault(cn.0, cn.1, 1 as i64);
     if (st != 0) {
       gnu.error("invalid number of columns: " + gnu.quote(col_str) + num_text(st));
       exit(1);
@@ -1498,7 +1498,7 @@ pub function main(): i32 {
   if (page_length <= 10) {
     omit_header = true;
   }
-  let page_width: i32 = 72;
+  let page_width = 72;
   if (big_w_given) {
     page_width = big_w_value;
   } else if (w_given) {
@@ -1519,7 +1519,7 @@ pub function main(): i32 {
   } else {
     sep = " ";
   }
-  let truncate: boolean = columns > 1;
+  let truncate = columns > 1;
   if (s_given && !big_s_given) {
     truncate = w_given || big_w_given;
   }
@@ -1529,39 +1529,39 @@ pub function main(): i32 {
   if (join) {
     truncate = false;
   }
-  let num_width: i32 = num_digits + 1;
+  let num_width = num_digits + 1;
   if (num_sep == 9) {
     num_width = num_digits + tab_stop() - num_digits % tab_stop();
   }
-  let num_prefix: i32 = 0;
+  let num_prefix = 0;
   if (merge && numbering) {
     num_prefix = num_width;
   }
-  let chars_per_column: i32 = (page_width - num_prefix - (columns - 1) * sep.len()) / columns;
+  let chars_per_column = (page_width - num_prefix - (columns - 1) * sep.len()) / columns;
   if (chars_per_column < 1) {
     gnu.error("page width too narrow");
     exit(1);
   }
-  let tab_literal: boolean = !truncate && sep == "\t";
+  let tab_literal = !truncate && sep == "\t";
 
-  let c: Cfg = Cfg { columns: columns, across: across, merge: merge, ctrl: ctrl, nonprint: nonprint, double_space: double_space, date_fmt: header_date_format(has_date, date_fmt), untabify: untabify, in_tab: in_tab, in_tab_width: in_tab_width, tabify: want_tabify || columns > 1, out_tab: out_tab, out_tab_width: out_tab_width, form_feed: form_feed, header: header, has_header: has_header, page_length: page_length, numbering: numbering, num_sep: num_sep, num_digits: num_digits, num_width: num_width, first_line: first_line, has_first_line: has_first_line, offset: offset, nowarn: nowarn, sep: sep, omit_header: omit_header, omit_pagination: omit_pagination, page_width: page_width, zone: tz.local_zone(), truncate: truncate, tab_literal: tab_literal, num_prefix: num_prefix, first_page: first_page, last_page: last_page, chars_per_column: chars_per_column };
+  let c = Cfg { columns: columns, across: across, merge: merge, ctrl: ctrl, nonprint: nonprint, double_space: double_space, date_fmt: header_date_format(has_date, date_fmt), untabify: untabify, in_tab: in_tab, in_tab_width: in_tab_width, tabify: want_tabify || columns > 1, out_tab: out_tab, out_tab_width: out_tab_width, form_feed: form_feed, header: header, has_header: has_header, page_length: page_length, numbering: numbering, num_sep: num_sep, num_digits: num_digits, num_width: num_width, first_line: first_line, has_first_line: has_first_line, offset: offset, nowarn: nowarn, sep: sep, omit_header: omit_header, omit_pagination: omit_pagination, page_width: page_width, zone: tz.local_zone(), truncate: truncate, tab_literal: tab_literal, num_prefix: num_prefix, first_page: first_page, last_page: last_page, chars_per_column: chars_per_column };
 
-  let o: io_buffered.BufWriter = gnu.out_new();
-  let ok: boolean = true;
+  let o = gnu.out_new();
+  let ok = true;
   if (merge) {
-    let j: Job = run_merge(c, files, o, ok);
+    let j = run_merge(c, files, o, ok);
     o = j.o;
     ok = j.ok;
   } else {
-    let i: i32 = 0;
+    let i = 0;
     while (i < files.len()) {
-      let j: Job = run_serial(c, files[i], o, ok);
+      let j = run_serial(c, files[i], o, ok);
       o = j.o;
       ok = j.ok;
       if (j.fatal) {
         i = files.len();
       }
-      i = i + 1;
+      i += 1;
     }
   }
   gnu.finish(o);

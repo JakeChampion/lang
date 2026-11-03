@@ -17,6 +17,7 @@ site/
 │   ├── content/docs/
 │   │   ├── index.mdx           Landing page
 │   │   ├── *.md                Cookbook, why Fern, releases, contributing
+│   │   ├── coreutils.mdx       Coreutils parity + bench tables
 │   │   ├── tutorial/*.md(x)    Narrative learn-the-language
 │   │   ├── http/*.md(x)        The HTTP guide, basic to advanced
 │   │   ├── reference/*.md      Syntax, types, traits, packages, tooling
@@ -31,7 +32,10 @@ site/
 │   │   ├── Facet.astro           One entry in the landing rail
 │   │   ├── FacetRail.astro       The landing feature rail
 │   │   ├── NextSteps.astro       Closing signpost grid
+│   │   ├── CoreutilsBench.astro  Tables from the newest coreutils bench log
 │   │   └── SpecSheet.astro       Label/value fact panel
+│   ├── lib/
+│   │   └── coreutils-bench.mjs Parses docs/coreutils-log/*-bench.md
 │   └── styles/
 │       ├── fern.css            Theme: palette, type, landing layout
 │       └── fonts.css           @font-face rules (generated)

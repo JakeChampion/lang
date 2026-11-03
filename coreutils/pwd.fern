@@ -2,16 +2,16 @@ import "std/string";
 import "./lib/gnu";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
-  out = out + "Print the full filename of the current working directory.\n";
-  out = out + "\n";
-  out = out + "  -L, --logical   use PWD from environment, even if it contains symlinks\n";
-  out = out + "  -P, --physical  avoid all symlinks\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "If no option is specified, -P is assumed.\n";
+  out += "Print the full filename of the current working directory.\n";
+  out += "\n";
+  out += "  -L, --logical   use PWD from environment, even if it contains symlinks\n";
+  out += "  -P, --physical  avoid all symlinks\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "If no option is specified, -P is assumed.\n";
   return out;
 }
 
@@ -24,27 +24,27 @@ function opt_physical(): i32 {
 }
 
 function has_dot_component(wd: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < wd.len()) {
     if (wd[i] as i32 == 47 && wd[i + 1] as i32 == 46) {
-      let after: i32 = i + 2;
+      let after = i + 2;
       if (after >= wd.len() || wd[after] as i32 == 47) {
         return true;
       }
       if (wd[after] as i32 == 46) {
-        let after2: i32 = after + 1;
+        let after2 = after + 1;
         if (after2 >= wd.len() || wd[after2] as i32 == 47) {
           return true;
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function logical_cwd(): Option[string] {
-  let wd: string = "";
+  let wd = "";
   match (env("PWD")) {
     Some(v) => {
       wd = v;
@@ -85,10 +85,10 @@ function die_errno(msg: string, e: IoError): void {
 }
 
 function walked_cwd(): string {
-  let root: FileStat = stat_or_die(stat("/"), "failed to get attributes of " + gnu.quotea("/"));
-  let here: FileStat = stat_or_die(stat("."), "failed to stat " + gnu.quotea("."));
-  let name: string = "";
-  let prefix: string = "..";
+  let root = stat_or_die(stat("/"), "failed to get attributes of " + gnu.quotea("/"));
+  let here = stat_or_die(stat("."), "failed to stat " + gnu.quotea("."));
+  let name = "";
+  let prefix = "..";
   while (!(here.dev == root.dev && here.ino == root.ino)) {
     let entries: string[] = [];
     match (read_dir(prefix)) {
@@ -99,10 +99,10 @@ function walked_cwd(): string {
         die_errno("cannot open directory " + gnu.quote(prefix), e);
       }
     }
-    let parent: FileStat = stat_or_die(stat(prefix), "failed to stat " + gnu.quote(prefix));
-    let found: string = "";
-    let matched: boolean = false;
-    let i: i32 = 0;
+    let parent = stat_or_die(stat(prefix), "failed to stat " + gnu.quote(prefix));
+    let found = "";
+    let matched = false;
+    let i = 0;
     while (i < entries.len()) {
       match (lstat(prefix + "/" + entries[i])) {
         Ok(st) => {
@@ -114,14 +114,14 @@ function walked_cwd(): string {
         },
         Err(_) => {}
       }
-      i = i + 1;
+      i += 1;
     }
     if (!matched) {
       die("couldn't find directory entry in " + gnu.quote(prefix) + " with matching i-node");
     }
     name = "/" + found + name;
     here = parent;
-    prefix = prefix + "/..";
+    prefix += "/..";
   }
   if (name.len() == 0) {
     return "/";
@@ -146,7 +146,7 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("L", "logical", opt_logical()));
   opts = opts.append(gnu.flag("P", "physical", opt_physical()));
 
-  let logical: boolean = false;
+  let logical = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       logical = true;
@@ -154,7 +154,7 @@ pub function main(): i32 {
     None => {}
   }
 
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "pwd", help_text(), 1);
+  let g = gnu.getopt_new(args(), opts, "pwd", help_text(), 1);
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;

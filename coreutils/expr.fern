@@ -6,47 +6,47 @@ import "./lib/gnu";
 import "./lib/bre";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " EXPRESSION\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Print the value of EXPRESSION to standard output.  A blank line below\n";
-  out = out + "separates increasing precedence groups.  EXPRESSION may be:\n";
-  out = out + "\n";
-  out = out + "  ARG1 | ARG2       ARG1 if it is neither null nor 0, otherwise ARG2\n";
-  out = out + "\n";
-  out = out + "  ARG1 & ARG2       ARG1 if neither argument is null or 0, otherwise 0\n";
-  out = out + "\n";
-  out = out + "  ARG1 < ARG2       ARG1 is less than ARG2\n";
-  out = out + "  ARG1 <= ARG2      ARG1 is less than or equal to ARG2\n";
-  out = out + "  ARG1 = ARG2       ARG1 is equal to ARG2\n";
-  out = out + "  ARG1 != ARG2      ARG1 is unequal to ARG2\n";
-  out = out + "  ARG1 >= ARG2      ARG1 is greater than or equal to ARG2\n";
-  out = out + "  ARG1 > ARG2       ARG1 is greater than ARG2\n";
-  out = out + "\n";
-  out = out + "  ARG1 + ARG2       arithmetic sum of ARG1 and ARG2\n";
-  out = out + "  ARG1 - ARG2       arithmetic difference of ARG1 and ARG2\n";
-  out = out + "\n";
-  out = out + "  ARG1 * ARG2       arithmetic product of ARG1 and ARG2\n";
-  out = out + "  ARG1 / ARG2       arithmetic quotient of ARG1 divided by ARG2\n";
-  out = out + "  ARG1 % ARG2       arithmetic remainder of ARG1 divided by ARG2\n";
-  out = out + "\n";
-  out = out + "  STRING : REGEXP   anchored pattern match of REGEXP in STRING\n";
-  out = out + "\n";
-  out = out + "  match STRING REGEXP        same as STRING : REGEXP\n";
-  out = out + "  substr STRING POS LENGTH   substring of STRING, POS counted from 1\n";
-  out = out + "  index STRING CHARS         index in STRING where any CHARS is found, or 0\n";
-  out = out + "  length STRING              length of STRING\n";
-  out = out + "  + TOKEN                    interpret TOKEN as a string, even if it is a\n";
-  out = out + "                               keyword like 'match' or an operator like '/'\n";
-  out = out + "\n";
-  out = out + "  ( EXPRESSION )             value of EXPRESSION\n";
-  out = out + "\n";
-  out = out + "Exit status is 0 if EXPRESSION is neither null nor 0, 1 if EXPRESSION is null\n";
-  out = out + "or 0, 2 if EXPRESSION is syntactically invalid, and 3 if an error occurred.\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Print the value of EXPRESSION to standard output.  A blank line below\n";
+  out += "separates increasing precedence groups.  EXPRESSION may be:\n";
+  out += "\n";
+  out += "  ARG1 | ARG2       ARG1 if it is neither null nor 0, otherwise ARG2\n";
+  out += "\n";
+  out += "  ARG1 & ARG2       ARG1 if neither argument is null or 0, otherwise 0\n";
+  out += "\n";
+  out += "  ARG1 < ARG2       ARG1 is less than ARG2\n";
+  out += "  ARG1 <= ARG2      ARG1 is less than or equal to ARG2\n";
+  out += "  ARG1 = ARG2       ARG1 is equal to ARG2\n";
+  out += "  ARG1 != ARG2      ARG1 is unequal to ARG2\n";
+  out += "  ARG1 >= ARG2      ARG1 is greater than or equal to ARG2\n";
+  out += "  ARG1 > ARG2       ARG1 is greater than ARG2\n";
+  out += "\n";
+  out += "  ARG1 + ARG2       arithmetic sum of ARG1 and ARG2\n";
+  out += "  ARG1 - ARG2       arithmetic difference of ARG1 and ARG2\n";
+  out += "\n";
+  out += "  ARG1 * ARG2       arithmetic product of ARG1 and ARG2\n";
+  out += "  ARG1 / ARG2       arithmetic quotient of ARG1 divided by ARG2\n";
+  out += "  ARG1 % ARG2       arithmetic remainder of ARG1 divided by ARG2\n";
+  out += "\n";
+  out += "  STRING : REGEXP   anchored pattern match of REGEXP in STRING\n";
+  out += "\n";
+  out += "  match STRING REGEXP        same as STRING : REGEXP\n";
+  out += "  substr STRING POS LENGTH   substring of STRING, POS counted from 1\n";
+  out += "  index STRING CHARS         index in STRING where any CHARS is found, or 0\n";
+  out += "  length STRING              length of STRING\n";
+  out += "  + TOKEN                    interpret TOKEN as a string, even if it is a\n";
+  out += "                               keyword like 'match' or an operator like '/'\n";
+  out += "\n";
+  out += "  ( EXPRESSION )             value of EXPRESSION\n";
+  out += "\n";
+  out += "Exit status is 0 if EXPRESSION is neither null nor 0, 1 if EXPRESSION is null\n";
+  out += "or 0, 2 if EXPRESSION is syntactically invalid, and 3 if an error occurred.\n";
   return out;
 }
 
@@ -64,7 +64,7 @@ function die(msg: string): void {
 }
 
 function is_integer(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   if (s.len() > 0 && s[0] as i32 == 45) {
     i = 1;
   }
@@ -72,11 +72,11 @@ function is_integer(s: string): boolean {
     return false;
   }
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 48 || b > 57) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -85,7 +85,7 @@ function is_null(s: string): boolean {
   if (s.len() == 0) {
     return true;
   }
-  let i: i32 = 0;
+  let i = 0;
   if (s[0] as i32 == 45) {
     i = 1;
   }
@@ -96,7 +96,7 @@ function is_null(s: string): boolean {
     if (s[i] as i32 != 48) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -120,21 +120,21 @@ function bool_value(b: boolean): string {
 }
 
 function str_cmp(a: string, b: string): i32 {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let x: i32 = a[i] as i32;
-    let y: i32 = b[i] as i32;
+    let x = a[i] as i32;
+    let y = b[i] as i32;
     if (x != y) {
       if (x < y) {
         return 0 - 1;
       }
       return 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (a.len() < b.len()) {
     return 0 - 1;
@@ -185,16 +185,16 @@ function do_length(s: string): string {
 }
 
 function do_index(s: string, chars: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < chars.len()) {
       if (s[i] as i32 == chars[k] as i32) {
         return (i as i64 + 1 as i64).to_string();
       }
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return "0";
 }
@@ -203,16 +203,16 @@ function do_substr(s: string, pos: string, len: string): string {
   if (!is_integer(pos) || !is_integer(len)) {
     return "";
   }
-  let p: bigint.BigInt = to_int(pos);
-  let n: bigint.BigInt = to_int(len);
-  let one: bigint.BigInt = bigint.from_i64(1 as i64);
-  let size: bigint.BigInt = bigint.from_i64(s.len() as i64);
+  let p = to_int(pos);
+  let n = to_int(len);
+  let one = bigint.from_i64(1 as i64);
+  let size = bigint.from_i64(s.len() as i64);
   if (p.cmp(one) < 0 || p.cmp(size) > 0 || n.cmp(one) < 0) {
     return "";
   }
-  let start: i32 = p.low_u64() as i32 - 1;
-  let end: i32 = s.len();
-  let avail: bigint.BigInt = size.sub(p).add(one);
+  let start = p.low_u64() as i32 - 1;
+  let end = s.len();
+  let avail = size.sub(p).add(one);
   if (n.cmp(avail) < 0) {
     end = start + n.low_u64() as i32;
   }
@@ -223,12 +223,12 @@ function do_colon(l: string, r: string, ev: boolean): string {
   if (!ev) {
     return "0";
   }
-  let re: bre.Bre = bre.bre_compile(r);
+  let re = bre.bre_compile(r);
   if (re.err.len() > 0) {
     gnu.error(re.err);
     exit(invalid());
   }
-  let m: bre.BreMatch = re.exec(l);
+  let m = re.exec(l);
   if (re.ngroups > 0) {
     if (!m.matched || m.starts[1] < 0) {
       return "";
@@ -249,8 +249,8 @@ function arith(op: string, l: string, r: string, ev: boolean): string {
     gnu.error("non-integer argument");
     exit(invalid());
   }
-  let a: bigint.BigInt = to_int(l);
-  let b: bigint.BigInt = to_int(r);
+  let a = to_int(l);
+  let b = to_int(r);
   if (op == "+") {
     return a.add(b).to_string();
   }
@@ -272,7 +272,7 @@ function arith(op: string, l: string, r: string, ev: boolean): string {
 }
 
 function eval7(s0: S, ev: boolean): (string, S) {
-  let s: S = s0;
+  let s = s0;
   if (is_tok(s, "(")) {
     s = advance(s);
     let r: (string, S) = eval_or(s, ev);
@@ -293,7 +293,7 @@ function eval7(s0: S, ev: boolean): (string, S) {
 }
 
 function eval6(s0: S, ev: boolean): (string, S) {
-  let s: S = s0;
+  let s = s0;
   if (is_tok(s, "length")) {
     let a: (string, S) = eval6(advance(s), ev);
     return (do_length(a.0), a.1);
@@ -324,8 +324,8 @@ function eval6(s0: S, ev: boolean): (string, S) {
 
 function eval5(s0: S, ev: boolean): (string, S) {
   let r: (string, S) = eval6(s0, ev);
-  let l: string = r.0;
-  let s: S = r.1;
+  let l = r.0;
+  let s = r.1;
   while (is_tok(s, ":")) {
     let r2: (string, S) = eval6(advance(s), ev);
     l = do_colon(l, r2.0, ev);
@@ -336,10 +336,10 @@ function eval5(s0: S, ev: boolean): (string, S) {
 
 function eval4(s0: S, ev: boolean): (string, S) {
   let r: (string, S) = eval5(s0, ev);
-  let l: string = r.0;
-  let s: S = r.1;
+  let l = r.0;
+  let s = r.1;
   while (is_tok(s, "*") || is_tok(s, "/") || is_tok(s, "%")) {
-    let op: string = peek(s);
+    let op = peek(s);
     let r2: (string, S) = eval5(advance(s), ev);
     l = arith(op, l, r2.0, ev);
     s = r2.1;
@@ -349,10 +349,10 @@ function eval4(s0: S, ev: boolean): (string, S) {
 
 function eval3(s0: S, ev: boolean): (string, S) {
   let r: (string, S) = eval4(s0, ev);
-  let l: string = r.0;
-  let s: S = r.1;
+  let l = r.0;
+  let s = r.1;
   while (is_tok(s, "+") || is_tok(s, "-")) {
-    let op: string = peek(s);
+    let op = peek(s);
     let r2: (string, S) = eval4(advance(s), ev);
     l = arith(op, l, r2.0, ev);
     s = r2.1;
@@ -385,10 +385,10 @@ function relate(op: string, c: i32): boolean {
 
 function eval2(s0: S, ev: boolean): (string, S) {
   let r: (string, S) = eval3(s0, ev);
-  let l: string = r.0;
-  let s: S = r.1;
+  let l = r.0;
+  let s = r.1;
   while (has(s) && is_relop(peek(s))) {
-    let op: string = peek(s);
+    let op = peek(s);
     let r2: (string, S) = eval3(advance(s), ev);
     l = bool_value(relate(op, compare(l, r2.0)));
     s = r2.1;
@@ -398,8 +398,8 @@ function eval2(s0: S, ev: boolean): (string, S) {
 
 function eval_and(s0: S, ev: boolean): (string, S) {
   let r: (string, S) = eval2(s0, ev);
-  let l: string = r.0;
-  let s: S = r.1;
+  let l = r.0;
+  let s = r.1;
   while (is_tok(s, "&")) {
     let r2: (string, S) = eval2(advance(s), ev && !is_null(l));
     s = r2.1;
@@ -412,8 +412,8 @@ function eval_and(s0: S, ev: boolean): (string, S) {
 
 function eval_or(s0: S, ev: boolean): (string, S) {
   let r: (string, S) = eval_and(s0, ev);
-  let l: string = r.0;
-  let s: S = r.1;
+  let l = r.0;
+  let s = r.1;
   while (is_tok(s, "|")) {
     let r2: (string, S) = eval_and(advance(s), ev && is_null(l));
     s = r2.1;
@@ -431,11 +431,11 @@ function sole_option(argv: string[]): void {
   if (argv.len() != 2) {
     return;
   }
-  let a: string = argv[1];
+  let a = argv[1];
   if (a.len() < 3 || !a.starts_with("--")) {
     return;
   }
-  let name: string = slice_unchecked(a, 2, a.len()) + "";
+  let name = slice_unchecked(a, 2, a.len()) + "";
   if ("help".starts_with(name)) {
     gnu.write_out_with(help_text(), failure());
     exit(0);
@@ -447,27 +447,27 @@ function sole_option(argv: string[]): void {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   sole_option(argv);
-  let start: i32 = 1;
+  let start = 1;
   if (argv.len() > 1 && argv[1] == "--") {
     start = 2;
   }
   let ops: string[] = [];
-  let k: i32 = start;
+  let k = start;
   while (k < argv.len()) {
     ops = ops.append(argv[k]);
-    k = k + 1;
+    k += 1;
   }
   if (ops.len() == 0) {
     gnu.die_usage("missing operand", invalid());
   }
   let r: (string, S) = eval_or(S { ops: ops, i: 0 }, true);
-  let s: S = r.1;
+  let s = r.1;
   if (has(s)) {
     die("syntax error: unexpected argument " + gnu.quote(peek(s)));
   }
-  let o: io_buffered.BufWriter = gnu.out_with(r.0.len() + 1);
+  let o = gnu.out_with(r.0.len() + 1);
   o = gnu.put_with(o, r.0 + "\n", failure());
   gnu.finish_with(o, failure());
   if (is_null(r.0)) {

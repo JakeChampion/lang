@@ -1,0 +1,146 @@
+import "std/hash/crc32";
+import "std/opus/modes";
+import "std/opus/range";
+import "std/opus/rate";
+import "std/test";
+
+// Each script runs random allocations, first on the encoding side and then on
+// the decoding side, over the bytes that the encoder wrote. The trace holds the
+// inputs and each result. libopus 1.4 gave the CRC-32 of each trace, from a C
+// program that calls clt_compute_allocation with the same inputs.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function show(tag: string, a: rate.Allocation, tell: i32): string {
+  let dual: i32 = 0;
+  if (a.dual_stereo) {
+    dual = 1;
+  }
+  let s: string = tag + " " + a.coded_bands.to_string() + " " + a.intensity.to_string() + " " + dual.to_string() + " " + a.balance.to_string() + " " + tell.to_string() + " |";
+  for i in 0..21 {
+    s = s + " " + a.pulses[i].to_string() + "/" + a.ebits[i].to_string() + "/" + a.fine_priority[i].to_string();
+  }
+  return s;
+}
+
+function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let t: crc32.Crc32 = crc32.new();
+  let g: Gen = Gen { x: seed };
+  for c in 0..cases {
+    let (g1, r1) = rnd(g);
+    let start: i32 = 0;
+    if (r1 % 4 == 0) {
+      start = 17;
+    }
+    let (g2, r2) = rnd(g1);
+    let end: i32 = start + 1 + r2 % (21 - start);
+    let (g3, r3) = rnd(g2);
+    let lm: i32 = r3 % 4;
+    let (g4, r4) = rnd(g3);
+    let ch: i32 = 1 + r4 % 2;
+    let (g5, r5) = rnd(g4);
+    let trim: i32 = r5 % 11;
+    g = g5;
+    let offsets: i32[] = [];
+    let cap: i32[] = [];
+    for i in 0..21 {
+      let (ga, ra) = rnd(g);
+      g = ga;
+      let off: i32 = 0;
+      if (ra % 5 == 0) {
+        let (gb, rb) = rnd(g);
+        g = gb;
+        off = 8 * (rb % 40);
+      }
+      offsets = offsets.append(off);
+      let n: i32 = modes.EBANDS[i + 1] - modes.EBANDS[i] << lm;
+      cap = cap.append((modes.CACHE_CAPS[modes.BANDS * (2 * lm + ch - 1) + i] + 64) * ch * n >> 2);
+    }
+    let (g6, r6) = rnd(g);
+    let total: i32 = r6 % (1275 * 64);
+    let (g7, r7) = rnd(g6);
+    g = g7;
+    if (r7 % 3 == 0) {
+      let (g8, r8) = rnd(g);
+      g = g8;
+      total = r8 % 2000;
+    }
+    let (g9, r9) = rnd(g);
+    let intensity: i32 = start + r9 % (end + 1 - start);
+    let (g10, r10) = rnd(g9);
+    let dual: boolean = r10 % 2 == 1;
+    let (g11, r11) = rnd(g10);
+    let prev: i32 = r11 % 22;
+    let (g12, r12) = rnd(g11);
+    let sbw: i32 = r12 % 21;
+    g = g12;
+    let req: rate.Request = rate.Request { start: start, end: end, offsets: offsets, cap: cap, alloc_trim: trim, intensity: intensity, dual_stereo: dual, total: total, channels: ch, lm: lm, prev: prev, signal_bandwidth: sbw };
+    let dualn: i32 = 0;
+    if (dual) {
+      dualn = 1;
+    }
+    t = line(t, "q " + start.to_string() + " " + end.to_string() + " " + lm.to_string() + " " + ch.to_string() + " " + trim.to_string() + " " + total.to_string() + " " + intensity.to_string() + " " + dualn.to_string() + " " + prev.to_string() + " " + sbw.to_string());
+    let (ce, a) = rate.compute_allocation(range.Encoding(range.encoder(2000)), req);
+    t = line(t, show("e", a, ce.tell_frac()));
+    let packet: u8[] = [];
+    match (ce) {
+      range.Encoding(e) => {
+        packet = e.done().bytes();
+      },
+      range.Decoding(_) => {}
+    }
+    let (cd, b) = rate.compute_allocation(range.Decoding(range.decoder(packet)), rate.Request { ...req, intensity: 0, dual_stereo: false, prev: 0, signal_bandwidth: 0 });
+    t = line(t, show("d", b, cd.tell_frac()));
+  }
+  return t.finish();
+}
+
+function test_short_script(): test.TestOutcome {
+  return test.assert_eq(trace(2u32, 500), 3299352854u32);
+}
+
+function test_long_script(): test.TestOutcome {
+  return test.assert_eq(trace(3u32, 3000), 4192868265u32);
+}
+
+function test_pulses(): test.TestOutcome {
+  let all: string = rate.get_pulses(7).to_string() + " " + rate.get_pulses(8).to_string() + " " + rate.get_pulses(15).to_string() + " " + rate.get_pulses(40).to_string();
+  return test.assert_eq(all, "7 8 15 128");
+}
+
+// The pulses of each bit count and the bits of each pulse count, for each band
+// and each frame size. libopus gave the CRC-32 of the same lines.
+function test_pulse_cache(): test.TestOutcome {
+  let t: crc32.Crc32 = crc32.new();
+  for lm in 0..4 {
+    for band in 0..modes.BANDS {
+      let most: i32 = modes.CACHE_BITS[modes.CACHE_INDEX[(lm + 1) * modes.BANDS + band]];
+      let top: i32 = rate.pulses2bits(band, lm, most) + 16;
+      for bits in 0..top + 1 {
+        t = line(t, lm.to_string() + " " + band.to_string() + " " + bits.to_string() + " " + rate.bits2pulses(band, lm, bits).to_string());
+      }
+      for k in 0..most + 1 {
+        t = line(t, "p " + rate.pulses2bits(band, lm, k).to_string());
+      }
+    }
+  }
+  return test.assert_eq(t.finish(), 3056495796u32);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/rate");
+  r = r.it("a short script gives the libopus trace", test_short_script);
+  r = r.it("a long script gives the libopus trace", test_long_script);
+  r = r.it("get_pulses expands the pseudo-pulse counts", test_pulses);
+  r = r.it("the pulse cache gives the libopus values", test_pulse_cache);
+  return r.finish();
+}

@@ -35,12 +35,12 @@ pub function name(n: i32): string {
   if (n == 0) {
     return "EXIT";
   }
-  let ns: string[] = names();
+  let ns = names();
   if (n >= 1 && n <= ns.len()) {
     return ns[n - 1];
   }
-  let lo: i32 = rt_min();
-  let hi: i32 = rt_max();
+  let lo = rt_min();
+  let hi = rt_max();
   if (lo == 0 || n < lo || n > hi) {
     return "";
   }
@@ -64,21 +64,21 @@ function descriptions(): string[] {
 }
 
 pub function description(n: i32): string {
-  let dar: boolean = target_os() == "darwin";
+  let dar = target_os() == "darwin";
   if (n == 0) {
     if (dar) {
       return "Unknown signal: 0";
     }
     return "Unknown signal 0";
   }
-  let ds: string[] = descriptions();
+  let ds = descriptions();
   if (n >= 1 && n <= ds.len()) {
     if (dar) {
       return ds[n - 1] + ": " + n.to_string();
     }
     return ds[n - 1];
   }
-  let lo: i32 = rt_min();
+  let lo = rt_min();
   if (lo == 0 || n < lo || n > rt_max()) {
     return "";
   }
@@ -103,7 +103,7 @@ pub function number(s: string): i32 {
   if (s.len() == 0) {
     return 0;
   }
-  let bare: string = upper(s);
+  let bare = upper(s);
   if (bare.starts_with("SIG")) {
     bare = slice_unchecked(bare, 3, bare.len()) + "";
   }
@@ -111,46 +111,46 @@ pub function number(s: string): i32 {
 }
 
 function table_number(bare: string): i32 {
-  let ns: string[] = names();
-  let i: i32 = 0;
+  let ns = names();
+  let i = 0;
   while (i < ns.len()) {
     if (ns[i] == bare) {
       return i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
-  let alt: string[] = alternates();
-  let av: i32[] = alternate_values();
-  let j: i32 = 0;
+  let alt = alternates();
+  let av = alternate_values();
+  let j = 0;
   while (j < alt.len()) {
     if (alt[j] == bare) {
       return av[j];
     }
-    j = j + 1;
+    j += 1;
   }
   return realtime_number(bare);
 }
 
 function parse_u31(s: string): i32 {
   if (s.len() == 0) {
-    return 0 - 1;
+    return -1;
   }
-  let v: i32 = 0;
-  let i: i32 = 0;
+  let v = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c < 48 || c > 57) {
-      return 0 - 1;
+      return -1;
     }
-    let d: i32 = c - 48;
+    let d = c - 48;
     if (v > 214748364) {
-      return 0 - 1;
+      return -1;
     }
     if (v == 214748364 && d > 7) {
-      return 0 - 1;
+      return -1;
     }
     v = v * 10 + d;
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -159,9 +159,9 @@ function str2signum(bare: string): i32 {
   if (bare.len() == 0) {
     return 0 - 1;
   }
-  let c0: i32 = bare[0] as i32;
+  let c0 = bare[0] as i32;
   if (c0 >= 48 && c0 <= 57) {
-    let v: i32 = parse_u31(bare);
+    let v = parse_u31(bare);
     if (v < 0 || v > highest()) {
       return 0 - 1;
     }
@@ -170,7 +170,7 @@ function str2signum(bare: string): i32 {
   if (bare == "EXIT") {
     return 0;
   }
-  let t: i32 = table_number(bare);
+  let t = table_number(bare);
   if (t != 0) {
     return t;
   }
@@ -181,13 +181,13 @@ pub function operand2sig(operand: string): i32 {
   if (operand.len() == 0) {
     return 0 - 1;
   }
-  let c0: i32 = operand[0] as i32;
+  let c0 = operand[0] as i32;
   if (c0 >= 48 && c0 <= 57) {
-    let v: i32 = parse_u31(operand);
+    let v = parse_u31(operand);
     if (v < 0) {
       return 0 - 1;
     }
-    let n: i32 = v % 128;
+    let n = v % 128;
     if (v >= 255) {
       n = v % 256;
     }
@@ -196,8 +196,8 @@ pub function operand2sig(operand: string): i32 {
     }
     return n;
   }
-  let up: string = upper(operand);
-  let found: i32 = str2signum(up);
+  let up = upper(operand);
+  let found = str2signum(up);
   if (found < 0 && up.starts_with("SIG")) {
     found = str2signum(slice_unchecked(up, 3, up.len()) + "");
   }
@@ -208,8 +208,8 @@ pub function operand2sig(operand: string): i32 {
 }
 
 function realtime_number(bare: string): i32 {
-  let lo: i32 = rt_min();
-  let hi: i32 = rt_max();
+  let lo = rt_min();
+  let hi = rt_max();
   if (lo == 0) {
     return 0;
   }
@@ -219,7 +219,7 @@ function realtime_number(bare: string): i32 {
   if (bare == "RTMAX") {
     return hi;
   }
-  let base: i32 = 0;
+  let base = 0;
   if (bare.starts_with("RTMIN")) {
     base = lo;
   } else if (bare.starts_with("RTMAX")) {
@@ -227,17 +227,17 @@ function realtime_number(bare: string): i32 {
   } else {
     return 0;
   }
-  let rest: string = slice_unchecked(bare, 5, bare.len()) + "";
+  let rest = slice_unchecked(bare, 5, bare.len()) + "";
   if (rest.len() < 2) {
     return 0;
   }
-  let sign: string = slice_unchecked(rest, 0, 1) + "";
-  let digits: string = slice_unchecked(rest, 1, rest.len()) + "";
-  let off: i32 = parse_u31(digits);
+  let sign = slice_unchecked(rest, 0, 1) + "";
+  let digits = slice_unchecked(rest, 1, rest.len()) + "";
+  let off = parse_u31(digits);
   if (off < 0) {
     return 0;
   }
-  let n: i32 = 0;
+  let n = 0;
   if (sign == "+") {
     n = base + off;
   } else if (sign == "-") {

@@ -16,22 +16,22 @@ function opt_digit(d: i32): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Convert tabs in each FILE to spaces, writing to standard output.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -i, --initial    do not convert tabs after non blanks\n";
-  out = out + "  -t, --tabs=N     have tabs N characters apart, not 8\n";
-  out = out + "  -t, --tabs=LIST  use comma separated list of tab positions\n";
-  out = out + "                     The last specified position can be prefixed with '/'\n";
-  out = out + "                     to specify a tab size to use after the last\n";
-  out = out + "                     explicitly specified tab stop.  Also a prefix of '+'\n";
-  out = out + "                     can be used to align remaining tab stops relative to\n";
-  out = out + "                     the last specified tab stop instead of the first column\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Convert tabs in each FILE to spaces, writing to standard output.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -i, --initial    do not convert tabs after non blanks\n";
+  out += "  -t, --tabs=N     have tabs N characters apart, not 8\n";
+  out += "  -t, --tabs=LIST  use comma separated list of tab positions\n";
+  out += "                     The last specified position can be prefixed with '/'\n";
+  out += "                     to specify a tab size to use after the last\n";
+  out += "                     explicitly specified tab stop.  Also a prefix of '+'\n";
+  out += "                     can be used to align remaining tab stops relative to\n";
+  out += "                     the last specified tab stop instead of the first column\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -48,19 +48,19 @@ function digit_of(id: i32): string {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("t", "tabs", opt_tabs()));
   opts = opts.append(gnu.flag("i", "initial", opt_initial()));
-  let d: i32 = 0;
+  let d = 0;
   while (d < 10) {
     opts = opts.append(gnu.optional(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
-    d = d + 1;
+    d += 1;
   }
 
-  let stops: tabs.Tabs = tabs.tabs_new();
-  let initial: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "expand", help_text(), 1);
+  let stops = tabs.tabs_new();
+  let initial = false;
+  let g = gnu.getopt_new(argv, opts, "expand", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -81,7 +81,7 @@ pub function main(): i32 {
   }
   stops = stops.finish();
 
-  let files: string[] = g.operands();
+  let files = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
@@ -89,24 +89,24 @@ pub function main(): i32 {
 }
 
 function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
-  let o: io_buffered.BufWriter = gnu.out_with(block_size());
-  let h: usize = o.handle();
-  let pad: string = "        ";
-  let ok: boolean = true;
-  let step: u64 = stops.size;
+  let o = gnu.out_with(block_size());
+  let h = o.handle();
+  let pad = "        ";
+  let ok = true;
+  let step = stops.size;
 
-  let fi: i32 = 0;
-  let have_reader: boolean = false;
-  let is_stdin: boolean = false;
-  let name: string = "";
-  let r: Reader = stdin();
+  let fi = 0;
+  let have_reader = false;
+  let is_stdin = false;
+  let name = "";
+  let r = stdin();
   let chunk: u8[] = [];
-  let pos: i32 = 0;
-  let tabat: i32 = 0 - 1;
-  let bsat: i32 = 0 - 1;
-  let nulat: i32 = 0 - 1;
-  let carry: usize = 0 as usize;
-  let final: boolean = false;
+  let pos = 0;
+  let tabat: i32 = -1;
+  let bsat: i32 = -1;
+  let nulat: i32 = -1;
+  let carry = 0 as usize;
+  let final = false;
 
   while (true) {
     if (pos >= chunk.len()) {
@@ -115,7 +115,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       }
       chunk = [];
       pos = 0;
-      let got: boolean = false;
+      let got = false;
       while (!got) {
         if (!have_reader) {
           if (fi >= files.len()) {
@@ -128,13 +128,13 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
             got = true;
           } else {
             name = files[fi];
-            fi = fi + 1;
+            fi += 1;
             is_stdin = name == "-";
             if (is_stdin) {
               r = stdin();
               have_reader = true;
             } else {
-              let opened: boolean = false;
+              let opened = false;
               match (open_reader(name)) {
                 Ok(f) => {
                   r = f;
@@ -150,13 +150,13 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           }
         } else {
           let piece: u8[] = [];
-          let read_ok: boolean = true;
+          let read_ok = true;
           match (r.read_chunk_bytes(read_size())) {
             Ok(c) => {
               piece = c;
             },
             Err(e) => {
-              let message: string = gnu.io_error_text(e);
+              let message = gnu.io_error_text(e);
               match (r.stat()) {
                 Ok(st) => {
                   if (st.is_dir) {
@@ -197,7 +197,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       continue;
     }
 
-    let j: i32 = __memchr_bytes(chunk, 10, pos);
+    let j = __memchr_bytes(chunk, 10, pos);
     if (j < 0) {
       if (!final) {
         if (carry == 0 as usize) {
@@ -210,10 +210,10 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
       j = chunk.len() - 1;
     }
 
-    let buf: u8[] = chunk;
-    let lo: i32 = pos;
-    let hi: i32 = j + 1;
-    let carried: boolean = carry != 0 as usize;
+    let buf = chunk;
+    let lo = pos;
+    let hi = j + 1;
+    let carried = carry != 0 as usize;
     if (carried) {
       buf_push_bytes_range(carry, chunk, pos, j + 1);
       buf = buf_take_bytes(carry);
@@ -224,9 +224,9 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     }
     pos = j + 1;
 
-    let ta: i32 = tabat;
-    let ba: i32 = bsat;
-    let na: i32 = nulat;
+    let ta = tabat;
+    let ba = bsat;
+    let na = nulat;
     if (carried) {
       ta = __memchr_bytes(buf, 9, 0);
       ba = __memchr_bytes(buf, 8, 0);
@@ -235,18 +235,18 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
     if (ta < 0 || ta >= hi) {
       buf_push_bytes_range(h, buf, lo, hi);
     } else {
-      let end: i32 = hi;
+      let end = hi;
       if (initial) {
         end = lo;
         while (end < hi && (buf[end] as i32 == 32 || buf[end] as i32 == 9)) {
-          end = end + 1;
+          end += 1;
         }
       }
-      let p: i32 = lo;
-      let column: u64 = 0 as u64;
-      let idx: i32 = 0;
+      let p = lo;
+      let column = 0 as u64;
+      let idx = 0;
       while (p < end) {
-        let k: i32 = end;
+        let k = end;
         if (ta >= p && ta < k) {
           k = ta;
         }
@@ -264,8 +264,8 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
         if (p >= end) {
           break;
         }
-        let c: i32 = buf[p] as i32;
-        p = p + 1;
+        let c = buf[p] as i32;
+        p += 1;
         if (c == 0) {
           buf_push_byte(h, c);
           na = __memchr_bytes(buf, 0, p);
@@ -274,12 +274,12 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
             column = column - 1 as u64;
           }
           if (idx > 0) {
-            idx = idx - 1;
+            idx -= 1;
           }
           buf_push_byte(h, c);
           ba = __memchr_bytes(buf, 8, p);
         } else {
-          let target: u64 = 0 as u64;
+          let target = 0 as u64;
           if (step != 0 as u64) {
             target = column + (step - column % step);
           } else {
@@ -290,18 +290,18 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           if (target == 0 as u64) {
             target = column + 1 as u64;
           }
-          let need: u64 = target - column;
+          let need = target - column;
           column = target;
           if (need <= 8 as u64) {
             buf_push_range(h, pad, 0, need as i32);
           } else {
             while (need > 0 as u64) {
-              let take: i32 = 4096;
+              let take = 4096;
               if (need < 4096 as u64) {
                 take = need as i32;
               }
               while (pad.len() < take) {
-                pad = pad + "                                ";
+                pad += "                                ";
               }
               buf_push_range(h, pad, 0, take);
               need = need - take as u64;

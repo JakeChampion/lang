@@ -44,6 +44,7 @@
 # Both runs contain timeouts. Interrupted tests retain their existing weights.
 # The independent Socket run 41669959339 supplies the complete replay workload.
 # Replay and limits: docs/ci-log/2026-11-03-self-host-shard-balance.md.
+# 2026-11-03: TestSelfHostConstAggregateArm64PIE measured 112.7 s in the audit of run 41668392373.
 
 TestAbortCauseLineInterpreters 11
 TestCheckRenderMatchesOracle 6
@@ -778,7 +779,7 @@ TestSelfHostCondBranch 125
 TestSelfHostConditionalValueReleaseArm64 7
 TestSelfHostConditionalValueReleaseWasm 7
 TestSelfHostConditionalValueReleaseX86_64 8
-TestSelfHostConstAggregateArm64PIE 2
+TestSelfHostConstAggregateArm64PIE 170
 TestSelfHostConstAggregateIRX86_64 8
 TestSelfHostConstAggregateWasmIR 4
 TestSelfHostConstArm64 6

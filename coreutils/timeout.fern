@@ -31,45 +31,45 @@ function status_canceled(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] DURATION COMMAND [ARG]...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]\n";
-  out = out + "Start COMMAND, and kill it if still running after DURATION.\n";
-  out = out + "\n";
-  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
-  out = out + "      --preserve-status\n";
-  out = out + "                 exit with the same status as COMMAND, even when the\n";
-  out = out + "                   command times out\n";
-  out = out + "      --foreground\n";
-  out = out + "                 when not running timeout directly from a shell prompt,\n";
-  out = out + "                   allow COMMAND to read from the TTY and get TTY signals;\n";
-  out = out + "                   in this mode, children of COMMAND will not be timed out\n";
-  out = out + "  -k, --kill-after=DURATION\n";
-  out = out + "                 also send a KILL signal if COMMAND is still running\n";
-  out = out + "                   this long after the initial signal was sent\n";
-  out = out + "  -s, --signal=SIGNAL\n";
-  out = out + "                 specify the signal to be sent on timeout;\n";
-  out = out + "                   SIGNAL may be a name like 'HUP' or a number;\n";
-  out = out + "                   see 'kill -l' for a list of signals\n";
-  out = out + "  -v, --verbose  diagnose to stderr any signal sent upon timeout\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "DURATION is a floating point number with an optional suffix:\n";
-  out = out + "'s' for seconds (the default), 'm' for minutes, 'h' for hours or 'd' for days.\n";
-  out = out + "A duration of 0 disables the associated timeout.\n";
-  out = out + "\n";
-  out = out + "Upon timeout, send the TERM signal to COMMAND, if no other SIGNAL specified.\n";
-  out = out + "The TERM signal kills any process that does not block or catch that signal.\n";
-  out = out + "It may be necessary to use the KILL signal, since this signal can't be caught.\n";
-  out = out + "\n";
-  out = out + "Exit status:\n";
-  out = out + "  124  if COMMAND times out, and --preserve-status is not specified\n";
-  out = out + "  125  if the timeout command itself fails\n";
-  out = out + "  126  if COMMAND is found but cannot be invoked\n";
-  out = out + "  127  if COMMAND cannot be found\n";
-  out = out + "  137  if COMMAND (or timeout itself) is sent the KILL (9) signal (128+9)\n";
-  out = out + "  -    the exit status of COMMAND otherwise\n";
+  out += "Start COMMAND, and kill it if still running after DURATION.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "      --preserve-status\n";
+  out += "                 exit with the same status as COMMAND, even when the\n";
+  out += "                   command times out\n";
+  out += "      --foreground\n";
+  out += "                 when not running timeout directly from a shell prompt,\n";
+  out += "                   allow COMMAND to read from the TTY and get TTY signals;\n";
+  out += "                   in this mode, children of COMMAND will not be timed out\n";
+  out += "  -k, --kill-after=DURATION\n";
+  out += "                 also send a KILL signal if COMMAND is still running\n";
+  out += "                   this long after the initial signal was sent\n";
+  out += "  -s, --signal=SIGNAL\n";
+  out += "                 specify the signal to be sent on timeout;\n";
+  out += "                   SIGNAL may be a name like 'HUP' or a number;\n";
+  out += "                   see 'kill -l' for a list of signals\n";
+  out += "  -v, --verbose  diagnose to stderr any signal sent upon timeout\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "DURATION is a floating point number with an optional suffix:\n";
+  out += "'s' for seconds (the default), 'm' for minutes, 'h' for hours or 'd' for days.\n";
+  out += "A duration of 0 disables the associated timeout.\n";
+  out += "\n";
+  out += "Upon timeout, send the TERM signal to COMMAND, if no other SIGNAL specified.\n";
+  out += "The TERM signal kills any process that does not block or catch that signal.\n";
+  out += "It may be necessary to use the KILL signal, since this signal can't be caught.\n";
+  out += "\n";
+  out += "Exit status:\n";
+  out += "  124  if COMMAND times out, and --preserve-status is not specified\n";
+  out += "  125  if the timeout command itself fails\n";
+  out += "  126  if COMMAND is found but cannot be invoked\n";
+  out += "  127  if COMMAND cannot be found\n";
+  out += "  137  if COMMAND (or timeout itself) is sent the KILL (9) signal (128+9)\n";
+  out += "  -    the exit status of COMMAND otherwise\n";
   return out;
 }
 
@@ -91,14 +91,14 @@ function interval(f: ld.Format, s: string): ld.LD {
 }
 
 function fork_timer(f: ld.Format, seconds: ld.LD, fwd: i32[]): i32 {
-  let pid: i32 = proc_fork();
+  let pid = proc_fork();
   if (pid != 0) {
     return pid;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < fwd.len()) {
     signal.ignore(fwd[i]);
-    i = i + 1;
+    i += 1;
   }
   duration.sleep_seconds(f, seconds);
   exit(0);
@@ -110,28 +110,28 @@ function cancel_timer(pid: i32): void {
     Ok(_) => {},
     Err(_) => {}
   }
-  let reaped: i32 = proc_waitpid(pid);
+  let reaped = proc_waitpid(pid);
   while (reaped == eintr()) {
     reaped = proc_waitpid(pid);
   }
 }
 
 function eintr(): i32 {
-  return 0 - 4;
+  return -4;
 }
 
 function forwarded(term: i32): i32[] {
   let names: string[] = ["ALRM", "INT", "QUIT", "HUP", "TERM", "PIPE", "USR1", "USR2", "ILL", "TRAP", "ABRT", "BUS", "FPE", "SEGV", "XCPU", "XFSZ", "SYS", "VTALRM", "PROF", "POLL", "PWR", "STKFLT", "EMT"];
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     out = with_handled(out, signals.number(names[i]), term);
-    i = i + 1;
+    i += 1;
   }
-  let rt: i32 = signals.rt_min();
+  let rt = signals.rt_min();
   while (rt > 0 && rt <= signals.rt_max()) {
     out = with_handled(out, rt, term);
-    rt = rt + 1;
+    rt += 1;
   }
   return with_handled(out, term, term);
 }
@@ -147,12 +147,12 @@ function with_handled(sigs: i32[], n: i32, term: i32): i32[] {
 }
 
 function has(sigs: i32[], n: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < sigs.len()) {
     if (sigs[i] == n) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -162,12 +162,12 @@ function sig_alrm(): i32 {
 }
 
 function fired(pid: i32): boolean {
-  return proc_waitpid_nohang(pid) == 0 - 10;
+  return proc_waitpid_nohang(pid) == -10;
 }
 
 function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): void {
   if (verbose) {
-    let shown: string = signals.name(sig);
+    let shown = signals.name(sig);
     if (sig == 0) {
       shown = "0";
     }
@@ -181,7 +181,7 @@ function deliver(sig: i32, cmd: string, cpid: i32, foreground: boolean, verbose:
     return;
   }
   send(0, sig);
-  let cont: i32 = signals.number("CONT");
+  let cont = signals.number("CONT");
   if (sig != sig_kill() && sig != cont) {
     send(cpid, cont);
     send(0, cont);
@@ -196,7 +196,7 @@ function send(pid: i32, sig: i32): void {
 }
 
 function run_child(cmd: string, argv: string[]): void {
-  let errno: i32 = gnu.exec_command(cmd, argv, environ());
+  let errno = gnu.exec_command(cmd, argv, environ());
   gnu.error("failed to run command " + gnu.quote(cmd) + ": " + gnu.exec_errno_text(errno));
   if (errno == 2) {
     exit(127);
@@ -214,8 +214,8 @@ function parse_options(f: ld.Format): (Cfg, string[]) {
   opts = opts.append(gnu.valued("s", "signal", opt_signal()));
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
 
-  let cfg: Cfg = Cfg { sig: signals.number("TERM"), kill_after: f.from_i64(0 as i64), preserve: false, foreground: false, verbose: false };
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "timeout", help_text(), status_canceled()).in_order();
+  let cfg = Cfg { sig: signals.number("TERM"), kill_after: f.from_i64(0 as i64), preserve: false, foreground: false, verbose: false };
+  let g = gnu.getopt_new(args(), opts, "timeout", help_text(), status_canceled()).in_order();
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -244,7 +244,7 @@ function apply_option(f: ld.Format, cfg: Cfg, m: gnu.OptMatch): Cfg {
   if (m.id == opt_kill_after()) {
     return Cfg { ...cfg, kill_after: interval(f, m.value) };
   }
-  let sig: i32 = signals.operand2sig(m.value);
+  let sig = signals.operand2sig(m.value);
   if (sig < 0) {
     gnu.error(gnu.quote(m.value) + ": invalid signal");
     gnu.try_help(status_canceled());
@@ -253,20 +253,20 @@ function apply_option(f: ld.Format, cfg: Cfg, m: gnu.OptMatch): Cfg {
 }
 
 pub function main(): i32 {
-  let f: ld.Format = ld.format();
+  let f = ld.format();
   let parsed: (Cfg, string[]) = parse_options(f);
-  let cfg: Cfg = parsed.0;
-  let rest: string[] = parsed.1;
+  let cfg = parsed.0;
+  let rest = parsed.1;
   if (rest.len() < 2) {
     gnu.try_help(status_canceled());
   }
-  let wait_for: ld.LD = interval(f, rest[0]);
-  let cmd: string = rest[1];
+  let wait_for = interval(f, rest[0]);
+  let cmd = rest[1];
   let argv: string[] = [];
-  let a: i32 = 1;
+  let a = 1;
   while (a < rest.len()) {
     argv = argv.append(rest[a]);
-    a = a + 1;
+    a += 1;
   }
 
   if (!cfg.foreground) {
@@ -276,16 +276,16 @@ pub function main(): i32 {
     }
   }
 
-  let fwd: i32[] = forwarded(cfg.sig);
-  let i: i32 = 0;
+  let fwd = forwarded(cfg.sig);
+  let i = 0;
   while (i < fwd.len()) {
     signal.catch_interrupting(fwd[i]);
-    i = i + 1;
+    i += 1;
   }
 
-  let cpid: i32 = proc_fork();
+  let cpid = proc_fork();
   if (cpid < 0) {
-    gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - cpid));
+    gnu.error("fork system call failed: " + gnu.exec_errno_text(-cpid));
     return status_canceled();
   }
   if (cpid == 0) {
@@ -305,14 +305,14 @@ function over_setitimer_bound(f: ld.Format, seconds: ld.LD): boolean {
 struct Watch { tpid: i32, timer_sig: i32, kill_after: ld.LD, timed_out: boolean }
 
 function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i32, fwd: i32[]): i32 {
-  let w: Watch = Watch { tpid: 0, timer_sig: cfg.sig, kill_after: cfg.kill_after, timed_out: false };
+  let w = Watch { tpid: 0, timer_sig: cfg.sig, kill_after: cfg.kill_after, timed_out: false };
   if (!wait_for.is_zero()) {
     if (target_os() == "darwin" && over_setitimer_bound(f, wait_for)) {
       gnu.error("warning: setitimer: " + gnu.exec_errno_text(22));
     } else {
-      let tpid: i32 = fork_timer(f, wait_for, fwd);
+      let tpid = fork_timer(f, wait_for, fwd);
       if (tpid < 0) {
-        gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - tpid));
+        gnu.error("fork system call failed: " + gnu.exec_errno_text(-tpid));
         return status_canceled();
       }
       w = Watch { ...w, tpid: tpid };
@@ -320,7 +320,7 @@ function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i
   }
   while (true) {
     w = take_signals(f, cfg, cmd, cpid, fwd, w);
-    let status: i32 = proc_waitpid_status(0 - 1);
+    let status = proc_waitpid_status(-1);
     if (status == eintr()) {
       continue;
     }
@@ -337,10 +337,10 @@ function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i
 }
 
 function take_signals(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[], w0: Watch): Watch {
-  let w: Watch = w0;
-  let i: i32 = 0;
+  let w = w0;
+  let i = 0;
   while (i < fwd.len()) {
-    let n: i32 = fwd[i];
+    let n = fwd[i];
     if (signal.taken(n)) {
       if (n == sig_alrm()) {
         w = act(f, cfg, cmd, cpid, fwd, Watch { ...w, timed_out: true }, w.timer_sig);
@@ -348,21 +348,21 @@ function take_signals(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[]
         w = act(f, cfg, cmd, cpid, fwd, w, n);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
 
 function act(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[], w0: Watch, sig: i32): Watch {
   deliver(sig, cmd, cpid, cfg.foreground, cfg.verbose);
-  let w: Watch = w0;
+  let w = w0;
   if (w.kill_after.is_zero()) {
     return w;
   }
   if (w.tpid > 0) {
     cancel_timer(w.tpid);
   }
-  let kpid: i32 = fork_timer(f, w.kill_after, fwd);
+  let kpid = fork_timer(f, w.kill_after, fwd);
   if (kpid < 0) {
     kpid = 0;
   }
@@ -370,9 +370,9 @@ function act(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[], w0: Wat
 }
 
 function finish(cfg: Cfg, w: Watch, status: i32): i32 {
-  let sig: i32 = status & 127;
+  let sig = status & 127;
   if (status < 0 || sig == 0) {
-    let code: i32 = status;
+    let code = status;
     if (status >= 0) {
       code = status >> 8 & 255;
     }

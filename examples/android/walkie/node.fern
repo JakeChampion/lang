@@ -1,0 +1,354 @@
+// One walkie-talkie phone without its Android parts: the LAN link, the key
+// exchange, the session and the voice frames. The app gives it datagrams,
+// touches, microphone samples and the time. It does what the node asks: it
+// sends the datagrams in `out`, plays the frames in `heard`, and runs the
+// microphone while `capture` is true. A host test runs two nodes on a
+// simulated network.
+import "std/net";
+import "./lan";
+import "./pcm";
+import "./protocol";
+import "./secure";
+import "./session";
+
+// A datagram to send: to the broadcast address on each walkie port, or to
+// the peer.
+pub struct Datagram { broadcast: boolean, data: u8[] }
+
+pub struct Node {
+  link: lan.Link,
+  peer_addr: net.SocketAddr,
+  chan: Option[secure.Channel],
+  sess: session.Session,
+  // Random bytes for the key exchange: 32 for the key, then 16 for the nonce.
+  seed: u8[],
+  capture: boolean,
+  // Microphone samples at the wire rate that do not fill a frame yet.
+  pending: i32[],
+  notice: string,
+  heard_at: i64,
+  // The outputs since the app last took them.
+  out: Datagram[],
+  heard: i32[][],
+  logs: string[],
+}
+
+pub const SEED_BYTES: i32 = 48;
+
+// A node with ID `me`, which sends PCM voice frames.
+pub function new(me: i64, own seed: u8[], now: i64): Node {
+  let s0: session.Session = session.with_codec(session.new(), protocol.CODEC_PCM16);
+  let (s1, _) = session.step(s0, session.Start(session.Offline), now);
+  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], notice: "", heard_at: 0i64, out: [], heard: [], logs: [] };
+}
+
+// The node with its outputs taken.
+pub function drained(n: Node): Node {
+  return Node { ...n, out: [], heard: [], logs: [] };
+}
+
+pub function close(own n: Node): void {
+  match (n.chan) {
+    Some(c) => {
+      secure.close(c);
+    },
+    None => {}
+  }
+  let closed: lan.Link = lan.close(n.link);
+}
+
+// The session ended, or the key exchange did: a tap starts a new node.
+pub function ended(n: Node): boolean {
+  match (n.link.phase) {
+    lan.Closed => {
+      return true;
+    },
+    _ => {}
+  }
+  match (n.sess.state) {
+    session.Failed => {
+      return true;
+    },
+    session.Reconnecting => {
+      return true;
+    },
+    session.Idle => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// The `len` bytes of `b` from index `at`.
+function part(b: [u8], at: i32, len: i32): u8[] {
+  let out: u8[] = [];
+  for k in at..at + len {
+    out = out.append(b[k]);
+  }
+  return out;
+}
+
+function log(n: Node, line: string): Node {
+  return Node { ...n, logs: n.logs.append(line) };
+}
+
+function to_peer(n: Node, data: u8[][]): Node {
+  let out: Datagram[] = n.out;
+  for d in data {
+    out = out.append(Datagram { broadcast: false, data: d });
+  }
+  return Node { ...n, out: out };
+}
+
+// The datagram in the first `len` bytes of `data`, from `from`.
+pub function receive(n: Node, data: [u8], len: i32, from: net.SocketAddr, now: i64): Node {
+  match (lan.decode(data, len)) {
+    Some(p) => {
+      return packet(n, p, from, now);
+    },
+    None => {}
+  }
+  return n;
+}
+
+function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
+  let st: lan.Step = lan.heard(n.link, p, now);
+  let t: Node = to_peer(Node { ...n, link: st.link }, st.out);
+  match (st.heard) {
+    lan.Found(peer) => {
+      let u: Node = log(t, "found peer " + peer.to_string() + " at " + from.to_string());
+      let (l, out) = lan.pair(u.link, peer, now, part(u.seed, 0, 32), part(u.seed, 32, 16));
+      return to_peer(act(Node { ...u, link: l, peer_addr: from, seed: [] }, session.PeerFound, now), out);
+    },
+    lan.Verify(sas) => {
+      let me: i32 = 2;
+      let id: i64 = t.link.peer;
+      if (lan.initiator(t.link)) {
+        me = 1;
+        id = t.link.me;
+      }
+      return act(log(t, "keys are ready"), session.TransportUp(lan.initiator(t.link), me, 3 - me, id), now);
+    },
+    lan.Failed => {
+      return act(log(t, "the key exchange failed"), session.AuthFailed, now);
+    },
+    lan.Frame(kind, body) => {
+      return frame(t, kind, body, now);
+    },
+    lan.Nothing => {}
+  }
+  return t;
+}
+
+function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
+  match (n.chan) {
+    Some(c) => {
+      if (kind == lan.CONTROL) {
+        let (c1, plain) = secure.open_control(c, body);
+        let t: Node = Node { ...n, chan: Some(c1) };
+        match (plain) {
+          Some(b) => {
+            match (protocol.decode(b)) {
+              Some(m) => {
+                return act(t, session.Received(m), now);
+              },
+              None => {}
+            }
+          },
+          None => {}
+        }
+        return t;
+      }
+      let (c2, voice) = secure.open_voice(c, body);
+      let t2: Node = Node { ...n, chan: Some(c2) };
+      match (voice) {
+        Some(b) => {
+          let t3: Node = t2;
+          if (now - t2.heard_at > 1000i64) {
+            t3 = log(t2, "hearing the peer");
+          }
+          return Node { ...t3, heard: t3.heard.append(pcm.unpack(b)), heard_at: now };
+        },
+        None => {}
+      }
+      return t2;
+    },
+    None => {}
+  }
+  return n;
+}
+
+// One session event and its actions. The log gets each change of state,
+// and the confirmation of the peer.
+function act(n: Node, e: session.Event, now: i64): Node {
+  let (s, acts) = session.step(n.sess, e, now);
+  let t: Node = Node { ...n, sess: s };
+  let was: string = session.state_name(n.sess.state);
+  let next: string = session.state_name(s.state);
+  if (next != was) {
+    t = log(t, "state " + next);
+  }
+  if (s.peer_ready && !n.sess.peer_ready) {
+    t = log(t, "the other phone confirmed");
+  }
+  for a in acts {
+    t = action(t, a);
+  }
+  return t;
+}
+
+function action(n: Node, a: session.Action): Node {
+  match (a) {
+    session.Send(m) => {
+      return send_frame(n, lan.CONTROL, protocol.encode(m));
+    },
+    session.Capture(on) => {
+      return Node { ...n, capture: on, pending: [] };
+    },
+    session.Notice(text) => {
+      return log(Node { ...n, notice: text }, text);
+    }
+  }
+  return n;
+}
+
+// A sealed control or voice frame to the peer.
+function send_frame(n: Node, kind: i32, plain: u8[]): Node {
+  match (n.chan) {
+    Some(c) => {
+      let (c1, sealed) = match (kind == lan.VOICE) {
+        true => secure.seal_voice(c, plain),
+        false => secure.seal_control(c, plain),
+      };
+      return to_peer(Node { ...n, chan: Some(c1) }, [lan.encode(kind, n.link.me, sealed)]);
+    },
+    None => {}
+  }
+  return n;
+}
+
+// The beacons, the handshake resends and the session timers at `now`.
+pub function tick(n: Node, now: i64): Node {
+  let (l1, beacons) = lan.beacon(n.link, now);
+  let out: Datagram[] = n.out;
+  for b in beacons {
+    out = out.append(Datagram { broadcast: true, data: b });
+  }
+  let (l2, again) = lan.resend(l1, now);
+  return act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now);
+}
+
+// Microphone samples at the wire rate. Each full frame goes to the peer.
+pub function voice(n: Node, samples: [i32]): Node {
+  if (!n.capture) {
+    return n;
+  }
+  let pending: i32[] = n.pending;
+  for v in samples {
+    pending = pending.append(v);
+  }
+  let t: Node = n;
+  let at: i32 = 0;
+  while (pending.len() - at >= pcm.FRAME) {
+    let head: i32[] = [];
+    for k in at..at + pcm.FRAME {
+      head = head.append(pending[k]);
+    }
+    t = send_frame(t, lan.VOICE, pcm.pack(head));
+    at = at + pcm.FRAME;
+  }
+  let rest: i32[] = [];
+  for k in at..pending.len() {
+    rest = rest.append(pending[k]);
+  }
+  return Node { ...t, pending: rest };
+}
+
+pub function press(n: Node, now: i64): Node {
+  return act(n, session.PttDown, now);
+}
+
+pub function release(n: Node, now: i64): Node {
+  return act(n, session.PttUp, now);
+}
+
+// The user says that both phones show the same string.
+pub function confirm(n: Node, now: i64): Node {
+  match (n.link.phase) {
+    lan.Verifying => {},
+    _ => {
+      return n;
+    }
+  }
+  let (l, chan) = lan.confirm(n.link);
+  return act(log(Node { ...n, link: l, chan: chan }, "the string is confirmed"), session.Authenticated, now);
+}
+
+// The user says that the strings differ.
+pub function reject(own n: Node, now: i64): Node {
+  let t: Node = log(Node { ...n, link: lan.close(n.link) }, "the string is rejected");
+  return act(t, session.AuthFailed, now);
+}
+
+pub function leave(n: Node, now: i64): Node {
+  return act(n, session.Leave, now);
+}
+
+// The microphone failed or was not allowed: the floor goes back.
+pub function mic_lost(n: Node, why: string, now: i64): Node {
+  let t: Node = act(n, session.MicLost, now);
+  return Node { ...t, notice: why };
+}
+
+// The status line.
+pub function status(n: Node): string {
+  match (n.link.phase) {
+    lan.Searching => {
+      return "looking for a phone on this Wi-Fi";
+    },
+    lan.Pairing => {
+      return "found a phone: making keys";
+    },
+    lan.Verifying => {
+      return "do both phones show this code?";
+    },
+    lan.Closed => {
+      return "not connected";
+    },
+    lan.Ready => {
+      if (session.connected(n.sess) && !n.sess.peer_ready) {
+        return "waiting for the other phone to confirm";
+      }
+      return "connected";
+    }
+  }
+  return "";
+}
+
+// The words of the talk button.
+pub function button(n: Node, now: i64): string {
+  if (ended(n)) {
+    return "TAP TO SEARCH AGAIN";
+  }
+  match (n.sess.state) {
+    session.Transmitting => {
+      return "TALKING";
+    },
+    session.Requesting => {
+      return "WAIT";
+    },
+    session.Listening => {
+      if (!n.sess.peer_ready) {
+        return "WAITING";
+      }
+      if (n.sess.receiving || now - n.heard_at < 300i64) {
+        return "LISTENING";
+      }
+      return "HOLD TO TALK";
+    },
+    _ => {}
+  }
+  return "SEARCHING";
+}

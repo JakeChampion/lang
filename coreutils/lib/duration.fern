@@ -17,11 +17,11 @@ function suffix_seconds(b: i32): i64 {
 }
 
 pub function parse(f: ld.Format, s: string): Option[ld.LD] {
-  let r: ld.Parse = f.strtold(s);
+  let r = f.strtold(s);
   if (r.end == 0) {
     return None;
   }
-  let scale: i64 = 1 as i64;
+  let scale = 1 as i64;
   if (r.end == s.len() - 1) {
     scale = suffix_seconds(s[r.end] as i32);
     if (scale == 0 as i64) {
@@ -46,7 +46,7 @@ pub function nanos_ceil(f: ld.Format, seconds: ld.LD): Option[i64] {
   if (!seconds.is_finite()) {
     return None;
   }
-  let ns: ld.LD = f.mul(seconds, f.from_i64(1000000000 as i64));
+  let ns = f.mul(seconds, f.from_i64(1000000000 as i64));
   return f.round_to_int(ns, ld.round_up()).as_i64();
 }
 
@@ -58,7 +58,7 @@ pub function sleep_seconds(f: ld.Format, seconds: ld.LD): void {
       }
     },
     None => {
-      let hour_ns: i64 = 3600 as i64 * (1000000000 as i64);
+      let hour_ns = 3600 as i64 * (1000000000 as i64);
       while (true) {
         sleep_ns(hour_ns);
       }
