@@ -1723,7 +1723,11 @@ function (s: Scope) overload_ret(method: string, t: typeinfo.Type): typeinfo.Typ
   if (recv == "") {
     return t_unknown("operand is not a nominal type");
   }
-  return match (s.lookup_method(method, recv)) { Some(ms) => ms.ret_type, None => t_unknown("no such method") };
+  let Some(ms) = s.lookup_method(method, recv) else {
+    return t_unknown("no such method");
+  };
+  let no_type_args: string[] = [];
+  return generic_method_ret(ms, receiver_binding(ms, no_type_args, t, s), s);
 }
 
 function downcast_operand_ok(t: typeinfo.Type): boolean {
@@ -3368,7 +3372,7 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
         return t_i32();
       }
       if let Some(arm) = s.array_recv_method(field, array.view) {
-        return generic_method_ret(c, arm, method_binding(c, arm, recv_ty, s), s);
+        return generic_method_ret(arm, method_binding(c, arm, recv_ty, s), s);
       }
       if (array.view) {
         return t_unknown("no such array method");
@@ -5282,7 +5286,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           }
           match (bound_method(s, tp_receiver(recv_ty, s), name)) {
             Some(msig) => {
-              return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
+              return generic_method_ret(msig, method_binding(c, msig, recv_ty, s), s);
             },
             None => {}
           }
@@ -5406,7 +5410,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       if (c.args.len() != msig.param_types.len()) {
         return t_unknown("arity mismatch calling method `" + name + "`");
       }
-      return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
+      return generic_method_ret(msig, method_binding(c, msig, recv_ty, s), s);
     } else {
       if let typeinfo.TypeFunc(bm) = builtin_method_sig(recv_type_name, name) {
         if (bm.param_types.len() == c.args.len()) {
@@ -7261,31 +7265,13 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
 struct MethodBinding { names: string[], types: typeinfo.Type[], full: string[] }
 
 function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s: Scope): MethodBinding {
-  let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
-  let full: string[] = ref_type_vars(rref, msig.all_type_params, s, []);
-  for tp in msig.all_type_params {
-    if (!util.has_str(full, tp)) {
-      full = full.append(tp);
-    }
-  }
-  let names: string[] = [];
-  let types: typeinfo.Type[] = [];
-  let offset: i32 = full.len() - c.type_args.len();
-  if (offset < 0) {
-    offset = 0;
-  }
-  let wi: i32 = 0;
-  while (wi < c.type_args.len() && offset + wi < full.len()) {
-    if (c.type_args[wi].len() > 0) {
-      names = names.append(full[offset + wi]);
-      types = types.append(type_from_spelling(c.type_args[wi], s.type_names()));
-    }
-    wi = wi + 1;
-  }
-  let (n2, t2) = gc_bind_param(rref, recv, full, s.type_names(), names, types);
+  let rb: MethodBinding = receiver_binding(msig, c.type_args, recv, s);
+  let full: string[] = rb.full;
   if (full.len() == 0) {
-    return MethodBinding { names: n2, types: t2, full: full };
+    return rb;
   }
+  let n2: string[] = rb.names;
+  let t2: typeinfo.Type[] = rb.types;
   let mi: i32 = 0;
   while (mi < c.args.len() && mi < msig.param_type_names.len()) {
     let ref = parser.parse_type_ref(msig.param_type_names[mi]);
@@ -7296,6 +7282,34 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s
     t2 = t3;
     mi = mi + 1;
   }
+  return MethodBinding { names: n2, types: t2, full: full };
+}
+
+// receiver_binding binds the type variables of msig from the written type
+// arguments and the receiver type alone.
+function receiver_binding(msig: MethodSig, type_args: string[], recv: typeinfo.Type, s: Scope): MethodBinding {
+  let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
+  let full: string[] = ref_type_vars(rref, msig.all_type_params, s, []);
+  for tp in msig.all_type_params {
+    if (!util.has_str(full, tp)) {
+      full = full.append(tp);
+    }
+  }
+  let names: string[] = [];
+  let types: typeinfo.Type[] = [];
+  let offset: i32 = full.len() - type_args.len();
+  if (offset < 0) {
+    offset = 0;
+  }
+  let wi: i32 = 0;
+  while (wi < type_args.len() && offset + wi < full.len()) {
+    if (type_args[wi].len() > 0) {
+      names = names.append(full[offset + wi]);
+      types = types.append(type_from_spelling(type_args[wi], s.type_names()));
+    }
+    wi = wi + 1;
+  }
+  let (n2, t2) = gc_bind_param(rref, recv, full, s.type_names(), names, types);
   return MethodBinding { names: n2, types: t2, full: full };
 }
 
@@ -7368,7 +7382,7 @@ function method_count_subject(recv: typeinfo.Type, owner: string, method: string
   return util.base_type_name(owner) + "." + method;
 }
 
-function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding, s: Scope): typeinfo.Type {
+function generic_method_ret(msig: MethodSig, mb: MethodBinding, s: Scope): typeinfo.Type {
   if (!type_contains_unknown(msig.ret_type) || msig.ret_type_name.len() == 0) {
     return msig.ret_type;
   }
@@ -26207,8 +26221,9 @@ function unknown_site_within(st: ast.Stmt, s: Scope): UnknownSite {
 
 pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
   let (filled, _) = parser.fill_default_args_with_diags(raw_mod);
-  let mod: parser.Module = prepared_module(filled);
-  let env: ModuleEnv = module_env(mod);
+  let prepared: parser.Module = prepared_module(filled);
+  let env: ModuleEnv = module_env(prepared);
+  let mod: parser.Module = qualify_variants_in(prepared, env, whole_focus(prepared));
   for func in mod.funcs {
     let fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
     if (!check_func_body(func, fs)) {
