@@ -445,6 +445,26 @@ pub function get_static_double_field(env: usize, clazz: usize, field: usize): f6
   return call2_f64(env, 153, clazz, field);
 }
 
+// A new array of `n` references of class `clazz`, each set to `init`.
+pub function new_object_array(env: usize, n: i32, clazz: usize, init: usize): usize {
+  return call3(env, 172, n as usize, clazz, init);
+}
+
+pub function set_object_array_element(env: usize, array: usize, index: i32, value: usize): usize {
+  return call3(env, 174, array, index as usize, value);
+}
+
+// A String[] of `items`. The local references of the strings are deleted.
+pub function string_array(env: usize, items: string[]): usize {
+  let array: usize = new_object_array(env, items.len(), find_class(env, "java/lang/String"), 0 as usize);
+  for k in 0..items.len() {
+    let s: usize = new_string(env, items[k]);
+    let ignored: usize = set_object_array_element(env, array, k, s);
+    let deleted: usize = delete_local_ref(env, s);
+  }
+  return array;
+}
+
 pub function get_array_length(env: usize, array: usize): i32 {
   return call1(env, 171, array) as i32;
 }

@@ -37,6 +37,7 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 <<module introduction>>=
 // This module runs an Android app with no Java code, through NativeActivity.
 import "std/android/draw";
+import "std/jni";
 ```
 
 ### `C functions`
@@ -218,13 +219,13 @@ function message_event(kind: i32, arg: usize): Event {
 
 ### `the UI thread`
 
-The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, and space for the thread handle: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, and the thread at 24.
+The context block that `start` hangs off `ANativeActivity.instance` holds the two pipes, the activity, the thread handle and the JNIEnv of the loop thread: the message pipe at 0 and 4, the reply pipe at 8 and 12, the activity at 16, the thread at 24, and the JNIEnv at 32.
 
 The offsets of the activity are the LP64 layout of `ANativeActivity`: the callbacks at 0 and the instance at 56. The callbacks follow the order of `ANativeActivityCallbacks`.
 
 ```fern
 <<the UI thread>>=
-const CTX_SIZE: i32 = 32;
+const CTX_SIZE: i32 = 40;
 
 @callback("on_start")
 function on_start_entry(): usize;
@@ -385,6 +386,7 @@ struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean }
 // returns the last state after the Destroy event.
 pub function run[S](ctx: usize, state: S, step: (S, Event) => S, timeout: (S) => i32): S {
   let lp: Loop = Loop { ctx: ctx, looper: c_looper_prepare(1), queue: 0 as usize, done: false };
+  let vm: usize = attach(ctx);
   unsafe {
     let added: i32 = c_looper_add_fd(lp.looper, __load_i32(ctx), IDENT_MESSAGE, 1, 0 as usize, 0 as usize);
   }
@@ -400,6 +402,7 @@ pub function run[S](ctx: usize, state: S, step: (S, Event) => S, timeout: (S) =>
       state = step(state, Tick);
     }
   }
+  detach(vm);
   return state;
 }
 
@@ -464,6 +467,74 @@ function input[S](lp: Loop, state: S, step: (S, Event) => S): S {
     __free(slot, 8);
   }
   return state;
+}
+
+// Attaches the loop thread to the JVM of the activity, and keeps its
+// JNIEnv in the context at 32. The JavaVM interface has
+// AttachCurrentThread at 4 and DetachCurrentThread at 5.
+function attach(ctx: usize): usize {
+  unsafe {
+    let vm: usize = __load_ptr(__load_ptr(ctx + 16 as usize) + 8 as usize);
+    let attach_fn: usize = __load_ptr(__load_ptr(vm) + 32 as usize);
+    let ignored: usize = __c_call3(attach_fn, vm, ctx + 32 as usize, 0 as usize);
+    return vm;
+  }
+}
+
+function detach(vm: usize): void {
+  unsafe {
+    let detach_fn: usize = __load_ptr(__load_ptr(vm) + 40 as usize);
+    let ignored: usize = __c_call1(detach_fn, vm);
+  }
+}
+
+// The JNIEnv of the loop thread, for calls that `run` makes.
+pub function env(ctx: usize): usize {
+  unsafe {
+    return __load_ptr(ctx + 32 as usize);
+  }
+}
+
+// The global reference of the NativeActivity object.
+pub function activity_object(ctx: usize): usize {
+  unsafe {
+    return __load_ptr(__load_ptr(ctx + 16 as usize) + 24 as usize);
+  }
+}
+
+// The API level of the device.
+pub function sdk_version(ctx: usize): i32 {
+  unsafe {
+    return __load_i32(__load_ptr(ctx + 16 as usize) + 48 as usize);
+  }
+}
+
+// The app has permission `name`, such as "android.permission.RECORD_AUDIO".
+// Call it on the loop thread.
+pub function has_permission(ctx: usize, name: string): boolean {
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let check: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "checkSelfPermission", "(Ljava/lang/String;)I");
+  let s: usize = jni.new_string(e, name);
+  let args: usize = jni.jvalues([s]);
+  let granted: i32 = jni.call_int_method_a(e, obj, check, args);
+  jni.free_buffer(args);
+  let deleted: usize = jni.delete_local_ref(e, s);
+  return granted == 0;
+}
+
+// Asks the user for the permissions `names`. The activity pauses while the
+// dialog shows, so check has_permission again at the next Resume. Call it on
+// the loop thread.
+pub function request_permissions(ctx: usize, names: string[]): void {
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let request: usize = jni.get_method_id(e, jni.get_object_class(e, obj), "requestPermissions", "([Ljava/lang/String;I)V");
+  let array: usize = jni.string_array(e, names);
+  let args: usize = jni.jvalues([array, 1 as usize]);
+  let ignored: usize = jni.call_void_method_a(e, obj, request, args);
+  jni.free_buffer(args);
+  let deleted: usize = jni.delete_local_ref(e, array);
 }
 
 // Asks the activity to finish. The Destroy event follows.

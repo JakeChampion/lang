@@ -11,7 +11,8 @@ name: Android
 # examples/android/native/emulator_check.py drives it on the same emulator.
 # tests/android/dex is an app with @jni classes in the classes.dex that fern
 # -apk writes, and its check requires that ART loads, constructs and binds
-# them.
+# them. tests/android/audio checks std/android/audio and a JNI call from
+# the loop thread, so the emulator runs with its audio on.
 # The seccomp job checks the syscalls of the fixture corpus against
 # Android's app filter.
 
@@ -44,6 +45,7 @@ jobs:
           ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
           ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
+          ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
       - uses: actions/upload-artifact@v7
         with:
           name: fern-stopwatch-apk
@@ -52,6 +54,7 @@ jobs:
             build/android-stopwatch/report
             build/android-stopwatch/fern-native.apk
             build/android-stopwatch/fern-dextest.apk
+            build/android-stopwatch/fern-audiotest.apk
           if-no-files-found: error
 
   emulator:
@@ -76,11 +79,12 @@ jobs:
           api-level: 34
           arch: x86_64
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           script: |
             python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
             python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native
             python3 tests/android/dex/emulator_check.py build/android-stopwatch/fern-dextest.apk build/android-stopwatch/emulator/dex
+            python3 tests/android/audio/emulator_check.py build/android-stopwatch/fern-audiotest.apk build/android-stopwatch/emulator/audio
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
