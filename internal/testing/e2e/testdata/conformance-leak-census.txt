@@ -315,6 +315,7 @@ for_over_collections                                 0
 for_over_iterator                                    0
 for_over_range_value                                 0
 for_underscore_nested                                0
+for_range_in_lambda_in_header                        0
 foreach_binding_trailing_comma                       0
 foreach_pattern_binding                              0
 format_placeholders                                  0

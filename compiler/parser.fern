@@ -19393,22 +19393,20 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
         }
         return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
       }
-      return [ast.StmtFor { ...written, body: dbody }];
+      return [ast.StmtFor { ...written, iter: dr_expr(written.iter), body: dbody }];
     },
     ast.StmtIf(f) => {
-      return [ast.StmtIf { ...f, cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
+      return [ast.StmtIf { ...f, cond: dr_expr(f.cond), then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
     },
     ast.StmtWhile(w) => {
-      return [ast.StmtWhile { cond: w.cond, body: desugar_ranges_block(w.body), label: w.label, line: w.line, is_loop: w.is_loop }];
+      return [ast.StmtWhile { ...w, cond: dr_expr(w.cond), body: desugar_ranges_block(w.body) }];
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
-      let a: i32 = 0;
-      while (a < m.arms.len()) {
-        arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: desugar_ranges_block(m.arms[a].body), line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
-        a = a + 1;
+      for arm in m.arms {
+        arms = arms.append(ast.MatchArm { ...arm, body: desugar_ranges_block(arm.body), guard: dr_expr(arm.guard) });
       }
-      return [ast.StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms }];
+      return [ast.StmtMatch { ...m, scrutinee: dr_expr(m.scrutinee), arms: arms }];
     },
     ast.StmtDefer(d) => {
       return [ast.StmtDefer { action: desugar_ranges_one(d.action)[0], on_error: d.on_error, line: d.line }];
