@@ -78,8 +78,15 @@ def boot_without_freezer():
     time.sleep(5)
 
 
-def to_front(package):
+def launch(package):
+    """Starts the app as the launcher does. The same intent later brings its
+    task to the front. Another intent starts a second activity in the same
+    process, which cannot open a port."""
     adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-f", "0x10200000", "-n", package + ACTIVITY)
+
+
+def to_front(package):
+    launch(package)
     time.sleep(1.5)
 
 
@@ -133,9 +140,9 @@ def run(apk, second_apk, out):
         adb("install", "-r", "-g", a)
         adb("shell", "pm", "grant", package, "android.permission.RECORD_AUDIO")
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", FIRST + ACTIVITY)
+    launch(FIRST)
     wait_for("the first copy starts", lambda log: pid(FIRST) != "" and any(START.search(line) and START.search(line).group(1) == "47120" for line in lines_of(log, pid(FIRST))))
-    adb("shell", "am", "start", "-W", "-n", SECOND + ACTIVITY)
+    launch(SECOND)
     wait_for("the second copy starts", lambda log: pid(SECOND) != "" and any(START.search(line) and START.search(line).group(1) == "47121" for line in lines_of(log, pid(SECOND))))
     a, b = pid(FIRST), pid(SECOND)
     for p in (a, b):
@@ -155,6 +162,9 @@ def run(apk, second_apk, out):
     log = logcat()
     if pid(FIRST) != a or pid(SECOND) != b:
         raise Failure("a copy stopped running")
+    for p in (a, b):
+        if sum(1 for line in lines_of(log, p) if START.search(line)) != 1:
+            raise Failure("a copy started a second activity")
     lost = [line for line in log.splitlines() if LOST.search(line)]
     if lost:
         raise Failure("a copy lost its peer: " + "; ".join(lost))
