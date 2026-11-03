@@ -22,10 +22,8 @@ function diag_count(src: string): i32 {
 function tok_texts(src: string): string[] {
   let toks = lexer.lex(src).toks;
   let out: string[] = [];
-  let i = 0;
-  while (i < toks.len() - 1) {
+  for i in 0..toks.len() - 1 {
     out = out.append(toks[i].text);
-    i += 1;
   }
   return out;
 }
@@ -44,12 +42,12 @@ function test_property_name_is_one_token(): test.TestOutcome {
 
 function test_ms_beats_m(): test.TestOutcome {
   let toks = lexer.lex("100ms").toks;
-  return test.assert_eq(toks[0].text + "|" + toks[0].aux, "100|ms");
+  return test.assert_eq(f"{toks[0].text}|{toks[0].aux}", "100|ms");
 }
 
 function test_byte_unit(): test.TestOutcome {
   let toks = lexer.lex("256KB").toks;
-  return test.assert_eq(toks[0].text + "|" + toks[0].aux, "256|KB");
+  return test.assert_eq(f"{toks[0].text}|{toks[0].aux}", "256|KB");
 }
 
 function test_unit_needs_a_boundary(): test.TestOutcome {
@@ -62,7 +60,7 @@ function test_comment_forms(): test.TestOutcome {
 
 function test_position_after_block_comment(): test.TestOutcome {
   let toks = lexer.lex("/* one\ntwo\n*/ here").toks;
-  return test.assert_eq(toks[0].line.to_string() + ":" + toks[0].col.to_string(), "3:4");
+  return test.assert_eq(f"{toks[0].line}:{toks[0].col}", "3:4");
 }
 
 function test_unterminated_string_reports(): test.TestOutcome {
@@ -163,16 +161,16 @@ function test_inline_c_block(): test.TestOutcome {
 function shape(e: ast.Expr): string {
   match (e) {
     EBinary(b) => {
-      return "(" + b.op + " " + shape(b.lhs) + " " + shape(b.rhs) + ")";
+      return f"({b.op} {shape(b.lhs)} {shape(b.rhs)})";
     },
     EUnary(u) => {
-      return "(" + u.op + " " + shape(u.operand) + ")";
+      return f"({u.op} {shape(u.operand)})";
     },
     EParen(inner) => {
-      return "[" + shape(inner) + "]";
+      return f"[{shape(inner)}]";
     },
     ECall(c) => {
-      return "(call " + c.callee + ")";
+      return f"(call {c.callee})";
     },
     EVar(v) => {
       return v.name;
@@ -184,25 +182,17 @@ function shape(e: ast.Expr): string {
 }
 
 function cond_shape(src: string): string {
-  let r = parser.parse("sub s { if (" + src + ") { call x; } }");
+  let r = parser.parse(f"sub s {{ if ({src}) {{ call x; }} }}");
   if (r.diags.len() > 0) {
     return "ERR:" + r.diags[0].msg;
   }
-  match (r.decls[0]) {
-    DSub(sub) => {
-      match (sub.body.stmts[0]) {
-        SIf(i) => {
-          return shape(i.arms[0].cond);
-        },
-        _ => {
-          return "ERR:not an if";
-        }
-      }
-    },
-    _ => {
-      return "ERR:not a sub";
-    }
-  }
+  let DSub(sub) = r.decls[0] else {
+    return "ERR:not a sub";
+  };
+  let SIf(i) = sub.body.stmts[0] else {
+    return "ERR:not an if";
+  };
+  return shape(i.arms[0].cond);
 }
 
 function test_and_binds_tighter_than_or(): test.TestOutcome {

@@ -28,22 +28,12 @@ function test_headers_are_forwarded(): test.TestOutcome {
 }
 
 function header_of(req: fetch.Request, name: string): string {
-  match (req.headers.get(name)) {
-    Some(v) => {
-      return v;
-    },
-    None => {
-      return "<unset>";
-    }
-  }
+  return match (req.headers.get(name)) { Some(v) => v, None => "<unset>" };
 }
 
 function test_hop_by_hop_headers_are_stripped(): test.TestOutcome {
   let m = req_msg("GET", "/");
-  let h = m.headers.set("Connection", "keep-alive");
-  h = h.set("Transfer-Encoding", "chunked");
-  h = h.set("Host", "client-supplied");
-  h = h.set("Content-Length", "999");
+  let h = m.headers.set("Connection", "keep-alive").set("Transfer-Encoding", "chunked").set("Host", "client-supplied").set("Content-Length", "999");
   let req = wire.request_of(runtime.Msg { ...m, headers: h }, "http://real-origin");
   if (req.headers.len() != 0) {
     return test.fail("a hop-by-hop header was relayed: " + req.headers.names[0]);
@@ -67,62 +57,41 @@ function test_the_body_is_sent_as_the_policy_left_it(): test.TestOutcome {
 function test_response_headers_become_the_proxys(): test.TestOutcome {
   let h = headers.new().append("X-A", "1").append("X-B", "two words");
   let out = wire.headers_of(h);
-  match (out.get("X-A")) {
-    VString(s) => {
-      if (s != "1") {
-        return test.fail("X-A = " + s);
-      }
-    },
-    _ => {
-      return test.fail("X-A lost");
-    }
+  let VString(a) = out.get("X-A") else {
+    return test.fail("X-A lost");
+  };
+  if (a != "1") {
+    return test.fail("X-A = " + a);
   }
-  match (out.get("X-B")) {
-    VString(s) => {
-      return test.assert_eq(s, "two words");
-    },
-    _ => {
-      return test.fail("X-B lost");
-    }
-  }
+  let VString(b) = out.get("X-B") else {
+    return test.fail("X-B lost");
+  };
+  return test.assert_eq(b, "two words");
 }
 
 function test_max_age_is_read(): test.TestOutcome {
-  match (wire.max_age("public, max-age=600")) {
-    Some(v) => {
-      return test.assert_eq(v, 600.0);
-    },
-    None => {
-      return test.fail("max-age not found");
-    }
-  }
+  let Some(v) = wire.max_age("public, max-age=600") else {
+    return test.fail("max-age not found");
+  };
+  return test.assert_eq(v, 600.0);
 }
 
 function test_no_store_is_zero(): test.TestOutcome {
-  match (wire.max_age("no-store")) {
-    Some(v) => {
-      return test.assert_eq(v, 0.0);
-    },
-    None => {
-      return test.fail("no-store should be 0");
-    }
-  }
+  let Some(v) = wire.max_age("no-store") else {
+    return test.fail("no-store should be 0");
+  };
+  return test.assert_eq(v, 0.0);
 }
 
 function test_absent_cache_control_has_no_opinion(): test.TestOutcome {
-  match (wire.max_age("public")) {
-    Some(v) => {
-      return test.fail("expected no opinion");
-    },
-    None => {
-      return test.pass();
-    }
+  if let Some(_) = wire.max_age("public") {
+    return test.fail("expected no opinion");
   }
+  return test.pass();
 }
 
 function entry(key: string, body: string): runtime.CacheEntry {
-  let h = runtime.headers_new();
-  h = h.set("Content-Type", "text/plain");
+  let h = runtime.headers_new().set("Content-Type", "text/plain");
   return runtime.CacheEntry { key: key, status: 200, reason: "OK", headers: h, body: body, ttl: 60.0, hits: 3 };
 }
 
@@ -134,7 +103,7 @@ function test_roundtrip_preserves_an_entry(): test.TestOutcome {
   }
   let e = back.entries[0];
   if (e.key != "/a" || e.body != "hello" || e.status != 200 || e.hits != 3) {
-    return test.fail("field lost: " + e.key + "/" + e.body + "/" + e.status.to_string());
+    return test.fail(f"field lost: {e.key}/{e.body}/{e.status}");
   }
   return test.assert_eq(e.ttl, 60.0);
 }
@@ -156,7 +125,7 @@ function test_roundtrip_preserves_several_entries(): test.TestOutcome {
   c = c.store(entry("/c", ""));
   let back = store.decode(store.encode(c));
   if (back.entries.len() != 3) {
-    return test.fail("expected 3, got " + back.entries.len().to_string());
+    return test.fail(f"expected 3, got {back.entries.len()}");
   }
   return test.assert_eq(back.entries[2].key, "/c");
 }
@@ -164,14 +133,10 @@ function test_roundtrip_preserves_several_entries(): test.TestOutcome {
 function test_roundtrip_preserves_headers(): test.TestOutcome {
   let c = runtime.cache_new().store(entry("/h", "b"));
   let back = store.decode(store.encode(c));
-  match (back.entries[0].headers.get("Content-Type")) {
-    VString(v) => {
-      return test.assert_eq(v, "text/plain");
-    },
-    _ => {
-      return test.fail("header lost");
-    }
-  }
+  let VString(v) = back.entries[0].headers.get("Content-Type") else {
+    return test.fail("header lost");
+  };
+  return test.assert_eq(v, "text/plain");
 }
 
 function test_empty_cache_roundtrips(): test.TestOutcome {

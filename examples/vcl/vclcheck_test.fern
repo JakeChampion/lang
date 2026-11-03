@@ -1,12 +1,13 @@
 import "std/test";
 import "std/string";
 import "std/i64";
+import "std/array";
 import "./ast";
 import "./parser";
 import "./check";
 
 function program(body: string): string {
-  return "vcl 4.1;\nbackend origin { .host = \"127.0.0.1\"; }\n" + body + "\n";
+  return f"vcl 4.1;\nbackend origin {{ .host = \"127.0.0.1\"; }}\n{body}\n";
 }
 
 function problems_of(body: string): check.Problem[] {
@@ -14,22 +15,13 @@ function problems_of(body: string): check.Problem[] {
 }
 
 function joined(ps: check.Problem[]): string {
-  let out = "";
-  let i = 0;
-  while (i < ps.len()) {
-    if (i > 0) {
-      out += "; ";
-    }
-    out = out + ps[i].entry + "|" + ps[i].msg;
-    i += 1;
-  }
-  return out;
+  return array.map(ps, (p: check.Problem) => f"{p.entry}|{p.msg}").join("; ");
 }
 
 function only_problem(body: string): string {
   let ps = problems_of(body);
   if (ps.len() != 1) {
-    return "expected exactly 1 problem, got " + ps.len().to_string() + ": " + joined(ps);
+    return f"expected exactly 1 problem, got {ps.len()}: {joined(ps)}";
   }
   return ps[0].msg;
 }
@@ -124,17 +116,14 @@ function test_unknown_function(): test.TestOutcome {
 }
 
 function test_every_builtin_name_is_accepted(): test.TestOutcome {
-  let names = eval_builtin_names();
-  let i = 0;
-  while (i < names.len()) {
-    if (names[i] != "hash_data") {
-      let body = "sub vcl_recv { set req.http.X = " + names[i] + "(\"a\", \"b\", \"c\"); return (hash); }";
+  for name in eval_builtin_names() {
+    if (name != "hash_data") {
+      let body = f"sub vcl_recv {{ set req.http.X = {name}(\"a\", \"b\", \"c\"); return (hash); }}";
       let ps = problems_of(body);
       if (ps.len() != 0) {
-        return test.fail("builtin " + names[i] + " rejected by the checker: " + joined(ps));
+        return test.fail(f"builtin {name} rejected by the checker: {joined(ps)}");
       }
     }
-    i += 1;
   }
   return test.pass();
 }
@@ -204,7 +193,7 @@ function test_problem_carries_a_position(): test.TestOutcome {
   if (ps.len() != 1) {
     return test.fail("expected 1 problem: " + joined(ps));
   }
-  return test.assert_eq(ps[0].line.to_string() + ":" + ps[0].col.to_string(), "4:3");
+  return test.assert_eq(f"{ps[0].line}:{ps[0].col}", "4:3");
 }
 
 function main(): i32 {

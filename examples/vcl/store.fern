@@ -7,58 +7,47 @@ import "./runtime";
 struct Cur { at: i32, ok: boolean }
 
 function field(s: string): string {
-  return s.len().to_string() + "\n" + s;
+  return f"{s.len()}\n{s}";
 }
 
 pub function encode(c: runtime.Cache): string {
-  let out = c.entries.len().to_string() + "\n";
-  let i = 0;
-  while (i < c.entries.len()) {
-    let e = c.entries[i];
+  let out = f"{c.entries.len()}\n";
+  for e in c.entries {
     out += field(e.key);
     out += field(e.status.to_string());
     out += field(e.reason);
-    out = out + e.headers.names.len().to_string() + "\n";
-    let j = 0;
-    while (j < e.headers.names.len()) {
-      out = out + field(e.headers.names[j]) + field(e.headers.values[j]);
-      j += 1;
+    out += f"{e.headers.names.len()}\n";
+    for j in 0..e.headers.names.len() {
+      out += field(e.headers.names[j]) + field(e.headers.values[j]);
     }
     out += field(e.body);
     out += field(e.ttl.to_string());
     out += field(e.hits.to_string());
-    i += 1;
   }
   return out;
 }
 
 struct IntRead { value: i32, cur: Cur }
 
+function newline_from(s: string, at: i32): Option[i32] {
+  for i in at..s.len() {
+    if (s[i] == b'\n') {
+      return Some(i);
+    }
+  }
+  return None;
+}
+
 function read_int(s: string, cur: Cur): IntRead {
   if (!cur.ok) {
     return IntRead { value: 0, cur: cur };
   }
-  let nl: i32 = -1;
-  let i = cur.at;
-  while (i < s.len()) {
-    if (s[i] == 10) {
-      nl = i;
-      i = s.len();
-    }
-    i += 1;
-  }
-  if (nl < 0) {
-    return IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
-  }
+  let failed = IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
+  let Some(nl) = newline_from(s, cur.at) else {
+    return failed;
+  };
   let digits = slice_unchecked(s, cur.at, nl).to_owned();
-  match (i32.parse_i32(digits)) {
-    Ok(n) => {
-      return IntRead { value: n, cur: Cur { at: nl + 1, ok: true } };
-    },
-    Err(_) => {
-      return IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
-    }
-  }
+  return match (i32.parse_i32(digits)) { Ok(n) => IntRead { value: n, cur: Cur { at: nl + 1, ok: true } }, Err(_) => failed };
 }
 
 struct StrRead { value: string, cur: Cur }
@@ -76,25 +65,11 @@ function read_field(s: string, cur: Cur): StrRead {
 }
 
 function to_i64(s: string): i64 {
-  match (i32.parse_i32(s)) {
-    Ok(n) => {
-      return n as i64;
-    },
-    Err(_) => {
-      return 0;
-    }
-  }
+  return match (i32.parse_i32(s)) { Ok(n) => n as i64, Err(_) => 0 };
 }
 
 function to_f64(s: string): f64 {
-  match (f64.parse_f64(s)) {
-    Ok(f) => {
-      return f;
-    },
-    Err(_) => {
-      return 0.0;
-    }
-  }
+  return match (f64.parse_f64(s)) { Ok(f) => f, Err(_) => 0.0 };
 }
 
 struct EntryRead { entry: runtime.CacheEntry, cur: Cur }
@@ -110,8 +85,7 @@ function read_entry(s: string, cur: Cur): EntryRead {
   }
   let h = runtime.headers_new();
   let c = nh.cur;
-  let j = 0;
-  while (j < nh.value) {
+  for _ in 0..nh.value {
     let name = read_field(s, c);
     let value = read_field(s, name.cur);
     if (!value.cur.ok) {
@@ -119,7 +93,6 @@ function read_entry(s: string, cur: Cur): EntryRead {
     }
     h = h.set(name.value, value.value);
     c = value.cur;
-    j += 1;
   }
   let body = read_field(s, c);
   let ttl = read_field(s, body.cur);
@@ -141,15 +114,13 @@ pub function decode(s: string): runtime.Cache {
   }
   let out: runtime.CacheEntry[] = [];
   let c = n.cur;
-  let i = 0;
-  while (i < n.value) {
+  for _ in 0..n.value {
     let e = read_entry(s, c);
     if (!e.cur.ok) {
       return runtime.cache_new();
     }
     out = out.append(e.entry);
     c = e.cur;
-    i += 1;
   }
   return runtime.Cache { entries: out };
 }

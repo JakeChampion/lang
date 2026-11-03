@@ -1,5 +1,6 @@
 import "std/string";
 import "std/i32";
+import "std/array";
 import "./ast";
 
 function indent(n: i32): string {
@@ -7,26 +8,11 @@ function indent(n: i32): string {
 }
 
 function quote(s: ast.StrLit): string {
-  if (s.form == "brace") {
-    return "{\"" + s.value + "\"}";
-  }
-  if (s.form == "triple") {
-    return "\"\"\"" + s.value + "\"\"\"";
-  }
-  return "\"" + s.value + "\"";
+  return match (s.form) { "brace" => f"{{\"{s.value}\"}}", "triple" => f"\"\"\"{s.value}\"\"\"", _ => f"\"{s.value}\"" };
 }
 
 function join_args(args: ast.Expr[]): string {
-  let out = "";
-  let i = 0;
-  while (i < args.len()) {
-    if (i > 0) {
-      out += ", ";
-    }
-    out += print_expr(args[i]);
-    i += 1;
-  }
-  return out;
+  return array.map(args, print_expr).join(", ");
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -45,25 +31,22 @@ pub function print_expr(e: ast.Expr): string {
       return q.text + q.unit;
     },
     EBool(b) => {
-      if (b.value) {
-        return "true";
-      }
-      return "false";
+      return if (b.value) { "true" } else { "false" };
     },
     EVar(v) => {
       return v.name;
     },
     ECall(c) => {
-      return c.callee + "(" + join_args(c.args) + ")";
+      return f"{c.callee}({join_args(c.args)})";
     },
     EBinary(b) => {
-      return print_expr(b.lhs) + " " + b.op + " " + print_expr(b.rhs);
+      return f"{print_expr(b.lhs)} {b.op} {print_expr(b.rhs)}";
     },
     EUnary(u) => {
       return u.op + print_expr(u.operand);
     },
     EParen(inner) => {
-      return "(" + print_expr(inner) + ")";
+      return f"({print_expr(inner)})";
     }
   }
 }
@@ -73,26 +56,24 @@ function print_return(r: ast.ReturnStmt): string {
     return "return;";
   }
   if (r.has_args) {
-    return "return (" + r.action + "(" + join_args(r.args) + "));";
+    return f"return ({r.action}({join_args(r.args)}));";
   }
-  return "return (" + r.action + ");";
+  return f"return ({r.action});";
 }
 
 function print_if(s: ast.IfStmt, depth: i32): string {
   let out = "";
-  let i = 0;
-  while (i < s.arms.len()) {
+  for i in 0..s.arms.len() {
     let arm = s.arms[i];
     if (i == 0) {
-      out = out + indent(depth) + "if (" + print_expr(arm.cond) + ") ";
+      out += f"{indent(depth)}if ({print_expr(arm.cond)}) ";
     } else {
-      out = out + " " + arm.kw + " (" + print_expr(arm.cond) + ") ";
+      out += f" {arm.kw} ({print_expr(arm.cond)}) ";
     }
     out += print_block(arm.body, depth);
-    i += 1;
   }
   if (s.has_else) {
-    out = out + " else " + print_block(s.else_blk, depth);
+    out += " else " + print_block(s.else_blk, depth);
   }
   return out;
 }
@@ -102,10 +83,8 @@ pub function print_block(b: ast.Block, depth: i32): string {
     return "{ }";
   }
   let out = "{\n";
-  let i = 0;
-  while (i < b.stmts.len()) {
-    out = out + print_stmt(b.stmts[i], depth + 1) + "\n";
-    i += 1;
+  for stmt in b.stmts {
+    out += print_stmt(stmt, depth + 1) + "\n";
   }
   return out + indent(depth) + "}";
 }
@@ -114,10 +93,10 @@ pub function print_block(b: ast.Block, depth: i32): string {
 pub function print_stmt(s: ast.Stmt, depth: i32): string {
   match (s) {
     SSet(x) => {
-      return indent(depth) + "set " + x.target + " " + x.op + " " + print_expr(x.value) + ";";
+      return f"{indent(depth)}set {x.target} {x.op} {print_expr(x.value)};";
     },
     SUnset(x) => {
-      return indent(depth) + "unset " + x.target + ";";
+      return f"{indent(depth)}unset {x.target};";
     },
     SIf(x) => {
       return print_if(x, depth);
@@ -126,19 +105,19 @@ pub function print_stmt(s: ast.Stmt, depth: i32): string {
       return indent(depth) + print_return(x);
     },
     SCall(x) => {
-      return indent(depth) + "call " + x.name + ";";
+      return f"{indent(depth)}call {x.name};";
     },
     SNew(x) => {
-      return indent(depth) + "new " + x.name + " = " + print_expr(x.init) + ";";
+      return f"{indent(depth)}new {x.name} = {print_expr(x.init)};";
     },
     SExpr(x) => {
-      return indent(depth) + print_expr(x.value) + ";";
+      return f"{indent(depth)}{print_expr(x.value)};";
     },
     SInclude(x) => {
-      return indent(depth) + "include \"" + x.path + "\";";
+      return f"{indent(depth)}include \"{x.path}\";";
     },
     SCSource(x) => {
-      return indent(depth) + "C{" + x.code + "}C";
+      return f"{indent(depth)}C{{{x.code}}}C";
     },
     SBlock(b) => {
       return indent(depth) + print_block(b, depth);
@@ -148,116 +127,93 @@ pub function print_stmt(s: ast.Stmt, depth: i32): string {
 
 function print_props(p: ast.PropBlock, depth: i32): string {
   let out = "{\n";
-  let i = 0;
-  while (i < p.props.len()) {
-    let prop = p.props[i];
-    out = out + indent(depth + 1) + prop.name + " = ";
+  for prop in p.props {
+    out += f"{indent(depth + 1)}{prop.name} = ";
     match (prop.value) {
       PVExpr(e) => {
-        out = out + print_expr(e) + ";\n";
+        out += print_expr(e) + ";\n";
       },
       PVBlock(b) => {
-        out = out + print_props(b, depth + 1) + "\n";
+        out += print_props(b, depth + 1) + "\n";
       }
     }
-    i += 1;
   }
   return out + indent(depth) + "}";
 }
 
 function print_acl_entry(e: ast.AclEntry): string {
-  let out = "";
-  if (e.negated) {
-    out += "! ";
-  }
-  let body = "\"" + e.host + "\"";
+  let bang = if (e.negated) { "! " } else { "" };
+  let body = f"\"{e.host}\"";
   if (e.mask != "") {
-    body = body + "/" + e.mask;
+    body += "/" + e.mask;
   }
   if (e.parens) {
-    body = "( " + body + " )";
+    body = f"( {body} )";
   }
-  return out + body + ";";
+  return f"{bang}{body};";
 }
 
 function print_acl(a: ast.AclDecl): string {
-  let out = "acl " + a.name + " {\n";
-  let i = 0;
-  while (i < a.entries.len()) {
-    out = out + indent(1) + print_acl_entry(a.entries[i]) + "\n";
-    i += 1;
+  let out = f"acl {a.name} {{\n";
+  for entry in a.entries {
+    out += f"{indent(1)}{print_acl_entry(entry)}\n";
   }
   return out + "}";
 }
 
 function print_backend(b: ast.BackendDecl): string {
   if (b.none) {
-    return "backend " + b.name + " none;";
+    return f"backend {b.name} none;";
   }
-  return "backend " + b.name + " " + print_props(b.props, 0);
+  return f"backend {b.name} {print_props(b.props, 0)}";
 }
 
 pub function print_decl(d: ast.Decl): string {
   match (d) {
     DVcl(v) => {
-      return "vcl " + v.version + ";";
+      return f"vcl {v.version};";
     },
     DImport(im) => {
       if (im.has_from) {
-        return "import " + im.module + " from \"" + im.from + "\";";
+        return f"import {im.module} from \"{im.from}\";";
       }
-      return "import " + im.module + ";";
+      return f"import {im.module};";
     },
     DInclude(inc) => {
-      return "include \"" + inc.path + "\";";
+      return f"include \"{inc.path}\";";
     },
     DBackend(b) => {
       return print_backend(b);
     },
     DProbe(p) => {
-      return "probe " + p.name + " " + print_props(p.props, 0);
+      return f"probe {p.name} {print_props(p.props, 0)}";
     },
     DAcl(a) => {
       return print_acl(a);
     },
     DSub(s) => {
-      return "sub " + s.name + " " + print_block(s.body, 0);
+      return f"sub {s.name} {print_block(s.body, 0)}";
     },
     DCSource(c) => {
-      return "C{" + c.code + "}C";
+      return f"C{{{c.code}}}C";
     }
   }
 }
 
 function decl_kind(d: ast.Decl): string {
-  match (d) {
-    DVcl(v) => {
-      return "vcl";
-    },
-    DImport(im) => {
-      return "import";
-    },
-    DInclude(inc) => {
-      return "include";
-    },
-    _ => {
-      return "block";
-    }
-  }
+  return match (d) { DVcl(_) => "vcl", DImport(_) => "import", DInclude(_) => "include", _ => "block" };
 }
 
 pub function print_program(decls: ast.Decl[]): string {
   let out = "";
-  let i = 0;
-  while (i < decls.len()) {
+  for i in 0..decls.len() {
     if (i > 0) {
       let same = decl_kind(decls[i]) == decl_kind(decls[i - 1]);
       if (!same || decl_kind(decls[i]) == "block") {
         out += "\n";
       }
     }
-    out = out + print_decl(decls[i]) + "\n";
-    i += 1;
+    out += print_decl(decls[i]) + "\n";
   }
   return out;
 }

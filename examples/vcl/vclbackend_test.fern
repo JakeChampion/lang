@@ -2,6 +2,7 @@ import "std/test";
 import "std/string";
 import "std/i64";
 import "std/f64";
+import "std/array";
 import "./ast";
 import "./value";
 import "./runtime";
@@ -10,7 +11,7 @@ import "./eval";
 import "./machine";
 
 function program(body: string): string {
-  return "vcl 4.1;\nbackend origin { .host = \"127.0.0.1\"; }\n" + body + "\n";
+  return f"vcl 4.1;\nbackend origin {{ .host = \"127.0.0.1\"; }}\n{body}\n";
 }
 
 function decls_of(src: string): ast.Decl[] {
@@ -18,12 +19,12 @@ function decls_of(src: string): ast.Decl[] {
 }
 
 function run_get(body: string, url: string): machine.Outcome {
-  let cache: runtime.Cache = runtime.cache_new();
+  let cache = runtime.cache_new();
   return machine.run(decls_of(program(body)), "GET", url, "127.0.0.1", cache);
 }
 
 function run_as(body: string, method: string, url: string, ip: string): machine.Outcome {
-  let cache: runtime.Cache = runtime.cache_new();
+  let cache = runtime.cache_new();
   return machine.run(decls_of(program(body)), method, url, ip, cache);
 }
 
@@ -32,20 +33,11 @@ function header(o: machine.Outcome, name: string): string {
 }
 
 function path_of(o: machine.Outcome): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < o.steps.len()) {
-    if (i > 0) {
-      out = out + " -> ";
-    }
-    out = out + o.steps[i];
-    i = i + 1;
-  }
-  return out;
+  return o.steps.join(" -> ");
 }
 
 function expr_result(expr: string): string {
-  let o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = " + expr + "; return (deliver); }", "/e");
+  let o = run_get(f"sub vcl_backend_response {{ set beresp.http.R = {expr}; return (deliver); }}", "/e");
   if (!o.ok) {
     return "ERR:" + o.err;
   }
@@ -65,7 +57,7 @@ function test_duration_arithmetic(): test.TestOutcome {
 }
 
 function test_int_arithmetic_stays_integral(): test.TestOutcome {
-  let o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = \"\" + (beresp.status + 1); return (deliver); }", "/i");
+  let o = run_get("sub vcl_backend_response { set beresp.http.R = \"\" + (beresp.status + 1); return (deliver); }", "/i");
   return test.assert_eq(header(o, "R"), "201");
 }
 
@@ -102,7 +94,7 @@ function acl_program(): string {
 }
 
 function acl_says(ip: string): string {
-  let o: machine.Outcome = run_as(acl_program(), "GET", "/", ip);
+  let o = run_as(acl_program(), "GET", "/", ip);
   if (!o.ok) {
     return "ERR:" + o.err;
   }
@@ -126,12 +118,12 @@ function test_acl_matches_localhost(): test.TestOutcome {
 }
 
 function test_acl_negated_match_idiom(): test.TestOutcome {
-  let body: string = "acl a { \"10.0.0.0\"/8; }\n" + "sub vcl_recv { if (!client.ip ~ a) { return (synth(403, \"denied\")); } return (synth(200, \"ok\")); }\n";
-  let out: machine.Outcome = run_as(body, "GET", "/", "192.0.2.1");
+  let body = "acl a { \"10.0.0.0\"/8; }\n" + "sub vcl_recv { if (!client.ip ~ a) { return (synth(403, \"denied\")); } return (synth(200, \"ok\")); }\n";
+  let out = run_as(body, "GET", "/", "192.0.2.1");
   if (!out.ok) {
     return test.fail(out.err);
   }
-  let inside: machine.Outcome = run_as(body, "GET", "/", "10.1.2.3");
+  let inside = run_as(body, "GET", "/", "10.1.2.3");
   if (!inside.ok) {
     return test.fail(inside.err);
   }
@@ -142,7 +134,7 @@ function test_acl_negated_match_idiom(): test.TestOutcome {
 }
 
 function scope_error(body: string): string {
-  let o: machine.Outcome = run_get(body, "/s");
+  let o = run_get(body, "/s");
   if (o.ok) {
     return "NO ERROR";
   }
@@ -178,17 +170,17 @@ function test_called_sub_inherits_caller_scope(): test.TestOutcome {
 }
 
 function test_miss_then_hit(): test.TestOutcome {
-  let body: string = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
-  let decls: ast.Decl[] = decls_of(program(body));
-  let c: runtime.Cache = runtime.cache_new();
-  let first: machine.Outcome = machine.run(decls, "GET", "/a", "127.0.0.1", c);
+  let body = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  let decls = decls_of(program(body));
+  let c = runtime.cache_new();
+  let first = machine.run(decls, "GET", "/a", "127.0.0.1", c);
   if (!first.ok) {
     return test.fail(first.err);
   }
   if (first.hit) {
     return test.fail("first request should miss");
   }
-  let second: machine.Outcome = machine.run(decls, "GET", "/a", "127.0.0.1", first.cache);
+  let second = machine.run(decls, "GET", "/a", "127.0.0.1", first.cache);
   if (!second.ok) {
     return test.fail(second.err);
   }
@@ -199,11 +191,11 @@ function test_miss_then_hit(): test.TestOutcome {
 }
 
 function test_obj_hits_counts_from_one(): test.TestOutcome {
-  let body: string = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }\n" + "sub vcl_deliver { set resp.http.H = obj.hits; return (deliver); }";
-  let decls: ast.Decl[] = decls_of(program(body));
-  let c: runtime.Cache = runtime.cache_new();
-  let a: machine.Outcome = machine.run(decls, "GET", "/h", "127.0.0.1", c);
-  let b: machine.Outcome = machine.run(decls, "GET", "/h", "127.0.0.1", a.cache);
+  let body = "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }\n" + "sub vcl_deliver { set resp.http.H = obj.hits; return (deliver); }";
+  let decls = decls_of(program(body));
+  let c = runtime.cache_new();
+  let a = machine.run(decls, "GET", "/h", "127.0.0.1", c);
+  let b = machine.run(decls, "GET", "/h", "127.0.0.1", a.cache);
   if (!a.ok || !b.ok) {
     return test.fail("run failed");
   }
@@ -214,11 +206,11 @@ function test_obj_hits_counts_from_one(): test.TestOutcome {
 }
 
 function test_pass_never_caches(): test.TestOutcome {
-  let body: string = "sub vcl_recv { return (pass); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
-  let decls: ast.Decl[] = decls_of(program(body));
-  let c: runtime.Cache = runtime.cache_new();
-  let a: machine.Outcome = machine.run(decls, "GET", "/p", "127.0.0.1", c);
-  let b: machine.Outcome = machine.run(decls, "GET", "/p", "127.0.0.1", a.cache);
+  let body = "sub vcl_recv { return (pass); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  let decls = decls_of(program(body));
+  let c = runtime.cache_new();
+  let a = machine.run(decls, "GET", "/p", "127.0.0.1", c);
+  let b = machine.run(decls, "GET", "/p", "127.0.0.1", a.cache);
   if (!a.ok || !b.ok) {
     return test.fail("run failed");
   }
@@ -229,9 +221,9 @@ function test_pass_never_caches(): test.TestOutcome {
 }
 
 function test_builtin_recv_passes_on_cookie(): test.TestOutcome {
-  let decls: ast.Decl[] = decls_of(program("sub vcl_recv { set req.http.Seen = \"1\"; }"));
-  let c: runtime.Cache = runtime.cache_new();
-  let o: machine.Outcome = machine.run_with_headers(decls, "GET", "/c", "127.0.0.1", ["Cookie"], ["a=1"], c);
+  let decls = decls_of(program("sub vcl_recv { set req.http.Seen = \"1\"; }"));
+  let c = runtime.cache_new();
+  let o = machine.run_with_headers(decls, "GET", "/c", "127.0.0.1", ["Cookie"], ["a=1"], c);
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -239,7 +231,7 @@ function test_builtin_recv_passes_on_cookie(): test.TestOutcome {
 }
 
 function test_builtin_recv_hashes_without_cookie(): test.TestOutcome {
-  let o: machine.Outcome = run_get("sub vcl_recv { set req.http.Seen = \"1\"; }", "/c");
+  let o = run_get("sub vcl_recv { set req.http.Seen = \"1\"; }", "/c");
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -247,7 +239,7 @@ function test_builtin_recv_hashes_without_cookie(): test.TestOutcome {
 }
 
 function test_builtin_recv_pipes_unknown_method(): test.TestOutcome {
-  let o: machine.Outcome = run_as("sub vcl_recv { }", "FROBNICATE", "/", "127.0.0.1");
+  let o = run_as("sub vcl_recv { }", "FROBNICATE", "/", "127.0.0.1");
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -255,11 +247,11 @@ function test_builtin_recv_pipes_unknown_method(): test.TestOutcome {
 }
 
 function test_zero_ttl_is_not_stored(): test.TestOutcome {
-  let body: string = "sub vcl_backend_response { set beresp.ttl = 0s; return (deliver); }";
-  let decls: ast.Decl[] = decls_of(program(body));
-  let c: runtime.Cache = runtime.cache_new();
-  let a: machine.Outcome = machine.run(decls, "GET", "/z", "127.0.0.1", c);
-  let b: machine.Outcome = machine.run(decls, "GET", "/z", "127.0.0.1", a.cache);
+  let body = "sub vcl_backend_response { set beresp.ttl = 0s; return (deliver); }";
+  let decls = decls_of(program(body));
+  let c = runtime.cache_new();
+  let a = machine.run(decls, "GET", "/z", "127.0.0.1", c);
+  let b = machine.run(decls, "GET", "/z", "127.0.0.1", a.cache);
   if (!a.ok || !b.ok) {
     return test.fail("run failed");
   }
@@ -267,11 +259,11 @@ function test_zero_ttl_is_not_stored(): test.TestOutcome {
 }
 
 function test_uncacheable_is_not_stored(): test.TestOutcome {
-  let body: string = "sub vcl_backend_response { set beresp.ttl = 1h; set beresp.uncacheable = true; return (deliver); }";
-  let decls: ast.Decl[] = decls_of(program(body));
-  let c: runtime.Cache = runtime.cache_new();
-  let a: machine.Outcome = machine.run(decls, "GET", "/u", "127.0.0.1", c);
-  let b: machine.Outcome = machine.run(decls, "GET", "/u", "127.0.0.1", a.cache);
+  let body = "sub vcl_backend_response { set beresp.ttl = 1h; set beresp.uncacheable = true; return (deliver); }";
+  let decls = decls_of(program(body));
+  let c = runtime.cache_new();
+  let a = machine.run(decls, "GET", "/u", "127.0.0.1", c);
+  let b = machine.run(decls, "GET", "/u", "127.0.0.1", a.cache);
   if (!a.ok || !b.ok) {
     return test.fail("run failed");
   }
@@ -279,19 +271,19 @@ function test_uncacheable_is_not_stored(): test.TestOutcome {
 }
 
 function test_purge_evicts(): test.TestOutcome {
-  let body: string = "sub vcl_recv { if (req.method == \"PURGE\") { return (purge); } return (hash); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
-  let decls: ast.Decl[] = decls_of(program(body));
-  let c: runtime.Cache = runtime.cache_new();
-  let warm: machine.Outcome = machine.run(decls, "GET", "/g", "127.0.0.1", c);
-  let hit: machine.Outcome = machine.run(decls, "GET", "/g", "127.0.0.1", warm.cache);
+  let body = "sub vcl_recv { if (req.method == \"PURGE\") { return (purge); } return (hash); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  let decls = decls_of(program(body));
+  let c = runtime.cache_new();
+  let warm = machine.run(decls, "GET", "/g", "127.0.0.1", c);
+  let hit = machine.run(decls, "GET", "/g", "127.0.0.1", warm.cache);
   if (!hit.hit) {
     return test.fail("expected a hit before the purge");
   }
-  let purged: machine.Outcome = machine.run(decls, "PURGE", "/g", "127.0.0.1", hit.cache);
+  let purged = machine.run(decls, "PURGE", "/g", "127.0.0.1", hit.cache);
   if (!purged.ok) {
     return test.fail(purged.err);
   }
-  let after: machine.Outcome = machine.run(decls, "GET", "/g", "127.0.0.1", purged.cache);
+  let after = machine.run(decls, "GET", "/g", "127.0.0.1", purged.cache);
   if (!after.ok) {
     return test.fail(after.err);
   }
@@ -299,35 +291,35 @@ function test_purge_evicts(): test.TestOutcome {
 }
 
 function test_synth_carries_status_and_reason(): test.TestOutcome {
-  let o: machine.Outcome = run_get("sub vcl_recv { return (synth(405, \"Not allowed\")); }", "/x");
+  let o = run_get("sub vcl_recv { return (synth(405, \"Not allowed\")); }", "/x");
   if (!o.ok) {
     return test.fail(o.err);
   }
   if (o.txn.resp.status != 405) {
-    return test.fail("status " + o.txn.resp.status.to_string());
+    return test.fail(f"status {o.txn.resp.status}");
   }
   return test.assert_eq(o.txn.resp.reason, "Not allowed");
 }
 
 function test_hash_data_separates_by_host(): test.TestOutcome {
-  let body: string = "sub vcl_hash { hash_data(req.url); hash_data(req.http.Host); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
-  let decls: ast.Decl[] = decls_of(program(body));
-  let c: runtime.Cache = runtime.cache_new();
-  let a: machine.Outcome = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["one.example"], c);
-  let b: machine.Outcome = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["two.example"], a.cache);
+  let body = "sub vcl_hash { hash_data(req.url); hash_data(req.http.Host); }\n" + "sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }";
+  let decls = decls_of(program(body));
+  let c = runtime.cache_new();
+  let a = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["one.example"], c);
+  let b = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["two.example"], a.cache);
   if (!a.ok || !b.ok) {
     return test.fail("run failed");
   }
   if (b.hit) {
     return test.fail("a different Host must not hit the first object");
   }
-  let again: machine.Outcome = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["one.example"], b.cache);
+  let again = machine.run_with_headers(decls, "GET", "/v", "127.0.0.1", ["Host"], ["one.example"], b.cache);
   return test.assert_true(again.hit);
 }
 
 function test_call_returns_from_the_caller(): test.TestOutcome {
-  let body: string = "sub deny { return (synth(403, \"nope\")); }\n" + "sub vcl_recv { call deny; return (hash); }";
-  let o: machine.Outcome = run_get(body, "/call");
+  let body = "sub deny { return (synth(403, \"nope\")); }\n" + "sub vcl_recv { call deny; return (hash); }";
+  let o = run_get(body, "/call");
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -335,8 +327,8 @@ function test_call_returns_from_the_caller(): test.TestOutcome {
 }
 
 function test_bare_return_exits_only_the_callee(): test.TestOutcome {
-  let body: string = "sub early { return; }\n" + "sub vcl_recv { call early; set req.http.X = \"reached\"; return (pass); }";
-  let o: machine.Outcome = run_get(body, "/bare");
+  let body = "sub early { return; }\n" + "sub vcl_recv { call early; set req.http.X = \"reached\"; return (pass); }";
+  let o = run_get(body, "/bare");
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -344,9 +336,9 @@ function test_bare_return_exits_only_the_callee(): test.TestOutcome {
 }
 
 function test_bare_return_at_entry_falls_through_to_builtin(): test.TestOutcome {
-  let decls: ast.Decl[] = decls_of(program("sub vcl_recv { return; }"));
-  let c: runtime.Cache = runtime.cache_new();
-  let o: machine.Outcome = machine.run_with_headers(decls, "GET", "/bf", "127.0.0.1", ["Cookie"], ["a=1"], c);
+  let decls = decls_of(program("sub vcl_recv { return; }"));
+  let c = runtime.cache_new();
+  let o = machine.run_with_headers(decls, "GET", "/bf", "127.0.0.1", ["Cookie"], ["a=1"], c);
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -354,8 +346,8 @@ function test_bare_return_at_entry_falls_through_to_builtin(): test.TestOutcome 
 }
 
 function test_recursive_call_is_bounded(): test.TestOutcome {
-  let body: string = "sub a { call b; }\nsub b { call a; }\nsub vcl_recv { call a; return (hash); }";
-  let o: machine.Outcome = run_get(body, "/r");
+  let body = "sub a { call b; }\nsub b { call a; }\nsub vcl_recv { call a; return (hash); }";
+  let o = run_get(body, "/r");
   if (o.ok) {
     return test.fail("expected the call depth guard to fire");
   }
@@ -363,7 +355,7 @@ function test_recursive_call_is_bounded(): test.TestOutcome {
 }
 
 function test_restart_is_bounded(): test.TestOutcome {
-  let o: machine.Outcome = run_get("sub vcl_recv { return (restart); }", "/loop");
+  let o = run_get("sub vcl_recv { return (restart); }", "/loop");
   if (o.ok) {
     return test.fail("expected the restart limit to fire");
   }
@@ -371,7 +363,7 @@ function test_restart_is_bounded(): test.TestOutcome {
 }
 
 function test_compound_assignment(): test.TestOutcome {
-  let o: machine.Outcome = run_get("sub vcl_backend_response { set beresp.http.R = \"a\"; set beresp.http.R += \"b\"; return (deliver); }", "/ca");
+  let o = run_get("sub vcl_backend_response { set beresp.http.R = \"a\"; set beresp.http.R += \"b\"; return (deliver); }", "/ca");
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -379,8 +371,8 @@ function test_compound_assignment(): test.TestOutcome {
 }
 
 function test_and_short_circuits(): test.TestOutcome {
-  let body: string = "sub vcl_recv { if (false && std.tolower(\"X\") == \"x\") { return (pass); } return (hash); }";
-  let o: machine.Outcome = run_get(body, "/sc");
+  let body = "sub vcl_recv { if (false && std.tolower(\"X\") == \"x\") { return (pass); } return (hash); }";
+  let o = run_get(body, "/sc");
   if (!o.ok) {
     return test.fail(o.err);
   }
@@ -392,7 +384,7 @@ function test_unknown_function_is_rejected(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("vcl-backend");
+  let r = test.new("vcl-backend");
   r = r.it("string plus bytes concatenates", test_string_plus_bytes_concatenates);
   r = r.it("byte units are binary", test_byte_units_are_binary);
   r = r.it("duration arithmetic", test_duration_arithmetic);

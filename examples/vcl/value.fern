@@ -6,28 +6,28 @@ pub enum Value { VString(string), VInt(i64), VReal(f64), VDuration(f64), VBytes(
 
 pub function type_name(v: Value): string {
   match (v) {
-    VString(s) => {
+    VString(_) => {
       return "STRING";
     },
-    VInt(n) => {
+    VInt(_) => {
       return "INT";
     },
-    VReal(r) => {
+    VReal(_) => {
       return "REAL";
     },
-    VDuration(d) => {
+    VDuration(_) => {
       return "DURATION";
     },
-    VBytes(b) => {
+    VBytes(_) => {
       return "BYTES";
     },
-    VBool(b) => {
+    VBool(_) => {
       return "BOOL";
     },
-    VBackend(n) => {
+    VBackend(_) => {
       return "BACKEND";
     },
-    VAcl(n) => {
+    VAcl(_) => {
       return "ACL";
     },
     VNone => {
@@ -54,10 +54,10 @@ pub function to_str(v: Value): string {
     VBytes(b) => {
       return b.to_string();
     },
-    VBool(b) => {
-      if (b) {
-        return "true";
-      }
+    VBool(true) => {
+      return "true";
+    },
+    VBool(false) => {
       return "false";
     },
     VBackend(n) => {
@@ -73,102 +73,27 @@ pub function to_str(v: Value): string {
 }
 
 pub function to_bool(v: Value): boolean {
-  match (v) {
-    VBool(b) => {
-      return b;
-    },
-    VNone => {
-      return false;
-    },
-    VInt(n) => {
-      return n != 0;
-    },
-    VString(s) => {
-      return true;
-    },
-    _ => {
-      return true;
-    }
-  }
+  return match (v) { VBool(b) => b, VNone => false, VInt(n) => n != 0, _ => true };
 }
 
 function is_string(v: Value): boolean {
-  match (v) {
-    VString(s) => {
-      return true;
-    },
-    VNone => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return match (v) { VString(_) | VNone => true, _ => false };
 }
 
 function as_f64(v: Value): f64 {
-  match (v) {
-    VInt(n) => {
-      return n as f64;
-    },
-    VBytes(b) => {
-      return b as f64;
-    },
-    VReal(r) => {
-      return r;
-    },
-    VDuration(d) => {
-      return d;
-    },
-    VBool(b) => {
-      if (b) {
-        return 1.0;
-      }
-      return 0.0;
-    },
-    _ => {
-      return 0.0;
-    }
-  }
+  return match (v) { VInt(n) => n as f64, VBytes(b) => b as f64, VReal(r) => r, VDuration(d) => d, VBool(true) => 1.0, VBool(false) => 0.0, _ => 0.0 };
 }
 
 function as_i64(v: Value): i64 {
-  match (v) {
-    VInt(n) => {
-      return n;
-    },
-    VBytes(b) => {
-      return b;
-    },
-    _ => {
-      return 0;
-    }
-  }
+  return match (v) { VInt(n) => n, VBytes(b) => b, _ => 0 };
 }
 
 function is_int(v: Value): boolean {
-  match (v) {
-    VInt(n) => {
-      return true;
-    },
-    VBytes(b) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return match (v) { VInt(_) | VBytes(_) => true, _ => false };
 }
 
 function is_duration(v: Value): boolean {
-  match (v) {
-    VDuration(d) => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return match (v) { VDuration(_) => true, _ => false };
 }
 
 function wrap_real(x: f64, a: Value, b: Value): Value {
@@ -183,7 +108,7 @@ pub function arith(op: string, a: Value, b: Value): Result[Value, string] {
     return Ok(VString(to_str(a) + to_str(b)));
   }
   if (is_string(a) || is_string(b)) {
-    return Err("cannot apply '" + op + "' to " + type_name(a) + " and " + type_name(b));
+    return Err(f"cannot apply '{op}' to {type_name(a)} and {type_name(b)}");
   }
   if (is_int(a) && is_int(b)) {
     return arith_int(op, as_i64(a), as_i64(b), a, b);
@@ -192,68 +117,61 @@ pub function arith(op: string, a: Value, b: Value): Result[Value, string] {
 }
 
 function arith_int(op: string, x: i64, y: i64, a: Value, b: Value): Result[Value, string] {
-  if (op == "+") {
-    return Ok(retag_int(x + y, a, b));
-  }
-  if (op == "-") {
-    return Ok(retag_int(x - y, a, b));
-  }
-  if (op == "*") {
-    return Ok(retag_int(x * y, a, b));
-  }
-  if (op == "/") {
-    if (y == 0) {
-      return Err("division by zero");
+  match (op) {
+    "+" => {
+      return Ok(retag_int(x + y, a, b));
+    },
+    "-" => {
+      return Ok(retag_int(x - y, a, b));
+    },
+    "*" => {
+      return Ok(retag_int(x * y, a, b));
+    },
+    "/" => {
+      return if (y == 0) { Err("division by zero") } else { Ok(retag_int(x / y, a, b)) };
+    },
+    _ => {
+      return Err(f"unknown arithmetic operator '{op}'");
     }
-    return Ok(retag_int(x / y, a, b));
   }
-  return Err("unknown arithmetic operator '" + op + "'");
 }
 
 function retag_int(x: i64, a: Value, b: Value): Value {
-  match (a) {
-    VBytes(n) => {
-      return VBytes(x);
-    },
-    _ => {}
+  if let VBytes(_) = a {
+    return VBytes(x);
   }
-  match (b) {
-    VBytes(n) => {
-      return VBytes(x);
-    },
-    _ => {}
+  if let VBytes(_) = b {
+    return VBytes(x);
   }
   return VInt(x);
 }
 
 function arith_real(op: string, x: f64, y: f64, a: Value, b: Value): Result[Value, string] {
-  if (op == "+") {
-    return Ok(wrap_real(x + y, a, b));
-  }
-  if (op == "-") {
-    return Ok(wrap_real(x - y, a, b));
-  }
-  if (op == "*") {
-    return Ok(wrap_real(x * y, a, b));
-  }
-  if (op == "/") {
-    if (y == 0.0) {
-      return Err("division by zero");
+  match (op) {
+    "+" => {
+      return Ok(wrap_real(x + y, a, b));
+    },
+    "-" => {
+      return Ok(wrap_real(x - y, a, b));
+    },
+    "*" => {
+      return Ok(wrap_real(x * y, a, b));
+    },
+    "/" => {
+      return if (y == 0.0) { Err("division by zero") } else { Ok(wrap_real(x / y, a, b)) };
+    },
+    _ => {
+      return Err(f"unknown arithmetic operator '{op}'");
     }
-    return Ok(wrap_real(x / y, a, b));
   }
-  return Err("unknown arithmetic operator '" + op + "'");
 }
 
 pub function equal(a: Value, b: Value): boolean {
   if (is_string(a) || is_string(b)) {
     return to_str(a) == to_str(b);
   }
-  match (a) {
-    VBool(x) => {
-      return to_bool(a) == to_bool(b);
-    },
-    _ => {}
+  if let VBool(_) = a {
+    return to_bool(a) == to_bool(b);
   }
   if (is_int(a) && is_int(b)) {
     return as_i64(a) == as_i64(b);
@@ -263,12 +181,12 @@ pub function equal(a: Value, b: Value): boolean {
 
 pub function compare(a: Value, b: Value): Result[i32, string] {
   if (is_string(a) || is_string(b)) {
-    return Err("cannot order " + type_name(a) + " and " + type_name(b));
+    return Err(f"cannot order {type_name(a)} and {type_name(b)}");
   }
-  let x: f64 = as_f64(a);
-  let y: f64 = as_f64(b);
+  let x = as_f64(a);
+  let y = as_f64(b);
   if (x < y) {
-    return Ok(0 - 1);
+    return Ok(-1);
   }
   if (x > y) {
     return Ok(1);
@@ -277,45 +195,53 @@ pub function compare(a: Value, b: Value): Result[i32, string] {
 }
 
 pub function duration_seconds(n: f64, unit: string): Result[f64, string] {
-  if (unit == "ms") {
-    return Ok(n / 1000.0);
+  match (unit) {
+    "ms" => {
+      return Ok(n / 1000.0);
+    },
+    "s" => {
+      return Ok(n);
+    },
+    "m" => {
+      return Ok(n * 60.0);
+    },
+    "h" => {
+      return Ok(n * 3600.0);
+    },
+    "d" => {
+      return Ok(n * 86400.0);
+    },
+    "w" => {
+      return Ok(n * 604800.0);
+    },
+    "y" => {
+      return Ok(n * 31536000.0);
+    },
+    _ => {
+      return Err(f"unknown duration unit '{unit}'");
+    }
   }
-  if (unit == "s") {
-    return Ok(n);
-  }
-  if (unit == "m") {
-    return Ok(n * 60.0);
-  }
-  if (unit == "h") {
-    return Ok(n * 3600.0);
-  }
-  if (unit == "d") {
-    return Ok(n * 86400.0);
-  }
-  if (unit == "w") {
-    return Ok(n * 604800.0);
-  }
-  if (unit == "y") {
-    return Ok(n * 31536000.0);
-  }
-  return Err("unknown duration unit '" + unit + "'");
 }
 
 pub function byte_count(n: f64, unit: string): Result[i64, string] {
-  if (unit == "B") {
-    return Ok(n as i64);
+  match (unit) {
+    "B" => {
+      return Ok(n as i64);
+    },
+    "KB" => {
+      return Ok((n * 1024.0) as i64);
+    },
+    "MB" => {
+      return Ok((n * 1048576.0) as i64);
+    },
+    "GB" => {
+      return Ok((n * 1073741824.0) as i64);
+    },
+    "TB" => {
+      return Ok((n * 1099511627776.0) as i64);
+    },
+    _ => {
+      return Err(f"unknown size unit '{unit}'");
+    }
   }
-  if (unit == "KB") {
-    return Ok((n * 1024.0) as i64);
-  }
-  if (unit == "MB") {
-    return Ok((n * 1048576.0) as i64);
-  }
-  if (unit == "GB") {
-    return Ok((n * 1073741824.0) as i64);
-  }
-  if (unit == "TB") {
-    return Ok((n * 1099511627776.0) as i64);
-  }
-  return Err("unknown size unit '" + unit + "'");
 }

@@ -30,6 +30,8 @@ import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
+import "std/array";
+import "core/cmp";
 import "./ast";
 import "./value";
 import "./vars";
@@ -38,23 +40,27 @@ import "./machine";
 
 pub function quote(s: string): string {
   let out = "\"";
-  let i = 0;
-  while (i < s.len()) {
-    let b = s[i];
-    if (b == 34) {
-      out += "\\\"";
-    } else if (b == 92) {
-      out += "\\\\";
-    } else if (b == 10) {
-      out += "\\n";
-    } else if (b == 9) {
-      out += "\\t";
-    } else if (b == 13) {
-      out += "\\r";
-    } else {
-      out += slice_unchecked(s, i, i + 1);
+  for i in 0..s.len() {
+    match (s[i]) {
+      b'"' => {
+        out += "\\\"";
+      },
+      b'\\' => {
+        out += "\\\\";
+      },
+      b'\n' => {
+        out += "\\n";
+      },
+      b'\t' => {
+        out += "\\t";
+      },
+      b'\r' => {
+        out += "\\r";
+      },
+      _ => {
+        out += slice_unchecked(s, i, i + 1);
+      }
     }
-    i += 1;
   }
   return out + "\"";
 }
@@ -91,142 +97,150 @@ function is_header(name: string): boolean {
 // fern-lint: allow cyclomatic-complexity
 pub function read_code(name: string): string {
   if (is_header(name)) {
-    return "t." + object_of(name) + ".headers.get(" + quote(header_key(name)) + ")";
+    return f"t.{object_of(name)}.headers.get({quote(header_key(name))})";
   }
-  if (name == "req.method") {
-    return "VString(t.req.method)";
+  match (name) {
+    "req.method" => {
+      return "VString(t.req.method)";
+    },
+    "req.url" => {
+      return "VString(t.req.url)";
+    },
+    "req.proto" => {
+      return "VString(t.req.proto)";
+    },
+    "req.backend_hint" => {
+      return "VBackend(t.backend_hint)";
+    },
+    "bereq.method" => {
+      return "VString(t.bereq.method)";
+    },
+    "bereq.url" => {
+      return "VString(t.bereq.url)";
+    },
+    "bereq.proto" => {
+      return "VString(t.bereq.proto)";
+    },
+    "beresp.status" => {
+      return "VInt(t.beresp.status)";
+    },
+    "beresp.reason" => {
+      return "VString(t.beresp.reason)";
+    },
+    "beresp.proto" => {
+      return "VString(t.beresp.proto)";
+    },
+    "beresp.ttl" => {
+      return "VDuration(t.beresp_ttl)";
+    },
+    "beresp.grace" => {
+      return "VDuration(t.beresp_grace)";
+    },
+    "beresp.keep" => {
+      return "VDuration(t.beresp_keep)";
+    },
+    "beresp.uncacheable" => {
+      return "VBool(t.beresp_uncacheable)";
+    },
+    "resp.status" => {
+      return "VInt(t.resp.status)";
+    },
+    "resp.reason" => {
+      return "VString(t.resp.reason)";
+    },
+    "resp.proto" => {
+      return "VString(t.resp.proto)";
+    },
+    "obj.status" => {
+      return "VInt(t.obj.status)";
+    },
+    "obj.reason" => {
+      return "VString(t.obj.reason)";
+    },
+    "obj.ttl" => {
+      return "VDuration(t.obj_ttl)";
+    },
+    "obj.hits" => {
+      return "VInt(t.obj_hits)";
+    },
+    "client.ip" => {
+      return "VString(t.client_ip)";
+    },
+    _ => {
+      return "VString(t.server_ip)";
+    }
   }
-  if (name == "req.url") {
-    return "VString(t.req.url)";
-  }
-  if (name == "req.proto") {
-    return "VString(t.req.proto)";
-  }
-  if (name == "req.backend_hint") {
-    return "VBackend(t.backend_hint)";
-  }
-  if (name == "bereq.method") {
-    return "VString(t.bereq.method)";
-  }
-  if (name == "bereq.url") {
-    return "VString(t.bereq.url)";
-  }
-  if (name == "bereq.proto") {
-    return "VString(t.bereq.proto)";
-  }
-  if (name == "beresp.status") {
-    return "VInt(t.beresp.status)";
-  }
-  if (name == "beresp.reason") {
-    return "VString(t.beresp.reason)";
-  }
-  if (name == "beresp.proto") {
-    return "VString(t.beresp.proto)";
-  }
-  if (name == "beresp.ttl") {
-    return "VDuration(t.beresp_ttl)";
-  }
-  if (name == "beresp.grace") {
-    return "VDuration(t.beresp_grace)";
-  }
-  if (name == "beresp.keep") {
-    return "VDuration(t.beresp_keep)";
-  }
-  if (name == "beresp.uncacheable") {
-    return "VBool(t.beresp_uncacheable)";
-  }
-  if (name == "resp.status") {
-    return "VInt(t.resp.status)";
-  }
-  if (name == "resp.reason") {
-    return "VString(t.resp.reason)";
-  }
-  if (name == "resp.proto") {
-    return "VString(t.resp.proto)";
-  }
-  if (name == "obj.status") {
-    return "VInt(t.obj.status)";
-  }
-  if (name == "obj.reason") {
-    return "VString(t.obj.reason)";
-  }
-  if (name == "obj.ttl") {
-    return "VDuration(t.obj_ttl)";
-  }
-  if (name == "obj.hits") {
-    return "VInt(t.obj_hits)";
-  }
-  if (name == "client.ip") {
-    return "VString(t.client_ip)";
-  }
-  return "VString(t.server_ip)";
 }
 
 function msg_update(obj: string, field: string, expr: string): string {
-  return "t = runtime.Txn { ...t, " + obj + ": runtime.Msg { ...t." + obj + ", " + field + ": " + expr + " } };";
+  return f"t = runtime.Txn {{ ...t, {obj}: runtime.Msg {{ ...t.{obj}, {field}: {expr} }} }};";
 }
 
 function txn_update(field: string, expr: string): string {
-  return "t = runtime.Txn { ...t, " + field + ": " + expr + " };";
+  return f"t = runtime.Txn {{ ...t, {field}: {expr} }};";
 }
 
 // fern-lint: allow cyclomatic-complexity
 pub function write_code(name: string, v: string): string {
   if (is_header(name)) {
     let obj = object_of(name);
-    return msg_update(obj, "headers", "t." + obj + ".headers.set(" + quote(header_key(name)) + ", value.to_str(" + v + "))");
+    return msg_update(obj, "headers", f"t.{obj}.headers.set({quote(header_key(name))}, value.to_str({v}))");
   }
-  if (name == "req.method") {
-    return msg_update("req", "method", "value.to_str(" + v + ")");
+  match (name) {
+    "req.method" => {
+      return msg_update("req", "method", f"value.to_str({v})");
+    },
+    "req.url" => {
+      return msg_update("req", "url", f"value.to_str({v})");
+    },
+    "req.backend_hint" => {
+      return txn_update("backend_hint", f"value.to_str({v})");
+    },
+    "bereq.method" => {
+      return msg_update("bereq", "method", f"value.to_str({v})");
+    },
+    "bereq.url" => {
+      return msg_update("bereq", "url", f"value.to_str({v})");
+    },
+    "bereq.proto" => {
+      return msg_update("bereq", "proto", f"value.to_str({v})");
+    },
+    "beresp.status" => {
+      return msg_update("beresp", "status", f"vars.as_int({v})");
+    },
+    "beresp.reason" => {
+      return msg_update("beresp", "reason", f"value.to_str({v})");
+    },
+    "beresp.proto" => {
+      return msg_update("beresp", "proto", f"value.to_str({v})");
+    },
+    "beresp.ttl" => {
+      return txn_update("beresp_ttl", f"vars.as_secs({v})");
+    },
+    "beresp.grace" => {
+      return txn_update("beresp_grace", f"vars.as_secs({v})");
+    },
+    "beresp.keep" => {
+      return txn_update("beresp_keep", f"vars.as_secs({v})");
+    },
+    "beresp.uncacheable" => {
+      return txn_update("beresp_uncacheable", f"value.to_bool({v})");
+    },
+    "resp.status" => {
+      return msg_update("resp", "status", f"vars.as_int({v})");
+    },
+    "resp.reason" => {
+      return msg_update("resp", "reason", f"value.to_str({v})");
+    },
+    _ => {
+      return msg_update("resp", "proto", f"value.to_str({v})");
+    }
   }
-  if (name == "req.url") {
-    return msg_update("req", "url", "value.to_str(" + v + ")");
-  }
-  if (name == "req.backend_hint") {
-    return txn_update("backend_hint", "value.to_str(" + v + ")");
-  }
-  if (name == "bereq.method") {
-    return msg_update("bereq", "method", "value.to_str(" + v + ")");
-  }
-  if (name == "bereq.url") {
-    return msg_update("bereq", "url", "value.to_str(" + v + ")");
-  }
-  if (name == "bereq.proto") {
-    return msg_update("bereq", "proto", "value.to_str(" + v + ")");
-  }
-  if (name == "beresp.status") {
-    return msg_update("beresp", "status", "vars.as_int(" + v + ")");
-  }
-  if (name == "beresp.reason") {
-    return msg_update("beresp", "reason", "value.to_str(" + v + ")");
-  }
-  if (name == "beresp.proto") {
-    return msg_update("beresp", "proto", "value.to_str(" + v + ")");
-  }
-  if (name == "beresp.ttl") {
-    return txn_update("beresp_ttl", "vars.as_secs(" + v + ")");
-  }
-  if (name == "beresp.grace") {
-    return txn_update("beresp_grace", "vars.as_secs(" + v + ")");
-  }
-  if (name == "beresp.keep") {
-    return txn_update("beresp_keep", "vars.as_secs(" + v + ")");
-  }
-  if (name == "beresp.uncacheable") {
-    return txn_update("beresp_uncacheable", "value.to_bool(" + v + ")");
-  }
-  if (name == "resp.status") {
-    return msg_update("resp", "status", "vars.as_int(" + v + ")");
-  }
-  if (name == "resp.reason") {
-    return msg_update("resp", "reason", "value.to_str(" + v + ")");
-  }
-  return msg_update("resp", "proto", "value.to_str(" + v + ")");
 }
 
 pub function unset_code(name: string): string {
   let obj = object_of(name);
-  return msg_update(obj, "headers", "t." + obj + ".headers.unset(" + quote(header_key(name)) + ")");
+  return msg_update(obj, "headers", f"t.{obj}.headers.unset({quote(header_key(name))})");
 }
 
 struct Emit { code: string, name: string, next: i32, ok: boolean, err: string }
@@ -236,90 +250,50 @@ function emit_err(msg: string): Emit {
 }
 
 function tmp(n: i32): string {
-  return "v" + n.to_string();
+  return f"v{n}";
 }
 
 function bind(ind: string, n: i32, expr: string): Emit {
-  return Emit { code: ind + "let " + tmp(n) + ": value.Value = " + expr + ";\n", name: tmp(n), next: n + 1, ok: true, err: "" };
+  return Emit { code: f"{ind}let {tmp(n)}: value.Value = {expr};\n", name: tmp(n), next: n + 1, ok: true, err: "" };
 }
 
 function bind_checked(ind: string, n: i32, expr: string): Emit {
-  let res = "r" + n.to_string();
+  let res = f"r{n}";
   let out = tmp(n);
-  let code: string = ind + "let " + res + ": Result[value.Value, string] = " + expr + ";\n" + ind + "let " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(ok" + n.to_string() + ") => {\n" + ind + "    " + out + " = ok" + n.to_string() + ";\n" + ind + "  }\n" + ind + "}\n";
+  let code = f"{ind}let {res}: Result[value.Value, string] = {expr};\n{ind}let {out}: value.Value = VNone;\n{ind}match ({res}) {{\n{ind}  Err(m) => {{\n{ind}    return eval.failed(t, m);\n{ind}  }},\n{ind}  Ok(ok{n}) => {{\n{ind}    {out} = ok{n};\n{ind}  }}\n{ind}}}\n";
   return Emit { code: code, name: out, next: n + 1, ok: true, err: "" };
 }
 
-function num_literal(text: string): string {
+function num_literal(text: string): Option[string] {
   if (text.contains(".")) {
-    match (f64.parse_f64(text)) {
-      Ok(f) => {
-        return "VReal(" + f.to_string() + ")";
-      },
-      Err(_) => {
-        return "";
-      }
-    }
+    return match (f64.parse_f64(text)) { Ok(f) => Some(f"VReal({f})"), Err(_) => None };
   }
-  match (i32.parse_i32(text)) {
-    Ok(v) => {
-      return "VInt(" + v.to_string() + ")";
-    },
-    Err(_) => {
-      return "";
-    }
-  }
+  return match (i32.parse_i32(text)) { Ok(v) => Some(f"VInt({v})"), Err(_) => None };
 }
 
 function qty_number(text: string): f64 {
-  match (f64.parse_f64(text)) {
-    Ok(f) => {
-      return f;
-    },
-    Err(_) => {
-      return 0.0;
-    }
-  }
+  return match (f64.parse_f64(text)) { Ok(f) => f, Err(_) => 0.0 };
 }
 
 // fern-lint: allow cyclomatic-complexity
 function literal_code(e: ast.Expr): Result[string, string] {
   match (e) {
     EString(s) => {
-      return Ok("VString(" + quote(s.value) + ")");
+      return Ok(f"VString({quote(s.value)})");
     },
     EBool(b) => {
-      if (b.value) {
-        return Ok("VBool(true)");
-      }
-      return Ok("VBool(false)");
+      return Ok(if (b.value) { "VBool(true)" } else { "VBool(false)" });
     },
     ENumber(n) => {
-      let code = num_literal(n.text);
-      if (code == "") {
-        return Err("malformed number '" + n.text + "'");
-      }
-      return Ok(code);
+      return match (num_literal(n.text)) { Some(code) => Ok(code), None => Err(f"malformed number '{n.text}'") };
     },
     EDuration(q) => {
-      match (value.duration_seconds(qty_number(q.text), q.unit)) {
-        Ok(secs) => {
-          return Ok("VDuration(" + secs.to_string() + ")");
-        },
-        Err(m) => {
-          return Err(m);
-        }
-      }
+      let secs = value.duration_seconds(qty_number(q.text), q.unit)?;
+      return Ok(f"VDuration({secs})");
     },
     EBytes(q) => {
-      match (value.byte_count(qty_number(q.text), q.unit)) {
-        Ok(count) => {
-          return Ok("VBytes(" + count.to_string() + ")");
-        },
-        Err(m) => {
-          return Err(m);
-        }
-      }
+      let count = value.byte_count(qty_number(q.text), q.unit)?;
+      return Ok(f"VBytes({count})");
     },
     _ => {
       return Err("not a literal");
@@ -330,23 +304,10 @@ function literal_code(e: ast.Expr): Result[string, string] {
 pub struct Env { acls: string[], backends: machine.Backend[] }
 
 function has_backend(env: Env, name: string): boolean {
-  let i = 0;
-  while (i < env.backends.len()) {
-    if (env.backends[i].name == name) {
+  for b in env.backends {
+    if (b.name == name) {
       return true;
     }
-    i += 1;
-  }
-  return false;
-}
-
-function has(items: string[], s: string): boolean {
-  let i = 0;
-  while (i < items.len()) {
-    if (items[i] == s) {
-      return true;
-    }
-    i += 1;
   }
   return false;
 }
@@ -356,10 +317,10 @@ function name_code(env: Env, name: string): Result[string, string] {
     return Ok(read_code(name));
   }
   if (has_backend(env, name)) {
-    return Ok("VBackend(" + quote(name) + ")");
+    return Ok(f"VBackend({quote(name)})");
   }
-  if (has(env.acls, name)) {
-    return Ok("VAcl(" + quote(name) + ")");
+  if (cmp.contains(env.acls, name)) {
+    return Ok(f"VAcl({quote(name)})");
   }
   if (name == "true") {
     return Ok("VBool(true)");
@@ -367,25 +328,20 @@ function name_code(env: Env, name: string): Result[string, string] {
   if (name == "false") {
     return Ok("VBool(false)");
   }
-  return Err("unknown name '" + name + "'");
+  return Err(f"unknown name '{name}'");
 }
 
 function is_ordering(op: string): boolean {
   return op == "<" || op == "<=" || op == ">" || op == ">=";
 }
 
-function acl_operand(env: Env, e: ast.Expr): string {
-  match (e) {
-    EVar(v) => {
-      if (has(env.acls, v.name)) {
-        return v.name;
-      }
-      return "";
-    },
-    _ => {
-      return "";
+function acl_operand(env: Env, e: ast.Expr): Option[string] {
+  if let EVar(v) = e {
+    if (cmp.contains(env.acls, v.name)) {
+      return Some(v.name);
     }
   }
+  return None;
 }
 
 struct Seq { code: string, names: string[], next: i32, ok: boolean, err: string }
@@ -394,16 +350,14 @@ function emit_seq(env: Env, es: ast.Expr[], ind: string, n: i32): Seq {
   let code = "";
   let names: string[] = [];
   let cur = n;
-  let i = 0;
-  while (i < es.len()) {
-    let e = emit_expr(env, es[i], ind, cur);
+  for x in es {
+    let e = emit_expr(env, x, ind, cur);
     if (!e.ok) {
       return Seq { code: "", names: names, next: cur, ok: false, err: e.err };
     }
     code += e.code;
     names = names.append(e.name);
     cur = e.next;
-    i += 1;
   }
   return Seq { code: code, names: names, next: cur, ok: true, err: "" };
 }
@@ -414,18 +368,10 @@ function emit_call(env: Env, c: ast.CallExpr, ind: string, n: i32): Emit {
     return emit_err(args.err);
   }
   let cur = args.next;
-  let lst = "";
-  let i = 0;
-  while (i < args.names.len()) {
-    if (i > 0) {
-      lst += ", ";
-    }
-    lst += args.names[i];
-    i += 1;
-  }
-  let res = "c" + cur.to_string();
+  let lst = args.names.join(", ");
+  let res = f"c{cur}";
   let out = tmp(cur);
-  let code = args.code + ind + "let a" + cur.to_string() + ": value.Value[] = [" + lst + "];\n" + ind + "let " + res + ": eval.EvalOut = eval.call_builtin(t, " + quote(c.callee) + ", a" + cur.to_string() + ");\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return eval.failed(" + res + ".txn, " + res + ".err);\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "let " + out + ": value.Value = " + res + ".val;\n";
+  let code = f"{args.code}{ind}let a{cur}: value.Value[] = [{lst}];\n{ind}let {res}: eval.EvalOut = eval.call_builtin(t, {quote(c.callee)}, a{cur});\n{ind}if (!{res}.ok) {{\n{ind}  return eval.failed({res}.txn, {res}.err);\n{ind}}}\n{ind}t = {res}.txn;\n{ind}let {out}: value.Value = {res}.val;\n";
   return Emit { code: code, name: out, next: cur + 1, ok: true, err: "" };
 }
 
@@ -436,40 +382,33 @@ function emit_logical(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
   }
   let out = tmp(left.next);
   let inner = left.next + 1;
-  let gate = "if (value.to_bool(" + left.name + "))";
-  let seed = "VBool(true)";
-  if (b.op == "&&") {
-    seed = "VBool(false)";
-  } else {
-    gate = "if (!value.to_bool(" + left.name + "))";
-  }
+  let and = b.op == "&&";
+  let seed = if (and) { "VBool(false)" } else { "VBool(true)" };
+  let gate = if (and) { f"if (value.to_bool({left.name}))" } else { f"if (!value.to_bool({left.name}))" };
   let right = emit_expr(env, b.rhs, ind + "  ", inner);
   if (!right.ok) {
     return right;
   }
-  let code = left.code + ind + "let " + out + ": value.Value = " + seed + ";\n" + ind + gate + " {\n" + right.code + ind + "  " + out + " = VBool(value.to_bool(" + right.name + "));\n" + ind + "}\n";
+  let code = f"{left.code}{ind}let {out}: value.Value = {seed};\n{ind}{gate} {{\n{right.code}{ind}  {out} = VBool(value.to_bool({right.name}));\n{ind}}}\n";
   return Emit { code: code, name: out, next: right.next, ok: true, err: "" };
 }
 
 function emit_match(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
-  let negate = "";
-  if (b.op == "!~") {
-    negate = "!";
-  }
+  let negated = b.op == "!~";
   let left = emit_expr(env, b.lhs, ind, n);
   if (!left.ok) {
     return left;
   }
-  let acl = acl_operand(env, b.rhs);
-  if (acl != "") {
-    let hit = bind(ind, left.next, "VBool(" + negate + "acl_" + acl + "(value.to_str(" + left.name + ")))");
+  if let Some(acl) = acl_operand(env, b.rhs) {
+    let negate = if (negated) { "!" } else { "" };
+    let hit = bind(ind, left.next, f"VBool({negate}acl_{acl}(value.to_str({left.name})))");
     return Emit { code: left.code + hit.code, name: hit.name, next: hit.next, ok: true, err: "" };
   }
   let right = emit_expr(env, b.rhs, ind, left.next);
   if (!right.ok) {
     return right;
   }
-  let m = bind_checked(ind, right.next, "eval.match_pattern(value.to_str(" + right.name + "), value.to_str(" + left.name + "), " + (if (b.op == "!~") { "true" } else { "false" }) + ")");
+  let m = bind_checked(ind, right.next, f"eval.match_pattern(value.to_str({right.name}), value.to_str({left.name}), {negated})");
   return Emit { code: left.code + right.code + m.code, name: m.name, next: m.next, ok: true, err: "" };
 }
 
@@ -491,25 +430,21 @@ function emit_binary(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
   }
   let pre = left.code + right.code;
   if (cls == "compare" && !is_ordering(b.op)) {
-    let neg = "";
-    if (b.op == "!=") {
-      neg = "!";
-    }
-    let eq = bind(ind, right.next, "VBool(" + neg + "value.equal(" + left.name + ", " + right.name + "))");
+    let neg = if (b.op == "!=") { "!" } else { "" };
+    let eq = bind(ind, right.next, f"VBool({neg}value.equal({left.name}, {right.name}))");
     return Emit { code: pre + eq.code, name: eq.name, next: eq.next, ok: true, err: "" };
   }
   if (is_ordering(b.op)) {
     return emit_ordering(pre, b.op, left.name, right.name, ind, right.next);
   }
-  let ar = bind_checked(ind, right.next, "value.arith(" + quote(b.op) + ", " + left.name + ", " + right.name + ")");
+  let ar = bind_checked(ind, right.next, f"value.arith({quote(b.op)}, {left.name}, {right.name})");
   return Emit { code: pre + ar.code, name: ar.name, next: ar.next, ok: true, err: "" };
 }
 
 function emit_ordering(pre: string, op: string, l: string, r: string, ind: string, n: i32): Emit {
-  let res = "o" + n.to_string();
+  let res = f"o{n}";
   let out = tmp(n);
-  let test = res + "v " + op + " 0";
-  let code: string = ind + "let " + res + ": Result[i32, string] = value.compare(" + l + ", " + r + ");\n" + ind + "let " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(" + res + "v) => {\n" + ind + "    " + out + " = VBool(" + test + ");\n" + ind + "  }\n" + ind + "}\n";
+  let code = f"{ind}let {res}: Result[i32, string] = value.compare({l}, {r});\n{ind}let {out}: value.Value = VNone;\n{ind}match ({res}) {{\n{ind}  Err(m) => {{\n{ind}    return eval.failed(t, m);\n{ind}  }},\n{ind}  Ok({res}v) => {{\n{ind}    {out} = VBool({res}v {op} 0);\n{ind}  }}\n{ind}}}\n";
   return Emit { code: pre + code, name: out, next: n + 1, ok: true, err: "" };
 }
 
@@ -517,14 +452,7 @@ function emit_ordering(pre: string, op: string, l: string, r: string, ind: strin
 pub function emit_expr(env: Env, e: ast.Expr, ind: string, n: i32): Emit {
   match (e) {
     EVar(v) => {
-      match (name_code(env, v.name)) {
-        Ok(code) => {
-          return bind(ind, n, code);
-        },
-        Err(m) => {
-          return emit_err(m);
-        }
-      }
+      return match (name_code(env, v.name)) { Ok(code) => bind(ind, n, code), Err(m) => emit_err(m) };
     },
     ECall(c) => {
       return emit_call(env, c, ind, n);
@@ -538,24 +466,17 @@ pub function emit_expr(env: Env, e: ast.Expr, ind: string, n: i32): Emit {
         return inner;
       }
       if (u.op == "!") {
-        let not = bind(ind, inner.next, "VBool(!value.to_bool(" + inner.name + "))");
+        let not = bind(ind, inner.next, f"VBool(!value.to_bool({inner.name}))");
         return Emit { code: inner.code + not.code, name: not.name, next: not.next, ok: true, err: "" };
       }
-      let neg = bind_checked(ind, inner.next, "value.arith(\"-\", VInt(0), " + inner.name + ")");
+      let neg = bind_checked(ind, inner.next, f"value.arith(\"-\", VInt(0), {inner.name})");
       return Emit { code: inner.code + neg.code, name: neg.name, next: neg.next, ok: true, err: "" };
     },
     EParen(inner) => {
       return emit_expr(env, inner, ind, n);
     },
     _ => {
-      match (literal_code(e)) {
-        Ok(code) => {
-          return bind(ind, n, code);
-        },
-        Err(m) => {
-          return emit_err(m);
-        }
-      }
+      return match (literal_code(e)) { Ok(code) => bind(ind, n, code), Err(m) => emit_err(m) };
     }
   }
 }
@@ -577,12 +498,12 @@ function emit_set(env: Env, s: ast.SetStmt, ind: string, n: i32): Stmts {
   if (s.op != "=") {
     let op = slice_unchecked(s.op, 0, s.op.len() - 1).to_owned();
     let old = bind(ind, cur, read_code(s.target));
-    let combined = bind_checked(ind, old.next, "value.arith(" + quote(op) + ", " + old.name + ", " + src + ")");
-    code = code + old.code + combined.code;
+    let combined = bind_checked(ind, old.next, f"value.arith({quote(op)}, {old.name}, {src})");
+    code += old.code + combined.code;
     src = combined.name;
     cur = combined.next;
   }
-  return Stmts { code: code + ind + write_code(s.target, src) + "\n", next: cur, ok: true, err: "" };
+  return Stmts { code: f"{code}{ind}{write_code(s.target, src)}\n", next: cur, ok: true, err: "" };
 }
 
 function emit_return(env: Env, s: ast.ReturnStmt, ind: string, n: i32): Stmts {
@@ -590,27 +511,21 @@ function emit_return(env: Env, s: ast.ReturnStmt, ind: string, n: i32): Stmts {
     return Stmts { code: ind + "return eval.returned(t, eval.action(\"none\"));\n", next: n, ok: true, err: "" };
   }
   if (!s.has_args || s.args.len() == 0) {
-    return Stmts { code: ind + "return eval.returned(t, eval.action(" + quote(s.action) + "));\n", next: n, ok: true, err: "" };
+    return Stmts { code: f"{ind}return eval.returned(t, eval.action({quote(s.action)}));\n", next: n, ok: true, err: "" };
   }
   let args = emit_seq(env, s.args, ind, n);
   if (!args.ok) {
     return stmts_err(args.err);
   }
-  let status = "0";
-  if (args.names.len() > 0) {
-    status = "vars.as_int(" + args.names[0] + ")";
-  }
-  let reason = "\"\"";
-  if (args.names.len() > 1) {
-    reason = "value.to_str(" + args.names[1] + ")";
-  }
-  let code = args.code + ind + "return eval.returned(t, eval.synth_action(" + quote(s.action) + ", " + status + ", " + reason + "));\n";
+  let status = if (args.names.len() > 0) { f"vars.as_int({args.names[0]})" } else { "0" };
+  let reason = if (args.names.len() > 1) { f"value.to_str({args.names[1]})" } else { "\"\"" };
+  let code = f"{args.code}{ind}return eval.returned(t, eval.synth_action({quote(s.action)}, {status}, {reason}));\n";
   return Stmts { code: code, next: args.next, ok: true, err: "" };
 }
 
 function emit_call_stmt(s: ast.CallStmt, ind: string, n: i32): Stmts {
-  let res = "s" + n.to_string();
-  let code: string = ind + "let " + res + ": eval.ExecOut = sub_" + s.name + "(t);\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return " + res + ";\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "match (" + res + ".flow) {\n" + ind + "  FReturn(a" + n.to_string() + ") => {\n" + ind + "    if (a" + n.to_string() + ".name != \"none\") {\n" + ind + "      return " + res + ";\n" + ind + "    }\n" + ind + "  },\n" + ind + "  FNext => {}\n" + ind + "}\n";
+  let res = f"s{n}";
+  let code = f"{ind}let {res}: eval.ExecOut = sub_{s.name}(t);\n{ind}if (!{res}.ok) {{\n{ind}  return {res};\n{ind}}}\n{ind}t = {res}.txn;\n{ind}match ({res}.flow) {{\n{ind}  FReturn(a{n}) => {{\n{ind}    if (a{n}.name != \"none\") {{\n{ind}      return {res};\n{ind}    }}\n{ind}  }},\n{ind}  FNext => {{}}\n{ind}}}\n";
   return Stmts { code: code, next: n + 1, ok: true, err: "" };
 }
 
@@ -638,11 +553,11 @@ function emit_arm(env: Env, s: ast.IfStmt, idx: i32, ind: string, n: i32): Stmts
   if (!rest.ok) {
     return rest;
   }
-  let code = cond.code + ind + "if (value.to_bool(" + cond.name + ")) {\n" + body.code + ind + "}";
+  let code = f"{cond.code}{ind}if (value.to_bool({cond.name})) {{\n{body.code}{ind}}}";
   if (rest.code == "") {
     return Stmts { code: code + "\n", next: rest.next, ok: true, err: "" };
   }
-  return Stmts { code: code + " else {\n" + rest.code + ind + "}\n", next: rest.next, ok: true, err: "" };
+  return Stmts { code: f"{code} else {{\n{rest.code}{ind}}}\n", next: rest.next, ok: true, err: "" };
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -652,7 +567,7 @@ function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
       return emit_set(env, x, ind, n);
     },
     SUnset(x) => {
-      return Stmts { code: ind + unset_code(x.target) + "\n", next: n, ok: true, err: "" };
+      return Stmts { code: f"{ind}{unset_code(x.target)}\n", next: n, ok: true, err: "" };
     },
     SIf(x) => {
       return emit_if(env, x, ind, n);
@@ -674,7 +589,7 @@ function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
       return emit_block(env, b, ind, n);
     },
     SNew(x) => {
-      return stmts_err("'new " + x.name + "' needs VMOD objects, which are not implemented");
+      return stmts_err(f"'new {x.name}' needs VMOD objects, which are not implemented");
     },
     SInclude(x) => {
       return stmts_err("'include' must be resolved before compiling");
@@ -688,53 +603,36 @@ function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
 function emit_block(env: Env, b: ast.Block, ind: string, n: i32): Stmts {
   let code = "";
   let cur = n;
-  let i = 0;
-  while (i < b.stmts.len()) {
-    let s = emit_stmt(env, b.stmts[i], ind, cur);
+  for stmt in b.stmts {
+    let s = emit_stmt(env, stmt, ind, cur);
     if (!s.ok) {
       return s;
     }
     code += s.code;
     cur = s.next;
-    i += 1;
   }
   return Stmts { code: code, next: cur, ok: true, err: "" };
 }
 
 function emit_acl(a: ast.AclDecl): Result[string, string] {
-  let code: string = "// ACL `" + a.name + "`, compiled: masks folded, longest prefix wins.\n" + "function acl_" + a.name + "(addr: string): boolean {\n" + "  match (eval.parse_ipv4(addr)) {\n" + "    None => {\n      return false;\n    },\n" + "    Some(ip) => {\n" + "      let best: i32 = 0 - 1;\n" + "      let neg: boolean = false;\n";
-  let i = 0;
-  while (i < a.entries.len()) {
-    let e = a.entries[i];
-    match (eval.parse_ipv4(e.host)) {
-      None => {
-        return Err("ACL entry '" + e.host + "' is not an IPv4 address or 'localhost'");
-      },
-      Some(base) => {
-        let bits = 32;
-        if (e.mask != "") {
-          match (i32.parse_i32(e.mask)) {
-            Ok(b) => {
-              bits = b;
-            },
-            Err(_) => {
-              return Err("ACL mask '" + e.mask + "' is not a number");
-            }
-          }
-        }
-        if (bits < 0 || bits > 32) {
-          return Err("ACL mask /" + e.mask + " is out of range");
-        }
-        let m = eval.mask_of(bits);
-        let masked = base & m;
-        let negated = "false";
-        if (e.negated) {
-          negated = "true";
-        }
-        code = code + "      if ((ip & " + m.to_string() + ") == " + masked.to_string() + " && " + bits.to_string() + " > best) {\n" + "        best = " + bits.to_string() + ";\n" + "        neg = " + negated + ";\n" + "      }\n";
-      }
+  let code = f"// ACL `{a.name}`, compiled: masks folded, longest prefix wins.\nfunction acl_{a.name}(addr: string): boolean {{\n" + "  match (eval.parse_ipv4(addr)) {\n" + "    None => {\n      return false;\n    },\n" + "    Some(ip) => {\n" + "      let best: i32 = 0 - 1;\n" + "      let neg: boolean = false;\n";
+  for e in a.entries {
+    let Some(base) = eval.parse_ipv4(e.host) else {
+      return Err(f"ACL entry '{e.host}' is not an IPv4 address or 'localhost'");
+    };
+    let bits = 32;
+    if (e.mask != "") {
+      let Ok(b) = i32.parse_i32(e.mask) else {
+        return Err(f"ACL mask '{e.mask}' is not a number");
+      };
+      bits = b;
     }
-    i += 1;
+    if (bits < 0 || bits > 32) {
+      return Err(f"ACL mask /{e.mask} is out of range");
+    }
+    let m = eval.mask_of(bits);
+    let masked = base & m;
+    code += f"      if ((ip & {m}) == {masked} && {bits} > best) {{\n        best = {bits};\n        neg = {e.negated};\n      }}\n";
   }
   return Ok(code + "      if (best < 0) {\n        return false;\n      }\n" + "      return !neg;\n    }\n  }\n}\n");
 }
@@ -742,112 +640,68 @@ function emit_acl(a: ast.AclDecl): Result[string, string] {
 function emit_sub(env: Env, s: ast.SubDecl): Result[string, string] {
   let body = emit_block(env, s.body, "  ", 0);
   if (!body.ok) {
-    return Err("in sub " + s.name + ": " + body.err);
+    return Err(f"in sub {s.name}: {body.err}");
   }
-  return Ok("function sub_" + s.name + "(t0: runtime.Txn): eval.ExecOut {\n" + "  let t: runtime.Txn = t0;\n" + body.code + "  return eval.fell_through(t);\n}\n");
+  return Ok(f"function sub_{s.name}(t0: runtime.Txn): eval.ExecOut {{\n  let t: runtime.Txn = t0;\n{body.code}  return eval.fell_through(t);\n}}\n");
 }
 
 pub function env_of(decls: ast.Decl[]): Env {
   let acls: string[] = [];
-  let i = 0;
-  while (i < decls.len()) {
-    match (decls[i]) {
-      DAcl(a) => {
-        acls = acls.append(a.name);
-      },
-      _ => {}
+  for d in decls {
+    if let DAcl(a) = d {
+      acls = acls.append(a.name);
     }
-    i += 1;
   }
   return Env { acls: acls, backends: machine.backends_of(decls) };
 }
 
 function sub_names(decls: ast.Decl[]): string[] {
   let out: string[] = [];
-  let i = 0;
-  while (i < decls.len()) {
-    match (decls[i]) {
-      DSub(s) => {
-        out = out.append(s.name);
-      },
-      _ => {}
+  for d in decls {
+    if let DSub(s) = d {
+      out = out.append(s.name);
     }
-    i += 1;
   }
   return out;
 }
 
 function emit_dispatch(names: string[]): string {
   let code = "// The dispatcher `machine.Driver` calls. A subroutine this policy does\n" + "// not define falls through, so the built-in default applies.\n" + "function run_sub(name: string, t: runtime.Txn): eval.ExecOut {\n";
-  let i = 0;
-  while (i < names.len()) {
-    code = code + "  if (name == " + quote(names[i]) + ") {\n" + "    return sub_" + names[i] + "(t);\n  }\n";
-    i += 1;
+  for name in names {
+    code += f"  if (name == {quote(name)}) {{\n    return sub_{name}(t);\n  }}\n";
   }
   return code + "  return eval.fell_through(t);\n}\n";
 }
 
-function join(items: string[], sep: string): string {
-  let out = "";
-  let i = 0;
-  while (i < items.len()) {
-    if (i > 0) {
-      out += sep;
-    }
-    out += items[i];
-    i += 1;
-  }
-  return out;
-}
-
 function backend_list(env: Env): string {
   let lits: string[] = [];
-  let i = 0;
-  while (i < env.backends.len()) {
-    let b = env.backends[i];
-    lits = lits.append("machine.Backend { name: " + quote(b.name) + ", host: " + quote(b.host) + ", port: " + b.port.to_string() + " }");
-    i += 1;
+  for b in env.backends {
+    lits = lits.append(f"machine.Backend {{ name: {quote(b.name)}, host: {quote(b.host)}, port: {b.port} }}");
   }
   if (lits.len() == 0) {
     return "let __b: machine.Backend[] = [];";
   }
-  return "let __b: machine.Backend[] = [" + join(lits, ", ") + "];";
+  return f"let __b: machine.Backend[] = [{lits.join(", ")}];";
 }
 
 pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] {
   let env = env_of(decls);
-  let out = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/f64\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
-  let i = 0;
-  while (i < decls.len()) {
-    match (decls[i]) {
+  let out = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/f64\";\n" + f"import {quote(prefix + "value")};\nimport {quote(prefix + "runtime")};\nimport {quote(prefix + "vars")};\n" + f"import {quote(prefix + "eval")};\nimport {quote(prefix + "machine")};\nimport {quote(prefix + "report")};\n\n";
+  for d in decls {
+    match (d) {
       DAcl(a) => {
-        match (emit_acl(a)) {
-          Ok(code) => {
-            out = out + code + "\n";
-          },
-          Err(m) => {
-            return Err(m);
-          }
-        }
+        out += emit_acl(a)? + "\n";
       },
       DSub(s) => {
-        match (emit_sub(env, s)) {
-          Ok(code) => {
-            out = out + code + "\n";
-          },
-          Err(m) => {
-            return Err(m);
-          }
-        }
+        out += emit_sub(env, s)? + "\n";
       },
       _ => {}
     }
-    i += 1;
   }
-  out = out + emit_dispatch(sub_names(decls)) + "\n";
+  out += emit_dispatch(sub_names(decls)) + "\n";
   return Ok(out + main_code(env));
 }
 
 function main_code(env: Env): string {
-  return "// The policy's own entry point: same command line as vclrun, with this\n" + "// policy compiled in rather than parsed at startup.\n" + "function main(): i32 {\n" + "  let argv: string[] = args();\n" + "  " + backend_list(env) + "\n" + "  let d: machine.Driver = machine.Driver { run_sub: run_sub, backends: __b, fetch: machine.mock_fetch };\n" + "  return report.drive(d, argv);\n" + "}\n";
+  return "// The policy's own entry point: same command line as vclrun, with this\n" + "// policy compiled in rather than parsed at startup.\n" + "function main(): i32 {\n" + "  let argv: string[] = args();\n" + f"  {backend_list(env)}\n" + "  let d: machine.Driver = machine.Driver { run_sub: run_sub, backends: __b, fetch: machine.mock_fetch };\n" + "  return report.drive(d, argv);\n" + "}\n";
 }

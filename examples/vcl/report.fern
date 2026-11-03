@@ -11,6 +11,7 @@ import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
+import "std/array";
 import "./runtime";
 import "./machine";
 
@@ -28,21 +29,14 @@ pub function parse_args(argv: string[], first: i32): Args {
   while (i < argv.len()) {
     let arg = argv[i];
     if (arg == "-n" && i + 1 < argv.len()) {
-      match (i32.parse_i32(argv[i + 1])) {
-        Ok(c) => {
-          a = Args { ...a, repeat: c };
-        },
-        Err(_) => {
-          return bad;
-        }
-      }
+      let Ok(c) = i32.parse_i32(argv[i + 1]) else {
+        return bad;
+      };
+      a = Args { ...a, repeat: c };
       i += 2;
     } else if (arg.contains(":")) {
-      match (arg.split_once(":")) {
-        Some(pair) => {
-          a = Args { ...a, names: a.names.append(pair.0), values: a.values.append(pair.1) };
-        },
-        None => {}
+      if let Some(pair) = arg.split_once(":") {
+        a = Args { ...a, names: a.names.append(pair.0), values: a.values.append(pair.1) };
       }
       i += 1;
     } else {
@@ -53,61 +47,39 @@ pub function parse_args(argv: string[], first: i32): Args {
   return a;
 }
 
-pub function join(items: string[], sep: string): string {
-  let out = "";
-  let i = 0;
-  while (i < items.len()) {
-    if (i > 0) {
-      out += sep;
-    }
-    out += items[i];
-    i += 1;
-  }
-  return out;
-}
-
 function print_headers(h: runtime.Headers, indent: string): void {
-  let i = 0;
-  while (i < h.names.len()) {
-    print(indent + h.names[i] + ": " + h.values[i]);
-    i += 1;
+  for i in 0..h.names.len() {
+    print(f"{indent}{h.names[i]}: {h.values[i]}");
   }
 }
 
 pub function print_outcome(o: machine.Outcome, n: i32): void {
-  print("--- request " + n.to_string() + " ---");
-  print("  path:        " + join(o.steps, " -> "));
-  let hit = "miss";
-  if (o.hit) {
-    hit = "HIT";
-  }
-  print("  disposition: " + o.disposition + " (" + hit + ")");
-  print("  status:      " + o.txn.resp.status.to_string() + " " + o.txn.resp.reason);
+  print(f"--- request {n} ---");
+  print("  path:        " + o.steps.join(" -> "));
+  let hit = if (o.hit) { "HIT" } else { "miss" };
+  print(f"  disposition: {o.disposition} ({hit})");
+  print(f"  status:      {o.txn.resp.status} {o.txn.resp.reason}");
   print("  response headers:");
   print_headers(o.txn.resp.headers, "    ");
   if (o.txn.log.len() > 0) {
     print("  log:");
-    let i = 0;
-    while (i < o.txn.log.len()) {
-      print("    " + o.txn.log[i]);
-      i += 1;
+    for line in o.txn.log {
+      print("    " + line);
     }
   }
 }
 
 pub function run_all(d: machine.Driver, a: Args): i32 {
   let cache = runtime.cache_new();
-  let i = 0;
-  while (i < a.repeat) {
+  for i in 0..a.repeat {
     let o = machine.run_with(d, a.method, a.url, a.client_ip, a.names, a.values, cache);
     if (!o.ok) {
       eprint("vcl: " + o.err);
-      eprint("     after " + join(o.steps, " -> "));
+      eprint("     after " + o.steps.join(" -> "));
       return 1;
     }
     print_outcome(o, i + 1);
     cache = o.cache;
-    i += 1;
   }
   return 0;
 }
