@@ -20007,7 +20007,27 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
     return false;
   }
-  return lu_path_is_last(fx, q, fa.field);
+  return lu_path_is_last(fx, q, fa.field) || lu_field_base_dead(fx, site, q, fa.field);
+}
+
+// No path after the statement that holds the call reads q, and the statement
+// reads only other fields of q after q.field. A later mention in a branch
+// that the call does not reach is not a read.
+function lu_field_base_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
+  if (site.frames.len() == 0) {
+    return false;
+  }
+  let inner: LuFrame = site.frames[site.frames.len() - 1];
+  let facts: LuFacts = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
+      let sel: string = lu_sel_at(facts, o.line, o.col);
+      if (sel.len() == 0 || sel == field) {
+        return false;
+      }
+    }
+  }
+  return !lu_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name));
 }
 
 struct LuFieldReads { name: string, field: string, n: i32 }

@@ -678,7 +678,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) && !fieldBaseDead(info, body, c, q, fa.Field, order, fieldOf) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -813,6 +813,27 @@ func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates ma
 		return false
 	}
 	return true
+}
+
+// fieldBaseDead reports that no path after the statement that holds c reads
+// q, and that the statement reads only other fields of q after q.field. A
+// later mention in a branch that the call does not reach is not a read.
+func fieldBaseDead(info *Info, body *ast.Block, c *ast.Call, q *ast.Ident, field string, order IdentOrder, fieldOf map[*ast.Ident]string) bool {
+	frames := enclosingFrames(body, c)
+	if len(frames) == 0 {
+		return false
+	}
+	inner := frames[len(frames)-1]
+	later := false
+	ast.Walk(inner.stmts[inner.idx], func(m ast.Node) bool {
+		if id, ok := m.(*ast.Ident); ok && id.Name == q.Name && order.Idx[id] > order.Idx[q] {
+			if f, isField := fieldOf[id]; !isField || f == field {
+				later = true
+			}
+		}
+		return !later
+	})
+	return !later && !liveFrom(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name))
 }
 
 // UpdateBases maps the base of each update literal `S { ...q, f: v }` to the

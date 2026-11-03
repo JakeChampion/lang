@@ -138,6 +138,25 @@ func TestSelfHostOwnLocalReboundOnEveryBranch(t *testing.T) {
 	}
 }
 
+// A field move in one branch, beside a sibling branch that mentions the
+// field, with a balanced census (#14126).
+func TestSelfHostOwnFieldMoveInOneBranch(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_field_move_in_one_branch", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 63 {
+				t.Fatalf("exit %d, want 63 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
 const ownLastUseReassignSrc = `struct W { d: i32[], n: i32 }
 @noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
 @noinline function mkw(n: i32): W { return W { d: [n], n: n }; }

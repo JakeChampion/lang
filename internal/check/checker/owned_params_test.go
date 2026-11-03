@@ -2329,6 +2329,53 @@ function f(): i32 {
 }`)
 }
 
+const fieldBranchPrelude = `struct Gen { x: i32[], n: i32 }
+struct Fill { g: Gen, xs: i32[] }
+function take(own g: Gen, xs: [i32]): (Gen, i32) { return (Gen { x: g.x, n: g.n + 1 }, xs.len()); }
+function make(n: i32): Fill { return Fill { g: Gen { x: [], n: n }, xs: [1, 2] }; }
+`
+
+// A field move in one branch dies there when a sibling branch mentions the
+// field, because no path from the call reaches the sibling (#14126).
+func TestOwnGuardFieldMoveBesideSiblingBranch(t *testing.T) {
+	wantOK(t, "field-move-in-one-branch", fieldBranchPrelude+`
+function f(): i32 {
+    let g: Gen = Gen { x: [], n: 0 };
+    let total: i32 = 0;
+    for k in 0..3 {
+        let f: Fill = make(g.n);
+        if (k == 0) {
+            let (g1, n) = take(f.g, f.xs);
+            g = g1;
+            total = total + n;
+        } else {
+            g = f.g;
+        }
+    }
+    return total + g.n;
+}`)
+	wantE051(t, "field-read-after-the-branches", fieldBranchPrelude+`
+function f(c: boolean): i32 {
+    let f: Fill = make(1);
+    let total: i32 = 0;
+    if (c) {
+        let (g1, n) = take(f.g, f.xs);
+        total = n + g1.n;
+    }
+    return total + f.g.n;
+}`)
+	wantE051(t, "base-read-later-in-the-branch", fieldBranchPrelude+`
+function keep(own f: Fill): i32 { return f.xs.len(); }
+function f(c: boolean): i32 {
+    let f: Fill = make(1);
+    if (c) {
+        let (g1, n) = take(f.g, f.xs);
+        return n + keep(f);
+    }
+    return keep(f);
+}`)
+}
+
 func TestOwnGuardCallInMatchTagKeepsBindingScope(t *testing.T) {
 	const settle = `struct R { items: i32[], n: i32 }
 function settle(own r: R): Result[i32, R] { return Err(r); }

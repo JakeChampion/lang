@@ -1,0 +1,36 @@
+// A field move in one branch dies there when a sibling branch mentions the
+// field (#14126).
+struct Gen { x: i32[], n: i32 }
+
+struct Fill { g: Gen, xs: i32[] }
+
+@noinline
+function take(own g: Gen, xs: [i32]): (Gen, i32) {
+  return (Gen { x: g.x.append(xs.len()), n: g.n + 1 }, xs.len());
+}
+
+@noinline
+function make(n: i32): Fill {
+  return Fill { g: Gen { x: [n], n: n }, xs: [1, 2, 3] };
+}
+
+function main(): i32 {
+  let g: Gen = Gen { x: [], n: 0 };
+  let total: i32 = 0;
+  for k in 0..4 {
+    let f: Fill = make(g.n);
+    if (k % 2 == 0) {
+      let (g1, n) = take(f.g, f.xs);
+      g = g1;
+      total = total + n;
+    } else {
+      g = f.g;
+    }
+  }
+  // total = 3 + 3. The last round takes g from make(2): g.n = 2, one item.
+  let r: i32 = total * 10 + g.n + g.x.len();
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r;
+}
