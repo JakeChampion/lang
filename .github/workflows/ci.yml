@@ -131,6 +131,7 @@ jobs:
                 "compiler/**",
                 "web/**",
                 "site/**",
+                "docs/coreutils-log/**",
                 "scripts/check-site-examples",
                 "editors/vscode/syntaxes/**",
                 "internal/**",

@@ -229,6 +229,7 @@ export default defineConfig({
           label: "Standard library",
           items: stdlibSidebar(),
         },
+        { label: "Coreutils", link: "/coreutils/" },
         { label: "Releases", link: "/releases/" },
         { label: "Contributing", link: "/contributing/" },
         {

@@ -233,3 +233,28 @@ test("tutorial install → first-steps next-link navigates", async ({ page }) =>
     .click();
   await expect(page).toHaveURL(/\/lang\/tutorial\/first-steps\/?$/);
 });
+
+test("coreutils page sorts, filters and opens a utility's workloads", async ({
+  page,
+}) => {
+  await page.goto("coreutils/");
+  await expect(page.locator("h1")).toContainText("Coreutils");
+  await expect(page.locator(".fern-spec")).toContainText("Faster than GNU");
+
+  const table = page.locator("[data-bench-table]");
+  const names = table.locator("tbody tr:not([hidden]) th code");
+  await expect(names.first()).toHaveText("[");
+
+  await page.getByRole("button", { name: "GNU median" }).click();
+  const first = Number(await table.locator("tbody tr").first().getAttribute("data-mg"));
+  const second = Number(await table.locator("tbody tr").nth(1).getAttribute("data-mg"));
+  expect(first).toBeGreaterThanOrEqual(second);
+
+  await page.locator("[data-bench-filter]").fill("sha256");
+  await expect(names).toHaveText(["sha256sum"]);
+
+  await names.first().click();
+  const details = page.locator("details#bench-sha256sum");
+  await expect(details).toHaveAttribute("open", "");
+  await expect(details.locator("tbody tr").first()).toBeVisible();
+});
