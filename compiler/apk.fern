@@ -461,17 +461,14 @@ pub function new_scalar(): u8[] {
 const CHUNK: i32 = 1048576;
 
 function chunk_digests(out: u8[], b: [u8]): (u8[], i32) {
-  let n: i32 = 0;
-  let at: i32 = 0;
-  while (at < b.len()) {
+  let n: i32 = (b.len() + CHUNK - 1) / CHUNK;
+  for k in 0..n {
+    let at: i32 = k * CHUNK;
     let to: i32 = at + CHUNK;
     if (to > b.len()) {
       to = b.len();
     }
-    let msg: u8[] = cat(put32([165 as u8], to - at), b[at:to]);
-    out = cat(out, crypto.sha256(msg));
-    n = n + 1;
-    at = to;
+    out = cat(out, crypto.sha256(cat(put32([165 as u8], to - at), b[at:to])));
   }
   return (out, n);
 }
