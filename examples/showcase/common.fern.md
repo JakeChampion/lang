@@ -49,23 +49,20 @@ pub function path(req: HttpRequest): string {
 }
 
 pub function query(req: HttpRequest, name: string, fallback: string): string {
-  let parts: string[] = req.path.splitn("?", 2);
+  let parts = req.path.splitn("?", 2);
   if (parts.len() < 2) {
     return fallback;
   }
-  match (url.query_parse(parts[1]).get(name)) {
-    Some(values) => {
-      if (values.len() > 0) {
-        return values[0];
-      }
-    },
-    None => {}
+  if let Some(values) = url.query_parse(parts[1]).get(name) {
+    if (values.len() > 0) {
+      return values[0];
+    }
   }
   return fallback;
 }
 
 pub function integer(req: HttpRequest, name: string, fallback: i32, low: i32, high: i32): Result[i32, http.HttpError] {
-  let value: i64 = i64.parse_i64(query(req, name, fallback.to_string())).map_err((e: number_parse.ParseNumberError): http.HttpError => http.fail(400, "invalid " + name))?;
+  let value = i64.parse_i64(query(req, name, fallback.to_string())).map_err((e: number_parse.ParseNumberError): http.HttpError => http.fail(400, "invalid " + name))?;
   if (value < low as i64 || value > high as i64) {
     return Err(http.fail(400, name + " is outside its range"));
   }
@@ -81,7 +78,7 @@ A short allowlist prevents path separators and control characters in room names.
 ```fern
 <<Create identifiers>>=
 pub function token(): string {
-  let bytes: u8[] = rand.bytes(24);
+  let bytes = rand.bytes(24);
   return hex.encode(crypto.sha256_new().update(bytes).finish()).take(24);
 }
 

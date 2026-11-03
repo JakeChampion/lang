@@ -5,85 +5,55 @@ import "std/string";
 import "std/i32";
 
 function tokenize(s: string): string[] {
-  let lower: string = s.to_lower();
+  let lower = s.to_lower();
   let out: string[] = [];
-  let i: i32 = 0;
-  let sLen: i32 = lower.len();
-  let start: i32 = 0;
-  while (i <= sLen) {
-    let b: i32 = 0;
-    if (i < sLen) {
-      b = lower[i] as i32;
-    }
-    let is_break: boolean = i == sLen || b == 32 || b == 9 || b == 10 || b == 13;
+  let n = lower.len();
+  let start = 0;
+  for i in 0..=n {
+    let b = if (i < n) { lower[i] } else { 0 };
+    let is_break = i == n || b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
     if (is_break) {
       if (i > start) {
         out = out.append(slice_unchecked(lower, start, i).to_owned());
       }
       start = i + 1;
     }
-    i = i + 1;
   }
   return out;
 }
 
 function sort_pairs(keys: string[], counts: i32[]): (string[], i32[]) {
-  let i: i32 = 1;
-  while (i < counts.len()) {
-    let j: i32 = i;
+  for i in 1..counts.len() {
+    let j = i;
     while (j > 0 && counts[j] > counts[j - 1]) {
-      let tk: string = keys[j];
-      let tc: i32 = counts[j];
+      let tk = keys[j];
+      let tc = counts[j];
       keys = keys.with(j, keys[j - 1]);
       counts = counts.with(j, counts[j - 1]);
       keys = keys.with(j - 1, tk);
       counts = counts.with(j - 1, tc);
-      j = j - 1;
+      j -= 1;
     }
-    i = i + 1;
   }
   return (keys, counts);
 }
 
 function main(): i32 {
-  let text: string = "";
-  match (io.read_all_stdin()) {
-    Ok(t) => {
-      text = t;
-    },
-    Err(_) => {
-      eprint("word_freq: cannot read stdin");
-      return 1;
-    }
-  }
-  let words: string[] = tokenize(text);
+  let Ok(text) = io.read_all_stdin() else {
+    eprint("word_freq: cannot read stdin");
+    return 1;
+  };
   let counts: Map[string, i32] = map_new(64);
-  let i: i32 = 0;
-  while (i < words.len()) {
-    let w: string = words[i];
-    match (counts.get(w)) {
-      Some(n) => {
-        counts = counts.insert(w, n + 1);
-      },
-      None => {
-        counts = counts.insert(w, 1);
-      }
+  for w in tokenize(text) {
+    if let Some(n) = counts.get(w) {
+      counts = counts.insert(w, n + 1);
+    } else {
+      counts = counts.insert(w, 1);
     }
-    i = i + 1;
   }
-  let keys_arr: string[] = counts.keys();
-  let vals_arr: i32[] = counts.values();
-  let sorted: (string[], i32[]) = sort_pairs(keys_arr, vals_arr);
-  keys_arr = sorted.0;
-  vals_arr = sorted.1;
-  let topN: i32 = 5;
-  if (keys_arr.len() < topN) {
-    topN = keys_arr.len();
-  }
-  let k: i32 = 0;
-  while (k < topN) {
-    print(vals_arr[k].to_string() + "\t" + keys_arr[k]);
-    k = k + 1;
+  let (keys, vals) = sort_pairs(counts.keys(), counts.values());
+  for k in 0..keys.len().min(5) {
+    print(f"{vals[k]}\t{keys[k]}");
   }
   return 0;
 }

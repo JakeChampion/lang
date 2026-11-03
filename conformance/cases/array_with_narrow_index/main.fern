@@ -1,0 +1,7 @@
+// A `with` index of a narrower integer type converts to i32 without loss.
+function main(): i32 {
+  let u: u8 = 1;
+  let ys = [1, 2, 3].with(u, 7);
+  print(f"{ys[0]} {ys[1]} {ys[2]}");
+  return 0;
+}

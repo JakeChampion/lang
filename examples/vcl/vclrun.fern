@@ -9,46 +9,38 @@ import "./machine";
 import "./report";
 
 function report_diags(path: string, diags: diag.Diag[]): void {
-  let i: i32 = 0;
-  while (i < diags.len()) {
-    eprint(diags[i].render(path));
-    i = i + 1;
+  for d in diags {
+    eprint(d.render(path));
   }
 }
 
 function report_problems(path: string, ps: check.Problem[]): void {
-  let i: i32 = 0;
-  while (i < ps.len()) {
-    eprint(path + ":" + ps[i].line.to_string() + ":" + ps[i].col.to_string() + ": [" + ps[i].entry + "] " + ps[i].msg);
-    i = i + 1;
+  for p in ps {
+    eprint(p.render(path));
   }
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let a: report.Args = report.parse_args(argv, 2);
+  let argv = args();
+  let a = report.parse_args(argv, 2);
   if (argv.len() < 4 || !a.ok) {
     eprint("usage: vclrun FILE.vcl METHOD URL [CLIENT_IP] [Name:Value ...] [-n COUNT]");
     return 2;
   }
-  let path: string = argv[1];
-  match (io.read_input(path)) {
-    Err(e) => {
-      eprint("vclrun: " + path + ": cannot read");
-      return 2;
-    },
-    Ok(src) => {
-      let p: parser.ParseResult = parser.parse(src);
-      if (p.diags.len() > 0) {
-        report_diags(path, p.diags);
-        return 2;
-      }
-      let problems: check.Problem[] = check.check(p.decls);
-      if (problems.len() > 0) {
-        report_problems(path, problems);
-        return 1;
-      }
-      return report.run_all(machine.interpreting(p.decls), a);
-    }
+  let path = argv[1];
+  let Ok(src) = io.read_input(path) else {
+    eprint(f"vclrun: {path}: cannot read");
+    return 2;
+  };
+  let p = parser.parse(src);
+  if (p.diags.len() > 0) {
+    report_diags(path, p.diags);
+    return 2;
   }
+  let problems = check.check(p.decls);
+  if (problems.len() > 0) {
+    report_problems(path, problems);
+    return 1;
+  }
+  return report.run_all(machine.interpreting(p.decls), a);
 }

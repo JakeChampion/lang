@@ -32,6 +32,7 @@ import "std/number_parse";
 import "std/option";
 import "std/result";
 import "std/array";
+import "std/string";
 import "std/time";
 import "std/async";
 import "std/clock";
@@ -131,7 +132,7 @@ pub function record(state: State, req: HttpRequest, response: HttpResponse, star
   if (response.status >= 500) {
     state.server_errors.set(state.server_errors.get() + 1);
   }
-  let recent: Request[] = state.recent.get().append(Request { method: req.method, path: common.path(req).take(120), status: response.status, elapsed_us: (now_ns() - started) / 1000, at_ms: now_unix_ms() });
+  let recent = state.recent.get().append(Request { method: req.method, path: common.path(req).take(120), status: response.status, elapsed_us: (now_ns() - started) / 1000, at_ms: now_unix_ms() });
   if (recent.len() > 32) {
     recent = recent.drop(1);
   }
@@ -149,9 +150,9 @@ Linux exports CPU time at 100 ticks per second. Compare successive samples for C
 <<Read Linux counters>>=
 pub function status_number(status: string, name: string, multiplier: i64): Option[i64] {
   for line in status.split("\n") {
-    let parts: string[] = line.splitn(":", 2);
+    let parts = line.splitn(":", 2);
     if (parts.len() == 2 && parts[0] == name) {
-      let value: i64 = i64.parse_i64(parts[1].trim().splitn(" ", 2)[0]).ok()?;
+      let value = i64.parse_i64(parts[1].trim().splitn(" ", 2)[0]).ok()?;
       if (value < 0 || value > 9223372036854775807 / multiplier) {
         return None;
       }
@@ -163,21 +164,13 @@ pub function status_number(status: string, name: string, multiplier: i64): Optio
 
 // Linux exports user and system CPU time in USER_HZ units of 100 ticks/second.
 pub function cpu_ticks(stat: string): Option[i64] {
-  let end: Option[i32] = None;
-  let at: i32 = 0;
-  while (at < stat.len()) {
-    if (stat[at] == b')') {
-      end = Some(at);
-    }
-    at = at + 1;
-  }
-  let close: i32 = end?;
-  let fields: string[] = stat.drop(close + 1).trim().split(" ");
+  let close = stat.last_index_of(")")?;
+  let fields = stat.drop(close + 1).trim().split(" ");
   if (fields.len() < 13) {
     return None;
   }
-  let user: i64 = i64.parse_i64(fields[11]).ok()?;
-  let system: i64 = i64.parse_i64(fields[12]).ok()?;
+  let user = i64.parse_i64(fields[11]).ok()?;
+  let system = i64.parse_i64(fields[12]).ok()?;
   if (user < 0 || system < 0 || user > 9223372036854775807 - system) {
     return None;
   }
@@ -194,8 +187,8 @@ Cache OS samples for half a second so many viewers do not multiply procfs work.
 ```fern
 <<Sample and cache>>=
 function file_number(primary: string, fallback: string): Option[i64] {
-  let text: string = read_file(primary).unwrap_or_else((e: IoError): string => read_file(fallback).unwrap_or(""));
-  let value: i64 = i64.parse_i64(text.trim()).ok()?;
+  let text = read_file(primary).unwrap_or_else((e: IoError): string => read_file(fallback).unwrap_or(""));
+  let value = i64.parse_i64(text.trim()).ok()?;
   if (value < 0 || value > 1152921504606846976) {
     return None;
   }
@@ -203,14 +196,14 @@ function file_number(primary: string, fallback: string): Option[i64] {
 }
 
 function measure(state: State): Memory {
-  let now: i64 = now_ns();
+  let now = now_ns();
   if (now - state.sampled.get() < 500000000) {
     if let Some(memory) = state.memory.get() {
       return memory;
     }
   }
-  let status: string = read_file("/proc/self/status").unwrap_or("");
-  let ticks: Option[i64] = cpu_ticks(read_file("/proc/self/stat").unwrap_or(""));
+  let status = read_file("/proc/self/status").unwrap_or("");
+  let ticks = cpu_ticks(read_file("/proc/self/stat").unwrap_or(""));
   let cpu: Option[f64] = None;
   if let Some(current) = ticks {
     if let Some(previous) = state.ticks.get() {
@@ -219,7 +212,7 @@ function measure(state: State): Memory {
       }
     }
   }
-  let memory: Memory = Memory {
+  let memory = Memory {
     rss: status_number(status, "VmRSS", 1024), peak_rss: status_number(status, "VmHWM", 1024), virtual_bytes: status_number(status, "VmSize", 1024),
     anonymous: status_number(status, "RssAnon", 1024), file_backed: status_number(status, "RssFile", 1024), swap: status_number(status, "VmSwap", 1024), threads: status_number(status, "Threads", 1),
     container_bytes: file_number("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory/memory.usage_in_bytes"),
@@ -241,16 +234,16 @@ RSS includes resident process pages and can differ from both runtime counters.
 ```fern
 <<Expose application counters>>=
 pub function snapshot(state: State): Snapshot {
-  let strokes: i64 = 0;
-  let peers: i64 = state.labs.connections.get() as i64 + state.studios.live.listeners.get().len() as i64 + blockyard.participants(state.voxels) as i64 + state.arena.count.get() as i64 + state.fractal.sockets.get() + state.games.live.listeners.get().len() as i64 + state.canvases.live.listeners.get().len() as i64;
+  let strokes = 0i64;
+  let peers = state.labs.connections.get() as i64 + state.studios.live.listeners.get().len() as i64 + blockyard.participants(state.voxels) as i64 + state.arena.count.get() as i64 + state.fractal.sockets.get() + state.games.live.listeners.get().len() as i64 + state.canvases.live.listeners.get().len() as i64;
   for board in state.canvases.rooms.get() {
-    strokes = strokes + board.revision;
+    strokes += board.revision;
   }
   let units = 0i64;
   let refined = 0i64;
   for project in state.studios.projects.get() {
-    units = units + project.factory.consumed;
-    refined = refined + project.factory.refined;
+    units += project.factory.consumed;
+    refined += project.factory.refined;
   }
   return Snapshot {
     studio_connections: state.studios.live.listeners.get().len(), studio_projects: state.studios.projects.get().len(), factory_units: units, factory_refined: refined,
@@ -272,32 +265,28 @@ The Prometheus endpoint exposes gauges only when measurements exist. Counters re
 pub function events(state: State): HttpResponse {
   return sse.respond_with(time.duration_seconds(15), (index: i32): Option[sse.Event] => {
     if (index > 0) {
-      let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(1000))));
+      let ready = async.wait_any([], Some(clock.instant().add(time.duration_millis(1000))));
     }
     if (async.task_cancelled()) {
       return None;
     }
-    let value: Snapshot = snapshot(state);
+    let value = snapshot(state);
     return Some(sse.event(value.to_json()).with_name("metrics").with_id(value.at_ms.to_string()).with_retry(time.duration_millis(1500)));
   }).with_header("X-Accel-Buffering", "no");
 }
 
 function gauge(name: string, help: string, value: Option[i64]): string {
-  match (value) {
-    Some(number) => {
-      return "# HELP " + name + " " + help + "\n# TYPE " + name + " gauge\n" + name + " " + number.to_string() + "\n";
-    },
-    None => {
-      return "";
-    }
-  }
+  let Some(number) = value else {
+    return "";
+  };
+  return f"# HELP {name} {help}\n# TYPE {name} gauge\n{name} {number}\n";
 }
 
 pub function prometheus(state: State): HttpResponse {
-  let value: Snapshot = snapshot(state);
-  let text: string = "# HELP fern_http_requests_total HTTP requests since process start\n# TYPE fern_http_requests_total counter\nfern_http_requests_total " + value.requests.to_string() + "\n"
-    + "# HELP fern_heap_allocations_total Runtime allocations since process start\n# TYPE fern_heap_allocations_total counter\nfern_heap_allocations_total " + value.allocations_total.to_string() + "\n";
-  text = text + gauge("process_resident_memory_bytes", "Resident memory from procfs", value.memory.rss)
+  let value = snapshot(state);
+  let text = f"# HELP fern_http_requests_total HTTP requests since process start\n# TYPE fern_http_requests_total counter\nfern_http_requests_total {value.requests}\n"
+    + f"# HELP fern_heap_allocations_total Runtime allocations since process start\n# TYPE fern_heap_allocations_total counter\nfern_heap_allocations_total {value.allocations_total}\n";
+  text += gauge("process_resident_memory_bytes", "Resident memory from procfs", value.memory.rss)
     + gauge("process_virtual_memory_bytes", "Virtual address space from procfs", value.memory.virtual_bytes)
     + gauge("fern_heap_arena_high_water_bytes", "Runtime arena high-water mark, not live heap bytes", Some(value.arena_bytes))
     + gauge("fern_container_memory_bytes", "Memory used by this cgroup", value.memory.container_bytes)

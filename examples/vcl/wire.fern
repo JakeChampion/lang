@@ -4,6 +4,7 @@ import "std/i32";
 import "std/f64";
 import "std/fetch";
 import "std/headers";
+import "std/array";
 import "./runtime";
 
 function hop_by_hop(): string[] {
@@ -11,80 +12,53 @@ function hop_by_hop(): string[] {
 }
 
 function is_hop_by_hop(name: string): boolean {
-  let hops: string[] = hop_by_hop();
-  let i: i32 = 0;
-  while (i < hops.len()) {
-    if (name.eq_ignore_ascii_case(hops[i])) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
+  return array.any(hop_by_hop(), (hop: string) => name.eq_ignore_ascii_case(hop));
 }
 
 pub function request_of(m: runtime.Msg, base: string): fetch.Request {
-  let method: string = m.method;
-  if (method == "") {
-    method = "GET";
-  }
-  let url: string = m.url;
-  if (url == "") {
-    url = "/";
-  }
-  let req: fetch.Request = fetch.request(method, base + url);
-  let i: i32 = 0;
-  while (i < m.headers.names.len()) {
-    let n: string = m.headers.names[i];
+  let method = if (m.method == "") { "GET" } else { m.method };
+  let url = if (m.url == "") { "/" } else { m.url };
+  let req = fetch.request(method, base + url);
+  for i in 0..m.headers.names.len() {
+    let n = m.headers.names[i];
     if (!is_hop_by_hop(n)) {
       req = req.with_header(n, m.headers.values[i]);
     }
-    i = i + 1;
   }
   return req.with_text(m.body);
 }
 
 pub function headers_of(h: HeaderMap): runtime.Headers {
-  let out: runtime.Headers = runtime.headers_new();
-  let i: i32 = 0;
-  while (i < h.names.len()) {
+  let out = runtime.headers_new();
+  for i in 0..h.names.len() {
     out = out.set(h.names[i], h.values[i]);
-    i = i + 1;
   }
   return out;
 }
 
 function leading_digits(s: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < s.len()) {
-    let b: u8 = s[i];
-    if (b < 48 || b > 57) {
+  let out = "";
+  for i in 0..s.len() {
+    let b = s[i];
+    if (b < b'0' || b > b'9') {
       return out;
     }
-    out = out + slice_unchecked(s, i, i + 1);
-    i = i + 1;
+    out += slice_unchecked(s, i, i + 1);
   }
   return out;
 }
 
 pub function max_age(cc: string): Option[f64] {
-  let lower: string = cc.to_ascii_lower();
+  let lower = cc.to_ascii_lower();
   if (lower.contains("no-store") || lower.contains("no-cache") || lower.contains("private")) {
     return Some(0.0);
   }
   let Some(at) = lower.index_of("max-age=") else {
     return None;
   };
-  let digits: string = leading_digits(slice_unchecked(lower, at + 8, lower.len()).to_owned());
+  let digits = leading_digits(slice_unchecked(lower, at + 8, lower.len()).to_owned());
   if (digits.len() == 0) {
     return None;
   }
-  match (i32.parse_i32(digits)) {
-    Ok(n) => {
-      return Some(n as f64);
-    },
-    Err(_) => {
-      return None;
-    }
-  }
+  return match (i32.parse_i32(digits)) { Ok(n) => Some(n as f64), Err(_) => None };
 }

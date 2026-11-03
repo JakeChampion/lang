@@ -107,10 +107,8 @@ function array_length(xs: i32[]): i32 { return xs.len(); }
 // unit the plan retains at the call and hands back a copy, where the counted
 // receiver below moves its own.
 function borrowed_append(xs: i32[]): i32[] { return xs.append(1); }
-// The produced for-loop's shape, pinned: the index is a const -1 carried by the
-// header phi, the advance is the FIRST thing in the header, and the test comes
-// after it. An advance moved below the body would still pass every value test
-// and hang on the first continue.
+// The loop starts at zero and advances in a latch. Both fallthrough and
+// continue reach the latch before the next bound test.
 function loop_sum(xs: i32[]): i32 {
     let t: i32 = 0;
     for x in xs { t = t + x; }

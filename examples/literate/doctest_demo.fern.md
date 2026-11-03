@@ -32,7 +32,7 @@ is correct — so these double as documentation *and* a test suite.
 ```fern test name=clamps-below-range
 <<clamp>>
 function main(): i32 {
-    if (clamp(0 - 5, 0, 10) != 0) { return 1; }
+    if (clamp(-5, 0, 10) != 0) { return 1; }
     return 0;
 }
 ```

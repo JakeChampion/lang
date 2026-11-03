@@ -4585,7 +4585,7 @@ func (p *parser) parseAssignChain(chained bool) (ast.Expr, error) {
 				return nil, p.errorfCode(tok.Pos, "P003", "left-hand side of assignment is not assignable")
 			}
 			binary := &ast.Binary{P: tok.Pos, Op: op, Left: left, Right: rhs}
-			return &ast.Assign{P: tok.Pos, Target: left, Value: binary}, nil
+			return &ast.Assign{P: tok.Pos, Target: left, Value: binary, Op: op}, nil
 		}
 	}
 	return left, nil

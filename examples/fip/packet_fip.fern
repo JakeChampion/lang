@@ -72,13 +72,13 @@ fip function st_bad_checksum(): i32 {
 }
 
 fip function checksum(bytes: u8[], from: i32, n: i32): i32 {
-  let a: i32 = 0;
-  let b: i32 = 0;
-  let i: i32 = 0;
+  let a = 0;
+  let b = 0;
+  let i = 0;
   while (i < n) {
     a = (a + bytes[from + i] as i32) % 255;
     b = (b + a) % 255;
-    i = i + 1;
+    i += 1;
   }
   return b * 256 + a;
 }
@@ -89,9 +89,9 @@ fip function read_u16(bytes: u8[], at: i32): i32 {
 
 fip function read_u32(bytes: u8[], at: i32): i64 {
   return bytes[at] as i64
-    + bytes[at + 1] as i64 * (256 as i64)
-    + bytes[at + 2] as i64 * (65536 as i64)
-    + bytes[at + 3] as i64 * (16777216 as i64);
+    + bytes[at + 1] as i64 * 256i64
+    + bytes[at + 2] as i64 * 65536i64
+    + bytes[at + 3] as i64 * 16777216i64;
 }
 
 fip function known_type(t: i32): boolean {
@@ -99,98 +99,98 @@ fip function known_type(t: i32): boolean {
 }
 
 fip function pow256(k: i32): i64 {
-  let p: i64 = 1 as i64;
-  let i: i32 = 0;
+  let p = 1i64;
+  let i = 0;
   while (i < k) {
-    p = p * (256 as i64);
-    i = i + 1;
+    p *= 256i64;
+    i += 1;
   }
   return p;
 }
 
 fip function rev_inplace(own b: u8[], at: i32, n: i32): u8[] {
-  let i: i32 = 0;
-  let j: i32 = n - 1;
+  let i = 0;
+  let j = n - 1;
   while (i < j) {
-    let lo: u8 = b[at + i];
-    let hi: u8 = b[at + j];
+    let lo = b[at + i];
+    let hi = b[at + j];
     b = b.with(at + i, hi);
     b = b.with(at + j, lo);
-    i = i + 1;
-    j = j - 1;
+    i += 1;
+    j -= 1;
   }
   return b;
 }
 
 fip function upper_inplace(own b: u8[], at: i32, n: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let ch: i32 = b[at + i] as i32;
+    let ch = b[at + i] as i32;
     if (ch >= 97 && ch <= 122) {
       b = b.with(at + i, (ch - 32) as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   return b;
 }
 
 fip function sum_inplace(own b: u8[], at: i32, n: i32): u8[] {
-  let total: i64 = 0 as i64;
-  let s: i32 = 0;
+  let total = 0i64;
+  let s = 0;
   while (s < n) {
-    total = total + b[at + s] as i64;
-    s = s + 1;
+    total += b[at + s] as i64;
+    s += 1;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < 8) {
-    b = b.with(at + k, (total / pow256(k) % (256 as i64)) as u8);
-    k = k + 1;
+    b = b.with(at + k, (total / pow256(k) % 256i64) as u8);
+    k += 1;
   }
   return b;
 }
 
 fip function sum_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
-  let total: i64 = 0 as i64;
-  let s: i32 = 0;
+  let total = 0i64;
+  let s = 0;
   while (s < n) {
-    total = total + src[at + s] as i64;
-    s = s + 1;
+    total += src[at + s] as i64;
+    s += 1;
   }
-  let b: i32 = 0;
+  let b = 0;
   while (b < 8) {
-    dst = dst.with(to + b, (total / pow256(b) % (256 as i64)) as u8);
-    b = b + 1;
+    dst = dst.with(to + b, (total / pow256(b) % 256i64) as u8);
+    b += 1;
   }
   return dst;
 }
 
 fip function copy_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     dst = dst.with(to + i, src[at + i]);
-    i = i + 1;
+    i += 1;
   }
   return dst;
 }
 
 fip function rev_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     dst = dst.with(to + i, src[at + n - 1 - i]);
-    i = i + 1;
+    i += 1;
   }
   return dst;
 }
 
 fip function upper_into(own dst: u8[], src: u8[], at: i32, n: i32, to: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let ch: i32 = src[at + i] as i32;
+    let ch = src[at + i] as i32;
     if (ch >= 97 && ch <= 122) {
-      ch = ch - 32;
+      ch -= 32;
     }
     dst = dst.with(to + i, ch as u8);
-    i = i + 1;
+    i += 1;
   }
   return dst;
 }
@@ -205,7 +205,7 @@ fip function validate(wire: u8[], wire_len: i32): i32 {
   if (wire[2] as i32 != version()) {
     return st_bad_version();
   }
-  let n: i32 = read_u16(wire, 10);
+  let n = read_u16(wire, 10);
   if (n > max_payload()) {
     return st_oversize();
   }
@@ -222,17 +222,17 @@ fip function validate(wire: u8[], wire_len: i32): i32 {
 }
 
 fip function frame(own out: u8[], mtype: i32, status: i32, rid: i64, plen: i32): u8[] {
-  let ck: i32 = checksum(out, header_len(), plen);
+  let ck = checksum(out, header_len(), plen);
   out = out.with(0, magic0() as u8);
   out = out.with(1, magic1() as u8);
   out = out.with(2, version() as u8);
   out = out.with(3, mtype as u8);
   out = out.with(4, status as u8);
   out = out.with(5, 0 as u8);
-  let idb: i32 = 0;
+  let idb = 0;
   while (idb < 4) {
-    out = out.with(6 + idb, (rid / pow256(idb) % (256 as i64)) as u8);
-    idb = idb + 1;
+    out = out.with(6 + idb, (rid / pow256(idb) % 256i64) as u8);
+    idb += 1;
   }
   out = out.with(10, (plen % 256) as u8);
   out = out.with(11, (plen / 256) as u8);
@@ -243,16 +243,16 @@ fip function frame(own out: u8[], mtype: i32, status: i32, rid: i64, plen: i32):
 }
 
 fip function serve_inplace(own buf: u8[], wire_len: i32): u8[] {
-  let status: i32 = validate(buf, wire_len);
-  let mtype: i32 = 0;
-  let rid: i64 = 0 as i64;
-  let plen: i32 = 0;
+  let status = validate(buf, wire_len);
+  let mtype = 0;
+  let rid = 0i64;
+  let plen = 0;
   if (status != st_bad_magic() && status != st_bad_version() && wire_len >= header_len()) {
     mtype = buf[3] as i32;
     rid = read_u32(buf, 6);
   }
   if (status == st_ok()) {
-    let n: i32 = read_u16(buf, 10);
+    let n = read_u16(buf, 10);
     plen = n;
     if (mtype == msg_reverse()) {
       buf = rev_inplace(buf, header_len(), n);
@@ -269,16 +269,16 @@ fip function serve_inplace(own buf: u8[], wire_len: i32): u8[] {
 }
 
 fip function serve_separate(own out: u8[], wire: u8[], wire_len: i32): u8[] {
-  let status: i32 = validate(wire, wire_len);
-  let mtype: i32 = 0;
-  let rid: i64 = 0 as i64;
-  let plen: i32 = 0;
+  let status = validate(wire, wire_len);
+  let mtype = 0;
+  let rid = 0i64;
+  let plen = 0;
   if (status != st_bad_magic() && status != st_bad_version() && wire_len >= header_len()) {
     mtype = wire[3] as i32;
     rid = read_u32(wire, 6);
   }
   if (status == st_ok()) {
-    let n: i32 = read_u16(wire, 10);
+    let n = read_u16(wire, 10);
     plen = n;
     if (mtype == msg_echo()) {
       out = copy_into(out, wire, header_len(), n, header_len());
@@ -311,33 +311,33 @@ fip function moved(mtype: i32, status: i32, plen: i32, inplace: boolean): i64 {
 }
 
 fip function gen_payload_len(n: i64): i32 {
-  return (n * (37 as i64) % (241 as i64)) as i32;
+  return (n * 37i64 % 241i64) as i32;
 }
 
 fip function gen_byte(n: i64, j: i32): u8 {
-  return (((n + j as i64) % (251 as i64)) as i32) as u8;
+  return (((n + j as i64) % 251i64) as i32) as u8;
 }
 
 fip function corruption(n: i64): i32 {
-  if (n % (17 as i64) != 0 as i64) {
-    return 0 - 1;
+  if (n % 17i64 != 0i64) {
+    return -1;
   }
-  return (n / (17 as i64) % (6 as i64)) as i32;
+  return (n / 17i64 % 6i64) as i32;
 }
 
 fip function build_request(own wire: u8[], n: i64): u8[] {
-  let t: i32 = 1 + (n % (4 as i64)) as i32;
-  let plen: i32 = gen_payload_len(n);
-  let corrupt: i32 = corruption(n);
-  let i: i32 = 0;
+  let t = 1 + (n % 4i64) as i32;
+  let plen = gen_payload_len(n);
+  let corrupt = corruption(n);
+  let i = 0;
   while (i < plen) {
     wire = wire.with(header_len() + i, gen_byte(n, i));
-    i = i + 1;
+    i += 1;
   }
-  let ck: i32 = checksum(wire, header_len(), plen);
-  let m0: i32 = magic0();
-  let ver: i32 = version();
-  let wire_plen: i32 = plen;
+  let ck = checksum(wire, header_len(), plen);
+  let m0 = magic0();
+  let ver = version();
+  let wire_plen = plen;
   if (corrupt == 0) {
     m0 = 1;
   }
@@ -351,7 +351,7 @@ fip function build_request(own wire: u8[], n: i64): u8[] {
     wire_plen = max_payload() + 8;
   }
   if (corrupt == 5) {
-    ck = ck ^ 1;
+    ck ^= 1;
   }
   wire = wire.with(0, m0 as u8);
   wire = wire.with(1, magic1() as u8);
@@ -359,10 +359,10 @@ fip function build_request(own wire: u8[], n: i64): u8[] {
   wire = wire.with(3, t as u8);
   wire = wire.with(4, 0 as u8);
   wire = wire.with(5, 0 as u8);
-  let idb: i32 = 0;
+  let idb = 0;
   while (idb < 4) {
-    wire = wire.with(6 + idb, (n / pow256(idb) % (256 as i64)) as u8);
-    idb = idb + 1;
+    wire = wire.with(6 + idb, (n / pow256(idb) % 256i64) as u8);
+    idb += 1;
   }
   wire = wire.with(10, (wire_plen % 256) as u8);
   wire = wire.with(11, (wire_plen / 256) as u8);
@@ -373,7 +373,7 @@ fip function build_request(own wire: u8[], n: i64): u8[] {
 }
 
 fip function wire_len_for(n: i64): i32 {
-  let plen: i32 = gen_payload_len(n);
+  let plen = gen_payload_len(n);
   if (corruption(n) == 4) {
     return header_len() + plen - 1;
   }
@@ -381,156 +381,135 @@ fip function wire_len_for(n: i64): i32 {
 }
 
 fip function mix(d: i64, b: i32): i64 {
-  let x: i64 = d ^ b as i64;
-  x = x * (1099511628211 as i64);
-  x = x ^ x >> 29 as i64;
-  if (x < 0 as i64) {
-    x = 0 - x;
+  let x = d ^ b as i64;
+  x *= 1099511628211i64;
+  x ^= x >> 29i64;
+  if (x < 0i64) {
+    x = -x;
   }
-  return x % (1000000007 as i64);
+  return x % 1000000007i64;
 }
 
 function zeros_u8(n: i32): u8[] {
-  let xs: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
-  while (i < n) {
+  let xs = __alloc_u8(n);
+  for i in 0..n {
     xs = xs.with(i, 0 as u8);
-    i = i + 1;
   }
   return xs;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let inplace: boolean = true;
-  let name: string = "fip";
-  if (argv.len() > 1 && argv[1] == "separate") {
-    inplace = false;
-    name = "fip-separate";
-  }
+  let argv = args();
+  let inplace = !(argv.len() > 1 && argv[1] == "separate");
+  let name = if (inplace) { "fip" } else { "fip-separate" };
 
-  let batch: i32 = 64;
-  let rounds: i32 = 4000;
-  let wire: u8[] = zeros_u8(max_packet());
-  let out: u8[] = zeros_u8(max_packet());
+  let batch = 64;
+  let rounds = 4000;
+  let wire = zeros_u8(max_packet());
+  let out = zeros_u8(max_packet());
 
-  let ok: i64 = 0 as i64;
+  let ok = 0i64;
+  let bad_magic = 0i64;
+  let bad_version = 0i64;
+  let bad_type = 0i64;
+  let oversize = 0i64;
+  let truncated = 0i64;
+  let bad_checksum = 0i64;
+  let digest = 1469598103934665603i64;
+  let copied = 0i64;
 
-  let bad_magic: i64 = 0 as i64;
-
-  let bad_version: i64 = 0 as i64;
-  let bad_type: i64 = 0 as i64;
-  let oversize: i64 = 0 as i64;
-  let truncated: i64 = 0 as i64;
-  let bad_checksum: i64 = 0 as i64;
-  let digest: i64 = 1469598103934665603 as i64;
-  let copied: i64 = 0 as i64;
-
-  let r: i32 = 0 - 1;
   let samples: i64[] = [];
-  let p: i32 = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p = p + 1;
+  for _ in 0..rounds {
+    samples = samples.append(0i64);
   }
 
-  let w: i32 = 0;
-  while (w < batch) {
+  for w in 0..batch {
     wire = build_request(wire, w as i64);
     if (inplace) {
       wire = serve_inplace(wire, wire_len_for(w as i64));
     } else {
       out = serve_separate(out, wire, wire_len_for(w as i64));
     }
-    w = w + 1;
   }
 
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  r = 0;
-  while (r < rounds) {
-    let t0: i64 = monotonic_ns();
-    let k: i32 = 0;
-    while (k < batch) {
-      let n: i64 = r as i64 * (batch as i64) + k as i64;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  for r in 0..rounds {
+    let t0 = monotonic_ns();
+    for k in 0..batch {
+      let n = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
-      let wl: i32 = wire_len_for(n);
+      let wl = wire_len_for(n);
       if (inplace) {
         wire = serve_inplace(wire, wl);
-        let st1: i32 = wire[4] as i32;
-        let pl1: i32 = read_u16(wire, 10);
-        let mt1: i32 = wire[3] as i32;
-        let i1: i32 = 0;
-        while (i1 < header_len() + pl1) {
-          digest = mix(digest, wire[i1] as i32);
-          i1 = i1 + 1;
+        let st1 = wire[4] as i32;
+        let pl1 = read_u16(wire, 10);
+        let mt1 = wire[3] as i32;
+        for i in 0..header_len() + pl1 {
+          digest = mix(digest, wire[i] as i32);
         }
-        copied = copied + moved(mt1, st1, pl1, true);
+        copied += moved(mt1, st1, pl1, true);
         if (st1 == st_ok()) {
-          ok = ok + 1 as i64;
+          ok += 1i64;
         }
         if (st1 == st_bad_magic()) {
-          bad_magic = bad_magic + 1 as i64;
+          bad_magic += 1i64;
         }
         if (st1 == st_bad_version()) {
-          bad_version = bad_version + 1 as i64;
+          bad_version += 1i64;
         }
         if (st1 == st_bad_type()) {
-          bad_type = bad_type + 1 as i64;
+          bad_type += 1i64;
         }
         if (st1 == st_oversize()) {
-          oversize = oversize + 1 as i64;
+          oversize += 1i64;
         }
         if (st1 == st_truncated()) {
-          truncated = truncated + 1 as i64;
+          truncated += 1i64;
         }
         if (st1 == st_bad_checksum()) {
-          bad_checksum = bad_checksum + 1 as i64;
+          bad_checksum += 1i64;
         }
       } else {
         out = serve_separate(out, wire, wl);
-        let st2: i32 = out[4] as i32;
-        let pl2: i32 = read_u16(out, 10);
-        let mt2: i32 = out[3] as i32;
-        let i2: i32 = 0;
-        while (i2 < header_len() + pl2) {
-          digest = mix(digest, out[i2] as i32);
-          i2 = i2 + 1;
+        let st2 = out[4] as i32;
+        let pl2 = read_u16(out, 10);
+        let mt2 = out[3] as i32;
+        for i in 0..header_len() + pl2 {
+          digest = mix(digest, out[i] as i32);
         }
-        copied = copied + moved(mt2, st2, pl2, false);
+        copied += moved(mt2, st2, pl2, false);
         if (st2 == st_ok()) {
-          ok = ok + 1 as i64;
+          ok += 1i64;
         }
         if (st2 == st_bad_magic()) {
-          bad_magic = bad_magic + 1 as i64;
+          bad_magic += 1i64;
         }
         if (st2 == st_bad_version()) {
-          bad_version = bad_version + 1 as i64;
+          bad_version += 1i64;
         }
         if (st2 == st_bad_type()) {
-          bad_type = bad_type + 1 as i64;
+          bad_type += 1i64;
         }
         if (st2 == st_oversize()) {
-          oversize = oversize + 1 as i64;
+          oversize += 1i64;
         }
         if (st2 == st_truncated()) {
-          truncated = truncated + 1 as i64;
+          truncated += 1i64;
         }
         if (st2 == st_bad_checksum()) {
-          bad_checksum = bad_checksum + 1 as i64;
+          bad_checksum += 1i64;
         }
       }
-      k = k + 1;
     }
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let requests: i64 = rounds as i64 * (batch as i64);
-  let rep: bench.Report = bench.Report {
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let requests = rounds as i64 * (batch as i64);
+  let rep = bench.Report {
     name: name,
     iterations: rounds,
     wall_ns: elapsed_ns,
@@ -538,29 +517,15 @@ function main(): i32 {
     allocs: allocs,
     fresh_bytes: fresh,
   };
-  print("{\"variant\":\"" + name + "\""
-    + ",\"requests\":" + requests.to_string()
-    + ",\"requests_per_round\":" + batch.to_string()
-    + ",\"ok\":" + ok.to_string()
-    + ",\"bad_magic\":" + bad_magic.to_string()
-    + ",\"bad_version\":" + bad_version.to_string()
-    + ",\"bad_type\":" + bad_type.to_string()
-    + ",\"oversize\":" + oversize.to_string()
-    + ",\"truncated\":" + truncated.to_string()
-    + ",\"bad_checksum\":" + bad_checksum.to_string()
-    + ",\"digest\":" + digest.to_string()
-    + ",\"bytes_copied\":" + copied.to_string()
-    + ",\"bytes_copied_per_request\":" + (copied / requests).to_string()
-    + ",\"steady_allocs\":" + allocs.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
-    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
-    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
-    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"round_max_ns\":" + rep.max_ns().to_string()
-    + "}");
+  print(f"{{\"variant\":\"{name}\",\"requests\":{requests},\"requests_per_round\":{batch},\"ok\":{ok}"
+    + f",\"bad_magic\":{bad_magic},\"bad_version\":{bad_version},\"bad_type\":{bad_type}"
+    + f",\"oversize\":{oversize},\"truncated\":{truncated},\"bad_checksum\":{bad_checksum}"
+    + f",\"digest\":{digest},\"bytes_copied\":{copied},\"bytes_copied_per_request\":{copied / requests}"
+    + f",\"steady_allocs\":{allocs},\"steady_fresh_bytes\":{fresh}"
+    + f",\"allocs_per_request_milli\":{allocs * 1000i64 / requests}"
+    + f",\"ns_per_request\":{elapsed_ns / requests}"
+    + f",\"requests_per_sec\":{requests * 1000000000i64 / elapsed_ns},\"round_p50_ns\":{rep.p50_ns()}"
+    + f",\"round_p95_ns\":{rep.p95_ns()},\"round_p99_ns\":{rep.p99_ns()}"
+    + f",\"round_p999_ns\":{rep.p999_ns()},\"round_max_ns\":{rep.max_ns()}}}");
   return 0;
 }

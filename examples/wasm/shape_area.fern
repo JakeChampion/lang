@@ -4,47 +4,32 @@ enum Shape { Circle(f32), Square(f32), Triangle(f32, f32), Cuboid(f64, f64, f64)
 
 function area(s: Shape): Result[f32, string] {
   match (s) {
-    Circle(r) when r <= 0 as f32 => {
+    Circle(r) when r <= 0.0 => {
       return Err("non-positive radius");
     },
     Circle(r) => {
-      return Ok(3.14159 as f32 * r * r);
+      return Ok(3.14159 * r * r);
     },
-    Square(side) when side <= 0 as f32 => {
+    Square(side) when side <= 0.0 => {
       return Err("zero or negative side");
     },
     Square(side) => {
       return Ok(side * side);
     },
-    Triangle(b, h) when b <= 0 as f32 || h <= 0 as f32 => {
+    Triangle(b, h) when b <= 0.0 || h <= 0.0 => {
       return Err("non-positive triangle dim");
     },
     Triangle(b, h) => {
-      return Ok(0.5 as f32 * b * h);
+      return Ok(0.5 * b * h);
     },
     Cuboid(_, _, _) => {
       return Err("area undefined for 3D -- call volume()");
     }
   }
-  return Err("unreachable");
 }
 
 function volume(s: Shape): f64 {
-  match (s) {
-    Cuboid(x, y, z) => {
-      return x * y * z;
-    },
-    Circle(_) => {
-      return 0 as f64;
-    },
-    Square(_) => {
-      return 0 as f64;
-    },
-    Triangle(_, _) => {
-      return 0 as f64;
-    }
-  }
-  return 0 as f64;
+  return match (s) { Cuboid(x, y, z) => x * y * z, Circle(_) | Square(_) | Triangle(_, _) => 0.0 };
 }
 
 function show_area(label: string, s: Shape): void {
@@ -59,10 +44,10 @@ function show_area(label: string, s: Shape): void {
 }
 
 function main(): i32 {
-  show_area("circle r=2.5", Circle(2.5 as f32));
-  show_area("square s=3", Square(3 as f32));
-  show_area("triangle b=4 h=2.5", Triangle(4 as f32, 2.5 as f32));
-  show_area("degenerate input", Square(0 as f32));
-  print(f"cuboid 2x3x5 -> volume {volume(Cuboid(2 as f64, 3 as f64, 5 as f64))}");
+  show_area("circle r=2.5", Circle(2.5));
+  show_area("square s=3", Square(3.0));
+  show_area("triangle b=4 h=2.5", Triangle(4.0, 2.5));
+  show_area("degenerate input", Square(0.0));
+  print(f"cuboid 2x3x5 -> volume {volume(Cuboid(2.0, 3.0, 5.0))}");
   return 0;
 }

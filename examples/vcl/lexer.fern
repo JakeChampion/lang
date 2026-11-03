@@ -11,27 +11,25 @@ pub struct LexResult { toks: Tok[], diags: diag.Diag[] }
 struct Pos { i: i32, line: i32, col: i32 }
 
 function advance(src: string, p: Pos, to: i32): Pos {
-  let i: i32 = p.i;
-  let line: i32 = p.line;
-  let col: i32 = p.col;
-  while (i < to) {
-    if (src[i] == 10) {
-      line = line + 1;
+  let line = p.line;
+  let col = p.col;
+  for i in p.i..to {
+    if (src[i] == b'\n') {
+      line += 1;
       col = 1;
     } else {
-      col = col + 1;
+      col += 1;
     }
-    i = i + 1;
   }
-  return Pos { i: i, line: line, col: col };
+  return Pos { i: to, line: line, col: col };
 }
 
 function is_digit(b: u8): boolean {
-  return b >= 48 && b <= 57;
+  return b >= b'0' && b <= b'9';
 }
 
 function is_alpha(b: u8): boolean {
-  return b >= 97 && b <= 122 || b >= 65 && b <= 90 || b == 95;
+  return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b == b'_';
 }
 
 function is_alphanumeric(b: u8): boolean {
@@ -39,32 +37,26 @@ function is_alphanumeric(b: u8): boolean {
 }
 
 function ident_end(src: string, i: i32): i32 {
-  let j: i32 = i;
-  if (j < src.len() && src[j] == 46) {
-    j = j + 1;
-  }
-  while (j < src.len()) {
-    let b: u8 = src[j];
-    if (is_alphanumeric(b) || b == 46) {
-      j = j + 1;
-    } else if (b == 45 && j + 1 < src.len() && is_alphanumeric(src[j + 1])) {
-      j = j + 1;
-    } else {
+  let start = if (i < src.len() && src[i] == b'.') { i + 1 } else { i };
+  for j in start..src.len() {
+    let b = src[j];
+    let dashed = b == b'-' && j + 1 < src.len() && is_alphanumeric(src[j + 1]);
+    if (!is_alphanumeric(b) && b != b'.' && !dashed) {
       return j;
     }
   }
-  return j;
+  return src.len();
 }
 
 function number_end(src: string, i: i32): i32 {
-  let j: i32 = i;
+  let j = i;
   while (j < src.len() && is_digit(src[j])) {
-    j = j + 1;
+    j += 1;
   }
-  if (j < src.len() && src[j] == 46 && j + 1 < src.len() && is_digit(src[j + 1])) {
-    j = j + 1;
+  if (j + 1 < src.len() && src[j] == b'.' && is_digit(src[j + 1])) {
+    j += 1;
     while (j < src.len() && is_digit(src[j])) {
-      j = j + 1;
+      j += 1;
     }
   }
   return j;
@@ -79,16 +71,11 @@ function byte_units(): string[] {
 }
 
 function match_unit(src: string, i: i32, units: string[]): string {
-  let u: i32 = 0;
-  while (u < units.len()) {
-    let unit: string = units[u];
-    let e: i32 = i + unit.len();
-    if (e <= src.len() && slice_unchecked(src, i, e) == unit) {
-      if (e == src.len() || !is_alphanumeric(src[e])) {
-        return unit;
-      }
+  for unit in units {
+    let e = i + unit.len();
+    if (e <= src.len() && slice_unchecked(src, i, e) == unit && (e == src.len() || !is_alphanumeric(src[e]))) {
+      return unit;
     }
-    u = u + 1;
   }
   return "";
 }
@@ -96,58 +83,49 @@ function match_unit(src: string, i: i32, units: string[]): string {
 struct Run { start: i32, end: i32, close: i32, ok: boolean }
 
 function delimited(src: string, from: i32, closer: string): Run {
-  let j: i32 = from;
-  while (j + closer.len() <= src.len()) {
+  for j in from..=src.len() - closer.len() {
     if (slice_unchecked(src, j, j + closer.len()) == closer) {
       return Run { start: from, end: j, close: j + closer.len(), ok: true };
     }
-    j = j + 1;
   }
   return Run { start: from, end: src.len(), close: src.len(), ok: false };
 }
 
 function short_string(src: string, from: i32): Run {
-  let j: i32 = from;
-  while (j < src.len() && src[j] != 34 && src[j] != 10) {
-    j = j + 1;
+  let j = from;
+  while (j < src.len() && src[j] != b'"' && src[j] != b'\n') {
+    j += 1;
   }
-  if (j >= src.len() || src[j] == 10) {
+  if (j >= src.len() || src[j] == b'\n') {
     return Run { start: from, end: j, close: j, ok: false };
   }
   return Run { start: from, end: j, close: j + 1, ok: true };
 }
 
-function comment_end(src: string, i: i32): i32 {
-  let b: u8 = src[i];
-  if (b == 35) {
-    return line_end(src, i);
+function comment_end(src: string, i: i32): Option[i32] {
+  let b = src[i];
+  if (b == b'#') {
+    return Some(line_end(src, i));
   }
-  if (b != 47 || i + 1 >= src.len()) {
-    return 0 - 1;
+  if (b != b'/' || i + 1 >= src.len()) {
+    return None;
   }
-  if (src[i + 1] == 47) {
-    return line_end(src, i);
-  }
-  if (src[i + 1] == 42) {
-    return delimited(src, i + 2, "*/").close;
-  }
-  return 0 - 1;
+  return match (src[i + 1]) { b'/' => Some(line_end(src, i)), b'*' => Some(delimited(src, i + 2, "*/").close), _ => None };
 }
 
 function is_space(b: u8): boolean {
-  return b == 32 || b == 9 || b == 13 || b == 10;
+  return b == b' ' || b == b'\t' || b == b'\r' || b == b'\n';
 }
 
 function skip_trivia(src: string, p: Pos): Pos {
-  let cur: Pos = p;
+  let cur = p;
   while (cur.i < src.len()) {
     if (is_space(src[cur.i])) {
       cur = advance(src, cur, cur.i + 1);
     } else {
-      let ce: i32 = comment_end(src, cur.i);
-      if (ce < 0) {
+      let Some(ce) = comment_end(src, cur.i) else {
         return cur;
-      }
+      };
       cur = advance(src, cur, ce);
     }
   }
@@ -155,9 +133,9 @@ function skip_trivia(src: string, p: Pos): Pos {
 }
 
 function line_end(src: string, i: i32): i32 {
-  let j: i32 = i;
-  while (j < src.len() && src[j] != 10) {
-    j = j + 1;
+  let j = i;
+  while (j < src.len() && src[j] != b'\n') {
+    j += 1;
   }
   return j;
 }
@@ -171,13 +149,10 @@ function punct_bytes(): string {
 }
 
 function is_punct_byte(b: u8): boolean {
-  let set: string = punct_bytes();
-  let i: i32 = 0;
-  while (i < set.len()) {
-    if (set[i] == b) {
+  for c in punct_bytes() {
+    if (c == b) {
       return true;
     }
-    i = i + 1;
   }
   return false;
 }
@@ -193,27 +168,27 @@ function scan_failed(t: Tok, next: Pos, msg: string, at: Pos): Scan {
 }
 
 function scan_number(src: string, p: Pos): Scan {
-  let e: i32 = number_end(src, p.i);
-  let text: string = slice_unchecked(src, p.i, e).to_owned();
-  let bu: string = match_unit(src, e, byte_units());
+  let e = number_end(src, p.i);
+  let text = slice_unchecked(src, p.i, e).to_owned();
+  let bu = match_unit(src, e, byte_units());
   if (bu != "") {
-    let t: Tok = Tok { kind: TBytes, text: text, aux: bu, line: p.line, col: p.col };
+    let t = Tok { kind: TBytes, text: text, aux: bu, line: p.line, col: p.col };
     return scanned(t, advance(src, p, e + bu.len()));
   }
-  let du: string = match_unit(src, e, duration_units());
+  let du = match_unit(src, e, duration_units());
   if (du != "") {
-    let d: Tok = Tok { kind: TDuration, text: text, aux: du, line: p.line, col: p.col };
+    let d = Tok { kind: TDuration, text: text, aux: du, line: p.line, col: p.col };
     return scanned(d, advance(src, p, e + du.len()));
   }
-  let n: Tok = Tok { kind: TNumber, text: text, aux: "", line: p.line, col: p.col };
+  let n = Tok { kind: TNumber, text: text, aux: "", line: p.line, col: p.col };
   return scanned(n, advance(src, p, e));
 }
 
 function scan_string(src: string, p: Pos): Scan {
-  let form: string = "short";
-  let open: i32 = p.i + 1;
-  let closer: string = "\"";
-  if (src[p.i] == 123) {
+  let form = "short";
+  let open = p.i + 1;
+  let closer = "\"";
+  if (src[p.i] == b'{') {
     form = "brace";
     open = p.i + 2;
     closer = "\"}";
@@ -222,13 +197,8 @@ function scan_string(src: string, p: Pos): Scan {
     open = p.i + 3;
     closer = "\"\"\"";
   }
-  let sp: Run = Run { start: 0, end: 0, close: 0, ok: false };
-  if (form == "short") {
-    sp = short_string(src, open);
-  } else {
-    sp = delimited(src, open, closer);
-  }
-  let tok: Tok = Tok { kind: TString, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: form, line: p.line, col: p.col };
+  let sp = if (form == "short") { short_string(src, open) } else { delimited(src, open, closer) };
+  let tok = Tok { kind: TString, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: form, line: p.line, col: p.col };
   if (!sp.ok) {
     return scan_failed(tok, advance(src, p, sp.close), "unterminated string literal", p);
   }
@@ -236,23 +206,19 @@ function scan_string(src: string, p: Pos): Scan {
 }
 
 function scan_punct(src: string, p: Pos): Scan {
-  let ops: string[] = two_byte_ops();
-  let k: i32 = 0;
-  while (k < ops.len()) {
-    let op: string = ops[k];
+  for op in two_byte_ops() {
     if (p.i + 2 <= src.len() && slice_unchecked(src, p.i, p.i + 2) == op) {
-      let t2: Tok = Tok { kind: TPunct, text: op, aux: "", line: p.line, col: p.col };
+      let t2 = Tok { kind: TPunct, text: op, aux: "", line: p.line, col: p.col };
       return scanned(t2, advance(src, p, p.i + 2));
     }
-    k = k + 1;
   }
-  let t1: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
+  let t1 = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
   return scanned(t1, advance(src, p, p.i + 1));
 }
 
 function scan_c_source(src: string, p: Pos): Scan {
-  let sp: Run = delimited(src, p.i + 2, "}C");
-  let tok: Tok = Tok { kind: TCSource, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: "", line: p.line, col: p.col };
+  let sp = delimited(src, p.i + 2, "}C");
+  let tok = Tok { kind: TCSource, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: "", line: p.line, col: p.col };
   if (!sp.ok) {
     return scan_failed(tok, advance(src, p, sp.close), "unterminated C{ … }C block", p);
   }
@@ -260,104 +226,74 @@ function scan_c_source(src: string, p: Pos): Scan {
 }
 
 function at_c_source(src: string, i: i32): boolean {
-  return src[i] == 67 && i + 1 < src.len() && src[i + 1] == 123;
+  return src[i] == b'C' && i + 1 < src.len() && src[i + 1] == b'{';
 }
 
 function at_brace_string(src: string, i: i32): boolean {
-  return src[i] == 123 && i + 1 < src.len() && src[i + 1] == 34;
+  return src[i] == b'{' && i + 1 < src.len() && src[i + 1] == b'"';
 }
 
-// fern-lint: allow cyclomatic-complexity
 function scan_one(src: string, p: Pos): Scan {
-  let b: u8 = src[p.i];
+  let b = src[p.i];
   if (at_c_source(src, p.i)) {
     return scan_c_source(src, p);
   }
-  if (at_brace_string(src, p.i) || b == 34) {
+  if (at_brace_string(src, p.i) || b == b'"') {
     return scan_string(src, p);
   }
   if (is_digit(b)) {
     return scan_number(src, p);
   }
   if (is_alpha(b)) {
-    let e: i32 = ident_end(src, p.i);
-    let id: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, e).to_owned(), aux: "", line: p.line, col: p.col };
+    let e = ident_end(src, p.i);
+    let id = Tok { kind: TIdent, text: slice_unchecked(src, p.i, e).to_owned(), aux: "", line: p.line, col: p.col };
     return scanned(id, advance(src, p, e));
   }
-  if (b == 46 && p.i + 1 < src.len() && is_alpha(src[p.i + 1])) {
-    let pe: i32 = ident_end(src, p.i);
-    let prop: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, pe).to_owned(), aux: "", line: p.line, col: p.col };
+  if (b == b'.' && p.i + 1 < src.len() && is_alpha(src[p.i + 1])) {
+    let pe = ident_end(src, p.i);
+    let prop = Tok { kind: TIdent, text: slice_unchecked(src, p.i, pe).to_owned(), aux: "", line: p.line, col: p.col };
     return scanned(prop, advance(src, p, pe));
   }
   if (is_punct_byte(b)) {
     return scan_punct(src, p);
   }
-  let bad: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
-  return scan_failed(bad, advance(src, p, p.i + 1), "unexpected byte '" + slice_unchecked(src, p.i, p.i + 1) + "'", p);
+  let bad = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
+  return scan_failed(bad, advance(src, p, p.i + 1), f"unexpected byte '{bad.text}'", p);
 }
 
 pub function lex(src: string): LexResult {
   let toks: Tok[] = [];
   let diags: diag.Diag[] = [];
-  let cur: Pos = Pos { i: 0, line: 1, col: 1 };
-  while (true) {
+  let cur = Pos { i: 0, line: 1, col: 1 };
+  loop {
     cur = skip_trivia(src, cur);
     if (cur.i >= src.len()) {
       toks = toks.append(Tok { kind: TEOF, text: "", aux: "", line: cur.line, col: cur.col });
       return LexResult { toks: toks, diags: diags };
     }
-    let s: Scan = scan_one(src, cur);
+    let s = scan_one(src, cur);
     if (!s.ok) {
       diags = diags.append(s.err);
     }
     toks = toks.append(s.tok);
     cur = s.next;
   }
-  return LexResult { toks: toks, diags: diags };
 }
 
 pub function (t: Tok) is_eof(): boolean {
-  match (t.kind) {
-    TEOF => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return match (t.kind) { TEOF => true, _ => false };
 }
 
 pub function (t: Tok) is_ident(): boolean {
-  match (t.kind) {
-    TIdent => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return match (t.kind) { TIdent => true, _ => false };
 }
 
 pub function (t: Tok) is_string(): boolean {
-  match (t.kind) {
-    TString => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return match (t.kind) { TString => true, _ => false };
 }
 
 pub function (t: Tok) is_punct(): boolean {
-  match (t.kind) {
-    TPunct => {
-      return true;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return match (t.kind) { TPunct => true, _ => false };
 }
 
 pub function (t: Tok) punct(s: string): boolean {

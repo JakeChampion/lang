@@ -1,6 +1,7 @@
 import "std/string";
 import "std/i32";
 import "std/io";
+import "std/array";
 
 struct Opts { ignore_case: boolean, invert: boolean, show_num: boolean, count_only: boolean }
 
@@ -12,32 +13,33 @@ function matches(line: string, pat: string, ci: boolean): boolean {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let o: Opts = Opts { ignore_case: false, invert: false, show_num: false, count_only: false };
-  let pat: string = "";
-  let have_pat: boolean = false;
+  let argv = args();
+  let o = Opts { ignore_case: false, invert: false, show_num: false, count_only: false };
+  let pat = "";
+  let have_pat = false;
   let inputs: string[] = [];
 
-  let i: i32 = 1;
-  while (i < argv.len()) {
-    let a: string = argv[i];
+  for a in array.drop(argv, 1) {
     if (a.starts_with("-") && a.len() > 1 && !have_pat) {
-      let f: i32 = 1;
-      while (f < a.len()) {
-        let c: i32 = a[f] as i32;
-        if (c == 105) {
-          o = Opts { ...o, ignore_case: true };
-        } else if (c == 118) {
-          o = Opts { ...o, invert: true };
-        } else if (c == 110) {
-          o = Opts { ...o, show_num: true };
-        } else if (c == 99) {
-          o = Opts { ...o, count_only: true };
-        } else {
-          eprint("grep: invalid option -- '" + slice_unchecked(a, f, f + 1) + "'");
-          return 2;
+      for f in 1..a.len() {
+        match (a[f]) {
+          b'i' => {
+            o = Opts { ...o, ignore_case: true };
+          },
+          b'v' => {
+            o = Opts { ...o, invert: true };
+          },
+          b'n' => {
+            o = Opts { ...o, show_num: true };
+          },
+          b'c' => {
+            o = Opts { ...o, count_only: true };
+          },
+          _ => {
+            eprint(f"grep: invalid option -- '{slice_unchecked(a, f, f + 1)}'");
+            return 2;
+          }
         }
-        f = f + 1;
       }
     } else if (!have_pat) {
       pat = a;
@@ -45,7 +47,6 @@ function main(): i32 {
     } else {
       inputs = inputs.append(a);
     }
-    i = i + 1;
   }
 
   if (!have_pat) {
@@ -56,53 +57,43 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  let multi: boolean = inputs.len() > 1;
-  let any_match: boolean = false;
-  let status: i32 = 1;
+  let multi = inputs.len() > 1;
+  let any_match = false;
+  let status = 1;
 
-  let j: i32 = 0;
-  while (j < inputs.len()) {
-    let name: string = inputs[j];
+  for name in inputs {
     match (io.read_input(name)) {
       Ok(text) => {
-        let lines: string[] = text.lines();
-        let hits: i32 = 0;
-        let ln: i32 = 0;
-        while (ln < lines.len()) {
-          let hit: boolean = matches(lines[ln], pat, o.ignore_case);
-          if (o.invert) {
-            hit = !hit;
-          }
+        let lines = text.lines();
+        let hits = 0;
+        for ln in 0..lines.len() {
+          let found = matches(lines[ln], pat, o.ignore_case);
+          let hit = if (o.invert) { !found } else { found };
           if (hit) {
-            hits = hits + 1;
+            hits += 1;
             any_match = true;
             if (!o.count_only) {
-              let prefix: string = "";
-              if (multi) {
-                prefix = name + ":";
-              }
+              let prefix = if (multi) { name + ":" } else { "" };
               if (o.show_num) {
-                prefix = prefix + (ln + 1).to_string() + ":";
+                prefix += f"{ln + 1}:";
               }
               print(prefix + lines[ln]);
             }
           }
-          ln = ln + 1;
         }
         if (o.count_only) {
           if (multi) {
-            print(name + ":" + hits.to_string());
+            print(f"{name}:{hits}");
           } else {
             print(hits.to_string());
           }
         }
       },
       Err(_) => {
-        eprint("grep: " + name + ": No such file or directory");
+        eprint(f"grep: {name}: No such file or directory");
         status = 2;
       }
     }
-    j = j + 1;
   }
   if (any_match) {
     return 0;

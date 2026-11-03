@@ -36,13 +36,12 @@ from `std/`.
 ## Is a number divisible?
 
 FizzBuzz turns on divisibility, so that's the first idea worth naming.
-Fern has no `%` operator in this little subset, so we reconstruct the
-remainder from integer division:
+A number is divisible when the remainder `%` leaves is zero:
 
 ```fern
 <<the divisibility test>>=
 function divisible(n: i32, by: i32): boolean {
-  return n - n / by * by == 0;
+  return n % by == 0;
 }
 ```
 
@@ -55,31 +54,29 @@ multiples of five, both for multiples of fifteen, and a `.` otherwise:
 ```fern
 <<the main loop>>=
 function main(): i32 {
-  let i: i32 = 1;
-  while (i <= 15) {
+  for i in 1..=15 {
     <<classify one number>>
-    putchar(10);
-    i = i + 1;
+    putchar(b'\n');
   }
   return 0;
 }
 ```
 
 The classification is its own chunk so the loop above reads as prose.
-Note it's referenced *inside* the `while` body, so tangling keeps its
+Note it's referenced *inside* the `for` body, so tangling keeps its
 indentation:
 
 ```fern
 <<classify one number>>=
 if (divisible(i, 15)) {
-  putchar(70);
-  putchar(66);
+  putchar(b'F');
+  putchar(b'B');
 } else if (divisible(i, 3)) {
-  putchar(70);
+  putchar(b'F');
 } else if (divisible(i, 5)) {
-  putchar(66);
+  putchar(b'B');
 } else {
-  putchar(46);
+  putchar(b'.');
 }
 ```
 

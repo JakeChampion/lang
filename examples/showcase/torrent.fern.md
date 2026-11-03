@@ -38,11 +38,11 @@ function text(s: string): u8[] {
 }
 
 function bstr(b: u8[]): u8[] {
-  return text(b.len().to_string() + ":").concat(b);
+  return text(f"{b.len()}:").concat(b);
 }
 
 function bint(n: i64): u8[] {
-  return text("i" + n.to_string() + "e");
+  return text(f"i{n}e");
 }
 
 function digits(b: u8[], at: i32, stop: u8): (i64, i32) {
@@ -50,19 +50,19 @@ function digits(b: u8[], at: i32, stop: u8): (i64, i32) {
   let negative = false;
   if (i < b.len() && b[i] == b'-') {
     negative = true;
-    i = i + 1;
+    i += 1;
   }
   let n: i64 = 0;
   let start = i;
   while (i < b.len() && b[i] >= b'0' && b[i] <= b'9' && i - start < 18) {
     n = n * 10 + (b[i] - b'0') as i64;
-    i = i + 1;
+    i += 1;
   }
   if (i == start || i >= b.len() || b[i] != stop) {
-    return (0, 0 - 1);
+    return (0, -1);
   }
   if (negative) {
-    n = 0 - n;
+    n = -n;
   }
   return (n, i + 1);
 }
@@ -70,26 +70,28 @@ function digits(b: u8[], at: i32, stop: u8): (i64, i32) {
 // The end of the bencoded value at `at`, or -1.
 function skip(b: u8[], at: i32, depth: i32): i32 {
   if (at >= b.len() || depth > 32) {
-    return 0 - 1;
+    return -1;
   }
-  let c = b[at];
-  if (c == b'i') {
-    let (n, end) = digits(b, at + 1, b'e');
-    return end;
-  }
-  if (c == b'l' || c == b'd') {
-    let i = at + 1;
-    while (i >= 0 && i < b.len() && b[i] != b'e') {
-      i = skip(b, i, depth + 1);
-    }
-    if (i < 0 || i >= b.len()) {
-      return 0 - 1;
-    }
-    return i + 1;
+  match (b[at]) {
+    b'i' => {
+      let (n, end) = digits(b, at + 1, b'e');
+      return end;
+    },
+    b'l' | b'd' => {
+      let i = at + 1;
+      while (i >= 0 && i < b.len() && b[i] != b'e') {
+        i = skip(b, i, depth + 1);
+      }
+      if (i < 0 || i >= b.len()) {
+        return -1;
+      }
+      return i + 1;
+    },
+    _ => {}
   }
   let (len, start) = digits(b, at, b':');
   if (start < 0 || len < 0 || len > (b.len() - start) as i64) {
-    return 0 - 1;
+    return -1;
   }
   return start + len as i32;
 }
@@ -97,14 +99,14 @@ function skip(b: u8[], at: i32, depth: i32): i32 {
 // The start of the value under `key` in the dictionary at `at`, or -1.
 function lookup(b: u8[], at: i32, key: string): i32 {
   if (at >= b.len() || b[at] != b'd') {
-    return 0 - 1;
+    return -1;
   }
   let want = key.bytes();
   let i = at + 1;
   while (i >= 0 && i < b.len() && b[i] != b'e') {
     let (len, start) = digits(b, i, b':');
     if (start < 0 || len < 0 || len > (b.len() - start) as i64) {
-      return 0 - 1;
+      return -1;
     }
     let value = start + len as i32;
     if (crypto.consteq(b[start:value], want[:])) {
@@ -112,16 +114,16 @@ function lookup(b: u8[], at: i32, key: string): i32 {
     }
     i = skip(b, value, 1);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function int_at(b: u8[], at: i32): i64 {
   if (at < 0 || at >= b.len() || b[at] != b'i') {
-    return 0 - 1;
+    return -1;
   }
   let (n, end) = digits(b, at + 1, b'e');
   if (end < 0) {
-    return 0 - 1;
+    return -1;
   }
   return n;
 }
@@ -176,7 +178,7 @@ function json_text(b: u8[]): string {
   for c in b {
     if (c == b'"' || c == b'\\') {
       out = out.append(b'\\').append(c);
-    } else if (c < 32 || c > 126) {
+    } else if (c < b' ' || c > b'~') {
       out = out.append(b'?');
     } else {
       out = out.append(c);
@@ -201,7 +203,7 @@ pub function describe(info: u8[]): string {
   if (count != (pieces.len() / 20) as i64) {
     return "";
   }
-  return "{\"name\":" + json_text(name) + ",\"length\":" + length.to_string() + ",\"piece_length\":" + piece_length.to_string() + ",\"pieces\":" + count.to_string() + "}";
+  return f"{{\"name\":{json_text(name)},\"length\":{length},\"piece_length\":{piece_length},\"pieces\":{count}}}";
 }
 
 @export("fern:showcase/torrent", "piece-ok")
@@ -240,7 +242,7 @@ pub function handshake(info_hash: u8[], peer_id: u8[]): u8[] {
 
 function frame(payload: u8[]): u8[] {
   let n = payload.len();
-  let head: u8[] = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+  let head = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
   return head.concat(payload);
 }
 
@@ -250,12 +252,7 @@ function extended(ext_id: i32, body: u8[]): u8[] {
 
 @export("fern:showcase/torrent", "ext-handshake")
 pub function ext_handshake(metadata_size: i32): u8[] {
-  let body = text("d1:md11:ut_metadatai1ee");
-  if (metadata_size > 0) {
-    body = text("d1:md11:ut_metadatai1ee13:metadata_size").concat(bint(metadata_size as i64)).concat(text("e"));
-  } else {
-    body = body.concat(text("e"));
-  }
+  let body = if (metadata_size > 0) { text("d1:md11:ut_metadatai1ee13:metadata_size").concat(bint(metadata_size as i64)).concat(text("e")) } else { text("d1:md11:ut_metadatai1eee") };
   return extended(0, body);
 }
 
@@ -276,7 +273,7 @@ pub function metadata_piece(ext_id: i32, info: u8[], piece: i32): u8[] {
 }
 
 function field(name: string, value: i64): string {
-  return "\"" + name + "\":" + value.to_string();
+  return f"\"{name}\":{value}";
 }
 
 @export("fern:showcase/torrent", "ext-fields")
@@ -285,7 +282,7 @@ pub function ext_fields(payload: u8[]): string {
   if (end < 0) {
     return "";
   }
-  let parts: string[] = [field("data", end as i64)];
+  let parts = [field("data", end as i64)];
   for key in ["msg_type", "piece", "total_size", "metadata_size"] {
     let n = int_at(payload, lookup(payload, 0, key));
     if (n >= 0) {
@@ -313,19 +310,19 @@ const WORDS: string[] = ["fern", "frond", "spore", "moss", "lichen", "cedar", "r
 
 @export("fern:showcase/torrent", "sample")
 pub function sample(seed: i32, size: i32): u8[] {
-  let s: u32 = seed as u32 * 2654435761 | 1;
+  let s = seed as u32 * 2654435761 | 1;
   let out: u8[] = [];
   let line = 0;
   while (out.len() < size) {
     let words: string[] = [];
     for i in 0..10 {
-      s = s ^ s << 13;
-      s = s ^ s >> 17;
-      s = s ^ s << 5;
+      s ^= s << 13;
+      s ^= s >> 17;
+      s ^= s << 5;
       words = words.append(WORDS[(s % 16) as i32]);
     }
-    out = out.concat(text(line.to_string() + " " + words.join(" ") + "\n"));
-    line = line + 1;
+    out = out.concat(text(f"{line} {words.join(" ")}\n"));
+    line += 1;
   }
   return array.slice(out, 0, size);
 }

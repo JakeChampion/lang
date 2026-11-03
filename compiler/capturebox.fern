@@ -164,15 +164,15 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
         let recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "", builtin: false };
         let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "", const_read: false }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
-        return ast.StmtExpr { value: scall, line: a.line };
+        return ast.StmtExpr { value: scall, line: a.line, op: "" };
       }
-      return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+      return ast.StmtAssign { ...a, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound) };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: box_rewrite_expr(r.value, boxed, btypes, bsites, bound), line: r.line, col: r.col };
     },
     ast.StmtExpr(e) => {
-      return ast.StmtExpr { value: box_rewrite_expr(e.value, boxed, btypes, bsites, bound), line: e.line };
+      return ast.StmtExpr { ...e, value: box_rewrite_expr(e.value, boxed, btypes, bsites, bound) };
     },
     ast.StmtIf(f) => {
       return ast.StmtIf { ...f, cond: box_rewrite_expr(f.cond, boxed, btypes, bsites, bound), then_body: box_rewrite_stmts(f.then_body, boxed, btypes, bsites, bound), else_body: box_rewrite_stmts(f.else_body, boxed, btypes, bsites, bound) };

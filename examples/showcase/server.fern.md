@@ -61,14 +61,14 @@ pub struct State { studios: studio.State, labs: labs.State, voxels: blockyard.St
 struct Meta { apps: i32, instance: string, binary_bytes: i64, uptime_ms: i64, requests: i64 }
 
 pub function state(binary_bytes: i64, version: string): State {
-  let games: rally.State = rally.state();
-  let canvases: mosaic.State = mosaic.state();
-  let renderer: fractal.Stats = fractal.stats(common.token().take(8), now_unix_ms(), binary_bytes, version);
+  let games = rally.state();
+  let canvases = mosaic.state();
+  let renderer = fractal.stats(common.token().take(8), now_unix_ms(), binary_bytes, version);
   let arena = gather.state(renderer.instance);
   let voxels = blockyard.state(renderer.instance);
   let studios = studio.state();
   let lab_state = labs.state();
-  let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels, studios, lab_state);
+  let telemetry = metrics.state(canvases, games, renderer, arena, voxels, studios, lab_state);
   return State {
     studios: studios, labs: lab_state, voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry, bench: bench.state(),
     fractal: renderer, tracker: tracker.state(live.state()),
@@ -116,12 +116,12 @@ Streams keep their body type. The middleware records response status and time fo
 ```fern
 <<HTTP routes>>=
 pub function routes[P: platform.Platform](state: State, root: string, pages: source.Page[]): router.Router[P] {
-  let original_encoding: string = env("FERN_ORIGINAL_ACCEPT_ENCODING").unwrap_or("Netlify-Original-Accept-Encoding");
-  let app: router.Router[P] = router.new[P]();
-  let fractals: router.Router[P] = fractal.routes[P](state.fractal, root + "/fractal/web", pages);
+  let original_encoding = env("FERN_ORIGINAL_ACCEPT_ENCODING").unwrap_or("Netlify-Original-Accept-Encoding");
+  let app = router.new[P]();
+  let fractals = fractal.routes[P](state.fractal, root + "/fractal/web", pages);
   app = app.get("/fractal", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/fractal/")));
   app = app.route("/fractal/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let response: HttpResponse = fractals.handle(HttpRequest { ...req, path: req.path.drop(8) }, plat);
+    let response = fractals.handle(HttpRequest { ...req, path: req.path.drop(8) }, plat);
     if let Some(location) = response.headers.get("Location") {
       if (location.starts_with("/tile/")) {
         response = response.with_header("Location", "/fractal" + location);
@@ -130,7 +130,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     return Ok(response);
   });
   app = app.get("/api/meta", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let meta: Meta = Meta { apps: 20, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
+    let meta = Meta { apps: 20, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
     return Ok(http.json_of(meta).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
@@ -161,20 +161,20 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   app = app.get("/prism/reference", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.reference(req)?));
   for name in ["foundry", "patchbay", "circuit"] {
     let application = name;
-    app = app.post("/" + name + "/checkpoint", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(studio.checkpoint(state.studios, application, req)?));
-    app = app.get("/" + name + "/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => studio.socket(state.studios, application, req));
-    app = app.get("/" + name + "/preview", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(studio.preview(state.studios, application)?));
+    app = app.post(f"/{name}/checkpoint", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(studio.checkpoint(state.studios, application, req)?));
+    app = app.get(f"/{name}/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => studio.socket(state.studios, application, req));
+    app = app.get(f"/{name}/preview", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(studio.preview(state.studios, application)?));
   }
   for name in ["fernbase", "lantern"] {
     let application = name;
-    app = app.get("/" + name + "/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => labs.socket(state.labs, application, req));
+    app = app.get(f"/{name}/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => labs.socket(state.labs, application, req));
     for verb in ["state", "search", "export"] {
       let action = verb;
-      app = app.get("/" + name + "/" + verb, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.handle(state.labs, application, action, req)?));
+      app = app.get(f"/{name}/{verb}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.handle(state.labs, application, action, req)?));
     }
     for verb in ["query", "import", "recover"] {
       let action = verb;
-      app = app.post("/" + name + "/" + verb, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.handle(state.labs, application, action, req)?));
+      app = app.post(f"/{name}/{verb}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(labs.handle(state.labs, application, action, req)?));
     }
   }
   app = app.get("/gather/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => gather.socket(state.arena, req));
@@ -189,25 +189,22 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   app = app.get("/rally/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => rally.socket(state.games, req));
   app = app.get("/mosaic/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => mosaic.socket(state.canvases, req));
   app = app.get("/mosaic/state", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let room: mosaic.Room = mosaic.room(state.canvases, common.query(req, "room", "commons"))?;
+    let room = mosaic.room(state.canvases, common.query(req, "room", "commons"))?;
     return Ok(http.json_of(mosaic.snapshot(room)).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/mosaic/events", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let room: mosaic.Room = mosaic.room(state.canvases, common.query(req, "room", "commons"))?;
+    let room = mosaic.room(state.canvases, common.query(req, "room", "commons"))?;
     return Ok(mosaic.events(room, req));
   });
   app = app.post("/mosaic/paint", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let room: mosaic.Room = mosaic.room(state.canvases, common.query(req, "room", "commons"))?;
-    let stroke: mosaic.Stroke = http.body_json[mosaic.Stroke](req)?;
+    let room = mosaic.room(state.canvases, common.query(req, "room", "commons"))?;
+    let stroke = http.body_json[mosaic.Stroke](req)?;
     return Ok(http.json_of(mosaic.paint(room, stroke)?).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/mosaic/export.png", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(mosaic.export_png(mosaic.room(state.canvases, common.query(req, "room", "commons"))?)?));
   app = app.get("/wave/render.wav", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(wave.audio(req)?));
   app = app.get("/notes/{$}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let notice: string = "";
-    if (common.query(req, "posted", "") == "1") {
-      notice = "Your note is on the wall. Thanks for stopping by.";
-    }
+    let notice = if (common.query(req, "posted", "") == "1") { "Your note is on the wall. Thanks for stopping by." } else { "" };
     return Ok(notes.document(state.guestbook, req, notice, 200));
   });
   app = app.post("/notes/{$}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(notes.post(state.guestbook, req)));
@@ -217,10 +214,10 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   app = app.get("/pulse/metrics", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(metrics.prometheus(state.metrics)));
   app = app.get("/_src", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/_src/")));
   app = app.get("/_src/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let name: string = params.param("path")?;
+    let name = params.param("path")?;
     for page in pages {
       if (page.name == name || page.name == name + ".md") {
-        let prepared: HttpResponse = static.serve(HttpRequest { ...req, path: "/" + page.name + ".html" }, static.dir(root + "/showcase/web/.source"), plat);
+        let prepared = static.serve(HttpRequest { ...req, path: f"/{page.name}.html" }, static.dir(root + "/showcase/web/.source"), plat);
         if (prepared.status != 404) {
           return Ok(prepared);
         }
@@ -230,12 +227,12 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     return Ok(source.serve(pages, name));
   });
   for name in ["contour", "uxn", "rally", "mosaic", "wave", "notes", "pulse", "swarm", "gather", "foundry", "patchbay", "prism", "fernbase", "circuit", "lantern", "json", "compress", "handshake", "image", "torrent"] {
-    let destination: string = "/" + name + "/";
+    let destination = f"/{name}/";
     app = app.get("/" + name, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect(destination)));
   }
   app = app.get("/assets/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let asset: HttpRequest = HttpRequest { ...req, path: req.path.drop(7) };
-    let response: HttpResponse = static.serve(asset, static.dir(root + "/showcase/web/shared"), plat);
+    let asset = HttpRequest { ...req, path: req.path.drop(7) };
+    let response = static.serve(asset, static.dir(root + "/showcase/web/shared"), plat);
     if (response.status == 404 && asset.path.starts_with("/fonts/")) {
       return Ok(static.serve(HttpRequest { ...asset, path: asset.path.drop(6) }, static.dir(root + "/../site/src/assets/fonts"), plat));
     }
@@ -243,9 +240,9 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   });
   app = app.route("/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(static.serve(req, static.dir(root + "/showcase/web"), plat)));
   return app.wrap((req: HttpRequest, plat: P, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] => {
-    let started: i64 = now_ns();
-    let normalized: HttpRequest = encoding.request(req, original_encoding);
-    let response: HttpResponse = compress.response(normalized, http.respond(next(normalized)), compress.options());
+    let started = now_ns();
+    let normalized = encoding.request(req, original_encoding);
+    let response = compress.response(normalized, http.respond(next(normalized)), compress.options());
     if (original_encoding != "") {
       response = response.with_vary(original_encoding);
     }
@@ -284,28 +281,21 @@ Check route conflicts before the server starts. Limit request bodies to 16 KiB a
 <<Start the server>>=
 function main(): i32 {
   if (args().len() == 4 && args()[1] == "--prepare") {
-    match (prepare(args()[2], args()[3])) {
-      Ok(_) => {
-        return 0;
-      },
-      Err(message) => {
-        eprint(message);
-        return 1;
-      }
+    if let Err(message) = prepare(args()[2], args()[3]) {
+      eprint(message);
+      return 1;
     }
+    return 0;
   }
-  let root: string = "examples";
-  if (args().len() > 1) {
-    root = args()[1];
-  }
-  let identity: (i64, string) = identity();
+  let root = if (args().len() > 1) { args()[1] } else { "examples" };
+  let identity = identity();
   match (source.load_files(root, files())) {
     Ok(pages) => {
-      let app: router.Router[platform.Host] = routes[platform.Host](state(identity.0, identity.1), root, pages);
+      let app = routes[platform.Host](state(identity.0, identity.1), root, pages);
       match (app.check()) {
         Ok(_) => {
-          let config: serve.Config = serve.config();
-          config = serve.Config { ...config, limits: http.HttpLimits { ...config.limits, body: 16384 }, max_connections: 8192, max_connections_per_ip: 8192, max_in_flight: 16384, background_deadline: time.duration_seconds(0) };
+          let defaults = serve.config();
+          let config = serve.Config { ...defaults, limits: http.HttpLimits { ...defaults.limits, body: 16384 }, max_connections: 8192, max_connections_per_ip: 8192, max_in_flight: 16384, background_deadline: time.duration_seconds(0) };
           return serve.exit_code(serve.run_shutdown(8080, config, app.handler(), (reason: string): void => eprint("showcase: " + reason)));
         },
         Err(error) => {
@@ -330,13 +320,13 @@ A separate build script compresses these immutable bytes with three standard enc
 ```fern
 <<Prepare lesson assets>>=
 function prepare(root: string, destination: string): Result[void, string] {
-  let pages: source.Page[] = source.load_files(root, files())?;
+  let pages = source.load_files(root, files())?;
   let preview_directory = util.dir_of(destination) + "/prism";
   create_dir_all(preview_directory).map_err((e: IoError): string => "Cannot create preview directory.")?;
   let preview = labs.thumbnail().map_err((e: http.HttpError): string => e.detail)?;
   write_file_bytes(preview_directory + "/preview.png", preview).map_err((e: IoError): string => "Cannot write preview image.")?;
   for page in pages {
-    let path: string = destination + "/" + page.name + ".html";
+    let path = f"{destination}/{page.name}.html";
     create_dir_all(util.dir_of(path)).map_err((e: IoError): string => "cannot create lesson directory")?;
     write_file(path, page.html).map_err((e: IoError): string => "cannot write lesson " + page.name)?;
   }

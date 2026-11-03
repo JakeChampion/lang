@@ -1,0 +1,27 @@
+// A range `for` and a value `if` or `match` allocate nothing, so a fip
+// function may use them. Their parts are still checked: see
+// diag_e053_range_bound_and_value_block.
+fip function sum(n: i32): i32 {
+  let t = 0;
+  for i in 0..n {
+    t += i;
+  }
+  for j in 0..=n {
+    t += j;
+  }
+  return t;
+}
+
+fip function wrap(c: i32, n: i32): i32 {
+  let next = if (c + 1 == n) { 0 } else { c + 1 };
+  let kind = match (next) {
+    0 => 10,
+    _ => 20,
+  };
+  return next + kind;
+}
+
+function main(): i32 {
+  print(f"{sum(4)} {wrap(2, 3)} {wrap(0, 3)}");
+  return 0;
+}

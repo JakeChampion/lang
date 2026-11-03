@@ -20,6 +20,8 @@ import "std/string";
 import "std/i64";
 import "std/f64";
 import "std/regex";
+import "std/option";
+import "core/cmp";
 import "./ast";
 import "./value";
 import "./runtime";
@@ -72,60 +74,38 @@ function xerr(t: runtime.Txn, msg: string): ExecOut {
 }
 
 pub function find_sub(ctx: Ctx, name: string): Option[ast.Block] {
-  let i: i32 = 0;
-  while (i < ctx.decls.len()) {
-    match (ctx.decls[i]) {
-      DSub(s) => {
-        if (s.name == name) {
-          return Some(s.body);
-        }
-      },
-      _ => {}
+  for d in ctx.decls {
+    if let DSub(s) = d {
+      if (s.name == name) {
+        return Some(s.body);
+      }
     }
-    i = i + 1;
   }
   return None;
 }
 
 pub function find_acl(ctx: Ctx, name: string): Option[ast.AclDecl] {
-  let i: i32 = 0;
-  while (i < ctx.decls.len()) {
-    match (ctx.decls[i]) {
-      DAcl(a) => {
-        if (a.name == name) {
-          return Some(a);
-        }
-      },
-      _ => {}
+  for d in ctx.decls {
+    if let DAcl(a) = d {
+      if (a.name == name) {
+        return Some(a);
+      }
     }
-    i = i + 1;
   }
   return None;
 }
 
 pub function has_acl(ctx: Ctx, name: string): boolean {
-  match (find_acl(ctx, name)) {
-    Some(a) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return find_acl(ctx, name).is_some();
 }
 
 pub function has_backend(ctx: Ctx, name: string): boolean {
-  let i: i32 = 0;
-  while (i < ctx.decls.len()) {
-    match (ctx.decls[i]) {
-      DBackend(b) => {
-        if (b.name == name) {
-          return true;
-        }
-      },
-      _ => {}
+  for d in ctx.decls {
+    if let DBackend(b) = d {
+      if (b.name == name) {
+        return true;
+      }
     }
-    i = i + 1;
   }
   return false;
 }
@@ -134,25 +114,19 @@ pub function parse_ipv4(s: string): Option[i64] {
   if (s == "localhost") {
     return Some(2130706433);
   }
-  let parts: string[] = s.split(".");
+  let parts = s.split(".");
   if (parts.len() != 4) {
     return None;
   }
   let acc: i64 = 0;
-  let i: i32 = 0;
-  while (i < 4) {
-    match (i32.parse_i32(parts[i])) {
-      Err(_) => {
-        return None;
-      },
-      Ok(n) => {
-        if (n < 0 || n > 255) {
-          return None;
-        }
-        acc = acc * 256 + n as i64;
-      }
+  for part in parts {
+    let Ok(n) = i32.parse_i32(part) else {
+      return None;
+    };
+    if (n < 0 || n > 255) {
+      return None;
     }
-    i = i + 1;
+    acc = acc * 256 + n as i64;
   }
   return Some(acc);
 }
@@ -169,67 +143,45 @@ pub function mask_of(bits: i32): i64 {
   return 4294967295 - (low - 1);
 }
 
-struct EntryHit { covers: boolean, bits: i32, ok: boolean, err: string }
+struct EntryHit { covers: boolean, bits: i32 }
 
-function entry_matches(e: ast.AclEntry, ip: i64): EntryHit {
-  match (parse_ipv4(e.host)) {
-    None => {
-      return EntryHit { covers: false, bits: 0, ok: false, err: "ACL entry '" + e.host + "' is not an IPv4 address or 'localhost'" };
-    },
-    Some(base) => {
-      let bits: i32 = 32;
-      if (e.mask != "") {
-        match (i32.parse_i32(e.mask)) {
-          Ok(b) => {
-            bits = b;
-          },
-          Err(_) => {
-            return EntryHit { covers: false, bits: 0, ok: false, err: "ACL mask '" + e.mask + "' is not a number" };
-          }
-        }
-      }
-      if (bits < 0 || bits > 32) {
-        return EntryHit { covers: false, bits: 0, ok: false, err: "ACL mask /" + e.mask + " is out of range" };
-      }
-      let m: i64 = mask_of(bits);
-      return EntryHit { covers: (base & m) == (ip & m), bits: bits, ok: true, err: "" };
-    }
+function entry_matches(e: ast.AclEntry, ip: i64): Result[EntryHit, string] {
+  let Some(base) = parse_ipv4(e.host) else {
+    return Err(f"ACL entry '{e.host}' is not an IPv4 address or 'localhost'");
+  };
+  let bits = 32;
+  if (e.mask != "") {
+    let Ok(b) = i32.parse_i32(e.mask) else {
+      return Err(f"ACL mask '{e.mask}' is not a number");
+    };
+    bits = b;
   }
+  if (bits < 0 || bits > 32) {
+    return Err(f"ACL mask /{e.mask} is out of range");
+  }
+  let m = mask_of(bits);
+  return Ok(EntryHit { covers: (base & m) == (ip & m), bits: bits });
 }
 
 pub function acl_match(ctx: Ctx, name: string, addr: string): Result[boolean, string] {
-  match (find_acl(ctx, name)) {
-    None => {
-      return Err("unknown ACL '" + name + "'");
-    },
-    Some(a) => {
-      match (parse_ipv4(addr)) {
-        None => {
-          return Err("'" + addr + "' is not an IPv4 address");
-        },
-        Some(ip) => {
-          return acl_walk(a, ip);
-        }
-      }
-    }
-  }
+  let Some(a) = find_acl(ctx, name) else {
+    return Err(f"unknown ACL '{name}'");
+  };
+  let Some(ip) = parse_ipv4(addr) else {
+    return Err(f"'{addr}' is not an IPv4 address");
+  };
+  return acl_walk(a, ip);
 }
 
 function acl_walk(a: ast.AclDecl, ip: i64): Result[boolean, string] {
-  let best_bits: i32 = 0 - 1;
-  let best_negated: boolean = false;
-  let i: i32 = 0;
-  while (i < a.entries.len()) {
-    let e: ast.AclEntry = a.entries[i];
-    let h: EntryHit = entry_matches(e, ip);
-    if (!h.ok) {
-      return Err(h.err);
-    }
+  let best_bits = -1;
+  let best_negated = false;
+  for e in a.entries {
+    let h = entry_matches(e, ip)?;
     if (h.covers && h.bits > best_bits) {
       best_bits = h.bits;
       best_negated = e.negated;
     }
-    i = i + 1;
   }
   if (best_bits < 0) {
     return Ok(false);
@@ -238,19 +190,19 @@ function acl_walk(a: ast.AclDecl, ip: i64): Result[boolean, string] {
 }
 
 function vcl_template(repl: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < repl.len()) {
-    let b: u8 = repl[i];
-    if (b == 36) {
-      out = out + "$$";
-    } else if (b == 92 && i + 1 < repl.len() && repl[i + 1] >= 48 && repl[i + 1] <= 57) {
+    let b = repl[i];
+    if (b == b'$') {
+      out += "$$";
+    } else if (b == b'\\' && i + 1 < repl.len() && repl[i + 1] >= b'0' && repl[i + 1] <= b'9') {
       out = out + "$" + slice_unchecked(repl, i + 1, i + 2);
-      i = i + 1;
+      i += 1;
     } else {
-      out = out + slice_unchecked(repl, i, i + 1);
+      out += slice_unchecked(repl, i, i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -267,119 +219,87 @@ pub function builtin_names(): string[] {
 }
 
 pub function is_builtin(name: string): boolean {
-  let names: string[] = builtin_names();
-  let i: i32 = 0;
-  while (i < names.len()) {
-    if (names[i] == name) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
+  return cmp.contains(builtin_names(), name);
 }
 
 function call_text_builtin(name: string, args: value.Value[]): Option[value.Value] {
-  if (name == "std.tolower") {
-    return Some(VString(arg_str(args, 0).to_ascii_lower()));
-  }
-  if (name == "std.toupper") {
-    return Some(VString(arg_str(args, 0).to_ascii_upper()));
-  }
-  if (name == "std.integer") {
-    match (i32.parse_i32(arg_str(args, 0))) {
-      Ok(n) => {
-        return Some(VInt(n as i64));
-      },
-      Err(_) => {
-        if (args.len() > 1) {
-          return Some(args[1]);
-        }
-        return Some(VInt(0));
-      }
+  match (name) {
+    "std.tolower" => {
+      return Some(VString(arg_str(args, 0).to_ascii_lower()));
+    },
+    "std.toupper" => {
+      return Some(VString(arg_str(args, 0).to_ascii_upper()));
+    },
+    "std.integer" => {
+      return Some(integer_or(arg_str(args, 0), args));
+    },
+    _ => {
+      return None;
     }
   }
-  return None;
+}
+
+function integer_or(text: string, args: value.Value[]): value.Value {
+  if let Ok(n) = i32.parse_i32(text) {
+    return VInt(n as i64);
+  }
+  if (args.len() > 1) {
+    return args[1];
+  }
+  return VInt(0);
+}
+
+function call_regex(t: runtime.Txn, name: string, args: value.Value[]): EvalOut {
+  match (regex.compile(arg_str(args, 1))) {
+    Err(e) => {
+      return eerr(t, e.to_string());
+    },
+    Ok(pattern) => {
+      let subject = arg_str(args, 0);
+      let template = vcl_template(arg_str(args, 2));
+      let result = if (name == "regsub") { pattern.replace_groups(subject, template) } else { pattern.replace_all_groups(subject, template) };
+      return match (result) { Ok(text) => eok(t, VString(text)), Err(e) => eerr(t, f"{name}: {e}") };
+    }
+  }
 }
 
 pub function call_builtin(t: runtime.Txn, name: string, args: value.Value[]): EvalOut {
   if (name == "regsub" || name == "regsuball") {
-    match (regex.compile(arg_str(args, 1))) {
-      Err(e) => {
-        return eerr(t, e.to_string());
-      },
-      Ok(pattern) => {
-        let result: Result[string, regex.TextError] = if (name == "regsub") { pattern.replace_groups(arg_str(args, 0), vcl_template(arg_str(args, 2))) } else { pattern.replace_all_groups(arg_str(args, 0), vcl_template(arg_str(args, 2))) };
-        match (result) {
-          Ok(text) => {
-            return eok(t, VString(text));
-          },
-          Err(e) => {
-            return eerr(t, name + ": " + e.to_string());
-          }
-        }
-      }
+    return call_regex(t, name, args);
+  }
+  if let Some(v) = call_text_builtin(name, args) {
+    return eok(t, v);
+  }
+  match (name) {
+    "std.log" => {
+      return eok(t.note("std.log: " + arg_str(args, 0)), VNone);
+    },
+    "hash_data" => {
+      return eok(t.add_hash(arg_str(args, 0)), VNone);
+    },
+    "synthetic" => {
+      return eok(t.note("synthetic: " + arg_str(args, 0)), VNone);
+    },
+    _ => {
+      return eerr(t, f"unsupported function '{name}'");
     }
   }
-  match (call_text_builtin(name, args)) {
-    Some(v) => {
-      return eok(t, v);
-    },
-    None => {}
-  }
-  if (name == "std.log") {
-    return eok(t.note("std.log: " + arg_str(args, 0)), VNone);
-  }
-  if (name == "hash_data") {
-    return eok(t.add_hash(arg_str(args, 0)), VNone);
-  }
-  if (name == "synthetic") {
-    return eok(t.note("synthetic: " + arg_str(args, 0)), VNone);
-  }
-  return eerr(t, "unsupported function '" + name + "'");
 }
 
 function number_of(text: string): Result[value.Value, string] {
   if (text.contains(".")) {
-    match (f64.parse_f64(text)) {
-      Ok(f) => {
-        return Ok(VReal(f));
-      },
-      Err(_) => {
-        return Err("malformed real '" + text + "'");
-      }
-    }
+    return match (f64.parse_f64(text)) { Ok(f) => Ok(VReal(f)), Err(_) => Err(f"malformed real '{text}'") };
   }
-  match (i32.parse_i32(text)) {
-    Ok(n) => {
-      return Ok(VInt(n as i64));
-    },
-    Err(_) => {
-      return Err("malformed integer '" + text + "'");
-    }
-  }
+  return match (i32.parse_i32(text)) { Ok(n) => Ok(VInt(n as i64)), Err(_) => Err(f"malformed integer '{text}'") };
 }
 
 function qty_number(text: string): f64 {
-  match (f64.parse_f64(text)) {
-    Ok(f) => {
-      return f;
-    },
-    Err(_) => {
-      return 0.0;
-    }
-  }
+  return match (f64.parse_f64(text)) { Ok(f) => f, Err(_) => 0.0 };
 }
 
 function eval_name(ctx: Ctx, t: runtime.Txn, sub: string, name: string): EvalOut {
   if (vars.is_var(name)) {
-    match (vars.read(t, sub, name)) {
-      Ok(v) => {
-        return eok(t, v);
-      },
-      Err(m) => {
-        return eerr(t, m);
-      }
-    }
+    return match (vars.read(t, sub, name)) { Ok(v) => eok(t, v), Err(m) => eerr(t, m) };
   }
   if (has_backend(ctx, name)) {
     return eok(t, VBackend(name));
@@ -387,171 +307,99 @@ function eval_name(ctx: Ctx, t: runtime.Txn, sub: string, name: string): EvalOut
   if (has_acl(ctx, name)) {
     return eok(t, VAcl(name));
   }
-  return eerr(t, "unknown name '" + name + "'");
+  return eerr(t, f"unknown name '{name}'");
 }
 
 function eval_call(ctx: Ctx, t: runtime.Txn, sub: string, c: ast.CallExpr): EvalOut {
-  let cur: runtime.Txn = t;
+  let cur = t;
   let out: value.Value[] = [];
-  let i: i32 = 0;
-  while (i < c.args.len()) {
-    let r: EvalOut = eval_expr(ctx, cur, sub, c.args[i]);
+  for arg in c.args {
+    let r = eval_expr(ctx, cur, sub, arg);
     if (!r.ok) {
       return r;
     }
     cur = r.txn;
     out = out.append(r.val);
-    i = i + 1;
   }
   return call_builtin(cur, c.callee, out);
 }
 
-function is_acl_operand(ctx: Ctx, e: ast.Expr): string {
-  match (e) {
-    EVar(v) => {
-      if (has_acl(ctx, v.name)) {
-        return v.name;
-      }
-      return "";
-    },
-    _ => {
-      return "";
+function acl_operand(ctx: Ctx, e: ast.Expr): Option[string] {
+  if let EVar(v) = e {
+    if (has_acl(ctx, v.name)) {
+      return Some(v.name);
     }
   }
+  return None;
 }
 
 function eval_match(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
-  let negate: boolean = b.op == "!~";
-  let acl: string = is_acl_operand(ctx, b.rhs);
-  let left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  let negate = b.op == "!~";
+  let acl = acl_operand(ctx, b.rhs);
+  let left = eval_expr(ctx, t, sub, b.lhs);
   if (!left.ok) {
     return left;
   }
-  if (acl != "") {
-    match (acl_match(ctx, acl, value.to_str(left.val))) {
-      Err(m) => {
-        return eerr(left.txn, m);
-      },
-      Ok(hit) => {
-        return eok(left.txn, VBool(hit != negate));
-      }
-    }
+  if let Some(name) = acl {
+    return match (acl_match(ctx, name, value.to_str(left.val))) { Err(m) => eerr(left.txn, m), Ok(hit) => eok(left.txn, VBool(hit != negate)) };
   }
-  let right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  let right = eval_expr(ctx, left.txn, sub, b.rhs);
   if (!right.ok) {
     return right;
   }
-  match (match_pattern(value.to_str(right.val), value.to_str(left.val), negate)) {
-    Ok(result) => {
-      return eok(right.txn, result);
-    },
-    Err(message) => {
-      return eerr(right.txn, message);
-    }
-  }
-  return eerr(right.txn, "invalid regex");
+  return match (match_pattern(value.to_str(right.val), value.to_str(left.val), negate)) { Ok(result) => eok(right.txn, result), Err(message) => eerr(right.txn, message) };
 }
 
 function eval_logical(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
-  let left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  let left = eval_expr(ctx, t, sub, b.lhs);
   if (!left.ok) {
     return left;
   }
-  let lv: boolean = value.to_bool(left.val);
+  let lv = value.to_bool(left.val);
   if (b.op == "&&" && !lv) {
     return eok(left.txn, VBool(false));
   }
   if (b.op == "||" && lv) {
     return eok(left.txn, VBool(true));
   }
-  let right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  let right = eval_expr(ctx, left.txn, sub, b.rhs);
   if (!right.ok) {
     return right;
   }
   return eok(right.txn, VBool(value.to_bool(right.val)));
 }
 
-function is_ordering(op: string): boolean {
-  return op == "<" || op == "<=" || op == ">" || op == ">=";
-}
-
 function ordering_holds(op: string, c: i32): boolean {
-  if (op == "<") {
-    return c < 0;
-  }
-  if (op == "<=") {
-    return c <= 0;
-  }
-  if (op == ">") {
-    return c > 0;
-  }
-  return c >= 0;
+  return match (op) { "<" => c < 0, "<=" => c <= 0, ">" => c > 0, _ => c >= 0 };
 }
 
 function eval_compare(op: string, lv: value.Value, rv: value.Value): Result[value.Value, string] {
-  if (op == "==") {
-    return Ok(VBool(value.equal(lv, rv)));
-  }
-  if (op == "!=") {
-    return Ok(VBool(!value.equal(lv, rv)));
-  }
-  match (value.compare(lv, rv)) {
-    Err(m) => {
-      return Err(m);
-    },
-    Ok(c) => {
-      return Ok(VBool(ordering_holds(op, c)));
-    }
-  }
+  return match (op) { "==" => Ok(VBool(value.equal(lv, rv))), "!=" => Ok(VBool(!value.equal(lv, rv))), _ => Ok(VBool(ordering_holds(op, value.compare(lv, rv)?))) };
 }
 
+// fern-lint: allow cyclomatic-complexity
 pub function op_class(op: string): string {
-  if (op == "~" || op == "!~") {
-    return "match";
-  }
-  if (op == "&&" || op == "||") {
-    return "logical";
-  }
-  if (op == "==" || op == "!=" || is_ordering(op)) {
-    return "compare";
-  }
-  return "arith";
+  return match (op) { "~" | "!~" => "match", "&&" | "||" => "logical", "==" | "!=" | "<" | "<=" | ">" | ">=" => "compare", _ => "arith" };
 }
 
 function eval_binary(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.BinExpr): EvalOut {
-  let cls: string = op_class(b.op);
+  let cls = op_class(b.op);
   if (cls == "match") {
     return eval_match(ctx, t, sub, b);
   }
   if (cls == "logical") {
     return eval_logical(ctx, t, sub, b);
   }
-  let left: EvalOut = eval_expr(ctx, t, sub, b.lhs);
+  let left = eval_expr(ctx, t, sub, b.lhs);
   if (!left.ok) {
     return left;
   }
-  let right: EvalOut = eval_expr(ctx, left.txn, sub, b.rhs);
+  let right = eval_expr(ctx, left.txn, sub, b.rhs);
   if (!right.ok) {
     return right;
   }
-  if (cls == "compare") {
-    match (eval_compare(b.op, left.val, right.val)) {
-      Err(m) => {
-        return eerr(right.txn, m);
-      },
-      Ok(v) => {
-        return eok(right.txn, v);
-      }
-    }
-  }
-  match (value.arith(b.op, left.val, right.val)) {
-    Err(m) => {
-      return eerr(right.txn, m);
-    },
-    Ok(v) => {
-      return eok(right.txn, v);
-    }
-  }
+  let r = if (cls == "compare") { eval_compare(b.op, left.val, right.val) } else { value.arith(b.op, left.val, right.val) };
+  return match (r) { Err(m) => eerr(right.txn, m), Ok(v) => eok(right.txn, v) };
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -579,54 +427,26 @@ pub function eval_expr(ctx: Ctx, t: runtime.Txn, sub: string, e: ast.Expr): Eval
       return eval_unary(ctx, t, sub, u);
     },
     ENumber(n) => {
-      match (number_of(n.text)) {
-        Ok(v) => {
-          return eok(t, v);
-        },
-        Err(m) => {
-          return eerr(t, m);
-        }
-      }
+      return match (number_of(n.text)) { Ok(v) => eok(t, v), Err(m) => eerr(t, m) };
     },
     EDuration(q) => {
-      match (value.duration_seconds(qty_number(q.text), q.unit)) {
-        Ok(secs) => {
-          return eok(t, VDuration(secs));
-        },
-        Err(m) => {
-          return eerr(t, m);
-        }
-      }
+      return match (value.duration_seconds(qty_number(q.text), q.unit)) { Ok(secs) => eok(t, VDuration(secs)), Err(m) => eerr(t, m) };
     },
     EBytes(q) => {
-      match (value.byte_count(qty_number(q.text), q.unit)) {
-        Ok(n) => {
-          return eok(t, VBytes(n));
-        },
-        Err(m) => {
-          return eerr(t, m);
-        }
-      }
+      return match (value.byte_count(qty_number(q.text), q.unit)) { Ok(n) => eok(t, VBytes(n)), Err(m) => eerr(t, m) };
     }
   }
 }
 
 function eval_unary(ctx: Ctx, t: runtime.Txn, sub: string, u: ast.UnExpr): EvalOut {
-  let r: EvalOut = eval_expr(ctx, t, sub, u.operand);
+  let r = eval_expr(ctx, t, sub, u.operand);
   if (!r.ok) {
     return r;
   }
   if (u.op == "!") {
     return eok(r.txn, VBool(!value.to_bool(r.val)));
   }
-  match (value.arith("-", VInt(0), r.val)) {
-    Ok(v) => {
-      return eok(r.txn, v);
-    },
-    Err(m) => {
-      return eerr(r.txn, m);
-    }
-  }
+  return match (value.arith("-", VInt(0), r.val)) { Ok(v) => eok(r.txn, v), Err(m) => eerr(r.txn, m) };
 }
 
 function max_call_depth(): i32 {
@@ -638,37 +458,28 @@ function compound_op(op: string): string {
 }
 
 function exec_set(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.SetStmt): ExecOut {
-  let r: EvalOut = eval_expr(ctx, t, sub, s.value);
+  let r = eval_expr(ctx, t, sub, s.value);
   if (!r.ok) {
     return xerr(r.txn, r.err);
   }
-  let v: value.Value = r.val;
-  let cur: runtime.Txn = r.txn;
+  let v = r.val;
+  let cur = r.txn;
   if (s.op != "=") {
-    match (vars.read(cur, sub, s.target)) {
+    match (combine(cur, sub, s, v)) {
       Err(m) => {
         return xerr(cur, m);
       },
-      Ok(old) => {
-        match (value.arith(compound_op(s.op), old, v)) {
-          Err(m) => {
-            return xerr(cur, m);
-          },
-          Ok(combined) => {
-            v = combined;
-          }
-        }
+      Ok(combined) => {
+        v = combined;
       }
     }
   }
-  match (vars.assign(cur, sub, s.target, v)) {
-    Err(m) => {
-      return xerr(cur, m);
-    },
-    Ok(next) => {
-      return xok(next, FNext);
-    }
-  }
+  return match (vars.assign(cur, sub, s.target, v)) { Err(m) => xerr(cur, m), Ok(next) => xok(next, FNext) };
+}
+
+function combine(t: runtime.Txn, sub: string, s: ast.SetStmt, v: value.Value): Result[value.Value, string] {
+  let old = vars.read(t, sub, s.target)?;
+  return value.arith(compound_op(s.op), old, v);
 }
 
 function exec_return(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.ReturnStmt): ExecOut {
@@ -678,23 +489,15 @@ function exec_return(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.ReturnStmt): 
   if (!s.has_args || s.args.len() == 0) {
     return xok(t, FReturn(action(s.action)));
   }
-  let first: EvalOut = eval_expr(ctx, t, sub, s.args[0]);
+  let first = eval_expr(ctx, t, sub, s.args[0]);
   if (!first.ok) {
     return xerr(first.txn, first.err);
   }
-  let status: i64 = 0;
-  match (first.val) {
-    VInt(n) => {
-      status = n;
-    },
-    _ => {
-      status = 0;
-    }
-  }
-  let cur: runtime.Txn = first.txn;
-  let reason: string = "";
+  let status = match (first.val) { VInt(n) => n, _ => 0 };
+  let cur = first.txn;
+  let reason = "";
   if (s.args.len() > 1) {
-    let second: EvalOut = eval_expr(ctx, cur, sub, s.args[1]);
+    let second = eval_expr(ctx, cur, sub, s.args[1]);
     if (!second.ok) {
       return xerr(second.txn, second.err);
     }
@@ -705,18 +508,16 @@ function exec_return(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.ReturnStmt): 
 }
 
 function exec_if(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.IfStmt, depth: i32): ExecOut {
-  let cur: runtime.Txn = t;
-  let i: i32 = 0;
-  while (i < s.arms.len()) {
-    let c: EvalOut = eval_expr(ctx, cur, sub, s.arms[i].cond);
+  let cur = t;
+  for arm in s.arms {
+    let c = eval_expr(ctx, cur, sub, arm.cond);
     if (!c.ok) {
       return xerr(c.txn, c.err);
     }
     cur = c.txn;
     if (value.to_bool(c.val)) {
-      return exec_block(ctx, cur, sub, s.arms[i].body, depth);
+      return exec_block(ctx, cur, sub, arm.body, depth);
     }
-    i = i + 1;
   }
   if (s.has_else) {
     return exec_block(ctx, cur, sub, s.else_blk, depth);
@@ -726,30 +527,21 @@ function exec_if(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.IfStmt, depth: i3
 
 function exec_call(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.CallStmt, depth: i32): ExecOut {
   if (depth >= max_call_depth()) {
-    return xerr(t, "call nesting too deep at '" + s.name + "' (recursive subroutines?)");
+    return xerr(t, f"call nesting too deep at '{s.name}' (recursive subroutines?)");
   }
-  match (find_sub(ctx, s.name)) {
-    None => {
-      return xerr(t, "call to undefined subroutine '" + s.name + "'");
-    },
-    Some(body) => {
-      let out: ExecOut = exec_block(ctx, t, sub, body, depth + 1);
-      if (!out.ok) {
-        return out;
-      }
-      match (out.flow) {
-        FReturn(a) => {
-          if (a.name == "none") {
-            return xok(out.txn, FNext);
-          }
-          return out;
-        },
-        FNext => {
-          return out;
-        }
-      }
+  let Some(body) = find_sub(ctx, s.name) else {
+    return xerr(t, f"call to undefined subroutine '{s.name}'");
+  };
+  let out = exec_block(ctx, t, sub, body, depth + 1);
+  if (!out.ok) {
+    return out;
+  }
+  if let FReturn(a) = out.flow {
+    if (a.name == "none") {
+      return xok(out.txn, FNext);
     }
   }
+  return out;
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -759,14 +551,7 @@ pub function exec_stmt(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.Stmt, depth
       return exec_set(ctx, t, sub, x);
     },
     SUnset(x) => {
-      match (vars.unset(t, sub, x.target)) {
-        Err(m) => {
-          return xerr(t, m);
-        },
-        Ok(next) => {
-          return xok(next, FNext);
-        }
-      }
+      return match (vars.unset(t, sub, x.target)) { Err(m) => xerr(t, m), Ok(next) => xok(next, FNext) };
     },
     SIf(x) => {
       return exec_if(ctx, t, sub, x, depth);
@@ -778,7 +563,7 @@ pub function exec_stmt(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.Stmt, depth
       return exec_call(ctx, t, sub, x, depth);
     },
     SExpr(x) => {
-      let r: EvalOut = eval_expr(ctx, t, sub, x.value);
+      let r = eval_expr(ctx, t, sub, x.value);
       if (!r.ok) {
         return xerr(r.txn, r.err);
       }
@@ -788,7 +573,7 @@ pub function exec_stmt(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.Stmt, depth
       return exec_block(ctx, t, sub, b, depth);
     },
     SNew(x) => {
-      return xerr(t, "'new " + x.name + "' needs VMOD objects, which this evaluator does not implement");
+      return xerr(t, f"'new {x.name}' needs VMOD objects, which this evaluator does not implement");
     },
     SInclude(x) => {
       return xerr(t, "'include' is resolved before evaluation, not during it");
@@ -800,46 +585,28 @@ pub function exec_stmt(ctx: Ctx, t: runtime.Txn, sub: string, s: ast.Stmt, depth
 }
 
 pub function exec_block(ctx: Ctx, t: runtime.Txn, sub: string, b: ast.Block, depth: i32): ExecOut {
-  let cur: runtime.Txn = t;
-  let i: i32 = 0;
-  while (i < b.stmts.len()) {
-    let r: ExecOut = exec_stmt(ctx, cur, sub, b.stmts[i], depth);
+  let cur = t;
+  for stmt in b.stmts {
+    let r = exec_stmt(ctx, cur, sub, stmt, depth);
     if (!r.ok) {
       return r;
     }
     cur = r.txn;
-    match (r.flow) {
-      FReturn(a) => {
-        return r;
-      },
-      FNext => {}
+    if let FReturn(_) = r.flow {
+      return r;
     }
-    i = i + 1;
   }
   return xok(cur, FNext);
 }
 
 pub function run_sub(ctx: Ctx, t: runtime.Txn, name: string): ExecOut {
-  match (find_sub(ctx, name)) {
-    None => {
-      return xok(t, FNext);
-    },
-    Some(body) => {
-      return exec_block(ctx, t, name, body, 0);
-    }
-  }
+  let Some(body) = find_sub(ctx, name) else {
+    return xok(t, FNext);
+  };
+  return exec_block(ctx, t, name, body, 0);
 }
 
 // Match errors use the evaluator's existing error channel.
 pub function match_pattern(pattern: string, text: string, negate: boolean): Result[value.Value, string] {
-  match (regex.compile(pattern)) {
-    Ok(compiled) => {
-      let hit: boolean = compiled.is_match(text);
-      return Ok(VBool(hit != negate));
-    },
-    Err(e) => {
-      return Err(e.to_string());
-    }
-  }
-  return Err("invalid regex");
+  return match (regex.compile(pattern)) { Ok(compiled) => Ok(VBool(compiled.is_match(text) != negate)), Err(e) => Err(e.to_string()) };
 }

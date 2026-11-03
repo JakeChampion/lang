@@ -391,6 +391,11 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		b.WriteByte(']')
 	case *ast.Assign:
 		printExpr(b, x.Target)
+		if bin, ok := x.Value.(*ast.Binary); ok && x.Op != "" && bin.Op == x.Op && bin.Left == x.Target {
+			b.WriteString(" " + x.Op + "= ")
+			printExpr(b, bin.Right)
+			return
+		}
 		b.WriteString(" = ")
 		printExpr(b, x.Value)
 	case *ast.IfExpr:

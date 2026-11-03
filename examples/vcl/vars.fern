@@ -22,6 +22,8 @@ import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
+import "std/option";
+import "core/cmp";
 import "./value";
 import "./runtime";
 
@@ -69,22 +71,8 @@ pub function var_table(): VarSpec[] {
   return [scalar("req.method", client_subs(), req_write_subs()), scalar("req.url", client_subs(), req_write_subs()), scalar("req.proto", client_subs(), none_of()), scalar("req.backend_hint", client_subs(), ["vcl_recv", "vcl_pass", "vcl_miss", "vcl_hit"]), headers("req.http.", client_subs(), client_subs()), scalar("bereq.method", bereq_subs(), bereq_subs()), scalar("bereq.url", bereq_subs(), bereq_subs()), scalar("bereq.proto", bereq_subs(), bereq_subs()), headers("bereq.http.", bereq_subs(), bereq_subs()), scalar("beresp.status", beresp_subs(), beresp_subs()), scalar("beresp.reason", beresp_subs(), beresp_subs()), scalar("beresp.proto", beresp_subs(), beresp_subs()), scalar("beresp.ttl", beresp_subs(), beresp_subs()), scalar("beresp.grace", beresp_subs(), beresp_subs()), scalar("beresp.keep", beresp_subs(), beresp_subs()), scalar("beresp.uncacheable", beresp_subs(), beresp_subs()), headers("beresp.http.", beresp_subs(), beresp_subs()), scalar("resp.status", deliver_subs(), deliver_subs()), scalar("resp.reason", deliver_subs(), deliver_subs()), scalar("resp.proto", deliver_subs(), deliver_subs()), headers("resp.http.", deliver_subs(), deliver_subs()), scalar("obj.status", ["vcl_hit"], none_of()), scalar("obj.reason", ["vcl_hit"], none_of()), scalar("obj.ttl", ["vcl_hit"], none_of()), scalar("obj.hits", ["vcl_hit", "vcl_deliver"], none_of()), headers("obj.http.", ["vcl_hit"], none_of()), scalar("client.ip", client_subs(), none_of()), scalar("server.ip", client_subs(), none_of())];
 }
 
-function in_list(s: string, items: string[]): boolean {
-  let i: i32 = 0;
-  while (i < items.len()) {
-    if (items[i] == s) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
 pub function find_spec(name: string): Option[VarSpec] {
-  let t: VarSpec[] = var_table();
-  let i: i32 = 0;
-  while (i < t.len()) {
-    let s: VarSpec = t[i];
+  for s in var_table() {
     if (s.is_prefix) {
       if (name.starts_with(s.name) && name.len() > s.name.len()) {
         return Some(s);
@@ -92,7 +80,6 @@ pub function find_spec(name: string): Option[VarSpec] {
     } else if (name == s.name) {
       return Some(s);
     }
-    i = i + 1;
   }
   return None;
 }
@@ -102,111 +89,107 @@ function suffix_of(name: string, prefix: string): string {
 }
 
 pub function is_var(name: string): boolean {
-  match (find_spec(name)) {
-    Some(s) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return find_spec(name).is_some();
 }
 
 function read_req(t: runtime.Txn, name: string): value.Value {
-  if (name == "req.method") {
-    return VString(t.req.method);
+  match (name) {
+    "req.method" => {
+      return VString(t.req.method);
+    },
+    "req.url" => {
+      return VString(t.req.url);
+    },
+    "req.proto" => {
+      return VString(t.req.proto);
+    },
+    "req.backend_hint" => {
+      return VBackend(t.backend_hint);
+    },
+    _ => {
+      return t.req.headers.get(suffix_of(name, "req.http."));
+    }
   }
-  if (name == "req.url") {
-    return VString(t.req.url);
-  }
-  if (name == "req.proto") {
-    return VString(t.req.proto);
-  }
-  if (name == "req.backend_hint") {
-    return VBackend(t.backend_hint);
-  }
-  return t.req.headers.get(suffix_of(name, "req.http."));
 }
 
 function read_bereq(t: runtime.Txn, name: string): value.Value {
-  if (name == "bereq.method") {
-    return VString(t.bereq.method);
+  match (name) {
+    "bereq.method" => {
+      return VString(t.bereq.method);
+    },
+    "bereq.url" => {
+      return VString(t.bereq.url);
+    },
+    "bereq.proto" => {
+      return VString(t.bereq.proto);
+    },
+    _ => {
+      return t.bereq.headers.get(suffix_of(name, "bereq.http."));
+    }
   }
-  if (name == "bereq.url") {
-    return VString(t.bereq.url);
-  }
-  if (name == "bereq.proto") {
-    return VString(t.bereq.proto);
-  }
-  return t.bereq.headers.get(suffix_of(name, "bereq.http."));
 }
 
 function read_beresp(t: runtime.Txn, name: string): value.Value {
-  if (name == "beresp.status") {
-    return VInt(t.beresp.status);
+  match (name) {
+    "beresp.status" => {
+      return VInt(t.beresp.status);
+    },
+    "beresp.reason" => {
+      return VString(t.beresp.reason);
+    },
+    "beresp.proto" => {
+      return VString(t.beresp.proto);
+    },
+    "beresp.ttl" => {
+      return VDuration(t.beresp_ttl);
+    },
+    "beresp.grace" => {
+      return VDuration(t.beresp_grace);
+    },
+    "beresp.keep" => {
+      return VDuration(t.beresp_keep);
+    },
+    "beresp.uncacheable" => {
+      return VBool(t.beresp_uncacheable);
+    },
+    _ => {
+      return t.beresp.headers.get(suffix_of(name, "beresp.http."));
+    }
   }
-  if (name == "beresp.reason") {
-    return VString(t.beresp.reason);
-  }
-  if (name == "beresp.proto") {
-    return VString(t.beresp.proto);
-  }
-  if (name == "beresp.ttl") {
-    return VDuration(t.beresp_ttl);
-  }
-  if (name == "beresp.grace") {
-    return VDuration(t.beresp_grace);
-  }
-  if (name == "beresp.keep") {
-    return VDuration(t.beresp_keep);
-  }
-  if (name == "beresp.uncacheable") {
-    return VBool(t.beresp_uncacheable);
-  }
-  return t.beresp.headers.get(suffix_of(name, "beresp.http."));
 }
 
 function read_resp(t: runtime.Txn, name: string): value.Value {
-  if (name == "resp.status") {
-    return VInt(t.resp.status);
-  }
-  if (name == "resp.reason") {
-    return VString(t.resp.reason);
-  }
-  if (name == "resp.proto") {
-    return VString(t.resp.proto);
-  }
-  return t.resp.headers.get(suffix_of(name, "resp.http."));
+  return match (name) { "resp.status" => VInt(t.resp.status), "resp.reason" => VString(t.resp.reason), "resp.proto" => VString(t.resp.proto), _ => t.resp.headers.get(suffix_of(name, "resp.http.")) };
 }
 
 function read_obj(t: runtime.Txn, name: string): value.Value {
-  if (name == "obj.status") {
-    return VInt(t.obj.status);
+  match (name) {
+    "obj.status" => {
+      return VInt(t.obj.status);
+    },
+    "obj.reason" => {
+      return VString(t.obj.reason);
+    },
+    "obj.ttl" => {
+      return VDuration(t.obj_ttl);
+    },
+    "obj.hits" => {
+      return VInt(t.obj_hits);
+    },
+    _ => {
+      return t.obj.headers.get(suffix_of(name, "obj.http."));
+    }
   }
-  if (name == "obj.reason") {
-    return VString(t.obj.reason);
-  }
-  if (name == "obj.ttl") {
-    return VDuration(t.obj_ttl);
-  }
-  if (name == "obj.hits") {
-    return VInt(t.obj_hits);
-  }
-  return t.obj.headers.get(suffix_of(name, "obj.http."));
 }
 
 pub function read(t: runtime.Txn, sub: string, name: string): Result[value.Value, string] {
-  match (find_spec(name)) {
-    None => {
-      return Err("unknown variable '" + name + "'");
-    },
-    Some(s) => {
-      if (!in_list(sub, s.read_in)) {
-        return Err("'" + name + "' is not readable in " + sub);
-      }
-      return Ok(read_dispatch(t, name));
-    }
+  let Some(s) = find_spec(name) else {
+    return Err(f"unknown variable '{name}'");
+  };
+  if (!cmp.contains(s.read_in, sub)) {
+    return Err(f"'{name}' is not readable in {sub}");
   }
+  return Ok(read_dispatch(t, name));
 }
 
 function read_dispatch(t: runtime.Txn, name: string): value.Value {
@@ -232,132 +215,104 @@ function read_dispatch(t: runtime.Txn, name: string): value.Value {
 }
 
 function write_req(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
-  if (name == "req.method") {
-    return runtime.Txn { ...t, req: runtime.Msg { ...t.req, method: value.to_str(v) } };
+  match (name) {
+    "req.method" => {
+      return runtime.Txn { ...t, req: runtime.Msg { ...t.req, method: value.to_str(v) } };
+    },
+    "req.url" => {
+      return runtime.Txn { ...t, req: runtime.Msg { ...t.req, url: value.to_str(v) } };
+    },
+    "req.backend_hint" => {
+      return runtime.Txn { ...t, backend_hint: value.to_str(v) };
+    },
+    _ => {
+      return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: t.req.headers.set(suffix_of(name, "req.http."), value.to_str(v)) } };
+    }
   }
-  if (name == "req.url") {
-    return runtime.Txn { ...t, req: runtime.Msg { ...t.req, url: value.to_str(v) } };
-  }
-  if (name == "req.backend_hint") {
-    return runtime.Txn { ...t, backend_hint: value.to_str(v) };
-  }
-  let h: runtime.Headers = t.req.headers.set(suffix_of(name, "req.http."), value.to_str(v));
-  return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h } };
 }
 
 function write_bereq(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
-  if (name == "bereq.method") {
-    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, method: value.to_str(v) } };
+  match (name) {
+    "bereq.method" => {
+      return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, method: value.to_str(v) } };
+    },
+    "bereq.url" => {
+      return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, url: value.to_str(v) } };
+    },
+    "bereq.proto" => {
+      return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, proto: value.to_str(v) } };
+    },
+    _ => {
+      return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: t.bereq.headers.set(suffix_of(name, "bereq.http."), value.to_str(v)) } };
+    }
   }
-  if (name == "bereq.url") {
-    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, url: value.to_str(v) } };
-  }
-  if (name == "bereq.proto") {
-    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, proto: value.to_str(v) } };
-  }
-  let h: runtime.Headers = t.bereq.headers.set(suffix_of(name, "bereq.http."), value.to_str(v));
-  return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: h } };
 }
 
 pub function as_int(v: value.Value): i64 {
-  match (v) {
-    VInt(n) => {
-      return n;
-    },
-    VBytes(b) => {
-      return b;
-    },
-    VReal(r) => {
-      return r as i64;
-    },
-    VDuration(d) => {
-      return d as i64;
-    },
-    _ => {
-      match (i32.parse_i32(value.to_str(v))) {
-        Ok(n) => {
-          return n as i64;
-        },
-        Err(_) => {
-          return 0;
-        }
-      }
-    }
-  }
+  return match (v) { VInt(n) => n, VBytes(b) => b, VReal(r) => r as i64, VDuration(d) => d as i64, _ => match (i32.parse_i32(value.to_str(v))) { Ok(n) => n as i64, Err(_) => 0 } };
 }
 
 pub function as_secs(v: value.Value): f64 {
-  match (v) {
-    VDuration(d) => {
-      return d;
-    },
-    VReal(r) => {
-      return r;
-    },
-    VInt(n) => {
-      return n as f64;
-    },
-    _ => {
-      return 0.0;
-    }
-  }
+  return match (v) { VDuration(d) => d, VReal(r) => r, VInt(n) => n as f64, _ => 0.0 };
 }
 
 function write_beresp(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
-  if (name == "beresp.status") {
-    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, status: as_int(v) } };
+  match (name) {
+    "beresp.status" => {
+      return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, status: as_int(v) } };
+    },
+    "beresp.reason" => {
+      return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, reason: value.to_str(v) } };
+    },
+    "beresp.proto" => {
+      return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, proto: value.to_str(v) } };
+    },
+    "beresp.ttl" => {
+      return runtime.Txn { ...t, beresp_ttl: as_secs(v) };
+    },
+    "beresp.grace" => {
+      return runtime.Txn { ...t, beresp_grace: as_secs(v) };
+    },
+    "beresp.keep" => {
+      return runtime.Txn { ...t, beresp_keep: as_secs(v) };
+    },
+    "beresp.uncacheable" => {
+      return runtime.Txn { ...t, beresp_uncacheable: value.to_bool(v) };
+    },
+    _ => {
+      return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, headers: t.beresp.headers.set(suffix_of(name, "beresp.http."), value.to_str(v)) } };
+    }
   }
-  if (name == "beresp.reason") {
-    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, reason: value.to_str(v) } };
-  }
-  if (name == "beresp.proto") {
-    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, proto: value.to_str(v) } };
-  }
-  if (name == "beresp.ttl") {
-    return runtime.Txn { ...t, beresp_ttl: as_secs(v) };
-  }
-  if (name == "beresp.grace") {
-    return runtime.Txn { ...t, beresp_grace: as_secs(v) };
-  }
-  if (name == "beresp.keep") {
-    return runtime.Txn { ...t, beresp_keep: as_secs(v) };
-  }
-  if (name == "beresp.uncacheable") {
-    return runtime.Txn { ...t, beresp_uncacheable: value.to_bool(v) };
-  }
-  let h: runtime.Headers = t.beresp.headers.set(suffix_of(name, "beresp.http."), value.to_str(v));
-  return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, headers: h } };
 }
 
 function write_resp(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
-  if (name == "resp.status") {
-    return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, status: as_int(v) } };
+  match (name) {
+    "resp.status" => {
+      return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, status: as_int(v) } };
+    },
+    "resp.reason" => {
+      return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, reason: value.to_str(v) } };
+    },
+    "resp.proto" => {
+      return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, proto: value.to_str(v) } };
+    },
+    _ => {
+      return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: t.resp.headers.set(suffix_of(name, "resp.http."), value.to_str(v)) } };
+    }
   }
-  if (name == "resp.reason") {
-    return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, reason: value.to_str(v) } };
-  }
-  if (name == "resp.proto") {
-    return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, proto: value.to_str(v) } };
-  }
-  let h: runtime.Headers = t.resp.headers.set(suffix_of(name, "resp.http."), value.to_str(v));
-  return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: h } };
 }
 
 pub function assign(t: runtime.Txn, sub: string, name: string, v: value.Value): Result[runtime.Txn, string] {
-  match (find_spec(name)) {
-    None => {
-      return Err("unknown variable '" + name + "'");
-    },
-    Some(s) => {
-      if (s.write_in.len() == 0) {
-        return Err("'" + name + "' is read-only");
-      }
-      if (!in_list(sub, s.write_in)) {
-        return Err("'" + name + "' is not writable in " + sub);
-      }
-      return Ok(write_dispatch(t, name, v));
-    }
+  let Some(s) = find_spec(name) else {
+    return Err(f"unknown variable '{name}'");
+  };
+  if (s.write_in.len() == 0) {
+    return Err(f"'{name}' is read-only");
   }
+  if (!cmp.contains(s.write_in, sub)) {
+    return Err(f"'{name}' is not writable in {sub}");
+  }
+  return Ok(write_dispatch(t, name, v));
 }
 
 function write_dispatch(t: runtime.Txn, name: string, v: value.Value): runtime.Txn {
@@ -374,32 +329,32 @@ function write_dispatch(t: runtime.Txn, name: string, v: value.Value): runtime.T
 }
 
 pub function unset(t: runtime.Txn, sub: string, name: string): Result[runtime.Txn, string] {
-  match (find_spec(name)) {
-    None => {
-      return Err("unknown variable '" + name + "'");
-    },
-    Some(s) => {
-      if (!s.is_prefix) {
-        return Err("'" + name + "' is not a header and cannot be unset");
-      }
-      if (!in_list(sub, s.write_in)) {
-        return Err("'" + name + "' is not writable in " + sub);
-      }
-      return Ok(unset_dispatch(t, name, s.name));
-    }
+  let Some(s) = find_spec(name) else {
+    return Err(f"unknown variable '{name}'");
+  };
+  if (!s.is_prefix) {
+    return Err(f"'{name}' is not a header and cannot be unset");
   }
+  if (!cmp.contains(s.write_in, sub)) {
+    return Err(f"'{name}' is not writable in {sub}");
+  }
+  return Ok(unset_dispatch(t, name, s.name));
 }
 
 function unset_dispatch(t: runtime.Txn, name: string, prefix: string): runtime.Txn {
-  let key: string = suffix_of(name, prefix);
-  if (prefix == "req.http.") {
-    return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: t.req.headers.unset(key) } };
+  let key = suffix_of(name, prefix);
+  match (prefix) {
+    "req.http." => {
+      return runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: t.req.headers.unset(key) } };
+    },
+    "bereq.http." => {
+      return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: t.bereq.headers.unset(key) } };
+    },
+    "beresp.http." => {
+      return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, headers: t.beresp.headers.unset(key) } };
+    },
+    _ => {
+      return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: t.resp.headers.unset(key) } };
+    }
   }
-  if (prefix == "bereq.http.") {
-    return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: t.bereq.headers.unset(key) } };
-  }
-  if (prefix == "beresp.http.") {
-    return runtime.Txn { ...t, beresp: runtime.Msg { ...t.beresp, headers: t.beresp.headers.unset(key) } };
-  }
-  return runtime.Txn { ...t, resp: runtime.Msg { ...t.resp, headers: t.resp.headers.unset(key) } };
 }

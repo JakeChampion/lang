@@ -1,0 +1,2 @@
+`fip` function "bad_bound" may only call other `fip` functions, not "helper"
+`fip` function "bad_block" may not allocate (string concatenation)

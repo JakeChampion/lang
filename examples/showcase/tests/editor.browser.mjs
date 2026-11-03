@@ -51,12 +51,12 @@ assert.match(await statusText(), /did not compile/);
 assert.equal(await kernel(), "edited", "a failed compile keeps the running kernel");
 console.log("compile error reported at its line OK");
 
-await compile(
-  source.replace(
-    "let a: f64 = seed(index, 1);",
-    "let a: f64 = seed(index, monotonic_ns() as i32);",
-  ),
+const unsupportedImport = source.replace(
+  "seed(index, 1)",
+  "seed(index, monotonic_ns() as i32)",
 );
+assert.notEqual(unsupportedImport, source, "the test must add the clock import");
+await compile(unsupportedImport);
 assert.match(
   await page.locator("#diagnostics").textContent(),
   /imports wasi_snapshot_preview1\.clock_time_get/,

@@ -9,24 +9,22 @@ function open_output(path: string, append: boolean): Result[Writer, IoError] {
 }
 
 function write_output(path: string, append: boolean, bytes: u8[]): Result[void, IoError] {
-  let w: Writer = open_output(path, append)?;
-  let written: Result[void, IoError] = w.write_bytes(bytes);
-  let closed: Result[void, IoError] = w.close();
-  if let Err(e) = written {
-    return Err(e);
-  }
+  let w = open_output(path, append)?;
+  let written = w.write_bytes(bytes);
+  let closed = w.close();
+  written?;
   return closed;
 }
 
 function copy_outputs(data: u8[], files: string[], append: boolean): i32 {
-  let status: i32 = 0;
+  let status = 0;
   if let Err(_) = stdout().write_bytes(data) {
     eprint("tee: cannot write stdout");
     status = 1;
   }
   for path in files {
     if let Err(_) = write_output(path, append, data) {
-      eprint("tee: " + path + ": cannot write");
+      eprint(f"tee: {path}: cannot write");
       status = 1;
     }
   }
@@ -34,28 +32,24 @@ function copy_outputs(data: u8[], files: string[], append: boolean): i32 {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let append: boolean = false;
+  let argv = args();
+  let append = false;
   let files: string[] = [];
 
-  let i: i32 = 1;
-  while (i < argv.len()) {
-    let a: string = argv[i];
-    if (a == "-a" || a == "--append") {
-      append = true;
-    } else {
-      files = files.append(a);
+  for a in array.drop(argv, 1) {
+    match (a) {
+      "-a" | "--append" => {
+        append = true;
+      },
+      _ => {
+        files = files.append(a);
+      }
     }
-    i = i + 1;
   }
 
-  match (io.read_all_stdin_bytes()) {
-    Err(_) => {
-      eprint("tee: cannot read stdin");
-      return 1;
-    },
-    Ok(data) => {
-      return copy_outputs(data, files, append);
-    }
-  }
+  let Ok(data) = io.read_all_stdin_bytes() else {
+    eprint("tee: cannot read stdin");
+    return 1;
+  };
+  return copy_outputs(data, files, append);
 }

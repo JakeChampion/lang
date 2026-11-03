@@ -1,28 +1,26 @@
+import "core/cmp";
+import "std/array";
 import "std/string";
 import "std/i32";
 import "std/io";
 
 struct Counts { lines: i32, words: i32, bytes: i32, chars: i32 }
 
+@derive(cmp.Eq)
 struct Show { lines: boolean, words: boolean, bytes: boolean, chars: boolean }
 
 function count(text: string): Counts {
-  let bytes: i32 = text.len();
-  let lines: i32 = 0;
-  let chars: i32 = 0;
-  let i: i32 = 0;
-  while (i < bytes) {
-    let b: i32 = text[i] as i32;
-    if (b == 10) {
-      lines = lines + 1;
+  let lines = 0;
+  let chars = 0;
+  for b in text.as_bytes() {
+    if (b == b'\n') {
+      lines += 1;
     }
     if (b < 128 || b >= 192) {
-      chars = chars + 1;
+      chars += 1;
     }
-    i = i + 1;
   }
-  let words: i32 = text.fields().len();
-  return Counts { lines: lines, words: words, bytes: bytes, chars: chars };
+  return Counts { lines: lines, words: text.fields().len(), bytes: text.len(), chars: chars };
 }
 
 function add(a: Counts, b: Counts): Counts {
@@ -30,81 +28,75 @@ function add(a: Counts, b: Counts): Counts {
 }
 
 function format_row(c: Counts, sh: Show, label: string): string {
-  let out: string = "";
+  let out = "";
   if (sh.lines) {
-    out = out + c.lines.to_string().pad_start(7, ' ');
+    out += c.lines.to_string().pad_start(7, ' ');
   }
   if (sh.words) {
-    out = out + c.words.to_string().pad_start(8, ' ');
+    out += c.words.to_string().pad_start(8, ' ');
   }
   if (sh.bytes) {
-    out = out + c.bytes.to_string().pad_start(8, ' ');
+    out += c.bytes.to_string().pad_start(8, ' ');
   }
   if (sh.chars) {
-    out = out + c.chars.to_string().pad_start(8, ' ');
+    out += c.chars.to_string().pad_start(8, ' ');
   }
   if (!label.is_empty()) {
-    out = out + " " + label;
+    out += f" {label}";
   }
   return out.trim_start().to_owned();
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let sh: Show = Show { lines: false, words: false, bytes: false, chars: false };
-  let any_flag: boolean = false;
+  let argv = args();
+  let none = Show { lines: false, words: false, bytes: false, chars: false };
+  let sh = none;
   let inputs: string[] = [];
 
-  let i: i32 = 1;
-  while (i < argv.len()) {
-    let a: string = argv[i];
-    if (a == "-l") {
-      sh = Show { ...sh, lines: true };
-      any_flag = true;
-    } else if (a == "-w") {
-      sh = Show { ...sh, words: true };
-      any_flag = true;
-    } else if (a == "-c") {
-      sh = Show { ...sh, bytes: true };
-      any_flag = true;
-    } else if (a == "-m") {
-      sh = Show { ...sh, chars: true };
-      any_flag = true;
-    } else {
-      inputs = inputs.append(a);
+  for a in array.drop(argv, 1) {
+    match (a) {
+      "-l" => {
+        sh = Show { ...sh, lines: true };
+      },
+      "-w" => {
+        sh = Show { ...sh, words: true };
+      },
+      "-c" => {
+        sh = Show { ...sh, bytes: true };
+      },
+      "-m" => {
+        sh = Show { ...sh, chars: true };
+      },
+      _ => {
+        inputs = inputs.append(a);
+      }
     }
-    i = i + 1;
   }
-  if (!any_flag) {
+  if (sh == none) {
     sh = Show { lines: true, words: true, bytes: true, chars: false };
   }
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }
 
-  let total: Counts = Counts { lines: 0, words: 0, bytes: 0, chars: 0 };
-  let nfiles: i32 = 0;
-  let status: i32 = 0;
+  let total = Counts { lines: 0, words: 0, bytes: 0, chars: 0 };
+  let nfiles = 0;
+  let status = 0;
 
-  let j: i32 = 0;
-  while (j < inputs.len()) {
-    let label: string = inputs[j];
-    if (label == "-") {
-      label = "";
-    }
-    match (io.read_input(inputs[j])) {
+  for input in inputs {
+    let label = if (input == "-") { "" } else { input };
+    match (io.read_input(input)) {
       Ok(text) => {
-        let c: Counts = count(text);
+        let c = count(text);
         print(format_row(c, sh, label));
         total = add(total, c);
-        nfiles = nfiles + 1;
+        nfiles += 1;
       },
       Err(_) => {
-        eprint("wc: " + inputs[j] + ": No such file or directory");
+        eprint(f"wc: {input}: No such file or directory");
         status = 1;
       }
     }
-    j = j + 1;
   }
   if (nfiles > 1) {
     print(format_row(total, sh, "total"));

@@ -199,8 +199,9 @@ func TestSelfHostStorageDriver(t *testing.T) {
 				command = func(args ...string) *exec.Cmd { return runArm64Bin(runner, bin, args...) }
 			case "wasm32-wasi":
 				wat := cli.emit(t, path, target, env...)
+				wasmtime := e2eharness.Wasmtime(t)
 				command = func(args ...string) *exec.Cmd {
-					return exec.Command(e2eharness.Wasmtime(t), append([]string{"run", wat}, args...)...)
+					return exec.Command(wasmtime, append([]string{"run", wat}, args...)...)
 				}
 			}
 			for _, tc := range []struct{ depth, waves int }{{1, 5}, {3, 19}, {17, 7}, {128, 1}} {

@@ -21,118 +21,87 @@ function operation(own q: bounded_ring.Ring[i64], value: i64, mode: string): bou
 }
 
 function run(capacity: i32, turns: i32, mode: string, sharing: string, export_samples: boolean): i32 {
-  let startup: i64 = monotonic_ns();
-  let startup_mark: i64 = bench.alloc_count();
-  let startup_fresh: i64 = bench.bump_bytes();
-  let samples: i64[] = __alloc_i64(turns);
-  match (bounded_ring.new_ring(capacity, 0i64)) {
-    None => {
-      return 2;
-    },
-    Some(q) => {
-      let fill_mark: i64 = bench.alloc_count();
-      let i: i32 = 0;
-      while (i < capacity) {
-        q = bounded_ring.push(q, i as i64 + 1i64);
-        i = i + 1;
-      }
-      let fill_allocs: i64 = bench.allocs_after(fill_mark);
-      let startup_ns: i64 = monotonic_ns() - startup;
-      let startup_allocs: i64 = bench.allocs_after(startup_mark);
-      let startup_bytes: i64 = bench.fresh_bytes_after(startup_fresh);
-      let mark: i64 = bench.alloc_count();
-      let fresh_mark: i64 = bench.bump_bytes();
-      let started: i64 = monotonic_ns();
-      let checks: i64 = 0i64;
-      let first_allocs: i64 = 0i64;
-      i = 0;
-      while (i < turns) {
-        let value: i64 = capacity as i64 + i as i64 + 1i64;
-        let duration: i64 = 0i64;
-        if (sharing == "shared") {
-          let saved: bounded_ring.Ring[i64] = snapshot(q);
-          let t: i64 = monotonic_ns();
-          q = operation(q, value, mode);
-          duration = monotonic_ns() - t;
-          checks = checks + endpoints(saved);
-        } else {
-          checks = checks + endpoints(q);
-          let t: i64 = monotonic_ns();
-          q = operation(q, value, mode);
-          duration = monotonic_ns() - t;
-        }
-        samples = samples.with(i, duration);
-        if (q.count != capacity || mode == "flow" && q.status != 0 || mode == "full" && q.status != 1) {
-          return 3;
-        }
-        if (i == 0) {
-          first_allocs = bench.allocs_after(mark);
-        }
-        i = i + 1;
-      }
-      let elapsed: i64 = monotonic_ns() - started;
-      let allocations: i64 = bench.allocs_after(mark);
-      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
-      let sum: i64 = 0i64;
-      i = 0;
-      while (i < capacity) {
-        let expected: i64 = i as i64 + 1i64;
-        if (mode == "flow") {
-          expected = expected + turns as i64;
-        }
-        let actual: i64 = bounded_ring.at_or(q, i, -1i64);
-        if (actual != expected) {
-          return 4;
-        }
-        sum = sum + actual;
-        i = i + 1;
-      }
-      if (export_samples) {
-        i = 0;
-        while (i < turns) {
-          print("sample," + i.to_string() + "," + samples[i].to_string());
-          i = i + 1;
-        }
-      }
-      let stats: bench.Report = bench.Report { name: mode, iterations: turns, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
-      print("{\"capacity\":" + capacity.to_string() + ",\"turns\":" + turns.to_string()
-        + ",\"mode\":\"" + mode + "\",\"sharing\":\"" + sharing + "\",\"checks\":" + checks.to_string()
-        + ",\"checksum\":" + sum.to_string() + ",\"count\":" + q.count.to_string()
-        + ",\"fill_allocs\":" + fill_allocs.to_string() + ",\"startup_ns\":" + startup_ns.to_string()
-        + ",\"startup_allocs\":" + startup_allocs.to_string() + ",\"startup_fresh_bytes\":" + startup_bytes.to_string()
-        + ",\"wall_ns\":" + elapsed.to_string() + ",\"allocs\":" + allocations.to_string()
-        + ",\"first_turn_allocs\":" + first_allocs.to_string() + ",\"fresh_bytes\":" + fresh.to_string()
-        + ",\"turn_p50_ns\":" + stats.p50_ns().to_string() + ",\"turn_p95_ns\":" + stats.p95_ns().to_string()
-        + ",\"turn_p99_ns\":" + stats.p99_ns().to_string() + ",\"turn_p999_ns\":" + stats.p999_ns().to_string()
-        + ",\"turn_max_ns\":" + stats.max_ns().to_string() + "}");
-      return 0;
+  let startup = monotonic_ns();
+  let startup_mark = bench.alloc_count();
+  let startup_fresh = bench.bump_bytes();
+  let samples = __alloc_i64(turns);
+  let Some(q) = bounded_ring.new_ring(capacity, 0i64) else {
+    return 2;
+  };
+  let fill_mark = bench.alloc_count();
+  for i in 0..capacity {
+    q = bounded_ring.push(q, i as i64 + 1i64);
+  }
+  let fill_allocs = bench.allocs_after(fill_mark);
+  let startup_ns = monotonic_ns() - startup;
+  let startup_allocs = bench.allocs_after(startup_mark);
+  let startup_bytes = bench.fresh_bytes_after(startup_fresh);
+  let mark = bench.alloc_count();
+  let fresh_mark = bench.bump_bytes();
+  let started = monotonic_ns();
+  let checks = 0i64;
+  let first_allocs = 0i64;
+  for i in 0..turns {
+    let value = capacity as i64 + i as i64 + 1i64;
+    let duration = 0i64;
+    if (sharing == "shared") {
+      let saved = snapshot(q);
+      let t = monotonic_ns();
+      q = operation(q, value, mode);
+      duration = monotonic_ns() - t;
+      checks += endpoints(saved);
+    } else {
+      checks += endpoints(q);
+      let t = monotonic_ns();
+      q = operation(q, value, mode);
+      duration = monotonic_ns() - t;
+    }
+    samples = samples.with(i, duration);
+    if (q.count != capacity || mode == "flow" && q.status != 0 || mode == "full" && q.status != 1) {
+      return 3;
+    }
+    if (i == 0) {
+      first_allocs = bench.allocs_after(mark);
     }
   }
+  let elapsed = monotonic_ns() - started;
+  let allocations = bench.allocs_after(mark);
+  let fresh = bench.fresh_bytes_after(fresh_mark);
+  let sum = 0i64;
+  for i in 0..capacity {
+    let expected = if (mode == "flow") { i as i64 + 1i64 + turns as i64 } else { i as i64 + 1i64 };
+    let actual = bounded_ring.at_or(q, i, -1i64);
+    if (actual != expected) {
+      return 4;
+    }
+    sum += actual;
+  }
+  if (export_samples) {
+    for i in 0..turns {
+      print(f"sample,{i},{samples[i]}");
+    }
+  }
+  let stats = bench.Report { name: mode, iterations: turns, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
+  print(f"{{\"capacity\":{capacity},\"turns\":{turns},\"mode\":\"{mode}\",\"sharing\":\"{sharing}\",\"checks\":{checks}"
+    + f",\"checksum\":{sum},\"count\":{q.count},\"fill_allocs\":{fill_allocs},\"startup_ns\":{startup_ns}"
+    + f",\"startup_allocs\":{startup_allocs},\"startup_fresh_bytes\":{startup_bytes}"
+    + f",\"wall_ns\":{elapsed},\"allocs\":{allocations},\"first_turn_allocs\":{first_allocs},\"fresh_bytes\":{fresh}"
+    + f",\"turn_p50_ns\":{stats.p50_ns()},\"turn_p95_ns\":{stats.p95_ns()}"
+    + f",\"turn_p99_ns\":{stats.p99_ns()},\"turn_p999_ns\":{stats.p999_ns()},\"turn_max_ns\":{stats.max_ns()}}}");
+  return 0;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() < 5 || argv.len() > 6) {
     return 2;
   }
-  let capacity: i32 = 0;
-  let turns: i32 = 0;
-  match (i32.parse_i32(argv[1])) {
-    Ok(n) => {
-      capacity = n;
-    },
-    Err(_) => {
-      return 2;
-    }
-  }
-  match (i32.parse_i32(argv[2])) {
-    Ok(n) => {
-      turns = n;
-    },
-    Err(_) => {
-      return 2;
-    }
-  }
+  let Ok(capacity) = i32.parse_i32(argv[1]) else {
+    return 2;
+  };
+  let Ok(turns) = i32.parse_i32(argv[2]) else {
+    return 2;
+  };
   if (capacity < 1 || capacity > 4096 || turns < 1 || turns > 1000000) {
     return 2;
   }

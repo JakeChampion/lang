@@ -40,6 +40,7 @@ which ones.
 | `BLOCK-EXPRESSIONS.md` | [reference] | Block-expression syntax and value rules. |
 | `CELL-TYPE-PLAN.md` | [reference] | `Cell[T]`, the one mutable slot: which element types it admits, why E057 refuses the rest, and how it is implemented. |
 | `DYN-TRAITS.md` | [reference] | `dyn Trait` runtime dispatch and its RC handling; slices 1–4 shipped, remaining leaking positions listed. |
+| `IDIOMS.md` | [reference] | Fern source style, with compiler bootstrap and validation limits. |
 | `LANGUAGE-DIRECTION.md` | [reference] | The language's direction: positioning, ideas adopted and rejected from other languages, and the shipping plan. |
 | `MUST-CONSUME.md` | [reference] | `@must_consume` types: structs and enums that may not be implicitly dropped, checked as E067. |
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants: declaring, constructing and destructuring them. |

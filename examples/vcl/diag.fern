@@ -7,5 +7,5 @@ pub function at(msg: string, line: i32, col: i32): Diag {
 }
 
 pub function (d: Diag) render(path: string): string {
-  return path + ":" + d.line.to_string() + ":" + d.col.to_string() + ": " + d.msg;
+  return f"{path}:{d.line}:{d.col}: {d.msg}";
 }

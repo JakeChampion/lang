@@ -12,16 +12,9 @@ pub struct Entity {
 }
 
 pub function initial(index: i32, count: i32, clustered: boolean): Entity {
-  let x: i32 = index * 73 % 4096;
-  let y: i32 = index * 151 % 4096;
-  if (clustered) {
-    x = index % 8;
-    y = index / 8 % 8;
-  }
-  let target: i32 = -1;
-  if (index % 3 != 0) {
-    target = (index + 1) % count;
-  }
+  let x = if (clustered) { index % 8 } else { index * 73 % 4096 };
+  let y = if (clustered) { index / 8 % 8 } else { index * 151 % 4096 };
+  let target = if (index % 3 != 0) { (index + 1) % count } else { -1 };
   return Entity {
     x: x, y: y, vx: index * 7 % 9 - 4, vy: index * 11 % 9 - 4,
     health: 100, kind: index % 3, target: target,
@@ -30,8 +23,8 @@ pub function initial(index: i32, count: i32, clustered: boolean): Entity {
 }
 
 pub fbip function input_ai(own row: Entity, index: i32, tick: i32, target: i32, target_x: i32, target_y: i32): Entity {
-  let vx: i32 = 0;
-  let vy: i32 = 0;
+  let vx = 0;
+  let vy = 0;
   if (row.mode != 2) {
     if (target >= 0) {
       vx = simulation_rules.steer(simulation_rules.delta(target_x, row.x), row.kind);
@@ -45,14 +38,14 @@ pub fbip function input_ai(own row: Entity, index: i32, tick: i32, target: i32, 
 }
 
 pub fbip function move(own row: Entity): Entity {
-  let x: i32 = simulation_rules.wrap(row.x + row.vx);
-  let y: i32 = simulation_rules.wrap(row.y + row.vy);
+  let x = simulation_rules.wrap(row.x + row.vx);
+  let y = simulation_rules.wrap(row.y + row.vy);
   return Entity { ...row, x: x, y: y };
 }
 
 pub fbip function update(own row: Entity, neighbors: i32): Entity {
-  let health: i32 = simulation_rules.health(row.health, row.mode, neighbors, row.kind);
-  let mode: i32 = simulation_rules.mode(row.mode, health, row.target);
+  let health = simulation_rules.health(row.health, row.mode, neighbors, row.kind);
+  let mode = simulation_rules.mode(row.mode, health, row.target);
   return Entity { ...row, health: health, mode: mode };
 }
 

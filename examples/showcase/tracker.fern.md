@@ -64,12 +64,7 @@ struct Offer { info_hash: string, name: string, length: i64 }
 struct Registered { info_hash: string, expires_in: i64, peers: i32 }
 
 function live_swarms(state: State, now: i64): Swarm[] {
-  let kept: Swarm[] = [];
-  for swarm in state.swarms.get() {
-    if (swarm.expires > now) {
-      kept = kept.append(swarm);
-    }
-  }
+  let kept = state.swarms.get() |> array.filter((swarm: Swarm): boolean => swarm.expires > now);
   state.swarms.set(kept);
   return kept;
 }
@@ -84,12 +79,7 @@ function find_swarm(state: State, hash: string): Option[Swarm] {
 }
 
 function store_swarm(state: State, swarm: Swarm): void {
-  let swarms: Swarm[] = [];
-  for s in state.swarms.get() {
-    if (s.hash != swarm.hash) {
-      swarms = swarms.append(s);
-    }
-  }
+  let swarms = state.swarms.get() |> array.filter((s: Swarm): boolean => s.hash != swarm.hash);
   state.swarms.set(swarms.append(swarm));
 }
 
@@ -118,17 +108,14 @@ pub function register(state: State, req: HttpRequest): Result[HttpResponse, http
   }
   let now = monotonic_ns();
   let swarms = live_swarms(state, now);
-  let swarm: Swarm = Swarm { hash: offer.info_hash, name: offer.name, length: offer.length, expires: now + LIFETIME_NS, peers: [] };
-  match (find_swarm(state, offer.info_hash)) {
-    Some(existing) => {
-      swarm = existing;
-    },
-    None => {
-      if (swarms.len() >= MAX_SWARMS) {
-        return Err(http.fail(503, "The tracker holds its maximum of swarms. Try again later."));
-      }
-      store_swarm(state, swarm);
+  let swarm = Swarm { hash: offer.info_hash, name: offer.name, length: offer.length, expires: now + LIFETIME_NS, peers: [] };
+  if let Some(existing) = find_swarm(state, offer.info_hash) {
+    swarm = existing;
+  } else {
+    if (swarms.len() >= MAX_SWARMS) {
+      return Err(http.fail(503, "The tracker holds its maximum of swarms. Try again later."));
     }
+    store_swarm(state, swarm);
   }
   return Ok(http.json_of(Registered { info_hash: swarm.hash, expires_in: (swarm.expires - now) / 1000000000, peers: swarm.peers.len() }).with_header("Cache-Control", "no-store"));
 }
@@ -150,10 +137,10 @@ function latin1(s: string): u8[] {
     let c = b[i];
     if (c < 128) {
       out = out.append(c);
-      i = i + 1;
+      i += 1;
     } else if ((c == 194 as u8 || c == 195 as u8) && i + 1 < b.len()) {
       out = out.append(((c & 31) << 6 | b[i + 1] & 63) as u8);
-      i = i + 2;
+      i += 2;
     } else {
       return [];
     }
@@ -195,14 +182,7 @@ function failure(text: json.JsonValue, reason: string): string {
 }
 
 function deliver(state: State, conn: string, message: string): void {
-  let peers: Peer[] = [];
-  for peer in state.peers.get() {
-    if (peer.conn == conn && peer.outbox.len() < 64) {
-      peers = peers.append(Peer { ...peer, outbox: peer.outbox.append(message) });
-    } else {
-      peers = peers.append(peer);
-    }
-  }
+  let peers = state.peers.get() |> array.map((peer: Peer): Peer => if (peer.conn == conn && peer.outbox.len() < 64) { Peer { ...peer, outbox: peer.outbox.append(message) } } else { peer });
   state.peers.set(peers);
   live.notify(state.live, conn, "");
 }
@@ -224,7 +204,6 @@ function take(state: State, conn: string): string[] {
 }
 
 function join(state: State, conn: string, id: string, swarm: Swarm): boolean {
-  let peers: Peer[] = [];
   let outbox: string[] = [];
   for peer in state.peers.get() {
     if (peer.conn == conn) {
@@ -234,41 +213,19 @@ function join(state: State, conn: string, id: string, swarm: Swarm): boolean {
       outbox = peer.outbox;
     }
   }
-  if (!contains(swarm.peers, conn)) {
+  if (!array.any(swarm.peers, (p: string): boolean => p == conn)) {
     if (swarm.peers.len() >= MAX_PEERS) {
       return false;
     }
     store_swarm(state, Swarm { ...swarm, peers: swarm.peers.append(conn) });
   }
-  for peer in state.peers.get() {
-    if (peer.conn != conn) {
-      peers = peers.append(peer);
-    }
-  }
+  let peers = state.peers.get() |> array.filter((peer: Peer): boolean => peer.conn != conn);
   state.peers.set(peers.append(Peer { conn: conn, id: id, hash: swarm.hash, outbox: outbox }));
   return true;
 }
 
-function contains(xs: string[], x: string): boolean {
-  for y in xs {
-    if (y == x) {
-      return true;
-    }
-  }
-  return false;
-}
-
 pub function leave(state: State, conn: string): void {
-  let swarms: Swarm[] = [];
-  for swarm in state.swarms.get() {
-    let kept: string[] = [];
-    for p in swarm.peers {
-      if (p != conn) {
-        kept = kept.append(p);
-      }
-    }
-    swarms = swarms.append(Swarm { ...swarm, peers: kept });
-  }
+  let swarms = state.swarms.get() |> array.map((swarm: Swarm): Swarm => Swarm { ...swarm, peers: swarm.peers |> array.filter((p: string): boolean => p != conn) });
   state.swarms.set(swarms);
 }
 
@@ -312,7 +269,7 @@ function announce(state: State, conn: string, msg: json.JsonValue): string {
   for other in current.peers {
     if (other != conn && k < offers.len() && k < 10) {
       deliver(state, other, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("offer", json.get(offers[k], "offer").unwrap_or(json.JNull)), ("offer_id", json.get(offers[k], "offer_id").unwrap_or(json.JNull))]));
-      k = k + 1;
+      k += 1;
     }
   }
   return reply([("action", json.JString("announce")), ("info_hash", hash_text), ("interval", json.JNumber(INTERVAL_S.to_string())), ("complete", json.JNumber((current.peers.len() - 1).to_string())), ("incomplete", json.JNumber("0"))]);
@@ -320,10 +277,7 @@ function announce(state: State, conn: string, msg: json.JsonValue): string {
 
 function scrape(state: State, msg: json.JsonValue): string {
   let hash_text = json.get(msg, "info_hash").unwrap_or(json.JNull);
-  let peers = 0;
-  if let Some(swarm) = find_swarm(state, binary_id(json.get_string(msg, "info_hash"))) {
-    peers = swarm.peers.len();
-  }
+  let peers = if let Some(swarm) = find_swarm(state, binary_id(json.get_string(msg, "info_hash"))) { swarm.peers.len() } else { 0 };
   return reply([("action", json.JString("scrape")), ("info_hash", hash_text), ("complete", json.JNumber(peers.to_string())), ("incomplete", json.JNumber("0"))]);
 }
 ```
@@ -336,9 +290,9 @@ The push loop sends the queued messages. Close removes the peer from its swarm.
 ```fern
 <<Connection>>=
 pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
-  let conn: string = common.token();
-  let subscription: live.Subscription = live.subscribe(state.live, conn)?;
-  let handlers: websocket.Handlers = websocket.Handlers {
+  let conn = common.token();
+  let subscription = live.subscribe(state.live, conn)?;
+  let handlers = websocket.Handlers {
     open: (connection: websocket.Conn): void => {},
     message: (connection: websocket.Conn, message: websocket.Message): void => {
       match (message) {
@@ -348,12 +302,7 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
             return;
           };
           let action = json.get_string(msg, "action").unwrap_or("");
-          let answer = "";
-          if (action == "announce") {
-            answer = announce(state, conn, msg);
-          } else if (action == "scrape") {
-            answer = scrape(state, msg);
-          }
+          let answer = match (action) { "announce" => announce(state, conn, msg), "scrape" => scrape(state, msg), _ => "" };
           if (answer.len() > 0) {
             let sent = connection.send_text(answer);
           }
@@ -366,27 +315,18 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
     drain: (connection: websocket.Conn): void => {},
     close: (connection: websocket.Conn, code: i32, reason: string): void => {
       leave(state, conn);
-      let peers: Peer[] = [];
-      for peer in state.peers.get() {
-        if (peer.conn != conn) {
-          peers = peers.append(peer);
-        }
-      }
-      state.peers.set(peers);
+      state.peers.set(state.peers.get() |> array.filter((peer: Peer): boolean => peer.conn != conn));
       live.cancel(subscription);
     },
   };
-  let options: websocket.Options = websocket.Options { ...websocket.options(), max_message: 65536, backpressure: 65536, max_backpressure: 262144 };
+  let options = websocket.Options { ...websocket.options(), max_message: 65536, backpressure: 65536, max_backpressure: 262144 };
   match (websocket.accept_with_push(req, options, handlers, (connection: websocket.Conn): void => {
     while (live.wait(subscription)) {
       for message in take(state, conn) {
         let sent = connection.send_text(message);
       }
-      match (connection.flush()) {
-        Dropped => {
-          break;
-        },
-        _ => {}
+      if let Dropped = connection.flush() {
+        break;
       }
     }
     live.dispose(subscription);

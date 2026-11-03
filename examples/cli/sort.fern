@@ -1,3 +1,4 @@
+import "std/result";
 import "std/string";
 import "std/i32";
 import "std/io";
@@ -11,111 +12,80 @@ function fold_order(a: string, b: string): i32 {
 struct Opts { reverse: boolean, numeric: boolean, uniq: boolean, fold: boolean }
 
 function slurp(path: string): string {
-  match (io.read_input(path)) {
-    Ok(contents) => {
-      return contents;
-    },
-    Err(_) => {
-      return "";
-    }
-  }
+  return io.read_input(path).unwrap_or("");
 }
 
 function leading_int(s: string): i32 {
-  let t: str = s.trim_start();
-  match (i32.parse_i32(t)) {
-    Ok(n) => {
-      return n;
-    },
-    Err(_) => {
-      return 0;
+  return i32.parse_i32(s.trim_start()).unwrap_or(0);
+}
+
+function sort_numeric(lines: string[]): string[] {
+  let keys = lines |> array.map(leading_int);
+  for a in 1..lines.len() {
+    let kv = keys[a];
+    let lv = lines[a];
+    let b = a - 1;
+    while (b >= 0 && keys[b] > kv) {
+      keys = keys.with(b + 1, keys[b]);
+      lines = lines.with(b + 1, lines[b]);
+      b -= 1;
     }
+    keys = keys.with(b + 1, kv);
+    lines = lines.with(b + 1, lv);
   }
+  return lines;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let o: Opts = Opts { reverse: false, numeric: false, uniq: false, fold: false };
+  let argv = args();
+  let o = Opts { reverse: false, numeric: false, uniq: false, fold: false };
   let inputs: string[] = [];
 
-  let i: i32 = 1;
-  while (i < argv.len()) {
-    let a: string = argv[i];
-    if (a == "-r") {
-      o = Opts { ...o, reverse: true };
-    } else if (a == "-n") {
-      o = Opts { ...o, numeric: true };
-    } else if (a == "-u") {
-      o = Opts { ...o, uniq: true };
-    } else if (a == "-f") {
-      o = Opts { ...o, fold: true };
-    } else {
-      inputs = inputs.append(a);
+  for a in array.drop(argv, 1) {
+    match (a) {
+      "-r" => {
+        o = Opts { ...o, reverse: true };
+      },
+      "-n" => {
+        o = Opts { ...o, numeric: true };
+      },
+      "-u" => {
+        o = Opts { ...o, uniq: true };
+      },
+      "-f" => {
+        o = Opts { ...o, fold: true };
+      },
+      _ => {
+        inputs = inputs.append(a);
+      }
     }
-    i = i + 1;
   }
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }
 
   let lines: string[] = [];
-  let j: i32 = 0;
-  while (j < inputs.len()) {
-    let ls: string[] = slurp(inputs[j]).lines();
-    let k: i32 = 0;
-    while (k < ls.len()) {
-      lines = lines.append(ls[k]);
-      k = k + 1;
+  for input in inputs {
+    for line in slurp(input).lines() {
+      lines = lines.append(line);
     }
-    j = j + 1;
   }
 
-  let sorted: string[] = [];
-  if (o.numeric) {
-    let keys: i32[] = [];
-    let m: i32 = 0;
-    while (m < lines.len()) {
-      keys = keys.append(leading_int(lines[m]));
-      m = m + 1;
-    }
-    let a: i32 = 1;
-    while (a < lines.len()) {
-      let kv: i32 = keys[a];
-      let lv: string = lines[a];
-      let b: i32 = a - 1;
-      while (b >= 0 && keys[b] > kv) {
-        keys = keys.with(b + 1, keys[b]);
-        lines = lines.with(b + 1, lines[b]);
-        b = b - 1;
-      }
-      keys = keys.with(b + 1, kv);
-      lines = lines.with(b + 1, lv);
-      a = a + 1;
-    }
-    sorted = lines;
-  } else if (o.fold) {
-    sorted = cmp.sort_by(lines, fold_order);
-  } else {
-    sorted = cmp.sort(lines);
-  }
+  let sorted = if (o.numeric) { sort_numeric(lines) } else if (o.fold) { cmp.sort_by(lines, fold_order) } else { cmp.sort(lines) };
 
   if (o.reverse) {
     sorted = sorted.reverse();
   }
 
-  let prev: string = "";
-  let have_prev: boolean = false;
-  let p: i32 = 0;
-  while (p < sorted.len()) {
-    let line: string = sorted[p];
+  let prev = "";
+  let have_prev = false;
+  for line in sorted {
     if (o.uniq && have_prev && line == prev) {
-      p = p + 1;
       continue;
     }
     print(line);
     prev = line;
     have_prev = true;
-    p = p + 1;
   }
   return 0;
 }

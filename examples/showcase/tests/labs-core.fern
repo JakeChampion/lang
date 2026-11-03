@@ -63,7 +63,7 @@ function main(): i32 {
   if (lantern.add(index, lantern.Document { id: 0, title: "duplicate", text: "x" }).is_ok() || lantern.add(index, lantern.Document { id: 3, title: "", text: "x" }).is_ok()) {
     return 16;
   }
-  let layout: i32[] = __alloc_i32(16);
+  let layout = __alloc_i32(16);
   layout = layout.with(0, 1).with(1, 2).with(2, 2).with(3, 6);
   let factory = foundry.factory(16);
   for tick in 0..129 {
@@ -71,7 +71,7 @@ function main(): i32 {
   }
   let inventory = 0i64;
   for amount in factory.cargo {
-    inventory = inventory + amount as i64;
+    inventory += amount as i64;
   }
   if (factory.produced != factory.consumed + inventory || factory.consumed == 0) {
     return 17;
@@ -108,7 +108,7 @@ function main(): i32 {
   if ((cpu & 15) != 6 || (cpu & 512) == 0 || (circuit.cpu(128, 6, 4) & 256) == 0) {
     return 24;
   }
-  let machines: i32[] = __alloc_i32(32);
+  let machines = __alloc_i32(32);
   machines = machines.with(0, 1).with(1, 2).with(2, 7).with(3, 2).with(4, 6).with(10, 10).with(18, 8);
   let powered = foundry.configure(machines, foundry.factory(32), 8);
   if (powered.powered[2] != 1) {
@@ -119,7 +119,7 @@ function main(): i32 {
   }
   let units = 0i64;
   for cargo in powered.cargo {
-    units = units + foundry.units(cargo) as i64;
+    units += foundry.units(cargo) as i64;
   }
   if (powered.refined == 0 || powered.consumed == 0 || powered.produced != powered.consumed + units) {
     return 26;
@@ -132,7 +132,7 @@ function main(): i32 {
   if (disconnected.refined != 0 || disconnected.powered[2] != 0) {
     return 27;
   }
-  let rails: i32[] = [1, 11, 9, 9, 9, 9, 11, 6];
+  let rails = [1, 11, 9, 9, 9, 9, 11, 6];
   let freight = foundry.factory(8);
   for tick in 0..128 {
     freight = foundry.step(rails, freight, 8);

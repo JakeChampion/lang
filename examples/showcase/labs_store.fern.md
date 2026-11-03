@@ -30,7 +30,7 @@ pub function load(directory: string, name: string): Result[Option[string], strin
   if (directory == "") {
     return Ok(None);
   }
-  let path = directory + "/" + name + ".json";
+  let path = f"{directory}/{name}.json";
   match (stat(path)) {
     Ok(info) => {
       if (info.size > 16777216) {
@@ -60,8 +60,9 @@ pub function save(directory: string, name: string, payload: string): Result[void
     return Err("Saved project exceeds 16 MiB.");
   }
   create_dir_all(directory).map_err((e: IoError): string => e.message())?;
-  let path = directory + "/" + name + ".json";
-  let record = hex.encode(crypto.sha256_new().update(payload.as_bytes()).finish()) + "\n" + payload;
+  let path = f"{directory}/{name}.json";
+  let digest = hex.encode(crypto.sha256_new().update(payload.as_bytes()).finish());
+  let record = f"{digest}\n{payload}";
   let writer = open_writer(path + ".next").map_err((e: IoError): string => e.message())?;
   if let Err(error) = writer.write(record) {
     let closed = writer.close();

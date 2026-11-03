@@ -115,13 +115,11 @@ function room(state: State, request: HttpRequest): Result[i32, http.HttpError] {
   if (!common.room_name(name)) {
     return Err(http.fail(400, "Invalid room name."));
   }
-  let at = 0;
-  for found in state.rooms.get() {
-    if (found.name == name) {
-      return Ok(at);
-    }
-    at = at + 1;
+  let rooms = state.rooms.get();
+  if let Some(at) = array.position(rooms, (found: Room): boolean => found.name == name) {
+    return Ok(at);
   }
+  let at = rooms.len();
   if (at >= 12) {
     return Err(http.fail(429, "All database and archive rooms are in use."));
   }
@@ -131,17 +129,13 @@ function room(state: State, request: HttpRequest): Result[i32, http.HttpError] {
 }
 
 function persist(state: State, at: i32, name: string, value: string): Result[void, http.HttpError] {
-  match (store.save(state.directory, name, value)) {
-    Ok(_) => {
-      return Ok(());
-    },
-    Err(error) => {
-      let response = failure(error);
-      let rooms = state.rooms.get();
-      state.rooms.set(rooms.with(at, Room { ...rooms[at], fault: error }));
-      return Err(response);
-    }
+  if let Err(error) = store.save(state.directory, name, value) {
+    let response = failure(error);
+    let rooms = state.rooms.get();
+    state.rooms.set(rooms.with(at, Room { ...rooms[at], fault: error }));
+    return Err(response);
   }
+  return Ok(());
 }
 
 pub function handle(state: State, application: string, action: string, request: HttpRequest): Result[HttpResponse, http.HttpError] {
@@ -194,7 +188,7 @@ pub function handle(state: State, application: string, action: string, request: 
   if (action == "export") {
     let text = "";
     for document in current.archive.documents {
-      text = text + document.to_json() + "\n";
+      text += f"{document.to_json()}\n";
     }
     return Ok(http.ok(text).with_header("Content-Type", "application/x-ndjson").with_header("Cache-Control", "no-store"));
   }
@@ -257,12 +251,9 @@ pub function socket(state: State, application: string, req: HttpRequest): Result
       if (refill > 0) {
         last.set(last.get() + refill * 5000000);
       }
-      let method = "GET";
-      if (input.post) {
-        method = "POST";
-      }
+      let method = if (input.post) { "POST" } else { "GET" };
       let request = http.request(method, input.path).with_json(input.body);
-      let prefix = "/" + application + "/";
+      let prefix = f"/{application}/";
       if (!common.path(request).starts_with(prefix) || common.query(request, "room", "commons") != name) {
         connection.close(1008, "Command belongs to another application or room.");
         return;
@@ -270,10 +261,7 @@ pub function socket(state: State, application: string, req: HttpRequest): Result
       state.inputs.set(state.inputs.get() + 1);
       let action = common.path(request).drop(prefix.len());
       let mutates = action == "query" || action == "import" || action == "recover";
-      let response = http.text(405, "Use the operation method.");
-      if (input.post == mutates) {
-        response = http.respond(handle(state, application, action, request));
-      }
+      let response = if (input.post == mutates) { http.respond(handle(state, application, action, request)) } else { http.text(405, "Use the operation method.") };
       let reply = Reply { seq: input.seq, status: response.status, body: response.body_text_lossy() };
       if let websocket.Dropped = connection.send_text(reply.to_json()) {
         connection.close(1013, "Command receiver is too slow.");
@@ -328,7 +316,7 @@ pub function preview(state: State): Result[HttpResponse, http.HttpError] {
 pub function thumbnail(): Result[u8[], http.HttpError] {
   let width = 320;
   let height = 200;
-  let rgb: u8[] = __alloc_u8(width * height * 3);
+  let rgb = __alloc_u8(width * height * 3);
   for y in 0..height {
     for x in 0..width {
       let red = 0.0;
@@ -336,9 +324,9 @@ pub function thumbnail(): Result[u8[], http.HttpError] {
       let blue = 0.0;
       for sample in 0..8 {
         let value = trace.pixel(x, y, width, height, sample, 6324352, 0.0);
-        red = red + (value >> 20 & 1023) as f64;
-        green = green + (value >> 10 & 1023) as f64;
-        blue = blue + (value & 1023) as f64;
+        red += (value >> 20 & 1023) as f64;
+        green += (value >> 10 & 1023) as f64;
+        blue += (value & 1023) as f64;
       }
       let r = red / 8.0 / 255.0 * 1.5;
       let g = green / 8.0 / 255.0 * 1.5;

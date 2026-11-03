@@ -37,50 +37,36 @@ pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity
     || pool < 1 || pool > 4096 || queue_capacity < 1 || queue_capacity > 4096) {
     return None;
   }
-  let empty: Message = Message { topic: -1, serial: 0i64, payload: 0i64 };
+  let empty = Message { topic: -1, serial: 0i64, payload: 0i64 };
   let slots: Message[] = [];
-  let free: i32[] = __alloc_i32(pool);
-  let i: i32 = 0;
-  while (i < pool) {
+  let free = __alloc_i32(pool);
+  for i in 0..pool {
     slots = slots.append(Message { topic: no_topic(), serial: 0i64, payload: 0i64 });
     free = free.with(i, pool - i - 1);
-    i = i + 1;
   }
   let leases: Message[] = [];
-  let lease_slots: i32[] = __alloc_i32(subscribers);
-  i = 0;
-  while (i < subscribers) {
+  let lease_slots = __alloc_i32(subscribers);
+  for i in 0..subscribers {
     leases = leases.append(empty);
     lease_slots = lease_slots.with(i, -1);
-    i = i + 1;
   }
   let queues: bounded_ring.Ring[i32][] = [];
-  i = 0;
-  while (i < subscribers) {
-    match (bounded_ring.new_ring(queue_capacity, -1)) {
-      Some(q) => {
-        queues = queues.append(q);
-      },
-      None => {
-        return None;
-      }
-    }
-    i = i + 1;
-  }
-  match (bounded_ring.new_ring(1, -1)) {
-    None => {
+  for _ in 0..subscribers {
+    let Some(q) = bounded_ring.new_ring(queue_capacity, -1) else {
       return None;
-    },
-    Some(empty_queue) => {
-      return Some(Broker {
-        topics: topics, subscribers: subscribers, queue_capacity: queue_capacity,
-        slots: slots, empty: empty, free: free, free_count: pool,
-        phase: __alloc_i32(pool), refs: __alloc_i32(pool),
-        queues: queues, empty_queue: empty_queue, leases: leases, lease_slots: lease_slots,
-        producer: empty, producer_slot: -1, serial: 0i64, status: 0, result_slot: -1,
-      });
-    }
+    };
+    queues = queues.append(q);
   }
+  let Some(empty_queue) = bounded_ring.new_ring(1, -1) else {
+    return None;
+  };
+  return Some(Broker {
+    topics: topics, subscribers: subscribers, queue_capacity: queue_capacity,
+    slots: slots, empty: empty, free: free, free_count: pool,
+    phase: __alloc_i32(pool), refs: __alloc_i32(pool),
+    queues: queues, empty_queue: empty_queue, leases: leases, lease_slots: lease_slots,
+    producer: empty, producer_slot: -1, serial: 0i64, status: 0, result_slot: -1,
+  });
 }
 
 pub fip function result(own b: Broker, status: i32, slot: i32): Broker {
@@ -88,13 +74,13 @@ pub fip function result(own b: Broker, status: i32, slot: i32): Broker {
 }
 
 pub fip function recipients(b: Broker, topic: i32): i32 {
-  let total: i32 = 0;
-  let s: i32 = 0;
+  let total = 0;
+  let s = 0;
   while (s < b.subscribers) {
     if (s % b.topics == topic) {
-      total = total + 1;
+      total += 1;
     }
-    s = s + 1;
+    s += 1;
   }
   return total;
 }
@@ -127,8 +113,8 @@ pub fip function reserve(own b: Broker, topic: i32, payload: i64): Broker {
   if (b.free_count == 0) {
     return result(b, 3, -1);
   }
-  let slot: i32 = b.free[b.free_count - 1];
-  let message: Message = slot_message(b, slot);
+  let slot = b.free[b.free_count - 1];
+  let message = slot_message(b, slot);
   b = Broker { ...b, slots: b.slots.with(slot, b.empty) };
   message = Message { ...message, topic: topic };
   message = Message { ...message, serial: b.serial + 1i64 };
@@ -141,11 +127,11 @@ pub fip function reserve(own b: Broker, topic: i32, payload: i64): Broker {
 }
 
 pub fip function cancel(own b: Broker): Broker {
-  let slot: i32 = b.producer_slot;
+  let slot = b.producer_slot;
   if (slot < 0) {
     return result(b, 6, -1);
   }
-  let message: Message = producer_message(b);
+  let message = producer_message(b);
   b = Broker { ...b, producer: b.empty };
   b = Broker { ...b, slots: b.slots.with(slot, message) };
   b = Broker { ...b, phase: b.phase.with(slot, 0) };
@@ -154,43 +140,43 @@ pub fip function cancel(own b: Broker): Broker {
 }
 
 pub fip function queues_fit(b: Broker, topic: i32): boolean {
-  let s: i32 = 0;
+  let s = 0;
   while (s < b.subscribers) {
     if (s % b.topics == topic && b.queues[s].count == b.queue_capacity) {
       return false;
     }
-    s = s + 1;
+    s += 1;
   }
   return true;
 }
 
 pub fip function enqueue(own b: Broker, slot: i32, topic: i32): Broker {
-  let count: i32 = 0;
-  let s: i32 = 0;
+  let count = 0;
+  let s = 0;
   while (s < b.subscribers) {
     if (s % b.topics == topic) {
-      let q: bounded_ring.Ring[i32] = subscriber_queue(b, s);
+      let q = subscriber_queue(b, s);
       b = Broker { ...b, queues: b.queues.with(s, b.empty_queue) };
       q = bounded_ring.push(q, slot);
       b = Broker { ...b, queues: b.queues.with(s, q) };
-      count = count + 1;
+      count += 1;
     }
-    s = s + 1;
+    s += 1;
   }
   b = Broker { ...b, refs: b.refs.with(slot, count) };
   return b;
 }
 
 pub fip function publish(own b: Broker): Broker {
-  let slot: i32 = b.producer_slot;
+  let slot = b.producer_slot;
   if (slot < 0) {
     return result(b, 6, -1);
   }
-  let topic: i32 = producer_message(b).topic;
+  let topic = producer_message(b).topic;
   if (!queues_fit(b, topic)) {
     return result(b, 4, -1);
   }
-  let message: Message = producer_message(b);
+  let message = producer_message(b);
   b = Broker { ...b, producer: b.empty };
   b = Broker { ...b, slots: b.slots.with(slot, message) };
   b = enqueue(b, slot, topic);
@@ -208,8 +194,8 @@ pub fip function consume(own b: Broker, subscriber: i32): Broker {
   if (b.queues[subscriber].count == 0) {
     return result(b, 5, -1);
   }
-  let q: bounded_ring.Ring[i32] = subscriber_queue(b, subscriber);
-  let slot: i32 = bounded_ring.front_or(q, -1);
+  let q = subscriber_queue(b, subscriber);
+  let slot = bounded_ring.front_or(q, -1);
   b = Broker { ...b, queues: b.queues.with(subscriber, b.empty_queue) };
   q = bounded_ring.drop(q);
   b = Broker { ...b, queues: b.queues.with(subscriber, q) };
@@ -229,7 +215,7 @@ pub fip function acknowledge(own b: Broker, subscriber: i32, serial: i64): Broke
   if (subscriber < 0 || subscriber >= b.subscribers) {
     return result(b, 1, -1);
   }
-  let slot: i32 = b.lease_slots[subscriber];
+  let slot = b.lease_slots[subscriber];
   if (slot < 0) {
     return result(b, 6, -1);
   }
@@ -238,7 +224,7 @@ pub fip function acknowledge(own b: Broker, subscriber: i32, serial: i64): Broke
   }
   b = Broker { ...b, leases: b.leases.with(subscriber, b.empty) };
   b = Broker { ...b, lease_slots: b.lease_slots.with(subscriber, -1) };
-  let remaining: i32 = b.refs[slot] - 1;
+  let remaining = b.refs[slot] - 1;
   b = Broker { ...b, refs: b.refs.with(slot, remaining) };
   if (remaining == 0) {
     b = Broker { ...b, phase: b.phase.with(slot, 0) };

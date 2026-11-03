@@ -7,33 +7,27 @@ import "./parser";
 import "./printer";
 
 function report(path: string, diags: diag.Diag[]): void {
-  let i: i32 = 0;
-  while (i < diags.len()) {
-    eprint(diags[i].render(path));
-    i = i + 1;
+  for d in diags {
+    eprint(d.render(path));
   }
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() < 2) {
     eprint("usage: vclfmt FILE.vcl");
     return 2;
   }
-  let path: string = argv[1];
-  match (io.read_input(path)) {
-    Err(e) => {
-      eprint("vclfmt: " + path + ": cannot read");
-      return 2;
-    },
-    Ok(src) => {
-      let r: parser.ParseResult = parser.parse(src);
-      if (r.diags.len() > 0) {
-        report(path, r.diags);
-        return 1;
-      }
-      print(printer.print_program(r.decls));
-      return 0;
-    }
+  let path = argv[1];
+  let Ok(src) = io.read_input(path) else {
+    eprint(f"vclfmt: {path}: cannot read");
+    return 2;
+  };
+  let r = parser.parse(src);
+  if (r.diags.len() > 0) {
+    report(path, r.diags);
+    return 1;
   }
+  print(printer.print_program(r.decls));
+  return 0;
 }

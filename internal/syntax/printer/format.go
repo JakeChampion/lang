@@ -1941,8 +1941,13 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte('(')
 		}
 		f.formatExpr(x.Target, precPrimary)
-		f.b.WriteString(" = ")
-		f.formatExpr(x.Value, precAssign)
+		if bin, ok := x.Value.(*ast.Binary); ok && x.Op != "" && bin.Op == x.Op && bin.Left == x.Target {
+			f.b.WriteString(" " + x.Op + "= ")
+			f.formatExpr(bin.Right, precAssign)
+		} else {
+			f.b.WriteString(" = ")
+			f.formatExpr(x.Value, precAssign)
+		}
 		if needsParens {
 			f.b.WriteByte(')')
 		}

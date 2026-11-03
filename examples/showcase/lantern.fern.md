@@ -70,13 +70,7 @@ pub function tokenize(text: string): string[] {
   for separator in ["\n", "\r", "\t", ".", ",", ";", ":", "!", "?", "(", ")", "[", "]", "{", "}", "\"", "'", "/", "\\", "-", "—", "　"] {
     clean = clean.replace(separator, " ");
   }
-  let terms: string[] = [];
-  for term in clean.split(" ") {
-    if (term.len() > 0 && term.len() <= 128) {
-      terms = terms.append(term);
-    }
-  }
-  return terms;
+  return clean.split(" ") |> array.filter((term: string): boolean => term.len() > 0 && term.len() <= 128);
 }
 ```
 
@@ -95,7 +89,7 @@ pub function add(index: Index, document: Document): Result[Index, string] {
   if (index.bytes + document.title.len() + document.text.len() > 4194304) {
     return Err("The archive exceeds its 4 MiB text limit.");
   }
-  let words = tokenize(document.title + " " + document.text);
+  let words = tokenize(f"{document.title} {document.text}");
   if (index.words + words.len() > 262144) {
     return Err("The archive exceeds its 262144-token limit.");
   }
@@ -140,7 +134,7 @@ pub function search(index: Index, query: string): Results {
     let postings = index.terms.get(term).unwrap_or([] as Posting[]);
     let idf = (1.0 + (index.documents.len() as f64 - postings.len() as f64 + 0.5) / (postings.len() as f64 + 0.5)).log();
     for posting in postings {
-      visits = visits + 1;
+      visits += 1;
       let frequency = posting.frequency as f64;
       let score = idf * frequency * 2.2 / (frequency + 1.2 * (0.25 + 0.75 * (index.lengths[posting.id] as f64) / average));
       scores = scores.insert(posting.id, scores.get(posting.id).unwrap_or(0.0) + score);

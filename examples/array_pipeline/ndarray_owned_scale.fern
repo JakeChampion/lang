@@ -13,10 +13,8 @@ function scale(own a: ndarray.NdArray[f64]): ndarray.NdArray[f64] {
 
 function build(n: i32): ndarray.NdArray[f64] {
   let xs: f64[] = [];
-  let i: i32 = 0;
-  while (i < n) {
+  for i in 0..n {
     xs = xs.append((i % 127 + 1) as f64);
-    i = i + 1;
   }
   return ndarray.from_flat(xs, [n]);
 }
@@ -25,67 +23,51 @@ function correct(a: ndarray.NdArray[f64], n: i32, factor: f64): boolean {
   if (a.len() != n || a.shape()[0] != n || !a.is_packed()) {
     return false;
   }
-  let xs: f64[] = a.to_flat();
-  let i: i32 = 0;
-  while (i < n) {
-    let expected: f64 = (i % 127 + 1) as f64 * factor;
+  let xs = a.to_flat();
+  for i in 0..n {
+    let expected = (i % 127 + 1) as f64 * factor;
     if (xs[i] != expected) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let n: i32 = 1000;
-  let rounds: i32 = 2;
-  let shared: boolean = false;
-  if (argv.len() > 1) {
-    n = i32.parse_i32(argv[1]).unwrap_or(n);
-  }
-  if (argv.len() > 2) {
-    rounds = i32.parse_i32(argv[2]).unwrap_or(rounds);
-  }
-  if (argv.len() > 3) {
-    shared = argv[3] == "1";
-  }
+  let argv = args();
+  let n = if (argv.len() > 1) { i32.parse_i32(argv[1]).unwrap_or(1000) } else { 1000 };
+  let rounds = if (argv.len() > 2) { i32.parse_i32(argv[2]).unwrap_or(2) } else { 2 };
+  let shared = argv.len() > 3 && argv[3] == "1";
   if (n < 1 || rounds < 1 || rounds > 1000) {
     return 1;
   }
-  let current: ndarray.NdArray[f64] = build(n);
-  let mark_calls: i64 = __heap_alloc_count();
-  let mark_bytes: i64 = __heap_bump_bytes();
-  let elapsed: i64 = 0 as i64;
-  let factor: f64 = 1.0;
-  let r: i32 = 0;
-  while (r < rounds) {
+  let current = build(n);
+  let mark_calls = __heap_alloc_count();
+  let mark_bytes = __heap_bump_bytes();
+  let elapsed = 0i64;
+  let factor = 1.0;
+  for _ in 0..rounds {
     if (shared) {
-      let alias: ndarray.NdArray[f64] = current;
-      let start: i64 = monotonic_ns();
+      let alias = current;
+      let start = monotonic_ns();
       current = scale(current);
-      elapsed = elapsed + monotonic_ns() - start;
+      elapsed += monotonic_ns() - start;
       if (!correct(alias, n, factor)) {
         return 2;
       }
     } else {
-      let start: i64 = monotonic_ns();
+      let start = monotonic_ns();
       current = scale(current);
-      elapsed = elapsed + monotonic_ns() - start;
+      elapsed += monotonic_ns() - start;
     }
-    factor = factor * 2.0;
+    factor *= 2.0;
     if (!correct(current, n, factor)) {
       return 3;
     }
-    r = r + 1;
   }
-  let calls: i64 = __heap_alloc_count() - mark_calls;
-  let bytes: i64 = __heap_bump_bytes() - mark_bytes;
-  let mode: string = "unique";
-  if (shared) {
-    mode = "shared";
-  }
+  let calls = __heap_alloc_count() - mark_calls;
+  let bytes = __heap_bump_bytes() - mark_bytes;
+  let mode = if (shared) { "shared" } else { "unique" };
   print("{\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"mode\":\"" + mode + "\",\"alloc_calls\":" + calls.to_string() + ",\"fresh_bytes\":" + bytes.to_string() + ",\"ns_per_map\":" + (elapsed / (rounds as i64)).to_string() + "}");
   return 0;
 }
