@@ -110,7 +110,9 @@ function ownership_and_wire(): test.TestOutcome {
   if (match (result) { Ok(v) => v != 0.5, Err(_) => true } || samples[1] != 65535 || shared.get()[1] != 0) {
     return test.fail("input COW during validation callbacks");
   }
-  let decoded = match (tag_data.read_curve([99 as u8, 117 as u8, 114 as u8, 118 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8, 2 as u8, 0 as u8], tag_data.default_curve_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("typed gamma wire input"); } };
+  let Ok(decoded) = tag_data.read_curve([b'c', b'u', b'r', b'v', 0, 0, 0, 0, 0, 0, 0, 1, 2, 0], tag_data.default_curve_limits(), never) else {
+    return test.fail("typed gamma wire input");
+  };
   return test.assert_true(match (value(decoded, 0.5)) { Ok(v) => close(v, 0.25, 0.000000000001), Err(_) => false }
     && match (value(tag_data.Samples(samples), 0.25)) { Ok(v) => v == 0.5, Err(_) => false });
 }
@@ -129,7 +131,7 @@ function cancellation(): test.TestOutcome {
     if (match (success) { Ok(_) => false, Err(_) => true } || total.get() < 2) {
       return test.fail("successful poll coverage");
     }
-    for stop in 1..total.get() + 1 {
+    for stop in 1..=total.get() {
       let polls = cell_new(0);
       let result = curv_eval.evaluate(curve, 0.375, curv_eval.default_limits(), (): boolean => {
         polls.set(polls.get() + 1);

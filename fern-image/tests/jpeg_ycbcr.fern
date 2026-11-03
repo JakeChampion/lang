@@ -6,7 +6,9 @@ function never(): boolean {
 }
 
 function emit(path: string): i32 {
-  let bytes = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let Ok(bytes) = read_file_bytes(path) else {
+    return 2;
+  };
   if (bytes.len() <= 0 || bytes.len() % 3 != 0) {
     return 3;
   }
@@ -19,23 +21,22 @@ function emit(path: string): i32 {
     cb = cb.append(bytes[i * 3 + 1]);
     cr = cr.append(bytes[i * 3 + 2]);
   }
-  let rgb = match (ycbcr.convert_row(y, cb, cr, bytes.len(), never)) { Ok(v) => v, Err(_) => { return 4; } };
+  let Ok(rgb) = ycbcr.convert_row(y, cb, cr, bytes.len(), never) else {
+    return 4;
+  };
   if (rgb.len() != bytes.len()) {
     return 5;
   }
   for i in 0..count {
     let pixel = ycbcr.convert(y[i], cb[i], cr[i]);
-    if (rgb[i * 3] != pixel.r || rgb[i * 3 + 1] != pixel.g || rgb[i * 3 + 2] != pixel.b || pixel.a != 255 as u8) {
+    if (rgb[i * 3] != pixel.r || rgb[i * 3 + 1] != pixel.g || rgb[i * 3 + 2] != pixel.b || pixel.a != 255) {
       return 6;
     }
   }
-  match (write_file_bytes(path + ".rgb.raw", rgb)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 7;
-    }
+  if let Err(_) = write_file_bytes(path + ".rgb.raw", rgb) {
+    return 7;
   }
-  print("converted " + path + " " + count.to_string());
+  print(f"converted {path} {count}");
   return 0;
 }
 

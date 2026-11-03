@@ -16,7 +16,7 @@ function put32(input: u8[], at: i32, value: i64): u8[] {
 function blank(count: i32): u8[] {
   let input: u8[] = [];
   for _ in 0..count {
-    input = input.append(0 as u8);
+    input = input.append(0);
   }
   return input;
 }
@@ -24,11 +24,11 @@ function blank(count: i32): u8[] {
 function make(sizes: [i32]): u8[] {
   let bytes = 132 + sizes.len() * 12;
   for size in sizes {
-    bytes = bytes + (size + 3) / 4 * 4;
+    bytes += (size + 3) / 4 * 4;
   }
   let input = blank(bytes);
   input = put32(put32(put32(put32(put32(input, 0, bytes as i64), 8, 71303168i64), 12, 1835955314i64), 16, 1380401696i64), 20, 1482250784i64);
-  input = input.with(24, 7 as u8).with(25, 234 as u8).with(27, 10 as u8).with(29, 27 as u8);
+  input = input.with(24, 7).with(25, 234).with(27, 10).with(29, 27);
   input = put32(put32(put32(put32(input, 36, 1633907568i64), 68, 63190i64), 72, 65536i64), 76, 54061i64);
   input = put32(input, 128, sizes.len() as i64);
   let offset = 132 + sizes.len() * 12;
@@ -36,7 +36,7 @@ function make(sizes: [i32]): u8[] {
     let at = 132 + index * 12;
     input = put32(put32(put32(input, at, 1949315120i64 + index as i64), at + 4, offset as i64), at + 8, sizes[index] as i64);
     input = put32(input, offset, 2054847098i64);
-    offset = offset + (sizes[index] + 3) / 4 * 4;
+    offset += (sizes[index] + 3) / 4 * 4;
   }
   return input;
 }
@@ -46,14 +46,20 @@ function rejects(input: [u8], error: envelope.IccError): boolean {
 }
 
 function profiles(): test.TestOutcome {
-  let real = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen offline profile"); } };
-  let info = match (envelope.inspect(real, envelope.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("real shared curve elements"); } };
+  let Ok(real) = read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc") else {
+    return test.fail("frozen offline profile");
+  };
+  let Ok(info) = envelope.inspect(real, envelope.default_limits(), never) else {
+    return test.fail("real shared curve elements");
+  };
   if (info.bytes != 588 || info.tags.len() != 11 || info.unique_elements != 9 || info.device_class != envelope.DeviceClass.Display || info.preferred_intent != envelope.Intent.Perceptual) {
     return test.fail("independent profile envelope metadata");
   }
   for intent in 0..4 {
     let input = put32(put32(make([8, 9, 10, 11]), 12, 1935896178i64), 64, intent as i64);
-    let value = match (envelope.inspect(input, envelope.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("input profile and all preferred intents"); } };
+    let Ok(value) = envelope.inspect(input, envelope.default_limits(), never) else {
+      return test.fail("input profile and all preferred intents");
+    };
     if (value.device_class != envelope.DeviceClass.Input || value.tags.len() != 4 || value.unique_elements != 4 || value.created.year != 2026) {
       return test.fail("constructed metadata");
     }
@@ -76,11 +82,11 @@ function header(): test.TestOutcome {
   for at in [0, 26, 28, 30, 32, 44, 60, 64, 68, 72, 76, 100, 124] {
     let value = if (at == 0) { 4294967295i64 } else if (at == 26 || at == 28) { 0i64 } else { 4294967295i64 };
     if (!rejects(put32(input, at, value), envelope.IccError.Header)) {
-      return test.fail("header ranges, reserved fields, and D50 at " + at.to_string());
+      return test.fail(f"header ranges, reserved fields, and D50 at {at}");
     }
   }
   let vendor = put32(put32(put32(input, 44, 4294901763i64), 56, 4294967295i64), 60, 15i64);
-  if (!rejects(input.with(35, 60 as u8), envelope.IccError.Header)) {
+  if (!rejects(input.with(35, 60), envelope.IccError.Header)) {
     return test.fail("seconds range");
   }
   return test.assert_true(match (envelope.inspect(vendor, envelope.default_limits(), never)) { Ok(v) => v.flags == 4294901763i64 && v.attributes_high == 4294967295i64 && v.attributes_low == 15i64, Err(_) => false });
@@ -129,7 +135,7 @@ function layout(): test.TestOutcome {
   }
   gap = put32(gap, 0, 180i64);
   return test.assert_true(rejects(gap, envelope.IccError.Layout)
-    && rejects(input.with(173, 1 as u8), envelope.IccError.Layout)
+    && rejects(input.with(173, 1), envelope.IccError.Layout)
     && rejects(put32(same, 148, 156i64), envelope.IccError.Layout)
     && rejects(put32(input, 160, 1i64), envelope.IccError.Header));
 }
@@ -154,14 +160,16 @@ function ownership(): test.TestOutcome {
   let input = put32(make([8]), 84, 4294967295i64);
   let shared = cell_new(input);
   let first = match (envelope.inspect(input, envelope.default_limits(), (): boolean => {
-    shared.set(shared.get().with(132, 0 as u8));
+    shared.set(shared.get().with(132, 0));
     return false;
   })) { Ok(v) => v, Err(_) => { return test.fail("input COW during callbacks"); } };
   let changed = first.tags.with(0, envelope.Tag { signature: 0i64, offset: 0, size: 0, type_signature: 0i64 });
-  let id = first.unverified_id.with(0, 0 as u8);
-  let second = match (envelope.inspect(input, envelope.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fresh inspector session"); } };
+  let id = first.unverified_id.with(0, 0);
+  let Ok(second) = envelope.inspect(input, envelope.default_limits(), never) else {
+    return test.fail("fresh inspector session");
+  };
   return test.assert_true(first.tags[0].signature == 1949315120i64 && second.tags[0].signature == 1949315120i64 && changed[0].signature == 0i64
-    && first.unverified_id[0] == 255 as u8 && second.unverified_id[0] == 255 as u8 && id[0] == 0 as u8 && input[132] != shared.get()[132]);
+    && first.unverified_id[0] == 255 && second.unverified_id[0] == 255 && id[0] == 0 && input[132] != shared.get()[132]);
 }
 
 function cancellation(): test.TestOutcome {
@@ -174,7 +182,7 @@ function cancellation(): test.TestOutcome {
     if (match (success) { Ok(_) => false, Err(_) => true } || count.get() < 3) {
       return test.fail("poll coverage");
     }
-    for stop in 1..count.get() + 1 {
+    for stop in 1..=count.get() {
       let polls = cell_new(0);
       let result = envelope.inspect(input, envelope.default_limits(), (): boolean => {
         polls.set(polls.get() + 1);

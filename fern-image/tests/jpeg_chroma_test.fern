@@ -92,7 +92,7 @@ function admission(): test.TestOutcome {
     || !rejects(plane(2, 1, 2147483647, 1, 1, [0 as u8]), grid, 0, 4, chroma.ChromaError.Limit)) {
     return test.fail("caller-constructed storage validation");
   }
-  if (!rejects(source, grid, 0 - 1, 4, chroma.ChromaError.Bounds) || !rejects(source, grid, 1, 4, chroma.ChromaError.Bounds)
+  if (!rejects(source, grid, -1, 4, chroma.ChromaError.Bounds) || !rejects(source, grid, 1, 4, chroma.ChromaError.Bounds)
     || !rejects(source, grid, 0, 0, chroma.ChromaError.Limit) || !rejects(source, grid, 0, 3, chroma.ChromaError.Limit)) {
     return test.fail("row and exact output-byte admission");
   }
@@ -105,13 +105,15 @@ function ownership(): test.TestOutcome {
   let shared = cell_new(source);
   let first = match (chroma.reconstruct_row(source, grid, 0, chroma.Filter.Bilinear, 4, (): boolean => {
     let old = shared.get();
-    shared.set(planes.SamplePlane { layout: old.layout, data: old.data.with(0, 255 as u8) });
+    shared.set(planes.SamplePlane { layout: old.layout, data: old.data.with(0, 255) });
     return false;
   })) { Ok(v) => v, Err(_) => { return test.fail("callback input update"); } };
   let retained = first;
-  first = first.with(0, 99 as u8);
-  let again = match (chroma.reconstruct_row(source, grid, 0, chroma.Filter.Bilinear, 4, never)) { Ok(v) => v, Err(_) => { return test.fail("fresh row"); } };
-  return test.assert_true(equals(retained, [0 as u8, 50 as u8, 150 as u8, 200 as u8]) && equals(again, retained) && first[0] == 99 as u8 && source.data[0] == 0 as u8 && shared.get().data[0] == 255 as u8);
+  first = first.with(0, 99);
+  let Ok(again) = chroma.reconstruct_row(source, grid, 0, chroma.Filter.Bilinear, 4, never) else {
+    return test.fail("fresh row");
+  };
+  return test.assert_true(equals(retained, [0 as u8, 50 as u8, 150 as u8, 200 as u8]) && equals(again, retained) && first[0] == 99 && source.data[0] == 0 && shared.get().data[0] == 255);
 }
 
 function cancellation(): test.TestOutcome {
@@ -135,7 +137,7 @@ function cancellation(): test.TestOutcome {
     if (count.get() != 8) {
       return test.fail("group and final cancellation polls");
     }
-    for stop in 1..count.get() + 1 {
+    for stop in 1..=count.get() {
       let seen = cell_new(0);
       match (chroma.reconstruct_row(source, grid, 1, filter, 257, (): boolean => {
         seen.set(seen.get() + 1);

@@ -26,12 +26,12 @@ pub function bad_filter_and_checksum(): u8[] {
 pub function expected(y: i32, at: i32): u8 {
   if (y == 0) {
     if (at < 256) {
-      return 255 as u8;
+      return 255;
     }
     if (at == 256) {
-      return 240 as u8;
+      return 240;
     }
-    return 0 as u8;
+    return 0;
   }
   return ((at * 37 + y * 11 + at / 251) % 256) as u8;
 }

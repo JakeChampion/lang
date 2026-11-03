@@ -12,7 +12,9 @@ function field(input: [u8], index: i32): i32 {
 }
 
 function emit(path: string): i32 {
-  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let Ok(input) = read_file_bytes(path) else {
+    return 2;
+  };
   if (input.len() < 52 || field(input, 12) != input.len() - 52) {
     return 3;
   }
@@ -25,17 +27,16 @@ function emit(path: string): i32 {
     data = data.append(value);
   }
   let source = planes.SamplePlane { layout: layout, data: data };
-  let output = match (chroma.reconstruct_row(source, grid, row, filter, grid.width, never)) { Ok(v) => v, Err(_) => { return 5; } };
+  let Ok(output) = chroma.reconstruct_row(source, grid, row, filter, grid.width, never) else {
+    return 5;
+  };
   if (output.len() != grid.width) {
     return 6;
   }
-  match (write_file_bytes(path + ".row.raw", output)) {
-    Ok(_) => {},
-    Err(_) => {
-      return 7;
-    }
+  if let Err(_) = write_file_bytes(path + ".row.raw", output) {
+    return 7;
   }
-  print("row " + path + " " + grid.width.to_string());
+  print(f"row {path} {grid.width}");
   return 0;
 }
 

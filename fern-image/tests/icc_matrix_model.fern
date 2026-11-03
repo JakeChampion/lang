@@ -64,16 +64,18 @@ function report(path: string, polls: i32, data: matrix_model.ForwardData): void 
   }
   values = values.append(data.media_white.x as i64).append(data.media_white.y as i64).append(data.media_white.z as i64);
   values = curve_values(curve_values(curve_values(values, data.red), data.green), data.blue);
-  let text = "model " + path + " ok " + polls.to_string();
+  let text = f"model {path} ok {polls}";
   for value in values {
-    text = text + " " + value.to_string();
+    text += f" {value}";
   }
   print(text);
 }
 
 function emit(path: string): i32 {
-  let input = match (read_file_bytes(path)) { Ok(value) => value, Err(_) => { return 2; } };
-  if (input.len() < 28 || input.len() > 16777244 || input[0] != 70 as u8 || input[1] != 77 as u8 || input[2] != 68 as u8 || input[3] != 49 as u8) {
+  let Ok(input) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (input.len() < 28 || input.len() > 16777244 || input[0] != b'F' || input[1] != b'M' || input[2] != b'D' || input[3] != b'1') {
     return 3;
   }
   let requested = match (signed(input, 4)) { 0 => envelope.Intent.Perceptual, 1 => envelope.Intent.Relative, 2 => envelope.Intent.Saturation, 3 => envelope.Intent.Absolute, _ => { return 4; } };
@@ -92,7 +94,7 @@ function emit(path: string): i32 {
       report(path, polls.get(), data);
     },
     Err(error) => {
-      print("model " + path + " error " + error_name(error) + " " + polls.get().to_string());
+      print(f"model {path} error {error_name(error)} {polls.get()}");
     }
   }
   return 0;
