@@ -22,22 +22,16 @@ pub function fit_dimensions(width: i32, height: i32, max_width: i32, max_height:
   if (width <= 0 || height <= 0 || max_width <= 0 || max_height <= 0) {
     return Err(pixels.Dimensions);
   }
-  let w: i64 = width as i64;
-  let h: i64 = height as i64;
-  let mw: i64 = max_width as i64;
-  let mh: i64 = max_height as i64;
+  let w = width as i64;
+  let h = height as i64;
+  let mw = max_width as i64;
+  let mh = max_height as i64;
   if (mw * h <= mh * w) {
-    let fitted: i32 = ((h * mw + w / 2) / w) as i32;
-    if (fitted < 1) {
-      fitted = 1;
-    }
-    return Ok(Dimensions { width: max_width, height: fitted });
+    let fitted = ((h * mw + w / 2) / w) as i32;
+    return Ok(Dimensions { width: max_width, height: if (fitted < 1) { 1 } else { fitted } });
   }
-  let fitted: i32 = ((w * mh + h / 2) / h) as i32;
-  if (fitted < 1) {
-    fitted = 1;
-  }
-  return Ok(Dimensions { width: fitted, height: max_height });
+  let fitted = ((w * mh + h / 2) / h) as i32;
+  return Ok(Dimensions { width: if (fitted < 1) { 1 } else { fitted }, height: max_height });
 }
 
 function clamp(value: i32, maximum: i32): i32 {
@@ -57,20 +51,18 @@ pub function bilinear_axis(index: i32, source_size: i32, output_size: i32): Resu
   if (index < 0 || index >= output_size) {
     return Err(pixels.Bounds);
   }
-  let position: f64 = (index as f64 + 0.5) * (source_size as f64) / (output_size as f64) - 0.5;
-  if (position < 0.0) {
-    position = 0.0;
-  }
+  let scaled = (index as f64 + 0.5) * (source_size as f64) / (output_size as f64) - 0.5;
+  let position = if (scaled < 0.0) { 0.0 } else { scaled };
   let first = clamp(position as i32, source_size - 1);
   return Ok(BilinearAxis { first: first, second: clamp(first + 1, source_size - 1), weight: position - first as f64 });
 }
 
 function byte(value: f64): u8 {
   if (value <= 0.0) {
-    return 0 as u8;
+    return 0;
   }
   if (value >= 1.0) {
-    return 255 as u8;
+    return 255;
   }
   return (value * 255.0 + 0.5) as u8;
 }
@@ -81,9 +73,9 @@ function mix(a: f64, b: f64, c: f64, d: f64, fx: f64, fy: f64): f64 {
 
 function channel(a: u8, b: u8, c: u8, d: u8, aa: f64, ba: f64, ca: f64, da: f64, alpha: f64, fx: f64, fy: f64): u8 {
   if (alpha == 0.0) {
-    return 0 as u8;
+    return 0;
   }
-  let linear: f64 = mix(
+  let linear = mix(
     color.srgb_to_linear(a as f64 / 255.0) * aa,
     color.srgb_to_linear(b as f64 / 255.0) * ba,
     color.srgb_to_linear(c as f64 / 255.0) * ca,
@@ -96,11 +88,11 @@ pub function interpolate(a: pixels.Pixel, b: pixels.Pixel, c: pixels.Pixel, d: p
   if (fx != fx || fy != fy || fx < 0.0 || fx > 1.0 || fy < 0.0 || fy > 1.0) {
     return Err(pixels.Bounds);
   }
-  let aa: f64 = a.a as f64 / 255.0;
-  let ba: f64 = b.a as f64 / 255.0;
-  let ca: f64 = c.a as f64 / 255.0;
-  let da: f64 = d.a as f64 / 255.0;
-  let alpha: f64 = mix(aa, ba, ca, da, fx, fy);
+  let aa = a.a as f64 / 255.0;
+  let ba = b.a as f64 / 255.0;
+  let ca = c.a as f64 / 255.0;
+  let da = d.a as f64 / 255.0;
+  let alpha = mix(aa, ba, ca, da, fx, fy);
   return Ok(pixels.Pixel {
     r: channel(a.r, b.r, c.r, d.r, aa, ba, ca, da, alpha, fx, fy),
     g: channel(a.g, b.g, c.g, d.g, aa, ba, ca, da, alpha, fx, fy),
@@ -120,26 +112,16 @@ pub function resize(source: pixels.Image, width: i32, height: i32, filter: Filte
   if (width <= 0 || height <= 0) {
     return Err(pixels.Dimensions);
   }
-  let first = pixels.read_pixel(source, 0, 0)?;
-  let stride: i32 = match (width *? pixels.channels(source.layout.format)) { Some(n) => n, None => { return Err(pixels.Overflow); } };
+  pixels.read_pixel(source, 0, 0)?;
+  let Some(stride) = width *? pixels.channels(source.layout.format) else {
+    return Err(pixels.Overflow);
+  };
   let output = pixels.create(width, height, stride, source.layout.format, limits)?;
-  let y: i32 = 0;
-  while (y < height) {
-    let x: i32 = 0;
-    while (x < width) {
-      let value: pixels.Pixel = first;
-      match (filter) {
-        Nearest => {
-          value = pixels.read_pixel(source, nearest_index(x, source.layout.width, width)?, nearest_index(y, source.layout.height, height)?)?;
-        },
-        Bilinear => {
-          value = bilinear(source, bilinear_axis(x, source.layout.width, width)?, bilinear_axis(y, source.layout.height, height)?)?;
-        }
-      }
+  for y in 0..height {
+    for x in 0..width {
+      let value = match (filter) { Nearest => pixels.read_pixel(source, nearest_index(x, source.layout.width, width)?, nearest_index(y, source.layout.height, height)?)?, Bilinear => bilinear(source, bilinear_axis(x, source.layout.width, width)?, bilinear_axis(y, source.layout.height, height)?)? };
       output = pixels.write_pixel(output, x, y, value)?;
-      x = x + 1;
     }
-    y = y + 1;
   }
   return Ok(output);
 }

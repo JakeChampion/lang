@@ -14,7 +14,7 @@ pub function default_limits(): OrientLimits {
 }
 
 function swaps_axes(value: exif.Orientation): boolean {
-  return match (value) { exif.LeftTop => true, exif.RightTop => true, exif.RightBottom => true, exif.LeftBottom => true, _ => false };
+  return match (value) { exif.LeftTop | exif.RightTop | exif.RightBottom | exif.LeftBottom => true, _ => false };
 }
 
 // Validate public records before callbacks, output allocation, or pixel access.
@@ -29,7 +29,9 @@ pub function inspect(source: pixels.Image, value: exif.Orientation, limits: Orie
   }
   let width = if (swaps_axes(value)) { input.height } else { input.width };
   let height = if (swaps_axes(value)) { input.width } else { input.height };
-  let stride = match (width *? pixels.channels(input.format)) { Some(v) => v, None => { return Err(OrientError.Image(pixels.Overflow)); } };
+  let Some(stride) = width *? pixels.channels(input.format) else {
+    return Err(OrientError.Image(pixels.Overflow));
+  };
   let output = match (pixels.checked_layout(width, height, stride, input.format, limits.output)) { Ok(v) => v, Err(e) => { return Err(OrientError.Image(e)); } };
   let bytes = input.bytes as i64 + output.bytes as i64;
   if (bytes > limits.max_planned_bytes as i64 || bytes > 67108864i64) {
