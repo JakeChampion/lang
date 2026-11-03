@@ -59,7 +59,7 @@ function test_gather_empty(): test.TestOutcome {
 }
 
 function test_gather_waits_for_all_in_order(): test.TestOutcome {
-  let seen: Cell[i32] = cell_new(0);
+  let seen = cell_new(0);
   let fs: async.Future[i32][] = [napper(30, 1, seen), napper(10, 2, seen), napper(20, 3, seen)];
   match (async.block_on(async.gather(fs))) {
     Some(got) => {
@@ -76,7 +76,7 @@ function test_gather_waits_for_all_in_order(): test.TestOutcome {
 }
 
 function test_gather_fails_when_an_input_fails(): test.TestOutcome {
-  let seen: Cell[i32] = cell_new(0);
+  let seen = cell_new(0);
   let fs: async.Future[i32][] = [napper(400, 1, seen), failing(clock.instant().add(ms(10)))];
   match (async.block_on(async.gather(fs))) {
     Some(got) => {
@@ -107,7 +107,7 @@ function test_race_first_ready(): test.TestOutcome {
 }
 
 function test_race_cancels_the_losers(): test.TestOutcome {
-  let seen: Cell[i32] = cell_new(0);
+  let seen = cell_new(0);
   let fs: async.Future[i32][] = [napper(400, 1, seen), napper(10, 2, seen)];
   match (async.block_on(async.race(fs))) {
     Some(won) => {
@@ -145,7 +145,7 @@ function test_race_of_nothing_is_cancelled(): test.TestOutcome {
 }
 
 function test_deadline_some_and_none(): test.TestOutcome {
-  let seen: Cell[i32] = cell_new(0);
+  let seen = cell_new(0);
   let fs: async.Future[i32][] = [napper(10, 7, seen), napper(500, 8, seen)];
   match (async.block_on(async.with_deadline(clock.instant().add(ms(100)), fs))) {
     Some(slots) => {
@@ -168,12 +168,12 @@ function test_deadline_some_and_none(): test.TestOutcome {
 }
 
 function test_wait_without_a_scheduler(): test.TestOutcome {
-  let seen: Cell[i32] = cell_new(0);
-  let ready: Option[i32] = async.wait(Ready(3));
+  let seen = cell_new(0);
+  let ready = async.wait(Ready(3));
   if (ready != Some(3)) {
     return test.fail("wait of a ready future did not answer it");
   }
-  let pending: Option[i32] = async.wait(napper(10, 1, seen));
+  let pending = async.wait(napper(10, 1, seen));
   if (!async.parks()) {
     return test.assert_eq(pending.unwrap_or(0), 1);
   }
@@ -185,7 +185,7 @@ function test_wait_without_a_scheduler(): test.TestOutcome {
 
 // Inside a task, `wait` parks on the task's scheduler; here that is block_on.
 function test_wait_inside_a_task(): test.TestOutcome {
-  let seen: Cell[i32] = cell_new(0);
+  let seen = cell_new(0);
   let outer: async.Future[i32] = async.spawn((): i32 => {
     let fs: async.Future[i32][] = [napper(20, 4, seen), napper(10, 5, seen)];
     match (async.wait(async.gather(fs))) {
@@ -196,14 +196,14 @@ function test_wait_inside_a_task(): test.TestOutcome {
         return 0 - 1;
       }
     }
-    return 0 - 2;
+    return -2;
   });
   return test.assert_eq(async.block_on(outer).unwrap_or(0), 45);
 }
 
 // A task cancelled while it waits cancels what it waits for.
 function test_cancel_reaches_the_children(): test.TestOutcome {
-  let seen: Cell[i32] = cell_new(0);
+  let seen = cell_new(0);
   let inner: async.Future[i32] = async.spawn((): i32 => {
     let fs: async.Future[i32][] = [napper(400, 1, seen), napper(400, 2, seen)];
     match (async.wait(async.gather(fs))) {
@@ -235,7 +235,7 @@ function test_cancel_reaches_the_children(): test.TestOutcome {
 }
 
 function test_sim_deadline_is_exact(): test.TestOutcome {
-  let d: sim.Sim = sim.new(7);
+  let d = sim.new(7);
   let fs: async.Future[string][] = [sim.future_at(sim.at(ms(40)), "late"), sim.future_at(sim.at(ms(10)), "early")];
   match (sim.block_on(d, async.with_deadline(sim.at(ms(25)), fs))) {
     Some(slots) => {
@@ -251,7 +251,7 @@ function test_sim_deadline_is_exact(): test.TestOutcome {
 }
 
 function test_sim_gather_and_race(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
+  let d = sim.new(1);
   let fs: async.Future[i32][] = [sim.future_at(sim.at(ms(30)), 10), sim.future_chain(sim.at(ms(10)), ms(5), 3, 20)];
   match (sim.block_on(d, async.gather(fs))) {
     Some(got) => {
@@ -283,14 +283,14 @@ function test_sim_gather_and_race(): test.TestOutcome {
 function test_parks_agrees(): test.TestOutcome {
   let t: async.Task[i32] = async.task_new((): i32 => {
     let none: i32[] = [];
-    let w: async.Wake = async.wait_any(none, Some(clock.instant().add(ms(1))));
+    let w = async.wait_any(none, Some(clock.instant().add(ms(1))));
     return 1;
   });
-  let parked: boolean = false;
+  let parked = false;
   match (async.task_start(t)) {
     Suspended(w) => {
       parked = true;
-      let st: async.TaskStatus[i32] = async.task_resume(t, async.Wake.Cancelled);
+      let st = async.task_resume(t, async.Wake.Cancelled);
     },
     Done(v) => {}
   }
@@ -298,7 +298,7 @@ function test_parks_agrees(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("async combinators");
+  let r = test.new("async combinators");
   r = r.it("gather of ready futures", test_gather_ready);
   r = r.it("gather of nothing", test_gather_empty);
   r = r.it("gather waits for all, in input order", test_gather_waits_for_all_in_order);

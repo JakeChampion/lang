@@ -24,7 +24,7 @@ function __net(d: sim.Sim): sim_fetch.Net {
 }
 
 function __plat(seed: i64): sim_platform.SimPlatform {
-  let d: sim.Sim = sim.new(seed);
+  let d = sim.new(seed);
   return sim_platform.new(d, __net(d));
 }
 
@@ -41,19 +41,19 @@ function __message(got: Result[HttpResponse, fetch.FetchError]): string {
 }
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-  let region: string = "nowhere";
+  let region = "nowhere";
   match (plat.config("REGION")) {
     Some(r) => {
       region = r;
     },
     None => {}
   }
-  let upstream: string = __message(plat.http(fetch.get("http://example.test/")));
+  let upstream = __message(plat.http(fetch.get("http://example.test/")));
   return http.ok(region + " " + plat.now().unix_millis().to_string() + " " + upstream);
 }
 
 function test_config_and_secret_answer_what_was_set(): test.TestOutcome {
-  let bare: sim_platform.SimPlatform = __plat(1);
+  let bare = __plat(1);
   match (bare.config("REGION")) {
     Some(v) => {
       return test.fail("config before setting: " + v);
@@ -66,7 +66,7 @@ function test_config_and_secret_answer_what_was_set(): test.TestOutcome {
     },
     None => {}
   }
-  let p: sim_platform.SimPlatform = bare.with_config("REGION", "eu-west").with_secret("TOKEN", "s3cr3t");
+  let p = bare.with_config("REGION", "eu-west").with_secret("TOKEN", "s3cr3t");
   match (p.config("REGION")) {
     Some(v) => {
       if (v != "eu-west") {
@@ -91,8 +91,8 @@ function test_config_and_secret_answer_what_was_set(): test.TestOutcome {
 }
 
 function test_env_answers_what_was_set(): test.TestOutcome {
-  let bare: sim_platform.SimPlatform = __plat(1);
-  let p: sim_platform.SimPlatform = bare.with_env("HOME", "/sim");
+  let bare = __plat(1);
+  let p = bare.with_env("HOME", "/sim");
   match (bare.env("HOME")) {
     Some(v) => {
       return test.fail("env of the platform the builder started from: " + v);
@@ -111,8 +111,8 @@ function test_env_answers_what_was_set(): test.TestOutcome {
 }
 
 function test_peer_files_and_directories_answer_what_was_set(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1).with_peer(net.socket_addr_parse("192.0.2.7:5000").ok()).with_file("www/a.txt", "hello", time.timestamp_from_unix(7)).with_dir("www");
-  let got: string = "";
+  let p = __plat(1).with_peer(net.socket_addr_parse("192.0.2.7:5000").ok()).with_file("www/a.txt", "hello", time.timestamp_from_unix(7)).with_dir("www");
+  let got = "";
   match (p.peer()) {
     Some(a) => {
       got = a.to_string();
@@ -141,7 +141,7 @@ function test_peer_files_and_directories_answer_what_was_set(): test.TestOutcome
 }
 
 function test_the_clock_is_the_simulations(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1);
+  let p = __plat(1);
   if (p.now().unix_millis() != 0 as i64) {
     return test.fail("now before anything: " + p.now().unix_millis().to_string());
   }
@@ -153,13 +153,13 @@ function test_the_clock_is_the_simulations(): test.TestOutcome {
 }
 
 function test_randomness_is_the_seeds(): test.TestOutcome {
-  let a: sim_platform.SimPlatform = __plat(7);
-  let b: sim_platform.SimPlatform = __plat(7);
-  let first: i32 = a.random_i32();
+  let a = __plat(7);
+  let b = __plat(7);
+  let first = a.random_i32();
   if (first != b.random_i32()) {
     return test.fail("two sims from one seed drew differently");
   }
-  let c: sim_platform.SimPlatform = __plat(7);
+  let c = __plat(7);
   c.random_i32();
   if (c.drv.rng_state() == __plat(7).drv.rng_state()) {
     return test.fail("a draw left the PRNG state where it was");
@@ -168,10 +168,10 @@ function test_randomness_is_the_seeds(): test.TestOutcome {
 }
 
 function test_http_reaches_global_addresses_only(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("internal.test", ["10.0.0.1"]).listen("10.0.0.1", 80, time.duration_millis(1)).route("10.0.0.1", 80, "/", [sim_fetch.reply(200, "secret")]);
-  let p: sim_platform.SimPlatform = sim_platform.new(d, n);
-  let open: string = __message(p.http(fetch.get("http://example.test/")));
+  let d = sim.new(1);
+  let n = __net(d).host("internal.test", ["10.0.0.1"]).listen("10.0.0.1", 80, time.duration_millis(1)).route("10.0.0.1", 80, "/", [sim_fetch.reply(200, "secret")]);
+  let p = sim_platform.new(d, n);
+  let open = __message(p.http(fetch.get("http://example.test/")));
   if (open != "status 200") {
     return test.fail("a global origin: " + open);
   }
@@ -179,12 +179,12 @@ function test_http_reaches_global_addresses_only(): test.TestOutcome {
 }
 
 function test_http_reaches_only_the_allow_list(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, time.duration_millis(1)).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
+  let d = sim.new(1);
+  let n = __net(d).host("other.test", ["93.184.216.35"]).listen("93.184.216.35", 80, time.duration_millis(1)).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
   match (fetch.allow(["example.test"])) {
     Ok(a) => {
-      let p: sim_platform.SimPlatform = sim_platform.new(d, n).with_allow(a);
-      let listed: string = __message(p.http(fetch.get("http://example.test/")));
+      let p = sim_platform.new(d, n).with_allow(a);
+      let listed = __message(p.http(fetch.get("http://example.test/")));
       return test.assert_eq(listed + "|" + __message(p.http(fetch.get("http://other.test/"))), "status 200|blocked: other.test:80 is not on the allow-list");
     },
     Err(why) => {
@@ -197,11 +197,11 @@ function test_http_reaches_only_the_allow_list(): test.TestOutcome {
 const PROXY: string = "10.0.0.9";
 
 function test_http_goes_through_the_proxy_the_env_names(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d).listen(PROXY, 3128, time.duration_millis(5)).route(PROXY, 3128, "http://example.test/", [sim_fetch.reply(203, "via proxy")]);
-  let p: sim_platform.SimPlatform = sim_platform.new(d, n).with_env("http_proxy", "http://" + PROXY + ":3128");
-  let proxied: string = __message(p.http(fetch.get("http://example.test/")));
-  let direct: string = __message(p.with_env("no_proxy", "example.test").http(fetch.get("http://example.test/")));
+  let d = sim.new(1);
+  let n = __net(d).listen(PROXY, 3128, time.duration_millis(5)).route(PROXY, 3128, "http://example.test/", [sim_fetch.reply(203, "via proxy")]);
+  let p = sim_platform.new(d, n).with_env("http_proxy", "http://" + PROXY + ":3128");
+  let proxied = __message(p.http(fetch.get("http://example.test/")));
+  let direct = __message(p.with_env("no_proxy", "example.test").http(fetch.get("http://example.test/")));
   if (proxied + "|" + direct != "status 203|status 200") {
     return test.fail(proxied + "|" + direct);
   }
@@ -214,16 +214,16 @@ function test_http_goes_through_the_proxy_the_env_names(): test.TestOutcome {
 }
 
 function test_http_keeps_the_connection_for_the_next_request(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1);
+  let p = __plat(1);
   p.http(fetch.get("http://example.test/"));
   p.http(fetch.get("http://example.test/"));
   return test.assert_eq(p.net.connects(), 1);
 }
 
 function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1).with_secret("TOKEN", "s3cr3t");
+  let p = __plat(1).with_secret("TOKEN", "s3cr3t");
   p.secret("TOKEN");
-  let calls: mock_platform.MockCall[] = p.calls();
+  let calls = p.calls();
   if (calls.len() != 1) {
     return test.fail("calls: " + calls.len().to_string());
   }
@@ -239,10 +239,10 @@ function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
 }
 
 function __until_cancelled(plat: platform.Platform): string {
-  let steps: i32 = 0;
+  let steps = 0;
   while (!plat.cancelled() && steps < 100) {
     plat.sleep(time.duration_millis(10 as i64));
-    steps = steps + 1;
+    steps += 1;
   }
   match (plat.deadline()) {
     Some(at) => {
@@ -256,7 +256,7 @@ function __until_cancelled(plat: platform.Platform): string {
 }
 
 function test_the_deadline_cancels_on_the_sims_clock(): test.TestOutcome {
-  let bounded: string = __until_cancelled(__plat(1).with_deadline(sim.at(time.duration_millis(35))));
+  let bounded = __until_cancelled(__plat(1).with_deadline(sim.at(time.duration_millis(35))));
   if (bounded != "4 steps, due at 35 ms") {
     return test.fail("bounded: " + bounded);
   }
@@ -264,7 +264,7 @@ function test_the_deadline_cancels_on_the_sims_clock(): test.TestOutcome {
 }
 
 function __sent_traceparent(n: sim_fetch.Net): string {
-  let text: string = "";
+  let text = "";
   match (utf8.from_bytes(n.sent(n.sent_count() - 1))) {
     Ok(t) => {
       text = t;
@@ -282,23 +282,23 @@ function __sent_traceparent(n: sim_fetch.Net): string {
 }
 
 function test_http_carries_the_span_upstream(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
-  let n: sim_fetch.Net = __net(d);
-  let span: trace.Context = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
-  let p: sim_platform.SimPlatform = sim_platform.new(d, n).with_trace(span);
+  let d = sim.new(1);
+  let n = __net(d);
+  let span = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
+  let p = sim_platform.new(d, n).with_trace(span);
   p.http(fetch.get("http://example.test/"));
-  let sent: string = __sent_traceparent(n);
+  let sent = __sent_traceparent(n);
   if (!sent.starts_with("00-4bf92f3577b34da6a3ce929d0e0e4736-") || sent.ends_with("-00f067aa0ba902b7-01") || !sent.ends_with("-01")) {
     return test.fail("sent " + sent);
   }
-  let own: string = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+  let own = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
   p.http(fetch.get("http://example.test/").with_header("traceparent", own));
   return test.assert_eq(__sent_traceparent(n), own);
 }
 
 function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1).with_config("REGION", "eu-west");
-  let resp: HttpResponse = handle(http.request("GET", "/"), p);
+  let p = __plat(1).with_config("REGION", "eu-west");
+  let resp = handle(http.request("GET", "/"), p);
   return test.assert_body(resp, "eu-west 25 status 200");
 }
 
@@ -308,11 +308,11 @@ function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimP
 }
 
 function test_router_served_in_memory(): test.TestOutcome {
-  let d: sim.Sim = sim.new(1);
-  let server_plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.new(d));
+  let d = sim.new(1);
+  let server_plat = sim_platform.new(d, sim_fetch.new(d));
   let h: (HttpRequest, sim_platform.SimPlatform) => HttpResponse = router.new[sim_platform.SimPlatform]().get("/users/{id}", __user).handler();
   let n: sim_fetch.Net = sim_fetch.new(d).host("api.test", [ORIGIN]).serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => h(req, server_plat));
-  let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
+  let plat = sim_platform.new(d, n);
   match (plat.http(fetch.get("http://api.test/users/7"))) {
     Ok(resp) => {
       if (resp.status != 200 || resp.body_text_lossy() != "user 7") {
@@ -333,7 +333,7 @@ function test_router_served_in_memory(): test.TestOutcome {
       return test.fail(e.message());
     }
   }
-  let lines: string = "";
+  let lines = "";
   for c in server_plat.calls() {
     if (c.name == "log") {
       lines = lines + c.args + "\n";
@@ -346,7 +346,7 @@ function test_router_served_in_memory(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.new("std/sim_platform");
+  let t = test.new("std/sim_platform");
   t = t.it("serves a router in memory", test_router_served_in_memory);
   t = t.it("config and secret answer what was set", test_config_and_secret_answer_what_was_set);
   t = t.it("env answers what was set", test_env_answers_what_was_set);

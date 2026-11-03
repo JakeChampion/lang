@@ -21,7 +21,7 @@ function test_to_lower(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("skip-and-subsuites");
+  let r = test.new("skip-and-subsuites");
 
   r = r.it("top-level pass", test_pass);
 
@@ -31,13 +31,13 @@ function main(): i32 {
 
   r = r.skip_if(false, "always-runs", "(unused reason)", test_pass);
 
-  let arith: test.TestRunner = r.subsuite("arithmetic");
+  let arith = r.subsuite("arithmetic");
   arith = arith.it("addition", test_addition);
   arith = arith.it("subtraction", test_subtraction);
   arith = arith.skip("multiplication", "out of scope for this slice");
   r = r.merge(arith);
 
-  let str: test.TestRunner = r.subsuite("strings");
+  let str = r.subsuite("strings");
   str = str.it("to_upper", test_to_upper);
   str = str.it("to_lower", test_to_lower);
   r = r.merge(str);

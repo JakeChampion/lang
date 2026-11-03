@@ -4,7 +4,7 @@ import "std/test";
 // A stored DEFLATE block contains ASCII A. Python zlib independently
 // decodes this complete frame to one byte.
 function frame(): u8[] {
-  return [120 as u8, 1 as u8, 1 as u8, 1 as u8, 0 as u8, 254 as u8, 255 as u8, 65 as u8, 0 as u8, 66 as u8, 0 as u8, 66 as u8];
+  return [120, 1, 1, 1, 0, 254, 255, 65, 0, 66, 0, 66];
 }
 
 function rejects(input: [u8], limit: i32, expected: compression.CompressionError): boolean {
@@ -16,35 +16,37 @@ function same_error(a: compression.CompressionError, b: compression.CompressionE
 }
 
 function exact_limit(): test.TestOutcome {
-  let data: u8[] = match (compression.decode(frame(), 1)) { Ok(value) => value, Err(_) => { return test.fail("valid frame failed"); } };
-  return test.assert_true(data.len() == 1 && data[0] == 65 as u8
+  let Ok(data) = compression.decode(frame(), 1) else {
+    return test.fail("valid frame failed");
+  };
+  return test.assert_true(data.len() == 1 && data[0] == 65
     && rejects(frame(), 0, compression.CompressionError.Limit)
-    && rejects(frame(), 0 - 1, compression.CompressionError.Limit)
+    && rejects(frame(), -1, compression.CompressionError.Limit)
     && rejects(frame(), 67108865, compression.CompressionError.Limit));
 }
 
 function headers(): test.TestOutcome {
-  let input: u8[] = frame();
+  let input = frame();
   // Each alternate header has a valid modulo-31 check. The adapter must
   // reject its window, method, or dictionary policy independently.
-  let window: u8[] = input.with(0, 104 as u8).with(1, 5 as u8);
-  let method: u8[] = input.with(0, 119 as u8).with(1, 9 as u8);
-  let dictionary: u8[] = input.with(1, 32 as u8);
+  let window = input.with(0, 104).with(1, 5);
+  let method = input.with(0, 119).with(1, 9);
+  let dictionary = input.with(1, 32);
   return test.assert_true(rejects(window, 1, compression.CompressionError.Header)
     && rejects(method, 1, compression.CompressionError.Header)
     && rejects(dictionary, 1, compression.CompressionError.Header)
-    && rejects(input.with(1, 0 as u8), 1, compression.CompressionError.Header));
+    && rejects(input.with(1, 0), 1, compression.CompressionError.Header));
 }
 
 function framing(): test.TestOutcome {
-  let input: u8[] = frame();
-  return test.assert_true(rejects(input.append(0 as u8), 1, compression.CompressionError.Trailing)
+  let input = frame();
+  return test.assert_true(rejects(input.append(0), 1, compression.CompressionError.Trailing)
     && rejects(input.concat(input), 1, compression.CompressionError.Trailing)
-    && rejects(input.with(input.len() - 1, 0 as u8), 1, compression.CompressionError.Checksum));
+    && rejects(input.with(input.len() - 1, 0), 1, compression.CompressionError.Checksum));
 }
 
 function truncations(): test.TestOutcome {
-  let input: u8[] = frame();
+  let input = frame();
   for end in 0..input.len() {
     match (compression.decode(input[:end], 1)) {
       Ok(_) => {

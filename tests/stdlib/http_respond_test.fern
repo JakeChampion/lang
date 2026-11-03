@@ -20,7 +20,7 @@ function lookup(path: string): Result[string, http.HttpError] {
 }
 
 function serve(req: HttpRequest): Result[HttpResponse, http.HttpError] {
-  let name: string = lookup(req.path)?;
+  let name = lookup(req.path)?;
   return Ok(http.ok(name));
 }
 
@@ -29,8 +29,8 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 function test_ok_passes_through(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("GET", "/items/1"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("GET", "/items/1"), m);
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -41,8 +41,8 @@ function test_ok_passes_through(): test.TestOutcome {
 }
 
 function test_fail_answers_a_problem(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("GET", "/items/9"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("GET", "/items/9"), m);
   match (test.assert_status(resp, 404)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -59,8 +59,8 @@ function test_fail_answers_a_problem(): test.TestOutcome {
 }
 
 function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("GET", "/items/locked"), m);
+  let m = mock_platform.new();
+  let resp = handle(http.request("GET", "/items/locked"), m);
   match (test.assert_status(resp, 403)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -71,7 +71,7 @@ function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
 }
 
 function test_problem_quotes_its_text(): test.TestOutcome {
-  let resp: HttpResponse = http.problem(422, "Bad \"name\"", "line\nbreak");
+  let resp = http.problem(422, "Bad \"name\"", "line\nbreak");
   match (test.assert_status(resp, 422)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -82,17 +82,17 @@ function test_problem_quotes_its_text(): test.TestOutcome {
 }
 
 function test_problem_without_detail(): test.TestOutcome {
-  let resp: HttpResponse = http.problem(503, "", "");
+  let resp = http.problem(503, "", "");
   return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Service Unavailable\",\"status\":503}");
 }
 
 function decode(text: string): Result[HttpResponse, json.JsonError] {
-  let v: json.JsonValue = json.parse(text)?;
+  let v = json.parse(text)?;
   return Ok(http.ok("parsed"));
 }
 
 function test_json_error_answers_400(): test.TestOutcome {
-  let resp: HttpResponse = http.respond(decode("{\"n\": "));
+  let resp = http.respond(decode("{\"n\": "));
   match (test.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -105,7 +105,7 @@ function test_json_error_answers_400(): test.TestOutcome {
     },
     Pass => {}
   }
-  let body: string = resp.body_text_lossy();
+  let body = resp.body_text_lossy();
   if (!body.contains("\"title\":\"Malformed JSON\"")) {
     return test.fail("body: " + body);
   }
@@ -120,7 +120,7 @@ function failing(): Result[HttpResponse, string] {
 }
 
 function test_string_error_answers_500_without_the_message(): test.TestOutcome {
-  let resp: HttpResponse = http.respond(failing());
+  let resp = http.respond(failing());
   match (test.assert_status(resp, 500)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -168,8 +168,8 @@ function exploding(): Result[HttpResponse, dyn error.Error] {
 }
 
 function test_dyn_error_answers_500_and_logs_the_message(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = http.respond_error(exploding(), m);
+  let m = mock_platform.new();
+  let resp = http.respond_error(exploding(), m);
   match (test.assert_status(resp, 500)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -200,7 +200,7 @@ function counted_dyn(n: i32, ok: boolean): (i32, Result[HttpResponse, dyn error.
 }
 
 function test_respond_error_with_keeps_the_state(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new();
+  let m = mock_platform.new();
   let good: (i32, HttpResponse) = http.respond_error_with(counted_dyn(1, true), m);
   if (good.0 != 2) {
     return test.fail("state after Ok: " + good.0.to_string());
@@ -223,7 +223,7 @@ function test_respond_error_with_keeps_the_state(): test.TestOutcome {
 
 function proxied(failure: fetch.FetchError): Result[HttpResponse, fetch.FetchError] {
   let upstream: Result[string, fetch.FetchError] = Err(failure);
-  let body: string = upstream?;
+  let body = upstream?;
   return Ok(http.ok(body));
 }
 
@@ -232,7 +232,7 @@ function test_fetch_timeout_answers_504(): test.TestOutcome {
 }
 
 function test_fetch_failure_answers_502_without_the_message(): test.TestOutcome {
-  let resp: HttpResponse = http.respond(proxied(fetch.Connect(net.ConnectionRefused)));
+  let resp = http.respond(proxied(fetch.Connect(net.ConnectionRefused)));
   match (test.assert_status(resp, 502)) {
     Fail(msg) => {
       return test.fail(msg);
@@ -251,7 +251,7 @@ function test_fetch_bad_url_answers_502(): test.TestOutcome {
 }
 
 function test_produced_body_trailers(): test.TestOutcome {
-  let parts: Cell[i32] = cell_new(0);
+  let parts = cell_new(0);
   let resp: HttpResponse = http.chunks_with_trailers(
     200, (i: i32): Option[u8[]] => {
       if (i >= 2) {
@@ -300,7 +300,7 @@ function test_chunks_without_trailers(): test.TestOutcome {
 }
 
 function test_background_work_runs_in_the_order_added(): test.TestOutcome {
-  let log: Cell[string] = cell_new("");
+  let log = cell_new("");
   let resp: HttpResponse = http.ok("sent").with_background(() => log.set(log.get() + "a")).with_background(() => log.set(log.get() + "b"));
   if (log.get() != "") {
     return test.fail("ran when the response was built: " + log.get());
@@ -323,7 +323,7 @@ function test_background_work_runs_in_the_order_added(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.new("HTTP respond");
+  let t = test.new("HTTP respond");
   t = t.it("an Ok response passes through", test_ok_passes_through);
   t = t.it("a failed lookup answers a problem", test_fail_answers_a_problem);
   t = t.it("an error keeps its own title, and the detail is quoted", test_error_keeps_its_own_title_and_escapes);

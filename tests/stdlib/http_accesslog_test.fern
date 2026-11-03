@@ -15,15 +15,15 @@ function get(path: string): HttpRequest {
 }
 
 function test_a_record_carries_every_field(): test.TestOutcome {
-  let span: trace.Context = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
-  let m: mock_platform.MockPlatform = plat().with_peer(net.socket_addr_parse("192.0.2.7:5000").ok()).with_trace(span);
-  let req: HttpRequest = HttpRequest { ...get("/users/7"), headers: get("/").headers.set("User-Agent", "curl/8.9 \"x\"") };
-  let line: string = accesslog.record(req, http.ok("hello"), m, time.duration_nanos(412345));
+  let span = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
+  let m = plat().with_peer(net.socket_addr_parse("192.0.2.7:5000").ok()).with_trace(span);
+  let req = HttpRequest { ...get("/users/7"), headers: get("/").headers.set("User-Agent", "curl/8.9 \"x\"") };
+  let line = accesslog.record(req, http.ok("hello"), m, time.duration_nanos(412345));
   return test.assert_eq(line, "{\"timeUnixNano\":\"1700000000123000000\",\"severityNumber\":9,\"severityText\":\"INFO\",\"body\":\"GET /users/7 200\",\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"spanId\":\"00f067aa0ba902b7\",\"attributes\":{\"http.request.method\":\"GET\",\"url.path\":\"/users/7\",\"http.response.status_code\":200,\"http.server.request.duration\":0.000412,\"client.address\":\"192.0.2.7\",\"user_agent.original\":\"curl/8.9 \\\"x\\\"\",\"http.response.body.size\":5}}");
 }
 
 function test_absent_fields_are_left_out_and_a_5xx_is_an_error(): test.TestOutcome {
-  let line: string = accesslog.record(get("/boom"), http.text(503, ""), plat(), time.duration_millis(2500));
+  let line = accesslog.record(get("/boom"), http.text(503, ""), plat(), time.duration_millis(2500));
   return test.assert_eq(line, "{\"timeUnixNano\":\"1700000000123000000\",\"severityNumber\":17,\"severityText\":\"ERROR\",\"body\":\"GET /boom 503\",\"attributes\":{\"http.request.method\":\"GET\",\"url.path\":\"/boom\",\"http.response.status_code\":503,\"http.server.request.duration\":2.500000,\"http.response.body.size\":0}}");
 }
 
@@ -36,7 +36,7 @@ function test_a_produced_body_is_not_counted(): test.TestOutcome {
 }
 
 function test_the_middleware_logs_and_passes_the_response_on(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = plat();
+  let m = plat();
   let resp: HttpResponse = http.respond(accesslog.logged(get("/"), m, (r: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("done"))));
   if (resp.body_text_lossy() != "done") {
     return test.fail("the response changed: " + resp.body_text_lossy());
@@ -55,7 +55,7 @@ function test_the_middleware_logs_and_passes_the_response_on(): test.TestOutcome
 }
 
 function test_a_failure_is_logged_as_its_answer(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = plat();
+  let m = plat();
   let resp: HttpResponse = http.respond(accesslog.logged(get("/gone"), m, (r: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => Err(http.fail(404, "no such page"))));
   if (resp.status != 404) {
     return test.fail("answered " + resp.status.to_string());
@@ -72,7 +72,7 @@ function test_a_failure_is_logged_as_its_answer(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/accesslog");
+  let r = test.new("std/http/accesslog");
   r = r.it("a record carries every field", test_a_record_carries_every_field);
   r = r.it("absent fields are left out and a 5xx is an error", test_absent_fields_are_left_out_and_a_5xx_is_an_error);
   r = r.it("a produced body is not counted", test_a_produced_body_is_not_counted);

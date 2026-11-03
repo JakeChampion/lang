@@ -1,0 +1,50 @@
+// A local at its last use may pass to an owned parameter in a `for` header:
+// the header runs once. See diag_e051_for_header_used_after.
+struct S { v: i32[] }
+
+function take_s(own s: S): i32[] {
+  return s.v;
+}
+
+function take(own xs: i32[], n: i32): i32[] {
+  return xs.append(n);
+}
+
+function by_struct(): i32 {
+  let s = S { v: [1, 2] };
+  let t = 0;
+  for v in take_s(s) {
+    t += v;
+  }
+  return t;
+}
+
+function by_while(): i32 {
+  let found: i32[] = [];
+  let ys = take(found, 3);
+  let t = 0;
+  let i = 0;
+  while (i < ys.len()) {
+    t += ys[i];
+    i += 1;
+  }
+  return t;
+}
+
+function by_match(): i32 {
+  let found: i32[] = [];
+  match (take(found, 5).len()) {
+    1 => {
+      return 1;
+    },
+    _ => {
+      return 0;
+    },
+  }
+  return 0;
+}
+
+function main(): i32 {
+  print(f"{by_struct()} {by_while()} {by_match()}");
+  return 0;
+}

@@ -77,12 +77,12 @@ function opened(r: Result[record.Opened, record.RecordError]): string {
 function deframed(r: Result[record.Deframed, record.RecordError]): string {
   match (r) {
     Ok(d) => {
-      let out: string = "";
-      let i: i32 = 0;
+      let out = "";
+      let i = 0;
       while (i < d.records.len()) {
-        let rec: record.Record = d.records[i];
+        let rec = d.records[i];
         out = out + rec.content_type.code().to_string() + "/" + rec.version.to_string() + "/" + rec.fragment.len().to_string() + " ";
-        i = i + 1;
+        i += 1;
       }
       return out + "rest " + d.rest.len().to_string();
     },
@@ -107,20 +107,20 @@ function one(buf: u8[]): record.Record {
 
 function filled(n: i32, b: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(b as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function cat(a: u8[], b: u8[]): u8[] {
-  let out: u8[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -134,8 +134,8 @@ function test_frame_server_hello(): test.TestOutcome {
 }
 
 function test_frame_splits(): test.TestOutcome {
-  let data: u8[] = filled(16385, 7);
-  let wire: u8[] = record.frame(record.Handshake, 0x0303, data);
+  let data = filled(16385, 7);
+  let wire = record.frame(record.Handshake, 0x0303, data);
   if (deframed(record.deframe(wire)) != "22/771/16384 22/771/1 rest 0") {
     return test.fail(deframed(record.deframe(wire)));
   }
@@ -145,8 +145,8 @@ function test_frame_splits(): test.TestOutcome {
 function test_deframe(): test.TestOutcome {
   match (server_handshake_write().seal(record.Handshake, server_flight(), 0)) {
     Ok(s) => {
-      let start: u8[] = __codec_bytes(hex.decode("170303"));
-      let wire: u8[] = cat(cat(__codec_bytes(hex.decode("160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304")), s.record), start);
+      let start = __codec_bytes(hex.decode("170303"));
+      let wire = cat(cat(__codec_bytes(hex.decode("160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304")), s.record), start);
       match (record.deframe(wire)) {
         Ok(d) => {
           if (deframed(Ok(d)) != "22/771/90 23/771/674 rest 3") {
@@ -170,7 +170,7 @@ function test_deframe(): test.TestOutcome {
 }
 
 function test_deframe_waits(): test.TestOutcome {
-  let sh: u8[] = __codec_bytes(hex.decode("160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304"));
+  let sh = __codec_bytes(hex.decode("160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304"));
   if (deframed(record.deframe(sh[0:4])) != "rest 4") {
     return test.fail("a partial header");
   }
@@ -197,7 +197,7 @@ function test_deframe_refusals(): test.TestOutcome {
 }
 
 function test_seal(): test.TestOutcome {
-  let p: record.Protection = client_write();
+  let p = client_write();
   match (p.seal(record.ApplicationData, app_data(), 0)) {
     Ok(s) => {
       if (hex.encode(s.record) != "17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5") {
@@ -235,10 +235,10 @@ function test_seal(): test.TestOutcome {
 }
 
 function test_open(): test.TestOutcome {
-  let p: record.Protection = client_write();
+  let p = client_write();
   let records: string[] = ["17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5", "17030300135751bb89d96c0bfb14470003e6f006f1b2c0f8", "170303004a85e8b1c60ae361aede07b8140dfa333320bfde42832fc77f19c76902304519d6ff9492842e85bb2b4071e89971f2096ee7862d283ffe7309127d377b963b5f5c7ab84cf2b64b932645dd"];
   let want: string[] = ["23 " + hex.encode(app_data()), "21 " + hex.encode(close_notify()), "23 " + hex.encode(app_data())];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 3) {
     match (p.open(one(__codec_bytes(hex.decode(records[i]))))) {
       Ok(o) => {
@@ -251,7 +251,7 @@ function test_open(): test.TestOutcome {
         return test.fail(e.message());
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.assert_eq(p.seq, 3 as u64);
 }
@@ -276,8 +276,8 @@ function test_open_out_of_order(): test.TestOutcome {
 }
 
 function test_bad_record_mac(): test.TestOutcome {
-  let rec: u8[] = __codec_bytes(hex.decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5"));
-  let n: i32 = rec.len();
+  let rec = __codec_bytes(hex.decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5"));
+  let n = rec.len();
   if (opened(client_write().open(one(rec.with(n - 1, rec[n - 1] ^ 1 as u8)))) != "tls record: the record does not verify") {
     return test.fail("a flipped tag bit");
   }
@@ -288,7 +288,7 @@ function test_bad_record_mac(): test.TestOutcome {
 }
 
 function test_open_wrong_content_type(): test.TestOutcome {
-  let rec: record.Record = one(__codec_bytes(hex.decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5")));
+  let rec = one(__codec_bytes(hex.decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5")));
   return test.assert_eq(opened(client_write().open(record.Record { ...rec, content_type: record.Handshake })), "tls record: unexpected content type 22");
 }
 
@@ -308,8 +308,8 @@ function test_open_empty(): test.TestOutcome {
 }
 
 function test_open_inner_overflow(): test.TestOutcome {
-  let p: record.Protection = client_write();
-  let header: u8[] = __codec_bytes(hex.decode("1703034012"));
+  let p = client_write();
+  let header = __codec_bytes(hex.decode("1703034012"));
   let Ok(k) = chacha20poly1305.key(p.key) else {
     return test.fail("key");
   };
@@ -325,7 +325,7 @@ function test_open_inner_overflow(): test.TestOutcome {
 }
 
 function test_largest_record(): test.TestOutcome {
-  let content: u8[] = filled(16384, 5);
+  let content = filled(16384, 5);
   match (client_write().seal(record.ApplicationData, content, 0)) {
     Ok(s) => {
       if (s.record.len() != 5 + 16385 + 16) {
@@ -341,7 +341,7 @@ function test_largest_record(): test.TestOutcome {
 }
 
 function test_seal_refusals(): test.TestOutcome {
-  let p: record.Protection = client_write();
+  let p = client_write();
   if (sealed(p.seal(record.ApplicationData, filled(16385, 0), 0)) != "tls record: 16385 bytes is over the record size limit") {
     return test.fail("content over 2^14");
   }
@@ -355,12 +355,12 @@ function test_seal_refusals(): test.TestOutcome {
 }
 
 function test_key_update(): test.TestOutcome {
-  let next: u8[] = keyschedule.next_traffic_secret(keyschedule.Sha256, __codec_bytes(hex.decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5")));
+  let next = keyschedule.next_traffic_secret(keyschedule.Sha256, __codec_bytes(hex.decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5")));
   return test.assert_eq(sealed(record.protection(suite(), next).seal(record.ApplicationData, app_data(), 0)), "1703030043edcd32a2097e5153e9c681a6fc09a406307ffdf112e1888d6cd99a73a5879e62c656513151f18cf19a5f3b468cbe2c39bc321a1c6df4e9fc84bd82bd6c5ee7ffae3455");
 }
 
 function test_sequence_exhausted(): test.TestOutcome {
-  let p: record.Protection = record.Protection { ...client_write(), seq: 0xffffffffffffffff as u64 };
+  let p = record.Protection { ...client_write(), seq: 0xffffffffffffffff as u64 };
   if (sealed(p.seal(record.ApplicationData, app_data(), 0)) != "tls record: the sequence number is exhausted") {
     return test.fail("seal");
   }
@@ -368,10 +368,10 @@ function test_sequence_exhausted(): test.TestOutcome {
 }
 
 function test_aes_128_gcm_trace(): test.TestOutcome {
-  let secret: u8[] = __codec_bytes(hex.decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5"));
-  let p: record.Protection = record.protection(keyschedule.Aes128GcmSha256, secret);
-  let app: string = "1703030043a23f7054b62c94d0affafe8228ba55cbefacea42f914aa66bcab3f2b9819a8a5b46b395bd54a9a20441e2b62974e1f5a6292a2977014bd1e3deae63aeebb21694915e4";
-  let alert: string = "1703030013c9872760655666b74d7ff1153efd6db6d0b0e3";
+  let secret = __codec_bytes(hex.decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5"));
+  let p = record.protection(keyschedule.Aes128GcmSha256, secret);
+  let app = "1703030043a23f7054b62c94d0affafe8228ba55cbefacea42f914aa66bcab3f2b9819a8a5b46b395bd54a9a20441e2b62974e1f5a6292a2977014bd1e3deae63aeebb21694915e4";
+  let alert = "1703030013c9872760655666b74d7ff1153efd6db6d0b0e3";
   match (p.seal(record.ApplicationData, app_data(), 0)) {
     Ok(s) => {
       if (hex.encode(s.record) != app) {
@@ -391,7 +391,7 @@ function test_aes_128_gcm_trace(): test.TestOutcome {
   if (opened(p.open(one(__codec_bytes(hex.decode(app))))) != "23 " + hex.encode(app_data())) {
     return test.fail("open application data");
   }
-  let flight: record.Protection = record.protection(keyschedule.Aes128GcmSha256, __codec_bytes(hex.decode("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38")));
+  let flight = record.protection(keyschedule.Aes128GcmSha256, __codec_bytes(hex.decode("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38")));
   match (flight.seal(record.Handshake, server_flight(), 0)) {
     Ok(s) => {
       if (s.record.len() != 679 || hex.encode(crypto.sha256_new().update(s.record).finish()) != "a073d654259fa22ebda69c8b1207c06498a2619e8176e09575ff769dbe779f1e") {
@@ -407,8 +407,8 @@ function test_aes_128_gcm_trace(): test.TestOutcome {
 }
 
 function test_aes_256_gcm(): test.TestOutcome {
-  let p: record.Protection = record.protection(keyschedule.Aes256GcmSha384, __codec_bytes(hex.decode("9aabfb28a3106d6af28555d12ee08fb6b233680580a2a2b7df5cce8742aeba5f8cc14daf944fa21ab06a713deaf829a7")));
-  let app: string = "17030300437d612b0a9ee647a72f72a6fd0ace618de23d41e6bc4524677da7e9cf1bf81eeca154b8f4d904d7439bbf07f92a3929639716695e84258b3e069cbfbd7d4fad064b289f";
+  let p = record.protection(keyschedule.Aes256GcmSha384, __codec_bytes(hex.decode("9aabfb28a3106d6af28555d12ee08fb6b233680580a2a2b7df5cce8742aeba5f8cc14daf944fa21ab06a713deaf829a7")));
+  let app = "17030300437d612b0a9ee647a72f72a6fd0ace618de23d41e6bc4524677da7e9cf1bf81eeca154b8f4d904d7439bbf07f92a3929639716695e84258b3e069cbfbd7d4fad064b289f";
   match (p.seal(record.ApplicationData, app_data(), 0)) {
     Ok(s) => {
       if (hex.encode(s.record) != app) {
@@ -426,16 +426,16 @@ function test_aes_256_gcm(): test.TestOutcome {
 }
 
 function test_bad_keys(): test.TestOutcome {
-  let p: record.Protection = record.Protection { ...client_write(), key: filled(16, 0) };
+  let p = record.Protection { ...client_write(), key: filled(16, 0) };
   if (sealed(p.seal(record.ApplicationData, app_data(), 0)) != "tls record: a 16-byte key and a 12-byte iv do not fit the cipher suite") {
     return test.fail("ChaCha20-Poly1305");
   }
-  let aes: record.Protection = record.Protection { ...client_write(), suite: keyschedule.Aes128GcmSha256 };
+  let aes = record.Protection { ...client_write(), suite: keyschedule.Aes128GcmSha256 };
   return test.assert_eq(sealed(aes.seal(record.ApplicationData, app_data(), 0)), "tls record: a 32-byte key and a 12-byte iv do not fit the cipher suite");
 }
 
 function framed(content: [u8]): u8[] {
-  let buf: u8[] = __alloc_u8(record.FRAMED_HEAD + content.len() + record.FRAMED_TAIL);
+  let buf = __alloc_u8(record.FRAMED_HEAD + content.len() + record.FRAMED_TAIL);
   for i in 0..buf.len() {
     buf = buf.with(i, 0 as u8);
   }
@@ -446,7 +446,7 @@ function framed(content: [u8]): u8[] {
 }
 
 function framed_matches(p: record.Protection, what: string): string {
-  let want: string = sealed(p.seal(record.ApplicationData, app_data(), 0));
+  let want = sealed(p.seal(record.ApplicationData, app_data(), 0));
   match (p.seal_framed(record.ApplicationData, framed(app_data()))) {
     Ok(s) => {
       if (hex.encode(s.record) != want) {
@@ -465,8 +465,8 @@ function framed_matches(p: record.Protection, what: string): string {
 }
 
 function test_seal_framed(): test.TestOutcome {
-  let aes: record.Protection = record.protection(keyschedule.Aes128GcmSha256, __codec_bytes(hex.decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5")));
-  let want: string = "23 " + hex.encode(app_data());
+  let aes = record.protection(keyschedule.Aes128GcmSha256, __codec_bytes(hex.decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5")));
+  let want = "23 " + hex.encode(app_data());
   if (framed_matches(aes, "AES-128-GCM") != want) {
     return test.fail(framed_matches(aes, "AES-128-GCM"));
   }
@@ -474,7 +474,7 @@ function test_seal_framed(): test.TestOutcome {
 }
 
 function test_seal_framed_refusals(): test.TestOutcome {
-  let p: record.Protection = client_write();
+  let p = client_write();
   if (sealed(p.seal_framed(record.ApplicationData, __alloc_u8(21))) != "tls record: a handshake or alert record with no content") {
     return test.fail("short");
   }
@@ -487,8 +487,8 @@ function test_seal_framed_refusals(): test.TestOutcome {
 // A record taken from the wire is the open's own, and a held one is opened through a copy, so the held record
 // still carries its ciphertext afterwards.
 function test_record_at(): test.TestOutcome {
-  let app: u8[] = __codec_bytes(hex.decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5"));
-  let wire: u8[] = cat(cat(close_notify_record(), app), __codec_bytes(hex.decode("170303004300")));
+  let app = __codec_bytes(hex.decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5"));
+  let wire = cat(cat(close_notify_record(), app), __codec_bytes(hex.decode("170303004300")));
   match (record.framed_end(wire)) {
     Ok(end) => {
       if (end != 5 + 2 + 72) {
@@ -519,7 +519,7 @@ function close_notify_record(): u8[] {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/record");
+  let r = test.new("std/tls/record");
   r = r.it("frame the ClientHello", test_frame_client_hello);
   r = r.it("frame the ServerHello", test_frame_server_hello);
   r = r.it("frame splits at 2^14", test_frame_splits);

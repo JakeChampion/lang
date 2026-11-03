@@ -9,18 +9,18 @@ function bytes_equal(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }
 
 function golden(data: u8[], expected: u8[]): boolean {
-  let image = match (png.decode(data, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  let Ok(image) = png.decode(data, pixels.default_limits()) else {
+    return false;
+  };
   return image.layout.width == 2 && image.layout.height == 2 && bytes_equal(image.data, expected);
 }
 
@@ -33,9 +33,15 @@ function filters(): test.TestOutcome {
 }
 
 function roundtrip(data: u8[]): boolean {
-  let image = match (png.decode(data, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
-  let encoded = match (png.encode(image, 10000)) { Ok(v) => v, Err(_) => { return false; } };
-  let decoded = match (png.decode(encoded, pixels.default_limits())) { Ok(v) => v, Err(_) => { return false; } };
+  let Ok(image) = png.decode(data, pixels.default_limits()) else {
+    return false;
+  };
+  let Ok(encoded) = png.encode(image, 10000) else {
+    return false;
+  };
+  let Ok(decoded) = png.decode(encoded, pixels.default_limits()) else {
+    return false;
+  };
   let limited = match (png.encode(image, 1)) { Ok(_) => false, Err(png.PngError.Limit()) => true, Err(_) => false };
   return bytes_equal(decoded.data, image.data) && limited;
 }
@@ -46,10 +52,10 @@ function roundtrips(): test.TestOutcome {
 
 function malformed(): test.TestOutcome {
   let stream = fixtures.rgb0();
-  let signature = match (png.decode(stream.with(0, 0 as u8), pixels.default_limits())) { Err(png.Signature()) => true, _ => false };
-  let crc = match (png.decode(stream.with(stream.len() - 1, 1 as u8), pixels.default_limits())) { Err(png.Crc()) => true, _ => false };
-  let length = match (png.decode(stream.with(8, 127 as u8), pixels.default_limits())) { Err(png.Length()) => true, _ => false };
-  let order = match (png.decode(stream.append(0 as u8), pixels.default_limits())) { Err(png.Order()) => true, _ => false };
+  let signature = match (png.decode(stream.with(0, 0), pixels.default_limits())) { Err(png.Signature()) => true, _ => false };
+  let crc = match (png.decode(stream.with(stream.len() - 1, 1), pixels.default_limits())) { Err(png.Crc()) => true, _ => false };
+  let length = match (png.decode(stream.with(8, 127), pixels.default_limits())) { Err(png.Length()) => true, _ => false };
+  let order = match (png.decode(stream.append(0), pixels.default_limits())) { Err(png.Order()) => true, _ => false };
   let unsupported = match (png.decode(fixtures.unsupported(), pixels.default_limits())) { Err(png.Unsupported()) => true, _ => false };
   let filter = match (png.decode(fixtures.bad_filter(), pixels.default_limits())) { Err(png.Scanline()) => true, _ => false };
   let compressed = match (png.decode(fixtures.compressed_trailing(), pixels.default_limits())) { Err(png.Compressed()) => true, _ => false };
@@ -87,15 +93,13 @@ function budgets(): test.TestOutcome {
 
 function truncations(): test.TestOutcome {
   let stream = fixtures.rgb0();
-  let i = 0;
-  while (i < stream.len()) {
+  for i in 0..stream.len() {
     match (png.decode(stream[:i], pixels.default_limits())) {
       Ok(_) => {
         return test.fail("accepted truncated PNG");
       },
       Err(_) => {}
     }
-    i = i + 1;
   }
   return test.assert_true(true);
 }
@@ -113,23 +117,17 @@ function semantics(): test.TestOutcome {
 function chunk_budget(): test.TestOutcome {
   let stream = fixtures.rgb0();
   let bytes: u8[] = [];
-  let i = 0;
-  while (i < 33) {
+  for i in 0..33 {
     bytes = bytes.append(stream[i]);
-    i = i + 1;
   }
-  let empty_chunk: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 118 as u8, 112 as u8, 65 as u8, 103 as u8, 1 as u8, 85 as u8, 194 as u8, 179 as u8];
-  let count = 0;
-  while (count < 1025) {
+  let empty_chunk: u8[] = [0, 0, 0, 0, 118, 112, 65, 103, 1, 85, 194, 179];
+  for _ in 0..1025 {
     for b in empty_chunk {
       bytes = bytes.append(b);
     }
-    count = count + 1;
   }
-  i = 33;
-  while (i < stream.len()) {
+  for i in 33..stream.len() {
     bytes = bytes.append(stream[i]);
-    i = i + 1;
   }
   return test.assert_true(rejects(bytes, png.PngError.Limit));
 }

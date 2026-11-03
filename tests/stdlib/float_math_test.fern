@@ -57,14 +57,14 @@ function test_cos_zero(): test.TestOutcome {
 
 function test_sin_cos_pythagoras(): test.TestOutcome {
   let theta: f64 = 1.23;
-  let s: f64 = theta.sin();
-  let c: f64 = theta.cos();
+  let s = theta.sin();
+  let c = theta.cos();
   return test.assert_eq_f64_near(s * s + c * c, 1.0, 0.000001);
 }
 
 function test_is_nan(): test.TestOutcome {
   let z: f64 = 0.0;
-  let nan: f64 = z / z;
+  let nan = z / z;
   if (!nan.is_nan()) {
     return test.fail("is_nan didn't recognise NaN");
   }
@@ -135,7 +135,7 @@ function test_f32_sqrt(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("float math");
+  let r = test.new("float math");
   r = r.it("abs(negative)", test_abs_negative);
   r = r.it("floor", test_floor);
   r = r.it("ceil", test_ceil);

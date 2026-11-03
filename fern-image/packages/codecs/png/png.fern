@@ -39,6 +39,22 @@ struct StreamRead { cursor: StreamCursor, result: Result[pixels.Image, DecoderEr
 // Logical allowance for bounded DEFLATE tables and their temporary arrays.
 const STREAM_TABLE_BYTES: i64 = 16384i64;
 
+const CHUNK_IHDR: u32 = 1229472850;
+
+const CHUNK_IDAT: u32 = 1229209940;
+
+const CHUNK_IEND: u32 = 1229278788;
+
+const CHUNK_TRNS: u32 = 1951551059;
+
+const CHUNK_ACTL: u32 = 1633899596;
+
+const CHUNK_ICCP: u32 = 1766015824;
+
+const CHUNK_GAMA: u32 = 1732332865;
+
+const CHUNK_CHRM: u32 = 1665684045;
+
 enum UnfilterError { InvalidFilter, Interrupted }
 
 pub function default_row_limits(): RowLimits {
@@ -51,7 +67,7 @@ function be32(input: [u8], at: i32): u32 {
 
 function absolute(n: i32): i32 {
   if (n < 0) {
-    return 0 - n;
+    return -n;
   }
   return n;
 }
@@ -77,33 +93,20 @@ function predict(filter: i32, left: i32, above: i32, upper_left: i32): i32 {
 function reconstruct(filtered: [u8], layout: pixels.Layout): Result[pixels.Image, PngError] {
   let bytes: u8[] = __alloc_u8(layout.bytes);
   let channels = pixels.channels(layout.format);
-  let y = 0;
-  while (y < layout.height) {
+  for y in 0..layout.height {
     let start = y * (layout.stride + 1);
     let filter = filtered[start] as i32;
     if (filter > 4) {
       return Err(PngError.Scanline);
     }
-    let x = 0;
-    while (x < layout.stride) {
+    for x in 0..layout.stride {
       let at = y * layout.stride + x;
-      let left = 0;
-      let above = 0;
-      let upper_left = 0;
-      if (x >= channels) {
-        left = bytes[at - channels] as i32;
-      }
-      if (y > 0) {
-        above = bytes[at - layout.stride] as i32;
-      }
-      if (y > 0 && x >= channels) {
-        upper_left = bytes[at - layout.stride - channels] as i32;
-      }
+      let left = if (x >= channels) { bytes[at - channels] as i32 } else { 0 };
+      let above = if (y > 0) { bytes[at - layout.stride] as i32 } else { 0 };
+      let upper_left = if (y > 0 && x >= channels) { bytes[at - layout.stride - channels] as i32 } else { 0 };
       let prediction = predict(filter, left, above, upper_left);
       bytes = bytes.with(at, (filtered[start + 1 + x] as i32 + prediction) as u8);
-      x = x + 1;
     }
-    y = y + 1;
   }
   return Ok(pixels.Image { layout: layout, data: bytes });
 }
@@ -112,16 +115,14 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
   if (input.len() > 16777216) {
     return Err(PngError.Limit);
   }
-  let signature: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
+  let signature: u8[] = [137, 80, 78, 71, 13, 10, 26, 10];
   if (input.len() < 8) {
     return Err(PngError.Signature);
   }
-  let i = 0;
-  while (i < 8) {
+  for i in 0..8 {
     if (input[i] != signature[i]) {
       return Err(PngError.Signature);
     }
-    i = i + 1;
   }
   let layout = pixels.Layout { width: 0, height: 0, stride: 0, format: pixels.RGB8, bytes: 0 };
   let header = false;
@@ -132,7 +133,7 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
   let ended = false;
   let chunk_count = 0;
   while (pos < input.len()) {
-    chunk_count = chunk_count + 1;
+    chunk_count += 1;
     if (chunk_count > 1024) {
       return Err(PngError.Limit);
     }
@@ -151,52 +152,45 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
     if (actual != be32(input, end)) {
       return Err(PngError.Crc);
     }
-    let k = 0;
-    while (k < 4) {
-      let letter = input[pos + 4 + k] as i32;
-      if (!(letter >= 65 && letter <= 90 || letter >= 97 && letter <= 122)) {
+    for k in 0..4 {
+      let letter = input[pos + 4 + k];
+      if (!(letter >= b'A' && letter <= b'Z' || letter >= b'a' && letter <= b'z')) {
         return Err(PngError.Unsupported);
       }
-      k = k + 1;
     }
     if ((input[pos + 6] as i32 & 32) != 0) {
       return Err(PngError.Unsupported);
     }
-    if (!header && kind != 1229472850 as u32) {
+    if (!header && kind != CHUNK_IHDR) {
       return Err(PngError.Order);
     }
-    if (kind == 1229472850 as u32) {
+    if (kind == CHUNK_IHDR) {
       if (header || pos != 8 || length != 13) {
         return Err(PngError.Order);
       }
       let w = be32(input, body);
       let h = be32(input, body + 4);
-      if (w == 0 as u32 || h == 0 as u32 || w > 2147483647 as u32 || h > 2147483647 as u32) {
+      if (w == 0 || h == 0 || w > 2147483647 || h > 2147483647) {
         return Err(PngError.Dimensions);
       }
-      let format = pixels.RGB8;
-      if (input[body + 9] == 6 as u8) {
-        format = pixels.RGBA8;
-      } else if (input[body + 9] != 2 as u8) {
+      let format = match (input[body + 9]) { 2 => pixels.RGB8, 6 => pixels.RGBA8, _ => { return Err(PngError.Unsupported); } };
+      if (input[body + 8] != 8 || input[body + 10] != 0 || input[body + 11] != 0 || input[body + 12] != 0) {
         return Err(PngError.Unsupported);
       }
-      if (input[body + 8] != 8 as u8 || input[body + 10] != 0 as u8 || input[body + 11] != 0 as u8 || input[body + 12] != 0 as u8) {
-        return Err(PngError.Unsupported);
-      }
-      let stride = match (w as i32 *? pixels.channels(format)) { Some(v) => v, None => { return Err(PngError.Limit); } };
+      let Some(stride) = w as i32 *? pixels.channels(format) else {
+        return Err(PngError.Limit);
+      };
       layout = match (pixels.checked_layout(w as i32, h as i32, stride, format, limits)) { Ok(v) => v, Err(_) => { return Err(PngError.Limit); } };
       header = true;
-    } else if (kind == 1229209940 as u32) {
+    } else if (kind == CHUNK_IDAT) {
       if (data_closed) {
         return Err(PngError.Order);
       }
-      let j = body;
-      while (j < end) {
+      for j in body..end {
         compressed = compressed.append(input[j]);
-        j = j + 1;
       }
       data_seen = true;
-    } else if (kind == 1229278788 as u32) {
+    } else if (kind == CHUNK_IEND) {
       if (!data_seen || length != 0 || end + 4 != input.len()) {
         return Err(PngError.Order);
       }
@@ -208,7 +202,7 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
         data_closed = true;
       }
       // Reject transparency and animation rather than silently discard their semantics.
-      if ((input[pos + 4] as i32 & 32) == 0 || kind == 1951551059 as u32 || kind == 1633899596 as u32 || kind == 1766015824 as u32 || kind == 1732332865 as u32 || kind == 1665684045 as u32) {
+      if ((input[pos + 4] as i32 & 32) == 0 || kind == CHUNK_TRNS || kind == CHUNK_ACTL || kind == CHUNK_ICCP || kind == CHUNK_GAMA || kind == CHUNK_CHRM) {
         return Err(PngError.Unsupported);
       }
     }
@@ -217,8 +211,12 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
   if (!header || !ended) {
     return Err(PngError.Order);
   }
-  let filtered_size = match (layout.stride +? 1) { Some(v) => v, None => { return Err(PngError.Limit); } };
-  let total = match (filtered_size *? layout.height) { Some(v) => v, None => { return Err(PngError.Limit); } };
+  let Some(filtered_size) = layout.stride +? 1 else {
+    return Err(PngError.Limit);
+  };
+  let Some(total) = filtered_size *? layout.height else {
+    return Err(PngError.Limit);
+  };
   if (total > limits.max_bytes || total > 67108864) {
     return Err(PngError.Limit);
   }
@@ -248,26 +246,15 @@ function unfilter_row(filtered: [u8], layout: pixels.Layout, y: i32, previous: [
   }
   let bytes = __alloc_u8(layout.stride);
   let channels = pixels.channels(layout.format);
-  let x = 0;
-  while (x < layout.stride) {
+  for x in 0..layout.stride {
     if (x % 256 == 0 && cancelled()) {
       return Err(UnfilterError.Interrupted);
     }
-    let left = 0;
-    let above = 0;
-    let upper_left = 0;
-    if (x >= channels) {
-      left = bytes[x - channels] as i32;
-    }
-    if (y > 0) {
-      above = previous[x] as i32;
-    }
-    if (y > 0 && x >= channels) {
-      upper_left = previous[x - channels] as i32;
-    }
+    let left = if (x >= channels) { bytes[x - channels] as i32 } else { 0 };
+    let above = if (y > 0) { previous[x] as i32 } else { 0 };
+    let upper_left = if (y > 0 && x >= channels) { previous[x - channels] as i32 } else { 0 };
     let prediction = predict(filter, left, above, upper_left);
     bytes = bytes.with(x, (filtered[start + 1 + x] as i32 + prediction) as u8);
-    x = x + 1;
   }
   return Ok(bytes);
 }
@@ -308,15 +295,13 @@ function open_prepared(prepared: Prepared, plan: RowPlan, cancelled: () => boole
   }
   let layout = plan.layout;
   let filtered = match (inflate_prepared(prepared)) { Ok(v) => v, Err(e) => { return Err(DecoderCodec(e)); } };
-  let y = 0;
-  while (y < layout.height) {
+  for y in 0..layout.height {
     if (y % 64 == 0 && cancelled()) {
       return Err(DecoderCancelled);
     }
-    if (filtered[y * (layout.stride + 1)] > 4 as u8) {
+    if (filtered[y * (layout.stride + 1)] > 4) {
       return Err(DecoderCodec(PngError.Scanline));
     }
-    y = y + 1;
   }
   let state = cell_new(RowCursor { next: 0, previous: [] });
   let read = (y: i32, cancelled: () => boolean): Result[pixels.Image, DecoderError] => {
@@ -357,10 +342,7 @@ function incremental_plan(prepared: Prepared, input_bytes: i32, first: i32, coun
   if (first < 0 || count <= 0 || first >= layout.height || count > layout.height - first) {
     return Err(DecoderBounds);
   }
-  let window = prepared.filtered_bytes;
-  if (window > 32768) {
-    window = 32768;
-  }
+  let window = if (prepared.filtered_bytes > 32768) { 32768 } else { prepared.filtered_bytes };
   let scratch = 2i64 * (layout.stride as i64) + window as i64 + 1i64;
   let payload = 3i64 * (input_bytes as i64) + window as i64 + STREAM_TABLE_BYTES + scratch;
   let work = input_bytes as i64 + prepared.filtered_bytes as i64 + (first as i64 + count as i64) * (2i64 * (layout.stride as i64) + 1i64);
@@ -384,9 +366,9 @@ function stream_error(error: deflate.InflateReadError): DecoderError {
 
 function adler_append(checksum: u32, bytes: [u8]): u32 {
   let part = deflate.adler32(bytes);
-  let a = (checksum & 65535 as u32) as i64;
+  let a = (checksum & 65535) as i64;
   let b = (checksum >> 16) as i64;
-  let next_a = (a + (part & 65535 as u32) as i64 + 65520i64) % 65521i64;
+  let next_a = (a + (part & 65535) as i64 + 65520i64) % 65521i64;
   let next_b = (b + (part >> 16) as i64 + bytes.len() as i64 * ((a + 65520i64) % 65521i64)) % 65521i64;
   return next_b as u32 << 16 | next_a as u32;
 }
@@ -396,15 +378,14 @@ function validate_stream(raw: u8[], prepared: Prepared, cancelled: () => boolean
   let checksum: u32 = 1;
   let at = 0;
   let invalid_filter = false;
-  let done = false;
-  while (!done) {
+  loop {
     let chunk = match (reader.read(32768, cancelled)) { Ok(v) => v, Err(e) => { return Err(stream_error(e)); } };
     checksum = adler_append(checksum, chunk.bytes);
     for byte in chunk.bytes {
-      if (at % (prepared.layout.stride + 1) == 0 && byte > 4 as u8) {
+      if (at % (prepared.layout.stride + 1) == 0 && byte > 4) {
         invalid_filter = true;
       }
-      at = at + 1;
+      at += 1;
       if (at % 256 == 0 && cancelled()) {
         return Err(DecoderCancelled);
       }
@@ -412,7 +393,9 @@ function validate_stream(raw: u8[], prepared: Prepared, cancelled: () => boolean
     if (chunk.done && chunk.consumed != raw.len()) {
       return Err(DecoderCodec(PngError.Compressed));
     }
-    done = chunk.done;
+    if (chunk.done) {
+      break;
+    }
   }
   if (checksum != be32(prepared.compressed, prepared.compressed.len() - 4)) {
     return Err(DecoderCodec(PngError.Compressed));
@@ -441,39 +424,24 @@ function unfilter_stream_row(reader: deflate.InflateReader, layout: pixels.Layou
   let channels = pixels.channels(layout.format);
   let x = 0;
   while (x < layout.stride) {
-    let count = layout.stride - x;
-    if (count > 32768) {
-      count = 32768;
-    }
+    let count = if (layout.stride - x > 32768) { 32768 } else { layout.stride - x };
     let chunk = stream_bytes(reader, count, cancelled)?;
     for byte in chunk {
       if (x % 256 == 0 && cancelled()) {
         return Err(DecoderCancelled);
       }
-      let left = 0;
-      let above = 0;
-      let upper_left = 0;
-      if (x >= channels) {
-        left = bytes[x - channels] as i32;
-      }
-      if (y > 0) {
-        above = previous[x] as i32;
-      }
-      if (y > 0 && x >= channels) {
-        upper_left = previous[x - channels] as i32;
-      }
+      let left = if (x >= channels) { bytes[x - channels] as i32 } else { 0 };
+      let above = if (y > 0) { previous[x] as i32 } else { 0 };
+      let upper_left = if (y > 0 && x >= channels) { previous[x - channels] as i32 } else { 0 };
       bytes = bytes.with(x, (byte as i32 + predict(filter, left, above, upper_left)) as u8);
-      x = x + 1;
+      x += 1;
     }
   }
   return Ok(bytes);
 }
 
 function stream_failure(cursor: StreamCursor, error: DecoderError, terminal: boolean): StreamRead {
-  let next = cursor;
-  if (terminal) {
-    next = StreamCursor { ...cursor, failure: Some(error) };
-  }
+  let next = if (terminal) { StreamCursor { ...cursor, failure: Some(error) } } else { cursor };
   return StreamRead { cursor: next, result: Err(error) };
 }
 
@@ -510,19 +478,19 @@ function open_incremental_prepared(prepared: Prepared, plan: RowPlan, cancelled:
     return Err(DecoderCodec(PngError.Compressed));
   }
   let raw: u8[] = [];
-  let i = 2;
-  while (i < prepared.compressed.len() - 4) {
+  for i in 2..prepared.compressed.len() - 4 {
     if (i % 256 == 0 && cancelled()) {
       return Err(DecoderCancelled);
     }
     raw = raw.append(prepared.compressed[i]);
-    i = i + 1;
   }
   validate_stream(raw, prepared, cancelled)?;
   let reader = match (deflate.inflate_reader(raw, prepared.filtered_bytes)) { Ok(v) => v, Err(e) => { return Err(stream_error(e)); } };
   let state: Cell[Option[StreamCursor]] = cell_new(Some(StreamCursor { next: 0, previous: [], failure: None }));
   let read = (y: i32, cancelled: () => boolean): Result[pixels.Image, DecoderError] => {
-    let cursor = match (state.get()) { Some(v) => v, None => { return Err(DecoderAccess); } };
+    let Some(cursor) = state.get() else {
+      return Err(DecoderAccess);
+    };
     state.set(None);
     let result = stream_read(cursor, reader, plan, y, cancelled);
     state.set(Some(result.cursor));
@@ -567,14 +535,12 @@ pub function fold_incremental_rows[S, E](input: [u8], first: i32, count: i32, li
 function fold_decoder[S, E](decoder: RowDecoder, cancelled: () => boolean, value: S, consume: (S, pixels.Image) => Result[S, E]): Result[RowFold[S], RowError[E]] {
   let plan = decoder.plan;
   let value = value;
-  let y = plan.first;
-  while (y < plan.first + plan.count) {
+  for y in plan.first..plan.first + plan.count {
     let row = match (decoder.read(y, cancelled)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
     value = match (consume(value, row)) { Ok(v) => v, Err(e) => { return Err(RowConsumer(e)); } };
     if (cancelled()) {
       return Err(RowCancelled);
     }
-    y = y + 1;
   }
   return Ok(RowFold[S] { value: value, plan: plan });
 }
@@ -598,27 +564,27 @@ pub function encode(image: pixels.Image, max_bytes: i32): Result[u8[], PngError]
   if (max_bytes <= 0 || max_bytes > 16777216) {
     return Err(PngError.Limit);
   }
-  let first = match (pixels.read_pixel(image, 0, 0)) { Ok(v) => v, Err(_) => { return Err(PngError.Dimensions); } };
+  if let Err(_) = pixels.read_pixel(image, 0, 0) {
+    return Err(PngError.Dimensions);
+  }
   let channels = pixels.channels(image.layout.format);
   let row = image.layout.width * channels;
-  let filtered_size = match ((row + 1) *? image.layout.height) { Some(v) => v, None => { return Err(PngError.Limit); } };
+  let Some(filtered_size) = (row + 1) *? image.layout.height else {
+    return Err(PngError.Limit);
+  };
   if (filtered_size > 16777216) {
     return Err(PngError.Limit);
   }
   let raw: u8[] = [];
-  let y = 0;
-  while (y < image.layout.height) {
-    raw = raw.append(0 as u8);
-    let x = 0;
-    while (x < row) {
+  for y in 0..image.layout.height {
+    raw = raw.append(0);
+    for x in 0..row {
       raw = raw.append(image.data[y * image.layout.stride + x]);
-      x = x + 1;
     }
-    y = y + 1;
   }
   let compressed = deflate.deflate(raw);
   let checksum = deflate.adler32(raw);
-  let zlib: u8[] = [120 as u8, 156 as u8];
+  let zlib: u8[] = [120, 156];
   for b in compressed {
     zlib = zlib.append(b);
   }
@@ -628,14 +594,11 @@ pub function encode(image: pixels.Image, max_bytes: i32): Result[u8[], PngError]
     return Err(PngError.Limit);
   }
   let header = append32(append32([], image.layout.width as u32), image.layout.height as u32);
-  header = header.append(8 as u8);
-  let color_type: u8 = 2;
-  if (channels == 4) {
-    color_type = 6;
-  }
-  header = header.append(color_type).append(0 as u8).append(0 as u8).append(0 as u8);
-  let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
-  output = chunk(output, 1229472850 as u32, header);
-  output = chunk(output, 1229209940 as u32, zlib);
-  return Ok(chunk(output, 1229278788 as u32, []));
+  header = header.append(8);
+  let color_type: u8 = if (channels == 4) { 6 } else { 2 };
+  header = header.append(color_type).append(0).append(0).append(0);
+  let output: u8[] = [137, 80, 78, 71, 13, 10, 26, 10];
+  output = chunk(output, CHUNK_IHDR, header);
+  output = chunk(output, CHUNK_IDAT, zlib);
+  return Ok(chunk(output, CHUNK_IEND, []));
 }

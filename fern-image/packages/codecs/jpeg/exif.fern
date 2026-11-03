@@ -28,19 +28,7 @@ function get32(input: [u8], at: i32, order: ByteOrder): i64 {
 }
 
 function field_width(kind: i32): Result[i64, ExifError] {
-  if (kind == 1 || kind == 2 || kind == 7 || kind == 129) {
-    return Ok(1i64);
-  }
-  if (kind == 3) {
-    return Ok(2i64);
-  }
-  if (kind == 4 || kind == 9) {
-    return Ok(4i64);
-  }
-  if (kind == 5 || kind == 10) {
-    return Ok(8i64);
-  }
-  return Err(ExifError.Type);
+  return match (kind) { 1 | 2 | 7 | 129 => Ok(1), 3 => Ok(2), 4 | 9 => Ok(4), 5 | 10 => Ok(8), _ => Err(ExifError.Type) };
 }
 
 function orientation_value(value: i32): Result[Orientation, ExifError] {
@@ -48,7 +36,7 @@ function orientation_value(value: i32): Result[Orientation, ExifError] {
 }
 
 function directory(input: [u8], offset: i64, order: ByteOrder, budget: i32, cancelled: () => boolean): Result[IfdInfo, ExifError] {
-  if (offset < 8i64 || offset > input.len() as i64 - 2i64) {
+  if (offset < 8 || offset > input.len() as i64 - 2) {
     return Err(ExifError.Directory);
   }
   let start = offset as i32;
@@ -56,12 +44,12 @@ function directory(input: [u8], offset: i64, order: ByteOrder, budget: i32, canc
   if (entries > budget) {
     return Err(ExifError.Limit);
   }
-  let end = offset + 2i64 + entries as i64 * 12i64 + 4i64;
+  let end = offset + 2 + entries as i64 * 12 + 4;
   if (end > input.len() as i64) {
     return Err(ExifError.Truncated);
   }
   let value: Option[Orientation] = None;
-  let previous = 0 - 1;
+  let previous = -1;
   for index in 0..entries {
     if (cancelled()) {
       return Err(ExifError.Cancelled);
@@ -78,18 +66,18 @@ function directory(input: [u8], offset: i64, order: ByteOrder, budget: i32, canc
     let kind = get16(input, at + 2, order);
     let count = get32(input, at + 4, order);
     let width = field_width(kind)?;
-    if (count == 0i64) {
+    if (count == 0) {
       return Err(ExifError.Value);
     }
     let bytes = count * width;
-    if (bytes > 4i64) {
+    if (bytes > 4) {
       let position = get32(input, at + 8, order);
-      if (position < 8i64 || position > input.len() as i64 || bytes > input.len() as i64 - position) {
+      if (position < 8 || position > input.len() as i64 || bytes > input.len() as i64 - position) {
         return Err(ExifError.Value);
       }
     }
     if (tag == 274) {
-      if (kind != 3 || count != 1i64) {
+      if (kind != 3 || count != 1) {
         return Err(ExifError.Value);
       }
       value = Some(orientation_value(get16(input, at + 8, order))?);
@@ -109,11 +97,11 @@ pub function inspect(input: [u8], limits: ExifLimits, cancelled: () => boolean):
   if (input.len() < 14) {
     return Err(ExifError.Truncated);
   }
-  if (input[0] != 69 as u8 || input[1] != 120 as u8 || input[2] != 105 as u8 || input[3] != 102 as u8 || input[4] != 0 as u8 || input[5] != 0 as u8) {
+  if (input[0] != b'E' || input[1] != b'x' || input[2] != b'i' || input[3] != b'f' || input[4] != 0 || input[5] != 0) {
     return Err(ExifError.Signature);
   }
   let data = input[6:];
-  let order = if (data[0] == 73 as u8 && data[1] == 73 as u8) { ByteOrder.Little } else if (data[0] == 77 as u8 && data[1] == 77 as u8) { ByteOrder.Big } else { return Err(ExifError.ByteOrder); };
+  let order = if (data[0] == b'I' && data[1] == b'I') { ByteOrder.Little } else if (data[0] == b'M' && data[1] == b'M') { ByteOrder.Big } else { return Err(ExifError.ByteOrder); };
   if (get16(data, 2, order) != 42) {
     return Err(ExifError.Version);
   }
@@ -121,7 +109,7 @@ pub function inspect(input: [u8], limits: ExifLimits, cancelled: () => boolean):
   let first = directory(data, get32(data, 4, order), order, budget, cancelled)?;
   let count = first.entries;
   let directories = 1;
-  if (first.next != 0i64) {
+  if (first.next != 0) {
     if (cancelled()) {
       return Err(ExifError.Cancelled);
     }
@@ -129,10 +117,10 @@ pub function inspect(input: [u8], limits: ExifLimits, cancelled: () => boolean):
       return Err(ExifError.Directory);
     }
     let second = directory(data, first.next, order, budget - count, cancelled)?;
-    if (second.next != 0i64 || second.first < first.end && second.end > first.first) {
+    if (second.next != 0 || second.first < first.end && second.end > first.first) {
       return Err(ExifError.Directory);
     }
-    count = count + second.entries;
+    count += second.entries;
     directories = 2;
   }
   if (cancelled()) {

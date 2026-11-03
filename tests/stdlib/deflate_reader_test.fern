@@ -16,7 +16,7 @@ function error_contracts(): test.TestOutcome {
     if (value.message() != expected[i] || value.to_string() != expected[i] || error_message(value) != expected[i]) {
       return test.fail("reader error message or display contract");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -38,7 +38,7 @@ function same(a: [u8], b: [u8]): boolean {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -60,7 +60,7 @@ function read_all(input: u8[], expected: [u8], chunk_size: i32): boolean {
     if (done && chunk.consumed != input.len()) {
       return false;
     }
-    calls = calls + 1;
+    calls += 1;
   }
   let end = match (reader.read(1, never_cancel)) { Ok(v) => v.done && v.bytes.len() == 0 && v.total == total && v.consumed == input.len(), _ => false };
   return done && total == expected.len() && end;
@@ -70,8 +70,8 @@ function goldens(): test.TestOutcome {
   let dynamic = "";
   let i = 0;
   while (i < 12) {
-    dynamic = dynamic + "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. ";
-    i = i + 1;
+    dynamic += "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. ";
+    i += 1;
   }
   let streams = ["010300fcff616263", "cb48cdc9c957c8402701", "edcebb1580201044d156a6026b31a0013f08a8b08a8062f56e0926641bcf9b73aeb21a6776d38631d21db0d08335fbe302151d9178de87b76226d341358bfb813b5f317274bb64b1b8a2797a75c0eece4c91bfe66a4910af78c52b5ef18a57bc7fbd1f"];
   let expected = ["abc", "hello hello hello hello", dynamic];
@@ -83,7 +83,7 @@ function goldens(): test.TestOutcome {
         return test.fail("independent stored, fixed, or dynamic bytes");
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(true);
 }
@@ -93,7 +93,7 @@ function ring_stream(): u8[] {
   let i = 0;
   while (i < 32768) {
     data = data.append((i * 37 + i / 251) as u8);
-    i = i + 1;
+    i += 1;
   }
   return data.append(3 as u8).append(222 as u8).append(255 as u8).append(15 as u8).append(0 as u8);
 }
@@ -103,7 +103,7 @@ function history_wrap(): test.TestOutcome {
   let i = 0;
   while (i < 32768) {
     expected = expected.append((i * 37 + i / 251) as u8);
-    i = i + 1;
+    i += 1;
   }
   expected = expected.append(expected[0]).append(expected[1]).append(expected[2]);
   for size in [1, 255, 257, 32768] {
@@ -128,7 +128,7 @@ function literal_only(): test.TestOutcome {
     if (!eager || !read_all(data, expected[i].bytes(), 1)) {
       return test.fail("literal-only dynamic tree");
     }
-    i = i + 1;
+    i += 1;
   }
   for invalid in [
     "0580010400000040000000000000000000000000000000000000000000000000000000000000000002",
@@ -156,7 +156,7 @@ function empty_blocks(): test.TestOutcome {
     for byte in [0 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8] {
       data = data.append(byte);
     }
-    i = i + 1;
+    i += 1;
   }
   data = data.append(3 as u8).append(0 as u8);
   let reader = match (deflate.inflate_reader(data, 0)) { Ok(v) => v, Err(_) => { return test.fail("open empty stream"); } };
@@ -187,7 +187,7 @@ function rejected(input: u8[], max_out: i32, expected: string): boolean {
         return false;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   let repeated = match (reader.read(2, never_cancel)) { Err(deflate.ReadCodec(e)) => e.message() == error, _ => false };
   return error == expected && repeated;
@@ -254,7 +254,7 @@ function cancellation(): test.TestOutcome {
     if (!cancelled || !terminal || polls.get() != stop) {
       return test.fail("cancellation poll or terminal state");
     }
-    stop = stop + 1;
+    stop += 1;
   }
   return test.assert_true(total >= 128);
 }

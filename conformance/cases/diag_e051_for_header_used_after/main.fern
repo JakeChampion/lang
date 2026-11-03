@@ -1,0 +1,27 @@
+// A local read again in the loop body or after the loop is not at its last
+// use in the `for` header.
+function take(own xs: i32[], n: i32): i32[] {
+  return xs.append(n);
+}
+
+function in_body(): i32 {
+  let found: i32[] = [];
+  let t = 0;
+  for v in take(found, 3) {
+    t += v + found.len();
+  }
+  return t;
+}
+
+function after_loop(): i32 {
+  let found: i32[] = [];
+  let t = 0;
+  for v in take(found, 3) {
+    t += v;
+  }
+  return t + found.len();
+}
+
+function main(): i32 {
+  return in_body() + after_loop();
+}

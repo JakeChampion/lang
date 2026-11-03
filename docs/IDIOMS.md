@@ -12,7 +12,7 @@ the parts of it that you touch.
 
 ## Scope
 
-The rules apply to every tracked `.fern` and `.fern.md` file, with five
+The rules apply to every tracked `.fern` and `.fern.md` file, with six
 exceptions:
 
 - `conformance/cases/` is normative. A case shows one behaviour, and its
@@ -23,6 +23,8 @@ exceptions:
   the language stopped them (`tests/proposals/README.md`).
 - `tests/probes/` holds probes. Each probe keeps the shape that showed one
   defect.
+- `docs/benchmarks/` holds the programs that a dated measurement record
+  measured.
 - A program that tests one form keeps that form. Examples are a parser
   test, a differential case for an old form, and a probe for a bug in one
   construct.
@@ -194,6 +196,8 @@ Keep `+` when it joins two strings and nothing more.
 ### Write literals as the reader thinks of them
 
 - Write `-1`, not `0 - 1`.
+- Write `-5i64` for a negative literal of another width, not `-5 as i64`.
+  The cast binds tighter than the minus, so `-5 as i64` is `-(5 as i64)`.
 - Write `b'a'` for a byte, not `97`. Write `'a'` for a `char`.
 - Write `x += 1`, not `x = x + 1`. The same applies to `-=`, `*=` and the
   other compound operators.

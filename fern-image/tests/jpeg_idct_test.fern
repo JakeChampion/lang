@@ -35,10 +35,12 @@ function close(a: f64, b: f64): boolean {
 }
 
 function dc_and_rounding(): test.TestOutcome {
-  let dc = [0, 4, 0 - 4, 1016, 0 - 1024, 32767, 0 - 32768];
-  let expected = [128 as u8, 129 as u8, 128 as u8, 255 as u8, 0 as u8, 255 as u8, 0 as u8];
+  let dc = [0, 4, -4, 1016, -1024, 32767, -32768];
+  let expected: u8[] = [128, 129, 128, 255, 0, 255, 0];
   for i in 0..dc.len() {
-    let output = match (idct.reconstruct(coefficients(dc[i]), quantizers(1 as u8), never)) { Ok(v) => v, Err(_) => { return test.fail("DC transform"); } };
+    let Ok(output) = idct.reconstruct(coefficients(dc[i]), quantizers(1), never) else {
+      return test.fail("DC transform");
+    };
     if (output.len() != 64) {
       return test.fail("output shape");
     }
@@ -48,36 +50,54 @@ function dc_and_rounding(): test.TestOutcome {
       }
     }
   }
-  let exact_dc = match (idct.reconstruct(coefficients(0 - 4), quantizers(255 as u8), never)) { Ok(v) => v, Err(_) => { return test.fail("exact DC dequantization"); } };
+  let Ok(exact_dc) = idct.reconstruct(coefficients(-4), quantizers(255), never) else {
+    return test.fail("exact DC dequantization");
+  };
   for value in exact_dc {
-    if (value != 1 as u8) {
+    if (value != 1) {
       return test.fail("exact DC dequantization rounding");
     }
   }
-  let a = match (idct.samples(uniform(0.499999999), never)) { Ok(v) => v, Err(_) => { return test.fail("below tie"); } };
-  let b = match (idct.samples(uniform(0.5), never)) { Ok(v) => v, Err(_) => { return test.fail("tie"); } };
-  let c = match (idct.samples(uniform(0.0 - 0.5), never)) { Ok(v) => v, Err(_) => { return test.fail("negative tie"); } };
+  let Ok(a) = idct.samples(uniform(0.499999999), never) else {
+    return test.fail("below tie");
+  };
+  let Ok(b) = idct.samples(uniform(0.5), never) else {
+    return test.fail("tie");
+  };
+  let Ok(c) = idct.samples(uniform(-0.5), never) else {
+    return test.fail("negative tie");
+  };
   let largest = f64_from_bits(0x7fefffffffffffff);
-  let high = match (idct.samples(uniform(largest), never)) { Ok(v) => v, Err(_) => { return test.fail("largest finite sample"); } };
-  let low = match (idct.samples(uniform(0.0 - largest), never)) { Ok(v) => v, Err(_) => { return test.fail("smallest finite sample"); } };
+  let Ok(high) = idct.samples(uniform(largest), never) else {
+    return test.fail("largest finite sample");
+  };
+  let Ok(low) = idct.samples(uniform(-largest), never) else {
+    return test.fail("smallest finite sample");
+  };
   for i in 0..64 {
-    if (high[i] != 255 as u8 || low[i] != 0 as u8) {
+    if (high[i] != 255 || low[i] != 0) {
       return test.fail("finite clipping before conversion");
     }
   }
-  return test.assert_true(a[0] == 128 as u8 && b[0] == 129 as u8 && c[0] == 128 as u8);
+  return test.assert_true(a[0] == 128 && b[0] == 129 && c[0] == 128);
 }
 
 function natural_and_zigzag(): test.TestOutcome {
-  let q = quantizers(1 as u8).with(0, 8 as u8).with(1, 7 as u8).with(2, 11 as u8);
-  let dc = match (idct.inverse(coefficients(1), q, never)) { Ok(v) => v, Err(_) => { return test.fail("quantized DC"); } };
+  let q = quantizers(1).with(0, 8).with(1, 7).with(2, 11);
+  let Ok(dc) = idct.inverse(coefficients(1), q, never) else {
+    return test.fail("quantized DC");
+  };
   for value in dc {
     if (!close(value, 1.0)) {
       return test.fail("DC quantizer");
     }
   }
-  let h = match (idct.inverse(coefficients(0).with(1, 8), q, never)) { Ok(v) => v, Err(_) => { return test.fail("horizontal AC"); } };
-  let v = match (idct.inverse(coefficients(0).with(8, 8), q, never)) { Ok(value) => value, Err(_) => { return test.fail("vertical AC"); } };
+  let Ok(h) = idct.inverse(coefficients(0).with(1, 8), q, never) else {
+    return test.fail("horizontal AC");
+  };
+  let Ok(v) = idct.inverse(coefficients(0).with(8, 8), q, never) else {
+    return test.fail("vertical AC");
+  };
   if (!close(h[0] / 7.0, 1.3870398453221477)) {
     return test.fail("independent signed basis value");
   }
@@ -88,9 +108,11 @@ function natural_and_zigzag(): test.TestOutcome {
       }
     }
   }
-  let negative = match (idct.inverse(coefficients(0).with(1, 0 - 8), q, never)) { Ok(value) => value, Err(_) => { return test.fail("negative basis"); } };
+  let Ok(negative) = idct.inverse(coefficients(0).with(1, -8), q, never) else {
+    return test.fail("negative basis");
+  };
   for i in 0..64 {
-    if (!close(negative[i], 0.0 - h[i])) {
+    if (!close(negative[i], -h[i])) {
       return test.fail("signed coefficient");
     }
   }
@@ -99,13 +121,13 @@ function natural_and_zigzag(): test.TestOutcome {
 
 function invalid_inputs(): test.TestOutcome {
   let c = coefficients(0);
-  let q = quantizers(1 as u8);
+  let q = quantizers(1);
   for size in [0, 63, 65] {
     let bad: i32[] = [];
     let bad_q: u8[] = [];
     for i in 0..size {
       bad = bad.append(0);
-      bad_q = bad_q.append(1 as u8);
+      bad_q = bad_q.append(1);
     }
     match (idct.inverse(bad, q, never)) {
       Err(idct.Shape()) => {},
@@ -121,13 +143,13 @@ function invalid_inputs(): test.TestOutcome {
     }
   }
   for i in 0..64 {
-    match (idct.inverse(c, q.with(i, 0 as u8), never)) {
+    match (idct.inverse(c, q.with(i, 0), never)) {
       Err(idct.Quantizer()) => {},
       _ => {
         return test.fail("zero quantizer");
       }
     }
-    for value in [32768, 0 - 32769] {
+    for value in [32768, -32769] {
       match (idct.inverse(c.with(i, value), q, never)) {
         Err(idct.Coefficient()) => {},
         _ => {
@@ -142,7 +164,7 @@ function invalid_inputs(): test.TestOutcome {
       return test.fail("sample shape");
     }
   }
-  for value in [f64_from_bits(0x7ff8000000000000), f64_from_bits(0x7ff0000000000000), 0.0 - f64_from_bits(0x7ff0000000000000)] {
+  for value in [f64_from_bits(0x7ff8000000000000), f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000)] {
     match (idct.samples(uniform(0.0).with(63, value), never)) {
       Err(idct.NonFinite()) => {},
       _ => {
@@ -155,31 +177,37 @@ function invalid_inputs(): test.TestOutcome {
 
 function ownership_windows(): test.TestOutcome {
   let c = coefficients(8);
-  let q = quantizers(1 as u8);
-  let padded: i32[] = [77];
+  let q = quantizers(1);
+  let padded = [77];
   for value in c {
     padded = padded.append(value);
   }
   padded = padded.append(99);
-  let padded_q: u8[] = [77 as u8];
+  let padded_q: u8[] = [77];
   for value in q {
     padded_q = padded_q.append(value);
   }
-  padded_q = padded_q.append(99 as u8);
-  let first = match (idct.inverse(padded[1:65], padded_q[1:65], never)) { Ok(v) => v, Err(_) => { return test.fail("borrowed coefficient window"); } };
-  let second = match (idct.inverse(c, q, never)) { Ok(v) => v, Err(_) => { return test.fail("fresh inverse"); } };
+  padded_q = padded_q.append(99);
+  let Ok(first) = idct.inverse(padded[1:65], padded_q[1:65], never) else {
+    return test.fail("borrowed coefficient window");
+  };
+  let Ok(second) = idct.inverse(c, q, never) else {
+    return test.fail("fresh inverse");
+  };
   let changed = first.with(0, 9.0);
   let changed_c = c.with(0, 16);
   if (changed[0] != 9.0 || !close(first[0], 1.0) || !close(second[0], 1.0) || c[0] != 8 || changed_c[0] != 16) {
     return test.fail("owned transform state");
   }
-  let pixels = match (idct.samples(first, never)) { Ok(v) => v, Err(_) => { return test.fail("owned samples"); } };
-  let changed_pixels = pixels.with(0, 77 as u8);
-  return test.assert_true(pixels[0] == 129 as u8 && changed_pixels[0] == 77 as u8 && close(first[0], 1.0));
+  let Ok(pixels) = idct.samples(first, never) else {
+    return test.fail("owned samples");
+  };
+  let changed_pixels = pixels.with(0, 77);
+  return test.assert_true(pixels[0] == 129 && changed_pixels[0] == 77 && close(first[0], 1.0));
 }
 
 function cancellation(): test.TestOutcome {
-  let q = quantizers(255 as u8);
+  let q = quantizers(255);
   for c in [coefficients(8), coefficients(8).with(63, 5)] {
     let count = cell_new(0);
     match (idct.reconstruct(c, q, (): boolean => {
@@ -191,7 +219,7 @@ function cancellation(): test.TestOutcome {
         return test.fail("cancellation baseline");
       }
     }
-    for stop in 1..count.get() + 1 {
+    for stop in 1..=count.get() {
       let polls = cell_new(0);
       match (idct.reconstruct(c, q, (): boolean => {
         polls.set(polls.get() + 1);

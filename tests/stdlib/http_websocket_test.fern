@@ -15,23 +15,23 @@ function no_fault(): Cell[Option[StreamFault]] {
 }
 
 function handshake(path: string): HttpRequest {
-  let r: HttpRequest = http.request("GET", path);
+  let r = http.request("GET", path);
   r = r.with_header("Upgrade", "websocket").with_header("Connection", "keep-alive, Upgrade");
   r = r.with_header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==").with_header("Sec-WebSocket-Version", "13");
   return r;
 }
 
 function wired(req: HttpRequest, bytes: u8[], k: i32): (HttpRequest, Cell[u8[]]) {
-  let at: Cell[i32] = cell_new(0);
+  let at = cell_new(0);
   let none: u8[] = [];
-  let out: Cell[u8[]] = cell_new(none);
+  let out = cell_new(none);
   let src: BodySource = BodySource {
     next: (): Option[u8[]] => {
-      let from: i32 = at.get();
+      let from = at.get();
       if (from >= bytes.len()) {
         return None;
       }
-      let to: i32 = from + k;
+      let to = from + k;
       if (to > bytes.len()) {
         to = bytes.len();
       }
@@ -60,8 +60,8 @@ function close_frame(code: i32, reason: string): u8[] {
 }
 
 function hex(bs: u8[]): string {
-  let digits: string = "0123456789abcdef";
-  let out: string = "";
+  let digits = "0123456789abcdef";
+  let out = "";
   for b in bs {
     out = out + digits.slice_snap(b as i32 >> 4, (b as i32 >> 4) + 1) + digits.slice_snap(b as i32 & 15, (b as i32 & 15) + 1);
   }
@@ -71,10 +71,10 @@ function hex(bs: u8[]): string {
 function echo(c: websocket.Conn, m: websocket.Message): void {
   match (m) {
     Text(s) => {
-      let r: websocket.SendResult = c.send_text(s);
+      let r = c.send_text(s);
     },
     Binary(b) => {
-      let r: websocket.SendResult = c.send_binary(b);
+      let r = c.send_binary(b);
     }
   }
 }
@@ -87,7 +87,7 @@ function session_on(req: HttpRequest, bytes: u8[], k: i32, opts: websocket.Optio
   let w: (HttpRequest, Cell[u8[]]) = wired(req, bytes, k);
   match (websocket.accept(w.0, opts, h)) {
     Ok(resp) => {
-      let body: u8[] = resp.body_bytes();
+      let body = resp.body_bytes();
       return w.1.get();
     },
     Err(e) => {
@@ -112,7 +112,7 @@ function refusal(req: HttpRequest): string {
       return "ok";
     },
     Err(e) => {
-      let resp: HttpResponse = e.to_response();
+      let resp = e.to_response();
       return resp.status.to_string() + " " + resp.headers.get("upgrade").unwrap_or("-") + " " + resp.headers.get("sec-websocket-version").unwrap_or("-");
     }
   }
@@ -120,21 +120,21 @@ function refusal(req: HttpRequest): string {
 }
 
 function test_refusals(): test.TestOutcome {
-  let plain: string = refusal(http.request("GET", "/ws"));
-  let posted: string = refusal(HttpRequest { ...handshake("/ws"), method: "POST" });
-  let version: string = refusal(handshake("/ws").with_header("Sec-WebSocket-Version", "8"));
-  let key: string = refusal(handshake("/ws").with_header("Sec-WebSocket-Key", "notbase64"));
+  let plain = refusal(http.request("GET", "/ws"));
+  let posted = refusal(HttpRequest { ...handshake("/ws"), method: "POST" });
+  let version = refusal(handshake("/ws").with_header("Sec-WebSocket-Version", "8"));
+  let key = refusal(handshake("/ws").with_header("Sec-WebSocket-Key", "notbase64"));
   return test.assert_eq(plain + "|" + posted + "|" + version + "|" + key, "426 websocket 13|426 websocket 13|426 websocket 13|400 - -");
 }
 
 function test_handshake_response(): test.TestOutcome {
-  let req: HttpRequest = handshake("/chat").with_header("Sec-WebSocket-Protocol", "soap, chat");
-  let opts: websocket.Options = websocket.Options { ...websocket.options(), protocols: ["chat", "superchat"] };
+  let req = handshake("/chat").with_header("Sec-WebSocket-Protocol", "soap, chat");
+  let opts = websocket.Options { ...websocket.options(), protocols: ["chat", "superchat"] };
   let none: u8[] = [];
   let w: (HttpRequest, Cell[u8[]]) = wired(req, none, 8);
   match (websocket.accept(w.0, opts, websocket.handlers(echo))) {
     Ok(resp) => {
-      let got: string = resp.status.to_string() + " " + resp.headers.get("upgrade").unwrap_or("-") + " " + resp.headers.get("sec-websocket-accept").unwrap_or("-") + " " + resp.headers.get("sec-websocket-protocol").unwrap_or("-");
+      let got = resp.status.to_string() + " " + resp.headers.get("upgrade").unwrap_or("-") + " " + resp.headers.get("sec-websocket-accept").unwrap_or("-") + " " + resp.headers.get("sec-websocket-protocol").unwrap_or("-");
       return test.assert_eq(got, "101 websocket s3pPLMBiTxaQ9kYGzzhZRbK+xOo= chat");
     },
     Err(e) => {
@@ -145,31 +145,31 @@ function test_handshake_response(): test.TestOutcome {
 }
 
 function test_echo_text_and_close(): test.TestOutcome {
-  let bytes: u8[] = masked(true, 1, "Hello".bytes()).concat(close_frame(1000, "bye"));
+  let bytes = masked(true, 1, "Hello".bytes()).concat(close_frame(1000, "bye"));
   return test.assert_eq(echoed(bytes, 3), "810548656c6c6f" + "880203e8");
 }
 
 function test_echo_binary(): test.TestOutcome {
-  let bytes: u8[] = masked(true, 2, [1 as u8, 2 as u8, 255 as u8]).concat(close_frame(1001, ""));
+  let bytes = masked(true, 2, [1 as u8, 2 as u8, 255 as u8]).concat(close_frame(1001, ""));
   return test.assert_eq(echoed(bytes, 1), "82030102ff" + "880203e9");
 }
 
 function test_fragments_and_ping(): test.TestOutcome {
-  let bytes: u8[] = masked(false, 1, "Hel".bytes()).concat(masked(true, 9, "p".bytes())).concat(masked(false, 0, "lo ".bytes())).concat(masked(true, 0, "world".bytes())).concat(close_frame(1000, ""));
+  let bytes = masked(false, 1, "Hel".bytes()).concat(masked(true, 9, "p".bytes())).concat(masked(false, 0, "lo ".bytes())).concat(masked(true, 0, "world".bytes())).concat(close_frame(1000, ""));
   return test.assert_eq(echoed(bytes, 5), "8a0170" + "810b48656c6c6f20776f726c64" + "880203e8");
 }
 
 function test_large_message(): test.TestOutcome {
-  let big: u8[] = "x".repeat(70000).bytes();
-  let bytes: u8[] = masked(true, 2, big).concat(close_frame(1000, ""));
-  let out: u8[] = session(bytes, 4096, websocket.Options { ...websocket.options(), max_message: 100000 }, websocket.handlers(echo));
-  let head: string = hex(array.take(out, 10));
+  let big = "x".repeat(70000).bytes();
+  let bytes = masked(true, 2, big).concat(close_frame(1000, ""));
+  let out = session(bytes, 4096, websocket.Options { ...websocket.options(), max_message: 100000 }, websocket.handlers(echo));
+  let head = hex(array.take(out, 10));
   return test.assert_eq(head + " " + out.len().to_string(), "827f0000000000011170 70014");
 }
 
 function test_too_big(): test.TestOutcome {
-  let bytes: u8[] = masked(true, 2, "x".repeat(200).bytes());
-  let out: u8[] = session(bytes, 50, websocket.Options { ...websocket.options(), max_message: 100 }, websocket.handlers(echo));
+  let bytes = masked(true, 2, "x".repeat(200).bytes());
+  let out = session(bytes, 50, websocket.Options { ...websocket.options(), max_message: 100 }, websocket.handlers(echo));
   return test.assert_eq(hex(out), "880203f1");
 }
 
@@ -178,46 +178,46 @@ function violation(bytes: u8[]): string {
 }
 
 function test_violations(): test.TestOutcome {
-  let rsv: u8[] = masked(true, 1, "a".bytes());
+  let rsv = masked(true, 1, "a".bytes());
   rsv = rsv.with(0, (rsv[0] as i32 | 64) as u8);
   let none: u8[] = [];
-  let unmasked: u8[] = websocket.frame(true, 1, "a".bytes(), none);
-  let opcode: u8[] = masked(true, 3, "a".bytes());
-  let long_ping: u8[] = masked(true, 9, "p".repeat(126).bytes());
-  let fragmented_ping: u8[] = masked(false, 9, "p".bytes());
-  let lone_continuation: u8[] = masked(true, 0, "a".bytes());
-  let nested: u8[] = masked(false, 1, "a".bytes()).concat(masked(true, 1, "b".bytes()));
-  let got: string = violation(rsv) + "|" + violation(unmasked) + "|" + violation(opcode) + "|" + violation(long_ping) + "|" + violation(fragmented_ping) + "|" + violation(lone_continuation) + "|" + violation(nested);
+  let unmasked = websocket.frame(true, 1, "a".bytes(), none);
+  let opcode = masked(true, 3, "a".bytes());
+  let long_ping = masked(true, 9, "p".repeat(126).bytes());
+  let fragmented_ping = masked(false, 9, "p".bytes());
+  let lone_continuation = masked(true, 0, "a".bytes());
+  let nested = masked(false, 1, "a".bytes()).concat(masked(true, 1, "b".bytes()));
+  let got = violation(rsv) + "|" + violation(unmasked) + "|" + violation(opcode) + "|" + violation(long_ping) + "|" + violation(fragmented_ping) + "|" + violation(lone_continuation) + "|" + violation(nested);
   return test.assert_eq(got, "880203ea|880203ea|880203ea|880203ea|880203ea|880203ea|880203ea");
 }
 
 function test_utf8(): test.TestOutcome {
-  let bad: u8[] = masked(true, 1, [206 as u8, 186 as u8, 225 as u8, 189 as u8, 185 as u8, 207 as u8, 131 as u8, 206 as u8, 188 as u8, 206 as u8, 181 as u8, 237 as u8, 160 as u8, 128 as u8, 101 as u8, 100 as u8, 105 as u8, 116 as u8, 101 as u8, 100 as u8]);
-  let split: u8[] = masked(false, 1, [206 as u8]).concat(masked(true, 0, [186 as u8]));
-  let cut: u8[] = masked(false, 1, [206 as u8]).concat(masked(true, 0, "a".bytes()));
-  let early: u8[] = masked(false, 1, [255 as u8]).concat(masked(true, 0, "a".bytes()));
-  let good: string = violation(split.concat(close_frame(1000, "")));
+  let bad = masked(true, 1, [206 as u8, 186 as u8, 225 as u8, 189 as u8, 185 as u8, 207 as u8, 131 as u8, 206 as u8, 188 as u8, 206 as u8, 181 as u8, 237 as u8, 160 as u8, 128 as u8, 101 as u8, 100 as u8, 105 as u8, 116 as u8, 101 as u8, 100 as u8]);
+  let split = masked(false, 1, [206 as u8]).concat(masked(true, 0, [186 as u8]));
+  let cut = masked(false, 1, [206 as u8]).concat(masked(true, 0, "a".bytes()));
+  let early = masked(false, 1, [255 as u8]).concat(masked(true, 0, "a".bytes()));
+  let good = violation(split.concat(close_frame(1000, "")));
   return test.assert_eq(violation(bad) + "|" + good + "|" + violation(cut) + "|" + violation(early), "880203ef|8102ceba880203e8|880203ef|880203ef");
 }
 
 function test_close_frames(): test.TestOutcome {
-  let empty: string = violation(masked(true, 8, "".bytes()));
-  let one: string = violation(masked(true, 8, [3 as u8]));
-  let reserved: string = violation(close_frame(1005, ""));
-  let low: string = violation(close_frame(999, ""));
-  let private: string = violation(close_frame(4000, "k"));
-  let bad_reason: string = violation(close_frame(1000, "").concat([255 as u8]).with(1, (128 | 3) as u8));
+  let empty = violation(masked(true, 8, "".bytes()));
+  let one = violation(masked(true, 8, [3 as u8]));
+  let reserved = violation(close_frame(1005, ""));
+  let low = violation(close_frame(999, ""));
+  let private = violation(close_frame(4000, "k"));
+  let bad_reason = violation(close_frame(1000, "").concat([255 as u8]).with(1, (128 | 3) as u8));
   return test.assert_eq(empty + "|" + one + "|" + reserved + "|" + low + "|" + private + "|" + bad_reason, "880203e8|880203ea|880203ea|880203ea|88020fa0|880203ef");
 }
 
 function test_handler_close_and_results(): test.TestOutcome {
-  let seen: Cell[string] = cell_new("");
+  let seen = cell_new("");
   let h: websocket.Handlers = websocket.Handlers {
     open: (c: websocket.Conn): void => { seen.set(seen.get() + "open " + c.path + ";"); },
     message: (c: websocket.Conn, m: websocket.Message): void => {
-      let first: websocket.SendResult = c.send_text("one");
+      let first = c.send_text("one");
       c.close(1001, "going");
-      let after: websocket.SendResult = c.send_text("two");
+      let after = c.send_text("two");
       match (after) {
         Dropped => {
           seen.set(seen.get() + "dropped;");
@@ -231,30 +231,30 @@ function test_handler_close_and_results(): test.TestOutcome {
     drain: (c: websocket.Conn): void => {},
     close: (c: websocket.Conn, code: i32, reason: string): void => { seen.set(seen.get() + "close " + code.to_string() + " " + reason + ";"); },
   };
-  let bytes: u8[] = masked(true, 1, "x".bytes()).concat(masked(true, 1, "ignored".bytes())).concat(close_frame(1000, "ok"));
-  let out: string = hex(session(bytes, 9, websocket.options(), h));
+  let bytes = masked(true, 1, "x".bytes()).concat(masked(true, 1, "ignored".bytes())).concat(close_frame(1000, "ok"));
+  let out = hex(session(bytes, 9, websocket.options(), h));
   return test.assert_eq(seen.get() + " " + out, "open /ws;dropped;close 1000 ok; " + "81036f6e65" + "880703e9676f696e67");
 }
 
 function test_backpressure(): test.TestOutcome {
-  let seen: Cell[string] = cell_new("");
+  let seen = cell_new("");
   let h: websocket.Handlers = websocket.Handlers {
     open: (c: websocket.Conn): void => {},
     message: (c: websocket.Conn, m: websocket.Message): void => {
-      let a: websocket.SendResult = c.send_binary("a".repeat(60).bytes());
-      let b: websocket.SendResult = c.send_binary("b".repeat(60).bytes());
-      let d: websocket.SendResult = c.send_binary("c".repeat(60).bytes());
-      let shown: string = "";
+      let a = c.send_binary("a".repeat(60).bytes());
+      let b = c.send_binary("b".repeat(60).bytes());
+      let d = c.send_binary("c".repeat(60).bytes());
+      let shown = "";
       for r in [a, b, d] {
         match (r) {
           Sent => {
-            shown = shown + "sent,";
+            shown += "sent,";
           },
           Backpressure => {
-            shown = shown + "pressure,";
+            shown += "pressure,";
           },
           Dropped => {
-            shown = shown + "dropped,";
+            shown += "dropped,";
           }
         }
       }
@@ -263,27 +263,27 @@ function test_backpressure(): test.TestOutcome {
     drain: (c: websocket.Conn): void => { seen.set(seen.get() + "drained;"); },
     close: (c: websocket.Conn, code: i32, reason: string): void => {},
   };
-  let opts: websocket.Options = websocket.Options { ...websocket.options(), backpressure: 100, max_backpressure: 150 };
-  let bytes: u8[] = masked(true, 1, "go".bytes()).concat(close_frame(1000, ""));
-  let out: u8[] = session(bytes, 9, opts, h);
+  let opts = websocket.Options { ...websocket.options(), backpressure: 100, max_backpressure: 150 };
+  let bytes = masked(true, 1, "go".bytes()).concat(close_frame(1000, ""));
+  let out = session(bytes, 9, opts, h);
   return test.assert_eq(seen.get() + " " + out.len().to_string(), "sent,pressure,dropped,drained; 128");
 }
 
 function test_ended_without_close(): test.TestOutcome {
-  let seen: Cell[string] = cell_new("");
+  let seen = cell_new("");
   let h: websocket.Handlers = websocket.Handlers {
     open: (c: websocket.Conn): void => {},
     message: echo,
     drain: (c: websocket.Conn): void => {},
     close: (c: websocket.Conn, code: i32, reason: string): void => { seen.set(code.to_string()); },
   };
-  let out: string = hex(session(masked(true, 1, "hi".bytes()), 2, websocket.options(), h));
+  let out = hex(session(masked(true, 1, "hi".bytes()), 2, websocket.options(), h));
   return test.assert_eq(seen.get() + " " + out, "1006 81026869");
 }
 
 function compressed(fin: boolean, opcode: i32, payload: u8[]): u8[] {
-  let packed: u8[] = deflate.deflate_flushed(payload, 15);
-  let f: u8[] = masked(fin, opcode, array.take(packed, packed.len() - 4));
+  let packed = deflate.deflate_flushed(payload, 15);
+  let f = masked(fin, opcode, array.take(packed, packed.len() - 4));
   return f.with(0, (f[0] as i32 | 64) as u8);
 }
 
@@ -292,12 +292,12 @@ function compressing(): websocket.Options {
 }
 
 function deflated(bytes: u8[], k: i32): u8[] {
-  let req: HttpRequest = handshake("/ws").with_header("Sec-WebSocket-Extensions", "permessage-deflate; client_max_window_bits");
+  let req = handshake("/ws").with_header("Sec-WebSocket-Extensions", "permessage-deflate; client_max_window_bits");
   return session_on(req, bytes, k, compressing(), websocket.handlers(echo));
 }
 
 function negotiated(offer: string, opts: websocket.Options): string {
-  let req: HttpRequest = handshake("/ws");
+  let req = handshake("/ws");
   if (offer.len() > 0) {
     req = req.with_header("Sec-WebSocket-Extensions", offer);
   }
@@ -315,8 +315,8 @@ function negotiated(offer: string, opts: websocket.Options): string {
 }
 
 function test_deflate_negotiation(): test.TestOutcome {
-  let taken: string = "permessage-deflate; server_no_context_takeover; server_max_window_bits=";
-  let got: string = negotiated("permessage-deflate; client_max_window_bits", compressing());
+  let taken = "permessage-deflate; server_no_context_takeover; server_max_window_bits=";
+  let got = negotiated("permessage-deflate; client_max_window_bits", compressing());
   got = got + "|" + negotiated("permessage-deflate; client_max_window_bits", websocket.options());
   got = got + "|" + negotiated("", compressing());
   got = got + "|" + negotiated("x-webkit-deflate-frame, permessage-deflate; server_max_window_bits=10", compressing());
@@ -330,32 +330,32 @@ function test_deflate_negotiation(): test.TestOutcome {
 }
 
 function test_deflate_session(): test.TestOutcome {
-  let text: string = "Hello, Hello, Hello, Hello!";
-  let packed: u8[] = deflate.deflate_flushed([1 as u8, 2 as u8, 3 as u8], 15);
+  let text = "Hello, Hello, Hello, Hello!";
+  let packed = deflate.deflate_flushed([1 as u8, 2 as u8, 3 as u8], 15);
   packed = array.take(packed, packed.len() - 4);
-  let first: u8[] = masked(false, 2, array.take(packed, 2));
+  let first = masked(false, 2, array.take(packed, 2));
   first = first.with(0, (first[0] as i32 | 64) as u8);
-  let rest: u8[] = masked(true, 0, array.slice(packed, 2, packed.len()));
-  let bytes: u8[] = compressed(true, 1, text.bytes()).concat(first).concat(rest).concat(close_frame(1000, ""));
+  let rest = masked(true, 0, array.slice(packed, 2, packed.len()));
+  let bytes = compressed(true, 1, text.bytes()).concat(first).concat(rest).concat(close_frame(1000, ""));
   return test.assert_eq(frames_of(deflated(bytes, 5)), "193:" + hex(text.bytes()) + "|194:010203|136:03e8|");
 }
 
 function test_deflate_context_takeover(): test.TestOutcome {
-  let first: u8[] = masked(true, 1, [74 as u8, 206 as u8, 207 as u8, 43 as u8, 73 as u8, 173 as u8, 40 as u8, 81 as u8, 40 as u8, 73 as u8, 204 as u8, 78 as u8, 205 as u8, 47 as u8, 75 as u8, 45 as u8, 210 as u8, 81 as u8, 72 as u8, 70 as u8, 19 as u8, 1 as u8, 0 as u8]);
+  let first = masked(true, 1, [74 as u8, 206 as u8, 207 as u8, 43 as u8, 73 as u8, 173 as u8, 40 as u8, 81 as u8, 40 as u8, 73 as u8, 204 as u8, 78 as u8, 205 as u8, 47 as u8, 75 as u8, 45 as u8, 210 as u8, 81 as u8, 72 as u8, 70 as u8, 19 as u8, 1 as u8, 0 as u8]);
   first = first.with(0, (first[0] as i32 | 64) as u8);
-  let second: u8[] = masked(true, 1, [66 as u8, 231 as u8, 43 as u8, 2 as u8, 0 as u8]);
+  let second = masked(true, 1, [66 as u8, 231 as u8, 43 as u8, 2 as u8, 0 as u8]);
   second = second.with(0, (second[0] as i32 | 64) as u8);
-  let got: string = frames_of(deflated(first.concat(second).concat(close_frame(1000, "")), 5));
+  let got = frames_of(deflated(first.concat(second).concat(close_frame(1000, "")), 5));
   return test.assert_eq(got, "193:" + hex("context takeover, context takeover".bytes()) + "|193:" + hex("context takeover!".bytes()) + "|136:03e8|");
 }
 
 function frames_of(got: u8[]): string {
-  let out: string = "";
-  let at: i32 = 0;
+  let out = "";
+  let at = 0;
   while (at + 2 <= got.len()) {
-    let n: i32 = got[at + 1] as i32;
-    let payload: u8[] = array.slice(got, at + 2, at + 2 + n);
-    let head: string = (got[at] as i32).to_string();
+    let n = got[at + 1] as i32;
+    let payload = array.slice(got, at + 2, at + 2 + n);
+    let head = (got[at] as i32).to_string();
     if ((got[at] as i32 & 64) != 0) {
       match (deflate.inflate(payload.concat([0 as u8, 0 as u8, 255 as u8, 255 as u8, 1 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8]), 1024)) {
         Ok(r) => {
@@ -374,12 +374,12 @@ function frames_of(got: u8[]): string {
 }
 
 function test_deflate_refusals(): test.TestOutcome {
-  let plain: u8[] = compressed(true, 1, "a".bytes());
-  let garbage: u8[] = masked(true, 1, [7 as u8, 7 as u8, 7 as u8]);
+  let plain = compressed(true, 1, "a".bytes());
+  let garbage = masked(true, 1, [7 as u8, 7 as u8, 7 as u8]);
   garbage = garbage.with(0, (garbage[0] as i32 | 64) as u8);
-  let not_text: u8[] = compressed(true, 1, [255 as u8, 254 as u8]);
-  let continued: u8[] = masked(false, 1, "a".bytes()).concat(compressed(true, 0, "b".bytes()));
-  let got: string = hex(session(plain, 7, websocket.options(), websocket.handlers(echo)));
+  let not_text = compressed(true, 1, [255 as u8, 254 as u8]);
+  let continued = masked(false, 1, "a".bytes()).concat(compressed(true, 0, "b".bytes()));
+  let got = hex(session(plain, 7, websocket.options(), websocket.handlers(echo)));
   got = got + "|" + hex(deflated(garbage, 7));
   got = got + "|" + hex(deflated(not_text, 7));
   got = got + "|" + hex(deflated(continued, 7));
@@ -388,40 +388,40 @@ function test_deflate_refusals(): test.TestOutcome {
 
 function test_close_reason_boundary(): test.TestOutcome {
   let rb: u8[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < 62) {
     rb = rb.append(195 as u8).append(169 as u8);
-    k = k + 1;
+    k += 1;
   }
-  let reason: string = utf8.from_bytes_lossy(rb);
+  let reason = utf8.from_bytes_lossy(rb);
   let h: websocket.Handlers = websocket.handlers((c: websocket.Conn, m: websocket.Message): void => { c.close(1000, reason); });
-  let bytes: u8[] = masked(true, 1, "go".bytes());
-  let out: string = hex(session(bytes, 9, websocket.options(), h));
+  let bytes = masked(true, 1, "go".bytes());
+  let out = hex(session(bytes, 9, websocket.options(), h));
   let body: u8[] = [(1000 >> 8) as u8, (1000 & 255) as u8].concat(array.take(rb, 122));
   return test.assert_eq(out, "88" + __len_byte(body.len()) + hex(body));
 }
 
 function __len_byte(n: i32): string {
-  let digits: string = "0123456789abcdef";
+  let digits = "0123456789abcdef";
   return digits.slice_snap(n >> 4, (n >> 4) + 1) + digits.slice_snap(n & 15, (n & 15) + 1);
 }
 
 function test_length_framing(): test.TestOutcome {
-  let m: u8[] = mask();
+  let m = mask();
   let nonmin16: u8[] = [(1 as i32 | 128) as u8, (126 | 128) as u8, 0 as u8, 1 as u8].concat(m).concat(xormask("a".bytes(), m));
   let nonmin64: u8[] = [(1 as i32 | 128) as u8, (127 | 128) as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8].concat(m).concat(xormask("a".bytes(), m));
   let small64: u8[] = [(1 as i32 | 128) as u8, (127 | 128) as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 200 as u8].concat(m);
   let msb64: u8[] = [(1 as i32 | 128) as u8, (127 | 128) as u8, 128 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8].concat(m);
-  let got: string = framing(nonmin16) + "|" + framing(nonmin64) + "|" + framing(small64) + "|" + framing(msb64);
+  let got = framing(nonmin16) + "|" + framing(nonmin64) + "|" + framing(small64) + "|" + framing(msb64);
   return test.assert_eq(got, "880203ea|880203ea|880203ea|880203ea");
 }
 
 function xormask(payload: u8[], m: u8[]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < payload.len()) {
     out = out.append((payload[i] as i32 ^ m[i & 3] as i32) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -431,7 +431,7 @@ function framing(bytes: u8[]): string {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/websocket");
+  let r = test.new("std/http/websocket");
   r = r.it("computes the accept key", test_accept_key);
   r = r.it("refuses what is not a handshake", test_refusals);
   r = r.it("answers the 101 with the chosen protocol", test_handshake_response);

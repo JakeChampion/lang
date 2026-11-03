@@ -11,7 +11,9 @@ function error_class(error: grayscale.DecodeError): string {
 }
 
 function emit_case(path: string): i32 {
-  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let Ok(input) = read_file_bytes(path) else {
+    return 2;
+  };
   match (grayscale.decode(input, grayscale.default_limits(), never)) {
     Ok(image) => {
       match (image.layout.format) {
@@ -23,19 +25,16 @@ function emit_case(path: string): i32 {
       if (image.data.len() != image.layout.bytes || image.layout.stride != image.layout.width * 3) {
         return 4;
       }
-      match (write_file_bytes(path + ".rgb.raw", image.data)) {
-        Ok(_) => {},
-        Err(_) => {
-          return 5;
-        }
+      if let Err(_) = write_file_bytes(path + ".rgb.raw", image.data) {
+        return 5;
       }
-      print("accepted " + path + " " + image.layout.width.to_string() + " " + image.layout.height.to_string() + " " + image.layout.stride.to_string() + " " + image.layout.bytes.to_string());
+      print(f"accepted {path} {image.layout.width} {image.layout.height} {image.layout.stride} {image.layout.bytes}");
     },
     Err(grayscale.DecodeUnsupported()) => {
       print("unsupported " + path);
     },
     Err(error) => {
-      print("error " + path + " " + error_class(error));
+      print(f"error {path} {error_class(error)}");
     }
   }
   return 0;

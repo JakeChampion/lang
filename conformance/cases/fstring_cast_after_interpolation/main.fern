@@ -1,0 +1,9 @@
+// A widening cast inside an f-string, after another interpolation and inside
+// arithmetic.
+function main(): i32 {
+  let r = 2;
+  let w: i64 = 40;
+  print(f"{r}{r as i64}");
+  print(f"{r + 1} {w + r as i64} {r as i64 * w}");
+  return 0;
+}

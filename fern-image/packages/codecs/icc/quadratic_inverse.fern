@@ -77,7 +77,7 @@ function coordinate(p: Parameters, input: f64): f64 {
   let target = difference(input, p.e);
   let root = target.high.sqrt();
   if (target.high > 0.0) {
-    root = root + root * (0.5 * (target.low / target.high));
+    root += root * (0.5 * (target.low / target.high));
   }
   return (root - p.b) / p.a;
 }

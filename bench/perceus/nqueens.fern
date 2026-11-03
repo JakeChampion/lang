@@ -10,14 +10,7 @@ pub enum Solutions {
 }
 
 pub function safe(queen: i32, diagonal: i32, xs: Positions): boolean {
-  match (xs) {
-    NoPositions => {
-      return true;
-    },
-    Position(q, qs) => {
-      return queen != q && queen != q + diagonal && queen != q - diagonal && safe(queen, diagonal + 1, qs);
-    }
-  }
+  return match (xs) { NoPositions => true, Position(q, qs) => queen != q && queen != q + diagonal && queen != q - diagonal && safe(queen, diagonal + 1, qs) };
 }
 
 function append_safe(queen: i32, xs: Positions, xss: Solutions): Solutions {
@@ -31,14 +24,7 @@ function append_safe(queen: i32, xs: Positions, xss: Solutions): Solutions {
 }
 
 function extend(queen: i32, acc: Solutions, xss: Solutions): Solutions {
-  match (xss) {
-    NoSolutions => {
-      return acc;
-    },
-    Solution(xs, rest) => {
-      return extend(queen, append_safe(queen, xs, acc), rest);
-    }
-  }
+  return match (xss) { NoSolutions => acc, Solution(xs, rest) => extend(queen, append_safe(queen, xs, acc), rest) };
 }
 
 pub function find_solutions(n: i32, queen: i32): Solutions {
@@ -49,14 +35,14 @@ pub function find_solutions(n: i32, queen: i32): Solutions {
 }
 
 pub function length(xs: Solutions): i32 {
-  let count: i32 = 0;
+  let count = 0;
   while (true) {
     match (xs) {
       NoSolutions => {
         return count;
       },
       Solution(_, rest) => {
-        count = count + 1;
+        count += 1;
         xs = rest;
       }
     }

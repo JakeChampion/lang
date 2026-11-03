@@ -72,16 +72,16 @@ function tape_error(text: string): string {
 }
 
 function nested(n: i32): string {
-  let s: string = "";
-  let i: i32 = 0;
+  let s = "";
+  let i = 0;
   while (i < n) {
-    s = s + "[";
-    i = i + 1;
+    s += "[";
+    i += 1;
   }
   i = 0;
   while (i < n) {
-    s = s + "]";
-    i = i + 1;
+    s += "]";
+    i += 1;
   }
   return s;
 }
@@ -94,18 +94,18 @@ function test_to_value_matches_parse(): test.TestOutcome {
     "{\"k\": 1, \"k\": 2, \"j\": [true, false]}",
     "[1,2,3,4,5,6,7,8,9,10,11,12]",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < texts.len()) {
-    let want: string = json.encode(json.parse(texts[i]).unwrap_or(JString("<unparsed>")));
-    let d: json.Document = doc(texts[i]);
+    let want = json.encode(json.parse(texts[i]).unwrap_or(JString("<unparsed>")));
+    let d = doc(texts[i]);
     if (d.tape.len() == 0) {
       return test.fail("parse_document rejected " + texts[i]);
     }
-    let got: string = json.encode(d.to_value(d.root()));
+    let got = json.encode(d.to_value(d.root()));
     if (got != want) {
       return test.assert_eq(got, want);
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -117,23 +117,23 @@ function test_errors_match_parse(): test.TestOutcome {
     "nul", "\"abc", "\"\\x\"", "\"\\u12g4\"", "\"a\tb\"", "[1] 2", "{}}",
     nested(128), nested(129), "[\"\\ud800\"]",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < texts.len()) {
-    let want: string = dom_error(texts[i]);
-    let got: string = tape_error(texts[i]);
+    let want = dom_error(texts[i]);
+    let got = tape_error(texts[i]);
     if (got != want) {
       return test.assert_eq("[" + texts[i] + "] " + got, "[" + texts[i] + "] " + want);
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_walk_array(): test.TestOutcome {
-  let d: json.Document = doc("[10, [20, 21], {\"x\": 30}, 40]");
-  let r: i32 = d.root();
-  let seen: string = "";
-  let c: i32 = d.first(r);
+  let d = doc("[10, [20, 21], {\"x\": 30}, 40]");
+  let r = d.root();
+  let seen = "";
+  let c = d.first(r);
   while (c >= 0) {
     if (d.is_number(c)) {
       seen = seen + str(d.number_text(c)) + " ";
@@ -146,12 +146,12 @@ function test_walk_array(): test.TestOutcome {
 }
 
 function test_walk_object(): test.TestOutcome {
-  let d: json.Document = doc("{\"a\": [1, 2], \"b\\u0021\": {\"c\": null}, \"d\": 3}");
-  let r: i32 = d.root();
-  let seen: string = "";
-  let k: i32 = d.first(r);
+  let d = doc("{\"a\": [1, 2], \"b\\u0021\": {\"c\": null}, \"d\": 3}");
+  let r = d.root();
+  let seen = "";
+  let k = d.first(r);
   while (k >= 0) {
-    let v: i32 = d.value(k);
+    let v = d.value(k);
     seen = seen + str(d.as_string(k)) + "=" + d.len(v).to_string() + " ";
     k = d.next(r, k);
   }
@@ -159,9 +159,9 @@ function test_walk_object(): test.TestOutcome {
 }
 
 function test_empty_containers(): test.TestOutcome {
-  let d: json.Document = doc("[[], {}]");
-  let a: i32 = idx(d.at(d.root(), 0));
-  let o: i32 = idx(d.at(d.root(), 1));
+  let d = doc("[[], {}]");
+  let a = idx(d.at(d.root(), 0));
+  let o = idx(d.at(d.root(), 1));
   if (d.first(a) != -1 || d.first(o) != -1 || d.len(a) != 0 || d.len(o) != 0) {
     return test.fail("an empty container has a member");
   }
@@ -169,26 +169,26 @@ function test_empty_containers(): test.TestOutcome {
 }
 
 function test_at_and_get(): test.TestOutcome {
-  let d: json.Document = doc("{\"xs\": [5, [6], 7], \"k\": 1, \"k\": 2, \"e\\n\": 3}");
-  let r: i32 = d.root();
-  let xs: i32 = idx(d.get(r, "xs"));
-  let third: string = str(d.number_text(idx(d.at(xs, 2))));
-  let k: string = str(d.number_text(idx(d.get(r, "k"))));
-  let e: string = str(d.number_text(idx(d.get(r, "e\n"))));
-  let missing: i32 = idx(d.get(r, "nope")) + idx(d.at(xs, 3)) + idx(d.at(xs, -1)) + idx(d.get(xs, "k")) + idx(d.at(r, 0));
+  let d = doc("{\"xs\": [5, [6], 7], \"k\": 1, \"k\": 2, \"e\\n\": 3}");
+  let r = d.root();
+  let xs = idx(d.get(r, "xs"));
+  let third = str(d.number_text(idx(d.at(xs, 2))));
+  let k = str(d.number_text(idx(d.get(r, "k"))));
+  let e = str(d.number_text(idx(d.get(r, "e\n"))));
+  let missing = idx(d.get(r, "nope")) + idx(d.at(xs, 3)) + idx(d.at(xs, -1)) + idx(d.get(xs, "k")) + idx(d.at(r, 0));
   return test.assert_eq(third + " " + k + " " + e + " " + missing.to_string(), "7 2 3 -5");
 }
 
 function test_scalars(): test.TestOutcome {
-  let d: json.Document = doc("[true, false, null, \"plain\", \"t\\u00e9\\\"x\", 2.5e1]");
-  let r: i32 = d.root();
-  let out: string = "";
+  let d = doc("[true, false, null, \"plain\", \"t\\u00e9\\\"x\", 2.5e1]");
+  let r = d.root();
+  let out = "";
   match (d.as_bool(idx(d.at(r, 0)))) {
     Some(b) => {
-      out = out + b.to_string();
+      out += b.to_string();
     },
     None => {
-      out = out + "?";
+      out += "?";
     }
   }
   match (d.as_bool(idx(d.at(r, 1)))) {
@@ -196,7 +196,7 @@ function test_scalars(): test.TestOutcome {
       out = out + " " + b.to_string();
     },
     None => {
-      out = out + " ?";
+      out += " ?";
     }
   }
   if (!d.is_null(idx(d.at(r, 2))) || d.as_bool(idx(d.at(r, 2))).is_some()) {
@@ -208,7 +208,7 @@ function test_scalars(): test.TestOutcome {
       out = out + " " + f.to_string();
     },
     None => {
-      out = out + " ?";
+      out += " ?";
     }
   }
   out = out + " " + str(d.as_string(idx(d.at(r, 5)))) + " " + str(d.number_text(idx(d.at(r, 3))));
@@ -216,10 +216,10 @@ function test_scalars(): test.TestOutcome {
 }
 
 function test_as_i64(): test.TestOutcome {
-  let d: json.Document = doc("[0, -0, 42, -42, 9223372036854775807, -9223372036854775808, 9223372036854775808, -9223372036854775809, 1.0, 1e2, 99999999999999999999]");
-  let r: i32 = d.root();
-  let out: string = "";
-  let c: i32 = d.first(r);
+  let d = doc("[0, -0, 42, -42, 9223372036854775807, -9223372036854775808, 9223372036854775808, -9223372036854775809, 1.0, 1e2, 99999999999999999999]");
+  let r = d.root();
+  let out = "";
+  let c = d.first(r);
   while (c >= 0) {
     out = out + int(d.as_i64(c)) + " ";
     c = d.next(r, c);
@@ -228,29 +228,29 @@ function test_as_i64(): test.TestOutcome {
 }
 
 function test_kinds(): test.TestOutcome {
-  let d: json.Document = doc("[null, true, 1, \"s\", [], {}]");
-  let r: i32 = d.root();
-  let out: string = "";
-  let c: i32 = d.first(r);
+  let d = doc("[null, true, 1, \"s\", [], {}]");
+  let r = d.root();
+  let out = "";
+  let c = d.first(r);
   while (c >= 0) {
-    let n: i32 = 0;
+    let n = 0;
     if (d.is_null(c)) {
-      n = n + 1;
+      n += 1;
     }
     if (d.is_bool(c)) {
-      n = n + 10;
+      n += 10;
     }
     if (d.is_number(c)) {
-      n = n + 100;
+      n += 100;
     }
     if (d.is_string(c)) {
-      n = n + 1000;
+      n += 1000;
     }
     if (d.is_array(c)) {
-      n = n + 10000;
+      n += 10000;
     }
     if (d.is_object(c)) {
-      n = n + 100000;
+      n += 100000;
     }
     out = out + n.to_string() + " ";
     c = d.next(r, c);
@@ -259,7 +259,7 @@ function test_kinds(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/json document");
+  let r = test.new("std/json document");
   r = r.it("to_value matches parse", test_to_value_matches_parse);
   r = r.it("errors match parse", test_errors_match_parse);
   r = r.it("walk an array", test_walk_array);

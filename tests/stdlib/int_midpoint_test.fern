@@ -13,10 +13,10 @@ function test_i32_basic(): test.TestOutcome {
 }
 
 function test_i32_negatives(): test.TestOutcome {
-  if ((0 - 4).midpoint(0 - 2) != 0 - 3) {
+  if ((-4).midpoint(-2) != -3) {
     return test.fail("-4,-2");
   }
-  return test.assert_true((0 - 2).midpoint(4) == 1);
+  return test.assert_true((-2).midpoint(4) == 1);
 }
 
 function test_i32_no_overflow(): test.TestOutcome {
@@ -34,7 +34,7 @@ function test_i64_basic(): test.TestOutcome {
 }
 
 function test_i64_no_overflow(): test.TestOutcome {
-  let mx: i64 = 9223372036854775807 as i64;
+  let mx = 9223372036854775807 as i64;
   if (mx.midpoint(mx - 2 as i64) != mx - 1 as i64) {
     return test.fail("near i64::MAX");
   }
@@ -42,7 +42,7 @@ function test_i64_no_overflow(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/int midpoint");
+  let r = test.new("std/int midpoint");
   r = r.it("i32 basic", test_i32_basic);
   r = r.it("i32 negatives", test_i32_negatives);
   r = r.it("i32 no overflow", test_i32_no_overflow);

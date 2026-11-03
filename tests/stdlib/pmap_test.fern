@@ -36,7 +36,7 @@ function test_insert_get(): test.TestOutcome {
 }
 
 function test_insert_replaces(): test.TestOutcome {
-  let m: pmap.PMap[i32, i32] = pmap.from([(1, 10), (2, 20), (1, 11)]);
+  let m = pmap.from([(1, 10), (2, 20), (1, 11)]);
   if (m.len() != 2) {
     return test.fail("duplicate key grew the map");
   }
@@ -45,16 +45,16 @@ function test_insert_replaces(): test.TestOutcome {
 
 function test_insert_is_persistent(): test.TestOutcome {
   let m: pmap.PMap[i32, i32] = pmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 2000) {
     m = m.insert(i * 37 % 2000, i);
-    i = i + 1;
+    i += 1;
   }
-  let snapshot: pmap.PMap[i32, i32] = m;
+  let snapshot = m;
   i = 0;
   while (i < 2000) {
     m = m.insert(i, i + 5000);
-    i = i + 1;
+    i += 1;
   }
   if (snapshot.len() != 2000 || m.len() != 2000) {
     return test.fail("lengths");
@@ -67,19 +67,19 @@ function test_insert_is_persistent(): test.TestOutcome {
     if (m.get_or(i, -1) != i + 5000) {
       return test.fail("update lost at " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(snapshot.is_valid() && m.is_valid());
 }
 
 function test_remove(): test.TestOutcome {
   let m: pmap.PMap[i32, i32] = pmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 1000) {
     m = m.insert(i * 53 % 1000, i);
-    i = i + 1;
+    i += 1;
   }
-  let keep: pmap.PMap[i32, i32] = m;
+  let keep = m;
   i = 0;
   while (i < 1000) {
     if (i % 3 != 0) {
@@ -88,7 +88,7 @@ function test_remove(): test.TestOutcome {
     if (!m.is_valid()) {
       return test.fail("invalid after removing " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   if (m.len() != 334 || keep.len() != 1000) {
     return test.fail("len after remove: " + m.len().to_string());
@@ -102,26 +102,26 @@ function test_remove(): test.TestOutcome {
   i = 0;
   while (i < 1000) {
     m = m.remove(i);
-    i = i + 1;
+    i += 1;
   }
   return test.assert_true(m.is_empty() && m.is_valid());
 }
 
 function test_iteration(): test.TestOutcome {
-  let m: pmap.PMap[i32, i32] = pmap.from([(5, 50), (1, 10), (4, 40), (2, 20), (3, 30)]);
-  let ks: i32[] = m.keys();
-  let vs: i32[] = m.values();
+  let m = pmap.from([(5, 50), (1, 10), (4, 40), (2, 20), (3, 30)]);
+  let ks = m.keys();
+  let vs = m.values();
   if (ks.len() != 5 || vs.len() != 5) {
     return test.fail("lengths");
   }
-  let i: i32 = 0;
-  let total: i32 = 0;
+  let i = 0;
+  let total = 0;
   while (i < 5) {
     if (vs[i] != ks[i] * 10) {
       return test.fail("keys/values misaligned at " + i.to_string());
     }
-    total = total + ks[i];
-    i = i + 1;
+    total += ks[i];
+    i += 1;
   }
   if (total != 15) {
     return test.fail("keys missing");
@@ -154,29 +154,29 @@ function test_update_map_filter(): test.TestOutcome {
 function test_set_algebra(): test.TestOutcome {
   let a: pmap.PMap[i32, i32] = pmap.new();
   let b: pmap.PMap[i32, i32] = pmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 500) {
     a = a.insert(i, 1);
-    i = i + 1;
+    i += 1;
   }
   i = 250;
   while (i < 750) {
     b = b.insert(i, 2);
-    i = i + 1;
+    i += 1;
   }
-  let u: pmap.PMap[i32, i32] = a.merge(b);
+  let u = a.merge(b);
   if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 2 || u.get_or(100, -1) != 1 || u.get_or(600, -1) != 2) {
     return test.fail("merge (other wins)");
   }
-  let u2: pmap.PMap[i32, i32] = b.merge(a);
+  let u2 = b.merge(a);
   if (u2.len() != 750 || u2.get_or(300, -1) != 1) {
     return test.fail("merge other way");
   }
-  let x: pmap.PMap[i32, i32] = a.intersection(b);
+  let x = a.intersection(b);
   if (x.len() != 250 || !x.is_valid() || x.get_or(300, -1) != 1 || x.contains(100)) {
     return test.fail("intersection");
   }
-  let d: pmap.PMap[i32, i32] = a.difference(b);
+  let d = a.difference(b);
   if (d.len() != 250 || !d.is_valid() || d.contains(300) || !d.contains(100)) {
     return test.fail("difference");
   }
@@ -185,15 +185,15 @@ function test_set_algebra(): test.TestOutcome {
 
 function test_string_keys(): test.TestOutcome {
   let m: pmap.PMap[string, i32] = pmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 300) {
     m = m.insert("key-" + i.to_string(), i);
-    i = i + 1;
+    i += 1;
   }
   if (m.len() != 300 || !m.is_valid() || m.get_or("key-77", -1) != 77 || m.contains("key-300")) {
     return test.fail("string insert/get");
   }
-  let snap: pmap.PMap[string, i32] = m;
+  let snap = m;
   m = m.remove("key-77");
   if (snap.len() != 300 || m.len() != 299 || !snap.contains("key-77") || m.contains("key-77")) {
     return test.fail("string snapshot");
@@ -203,10 +203,10 @@ function test_string_keys(): test.TestOutcome {
 
 function test_collisions(): test.TestOutcome {
   let c: pmap.PMap[Coarse, i32] = pmap.new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < 200) {
     c = c.insert(Coarse { bucket: i % 5, id: i }, i);
-    i = i + 1;
+    i += 1;
   }
   if (c.len() != 200 || !c.is_valid()) {
     return test.fail("collision insert");
@@ -214,13 +214,13 @@ function test_collisions(): test.TestOutcome {
   if (c.get_or(Coarse { bucket: 3, id: 13 }, -1) != 13 || c.contains(Coarse { bucket: 3, id: 14 })) {
     return test.fail("collision lookup");
   }
-  let snap: pmap.PMap[Coarse, i32] = c;
+  let snap = c;
   i = 0;
   while (i < 200) {
     if (i % 2 == 0) {
       c = c.remove(Coarse { bucket: i % 5, id: i });
     }
-    i = i + 1;
+    i += 1;
   }
   if (c.len() != 100 || !c.is_valid() || snap.len() != 200) {
     return test.fail("collision remove");
@@ -233,8 +233,8 @@ function test_collisions(): test.TestOutcome {
 }
 
 function test_for_each(): test.TestOutcome {
-  let m: pmap.PMap[i32, i32] = pmap.from([(2, 20), (1, 10)]);
-  let seen: i32 = 0;
+  let m = pmap.from([(2, 20), (1, 10)]);
+  let seen = 0;
   function visit(k: i32, v: i32): void {
     seen = seen + k * 100 + v;
   }
@@ -243,7 +243,7 @@ function test_for_each(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/pmap");
+  let r = test.new("std/pmap");
   r = r.it("new is empty", test_new_is_empty);
   r = r.it("insert + get", test_insert_get);
   r = r.it("insert replaces", test_insert_replaces);

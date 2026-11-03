@@ -193,7 +193,7 @@ function test_time(): test.TestOutcome {
 }
 
 function test_distrust_after(): test.TestOutcome {
-  let issued: i64 = 0 as i64;
+  let issued = 0 as i64;
   match (x509.parse(ec_leaf())) {
     Ok(c) => {
       issued = c.not_before;
@@ -202,7 +202,7 @@ function test_distrust_after(): test.TestOutcome {
       return test.fail("the leaf does not parse");
     }
   }
-  let before: verify.Roots = ec_roots().distrusting(0, time.timestamp_from_unix(issued - 1 as i64));
+  let before = ec_roots().distrusting(0, time.timestamp_from_unix(issued - 1 as i64));
   if (outcome(verify.server([ec_leaf(), ec_int()], before, "example.com", now())) != "tls verify: the leaf was issued after the date root 2 is distrusted from") {
     return test.fail("a leaf issued after the date: " + outcome(verify.server([ec_leaf(), ec_int()], before, "example.com", now())));
   }
@@ -213,14 +213,14 @@ function test_distrust_after(): test.TestOutcome {
 }
 
 function test_denied_keys(): test.TestOutcome {
-  let at_leaf: string = "tls verify: certificate 0's key is known to be compromised";
+  let at_leaf = "tls verify: certificate 0's key is known to be compromised";
   if (outcome(verify.client([emudhra_g3b()], verify.no_roots(), now())) != at_leaf) {
     return test.fail("the intermediate as a leaf: " + outcome(verify.client([emudhra_g3b()], verify.no_roots(), now())));
   }
   if (outcome(verify.client([emudhra_g3b_sectigo()], verify.no_roots(), now())) != at_leaf) {
     return test.fail("its Sectigo cross-sign as a leaf: " + outcome(verify.client([emudhra_g3b_sectigo()], verify.no_roots(), now())));
   }
-  let trusted: verify.Roots = verify.roots([emudhra_g3b()]);
+  let trusted = verify.roots([emudhra_g3b()]);
   return test.assert_eq(outcome(verify.server([emudhra_forged_leaf()], trusted, "example.com", now())), "tls verify: certificate 1's key is known to be compromised");
 }
 
@@ -257,7 +257,7 @@ function test_name_constraints(): test.TestOutcome {
   if (nc_chain(nc_leaf_ok(), "www.example.com") != "ok constrained") {
     return test.fail("permitted: " + nc_chain(nc_leaf_ok(), "www.example.com"));
   }
-  let refused: string = "tls verify: certificate 1's name constraints exclude a name below it";
+  let refused = "tls verify: certificate 1's name constraints exclude a name below it";
   if (nc_chain(nc_leaf_out(), "www.example.com") != refused) {
     return test.fail("a name outside the permitted subtree");
   }
@@ -271,16 +271,16 @@ function test_name_constraints(): test.TestOutcome {
 }
 
 function test_bad_signature(): test.TestOutcome {
-  let b: u8[] = ec_leaf();
-  let serial: i32 = 0;
+  let b = ec_leaf();
+  let serial = 0;
   while (serial + 2 < b.len() && !(b[serial] == 0x02 && b[serial + 1] == 0x01 && b[serial + 2] == 0x03)) {
-    serial = serial + 1;
+    serial += 1;
   }
   return test.assert_eq(outcome(verify.server([b.with(serial + 2, 0x07 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0's signature does not verify");
 }
 
 function test_roots_from_pem(): test.TestOutcome {
-  let bundle: string = pem.encode("CERTIFICATE", rsa_root()) + pem.encode("CERTIFICATE", ec_root());
+  let bundle = pem.encode("CERTIFICATE", rsa_root()) + pem.encode("CERTIFICATE", ec_root());
   match (verify.roots_from_pem(bundle)) {
     Ok(r) => {
       if (r.certs.len() != 2) {
@@ -297,10 +297,10 @@ function test_roots_from_pem(): test.TestOutcome {
 
 function trace_signed(): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 64) {
     out = out.append(0x20 as u8);
-    i = i + 1;
+    i += 1;
   }
   for b in "TLS 1.3, server CertificateVerify".bytes() {
     out = out.append(b);
@@ -324,7 +324,7 @@ function test_p384(): test.TestOutcome {
   }
   match (x509.parse(__codec_bytes(hex.decode(P384_LEAF)))) {
     Ok(c) => {
-      let signed: u8[] = "fern p384 certificate verify".bytes();
+      let signed = "fern p384 certificate verify".bytes();
       if (!verify.signed(c, 0x0503, signed, __codec_bytes(hex.decode(P384_SIG)))) {
         return test.fail("ecdsa_secp384r1_sha384");
       }
@@ -340,7 +340,7 @@ function test_p384(): test.TestOutcome {
 function test_certificate_verify(): test.TestOutcome {
   match (x509.parse(rfc8448_certificate())) {
     Ok(c) => {
-      let sig: u8[] = trace_signature();
+      let sig = trace_signature();
       if (!verify.signed(c, 0x0804, trace_signed(), sig)) {
         return test.fail("the trace's signature");
       }
@@ -364,7 +364,7 @@ function test_certificate_verify(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/verify");
+  let r = test.new("std/tls/verify");
   r = r.it("valid chains", test_valid_chains);
   r = r.it("P-384", test_p384);
   r = r.it("names", test_names);

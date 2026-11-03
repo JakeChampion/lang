@@ -18,28 +18,30 @@ function near(actual: [u8], expected: [u8], tolerance: i32): boolean {
   }
   for i in 0..actual.len() {
     let delta = actual[i] as i32 - expected[i] as i32;
-    if (delta < 0 - tolerance || delta > tolerance) {
+    if (delta < -tolerance || delta > tolerance) {
       return false;
     }
   }
   return true;
 }
 
-function marker_at(input: [u8], marker: i32): i32 {
+function marker_at(input: [u8], marker: i32): Option[i32] {
   let at = 2;
   while (at + 4 <= input.len()) {
     if (input[at + 1] as i32 == marker) {
-      return at;
+      return Some(at);
     }
-    at = at + 2 + (input[at + 2] as i32 << 8 | input[at + 3] as i32);
+    at += 2 + (input[at + 2] as i32 << 8 | input[at + 3] as i32);
   }
-  return 0;
+  return None;
 }
 
 function goldens(): test.TestOutcome {
   for index in 0..6 {
     for filter in [chroma.Filter.Nearest, chroma.Filter.Bilinear] {
-      let image = match (rgb.decode(fixtures.input(index), filter, rgb.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("restricted JFIF decode"); } };
+      let Ok(image) = rgb.decode(fixtures.input(index), filter, rgb.default_limits(), never) else {
+        return test.fail("restricted JFIF decode");
+      };
       let expected = match (filter) { chroma.Filter.Nearest => fixtures.nearest(index), chroma.Filter.Bilinear => fixtures.bilinear(index) };
       let width = if (index == 4) { 1 } else if (index == 5) { 257 } else { 17 };
       let height = if (index == 4) { 1 } else { 9 };
@@ -49,7 +51,7 @@ function goldens(): test.TestOutcome {
       }
       if (index == 3 || index == 5) {
         for byte in image.data {
-          if (byte != 128 as u8) {
+          if (byte != 128) {
             return test.fail("fractional neutral planes");
           }
         }
@@ -64,7 +66,9 @@ function plans(): test.TestOutcome {
   let planes = [459, 315, 243, 315];
   for index in 0..4 {
     let input = fixtures.input(index);
-    let plan = match (rgb.inspect(input, rgb.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("checked RGB plan"); } };
+    let Ok(plan) = rgb.inspect(input, rgb.default_limits(), never) else {
+      return test.fail("checked RGB plan");
+    };
     if (plan.input_bytes != input.len() || plan.row_bytes != 102 || plan.planes.bytes != planes[index] || plan.layout.bytes != 459 || plan.planned_bytes != totals[index]) {
       return test.fail("independent named logical storage sum");
     }
@@ -93,8 +97,10 @@ function limits(): test.TestOutcome {
       return test.fail("invalid top-level limits precede callbacks");
     }
   }
-  let frame = marker_at(input, 192);
-  let large = input.with(frame + 5, 11 as u8).with(frame + 6, 184 as u8).with(frame + 7, 19 as u8).with(frame + 8, 136 as u8);
+  let Some(frame) = marker_at(input, 192) else {
+    return test.fail("frame marker");
+  };
+  let large = input.with(frame + 5, 11).with(frame + 6, 184).with(frame + 7, 19).with(frame + 8, 136);
   let unlimited = rgb.RgbLimits { ...rgb.default_limits(), max_output_bytes: 2147483647, max_planned_bytes: 2147483647 };
   return test.assert_true(match (rgb.inspect(large, unlimited, never)) { Err(rgb.RgbError.Limit()) => true, _ => false });
 }
@@ -131,7 +137,7 @@ function framing(): test.TestOutcome {
       return test.fail("every truncated stream prefix");
     }
   }
-  for bad in [input.append(0 as u8), input.with(input.len() - 1, 216 as u8)] {
+  for bad in [input.append(0), input.with(input.len() - 1, 216)] {
     if (match (rgb.decode(bad, chroma.Filter.Bilinear, rgb.default_limits(), never)) { Err(rgb.RgbError.Plane(_)) => false, _ => true }) {
       return test.fail("strict final EOI and exact consumption");
     }
@@ -139,27 +145,29 @@ function framing(): test.TestOutcome {
   let restart = fixtures.input(0);
   let last = 0;
   for at in 0..restart.len() - 1 {
-    if (restart[at] == 255 as u8 && restart[at + 1] >= 208 as u8 && restart[at + 1] <= 215 as u8) {
+    if (restart[at] == 255 && restart[at + 1] >= 208 as u8 && restart[at + 1] <= 215 as u8) {
       last = at;
     }
   }
   if (last == 0) {
     return test.fail("late restart fixture");
   }
-  return test.assert_true(match (rgb.decode(restart.with(last + 1, 0 as u8), chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Plane(_)) => true, _ => false });
+  return test.assert_true(match (rgb.decode(restart.with(last + 1, 0), chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Plane(_)) => true, _ => false });
 }
 
 function ownership(): test.TestOutcome {
   let input = fixtures.input(1);
   let shared = cell_new(input);
   let first = match (rgb.decode(input, chroma.Filter.Bilinear, rgb.default_limits(), (): boolean => {
-    shared.set(shared.get().with(0, 0 as u8));
+    shared.set(shared.get().with(0, 0));
     return false;
   })) { Ok(v) => v, Err(_) => { return test.fail("callback source update"); } };
   let retained = first;
   first = pixels.Image { layout: first.layout, data: first.data.with(0, (first.data[0] as i32 ^ 255) as u8) };
-  let again = match (rgb.decode(input, chroma.Filter.Bilinear, rgb.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fresh color decode"); } };
-  return test.assert_true(near(retained.data, again.data, 0) && first.data[0] != retained.data[0] && shared.get()[0] == 0 as u8 && input[0] == 255 as u8);
+  let Ok(again) = rgb.decode(input, chroma.Filter.Bilinear, rgb.default_limits(), never) else {
+    return test.fail("fresh color decode");
+  };
+  return test.assert_true(near(retained.data, again.data, 0) && first.data[0] != retained.data[0] && shared.get()[0] == 0 && input[0] == 255);
 }
 
 function reentry(): test.TestOutcome {
@@ -187,7 +195,7 @@ function cancellation(): test.TestOutcome {
     if (match (success) { Ok(_) => false, Err(_) => true } || count.get() < 50) {
       return test.fail("complete decode poll coverage");
     }
-    for stop in 1..count.get() + 1 {
+    for stop in 1..=count.get() {
       let polls = cell_new(0);
       let result = rgb.decode(input, filter, rgb.default_limits(), (): boolean => {
         polls.set(polls.get() + 1);

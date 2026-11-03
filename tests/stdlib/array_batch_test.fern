@@ -2,7 +2,7 @@ import "std/test";
 import "std/array" as array;
 
 function test_slice_basic(): test.TestOutcome {
-  let s: i32[] = array.slice([10, 20, 30, 40, 50], 1, 4);
+  let s = array.slice([10, 20, 30, 40, 50], 1, 4);
   if (s.len() != 3) {
     return test.fail("slice length");
   }
@@ -19,7 +19,7 @@ function test_slice_empty(): test.TestOutcome {
 }
 
 function test_chunks_even(): test.TestOutcome {
-  let c: i32[][] = array.chunks([1, 2, 3, 4], 2);
+  let c = array.chunks([1, 2, 3, 4], 2);
   if (c.len() != 2) {
     return test.fail("chunk count");
   }
@@ -27,7 +27,7 @@ function test_chunks_even(): test.TestOutcome {
 }
 
 function test_chunks_uneven(): test.TestOutcome {
-  let c: i32[][] = array.chunks([1, 2, 3, 4, 5], 2);
+  let c = array.chunks([1, 2, 3, 4, 5], 2);
   if (c.len() != 3) {
     return test.fail("chunk count");
   }
@@ -44,7 +44,7 @@ function test_chunks_empty_input(): test.TestOutcome {
 }
 
 function test_windows_basic(): test.TestOutcome {
-  let w: i32[][] = array.windows([1, 2, 3, 4], 2);
+  let w = array.windows([1, 2, 3, 4], 2);
   if (w.len() != 3) {
     return test.fail("window count");
   }
@@ -60,7 +60,7 @@ function test_windows_too_wide(): test.TestOutcome {
 }
 
 function test_windows_full_width(): test.TestOutcome {
-  let w: i32[][] = array.windows([1, 2, 3], 3);
+  let w = array.windows([1, 2, 3], 3);
   if (w.len() != 1) {
     return test.fail("window count");
   }
@@ -68,7 +68,7 @@ function test_windows_full_width(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/array batch");
+  let r = test.new("std/array batch");
   r = r.it("slice basic", test_slice_basic);
   r = r.it("slice clamped", test_slice_clamped);
   r = r.it("slice empty", test_slice_empty);

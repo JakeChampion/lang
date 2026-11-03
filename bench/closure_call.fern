@@ -1,21 +1,17 @@
 function apply_n(f: (i32) => i32, n: i32): i64 {
-  let total: i64 = 0i64;
-  let i: i32 = 0;
-  while (i < n) {
-    total = total + f(i) as i64;
-    i = i + 1;
+  let total = 0i64;
+  for i in 0..n {
+    total += f(i) as i64;
   }
   return total;
 }
 
 function main(): i32 {
-  let total: i64 = 0i64;
-  let r: i32 = 0;
-  while (r < 6000) {
-    total = total + apply_n((x: i32) => x * 3 - 1, 400);
-    let bias: i32 = r;
-    total = total + apply_n((x: i32) => x + bias, 400);
-    r = r + 1;
+  let total = 0i64;
+  for r in 0..6000 {
+    total += apply_n((x: i32) => x * 3 - 1, 400);
+    let bias = r;
+    total += apply_n((x: i32) => x + bias, 400);
   }
   return (total % 97i64) as i32;
 }

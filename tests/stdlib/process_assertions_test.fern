@@ -1,46 +1,46 @@
 import "std/test";
 
 function test_echo_stdout_eq(): test.TestOutcome {
-  let r: ProcessResult = subprocess("echo", ["hello"], "");
+  let r = subprocess("echo", ["hello"], "");
   return test.assert_stdout_eq(r, "hello\n");
 }
 
 function test_echo_exit_code(): test.TestOutcome {
-  let r: ProcessResult = subprocess("echo", ["x"], "");
+  let r = subprocess("echo", ["x"], "");
   return test.assert_exit(r, 0);
 }
 
 function test_cat_passthrough(): test.TestOutcome {
-  let r: ProcessResult = subprocess("cat", [], "piped\n");
+  let r = subprocess("cat", [], "piped\n");
   return test.assert_process(r, 0, "piped");
 }
 
 function test_sh_nonzero_exit(): test.TestOutcome {
-  let r: ProcessResult = subprocess("sh", ["-c", "exit 7"], "");
+  let r = subprocess("sh", ["-c", "exit 7"], "");
   return test.assert_exit(r, 7);
 }
 
 function test_sh_stderr_contains(): test.TestOutcome {
-  let r: ProcessResult = subprocess("sh", ["-c", "echo err-line 1>&2; exit 0"], "");
+  let r = subprocess("sh", ["-c", "echo err-line 1>&2; exit 0"], "");
   return test.assert_stderr_contains(r, "err-line");
 }
 
 function test_spawn_missing_binary(): test.TestOutcome {
-  let r: ProcessResult = subprocess("this-binary-definitely-does-not-exist-7349", [], "");
+  let r = subprocess("this-binary-definitely-does-not-exist-7349", [], "");
   return test.assert_exit(r, 127);
 }
 
 function test_temp_dir_writes_and_reads(): test.TestOutcome {
   match (temp_dir("lang-process-assert")) {
     Ok(dir) => {
-      let path: string = dir + "/fixture.txt";
+      let path = dir + "/fixture.txt";
       match (write_file(path, "hello tempdir")) {
         Ok(_) => {},
         Err(_) => {
           return test.fail("write_file failed under " + dir);
         }
       }
-      let r: ProcessResult = subprocess("cat", [path], "");
+      let r = subprocess("cat", [path], "");
       return test.assert_process(r, 0, "hello tempdir");
     },
     Err(_) => {
@@ -51,9 +51,9 @@ function test_temp_dir_writes_and_reads(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("process assertions");
+  let r = test.new("process assertions");
 
-  let probe: ProcessResult = subprocess("sh", ["-c", "exit 0"], "");
+  let probe = subprocess("sh", ["-c", "exit 0"], "");
   if (probe.exit_code == 127) {
     r = r.skip("posix tools probe", "sh / echo / cat not on $PATH");
     return r.finish();

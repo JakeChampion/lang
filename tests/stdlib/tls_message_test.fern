@@ -40,22 +40,22 @@ function one(b: u8[]): message.Raw {
 }
 
 function raw(kind: i32, body: string): message.Raw {
-  let b: u8[] = __codec_bytes(hex.decode(body));
+  let b = __codec_bytes(hex.decode(body));
   let out: u8[] = [kind as u8, (b.len() >> 16 & 255) as u8, (b.len() >> 8 & 255) as u8, (b.len() & 255) as u8];
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return message.Raw { kind: kind, bytes: out };
 }
 
 function cat(a: u8[], b: u8[]): u8[] {
-  let out: u8[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -85,18 +85,18 @@ function decoded(b: u8[]): message.Message {
 }
 
 function hexes(v: i32[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < v.len()) {
     out = out + " " + v[i].to_string();
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function test_round_trip(): test.TestOutcome {
   let all: u8[][] = [client_hello(), server_hello(), encrypted_extensions(), certificate(), certificate_verify(), server_finished(), client_finished(), new_session_ticket()];
-  let i: i32 = 0;
+  let i = 0;
   while (i < all.len()) {
     match (message.decode(one(all[i]))) {
       Ok(m) => {
@@ -111,7 +111,7 @@ function test_round_trip(): test.TestOutcome {
         return test.fail("message " + i.to_string() + ": " + e.message());
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -126,10 +126,10 @@ function test_client_hello_fields(): test.TestOutcome {
         return test.fail("cipher suites");
       }
       let kinds: i32[] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i < h.extensions.len()) {
         kinds = kinds.append(h.extensions[i].kind);
-        i = i + 1;
+        i += 1;
       }
       if (hexes(kinds) != " 0 65281 10 35 51 43 13 45 28") {
         return test.fail("extension kinds" + hexes(kinds));
@@ -304,7 +304,7 @@ function test_server_flight_fields(): test.TestOutcome {
 }
 
 function test_build_client_hello(): test.TestOutcome {
-  let share: message.KeyShareEntry = message.KeyShareEntry { group: 0x001d, key: __codec_bytes(hex.decode("99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c")) };
+  let share = message.KeyShareEntry { group: 0x001d, key: __codec_bytes(hex.decode("99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c")) };
   let exts: message.Extension[] = [
     message.ext_server_name("server"),
     message.Extension { kind: 0xff01, data: [0 as u8] },
@@ -316,13 +316,13 @@ function test_build_client_hello(): test.TestOutcome {
     message.ext_psk_modes([1]),
     message.Extension { kind: 0x001c, data: [0x40 as u8, 0x01 as u8] },
   ];
-  let h: message.ClientHello = message.ClientHello { random: __codec_bytes(hex.decode("cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7")), session_id: [], cipher_suites: [0x1301, 0x1303, 0x1302], extensions: exts };
+  let h = message.ClientHello { random: __codec_bytes(hex.decode("cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7")), session_id: [], cipher_suites: [0x1301, 0x1303, 0x1302], extensions: exts };
   return test.assert_eq(hex.encode(message.encode(message.ClientHelloMsg(h))), hex.encode(client_hello()));
 }
 
 function test_pre_shared_key(): test.TestOutcome {
-  let offer: message.OfferedPsks = message.OfferedPsks { identities: [message.PskIdentity { identity: "t1".bytes(), obfuscated_age: 0x01020304 as u32 }, message.PskIdentity { identity: "ticket-2".bytes(), obfuscated_age: 7 as u32 }], binders: [__codec_bytes(hex.decode("3add4fb2d8fdf822a0ca3cf7678ef5e88dae990141c5924d57bb6fa31b9e5f9d")), __codec_bytes(hex.decode("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"))] };
-  let e: message.Extension = message.ext_pre_shared_key(offer);
+  let offer = message.OfferedPsks { identities: [message.PskIdentity { identity: "t1".bytes(), obfuscated_age: 0x01020304 as u32 }, message.PskIdentity { identity: "ticket-2".bytes(), obfuscated_age: 7 as u32 }], binders: [__codec_bytes(hex.decode("3add4fb2d8fdf822a0ca3cf7678ef5e88dae990141c5924d57bb6fa31b9e5f9d")), __codec_bytes(hex.decode("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"))] };
+  let e = message.ext_pre_shared_key(offer);
   if (e.kind != message.EXT_PRE_SHARED_KEY || message.binders_length(offer.binders) != 68 || e.data.len() != 2 + 8 + 14 + 68) {
     return test.fail("offer encoding " + e.data.len().to_string());
   }
@@ -384,7 +384,7 @@ function test_build_server_extensions(): test.TestOutcome {
 }
 
 function test_split(): test.TestOutcome {
-  let flight: u8[] = cat(cat(cat(encrypted_extensions(), certificate()), certificate_verify()), server_finished());
+  let flight = cat(cat(cat(encrypted_extensions(), certificate()), certificate_verify()), server_finished());
   match (message.split(flight)) {
     Ok(s) => {
       if (s.messages.len() != 4 || s.rest.len() != 0 || s.messages[3].kind != message.FINISHED) {
@@ -432,12 +432,12 @@ function test_split_refusals(): test.TestOutcome {
 }
 
 function test_refusals(): test.TestOutcome {
-  let ch: u8[] = client_hello();
-  let n: i32 = ch.len();
+  let ch = client_hello();
+  let n = ch.len();
   if (refusal(message.decode(message.Raw { kind: 1, bytes: ch.take(n - 1) })) != "tls message: malformed ClientHello extensions") {
     return test.fail("truncated");
   }
-  let long: u8[] = cat(ch.with(3, ch[3] + 1 as u8), [0 as u8]);
+  let long = cat(ch.with(3, ch[3] + 1 as u8), [0 as u8]);
   if (refusal(message.decode(one(long))) != "tls message: malformed ClientHello") {
     return test.fail("trailing byte");
   }
@@ -468,7 +468,7 @@ function test_refusals(): test.TestOutcome {
 }
 
 function test_retry(): test.TestOutcome {
-  let h: message.ServerHello = message.ServerHello { random: __codec_bytes(hex.decode("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c")), session_id: [], cipher_suite: 0x1301, extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(0x11ec)] };
+  let h = message.ServerHello { random: __codec_bytes(hex.decode("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c")), session_id: [], cipher_suite: 0x1301, extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(0x11ec)] };
   match (decoded(message.encode(message.ServerHelloMsg(h)))) {
     message.ServerHelloMsg(back) => {
       return test.assert_eq(back.is_retry(), true);
@@ -481,7 +481,7 @@ function test_retry(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/message");
+  let r = test.new("std/tls/message");
   r = r.it("RFC 8448 messages round trip", test_round_trip);
   r = r.it("ClientHello fields", test_client_hello_fields);
   r = r.it("ServerHello fields", test_server_hello_fields);

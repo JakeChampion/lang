@@ -10,11 +10,9 @@ function fib(n: i32): i32 {
 }
 
 function main(): i32 {
-  let acc: i64 = 0i64;
-  let i: i64 = 0i64;
-  while (i < 1000000i64) {
+  let acc = 0i64;
+  for i in 0i64..1000000i64 {
     acc = step(acc, i);
-    i = i + 1i64;
   }
   return ((acc + fib(24) as i64) % 97i64) as i32;
 }

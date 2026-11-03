@@ -3,18 +3,18 @@ import "std/test";
 import "std/string";
 
 function test_text_basic(): test.TestOutcome {
-  let lg: log.Logger = log.new(log.INFO);
+  let lg = log.new(log.INFO);
   return test.assert_eq(lg.info_().render("hello"), "[INFO] hello\n");
 }
 
 function test_text_fields(): test.TestOutcome {
-  let lg: log.Logger = log.new(log.TRACE);
-  let line: string = lg.warn_().str("user", "bob").int("id", 7).bool("ok", true).render("hi");
+  let lg = log.new(log.TRACE);
+  let line = lg.warn_().str("user", "bob").int("id", 7).bool("ok", true).render("hi");
   return test.assert_eq(line, "[WARN] hi user=bob id=7 ok=true\n");
 }
 
 function test_threshold_filters_below(): test.TestOutcome {
-  let lg: log.Logger = log.new(log.INFO);
+  let lg = log.new(log.INFO);
   if (lg.debug_().str("k", "v").render("d") != "") {
     return test.fail("DEBUG should be filtered at INFO threshold");
   }
@@ -22,7 +22,7 @@ function test_threshold_filters_below(): test.TestOutcome {
 }
 
 function test_threshold_passes_at_or_above(): test.TestOutcome {
-  let lg: log.Logger = log.new(log.WARN);
+  let lg = log.new(log.WARN);
   if (lg.warn_().render("w") == "") {
     return test.fail("WARN should pass at WARN threshold");
   }
@@ -30,33 +30,33 @@ function test_threshold_passes_at_or_above(): test.TestOutcome {
 }
 
 function test_json_basic(): test.TestOutcome {
-  let lg: log.Logger = log.new_json(log.TRACE);
+  let lg = log.new_json(log.TRACE);
   return test.assert_eq(lg.info_().render("m"), "{\"level\":\"INFO\",\"msg\":\"m\"}\n");
 }
 
 function test_json_fields(): test.TestOutcome {
-  let lg: log.Logger = log.new_json(log.TRACE);
-  let line: string = lg.error_().str("k", "v").int("n", 42).bool("ok", false).render("boom");
+  let lg = log.new_json(log.TRACE);
+  let line = lg.error_().str("k", "v").int("n", 42).bool("ok", false).render("boom");
   return test.assert_eq(line, "{\"level\":\"ERROR\",\"msg\":\"boom\",\"k\":\"v\",\"n\":42,\"ok\":false}\n");
 }
 
 function test_json_escaping(): test.TestOutcome {
-  let lg: log.Logger = log.new_json(log.TRACE);
-  let line: string = lg.info_().render("a\"b\\c");
+  let lg = log.new_json(log.TRACE);
+  let line = lg.info_().render("a\"b\\c");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"a\\\"b\\\\c\"}\n");
 }
 
 function test_json_escaping_whitespace(): test.TestOutcome {
-  let lg: log.Logger = log.new_json(log.TRACE);
-  let line: string = lg.info_().render("x\ny\rz\tw");
+  let lg = log.new_json(log.TRACE);
+  let line = lg.info_().render("x\ny\rz\tw");
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"x\\ny\\rz\\tw\"}\n");
 }
 
 function test_json_escaping_control(): test.TestOutcome {
   let raw: u8[] = [65 as u8, 1 as u8, 66 as u8, 31 as u8];
-  let msg: string = string_from_bytes_unchecked(raw);
-  let lg: log.Logger = log.new_json(log.TRACE);
-  let line: string = lg.info_().render(msg);
+  let msg = string_from_bytes_unchecked(raw);
+  let lg = log.new_json(log.TRACE);
+  let line = lg.info_().render(msg);
   return test.assert_eq(line, "{\"level\":\"INFO\",\"msg\":\"A\\u0001B\\u001f\"}\n");
 }
 
@@ -77,12 +77,12 @@ function test_level_names(): test.TestOutcome {
 }
 
 function test_at_explicit_level(): test.TestOutcome {
-  let lg: log.Logger = log.new(log.DEBUG);
+  let lg = log.new(log.DEBUG);
   return test.assert_eq(lg.at(log.DEBUG).render("x"), "[DEBUG] x\n");
 }
 
 function test_sink_receives_each_line(): test.TestOutcome {
-  let seen: Cell[string] = cell_new("");
+  let seen = cell_new("");
   let lg: log.Logger = log.new_json(log.INFO).to((line: string): void => { seen.set(seen.get() + line + "|"); });
   lg.info_().emit("a");
   lg.debug_().emit("dropped");
@@ -91,7 +91,7 @@ function test_sink_receives_each_line(): test.TestOutcome {
 }
 
 function test_sink_keeps_level_and_mode(): test.TestOutcome {
-  let seen: Cell[string] = cell_new("");
+  let seen = cell_new("");
   let lg: log.Logger = log.new(log.WARN).to((line: string): void => { seen.set(seen.get() + "<" + line + ">"); });
   lg.info_().emit("quiet");
   lg.error_().int("n", 3).emit("loud");
@@ -102,7 +102,7 @@ function test_sink_keeps_level_and_mode(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("leveled logger");
+  let r = test.new("leveled logger");
   r = r.it("text basic", test_text_basic);
   r = r.it("text fields", test_text_fields);
   r = r.it("threshold filters below", test_threshold_filters_below);

@@ -28,11 +28,11 @@ function passed(deadline: Option[Instant]): boolean {
 
 // When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
 function wait_until(deadline: Option[Instant]): Option[Instant] {
-  let most: Duration = time.duration_millis(100);
+  let most = time.duration_millis(100);
   let Some(at) = deadline else {
     return Some(now().add(most));
   };
-  let left: Duration = at.since(now()).add(time.duration_millis(1));
+  let left = at.since(now()).add(time.duration_millis(1));
   if (left.cmp(time.duration_millis(1)) < 0) {
     return Some(now().add(time.duration_millis(1)));
   }
@@ -43,41 +43,35 @@ function wait_until(deadline: Option[Instant]): Option[Instant] {
 }
 
 function pump(c: conn.Conn, sock: i32, peer: net.SocketAddr): conn.Conn {
-  let c2: conn.Conn = c.transmit(now());
-  let out: u8[][] = c2.datagrams();
+  let c2 = c.transmit(now());
+  let out = c2.datagrams();
   c2 = c2.sent();
   for d in out {
-    let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
+    let _ = net.send_to(sock, d, peer);
   }
   return c2;
 }
 
 function drain(c: conn.Conn, sock: i32, buf: u8[]): conn.Conn {
-  let cur: conn.Conn = c;
-  let going: boolean = true;
-  while (going) {
-    match (net.recv_from(sock, buf)) {
-      Ok(got) => {
-        let step: conn.Conn = cur.receive(buf[0:got.0], now());
-        cur = step.events_taken();
-        for e in step.events {
-          match (e) {
-            conn.Connected => {
-              print("fern client: connected alpn=" + cur.alpn());
-            },
-            conn.Closed(why) => {
-              print("fern client: closed code=" + why.code.to_string() + " reason=" + why.reason);
-            },
-            _ => {}
-          }
-        }
-      },
-      Err(_) => {
-        going = false;
+  let cur = c;
+  loop {
+    let Ok(got) = net.recv_from(sock, buf) else {
+      return cur;
+    };
+    let step = cur.receive(buf[0:got.0], now());
+    cur = step.events_taken();
+    for e in step.events {
+      match (e) {
+        conn.Connected => {
+          print(f"fern client: connected alpn={cur.alpn()}");
+        },
+        conn.Closed(why) => {
+          print(f"fern client: closed code={why.code} reason={why.reason}");
+        },
+        _ => {}
       }
     }
   }
-  return cur;
 }
 
 function wait_for(c: conn.Conn): Option[Instant] {
@@ -85,11 +79,9 @@ function wait_for(c: conn.Conn): Option[Instant] {
 }
 
 function payload(n: i32): u8[] {
-  let out: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
-  while (i < n) {
+  let out = __alloc_u8(n);
+  for i in 0..n {
     out = out.with(i, (i * 7 + 3 & 255) as u8);
-    i = i + 1;
   }
   return out;
 }
@@ -98,12 +90,10 @@ function same(a: u8[], b: u8[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
-  while (i < a.len()) {
+  for i in 0..a.len() {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }
@@ -126,27 +116,24 @@ function echoed(c: conn.Conn, e: Echo): (conn.Conn, Echo) {
   let Ok(r) = c.read(e.id) else {
     return (c, e);
   };
-  let got: u8[] = e.got.concat(r.1);
+  let got = e.got.concat(r.1);
   if (!r.2) {
     return (r.0, Echo { ...e, got: got });
   }
-  let matched: boolean = same(got, e.sent);
-  let verdict: string = "DIFFERS";
-  if (matched) {
-    verdict = "matches";
-  }
-  print("fern client: echo of " + got.len().to_string() + " bytes " + verdict);
-  return (r.0.close(0 as i64, "fern done", true, now()), Echo { ...e, got: got, matched: matched, closing: true });
+  let matched = same(got, e.sent);
+  let verdict = if (matched) { "matches" } else { "DIFFERS" };
+  print(f"fern client: echo of {got.len()} bytes {verdict}");
+  return (r.0.close(0, "fern done", true, now()), Echo { ...e, got: got, matched: matched, closing: true });
 }
 
 function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean {
-  let buf: u8[] = __alloc_u8(65536);
-  let c: conn.Conn = c0;
-  let e: Echo = Echo { id: 0 - 1 as i64, sent: payload(size), got: [], matched: false, closing: false };
-  let started: Instant = now();
+  let buf = __alloc_u8(65536);
+  let c = c0;
+  let e = Echo { id: -1, sent: payload(size), got: [], matched: false, closing: false };
+  let started = now();
   while (!c.done() && now().since(started).cmp(time.duration_seconds(20)) < 0) {
     c = pump(c, sock, peer);
-    let woke: async.Wake = async.wait_any([sock, 1], wait_for(c));
+    let _ = async.wait_any([sock, 1], wait_for(c));
     c = drain(c, sock, buf);
     if (passed(c.deadline())) {
       c = c.tick(now());
@@ -159,7 +146,7 @@ function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
@@ -167,7 +154,7 @@ function main(): i32 {
     eprint("no roots");
     return 2;
   };
-  let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).client_side(argv[2], roots);
+  let cfg = conn.config(["fern-echo"]).with_streams(16, 16, 262144, 1048576).client_side(argv[2], roots);
   let Ok(c0) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
@@ -177,7 +164,7 @@ function main(): i32 {
   let Ok(sock) = net.udp_socket(any) else {
     return 2;
   };
-  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let _ = net.set_nonblocking(sock, true);
   let Ok(size) = i32.parse_i32(argv[4]) else {
     return 2;
   };

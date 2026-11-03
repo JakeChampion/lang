@@ -27,7 +27,7 @@ function test_map(): test.TestOutcome {
 function test_map_none(): test.TestOutcome {
   let n: Option[i32] = None;
   let m = n.map((x: i32): i32 => x * 2);
-  return test.assert_eq(m.unwrap_or(0 - 1), 0 - 1);
+  return test.assert_eq(m.unwrap_or(-1), -1);
 }
 
 function test_and_then(): test.TestOutcome {
@@ -166,7 +166,7 @@ function test_flatten(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/option combinators");
+  let r = test.new("std/option combinators");
   r = r.it("is_some / is_none", test_is_some_is_none);
   r = r.it("unwrap_or", test_unwrap_or);
   r = r.it("unwrap_or_else", test_unwrap_or_else);

@@ -2,6 +2,8 @@
 // paths seen most recently, the oldest evicted past the bound, so the
 // state churns without growing.
 import "std/i32";
+import "std/array";
+import "std/result";
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -14,20 +16,13 @@ function bound(): i32 {
 }
 
 function evict_oldest(r: Recent): Recent {
-  let dropped: Map[string, i32] = r.hits.remove(r.order[0]);
-  let rest: string[] = [];
-  let i: i32 = 1;
-  while (i < r.order.len()) {
-    rest = rest.append(r.order[i]);
-    i = i + 1;
-  }
-  return Recent { hits: dropped, order: rest };
+  return Recent { hits: r.hits.remove(r.order[0]), order: array.drop(r.order, 1) };
 }
 
 function handle(r: Recent, req: HttpRequest, plat: platform.Platform): (Recent, HttpResponse) {
-  let key: string = req.path + "";
-  let seen: i32 = r.hits.get_or(key, 0);
-  let next: Recent = r;
+  let key = req.path + "";
+  let seen = r.hits.get_or(key, 0);
+  let next = r;
   if (seen == 0) {
     next = Recent { hits: next.hits.insert(key, 1), order: next.order.append(key) };
     if (next.order.len() > bound()) {
@@ -36,29 +31,17 @@ function handle(r: Recent, req: HttpRequest, plat: platform.Platform): (Recent, 
   } else {
     next = Recent { ...next, hits: next.hits.insert(key, seen + 1) };
   }
-  return (next, http.ok((seen + 1).to_string() + " of " + next.order.len().to_string()));
+  return (next, http.ok(f"{seen + 1} of {next.order.len()}"));
 }
 
 function port(): i32 {
-  match (env("PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => {
-          return n;
-        },
-        Err(_) => {
-          return 8080;
-        }
-      }
-    },
-    None => {
-      return 8080;
-    }
-  }
-  return 8080;
+  let Some(p) = env("PORT") else {
+    return 8080;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(8080);
 }
 
 function main(): i32 {
-  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
+  let opts = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
   return serve.exit_code(serve.run_with(port(), opts, Recent { hits: map_new(512), order: [] }, handle));
 }

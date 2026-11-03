@@ -9,23 +9,23 @@ import "std/option";
 struct Link { c: h3.Session, s: h3.Session, log: string, trickle: boolean }
 
 function linked(): Link {
-  let c: h3.Session = h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64);
-  let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
+  let c = h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64);
+  let s = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
   return flow(Link { c: c, s: s, log: "", trickle: false });
 }
 
 function flow(p: Link): Link {
-  let cur: Link = p;
-  let rounds: i32 = 0;
+  let cur = p;
+  let rounds = 0;
   while (rounds < 20) {
-    let step1: h3.Session = cur.c;
-    let cacts: h3.Action[] = step1.actions;
-    let cevs: h3.Event[] = step1.events;
-    let c: h3.Session = step1.taken();
-    let step2: h3.Session = cur.s;
-    let sacts: h3.Action[] = step2.actions;
-    let sevs: h3.Event[] = step2.events;
-    let s: h3.Session = step2.taken();
+    let step1 = cur.c;
+    let cacts = step1.actions;
+    let cevs = step1.events;
+    let c = step1.taken();
+    let step2 = cur.s;
+    let sacts = step2.actions;
+    let sevs = step2.events;
+    let s = step2.taken();
     cur = Link { ...cur, c: c, s: s, log: cur.log + noted("client", cevs) + noted("server", sevs) };
     if (cacts.len() == 0 && sacts.len() == 0) {
       return cur;
@@ -36,7 +36,7 @@ function flow(p: Link): Link {
     for a in sacts {
       cur = Link { ...cur, c: deliver(cur.c, a, cur.trickle), log: cur.log + acted("server", a) };
     }
-    rounds = rounds + 1;
+    rounds += 1;
   }
   return cur;
 }
@@ -47,11 +47,11 @@ function deliver(to: h3.Session, a: h3.Action, trickle: boolean): h3.Session {
       if (!trickle || bytes.len() <= 1) {
         return to.on_stream(id, bytes, fin);
       }
-      let cur: h3.Session = to;
-      let i: i32 = 0;
+      let cur = to;
+      let i = 0;
       while (i < bytes.len()) {
         cur = cur.on_stream(id, bytes[i:i + 1], fin && i == bytes.len() - 1);
-        i = i + 1;
+        i += 1;
       }
       return cur;
     },
@@ -82,7 +82,7 @@ function acted(who: string, a: h3.Action): string {
 }
 
 function noted(who: string, evs: h3.Event[]): string {
-  let out: string = "";
+  let out = "";
   for e in evs {
     out = out + who + " " + event_text(e) + "; ";
   }
@@ -113,7 +113,7 @@ function event_text(e: h3.Event): string {
 }
 
 function fields_text(fs: qpack.Field[]): string {
-  let out: string = "[";
+  let out = "[";
   for f in fs {
     out = out + f.name + "=" + f.value + " ";
   }
@@ -129,13 +129,13 @@ function post(length: string): qpack.Field[] {
 }
 
 function test_reordered_low_stream(): test.TestOutcome {
-  let p: Link = linked();
-  let k: i32 = 1;
+  let p = linked();
+  let k = 1;
   while (k <= 32) {
-    let id: i64 = k as i64 * 4;
+    let id = k as i64 * 4;
     p = flow(Link { ...p, log: "", c: p.c.send_headers(id, get("/h"), true) });
     p = flow(Link { ...p, log: "", s: p.s.send_headers(id, [qpack.field(":status", "200")], true) });
-    k = k + 1;
+    k += 1;
   }
   p = flow(Link { ...p, log: "", c: p.c.send_headers(0 as i64, get("/late"), true) });
   if (count(p.log, "server headers 0 ") != "1") {
@@ -146,8 +146,8 @@ function test_reordered_low_stream(): test.TestOutcome {
 }
 
 function test_request_response(): test.TestOutcome {
-  let p: Link = linked();
-  let settings: string = "-";
+  let p = linked();
+  let settings = "-";
   if let Some(ps) = p.c.peer_settings() {
     settings = ps.max_table_capacity.to_string() + "/" + ps.blocked_streams.to_string() + "/" + ps.max_field_section_size.to_string();
   }
@@ -157,12 +157,12 @@ function test_request_response(): test.TestOutcome {
 }
 
 function writes_on(s: h3.Session, id: i64): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for a in s.actions {
     match (a) {
       h3.Write(on, _, _) => {
         if (on == id) {
-          n = n + 1;
+          n += 1;
         }
       },
       _ => {}
@@ -172,44 +172,44 @@ function writes_on(s: h3.Session, id: i64): i32 {
 }
 
 function test_send_section(): test.TestOutcome {
-  let p: Link = linked();
+  let p = linked();
   p = flow(Link { ...p, c: p.c.send_headers(0 as i64, get("/"), true).send_headers(4 as i64, get("/t"), true).send_headers(8 as i64, get("/e"), true), log: "" });
-  let enc: qpack.Encoder = p.s.enc;
-  let head: u8[] = enc.put_status(enc.section(16), 200);
+  let enc = p.s.enc;
+  let head = enc.put_status(enc.section(16), 200);
   head = enc.put(head, "content-type", "text/plain");
-  let s: h3.Session = p.s.send_section(0 as i64, head, "hello".as_bytes(), true);
+  let s = p.s.send_section(0 as i64, head, "hello".as_bytes(), true);
   s = s.send_section(4 as i64, enc.encode([qpack.field(":status", "200")]), "ab".as_bytes(), false).send_trailers(4 as i64, [qpack.field("x-done", "1")]);
   s = s.send_section(8 as i64, enc.put_status(enc.section(0), 200), [], true);
-  let writes: string = writes_on(s, 0 as i64).to_string() + "/" + writes_on(s, 4 as i64).to_string() + "/" + writes_on(s, 8 as i64).to_string();
+  let writes = writes_on(s, 0 as i64).to_string() + "/" + writes_on(s, 4 as i64).to_string() + "/" + writes_on(s, 8 as i64).to_string();
   p = flow(Link { ...p, s: s, log: "" });
   return test.assert_eq(writes + " | " + p.log, "1/2/1 | client headers 0 [:status=200 content-type=text/plain ]; client data 0 hello; client end 0; client headers 4 [:status=200 ]; client data 4 ab; client trailers 4 [x-done=1 ]; client end 4; client headers 8 [:status=200 ]; client end 8; ");
 }
 
 function test_body_trailers_interim(): test.TestOutcome {
-  let p: Link = linked();
+  let p = linked();
   p = Link { ...p, trickle: true, log: "" };
-  let c: h3.Session = p.c.send_headers(0 as i64, post("6"), false).send_data(0 as i64, "abc".bytes(), false).send_data(0 as i64, "def".bytes(), false).send_trailers(0 as i64, [qpack.field("x-sum", "ok")]);
+  let c = p.c.send_headers(0 as i64, post("6"), false).send_data(0 as i64, "abc".bytes(), false).send_data(0 as i64, "def".bytes(), false).send_trailers(0 as i64, [qpack.field("x-sum", "ok")]);
   p = flow(Link { ...p, c: c });
-  let body: string = count(p.log, "server data 0 ");
+  let body = count(p.log, "server data 0 ");
   p = flow(Link { ...p, log: "", s: p.s.send_headers(0 as i64, [qpack.field(":status", "103"), qpack.field("link", "</a>")], false).send_headers(0 as i64, [qpack.field(":status", "204")], true) });
   return test.assert_eq(body + " | " + p.log, "6 | client headers 0 [:status=103 link=</a> ]; client headers 0 [:status=204 ]; client end 0; ");
 }
 
 function count(s: string, needle: string): string {
-  let n: i32 = 0;
-  let rest: string = s;
+  let n = 0;
+  let rest = s;
   while (true) {
     let Some(at) = rest.index_of(needle) else {
       break;
     };
-    n = n + 1;
+    n += 1;
     rest = rest.drop(at + needle.len());
   }
   return n.to_string();
 }
 
 function test_bodiless(): test.TestOutcome {
-  let p: Link = linked();
+  let p = linked();
   let head: qpack.Field[] = [qpack.field(":method", "HEAD"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/")];
   p = flow(Link { ...p, c: p.c.send_headers(0 as i64, head, true).send_headers(4 as i64, get("/cached"), true) });
   p = flow(Link { ...p, log: "", s: p.s.send_headers(0 as i64, [qpack.field(":status", "200"), qpack.field("content-length", "12")], true).send_headers(4 as i64, [qpack.field(":status", "304"), qpack.field("content-length", "40")], true) });
@@ -225,36 +225,36 @@ function test_malformed(): test.TestOutcome {
     [qpack.field(":method", "GET"), qpack.field("accept", "*/*"), qpack.field(":scheme", "https"), qpack.field(":path", "/")],
     [qpack.field(":method", "CONNECT"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com")],
   ];
-  let out: string = "";
+  let out = "";
   let id: i64 = 0;
   for fs in cases {
-    let p: Link = linked();
+    let p = linked();
     p = flow(Link { ...p, log: "", c: p.c.send_headers(id, fs, true) });
     out = out + p.log + "\n";
   }
-  let len: Link = linked();
+  let len = linked();
   len = flow(Link { ...len, log: "", c: len.c.send_headers(0 as i64, post("5"), false).send_data(0 as i64, "abc".bytes(), true) });
-  out = out + len.log;
-  let want: string = "";
-  let i: i32 = 0;
+  out += len.log;
+  let want = "";
+  let i = 0;
   while (i < 6) {
-    want = want + "server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; \n";
-    i = i + 1;
+    want += "server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; \n";
+    i += 1;
   }
   return test.assert_eq(out, want + "server headers 0 [:method=POST :scheme=https :authority=example.com :path=/upload content-length=5 ]; server data 0 abc; server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; ");
 }
 
 function test_connection_errors(): test.TestOutcome {
-  let p: Link = linked();
-  let out: string = closes(p.s.on_stream(0 as i64, __codec_bytes(hex.decode("000161")), false));
-  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, __codec_bytes(hex.decode("00070100")), false));
-  out = out + closes(p.s.on_stream(14 as i64, __codec_bytes(hex.decode("000400")), false));
-  out = out + closes(h3.server(h3.config()).on_stream(2 as i64, __codec_bytes(hex.decode("0004020300")), false));
-  out = out + closes(p.s.on_stream(6 as i64, [], true));
-  out = out + closes(p.s.on_stream(18 as i64, __codec_bytes(hex.decode("01")), false));
-  out = out + closes(p.s.on_stream(22 as i64, __codec_bytes(hex.decode("21")), false));
-  let step3: h3.Session = p.c.send_headers(4 as i64, get("/g"), true);
-  let cacts: h3.Action[] = step3.actions;
+  let p = linked();
+  let out = closes(p.s.on_stream(0 as i64, __codec_bytes(hex.decode("000161")), false));
+  out += closes(h3.server(h3.config()).on_stream(2 as i64, __codec_bytes(hex.decode("00070100")), false));
+  out += closes(p.s.on_stream(14 as i64, __codec_bytes(hex.decode("000400")), false));
+  out += closes(h3.server(h3.config()).on_stream(2 as i64, __codec_bytes(hex.decode("0004020300")), false));
+  out += closes(p.s.on_stream(6 as i64, [], true));
+  out += closes(p.s.on_stream(18 as i64, __codec_bytes(hex.decode("01")), false));
+  out += closes(p.s.on_stream(22 as i64, __codec_bytes(hex.decode("21")), false));
+  let step3 = p.c.send_headers(4 as i64, get("/g"), true);
+  let cacts = step3.actions;
   let request: u8[] = [];
   for a in cacts {
     if let h3.Write(id, bytes, _) = a {
@@ -263,14 +263,14 @@ function test_connection_errors(): test.TestOutcome {
       }
     }
   }
-  let step4: h3.Session = p.s.on_stream(4 as i64, __codec_bytes(hex.decode("2103abcdef")).concat(request), true);
-  let evs: h3.Event[] = step4.events;
+  let step4 = p.s.on_stream(4 as i64, __codec_bytes(hex.decode("2103abcdef")).concat(request), true);
+  let evs = step4.events;
   return test.assert_eq(out + "| " + noted("server", evs), "261 DATA outside a message's body; 266 the control stream did not open with SETTINGS; 259 a second critical stream of one type; 265 a repeated setting, or one of HTTP/2's; 260 a critical stream ended; 259 a push stream from a client; stop 22 259; | server headers 4 [:method=GET :scheme=https :authority=example.com :path=/g ]; server end 4; ");
 }
 
 function closes(s: h3.Session): string {
-  let step5: h3.Session = s;
-  let acts: h3.Action[] = step5.actions;
+  let step5 = s;
+  let acts = step5.actions;
   for a in acts {
     match (a) {
       h3.CloseConnection(code, why) => {
@@ -286,50 +286,50 @@ function closes(s: h3.Session): string {
 }
 
 function test_goaway(): test.TestOutcome {
-  let p: Link = linked();
+  let p = linked();
   p = flow(Link { ...p, log: "", c: p.c.send_headers(0 as i64, get("/a"), true).send_headers(4 as i64, get("/b"), true) });
   p = flow(Link { ...p, log: "", s: p.s.send_goaway(4 as i64) });
   return test.assert_eq(p.log + p.c.goaway_received().to_string(), "client goaway 4; client aborted 4 267; 4");
 }
 
 function test_qpack_blocked(): test.TestOutcome {
-  let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
-  let step6: h3.Session = s;
-  let s0: h3.Session = step6.taken();
-  let section: string = "03811011d1d7";
-  let headers: string = "0106" + section;
-  let step7: h3.Session = s0.on_stream(0 as i64, __codec_bytes(hex.decode(headers)), true);
-  let acts1: h3.Action[] = step7.actions;
-  let evs1: h3.Event[] = step7.events;
-  let s1: h3.Session = step7.taken();
+  let s = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
+  let step6 = s;
+  let s0 = step6.taken();
+  let section = "03811011d1d7";
+  let headers = "0106" + section;
+  let step7 = s0.on_stream(0 as i64, __codec_bytes(hex.decode(headers)), true);
+  let acts1 = step7.actions;
+  let evs1 = step7.events;
+  let s1 = step7.taken();
   let encoder: string = "02" + "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468";
-  let step8: h3.Session = s1.on_stream(6 as i64, __codec_bytes(hex.decode(encoder)), false);
-  let acts2: h3.Action[] = step8.actions;
-  let evs2: h3.Event[] = step8.events;
-  let written: string = "";
+  let step8 = s1.on_stream(6 as i64, __codec_bytes(hex.decode(encoder)), false);
+  let acts2 = step8.actions;
+  let evs2 = step8.events;
+  let written = "";
   for a in acts2 {
     if let h3.Write(id, bytes, _) = a {
       written = written + id.to_string() + ":" + hex.encode(bytes) + " ";
     }
   }
-  let waits: string = s0.waiting(0 as i64).to_string() + " " + s1.waiting(0 as i64).to_string() + " " + step8.waiting(0 as i64).to_string();
+  let waits = s0.waiting(0 as i64).to_string() + " " + s1.waiting(0 as i64).to_string() + " " + step8.waiting(0 as i64).to_string();
   return test.assert_eq(waits + " | " + int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "false true false | 0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
 }
 
 function test_slot_sharing(): test.TestOutcome {
-  let headers: u8[] = __codec_bytes(hex.decode("0106" + "03811011d1d7"));
-  let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();
+  let headers = __codec_bytes(hex.decode("0106" + "03811011d1d7"));
+  let s = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();
   s = s.on_stream(0 as i64, headers, true).on_stream(4 as i64, headers, true).taken();
-  let waits: string = "";
+  let waits = "";
   for id in [0 as i64, 1 as i64, 2 as i64, 4 as i64, 5 as i64, 6 as i64, 10 as i64] {
     waits = waits + id.to_string() + "=" + s.waiting(id).to_string() + " ";
   }
   let encoder: string = "02" + "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468";
-  let step: h3.Session = s.on_stream(6 as i64, __codec_bytes(hex.decode(encoder)), false);
-  let evs: string = noted("server", step.events);
-  let unblocked: string = (evs.contains("headers 0 ") && evs.contains("headers 4 ")).to_string() + " " + step.waiting(0 as i64).to_string() + " " + step.waiting(4 as i64).to_string();
-  let c: h3.Session = h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64).send_headers(0 as i64, get("/a"), true).taken();
-  let c2: h3.Session = c.on_stream(1 as i64, __codec_bytes(hex.decode("01030000d9")), false);
+  let step = s.on_stream(6 as i64, __codec_bytes(hex.decode(encoder)), false);
+  let evs = noted("server", step.events);
+  let unblocked = (evs.contains("headers 0 ") && evs.contains("headers 4 ")).to_string() + " " + step.waiting(0 as i64).to_string() + " " + step.waiting(4 as i64).to_string();
+  let c = h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64).send_headers(0 as i64, get("/a"), true).taken();
+  let c2 = c.on_stream(1 as i64, __codec_bytes(hex.decode("01030000d9")), false);
   return test.assert_eq(waits + "| " + unblocked + " | client [" + noted("client", c2.events) + "]", "0=true 1=false 2=false 4=true 5=false 6=false 10=false | true false false | client []");
 }
 
@@ -338,7 +338,7 @@ function int_text(n: i32): string {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/http/h3");
+  let r = test.new("std/http/h3");
   r = r.it("a request and its response", test_request_response);
   r = r.it("a response's header section and body go out as one write", test_send_section);
   r = r.it("a body and trailers a byte at a time, and an interim response", test_body_trailers_interim);

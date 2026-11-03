@@ -17,16 +17,16 @@ function report_of(name: string, samples: i64[], allocs: i64): bench.Report {
 
 function ten_samples(): i64[] {
   let out: i64[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i <= 10) {
     out = out.append((i * 10) as i64);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function test_percentiles_are_nearest_rank(): test.TestOutcome {
-  let r: bench.Report = report_of("p", ten_samples(), 0 as i64);
+  let r = report_of("p", ten_samples(), 0 as i64);
   if (r.min_ns() != 10i64) {
     return test.fail("min " + r.min_ns().to_string());
   }
@@ -43,14 +43,14 @@ function test_percentiles_are_nearest_rank(): test.TestOutcome {
 }
 
 function test_percentile_names_a_real_sample(): test.TestOutcome {
-  let r: bench.Report = report_of("p", [5i64, 7i64, 11i64], 0 as i64);
-  let per: i32 = 0;
+  let r = report_of("p", [5i64, 7i64, 11i64], 0 as i64);
+  let per = 0;
   while (per <= 1000) {
-    let v: i64 = r.percentile_ns(per);
+    let v = r.percentile_ns(per);
     if (v != 5i64 && v != 7i64 && v != 11i64) {
       return test.fail("percentile " + per.to_string() + " invented " + v.to_string());
     }
-    per = per + 50;
+    per += 50;
   }
   return test.pass();
 }
@@ -80,7 +80,7 @@ function test_empty_report_is_answerable(): test.TestOutcome {
 }
 
 function test_mean_and_throughput(): test.TestOutcome {
-  let r: bench.Report = report_of("m", ten_samples(), 0 as i64);
+  let r = report_of("m", ten_samples(), 0 as i64);
   if (r.mean_ns() != 55i64) {
     return test.fail("mean " + r.mean_ns().to_string());
   }
@@ -94,11 +94,11 @@ function test_mean_and_throughput(): test.TestOutcome {
 }
 
 function test_allocs_per_op_does_not_round_to_zero(): test.TestOutcome {
-  let r: bench.Report = report_of("a", ten_samples(), 1i64);
+  let r = report_of("a", ten_samples(), 1i64);
   if (r.allocs_per_op_milli() != 100i64) {
     return test.fail("one alloc over ten iterations read " + r.allocs_per_op_milli().to_string());
   }
-  let none: bench.Report = report_of("a", ten_samples(), 0 as i64);
+  let none = report_of("a", ten_samples(), 0 as i64);
   if (none.allocs_per_op_milli() != 0 as i64) {
     return test.fail("zero must read zero");
   }
@@ -106,8 +106,8 @@ function test_allocs_per_op_does_not_round_to_zero(): test.TestOutcome {
 }
 
 function test_json_carries_every_figure(): test.TestOutcome {
-  let r: bench.Report = report_of("json", ten_samples(), 3i64);
-  let j: string = r.to_json();
+  let r = report_of("json", ten_samples(), 3i64);
+  let j = r.to_json();
   return test.assert_contains_all(j, [
     "\"name\":\"json\"", "\"iterations\":10", "\"ops_per_sec\":10000",
     "\"p50_ns\":50", "\"p99_ns\":100", "\"p999_ns\":100",
@@ -116,11 +116,11 @@ function test_json_carries_every_figure(): test.TestOutcome {
 }
 
 function test_output_escapes_the_name(): test.TestOutcome {
-  let r: bench.Report = report_of("odd\"name", ten_samples(), 0 as i64);
+  let r = report_of("odd\"name", ten_samples(), 0 as i64);
   if (!r.to_json().contains("odd\\\"name")) {
     return test.fail("json: " + r.to_json());
   }
-  let c: bench.Report = report_of("a,b", ten_samples(), 0 as i64);
+  let c = report_of("a,b", ten_samples(), 0 as i64);
   if (!c.to_csv_row().starts_with("\"a,b\",10,")) {
     return test.fail("csv: " + c.to_csv_row());
   }
@@ -128,9 +128,9 @@ function test_output_escapes_the_name(): test.TestOutcome {
 }
 
 function test_csv_row_matches_its_header(): test.TestOutcome {
-  let r: bench.Report = report_of("csv", ten_samples(), 0 as i64);
-  let cols: i32 = bench.CSV_HEADER.split(",").len();
-  let cells: i32 = r.to_csv_row().split(",").len();
+  let r = report_of("csv", ten_samples(), 0 as i64);
+  let cols = bench.CSV_HEADER.split(",").len();
+  let cells = r.to_csv_row().split(",").len();
   if (cols != cells) {
     return test.fail("header has " + cols.to_string() + " columns, row has " + cells.to_string());
   }
@@ -138,7 +138,7 @@ function test_csv_row_matches_its_header(): test.TestOutcome {
 }
 
 function test_summary_spreads_repeated_runs(): test.TestOutcome {
-  let fast: bench.Report = report_of("s", [10i64], 4i64);
+  let fast = report_of("s", [10i64], 4i64);
   let slow: bench.Report = bench.Report {
     name: "s", iterations: 1, wall_ns: 4000000i64,
     samples_ns: [40i64], allocs: 4i64, fresh_bytes: 0 as i64,
@@ -147,7 +147,7 @@ function test_summary_spreads_repeated_runs(): test.TestOutcome {
     name: "s", iterations: 1, wall_ns: 2000000i64,
     samples_ns: [20i64], allocs: 4i64, fresh_bytes: 0 as i64,
   };
-  let s: bench.Summary = bench.summarize("s", [slow, fast, mid]);
+  let s = bench.summarize("s", [slow, fast, mid]);
   if (s.runs != 3) {
     return test.fail("runs " + s.runs.to_string());
   }
@@ -170,9 +170,9 @@ function test_summary_spreads_repeated_runs(): test.TestOutcome {
 }
 
 function test_summary_reports_unstable_allocation(): test.TestOutcome {
-  let a: bench.Report = report_of("u", [10i64], 4i64);
-  let b: bench.Report = report_of("u", [10i64], 9i64);
-  let s: bench.Summary = bench.summarize("u", [a, b]);
+  let a = report_of("u", [10i64], 4i64);
+  let b = report_of("u", [10i64], 9i64);
+  let s = bench.summarize("u", [a, b]);
   if (s.allocation_is_stable()) {
     return test.fail("4 and 9 are not stable");
   }
@@ -183,7 +183,7 @@ function test_summary_reports_unstable_allocation(): test.TestOutcome {
 }
 
 function test_run_measures_every_iteration(): test.TestOutcome {
-  let calls: i32 = 0;
+  let calls = 0;
   let r: bench.Report = bench.run("counted", 2, 5, () => { calls = calls + 1; });
   if (calls != 7) {
     return test.fail("body ran " + calls.to_string() + " times, want 7");
@@ -201,26 +201,26 @@ function test_run_measures_every_iteration(): test.TestOutcome {
 }
 
 function test_run_returns_sorted_samples(): test.TestOutcome {
-  let sink: i32 = 0;
+  let sink = 0;
   let r: bench.Report = bench.run("sorted", 1, 8, () => { sink = sink + 1; });
-  let i: i32 = 1;
+  let i = 1;
   while (i < r.samples_ns.len()) {
     if (r.samples_ns[i] < r.samples_ns[i - 1]) {
       return test.fail("samples are not sorted");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_mark_reads_clean_over_a_quiet_region(): test.TestOutcome {
-  let a: i64 = bench.alloc_count();
-  let b: i64 = bench.bump_bytes();
-  let i: i32 = 0;
-  let sum: i32 = 0;
+  let a = bench.alloc_count();
+  let b = bench.bump_bytes();
+  let i = 0;
+  let sum = 0;
   while (i < 1000) {
-    sum = sum + i;
-    i = i + 1;
+    sum += i;
+    i += 1;
   }
   if (sum < 0) {
     return test.fail("unreachable");
@@ -238,12 +238,12 @@ function test_mark_reads_clean_over_a_quiet_region(): test.TestOutcome {
 }
 
 function test_delta_describes_both_halves(): test.TestOutcome {
-  let d: bench.Delta = bench.Delta { allocs: 7i64, fresh_bytes: 64i64 };
+  let d = bench.Delta { allocs: 7i64, fresh_bytes: 64i64 };
   return test.assert_eq(d.describe(), "allocs=7 fresh_bytes=64");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/bench harness");
+  let r = test.new("std/bench harness");
   r = r.it("percentiles are nearest-rank", test_percentiles_are_nearest_rank);
   r = r.it("a percentile names a real sample", test_percentile_names_a_real_sample);
   r = r.it("an empty report is answerable", test_empty_report_is_answerable);

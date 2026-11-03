@@ -35,7 +35,7 @@ function test_empty_input(): test.TestOutcome {
 }
 
 function test_invalid_text(): test.TestOutcome {
-  let msg: string = "error: invalid boolean: expected true, false, 1 or 0";
+  let msg = "error: invalid boolean: expected true, false, 1 or 0";
   return test.assert_eq(parsed("yes") + "|" + parsed("TRUE") + "|" + parsed(" true"), msg + "|" + msg + "|" + msg);
 }
 
@@ -57,7 +57,7 @@ function test_error_equality(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/string parse_bool");
+  let r = test.new("std/string parse_bool");
   r = r.it("canonical spellings", test_canonical_spellings);
   r = r.it("empty input", test_empty_input);
   r = r.it("invalid text", test_invalid_text);

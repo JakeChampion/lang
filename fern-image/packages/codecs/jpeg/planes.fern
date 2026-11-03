@@ -57,7 +57,7 @@ function prepare(input: [u8], limits: PlaneLimits, cancelled: () => boolean): Re
     let width = (h.output_layout.width as i64 * (component.horizontal as i64) + max_h as i64 - 1i64) / (max_h as i64);
     let height = (h.output_layout.height as i64 * (component.vertical as i64) + max_v as i64 - 1i64) / (max_v as i64);
     let bytes = width * height;
-    total = total + bytes;
+    total += bytes;
     if (width <= 0i64 || height <= 0i64 || total > limits.max_plane_bytes as i64 || total > 67108864i64) {
       return Err(PlaneLimit);
     }
@@ -75,8 +75,12 @@ function write_block(own plane: SamplePlane, block: entropy.CoefficientBlock, va
   if (values.len() != 64 || block.x < 0 || block.y < 0) {
     return Err(PlaneStorage);
   }
-  let left = match (block.x *? 8) { Some(v) => v, None => { return Err(PlaneStorage); } };
-  let top = match (block.y *? 8) { Some(v) => v, None => { return Err(PlaneStorage); } };
+  let Some(left) = block.x *? 8 else {
+    return Err(PlaneStorage);
+  };
+  let Some(top) = block.y *? 8 else {
+    return Err(PlaneStorage);
+  };
   if (left >= plane.layout.width || top >= plane.layout.height) {
     return Err(PlaneStorage);
   }
@@ -108,23 +112,27 @@ pub function decode(input: [u8], limits: PlaneLimits, cancelled: () => boolean):
     }
     let layout = prepared.plan.planes[i];
     let table = prepared.header.components[i].quant_table;
-    let quantizers = match (prepared.header.quantization[table]) { Some(v) => v.values, None => { return Err(PlaneStorage); } };
+    let Some(quantization) = prepared.header.quantization[table] else {
+      return Err(PlaneStorage);
+    };
     let data = __alloc_u8(layout.bytes);
     if (cancelled()) {
       return Err(PlaneCancelled);
     }
-    slots = slots.append(PlaneSlot { layout: layout, quantizers: quantizers, value: cell_new(Some(SamplePlane { layout: layout, data: data })) });
+    slots = slots.append(PlaneSlot { layout: layout, quantizers: quantization.values, value: cell_new(Some(SamplePlane { layout: layout, data: data })) });
   }
   let folded = entropy.fold_blocks(input, limits.blocks, cancelled, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, PlaneError] => {
     let at = 0;
     while (at < slots.len() && slots[at].layout.component != block.component) {
-      at = at + 1;
+      at += 1;
     }
     if (at == slots.len()) {
       return Err(PlaneStorage);
     }
     let slot = slots[at];
-    let plane = match (slot.value.get()) { Some(v) => v, None => { return Err(PlaneStorage); } };
+    let Some(plane) = slot.value.get() else {
+      return Err(PlaneStorage);
+    };
     slot.value.set(None);
     let values = match (idct.reconstruct(block.values, slot.quantizers, cancelled)) { Ok(v) => v, Err(e) => { return Err(transform_error(e)); } };
     let next = write_block(SamplePlane { layout: plane.layout, data: plane.data }, block, values, cancelled)?;
@@ -149,7 +157,9 @@ pub function decode(input: [u8], limits: PlaneLimits, cancelled: () => boolean):
     if (cancelled()) {
       return Err(PlaneCancelled);
     }
-    let plane = match (slot.value.get()) { Some(v) => v, None => { return Err(PlaneStorage); } };
+    let Some(plane) = slot.value.get() else {
+      return Err(PlaneStorage);
+    };
     planes = planes.append(SamplePlane { layout: plane.layout, data: plane.data });
   }
   if (cancelled()) {

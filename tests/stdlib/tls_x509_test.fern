@@ -99,7 +99,7 @@ function rfc8448_certificate(): u8[] {
 }
 
 function failed(why: string): x509.Certificate {
-  let none: x509.Name = x509.Name { raw: [], common_name: "" };
+  let none = x509.Name { raw: [], common_name: "" };
   return x509.Certificate { raw: [], tbs: [], version: 0, serial: [], algorithm: x509.OtherAlgorithm(why), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: x509.OtherKey(""), spki: [], ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], permitted_dns: [], excluded_dns: [], permitted_ip: [], excluded_ip: [], unknown_critical: [], signature: [] };
 }
 
@@ -153,7 +153,7 @@ function key_shape(k: x509.PublicKey): string {
 }
 
 function joined(v: string[]): string {
-  let out: string = "";
+  let out = "";
   for s in v {
     out = out + " " + s;
   }
@@ -165,7 +165,7 @@ function summary(c: x509.Certificate): string {
 }
 
 function test_leaf(): test.TestOutcome {
-  let c: x509.Certificate = parsed(ec_leaf());
+  let c = parsed(ec_leaf());
   if (summary(c) != "v3 #03 ecdsa_sha256 Fern Test Intermediate > example.com 1767225600..1798761600 p256 65 04") {
     return test.fail(summary(c));
   }
@@ -179,11 +179,11 @@ function test_leaf(): test.TestOutcome {
 }
 
 function test_authorities(): test.TestOutcome {
-  let i: x509.Certificate = parsed(ec_int());
+  let i = parsed(ec_int());
   if (!i.ca || i.path_len != 0 || i.key_usage != 96 || i.has_ext_key_usage) {
     return test.fail("intermediate");
   }
-  let r: x509.Certificate = parsed(ec_root());
+  let r = parsed(ec_root());
   if (!r.ca || r.path_len != -1 || hex.encode(r.subject.raw) != hex.encode(r.issuer.raw)) {
     return test.fail("root");
   }
@@ -204,7 +204,7 @@ function test_other_keys(): test.TestOutcome {
 }
 
 function test_name_constraints(): test.TestOutcome {
-  let c: x509.Certificate = parsed(nc_int());
+  let c = parsed(nc_int());
   if (joined(c.permitted_dns) != " example.com" || joined(c.excluded_dns) != " bad.example.com" || c.permitted_ip.len() != 1 || hex.encode(c.permitted_ip[0]) != "c0000200ffffff00" || c.unknown_critical.len() != 0) {
     return test.fail("DNS and IP subtrees");
   }
@@ -212,7 +212,7 @@ function test_name_constraints(): test.TestOutcome {
 }
 
 function test_rfc8448(): test.TestOutcome {
-  let c: x509.Certificate = parsed(rfc8448_certificate());
+  let c = parsed(rfc8448_certificate());
   if (summary(c) != "v3 #02 rsa_pkcs1_sha256 rsa > rsa 1469841839..1785374639 rsa 128 010001") {
     return test.fail(summary(c));
   }
@@ -228,44 +228,44 @@ function test_rfc8448(): test.TestOutcome {
 }
 
 function last(b: u8[], pat: string): i32 {
-  let p: u8[] = __codec_bytes(hex.decode(pat));
-  let at: i32 = b.len() - p.len();
+  let p = __codec_bytes(hex.decode(pat));
+  let at = b.len() - p.len();
   while (at >= 0) {
-    let i: i32 = 0;
+    let i = 0;
     while (i < p.len() && b[at + i] == p[i]) {
-      i = i + 1;
+      i += 1;
     }
     if (i == p.len()) {
       return at;
     }
-    at = at - 1;
+    at -= 1;
   }
   return -1;
 }
 
 function test_refusals(): test.TestOutcome {
-  let b: u8[] = ec_leaf();
+  let b = ec_leaf();
   if (refusal(b.take(b.len() - 1)) != "x509: der: truncated") {
     return test.fail("truncated");
   }
   if (refusal(b.append(0 as u8)) != "x509: der: malformed trailing bytes") {
     return test.fail("trailing byte");
   }
-  let outer: i32 = last(b, "06082a8648ce3d040302");
+  let outer = last(b, "06082a8648ce3d040302");
   if (refusal(b.with(outer + 9, 3 as u8)) != "x509: malformed signature algorithm: the two identifiers differ") {
     return test.fail("disagreeing algorithms");
   }
-  let san: i32 = last(b, "0603551d11");
+  let san = last(b, "0603551d11");
   return test.assert_eq(refusal(b.with(san + 4, 0x25 as u8)), "x509: malformed repeated extension 2.5.29.37");
 }
 
 function test_pem(): test.TestOutcome {
-  let text: string = pem.encode("CERTIFICATE", ec_leaf());
-  let lines: string[] = text.lines();
+  let text = pem.encode("CERTIFICATE", ec_leaf());
+  let lines = text.lines();
   if (lines.len() != 11 || lines[1].len() != 64 || lines[0] != "-----BEGIN CERTIFICATE-----") {
     return test.fail("encode");
   }
-  let bundle: string = "# a comment\n" + text + "\nstray text\n" + pem.encode("PRIVATE KEY", [1 as u8]) + pem.encode("CERTIFICATE", ec_root());
+  let bundle = "# a comment\n" + text + "\nstray text\n" + pem.encode("PRIVATE KEY", [1 as u8]) + pem.encode("CERTIFICATE", ec_root());
   match (pem.certificates(bundle)) {
     Ok(certs) => {
       if (certs.len() != 2 || hex.encode(certs[0]) != hex.encode(ec_leaf()) || hex.encode(certs[1]) != hex.encode(ec_root())) {
@@ -302,7 +302,7 @@ function pem_refusals(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/x509");
+  let r = test.new("std/tls/x509");
   r = r.it("a leaf's fields", test_leaf);
   r = r.it("an intermediate and a root", test_authorities);
   r = r.it("RSA, Ed25519, SHA-384 and a critical extension", test_other_keys);

@@ -47,25 +47,25 @@ function test_every_root_parses(): test.TestOutcome {
 }
 
 function index_of(r: verify.Roots, common_name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < r.certs.len()) {
     if (r.certs[i].subject.common_name == common_name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function test_mozillas_list(): test.TestOutcome {
-  let r: verify.Roots = mozilla.roots();
+  let r = mozilla.roots();
   if (has(r, "Entrust Root Certification Authority - G2")) {
     return test.fail("a root whose distrust date is spent is bundled");
   }
   if (r.distrust_after.len() != r.certs.len()) {
     return test.fail("the dates do not pair with the roots");
   }
-  let izenpe: i32 = index_of(r, "Izenpe.com");
+  let izenpe = index_of(r, "Izenpe.com");
   if (izenpe < 0 || r.distrust_after[izenpe] != 1776297599 as i64) {
     return test.fail("Izenpe.com is not bundled with its distrust date");
   }
@@ -73,16 +73,16 @@ function test_mozillas_list(): test.TestOutcome {
 }
 
 function test_public_chain(): test.TestOutcome {
-  let now: time.Timestamp = time.timestamp_from_unix(1788220800);
+  let now = time.timestamp_from_unix(1788220800);
   let chain: u8[][] = [leaf(), intermediate(), cross()];
-  let r: verify.Roots = mozilla.roots();
+  let r = mozilla.roots();
   if (outcome(verify.server(chain, verify.roots([]), "raw.githubusercontent.com", now)) == "ok *.github.io") {
     return test.fail("verified against no roots");
   }
   if (outcome(verify.server(chain, r, "example.com", now)) == "ok *.github.io") {
     return test.fail("verified for a name the leaf does not cover");
   }
-  let x1: i32 = index_of(r, "ISRG Root X1");
+  let x1 = index_of(r, "ISRG Root X1");
   if (outcome(verify.server(chain, r.distrusting(x1, time.timestamp_from_unix(1)), "raw.githubusercontent.com", now)) != "tls verify: the leaf was issued after the date root 3 is distrusted from") {
     return test.fail("verified under a root distrusted before the leaf was issued");
   }
@@ -93,7 +93,7 @@ function test_public_chain(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/mozilla");
+  let r = test.new("std/tls/mozilla");
   r = r.it("every root parses", test_every_root_parses);
   r = r.it("Mozilla's list", test_mozillas_list);
   r = r.it("a public chain", test_public_chain);

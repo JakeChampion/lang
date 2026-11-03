@@ -15,8 +15,10 @@ function error_name(value: exif.ExifError): string {
 }
 
 function emit(path: string): i32 {
-  let bytes = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
-  if (bytes.len() < 16 || bytes[0] != 70 as u8 || bytes[1] != 69 as u8 || bytes[2] != 88 as u8 || bytes[3] != 49 as u8) {
+  let Ok(bytes) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (bytes.len() < 16 || bytes[0] != 70 || bytes[1] != 69 || bytes[2] != 88 || bytes[3] != 49) {
     return 3;
   }
   let limits = exif.ExifLimits { max_bytes: signed_word(bytes, 4), max_entries: signed_word(bytes, 8) };
@@ -32,10 +34,10 @@ function emit(path: string): i32 {
   match (result) {
     Ok(info) => {
       let order = if (info.order == exif.ByteOrder.Little) { "II" } else { "MM" };
-      print("exif " + path + " ok " + orientation(info.orientation).to_string() + " " + order + " " + info.directories.to_string() + " " + info.entries.to_string() + " " + polls.get().to_string());
+      print(f"exif {path} ok {orientation(info.orientation)} {order} {info.directories} {info.entries} {polls.get()}");
     },
     Err(error) => {
-      print("exif " + path + " error " + error_name(error) + " " + polls.get().to_string());
+      print(f"exif {path} error {error_name(error)} {polls.get()}");
     }
   }
   return 0;

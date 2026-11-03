@@ -7,24 +7,24 @@ import "std/utf8";
 
 function lines(n: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     for b in ("line " + i.to_string() + " of the corpus\n").bytes() {
       out = out.append(b);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function lcg_bytes(n: i32): u8[] {
   let out: u8[] = [];
-  let x: i32 = 7;
-  let i: i32 = 0;
+  let x = 7;
+  let i = 0;
   while (i < n) {
     x = x * 1103515245 + 12345 & 2147483647;
     out = out.append((x >> 16 & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -98,11 +98,11 @@ function test_frames(): test.TestOutcome {
 }
 
 function test_refusals(): test.TestOutcome {
-  let r: u8[] = __codec_bytes(hex.decode(run()));
-  let cut: string = read(two().slice_snap(0, 1000));
-  let sum_bad: string = read(hex.encode(r.with(r.len() - 1, r[r.len() - 1] ^ 1 as u8)));
-  let magic: string = read("29b52ffd" + run().slice_snap(8, run().len()));
-  let limit: string = "";
+  let r = __codec_bytes(hex.decode(run()));
+  let cut = read(two().slice_snap(0, 1000));
+  let sum_bad = read(hex.encode(r.with(r.len() - 1, r[r.len() - 1] ^ 1 as u8)));
+  let magic = read("29b52ffd" + run().slice_snap(8, run().len()));
+  let limit = "";
   match (zstd.decompress(r, 100000)) {
     Ok(_) => {
       limit = "decoded";
@@ -111,13 +111,13 @@ function test_refusals(): test.TestOutcome {
       limit = e.message();
     }
   }
-  let reserved: string = read("28b52ffd2000070000");
-  let dict: string = read("28b52ffd21070100");
+  let reserved = read("28b52ffd2000070000");
+  let dict = read("28b52ffd21070100");
   return test.assert_eq(cut + " | " + sum_bad + " | " + magic + " | " + limit + " | " + reserved + " | " + dict, "zstd: truncated | zstd: checksum mismatch | zstd: malformed: magic number | zstd: output past the limit | zstd: malformed: reserved block type | zstd: unsupported: dictionary");
 }
 
 function joined(a: u8[], b: u8[]): u8[] {
-  let out: u8[] = a;
+  let out = a;
   for x in b {
     out = out.append(x);
   }
@@ -137,17 +137,17 @@ function limited(frames: u8[], cap: i32): string {
 }
 
 function test_frame_edges(): test.TestOutcome {
-  let a: u8[] = lines(400);
-  let b: u8[] = lcg_bytes(3000);
-  let frames: u8[] = joined(zstd.compress(a), zstd.compress(b));
-  let n: i32 = a.len() + b.len();
-  let both: string = limited(frames, n) + " | " + sum(joined(a, b)) + " | " + limited(frames, n - 1);
-  let skips: string = read("502a4d180500") + " | " + read("502a4d18f8ffffff") + " | " + read("502a4d1802000000ffff28b52ffd200c6100006669727374206672616d653b");
+  let a = lines(400);
+  let b = lcg_bytes(3000);
+  let frames = joined(zstd.compress(a), zstd.compress(b));
+  let n = a.len() + b.len();
+  let both = limited(frames, n) + " | " + sum(joined(a, b)) + " | " + limited(frames, n - 1);
+  let skips = read("502a4d180500") + " | " + read("502a4d18f8ffffff") + " | " + read("502a4d1802000000ffff28b52ffd200c6100006669727374206672616d653b");
   return test.assert_eq(both + " | " + skips, "12090 2852243673 | 12090 2852243673 | zstd: output past the limit | zstd: truncated | zstd: truncated | 12 2092780098");
 }
 
 function packed(input: u8[]): string {
-  let frame: u8[] = zstd.compress(input);
+  let frame = zstd.compress(input);
   match (zstd.decompress(frame, input.len() + 1)) {
     Ok(out) => {
       if (out.len() != input.len() || hex.encode(out) != hex.encode(input)) {
@@ -181,7 +181,7 @@ function test_encoder_blocks(): test.TestOutcome {
   while (a.len() < 140000) {
     a = a.append(97 as u8);
   }
-  let mixed: u8[] = lines(300);
+  let mixed = lines(300);
   while (mixed.len() < 131072 + 6790) {
     mixed = mixed.append(97 as u8);
   }
@@ -192,7 +192,7 @@ function test_encoder_blocks(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/zstd");
+  let r = test.new("std/zstd");
   r = r.it("a small frame", test_small);
   r = r.it("described tables and FSE-compressed weights", test_described);
   r = r.it("direct Huffman weights", test_direct_weights);

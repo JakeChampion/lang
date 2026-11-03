@@ -22,20 +22,20 @@ function client_finished(): u8[] {
 
 function part(b: [u8], from: i32, to: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function cat(a: u8[], b: u8[]): u8[] {
-  let out: u8[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -53,7 +53,7 @@ function th_client_finished(h: keyschedule.Hash): u8[] {
 }
 
 function th_certificate_verify(): u8[] {
-  let flight: u8[] = server_flight();
+  let flight = server_flight();
   return keyschedule.Sha256.digest(cat(cat(client_hello(), server_hello()), part(flight, 0, flight.len() - 36)));
 }
 
@@ -97,7 +97,7 @@ function test_shared_secret(): test.TestOutcome {
 
 function test_hkdf_expand_label(): test.TestOutcome {
   let none: u8[] = [];
-  let early: u8[] = keyschedule.early_secret(keyschedule.Sha256, none).secret;
+  let early = keyschedule.early_secret(keyschedule.Sha256, none).secret;
   return test.assert_eq(
     shown(keyschedule.hkdf_expand_label(keyschedule.Sha256, early, "derived", keyschedule.Sha256.digest(none), 32)),
     "6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba",
@@ -113,7 +113,7 @@ function test_handshake_secret(): test.TestOutcome {
 }
 
 function test_handshake_traffic(): test.TestOutcome {
-  let hs: keyschedule.HandshakeSecret = handshake(keyschedule.Sha256);
+  let hs = handshake(keyschedule.Sha256);
   if (shown(hs.client_traffic(th_hello(keyschedule.Sha256))) != "b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21") {
     return test.fail("client");
   }
@@ -125,8 +125,8 @@ function test_master_secret(): test.TestOutcome {
 }
 
 function test_application_secrets(): test.TestOutcome {
-  let m: keyschedule.MasterSecret = master(keyschedule.Sha256);
-  let th: u8[] = th_server_finished(keyschedule.Sha256);
+  let m = master(keyschedule.Sha256);
+  let th = th_server_finished(keyschedule.Sha256);
   if (shown(m.client_traffic(th)) != "9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5") {
     return test.fail("client traffic");
   }
@@ -140,12 +140,12 @@ function test_application_secrets(): test.TestOutcome {
 }
 
 function test_resumption(): test.TestOutcome {
-  let res: u8[] = __codec_bytes(hex.decode("7df235f2031d2a051287d02b0241b0bfdaf86cc856231f2d5aba46c434ec196c"));
-  let psk: u8[] = keyschedule.resumption_psk(keyschedule.Sha256, res, [0 as u8, 0 as u8]);
+  let res = __codec_bytes(hex.decode("7df235f2031d2a051287d02b0241b0bfdaf86cc856231f2d5aba46c434ec196c"));
+  let psk = keyschedule.resumption_psk(keyschedule.Sha256, res, [0 as u8, 0 as u8]);
   if (shown(psk) != "4ecd0eb6ec3b4d87f5d6028f922ca4c5851a277fd41311c9e62d2c9492e1c4f3") {
     return test.fail("psk " + shown(psk));
   }
-  let early: keyschedule.EarlySecret = keyschedule.early_secret(keyschedule.Sha256, psk);
+  let early = keyschedule.early_secret(keyschedule.Sha256, psk);
   if (shown(early.secret) != "9b2188e9b2fc6d64d71dc329900e20bb41915000f678aa839cbb797cb7d8332c") {
     return test.fail("early secret " + shown(early.secret));
   }
@@ -153,13 +153,13 @@ function test_resumption(): test.TestOutcome {
 }
 
 function aes_keys(secret: u8[]): string {
-  let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(keyschedule.Aes128GcmSha256, secret);
+  let k = keyschedule.traffic_keys(keyschedule.Aes128GcmSha256, secret);
   return shown(k.key) + " " + shown(k.iv);
 }
 
 function test_aes_128_traffic_keys(): test.TestOutcome {
-  let hs: keyschedule.HandshakeSecret = handshake(keyschedule.Sha256);
-  let m: keyschedule.MasterSecret = master(keyschedule.Sha256);
+  let hs = handshake(keyschedule.Sha256);
+  let m = master(keyschedule.Sha256);
   if (aes_keys(hs.server_traffic(th_hello(keyschedule.Sha256))) != "3fce516009c21727d0f2e4e86ee403bc 5d313eb2671276ee13000b30") {
     return test.fail("server handshake");
   }
@@ -173,12 +173,12 @@ function test_aes_128_traffic_keys(): test.TestOutcome {
 }
 
 function test_chacha20_poly1305_traffic_keys(): test.TestOutcome {
-  let suite: keyschedule.CipherSuite = keyschedule.ChaCha20Poly1305Sha256;
-  let s: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, handshake(keyschedule.Sha256).server_traffic(th_hello(keyschedule.Sha256)));
+  let suite = keyschedule.ChaCha20Poly1305Sha256;
+  let s = keyschedule.traffic_keys(suite, handshake(keyschedule.Sha256).server_traffic(th_hello(keyschedule.Sha256)));
   if (shown(s.key) + " " + shown(s.iv) != "ac70443f7fe3bdaf568b1dcdb0a7f3fea098bca189c3455ba41fcd9d488348a4 5d313eb2671276ee13000b30") {
     return test.fail("server handshake");
   }
-  let c: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, master(keyschedule.Sha256).client_traffic(th_server_finished(keyschedule.Sha256)));
+  let c = keyschedule.traffic_keys(suite, master(keyschedule.Sha256).client_traffic(th_server_finished(keyschedule.Sha256)));
   return test.assert_eq(shown(c.key) + " " + shown(c.iv), "c8afd24f48952725381a54085e8d8e3856d8d89e3019243b30a9db54809a3732 5b78923dee08579033e523d9");
 }
 
@@ -206,12 +206,12 @@ function test_cipher_suite(): test.TestOutcome {
 }
 
 function test_finished(): test.TestOutcome {
-  let hs: keyschedule.HandshakeSecret = handshake(keyschedule.Sha256);
-  let th: u8[] = th_hello(keyschedule.Sha256);
+  let hs = handshake(keyschedule.Sha256);
+  let th = th_hello(keyschedule.Sha256);
   if (shown(keyschedule.finished_verify_data(keyschedule.Sha256, hs.server_traffic(th), th_certificate_verify())) != "9b9b141d906337fbd2cbdce71df4deda4ab42c309572cb7fffee5454b78f0718") {
     return test.fail("server");
   }
-  let cf: u8[] = client_finished();
+  let cf = client_finished();
   return test.assert_eq(
     shown(keyschedule.finished_verify_data(keyschedule.Sha256, hs.client_traffic(th), th_server_finished(keyschedule.Sha256))),
     shown(part(cf, 4, 36)),
@@ -219,10 +219,10 @@ function test_finished(): test.TestOutcome {
 }
 
 function test_verify_finished(): test.TestOutcome {
-  let hs: keyschedule.HandshakeSecret = handshake(keyschedule.Sha256);
-  let base: u8[] = hs.client_traffic(th_hello(keyschedule.Sha256));
-  let th: u8[] = th_server_finished(keyschedule.Sha256);
-  let good: u8[] = part(client_finished(), 4, 36);
+  let hs = handshake(keyschedule.Sha256);
+  let base = hs.client_traffic(th_hello(keyschedule.Sha256));
+  let th = th_server_finished(keyschedule.Sha256);
+  let good = part(client_finished(), 4, 36);
   if (!keyschedule.verify_finished(keyschedule.Sha256, base, th, good)) {
     return test.fail("the trace's verify_data is refused");
   }
@@ -233,24 +233,24 @@ function test_verify_finished(): test.TestOutcome {
 }
 
 function test_key_update(): test.TestOutcome {
-  let c_ap: u8[] = master(keyschedule.Sha256).client_traffic(th_server_finished(keyschedule.Sha256));
-  let next: u8[] = keyschedule.next_traffic_secret(keyschedule.Sha256, c_ap);
+  let c_ap = master(keyschedule.Sha256).client_traffic(th_server_finished(keyschedule.Sha256));
+  let next = keyschedule.next_traffic_secret(keyschedule.Sha256, c_ap);
   if (shown(next) != "fcdfcc72725aaee48bf64e4fd8b749cdbdbab39d90da0b26e2245ca6ea167207") {
     return test.fail("the next secret");
   }
-  let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(keyschedule.ChaCha20Poly1305Sha256, next);
+  let k = keyschedule.traffic_keys(keyschedule.ChaCha20Poly1305Sha256, next);
   return test.assert_eq(shown(k.key) + " " + shown(k.iv), "e94818cd08e6071fae4cf6b04d62e583b7a04ea41aebd72044aa5f1f11919816 5dfb2c5938c3379b6cc5d1f2");
 }
 
 function test_sha384_handshake(): test.TestOutcome {
-  let h: keyschedule.Hash = keyschedule.Sha384;
+  let h = keyschedule.Sha384;
   if (shown(th_hello(h)) + shown(th_server_finished(h)) + shown(th_client_finished(h)) != "53585189fd526863cc1afbe3eecb2ba95ac94ba13e94d41603ce79f074ee1c0ae3879807076c5273a1a880d310208c54" + "314d0b33fd340a44bc9dedb17165e28106d58a8d5a3c3a940d1328f3ca7089ecbbcbf06f718f6a41c9b5d8b7fca3b7a4" + "cf3c5d2aed47704e3eec0776636f226c2270448027d0ea08b779434cbf74a66d4fec05ee7c61a376252e6a00cebe3baf") {
     return test.fail("transcript hashes");
   }
   if (shown(keyschedule.early_secret(h, []).secret) != "7ee8206f5570023e6dc7519eb1073bc4e791ad37b5c382aa10ba18e2357e716971f9362f2c2fe2a76bfd78dfec4ea9b5") {
     return test.fail("early secret");
   }
-  let hs: keyschedule.HandshakeSecret = handshake(h);
+  let hs = handshake(h);
   if (shown(hs.secret) != "984e65f4ea6ac0dece14762ac3752b71867a045c60d3fe7808b31949d2ce27d3142e6da6d92a68437f77c26509ce0b2b") {
     return test.fail("handshake secret");
   }
@@ -258,12 +258,12 @@ function test_sha384_handshake(): test.TestOutcome {
 }
 
 function test_sha384_master(): test.TestOutcome {
-  let h: keyschedule.Hash = keyschedule.Sha384;
-  let m: keyschedule.MasterSecret = master(h);
+  let h = keyschedule.Sha384;
+  let m = master(h);
   if (shown(m.secret) != "2915f95014de3957dad1c2764430fa490ffbe027a09be69e4da30a27969b40081308dbd17cb65a35332215cfc8cf4a2f") {
     return test.fail("master secret");
   }
-  let th: u8[] = th_server_finished(h);
+  let th = th_server_finished(h);
   if (shown(m.client_traffic(th)) + shown(m.server_traffic(th)) != "bbafec3b0ca7533f456f73d389ef910ec44f2c6fa5dc2e112a4414b6752a1d00ddf6d0ce9b6dd4b111e191562ed967be" + "9aabfb28a3106d6af28555d12ee08fb6b233680580a2a2b7df5cce8742aeba5f8cc14daf944fa21ab06a713deaf829a7") {
     return test.fail("application traffic secrets");
   }
@@ -271,9 +271,9 @@ function test_sha384_master(): test.TestOutcome {
 }
 
 function test_sha384_traffic(): test.TestOutcome {
-  let h: keyschedule.Hash = keyschedule.Sha384;
-  let th: u8[] = th_server_finished(h);
-  let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(keyschedule.Aes256GcmSha384, master(h).server_traffic(th));
+  let h = keyschedule.Sha384;
+  let th = th_server_finished(h);
+  let k = keyschedule.traffic_keys(keyschedule.Aes256GcmSha384, master(h).server_traffic(th));
   if (shown(k.key) + " " + shown(k.iv) != "c662148873b603bd489063ed551439ecdc8723af4addab36f6bd119a221e5a35 290f1d18cef19ec9685d2da8") {
     return test.fail("traffic key and iv");
   }
@@ -284,7 +284,7 @@ function test_sha384_traffic(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/tls/keyschedule");
+  let r = test.new("std/tls/keyschedule");
   r = r.it("transcript hashes", test_transcript_hashes);
   r = r.it("x25519 shared secret", test_shared_secret);
   r = r.it("hkdf_expand_label", test_hkdf_expand_label);

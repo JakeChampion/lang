@@ -13726,6 +13726,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	return c.postNumericType(e, t)
 }
 
+func (c *checker) checkCastTarget(target ast.Type, pos ast.Position) bool {
+	before := len(c.errors)
+	c.checkTypeKnown(target, c.typeParamsInScope(), pos)
+	return len(c.errors) == before
+}
+
 func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 	switch n := e.(type) {
 	case *ast.NumberLit:
@@ -13747,6 +13753,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		return ast.NumberType{Polymorphic: true}
 	case *ast.DowncastExpr:
 		inner := c.checkExpr(n.Inner, s)
+		if !c.checkCastTarget(n.Target, n.P) {
+			return nil
+		}
 		if st, isBareStruct := n.Target.(ast.StructType); isBareStruct && len(st.Args) == 0 {
 			if _, isEnum := c.info.Enums[st.Name]; isEnum {
 				n.Target = ast.EnumType{Name: st.Name}
@@ -13785,6 +13794,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 	case *ast.CastExpr:
 		inner := c.checkExpr(n.Inner, s)
+		if !c.checkCastTarget(n.Target, n.P) {
+			return nil
+		}
 		if c.holdsPendingLitLocal(n.Inner) {
 		} else if ft, innerIsFloat := inner.(ast.FloatType); innerIsFloat {
 			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt || !ft.Polymorphic {

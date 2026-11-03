@@ -12,11 +12,13 @@ function bytes(value: string): Result[i64, RssError] {
   if (fields.len() != 2 || fields[1].trim() != "") {
     return Err(Malformed);
   }
-  let number = match (i64.parse_i64(fields[0].trim())) { Ok(v) => v, Err(_) => { return Err(Malformed); } };
-  if (number < 0i64) {
+  let Ok(number) = i64.parse_i64(fields[0].trim()) else {
+    return Err(Malformed);
+  };
+  if (number < 0) {
     return Err(Malformed);
   }
-  return match (number *? 1024i64) { Some(v) => Ok(v), None => Err(Overflow) };
+  return match (number *? 1024) { Some(v) => Ok(v), None => Err(Overflow) };
 }
 
 pub function parse_status(status: string): Result[Snapshot, RssError] {
@@ -62,6 +64,8 @@ pub function parse_status(status: string): Result[Snapshot, RssError] {
 }
 
 pub function snapshot(): Result[Snapshot, RssError] {
-  let status = match (read_file("/proc/self/status")) { Ok(v) => v, Err(_) => { return Err(Unavailable); } };
+  let Ok(status) = read_file("/proc/self/status") else {
+    return Err(Unavailable);
+  };
   return parse_status(status);
 }
