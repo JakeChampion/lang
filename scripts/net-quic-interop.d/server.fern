@@ -32,11 +32,11 @@ function passed(deadline: Option[Instant]): boolean {
 
 // When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
 function wait_until(deadline: Option[Instant]): Option[Instant] {
-  let most: Duration = time.duration_millis(100);
+  let most = time.duration_millis(100);
   let Some(at) = deadline else {
     return Some(now().add(most));
   };
-  let left: Duration = at.since(now()).add(time.duration_millis(1));
+  let left = at.since(now()).add(time.duration_millis(1));
   if (left.cmp(time.duration_millis(1)) < 0) {
     return Some(now().add(time.duration_millis(1)));
   }
@@ -50,20 +50,17 @@ function shown(step: conn.Conn): conn.Conn {
   for e in step.events {
     match (e) {
       conn.Connected => {
-        print("fern server: connected alpn=" + step.alpn());
+        print(f"fern server: connected alpn={step.alpn()}");
       },
       conn.Closed(why) => {
-        print("fern server: closed code=" + why.code.to_string() + " remote=" + why.remote.to_string() + " reason=" + why.reason);
+        print(f"fern server: closed code={why.code} remote={why.remote} reason={why.reason}");
       }
     }
   }
-  let cur: conn.Conn = step.events_taken();
+  let cur = step.events_taken();
   for n in step.stream_events() {
-    match (n) {
-      streams.Readable(id) => {
-        cur = echo(cur, id);
-      },
-      _ => {}
+    if let streams.Readable(id) = n {
+      cur = echo(cur, id);
     }
   }
   return cur;
@@ -77,17 +74,15 @@ function echo(c: conn.Conn, id: i64): conn.Conn {
     return r.0;
   };
   if (r.2) {
-    print("fern server: echoed stream " + id.to_string() + " to its end");
+    print(f"fern server: echoed stream {id} to its end");
   }
   return w;
 }
 
 function copied(buf: u8[], n: i32): u8[] {
-  let out: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
-  while (i < n) {
+  let out = __alloc_u8(n);
+  for i in 0..n {
     out = out.with(i, buf[i]);
-    i = i + 1;
   }
   return out;
 }
@@ -109,7 +104,7 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Ok(c) = conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now()) else {
     return s;
   };
-  let step: conn.Conn = c.receive(d, now());
+  let step = c.receive(d, now());
   return Server { ...s, current: Some(shown(step)), peer: Some(from) };
 }
 
@@ -117,33 +112,32 @@ function received(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Some(c) = s.current else {
     return accepted(s, d, from);
   };
-  let step: conn.Conn = c.receive(d, now());
+  let step = c.receive(d, now());
   return Server { ...s, current: Some(shown(step)) };
 }
 
 function drained(s: Server, buf: u8[]): Server {
-  let cur: Server = s;
-  while (true) {
+  let cur = s;
+  loop {
     let Ok(got) = net.recv_from(cur.sock, buf) else {
       return cur;
     };
     cur = received(cur, copied(buf, got.0), got.1);
   }
-  return cur;
 }
 
 function sent(s: Server, c: conn.Conn): Server {
-  let cur: conn.Conn = c;
+  let cur = c;
   if (passed(cur.deadline())) {
-    let step: conn.Conn = cur.tick(now());
+    let step = cur.tick(now());
     cur = shown(step);
   }
-  let next: conn.Conn = cur.transmit(now());
-  let out: u8[][] = next.datagrams();
+  let next = cur.transmit(now());
+  let out = next.datagrams();
   next = next.sent();
   if let Some(to) = s.peer {
     for d in out {
-      let r: Result[i32, net.NetError] = net.send_to(s.sock, d, to);
+      let _ = net.send_to(s.sock, d, to);
     }
   }
   return Server { ...s, current: Some(next), connected: s.connected || next.connected() };
@@ -160,28 +154,28 @@ function bound(port: string, cert: string, key: string): Option[Server] {
     eprint("bad identity");
     return None;
   };
-  let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).server_side(id);
+  let cfg = conn.config(["fern-echo"]).with_streams(16, 16, 262144, 1048576).server_side(id);
   let Ok(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
     return None;
   };
   let Ok(sock) = net.udp_socket(addr) else {
     return None;
   };
-  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let _ = net.set_nonblocking(sock, true);
   return Some(Server { cfg: cfg, sock: sock, current: None, peer: None, connected: false });
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let Some(s0) = bound(argv[1], argv[2], argv[3]) else {
     return 2;
   };
   print("fern server: listening");
-  let buf: u8[] = __alloc_u8(65536);
-  let s: Server = s0;
-  let started: Instant = now();
+  let buf = __alloc_u8(65536);
+  let s = s0;
+  let started = now();
   while (now().since(started).cmp(time.duration_seconds(20)) < 0) {
-    let woke: async.Wake = async.wait_any([s.sock, 1], wait_for(s));
+    let _ = async.wait_any([s.sock, 1], wait_for(s));
     s = drained(s, buf);
     if let Some(c) = s.current {
       s = sent(s, c);

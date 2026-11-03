@@ -1,64 +1,46 @@
 import "std/fetch";
+import "std/string";
 
 function gzip_text(): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < 30) {
-    out = out + "hello gzip ";
-    i = i + 1;
-  }
-  return out;
+  return "hello gzip ".repeat(30);
 }
 
 function base(): string {
-  match (env("BASE")) {
-    Some(b) => {
-      return b;
-    },
-    None => {
-      return "http://127.0.0.1:8080";
-    }
-  }
-  return "";
+  return match (env("BASE")) { Some(b) => b, None => "http://127.0.0.1:8080" };
 }
 
 function line(answer: Result[HttpResponse, fetch.FetchError]): string {
   match (answer) {
     Ok(resp) => {
-      match (resp.body_text()) {
-        Ok(text) => {
-          return resp.status.to_string() + " " + text;
-        },
-        Err(_) => {
-          return resp.status.to_string() + " <not utf-8>";
-        }
+      if let Ok(text) = resp.body_text() {
+        return f"{resp.status} {text}";
       }
+      return f"{resp.status} <not utf-8>";
     },
     Err(e) => {
       return "error " + e.message();
     }
   }
-  return "";
 }
 
 function main(): i32 {
   print("hello: " + line(fetch.send(fetch.get(base() + "/hello"))));
   print("redirect: " + line(fetch.send(fetch.get(base() + "/redirect"))));
-  let coded: string = line(fetch.send(fetch.get(base() + "/gzip")));
+  let coded = line(fetch.send(fetch.get(base() + "/gzip")));
   if (coded == "200 " + gzip_text()) {
     print("gzip: 200 decoded");
   } else {
     print("gzip: " + coded);
   }
-  let kept: fetch.Sockets = fetch.sockets();
-  let open: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: None, jar: None, allow: None };
-  let first: string = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
-  let second: string = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
+  let kept = fetch.sockets();
+  let open = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: None, jar: None, allow: None };
+  let first = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
+  let second = line(fetch.send_on(kept, fetch.get(base() + "/port"), open));
   fetch.close_idle(kept);
   if (first == second && first.starts_with("200 ")) {
     print("reuse: one connection");
   } else {
-    print("reuse: " + first + " then " + second);
+    print(f"reuse: {first} then {second}");
   }
   return 0;
 }

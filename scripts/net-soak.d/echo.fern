@@ -1,6 +1,7 @@
 // The JSON echo server the soak lane holds under load: every request body
 // is parsed and encoded again, so a request allocates and frees a tree.
 import "std/i32";
+import "std/result";
 import "std/http";
 import "std/serve";
 import "std/platform";
@@ -8,44 +9,20 @@ import "std/json";
 import "core/int";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-  match (req.body_text()) {
-    Ok(text) => {
-      match (json.parse(text)) {
-        Ok(v) => {
-          return http.json(json.encode(v));
-        },
-        Err(e) => {
-          return http.text(400, e.to_string());
-        }
-      }
-    },
-    Err(_) => {
-      return http.text(400, "body is not text");
-    }
-  }
-  return http.text(400, "");
+  let Ok(text) = req.body_text() else {
+    return http.text(400, "body is not text");
+  };
+  return match (json.parse(text)) { Ok(v) => http.json(json.encode(v)), Err(e) => http.text(400, e.to_string()) };
 }
 
 function port(): i32 {
-  match (env("PORT")) {
-    Some(p) => {
-      match (i32.parse_i32_radix(p, 10)) {
-        Ok(n) => {
-          return n;
-        },
-        Err(_) => {
-          return 8080;
-        }
-      }
-    },
-    None => {
-      return 8080;
-    }
-  }
-  return 8080;
+  let Some(p) = env("PORT") else {
+    return 8080;
+  };
+  return i32.parse_i32_radix(p, 10).unwrap_or(8080);
 }
 
 function main(): i32 {
-  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
+  let opts = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
   return serve.exit_code(serve.run(port(), opts, handle));
 }
