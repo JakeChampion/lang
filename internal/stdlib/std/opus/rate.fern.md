@@ -204,9 +204,10 @@ function trim_offsets(r: Request): i32[] {
   return out;
 }
 
-// The two rows of the table that bracket the frame, as bits1, the lower row,
-// and bits2, the step up to the higher row.
-function plan(r: Request): Plan {
+struct Reserve { total: i32, skip_rsv: i32, intensity_rsv: i32, dual_stereo_rsv: i32 }
+
+// The bits kept for the skip flag, the intensity band and the dual stereo flag.
+function reserve(r: Request): Reserve {
   let total: i32 = max(r.total, 0);
   let skip_rsv: i32 = 0;
   if (total >= 1 << BITRES) {
@@ -227,53 +228,77 @@ function plan(r: Request): Plan {
       total = total - dual_stereo_rsv;
     }
   }
+  return Reserve { total: total, skip_rsv: skip_rsv, intensity_rsv: intensity_rsv, dual_stereo_rsv: dual_stereo_rsv };
+}
+
+// The bits under which a band gets no shape bits.
+function thresholds(r: Request): i32[] {
   let thresh: i32[] = zeros(modes.BANDS);
   for j in r.start..r.end {
     thresh = thresh.with(j, max(r.channels << BITRES, 3 * width(j) << r.lm << BITRES >> 4));
   }
-  let trim: i32[] = trim_offsets(r);
+  return thresh;
+}
+
+// The bits of row `row` for band `j`, with the trim.
+function row_trimmed(r: Request, row: i32, j: i32, trim: i32): i32 {
+  let b: i32 = row_bits(r, row, j);
+  if (b > 0) {
+    b = max(0, b + trim);
+  }
+  return b;
+}
+
+// The bits that the row `row` gives the frame.
+function row_sum(r: Request, row: i32, thresh: [i32], trim: [i32]): i32 {
+  let done: boolean = false;
+  let psum: i32 = 0;
+  let j: i32 = r.end;
+  while (j > r.start) {
+    j = j - 1;
+    let b: i32 = row_trimmed(r, row, j, trim[j]) + r.offsets[j];
+    if (b >= thresh[j] || done) {
+      done = true;
+      psum = psum + min(b, r.cap[j]);
+    } else if (b >= r.channels << BITRES) {
+      psum = psum + (r.channels << BITRES);
+    }
+  }
+  return psum;
+}
+
+// The first row of the table whose bits do not fit in `total`.
+function first_row_over(r: Request, total: i32, thresh: [i32], trim: [i32]): i32 {
   let lo: i32 = 1;
   let hi: i32 = modes.ALLOC_VECTORS - 1;
   while (lo <= hi) {
     let mid: i32 = lo + hi >> 1;
-    let done: boolean = false;
-    let psum: i32 = 0;
-    let j: i32 = r.end;
-    while (j > r.start) {
-      j = j - 1;
-      let b: i32 = row_bits(r, mid, j);
-      if (b > 0) {
-        b = max(0, b + trim[j]);
-      }
-      b = b + r.offsets[j];
-      if (b >= thresh[j] || done) {
-        done = true;
-        psum = psum + min(b, r.cap[j]);
-      } else if (b >= r.channels << BITRES) {
-        psum = psum + (r.channels << BITRES);
-      }
-    }
-    if (psum > total) {
+    if (row_sum(r, mid, thresh, trim) > total) {
       hi = mid - 1;
     } else {
       lo = mid + 1;
     }
   }
-  hi = lo;
-  lo = lo - 1;
+  return lo;
+}
+
+// The two rows of the table that bracket the frame, as bits1, the lower row,
+// and bits2, the step up to the higher row.
+function plan(r: Request): Plan {
+  let rs: Reserve = reserve(r);
+  let thresh: i32[] = thresholds(r);
+  let trim: i32[] = trim_offsets(r);
+  let hi: i32 = first_row_over(r, rs.total, thresh, trim);
+  let lo: i32 = hi - 1;
   let bits1: i32[] = zeros(modes.BANDS);
   let bits2: i32[] = zeros(modes.BANDS);
   let skip_start: i32 = r.start;
   for j in r.start..r.end {
-    let b1: i32 = row_bits(r, lo, j);
+    let b1: i32 = row_trimmed(r, lo, j, trim[j]);
     let b2: i32 = r.cap[j];
     if (hi < modes.ALLOC_VECTORS) {
-      b2 = row_bits(r, hi, j);
-    }
-    if (b1 > 0) {
-      b1 = max(0, b1 + trim[j]);
-    }
-    if (b2 > 0) {
+      b2 = row_trimmed(r, hi, j, trim[j]);
+    } else if (b2 > 0) {
       b2 = max(0, b2 + trim[j]);
     }
     if (lo > 0) {
@@ -286,7 +311,7 @@ function plan(r: Request): Plan {
     bits1 = bits1.with(j, b1);
     bits2 = bits2.with(j, max(0, b2 - b1));
   }
-  return Plan { bits1: bits1, bits2: bits2, thresh: thresh, skip_start: skip_start, skip_rsv: skip_rsv, intensity_rsv: intensity_rsv, dual_stereo_rsv: dual_stereo_rsv, total: total };
+  return Plan { bits1: bits1, bits2: bits2, thresh: thresh, skip_start: skip_start, skip_rsv: rs.skip_rsv, intensity_rsv: rs.intensity_rsv, dual_stereo_rsv: rs.dual_stereo_rsv, total: rs.total };
 }
 
 // The interpolation step: the largest of 64 steps whose bits fit.
@@ -305,6 +330,19 @@ function interp_step(r: Request, p: Plan): i32 {
 }
 
 struct Skip { c: range.Coder, coded: i32, bits: i32[], psum: i32, total: i32, intensity_rsv: i32 }
+
+// The encoder's choice to code band `j` and stop skipping. A threshold with
+// some hysteresis keeps a band from going in and out of the coded set.
+function keep_band(r: Request, coded: i32, j: i32, band_bits: i32, band_width: i32): boolean {
+  let depth: i32 = 0;
+  if (coded > 17) {
+    depth = 9;
+    if (j < r.prev) {
+      depth = 7;
+    }
+  }
+  return coded <= r.start + 2 || band_bits > depth * band_width << r.lm << BITRES >> 4 && j <= r.signal_bandwidth;
+}
 
 // Decides how many bands to code, from the end. A band above its threshold
 // codes a skip flag. A band below it is skipped without a flag.
@@ -328,17 +366,7 @@ function skip_bands(own c: range.Coder, r: Request, p: Plan, own bits: i32[], ps
     let band_width: i32 = modes.EBANDS[coded] - modes.EBANDS[j];
     let band_bits: i32 = bits[j] + percoeff * band_width + rem;
     if (band_bits >= max(p.thresh[j], floor + (1 << BITRES))) {
-      let keep: boolean = false;
-      if (c.encoding()) {
-        let depth: i32 = 0;
-        if (coded > 17) {
-          depth = 9;
-          if (j < r.prev) {
-            depth = 7;
-          }
-        }
-        keep = coded <= r.start + 2 || band_bits > depth * band_width << r.lm << BITRES >> 4 && j <= r.signal_bandwidth;
-      }
+      let keep: boolean = c.encoding() && keep_band(r, coded, j, band_bits, band_width);
       let (c1, stop) = c.bit(keep, 1);
       c = c1;
       if (stop) {
@@ -365,6 +393,38 @@ function skip_bands(own c: range.Coder, r: Request, p: Plan, own bits: i32[], ps
 
 struct Split { pulses: i32[], ebits: i32[], fine_priority: i32[], balance: i32 }
 
+struct FineSplit { ebits: i32, priority: i32 }
+
+// The fine energy bits of band `j`, which has `n` values and `b` bits, and
+// whether it is a candidate for the final fine energy pass.
+function fine_split(r: Request, j: i32, n: i32, b: i32, intensity: i32, dual_stereo: boolean): FineSplit {
+  let c: i32 = r.channels;
+  let den: i32 = c * n;
+  if (c == 2 && n > 2 && !dual_stereo && j < intensity) {
+    den = den + 1;
+  }
+  let nclogn: i32 = den * (modes.LOGN[j] + (r.lm << BITRES));
+  let offset: i32 = (nclogn >> 1) - den * FINE_OFFSET;
+  if (n == 2) {
+    offset = offset + (den << BITRES >> 2);
+  }
+  if (b + offset < den * 2 << BITRES) {
+    offset = offset + (nclogn >> 2);
+  } else if (b + offset < den * 3 << BITRES) {
+    offset = offset + (nclogn >> 3);
+  }
+  let eb: i32 = max(0, b + offset + (den << BITRES - 1)) / den >> BITRES;
+  if (c * eb > b >> BITRES) {
+    eb = b >> c - 1 >> BITRES;
+  }
+  eb = min(eb, MAX_FINE_BITS);
+  let fp: i32 = 0;
+  if (eb * (den << BITRES) >= b + offset) {
+    fp = 1;
+  }
+  return FineSplit { ebits: eb, priority: fp };
+}
+
 // Splits the bits of each coded band between fine energy and the shape, and
 // gives the skipped bands all their bits as fine energy.
 function split_bands(r: Request, coded: i32, own bits: i32[], intensity: i32, dual_stereo: boolean): Split {
@@ -375,7 +435,6 @@ function split_bands(r: Request, coded: i32, own bits: i32[], intensity: i32, du
     stereo = 1;
   }
   let c: i32 = r.channels;
-  let log_m: i32 = r.lm << BITRES;
   let balance: i32 = 0;
   for j in r.start..coded {
     let n: i32 = width(j) << r.lm;
@@ -386,29 +445,9 @@ function split_bands(r: Request, coded: i32, own bits: i32[], intensity: i32, du
     if (n > 1) {
       excess = max(bit - r.cap[j], 0);
       let b: i32 = bit - excess;
-      let den: i32 = c * n;
-      if (c == 2 && n > 2 && !dual_stereo && j < intensity) {
-        den = den + 1;
-      }
-      let nclogn: i32 = den * (modes.LOGN[j] + log_m);
-      let offset: i32 = (nclogn >> 1) - den * FINE_OFFSET;
-      if (n == 2) {
-        offset = offset + (den << BITRES >> 2);
-      }
-      if (b + offset < den * 2 << BITRES) {
-        offset = offset + (nclogn >> 2);
-      } else if (b + offset < den * 3 << BITRES) {
-        offset = offset + (nclogn >> 3);
-      }
-      eb = max(0, b + offset + (den << BITRES - 1));
-      eb = eb / den >> BITRES;
-      if (c * eb > b >> BITRES) {
-        eb = b >> stereo >> BITRES;
-      }
-      eb = min(eb, MAX_FINE_BITS);
-      if (eb * (den << BITRES) >= b + offset) {
-        fp = 1;
-      }
+      let fs: FineSplit = fine_split(r, j, n, b, intensity, dual_stereo);
+      eb = fs.ebits;
+      fp = fs.priority;
       bits = bits.with(j, b - (c * eb << BITRES));
     } else {
       excess = max(0, bit - (c << BITRES));
@@ -440,6 +479,36 @@ function split_bands(r: Request, coded: i32, own bits: i32[], intensity: i32, du
   return Split { pulses: bits, ebits: ebits, fine_priority: fine, balance: balance };
 }
 
+struct Stereo { c: range.Coder, intensity: i32, dual_stereo: boolean, total: i32 }
+
+// Codes the intensity band and the dual stereo flag, when their bits are kept.
+// The bits of a flag that is not coded go back to the total.
+function stereo_params(own c: range.Coder, r: Request, p: Plan, coded: i32, intensity_rsv: i32, total0: i32): Stereo {
+  let total: i32 = total0;
+  let intensity: i32 = 0;
+  if (intensity_rsv > 0) {
+    let want: u32 = 0u32;
+    if (c.encoding()) {
+      want = (min(r.intensity, coded) - r.start) as u32;
+    }
+    let (c3, v) = c.uint_of(want, (coded + 1 - r.start) as u32);
+    c = c3;
+    intensity = r.start + v as i32;
+  }
+  let dual_stereo_rsv: i32 = p.dual_stereo_rsv;
+  if (intensity <= r.start) {
+    total = total + dual_stereo_rsv;
+    dual_stereo_rsv = 0;
+  }
+  let dual_stereo: boolean = false;
+  if (dual_stereo_rsv > 0) {
+    let (c4, b) = c.bit(r.dual_stereo, 1);
+    c = c4;
+    dual_stereo = b;
+  }
+  return Stereo { c: c, intensity: intensity, dual_stereo: dual_stereo, total: total };
+}
+
 // Divides `r.total` bits between the bands of a frame.
 pub function compute_allocation(own c: range.Coder, r: Request): (range.Coder, Allocation) {
   let p: Plan = plan(r);
@@ -468,28 +537,11 @@ pub function compute_allocation(own c: range.Coder, r: Request): (range.Coder, A
   let s: Skip = skip_bands(c, r, p, bits, psum);
   let Skip { c: c2, coded, bits: bits2, psum: psum2, total: total0, intensity_rsv } = s;
   c = c2;
-  let total: i32 = total0;
-  let intensity: i32 = 0;
-  if (intensity_rsv > 0) {
-    let want: u32 = 0u32;
-    if (c.encoding()) {
-      want = (min(r.intensity, coded) - r.start) as u32;
-    }
-    let (c3, v) = c.uint_of(want, (coded + 1 - r.start) as u32);
-    c = c3;
-    intensity = r.start + v as i32;
-  }
-  let dual_stereo_rsv: i32 = p.dual_stereo_rsv;
-  if (intensity <= r.start) {
-    total = total + dual_stereo_rsv;
-    dual_stereo_rsv = 0;
-  }
-  let dual_stereo: boolean = false;
-  if (dual_stereo_rsv > 0) {
-    let (c4, b) = c.bit(r.dual_stereo, 1);
-    c = c4;
-    dual_stereo = b;
-  }
+  let st: Stereo = stereo_params(c, r, p, coded, intensity_rsv, total0);
+  c = st.c;
+  let total: i32 = st.total;
+  let intensity: i32 = st.intensity;
+  let dual_stereo: boolean = st.dual_stereo;
   let span: i32 = modes.EBANDS[coded] - modes.EBANDS[r.start];
   let left: i32 = total - psum2;
   let percoeff: i32 = left / span;

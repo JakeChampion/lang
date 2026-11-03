@@ -135,6 +135,51 @@ Each step finds the integer at the front of the codeword and the pulses that are
 
 ```fern
 <<decoding>>=
+struct Step { index: u32, left: i32, negative: boolean }
+
+// The largest pulse count from `start` down whose count of codewords with
+// `dims` integers is not above `index`, and that count.
+function search(start: i32, dims: i32, index: u32): (i32, u32) {
+  let left: i32 = start;
+  let p: u32 = u(left, dims);
+  while (p > index) {
+    left = left - 1;
+    p = u(left, dims);
+  }
+  return (left, p);
+}
+
+// The pulses left after the front integer of a codeword with `dims` integers,
+// the index within the rest, and the sign of the front integer.
+function front(dims: i32, k: i32, index: u32): Step {
+  let i: u32 = index;
+  let start: i32 = k - 1;
+  let negative: boolean = false;
+  if (k >= dims) {
+    let p: u32 = u(dims, k + 1);
+    negative = i >= p;
+    if (negative) {
+      i = i - p;
+    }
+    start = k;
+    if (u(dims, dims) > i) {
+      start = dims - 1;
+    }
+  } else {
+    let p: u32 = u(k, dims);
+    let q: u32 = u(k + 1, dims);
+    if (p <= i && i < q) {
+      return Step { index: i - p, left: k, negative: false };
+    }
+    negative = i >= q;
+    if (negative) {
+      i = i - q;
+    }
+  }
+  let (left, p) = search(start, dims, i);
+  return Step { index: i - p, left: left, negative: negative };
+}
+
 // The codeword of `n` integers and `k` pulses at `index`, and the sum of the
 // squares of its integers.
 pub function codeword(n: i32, k: i32, index: u32): (i32[], i32) {
@@ -142,56 +187,13 @@ pub function codeword(n: i32, k: i32, index: u32): (i32[], i32) {
   let yy: i32 = 0;
   let i: u32 = index;
   let left: i32 = k;
-  let dims: i32 = n;
-  while (dims > 2) {
-    let before: i32 = left;
-    let negative: boolean = false;
-    let p: u32 = 0u32;
-    if (left >= dims) {
-      p = u(dims, left + 1);
-      negative = i >= p;
-      if (negative) {
-        i = i - p;
-      }
-      if (u(dims, dims) > i) {
-        left = dims - 1;
-        p = u(left, dims);
-        while (p > i) {
-          left = left - 1;
-          p = u(left, dims);
-        }
-      } else {
-        p = u(dims, left);
-        while (p > i) {
-          left = left - 1;
-          p = u(dims, left);
-        }
-      }
-    } else {
-      p = u(left, dims);
-      let q: u32 = u(left + 1, dims);
-      if (p <= i && i < q) {
-        i = i - p;
-        y = y.append(0);
-        dims = dims - 1;
-        continue;
-      }
-      negative = i >= q;
-      if (negative) {
-        i = i - q;
-      }
-      left = left - 1;
-      p = u(left, dims);
-      while (p > i) {
-        left = left - 1;
-        p = u(left, dims);
-      }
-    }
-    i = i - p;
-    let val: i32 = signed(before - left, negative);
+  for dims in 0..n - 2 {
+    let st: Step = front(n - dims, left, i);
+    let val: i32 = signed(left - st.left, st.negative);
     y = y.append(val);
     yy = yy + val * val;
-    dims = dims - 1;
+    i = st.index;
+    left = st.left;
   }
   let p2: u32 = (2 * left + 1) as u32;
   let negative2: boolean = i >= p2;

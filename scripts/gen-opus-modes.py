@@ -5,7 +5,7 @@ Usage: gen-opus-modes.py LIBOPUS_DIR
 
 The module holds the static data of the one CELT mode that Opus uses: 48 kHz,
 frames of 960 samples, and an overlap of 120 samples. The data comes from
-celt/modes.c and celt/static_modes_float.h. The script reads each table, checks
+celt/modes.c, celt/quant_bands.c and celt/static_modes_float.h. The script reads each table, checks
 its length, and writes it as a Fern constant. The data is part of libopus, so
 the module carries the libopus notice.
 """
@@ -27,6 +27,8 @@ TABLES = [
     ("cache_bits50", "static_modes_float.h", "CACHE_BITS", "i32", 392),
     ("cache_caps50", "static_modes_float.h", "CACHE_CAPS", "i32", 168),
     ("window120", "static_modes_float.h", "WINDOW", "f32", 120),
+    ("eMeans", "quant_bands.c", "E_MEANS", "f32", 25),
+    ("e_prob_model", "quant_bands.c", "E_PROB_MODEL", "i32", 4 * 2 * 42),
 ]
 
 
@@ -36,12 +38,27 @@ def notice(root):
     return ["// " + line if line else "//" for line in lines]
 
 
+def float_build(src):
+    """`src` without the FIXED_POINT branches of its #ifdef blocks."""
+    out = []
+    skip = False
+    for line in src.splitlines():
+        if line.startswith("#ifdef FIXED_POINT"):
+            skip = True
+        elif skip and line.startswith(("#else", "#endif")):
+            skip = False
+        elif not skip:
+            out.append(line)
+    return "\n".join(out)
+
+
 def values(src, name):
     """The initializer of the C array `name`, without comments."""
-    m = re.search(r"\b" + name + r"\s*\[[^\]]*\]\s*=\s*\{(.*?)\};", src, re.S)
+    src = float_build(src)
+    m = re.search(r"\b" + name + r"\s*(?:\[[^\]]*\]\s*)+=\s*\{(.*?)\};", src, re.S)
     if m is None:
         sys.exit(f"gen-opus-modes: no table {name}")
-    body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+    body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S).replace("{", "").replace("}", "")
     return [v.strip() for v in body.split(",") if v.strip()]
 
 

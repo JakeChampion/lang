@@ -292,6 +292,28 @@ pub function (own e: Encoder) shrink(size: i32): Encoder {
 // Writes the fewest bits that decode as the coded symbols, whatever bits
 // follow, and then the raw bits that are still in the window.
 pub function (own e: Encoder) done(): Encoder {
+  let (e1, l) = flush_range(e);
+  e = e1;
+  let window: u32 = e.end_window;
+  let used: i32 = e.nend_bits;
+  while (used >= 8) {
+    e = put_at_end(e, window);
+    window = window >> 8u32;
+    used = used - 8;
+  }
+  if (e.error) {
+    return e;
+  }
+  let buf: u8[] = e.buf;
+  for i in e.offs..e.storage - e.end_offs {
+    buf = buf.with(i, 0 as u8);
+  }
+  return last_bits(Encoder { ...e, buf: buf }, window, used, 0 - l);
+}
+
+// Writes the fewest range bytes that decode as the coded symbols, and gives
+// the bits of the last byte that the range does not use, as a negative count.
+function flush_range(own e: Encoder): (Encoder, i32) {
   let l: i32 = 32 - ilog(e.rng);
   let msk: u32 = CODE_TOP - 1u32 >> l as u32;
   let end: u32 = e.val + msk & (msk ^ ALL);
@@ -308,28 +330,20 @@ pub function (own e: Encoder) done(): Encoder {
   if (e.rem >= 0 || e.ext > 0) {
     e = carry_out(e, 0u32);
   }
-  let window: u32 = e.end_window;
-  let used: i32 = e.nend_bits;
-  while (used >= 8) {
-    e = put_at_end(e, window);
-    window = window >> 8u32;
-    used = used - 8;
-  }
-  if (e.error) {
-    return e;
-  }
-  let buf: u8[] = e.buf;
-  for i in e.offs..e.storage - e.end_offs {
-    buf = buf.with(i, 0 as u8);
-  }
-  e = Encoder { ...e, buf: buf };
+  return (e, l);
+}
+
+// Puts the `used` raw bits that are left in `window` into the last byte of the
+// packet. When the packet is full, only the `room` free bits of that byte take
+// raw bits, so that the range data stays whole.
+function last_bits(own e: Encoder, window0: u32, used: i32, room: i32): Encoder {
   if (used <= 0) {
     return e;
   }
   if (e.end_offs >= e.storage) {
     return Encoder { ...e, error: true };
   }
-  let room: i32 = 0 - l;
+  let window: u32 = window0;
   if (e.offs + e.end_offs >= e.storage && room < used) {
     window = window & (1u32 << room as u32) - 1u32;
     e = Encoder { ...e, error: true };
