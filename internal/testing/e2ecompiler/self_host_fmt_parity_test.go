@@ -22,6 +22,14 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"cast-of-a-prefix-operand", `function f(s: i32): f32 {
+  let a: f32 = (-s) as f32;
+  let b: f32 = -(s as f32);
+  let c: f32 = (-1) as f32;
+  let d: i64 = (-s) as i64 * 2i64;
+  return a + b + c + d as f32;
+}
+`},
 	{"comment-only-blocks", `struct P { x: i32 }
 
 function f(a: boolean, b: boolean, o: Option[i32]): i32 {

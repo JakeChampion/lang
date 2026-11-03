@@ -73,6 +73,22 @@ function prec_assign(): i32 {
   return 1;
 }
 
+// A cast is a postfix, so `-x as T` reads as `-(x as T)`: a prefix operand of a
+// cast, or a negative literal, keeps its parentheses.
+function cast_operand_needs_parens(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprUnary(u) => {
+      return !util.str_has_prefix(u.op, "as_") && !util.str_has_prefix(u.op, "as?_") && u.op != "try_";
+    },
+    ast.ExprNumber(n) => {
+      return util.str_has_prefix(n.text, "-") || util.str_has_prefix(n.raw, "-");
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
 function prec_cast(): i32 {
   return 14;
 }
@@ -770,7 +786,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       // uses the same precedence and parentheses as a plain cast.
       let checked_cast: boolean = u.op.len() > 4 && util.str_has_prefix(u.op, "as?_");
       if (checked_cast || u.op.len() > 3 && util.str_has_prefix(u.op, "as_")) {
-        let (co, cf) = print_expr_c(u.operand, prec_cast(), depth, f);
+        let (co0, cf) = print_expr_c(u.operand, prec_cast(), depth, f);
+        let co: string = co0;
+        if (cast_operand_needs_parens(u.operand)) {
+          co = "(" + co0 + ")";
+        }
         let start: i32 = 3;
         let cast_op: string = " as ";
         if (checked_cast) {

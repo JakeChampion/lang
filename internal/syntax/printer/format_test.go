@@ -81,6 +81,30 @@ func TestFormatUnsignedLargeLiteral(t *testing.T) {
 	}
 }
 
+// A cast is a postfix, so the parentheses around a prefix operand or a
+// negative literal stay: `-x as T` reads as `-(x as T)` (#14102).
+func TestFormatKeepsParensAroundCastOperand(t *testing.T) {
+	src := `function main(): i32 {
+  let s: i32 = 1;
+  let a: f32 = (-s) as f32;
+  let b: f32 = -(s as f32);
+  let c: f32 = (-1) as f32;
+  let d: f32 = (-1.5f32) as f32;
+  let e: f64 = s as i64 as f64;
+  return a as i32 + b as i32 + c as i32 + d as i32 + e as i32;
+}
+`
+	got := formatSrc(t, src)
+	for _, want := range []string{"(-s) as f32", "-(s as f32)", "(-1) as f32", "(-1.5f32) as f32", "(s as i64) as f64"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("format lost %q:\n%s", want, got)
+		}
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Errorf("format is not idempotent:\n--- first ---\n%s\n--- second ---\n%s", got, again)
+	}
+}
+
 func TestFormatIfElseIndents(t *testing.T) {
 	got := formatSrc(t, `function f(n: i32): i32 { if (n == 0) { return 1; } else { return n; } }`)
 	want := strings.Join([]string{

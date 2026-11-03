@@ -1700,6 +1700,29 @@ func (f *formatter) writeStringBody(lit string, fstring bool) {
 	}
 }
 
+// formatCastOperand writes the operand of a cast. A cast is a postfix, so
+// `-x as T` reads as `-(x as T)`: a prefix operand keeps its parentheses.
+func (f *formatter) formatCastOperand(e ast.Expr) {
+	wrap := false
+	switch x := e.(type) {
+	case *ast.Unary:
+		wrap = true
+	case *ast.NumberLit:
+		// A large unsigned literal is stored as a negative Value and is
+		// written without a sign.
+		wrap = strings.HasPrefix(x.Raw, "-")
+	case *ast.FloatLit:
+		wrap = x.Value < 0
+	}
+	if wrap {
+		f.b.WriteByte('(')
+	}
+	f.formatExpr(e, precCast)
+	if wrap {
+		f.b.WriteByte(')')
+	}
+}
+
 func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 	switch x := e.(type) {
 	case *ast.CastExpr:
@@ -1707,7 +1730,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte('(')
 		}
-		f.formatExpr(x.Inner, precCast)
+		f.formatCastOperand(x.Inner)
 		f.b.WriteString(" as ")
 		f.b.WriteString(x.Target.String())
 		if needsParens {
@@ -1718,7 +1741,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if needsParens {
 			f.b.WriteByte('(')
 		}
-		f.formatExpr(x.Inner, precCast)
+		f.formatCastOperand(x.Inner)
 		f.b.WriteString(" as? ")
 		f.b.WriteString(x.Target.String())
 		if needsParens {
