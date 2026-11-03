@@ -18668,7 +18668,7 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
 // entry per field the literal replaces.
-struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[] }
+struct LuFacts { occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[] }
 
 struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, noret: util.NameIndex, looped: string[] }
 
@@ -18723,6 +18723,15 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
     ast.StmtDefer(d) => {
       let names: string[] = lu_all_names(d.action, []);
       return lu_defer_facts(d.action, LuFacts { ...f, escaping: util.append_all(f.escaping, names) });
+    },
+    ast.StmtMatch(m) => {
+      let matched: LuVar[] = f.matched;
+      for arm in m.arms {
+        for name in astwalk.pattern_binders(arm.pattern, []) {
+          matched = matched.append(LuVar { name: name, init: m.scrutinee });
+        }
+      }
+      return LuFacts { ...f, matched: matched };
     },
     _ => {
       return f;
@@ -19087,6 +19096,12 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
   let Some(init) = lu_init_of(fx, name) else {
     return false;
   };
+  return lu_unpack_expr(fx, init);
+}
+
+// An unpack reads the one field of a fresh local or an own parameter that
+// nothing else reads, from a holder that each mention selects a field of.
+function lu_unpack_expr(fx: LuFn, init: ast.Expr): boolean {
   if let ast.ExprFieldAccess(fa) = init {
     let h: string = ow_ident_name(fa.obj);
     if (h.len() == 0 || !(lu_fresh_init(fx, h) && lu_decl_count(fx, h) == 1) && !lu_own_param(fx, h)) {
@@ -19118,7 +19133,84 @@ function lu_rename_source(fx: LuFn, name: string): string {
   return src;
 }
 
+// A local that can move into an own parameter: an admitted local, or an
+// alias `let a = b`, declared once outside a loop, that takes an owned b at
+// its last use and is given only owned values after that. An owned value is
+// a fresh value, an unpack, an owned name, or a self-update
+// `T { ...a, f: v }`. A name in `seen` is on the path, so a cycle of aliases
+// is decided by its other values.
 function lu_admitted(fx: LuFn, name: string): boolean {
+  return lu_move_admitted(fx, name, []);
+}
+
+function lu_move_admitted(fx: LuFn, name: string, seen: string[]): boolean {
+  if (lu_base_admitted(fx, name)) {
+    return true;
+  }
+  if (util.has_str(seen, name)) {
+    return true;
+  }
+  let inner: string[] = seen.append(name);
+  if (!lu_alias_admitted(fx, name, inner)) {
+    return false;
+  }
+  for a in fx.facts.assigns {
+    if (a.name == name && !lu_value_owned(fx, name, a.init, inner)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function lu_owned_name(fx: LuFn, name: string, seen: string[]): boolean {
+  return lu_own_param(fx, name) || lu_fresh_bound(fx, name) || lu_is_local(fx, name) && lu_move_admitted(fx, name, seen);
+}
+
+// A name that only matches on a fresh call bind: the match takes the result,
+// so the payload is owned.
+function lu_fresh_bound(fx: LuFn, name: string): boolean {
+  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) != 0) {
+    return false;
+  }
+  let found: boolean = false;
+  for b in fx.facts.matched {
+    if (b.name == name) {
+      if (!lu_iter_owned(fx, b.init)) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
+}
+
+function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
+  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name)) {
+    return false;
+  }
+  let Some(init) = lu_init_of(fx, name) else {
+    return false;
+  };
+  if let ast.ExprIdent(src) = init {
+    return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
+  }
+  return false;
+}
+
+function lu_value_owned(fx: LuFn, target: string, e: ast.Expr, seen: string[]): boolean {
+  if (lu_fresh_value(fx, e) || lu_unpack_expr(fx, e)) {
+    return true;
+  }
+  if let ast.ExprIdent(src) = e {
+    return lu_owned_name(fx, src.name, seen);
+  }
+  if let ast.ExprStructLit(sl) = e {
+    return sl.has_base && ow_ident_name(sl.base) == target;
+  }
+  return false;
+}
+
+function lu_base_admitted(fx: LuFn, name: string): boolean {
   if (lu_fresh_init(fx, name) || lu_unpack_init(fx, name) || lu_owned_alias(fx, name)) {
     return true;
   }
@@ -19213,7 +19305,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { occ: [], vars: [], assigns: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [] };
+  return LuFacts { occ: [], vars: [], assigns: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [] };
 }
 
 // A later mention of the name inside the statement that holds the call.

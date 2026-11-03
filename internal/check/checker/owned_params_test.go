@@ -167,6 +167,12 @@ function consume(own xs: i32[]): i32 { return xs[0]; }
 function consumeBox(own b: Box): i32 { return 0; }
 `
 
+// ownHandle declares a struct with a method that consumes its receiver, so
+// the struct is a user-defined handle.
+const ownHandle = `struct Res { v: i32[], n: i32 }
+function (own r: Res) step(): (Res, boolean) { return (r, false); }
+`
+
 func wantE051(t *testing.T, name, src string) {
 	t.Helper()
 	err := checkSource(t, src)
@@ -316,6 +322,30 @@ function copyOf(w: Wv): i32[] {
 function f(w: Wv): i32 {
     return consume(copyOf(w));
 }`},
+		// An alias that takes a local at its last use can move a handle type,
+		// after a self-update of that local (#14109).
+		{"alias-after-a-self-update", ownHandle + `
+function f(own r0: Res): i32 {
+    let r1: Res = r0;
+    r1 = Res { ...r1, n: 1 };
+    let r2: Res = r1;
+    let (r3, k) = r2.step();
+    r2 = r3;
+    return r2.n;
+}`},
+		{"alias-of-an-unpack-after-a-self-update", ownHandle + `
+function split(own r: Res): (Res, boolean) { return (r, true); }
+function f(own r0: Res): i32 {
+    let (r1, k) = split(r0);
+    if (k) { r1 = Res { ...r1, n: r1.n + 1 }; }
+    let r2: Res = r1;
+    if (r2.n > 0) {
+        let (r3, j) = r2.step();
+        r2 = r3;
+    }
+    let (r4, m) = r2.step();
+    return r4.n;
+}`},
 		{"inner-binding-shadows-the-outer", `
 function f(c: boolean): i32 {
     let xs: i32[] = [1];
@@ -386,6 +416,26 @@ struct Wv { v: i32[] }
 function inner(w: Wv): i32[] { return w.v; }
 function f(w: Wv): i32 {
     return consume(inner(w));
+}`},
+		// An alias of a handle type moves only when it takes its source at
+		// the last use and is given only owned values (#14109).
+		{"alias-whose-source-is-read-again", ownHandle + `
+function f(own r0: Res): i32 {
+    let r1: Res = r0;
+    r1 = Res { ...r1, n: 1 };
+    let r2: Res = r1;
+    let (r3, k) = r2.step();
+    return r3.n + r1.n;
+}`},
+		{"alias-given-a-borrowed-value", ownHandle + `
+struct Hold { r: Res }
+function f(own r0: Res, h: Hold): i32 {
+    let r1: Res = r0;
+    r1 = Res { ...r1, n: 1 };
+    let r2: Res = r1;
+    r2 = h.r;
+    let (r3, k) = r2.step();
+    return r3.n;
 }`},
 		{"destructured-read-again", `
 function step(): (i32[], i32) { return ([1], 2); }
