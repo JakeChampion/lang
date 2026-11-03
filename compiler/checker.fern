@@ -4803,6 +4803,7 @@ function builtin_sigs(): string[] {
     "access(string, i32): Result[void, IoError]",
     "args(): string[]",
     "buf_clear(usize): void",
+    "buf_decode_base32(usize, u8[], i32, i32, u8[]): i32",
     "buf_free(usize): void",
     "buf_len(usize): i32",
     "buf_new(i32): usize",

@@ -2257,6 +2257,48 @@ function emit_buf_push_base32(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    .section .text\n");
 }
 
+// Each pass checks 16 characters against the two ranges and packs them to 10
+// bytes: vpmaddubsw and vpmaddwd join 5-bit values into 20-bit dwords, and two
+// shifts join each pair of those. A store writes 16 bytes, so the reserve
+// keeps 16 bytes past the decoded length.
+function emit_buf_decode_base32(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_buf_decode_base32:\n");
+  s = s.write("    movslq %edx, %rdx\n    movslq %ecx, %rcx\n    xorl %eax, %eax\n    testq %rdx, %rdx\n    cmovsq %rax, %rdx\n");
+  s = s.write("    movq (%rsi), %rax\n    cmpq %rax, %rcx\n    cmovgq %rax, %rcx\n    movq %rcx, %r10\n    subq %rdx, %r10\n    cmpq $8, %r10\n    jl .Ld32_none\n");
+  s = s.write("    cmpq $4, (%r8)\n    jb __fern_oob_abort\n");
+  s = s.write("    movq %r10, %rax\n    shrq $3, %rax\n    leaq 16(%rax,%rax,4), %rax\n    movq 8(%rdi), %r11\n    leaq (%r11,%rax), %r9\n    cmpq 16(%rdi), %r9\n    ja .Ld32_grow\n");
+  s = s.write(".Ld32_fits:\n    pushq %rdi\n    movq (%rdi), %rdi\n    addq %r11, %rdi\n    leaq 8(%rsi), %rax\n    leaq (%rax,%rdx), %rsi\n    movq %rax, %rdx\n    andq $-8, %r10\n");
+  s = s.write("    cmpq $16, %r10\n    jb .Ld32_group\n");
+  s = s.write("    movzbl 8(%r8), %eax\n    movd %eax, %xmm8\n    vpbroadcastb %xmm8, %xmm8\n");
+  s = s.write("    movzbl 9(%r8), %eax\n    subl $1, %eax\n    movd %eax, %xmm9\n    vpbroadcastb %xmm9, %xmm9\n");
+  s = s.write("    movzbl 10(%r8), %eax\n    movd %eax, %xmm10\n    vpbroadcastb %xmm10, %xmm10\n");
+  s = s.write("    movzbl 11(%r8), %eax\n    subl $1, %eax\n    movd %eax, %xmm11\n    vpbroadcastb %xmm11, %xmm11\n");
+  s = s.write("    movzbl 9(%r8), %ecx\n    xorl %eax, %eax\n    subl %ecx, %eax\n    movd %eax, %xmm12\n    vpbroadcastb %xmm12, %xmm12\n");
+  s = s.write("    vmovdqu .Ld32_join(%rip), %xmm13\n    vmovdqu .Ld32_join2(%rip), %xmm14\n    vmovdqu .Ld32_order(%rip), %xmm15\n");
+  s = s.write(".Ld32_vec:\n    vmovdqu (%rsi), %xmm0\n");
+  s = s.write("    vpsubb %xmm8, %xmm0, %xmm1\n    vpminub %xmm9, %xmm1, %xmm2\n    vpcmpeqb %xmm2, %xmm1, %xmm2\n");
+  s = s.write("    vpsubb %xmm10, %xmm0, %xmm3\n    vpminub %xmm11, %xmm3, %xmm4\n    vpcmpeqb %xmm4, %xmm3, %xmm4\n    vpsubb %xmm12, %xmm3, %xmm3\n");
+  s = s.write("    vpand %xmm2, %xmm1, %xmm1\n    vpand %xmm4, %xmm3, %xmm3\n    vpor %xmm3, %xmm1, %xmm1\n    vpor %xmm4, %xmm2, %xmm2\n");
+  s = s.write("    vpmovmskb %xmm2, %eax\n    cmpl $65535, %eax\n    jne .Ld32_group\n");
+  s = s.write("    vpmaddubsw %xmm13, %xmm1, %xmm1\n    vpmaddwd %xmm14, %xmm1, %xmm1\n");
+  s = s.write("    vpsllq $44, %xmm1, %xmm2\n    vpsrlq $24, %xmm2, %xmm2\n    vpsrlq $32, %xmm1, %xmm1\n    vpor %xmm2, %xmm1, %xmm1\n");
+  s = s.write("    vpshufb %xmm15, %xmm1, %xmm1\n    vmovdqu %xmm1, (%rdi)\n");
+  s = s.write("    addq $16, %rsi\n    addq $10, %rdi\n    subq $16, %r10\n    cmpq $16, %r10\n    jae .Ld32_vec\n");
+  s = s.write(".Ld32_group:\n    cmpq $8, %r10\n    jb .Ld32_stop\n    xorl %eax, %eax\n    xorl %ecx, %ecx\n");
+  s = s.write(".Ld32_char:\n    movzbl (%rsi,%rcx), %r9d\n    movzbl 8(%r8), %r11d\n    subl %r11d, %r9d\n    movzbl 9(%r8), %r11d\n    cmpl %r11d, %r9d\n    jb .Ld32_val\n");
+  s = s.write("    movzbl (%rsi,%rcx), %r9d\n    movzbl 10(%r8), %r11d\n    subl %r11d, %r9d\n    movzbl 11(%r8), %r11d\n    cmpl %r11d, %r9d\n    jae .Ld32_stop\n    movzbl 9(%r8), %r11d\n    addl %r11d, %r9d\n");
+  s = s.write(".Ld32_val:\n    shlq $5, %rax\n    orq %r9, %rax\n    addq $1, %rcx\n    cmpq $8, %rcx\n    jb .Ld32_char\n");
+  s = s.write("    shlq $24, %rax\n    bswapq %rax\n    movq %rax, (%rdi)\n    addq $5, %rdi\n    addq $8, %rsi\n    subq $8, %r10\n    jmp .Ld32_group\n");
+  s = s.write(".Ld32_stop:\n    popq %rcx\n    subq (%rcx), %rdi\n    movq %rdi, 8(%rcx)\n    movq %rsi, %rax\n    subq %rdx, %rax\n    ret\n");
+  s = s.write(".Ld32_none:\n    movq %rdx, %rax\n    ret\n");
+  s = s.write(".Ld32_grow:\n    pushq %rdi\n    pushq %rsi\n    pushq %rdx\n    pushq %r8\n    pushq %r10\n    movq %r9, %rsi\n    call __fern_buf_reserve\n");
+  s = s.write("    popq %r10\n    popq %r8\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    movq 8(%rdi), %r11\n    jmp .Ld32_fits\n");
+  s = s.write("    .section .rodata\n.Ld32_join:\n    .byte 32, 1, 32, 1, 32, 1, 32, 1, 32, 1, 32, 1, 32, 1, 32, 1\n");
+  s = s.write(".Ld32_join2:\n    .byte 0, 4, 1, 0, 0, 4, 1, 0, 0, 4, 1, 0, 0, 4, 1, 0\n");
+  s = s.write(".Ld32_order:\n    .byte 4, 3, 2, 1, 0, 12, 11, 10, 9, 8, 128, 128, 128, 128, 128, 128\n");
+  return s.write("    .section .text\n");
+}
+
 // __fern_buf_push_decimal(h, n) appends the decimal digits of the u64 n. It
 // writes them back to front into a stack scratch, two at a time from a table
 // of digit pairs, and divides by 100 with a multiply.
@@ -4015,6 +4057,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("buf_base32")) {
       s = emit_buf_push_base32(s);
+    }
+    if (s.has_need("buf_decode32")) {
+      s = emit_buf_decode_base32(s);
     }
     s = s.write("__fern_buf_len:\n");
     s = s.write("    movq 8(%rdi), %rax\n");
