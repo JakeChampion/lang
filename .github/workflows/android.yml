@@ -6,8 +6,11 @@ name: Android
 # emulator with KVM, and examples/android/stopwatch/emulator_check.py drives
 # it: the content at the screen centre, a tap to start, a long tap to reset,
 # the settings screen, and no crash in logcat. It is the one gate that loads
-# a Fern library with Android's loader. The seccomp job checks the syscalls
-# of the fixture corpus against Android's app filter.
+# a Fern library with Android's loader. The APK job also builds
+# examples/android/native with fern -apk, an app with no Java code, and
+# examples/android/native/emulator_check.py drives it on the same emulator.
+# The seccomp job checks the syscalls of the fixture corpus against
+# Android's app filter.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It decides from the changed files
@@ -36,12 +39,14 @@ jobs:
           make bin/fern
           examples/android/stopwatch/build.sh
           ./bin/fern -target x86-64-android -o build/android-stopwatch/report tests/android/report.fern
+          ./bin/fern -apk build/android-stopwatch/fern-native.apk -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
       - uses: actions/upload-artifact@v7
         with:
           name: fern-stopwatch-apk
           path: |
             build/android-stopwatch/fern-stopwatch.apk
             build/android-stopwatch/report
+            build/android-stopwatch/fern-native.apk
           if-no-files-found: error
 
   emulator:
@@ -67,7 +72,9 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
+          script: |
+            python3 examples/android/stopwatch/emulator_check.py build/android-stopwatch/fern-stopwatch.apk build/android-stopwatch/emulator build/android-stopwatch/report
+            python3 examples/android/native/emulator_check.py build/android-stopwatch/fern-native.apk dev.fern.native build/android-stopwatch/emulator/native
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

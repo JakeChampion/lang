@@ -1,0 +1,526 @@
+// The APK writer of fern -apk. An APK for a NativeActivity app has a binary
+// AndroidManifest.xml, the library of each ABI, and no Java code. The zip
+// archive has stored entries only, each one aligned, and an APK Signature
+// Scheme v2 block with a self-signed P-256 certificate.
+import "std/base64";
+import "std/crypto";
+import "std/crypto/ecdsa";
+import "std/crypto/sha2";
+import "std/hash/crc32";
+import "std/rand";
+
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string }
+
+pub struct Lib { abi: string, image: u8[] }
+
+pub const MIN_SDK: i32 = 24;
+
+pub const TARGET_SDK: i32 = 34;
+
+// Byte encodings, little-endian.
+
+function put8(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8);
+}
+
+function put16(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8);
+}
+
+function put32(out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8).append((v >> 8 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 24 & 255) as u8);
+}
+
+function put64(out: u8[], v: i64): u8[] {
+  return put32(put32(out, (v & 4294967295i64) as i32), (v >> 32) as i32);
+}
+
+function cat(out: u8[], b: [u8]): u8[] {
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function text(s: string): u8[] {
+  let out: u8[] = [];
+  for i in 0..s.len() {
+    out = out.append(s[i]);
+  }
+  return out;
+}
+
+// A field with a 32-bit length in front of it.
+function prefixed(b: [u8]): u8[] {
+  return cat(put32([], b.len()), b);
+}
+
+// The binary manifest. The pool starts with the names of the framework
+// attributes, in the order of their resource IDs, and the resource map
+// gives those IDs. The rest of the pool follows `pool_strings`.
+
+// android:theme, label, name, hasCode, exported, configChanges, value,
+// minSdkVersion, versionCode, versionName and targetSdkVersion.
+function attr_ids(): i32[] {
+  return [16842752, 16842753, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376];
+}
+
+const S_THEME: i32 = 0;
+
+const S_LABEL: i32 = 1;
+
+const S_NAME: i32 = 2;
+
+const S_HAS_CODE: i32 = 3;
+
+const S_EXPORTED: i32 = 4;
+
+const S_CONFIG_CHANGES: i32 = 5;
+
+const S_VALUE: i32 = 6;
+
+const S_MIN_SDK: i32 = 7;
+
+const S_VERSION_CODE: i32 = 8;
+
+const S_VERSION_NAME: i32 = 9;
+
+const S_TARGET_SDK: i32 = 10;
+
+const S_PREFIX: i32 = 11;
+
+const S_URI: i32 = 12;
+
+const S_PACKAGE: i32 = 13;
+
+function pool_strings(app: App): string[] {
+  return [
+    "theme", "label", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion",
+    "android", "http://schemas.android.com/apk/res/android", "package",
+    "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category",
+    app.package, app.label, app.version_name, "android.app.NativeActivity", "android.app.lib_name", app.lib,
+    "android.intent.action.MAIN", "android.intent.category.LAUNCHER",
+  ];
+}
+
+// The UTF-16 code units of `s`.
+function utf16(s: string): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let c: i32 = s[i] as i32;
+    let n: i32 = 1;
+    if (c >= 240) {
+      c = c & 7;
+      n = 4;
+    } else if (c >= 224) {
+      c = c & 15;
+      n = 3;
+    } else if (c >= 192) {
+      c = c & 31;
+      n = 2;
+    }
+    for k in 1..n {
+      if (i + k < s.len()) {
+        c = c << 6 | s[i + k] as i32 & 63;
+      }
+    }
+    if (c >= 65536) {
+      out = out.append(55296 + (c - 65536 >> 10)).append(56320 + (c - 65536 & 1023));
+    } else {
+      out = out.append(c);
+    }
+    i = i + n;
+  }
+  return out;
+}
+
+function string_pool(strings: string[]): u8[] {
+  let offs: u8[] = [];
+  let data: u8[] = [];
+  for s in strings {
+    offs = put32(offs, data.len());
+    let units: i32[] = utf16(s);
+    data = put16(data, units.len());
+    for u in units {
+      data = put16(data, u);
+    }
+    data = put16(data, 0);
+  }
+  while (data.len() % 4 != 0) {
+    data = data.append(0 as u8);
+  }
+  let head: u8[] = put16(put16([], 1), 28);
+  head = put32(head, 28 + offs.len() + data.len());
+  head = put32(put32(put32(put32(put32(head, strings.len()), 0), 0), 28 + offs.len()), 0);
+  return cat(cat(head, offs), data);
+}
+
+function resource_map(): u8[] {
+  let ids: i32[] = attr_ids();
+  let out: u8[] = put32(put16(put16([], 384), 8), 8 + 4 * ids.len());
+  for id in ids {
+    out = put32(out, id);
+  }
+  return out;
+}
+
+struct Attr { android: boolean, name: i32, kind: i32, data: i32 }
+
+function attr_str(name: i32, s: i32): Attr {
+  return Attr { android: true, name: name, kind: 3, data: s };
+}
+
+function attr_int(name: i32, kind: i32, v: i32): Attr {
+  return Attr { android: true, name: name, kind: kind, data: v };
+}
+
+function node(out: u8[], kind: i32, size: i32, line: i32): u8[] {
+  return put32(put32(put32(put16(put16(out, kind), 16), size), line), 0 - 1);
+}
+
+function start(out: u8[], line: i32, name: i32, attrs: Attr[]): u8[] {
+  out = node(out, 258, 36 + 20 * attrs.len(), line);
+  out = put32(put32(out, 0 - 1), name);
+  out = put16(put16(put16(put16(put16(put16(out, 20), 20), attrs.len()), 0), 0), 0);
+  for a in attrs {
+    let ns: i32 = 0 - 1;
+    if (a.android) {
+      ns = S_URI;
+    }
+    let raw: i32 = 0 - 1;
+    if (a.kind == 3) {
+      raw = a.data;
+    }
+    out = put32(put32(put32(out, ns), a.name), raw);
+    out = put32(put8(put8(put16(out, 8), 0), a.kind), a.data);
+  }
+  return out;
+}
+
+function end(out: u8[], line: i32, name: i32): u8[] {
+  return put32(put32(node(out, 259, 24, line), 0 - 1), name);
+}
+
+// The binary AndroidManifest.xml of `app`: one NativeActivity that loads
+// lib<app.lib>.so, with the launcher intent filter.
+pub function manifest(app: App): u8[] {
+  let s: string[] = pool_strings(app);
+  let body: u8[] = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
+  body = start(body, 1, 14, [attr_int(S_VERSION_CODE, 16, app.version_code), attr_str(S_VERSION_NAME, 24), Attr { android: false, name: S_PACKAGE, kind: 3, data: 22 }]);
+  body = end(start(body, 2, 15, [attr_int(S_MIN_SDK, 16, MIN_SDK), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, 15);
+  body = start(body, 3, 16, [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, 23), attr_int(S_HAS_CODE, 18, 0)]);
+  body = start(body, 4, 17, [attr_str(S_LABEL, 23), attr_str(S_NAME, 25), attr_int(S_EXPORTED, 18, 0 - 1), attr_int(S_CONFIG_CHANGES, 17, 1184)]);
+  body = end(start(body, 5, 18, [attr_str(S_NAME, 26), attr_str(S_VALUE, 27)]), 5, 18);
+  body = start(body, 6, 19, []);
+  body = end(start(body, 7, 20, [attr_str(S_NAME, 28)]), 7, 20);
+  body = end(start(body, 8, 21, [attr_str(S_NAME, 29)]), 8, 21);
+  body = end(end(end(end(body, 9, 19), 10, 17), 11, 16), 12, 14);
+  body = put32(put32(node(body, 257, 24, 12), S_PREFIX), S_URI);
+  let rest: u8[] = cat(cat(string_pool(s), resource_map()), body);
+  return cat(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
+}
+
+// The zip archive. Each entry is stored, and its data starts at a multiple
+// of its alignment: 16384 bytes for a library, so that a device with 16 KB
+// pages can map it, and 4 bytes for the rest. The 0xd935 extra field holds
+// the padding, as zipalign writes it.
+
+pub struct Entry { name: string, data: u8[] }
+
+pub struct Zip { body: u8[], central: u8[], count: i32 }
+
+function align_of(name: string): i32 {
+  if (name.ends_with(".so")) {
+    return 16384;
+  }
+  return 4;
+}
+
+function add_entry(z: Zip, e: Entry): Zip {
+  let off: i32 = z.body.len();
+  let crc: i32 = crc32.of(e.data) as i32;
+  let align: i32 = align_of(e.name);
+  let pad: i32 = (align - (off + 36 + e.name.len()) % align) % align;
+  let head: u8[] = put16(put16(put16(put16(put16(put32([], 67324752), 10), 0), 0), 0), 33);
+  head = put16(put16(put32(put32(put32(head, crc), e.data.len()), e.data.len()), e.name.len()), 6 + pad);
+  head = put16(put16(put16(cat(head, text(e.name)), 55605), 2 + pad), align);
+  for k in 0..pad {
+    head = head.append(0 as u8);
+  }
+  let cd: u8[] = put16(put16(put16(put16(put16(put16(put32(z.central, 33639248), 20), 10), 0), 0), 0), 33);
+  cd = put16(put16(put16(put16(put32(put32(put32(cd, crc), e.data.len()), e.data.len()), e.name.len()), 0), 0), 0);
+  cd = cat(put32(put32(put16(cd, 0), 0), off), text(e.name));
+  return Zip { body: cat(cat(z.body, head), e.data), central: cd, count: z.count + 1 };
+}
+
+function slice_bytes(b: [u8], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  for i in from..to {
+    out = out.append(b[i]);
+  }
+  return out;
+}
+
+pub function zip(entries: Entry[]): Zip {
+  let z: Zip = Zip { body: [], central: [], count: 0 };
+  for e in entries {
+    z = add_entry(z, e);
+  }
+  return z;
+}
+
+// The end of central directory record, for a central directory of `size`
+// bytes at `offset`.
+pub function eocd(count: i32, size: i32, offset: i32): u8[] {
+  return put16(put32(put32(put16(put16(put16(put16(put32([], 101010256), 0), 0), count), count), size), offset), 0);
+}
+
+// The DER encoding of the certificate, the key, and the signatures.
+
+function der(tag: i32, content: [u8]): u8[] {
+  let out: u8[] = put8([], tag);
+  let n: i32 = content.len();
+  if (n < 128) {
+    out = put8(out, n);
+  } else if (n < 256) {
+    out = put8(put8(out, 129), n);
+  } else {
+    out = put8(put8(put8(out, 130), n >> 8), n);
+  }
+  return cat(out, content);
+}
+
+function seq(parts: u8[][]): u8[] {
+  let out: u8[] = [];
+  for p in parts {
+    out = cat(out, p);
+  }
+  return der(48, out);
+}
+
+function oid(bytes: u8[]): u8[] {
+  return der(6, bytes);
+}
+
+function oid_ec_public_key(): u8[] {
+  return oid([42 as u8, 134 as u8, 72 as u8, 206 as u8, 61 as u8, 2 as u8, 1 as u8]);
+}
+
+function oid_p256(): u8[] {
+  return oid([42 as u8, 134 as u8, 72 as u8, 206 as u8, 61 as u8, 3 as u8, 1 as u8, 7 as u8]);
+}
+
+function ecdsa_sha256(): u8[] {
+  return seq([oid([42 as u8, 134 as u8, 72 as u8, 206 as u8, 61 as u8, 4 as u8, 3 as u8, 2 as u8])]);
+}
+
+function bit_string(b: [u8]): u8[] {
+  return der(3, cat([0 as u8], b));
+}
+
+// The SubjectPublicKeyInfo of the P-256 point `point`.
+pub function public_key_info(point: [u8]): u8[] {
+  return seq([seq([oid_ec_public_key(), oid_p256()]), bit_string(point)]);
+}
+
+function name(cn: string): u8[] {
+  return seq([der(49, seq([oid([85 as u8, 4 as u8, 3 as u8]), der(12, text(cn))]))]);
+}
+
+// A version 1 certificate for `key`, signed by itself. The dates are fixed,
+// so the same key gives the same certificate.
+pub function certificate(key: ecdsa.PrivateKey): u8[] {
+  let point: u8[] = key.public_point();
+  let serial: u8[] = [1 as u8];
+  for b in crypto.sha256(point)[0:8] {
+    serial = serial.append(b);
+  }
+  let validity: u8[] = seq([der(23, text("260101000000Z")), der(24, text("20991231235959Z"))]);
+  let tbs: u8[] = seq([der(2, serial), ecdsa_sha256(), name("Fern"), validity, name("Fern"), public_key_info(point)]);
+  return seq([tbs, ecdsa_sha256(), bit_string(sign(key, tbs))]);
+}
+
+function sign(key: ecdsa.PrivateKey, msg: [u8]): u8[] {
+  match (key.sign(sha2.Sha256, msg)) {
+    Ok(sig) => {
+      return sig;
+    },
+    Err(_) => {
+      return [];
+    }
+  }
+}
+
+// The PKCS #8 encoding of the P-256 scalar `d`, as a PEM file.
+pub function key_pem(d: [u8]): string {
+  let point: u8[] = [];
+  match (ecdsa.private_key(ecdsa.P256, d)) {
+    Ok(key) => {
+      point = key.public_point();
+    },
+    Err(_) => {
+      return "";
+    }
+  }
+  let ec: u8[] = seq([der(2, [1 as u8]), der(4, d), der(161, bit_string(point))]);
+  let pk: u8[] = seq([der(2, [0 as u8]), seq([oid_ec_public_key(), oid_p256()]), der(4, ec)]);
+  let b64: string = base64.encode(pk);
+  let out: string = "-----BEGIN PRIVATE KEY-----\n";
+  let i: i32 = 0;
+  while (i < b64.len()) {
+    let j: i32 = i + 64;
+    if (j > b64.len()) {
+      j = b64.len();
+    }
+    out = out + slice_unchecked(b64, i, j) + "\n";
+    i = j;
+  }
+  return out + "-----END PRIVATE KEY-----\n";
+}
+
+struct Tlv { tag: i32, start: i32, end: i32 }
+
+// The DER element at `at`: its tag and the span of its content.
+function tlv(b: [u8], at: i32): Tlv {
+  if (at + 2 > b.len()) {
+    return Tlv { tag: 0 - 1, start: at, end: at };
+  }
+  let n: i32 = b[at + 1] as i32;
+  let start: i32 = at + 2;
+  if (n > 128 && n <= 130) {
+    let len: i32 = 0;
+    for k in 0..n - 128 {
+      if (start + k < b.len()) {
+        len = len << 8 | b[start + k] as i32;
+      }
+    }
+    start = start + n - 128;
+    n = len;
+  }
+  if (start + n > b.len()) {
+    return Tlv { tag: 0 - 1, start: at, end: at };
+  }
+  return Tlv { tag: b[at] as i32, start: start, end: start + n };
+}
+
+// The private scalar of a PEM key file: PKCS #8 ("PRIVATE KEY") or SEC 1
+// ("EC PRIVATE KEY") for P-256. The result is empty when the file is not
+// one of these.
+pub function key_scalar(pem: string): u8[] {
+  let body: string = "";
+  for line in pem.split("\n") {
+    if (line.len() > 0 && !line.starts_with("-----")) {
+      body = body + line;
+    }
+  }
+  match (base64.decode(body)) {
+    Ok(raw) => {
+      return scalar_of(raw);
+    },
+    Err(_) => {
+      return [];
+    }
+  }
+}
+
+function scalar_of(raw: [u8]): u8[] {
+  let top: Tlv = tlv(raw, 0);
+  let version: Tlv = tlv(raw, top.start);
+  let next: Tlv = tlv(raw, version.end);
+  if (top.tag != 48 || version.tag != 2) {
+    return [];
+  }
+  if (next.tag == 4 && next.end - next.start == 32) {
+    return slice_bytes(raw, next.start, next.end);
+  }
+  let wrapped: Tlv = tlv(raw, next.end);
+  if (next.tag != 48 || wrapped.tag != 4) {
+    return [];
+  }
+  return scalar_of(slice_bytes(raw, wrapped.start, wrapped.end));
+}
+
+// A new random P-256 scalar.
+pub function new_scalar(): u8[] {
+  while (true) {
+    let d: u8[] = rand.bytes(32);
+    match (ecdsa.private_key(ecdsa.P256, d)) {
+      Ok(_) => {
+        return d;
+      },
+      Err(_) => {}
+    }
+  }
+  return [];
+}
+
+// APK Signature Scheme v2. The digest covers the entries, the central
+// directory and the end record, in chunks of 1 MiB.
+
+const CHUNK: i32 = 1048576;
+
+function chunk_digests(out: u8[], b: [u8]): (u8[], i32) {
+  let n: i32 = 0;
+  let at: i32 = 0;
+  while (at < b.len()) {
+    let to: i32 = at + CHUNK;
+    if (to > b.len()) {
+      to = b.len();
+    }
+    let msg: u8[] = cat(put32([165 as u8], to - at), b[at:to]);
+    out = cat(out, crypto.sha256(msg));
+    n = n + 1;
+    at = to;
+  }
+  return (out, n);
+}
+
+// The v2 content digest of the three sections of an unsigned APK.
+pub function content_digest(entries: [u8], central: [u8], end_record: [u8]): u8[] {
+  let (d1, n1) = chunk_digests([], entries);
+  let (d2, n2) = chunk_digests(d1, central);
+  let (d3, n3) = chunk_digests(d2, end_record);
+  return crypto.sha256(cat(put32([90 as u8], n1 + n2 + n3), d3));
+}
+
+const ECDSA_SHA256: i32 = 513;
+
+const V2_BLOCK_ID: i32 = 1896449818;
+
+// The APK Signing Block with one v2 signer.
+pub function signing_block(key: ecdsa.PrivateKey, cert: [u8], digest: [u8]): u8[] {
+  let digests: u8[] = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(digest))));
+  let signed: u8[] = cat(cat(digests, prefixed(prefixed(cert))), put32([], 0));
+  let sigs: u8[] = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(sign(key, signed)))));
+  let signer: u8[] = cat(cat(prefixed(signed), sigs), prefixed(public_key_info(key.public_point())));
+  let value: u8[] = prefixed(prefixed(signer));
+  let pair: u8[] = cat(put32(put64([], (4 + value.len()) as i64), V2_BLOCK_ID), value);
+  let size: i64 = (pair.len() + 24) as i64;
+  return cat(put64(cat(put64([], size), pair), size), text("APK Sig Block 42"));
+}
+
+// The signed APK of `app`, with the manifest, then one library for each
+// ABI, signed with the P-256 scalar `d`.
+pub function write(app: App, libs: Lib[], d: [u8]): u8[] {
+  match (ecdsa.private_key(ecdsa.P256, d)) {
+    Ok(key) => {
+      return signed(app, libs, key);
+    },
+    Err(_) => {
+      return [];
+    }
+  }
+}
+
+function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
+  let entries: Entry[] = [Entry { name: "AndroidManifest.xml", data: manifest(app) }];
+  for l in libs {
+    entries = entries.append(Entry { name: "lib/" + l.abi + "/lib" + app.lib + ".so", data: l.image });
+  }
+  let z: Zip = zip(entries);
+  let at: i32 = z.body.len();
+  let digest: u8[] = content_digest(z.body, z.central, eocd(z.count, z.central.len(), at));
+  let block: u8[] = signing_block(key, certificate(key), digest);
+  return cat(cat(cat(z.body, block), z.central), eocd(z.count, z.central.len(), at + block.len()));
+}

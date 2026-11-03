@@ -1,5 +1,8 @@
 # Fern on Android — building a JNI `.so` and packaging an APK
 
+For an app with no Java code, see `native/`: `std/android` runs it in
+NativeActivity, and `fern -apk` writes the signed APK with no Android SDK.
+
 Fern compiles to a native, position-independent shared object that an
 Android app loads with `System.loadLibrary`. This directory shows the
 smallest JNI library. [`stopwatch/`](stopwatch/README.md) is a complete app:

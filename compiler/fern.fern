@@ -32,6 +32,7 @@ import "./ambient";
 import "./arm64_native";
 import "./x86_native";
 import "./elf";
+import "./apk";
 import "./ircore";
 import "./emitforms";
 import "./semarrayreport";
@@ -2181,6 +2182,10 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export, besides the @jni ones (default main)"),
       cli_flag("-jni-java", "DIR", "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
+      cli_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
+      cli_flag("-apk-package", "NAME", "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
+      cli_flag("-apk-label", "TEXT", "with -apk: the name of the app on the launcher (default LIB)"),
+      cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
@@ -5902,6 +5907,188 @@ function cli_backend_refusal(backend: string, target: string): string {
   return "";
 }
 
+// The Android flags: -jni-java, and the output, package, label and key file
+// of -apk.
+struct ApkOpts { jni_java: string, out: string, package: string, label: string, key: string }
+
+function is_android_flag(name: string): boolean {
+  return util.has_str(["-jni-java", "-apk", "-apk-package", "-apk-label", "-apk-key"], name);
+}
+
+function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
+  if (f.name == "-jni-java") {
+    return ApkOpts { ...o, jni_java: f.value };
+  }
+  if (f.name == "-apk") {
+    return ApkOpts { ...o, out: f.value };
+  }
+  if (f.name == "-apk-package") {
+    return ApkOpts { ...o, package: f.value };
+  }
+  if (f.name == "-apk-label") {
+    return ApkOpts { ...o, label: f.value };
+  }
+  return ApkOpts { ...o, key: f.value };
+}
+
+// The arguments of one -apk build: the command line without the -apk flags.
+function apk_build_args(av: string[]): (string[], string) {
+  let out: string[] = [];
+  let i: i32 = 1;
+  while (i < av.len()) {
+    let a: string = av[i];
+    let name: string = apk_flag_name(a);
+    if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java"], name)) {
+      return (out, "fern: -apk builds the library for both Android ABIs itself, so it takes no " + a);
+    }
+    if (util.str_has_prefix(name, "-apk")) {
+      if (!a.contains("=")) {
+        i = i + 1;
+      }
+    } else {
+      out = out.append(a);
+    }
+    i = i + 1;
+  }
+  return (out, "");
+}
+
+// The name of flag `a`, with one dash and no "=value".
+function apk_flag_name(a: string): string {
+  if (!is_flag(a)) {
+    return "";
+  }
+  let body: string = slice_unchecked(a, 1, a.len()) + "";
+  if (util.str_has_prefix(body, "-")) {
+    body = slice_unchecked(body, 1, body.len()) + "";
+  }
+  let eq: i32 = util.index_of_sub(body, "=");
+  if (eq >= 0) {
+    body = slice_unchecked(body, 0, eq) + "";
+  }
+  return "-" + body;
+}
+
+// The library name of the app: the base name of FILE, as a C identifier.
+function apk_lib_name(entry_path: string): string {
+  let base: string = modloader.base_name(entry_path);
+  let out: string = "";
+  for i in 0..base.len() {
+    let c: u8 = base[i];
+    if (c == b'.') {
+      break;
+    }
+    if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9') {
+      out = out + slice_unchecked(base, i, i + 1);
+    } else {
+      out = out + "_";
+    }
+  }
+  return out;
+}
+
+// The signing scalar from `path`, or a new one, which it writes there.
+function apk_key(path: string): (u8[], string) {
+  match (read_file(path)) {
+    Ok(pem) => {
+      let d: u8[] = apk.key_scalar(pem);
+      if (d.len() != 32) {
+        return (d, "fern: " + path + " is not a P-256 private key in PEM form");
+      }
+      return (d, "");
+    },
+    Err(_) => {}
+  }
+  let d: u8[] = apk.new_scalar();
+  match (write_file(path, apk.key_pem(d))) {
+    Ok(_) => {
+      eprint("fern: wrote a new signing key to " + path + "; sign each update of the app with it");
+      return (d, "");
+    },
+    Err(e) => {
+      return (d, "fern: cannot write " + path + ": " + e.message());
+    }
+  }
+}
+
+// The library of the app for each Android ABI, built under `dir` with the
+// name lib<lib>.so, which is also its SONAME.
+function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): (apk.Lib[], i32) {
+  let libs: apk.Lib[] = [];
+  let status: i32 = 0;
+  for abi in [("arm64-v8a", "arm64-android"), ("x86_64", "x86-64-android")] {
+    let so: string = dir + "/" + abi.0 + "/lib" + lib + ".so";
+    let _ = create_dir_all(dir + "/" + abi.0);
+    if (status == 0) {
+      status = run_with_gate(util.append_all([fern, "-target", abi.1, "-shared", "-export", "ANativeActivity_onCreate", "-o", so], rest), embedded_root, fetcher, gate);
+    }
+    match (read_file_bytes(so)) {
+      Ok(image) => {
+        libs = libs.append(apk.Lib { abi: abi.0, image: image });
+      },
+      Err(e) => {
+        if (status == 0) {
+          eprint("fern: cannot read " + so + ": " + e.message());
+          status = 1;
+        }
+      }
+    }
+  }
+  let _ = remove_dir_all(dir);
+  return (libs, status);
+}
+
+// The -apk-key file, or by default the APK path with .key.pem for .apk.
+function apk_key_path(o: ApkOpts): string {
+  if (o.key.len() > 0) {
+    return o.key;
+  }
+  if (o.out.ends_with(".apk")) {
+    return slice_unchecked(o.out, 0, o.out.len() - 4) + ".key.pem";
+  }
+  return o.out + ".key.pem";
+}
+
+function apk_app(o: ApkOpts, lib: string): apk.App {
+  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0" };
+  if (o.package.len() > 0) {
+    app = apk.App { ...app, package: o.package };
+  }
+  if (o.label.len() > 0) {
+    app = apk.App { ...app, label: o.label };
+  }
+  return app;
+}
+
+// fern -apk: builds the library of the app for each Android ABI, then
+// writes the signed APK.
+function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
+  let (rest, bad) = apk_build_args(av);
+  if (bad.len() > 0) {
+    eprint(bad);
+    return 2;
+  }
+  let lib: string = apk_lib_name(entry_path);
+  let (libs, status) = apk_libs(av[0], rest, o.out + ".lib", lib, embedded_root, fetcher, gate);
+  if (status != 0) {
+    return status;
+  }
+  let (d, key_bad) = apk_key(apk_key_path(o));
+  if (key_bad.len() > 0) {
+    eprint(key_bad);
+    return 1;
+  }
+  match (write_file_bytes(o.out, apk.write(apk_app(o, lib), libs, d))) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: cannot write " + o.out + ": " + e.message());
+      return 1;
+    }
+  }
+}
+
 function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
   let entry_path: string = "";
   let out_path: string = "";
@@ -5944,7 +6131,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag: boolean = false;
   let shared: boolean = false;
   let export_list: string = "";
-  let jni_java_dir: string = "";
+  let apk_opts: ApkOpts = ApkOpts { jni_java: "", out: "", package: "", label: "", key: "" };
   let harden: boolean = false;
   let heap_limit_text: string = "";
   let quarantine_text: string = "";
@@ -6041,8 +6228,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       shared = f.on;
     } else if (f.name == "-export") {
       export_list = f.value;
-    } else if (f.name == "-jni-java") {
-      jni_java_dir = f.value;
+    } else if (is_android_flag(f.name)) {
+      apk_opts = android_flag(apk_opts, f);
     } else if (f.name == "-capabilities") {
       mode_caps = f.on;
     } else if (f.name == "-effects") {
@@ -6199,6 +6386,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     eprint("fern: -array-report prints the report and writes no output, so it takes neither -o nor -run");
     return 2;
   }
+  if (apk_opts.out.len() > 0) {
+    return run_apk(av, apk_opts, entry_path, embedded_root, fetcher, gate);
+  }
 
   if (mode_check && util.is_dir(entry_path)) {
     return check_dir(st, entry_path, root, target, target_given, embed_dir);
@@ -6336,7 +6526,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 1;
   }
 
-  let (bound, jni, bind_bad) = native_bindings(merged, target, shared, jni_java_dir);
+  let (bound, jni, bind_bad) = native_bindings(merged, target, shared, apk_opts.jni_java);
   if (bind_bad.len() > 0) {
     eprint("fern: " + bind_bad);
     return 2;
@@ -6556,7 +6746,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   } else {
     write(out_asm);
   }
-  let java_bad: string = write_jni_java(jni_java_dir, out_path, jni);
+  let java_bad: string = write_jni_java(apk_opts.jni_java, out_path, jni);
   if (java_bad.len() > 0) {
     eprint("fern: -jni-java: " + java_bad);
     return 1;
