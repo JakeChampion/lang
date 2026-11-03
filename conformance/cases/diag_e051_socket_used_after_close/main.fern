@@ -1,0 +1,8 @@
+// tcp_close consumes its Socket, so a read of the Socket after the close
+// is refused at the close.
+
+function main(): i32 {
+    let ls: Socket = tcp_listen(0);
+    let closed: i32 = tcp_close(ls);
+    return tcp_local_port(ls) + closed;
+}
