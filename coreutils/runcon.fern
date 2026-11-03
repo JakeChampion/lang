@@ -28,27 +28,27 @@ function canceled(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " CONTEXT COMMAND [args]\n";
   out = out + "  or:  " + gnu.prog() + " [ -c ] [-u USER] [-r ROLE] [-t TYPE] [-l RANGE] COMMAND [args]\n";
-  out = out + "Run a program in a different SELinux security context.\n";
-  out = out + "With neither CONTEXT nor COMMAND, print the current security context.\n";
-  out = out + "\n";
-  out = out + "Mandatory arguments to long options are mandatory for short options too.\n";
-  out = out + "  CONTEXT            Complete security context\n";
-  out = out + "  -c, --compute      compute process transition context before modifying\n";
-  out = out + "  -t, --type=TYPE    type (for same role as parent)\n";
-  out = out + "  -u, --user=USER    user identity\n";
-  out = out + "  -r, --role=ROLE    role\n";
-  out = out + "  -l, --range=RANGE  levelrange\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Exit status:\n";
-  out = out + "  125  if the runcon command itself fails\n";
-  out = out + "  126  if COMMAND is found but cannot be invoked\n";
-  out = out + "  127  if COMMAND cannot be found\n";
-  out = out + "  -    the exit status of COMMAND otherwise\n";
+  out += "Run a program in a different SELinux security context.\n";
+  out += "With neither CONTEXT nor COMMAND, print the current security context.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "  CONTEXT            Complete security context\n";
+  out += "  -c, --compute      compute process transition context before modifying\n";
+  out += "  -t, --type=TYPE    type (for same role as parent)\n";
+  out += "  -u, --user=USER    user identity\n";
+  out += "  -r, --role=ROLE    role\n";
+  out += "  -l, --range=RANGE  levelrange\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Exit status:\n";
+  out += "  125  if the runcon command itself fails\n";
+  out += "  126  if COMMAND is found but cannot be invoked\n";
+  out += "  127  if COMMAND cannot be found\n";
+  out += "  -    the exit status of COMMAND otherwise\n";
   return out;
 }
 
@@ -109,9 +109,9 @@ pub function main(): i32 {
   opts = opts.append(gnu.valued("l", "range", opt_range()));
   opts = opts.append(gnu.flag("c", "compute", opt_compute()));
 
-  let seen: Seen = Seen { role: false, type_: false, user: false, range: false };
-  let compute: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "runcon", help_text(), canceled()).in_order();
+  let seen = Seen { role: false, type_: false, user: false, range: false };
+  let compute = false;
+  let g = gnu.getopt_new(args(), opts, "runcon", help_text(), canceled()).in_order();
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -129,12 +129,12 @@ pub function main(): i32 {
     }
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() == 0) {
     return print_current_context();
   }
 
-  let first_command: i32 = 0;
+  let first_command = 0;
   if (!any(seen) && !compute) {
     first_command = 1;
   }

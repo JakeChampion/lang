@@ -1,21 +1,21 @@
 import "./lib/gnu";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [COMMAND [ARG]...]\n";
-  out = out + "Run COMMAND with an adjusted niceness, which affects process scheduling.\n";
-  out = out + "With no COMMAND, print the current niceness.  Niceness values range from\n";
-  out = out + "-20 (most favorable to the process) to 19 (least favorable to the process).\n";
-  out = out + "\n";
-  out = out + "  -n, --adjustment=N   add integer N to the niceness (default 10)\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Exit status:\n";
-  out = out + "  125  if the nice command itself fails\n";
-  out = out + "  126  if COMMAND is found but cannot be invoked\n";
-  out = out + "  127  if COMMAND cannot be found\n";
-  out = out + "  -    the exit status of COMMAND otherwise\n";
+  out += "Run COMMAND with an adjusted niceness, which affects process scheduling.\n";
+  out += "With no COMMAND, print the current niceness.  Niceness values range from\n";
+  out += "-20 (most favorable to the process) to 19 (least favorable to the process).\n";
+  out += "\n";
+  out += "  -n, --adjustment=N   add integer N to the niceness (default 10)\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Exit status:\n";
+  out += "  125  if the nice command itself fails\n";
+  out += "  126  if COMMAND is found but cannot be invoked\n";
+  out += "  127  if COMMAND cannot be found\n";
+  out += "  -    the exit status of COMMAND otherwise\n";
   return out;
 }
 
@@ -31,7 +31,7 @@ function is_dash_number(a: string): boolean {
   if (a.len() < 2 || a[0] as i32 != 45) {
     return false;
   }
-  let i: i32 = 1;
+  let i = 1;
   if (a[1] as i32 == 43 || a[1] as i32 == 45) {
     i = 2;
   }
@@ -49,7 +49,7 @@ function takes_next_value(a: string): boolean {
   if (!a.starts_with("--") || a.contains("=")) {
     return false;
   }
-  let name: string = slice_unchecked(a, 2, a.len()) + "";
+  let name = slice_unchecked(a, 2, a.len()) + "";
   return name.len() > 0 && "adjustment".starts_with(name);
 }
 
@@ -58,31 +58,31 @@ function rewrite_obsolete(argv: string[]): string[] {
   if (argv.len() > 0) {
     out = out.append(argv[0]);
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "--") {
       break;
     }
     if (is_dash_number(a)) {
       out = out.append("-n");
       out = out.append(slice_unchecked(a, 1, a.len()) + "");
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (!is_option(a)) {
       break;
     }
     out = out.append(a);
-    i = i + 1;
+    i += 1;
     if (takes_next_value(a) && i < argv.len()) {
       out = out.append(argv[i]);
-      i = i + 1;
+      i += 1;
     }
   }
   while (i < argv.len()) {
     out = out.append(argv[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -94,19 +94,19 @@ function saturation(): i64 {
 }
 
 function parse_adjustment(v: string): Adj {
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.len() && is_blank(v[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < v.len() && (v[i] as i32 == 43 || v[i] as i32 == 45)) {
     neg = v[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
   if (i >= v.len() || !gnu.is_digit(v[i] as i32)) {
     return Adj { value: 0 as i64, ok: false };
   }
-  let n: i64 = 0 as i64;
+  let n = 0 as i64;
   while (i < v.len() && gnu.is_digit(v[i] as i32)) {
     if (n < saturation()) {
       n = n * (10 as i64) + (v[i] as i32 - 48) as i64;
@@ -114,7 +114,7 @@ function parse_adjustment(v: string): Adj {
         n = saturation();
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (i != v.len()) {
     return Adj { value: 0 as i64, ok: false };
@@ -131,7 +131,7 @@ function is_blank(c: i32): boolean {
 
 function clamp_nice(n: i64): i32 {
   if (n < 0 as i64 - 20 as i64) {
-    return 0 - 20;
+    return -20;
   }
   if (n > prio_max()) {
     return prio_max() as i32;
@@ -150,16 +150,16 @@ pub function main(): i32 {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("n", "adjustment", opt_adjust()));
 
-  let adj: i64 = default_adjustment();
-  let given: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(rewrite_obsolete(args()), opts, "nice", help_text(), 125).in_order();
+  let adj = default_adjustment();
+  let given = false;
+  let g = gnu.getopt_new(rewrite_obsolete(args()), opts, "nice", help_text(), 125).in_order();
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
     match (res.0) {
       Some(m) => {
         if (m.id == opt_adjust()) {
-          let p: Adj = parse_adjustment(m.value);
+          let p = parse_adjustment(m.value);
           if (!p.ok) {
             gnu.error("invalid adjustment " + gnu.quote(m.value));
             exit(125);
@@ -173,7 +173,7 @@ pub function main(): i32 {
       }
     }
   }
-  let rest: string[] = g.operands();
+  let rest = g.operands();
 
   if (rest.len() == 0) {
     if (given) {
@@ -183,7 +183,7 @@ pub function main(): i32 {
     return 0;
   }
 
-  let target: i32 = clamp_nice(priority() as i64 + adj);
+  let target = clamp_nice(priority() as i64 + adj);
   match (set_priority(target)) {
     Ok(_) => {},
     Err(e) => {

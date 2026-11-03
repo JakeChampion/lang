@@ -56,44 +56,44 @@ function opt_header(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE1 FILE2\n";
-  out = out + "For each pair of input lines with identical join fields, write a line to\n";
-  out = out + "standard output.  The default join field is the first, delimited by blanks.\n";
-  out = out + "\n";
-  out = out + "When FILE1 or FILE2 (not both) is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -a FILENUM             also print unpairable lines from file FILENUM, where\n";
-  out = out + "                           FILENUM is 1 or 2, corresponding to FILE1 or FILE2\n";
-  out = out + "  -e STRING              replace missing (empty) input fields with STRING;\n";
-  out = out + "                           I.e., missing fields specified with '-12jo' options\n";
-  out = out + "  -i, --ignore-case      ignore differences in case when comparing fields\n";
-  out = out + "  -j FIELD               equivalent to '-1 FIELD -2 FIELD'\n";
-  out = out + "  -o FORMAT              obey FORMAT while constructing output line\n";
-  out = out + "  -t CHAR                use CHAR as input and output field separator\n";
-  out = out + "  -v FILENUM             like -a FILENUM, but suppress joined output lines\n";
-  out = out + "  -1 FIELD               join on this FIELD of file 1\n";
-  out = out + "  -2 FIELD               join on this FIELD of file 2\n";
-  out = out + "      --check-order      check that the input is correctly sorted, even\n";
-  out = out + "                           if all input lines are pairable\n";
-  out = out + "      --nocheck-order    do not check that the input is correctly sorted\n";
-  out = out + "      --header           treat the first line in each file as field headers,\n";
-  out = out + "                           print them without trying to pair them\n";
-  out = out + "  -z, --zero-terminated  line delimiter is NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Unless -t CHAR is given, leading blanks separate fields and are ignored,\n";
-  out = out + "else fields are separated by CHAR.  Any FIELD is a field number counted\n";
-  out = out + "from 1.  FORMAT is one or more comma or blank separated specifications,\n";
-  out = out + "each being 'FILENUM.FIELD' or '0'.  Default FORMAT outputs the join field,\n";
-  out = out + "the remaining fields from FILE1, the remaining fields from FILE2, all\n";
-  out = out + "separated by CHAR.  If FORMAT is the keyword 'auto', then the first\n";
-  out = out + "line of each file determines the number of fields output for each line.\n";
-  out = out + "\n";
-  out = out + "Important: FILE1 and FILE2 must be sorted on the join fields.\n";
-  out = out + "If the input is not sorted and some lines cannot be joined, a\n";
-  out = out + "warning message will be given.\n";
+  out += "For each pair of input lines with identical join fields, write a line to\n";
+  out += "standard output.  The default join field is the first, delimited by blanks.\n";
+  out += "\n";
+  out += "When FILE1 or FILE2 (not both) is -, read standard input.\n";
+  out += "\n";
+  out += "  -a FILENUM             also print unpairable lines from file FILENUM, where\n";
+  out += "                           FILENUM is 1 or 2, corresponding to FILE1 or FILE2\n";
+  out += "  -e STRING              replace missing (empty) input fields with STRING;\n";
+  out += "                           I.e., missing fields specified with '-12jo' options\n";
+  out += "  -i, --ignore-case      ignore differences in case when comparing fields\n";
+  out += "  -j FIELD               equivalent to '-1 FIELD -2 FIELD'\n";
+  out += "  -o FORMAT              obey FORMAT while constructing output line\n";
+  out += "  -t CHAR                use CHAR as input and output field separator\n";
+  out += "  -v FILENUM             like -a FILENUM, but suppress joined output lines\n";
+  out += "  -1 FIELD               join on this FIELD of file 1\n";
+  out += "  -2 FIELD               join on this FIELD of file 2\n";
+  out += "      --check-order      check that the input is correctly sorted, even\n";
+  out += "                           if all input lines are pairable\n";
+  out += "      --nocheck-order    do not check that the input is correctly sorted\n";
+  out += "      --header           treat the first line in each file as field headers,\n";
+  out += "                           print them without trying to pair them\n";
+  out += "  -z, --zero-terminated  line delimiter is NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Unless -t CHAR is given, leading blanks separate fields and are ignored,\n";
+  out += "else fields are separated by CHAR.  Any FIELD is a field number counted\n";
+  out += "from 1.  FORMAT is one or more comma or blank separated specifications,\n";
+  out += "each being 'FILENUM.FIELD' or '0'.  Default FORMAT outputs the join field,\n";
+  out += "the remaining fields from FILE1, the remaining fields from FILE2, all\n";
+  out += "separated by CHAR.  If FORMAT is the keyword 'auto', then the first\n";
+  out += "line of each file determines the number of fields output for each line.\n";
+  out += "\n";
+  out += "Important: FILE1 and FILE2 must be sorted on the join fields.\n";
+  out += "If the input is not sorted and some lines cannot be joined, a\n";
+  out += "warning message will be given.\n";
   return out;
 }
 
@@ -183,7 +183,7 @@ function is_sep(c: i32): boolean {
 }
 
 function sep_table(eol: i32): u8[] {
-  let t: u8[] = __alloc_u8(256);
+  let t = __alloc_u8(256);
   t = t.with(32, 1 as u8);
   t = t.with(9, 1 as u8);
   t = t.with(10, 1 as u8);
@@ -191,30 +191,30 @@ function sep_table(eol: i32): u8[] {
 }
 
 function make_line(text: u8[], lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]): Line {
-  let k0: i32 = lo;
-  let k1: i32 = lo;
-  let s0: i32 = lo;
-  let e0: i32 = lo;
-  let s1: i32 = lo;
-  let e1: i32 = lo;
-  let s2: i32 = lo;
-  let e2: i32 = lo;
-  let s3: i32 = lo;
-  let e3: i32 = lo;
-  let n: i32 = 0;
+  let k0 = lo;
+  let k1 = lo;
+  let s0 = lo;
+  let e0 = lo;
+  let s1 = lo;
+  let e1 = lo;
+  let s2 = lo;
+  let e2 = lo;
+  let s3 = lo;
+  let e3 = lo;
+  let n = 0;
   if (hi > lo) {
-    let want: i32 = jf as i32;
+    let want = jf as i32;
     if (jf > 1000000000 as u64) {
-      want = 0 - 1;
+      want = -1;
     }
-    let i: i32 = lo;
-    let f: i32 = lo;
-    let more: boolean = true;
+    let i = lo;
+    let f = lo;
+    let more = true;
     if (tab == 10) {
       more = false;
     } else if (tab < 0) {
       while (i < hi && is_sep(text[i] as i32)) {
-        i = i + 1;
+        i += 1;
       }
       if (i >= hi) {
         more = false;
@@ -232,7 +232,7 @@ function make_line(text: u8[], lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]):
     }
     while (more) {
       f = i;
-      let j: i32 = hi;
+      let j = hi;
       if (tab >= 0) {
         j = __memchr_bytes(text, tab, f);
       } else {
@@ -259,15 +259,15 @@ function make_line(text: u8[], lo: i32, hi: i32, tab: i32, jf: u64, seps: u8[]):
         s3 = f;
         e3 = i;
       }
-      n = n + 1;
+      n += 1;
       if (i >= hi) {
         more = false;
       } else if (tab >= 0) {
-        i = i + 1;
+        i += 1;
       } else {
-        i = i + 1;
+        i += 1;
         while (i < hi && is_sep(text[i] as i32)) {
-          i = i + 1;
+          i += 1;
         }
         if (i >= hi) {
           more = false;
@@ -290,38 +290,38 @@ function keycmp(a: Line, b: Line, ic: boolean): i32 {
 }
 
 function range_cmp(at: u8[], a0: i32, a1: i32, bt: u8[], b0: i32, b1: i32, ic: boolean): i32 {
-  let la: i32 = a1 - a0;
-  let lb: i32 = b1 - b0;
-  let n: i32 = la;
+  let la = a1 - a0;
+  let lb = b1 - b0;
+  let n = la;
   if (lb < n) {
     n = lb;
   }
-  let i: i32 = 0;
+  let i = 0;
   if (!ic) {
     i = __mismatch_bytes(at, a0, bt, b0, n);
     if (i < n) {
       if (at[a0 + i] as i32 < bt[b0 + i] as i32) {
-        return 0 - 1;
+        return -1;
       }
       return 1;
     }
   }
   while (i < n) {
-    let x: i32 = fold(at[a0 + i] as i32);
-    let y: i32 = fold(bt[b0 + i] as i32);
+    let x = fold(at[a0 + i] as i32);
+    let y = fold(bt[b0 + i] as i32);
     if (x != y) {
       if (x < y) {
-        return 0 - 1;
+        return -1;
       }
       return 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (la == lb) {
     return 0;
   }
   if (la < lb) {
-    return 0 - 1;
+    return -1;
   }
   return 1;
 }
@@ -342,7 +342,7 @@ function needs_order_check(inp: In, o: Opts, unpairable: boolean): boolean {
 }
 
 function report(inp: In, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run, io_buffered.BufWriter) {
-  let out: io_buffered.BufWriter = gnu.error_out_bytes(w, inp.msg);
+  let out = gnu.error_out_bytes(w, inp.msg);
   if (o.check == check_on()) {
     exit(1);
   }
@@ -350,18 +350,18 @@ function report(inp: In, o: Opts, run: Run, w: io_buffered.BufWriter): (In, Run,
 }
 
 function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWriter): In {
-  let jf: u64 = o.jf1;
+  let jf = o.jf1;
   if (inp.which == 2) {
     jf = o.jf2;
   }
-  let cur: In = inp;
+  let cur = inp;
   let data: u8[] = [];
-  let lo: i32 = 0;
-  let hi: i32 = 0;
-  let npos: i32 = 0;
-  let carry: usize = 0 as usize;
+  let lo = 0;
+  let hi = 0;
+  let npos = 0;
+  let carry = 0 as usize;
   while (true) {
-    let j: i32 = __memchr_bytes(cur.buf, o.eol, cur.pos);
+    let j = __memchr_bytes(cur.buf, o.eol, cur.pos);
     if (j >= 0) {
       npos = j + 1;
       if (carry == 0 as usize) {
@@ -407,16 +407,16 @@ function next_line(inp: In, o: Opts, unpairable: boolean, w: io_buffered.BufWrit
         if (carry != 0 as usize) {
           buf_free(carry);
         }
-        let w2: io_buffered.BufWriter = gnu.error_out(w, "read error: " + gnu.io_error_text(e));
+        let w2 = gnu.error_out(w, "read error: " + gnu.io_error_text(e));
         exit(1);
       }
     }
   }
-  let l: Line = make_line(data, lo, hi, o.tab, jf, o.seps);
+  let l = make_line(data, lo, hi, o.tab, jf, o.seps);
   let msg: u8[] = [];
   if (cur.hasprev && needs_order_check(cur, o, unpairable) && keycmp(cur.line, l, o.ignore_case) > 0) {
-    let prefix: string = cur.name + ":" + (cur.no + 1 as u64).to_string() + ": is not sorted: ";
-    let h: usize = buf_new(prefix.len() + hi - lo);
+    let prefix = cur.name + ":" + (cur.no + 1 as u64).to_string() + ": is not sorted: ";
+    let h = buf_new(prefix.len() + hi - lo);
     buf_push(h, prefix);
     buf_push_bytes_range(h, data, lo, hi);
     msg = buf_take_bytes(h);
@@ -445,21 +445,21 @@ function push_field(h: usize, l: Line, n: u64, o: Opts): void {
     buf_push(h, o.filler);
     return;
   }
-  let want: i32 = n as i32;
+  let want = n as i32;
   if (want < inline_fields()) {
     push_range_or_filler(h, l, field_start(l, want), field_end(l, want), o);
     return;
   }
-  let i: i32 = l.lo;
-  let hi: i32 = l.hi;
+  let i = l.lo;
+  let hi = l.hi;
   if (o.tab == 10) {
     push_range_or_filler(h, l, l.lo, hi, o);
     return;
   }
-  let k: i32 = 0;
+  let k = 0;
   if (o.tab >= 0) {
     while (true) {
-      let j: i32 = __memchr_bytes(l.text, o.tab, i);
+      let j = __memchr_bytes(l.text, o.tab, i);
       if (j < 0 || j > hi) {
         j = hi;
       }
@@ -467,26 +467,26 @@ function push_field(h: usize, l: Line, n: u64, o: Opts): void {
         push_range_or_filler(h, l, i, j, o);
         return;
       }
-      k = k + 1;
+      k += 1;
       i = j + 1;
     }
   }
   while (i < hi && is_sep(l.text[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   while (true) {
-    let f: i32 = i;
+    let f = i;
     while (i < hi && !is_sep(l.text[i] as i32)) {
-      i = i + 1;
+      i += 1;
     }
     if (k == want) {
       push_range_or_filler(h, l, f, i, o);
       return;
     }
-    k = k + 1;
-    i = i + 1;
+    k += 1;
+    i += 1;
     while (i < hi && is_sep(l.text[i] as i32)) {
-      i = i + 1;
+      i += 1;
     }
     if (i >= hi) {
       buf_push(h, o.filler);
@@ -496,22 +496,22 @@ function push_field(h: usize, l: Line, n: u64, o: Opts): void {
 }
 
 function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
-  let sep: i32 = sep_byte(o);
-  let skip: i32 = jf as i32;
+  let sep = sep_byte(o);
+  let skip = jf as i32;
   if (jf > 1000000000 as u64) {
-    skip = 0 - 1;
+    skip = -1;
   }
-  let stop: i32 = count as i32;
-  let n: i32 = 0;
-  let i: i32 = l.lo;
-  let hi: i32 = l.hi;
+  let stop = count as i32;
+  let n = 0;
+  let i = l.lo;
+  let hi = l.hi;
   if (l.nf <= inline_fields()) {
     while (n < stop && n < l.nf) {
       if (n != skip) {
         buf_push_byte(h, sep);
         push_range_or_filler(h, l, field_start(l, n), field_end(l, n), o);
       }
-      n = n + 1;
+      n += 1;
     }
   } else if (l.nf > 0) {
     if (o.tab == 10) {
@@ -522,7 +522,7 @@ function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
       n = 1;
     } else if (o.tab >= 0) {
       while (n < stop) {
-        let j: i32 = __memchr_bytes(l.text, o.tab, i);
+        let j = __memchr_bytes(l.text, o.tab, i);
         if (j < 0 || j > hi) {
           j = hi;
         }
@@ -530,7 +530,7 @@ function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
           buf_push_byte(h, sep);
           push_range_or_filler(h, l, i, j, o);
         }
-        n = n + 1;
+        n += 1;
         if (j >= hi) {
           break;
         }
@@ -538,31 +538,31 @@ function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
       }
     } else {
       while (i < hi && is_sep(l.text[i] as i32)) {
-        i = i + 1;
+        i += 1;
       }
       while (n < stop) {
-        let f: i32 = i;
+        let f = i;
         while (i < hi && !is_sep(l.text[i] as i32)) {
-          i = i + 1;
+          i += 1;
         }
         if (n != skip) {
           buf_push_byte(h, sep);
           push_range_or_filler(h, l, f, i, o);
         }
-        n = n + 1;
+        n += 1;
         if (i >= hi) {
           break;
         }
-        i = i + 1;
+        i += 1;
         while (i < hi && is_sep(l.text[i] as i32)) {
-          i = i + 1;
+          i += 1;
         }
         if (i >= hi) {
           if (n < stop && n != skip) {
             buf_push_byte(h, sep);
             buf_push(h, o.filler);
           }
-          n = n + 1;
+          n += 1;
           break;
         }
       }
@@ -573,19 +573,19 @@ function push_fields(h: usize, l: Line, jf: u64, count: u64, o: Opts): void {
       buf_push_byte(h, sep);
       buf_push(h, o.filler);
     }
-    n = n + 1;
+    n += 1;
   }
 }
 
 function push_join(h: usize, l1: Line, l2: Line, b1: boolean, o: Opts, ac1: u64, ac2: u64): void {
-  let sep: i32 = sep_byte(o);
+  let sep = sep_byte(o);
   if (o.specs.len() > 0) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < o.specs.len()) {
       if (k > 0) {
         buf_push_byte(h, sep);
       }
-      let sp: Spec = o.specs[k];
+      let sp = o.specs[k];
       if (sp.file == 0) {
         if (b1) {
           push_range_or_filler(h, l2, l2.k0, l2.k1, o);
@@ -597,13 +597,13 @@ function push_join(h: usize, l1: Line, l2: Line, b1: boolean, o: Opts, ac1: u64,
       } else {
         push_field(h, l2, sp.field, o);
       }
-      k = k + 1;
+      k += 1;
     }
     buf_push_byte(h, o.eol);
     return;
   }
-  let c1: u64 = nfields(l1);
-  let c2: u64 = nfields(l2);
+  let c1 = nfields(l1);
+  let c2 = nfields(l2);
   if (o.autofmt) {
     c1 = ac1;
     c2 = ac2;
@@ -619,22 +619,22 @@ function push_join(h: usize, l1: Line, l2: Line, b1: boolean, o: Opts, ac1: u64,
 }
 
 function add_field_list(specs: Spec[], str: string): Spec[] {
-  let out: Spec[] = specs;
-  let i: i32 = 0;
-  let n: i32 = str.len();
+  let out = specs;
+  let i = 0;
+  let n = str.len();
   while (true) {
-    let j: i32 = i;
+    let j = i;
     while (j < n && str[j] as i32 != 44 && str[j] as i32 != 32 && str[j] as i32 != 9) {
-      j = j + 1;
+      j += 1;
     }
-    let item: string = slice_unchecked(str, i, j) + "";
+    let item = slice_unchecked(str, i, j) + "";
     if (item == "0") {
       out = out.append(Spec { file: 0, field: 0 as u64 });
     } else {
       if (item.len() > 0 && item[0] as i32 == 48) {
         die_spec("invalid field specifier: ", item);
       }
-      let fi: i32 = 0 - 1;
+      let fi: i32 = -1;
       if (item.len() > 0) {
         fi = item[0] as i32 - 48;
       }
@@ -711,7 +711,7 @@ function take_operand(s: Scan, name: string): Scan {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("a", "", opt_a()));
   opts = opts.append(gnu.valued("e", "", opt_e()));
@@ -729,10 +729,10 @@ pub function main(): i32 {
 
   let none_specs: Spec[] = [];
   let none_toks: Tok[] = [];
-  let o: Opts = Opts { jf1: unset(), jf2: unset(), tab: 0 - 1, eol: 10, filler: "", ignore_case: false, pairs: true, unpair1: false, unpair2: false, specs: none_specs, autofmt: false, check: check_default(), header: false, seps: __alloc_u8(0) };
-  let s: Scan = Scan { o: o, toks: none_toks, nfiles: 0, pending: 0 };
+  let o = Opts { jf1: unset(), jf2: unset(), tab: 0 - 1, eol: 10, filler: "", ignore_case: false, pairs: true, unpair1: false, unpair2: false, specs: none_specs, autofmt: false, check: check_default(), header: false, seps: __alloc_u8(0) };
+  let s = Scan { o: o, toks: none_toks, nfiles: 0, pending: 0 };
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "join", help_text(), 1);
+  let g = gnu.getopt_new(argv, opts, "join", help_text(), 1);
   while (true) {
     let r: (i32, gnu.OptMatch, gnu.Getopt) = g.next_argv_order();
     g = r.2;
@@ -750,8 +750,8 @@ pub function main(): i32 {
       }
       continue;
     }
-    let m: gnu.OptMatch = r.1;
-    let next_pending: i32 = 0;
+    let m = r.1;
+    let next_pending = 0;
     if (m.id == opt_a()) {
       if (file_number(m.value) == 1) {
         s = Scan { ...s, o: Opts { ...s.o, unpair1: true } };
@@ -801,20 +801,20 @@ pub function main(): i32 {
     s = Scan { ...s, pending: next_pending };
   }
 
-  let toks: Tok[] = s.toks;
-  let want: i32 = 2 - s.nfiles;
-  let k: i32 = toks.len() - 1;
+  let toks = s.toks;
+  let want = 2 - s.nfiles;
+  let k = toks.len() - 1;
   while (want > 0 && k >= 0) {
     if (toks[k].kind >= 1 && toks[k].kind <= 3) {
       toks = toks.with(k, Tok { text: toks[k].text, kind: tok_file() });
-      want = want - 1;
+      want -= 1;
     }
-    k = k - 1;
+    k -= 1;
   }
   let files: string[] = [];
   k = 0;
   while (k < toks.len()) {
-    let t: Tok = toks[k];
+    let t = toks[k];
     if (t.kind == tok_file()) {
       files = files.append(t.text);
     } else if (t.kind == 1 || t.kind == tok_ospec()) {
@@ -824,12 +824,12 @@ pub function main(): i32 {
     } else if (t.kind == 3 || t.kind == tok_field2()) {
       s = Scan { ...s, o: set_field_2(s.o, field_number(t.text)) };
     } else if (t.kind == tok_field_both()) {
-      let v: u64 = field_number(t.text);
+      let v = field_number(t.text);
       s = Scan { ...s, o: set_field_2(set_field_1(s.o, v), v) };
     } else {
       s = Scan { ...s, o: Opts { ...s.o, autofmt: true } };
     }
-    k = k + 1;
+    k += 1;
   }
 
   if (files.len() == 0) {
@@ -853,21 +853,21 @@ pub function main(): i32 {
   }
 
   o = Opts { ...o, seps: sep_table(o.eol) };
-  let in1: In = open_input(files[0], 1);
-  let in2: In = open_input(files[1], 2);
+  let in1 = open_input(files[0], 1);
+  let in2 = open_input(files[1], 2);
 
-  let w: io_buffered.BufWriter = gnu.out_new();
-  let run: Run = Run { unpairable: false, disorder: false };
+  let w = gnu.out_new();
+  let run = Run { unpairable: false, disorder: false };
 
   in1 = next_line(in1, o, run.unpairable, w);
-  let have1: boolean = in1.have;
-  let l1: Line = in1.line;
+  let have1 = in1.have;
+  let l1 = in1.line;
   in2 = next_line(in2, o, run.unpairable, w);
-  let have2: boolean = in2.have;
-  let l2: Line = in2.line;
+  let have2 = in2.have;
+  let l2 = in2.line;
 
-  let ac1: u64 = 0 as u64;
-  let ac2: u64 = 0 as u64;
+  let ac1 = 0 as u64;
+  let ac2 = 0 as u64;
   if (have1) {
     ac1 = nfields(l1);
   }
@@ -876,8 +876,8 @@ pub function main(): i32 {
   }
 
   if (o.header && (have1 || have2)) {
-    let h1: Line = blank_line();
-    let h2: Line = blank_line();
+    let h1 = blank_line();
+    let h2 = blank_line();
     if (have1) {
       h1 = l1;
     }
@@ -912,11 +912,11 @@ pub function main(): i32 {
     }
   }
 
-  let blank: Line = blank_line();
+  let blank = blank_line();
   let g1: Line[] = [];
   let g2: Line[] = [];
   while (have1 && have2) {
-    let d: i32 = keycmp(l1, l2, o.ignore_case);
+    let d = keycmp(l1, l2, o.ignore_case);
     if (d < 0) {
       if (o.unpair1) {
         push_join(w.handle(), l1, blank, false, o, ac1, ac2);
@@ -951,10 +951,10 @@ pub function main(): i32 {
       run = Run { ...run, unpairable: true };
       continue;
     }
-    let head1: Line = l1;
-    let head2: Line = l2;
-    let many1: boolean = false;
-    let many2: boolean = false;
+    let head1 = l1;
+    let head2 = l2;
+    let many1 = false;
+    let many2 = false;
     while (true) {
       in1 = next_line(in1, o, run.unpairable, w);
       if (in1.msg.len() > 0) {
@@ -1004,15 +1004,15 @@ pub function main(): i32 {
         if (!many2) {
           g2 = [head2];
         }
-        let i: i32 = 0;
+        let i = 0;
         while (i < g1.len()) {
-          let j: i32 = 0;
+          let j = 0;
           while (j < g2.len()) {
             push_join(w.handle(), g1[i], g2[j], false, o, ac1, ac2);
             w = gnu.settle(w);
-            j = j + 1;
+            j += 1;
           }
-          i = i + 1;
+          i += 1;
         }
       }
     }
@@ -1065,7 +1065,7 @@ pub function main(): i32 {
 }
 
 function set_tab(o: Opts, arg: string): Opts {
-  let t: i32 = 10;
+  let t = 10;
   if (arg.len() > 0) {
     t = arg[0] as i32;
     if (arg.len() > 1) {
@@ -1085,7 +1085,7 @@ function set_tab(o: Opts, arg: string): Opts {
 }
 
 function glued(argv: string[], g: gnu.Getopt, value: string): boolean {
-  let i: i32 = g.index() - 1;
+  let i = g.index() - 1;
   if (i < 0 || i >= argv.len()) {
     return false;
   }
@@ -1093,7 +1093,7 @@ function glued(argv: string[], g: gnu.Getopt, value: string): boolean {
 }
 
 function open_input(path: string, which: i32): In {
-  let name: string = path;
+  let name = path;
   if (path == "-") {
     return In { r: stdin(), is_stdin: true, buf: [], pos: 0, eof: false, name: name, no: 0 as u64, hasprev: false, warned: false, which: which, have: false, line: blank_line(), msg: [] };
   }

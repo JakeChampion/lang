@@ -5,29 +5,29 @@ import "./lib/duration";
 import "./lib/ld";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " NUMBER[SUFFIX]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "Pause for NUMBER seconds.  SUFFIX may be 's' for seconds (the default),\n";
-  out = out + "'m' for minutes, 'h' for hours or 'd' for days.  NUMBER need not be an\n";
-  out = out + "integer.  Given two or more arguments, pause for the amount of time\n";
-  out = out + "specified by the sum of their values.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Pause for NUMBER seconds.  SUFFIX may be 's' for seconds (the default),\n";
+  out += "'m' for minutes, 'h' for hours or 'd' for days.  NUMBER need not be an\n";
+  out += "integer.  Given two or more arguments, pause for the amount of time\n";
+  out += "specified by the sum of their values.\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() <= 1) {
     gnu.die_usage("missing operand", 1);
   }
-  let operands: string[] = gnu.parse_standard_options_only(argv, "sleep", help_text(), 1);
-  let f: ld.Format = ld.format();
-  let total: ld.LD = f.from_i64(0 as i64);
-  let bad: boolean = false;
-  let i: i32 = 0;
+  let operands = gnu.parse_standard_options_only(argv, "sleep", help_text(), 1);
+  let f = ld.format();
+  let total = f.from_i64(0 as i64);
+  let bad = false;
+  let i = 0;
   while (i < operands.len()) {
     match (duration.parse(f, operands[i])) {
       Some(v) => {
@@ -38,7 +38,7 @@ pub function main(): i32 {
         bad = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (bad) {
     gnu.try_help(1);

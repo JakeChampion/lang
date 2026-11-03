@@ -4,12 +4,12 @@ import "./lib/gnu";
 import "./lib/resolv";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]\n";
-  out = out + "Print the numeric identifier (in hexadecimal) for the current host.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print the numeric identifier (in hexadecimal) for the current host.\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -42,7 +42,7 @@ function darwin_host_id(): i64 {
 }
 
 function address_id(word: i32): i64 {
-  let w: i64 = word as i64 & 4294967295;
+  let w = word as i64 & 4294967295;
   return (w << 16 | w >> 16) & 4294967295;
 }
 
@@ -56,7 +56,7 @@ function host_id(): i64 {
     },
     None => {}
   }
-  let name: string = hostname();
+  let name = hostname();
   if (name.len() == 0) {
     return 0;
   }
@@ -71,11 +71,11 @@ function host_id(): i64 {
 }
 
 function hex8(v: i64): string {
-  let digits: string = "0123456789abcdef";
-  let out: string = "";
-  let x: i64 = v;
+  let digits = "0123456789abcdef";
+  let out = "";
+  let x = v;
   while (x > 0) {
-    let d: i32 = (x & 15) as i32;
+    let d = (x & 15) as i32;
     out = slice_unchecked(digits, d, d + 1) + out;
     x = x >> 4;
   }
@@ -86,7 +86,7 @@ function hex8(v: i64): string {
 }
 
 pub function main(): i32 {
-  let operands: string[] = gnu.parse_standard_options_only(args(), "hostid", help_text(), 1);
+  let operands = gnu.parse_standard_options_only(args(), "hostid", help_text(), 1);
   if (operands.len() > 0) {
     gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
   }

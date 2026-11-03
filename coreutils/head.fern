@@ -33,29 +33,29 @@ function opt_digit(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Print the first 10 lines of each FILE to standard output.\n";
-  out = out + "With more than one FILE, precede each with a header giving the file name.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -c, --bytes=[-]NUM       print the first NUM bytes of each file;\n";
-  out = out + "                             with the leading '-', print all but the last\n";
-  out = out + "                             NUM bytes of each file\n";
-  out = out + "  -n, --lines=[-]NUM       print the first NUM lines instead of the first 10;\n";
-  out = out + "                             with the leading '-', print all but the last\n";
-  out = out + "                             NUM lines of each file\n";
-  out = out + "  -q, --quiet, --silent    never print headers giving file names\n";
-  out = out + "  -v, --verbose            always print headers giving file names\n";
-  out = out + "  -z, --zero-terminated    line delimiter is NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "NUM may have a multiplier suffix:\n";
-  out = out + "b 512, kB 1000, K 1024, MB 1000*1000, M 1024*1024,\n";
-  out = out + "GB 1000*1000*1000, G 1024*1024*1024, and so on for T, P, E, Z, Y, R, Q.\n";
-  out = out + "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
+  out += "Print the first 10 lines of each FILE to standard output.\n";
+  out += "With more than one FILE, precede each with a header giving the file name.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -c, --bytes=[-]NUM       print the first NUM bytes of each file;\n";
+  out += "                             with the leading '-', print all but the last\n";
+  out += "                             NUM bytes of each file\n";
+  out += "  -n, --lines=[-]NUM       print the first NUM lines instead of the first 10;\n";
+  out += "                             with the leading '-', print all but the last\n";
+  out += "                             NUM lines of each file\n";
+  out += "  -q, --quiet, --silent    never print headers giving file names\n";
+  out += "  -v, --verbose            always print headers giving file names\n";
+  out += "  -z, --zero-terminated    line delimiter is NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "NUM may have a multiplier suffix:\n";
+  out += "b 512, kB 1000, K 1024, MB 1000*1000, M 1024*1024,\n";
+  out += "GB 1000*1000*1000, G 1024*1024*1024, and so on for T, P, E, Z, Y, R, Q.\n";
+  out += "Binary prefixes can be used, too: KiB=K, MiB=M, and so on.\n";
   return out;
 }
 
@@ -66,18 +66,18 @@ function off_t_max(): u64 {
 }
 
 function count_of(value: string, lines: boolean): Count {
-  let body: string = value;
-  let elide: boolean = false;
+  let body = value;
+  let elide = false;
   if (value.len() > 0 && value[0] as i32 == 45) {
     elide = true;
     body = slice_unchecked(value, 1, value.len()) + "";
   }
-  let noun: string = "bytes";
+  let noun = "bytes";
   if (lines) {
     noun = "lines";
   }
   let r: (u64, i32) = gnu.parse_units(body);
-  let status: i32 = r.1;
+  let status = r.1;
   if (status == 0 && elide && !lines && r.0 > off_t_max()) {
     status = 2;
   }
@@ -113,17 +113,17 @@ function header_always(): i32 {
 }
 
 function obsolete(tok: string, s: Settings): Settings {
-  let i: i32 = 1;
-  let digits: i32 = i;
+  let i = 1;
+  let digits = i;
   while (i < tok.len() && gnu.is_digit(tok[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let num: string = slice_unchecked(tok, digits, i) + "";
-  let out: Settings = Settings { ...s, count: count_of(num, true), lines: true };
+  let num = slice_unchecked(tok, digits, i) + "";
+  let out = Settings { ...s, count: count_of(num, true), lines: true };
   while (i < tok.len()) {
-    let c: i32 = tok[i] as i32;
+    let c = tok[i] as i32;
     if (c == 98 || c == 107 || c == 109) {
-      let mult: string = "b";
+      let mult = "b";
       if (c == 107) {
         mult = "K";
       }
@@ -144,7 +144,7 @@ function obsolete(tok: string, s: Settings): Settings {
     } else {
       gnu.die_usage("invalid trailing option -- " + slice_unchecked(tok, i, i + 1), 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -154,8 +154,8 @@ function read_size(): i32 {
 }
 
 function copy_head(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
-  let out: gnu.Stream = o;
-  let left: u64 = s.count.n;
+  let out = o;
+  let left = s.count.n;
   if (left == 0 as u64) {
     return out;
   }
@@ -173,12 +173,12 @@ function copy_head(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Str
           out = gnu.stream_put_bytes(out, chunk);
           left = left - chunk.len() as u64;
         } else {
-          let here: u64 = __count_byte_bytes(chunk, s.term) as u64;
+          let here = __count_byte_bytes(chunk, s.term) as u64;
           if (here < left) {
             out = gnu.stream_put_bytes(out, chunk);
-            left = left - here;
+            left -= here;
           } else {
-            let i: i32 = 0;
+            let i = 0;
             while (left > 0 as u64) {
               i = __memchr_bytes(chunk, s.term, i) + 1;
               left = left - 1 as u64;
@@ -206,8 +206,8 @@ function seekable_region(r: Reader, s: Settings): Region {
   if (s.presume) {
     return no_region();
   }
-  let size: i64 = 0 as i64;
-  let blk: i64 = 0 as i64;
+  let size = 0 as i64;
+  let blk = 0 as i64;
   match (r.stat()) {
     Ok(st) => {
       if (!st.is_file) {
@@ -226,7 +226,7 @@ function seekable_region(r: Reader, s: Settings): Region {
   if (size <= blk) {
     return no_region();
   }
-  let cur: i64 = 0 as i64;
+  let cur = 0 as i64;
   match (r.seek(0 as i64, 1)) {
     Ok(p) => {
       cur = p;
@@ -242,16 +242,16 @@ function seekable_region(r: Reader, s: Settings): Region {
 }
 
 function copy_span(r: Reader, o: gnu.Stream, name: string, at: i64, n: i64): gnu.Stream {
-  let out: gnu.Stream = o;
+  let out = o;
   match (r.seek(at, 0)) {
     Ok(_) => {},
     Err(e) => {
       return gnu.stream_fail(out, gnu.quotef(name) + ": cannot seek to offset " + at.to_string() + ": " + gnu.io_error_text(e));
     }
   }
-  let left: i64 = n;
+  let left = n;
   while (left > 0 as i64) {
-    let want: i32 = read_size();
+    let want = read_size();
     if (left < want as i64) {
       want = left as i32;
     }
@@ -300,7 +300,7 @@ function read_at(r: Reader, o: gnu.Stream, name: string, at: i64, n: i32): (gnu.
           break;
         }
         buf_push_bytes_range(b, chunk, 0, chunk.len());
-        size = size + chunk.len();
+        size += chunk.len();
       },
       Err(e) => {
         buf_free(b);
@@ -314,7 +314,7 @@ function read_at(r: Reader, o: gnu.Stream, name: string, at: i64, n: i32): (gnu.
 }
 
 function elide_bytes_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
-  let span: i64 = reg.end - reg.start;
+  let span = reg.end - reg.start;
   if (s.count.n >= span as u64) {
     return o;
   }
@@ -322,26 +322,26 @@ function elide_bytes_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
 }
 
 function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: string, reg: Region): gnu.Stream {
-  let out: gnu.Stream = o;
-  let span: i64 = reg.end - reg.start;
+  let out = o;
+  let span = reg.end - reg.start;
   if (s.count.n >= span as u64) {
     return out;
   }
-  let skip: i64 = s.count.n as i64;
-  let block: i64 = read_size() as i64;
-  let want: i64 = span % block;
+  let skip = s.count.n as i64;
+  let block = read_size() as i64;
+  let want = span % block;
   if (want == 0 as i64) {
     want = block;
   }
-  let pos: i64 = reg.end - want;
-  let first: boolean = true;
+  let pos = reg.end - want;
+  let first = true;
   while (true) {
     let rb: (gnu.Stream, u8[], boolean) = read_at(r, out, name, pos, want as i32);
     out = rb.0;
     if (!rb.2) {
       return out;
     }
-    let buf: u8[] = rb.1;
+    let buf = rb.1;
     if (first) {
       if (buf.len() > 0 && buf[buf.len() - 1] as i32 != s.term) {
         skip = skip - 1 as i64;
@@ -351,7 +351,7 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
       }
       first = false;
     }
-    let j: i32 = buf.len() - 1;
+    let j = buf.len() - 1;
     while (j >= 0) {
       j = __rmemchr_bytes(buf, s.term, j);
       if (j < 0) {
@@ -361,19 +361,19 @@ function elide_lines_seekable(r: Reader, o: gnu.Stream, s: Settings, name: strin
         return copy_span(r, out, name, reg.start, pos + j as i64 + 1 as i64 - reg.start);
       }
       skip = skip - 1 as i64;
-      j = j - 1;
+      j -= 1;
     }
     if (pos <= reg.start) {
       return out;
     }
-    pos = pos - block;
+    pos -= block;
     want = block;
   }
   return out;
 }
 
 function copy_elide_bytes(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
-  let out: gnu.Stream = o;
+  let out = o;
   let hold = lines.hold_empty();
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
@@ -397,14 +397,14 @@ function copy_elide_bytes(r: Reader, o: gnu.Stream, s: Settings, name: string): 
 }
 
 function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): gnu.Stream {
-  let out: gnu.Stream = o;
+  let out = o;
   let hold = lines.hold_empty();
-  let pending: u64 = 0 as u64;
+  let pending = 0 as u64;
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
         if (chunk.len() == 0) {
-          let total: u64 = pending;
+          let total = pending;
           if (hold.n > 0 as u64 && hold.last as i32 != s.term) {
             total = total + 1 as u64;
           }
@@ -413,8 +413,8 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
           }
           return out;
         }
-        let here: u64 = __count_byte_bytes(chunk, s.term) as u64;
-        let start: i32 = 0 - 1;
+        let here = __count_byte_bytes(chunk, s.term) as u64;
+        let start: i32 = -1;
         if (here >= s.count.n) {
           start = lines.tail_start(chunk, s.count.n, s.term);
         }
@@ -425,7 +425,7 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
           pending = s.count.n;
         } else {
           hold = lines.hold_push(hold, chunk);
-          pending = pending + here;
+          pending += here;
           if (pending > s.count.n) {
             let cut = lines.hold_cut(hold, pending - s.count.n, s.term);
             out = lines.hold_write(hold, out, cut);
@@ -443,13 +443,13 @@ function copy_elide_lines(r: Reader, o: gnu.Stream, s: Settings, name: string): 
 }
 
 function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
-  let out: gnu.Stream = o;
-  let stdin_input: boolean = path == "-";
-  let name: string = path;
+  let out = o;
+  let stdin_input = path == "-";
+  let name = path;
   if (stdin_input) {
     name = "standard input";
   }
-  let r: Reader = stdin();
+  let r = stdin();
   if (!stdin_input) {
     match (open_reader(path)) {
       Ok(f) => {
@@ -464,7 +464,7 @@ function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu
     out = gnu.stream_header(out, name);
   }
   if (s.count.elide) {
-    let reg: Region = seekable_region(r, s);
+    let reg = seekable_region(r, s);
     if (reg.ok && s.lines) {
       out = elide_lines_seekable(r, out, s, name, reg);
     } else if (reg.ok) {
@@ -484,7 +484,7 @@ function head_file(path: string, o: gnu.Stream, s: Settings, show: boolean): gnu
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.valued("c", "bytes", opt_bytes()));
   opts = opts.append(gnu.valued("n", "lines", opt_lines()));
@@ -493,27 +493,27 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("", "silent", opt_quiet()));
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
-  let d: i32 = 0;
+  let d = 0;
   while (d < 10) {
     opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit()));
-    d = d + 1;
+    d += 1;
   }
 
-  let s: Settings = Settings { count: Count { n: 10 as u64, elide: false }, lines: true, header: header_auto(), term: 10, presume: false };
+  let s = Settings { count: Count { n: 10 as u64, elide: false }, lines: true, header: header_auto(), term: 10, presume: false };
 
-  let scan: string[] = argv;
+  let scan = argv;
   if (argv.len() > 1 && argv[1].len() >= 2 && argv[1][0] as i32 == 45 && gnu.is_digit(argv[1][1] as i32)) {
     s = obsolete(argv[1], s);
     scan = [];
     scan = scan.append(argv[0]);
-    let k: i32 = 2;
+    let k = 2;
     while (k < argv.len()) {
       scan = scan.append(argv[k]);
-      k = k + 1;
+      k += 1;
     }
   }
 
-  let g: gnu.Getopt = gnu.getopt_new(scan, opts, "head", help_text(), 1);
+  let g = gnu.getopt_new(scan, opts, "head", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -541,19 +541,19 @@ pub function main(): i32 {
     }
   }
 
-  let files: string[] = g.operands();
+  let files = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
-  let show: boolean = s.header == header_always() || s.header == header_auto() && files.len() > 1;
+  let show = s.header == header_always() || s.header == header_auto() && files.len() > 1;
 
-  let out: gnu.Stream = gnu.stream_new();
-  let i: i32 = 0;
+  let out = gnu.stream_new();
+  let i = 0;
   while (i < files.len()) {
     out = head_file(files[i], out, s, show);
-    i = i + 1;
+    i += 1;
   }
-  let ok: boolean = out.ok;
+  let ok = out.ok;
   gnu.stream_finish(out);
   if (!ok) {
     return 1;

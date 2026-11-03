@@ -3,15 +3,15 @@ import "./lib/gnu";
 import "./lib/cpuquota";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
-  out = out + "Print the number of processing units available to the current process,\n";
-  out = out + "which may be less than the number of online processors\n";
-  out = out + "\n";
-  out = out + "      --all      print the number of installed processors\n";
-  out = out + "      --ignore=N  if possible, exclude N processing units\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print the number of processing units available to the current process,\n";
+  out += "which may be less than the number of online processors\n";
+  out += "\n";
+  out += "      --all      print the number of installed processors\n";
+  out += "      --ignore=N  if possible, exclude N processing units\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -32,7 +32,7 @@ function is_space(b: i32): boolean {
 }
 
 function parse_omp(name: string): u64 {
-  let raw: string = "";
+  let raw = "";
   match (env(name)) {
     Some(v) => {
       raw = v;
@@ -41,17 +41,17 @@ function parse_omp(name: string): u64 {
       return 0 as u64;
     }
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < raw.len() && is_space(raw[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= raw.len() || !gnu.is_digit(raw[i] as i32)) {
     return 0 as u64;
   }
-  let v: u64 = 0 as u64;
-  let over: boolean = false;
+  let v = 0 as u64;
+  let over = false;
   while (i < raw.len() && gnu.is_digit(raw[i] as i32)) {
-    let d: u64 = (raw[i] as i32 - 48) as u64;
+    let d = (raw[i] as i32 - 48) as u64;
     match (v.checked_mul(10 as u64)) {
       Some(m) => {
         match (m.checked_add(d)) {
@@ -67,10 +67,10 @@ function parse_omp(name: string): u64 {
         over = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   while (i < raw.len() && is_space(raw[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < raw.len() && raw[i] as i32 != 44) {
     return 0 as u64;
@@ -82,7 +82,7 @@ function parse_omp(name: string): u64 {
 }
 
 function available_count(): u64 {
-  let n: i32 = cpu_count();
+  let n = cpu_count();
   if (n <= 0) {
     return 1 as u64;
   }
@@ -93,12 +93,12 @@ function is_cpu_dir(name: string): boolean {
   if (!name.starts_with("cpu") || name.len() < 4) {
     return false;
   }
-  let i: i32 = 3;
+  let i = 3;
   while (i < name.len()) {
     if (!gnu.is_digit(name[i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -106,13 +106,13 @@ function is_cpu_dir(name: string): boolean {
 function installed_count(): u64 {
   match (read_dir("/sys/devices/system/cpu")) {
     Ok(entries) => {
-      let n: i32 = 0;
-      let i: i32 = 0;
+      let n = 0;
+      let i = 0;
       while (i < entries.len()) {
         if (is_cpu_dir(entries[i])) {
-          n = n + 1;
+          n += 1;
         }
-        i = i + 1;
+        i += 1;
       }
       if (n > 0) {
         return n as u64;
@@ -122,7 +122,7 @@ function installed_count(): u64 {
   }
   match (read_file("/proc/cpuinfo")) {
     Ok(text) => {
-      let n: i32 = count_processor_lines(text);
+      let n = count_processor_lines(text);
       if (n > 0) {
         return n as u64;
       }
@@ -133,16 +133,16 @@ function installed_count(): u64 {
 }
 
 function count_processor_lines(text: string): i32 {
-  let word: string = "processor";
-  let n: i32 = 0;
-  let i: i32 = 0;
-  let at_line_start: boolean = true;
+  let word = "processor";
+  let n = 0;
+  let i = 0;
+  let at_line_start = true;
   while (i < text.len()) {
     if (at_line_start && starts_word(text, i, word)) {
-      n = n + 1;
+      n += 1;
     }
     at_line_start = text[i] as i32 == 10;
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
@@ -151,12 +151,12 @@ function starts_word(text: string, at: i32, word: string): boolean {
   if (at + word.len() > text.len()) {
     return false;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < word.len()) {
     if (text[at + k] != word[k]) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return true;
 }
@@ -173,9 +173,9 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("", "all", opt_all()));
   opts = opts.append(gnu.valued("", "ignore", opt_ignore()));
 
-  let all: boolean = false;
-  let ignore: u64 = 0 as u64;
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "nproc", help_text(), 1);
+  let all = false;
+  let ignore = 0 as u64;
+  let g = gnu.getopt_new(args(), opts, "nproc", help_text(), 1);
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -192,14 +192,14 @@ pub function main(): i32 {
       }
     }
   }
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() > 0) {
     gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
   }
 
-  let n: u64 = count_for(all);
+  let n = count_for(all);
   if (ignore < n) {
-    n = n - ignore;
+    n -= ignore;
   } else {
     n = 1 as u64;
   }
@@ -224,16 +224,16 @@ function count_for(all: boolean): u64 {
   if (all) {
     return installed_count();
   }
-  let limit: u64 = parse_omp("OMP_THREAD_LIMIT");
+  let limit = parse_omp("OMP_THREAD_LIMIT");
   if (limit == 0 as u64) {
     limit = ulong_max();
   }
-  let threads: u64 = parse_omp("OMP_NUM_THREADS");
+  let threads = parse_omp("OMP_NUM_THREADS");
   if (threads != 0 as u64) {
     return min_u64(threads, limit);
   }
-  let n: u64 = available_count();
-  let quota: u64 = cpuquota.current();
+  let n = available_count();
+  let quota = cpuquota.current();
   if (quota > 0 as u64) {
     n = min_u64(n, quota);
   }

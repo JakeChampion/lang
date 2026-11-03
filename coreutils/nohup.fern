@@ -9,32 +9,32 @@ function status_canceled(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " COMMAND [ARG]...\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "Run COMMAND, ignoring hangup signals.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "If standard input is a terminal, redirect it from an unreadable file.\n";
-  out = out + "If standard output is a terminal, append output to 'nohup.out' if possible,\n";
-  out = out + "'$HOME/nohup.out' otherwise.\n";
-  out = out + "If standard error is a terminal, redirect it to standard output.\n";
+  out += "Run COMMAND, ignoring hangup signals.\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "If standard input is a terminal, redirect it from an unreadable file.\n";
+  out += "If standard output is a terminal, append output to 'nohup.out' if possible,\n";
+  out += "'$HOME/nohup.out' otherwise.\n";
+  out += "If standard error is a terminal, redirect it to standard output.\n";
   out = out + "To save output to FILE, use '" + gnu.prog() + " COMMAND > FILE'.\n";
-  out = out + "\n";
-  out = out + "Exit status:\n";
-  out = out + "  125  if the nohup command itself fails\n";
-  out = out + "  126  if COMMAND is found but cannot be invoked\n";
-  out = out + "  127  if COMMAND cannot be found\n";
-  out = out + "  -    the exit status of COMMAND otherwise\n";
+  out += "\n";
+  out += "Exit status:\n";
+  out += "  125  if the nohup command itself fails\n";
+  out += "  126  if COMMAND is found but cannot be invoked\n";
+  out += "  127  if COMMAND cannot be found\n";
+  out += "  -    the exit status of COMMAND otherwise\n";
   return out;
 }
 
 function open_nohup_out(path: string): Result[Writer, IoError] {
-  let mask: i32 = umask(0);
+  let mask = umask(0);
   umask(mask | 54);
-  let r: Result[Writer, IoError] = open_appender(path);
+  let r = open_appender(path);
   umask(mask);
   return r;
 }
@@ -65,22 +65,22 @@ function ignore_input(): void {
 struct Appended { name: string }
 
 function append_output(): Appended {
-  let here: Result[Writer, IoError] = open_nohup_out("nohup.out");
+  let here = open_nohup_out("nohup.out");
   match (here) {
     Ok(w) => {
       redirect(w, 1, "output");
       return Appended { name: "nohup.out" };
     },
     Err(e) => {
-      let first: string = "failed to open " + gnu.quote("nohup.out") + ": " + gnu.io_error_text(e);
+      let first = "failed to open " + gnu.quote("nohup.out") + ": " + gnu.io_error_text(e);
       match (env("HOME")) {
         None => {
           gnu.error(first);
           exit(status_canceled());
         },
         Some(home) => {
-          let path: string = gnu.join_path(home, "nohup.out");
-          let home_out: Result[Writer, IoError] = open_nohup_out(path);
+          let path = gnu.join_path(home, "nohup.out");
+          let home_out = open_nohup_out(path);
           match (home_out) {
             Ok(w2) => {
               redirect(w2, 1, "output");
@@ -110,11 +110,11 @@ function announce(clauses: string[]): void {
   if (clauses.len() == 0) {
     return;
   }
-  let msg: string = clauses[0];
-  let i: i32 = 1;
+  let msg = clauses[0];
+  let i = 1;
   while (i < clauses.len()) {
     msg = msg + " and " + clauses[i];
-    i = i + 1;
+    i += 1;
   }
   gnu.error(msg);
 }
@@ -129,7 +129,7 @@ function fail_exec(cmd: string, errno: i32): void {
 
 pub function main(): i32 {
   let none: gnu.Opt[] = [];
-  let g: gnu.Getopt = gnu.getopt_new(args(), none, "nohup", help_text(), status_canceled()).in_order();
+  let g = gnu.getopt_new(args(), none, "nohup", help_text(), status_canceled()).in_order();
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -140,18 +140,18 @@ pub function main(): i32 {
       }
     }
   }
-  let rest: string[] = g.operands();
+  let rest = g.operands();
   if (rest.len() == 0) {
     gnu.die_usage("missing operand", status_canceled());
   }
 
-  let tty_in: boolean = isatty(0);
-  let tty_out: boolean = isatty(1);
-  let tty_err: boolean = isatty(2);
+  let tty_in = isatty(0);
+  let tty_out = isatty(1);
+  let tty_err = isatty(2);
 
-  let ri: i32 = signal_ignore(sig_hup());
+  let ri = signal_ignore(sig_hup());
   if (ri < 0) {
-    gnu.error("failed to set signal action for signal " + sig_hup().to_string() + ": " + gnu.exec_errno_text(0 - ri));
+    gnu.error("failed to set signal action for signal " + sig_hup().to_string() + ": " + gnu.exec_errno_text(-ri));
     exit(status_canceled());
   }
 
@@ -161,7 +161,7 @@ pub function main(): i32 {
     clauses = clauses.append("ignoring input");
   }
   if (tty_out) {
-    let a: Appended = append_output();
+    let a = append_output();
     clauses = clauses.append("appending output to " + gnu.quote(a.name));
   } else {
     if (tty_err) {

@@ -40,7 +40,7 @@ function help_text(): string {
   out = out + "  -b FILE   a block special file\n";
   out = out + "  -c FILE   a character special file\n";
   out = out + "  -d FILE   a directory\n";
-  out = out + "  -e FILE   exists\n";
+  out += "  -e FILE   exists\n";
   out = out + "  -f FILE   a regular file\n";
   out = out + "  -g FILE   set-group-ID bit set\n";
   out = out + "  -G FILE   owned by the effective group ID\n";

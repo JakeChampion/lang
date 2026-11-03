@@ -32,23 +32,23 @@ function opt_zero(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
   out = out + "  or:  " + gnu.prog() + " -e [OPTION]... [ARG]...\n";
   out = out + "  or:  " + gnu.prog() + " -i LO-HI [OPTION]...\n";
-  out = out + "Write a random permutation of the input lines to standard output.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -e, --echo                treat each ARG as an input line\n";
-  out = out + "  -i, --input-range=LO-HI   treat each number LO through HI as an input line\n";
-  out = out + "  -n, --head-count=COUNT    output at most COUNT lines\n";
-  out = out + "  -o, --output=FILE         write result to FILE instead of standard output\n";
-  out = out + "      --random-source=FILE  get random bytes from FILE\n";
-  out = out + "  -r, --repeat              output lines can be repeated\n";
-  out = out + "  -z, --zero-terminated     line delimiter is NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Write a random permutation of the input lines to standard output.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -e, --echo                treat each ARG as an input line\n";
+  out += "  -i, --input-range=LO-HI   treat each number LO through HI as an input line\n";
+  out += "  -n, --head-count=COUNT    output at most COUNT lines\n";
+  out += "  -o, --output=FILE         write result to FILE instead of standard output\n";
+  out += "      --random-source=FILE  get random bytes from FILE\n";
+  out += "  -r, --repeat              output lines can be repeated\n";
+  out += "  -z, --zero-terminated     line delimiter is NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -108,11 +108,11 @@ function rand_fill(s0: Rand): Rand {
 }
 
 function rand_choose(s0: Rand, n: u64): (u64, Rand) {
-  let s: Rand = s0;
-  let num: u64 = s.num;
-  let top: u64 = s.max;
-  let pos: i32 = s.pos;
-  let genmax: u64 = n - 1 as u64;
+  let s = s0;
+  let num = s.num;
+  let top = s.max;
+  let pos = s.pos;
+  let genmax = n - 1 as u64;
   while (true) {
     while (top < genmax) {
       if (pos >= s.buf.len()) {
@@ -124,11 +124,11 @@ function rand_choose(s0: Rand, n: u64): (u64, Rand) {
       }
       num = num * (256 as u64) + s.buf[pos] as u64;
       top = top * (256 as u64) + 255 as u64;
-      pos = pos + 1;
+      pos += 1;
     }
-    let excess: u64 = top - genmax;
-    let unusable: u64 = excess % n;
-    let reduced: u64 = num % n;
+    let excess = top - genmax;
+    let unusable = excess % n;
+    let reduced = num % n;
     if (num <= top - unusable) {
       return (reduced, Rand { ...s, num: num / n, max: excess / n, pos: pos });
     }
@@ -150,37 +150,37 @@ function use_dense(n: u64, h: u64): boolean {
 }
 
 function mix64(k: u64): u64 {
-  let x: u64 = k + 11400714819323198485 as u64;
+  let x = k + 11400714819323198485 as u64;
   x = (x ^ x >> 30 as u64) * (13787848793156543929 as u64);
   x = (x ^ x >> 27 as u64) * (10723151780598845931 as u64);
   return x ^ x >> 31 as u64;
 }
 
 function permutation(rs0: Rand, n: u64, h: u64, items: u64[]): (u64[], Rand) {
-  let rs: Rand = rs0;
+  let rs = rs0;
   let out: u64[] = [];
   if (h == 0 as u64) {
     return (out, rs);
   }
   if (use_dense(n, h)) {
-    let v: u64[] = items;
+    let v = items;
     if (v.len() == 0) {
-      let k: u64 = 0 as u64;
+      let k = 0 as u64;
       while (k < n) {
         v = v.append(k);
         k = k + 1 as u64;
       }
     }
-    let i: u64 = 0 as u64;
+    let i = 0 as u64;
     while (i < h) {
       let got: (u64, Rand) = rand_choose(rs, n - i);
       rs = got.1;
       if (rs.dead) {
         return (out, rs);
       }
-      let a: i32 = i as i32;
-      let b: i32 = (i + got.0) as i32;
-      let held: u64 = v[a];
+      let a = i as i32;
+      let b = (i + got.0) as i32;
+      let held = v[a];
       v = v.with(a, v[b]);
       v = v.with(b, held);
       i = i + 1 as u64;
@@ -188,45 +188,45 @@ function permutation(rs0: Rand, n: u64, h: u64, items: u64[]): (u64[], Rand) {
     return (v, rs);
   }
 
-  let cap: i32 = 16;
+  let cap = 16;
   while (cap as u64 < h && cap < 1073741824) {
-    cap = cap * 2;
+    cap *= 2;
   }
   if (cap < 1073741824) {
-    cap = cap * 2;
+    cap *= 2;
   }
-  let mask: u64 = (cap - 1) as u64;
+  let mask = (cap - 1) as u64;
   let keys: u64[] = [];
   let vals: u64[] = [];
   let live: i32[] = [];
-  let c: i32 = 0;
+  let c = 0;
   while (c < cap) {
     keys = keys.append(0 as u64);
     vals = vals.append(0 as u64);
     live = live.append(0);
-    c = c + 1;
+    c += 1;
   }
-  let i2: u64 = 0 as u64;
+  let i2 = 0 as u64;
   while (i2 < h) {
     let got2: (u64, Rand) = rand_choose(rs, n - i2);
     rs = got2.1;
     if (rs.dead) {
       return (out, rs);
     }
-    let j: u64 = i2 + got2.0;
-    let si: i32 = (mix64(i2) & mask) as i32;
+    let j = i2 + got2.0;
+    let si = (mix64(i2) & mask) as i32;
     while (live[si] != 0 && keys[si] != i2) {
       si = ((si + 1) as u64 & mask) as i32;
     }
-    let sj: i32 = (mix64(j) & mask) as i32;
+    let sj = (mix64(j) & mask) as i32;
     while (live[sj] != 0 && keys[sj] != j) {
       sj = ((sj + 1) as u64 & mask) as i32;
     }
-    let vi: u64 = i2;
+    let vi = i2;
     if (live[si] != 0) {
       vi = vals[si];
     }
-    let vj: u64 = j;
+    let vj = j;
     if (live[sj] != 0) {
       vj = vals[sj];
     }
@@ -253,16 +253,16 @@ function is_space(c: i32): boolean {
 struct Scan { value: u64, at: i32, digits: boolean, over: boolean }
 
 function scan_u64(text: string, from: i32): Scan {
-  let i: i32 = from;
+  let i = from;
   while (i < text.len() && is_space(text[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < text.len() && text[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
-  let first: i32 = i;
-  let value: u64 = 0 as u64;
-  let over: boolean = false;
+  let first = i;
+  let value = 0 as u64;
+  let over = false;
   while (i < text.len() && is_digit(text[i] as i32)) {
     match (value.checked_mul(10 as u64)) {
       Some(m) => {
@@ -279,7 +279,7 @@ function scan_u64(text: string, from: i32): Scan {
         over = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (i == first) {
     return Scan { value: 0 as u64, at: from, digits: false, over: false };
@@ -288,7 +288,7 @@ function scan_u64(text: string, from: i32): Scan {
 }
 
 function range_fatal(text: string, over: boolean): void {
-  let msg: string = "invalid input range: " + gnu.quote(text);
+  let msg = "invalid input range: " + gnu.quote(text);
   if (over) {
     msg = msg + ": " + gnu.eoverflow_text();
   }
@@ -297,21 +297,21 @@ function range_fatal(text: string, over: boolean): void {
 }
 
 function parse_range(text: string): (u64, u64) {
-  let lo: Scan = scan_u64(text, 0);
+  let lo = scan_u64(text, 0);
   if (lo.over) {
     range_fatal(text, true);
   }
   if (!lo.digits || lo.at >= text.len() || text[lo.at] as i32 != 45) {
     range_fatal(text, false);
   }
-  let hi: Scan = scan_u64(text, lo.at + 1);
+  let hi = scan_u64(text, lo.at + 1);
   if (!hi.digits || hi.at != text.len()) {
     range_fatal(text, false);
   }
   if (hi.over) {
     range_fatal(text, true);
   }
-  let count: u64 = hi.value - lo.value + 1 as u64;
+  let count = hi.value - lo.value + 1 as u64;
   if (lo.value <= hi.value == (count == 0 as u64)) {
     range_fatal(text, false);
   }
@@ -319,7 +319,7 @@ function parse_range(text: string): (u64, u64) {
 }
 
 function parse_count(text: string, held: u64): u64 {
-  let s: Scan = scan_u64(text, 0);
+  let s = scan_u64(text, 0);
   if (!s.digits || s.at != text.len()) {
     gnu.error("invalid line count: " + gnu.quote(text));
     exit(1);
@@ -381,11 +381,11 @@ function push_bytes(h: usize, bytes: u8[], lo: i32, hi: i32): void {
 }
 
 function slurp(r: Reader, size: i64): u8[] {
-  let capacity: i32 = read_size();
+  let capacity = read_size();
   if (size > capacity as i64 && size <= 2147483647 as i64) {
     capacity = size as i32;
   }
-  let b: usize = buf_new(capacity);
+  let b = buf_new(capacity);
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -401,7 +401,7 @@ function slurp(r: Reader, size: i64): u8[] {
       }
     }
   }
-  let bytes: u8[] = buf_take_bytes(b);
+  let bytes = buf_take_bytes(b);
   buf_free(b);
   return bytes;
 }
@@ -420,9 +420,9 @@ function line_len(v: u64): i32 {
 
 function split_lines(bytes: u8[], term: i32): u64[] {
   let lines: u64[] = [];
-  let start: i32 = 0;
+  let start = 0;
   while (start < bytes.len()) {
-    let end: i32 = __memchr_bytes(bytes, term, start);
+    let end = __memchr_bytes(bytes, term, start);
     if (end < 0) {
       lines = lines.append(pack_line(start, bytes.len() - start));
       break;
@@ -434,7 +434,7 @@ function split_lines(bytes: u8[], term: i32): u64[] {
 }
 
 function push_line(h: usize, bytes: u8[], v: u64, term: string): void {
-  let end: i32 = line_start(v) + line_len(v);
+  let end = line_start(v) + line_len(v);
   if (end < bytes.len()) {
     push_bytes(h, bytes, line_start(v), end + 1);
     return;
@@ -444,9 +444,9 @@ function push_line(h: usize, bytes: u8[], v: u64, term: string): void {
 }
 
 function push_record(h: usize, line: u8[], term: i32): void {
-  let end: i32 = line.len();
+  let end = line.len();
   if (end > 0 && line[end - 1] as i32 == term) {
-    end = end - 1;
+    end -= 1;
   }
   push_bytes(h, line, 0, end);
 }
@@ -479,8 +479,8 @@ function parse_args(argv: string[]): (Args, string[]) {
   opts = opts.append(gnu.flag("r", "repeat", opt_repeat()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
 
-  let a: Args = Args { echo: false, range: false, lo: 0 as u64, hi: 0 as u64, count: count_cap(), outfile: "", have_out: false, source: "", have_source: false, repeat: false, term: 10 };
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "shuf", help_text(), 1);
+  let a = Args { echo: false, range: false, lo: 0 as u64, hi: 0 as u64, count: count_cap(), outfile: "", have_out: false, source: "", have_source: false, repeat: false, term: 10 };
+  let g = gnu.getopt_new(argv, opts, "shuf", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -543,10 +543,10 @@ function lines_empty(): Lines {
 }
 
 function reservoir_sample(rs0: Rand, r: Reader, term: i32, k: i32): (u8[][], Rand) {
-  let rs: Rand = rs0;
+  let rs = rs0;
   let held: u8[][] = [];
-  let lr: io_buffered.ByteLineReader = io_buffered.byte_line_reader_new(r, term, read_size());
-  let filled: boolean = true;
+  let lr = io_buffered.byte_line_reader_new(r, term, read_size());
+  let filled = true;
   while (held.len() < k) {
     let nx: (Option[u8[]], io_buffered.ByteLineReader) = next_record(lr);
     lr = nx.1;
@@ -560,7 +560,7 @@ function reservoir_sample(rs0: Rand, r: Reader, term: i32, k: i32): (u8[][], Ran
       }
     }
   }
-  let seen: u64 = k as u64;
+  let seen = k as u64;
   while (filled) {
     let got: (u64, Rand) = rand_choose(rs, seen + 1 as u64);
     rs = got.1;
@@ -612,13 +612,13 @@ function next_record(lr: io_buffered.ByteLineReader): (Option[u8[]], io_buffered
 }
 
 function read_input(a: Args, path: string, rs0: Rand): (Lines, Rand) {
-  let rs: Rand = rs0;
-  let out: Lines = lines_empty();
-  let r: Reader = open_input(path);
-  let size: i64 = input_size(r);
+  let rs = rs0;
+  let out = lines_empty();
+  let r = open_input(path);
+  let size = input_size(r);
   if (!a.repeat && a.count != count_cap() && size > reservoir_min_input()) {
     rs = source_for(a);
-    let k: i32 = 1073741823;
+    let k = 1073741823;
     if (a.count < k as u64) {
       k = a.count as i32;
     }
@@ -629,8 +629,8 @@ function read_input(a: Args, path: string, rs0: Rand): (Lines, Rand) {
     }
     out = Lines { ...out, held: got.0, n: got.0.len() as u64, boxed: true };
   } else {
-    let bytes: u8[] = slurp(r, size);
-    let spans: u64[] = split_lines(bytes, a.term);
+    let bytes = slurp(r, size);
+    let spans = split_lines(bytes, a.term);
     out = Lines { ...out, bytes: bytes, spans: spans, n: spans.len() as u64 };
   }
   if (path != "-") {
@@ -647,47 +647,47 @@ function terminator(a: Args): string {
 }
 
 function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head: u64): void {
-  let o: io_buffered.BufWriter = o0;
-  let h: usize = o.handle();
-  let term: string = terminator(a);
-  let i: i32 = 0;
+  let o = o0;
+  let h = o.handle();
+  let term = terminator(a);
+  let i = 0;
   if (a.range) {
     while (i as u64 < head) {
       buf_push_decimal(h, a.lo + perm[i]);
       buf_push(h, term);
       o = gnu.settle(o);
-      i = i + 1;
+      i += 1;
     }
   } else if (a.echo) {
     while (i as u64 < head) {
       buf_push(h, src.echo[perm[i] as i32]);
       buf_push(h, term);
       o = gnu.settle(o);
-      i = i + 1;
+      i += 1;
     }
   } else if (src.boxed) {
     while (i as u64 < head) {
       push_record(h, src.held[perm[i] as i32], a.term);
       buf_push(h, term);
       o = gnu.settle(o);
-      i = i + 1;
+      i += 1;
     }
   } else {
     while (i as u64 < head) {
       push_line(h, src.bytes, perm[i], term);
       o = gnu.settle(o);
-      i = i + 1;
+      i += 1;
     }
   }
   gnu.finish(o);
 }
 
 function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): void {
-  let o: io_buffered.BufWriter = o0;
-  let rs: Rand = rs0;
-  let h: usize = o.handle();
-  let written: u64 = 0 as u64;
-  let term: string = terminator(a);
+  let o = o0;
+  let rs = rs0;
+  let h = o.handle();
+  let written = 0 as u64;
+  let term = terminator(a);
   while (a.count == count_cap() || written < a.count) {
     let got: (u64, Rand) = rand_choose(rs, src.n);
     rs = got.1;
@@ -695,7 +695,7 @@ function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): 
       o = gnu.flush(o);
       rand_die(rs);
     }
-    let j: u64 = got.0;
+    let j = got.0;
     if (a.range) {
       buf_push_decimal(h, a.lo + j);
       buf_push(h, term);
@@ -728,10 +728,10 @@ function check_operands(a: Args, operands: string[]): void {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let parsed: (Args, string[]) = parse_args(argv);
-  let a: Args = parsed.0;
-  let operands: string[] = parsed.1;
+  let a = parsed.0;
+  let operands = parsed.1;
   check_operands(a, operands);
 
   if (a.count == 0 as u64) {
@@ -739,14 +739,14 @@ pub function main(): i32 {
     return 0;
   }
 
-  let rs: Rand = rand_closed();
-  let src: Lines = lines_empty();
+  let rs = rand_closed();
+  let src = lines_empty();
   if (a.range) {
     src = Lines { ...src, n: a.hi - a.lo + 1 as u64 };
   } else if (a.echo) {
     src = Lines { ...src, echo: operands, n: operands.len() as u64 };
   } else {
-    let path: string = "-";
+    let path = "-";
     if (operands.len() == 1) {
       path = operands[0];
     }
@@ -755,7 +755,7 @@ pub function main(): i32 {
     rs = got.1;
   }
 
-  let head: u64 = a.count.min(src.n);
+  let head = a.count.min(src.n);
   if (a.repeat) {
     head = a.count;
   }
@@ -764,7 +764,7 @@ pub function main(): i32 {
   }
 
   if (a.repeat) {
-    let w: io_buffered.BufWriter = open_output(a.outfile, a.have_out);
+    let w = open_output(a.outfile, a.have_out);
     if (src.n == 0 as u64) {
       gnu.error("no lines to repeat");
       exit(1);
@@ -773,7 +773,7 @@ pub function main(): i32 {
     return 0;
   }
 
-  let spans: u64[] = src.spans;
+  let spans = src.spans;
   src = Lines { ...src, spans: [] };
   let pr: (u64[], Rand) = permutation(rs, src.n, head, spans);
   rs = pr.1;

@@ -44,26 +44,26 @@ function opt_show_all(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Concatenate FILE(s) to standard output.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -A, --show-all           equivalent to -vET\n";
-  out = out + "  -b, --number-nonblank    number nonempty output lines, overrides -n\n";
-  out = out + "  -e                       equivalent to -vE\n";
-  out = out + "  -E, --show-ends          display $ at end of each line\n";
-  out = out + "  -n, --number             number all output lines\n";
-  out = out + "  -s, --squeeze-blank      suppress repeated empty output lines\n";
-  out = out + "  -t                       equivalent to -vT\n";
-  out = out + "  -T, --show-tabs          display TAB characters as ^I\n";
-  out = out + "  -u                       (ignored)\n";
-  out = out + "  -v, --show-nonprinting   use ^ and M- notation, except for LFD and TAB\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "Examples:\n";
+  out += "Concatenate FILE(s) to standard output.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -A, --show-all           equivalent to -vET\n";
+  out += "  -b, --number-nonblank    number nonempty output lines, overrides -n\n";
+  out += "  -e                       equivalent to -vE\n";
+  out += "  -E, --show-ends          display $ at end of each line\n";
+  out += "  -n, --number             number all output lines\n";
+  out += "  -s, --squeeze-blank      suppress repeated empty output lines\n";
+  out += "  -t                       equivalent to -vT\n";
+  out += "  -T, --show-tabs          display TAB characters as ^I\n";
+  out += "  -u                       (ignored)\n";
+  out += "  -v, --show-nonprinting   use ^ and M- notation, except for LFD and TAB\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "Examples:\n";
   out = out + "  " + gnu.prog() + " f - g  Output f's contents, then standard input, then g's contents.\n";
   out = out + "  " + gnu.prog() + "        Copy standard input to standard output.\n";
   return out;
@@ -94,7 +94,7 @@ function spelling(b: i32, f: Fmt): u8[] {
     return [];
   }
   if (b >= 128) {
-    let c: i32 = b - 128;
+    let c = b - 128;
     if (c < 32) {
       return [b'M', b'-', b'^', (c + 64) as u8];
     }
@@ -111,14 +111,14 @@ function spelling(b: i32, f: Fmt): u8[] {
 
 function spell_table(f: Fmt): Fmt {
   let tab: u8[][] = [];
-  let stop: u8[] = __alloc_u8(256);
-  let expand: u8[] = __alloc_u8(2048);
-  let b: i32 = 0;
+  let stop = __alloc_u8(256);
+  let expand = __alloc_u8(2048);
+  let b = 0;
   while (b < 256) {
-    let s: u8[] = spelling(b, f);
+    let s = spelling(b, f);
     tab = tab.append(s);
     stop = stop.with(b, s.len() as u8);
-    let out: u8[] = s;
+    let out = s;
     if (b == 10) {
       out = [b'\n'];
       if (f.ends) {
@@ -128,12 +128,12 @@ function spell_table(f: Fmt): Fmt {
       out = [b as u8];
     }
     expand = expand.with(b * 8, out.len() as u8);
-    let k: i32 = 0;
+    let k = 0;
     while (k < out.len()) {
       expand = expand.with(b * 8 + 1 + k, out[k]);
-      k = k + 1;
+      k += 1;
     }
-    b = b + 1;
+    b += 1;
   }
   stop = stop.with(10, 1 as u8);
   return Fmt { ...f, spell: tab, stop: stop, expand: expand };
@@ -158,38 +158,38 @@ function state_new(): State {
 }
 
 function number_tails(): string {
-  let out: u8[] = __alloc_u8(600);
-  let i: i32 = 0;
+  let out = __alloc_u8(600);
+  let i = 0;
   while (i < 200) {
-    let n: i32 = i % 100;
-    let tens: i32 = 48 + n / 10;
+    let n = i % 100;
+    let tens = 48 + n / 10;
     if (i >= 100 && n < 10) {
       tens = 32;
     }
     out = out.with(i * 3, tens as u8);
     out = out.with(i * 3 + 1, (48 + n % 10) as u8);
     out = out.with(i * 3 + 2, 9 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
 
 function head_for(q: u64): string {
-  let digits: string = (q as i64).to_string();
-  let pad: i32 = 4 - digits.len();
+  let digits = (q as i64).to_string();
+  let pad = 4 - digits.len();
   if (pad <= 0) {
     return digits;
   }
-  let out: u8[] = __alloc_u8(4);
-  let i: i32 = 0;
+  let out = __alloc_u8(4);
+  let i = 0;
   while (i < pad) {
     out = out.with(i, 32 as u8);
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < digits.len()) {
     out = out.with(pad + j, digits[j]);
-    j = j + 1;
+    j += 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -199,28 +199,28 @@ function drain(s: State): State {
 }
 
 function format_chunk(st: State, chunk: u8[], f: Fmt): State {
-  let s: State = st;
-  let w: io_buffered.BufWriter = s.w;
-  let h: usize = w.handle();
-  let num: u64 = s.num;
-  let head: string = s.head;
-  let base: u64 = s.base;
-  let tails: string = f.tails;
-  let toff: i32 = 0;
+  let s = st;
+  let w = s.w;
+  let h = w.handle();
+  let num = s.num;
+  let head = s.head;
+  let base = s.base;
+  let tails = f.tails;
+  let toff = 0;
   if (base == 0 as u64) {
     toff = 300;
   }
-  let at_start: boolean = s.at_start;
-  let prev_blank: boolean = s.prev_blank;
-  let pos: i32 = 0;
-  let len: i32 = chunk.len();
-  let spell: boolean = f.np || f.tabs;
-  let stop: u8[] = f.stop;
-  let squeeze: boolean = f.squeeze;
-  let nonblank: boolean = f.nonblank;
-  let number: boolean = f.number;
-  let ends: boolean = f.ends;
-  let cr_mark: boolean = ends && !f.np;
+  let at_start = s.at_start;
+  let prev_blank = s.prev_blank;
+  let pos = 0;
+  let len = chunk.len();
+  let spell = f.np || f.tabs;
+  let stop = f.stop;
+  let squeeze = f.squeeze;
+  let nonblank = f.nonblank;
+  let number = f.number;
+  let ends = f.ends;
+  let cr_mark = ends && !f.np;
   if (s.pending_cr) {
     if (chunk[0] as i32 == 10) {
       buf_push(h, "^M");
@@ -228,15 +228,15 @@ function format_chunk(st: State, chunk: u8[], f: Fmt): State {
       buf_push_byte(h, 13);
     }
   }
-  let pending_cr: boolean = false;
+  let pending_cr = false;
   while (pos < len) {
-    let nl: i32 = __memchr_bytes(chunk, 10, pos);
-    let end: i32 = nl;
+    let nl = __memchr_bytes(chunk, 10, pos);
+    let end = nl;
     if (nl < 0) {
       end = len;
     }
     if (at_start) {
-      let blank: boolean = nl == pos;
+      let blank = nl == pos;
       if (blank && squeeze && prev_blank) {
         pos = nl + 1;
         continue;
@@ -248,7 +248,7 @@ function format_chunk(st: State, chunk: u8[], f: Fmt): State {
           head = head_for(base / (100 as u64));
           toff = 0;
         }
-        let t: i32 = toff + (num - base) as i32 * 3;
+        let t = toff + (num - base) as i32 * 3;
         buf_push_range(h, head, 0, head.len());
         buf_push_range(h, tails, t, t + 3);
       }
@@ -256,10 +256,10 @@ function format_chunk(st: State, chunk: u8[], f: Fmt): State {
       prev_blank = blank;
     }
     if (spell) {
-      let i: i32 = __scan_set_bytes(chunk, pos, stop);
+      let i = __scan_set_bytes(chunk, pos, stop);
       while (i < end) {
         buf_push_bytes_range(h, chunk, pos, i);
-        let spelled: u8[] = f.spell[chunk[i] as i32];
+        let spelled = f.spell[chunk[i] as i32];
         buf_push_bytes_range(h, spelled, 0, spelled.len());
         pos = i + 1;
         i = __scan_set_bytes(chunk, pos, stop);
@@ -298,27 +298,27 @@ function spell_chunk(st: State, chunk: u8[], f: Fmt): State {
 }
 
 function squeeze_chunk(st: State, chunk: u8[]): State {
-  let s: State = st;
-  let w: io_buffered.BufWriter = s.w;
-  let h: usize = w.handle();
-  let at_start: boolean = s.at_start;
-  let prev_blank: boolean = s.prev_blank;
-  let pos: i32 = 0;
-  let len: i32 = chunk.len();
+  let s = st;
+  let w = s.w;
+  let h = w.handle();
+  let at_start = s.at_start;
+  let prev_blank = s.prev_blank;
+  let pos = 0;
+  let len = chunk.len();
   while (pos < len) {
     if (at_start && chunk[pos] as i32 == 10) {
       if (!prev_blank) {
         buf_push_byte(h, 10);
         prev_blank = true;
       }
-      pos = pos + 1;
+      pos += 1;
       continue;
     }
-    let q: i32 = __memchr_bytes(chunk, 10, pos);
+    let q = __memchr_bytes(chunk, 10, pos);
     while (q >= 0 && q + 1 < len && chunk[q + 1] as i32 != 10) {
       q = __memchr_bytes(chunk, 10, q + 1);
     }
-    let end: i32 = len;
+    let end = len;
     at_start = false;
     if (q >= 0) {
       end = q + 1;
@@ -333,12 +333,12 @@ function squeeze_chunk(st: State, chunk: u8[]): State {
 }
 
 function fail(st: State, msg: string): State {
-  let s: State = drain(st);
+  let s = drain(st);
   return State { ...s, w: gnu.error_out(s.w, msg), ok: false };
 }
 
 function splice_all(r: Reader): Result[boolean, IoError] {
-  let out: Writer = stdout();
+  let out = stdout();
   match (copy_all(r, out)) {
     Ok(done) => {
       if (done) {
@@ -372,7 +372,7 @@ function splice_all(r: Reader): Result[boolean, IoError] {
 }
 
 function copy_all(r: Reader, out: Writer): Result[boolean, IoError] {
-  let copied: boolean = false;
+  let copied = false;
   while (true) {
     match (r.copy_range_to(out, splice_size())) {
       Ok(n) => {
@@ -396,9 +396,9 @@ function copy_all(r: Reader, out: Writer): Result[boolean, IoError] {
 }
 
 function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
-  let s: State = st;
-  let stdin_input: boolean = path == "-";
-  let r: Reader = stdin();
+  let s = st;
+  let stdin_input = path == "-";
+  let r = stdin();
   if (!stdin_input) {
     match (open_reader(path)) {
       Ok(fd) => {
@@ -409,7 +409,7 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
       }
     }
   }
-  let small: boolean = false;
+  let small = false;
   match (r.stat()) {
     Ok(in_stat) => {
       small = in_stat.is_file && in_stat.size <= splice_floor();
@@ -434,10 +434,10 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
       return fail(s, gnu.quotef(path) + ": " + gnu.io_error_text(e));
     }
   }
-  let plain: boolean = is_plain(f);
-  let squeeze_only: boolean = is_squeeze_only(f);
-  let spell_only: boolean = is_spell_only(f);
-  let done: boolean = false;
+  let plain = is_plain(f);
+  let squeeze_only = is_squeeze_only(f);
+  let spell_only = is_spell_only(f);
+  let done = false;
   if (plain && !small) {
     s = drain(s);
     match (splice_all(r)) {
@@ -480,7 +480,7 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("b", "number-nonblank", opt_number_nonblank()));
   opts = opts.append(gnu.flag("n", "number", opt_number()));
@@ -493,8 +493,8 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("t", "", opt_t()));
   opts = opts.append(gnu.flag("u", "", opt_u()));
 
-  let f: Fmt = Fmt { number: false, nonblank: false, squeeze: false, ends: false, tabs: false, np: false, spell: [], stop: [], expand: [], tails: "" };
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "cat", help_text(), 1);
+  let f = Fmt { number: false, nonblank: false, squeeze: false, ends: false, tabs: false, np: false, spell: [], stop: [], expand: [], tails: "" };
+  let g = gnu.getopt_new(argv, opts, "cat", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -531,7 +531,7 @@ pub function main(): i32 {
     f = Fmt { ...f, tails: number_tails() };
   }
 
-  let out_stat: FileStat = FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
+  let out_stat = FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64, btime: 0 as i64, btime_nsec: 0 as i64 };
   match (stdout().stat()) {
     Ok(o) => {
       out_stat = o;
@@ -542,15 +542,15 @@ pub function main(): i32 {
     }
   }
 
-  let files: string[] = g.operands();
+  let files = g.operands();
   if (files.len() == 0) {
     files = files.append("-");
   }
-  let st: State = state_new();
-  let i: i32 = 0;
+  let st = state_new();
+  let i = 0;
   while (i < files.len()) {
     st = cat_file(files[i], st, f, out_stat);
-    i = i + 1;
+    i += 1;
   }
   if (st.pending_cr) {
     st = State { ...st, w: gnu.put(st.w, "\r") };

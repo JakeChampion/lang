@@ -25,7 +25,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
   if (name.len() == 0) {
     return Err(NotFound(""));
   }
-  let rname: string = "/";
+  let rname = "/";
   if (name[0] as i32 != 47) {
     match (getcwd()) {
       Ok(wd) => {
@@ -36,23 +36,23 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       }
     }
   }
-  let path: string = name;
-  let pos: i32 = 0;
-  let links: i32 = 0;
+  let path = name;
+  let pos = 0;
+  let links = 0;
   let seen: Seen[] = [];
   while (pos < path.len()) {
     while (pos < path.len() && path[pos] as i32 == 47) {
-      pos = pos + 1;
+      pos += 1;
     }
-    let start: i32 = pos;
+    let start = pos;
     while (pos < path.len() && path[pos] as i32 != 47) {
-      pos = pos + 1;
+      pos += 1;
     }
     if (pos == start) {
       break;
     }
-    let end: i32 = pos;
-    let comp: string = slice_unchecked(path, start, end) + "";
+    let end = pos;
+    let comp = slice_unchecked(path, start, end) + "";
     if (comp == ".") {
       continue;
     }
@@ -60,12 +60,12 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       rname = parent_of(rname);
       continue;
     }
-    let parent: string = rname;
+    let parent = rname;
     rname = child_of(rname, comp);
 
-    let target: string = "";
-    let is_link: boolean = false;
-    let err: IoError = Unsupported;
+    let target = "";
+    let is_link = false;
+    let err = Unsupported;
     if (!logical) {
       match (byte_link_target(rname)) {
         Ok(t) => {
@@ -80,9 +80,9 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
 
     if (is_link) {
       if (links < unchecked_links()) {
-        links = links + 1;
+        links += 1;
       } else {
-        let here: FileStat = FileStat { is_file: false, is_dir: false, size: 0, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0, rdev: 0, ino: 0, blksize: 0, blocks: 0, atime: 0, atime_nsec: 0, mtime: 0, mtime_nsec: 0, ctime: 0, ctime_nsec: 0, btime: 0, btime_nsec: 0 };
+        let here = FileStat { is_file: false, is_dir: false, size: 0, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0, rdev: 0, ino: 0, blksize: 0, blocks: 0, atime: 0, atime_nsec: 0, mtime: 0, mtime_nsec: 0, ctime: 0, ctime_nsec: 0, btime: 0, btime_nsec: 0 };
         match (stat(parent)) {
           Ok(st) => {
             here = st;
@@ -91,7 +91,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
             return Err(e);
           }
         }
-        let key: string = slice_unchecked(path, start, path.len()) + "";
+        let key = slice_unchecked(path, start, path.len()) + "";
         if (stood_here(seen, key, here.dev, here.ino)) {
           if (mode == missing()) {
             continue;
@@ -110,8 +110,8 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       continue;
     }
 
-    let rest: string = slice_unchecked(path, end, path.len()) + "";
-    let ok: boolean = mode == missing();
+    let rest = slice_unchecked(path, end, path.len()) + "";
+    let ok = mode == missing();
     if (!ok) {
       if (suffix_needs_dir(rest)) {
         match (access(rname + dir_suffix(), 0)) {
@@ -159,28 +159,28 @@ function eloop_text(): string {
 }
 
 pub function relative(p: string, from: string): string {
-  let a: string[] = components(p);
-  let b: string[] = components(from);
-  let same: i32 = 0;
+  let a = components(p);
+  let b = components(from);
+  let same = 0;
   while (same < a.len() && same < b.len() && a[same] == b[same]) {
-    same = same + 1;
+    same += 1;
   }
-  let out: string = "";
-  let i: i32 = same;
+  let out = "";
+  let i = same;
   while (i < b.len()) {
     if (out.len() > 0) {
-      out = out + "/";
+      out += "/";
     }
-    out = out + "..";
-    i = i + 1;
+    out += "..";
+    i += 1;
   }
   i = same;
   while (i < a.len()) {
     if (out.len() > 0) {
-      out = out + "/";
+      out += "/";
     }
-    out = out + a[i];
-    i = i + 1;
+    out += a[i];
+    i += 1;
   }
   if (out.len() == 0) {
     return ".";
@@ -190,22 +190,22 @@ pub function relative(p: string, from: string): string {
 
 function components(p: string): string[] {
   let out: string[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < p.len()) {
-    let start: i32 = i;
+    let start = i;
     while (i < p.len() && p[i] as i32 != 47) {
-      i = i + 1;
+      i += 1;
     }
     out = out.append(slice_unchecked(p, start, i) + "");
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function parent_of(p: string): string {
-  let i: i32 = p.len();
+  let i = p.len();
   while (i > 0 && p[i - 1] as i32 != 47) {
-    i = i - 1;
+    i -= 1;
   }
   if (i <= 1) {
     return "/";
@@ -221,16 +221,16 @@ function child_of(p: string, comp: string): string {
 }
 
 function suffix_needs_dir(rest: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < rest.len() && rest[i] as i32 == 47) {
     while (i < rest.len() && rest[i] as i32 == 47) {
-      i = i + 1;
+      i += 1;
     }
     if (i >= rest.len()) {
       return true;
     }
-    let c: i32 = rest[i] as i32;
-    i = i + 1;
+    let c = rest[i] as i32;
+    i += 1;
     if (c != 46) {
       return false;
     }
@@ -245,23 +245,23 @@ function suffix_needs_dir(rest: string): boolean {
 }
 
 function all_slashes(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] as i32 != 47) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function stood_here(seen: Seen[], key: string, dev: i64, ino: i64): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < seen.len()) {
     if (seen[i].dev == dev && seen[i].ino == ino && seen[i].key == key) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }

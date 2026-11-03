@@ -35,7 +35,7 @@ pub function ipv4_word(a: i32, b: i32, c: i32, d: i32): i32 {
 }
 
 function first_v4_word(xs: net.IpAddr[]): Option[i32] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     match (xs[i].packed_v4()) {
       Some(w) => {
@@ -43,7 +43,7 @@ function first_v4_word(xs: net.IpAddr[]): Option[i32] {
       },
       None => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -59,11 +59,11 @@ pub function default_sources(): Source[] {
 }
 
 pub function nsswitch_hosts(contents: string): Source[] {
-  let lines: string[] = contents.lines();
-  let i: i32 = 0;
+  let lines = contents.lines();
+  let i = 0;
   while (i < lines.len()) {
-    let line: string = strip_comment(lines[i]).trim() + "";
-    i = i + 1;
+    let line = strip_comment(lines[i]).trim() + "";
+    i += 1;
     if (!line.starts_with("hosts:")) {
       continue;
     }
@@ -81,17 +81,17 @@ function strip_comment(line: string): string {
 
 function parse_sources(rest: string): Source[] {
   let out: Source[] = [];
-  let toks: string[] = rest.fields();
-  let in_bracket: boolean = false;
-  let i: i32 = 0;
+  let toks = rest.fields();
+  let in_bracket = false;
+  let i = 0;
   while (i < toks.len()) {
-    let t: string = toks[i];
-    i = i + 1;
+    let t = toks[i];
+    i += 1;
     if (t.starts_with("[")) {
       in_bracket = true;
       t = slice_unchecked(t, 1, t.len()) + "";
     }
-    let closes: boolean = t.ends_with("]");
+    let closes = t.ends_with("]");
     if (closes) {
       t = slice_unchecked(t, 0, t.len() - 1) + "";
     }
@@ -113,19 +113,19 @@ function apply_action(s: Source, pair: string): Source {
   let Some(eq) = pair.index_of("=") else {
     return s;
   };
-  let status: string = (slice_unchecked(pair, 0, eq) + "").to_ascii_lower();
-  let ret: boolean = (slice_unchecked(pair, eq + 1, pair.len()) + "").eq_ignore_ascii_case("return");
-  let negate: boolean = status.starts_with("!");
+  let status = (slice_unchecked(pair, 0, eq) + "").to_ascii_lower();
+  let ret = (slice_unchecked(pair, eq + 1, pair.len()) + "").eq_ignore_ascii_case("return");
+  let negate = status.starts_with("!");
   if (negate) {
     status = slice_unchecked(status, 1, status.len()) + "";
   }
-  let on_success: boolean = status == "success";
-  let on_notfound: boolean = status == "notfound";
-  let on_unavail: boolean = status == "unavail" || status == "tryagain";
+  let on_success = status == "success";
+  let on_notfound = status == "notfound";
+  let on_unavail = status == "unavail" || status == "tryagain";
   if (!on_success && !on_notfound && !on_unavail) {
     return s;
   }
-  let r: Source = s;
+  let r = s;
   if (on_success != negate) {
     r = Source { ...r, success_return: ret };
   }
@@ -161,9 +161,9 @@ function system_sources(): Source[] {
 }
 
 pub function lookup(name: string, sources: Source[]): Option[i32] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < sources.len()) {
-    let s: Source = sources[i];
+    let s = sources[i];
     let r: (i32, i32) = lookup_source(s.name, name);
     if (r.0 == success()) {
       return Some(r.1);
@@ -171,7 +171,7 @@ pub function lookup(name: string, sources: Source[]): Option[i32] {
     if (s.stops(r.0)) {
       return None;
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -233,10 +233,10 @@ pub function canon_host(name: string): Option[string] {
     },
     Err(_) => {}
   }
-  let sources: Source[] = system_sources();
-  let i: i32 = 0;
+  let sources = system_sources();
+  let i = 0;
   while (i < sources.len()) {
-    let s: Source = sources[i];
+    let s = sources[i];
     let r: (i32, string) = canon_source(s.name, name);
     if (r.0 == success()) {
       return Some(r.1);
@@ -244,7 +244,7 @@ pub function canon_host(name: string): Option[string] {
     if (s.stops(r.0)) {
       return None;
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }

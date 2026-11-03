@@ -157,8 +157,8 @@ function plain_count(p: Plain): u64 {
 }
 
 function plain_fields(sel: i32, p: Plain): string {
-  let v: u32 = plain_value(p);
-  let n: u64 = plain_count(p);
+  let v = plain_value(p);
+  let n = plain_count(p);
   if (sel == sel_bsd()) {
     return pad_left(v.to_string(), 5, "0") + " " + pad_left(n.to_string(), 5, " ");
   }
@@ -166,17 +166,17 @@ function plain_fields(sel: i32, p: Plain): string {
 }
 
 function pad_left(s: string, width: i32, fill: string): string {
-  let out: string = "";
-  let i: i32 = s.len();
+  let out = "";
+  let i = s.len();
   while (i < width) {
-    out = out + fill;
-    i = i + 1;
+    out += fill;
+    i += 1;
   }
   return out + s;
 }
 
 function plain_raw(sel: i32, p: Plain): u8[] {
-  let v: u32 = plain_value(p);
+  let v = plain_value(p);
   let out: u8[] = [];
   if (sel == sel_crc() || sel == sel_crc32b()) {
     out = out.append((v >> 24 & 255) as u8);
@@ -190,7 +190,7 @@ function plain_raw(sel: i32, p: Plain): u8[] {
 struct PlainSum { fields: string, raw: u8[], err: Option[IoError], failed: boolean }
 
 function plain_reader(own r: Reader, sel: i32, owned: boolean): PlainSum {
-  let p: Plain = plain_new(sel);
+  let p = plain_new(sel);
   while (true) {
     match (r.read_chunk_bytes(65536)) {
       Ok(chunk) => {
@@ -330,7 +330,7 @@ function apply(c: Conf, m: gnu.OptMatch): Conf {
     return Conf { ...c, sel: gnu.argmatch_exact(m.value, algo_names(), "--algorithm"), specified: true };
   }
   if (m.id == opt_length()) {
-    let bits: i32 = digest.parse_bits_value(m.value);
+    let bits = digest.parse_bits_value(m.value);
     return Conf { ...c, bits: bits, named_bits: bits != 0, bits_text: m.value };
   }
   if (m.id == opt_check()) {
@@ -443,50 +443,50 @@ function validate(c: Conf, operands: i32): void {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Print or verify checksums.\n";
-  out = out + "By default use the 32 bit CRC algorithm.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "  -a, --algorithm=TYPE  select the digest type to use.  See DIGEST below.\n";
-  out = out + "      --base64          emit base64-encoded digests, not hexadecimal\n";
-  out = out + "  -c, --check           read checksums from the FILEs and check them\n";
-  out = out + "  -l, --length=BITS     digest length in bits; must not exceed the max size\n";
-  out = out + "                          and must be a multiple of 8 for blake2b;\n";
-  out = out + "                          must be 224, 256, 384, or 512 for sha2 or sha3\n";
-  out = out + "      --raw             emit a raw binary digest, not hexadecimal\n";
-  out = out + "      --tag             create a BSD-style checksum (the default)\n";
-  out = out + "      --untagged        create a reversed style checksum, without digest type\n";
-  out = out + "  -z, --zero            end each output line with NUL, not newline,\n";
-  out = out + "                          and disable file name escaping\n";
-  out = out + "\n";
-  out = out + "The following five options are useful only when verifying checksums:\n";
-  out = out + "      --ignore-missing  don't fail or report status for missing files\n";
-  out = out + "      --quiet           don't print OK for each successfully verified file\n";
-  out = out + "      --status          don't output anything, status code shows success\n";
-  out = out + "      --strict          exit non-zero for improperly formatted checksum lines\n";
-  out = out + "  -w, --warn            warn about improperly formatted checksum lines\n";
-  out = out + "\n";
-  out = out + "      --debug           indicate which implementation used\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "DIGEST determines the digest algorithm and default output format:\n";
-  out = out + "  sysv      (equivalent to sum -s)\n";
-  out = out + "  bsd       (equivalent to sum -r)\n";
-  out = out + "  crc       (equivalent to cksum)\n";
-  out = out + "  crc32b    (only available through cksum)\n";
-  out = out + "  md5       (equivalent to md5sum)\n";
-  out = out + "  sha1      (equivalent to sha1sum)\n";
-  out = out + "  sha2      (equivalent to sha{224,256,384,512}sum)\n";
-  out = out + "  sha3      (only available through cksum)\n";
-  out = out + "  blake2b   (equivalent to b2sum)\n";
-  out = out + "  sm3       (only available through cksum)\n";
-  out = out + "\n";
-  out = out + "When checking, the input should be a former output of this program,\n";
-  out = out + "or equivalent standalone program.\n";
+  out += "Print or verify checksums.\n";
+  out += "By default use the 32 bit CRC algorithm.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "  -a, --algorithm=TYPE  select the digest type to use.  See DIGEST below.\n";
+  out += "      --base64          emit base64-encoded digests, not hexadecimal\n";
+  out += "  -c, --check           read checksums from the FILEs and check them\n";
+  out += "  -l, --length=BITS     digest length in bits; must not exceed the max size\n";
+  out += "                          and must be a multiple of 8 for blake2b;\n";
+  out += "                          must be 224, 256, 384, or 512 for sha2 or sha3\n";
+  out += "      --raw             emit a raw binary digest, not hexadecimal\n";
+  out += "      --tag             create a BSD-style checksum (the default)\n";
+  out += "      --untagged        create a reversed style checksum, without digest type\n";
+  out += "  -z, --zero            end each output line with NUL, not newline,\n";
+  out += "                          and disable file name escaping\n";
+  out += "\n";
+  out += "The following five options are useful only when verifying checksums:\n";
+  out += "      --ignore-missing  don't fail or report status for missing files\n";
+  out += "      --quiet           don't print OK for each successfully verified file\n";
+  out += "      --status          don't output anything, status code shows success\n";
+  out += "      --strict          exit non-zero for improperly formatted checksum lines\n";
+  out += "  -w, --warn            warn about improperly formatted checksum lines\n";
+  out += "\n";
+  out += "      --debug           indicate which implementation used\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "DIGEST determines the digest algorithm and default output format:\n";
+  out += "  sysv      (equivalent to sum -s)\n";
+  out += "  bsd       (equivalent to sum -r)\n";
+  out += "  crc       (equivalent to cksum)\n";
+  out += "  crc32b    (only available through cksum)\n";
+  out += "  md5       (equivalent to md5sum)\n";
+  out += "  sha1      (equivalent to sha1sum)\n";
+  out += "  sha2      (equivalent to sha{224,256,384,512}sum)\n";
+  out += "  sha3      (only available through cksum)\n";
+  out += "  blake2b   (equivalent to b2sum)\n";
+  out += "  sm3       (only available through cksum)\n";
+  out += "\n";
+  out += "When checking, the input should be a former output of this program,\n";
+  out += "or equivalent standalone program.\n";
   return out;
 }
 
@@ -512,10 +512,10 @@ function plain_line(c: Conf, fields: string, name: string, named: boolean): stri
 }
 
 function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  let out: io_buffered.BufWriter = o;
+  let out = o;
   if (is_digest(c.sel)) {
-    let a: digest.Algo = digest_algo(c.sel, c.s.bits);
-    let sum: digest.Sum = digest.digest_path(name, a.kind, c.s.bits);
+    let a = digest_algo(c.sel, c.s.bits);
+    let sum = digest.digest_path(name, a.kind, c.s.bits);
     if (sum.failed) {
       return (false, gnu.error_out(out, gnu.quotef(name) + ": " + digest.sum_error_text(sum)));
     }
@@ -524,7 +524,7 @@ function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWr
     }
     return (true, gnu.put(out, digest.sum_line(a, c.s, digest_text(c, sum.bin), name)));
   }
-  let p: PlainSum = plain_path(name, c.sel);
+  let p = plain_path(name, c.sel);
   if (p.failed) {
     return (false, gnu.error_out(out, gnu.quotef(name) + ": " + plain_error_text(p)));
   }
@@ -535,22 +535,22 @@ function compute_one(c: Conf, name: string, named: boolean, o: io_buffered.BufWr
 }
 
 function compute(c: Conf, names: string[], named: boolean, o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  let out: io_buffered.BufWriter = o;
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let out = o;
+  let ok = true;
+  let i = 0;
   while (i < names.len()) {
     let r: (boolean, io_buffered.BufWriter) = compute_one(c, names[i], named, out);
     out = gnu.flush(r.1);
     if (!r.0) {
       ok = false;
     }
-    i = i + 1;
+    i += 1;
   }
   return (ok, out);
 }
 
 function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, io_buffered.BufWriter) {
-  let a: digest.Algo = digest.algo_crc();
+  let a = digest.algo_crc();
   if (c.specified) {
     if (c.sel == sel_sha2()) {
       a = digest.algo_sha2();
@@ -558,25 +558,25 @@ function verify(c: Conf, names: string[], o: io_buffered.BufWriter): (boolean, i
       a = digest_algo(c.sel, c.s.bits);
     }
   }
-  let out: io_buffered.BufWriter = o;
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let out = o;
+  let ok = true;
+  let i = 0;
   while (i < names.len()) {
     let r: (boolean, io_buffered.BufWriter) = digest.check_file(a, c.s, names[i], out);
     out = r.1;
     if (!r.0) {
       ok = false;
     }
-    i = i + 1;
+    i += 1;
   }
   return (ok, out);
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let c: Conf = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false, tag_given: false };
+  let argv = args();
+  let c = Conf { s: digest.settings_new(0), sel: sel_crc(), specified: false, bits: 0, named_bits: false, bits_text: "", raw: false, b64: false, tag_given: false };
   c = Conf { ...c, s: digest.Settings { ...c.s, tag: true, cksum: true } };
-  let g: gnu.Getopt = gnu.getopt_new(argv, options(), "cksum", help_text(), 1);
+  let g = gnu.getopt_new(argv, options(), "cksum", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -590,8 +590,8 @@ pub function main(): i32 {
     }
   }
 
-  let names: string[] = g.operands();
-  let named: boolean = names.len() > 0;
+  let names = g.operands();
+  let named = names.len() > 0;
   validate(c, names.len());
   if (c.s.binary < 0) {
     c = Conf { ...c, s: digest.Settings { ...c.s, binary: 0 } };
@@ -599,7 +599,7 @@ pub function main(): i32 {
   if (!named) {
     names = ["-"];
   }
-  let bits: i32 = 0;
+  let bits = 0;
   if (is_digest(c.sel)) {
     bits = digest_algo(c.sel, c.bits).bits;
     if (c.named_bits) {
@@ -608,8 +608,8 @@ pub function main(): i32 {
   }
   c = Conf { ...c, s: digest.Settings { ...c.s, bits: bits, detect: c.s.check && !c.specified } };
 
-  let out: io_buffered.BufWriter = gnu.out_new();
-  let ok: boolean = true;
+  let out = gnu.out_new();
+  let ok = true;
   if (c.s.check) {
     let rv: (boolean, io_buffered.BufWriter) = verify(c, names, out);
     ok = rv.0;

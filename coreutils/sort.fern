@@ -134,66 +134,66 @@ function o_ignored(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --files0-from=F\n";
-  out = out + "Write sorted concatenation of all FILE(s) to standard output.\n";
-  out = out + "\n";
-  out = out + "With no FILE, or when FILE is -, read standard input.\n";
-  out = out + "\n";
-  out = out + "Ordering options:\n";
-  out = out + "\n";
-  out = out + "  -b, --ignore-leading-blanks  ignore leading blanks\n";
-  out = out + "  -d, --dictionary-order      consider only blanks and alphanumeric characters\n";
-  out = out + "  -f, --ignore-case           fold lower case to upper case characters\n";
-  out = out + "  -g, --general-numeric-sort  compare according to general numerical value\n";
-  out = out + "  -i, --ignore-nonprinting    consider only printable characters\n";
-  out = out + "  -M, --month-sort            compare (unknown) < 'JAN' < ... < 'DEC'\n";
-  out = out + "  -h, --human-numeric-sort    compare human readable numbers (e.g., 2K 1G)\n";
-  out = out + "  -n, --numeric-sort          compare according to string numerical value\n";
-  out = out + "  -R, --random-sort           shuffle, but group identical keys\n";
-  out = out + "      --random-source=FILE    get random bytes from FILE\n";
-  out = out + "  -r, --reverse               reverse the result of comparisons\n";
-  out = out + "      --sort=WORD             sort according to WORD:\n";
-  out = out + "                                general-numeric -g, human-numeric -h, month -M,\n";
-  out = out + "                                numeric -n, random -R, version -V\n";
-  out = out + "  -V, --version-sort          natural sort of (version) numbers within text\n";
-  out = out + "\n";
-  out = out + "Other options:\n";
-  out = out + "\n";
-  out = out + "      --batch-size=NMERGE   merge at most NMERGE inputs at once;\n";
-  out = out + "                            for more use temp files\n";
-  out = out + "  -c, --check, --check=diagnose-first  check for sorted input; do not sort\n";
-  out = out + "  -C, --check=quiet, --check=silent  like -c, but do not report first bad line\n";
-  out = out + "      --compress-program=PROG  compress temporaries with PROG;\n";
-  out = out + "                              decompress them with PROG -d\n";
-  out = out + "      --debug               annotate the part of the line used to sort,\n";
-  out = out + "                              and warn about questionable usage to stderr\n";
-  out = out + "      --files0-from=F       read input from the files specified by\n";
-  out = out + "                            NUL-terminated names in file F;\n";
-  out = out + "                            If F is - then read names from standard input\n";
-  out = out + "  -k, --key=KEYDEF          sort via a key; KEYDEF gives location and type\n";
-  out = out + "  -m, --merge               merge already sorted files; do not sort\n";
-  out = out + "  -o, --output=FILE         write result to FILE instead of standard output\n";
-  out = out + "  -s, --stable              stabilize sort by disabling last-resort comparison\n";
-  out = out + "  -S, --buffer-size=SIZE    use SIZE for main memory buffer\n";
-  out = out + "  -t, --field-separator=SEP  use SEP instead of non-blank to blank transition\n";
-  out = out + "  -T, --temporary-directory=DIR  use DIR for temporaries, not $TMPDIR or /tmp;\n";
-  out = out + "                              multiple options specify multiple directories\n";
-  out = out + "      --parallel=N          change the number of sorts run concurrently to N\n";
-  out = out + "  -u, --unique              with -c, check for strict ordering;\n";
-  out = out + "                              without -c, output only the first of an equal run\n";
-  out = out + "  -z, --zero-terminated     line delimiter is NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "KEYDEF is F[.C][OPTS][,F[.C][OPTS]] for start and stop position, where F is a\n";
-  out = out + "field number and C a character position in the field; both are origin 1, and\n";
-  out = out + "the stop position defaults to the line's end.  If neither -t nor -b is in\n";
-  out = out + "effect, characters in a field are counted from the beginning of the preceding\n";
-  out = out + "whitespace.  OPTS is one or more single-letter ordering options [bdfgiMhnRrV],\n";
-  out = out + "which override global ordering options for that key.  If no key is given, use\n";
-  out = out + "the entire line as the key.  Use --debug to diagnose incorrect key usage.\n";
+  out += "Write sorted concatenation of all FILE(s) to standard output.\n";
+  out += "\n";
+  out += "With no FILE, or when FILE is -, read standard input.\n";
+  out += "\n";
+  out += "Ordering options:\n";
+  out += "\n";
+  out += "  -b, --ignore-leading-blanks  ignore leading blanks\n";
+  out += "  -d, --dictionary-order      consider only blanks and alphanumeric characters\n";
+  out += "  -f, --ignore-case           fold lower case to upper case characters\n";
+  out += "  -g, --general-numeric-sort  compare according to general numerical value\n";
+  out += "  -i, --ignore-nonprinting    consider only printable characters\n";
+  out += "  -M, --month-sort            compare (unknown) < 'JAN' < ... < 'DEC'\n";
+  out += "  -h, --human-numeric-sort    compare human readable numbers (e.g., 2K 1G)\n";
+  out += "  -n, --numeric-sort          compare according to string numerical value\n";
+  out += "  -R, --random-sort           shuffle, but group identical keys\n";
+  out += "      --random-source=FILE    get random bytes from FILE\n";
+  out += "  -r, --reverse               reverse the result of comparisons\n";
+  out += "      --sort=WORD             sort according to WORD:\n";
+  out += "                                general-numeric -g, human-numeric -h, month -M,\n";
+  out += "                                numeric -n, random -R, version -V\n";
+  out += "  -V, --version-sort          natural sort of (version) numbers within text\n";
+  out += "\n";
+  out += "Other options:\n";
+  out += "\n";
+  out += "      --batch-size=NMERGE   merge at most NMERGE inputs at once;\n";
+  out += "                            for more use temp files\n";
+  out += "  -c, --check, --check=diagnose-first  check for sorted input; do not sort\n";
+  out += "  -C, --check=quiet, --check=silent  like -c, but do not report first bad line\n";
+  out += "      --compress-program=PROG  compress temporaries with PROG;\n";
+  out += "                              decompress them with PROG -d\n";
+  out += "      --debug               annotate the part of the line used to sort,\n";
+  out += "                              and warn about questionable usage to stderr\n";
+  out += "      --files0-from=F       read input from the files specified by\n";
+  out += "                            NUL-terminated names in file F;\n";
+  out += "                            If F is - then read names from standard input\n";
+  out += "  -k, --key=KEYDEF          sort via a key; KEYDEF gives location and type\n";
+  out += "  -m, --merge               merge already sorted files; do not sort\n";
+  out += "  -o, --output=FILE         write result to FILE instead of standard output\n";
+  out += "  -s, --stable              stabilize sort by disabling last-resort comparison\n";
+  out += "  -S, --buffer-size=SIZE    use SIZE for main memory buffer\n";
+  out += "  -t, --field-separator=SEP  use SEP instead of non-blank to blank transition\n";
+  out += "  -T, --temporary-directory=DIR  use DIR for temporaries, not $TMPDIR or /tmp;\n";
+  out += "                              multiple options specify multiple directories\n";
+  out += "      --parallel=N          change the number of sorts run concurrently to N\n";
+  out += "  -u, --unique              with -c, check for strict ordering;\n";
+  out += "                              without -c, output only the first of an equal run\n";
+  out += "  -z, --zero-terminated     line delimiter is NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "KEYDEF is F[.C][OPTS][,F[.C][OPTS]] for start and stop position, where F is a\n";
+  out += "field number and C a character position in the field; both are origin 1, and\n";
+  out += "the stop position defaults to the line's end.  If neither -t nor -b is in\n";
+  out += "effect, characters in a field are counted from the beginning of the preceding\n";
+  out += "whitespace.  OPTS is one or more single-letter ordering options [bdfgiMhnRrV],\n";
+  out += "which override global ordering options for that key.  If no key is given, use\n";
+  out += "the entire line as the key.  Use --debug to diagnose incorrect key usage.\n";
   return out;
 }
 
@@ -258,7 +258,7 @@ function default_key_compare(k: Key): boolean {
 }
 
 function tab_default(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 struct Conf { keys: Key[], tab: i32, reverse: boolean, unique: boolean, stable: boolean, term: i32, seed: [u8], debug: boolean, gkey_only: boolean }
@@ -277,27 +277,27 @@ function bad_field(spec: string, msgid: string): void {
 }
 
 function parse_count(s: string, from: i32): (i32, i32, boolean) {
-  let i: i32 = from;
+  let i = from;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < s.len() && s[i] as i32 == 45) {
     return (0, from, false);
   }
   if (i < s.len() && s[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
     return (0, from, false);
   }
-  let v: i32 = 0;
+  let v = 0;
   while (i < s.len() && gnu.is_digit(s[i] as i32)) {
     if (v < 100000000) {
       v = v * 10 + (s[i] as i32 - 48);
     } else {
       v = 2147483647;
     }
-    i = i + 1;
+    i += 1;
   }
   return (v, i, true);
 }
@@ -323,10 +323,10 @@ function bl_both(): i32 {
 }
 
 function set_ordering(s: string, from: i32, k: Key, blanktype: i32): (Key, i32) {
-  let key: Key = k;
-  let i: i32 = from;
+  let key = k;
+  let i = from;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 98) {
       if (blanktype == bl_start() || blanktype == bl_both()) {
         key = Key { ...key, skipsblanks: true };
@@ -359,19 +359,19 @@ function set_ordering(s: string, from: i32, k: Key, blanktype: i32): (Key, i32) 
     } else {
       return (key, i);
     }
-    i = i + 1;
+    i += 1;
   }
   return (key, i);
 }
 
 function parse_key(spec: string): Key {
-  let k: Key = key_new();
+  let k = key_new();
   let r: (i32, i32) = parse_field_count(spec, 0, "invalid number at field start");
   if (r.0 == 0) {
     bad_field(spec, "field number is zero");
   }
   k = Key { ...k, sword: r.0 - 1 };
-  let i: i32 = r.1;
+  let i = r.1;
   if (i < spec.len() && spec[i] as i32 == 46) {
     let c: (i32, i32) = parse_field_count(spec, i + 1, "invalid number after '.'");
     if (c.0 == 0) {
@@ -411,32 +411,32 @@ function parse_key(spec: string): Key {
 }
 
 function begfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
-  let ptr: i32 = lo;
-  let sword: i32 = k.sword;
+  let ptr = lo;
+  let sword = k.sword;
   if (tab != tab_default()) {
     while (ptr < hi && sword > 0) {
       while (ptr < hi && text[ptr] as i32 != tab) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
       if (ptr < hi) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
-      sword = sword - 1;
+      sword -= 1;
     }
   } else {
     while (ptr < hi && sword > 0) {
       while (ptr < hi && is_blank_b(text[ptr] as i32)) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
       while (ptr < hi && !is_blank_b(text[ptr] as i32)) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
-      sword = sword - 1;
+      sword -= 1;
     }
   }
   if (k.skipsblanks) {
     while (ptr < hi && is_blank_b(text[ptr] as i32)) {
-      ptr = ptr + 1;
+      ptr += 1;
     }
   }
   if (k.schar >= hi - ptr) {
@@ -446,31 +446,31 @@ function begfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
 }
 
 function limfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
-  let ptr: i32 = lo;
-  let eword: i32 = k.eword;
-  let echar: i32 = k.echar;
+  let ptr = lo;
+  let eword = k.eword;
+  let echar = k.echar;
   if (echar == 0) {
-    eword = eword + 1;
+    eword += 1;
   }
   if (tab != tab_default()) {
     while (ptr < hi && eword > 0) {
       while (ptr < hi && text[ptr] as i32 != tab) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
-      eword = eword - 1;
+      eword -= 1;
       if (ptr < hi && (eword > 0 || echar != 0)) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
     }
   } else {
     while (ptr < hi && eword > 0) {
       while (ptr < hi && is_blank_b(text[ptr] as i32)) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
       while (ptr < hi && !is_blank_b(text[ptr] as i32)) {
-        ptr = ptr + 1;
+        ptr += 1;
       }
-      eword = eword - 1;
+      eword -= 1;
     }
   }
   if (echar == 0) {
@@ -478,7 +478,7 @@ function limfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
   }
   if (k.skipeblanks) {
     while (ptr < hi && is_blank_b(text[ptr] as i32)) {
-      ptr = ptr + 1;
+      ptr += 1;
     }
   }
   if (echar >= hi - ptr) {
@@ -488,16 +488,16 @@ function limfield(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i32 {
 }
 
 function key_span(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i64 {
-  let lim: i32 = hi;
-  if (k.eword != 0 - 1) {
+  let lim = hi;
+  if (k.eword != -1) {
     lim = limfield(text, lo, hi, k, tab);
   }
-  let beg: i32 = lo;
-  if (k.sword != 0 - 1) {
+  let beg = lo;
+  if (k.sword != -1) {
     beg = begfield(text, lo, hi, k, tab);
   } else if (k.skipsblanks) {
     while (beg < lim && is_blank_b(text[beg] as i32)) {
-      beg = beg + 1;
+      beg += 1;
     }
   }
   if (lim < beg) {
@@ -507,9 +507,9 @@ function key_span(text: u8[], lo: i32, hi: i32, k: Key, tab: i32): i64 {
 }
 
 function nul_end(text: u8[], lo: i32, hi: i32): i32 {
-  let i: i32 = lo;
+  let i = lo;
   while (i < hi && text[i] as i32 != 0) {
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
@@ -522,17 +522,17 @@ function byte_at(text: u8[], i: i32, end: i32): i32 {
 }
 
 function fraccompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
-  let a: i32 = ai;
-  let b: i32 = bi;
+  let a = ai;
+  let b = bi;
   if (byte_at(ta, a, aend) == 46 && byte_at(tb, b, bend) == 46) {
-    a = a + 1;
-    b = b + 1;
+    a += 1;
+    b += 1;
     while (byte_at(ta, a, aend) == byte_at(tb, b, bend)) {
       if (!is_digit_b(byte_at(ta, a, aend))) {
         return 0;
       }
-      a = a + 1;
-      b = b + 1;
+      a += 1;
+      b += 1;
     }
     if (is_digit_b(byte_at(ta, a, aend)) && is_digit_b(byte_at(tb, b, bend))) {
       return byte_at(ta, a, aend) - byte_at(tb, b, bend);
@@ -555,9 +555,9 @@ function fraccompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32)
 }
 
 function trailing_nonzero(text: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (byte_at(text, i, end) == 48) {
-    i = i + 1;
+    i += 1;
   }
   if (is_digit_b(byte_at(text, i, end))) {
     return 1;
@@ -566,19 +566,19 @@ function trailing_nonzero(text: u8[], from: i32, end: i32): i32 {
 }
 
 function magcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
-  let a: i32 = ai;
-  let b: i32 = bi;
-  let ca: i32 = 0;
+  let a = ai;
+  let b = bi;
+  let ca = 0;
   if (a < aend) {
     ca = ta[a] as i32;
   }
-  let cb: i32 = 0;
+  let cb = 0;
   if (b < bend) {
     cb = tb[b] as i32;
   }
   while (ca == cb && is_digit_b(ca)) {
-    a = a + 1;
-    b = b + 1;
+    a += 1;
+    b += 1;
     ca = 0;
     if (a < aend) {
       ca = ta[a] as i32;
@@ -588,31 +588,31 @@ function magcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32):
       cb = tb[b] as i32;
     }
   }
-  let da: boolean = is_digit_b(ca);
-  let db: boolean = is_digit_b(cb);
+  let da = is_digit_b(ca);
+  let db = is_digit_b(cb);
   if (ca == 46 && !db || cb == 46 && !da) {
     return fraccompare(ta, a, aend, tb, b, bend);
   }
-  let tmp: i32 = ca - cb;
-  let log_a: i32 = 0;
+  let tmp = ca - cb;
+  let log_a = 0;
   while (a < aend) {
     if (!is_digit_b(ta[a] as i32)) {
       break;
     }
-    log_a = log_a + 1;
-    a = a + 1;
+    log_a += 1;
+    a += 1;
   }
-  let log_b: i32 = 0;
+  let log_b = 0;
   while (b < bend) {
     if (!is_digit_b(tb[b] as i32)) {
       break;
     }
-    log_b = log_b + 1;
-    b = b + 1;
+    log_b += 1;
+    b += 1;
   }
   if (log_a != log_b) {
     if (log_a < log_b) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
@@ -623,15 +623,15 @@ function magcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32):
 }
 
 function skip_zeros(text: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < end && text[i] as i32 == 48) {
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
 
 function nonzero_after(text: u8[], from: i32, end: i32): boolean {
-  let i: i32 = skip_zeros(text, from, end);
+  let i = skip_zeros(text, from, end);
   if (byte_at(text, i, end) == 46) {
     i = skip_zeros(text, i + 1, end);
   }
@@ -639,22 +639,22 @@ function nonzero_after(text: u8[], from: i32, end: i32): boolean {
 }
 
 function numcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
-  let a: i32 = ai;
-  let b: i32 = bi;
+  let a = ai;
+  let b = bi;
   while (a < aend && is_blank_b(ta[a] as i32)) {
-    a = a + 1;
+    a += 1;
   }
   while (b < bend && is_blank_b(tb[b] as i32)) {
-    b = b + 1;
+    b += 1;
   }
-  let nega: boolean = a < aend && ta[a] as i32 == 45;
-  let negb: boolean = b < bend && tb[b] as i32 == 45;
+  let nega = a < aend && ta[a] as i32 == 45;
+  let negb = b < bend && tb[b] as i32 == 45;
   if (nega && !negb) {
     if (nonzero_after(ta, a + 1, aend)) {
-      return 0 - 1;
+      return -1;
     }
     if (nonzero_after(tb, b, bend)) {
-      return 0 - 1;
+      return -1;
     }
     return 0;
   }
@@ -708,18 +708,18 @@ function unit_order(c: i32): i32 {
 }
 
 function find_unit_order(text: u8[], from: i32, end: i32): i32 {
-  let p: i32 = from;
+  let p = from;
   while (is_blank_b(byte_at(text, p, end))) {
-    p = p + 1;
+    p += 1;
   }
-  let sign: i32 = 1;
+  let sign = 1;
   if (byte_at(text, p, end) == 45) {
-    sign = 0 - 1;
-    p = p + 1;
+    sign = -1;
+    p += 1;
   }
-  let nonzero: boolean = false;
+  let nonzero = false;
   while (true) {
-    let c: i32 = byte_at(text, p, end);
+    let c = byte_at(text, p, end);
     if (is_digit_b(c)) {
       if (c != 48) {
         nonzero = true;
@@ -727,7 +727,7 @@ function find_unit_order(text: u8[], from: i32, end: i32): i32 {
     } else if (c != 46) {
       break;
     }
-    p = p + 1;
+    p += 1;
   }
   if (!nonzero) {
     return 0;
@@ -736,15 +736,15 @@ function find_unit_order(text: u8[], from: i32, end: i32): i32 {
 }
 
 function human_numcompare(ta: u8[], ai: i32, aend: i32, tb: u8[], bi: i32, bend: i32): i32 {
-  let a: i32 = ai;
-  let b: i32 = bi;
+  let a = ai;
+  let b = bi;
   while (is_blank_b(byte_at(ta, a, aend))) {
-    a = a + 1;
+    a += 1;
   }
   while (is_blank_b(byte_at(tb, b, bend))) {
-    b = b + 1;
+    b += 1;
   }
-  let diff: i32 = find_unit_order(ta, a, aend) - find_unit_order(tb, b, bend);
+  let diff = find_unit_order(ta, a, aend) - find_unit_order(tb, b, bend);
   if (diff != 0) {
     return diff;
   }
@@ -789,36 +789,36 @@ function month_name(i: i32): string {
 }
 
 function getmonth(text: u8[], from: i32, end: i32): i64 {
-  let p: i32 = from;
+  let p = from;
   while (p < end && is_blank_b(text[p] as i32)) {
-    p = p + 1;
+    p += 1;
   }
-  let m: i32 = 0;
+  let m = 0;
   while (m < 12) {
-    let name: string = month_name(m);
-    let k: i32 = 0;
+    let name = month_name(m);
+    let k = 0;
     while (k < name.len() && p + k < end && fold_up(text[p + k] as i32) == name[k] as i32) {
-      k = k + 1;
+      k += 1;
     }
     if (k == name.len()) {
       return pack_line(m + 1, p + k);
     }
-    m = m + 1;
+    m += 1;
   }
   return pack_line(0, p);
 }
 
 function compare_random(seed: [u8], ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
-  let da: u8[] = crypto.md5_new().update(seed).update(ta[a0:a1]).finish();
-  let db: u8[] = crypto.md5_new().update(seed).update(tb[b0:b1]).finish();
-  let i: i32 = 0;
+  let da = crypto.md5_new().update(seed).update(ta[a0:a1]).finish();
+  let db = crypto.md5_new().update(seed).update(tb[b0:b1]).finish();
+  let i = 0;
   while (i < da.len()) {
-    let x: i32 = da[i] as i32;
-    let y: i32 = db[i] as i32;
+    let x = da[i] as i32;
+    let y = db[i] as i32;
     if (x != y) {
       return x - y;
     }
-    i = i + 1;
+    i += 1;
   }
   return cmp_bytes(ta, a0, a1, tb, b0, b1);
 }
@@ -836,27 +836,27 @@ function line_len(v: i64): i32 {
 }
 
 function cmp_bytes(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
-  let la: i32 = a1 - a0;
-  let lb: i32 = b1 - b0;
+  let la = a1 - a0;
+  let lb = b1 - b0;
   if (la == 0) {
     if (lb == 0) {
       return 0;
     }
-    return 0 - 1;
+    return -1;
   }
   if (lb == 0) {
     return 1;
   }
-  let n: i32 = la;
+  let n = la;
   if (lb < n) {
     n = lb;
   }
-  let i: i32 = __mismatch_bytes(ta, a0, tb, b0, n);
+  let i = __mismatch_bytes(ta, a0, tb, b0, n);
   if (i < n) {
     return ta[a0 + i] as i32 - tb[b0 + i] as i32;
   }
   if (la < lb) {
-    return 0 - 1;
+    return -1;
   }
   if (la > lb) {
     return 1;
@@ -865,23 +865,23 @@ function cmp_bytes(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 
 }
 
 function cmp_folded(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
-  let la: i32 = a1 - a0;
-  let lb: i32 = b1 - b0;
-  let n: i32 = la;
+  let la = a1 - a0;
+  let lb = b1 - b0;
+  let n = la;
   if (lb < n) {
     n = lb;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let x: i32 = fold_up(ta[a0 + i] as i32);
-    let y: i32 = fold_up(tb[b0 + i] as i32);
+    let x = fold_up(ta[a0 + i] as i32);
+    let y = fold_up(tb[b0 + i] as i32);
     if (x != y) {
       return x - y;
     }
-    i = i + 1;
+    i += 1;
   }
   if (la < lb) {
-    return 0 - 1;
+    return -1;
   }
   if (la > lb) {
     return 1;
@@ -890,20 +890,20 @@ function cmp_folded(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32
 }
 
 function cmp_ignoring(k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
-  let a: i32 = a0;
-  let b: i32 = b0;
+  let a = a0;
+  let b = b0;
   while (true) {
     while (a < a1 && ignored(k.ignore, ta[a] as i32)) {
-      a = a + 1;
+      a += 1;
     }
     while (b < b1 && ignored(k.ignore, tb[b] as i32)) {
-      b = b + 1;
+      b += 1;
     }
     if (!(a < a1 && b < b1)) {
       break;
     }
-    let x: i32 = ta[a] as i32;
-    let y: i32 = tb[b] as i32;
+    let x = ta[a] as i32;
+    let y = tb[b] as i32;
     if (k.translate) {
       x = fold_up(x);
       y = fold_up(y);
@@ -911,14 +911,14 @@ function cmp_ignoring(k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1:
     if (x != y) {
       return x - y;
     }
-    a = a + 1;
-    b = b + 1;
+    a += 1;
+    b += 1;
   }
-  let ra: i32 = 0;
+  let ra = 0;
   if (a < a1) {
     ra = 1;
   }
-  let rb: i32 = 0;
+  let rb = 0;
   if (b < b1) {
     rb = 1;
   }
@@ -951,7 +951,7 @@ function key_diff(c: Conf, k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32
     if (b1 - b0 == 0) {
       return 0;
     }
-    return 0 - 1;
+    return -1;
   }
   if (b1 - b0 == 0) {
     return 1;
@@ -963,24 +963,24 @@ function key_diff(c: Conf, k: Key, ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32
 }
 
 function general_numcompare(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i32): i32 {
-  let f: ld.Format = ld.format();
-  let pa: ld.Parse = f.strtold_array(ta, a0, a1);
-  let pb: ld.Parse = f.strtold_array(tb, b0, b1);
+  let f = ld.format();
+  let pa = f.strtold_array(ta, a0, a1);
+  let pb = f.strtold_array(tb, b0, b1);
   if (pa.end == 0) {
     if (pb.end == 0) {
       return 0;
     }
-    return 0 - 1;
+    return -1;
   }
   if (pb.end == 0) {
     return 1;
   }
-  let d: i32 = pa.v.cmp(pb.v);
+  let d = pa.v.cmp(pb.v);
   if (d != 2) {
     return d;
   }
   if (pa.v.is_nan() && !pb.v.is_nan()) {
-    return 0 - 1;
+    return -1;
   }
   if (pb.v.is_nan() && !pa.v.is_nan()) {
     return 1;
@@ -989,50 +989,50 @@ function general_numcompare(ta: u8[], a0: i32, a1: i32, tb: u8[], b0: i32, b1: i
 }
 
 function key_ordered(c: Conf, k: Key, ta: u8[], sa: i64, tb: u8[], sb: i64): i32 {
-  let a0: i32 = line_start(sa);
-  let b0: i32 = line_start(sb);
-  let d: i32 = key_diff(c, k, ta, a0, a0 + line_len(sa), tb, b0, b0 + line_len(sb));
+  let a0 = line_start(sa);
+  let b0 = line_start(sb);
+  let d = key_diff(c, k, ta, a0, a0 + line_len(sa), tb, b0, b0 + line_len(sb));
   if (d != 0 && k.reverse) {
-    return 0 - d;
+    return -d;
   }
   return d;
 }
 
 function keycompare(c: Conf, ta: u8[], alo: i32, ahi: i32, tb: u8[], blo: i32, bhi: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.keys.len()) {
-    let k: Key = c.keys[i];
-    let d: i32 = key_ordered(c, k, ta, key_span(ta, alo, ahi, k, c.tab), tb, key_span(tb, blo, bhi, k, c.tab));
+    let k = c.keys[i];
+    let d = key_ordered(c, k, ta, key_span(ta, alo, ahi, k, c.tab), tb, key_span(tb, blo, bhi, k, c.tab));
     if (d != 0) {
       return d;
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }
 
 function numeric_key(text: u8[], a0: i32, a1: i32): i64 {
-  let a: i32 = a0;
+  let a = a0;
   while (a < a1 && is_blank_b(text[a] as i32)) {
-    a = a + 1;
+    a += 1;
   }
-  let neg: boolean = a < a1 && text[a] as i32 == 45;
+  let neg = a < a1 && text[a] as i32 == 45;
   if (neg) {
-    a = a + 1;
+    a += 1;
   }
   a = skip_zeros(text, a, a1);
-  let len: i32 = 0;
+  let len = 0;
   let d: i64 = 0;
   while (a < a1) {
-    let x: i32 = text[a] as i32;
+    let x = text[a] as i32;
     if (!is_digit_b(x)) {
       break;
     }
     if (len < 14) {
       d = d * (10 as i64) + (x - 48) as i64;
     }
-    len = len + 1;
-    a = a + 1;
+    len += 1;
+    a += 1;
   }
   if (len == 0) {
     return 0 as i64;
@@ -1041,9 +1041,9 @@ function numeric_key(text: u8[], a0: i32, a1: i32): i64 {
     len = 32767;
     d = 0 as i64;
   }
-  let key: i64 = len as i64 << 48 as i64 | d;
+  let key = len as i64 << 48 as i64 | d;
   if (neg) {
-    return 0 - key;
+    return -key;
   }
   return key;
 }
@@ -1054,85 +1054,85 @@ function plain_numeric(k: Key): boolean {
 
 function numeric_keys(c: Conf, text: u8[], spans: i64[], n: i32): i64[] {
   let out: i64[] = [];
-  let ki: i32 = 0;
+  let ki = 0;
   while (ki < c.keys.len()) {
-    let plain: boolean = plain_numeric(c.keys[ki]);
-    let i: i32 = 0;
+    let plain = plain_numeric(c.keys[ki]);
+    let i = 0;
     while (i < n) {
-      let key: i64 = 0 as i64;
+      let key = 0 as i64;
       if (plain) {
-        let sp: i64 = spans[ki * n + i];
-        let lo: i32 = line_start(sp);
+        let sp = spans[ki * n + i];
+        let lo = line_start(sp);
         key = numeric_key(text, lo, lo + line_len(sp));
       }
       out = out.append(key);
-      i = i + 1;
+      i += 1;
     }
-    ki = ki + 1;
+    ki += 1;
   }
   return out;
 }
 
 function key_spans(c: Conf, text: u8[], lines: i64[]): i64[] {
-  let n: i32 = lines.len();
+  let n = lines.len();
   let out: i64[] = [];
-  let ki: i32 = 0;
+  let ki = 0;
   while (ki < c.keys.len()) {
-    let k: Key = c.keys[ki];
-    let i: i32 = 0;
+    let k = c.keys[ki];
+    let i = 0;
     while (i < n) {
-      let l: i64 = lines[i];
-      let lo: i32 = line_start(l);
+      let l = lines[i];
+      let lo = line_start(l);
       out = out.append(key_span(text, lo, lo + line_len(l), k, c.tab));
-      i = i + 1;
+      i += 1;
     }
-    ki = ki + 1;
+    ki += 1;
   }
   return out;
 }
 
 function compare(c: Conf, ta: u8[], a: i64, tb: u8[], b: i64): i32 {
-  let alo: i32 = line_start(a);
-  let ahi: i32 = alo + line_len(a);
-  let blo: i32 = line_start(b);
-  let bhi: i32 = blo + line_len(b);
+  let alo = line_start(a);
+  let ahi = alo + line_len(a);
+  let blo = line_start(b);
+  let bhi = blo + line_len(b);
   if (c.keys.len() > 0) {
-    let d: i32 = keycompare(c, ta, alo, ahi, tb, blo, bhi);
+    let d = keycompare(c, ta, alo, ahi, tb, blo, bhi);
     if (d != 0 || c.unique || c.stable) {
       return d;
     }
   }
-  let r: i32 = cmp_bytes(ta, alo, ahi, tb, blo, bhi);
+  let r = cmp_bytes(ta, alo, ahi, tb, blo, bhi);
   if (c.reverse) {
-    return 0 - r;
+    return -r;
   }
   return r;
 }
 
 function compare_at(c: Conf, text: u8[], input: byte_input.Array, lines: i64[], spans: i64[], nkeys: i64[], n: i32, ia: i32, ib: i32): i32 {
-  let nk: i32 = c.keys.len();
+  let nk = c.keys.len();
   if (nk > 0) {
-    let i: i32 = 0;
+    let i = 0;
     while (i < nk) {
-      let d: i32 = 0;
-      let ka: i64 = nkeys[i * n + ia];
-      let kb: i64 = nkeys[i * n + ib];
+      let d = 0;
+      let ka = nkeys[i * n + ia];
+      let kb = nkeys[i * n + ib];
       if (ka != kb) {
         d = 1;
         if (ka < kb) {
-          d = 0 - 1;
+          d = -1;
         }
         if (c.keys[i].reverse) {
-          d = 0 - d;
+          d = -d;
         }
       } else if (c.keys[i].version && !c.keys[i].random) {
-        let a: i64 = spans[i * n + ia];
-        let b: i64 = spans[i * n + ib];
-        let alo: i32 = line_start(a);
-        let blo: i32 = line_start(b);
+        let a = spans[i * n + ia];
+        let b = spans[i * n + ib];
+        let alo = line_start(a);
+        let blo = line_start(b);
         d = vercmp.compare_buffer(input, alo, alo + line_len(a), blo, blo + line_len(b));
         if (c.keys[i].reverse) {
-          d = 0 - d;
+          d = -d;
         }
       } else {
         d = key_ordered(c, c.keys[i], text, spans[i * n + ia], text, spans[i * n + ib]);
@@ -1140,43 +1140,43 @@ function compare_at(c: Conf, text: u8[], input: byte_input.Array, lines: i64[], 
       if (d != 0) {
         return d;
       }
-      i = i + 1;
+      i += 1;
     }
     if (c.unique || c.stable) {
       return 0;
     }
   }
-  let a: i64 = lines[ia];
-  let b: i64 = lines[ib];
-  let alo: i32 = line_start(a);
-  let ahi: i32 = alo + line_len(a);
-  let blo: i32 = line_start(b);
-  let bhi: i32 = blo + line_len(b);
-  let r: i32 = cmp_bytes(text, alo, ahi, text, blo, bhi);
+  let a = lines[ia];
+  let b = lines[ib];
+  let alo = line_start(a);
+  let ahi = alo + line_len(a);
+  let blo = line_start(b);
+  let bhi = blo + line_len(b);
+  let r = cmp_bytes(text, alo, ahi, text, blo, bhi);
   if (c.reverse) {
-    return 0 - r;
+    return -r;
   }
   return r;
 }
 
 function in_order(c: Conf, text: u8[], lines: i64[]): boolean {
-  let i: i32 = 1;
+  let i = 1;
   while (i < lines.len()) {
     if (compare(c, text, lines[i - 1], text, lines[i]) > 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
-  let input: byte_input.Array = byte_input.Array { data: text };
-  let n: i32 = lines.len();
+  let input = byte_input.Array { data: text };
+  let n = lines.len();
   if (n < 2 || in_order(c, text, lines)) {
     return lines;
   }
-  let keyed: boolean = c.keys.len() > 0;
+  let keyed = c.keys.len() > 0;
   let spans: i64[] = [];
   let nkeys: i64[] = [];
   if (keyed) {
@@ -1187,41 +1187,41 @@ function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
   if (n >= radix.threshold()) {
     words = line_words(c, text, lines, nkeys, spans, n);
   }
-  let src: i64[] = index_of(n);
+  let src = index_of(n);
   if (words.len() > 0) {
     src = radix.by_word(src, words, n, word_signed(c), word_reversed(c));
   }
-  let dst: i64[] = index_of(n);
-  let lo: i32 = 0;
+  let dst = index_of(n);
+  let lo = 0;
   while (lo < n) {
-    let hi: i32 = n;
+    let hi = n;
     if (words.len() > 0) {
-      let w: i64 = words[src[lo] as i32];
+      let w = words[src[lo] as i32];
       hi = lo + 1;
       while (hi < n && words[src[hi] as i32] == w) {
-        hi = hi + 1;
+        hi += 1;
       }
     }
-    let passes: i32 = 0;
-    let width: i32 = 1;
+    let passes = 0;
+    let width = 1;
     while (width < hi - lo) {
-      let start: i32 = lo;
-      let at: i32 = lo;
+      let start = lo;
+      let at = lo;
       while (start < hi) {
-        let mid: i32 = start + width;
+        let mid = start + width;
         if (mid > hi) {
           mid = hi;
         }
-        let end: i32 = mid + width;
+        let end = mid + width;
         if (end > hi) {
           end = hi;
         }
-        let a: i32 = start;
-        let b: i32 = mid;
+        let a = start;
+        let b = mid;
         while (a < mid && b < end) {
-          let la: i64 = src[a];
-          let lb: i64 = src[b];
-          let d: i32 = 0;
+          let la = src[a];
+          let lb = src[b];
+          let d = 0;
           if (keyed) {
             d = compare_at(c, text, input, lines, spans, nkeys, n, lb as i32, la as i32);
           } else {
@@ -1229,57 +1229,57 @@ function sort_lines(c: Conf, text: u8[], lines: i64[]): i64[] {
           }
           if (d < 0) {
             dst = dst.with(at, lb);
-            b = b + 1;
+            b += 1;
           } else {
             dst = dst.with(at, la);
-            a = a + 1;
+            a += 1;
           }
-          at = at + 1;
+          at += 1;
         }
         while (a < mid) {
           dst = dst.with(at, src[a]);
-          a = a + 1;
-          at = at + 1;
+          a += 1;
+          at += 1;
         }
         while (b < end) {
           dst = dst.with(at, src[b]);
-          b = b + 1;
-          at = at + 1;
+          b += 1;
+          at += 1;
         }
         start = end;
       }
-      let swap: i64[] = src;
+      let swap = src;
       src = dst;
       dst = swap;
-      passes = passes + 1;
-      width = width * 2;
+      passes += 1;
+      width *= 2;
     }
     if (passes % 2 == 1) {
-      let swap2: i64[] = src;
+      let swap2 = src;
       src = dst;
       dst = swap2;
-      let k: i32 = lo;
+      let k = lo;
       while (k < hi) {
         src = src.with(k, dst[k]);
-        k = k + 1;
+        k += 1;
       }
     }
     lo = hi;
   }
   let out: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(lines[src[i] as i32]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function line_words(c: Conf, text: u8[], lines: i64[], nkeys: i64[], spans: i64[], n: i32): i64[] {
-  let fold: boolean = false;
-  let numeric: boolean = false;
+  let fold = false;
+  let numeric = false;
   if (c.keys.len() > 0) {
-    let k: Key = c.keys[0];
+    let k = c.keys[0];
     if (plain_numeric(k)) {
       numeric = true;
     } else if (k.numeric || k.general || k.human || k.random || k.month || k.version || k.ignore != ignore_none()) {
@@ -1290,38 +1290,38 @@ function line_words(c: Conf, text: u8[], lines: i64[], nkeys: i64[], spans: i64[
   }
   if (numeric) {
     let out: i64[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i < n) {
       out = out.append(nkeys[i]);
-      i = i + 1;
+      i += 1;
     }
     return out;
   }
   let out2: i64[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < n) {
-    let sp: i64 = lines[j];
+    let sp = lines[j];
     if (c.keys.len() > 0) {
       sp = spans[j];
     }
-    let lo: i32 = line_start(sp);
-    let hi: i32 = lo + line_len(sp);
-    let w: i64 = 0 as i64;
+    let lo = line_start(sp);
+    let hi = lo + line_len(sp);
+    let w = 0 as i64;
     if (!fold) {
       w = radix.bytes_word_bytes(text, lo, hi);
     } else {
-      let b: i32 = 0;
+      let b = 0;
       while (b < 8) {
-        let x: i32 = 0;
+        let x = 0;
         if (lo + b < hi) {
           x = fold_up(text[lo + b] as i32);
         }
         w = w << 8 as i64 | x as i64;
-        b = b + 1;
+        b += 1;
       }
     }
     out2 = out2.append(w);
-    j = j + 1;
+    j += 1;
   }
   return out2;
 }
@@ -1339,10 +1339,10 @@ function word_reversed(c: Conf): boolean {
 
 function index_of(n: i32): i64[] {
   let out: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(i as i64);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1352,7 +1352,7 @@ function read_size(): i32 {
 }
 
 function read_into(h: usize, path: string, open_msg: string): i32 {
-  let r: Reader = stdin();
+  let r = stdin();
   if (path != "-") {
     match (open_reader(path)) {
       Ok(f) => {
@@ -1363,7 +1363,7 @@ function read_into(h: usize, path: string, open_msg: string): i32 {
       }
     }
   }
-  let last: i32 = read_into_from(h, r, path);
+  let last = read_into_from(h, r, path);
   if (path != "-") {
     r.close();
   }
@@ -1371,7 +1371,7 @@ function read_into(h: usize, path: string, open_msg: string): i32 {
 }
 
 function read_into_from(h: usize, r: Reader, path: string): i32 {
-  let last: i32 = 0 - 1;
+  let last: i32 = -1;
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -1390,9 +1390,9 @@ function read_into_from(h: usize, r: Reader, path: string): i32 {
 }
 
 function slurp(path: string, open_msg: string): u8[] {
-  let h: usize = buf_new(read_size());
+  let h = buf_new(read_size());
   read_into(h, path, open_msg);
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return bytes;
 }
@@ -1401,9 +1401,9 @@ function byte_range(bytes: u8[], lo: i32, hi: i32): u8[] {
   if (lo == 0 && hi == bytes.len()) {
     return bytes;
   }
-  let h: usize = buf_new(hi - lo);
+  let h = buf_new(hi - lo);
   buf_push_bytes_range(h, bytes, lo, hi);
-  let out: u8[] = buf_take_bytes(h);
+  let out = buf_take_bytes(h);
   buf_free(h);
   return out;
 }
@@ -1415,16 +1415,16 @@ function concat_bytes(a: u8[], b: u8[]): u8[] {
   if (b.len() == 0) {
     return a;
   }
-  let h: usize = buf_new(a.len() + b.len());
+  let h = buf_new(a.len() + b.len());
   buf_push_bytes_range(h, a, 0, a.len());
   buf_push_bytes_range(h, b, 0, b.len());
-  let out: u8[] = buf_take_bytes(h);
+  let out = buf_take_bytes(h);
   buf_free(h);
   return out;
 }
 
 function check_inputs(files: string[]): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < files.len()) {
     if (files[i] != "-") {
       match (open_reader(files[i])) {
@@ -1436,7 +1436,7 @@ function check_inputs(files: string[]): void {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -1477,17 +1477,17 @@ function out_die(own o: Out, stage: string, e: IoError): void {
 }
 
 function out_put(own o: Out, s: string): Out {
-  let written: Result[io_buffered.BufWriter, IoError] = o.w.write_string(s);
+  let written = o.w.write_string(s);
   return out_written(o, written, "write failed");
 }
 
 function out_put_bytes(own o: Out, bytes: u8[]): Out {
-  let written: Result[io_buffered.BufWriter, IoError] = o.w.write_bytes(bytes);
+  let written = o.w.write_bytes(bytes);
   return out_written(o, written, "write failed");
 }
 
 function out_settle(own o: Out): Out {
-  let written: Result[io_buffered.BufWriter, IoError] = o.w.settle();
+  let written = o.w.settle();
   return out_written(o, written, "write failed");
 }
 
@@ -1504,16 +1504,16 @@ function out_written(own o: Out, own written: Result[io_buffered.BufWriter, IoEr
 }
 
 function out_finish(own o: Out): void {
-  let flushed: Result[io_buffered.BufWriter, IoError] = o.w.flush();
-  let done: Out = out_written(o, flushed, "fflush failed");
+  let flushed = o.w.flush();
+  let done = out_written(o, flushed, "fflush failed");
   gnu.close_stdout_with(done.w, false, sort_failure());
 }
 
 function split_lines(text: u8[], term: i32): i64[] {
   let lines: i64[] = [];
-  let start: i32 = 0;
+  let start = 0;
   while (start < text.len()) {
-    let end: i32 = __memchr_bytes(text, term, start);
+    let end = __memchr_bytes(text, term, start);
     if (end < 0) {
       lines = lines.append(pack_line(start, text.len() - start));
       break;
@@ -1525,9 +1525,9 @@ function split_lines(text: u8[], term: i32): i64[] {
 }
 
 function argmatch(value: string, names: string[], vals: i32[], option: string, groups: string[]): i32 {
-  let found: i32 = 0 - 1;
-  let ambiguous: boolean = false;
-  let i: i32 = 0;
+  let found: i32 = -1;
+  let ambiguous = false;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == value) {
       return vals[i];
@@ -1539,21 +1539,21 @@ function argmatch(value: string, names: string[], vals: i32[], option: string, g
         ambiguous = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (found >= 0 && !ambiguous) {
     return vals[found];
   }
-  let what: string = "invalid";
+  let what = "invalid";
   if (ambiguous) {
     what = "ambiguous";
   }
-  let msg: string = what + " argument " + gnu.quote(value) + " for " + gnu.quote(option) + "\n";
-  msg = msg + "Valid arguments are:\n";
+  let msg = what + " argument " + gnu.quote(value) + " for " + gnu.quote(option) + "\n";
+  msg += "Valid arguments are:\n";
   i = 0;
   while (i < groups.len()) {
     msg = msg + "  - " + groups[i] + "\n";
-    i = i + 1;
+    i += 1;
   }
   eprint(gnu.prog() + ": " + slice_unchecked(msg, 0, msg.len() - 1));
   gnu.try_help(1);
@@ -1595,21 +1595,21 @@ function xstrtol_fatal(status: i32, option: string, arg: string): void {
 }
 
 function parse_sort_size(s: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < s.len() && s[i] as i32 == 45) {
     return 1;
   }
   if (i < s.len() && s[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= s.len() || !gnu.is_digit(s[i] as i32)) {
     return 1;
   }
-  let v: u64 = 0 as u64;
-  let over: boolean = false;
+  let v = 0 as u64;
+  let over = false;
   while (i < s.len() && gnu.is_digit(s[i] as i32)) {
     match (v.checked_mul(10 as u64)) {
       Some(m) => {
@@ -1626,7 +1626,7 @@ function parse_sort_size(s: string): i32 {
         over = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (i == s.len()) {
     if (over) {
@@ -1641,13 +1641,13 @@ function parse_sort_size(s: string): i32 {
       }
     }
   }
-  let c: i32 = s[i] as i32;
-  let power: i32 = sort_size_power(c);
+  let c = s[i] as i32;
+  let power = sort_size_power(c);
   if (power > 0 && i + 1 == s.len()) {
     if (over) {
       return 3;
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < power) {
       match (v.checked_mul(1024 as u64)) {
         Some(m) => {
@@ -1657,7 +1657,7 @@ function parse_sort_size(s: string): i32 {
           return 3;
         }
       }
-      k = k + 1;
+      k += 1;
     }
     return 0;
   }
@@ -1715,36 +1715,36 @@ function inherit(k: Key, g: Key): Key {
 }
 
 function check_ordering_compatibility(keys: Key[]): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < keys.len()) {
-    let k: Key = keys[i];
-    let value_orders: i32 = 0;
+    let k = keys[i];
+    let value_orders = 0;
     if (k.numeric) {
-      value_orders = value_orders + 1;
+      value_orders += 1;
     }
     if (k.general) {
-      value_orders = value_orders + 1;
+      value_orders += 1;
     }
     if (k.human) {
-      value_orders = value_orders + 1;
+      value_orders += 1;
     }
     if (k.month) {
-      value_orders = value_orders + 1;
+      value_orders += 1;
     }
-    let others: i32 = value_orders;
+    let others = value_orders;
     if (k.random) {
-      others = others + 1;
+      others += 1;
     }
     if (k.version) {
-      others = others + 1;
+      others += 1;
     }
     if (k.ignore != ignore_none()) {
-      others = others + 1;
+      others += 1;
     }
     if (value_orders > 0 && others > 1) {
       die("options '-" + key_to_opts(Key { ...k, skipsblanks: false, skipeblanks: false, reverse: false }) + "' are incompatible");
     }
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -1756,17 +1756,17 @@ function byte_width(b: i32): i32 {
 }
 
 function debug_width(text: u8[], from: i32, to: i32): i32 {
-  let w: i32 = 0;
-  let i: i32 = from;
+  let w = 0;
+  let i = from;
   while (i < to) {
-    w = w + byte_width(text[i] as i32);
-    i = i + 1;
+    w += byte_width(text[i] as i32);
+    i += 1;
   }
   return w;
 }
 
 function mark_key(own o: Out, offset: i32, width: i32): Out {
-  let out: Out = o;
+  let out = o;
   if (offset > 0) {
     out = out_put(out, " ".repeat(offset));
   }
@@ -1777,52 +1777,52 @@ function mark_key(own o: Out, offset: i32, width: i32): Out {
 }
 
 function raw_number_end(text: u8[], beg: i32, lim: i32, human: boolean): i32 {
-  let p: i32 = beg;
+  let p = beg;
   if (p < lim && text[p] as i32 == 45) {
-    p = p + 1;
+    p += 1;
   }
-  let saw: boolean = false;
+  let saw = false;
   while (p < lim) {
-    let c: i32 = text[p] as i32;
+    let c = text[p] as i32;
     if (gnu.is_digit(c)) {
       saw = true;
     } else if (c != 46) {
       break;
     }
-    p = p + 1;
+    p += 1;
   }
   if (!saw) {
     return beg;
   }
   if (human && p < lim && unit_order(text[p] as i32) != 0) {
-    p = p + 1;
+    p += 1;
   }
   return p;
 }
 
 function debug_key(own o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, has_key: boolean): Out {
-  let beg: i32 = lo;
-  let lim: i32 = hi;
+  let beg = lo;
+  let lim = hi;
   if (has_key) {
-    if (k.sword != 0 - 1) {
+    if (k.sword != -1) {
       beg = begfield(text, lo, hi, k, c.tab);
     }
-    if (k.eword != 0 - 1) {
+    if (k.eword != -1) {
       lim = limfield(text, lo, hi, k, c.tab);
       if (lim < beg) {
         lim = beg;
       }
     }
-    if (k.skipsblanks && k.sword == 0 - 1 || k.month || key_numeric(k)) {
+    if (k.skipsblanks && k.sword == -1 || k.month || key_numeric(k)) {
       while (beg < lim && is_blank_b(text[beg] as i32)) {
-        beg = beg + 1;
+        beg += 1;
       }
-      let tighter: i32 = beg;
+      let tighter = beg;
       if (k.month) {
         tighter = line_len(getmonth(text, beg, lim));
       } else if (k.general) {
-        let f: ld.Format = ld.format();
-        let parsed: ld.Parse = f.strtold_array(text, beg, lim);
+        let f = ld.format();
+        let parsed = f.strtold_array(text, beg, lim);
         tighter = beg + parsed.end;
       } else if (key_numeric(k)) {
         tighter = raw_number_end(text, beg, lim, k.human);
@@ -1837,21 +1837,21 @@ function debug_key(own o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, ha
 
 function debug_line(own o: Out, c: Conf, text: u8[], lo: i32, hi: i32): Out {
   let bs: u8[] = [];
-  let i: i32 = lo;
+  let i = lo;
   while (i < hi) {
-    let b: i32 = text[i] as i32;
+    let b = text[i] as i32;
     if (b == 9) {
       b = 62;
     }
     bs = bs.append(b as u8);
-    i = i + 1;
+    i += 1;
   }
   bs = bs.append(10 as u8);
-  let out: Out = out_put_bytes(o, bs);
+  let out = out_put_bytes(o, bs);
   i = 0;
   while (i < c.keys.len()) {
     out = debug_key(out, c, text, lo, hi, c.keys[i], true);
-    i = i + 1;
+    i += 1;
   }
   if (c.keys.len() == 0 || !c.unique && !c.stable) {
     out = debug_key(out, c, text, lo, hi, key_new(), false);
@@ -1860,51 +1860,51 @@ function debug_line(own o: Out, c: Conf, text: u8[], lo: i32, hi: i32): Out {
 }
 
 function key_to_opts(k: Key): string {
-  let out: string = "";
+  let out = "";
   if (k.skipsblanks || k.skipeblanks) {
-    out = out + "b";
+    out += "b";
   }
   if (k.ignore == ignore_nondictionary()) {
-    out = out + "d";
+    out += "d";
   }
   if (k.translate) {
-    out = out + "f";
+    out += "f";
   }
   if (k.general) {
-    out = out + "g";
+    out += "g";
   }
   if (k.human) {
-    out = out + "h";
+    out += "h";
   }
   if (k.ignore == ignore_nonprinting()) {
-    out = out + "i";
+    out += "i";
   }
   if (k.month) {
-    out = out + "M";
+    out += "M";
   }
   if (k.numeric) {
-    out = out + "n";
+    out += "n";
   }
   if (k.random) {
-    out = out + "R";
+    out += "R";
   }
   if (k.reverse) {
-    out = out + "r";
+    out += "r";
   }
   if (k.version) {
-    out = out + "V";
+    out += "V";
   }
   return out;
 }
 
 function obsolete_advice(k: Key): string {
-  let sword: i32 = k.sword;
+  let sword = k.sword;
   if (sword < 0) {
     sword = 0;
   }
-  let old: string = "+" + sword.to_string();
-  let fresh: string = "-k " + (sword + 1).to_string();
-  if (k.eword != 0 - 1) {
+  let old = "+" + sword.to_string();
+  let fresh = "-k " + (sword + 1).to_string();
+  if (k.eword != -1) {
     old = old + " -" + (k.eword + 1).to_string();
     fresh = fresh + "," + (k.eword + 1).to_string();
   }
@@ -1912,11 +1912,11 @@ function obsolete_advice(k: Key): string {
 }
 
 function spans_fields(k: Key): boolean {
-  let sfield: i32 = k.sword;
+  let sfield = k.sword;
   if (sfield < 0) {
     sfield = 0;
   }
-  let efield: i32 = k.eword;
+  let efield = k.eword;
   if (efield < 0) {
     efield = 2147483647;
   }
@@ -1925,25 +1925,25 @@ function spans_fields(k: Key): boolean {
 
 function key_warnings(c: Conf, gkey: Key): void {
   gnu.error("text ordering performed using simple byte comparison");
-  let ugkey: Key = gkey;
-  let span: boolean = false;
-  let any_numeric: boolean = false;
-  let i: i32 = 0;
+  let ugkey = gkey;
+  let span = false;
+  let any_numeric = false;
+  let i = 0;
   while (i < c.keys.len()) {
-    let k: Key = c.keys[i];
-    let num: boolean = key_numeric(k);
+    let k = c.keys[i];
+    let num = key_numeric(k);
     if (num) {
       any_numeric = true;
     }
     if (k.obsolete) {
       gnu.error(obsolete_advice(k));
     }
-    let zero_width: boolean = k.sword != 0 - 1 && k.eword != 0 - 1 && k.eword < k.sword;
+    let zero_width = k.sword != -1 && k.eword != -1 && k.eword < k.sword;
     if (zero_width) {
       gnu.error("key " + (i + 1).to_string() + " has zero width and will be ignored");
     }
-    let line_offset: boolean = k.eword == 0 && k.echar != 0;
-    let significant: boolean = !k.skipsblanks && !(num || k.month) || !k.skipeblanks && k.echar != 0;
+    let line_offset = k.eword == 0 && k.echar != 0;
+    let significant = !k.skipsblanks && !(num || k.month) || !k.skipeblanks && k.echar != 0;
     if (!zero_width && !c.gkey_only && c.tab == tab_default() && !line_offset && significant) {
       gnu.error("leading blanks are significant in key " + (i + 1).to_string() + "; consider also specifying 'b'");
     }
@@ -1952,17 +1952,17 @@ function key_warnings(c: Conf, gkey: Key): void {
       span = true;
     }
     ugkey = unused_globals(ugkey, k);
-    i = i + 1;
+    i += 1;
   }
   if (any_numeric) {
     numeric_locale_warnings(c.tab, span);
   }
   if (!default_key_compare(ugkey)) {
-    let shown: Key = ugkey;
+    let shown = ugkey;
     if (!c.gkey_only) {
       shown = Key { ...shown, reverse: false };
     }
-    let opts: string = key_to_opts(shown);
+    let opts = key_to_opts(shown);
     if (opts.len() == 1) {
       gnu.error("option '-" + opts + "' is ignored");
     } else {
@@ -1975,7 +1975,7 @@ function key_warnings(c: Conf, gkey: Key): void {
 }
 
 function unused_globals(u: Key, k: Key): Key {
-  let out: Key = u;
+  let out = u;
   if (out.ignore != ignore_none() && out.ignore == k.ignore) {
     out = Key { ...out, ignore: ignore_none() };
   }
@@ -2001,7 +2001,7 @@ function numeric_locale_warnings(tab: i32, span: boolean): void {
 }
 
 function check_order(c: Conf, name: string, quiet: boolean): i32 {
-  let r: Reader = stdin();
+  let r = stdin();
   if (name != "-") {
     match (open_reader(name)) {
       Ok(f) => {
@@ -2013,10 +2013,10 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
     }
   }
   let buf: u8[] = [];
-  let prev: i64 = 0 - 1 as i64;
-  let at: i32 = 0;
-  let lineno: i32 = 0;
-  let eof: boolean = false;
+  let prev = -1i64;
+  let at = 0;
+  let lineno = 0;
+  let eof = false;
   while (!eof) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -2031,20 +2031,20 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
       }
     }
     while (at < buf.len()) {
-      let end: i32 = __memchr_bytes(buf, c.term, at);
+      let end = __memchr_bytes(buf, c.term, at);
       if (end < 0) {
         if (!eof) {
           break;
         }
         end = buf.len();
       }
-      let line: i64 = pack_line(at, end - at);
-      lineno = lineno + 1;
+      let line = pack_line(at, end - at);
+      lineno += 1;
       if (prev >= 0 as i64) {
-        let d: i32 = compare(c, buf, prev, buf, line);
+        let d = compare(c, buf, prev, buf, line);
         if (d > 0 || c.unique && d == 0) {
           if (!quiet) {
-            let w: Writer = stderr();
+            let w = stderr();
             w.write(gnu.prog() + ": " + name + ":" + lineno.to_string() + ": disorder: ");
             w.write_bytes(buf[at:end]);
             w.write(term_string(c.term));
@@ -2056,10 +2056,10 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
       at = end + 1;
     }
     if (!eof && prev >= 0 as i64) {
-      let keep: i32 = line_start(prev);
+      let keep = line_start(prev);
       buf = byte_range(buf, keep, buf.len());
       prev = pack_line(0, line_len(prev));
-      at = at - keep;
+      at -= keep;
     }
   }
   if (name != "-") {
@@ -2087,15 +2087,15 @@ function read_names(file: string): Option[string[]] {
     die("no input from " + gnu.quote(file));
   }
   let names: string[] = [];
-  let start: i32 = 0;
-  let n: i32 = 0;
+  let start = 0;
+  let n = 0;
   while (start < text.len()) {
-    let end: i32 = __memchr_bytes(text, 0, start);
+    let end = __memchr_bytes(text, 0, start);
     if (end < 0) {
       end = text.len();
     }
-    n = n + 1;
-    let name: string = "";
+    n += 1;
+    let name = "";
     match (utf8.from_bytes(byte_range(text, start, end))) {
       Ok(valid) => {
         name = valid;
@@ -2164,7 +2164,7 @@ function set_tab(a: Args, v: string): Args {
   if (v.len() == 0) {
     die("empty tab");
   }
-  let newtab: i32 = v[0] as i32;
+  let newtab = v[0] as i32;
   if (v.len() > 1) {
     if (v == "\\0") {
       newtab = 0;
@@ -2184,18 +2184,18 @@ function global_letter(a: Args, letter: string, blanktype: i32): Args {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let a: Args = args_new();
-  let g: gnu.Getopt = gnu.getopt_new(argv, declare_options(), "sort", help_text(), sort_failure()).return_in_order();
-  let posixly: boolean = false;
+  let argv = args();
+  let a = args_new();
+  let g = gnu.getopt_new(argv, declare_options(), "sort", help_text(), sort_failure()).return_in_order();
+  let posixly = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       posixly = true;
     },
     None => {}
   }
-  let posix: i64 = gnu.posix2_version();
-  let obsolete_usage: boolean = posix < 200112 as i64 || posix >= 200809 as i64;
+  let posix = gnu.posix2_version();
+  let obsolete_usage = posix < 200112 as i64 || posix >= 200809 as i64;
   while (true) {
     if (posixly && a.files.len() > 0) {
       match (g.peek()) {
@@ -2226,23 +2226,23 @@ pub function main(): i32 {
       }
     }
   }
-  let rest: string[] = g.operands();
-  let k: i32 = 0;
+  let rest = g.operands();
+  let k = 0;
   while (k < rest.len()) {
     a = Args { ...a, files: a.files.append(rest[k]) };
-    k = k + 1;
+    k += 1;
   }
   return run(a);
 }
 
 function operand(a0: Args, g0: gnu.Getopt, tok: string, obsolete_usage: boolean, posixly: boolean): (Args, gnu.Getopt) {
-  let a: Args = a0;
-  let g: gnu.Getopt = g0;
+  let a = a0;
+  let g = g0;
   if (tok.len() == 0 || tok[0] as i32 != 43) {
     return (Args { ...a, files: a.files.append(tok) }, g);
   }
-  let next: string = "";
-  let minus_pos: boolean = false;
+  let next = "";
+  let minus_pos = false;
   match (g.peek()) {
     Some(t) => {
       if (t.len() >= 2 && t[0] as i32 == 45 && gnu.is_digit(t[1] as i32)) {
@@ -2255,13 +2255,13 @@ function operand(a0: Args, g0: gnu.Getopt, tok: string, obsolete_usage: boolean,
   if (!obsolete_usage && !(minus_pos && !posixly)) {
     return (Args { ...a, files: a.files.append(tok) }, g);
   }
-  let k: Key = key_new();
+  let k = key_new();
   let r: (i32, i32, boolean) = parse_count(tok, 1);
   if (!r.2) {
     return (Args { ...a, files: a.files.append(tok) }, g);
   }
   k = Key { ...k, sword: r.0 };
-  let i: i32 = r.1;
+  let i = r.1;
   if (i < tok.len() && tok[i] as i32 == 46) {
     let c: (i32, i32, boolean) = parse_count(tok, i + 1);
     if (!c.2) {
@@ -2282,7 +2282,7 @@ function operand(a0: Args, g0: gnu.Getopt, tok: string, obsolete_usage: boolean,
     g = g.advance();
     let e: (i32, i32) = parse_field_count(next, 1, "invalid number after '-'");
     k = Key { ...k, eword: e.0 };
-    let j: i32 = e.1;
+    let j = e.1;
     if (j < next.len() && next[j] as i32 == 46) {
       let ec: (i32, i32) = parse_field_count(next, j + 1, "invalid number after '.'");
       k = Key { ...k, echar: ec.0 };
@@ -2302,7 +2302,7 @@ function operand(a0: Args, g0: gnu.Getopt, tok: string, obsolete_usage: boolean,
 }
 
 function option(a0: Args, m: gnu.OptMatch): Args {
-  let a: Args = a0;
+  let a = a0;
   if (m.id == o_blanks()) {
     return global_letter(a, "b", bl_both());
   }
@@ -2337,14 +2337,14 @@ function option(a0: Args, m: gnu.OptMatch): Args {
     return global_letter(a, "V", bl_both());
   }
   if (m.id == o_sort()) {
-    let w: i32 = argmatch(m.value, sort_words(), sort_vals(), "--sort", sort_groups());
+    let w = argmatch(m.value, sort_words(), sort_vals(), "--sort", sort_groups());
     return global_letter(a, sort_letter(w), bl_both());
   }
   if (m.id == o_key()) {
     return Args { ...a, keys: a.keys.append(parse_key(m.value)) };
   }
   if (m.id == o_check()) {
-    let mode: i32 = 99;
+    let mode = 99;
     if (m.has_value) {
       mode = argmatch(m.value, check_words(), check_vals(), "--check", check_groups());
     }
@@ -2384,9 +2384,9 @@ function option(a0: Args, m: gnu.OptMatch): Args {
     return Args { ...a, randsource: m.value, have_rand: true };
   }
   if (m.id == o_buffer()) {
-    let st: i32 = parse_sort_size(m.value);
+    let st = parse_sort_size(m.value);
     if (st != 0) {
-      let spelling: string = "-S";
+      let spelling = "-S";
       if (m.long_form) {
         spelling = "--buffer-size";
       }
@@ -2452,14 +2452,14 @@ function batch_size(a: Args, v: string): Args {
 }
 
 function random_seed(a: Args): u8[] {
-  let src: string = default_random_source();
+  let src = default_random_source();
   if (a.have_rand) {
     src = a.randsource;
   }
   match (open_reader(src)) {
     Ok(r) => {
       let got: u8[] = [];
-      let failed: string = "";
+      let failed = "";
       while (got.len() < 16 && failed.len() == 0) {
         match (r.read_chunk_bytes(16 - got.len())) {
           Ok(chunk) => {
@@ -2492,9 +2492,9 @@ function default_random_source(): string {
 }
 
 function run(a0: Args): i32 {
-  let a: Args = a0;
+  let a = a0;
   if (a.debug && (a.checkonly != 0 || a.have_out)) {
-    let what: string = "-o";
+    let what = "-o";
     if (a.checkonly == 99) {
       what = "-c";
     } else if (a.checkonly == 67) {
@@ -2503,13 +2503,13 @@ function run(a0: Args): i32 {
     die("options '" + what + " --debug' are incompatible");
   }
   if (a.checkonly != 0 && a.have_out) {
-    let letter: string = "c";
+    let letter = "c";
     if (a.checkonly == 67) {
       letter = "C";
     }
     die("options '-" + letter + "o' are incompatible");
   }
-  let files: string[] = a.files;
+  let files = a.files;
   if (a.have_files0) {
     if (files.len() > 0) {
       gnu.error("extra operand " + gnu.quote(files[0]) + "\nfile operands cannot be combined with --files0-from");
@@ -2525,7 +2525,7 @@ function run(a0: Args): i32 {
     }
   }
   if (a.checkonly != 0 && files.len() > 1) {
-    let letter2: string = "c";
+    let letter2 = "c";
     if (a.checkonly == 67) {
       letter2 = "C";
     }
@@ -2536,34 +2536,34 @@ function run(a0: Args): i32 {
   }
 
   let keys: Key[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.keys.len()) {
     keys = keys.append(inherit(a.keys[i], a.gkey));
-    i = i + 1;
+    i += 1;
   }
-  let gkey_only: boolean = false;
+  let gkey_only = false;
   if (keys.len() == 0 && !default_key_compare(a.gkey)) {
     gkey_only = true;
     keys = keys.append(a.gkey);
   }
   check_ordering_compatibility(keys);
-  let need_random: boolean = false;
+  let need_random = false;
   i = 0;
   while (i < keys.len()) {
     if (keys[i].random) {
       need_random = true;
     }
-    i = i + 1;
+    i += 1;
   }
   let seed: u8[] = [];
   if (need_random) {
     seed = random_seed(a);
   }
-  let term: i32 = 10;
+  let term = 10;
   if (a.zero) {
     term = 0;
   }
-  let c: Conf = Conf { keys: keys, tab: a.tab, reverse: a.gkey.reverse, unique: a.unique, stable: a.stable, term: term, seed: seed[:], debug: a.debug, gkey_only: gkey_only };
+  let c = Conf { keys: keys, tab: a.tab, reverse: a.gkey.reverse, unique: a.unique, stable: a.stable, term: term, seed: seed[:], debug: a.debug, gkey_only: gkey_only };
   if (c.debug) {
     key_warnings(c, a.gkey);
   }
@@ -2576,29 +2576,29 @@ function run(a0: Args): i32 {
   if (a.merge) {
     return merge_files(c, a, files);
   }
-  let hb: usize = buf_new(read_size());
+  let hb = buf_new(read_size());
   i = 0;
   while (i < files.len()) {
-    let last: i32 = read_into(hb, files[i], "open failed");
+    let last = read_into(hb, files[i], "open failed");
     if (last >= 0 && last != term) {
       buf_push_byte(hb, term);
     }
-    i = i + 1;
+    i += 1;
   }
-  let all: u8[] = buf_take_bytes(hb);
+  let all = buf_take_bytes(hb);
   buf_free(hb);
-  let lines: i64[] = sort_lines(c, all, split_lines(all, term));
+  let lines = sort_lines(c, all, split_lines(all, term));
 
-  let out: Out = out_open(a.outfile, !a.have_out);
-  let h: usize = out.w.handle();
-  let block: i32 = gnu.block_bytes();
-  let prev: i64 = 0 as i64;
-  let have_prev: boolean = false;
+  let out = out_open(a.outfile, !a.have_out);
+  let h = out.w.handle();
+  let block = gnu.block_bytes();
+  let prev = 0 as i64;
+  let have_prev = false;
   i = 0;
   while (i < lines.len()) {
-    let v: i64 = lines[i];
+    let v = lines[i];
     if (!(a.unique && have_prev && compare(c, all, prev, all, v) == 0)) {
-      let at: i32 = line_start(v);
+      let at = line_start(v);
       if (c.debug) {
         out = debug_line(out, c, all, at, at + line_len(v));
       } else {
@@ -2611,7 +2611,7 @@ function run(a0: Args): i32 {
       prev = v;
       have_prev = true;
     }
-    i = i + 1;
+    i += 1;
   }
   out_finish(out);
   return 0;
@@ -2620,15 +2620,15 @@ function run(a0: Args): i32 {
 struct Feeds { rs: Reader[], names: string[], eof: boolean[], fresh: u8[] }
 
 function merge_files(c: Conf, a: Args, files: string[]): i32 {
-  let n: i32 = files.len();
-  let term: i32 = c.term;
-  let m: Feeds = Feeds { rs: [], names: files, eof: [], fresh: [] };
+  let n = files.len();
+  let term = c.term;
+  let m = Feeds { rs: [], names: files, eof: [], fresh: [] };
   let bufs: u8[][] = [];
   let at: i32[] = [];
   let cur: i64[] = [];
-  let o_dev: i64 = 0 as i64;
-  let o_ino: i64 = 0 as i64;
-  let o_file: boolean = false;
+  let o_dev = 0 as i64;
+  let o_ino = 0 as i64;
+  let o_file = false;
   if (a.have_out) {
     match (stat(a.outfile)) {
       Ok(st) => {
@@ -2639,25 +2639,25 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
       Err(_) => {}
     }
   }
-  let f: i32 = 0;
+  let f = 0;
   while (f < n) {
     m = open_feed(m, files[f], o_file, o_dev, o_ino, term);
     bufs = bufs.append(m.fresh);
     at = at.append(0);
     cur = cur.append(0 - 1 as i64);
-    f = f + 1;
+    f += 1;
   }
-  let out: Out = out_open(a.outfile, !a.have_out);
-  let h: usize = out.w.handle();
-  let block: i32 = gnu.block_bytes();
+  let out = out_open(a.outfile, !a.have_out);
+  let h = out.w.handle();
+  let block = gnu.block_bytes();
   let prev_text: u8[] = [];
-  let prev: i64 = 0 as i64;
-  let have_prev: boolean = false;
-  let primed: i32 = 0;
+  let prev = 0 as i64;
+  let have_prev = false;
+  let primed = 0;
   f = 0;
   while (f >= 0) {
-    let from: i32 = at[f];
-    let end: i32 = __memchr_bytes(bufs[f], term, from);
+    let from = at[f];
+    let end = __memchr_bytes(bufs[f], term, from);
     if (end < 0) {
       m = refill(m, f, bufs[f], from, term);
       bufs = bufs.with(f, m.fresh);
@@ -2670,25 +2670,25 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
       cur = cur.with(f, pack_line(from, end - from));
       at = at.with(f, end + 1);
     }
-    primed = primed + 1;
+    primed += 1;
     if (primed < n) {
       f = primed;
     } else {
       f = 0 - 1;
-      let g: i32 = 0;
+      let g = 0;
       while (g < n) {
         if (cur[g] >= 0 as i64) {
           if (f < 0 || compare(c, bufs[g], cur[g], bufs[f], cur[f]) < 0) {
             f = g;
           }
         }
-        g = g + 1;
+        g += 1;
       }
       if (f >= 0) {
-        let text: u8[] = bufs[f];
-        let v: i64 = cur[f];
+        let text = bufs[f];
+        let v = cur[f];
         if (!(a.unique && have_prev && compare(c, prev_text, prev, text, v) == 0)) {
-          let lo: i32 = line_start(v);
+          let lo = line_start(v);
           if (c.debug) {
             out = debug_line(out, c, text, lo, lo + line_len(v));
           } else {
@@ -2710,14 +2710,14 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
     if (f < n && files[f] != "-") {
       fed.close();
     }
-    f = f + 1;
+    f += 1;
   }
   out_finish(out);
   return 0;
 }
 
 function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_ino: i64, term: i32): Feeds {
-  let r: Reader = stdin();
+  let r = stdin();
   if (path != "-") {
     match (open_reader(path)) {
       Ok(fd) => {
@@ -2729,7 +2729,7 @@ function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_in
     }
   }
   let buf: u8[] = [];
-  let whole: boolean = false;
+  let whole = false;
   if (o_file) {
     match (r.stat()) {
       Ok(st) => {
@@ -2739,8 +2739,8 @@ function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_in
     }
   }
   if (whole) {
-    let h: usize = buf_new(read_size());
-    let last: i32 = read_into_from(h, r, path);
+    let h = buf_new(read_size());
+    let last = read_into_from(h, r, path);
     if (last >= 0 && last != term) {
       buf_push_byte(h, term);
     }
@@ -2754,10 +2754,10 @@ function refill(own m: Feeds, f: i32, buf: u8[], from: i32, term: i32): Feeds {
   if (m.eof[f]) {
     return Feeds { ...m, fresh: [] };
   }
-  let h: usize = buf_new(read_size());
+  let h = buf_new(read_size());
   buf_push_bytes_range(h, buf, from, buf.len());
-  let ended: boolean = false;
-  let done: boolean = false;
+  let ended = false;
+  let done = false;
   while (!done) {
     match (m.rs[f].read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -2777,7 +2777,7 @@ function refill(own m: Feeds, f: i32, buf: u8[], from: i32, term: i32): Feeds {
       }
     }
   }
-  let fresh: u8[] = buf_take_bytes(h);
+  let fresh = buf_take_bytes(h);
   buf_free(h);
   return Feeds { ...m, eof: m.eof.with(f, ended), fresh: fresh };
 }

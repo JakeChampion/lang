@@ -70,7 +70,7 @@ function trav_physical(): i32 {
 }
 
 function deref_unset(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 function v_quiet(): i32 {
@@ -92,37 +92,37 @@ struct Target { changes: mode.Changes, fixed: i32, has_fixed: boolean, mask: i32
 struct St { out: gnu.Stdio, status: i32 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... MODE[,MODE]... FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... OCTAL-MODE FILE...\n";
   out = out + "  or:  " + gnu.prog() + " [OPTION]... --reference=RFILE FILE...\n";
-  out = out + "Change the mode of each FILE to MODE.\n";
-  out = out + "With --reference, change the mode of each FILE to that of RFILE.\n";
-  out = out + "\n";
-  out = out + "  -c, --changes          like verbose but report only when a change is made\n";
-  out = out + "  -f, --silent, --quiet  suppress most error messages\n";
-  out = out + "  -v, --verbose          output a diagnostic for every file processed\n";
-  out = out + "      --dereference      affect the referent of each symbolic link,\n";
-  out = out + "                         rather than the symbolic link itself\n";
-  out = out + "  -h, --no-dereference   affect each symbolic link, rather than the referent\n";
-  out = out + "      --no-preserve-root  do not treat '/' specially (the default)\n";
-  out = out + "      --preserve-root    fail to operate recursively on '/'\n";
-  out = out + "      --reference=RFILE  use RFILE's mode instead of specifying MODE values.\n";
-  out = out + "                         RFILE is always dereferenced if a symbolic link.\n";
-  out = out + "  -R, --recursive        change files and directories recursively\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "The following options modify how a hierarchy is traversed when the -R\n";
-  out = out + "option is also specified.  If more than one is specified, only the final\n";
-  out = out + "one takes effect. -H is the default.\n";
-  out = out + "\n";
-  out = out + "  -H                     if a command line argument is a symlink to a directory,\n";
-  out = out + "                           traverse it\n";
-  out = out + "  -L                     traverse every symbolic link to a directory encountered\n";
-  out = out + "  -P                     do not traverse any symbolic links\n";
-  out = out + "\n";
-  out = out + "Each MODE is of the form '[ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=][0-7]+'.\n";
+  out += "Change the mode of each FILE to MODE.\n";
+  out += "With --reference, change the mode of each FILE to that of RFILE.\n";
+  out += "\n";
+  out += "  -c, --changes          like verbose but report only when a change is made\n";
+  out += "  -f, --silent, --quiet  suppress most error messages\n";
+  out += "  -v, --verbose          output a diagnostic for every file processed\n";
+  out += "      --dereference      affect the referent of each symbolic link,\n";
+  out += "                         rather than the symbolic link itself\n";
+  out += "  -h, --no-dereference   affect each symbolic link, rather than the referent\n";
+  out += "      --no-preserve-root  do not treat '/' specially (the default)\n";
+  out += "      --preserve-root    fail to operate recursively on '/'\n";
+  out += "      --reference=RFILE  use RFILE's mode instead of specifying MODE values.\n";
+  out += "                         RFILE is always dereferenced if a symbolic link.\n";
+  out += "  -R, --recursive        change files and directories recursively\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "The following options modify how a hierarchy is traversed when the -R\n";
+  out += "option is also specified.  If more than one is specified, only the final\n";
+  out += "one takes effect. -H is the default.\n";
+  out += "\n";
+  out += "  -H                     if a command line argument is a symlink to a directory,\n";
+  out += "                           traverse it\n";
+  out += "  -L                     traverse every symbolic link to a directory encountered\n";
+  out += "  -P                     do not traverse any symbolic links\n";
+  out += "\n";
+  out += "Each MODE is of the form '[ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=][0-7]+'.\n";
   return out;
 }
 
@@ -141,11 +141,11 @@ function option_table(): gnu.Opt[] {
   opts = opts.append(gnu.flag("H", "", opt_comfollow()));
   opts = opts.append(gnu.flag("L", "", opt_logical()));
   opts = opts.append(gnu.flag("P", "", opt_physical()));
-  let i: i32 = 0;
-  let letters: string = "rwxXstugoa,+=01234567";
+  let i = 0;
+  let letters = "rwxXstugoa,+=01234567";
   while (i < letters.len()) {
     opts = opts.append(gnu.optional(slice_unchecked(letters, i, i + 1) + "", "", opt_mode()));
-    i = i + 1;
+    i += 1;
   }
   return opts;
 }
@@ -153,12 +153,12 @@ function option_table(): gnu.Opt[] {
 struct Parsed { s: Settings, mode: string, has_mode: boolean, reference: string, has_reference: boolean, files: string[] }
 
 function parse(argv: string[]): Parsed {
-  let s: Settings = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_unset(), traverse: trav_command_line() };
-  let mode: string = "";
-  let has_mode: boolean = false;
-  let reference: string = "";
-  let has_reference: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "chmod", help_text(), 1);
+  let s = Settings { verbosity: v_quiet(), quiet: false, recursive: false, preserve_root: false, deref: deref_unset(), traverse: trav_command_line() };
+  let mode = "";
+  let has_mode = false;
+  let reference = "";
+  let has_reference = false;
+  let g = gnu.getopt_new(argv, option_table(), "chmod", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -190,7 +190,7 @@ function parse(argv: string[]): Parsed {
         } else if (m.id == opt_physical()) {
           s = Settings { ...s, traverse: trav_physical() };
         } else if (m.id == opt_mode()) {
-          let token: string = argv[g.index() - 1];
+          let token = argv[g.index() - 1];
           if (has_mode) {
             mode = mode + "," + token;
           } else {
@@ -226,7 +226,7 @@ function say(st: St, s: Settings, line: string): St {
 }
 
 function unreachable(st0: St, s: Settings, path: string, msg: string): St {
-  let st: St = fail_quiet(st0, s, msg);
+  let st = fail_quiet(st0, s, msg);
   return say(st, s, gnu.quotea(path) + " could not be accessed\n");
 }
 
@@ -242,11 +242,11 @@ function is_root_dir(info: FileStat): boolean {
 }
 
 function refuse_root(st0: St, path: string): St {
-  let same: string = "";
+  let same = "";
   if (path != "/") {
     same = " (same as '/')";
   }
-  let st: St = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
+  let st = fail_loud(st0, "it is dangerous to operate recursively on " + gnu.quotea(path) + same);
   return fail_loud(st, "use --no-preserve-root to override this failsafe");
 }
 
@@ -254,18 +254,18 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
   if (t.has_fixed) {
     return (t.fixed, t.fixed, false);
   }
-  let masked: mode.Adjusted = t.changes.adjust(old, is_dir, t.mask);
+  let masked = t.changes.adjust(old, is_dir, t.mask);
   if (!t.from_option) {
     return (masked.mode, masked.mode, false);
   }
-  let naive: mode.Adjusted = t.changes.adjust(old, is_dir, 0);
+  let naive = t.changes.adjust(old, is_dir, 0);
   return (masked.mode, naive.mode, (masked.mode & mode.complement(naive.mode)) != 0);
 }
 
 function change_one(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: Option[FileStat], follows: boolean): St {
-  let st: St = st0;
-  let path: string = ent.path;
-  let on_link: boolean = false;
+  let st = st0;
+  let path = ent.path;
+  let on_link = false;
   match (link) {
     Some(_) => {
       if (!follows) {
@@ -274,10 +274,10 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, l
     },
     None => {}
   }
-  let old: i32 = info.mode as i32 & mode.all_bits();
-  let is_dir: boolean = filetype.is_dir(info.mode);
+  let old = info.mode as i32 & mode.all_bits();
+  let is_dir = filetype.is_dir(info.mode);
   let r: (i32, i32, boolean) = target_mode(t, old, is_dir);
-  let wanted: i32 = r.0;
+  let wanted = r.0;
   match (ent_chmod(ent, wanted, !on_link)) {
     Ok(_) => {
       if (s.verbosity == v_all() || s.verbosity == v_changes() && wanted != old) {
@@ -299,7 +299,7 @@ function change_one(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, l
 }
 
 function link_has_no_mode(e: IoError): boolean {
-  let n: i32 = errno.of(e);
+  let n = errno.of(e);
   return n == errno.EOPNOTSUPP || n == errno.ENOSYS;
 }
 
@@ -362,10 +362,10 @@ function ent_open(e: Ent, via_link: boolean): Result[Dir, IoError] {
 }
 
 function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
-  let st: St = st0;
-  let path: string = ent.path;
-  let followed: boolean = s.traverse == trav_logical() || top && s.traverse != trav_physical();
-  let lands: boolean = s.deref == 1 || s.deref == deref_unset() && top;
+  let st = st0;
+  let path = ent.path;
+  let followed = s.traverse == trav_logical() || top && s.traverse != trav_physical();
+  let lands = s.deref == 1 || s.deref == deref_unset() && top;
   if (followed) {
     match (ent_stat(ent)) {
       Ok(info) => {
@@ -425,8 +425,8 @@ function link_stat(ent: Ent): Option[FileStat] {
 }
 
 function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): St {
-  let st: St = st0;
-  let path: string = ent.path;
+  let st = st0;
+  let path = ent.path;
   if (top && s.recursive && s.preserve_root && filetype.is_dir(info.mode) && is_root_dir(info)) {
     return refuse_root(st, path);
   }
@@ -434,22 +434,22 @@ function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: 
   if (!s.recursive || !filetype.is_dir(info.mode)) {
     return st;
   }
-  let via_link: boolean = false;
+  let via_link = false;
   match (link) {
     Some(_) => {
       via_link = true;
     },
     None => {}
   }
-  let opened: Result[Dir, IoError] = ent_open(ent, via_link);
+  let opened = ent_open(ent, via_link);
   match (opened) {
     Ok(d) => {
       match (d.entries()) {
         Ok(names) => {
-          let i: i32 = 0;
+          let i = 0;
           while (i < names.len()) {
             st = process(st, s, t, Ent { path: fts.child_path(path, names[i]), dir: Some(d), name: names[i] }, false);
-            i = i + 1;
+            i += 1;
           }
         },
         Err(e) => {
@@ -466,14 +466,14 @@ function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: 
 }
 
 function current_umask(): i32 {
-  let mask: i32 = umask(0);
-  let back: i32 = umask(mask);
+  let mask = umask(0);
+  let back = umask(mask);
   return mask & mode.all_bits();
 }
 
 pub function main(): i32 {
-  let p: Parsed = parse(args());
-  let s: Settings = p.s;
+  let p = parse(args());
+  let s = p.s;
   if (s.recursive && s.traverse == trav_physical()) {
     if (s.deref == 1) {
       gnu.error("-R --dereference requires either -H or -L");
@@ -484,8 +484,8 @@ pub function main(): i32 {
   if (s.deref == deref_unset() && s.traverse == trav_logical()) {
     s = Settings { ...s, deref: 1 };
   }
-  let files: string[] = p.files;
-  let mode_spec: string = p.mode;
+  let files = p.files;
+  let mode_spec = p.mode;
   if (p.has_reference && p.has_mode) {
     gnu.die_usage("cannot combine mode and --reference options", 1);
   }
@@ -501,8 +501,8 @@ pub function main(): i32 {
   } else if (files.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
-  let st: St = St { out: gnu.stdio_new(), status: 0 };
-  let t: Target = Target { changes: mode.Changes { list: [] }, fixed: 0, has_fixed: false, mask: current_umask(), from_option: p.has_mode };
+  let st = St { out: gnu.stdio_new(), status: 0 };
+  let t = Target { changes: mode.Changes { list: [] }, fixed: 0, has_fixed: false, mask: current_umask(), from_option: p.has_mode };
   if (p.has_reference) {
     match (stat(p.reference)) {
       Ok(info) => {
@@ -523,10 +523,10 @@ pub function main(): i32 {
       }
     }
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < files.len()) {
     st = process(st, s, t, operand(fts.trim(files[i])), true);
-    i = i + 1;
+    i += 1;
   }
   st.out.close_stdout();
   return st.status;
