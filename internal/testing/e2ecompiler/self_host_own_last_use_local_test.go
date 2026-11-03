@@ -81,6 +81,25 @@ func TestSelfHostOwnAliasAfterSelfUpdate(t *testing.T) {
 	}
 }
 
+// A local's initializer that replaces a field of an own parameter moves the
+// field (#14111), and the moves leave the heap balanced.
+func TestSelfHostOwnSupersededFieldLet(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_param_superseded_field_let", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 24 {
+				t.Fatalf("exit %d, want 24 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
 const ownLastUseReassignSrc = `struct W { d: i32[], n: i32 }
 @noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
 @noinline function mkw(n: i32): W { return W { d: [n], n: n }; }

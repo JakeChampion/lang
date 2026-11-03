@@ -10828,6 +10828,20 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 
+	// A literal based on q that replaces q.f moves q.f into an own
+	// parameter in the literal. A returned literal can take it from any q
+	// that is not borrowed. A local's initializer takes it only from an owned
+	// q, whose later reads the walk refuses.
+	admitSupersededFields := func(value ast.Expr, returned bool) {
+		if sl := FieldMoveLiteral(value); sl != nil && sl.Base != nil {
+			if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] && (returned || owned[bid.Name]) {
+				for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
+					selfMoveArgs[arg] = true
+				}
+			}
+		}
+	}
+
 	walkStmt = func(st ast.Stmt, moved movedSet) {
 		switch x := st.(type) {
 		case *ast.Block:
@@ -10850,6 +10864,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return
 				}
 			}
+			admitSupersededFields(x.Init, false)
 			recordExprUses(x.Init, moved)
 		case *ast.ExprStmt:
 			if asn, ok := x.Expr.(*ast.Assign); ok {
@@ -10899,13 +10914,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				deferMoved[name] = at
 			}
 		case *ast.Return:
-			if sl := FieldMoveLiteral(x.Value); sl != nil && sl.Base != nil {
-				if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] {
-					for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
-						selfMoveArgs[arg] = true
-					}
-				}
-			}
+			admitSupersededFields(x.Value, true)
 			recordExprUses(x.Value, moved)
 		case *ast.If:
 			recordExprUses(x.Cond, moved)

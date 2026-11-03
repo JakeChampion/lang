@@ -1100,7 +1100,32 @@ function step(own a: Asm, v: i32): Asm {
 }`)
 }
 
+// A let initializer takes the superseded field as a return does (#14111).
+func TestOwnGuardAllowsSupersededFieldMoveOnLet(t *testing.T) {
+	wantOK(t, "field-move-let-form", fieldMovePrelude+`
+function step(own a: Asm, v: i32): Asm {
+    let b: Asm = Asm { ...a, cfi: record(a.cfi, v) };
+    return b;
+}`)
+}
+
+// The base stays owned by the walk, so a read of the moved field after the
+// literal is a use after move (#14111).
+func TestOwnGuardRejectsReadAfterSupersededFieldMoveOnLet(t *testing.T) {
+	wantE050(t, "field-move-let-then-read", fieldMovePrelude+`
+function step(own a: Asm, v: i32): Asm {
+    let b: Asm = Asm { ...a, cfi: record(a.cfi, v) };
+    let n: i32 = a.cfi.n;
+    return b;
+}`)
+}
+
 func TestOwnGuardRejectsSupersededFieldMoveOnBorrowedBase(t *testing.T) {
+	wantE051(t, "field-move-borrowed-base-let", fieldMovePrelude+`
+function step(a: Asm, v: i32): Asm {
+    let b: Asm = Asm { ...a, cfi: record(a.cfi, v) };
+    return b;
+}`)
 	wantE051(t, "field-move-borrowed-base", fieldMovePrelude+`
 function step(a: Asm, v: i32): Asm {
     a = Asm { ...a, cfi: record(a.cfi, v) };

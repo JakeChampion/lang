@@ -21040,25 +21040,29 @@ function ow_loop(body: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): util.Diag[
   return out;
 }
 
+// A literal based on q that replaces q.f moves q.f into an own parameter in
+// the literal. A returned literal can take it from any q that is not
+// borrowed. A local's initializer takes it only from an owned q, whose later
+// reads the walk refuses.
+function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): OwnCtx {
+  if let ast.ExprStructLit(sl) = value {
+    if (sl.has_base) {
+      let base: string = ow_ident_name(sl.base);
+      if (base.len() > 0 && !util.has_str(ctx.borrowed, base) && (returned || ow_is_owned(ctx, base))) {
+        return OwnCtx { ...ctx, admit_fields: ow_field_move_fields(base, value, ctx) };
+      }
+    }
+  }
+  return ctx;
+}
+
 function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (st) {
     ast.StmtVar(v) => {
-      return ru_expr(v.init, moved, ctx);
+      return ru_expr(v.init, moved, ow_superseded_ctx(v.init, false, ctx));
     },
     ast.StmtReturn(r) => {
-      let rctx: OwnCtx = ctx;
-      match (r.value) {
-        ast.ExprStructLit(sl) => {
-          if (sl.has_base) {
-            let base: string = ow_ident_name(sl.base);
-            if (base.len() > 0 && !util.has_str(ctx.borrowed, base)) {
-              rctx = OwnCtx { ...ctx, admit_fields: ow_field_move_fields(base, r.value, ctx) };
-            }
-          }
-        },
-        _ => {}
-      }
-      return ow_record_return(ru_expr(r.value, moved, rctx), r.line, ctx);
+      return ow_record_return(ru_expr(r.value, moved, ow_superseded_ctx(r.value, true, ctx)), r.line, ctx);
     },
     ast.StmtExpr(e) => {
       return ru_expr(e.value, moved, ctx);
