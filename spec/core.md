@@ -506,6 +506,7 @@ is the number of slots it leaves.
 | `tcp_addr_into` | 486 | 3 | 1 |
 | `buf_push_base64` | 487 | 5 | 1 |
 | `buf_push_base32` | 488 | 5 | 1 |
+| `buf_decode_base32` | 489 | 5 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

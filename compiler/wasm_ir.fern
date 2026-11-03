@@ -152,7 +152,7 @@ pub function need_ops(): string[] {
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded",
-    "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_len", "buf_clear", "buf_take", "buf_free",
+    "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_decode_base32", "buf_len", "buf_clear", "buf_take", "buf_free",
   ];
 }
 
@@ -1284,7 +1284,7 @@ pub function module_uses_buf(cache: irtables.LowerResult[]): boolean {
     || module_emits_op_cached(cache, "buf_push_mapped") || module_emits_op_cached(cache, "buf_push_filtered")
     || module_emits_op_cached(cache, "buf_push_expanded")
     || module_emits_op_cached(cache, "buf_push_bytes_mapped") || module_emits_op_cached(cache, "buf_push_bytes_filtered") || module_emits_op_cached(cache, "buf_push_bytes_expanded")
-    || module_emits_op_cached(cache, "buf_push_u64") || module_emits_op_cached(cache, "buf_push_decimal") || module_emits_op_cached(cache, "buf_push_base64") || module_emits_op_cached(cache, "buf_push_base32")
+    || module_emits_op_cached(cache, "buf_push_u64") || module_emits_op_cached(cache, "buf_push_decimal") || module_emits_op_cached(cache, "buf_push_base64") || module_emits_op_cached(cache, "buf_push_base32") || module_emits_op_cached(cache, "buf_decode_base32")
     || module_emits_op_cached(cache, "buf_len") || module_emits_op_cached(cache, "buf_take")
     || module_emits_op_cached(cache, "buf_take_bytes")
     || module_emits_op_cached(cache, "buf_push_bytes_range")
@@ -1461,7 +1461,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       || n == "buf_new" || n == "buf_push" || n == "buf_push_range"
       || n == "buf_push_mapped" || n == "buf_push_filtered" || n == "buf_push_expanded"
       || n == "buf_push_bytes_mapped" || n == "buf_push_bytes_filtered" || n == "buf_push_bytes_expanded"
-      || n == "buf_push_byte" || n == "buf_push_u64" || n == "buf_push_decimal" || n == "buf_push_base64" || n == "buf_push_base32" || n == "buf_len"
+      || n == "buf_push_byte" || n == "buf_push_u64" || n == "buf_push_decimal" || n == "buf_push_base64" || n == "buf_push_base32" || n == "buf_decode_base32" || n == "buf_len"
       || n == "buf_clear" || n == "buf_take" || n == "buf_free"
       || n == "str_bytes" || n == "str_from_bytes" || n == "str_from_bytes_range") {
       i = i + 1;
@@ -4839,7 +4839,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == 165) {
     parts = emit_wasm_putchar(eltmp, parts);
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 488 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag >= 487 && o.kind_tag <= 489 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
     parts = emit_wasm_buf_op(o, parts);
   } else if (o.kind_tag == 138) {
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
@@ -7232,6 +7232,9 @@ function emit_wasm_buf_op(o: ir.Op, parts: string[]): string[] {
   if (o.kind_tag == 488) {
     return parts.append("    call $__fern_buf_push_base32\n    i32.const 0\n");
   }
+  if (o.kind_tag == 489) {
+    return parts.append("    call $__fern_buf_decode_base32\n");
+  }
   if (o.kind_tag == 295) {
     return parts.append("    call $__fern_buf_len\n");
   }
@@ -7301,6 +7304,41 @@ function buf_push_base32_helper(): string {
   o = o + "      (local.set $n (i32.sub (local.get $n) (i32.const 1)))\n";
   o = o + "      (br_if $l (local.get $n)))\n";
   return o + "    (i32.store offset=4 (local.get $h) (i32.add (local.get $len) (local.get $out))))\n";
+}
+
+// Five bytes for each whole group of eight characters in a[lo..hi), up to the
+// first character outside both ranges in $r. Returns the index it stops at.
+function buf_decode_base32_helper(): string {
+  let o: string = "  (func $__fern_buf_decode_base32 (param $h i32) (param $a i32) (param $lo i32) (param $hi i32) (param $r i32) (result i32)\n";
+  o = o + "    (local $s i32) (local $p i32) (local $k i32) (local $c i32) (local $d i32) (local $v i64)\n";
+  o = o + "    (if (i32.lt_s (local.get $lo) (i32.const 0)) (then (local.set $lo (i32.const 0))))\n";
+  o = o + "    (if (i32.gt_s (local.get $hi) (i32.load (local.get $a))) (then (local.set $hi (i32.load (local.get $a)))))\n";
+  o = o + "    (if (i32.lt_s (i32.sub (local.get $hi) (local.get $lo)) (i32.const 8)) (then (return (local.get $lo))))\n";
+  o = o + "    (if (i32.lt_u (i32.load (local.get $r)) (i32.const 4)) (then (call $__fern_abort_arr) (unreachable)))\n";
+  o = o + "    (local.set $r (i32.add (local.get $r) (i32.const 8)))\n";
+  o = o + "    (local.set $s (local.get $lo))\n";
+  o = o + "    (block $done (loop $g\n";
+  o = o + "      (br_if $done (i32.gt_s (i32.add (local.get $s) (i32.const 8)) (local.get $hi)))\n";
+  o = o + "      (local.set $v (i64.const 0))\n";
+  o = o + "      (local.set $k (i32.const 0))\n";
+  o = o + "      (loop $c8\n";
+  o = o + "        (local.set $c (i32.load8_u offset=8 (i32.add (i32.add (local.get $a) (local.get $s)) (local.get $k))))\n";
+  o = o + "        (local.set $d (i32.and (i32.sub (local.get $c) (i32.load8_u (local.get $r))) (i32.const 255)))\n";
+  o = o + "        (if (i32.ge_u (local.get $d) (i32.load8_u offset=1 (local.get $r))) (then\n";
+  o = o + "          (local.set $d (i32.and (i32.sub (local.get $c) (i32.load8_u offset=2 (local.get $r))) (i32.const 255)))\n";
+  o = o + "          (br_if $done (i32.ge_u (local.get $d) (i32.load8_u offset=3 (local.get $r))))\n";
+  o = o + "          (local.set $d (i32.add (local.get $d) (i32.load8_u offset=1 (local.get $r))))))\n";
+  o = o + "        (local.set $v (i64.or (i64.shl (local.get $v) (i64.const 5)) (i64.extend_i32_u (local.get $d))))\n";
+  o = o + "        (local.set $k (i32.add (local.get $k) (i32.const 1)))\n";
+  o = o + "        (br_if $c8 (i32.lt_u (local.get $k) (i32.const 8))))\n";
+  o = o + "      (local.set $k (i32.const 32))\n";
+  o = o + "      (loop $b5\n";
+  o = o + "        (call $__fern_buf_push_byte (local.get $h) (i32.wrap_i64 (i64.and (i64.shr_u (local.get $v) (i64.extend_i32_u (local.get $k))) (i64.const 255))))\n";
+  o = o + "        (local.set $k (i32.sub (local.get $k) (i32.const 8)))\n";
+  o = o + "        (br_if $b5 (i32.ge_s (local.get $k) (i32.const 0))))\n";
+  o = o + "      (local.set $s (i32.add (local.get $s) (i32.const 8)))\n";
+  o = o + "      (br $g)))\n";
+  return o + "    (local.get $s))\n";
 }
 
 function buf_push_bytes_range_helper(): string {
@@ -7491,7 +7529,7 @@ pub function buf_helpers(needs: string[]): string {
     o = o + "    (i32.store (i32.add (local.get $h) (i32.const 12)) (local.get $cap))\n";
     o = o + "    (local.get $h))\n";
   }
-  if (need_any(needs, ["buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_push_bytes_range"])) {
+  if (need_any(needs, ["buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_decode_base32", "buf_push_bytes_range"])) {
     o = o + "  (func $__fern_buf_reserve (param $h i32) (param $need i32)\n";
     o = o + "    (local $ncap i32) (local $np i32) (local $i i32) (local $len i32) (local $old i32)\n";
     o = o + "    (local.set $ncap (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
@@ -7538,7 +7576,7 @@ pub function buf_helpers(needs: string[]): string {
   }
   o = o + buf_table_helpers(needs, false);
   o = o + buf_table_helpers(needs, true);
-  if (need(needs, "buf_push_byte")) {
+  if (need_any(needs, ["buf_push_byte", "buf_decode_base32"])) {
     o = o + "  (func $__fern_buf_push_byte (param $h i32) (param $x i32)\n";
     o = o + "    (local $len i32)\n";
     o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
@@ -7578,6 +7616,9 @@ pub function buf_helpers(needs: string[]): string {
   }
   if (need(needs, "buf_push_base32")) {
     o = o + buf_push_base32_helper();
+  }
+  if (need(needs, "buf_decode_base32")) {
+    o = o + buf_decode_base32_helper();
   }
   if (need(needs, "buf_len")) {
     o = o + "  (func $__fern_buf_len (param $h i32) (result i32)\n";

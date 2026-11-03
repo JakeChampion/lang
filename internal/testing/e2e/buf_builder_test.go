@@ -305,6 +305,97 @@ function main(): i32 {
 }
 `
 
+const bufDecodeBase32Probe = `import "std/string";
+function reference(b: usize, bs: u8[], lo: i32, hi: i32, r: u8[]): i32 {
+    let at: i32 = lo;
+    if (at < 0) { at = 0; }
+    let end: i32 = hi;
+    if (end > bs.len()) { end = bs.len(); }
+    while (at + 8 <= end) {
+        let v: i64 = 0 as i64;
+        let k: i32 = 0;
+        while (k < 8) {
+            let c: i32 = bs[at + k] as i32;
+            let d1: i32 = c - r[0] as i32 & 255;
+            let d2: i32 = c - r[2] as i32 & 255;
+            if (d1 < r[1] as i32) {
+                v = v << 5 | d1 as i64;
+            } else if (d2 < r[3] as i32) {
+                v = v << 5 | (d2 + r[1] as i32) as i64;
+            } else {
+                return at;
+            }
+            k = k + 1;
+        }
+        let s: i64 = 32 as i64;
+        while (s >= 0 as i64) {
+            buf_push_byte(b, (v >> s & 255 as i64) as i32);
+            s = s - 8 as i64;
+        }
+        at = at + 8;
+    }
+    return at;
+}
+function check(b: usize, bs: u8[], lo: i32, hi: i32, r: u8[]): i32 {
+    let n: i32 = buf_decode_base32(b, bs, lo, hi, r);
+    let got: string = buf_take(b);
+    let want: i32 = reference(b, bs, lo, hi, r);
+    if (n != want) { return 1; }
+    if (got != buf_take(b)) { return 2; }
+    return 0;
+}
+function text(alphabet: string, dirty: boolean): u8[] {
+    let a: u8[] = alphabet.bytes();
+    let out: u8[] = [];
+    let k: i32 = 0;
+    while (k < 200) {
+        let c: u8 = a[(k * 7 + k / 3) % 32];
+        if (dirty && (k == 37 || k == 90 || k == 151)) {
+            c = 61u8;
+        }
+        if (dirty && k == 123) {
+            c = 10u8;
+        }
+        out = out.append(c);
+        k = k + 1;
+    }
+    return out;
+}
+function sweep(b: usize, bs: u8[], r: u8[], tag: i32): i32 {
+    let lo: i32 = 0;
+    while (lo < 9) {
+        let hi: i32 = lo;
+        while (hi <= 200) {
+            if (check(b, bs, lo, hi, r) != 0) { return tag + lo; }
+            hi = hi + 1;
+        }
+        lo = lo + 1;
+    }
+    return 0;
+}
+function main(): i32 {
+    let b: usize = buf_new(1);
+    let std: u8[] = [65u8, 26u8, 50u8, 6u8];
+    let hex: u8[] = [48u8, 10u8, 65u8, 22u8];
+    let sa: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let ha: string = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
+    let e: i32 = sweep(b, text(sa, false), std, 10);
+    if (e != 0) { return e; }
+    e = sweep(b, text(sa, true), std, 20);
+    if (e != 0) { return e; }
+    e = sweep(b, text(ha, false), hex, 30);
+    if (e != 0) { return e; }
+    e = sweep(b, text(ha, true), hex, 40);
+    if (e != 0) { return e; }
+    if (check(b, text(sa, true), 0 - 5, 9999, std) != 0) { return 2; }
+    buf_push_byte(b, 61);
+    if (buf_decode_base32(b, "MZXW6YTBOI======".bytes(), 0, 16, std) != 8) { return 3; }
+    if (buf_take(b) != "=fooba") { return 4; }
+    buf_free(b);
+    return 0;
+}
+`
+
 func TestBufBuilder(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	probes := []struct {
@@ -318,6 +409,7 @@ func TestBufBuilder(t *testing.T) {
 		{"push-decimal", bufPushDecimalProbe},
 		{"push-base64", bufPushBase64Probe},
 		{"push-base32", bufPushBase32Probe},
+		{"decode-base32", bufDecodeBase32Probe},
 	}
 	for _, p := range probes {
 		t.Run(p.name, func(t *testing.T) {

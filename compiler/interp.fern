@@ -6271,7 +6271,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
 function is_buf_builtin(name: string): boolean {
   return util.has_str(
     [
-      "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_base64", "buf_push_base32",
+      "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_base64", "buf_push_base32", "buf_decode_base32",
       "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_bytes_mapped", "buf_push_bytes_filtered",
       "buf_push_bytes_expanded", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded",
       "buf_len", "buf_take", "buf_take_bytes", "buf_clear", "buf_free",
@@ -6961,6 +6961,64 @@ function push_based_range(h: usize, a: VArr, t: VArr, lo0: i32, hi0: i32, bits: 
   return v_void();
 }
 
+// Five bytes for each whole group of eight characters in a[lo..hi), up to the
+// first group with a character outside both ranges in r: the start and count
+// of the values from 0, then the start and count of the rest.
+function call_buf_decode_base32(h: usize, args: Value[]): Value {
+  if (args.len() != 5 || !is_int_like(args[2]) || !is_int_like(args[3])) {
+    return v_err("buf_decode_base32: expected 5 args (b, bytes, lo, hi, ranges)");
+  }
+  match (args[1]) {
+    VArr(a) => {
+      match (args[4]) {
+        VArr(r) => {
+          return decode_base32_range(h, a, r, int_arg_i32(args[2]), int_arg_i32(args[3]));
+        },
+        _ => {
+          return v_err("buf_decode_base32: expected a ranges array");
+        }
+      }
+    },
+    _ => {
+      return v_err("buf_decode_base32: expected byte array");
+    }
+  }
+}
+
+function decode_base32_range(h: usize, a: VArr, r: VArr, lo0: i32, hi0: i32): Value {
+  let lo: i32 = if (lo0 < 0) { 0 } else { lo0 };
+  let hi: i32 = if (hi0 > arr_len(a)) { arr_len(a) } else { hi0 };
+  if (hi - lo >= 8 && arr_len(r) < 4) {
+    return index_abort(aborts.arr_oob(), "3", arr_len(r));
+  }
+  let at: i32 = lo;
+  while (at + 8 <= hi && decode_base32_group(h, a, r, at)) {
+    at = at + 8;
+  }
+  return v_int(at);
+}
+
+function decode_base32_group(h: usize, a: VArr, r: VArr, at: i32): boolean {
+  let v: i64 = 0 as i64;
+  for k in 0..8 {
+    let c: i32 = vint_bits(arr_at(a, at + k)) & 255;
+    let d1: i32 = c - (vint_bits(arr_at(r, 0)) & 255) & 255;
+    let d2: i32 = c - (vint_bits(arr_at(r, 2)) & 255) & 255;
+    let n1: i32 = vint_bits(arr_at(r, 1)) & 255;
+    if (d1 < n1) {
+      v = v << 5 | d1 as i64;
+    } else if (d2 < (vint_bits(arr_at(r, 3)) & 255)) {
+      v = v << 5 | (d2 + n1) as i64;
+    } else {
+      return false;
+    }
+  }
+  for s in [32, 24, 16, 8, 0] {
+    buf_push_byte(h, (v >> s) as i32 & 255);
+  }
+  return true;
+}
+
 function push_based_group(h: usize, a: VArr, t: VArr, at: i32, group: i32, bits: i32): void {
   let v: i64 = 0 as i64;
   for k in 0..group {
@@ -7254,6 +7312,9 @@ function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): V
   }
   if (name == "buf_push_base32") {
     return call_buf_push_based(name, h, args, 5);
+  }
+  if (name == "buf_decode_base32") {
+    return call_buf_decode_base32(h, args);
   }
   if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return call_buf_push_table(name, h, args);
