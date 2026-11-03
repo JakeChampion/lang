@@ -127,8 +127,8 @@ func selfHostParameterisedBuiltins(t *testing.T) []string {
 		}
 	}
 	harvest := func(src string) {
-		for _, m := range quotedNameRE.FindAllStringSubmatch(src, -1) {
-			seen[m[1]] = true
+		for _, name := range selfHostDispatchNames(t, src) {
+			seen[name] = true
 		}
 	}
 	harvest(body)
@@ -145,10 +145,123 @@ func selfHostParameterisedBuiltins(t *testing.T) []string {
 }
 
 var (
-	quotedNameRE      = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
+	builtinNameRE     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	familyPredicateRE = regexp.MustCompile(`(is_[a-z0-9_]+)\(name\)`)
 	sigRowNameRE      = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)\(`)
 )
+
+func selfHostDispatchNames(t *testing.T, src string) []string {
+	t.Helper()
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse builtin dispatch: %v", err)
+	}
+	lists := map[string][]*ast.ArrayLit{}
+	ast.WalkProgram(prog, func(node ast.Node) bool {
+		if v, ok := node.(*ast.Var); ok {
+			if list, ok := v.Init.(*ast.ArrayLit); ok {
+				lists[v.Name] = append(lists[v.Name], list)
+			}
+		}
+		return true
+	})
+	seen := map[string]bool{}
+	add := func(value string) {
+		if builtinNameRE.MatchString(value) {
+			seen[value] = true
+		}
+	}
+	addList := func(expr ast.Expr) {
+		list, ok := expr.(*ast.ArrayLit)
+		if id, named := expr.(*ast.Ident); named {
+			candidates := lists[id.Name]
+			if len(candidates) != 1 {
+				t.Fatalf("builtin name list %q has no unique literal declaration; update the inventory's scope handling", id.Name)
+			}
+			list, ok = candidates[0], true
+		}
+		if !ok {
+			t.Fatalf("builtin name membership does not use a literal array; update the inventory")
+		}
+		for _, elem := range list.Elems {
+			name, ok := elem.(*ast.StringLit)
+			if !ok {
+				t.Fatalf("builtin name list contains a non-literal; update the inventory")
+			}
+			add(name.Value)
+		}
+	}
+	ast.WalkProgram(prog, func(node ast.Node) bool {
+		switch expr := node.(type) {
+		case *ast.Binary:
+			if value := dispatchComparedWith(expr, "name"); value != nil {
+				if name, ok := value.(*ast.StringLit); ok {
+					add(name.Value)
+				}
+			}
+		case *ast.Call:
+			field, ok := expr.Callee.(*ast.FieldAccess)
+			if ok && field.Field == "has_str" && len(expr.Args) == 2 && dispatchIdent(expr.Args[1], "name") {
+				addList(expr.Args[0])
+			}
+		case *ast.ForEach:
+			ast.Walk(expr.Body, func(node ast.Node) bool {
+				if test, ok := node.(*ast.Binary); ok && dispatchIdent(dispatchComparedWith(test, "name"), expr.Var) {
+					addList(expr.Iter)
+				}
+				return true
+			})
+		}
+		return true
+	})
+	var out []string
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func dispatchComparedWith(expr *ast.Binary, name string) ast.Expr {
+	if expr.Op == "==" {
+		if dispatchIdent(expr.Left, name) {
+			return expr.Right
+		}
+		if dispatchIdent(expr.Right, name) {
+			return expr.Left
+		}
+	}
+	return nil
+}
+
+func dispatchIdent(expr ast.Expr, name string) bool {
+	id, ok := expr.(*ast.Ident)
+	return ok && id.Name == name
+}
+
+func TestSelfHostDispatchNames(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"comparisons", `if (name == "first" || "second" == name) { return true; }`, "first,second"},
+		{"type-name", `if (name == "__tcp_close_unchecked") { t_struct("Socket"); return true; }`, "__tcp_close_unchecked"},
+		{"literal-list", `return util.has_str(["__alloc", "__fd_close"], name);`, "__alloc,__fd_close"},
+		{"named-list", `let names: string[] = ["lane_a", "lane_b"]; return util.has_str(names, name);`, "lane_a,lane_b"},
+		{"loop-list", `let names: string[] = ["math_a", "math_b"]; for n in names { if (n == name) { return true; } }`, "math_a,math_b"},
+		{"unrelated-data", `let types: string[] = ["Socket"]; if (other == "Reader") { return true; }`, ""},
+		{"unrelated-shadowing", `if (true) { let types = ["Socket"]; } if (false) { let types = ["Reader"]; } return name == "kept";`, "kept"},
+		{"unknown-builtin", `if (name == "not_declared") { return true; }`, "not_declared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "function probe(name: string): boolean { " + tc.body + " return false; }"
+			if got := strings.Join(selfHostDispatchNames(t, src), ","); got != tc.want {
+				t.Fatalf("names = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 func selfHostFileSection(t *testing.T, file, pattern string) string {
 	t.Helper()

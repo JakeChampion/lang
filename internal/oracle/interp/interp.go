@@ -605,6 +605,7 @@ func New() *Interp {
 	i.Builtins["buf_push_decimal"] = &Builtin{Fn: builtinBufPushDecimal}
 	i.Builtins["buf_push_base64"] = &Builtin{Fn: bufPushBased("buf_push_base64", 6)}
 	i.Builtins["buf_push_base32"] = &Builtin{Fn: bufPushBased("buf_push_base32", 5)}
+	i.Builtins["buf_decode_base32"] = &Builtin{Fn: builtinBufDecodeBase32}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
 	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
 	i.Builtins["buf_take_bytes"] = &Builtin{Fn: builtinBufTakeBytes}
@@ -1562,6 +1563,8 @@ func New() *Interp {
 	i.Builtins["timer_fd"] = &Builtin{Fn: builtinTimerFd}
 	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
+	i.Builtins["__tcp_close_unchecked"] = &Builtin{Fn: builtinTcpClose}
+	i.Builtins["__fd_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
@@ -5414,6 +5417,61 @@ func bufPushBased(name string, bits uint) func(*Interp, []Value) (Value, error) 
 		i.bufs[h] = b
 		return Void{}, nil
 	}
+}
+
+// builtinBufDecodeBase32 appends five bytes for each whole group of eight
+// characters in bytes[lo..hi), and stops at the first group with a character
+// outside both ranges. ranges is start and count of the values from 0, then
+// start and count of the rest. It returns the index after the last group.
+func builtinBufDecodeBase32(i *Interp, args []Value) (Value, error) {
+	if len(args) != 5 {
+		return nil, fmt.Errorf("buf_decode_base32: expected 5 args, got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_decode_base32", args[0])
+	if err != nil {
+		return nil, err
+	}
+	a, ok := args[1].(Array)
+	r, rok := args[4].(Array)
+	if !ok || !rok {
+		return nil, fmt.Errorf("buf_decode_base32: expected byte arrays, got %T and %T", args[1], args[4])
+	}
+	lo, lok := args[2].(Number)
+	hi, hik := args[3].(Number)
+	if !lok || !hik {
+		return nil, fmt.Errorf("buf_decode_base32: bounds must be numbers")
+	}
+	low, high := max(int64(lo), 0), min(int64(hi), int64(len(a.Elems())))
+	if high-low >= 8 && len(r.Elems()) < 4 {
+		return nil, indexAbort(CauseArrOOB, "3", len(r.Elems()))
+	}
+	byteAt := func(arr Array, at int64) byte {
+		n, _ := arr.Elems()[at].(Number)
+		return byte(n)
+	}
+	at := low
+	for ; at+8 <= high; at += 8 {
+		var v uint64
+		k := int64(0)
+		for ; k < 8; k++ {
+			c := byteAt(a, at+k)
+			if d := c - byteAt(r, 0); d < byteAt(r, 1) {
+				v = v<<5 | uint64(d)
+			} else if d := c - byteAt(r, 2); d < byteAt(r, 3) {
+				v = v<<5 | uint64(d+byteAt(r, 1))
+			} else {
+				break
+			}
+		}
+		if k < 8 {
+			break
+		}
+		for s := 32; s >= 0; s -= 8 {
+			b = append(b, byte(v>>uint(s)))
+		}
+	}
+	i.bufs[h] = b
+	return Number(at), nil
 }
 
 func builtinBufPushRange(i *Interp, args []Value) (Value, error) {

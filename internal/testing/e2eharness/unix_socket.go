@@ -40,7 +40,7 @@ function main(): i32 {
     if (tcp_send_bytes(a, [121u8, 111u8]) != 2) { return fail(6); }
     let back: u8[] = recv(c, 16);
     if (back.len() != 2 || back[0] != 121u8) { return fail(7); }
-    if (unix_listen(path, 4) >= 0) { return fail(8); }
+    if (unix_listen(path, 4).fd >= 0) { return fail(8); }
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
@@ -48,10 +48,10 @@ function main(): i32 {
         Ok(_) => {},
         Err(e) => { return fail(9); },
     }
-    if (unix_connect(path) != 0 - 2) { return fail(10); }
+    if (unix_connect(path).fd != 0 - 2) { return fail(10); }
     let long: string = "/tmp/" + "a".repeat(120);
-    if (unix_listen(long, 4) != 0 - enametoolong()) { return fail(11); }
-    if (unix_connect(long) != 0 - enametoolong()) { return fail(12); }
+    if (unix_listen(long, 4).fd != 0 - enametoolong()) { return fail(11); }
+    if (unix_connect(long).fd != 0 - enametoolong()) { return fail(12); }
     print("ok");
     return 42;
 }
