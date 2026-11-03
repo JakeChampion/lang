@@ -162,6 +162,7 @@ captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
 cast_in_tuple                                        0
 cast_int_arith_to_float                              0
+cast_known_targets                                   0
 cast_narrow_binding                                  0
 cell_composite_state                                 0
 cell_in_container                                    0
