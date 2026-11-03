@@ -1383,7 +1383,25 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
   return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none(), [], []);
 }
 
+// The call still runs when its result has no reader. Its result needs no
+// register or spill slot, and cannot prevent another value from taking one.
+function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
+  while (no_home.len() < f.nvals) {
+    no_home = no_home.append(false);
+  }
+  let uses = use_counts(f);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (inst_is_call(ins.kind_tag) && ins.result >= 0 && uses[ins.result] == 0) {
+        no_home = no_home.with(ins.result, true);
+      }
+    }
+  }
+  return no_home;
+}
+
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
+  no_home = unhomed_call_results(f, no_home);
   let cold_calls: boolean = cold.len() > 0;
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;

@@ -54,6 +54,11 @@ function split_paths(): ssa.SFunc {
   return ssa.SFunc { name: "split_paths", nparams: 0, nvals: 8, blocks: [b0, b1, b2], entry: 0, takes_env: false };
 }
 
+function unused_result(): ssa.SFunc {
+  let b = ssa.SBlock { id: 0, insts: [inst(1, 0, [], ""), inst(11, 1, [0], "effect"), inst(9, 2, [0, 0], "add")], term: ret(2), preds: [] };
+  return ssa.SFunc { name: "unused_result", nparams: 0, nvals: 3, blocks: [b], entry: 0, takes_env: false };
+}
+
 function check(ok: boolean, what: string, failures: i32): i32 {
   if (ok) {
     return failures;
@@ -105,6 +110,10 @@ function main(): i32 {
   let by_span: ssa.Alloc = ssa.regalloc_linear_fixed(sp, 3, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), [], []);
   failures = check(by_live.reg_of[1] >= 0 && by_live.reg_of[5] < 0, "liveness keeps a register the call does not clobber", failures);
   failures = check(by_span.reg_of[1] < 0, "an interval over a call spills without liveness", failures);
+  let unused = unused_result();
+  let homes = ssa.regalloc_linear(unused, 1, 1, 0, false, [], [], [], 0, 0);
+  failures = check(homes.reg_of[1] == 0 - 1 && homes.hi[1] < 0, "an unused call result needs no register or spill slot", failures);
+  failures = check(homes.reg_of[0] >= 1 && homes.reg_of[2] >= 0, "the live input and returned result retain their homes", failures);
   print("failures=" + util.i32_to_string(failures));
   return failures;
 }
