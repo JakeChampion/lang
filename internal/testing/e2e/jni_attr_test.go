@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -125,5 +126,84 @@ function main(): i32 { return 0; }`, false, "a JNI method needs -shared and a na
 				t.Fatalf("want a refusal with %q, got %v:\n%s", tc.want, err, out)
 			}
 		})
+	}
+}
+
+// jni.new_string in a real JVM: each Fern string reaches Java with the same
+// characters, an embedded NUL and characters above U+FFFF included (#14032).
+// A byte that does not start a whole UTF-8 character becomes U+FFFD.
+func TestStdJNINewStringRoundTrip(t *testing.T) {
+	host := e2eharness.HostSelfHostTarget()
+	if runtime.GOOS != "linux" || host == "" {
+		t.Skipf("-shared does not build for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	javac, err := exec.LookPath("javac")
+	if err != nil {
+		t.Skip("javac not on PATH")
+	}
+	java, err := exec.LookPath("java")
+	if err != nil {
+		t.Skip("java not on PATH")
+	}
+	const src = `import "std/jni";
+
+function sample_text(k: i32): string {
+  let samples: u8[][] = [
+    [],
+    [65 as u8, 0 as u8, 66 as u8],
+    [104 as u8, 195 as u8, 169 as u8, 226 as u8, 130 as u8, 172 as u8],
+    [240 as u8, 159 as u8, 152 as u8, 128 as u8],
+    [244 as u8, 143 as u8, 191 as u8, 191 as u8],
+    [255 as u8, 65 as u8, 226 as u8, 130 as u8],
+  ];
+  return string_from_bytes_unchecked(samples[k]);
+}
+
+@jni("dev.fern.strtest.Strings", "static String sample(int)")
+pub function sample(env: usize, cls: usize, k: i32): usize {
+  return jni.new_string(env, sample_text(k));
+}
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lib.fern")
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	javaDir := filepath.Join(dir, "java")
+	so := filepath.Join(dir, "libstrtest.so")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", host, "-shared", "-jni-java", javaDir, "-o", so, path, e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	check := `package dev.fern.strtest;
+
+public class Check {
+    public static void main(String[] args) {
+        String[] want = {"", "A\u0000B", "hé€", "😀", "􏿿", "�A��"};
+        for (int k = 0; k < want.length; k++) {
+            String got = Strings.sample(k);
+            if (!got.equals(want[k])) {
+                StringBuilder units = new StringBuilder();
+                for (char c : got.toCharArray()) units.append(Integer.toHexString(c)).append(' ');
+                System.out.println("sample " + k + ": got units " + units);
+                System.exit(1);
+            }
+        }
+        System.out.println("ok");
+    }
+}
+`
+	checkPath := filepath.Join(javaDir, "dev", "fern", "strtest", "Check.java")
+	if err := os.WriteFile(checkPath, []byte(check), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	classes := filepath.Join(dir, "classes")
+	if out, err := exec.Command(javac, "-d", classes, filepath.Join(javaDir, "dev", "fern", "strtest", "Strings.java"), checkPath).CombinedOutput(); err != nil {
+		t.Fatalf("javac: %v\n%s", err, out)
+	}
+	out, err := exec.Command(java, "-Djava.library.path="+dir, "-cp", classes, "dev.fern.strtest.Check").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "ok") {
+		t.Fatalf("round trip: %v\n%s", err, out)
 	}
 }
