@@ -381,10 +381,11 @@ const POLL_TIMEOUT: i32 = 0 - 3;
 struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean }
 
 // Runs the loop of the app on the loop thread, from the context that `start`
-// gave to it. `step` gets each event and gives the next state. `timeout`
+// gave to it. `step` takes the state with each event and gives the next
+// state, so the state can hold values that `step` must consume. `timeout`
 // gives the milliseconds to wait for the next event before a Tick. It
 // returns the last state after the Destroy event.
-pub function run[S](ctx: usize, state: S, step: (S, Event) => S, timeout: (S) => i32): S {
+pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout: (S) => i32): S {
   let lp: Loop = Loop { ctx: ctx, looper: c_looper_prepare(1), queue: 0 as usize, done: false };
   let vm: usize = attach(ctx);
   unsafe {
@@ -407,7 +408,7 @@ pub function run[S](ctx: usize, state: S, step: (S, Event) => S, timeout: (S) =>
 }
 
 // Reads one message from the UI thread, handles it, and replies.
-function message[S](lp: Loop, state: S, step: (S, Event) => S): (Loop, S) {
+function message[S](lp: Loop, own state: S, step: (own S, Event) => S): (Loop, S) {
   unsafe {
     let msg: usize = __alloc(16);
     let got: i64 = c_read(__load_i32(lp.ctx), msg, 16 as usize);
@@ -443,7 +444,7 @@ function message[S](lp: Loop, state: S, step: (S, Event) => S): (Loop, S) {
 }
 
 // Gives each pending input event to `step`.
-function input[S](lp: Loop, state: S, step: (S, Event) => S): S {
+function input[S](lp: Loop, own state: S, step: (own S, Event) => S): S {
   if (lp.queue == 0 as usize) {
     return state;
   }
@@ -488,9 +489,13 @@ function detach(vm: usize): void {
   }
 }
 
-// The JNIEnv of the loop thread, for calls that `run` makes.
+// The JNIEnv of the loop thread. The first call before `run` attaches the
+// thread to the JVM, so JNI calls work on the loop thread at any time.
 pub function env(ctx: usize): usize {
   unsafe {
+    if (__load_ptr(ctx + 32 as usize) == 0 as usize) {
+      let vm: usize = attach(ctx);
+    }
     return __load_ptr(ctx + 32 as usize);
   }
 }

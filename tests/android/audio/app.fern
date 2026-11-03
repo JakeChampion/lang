@@ -16,7 +16,7 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 function app_main_entry(): usize;
 
 function app_main(ctx: usize): usize {
-  let last: App = android.run(ctx, App { ctx: ctx, done: false }, (s: App, e: android.Event): App => step(s, e), (s: App): i32 => 0 - 1);
+  let last: App = android.run(ctx, App { ctx: ctx, done: false }, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 0 - 1);
   return 0 as usize;
 }
 

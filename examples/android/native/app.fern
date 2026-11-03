@@ -16,7 +16,7 @@ function app_main_entry(): usize;
 
 function app_main(ctx: usize): usize {
   let first: App = App { ctx: ctx, window: 0 as usize, started_ns: 0 as i64, before_ms: 0 as i64, running: false };
-  let last: App = android.run(ctx, first, (s: App, e: android.Event): App => step(s, e), (s: App): i32 => timeout(s));
+  let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => timeout(s));
   log.info("stopwatch: destroyed at " + elapsed_ms(last).to_string() + " ms");
   return 0 as usize;
 }
