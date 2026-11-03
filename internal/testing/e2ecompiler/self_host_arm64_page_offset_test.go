@@ -3,8 +3,11 @@ package e2ecompiler
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // The data words sit at offsets 8 and 16, and the byte puts the last quad
@@ -32,6 +35,10 @@ function main(): i32 {
     report("ldr_pageoff", ".text\n    ldr x16, [x16, quad@PAGEOFF]\n" + data);
     report("ldr_odd", ".text\n    ldr x0, [x0, :lo12:odd]\n" + data);
     report("str_lo12", ".text\n    str x0, [x1, :lo12:quad]\n" + data);
+    report("ldr_bad_mem", ".text\n    ldr x0, :lo12:quad\n" + data);
+    report("ldr_empty_mem", ".text\n    ldr x0, []\n    ldr x0, [x0, :lo12:quad]\n" + data);
+    report("ldr_missing", ".text\n    ldr :lo12:quad\n" + data);
+    report("ldr_fp", ".text\n    ldr d0, [x0, :lo12:quad]\n" + data);
     return 0;
 }
 `
@@ -41,13 +48,16 @@ function main(): i32 {
 // access size, a misaligned target is refused, and a page offset in an
 // instruction with no such fixup is refused rather than read as a number.
 func TestSelfHostArm64PageOffsetLoads(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("no native compiler target for this host")
+	}
 	dir := copySelfHostTree(t)
 	if err := os.WriteFile(filepath.Join(dir, "pageoff.fern"), []byte(arm64PageOffsetDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	driver := buildSelfHostBin(t, gcc, dir, "pageoff.fern", "pageoff")
-	cmd := runX86_64Bin(runner, driver)
+	driver := e2eharness.CachedDriverBinFor(t, dir, "pageoff.fern", target)
+	cmd := exec.Command(driver)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -62,6 +72,10 @@ func TestSelfHostArm64PageOffsetLoads(t *testing.T) {
 		"ldr_pageoff 4181722640\n",
 		"ldr_odd [ldr:align:odd]\n",
 		"str_lo12 [page offset in str]\n",
+		"ldr_bad_mem [ldr:page-offset operands]\n",
+		"ldr_empty_mem [",
+		"ldr_missing [",
+		"ldr_fp [ldr:page-offset operands]\n",
 	} {
 		if !bytes.Contains(out, []byte(want)) {
 			t.Errorf("driver output lacks %q:\n%s", want, out)
