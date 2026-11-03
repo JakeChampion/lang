@@ -588,7 +588,7 @@ func expectSIGILL(t *testing.T, qemu, bin string) {
 
 func expectHardenSignal(t *testing.T, qemu, bin string, signals ...syscall.Signal) {
 	t.Helper()
-	out, err := runArm64Bin(qemu, bin).CombinedOutput()
+	out, err := withoutCoreDump(runArm64Bin(qemu, bin)).CombinedOutput()
 	ee, ok := err.(*exec.ExitError)
 	if !ok {
 		t.Fatalf("%s: err=%v, want signals %v\n%s", filepath.Base(bin), err, signals, out)
