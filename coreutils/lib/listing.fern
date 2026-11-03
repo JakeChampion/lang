@@ -410,8 +410,8 @@ function put_bytes(o: Out, bytes: u8[]): Out {
 }
 
 function put_name(c: Cfg, o: Out, s: string): Out {
-  let start: i64 = o.pos;
-  let next: Out = put(o, s);
+  let start = o.pos;
+  let next = put(o, s);
   if (!c.dired) {
     return next;
   }
@@ -419,8 +419,8 @@ function put_name(c: Cfg, o: Out, s: string): Out {
 }
 
 function put_subdir(c: Cfg, o: Out, s: string): Out {
-  let start: i64 = o.pos;
-  let next: Out = put(o, s);
+  let start = o.pos;
+  let next = put(o, s);
   if (!c.dired) {
     return next;
   }
@@ -435,7 +435,7 @@ function dired_indent(c: Cfg, o: Out): Out {
 }
 
 function fail(o: Out, msg: string, status: i32): Out {
-  let worst: i32 = o.status;
+  let worst = o.status;
   if (status > worst) {
     worst = status;
   }
@@ -446,15 +446,15 @@ function spaces(n: i32): string {
   if (n <= 0) {
     return "";
   }
-  let pool: string = "                                                                ";
+  let pool = "                                                                ";
   if (n <= pool.len()) {
     return slice_unchecked(pool, 0, n) + "";
   }
   let bs: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     bs = bs.append(32 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bs);
 }
@@ -469,14 +469,14 @@ function pad_right(s: string, w: i32): string {
 
 function indent(from: i32, to: i32, size: i32): string {
   let bs: u8[] = [];
-  let f: i32 = from;
+  let f = from;
   while (f < to) {
     if (size != 0 && to / size > (f + 1) / size) {
       bs = bs.append(9 as u8);
-      f = f + (size - f % size);
+      f += size - f % size;
     } else {
       bs = bs.append(32 as u8);
-      f = f + 1;
+      f += 1;
     }
   }
   return string_from_bytes_unchecked(bs);
@@ -570,20 +570,20 @@ pub struct Palette { on: boolean, link_target: boolean, lc: string, rc: string, 
 
 function empty_caps(): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cap_count()) {
     out = out.append("");
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function unset_caps(): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cap_count()) {
     out = out.append(false);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -593,9 +593,9 @@ pub function palette_off(): Palette {
 }
 
 function palette_default(): Palette {
-  let code: string[] = empty_caps();
-  let set: boolean[] = unset_caps();
-  let p: Palette = Palette { on: true, link_target: false, lc: "\x1b[", rc: "m", rs: "0", ec: "", has_ec: false, code: code, set: set, suffix: [], suffix_code: [] };
+  let code = empty_caps();
+  let set = unset_caps();
+  let p = Palette { on: true, link_target: false, lc: "\x1b[", rc: "m", rs: "0", ec: "", has_ec: false, code: code, set: set, suffix: [], suffix_code: [] };
   p = cap_put(p, cap_di(), "01;34");
   p = cap_put(p, cap_ln(), "01;36");
   p = cap_put(p, cap_pi(), "33");
@@ -623,91 +623,91 @@ function cap_on(p: Palette, id: i32): boolean {
   if (!p.set[id]) {
     return false;
   }
-  let v: string = p.code[id];
+  let v = p.code[id];
   return v.len() > 0 && v != "0" && v != "00";
 }
 
 function unescape(s: string, start: i32, end: i32): string {
   let bs: u8[] = [];
-  let i: i32 = start;
+  let i = start;
   while (i < end) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 92 && i + 1 < end) {
-      let n: i32 = s[i + 1] as i32;
+      let n = s[i + 1] as i32;
       if (n == 97) {
         bs = bs.append(7 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 98) {
         bs = bs.append(8 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 101) {
         bs = bs.append(27 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 102) {
         bs = bs.append(12 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 110) {
         bs = bs.append(10 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 114) {
         bs = bs.append(13 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 116) {
         bs = bs.append(9 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 118) {
         bs = bs.append(11 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 63) {
         bs = bs.append(127 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n == 95) {
         bs = bs.append(32 as u8);
-        i = i + 2;
+        i += 2;
       } else if (n >= 48 && n <= 55) {
-        let v: i32 = 0;
-        let k: i32 = i + 1;
+        let v = 0;
+        let k = i + 1;
         while (k < end && k < i + 4 && s[k] as i32 >= 48 && s[k] as i32 <= 55) {
           v = v * 8 + (s[k] as i32 - 48);
-          k = k + 1;
+          k += 1;
         }
         bs = bs.append((v & 255) as u8);
         i = k;
       } else if (n == 120 || n == 88) {
-        let hv: i32 = 0;
-        let hk: i32 = i + 2;
-        let any: boolean = false;
+        let hv = 0;
+        let hk = i + 2;
+        let any = false;
         while (hk < end) {
-          let d: i32 = hex_value(s[hk] as i32);
+          let d = hex_value(s[hk] as i32);
           if (d < 0) {
             break;
           }
           hv = hv * 16 + d;
           any = true;
-          hk = hk + 1;
+          hk += 1;
         }
         if (any) {
           bs = bs.append((hv & 255) as u8);
           i = hk;
         } else {
           bs = bs.append(n as u8);
-          i = i + 2;
+          i += 2;
         }
       } else {
         bs = bs.append(n as u8);
-        i = i + 2;
+        i += 2;
       }
     } else if (c == 94 && i + 1 < end) {
-      let m: i32 = s[i + 1] as i32;
+      let m = s[i + 1] as i32;
       if (m == 63) {
         bs = bs.append(127 as u8);
       } else {
         bs = bs.append((m & 31) as u8);
       }
-      i = i + 2;
+      i += 2;
     } else {
       bs = bs.append(c as u8);
-      i = i + 1;
+      i += 1;
     }
   }
   return string_from_bytes_unchecked(bs);
@@ -723,54 +723,54 @@ function hex_value(c: i32): i32 {
   if (c >= 65 && c <= 70) {
     return c - 55;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function scan_to(s: string, i0: i32, end: i32, b: i32): i32 {
-  let i: i32 = i0;
+  let i = i0;
   while (i < end) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 92 && i + 1 < end) {
-      i = i + 2;
+      i += 2;
       continue;
     }
     if (c == b) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return end;
 }
 
 function parse_ls_colors(spec: string): Palette {
-  let p: Palette = palette_default();
-  let names: string[] = cap_names();
-  let n: i32 = spec.len();
-  let i: i32 = 0;
+  let p = palette_default();
+  let names = cap_names();
+  let n = spec.len();
+  let i = 0;
   while (i < n) {
     if (spec[i] as i32 == 58) {
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let stop: i32 = scan_to(spec, i, n, 58);
-    let eq: i32 = scan_to(spec, i, stop, 61);
+    let stop = scan_to(spec, i, n, 58);
+    let eq = scan_to(spec, i, stop, 61);
     if (eq >= stop) {
       gnu.error("unparsable value for LS_COLORS environment variable");
       return palette_off();
     }
-    let key: string = unescape(spec, i, eq);
-    let value: string = unescape(spec, eq + 1, stop);
+    let key = unescape(spec, i, eq);
+    let value = unescape(spec, eq + 1, stop);
     if (key.len() > 1 && key[0] as i32 == 42) {
       p = Palette { ...p, suffix: p.suffix.append(slice_unchecked(key, 1, key.len()) + ""), suffix_code: p.suffix_code.append(value) };
     } else {
-      let slot: i32 = 0 - 1;
-      let k: i32 = 0;
+      let slot: i32 = -1;
+      let k = 0;
       while (k < names.len()) {
         if (names[k] == key) {
           slot = k;
           break;
         }
-        k = k + 1;
+        k += 1;
       }
       if (slot < 0) {
         gnu.error("unrecognized prefix: " + gnu.quote(key));
@@ -830,7 +830,7 @@ function stat_needed(c: Cfg, e: Ent): boolean {
   if (needs_record(c) || e.dkind == 0 as u32) {
     return true;
   }
-  let link: boolean = filetype.is_link(e.dkind);
+  let link = filetype.is_link(e.dkind);
   if (link && (c.deref == deref_all() || c.dirs_first)) {
     return true;
   }
@@ -859,9 +859,9 @@ function stat_entry(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
 }
 
 function stat_record(c: Cfg, e: Ent, cmdline: boolean): (Ent, boolean, string) {
-  let follow: boolean = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
-  let out: Ent = e;
-  let path: string = ent_path(e);
+  let follow = c.deref == deref_all() || cmdline && c.deref == deref_cmd();
+  let out = e;
+  let path = ent_path(e);
   if (follow) {
     match (stat(path)) {
       Ok(s) => {
@@ -970,7 +970,7 @@ function effective_mode(c: Cfg, e: Ent): u32 {
 
 function byte_cmp(a: string, b: string): i32 {
   if (a < b) {
-    return 0 - 1;
+    return -1;
   }
   if (a > b) {
     return 1;
@@ -979,19 +979,19 @@ function byte_cmp(a: string, b: string): i32 {
 }
 
 function extension(name: string): string {
-  let i: i32 = name.len() - 1;
+  let i = name.len() - 1;
   while (i > 0) {
     if (name[i] as i32 == 46) {
       return slice_unchecked(name, i, name.len()) + "";
     }
-    i = i - 1;
+    i -= 1;
   }
   return "";
 }
 
 function cmp_i64(a: i64, b: i64): i32 {
   if (a < b) {
-    return 0 - 1;
+    return -1;
   }
   if (a > b) {
     return 1;
@@ -1004,7 +1004,7 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     return byte_cmp(a.name, b.name);
   }
   if (c.sort_key == sort_time()) {
-    let r: i32 = cmp_i64(ent_time(c, b), ent_time(c, a));
+    let r = cmp_i64(ent_time(c, b), ent_time(c, a));
     if (r == 0) {
       r = cmp_i64(ent_nsec(c, b), ent_nsec(c, a));
     }
@@ -1014,14 +1014,14 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     return byte_cmp(a.name, b.name);
   }
   if (c.sort_key == sort_size()) {
-    let s: i32 = cmp_i64(b.st.size, a.st.size);
+    let s = cmp_i64(b.st.size, a.st.size);
     if (s != 0) {
       return s;
     }
     return byte_cmp(a.name, b.name);
   }
   if (c.sort_key == sort_ext()) {
-    let e: i32 = byte_cmp(extension(a.name), extension(b.name));
+    let e = byte_cmp(extension(a.name), extension(b.name));
     if (e != 0) {
       return e;
     }
@@ -1031,7 +1031,7 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
     return vercmp.compare(a.name, b.name);
   }
   if (c.sort_key == sort_width()) {
-    let w: i32 = printable_width(quoted_name(c, a.name)) - printable_width(quoted_name(c, b.name));
+    let w = printable_width(quoted_name(c, a.name)) - printable_width(quoted_name(c, b.name));
     if (w != 0) {
       return w;
     }
@@ -1042,8 +1042,8 @@ function cmp_key(c: Cfg, a: Ent, b: Ent): i32 {
 
 function before(c: Cfg, es: Ent[], a: i32, b: i32): boolean {
   if (c.dirs_first) {
-    let ad: boolean = is_dir_entry(c, es[a]);
-    let bd: boolean = is_dir_entry(c, es[b]);
+    let ad = is_dir_entry(c, es[a]);
+    let bd = is_dir_entry(c, es[b]);
     if (ad != bd) {
       return ad;
     }
@@ -1069,65 +1069,65 @@ function is_dir_entry(c: Cfg, e: Ent): boolean {
 }
 
 function sort_entries(c: Cfg, es: Ent[]): Ent[] {
-  let n: i32 = es.len();
+  let n = es.len();
   if (n < 2 || c.sort_key == sort_none()) {
     return es;
   }
   let src: i32[] = [];
   let dst: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     src = src.append(i);
     dst = dst.append(0);
-    i = i + 1;
+    i += 1;
   }
-  let width: i32 = 1;
+  let width = 1;
   while (width < n) {
-    let start: i32 = 0;
-    let at: i32 = 0;
+    let start = 0;
+    let at = 0;
     while (start < n) {
-      let mid: i32 = start + width;
+      let mid = start + width;
       if (mid > n) {
         mid = n;
       }
-      let end: i32 = mid + width;
+      let end = mid + width;
       if (end > n) {
         end = n;
       }
-      let p: i32 = start;
-      let q: i32 = mid;
+      let p = start;
+      let q = mid;
       while (p < mid && q < end) {
         if (before(c, es, src[q], src[p])) {
           dst = dst.with(at, src[q]);
-          q = q + 1;
+          q += 1;
         } else {
           dst = dst.with(at, src[p]);
-          p = p + 1;
+          p += 1;
         }
-        at = at + 1;
+        at += 1;
       }
       while (p < mid) {
         dst = dst.with(at, src[p]);
-        p = p + 1;
-        at = at + 1;
+        p += 1;
+        at += 1;
       }
       while (q < end) {
         dst = dst.with(at, src[q]);
-        q = q + 1;
-        at = at + 1;
+        q += 1;
+        at += 1;
       }
       start = end;
     }
-    let swap: i32[] = src;
+    let swap = src;
     src = dst;
     dst = swap;
-    width = width * 2;
+    width *= 2;
   }
   let out: Ent[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < n) {
     out = out.append(es[src[k]]);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
@@ -1138,25 +1138,25 @@ function qmark_applies(style: i32): boolean {
 
 function qmark(s: string): string {
   let bs: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 32 || b >= 127) {
       bs = bs.append(63 as u8);
     } else {
       bs = bs.append(b as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bs);
 }
 
 function quoted_name(c: Cfg, name: string): string {
-  let extra: string = "";
+  let extra = "";
   if (c.qstyle == 7) {
     extra = " ";
   }
-  let out: string = gnu.quote_style_with(name, c.qstyle, extra);
+  let out = gnu.quote_style_with(name, c.qstyle, extra);
   if (c.qmark && qmark_applies(c.qstyle)) {
     return qmark(out);
   }
@@ -1168,20 +1168,20 @@ function quoted_name(c: Cfg, name: string): string {
 
 function newline_qmark(s: string): string {
   let bs: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] as i32 == 10) {
       bs = bs.append(63 as u8);
     } else {
       bs = bs.append(s[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bs);
 }
 
 function quoted_header(c: Cfg, name: string): string {
-  let out: string = gnu.quote_style_with(name, c.qstyle, ":");
+  let out = gnu.quote_style_with(name, c.qstyle, ":");
   if (c.qmark && qmark_applies(c.qstyle)) {
     return qmark(out);
   }
@@ -1192,7 +1192,7 @@ function indicator(c: Cfg, e: Ent): string {
   if (c.indicator == ind_none()) {
     return "";
   }
-  let m: u32 = kind_mode(e);
+  let m = kind_mode(e);
   if (filetype.is_dir(m)) {
     return "/";
   }
@@ -1215,7 +1215,7 @@ function indicator(c: Cfg, e: Ent): string {
 }
 
 function color_slot(c: Cfg, e: Ent): i32 {
-  let p: Palette = c.colors;
+  let p = c.colors;
   if (filetype.is_link(e.st.mode)) {
     if (!e.link_ok && (p.link_target || cap_on(p, cap_or()))) {
       return cap_or();
@@ -1224,10 +1224,10 @@ function color_slot(c: Cfg, e: Ent): i32 {
       return cap_ln();
     }
   }
-  let m: u32 = effective_mode(c, e);
+  let m = effective_mode(c, e);
   if (filetype.is_dir(m)) {
-    let sticky: boolean = (m & 0x200 as u32) != 0 as u32;
-    let other_w: boolean = (m & 2 as u32) != 0 as u32;
+    let sticky = (m & 0x200 as u32) != 0 as u32;
+    let other_w = (m & 2 as u32) != 0 as u32;
     if (sticky && other_w && cap_on(p, cap_tw())) {
       return cap_tw();
     }
@@ -1273,15 +1273,15 @@ function color_code(c: Cfg, e: Ent): (string, boolean) {
   if (!c.color) {
     return ("", false);
   }
-  let p: Palette = c.colors;
-  let slot: i32 = color_slot(c, e);
+  let p = c.colors;
+  let slot = color_slot(c, e);
   if (slot == cap_fi()) {
-    let i: i32 = p.suffix.len() - 1;
+    let i = p.suffix.len() - 1;
     while (i >= 0) {
       if (ends_with_fold(e.name, p.suffix[i])) {
         return (p.suffix_code[i], true);
       }
-      i = i - 1;
+      i -= 1;
     }
   }
   if (slot < 0 || !cap_set(p, slot)) {
@@ -1294,21 +1294,21 @@ function ends_with_fold(name: string, suffix: string): boolean {
   if (suffix.len() > name.len()) {
     return false;
   }
-  let off: i32 = name.len() - suffix.len();
-  let i: i32 = 0;
+  let off = name.len() - suffix.len();
+  let i = 0;
   while (i < suffix.len()) {
-    let x: i32 = name[off + i] as i32;
-    let y: i32 = suffix[i] as i32;
+    let x = name[off + i] as i32;
+    let y = suffix[i] as i32;
     if (x >= 65 && x <= 90) {
-      x = x + 32;
+      x += 32;
     }
     if (y >= 65 && y <= 90) {
-      y = y + 32;
+      y += 32;
     }
     if (x != y) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -1319,10 +1319,10 @@ function osc_end(): string {
 
 function uri_encode(s: string): string {
   let bs: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
-    let plain: boolean = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 45 || b == 46 || b == 95 || b == 126 || b == 47;
+    let b = s[i] as i32;
+    let plain = b >= 48 && b <= 57 || b >= 65 && b <= 90 || b >= 97 && b <= 122 || b == 45 || b == 46 || b == 95 || b == 126 || b == 47;
     if (plain) {
       bs = bs.append(b as u8);
     } else {
@@ -1330,7 +1330,7 @@ function uri_encode(s: string): string {
       bs = bs.append(hex_digit_byte(b / 16));
       bs = bs.append(hex_digit_byte(b % 16));
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(bs);
 }
@@ -1409,14 +1409,14 @@ function resolve_ids(c: Cfg, n: pwdb.Names, e: Ent): (Ent, pwdb.Names) {
   if (c.numeric_ids) {
     return (Ent { ...e, owner: e.st.uid.to_string(), group: e.st.gid.to_string() }, n);
   }
-  let names: pwdb.Names = n;
-  let owner: string = "";
+  let names = n;
+  let owner = "";
   if (c.show_owner || c.show_author) {
     let u: (string, pwdb.Names) = names.user(e.st.uid as i64);
     owner = u.0;
     names = u.1;
   }
-  let group: string = "";
+  let group = "";
   if (c.show_group) {
     let g: (string, pwdb.Names) = names.group(e.st.gid as i64);
     group = g.0;
@@ -1456,8 +1456,8 @@ function block_text(c: Cfg, e: Ent): string {
 }
 
 function time_width(c: Cfg): i32 {
-  let a: i32 = timefmt.format_bytes(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
-  let b: i32 = timefmt.format_bytes(c.recent_fmt, c.zone, c.now, 0 as i64).len();
+  let a = timefmt.format_bytes(c.nonrecent_fmt, c.zone, c.now, 0 as i64).len();
+  let b = timefmt.format_bytes(c.recent_fmt, c.zone, c.now, 0 as i64).len();
   if (b > a) {
     return b;
   }
@@ -1468,8 +1468,8 @@ function time_bytes(c: Cfg, e: Ent): u8[] {
   if (!e.stated || c.time_type == time_birth() && no_birth(e)) {
     return pad_left("?", time_width(c)).bytes();
   }
-  let t: i64 = ent_time(c, e);
-  let recent: boolean = c.now - six_months() < t && t <= c.now;
+  let t = ent_time(c, e);
+  let recent = c.now - six_months() < t && t <= c.now;
   if (recent) {
     return timefmt.format_bytes(c.recent_fmt, c.zone, t, ent_nsec(c, e));
   }
@@ -1477,20 +1477,20 @@ function time_bytes(c: Cfg, e: Ent): u8[] {
 }
 
 function measure(c: Cfg, es: Ent[]): Widths {
-  let w: Widths = widths_new();
+  let w = widths_new();
   w = Widths { ...w, time: time_width(c), pad: some_quoted(c, es) };
-  let i: i32 = 0;
+  let i = 0;
   while (i < es.len()) {
-    let e: Ent = es[i];
+    let e = es[i];
     if (c.inode) {
-      let ino: string = "?";
+      let ino = "?";
       if (e.stated) {
         ino = e.st.ino.to_string();
       }
       w = Widths { ...w, inode: max_i32(w.inode, ino.len()) };
     }
     if (c.show_blocks) {
-      let blk: string = "?";
+      let blk = "?";
       if (e.stated) {
         blk = block_text(c, e);
       }
@@ -1500,7 +1500,7 @@ function measure(c: Cfg, es: Ent[]): Widths {
       w = Widths { ...w, context: max_i32(w.context, e.context.len()) };
     }
     if (c.format == fmt_long()) {
-      let nl: string = "?";
+      let nl = "?";
       if (e.stated) {
         nl = e.st.nlink.to_string();
       }
@@ -1526,7 +1526,7 @@ function measure(c: Cfg, es: Ent[]): Widths {
         w = Widths { ...w, size: max_i32(w.size, size_text(c, e).len()) };
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (w.major > 0 || w.minor > 0) {
     w = Widths { ...w, size: max_i32(w.size, w.major + 2 + w.minor) };
@@ -1566,16 +1566,16 @@ function size_field(c: Cfg, w: Widths, e: Ent): string {
 }
 
 function frills(c: Cfg, w: Widths, e: Ent): string {
-  let out: string = "";
+  let out = "";
   if (c.inode) {
-    let ino: string = "?";
+    let ino = "?";
     if (e.stated) {
       ino = e.st.ino.to_string();
     }
     out = out + pad_left(ino, w.inode) + " ";
   }
   if (c.show_blocks) {
-    let blk: string = "?";
+    let blk = "?";
     if (e.stated) {
       blk = block_text(c, e);
     }
@@ -1588,14 +1588,14 @@ function frills(c: Cfg, w: Widths, e: Ent): string {
 }
 
 function long_prefix(c: Cfg, w: Widths, e: Ent): u8[] {
-  let h: usize = buf_new(96);
+  let h = buf_new(96);
   buf_push(h, frills(c, w, e));
   if (e.stated) {
     buf_push(h, filetype.mode_string(e.st.mode));
   } else {
     buf_push(h, unknown_mode_string(e));
   }
-  let nl: string = "?";
+  let nl = "?";
   if (e.stated) {
     nl = e.st.nlink.to_string();
   }
@@ -1620,19 +1620,19 @@ function long_prefix(c: Cfg, w: Widths, e: Ent): u8[] {
   buf_push(h, " ");
   buf_push(h, size_field(c, w, e));
   buf_push(h, " ");
-  let stamp: u8[] = time_bytes(c, e);
+  let stamp = time_bytes(c, e);
   buf_push_bytes_range(h, stamp, 0, stamp.len());
   buf_push(h, " ");
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return bytes;
 }
 
 function push_pad(h: usize, n: i32): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     buf_push_byte(h, 32);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -1661,11 +1661,11 @@ function paint_new(): Paint {
 }
 
 function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean), text: string, record: boolean, hoist: boolean): (Out, Paint) {
-  let out: Out = o;
-  let paint: Paint = p;
-  let pal: Palette = c.colors;
-  let has: boolean = colour.1;
-  let coloured: boolean = c.color && (has || cap_on(pal, cap_no()));
+  let out = o;
+  let paint = p;
+  let pal = c.colors;
+  let has = colour.1;
+  let coloured = c.color && (has || cap_on(pal, cap_no()));
   if (coloured) {
     if (!paint.started) {
       out = put(out, reset_seq(pal));
@@ -1678,7 +1678,7 @@ function write_name(c: Cfg, o: Out, p: Paint, e: Ent, colour: (string, boolean),
       out = put(out, wrap_seq(pal, colour.0));
     }
   }
-  let body: string = text;
+  let body = text;
   if (hoist) {
     out = put(out, slice_unchecked(text, 0, 1) + "");
     body = slice_unchecked(text, 1, text.len() - 1) + "";
@@ -1707,8 +1707,8 @@ function start_entry(c: Cfg, o: Out, p: Paint): (Out, Paint) {
   if (!c.color || !cap_on(c.colors, cap_no())) {
     return (o, p);
   }
-  let out: Out = o;
-  let paint: Paint = p;
+  let out = o;
+  let paint = p;
   if (!paint.started) {
     out = put(out, reset_seq(c.colors));
     paint = Paint { started: true, used: true };
@@ -1717,7 +1717,7 @@ function start_entry(c: Cfg, o: Out, p: Paint): (Out, Paint) {
 }
 
 function aligns_quotes(c: Cfg): boolean {
-  let laid_out: boolean = c.format == fmt_long() || (c.format == fmt_vertical() || c.format == fmt_across()) && c.width != 0 as i64;
+  let laid_out = c.format == fmt_long() || (c.format == fmt_vertical() || c.format == fmt_across()) && c.width != 0 as i64;
   if (!laid_out) {
     return false;
   }
@@ -1732,32 +1732,32 @@ function some_quoted(c: Cfg, es: Ent[]): boolean {
   if (!aligns_quotes(c)) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < es.len()) {
     if (wears_quotes(quoted_name(c, es[i].name))) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean): (Out, Paint) {
-  let text: string = quoted_name(c, e.name);
-  let lead: Out = o;
-  let quoted: boolean = wears_quotes(text);
+  let text = quoted_name(c, e.name);
+  let lead = o;
+  let quoted = wears_quotes(text);
   if (pad && !quoted) {
     lead = put(lead, " ");
   }
   let r: (Out, Paint) = write_name(c, lead, p, e, color_code(c, e), text, true, c.hyperlink && pad && quoted);
-  let out: Out = r.0;
-  let paint: Paint = r.1;
+  let out = r.0;
+  let paint = r.1;
   if (!long || !filetype.is_link(kind_mode(e))) {
     out = put(out, indicator(c, e));
   }
   if (long && e.has_target) {
     out = put(out, " -> ");
-    let target: Ent = ent_new(e.target, ".");
+    let target = ent_new(e.target, ".");
     if (e.link_ok) {
       target = Ent { ...target, st: FileStat { ...e.st, mode: e.link_mode }, stated: true };
     }
@@ -1774,22 +1774,22 @@ function emit_name(c: Cfg, o: Out, p: Paint, e: Ent, long: boolean, pad: boolean
 }
 
 function display_len(c: Cfg, w: Widths, e: Ent): i32 {
-  let text: string = quoted_name(c, e.name);
-  let pad: i32 = 0;
+  let text = quoted_name(c, e.name);
+  let pad = 0;
   if (w.pad && !wears_quotes(text)) {
     pad = 1;
   }
-  let prefix: i32 = 0;
+  let prefix = 0;
   if (c.inode) {
     prefix = prefix + w.inode + 1;
     if (!e.stated) {
-      prefix = prefix - 1;
+      prefix -= 1;
     }
   }
   if (c.show_blocks) {
     prefix = prefix + w.blocks + 1;
     if (!e.stated) {
-      prefix = prefix - 1;
+      prefix -= 1;
     }
   }
   if (c.show_context && c.format != fmt_long()) {
@@ -1799,23 +1799,23 @@ function display_len(c: Cfg, w: Widths, e: Ent): i32 {
 }
 
 function printable_width(s: string): i32 {
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let n = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b >= 32 && b < 127) {
-      n = n + 1;
+      n += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32 {
-  let n: i32 = lens.len();
-  let max_cols: i32 = width / min_column_width();
+  let n = lens.len();
+  let max_cols = width / min_column_width();
   if (width % min_column_width() != 0) {
-    max_cols = max_cols + 1;
+    max_cols += 1;
   }
   if (max_cols > n) {
     max_cols = n;
@@ -1827,75 +1827,75 @@ function column_count(c: Cfg, lens: i32[], by_columns: boolean, width: i32): i32
   let total: i32[] = [];
   let valid: boolean[] = [];
   let flat: i32[] = [];
-  let at: i32 = 0;
-  let i: i32 = 0;
+  let at = 0;
+  let i = 0;
   while (i < max_cols) {
     base = base.append(at);
     total = total.append(min_column_width() * (i + 1));
     valid = valid.append(true);
-    let j: i32 = 0;
+    let j = 0;
     while (j <= i) {
       flat = flat.append(min_column_width());
-      j = j + 1;
+      j += 1;
     }
     at = at + i + 1;
-    i = i + 1;
+    i += 1;
   }
-  let f: i32 = 0;
+  let f = 0;
   while (f < n) {
-    let len: i32 = lens[f];
-    let k: i32 = 0;
+    let len = lens[f];
+    let k = 0;
     while (k < max_cols) {
       if (valid[k]) {
-        let cols: i32 = k + 1;
-        let idx: i32 = 0;
+        let cols = k + 1;
+        let idx = 0;
         if (by_columns) {
-          let rows: i32 = (n + k) / cols;
+          let rows = (n + k) / cols;
           if (rows > 0) {
             idx = f / rows;
           }
         } else {
           idx = f % cols;
         }
-        let want: i32 = len;
+        let want = len;
         if (idx != k) {
-          want = want + 2;
+          want += 2;
         }
-        let slot: i32 = base[k] + idx;
+        let slot = base[k] + idx;
         if (flat[slot] < want) {
           total = total.with(k, total[k] + want - flat[slot]);
           flat = flat.with(slot, want);
           valid = valid.with(k, total[k] <= width);
         }
       }
-      k = k + 1;
+      k += 1;
     }
-    f = f + 1;
+    f += 1;
   }
-  let chosen: i32 = 1;
-  let c2: i32 = max_cols;
+  let chosen = 1;
+  let c2 = max_cols;
   while (c2 > 1) {
     if (valid[c2 - 1]) {
       chosen = c2;
       break;
     }
-    c2 = c2 - 1;
+    c2 -= 1;
   }
   return chosen;
 }
 
 function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
-  let n: i32 = lens.len();
+  let n = lens.len();
   let w: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cols) {
     w = w.append(min_column_width());
-    i = i + 1;
+    i += 1;
   }
-  let rows: i32 = (n + cols - 1) / cols;
-  let f: i32 = 0;
+  let rows = (n + cols - 1) / cols;
+  let f = 0;
   while (f < n) {
-    let idx: i32 = 0;
+    let idx = 0;
     if (by_columns) {
       if (rows > 0) {
         idx = f / rows;
@@ -1903,24 +1903,24 @@ function column_widths(lens: i32[], cols: i32, by_columns: boolean): i32[] {
     } else {
       idx = f % cols;
     }
-    let want: i32 = lens[f];
+    let want = lens[f];
     if (idx != cols - 1) {
-      want = want + 2;
+      want += 2;
     }
     if (w[idx] < want) {
       w = w.with(idx, want);
     }
-    f = f + 1;
+    f += 1;
   }
   return w;
 }
 
 function column_start(w: i32[], col: i32): i32 {
-  let s: i32 = 0;
-  let i: i32 = 0;
+  let s = 0;
+  let i = 0;
   while (i < col) {
-    s = s + w[i];
-    i = i + 1;
+    s += w[i];
+    i += 1;
   }
   return s;
 }
@@ -1933,9 +1933,9 @@ function eol(c: Cfg): string {
 }
 
 function emit_single(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint) {
-  let out: Out = o;
-  let paint: Paint = p;
-  let i: i32 = 0;
+  let out = o;
+  let paint = p;
+  let i = 0;
   while (i < es.len()) {
     let open: (Out, Paint) = start_entry(c, out, paint);
     out = put(open.0, frills(c, w, es[i]));
@@ -1944,15 +1944,15 @@ function emit_single(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Pain
     out = r.0;
     paint = r.1;
     out = put(out, eol(c));
-    i = i + 1;
+    i += 1;
   }
   return (out, paint);
 }
 
 function emit_long(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint) {
-  let out: Out = o;
-  let paint: Paint = p;
-  let i: i32 = 0;
+  let out = o;
+  let paint = p;
+  let i = 0;
   while (i < es.len()) {
     out = dired_indent(c, out);
     let open: (Out, Paint) = start_entry(c, out, paint);
@@ -1962,30 +1962,30 @@ function emit_long(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Paint)
     out = r.0;
     paint = r.1;
     out = put(out, eol(c));
-    i = i + 1;
+    i += 1;
   }
   return (out, paint);
 }
 
 function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: string): (Out, Paint) {
-  let out: Out = o;
-  let paint: Paint = p;
-  let width: i32 = c.width as i32;
-  let pos: i32 = 0;
-  let i: i32 = 0;
+  let out = o;
+  let paint = p;
+  let width = c.width as i32;
+  let pos = 0;
+  let i = 0;
   while (i < es.len()) {
-    let len: i32 = 0;
+    let len = 0;
     if (width != 0) {
       len = display_len(c, w, es[i]);
     }
     if (i > 0) {
       out = put(out, sep);
-      let want: i32 = pos + len + 2;
+      let want = pos + len + 2;
       if (sep == "," && i < es.len() - 1) {
-        want = want + 1;
+        want += 1;
       }
       if (width == 0 || want <= width) {
-        pos = pos + 2;
+        pos += 2;
         out = put(out, " ");
       } else {
         pos = 0;
@@ -1998,8 +1998,8 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
     let r: (Out, Paint) = emit_name(c, out, paint, es[i], false, w.pad);
     out = r.0;
     paint = r.1;
-    pos = pos + display_len(c, w, es[i]);
-    i = i + 1;
+    pos += display_len(c, w, es[i]);
+    i += 1;
   }
   if (es.len() > 0) {
     out = put(out, eol(c));
@@ -2008,27 +2008,27 @@ function emit_separated(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, sep: str
 }
 
 function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns: boolean): (Out, Paint) {
-  let n: i32 = es.len();
+  let n = es.len();
   if (c.width == 0 as i64) {
     return emit_separated(c, o, p, es, w, " ");
   }
   let lens: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     lens = lens.append(display_len(c, w, es[i]));
-    i = i + 1;
+    i += 1;
   }
-  let cols: i32 = column_count(c, lens, by_columns, c.width as i32);
-  let cw: i32[] = column_widths(lens, cols, by_columns);
-  let rows: i32 = (n + cols - 1) / cols;
-  let out: Out = o;
-  let paint: Paint = p;
-  let r: i32 = 0;
+  let cols = column_count(c, lens, by_columns, c.width as i32);
+  let cw = column_widths(lens, cols, by_columns);
+  let rows = (n + cols - 1) / cols;
+  let out = o;
+  let paint = p;
+  let r = 0;
   while (r < rows) {
-    let pos: i32 = 0;
-    let col: i32 = 0;
+    let pos = 0;
+    let col = 0;
     while (col < cols) {
-      let idx: i32 = 0;
+      let idx = 0;
       if (by_columns) {
         idx = col * rows + r;
       } else {
@@ -2037,7 +2037,7 @@ function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns
       if (idx >= n) {
         break;
       }
-      let start: i32 = column_start(cw, col);
+      let start = column_start(cw, col);
       out = put(out, indent(pos, start, c.tabsize as i32));
       let open: (Out, Paint) = start_entry(c, out, paint);
       out = put(open.0, frills(c, w, es[idx]));
@@ -2046,10 +2046,10 @@ function emit_columns(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths, by_columns
       out = e.0;
       paint = e.1;
       pos = start + lens[idx];
-      col = col + 1;
+      col += 1;
     }
     out = put(out, eol(c));
-    r = r + 1;
+    r += 1;
   }
   return (out, paint);
 }
@@ -2075,16 +2075,16 @@ function emit_measured(c: Cfg, o: Out, p: Paint, es: Ent[], w: Widths): (Out, Pa
 }
 
 function emit_total(c: Cfg, o: Out, es: Ent[]): Out {
-  let sum: i64 = 0 as i64;
-  let i: i32 = 0;
+  let sum = 0 as i64;
+  let i = 0;
   while (i < es.len()) {
     if (es[i].stated) {
-      sum = sum + es[i].st.blocks;
+      sum += es[i].st.blocks;
     }
-    i = i + 1;
+    i += 1;
   }
-  let text: string = render(c.bsize, (sum * (512 as i64)) as u64);
-  let out: Out = dired_indent(c, o);
+  let text = render(c.bsize, (sum * (512 as i64)) as u64);
+  let out = dired_indent(c, o);
   return put(out, "total " + text + eol(c));
 }
 
@@ -2096,12 +2096,12 @@ function hidden(c: Cfg, name: string): boolean {
 }
 
 function matches_any(pats: string[], name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pats.len()) {
     if (fnmatch.fnmatch(pats[i], name)) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -2131,10 +2131,10 @@ function ent_path(e: Ent): string {
 }
 
 function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Out, pwdb.Names, boolean) {
-  let out: Out = o;
+  let out = o;
   let read: DirEntry[] = [];
-  let failed: boolean = false;
-  let why: string = "";
+  let failed = false;
+  let why = "";
   if (c.ignore_mode == ignore_minimal()) {
     match (read_dir_ino_all(path)) {
       Ok(es) => {
@@ -2169,19 +2169,19 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
   if (!needs_stat(c)) {
     return (list, out, seed, true);
   }
-  let ids: pwdb.Names = seed;
+  let ids = seed;
   let filled: Ent[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < list.len()) {
     if (!stat_needed(c, list[k])) {
       filled = filled.append(list[k]);
-      k = k + 1;
+      k += 1;
       continue;
     }
     let r: (Ent, boolean, string) = stat_entry(c, list[k], false);
-    let e: Ent = r.0;
+    let e = r.0;
     if (!r.1) {
-      let at: string = ent_path(e);
+      let at = ent_path(e);
       out = fail(out, "cannot access " + gnu.quotea(at) + ": " + r.2, status_minor());
       match (lstat(at)) {
         Ok(s) => {
@@ -2193,7 +2193,7 @@ function dir_entries(c: Cfg, o: Out, path: string, seed: pwdb.Names): (Ent[], Ou
     let r2: (Ent, pwdb.Names) = resolve_ids(c, ids, e);
     filled = filled.append(r2.0);
     ids = r2.1;
-    k = k + 1;
+    k += 1;
   }
   return (filled, out, ids, true);
 }
@@ -2204,8 +2204,8 @@ struct State { out: Out, paint: Paint, wrote: boolean, queue: Pending[], names: 
 
 function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
   let r: (Ent[], Out, pwdb.Names, boolean) = dir_entries(c, st.out, p.path, st.names);
-  let es: Ent[] = r.0;
-  let state: State = State { ...st, out: r.1, names: r.2 };
+  let es = r.0;
+  let state = State { ...st, out: r.1, names: r.2 };
   if (!r.3) {
     return state;
   }
@@ -2213,7 +2213,7 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
     if (state.wrote) {
       state = State { ...state, out: put(state.out, "\n") };
     }
-    let h: Out = dired_indent(c, state.out);
+    let h = dired_indent(c, state.out);
     h = put_subdir(c, h, quoted_header(c, p.path));
     state = State { ...state, out: put(h, ":\n") };
   }
@@ -2228,19 +2228,19 @@ function list_dir(c: Cfg, st: State, p: Pending, header: boolean): State {
     return state;
   }
   let subs: Pending[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < es.len()) {
-    let ent: Ent = es[i];
+    let ent = es[i];
     if (filetype.is_dir(kind_mode(ent)) && ent.name != "." && ent.name != "..") {
       subs = subs.append(Pending { path: gnu.join_path(p.path, ent.name) });
     }
-    i = i + 1;
+    i += 1;
   }
-  let q: Pending[] = subs;
-  let k: i32 = 0;
+  let q = subs;
+  let k = 0;
   while (k < state.queue.len()) {
     q = q.append(state.queue[k]);
-    k = k + 1;
+    k += 1;
   }
   return State { ...state, queue: q };
 }
@@ -2249,59 +2249,59 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
   let files: Ent[] = [];
   let every: Ent[] = [];
   let dirs: Pending[] = [];
-  let out: Out = o;
-  let ids: pwdb.Names = id_names_new(c);
-  let explicit: boolean = operands.len() > 0;
-  let args: string[] = operands;
+  let out = o;
+  let ids = id_names_new(c);
+  let explicit = operands.len() > 0;
+  let args = operands;
   if (!explicit) {
     args = ["."];
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < args.len()) {
-    let arg: string = args[i];
-    let e: Ent = ent_new(arg, ".");
+    let arg = args[i];
+    let e = ent_new(arg, ".");
     let r: (Ent, boolean, string) = stat_entry(c, e, true);
     if (!r.1) {
       out = fail(out, "cannot access " + gnu.quotea(arg) + ": " + r.2, status_usage());
-      i = i + 1;
+      i += 1;
       continue;
     }
     let got0: (Ent, pwdb.Names) = resolve_ids(c, ids, r.0);
     every = every.append(got0.0);
     ids = got0.1;
-    i = i + 1;
+    i += 1;
   }
   every = sort_entries(c, every);
-  let operand_widths: Widths = measure(c, every);
-  let k2: i32 = 0;
+  let operand_widths = measure(c, every);
+  let k2 = 0;
   while (k2 < every.len()) {
-    let got: Ent = every[k2];
+    let got = every[k2];
     if (filetype.is_dir(got.st.mode) && !c.immediate_dirs) {
       dirs = dirs.append(Pending { path: got.name });
     } else {
       files = files.append(got);
     }
-    k2 = k2 + 1;
+    k2 += 1;
   }
-  let state: State = State { out: out, paint: paint_new(), wrote: false, queue: dirs, names: ids };
+  let state = State { out: out, paint: paint_new(), wrote: false, queue: dirs, names: ids };
   if (files.len() > 0) {
     let fe: (Out, Paint) = emit_measured(c, state.out, state.paint, files, operand_widths);
     state = State { ...state, out: fe.0, paint: fe.1, wrote: true };
   }
-  let header: boolean = state.wrote || c.recursive || args.len() > 1 || dirs.len() > 1;
+  let header = state.wrote || c.recursive || args.len() > 1 || dirs.len() > 1;
   while (state.queue.len() > 0) {
-    let next: Pending = state.queue[0];
+    let next = state.queue[0];
     let rest: Pending[] = [];
-    let k: i32 = 1;
+    let k = 1;
     while (k < state.queue.len()) {
       rest = rest.append(state.queue[k]);
-      k = k + 1;
+      k += 1;
     }
     state = State { ...state, queue: rest };
     state = list_dir(c, state, next, header);
     header = true;
   }
-  let done: Out = state.out;
+  let done = state.out;
   if (c.color && state.paint.used && (c.colors.lc != "\x1b[" || c.colors.rc != "m")) {
     done = put(done, c.colors.lc + c.colors.rc);
   }
@@ -2318,19 +2318,19 @@ function run_operands(c: Cfg, o: Out, operands: string[]): Out {
 }
 
 function dired_line(tag: string, offs: i64[]): string {
-  let out: string = tag;
-  let i: i32 = 0;
+  let out = tag;
+  let i = 0;
   while (i < offs.len()) {
     out = out + " " + offs[i].to_string();
-    i = i + 1;
+    i += 1;
   }
   return out + "\n";
 }
 
 function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
   if (spec.len() > 0 && spec[0] as i32 == 43) {
-    let body: string = slice_unchecked(spec, 1, spec.len()) + "";
-    let parts: string[] = body.lines();
+    let body = slice_unchecked(spec, 1, spec.len()) + "";
+    let parts = body.lines();
     if (parts.len() > 2) {
       gnu.error("invalid time style format " + gnu.quote(body));
       exit(status_usage());
@@ -2338,10 +2338,10 @@ function apply_time_style(c: Cfg, spec: string, from_env: boolean): Cfg {
     if (parts.len() == 2) {
       return Cfg { ...c, nonrecent_fmt: timefmt.compile(parts[0]), recent_fmt: timefmt.compile(parts[1]) };
     }
-    let f: timefmt.Format = timefmt.compile(body);
+    let f = timefmt.compile(body);
     return Cfg { ...c, nonrecent_fmt: f, recent_fmt: f };
   }
-  let name: string = spec;
+  let name = spec;
   if (name.starts_with("posix-")) {
     name = slice_unchecked(name, 6, name.len()) + "";
     if (name == "full-iso" || name == "long-iso" || name == "iso" || name == "locale") {
@@ -2488,36 +2488,36 @@ function indicator_names(): string[] {
 }
 
 function parse_ulong0(spec: string): (i64, boolean) {
-  let n: i32 = spec.len();
-  let i: i32 = 0;
+  let n = spec.len();
+  let i = 0;
   while (i < n && gnu.is_blank(spec[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < n && spec[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= n) {
     return (0 as i64, false);
   }
-  let base: i64 = 10 as i64;
+  let base = 10 as i64;
   if (spec[i] as i32 == 48) {
     if (i + 1 < n && (spec[i + 1] as i32 == 120 || spec[i + 1] as i32 == 88)) {
       base = 16 as i64;
-      i = i + 2;
+      i += 2;
       if (i >= n) {
         return (0 as i64, false);
       }
     } else {
       base = 8 as i64;
-      i = i + 1;
+      i += 1;
       if (i >= n) {
         return (0 as i64, true);
       }
     }
   }
-  let v: i64 = 0 as i64;
+  let v = 0 as i64;
   while (i < n) {
-    let d: i32 = hex_value(spec[i] as i32);
+    let d = hex_value(spec[i] as i32);
     if (d < 0 || d as i64 >= base) {
       return (0 as i64, false);
     }
@@ -2525,7 +2525,7 @@ function parse_ulong0(spec: string): (i64, boolean) {
     if (v > 2147483647 as i64) {
       v = 2147483647 as i64;
     }
-    i = i + 1;
+    i += 1;
   }
   return (v, true);
 }
@@ -2540,108 +2540,108 @@ function parse_count(spec: string, what: string): i64 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "List information about the FILEs (the current directory by default).\n";
-  out = out + "Entries are sorted alphabetically unless an option below says otherwise.\n";
-  out = out + "\n";
-  out = out + "  -a, --all                  do not ignore entries starting with .\n";
-  out = out + "  -A, --almost-all           do not list implied . and ..\n";
-  out = out + "      --author               with -l, print the author of each file\n";
-  out = out + "  -b, --escape               print C-style escapes for nongraphic characters\n";
-  out = out + "      --block-size=SIZE      scale sizes by SIZE before printing them\n";
-  out = out + "  -B, --ignore-backups       do not list entries ending with ~\n";
-  out = out + "  -c                         with -l, show and sort by ctime\n";
-  out = out + "  -C                         list entries by columns\n";
-  out = out + "      --color[=WHEN]         colour the output; WHEN is always, auto or never\n";
-  out = out + "  -d, --directory            list directories themselves, not their contents\n";
-  out = out + "  -D, --dired                generate output designed for Emacs' dired mode\n";
-  out = out + "  -f                         do not sort, enable -aU\n";
-  out = out + "  -F, --classify[=WHEN]      append an indicator (one of */=>@|) to entries\n";
-  out = out + "      --file-type            likewise, except do not append '*'\n";
-  out = out + "      --format=WORD          across, commas, horizontal, long, single-column,\n";
-  out = out + "                               verbose, vertical\n";
-  out = out + "      --full-time            like -l --time-style=full-iso\n";
-  out = out + "  -g                         like -l, but do not list the owner\n";
-  out = out + "      --group-directories-first  list directories before files\n";
-  out = out + "  -G, --no-group             in a long listing, do not print group names\n";
-  out = out + "  -h, --human-readable       with -l and -s, print sizes like 1K 234M 2G\n";
-  out = out + "      --si                   likewise, but use powers of 1000 not 1024\n";
-  out = out + "  -H, --dereference-command-line  follow symbolic links on the command line\n";
-  out = out + "      --dereference-command-line-symlink-to-dir  follow each command line\n";
-  out = out + "                               symbolic link that points to a directory\n";
-  out = out + "      --hide=PATTERN         do not list entries matching PATTERN\n";
-  out = out + "                               (overridden by -a or -A)\n";
-  out = out + "      --hyperlink[=WHEN]     hyperlink file names; WHEN as for --color\n";
-  out = out + "      --indicator-style=WORD  append an indicator to entry names: none,\n";
-  out = out + "                               slash (-p), file-type, classify (-F)\n";
-  out = out + "  -i, --inode                print the index number of each file\n";
-  out = out + "  -I, --ignore=PATTERN       do not list entries matching PATTERN\n";
-  out = out + "  -k, --kibibytes            default to 1024-byte blocks for disk usage\n";
-  out = out + "  -l                         use a long listing format\n";
-  out = out + "  -L, --dereference          show information for the link's referent\n";
-  out = out + "  -m                         fill width with a comma separated list\n";
-  out = out + "  -n, --numeric-uid-gid      like -l, but list numeric user and group ids\n";
-  out = out + "  -N, --literal              print entry names without quoting\n";
-  out = out + "  -o                         like -l, but do not list group information\n";
-  out = out + "  -p                         append / indicator to directories\n";
-  out = out + "  -q, --hide-control-chars   print ? instead of nongraphic characters\n";
-  out = out + "      --show-control-chars   show nongraphic characters as-is\n";
-  out = out + "  -Q, --quote-name           enclose entry names in double quotes\n";
-  out = out + "      --quoting-style=WORD   literal, locale, shell, shell-always,\n";
-  out = out + "                               shell-escape, shell-escape-always, c, escape\n";
-  out = out + "  -r, --reverse              reverse order while sorting\n";
-  out = out + "  -R, --recursive            list subdirectories recursively\n";
-  out = out + "  -s, --size                 print the allocated size of each file, in blocks\n";
-  out = out + "  -S                         sort by file size, largest first\n";
-  out = out + "      --sort=WORD            sort by WORD instead of name: none (-U), size (-S),\n";
-  out = out + "                               time (-t), version (-v), extension (-X), width\n";
-  out = out + "      --time=WORD            select which timestamp is shown and sorted by\n";
-  out = out + "      --time-style=STYLE     time/date format with -l; STYLE is full-iso,\n";
-  out = out + "                               long-iso, iso, locale, or +FORMAT\n";
-  out = out + "  -t                         sort by time, newest first\n";
-  out = out + "  -T, --tabsize=COLS         assume tab stops at each COLS instead of 8\n";
-  out = out + "  -u                         with -lt sort by, and show, access time\n";
-  out = out + "  -U                         do not sort; list entries in directory order\n";
-  out = out + "  -v                         natural sort of (version) numbers within text\n";
-  out = out + "  -w, --width=COLS           set output width to COLS; 0 means no limit\n";
-  out = out + "  -x                         list entries by lines instead of by columns\n";
-  out = out + "  -X                         sort alphabetically by entry extension\n";
-  out = out + "  -Z, --context              print any security context of each file\n";
-  out = out + "      --zero                 end each output line with NUL, not newline\n";
-  out = out + "  -1                         list one file per line\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "The SIZE argument is an integer with an optional unit: K, M, G, T, P, E, Z, Y,\n";
-  out = out + "R or Q for powers of 1024, or KB, MB and so on for powers of 1000.\n";
-  out = out + "\n";
-  out = out + "The WHEN argument of --color, --classify and --hyperlink defaults to 'always'.\n";
-  out = out + "With 'auto' the decision is whether standard output is a terminal.\n";
-  out = out + "\n";
-  out = out + "Exit status is 0 if all went well, 1 if a file could not be reached, and 2 if\n";
-  out = out + "there was a serious trouble such as an unusable option.\n";
+  out += "List information about the FILEs (the current directory by default).\n";
+  out += "Entries are sorted alphabetically unless an option below says otherwise.\n";
+  out += "\n";
+  out += "  -a, --all                  do not ignore entries starting with .\n";
+  out += "  -A, --almost-all           do not list implied . and ..\n";
+  out += "      --author               with -l, print the author of each file\n";
+  out += "  -b, --escape               print C-style escapes for nongraphic characters\n";
+  out += "      --block-size=SIZE      scale sizes by SIZE before printing them\n";
+  out += "  -B, --ignore-backups       do not list entries ending with ~\n";
+  out += "  -c                         with -l, show and sort by ctime\n";
+  out += "  -C                         list entries by columns\n";
+  out += "      --color[=WHEN]         colour the output; WHEN is always, auto or never\n";
+  out += "  -d, --directory            list directories themselves, not their contents\n";
+  out += "  -D, --dired                generate output designed for Emacs' dired mode\n";
+  out += "  -f                         do not sort, enable -aU\n";
+  out += "  -F, --classify[=WHEN]      append an indicator (one of */=>@|) to entries\n";
+  out += "      --file-type            likewise, except do not append '*'\n";
+  out += "      --format=WORD          across, commas, horizontal, long, single-column,\n";
+  out += "                               verbose, vertical\n";
+  out += "      --full-time            like -l --time-style=full-iso\n";
+  out += "  -g                         like -l, but do not list the owner\n";
+  out += "      --group-directories-first  list directories before files\n";
+  out += "  -G, --no-group             in a long listing, do not print group names\n";
+  out += "  -h, --human-readable       with -l and -s, print sizes like 1K 234M 2G\n";
+  out += "      --si                   likewise, but use powers of 1000 not 1024\n";
+  out += "  -H, --dereference-command-line  follow symbolic links on the command line\n";
+  out += "      --dereference-command-line-symlink-to-dir  follow each command line\n";
+  out += "                               symbolic link that points to a directory\n";
+  out += "      --hide=PATTERN         do not list entries matching PATTERN\n";
+  out += "                               (overridden by -a or -A)\n";
+  out += "      --hyperlink[=WHEN]     hyperlink file names; WHEN as for --color\n";
+  out += "      --indicator-style=WORD  append an indicator to entry names: none,\n";
+  out += "                               slash (-p), file-type, classify (-F)\n";
+  out += "  -i, --inode                print the index number of each file\n";
+  out += "  -I, --ignore=PATTERN       do not list entries matching PATTERN\n";
+  out += "  -k, --kibibytes            default to 1024-byte blocks for disk usage\n";
+  out += "  -l                         use a long listing format\n";
+  out += "  -L, --dereference          show information for the link's referent\n";
+  out += "  -m                         fill width with a comma separated list\n";
+  out += "  -n, --numeric-uid-gid      like -l, but list numeric user and group ids\n";
+  out += "  -N, --literal              print entry names without quoting\n";
+  out += "  -o                         like -l, but do not list group information\n";
+  out += "  -p                         append / indicator to directories\n";
+  out += "  -q, --hide-control-chars   print ? instead of nongraphic characters\n";
+  out += "      --show-control-chars   show nongraphic characters as-is\n";
+  out += "  -Q, --quote-name           enclose entry names in double quotes\n";
+  out += "      --quoting-style=WORD   literal, locale, shell, shell-always,\n";
+  out += "                               shell-escape, shell-escape-always, c, escape\n";
+  out += "  -r, --reverse              reverse order while sorting\n";
+  out += "  -R, --recursive            list subdirectories recursively\n";
+  out += "  -s, --size                 print the allocated size of each file, in blocks\n";
+  out += "  -S                         sort by file size, largest first\n";
+  out += "      --sort=WORD            sort by WORD instead of name: none (-U), size (-S),\n";
+  out += "                               time (-t), version (-v), extension (-X), width\n";
+  out += "      --time=WORD            select which timestamp is shown and sorted by\n";
+  out += "      --time-style=STYLE     time/date format with -l; STYLE is full-iso,\n";
+  out += "                               long-iso, iso, locale, or +FORMAT\n";
+  out += "  -t                         sort by time, newest first\n";
+  out += "  -T, --tabsize=COLS         assume tab stops at each COLS instead of 8\n";
+  out += "  -u                         with -lt sort by, and show, access time\n";
+  out += "  -U                         do not sort; list entries in directory order\n";
+  out += "  -v                         natural sort of (version) numbers within text\n";
+  out += "  -w, --width=COLS           set output width to COLS; 0 means no limit\n";
+  out += "  -x                         list entries by lines instead of by columns\n";
+  out += "  -X                         sort alphabetically by entry extension\n";
+  out += "  -Z, --context              print any security context of each file\n";
+  out += "      --zero                 end each output line with NUL, not newline\n";
+  out += "  -1                         list one file per line\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "The SIZE argument is an integer with an optional unit: K, M, G, T, P, E, Z, Y,\n";
+  out += "R or Q for powers of 1024, or KB, MB and so on for powers of 1000.\n";
+  out += "\n";
+  out += "The WHEN argument of --color, --classify and --hyperlink defaults to 'always'.\n";
+  out += "With 'auto' the decision is whether standard output is a terminal.\n";
+  out += "\n";
+  out += "Exit status is 0 if all went well, 1 if a file could not be reached, and 2 if\n";
+  out += "there was a serious trouble such as an unusable option.\n";
   return out;
 }
 
 struct Scan { c: Cfg, width_seen: boolean, hide_opt: i32, operands: string[] }
 
 function scan(argv: string[], start: Cfg): Scan {
-  let c: Cfg = start;
-  let hide_opt: i32 = 0 - 1;
+  let c = start;
+  let hide_opt: i32 = -1;
   c = Cfg { ...c, qstyle: gnu.quoting_style_from_env_with(c.qstyle) };
-  let g: gnu.Getopt = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
-  let format_opt: i32 = 0 - 1;
-  let sort_opt: i32 = 0 - 1;
-  let explicit_time: boolean = false;
-  let deref_seen: boolean = false;
-  let kibibytes: boolean = false;
-  let width_seen: boolean = false;
-  let color_when: i32 = when_never();
-  let link_when: i32 = when_never();
-  let block_spec_seen: boolean = false;
-  let time_style: string = "";
-  let time_style_seen: boolean = false;
+  let g = gnu.getopt_new(argv, options(), gnu.prog(), help_text(), status_usage());
+  let format_opt: i32 = -1;
+  let sort_opt: i32 = -1;
+  let explicit_time = false;
+  let deref_seen = false;
+  let kibibytes = false;
+  let width_seen = false;
+  let color_when = when_never();
+  let link_when = when_never();
+  let block_spec_seen = false;
+  let time_style = "";
+  let time_style_seen = false;
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -2686,7 +2686,7 @@ function scan(argv: string[], start: Cfg): Scan {
           c = Cfg { ...c, fsize: blocks.human_unit(1000 as u64), bsize: blocks.human_unit(1000 as u64) };
           block_spec_seen = true;
         } else if (m.id == op_block_size()) {
-          let n: blocks.Num = blocks.parse_num(m.value, false, true, false);
+          let n = blocks.parse_num(m.value, false, true, false);
           if (n.status != blocks.size_ok()) {
             blocks.die_size_with(n.status, "--block-size", m.value, status_usage());
           }
@@ -2826,7 +2826,7 @@ function scan(argv: string[], start: Cfg): Scan {
     c = Cfg { ...c, dired: false };
   }
   if (c.color) {
-    let spec: string = "";
+    let spec = "";
     match (env("LS_COLORS")) {
       Some(v) => {
         spec = v;
@@ -2863,7 +2863,7 @@ function scan(argv: string[], start: Cfg): Scan {
     c = apply_time_style(c, time_style, false);
   }
   if (!block_spec_seen) {
-    let u: blocks.Unit = blocks.env_unit(["LS_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
+    let u = blocks.env_unit(["LS_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"]);
     c = Cfg { ...c, bsize: u };
     if (env_named_block_size()) {
       c = Cfg { ...c, fsize: u };
@@ -2961,14 +2961,14 @@ function qstyle_escape(): i32 {
 }
 
 function run(format: i32, qstyle: i32, qmark: boolean): i32 {
-  let argv: string[] = args();
-  let start: Cfg = defaults(format, qstyle, qmark);
-  let s: Scan = scan(argv, start);
-  let c: Cfg = resolve_width(s.c, s.width_seen);
+  let argv = args();
+  let start = defaults(format, qstyle, qmark);
+  let s = scan(argv, start);
+  let c = resolve_width(s.c, s.width_seen);
   c = Cfg { ...c, qmark_newline: s.hide_opt != 0 && !c.zero && (c.width != 0 as i64 && (c.format == fmt_commas() || c.format == fmt_vertical() || c.format == fmt_across()) || c.format == fmt_single() || c.format == fmt_long()) };
   c = Cfg { ...c, zone: tz.local_zone(), now: now_unix_ms() / (1000 as i64) };
-  let o: Out = run_operands(c, out_new(), s.operands);
-  let status: i32 = o.status;
+  let o = run_operands(c, out_new(), s.operands);
+  let status = o.status;
   gnu.close_stdout_with(o.w, false, status_usage());
   return status;
 }

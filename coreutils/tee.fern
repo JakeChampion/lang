@@ -14,7 +14,7 @@ function opt_output_error(): i32 {
 }
 
 function mode_sigpipe(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 function mode_warn(): i32 {
@@ -46,27 +46,27 @@ function mode_quiet_on_pipe(mode: i32): boolean {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]...\n";
-  out = out + "Copy standard input to each FILE, and also to standard output.\n";
-  out = out + "\n";
-  out = out + "  -a, --append              append to the given FILEs, do not overwrite\n";
-  out = out + "  -i, --ignore-interrupts   ignore interrupt signals\n";
-  out = out + "  -p                        operate in a more appropriate MODE with pipes.\n";
-  out = out + "      --output-error[=MODE]   set behavior on write error.  See MODE below\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "MODE determines behavior with write errors on the outputs:\n";
-  out = out + "  warn           diagnose errors writing to any output\n";
-  out = out + "  warn-nopipe    diagnose errors writing to any output not a pipe\n";
-  out = out + "  exit           exit on error writing to any output\n";
-  out = out + "  exit-nopipe    exit on error writing to any output not a pipe\n";
-  out = out + "The default MODE for the -p option is 'warn-nopipe'.\n";
-  out = out + "With \"nopipe\" MODEs, exit immediately if all outputs become broken pipes.\n";
-  out = out + "The default operation when --output-error is not specified, is to\n";
-  out = out + "exit immediately on error writing to a pipe, and diagnose errors\n";
-  out = out + "writing to non pipe outputs.\n";
+  out += "Copy standard input to each FILE, and also to standard output.\n";
+  out += "\n";
+  out += "  -a, --append              append to the given FILEs, do not overwrite\n";
+  out += "  -i, --ignore-interrupts   ignore interrupt signals\n";
+  out += "  -p                        operate in a more appropriate MODE with pipes.\n";
+  out += "      --output-error[=MODE]   set behavior on write error.  See MODE below\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "MODE determines behavior with write errors on the outputs:\n";
+  out += "  warn           diagnose errors writing to any output\n";
+  out += "  warn-nopipe    diagnose errors writing to any output not a pipe\n";
+  out += "  exit           exit on error writing to any output\n";
+  out += "  exit-nopipe    exit on error writing to any output not a pipe\n";
+  out += "The default MODE for the -p option is 'warn-nopipe'.\n";
+  out += "With \"nopipe\" MODEs, exit immediately if all outputs become broken pipes.\n";
+  out += "The default operation when --output-error is not specified, is to\n";
+  out += "exit immediately on error writing to a pipe, and diagnose errors\n";
+  out += "writing to non pipe outputs.\n";
   return out;
 }
 
@@ -79,13 +79,13 @@ function read_size(): i32 {
 }
 
 function fail(c: Copy, i: i32, e: IoError): Copy {
-  let out: Out = c.outs[i];
-  let quiet: boolean = gnu.is_broken_pipe(e) && mode_quiet_on_pipe(c.mode);
-  let s: Copy = Copy { ...c, outs: c.outs.with(i, Out { ...out, live: false }), live: c.live - 1 };
+  let out = c.outs[i];
+  let quiet = gnu.is_broken_pipe(e) && mode_quiet_on_pipe(c.mode);
+  let s = Copy { ...c, outs: c.outs.with(i, Out { ...out, live: false }), live: c.live - 1 };
   if (quiet) {
     return s;
   }
-  let shown: string = out.name;
+  let shown = out.name;
   if (!out.is_file) {
     shown = gnu.quote(out.name);
   }
@@ -98,15 +98,15 @@ function fail(c: Copy, i: i32, e: IoError): Copy {
 }
 
 function put(c: Copy, chunk: u8[]): Copy {
-  let s: Copy = c;
-  let i: i32 = 0;
+  let s = c;
+  let i = 0;
   while (i < s.outs.len()) {
     if (s.outs[i].live) {
       if let Err(e) = s.outs[i].w.write_bytes(chunk) {
         s = fail(s, i, e);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
@@ -129,10 +129,10 @@ function open_out(name: string, append: boolean): Result[Writer, IoError] {
 function open_outs(files: string[], append: boolean, mode: i32): Copy {
   let outs: Out[] = [];
   outs = outs.append(Out { w: stdout(), name: "standard output", live: true, is_file: false });
-  let c: Copy = Copy { outs: outs, mode: mode, live: 1, ok: true };
-  let i: i32 = 0;
+  let c = Copy { outs: outs, mode: mode, live: 1, ok: true };
+  let i = 0;
   while (i < files.len()) {
-    let name: string = files[i];
+    let name = files[i];
     match (open_out(name, append)) {
       Ok(w) => {
         c = Copy { ...c, outs: c.outs.append(Out { w: w, name: name, live: true, is_file: true }), live: c.live + 1 };
@@ -146,22 +146,22 @@ function open_outs(files: string[], append: boolean, mode: i32): Copy {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return c;
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("a", "append", opt_append()));
   opts = opts.append(gnu.flag("i", "ignore-interrupts", opt_ignore_interrupts()));
   opts = opts.append(gnu.optional_long("p", "output-error", opt_output_error()));
 
-  let append: boolean = false;
-  let ignore_interrupts: boolean = false;
-  let mode: i32 = mode_sigpipe();
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "tee", help_text(), 1);
+  let append = false;
+  let ignore_interrupts = false;
+  let mode = mode_sigpipe();
+  let g = gnu.getopt_new(argv, opts, "tee", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -192,8 +192,8 @@ pub function main(): i32 {
     signal.ignore(signal.SIGPIPE);
   }
 
-  let c: Copy = open_outs(g.operands(), append, mode);
-  let r: Reader = stdin();
+  let c = open_outs(g.operands(), append, mode);
+  let r = stdin();
   while (c.live > 0) {
     match (r.read_chunk_bytes(read_size())) {
       Ok(chunk) => {
@@ -209,7 +209,7 @@ pub function main(): i32 {
       }
     }
   }
-  let ok: boolean = c.ok;
+  let ok = c.ok;
   close_files(c);
   if (!ok) {
     return 1;

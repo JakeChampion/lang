@@ -130,7 +130,7 @@ function deref_all(): i32 {
 }
 
 function time_none(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 function time_mtime(): i32 {
@@ -148,65 +148,65 @@ function time_ctime(): i32 {
 pub struct Conf { all: boolean, apparent: boolean, block_size: u64, suffix: string, human: u64, total: boolean, deref: i32, max_depth: u64, inodes: boolean, count_links: boolean, separate_dirs: boolean, threshold: i64, has_threshold: boolean, time_kind: i32, time_format: timefmt.Format, zone: tz.Zone, excludes: fnmatch.BytePattern[], one_file_system: boolean, terminator: string }
 
 function help_text(): string {
-  let out: string = "";
-  out = out + "Usage: du [OPTION]... [FILE]...\n";
-  out = out + "  or:  du [OPTION]... --files0-from=F\n";
-  out = out + "Summarize device usage of the set of FILEs, recursively for directories.\n";
-  out = out + "\n";
-  out = out + "  -0, --null            end each output line with NUL, not newline\n";
-  out = out + "  -a, --all             write counts for all files, not just directories\n";
-  out = out + "      --apparent-size   print apparent sizes rather than device usage\n";
-  out = out + "  -B, --block-size=SIZE  scale sizes by SIZE before printing them\n";
-  out = out + "  -b, --bytes           equivalent to '--apparent-size --block-size=1'\n";
-  out = out + "  -c, --total           produce a grand total\n";
-  out = out + "  -D, --dereference-args  dereference only symlinks listed on the command line\n";
-  out = out + "  -d, --max-depth=N     print the total for a directory only if it is N or\n";
-  out = out + "                          fewer levels below the command line argument\n";
-  out = out + "      --files0-from=F   summarize device usage of the NUL-terminated file\n";
-  out = out + "                          names specified in file F; if F is -, read stdin\n";
-  out = out + "  -H                    equivalent to --dereference-args (-D)\n";
-  out = out + "  -h, --human-readable  print sizes in human readable format\n";
-  out = out + "      --inodes          list inode usage information instead of block usage\n";
-  out = out + "  -k                    like --block-size=1K\n";
-  out = out + "  -L, --dereference     dereference all symbolic links\n";
-  out = out + "  -l, --count-links     count sizes many times if hard linked\n";
-  out = out + "  -m                    like --block-size=1M\n";
-  out = out + "  -P, --no-dereference  don't follow any symbolic links (this is the default)\n";
-  out = out + "  -S, --separate-dirs   for directories do not include size of subdirectories\n";
-  out = out + "      --si              like -h, but use powers of 1000 not 1024\n";
-  out = out + "  -s, --summarize       display only a total for each argument\n";
-  out = out + "  -t, --threshold=SIZE  exclude entries smaller than SIZE if positive,\n";
-  out = out + "                          or entries greater than SIZE if negative\n";
-  out = out + "      --time            show time of the last modification of any file in\n";
-  out = out + "                          the directory, or any of its subdirectories\n";
-  out = out + "      --time=WORD       show time as WORD instead of modification time:\n";
-  out = out + "                          atime, access, use, ctime or status\n";
-  out = out + "      --time-style=STYLE  show times using STYLE, which can be full-iso,\n";
-  out = out + "                          long-iso, iso, or +FORMAT\n";
-  out = out + "  -X, --exclude-from=FILE  exclude files that match any pattern in FILE\n";
-  out = out + "      --exclude=PATTERN    exclude files that match PATTERN\n";
-  out = out + "  -x, --one-file-system    skip directories on different file systems\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  let out = "";
+  out += "Usage: du [OPTION]... [FILE]...\n";
+  out += "  or:  du [OPTION]... --files0-from=F\n";
+  out += "Summarize device usage of the set of FILEs, recursively for directories.\n";
+  out += "\n";
+  out += "  -0, --null            end each output line with NUL, not newline\n";
+  out += "  -a, --all             write counts for all files, not just directories\n";
+  out += "      --apparent-size   print apparent sizes rather than device usage\n";
+  out += "  -B, --block-size=SIZE  scale sizes by SIZE before printing them\n";
+  out += "  -b, --bytes           equivalent to '--apparent-size --block-size=1'\n";
+  out += "  -c, --total           produce a grand total\n";
+  out += "  -D, --dereference-args  dereference only symlinks listed on the command line\n";
+  out += "  -d, --max-depth=N     print the total for a directory only if it is N or\n";
+  out += "                          fewer levels below the command line argument\n";
+  out += "      --files0-from=F   summarize device usage of the NUL-terminated file\n";
+  out += "                          names specified in file F; if F is -, read stdin\n";
+  out += "  -H                    equivalent to --dereference-args (-D)\n";
+  out += "  -h, --human-readable  print sizes in human readable format\n";
+  out += "      --inodes          list inode usage information instead of block usage\n";
+  out += "  -k                    like --block-size=1K\n";
+  out += "  -L, --dereference     dereference all symbolic links\n";
+  out += "  -l, --count-links     count sizes many times if hard linked\n";
+  out += "  -m                    like --block-size=1M\n";
+  out += "  -P, --no-dereference  don't follow any symbolic links (this is the default)\n";
+  out += "  -S, --separate-dirs   for directories do not include size of subdirectories\n";
+  out += "      --si              like -h, but use powers of 1000 not 1024\n";
+  out += "  -s, --summarize       display only a total for each argument\n";
+  out += "  -t, --threshold=SIZE  exclude entries smaller than SIZE if positive,\n";
+  out += "                          or entries greater than SIZE if negative\n";
+  out += "      --time            show time of the last modification of any file in\n";
+  out += "                          the directory, or any of its subdirectories\n";
+  out += "      --time=WORD       show time as WORD instead of modification time:\n";
+  out += "                          atime, access, use, ctime or status\n";
+  out += "      --time-style=STYLE  show times using STYLE, which can be full-iso,\n";
+  out += "                          long-iso, iso, or +FORMAT\n";
+  out += "  -X, --exclude-from=FILE  exclude files that match any pattern in FILE\n";
+  out += "      --exclude=PATTERN    exclude files that match PATTERN\n";
+  out += "  -x, --one-file-system    skip directories on different file systems\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 function excluded(c: Conf, name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.excludes.len()) {
     if (c.excludes[i].matches(name)) {
       return true;
     }
-    let j: i32 = 0;
+    let j = 0;
     while (j < name.len()) {
       if (name[j] as i32 == 47) {
         if (c.excludes[i].matches(slice_unchecked(name, j + 1, name.len()) + "")) {
           return true;
         }
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -219,9 +219,9 @@ function join_path(dir: string, name: string): string {
 }
 
 function walk_base(arg: string): string {
-  let n: i32 = arg.len();
+  let n = arg.len();
   while (n > 0 && arg[n - 1] as i32 == 47) {
-    n = n - 1;
+    n -= 1;
   }
   if (n == 0) {
     if (arg.len() == 2) {
@@ -239,7 +239,7 @@ function display_name(arg: string): string {
   if (arg[arg.len() - 1] as i32 != 47) {
     return arg;
   }
-  let b: string = walk_base(arg);
+  let b = walk_base(arg);
   if (b[b.len() - 1] as i32 == 47) {
     return b;
   }
@@ -315,7 +315,7 @@ function wants_line(c: Conf, depth: i32, is_dir: boolean): boolean {
 }
 
 function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i64, display: string): io_buffered.BufWriter {
-  let w: io_buffered.BufWriter = gnu.put(o, blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t");
+  let w = gnu.put(o, blocks.format_size(size, c.block_size, c.suffix, c.human) + "\t");
   if (c.time_kind != time_none()) {
     w = gnu.put_bytes(w, timefmt.format_bytes(c.time_format, c.zone, tsec, tnsec));
     w = gnu.put(w, "\t");
@@ -360,21 +360,21 @@ function stat_child(top: Frame, path: string, name: string): Result[FileStat, Io
 }
 
 function walk(c: Conf, names: string[], have_files0: boolean, list_name: string, from_stdin: boolean): i32 {
-  let out: io_buffered.BufWriter = gnu.out_new();
+  let out = gnu.out_new();
   let seen: Map[string, i32] = map_new(1024);
-  let failed: boolean = false;
-  let grand: u64 = 0 as u64;
-  let gtime: i64 = 0 as i64;
-  let gnsec: i64 = 0 as i64;
+  let failed = false;
+  let grand = 0 as u64;
+  let gtime = 0 as i64;
+  let gnsec = 0 as i64;
   let stack: Frame[] = [];
 
-  let oi: i32 = 0;
+  let oi = 0;
   while (oi < names.len()) {
-    let arg: string = names[oi];
-    let ordinal: i32 = oi + 1;
-    oi = oi + 1;
+    let arg = names[oi];
+    let ordinal = oi + 1;
+    oi += 1;
     if (arg.len() == 0) {
-      let where: string = "";
+      let where = "";
       if (have_files0) {
         where = gnu.quotef(list_name) + ":" + ordinal.to_string() + ": ";
       }
@@ -387,16 +387,16 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       failed = true;
       continue;
     }
-    let display: string = display_name(arg);
+    let display = display_name(arg);
     if (excluded(c, display)) {
       continue;
     }
-    let stat_name: string = arg;
+    let stat_name = arg;
     if (target_os() == "darwin" && arg[arg.len() - 1] as i32 == 47) {
       stat_name = arg + ".";
     }
-    let st: FileStat = zero_stat();
-    let got: boolean = false;
+    let st = zero_stat();
+    let got = false;
     match (lstat(stat_name)) {
       Ok(s) => {
         st = s;
@@ -411,7 +411,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       continue;
     }
     if (c.deref != deref_none() && is_symlink(st)) {
-      let resolved: boolean = false;
+      let resolved = false;
       match (stat(arg)) {
         Ok(s) => {
           st = s;
@@ -427,42 +427,42 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       }
     }
 
-    let root_dev: i64 = st.dev;
-    let sp: i32 = 0;
-    let pending: boolean = true;
-    let p_path: string = walk_base(arg);
-    let p_name: string = p_path;
-    let p_via_link: boolean = false;
-    let p_display: string = display;
-    let p_st: FileStat = st;
-    let p_depth: i32 = 0;
-    let owed: boolean = false;
-    let o_size: u64 = 0 as u64;
-    let o_time: i64 = 0 as i64;
-    let o_nsec: i64 = 0 as i64;
-    let o_dir: boolean = false;
-    let total: u64 = 0 as u64;
-    let ttime: i64 = 0 as i64;
-    let tnsec: i64 = 0 as i64;
-    let thave: boolean = false;
+    let root_dev = st.dev;
+    let sp = 0;
+    let pending = true;
+    let p_path = walk_base(arg);
+    let p_name = p_path;
+    let p_via_link = false;
+    let p_display = display;
+    let p_st = st;
+    let p_depth = 0;
+    let owed = false;
+    let o_size = 0 as u64;
+    let o_time = 0 as i64;
+    let o_nsec = 0 as i64;
+    let o_dir = false;
+    let total = 0 as u64;
+    let ttime = 0 as i64;
+    let tnsec = 0 as i64;
+    let thave = false;
 
     while (pending || owed || sp > 0) {
       if (owed) {
         owed = false;
         if (sp > 0) {
-          let par: Frame = stack[sp - 1];
-          let nfull: u64 = par.full + o_size;
-          let nft: i64 = par.ftime;
-          let nfn: i64 = par.fnsec;
+          let par = stack[sp - 1];
+          let nfull = par.full + o_size;
+          let nft = par.ftime;
+          let nfn = par.fnsec;
           if (newer(o_time, o_nsec, nft, nfn)) {
             nft = o_time;
             nfn = o_nsec;
           }
-          let nshown: u64 = par.shown;
-          let nst: i64 = par.stime;
-          let nsn: i64 = par.snsec;
+          let nshown = par.shown;
+          let nst = par.stime;
+          let nsn = par.snsec;
           if (!c.separate_dirs || !o_dir) {
-            nshown = nshown + o_size;
+            nshown += o_size;
             if (newer(o_time, o_nsec, nst, nsn)) {
               nst = o_time;
               nsn = o_nsec;
@@ -470,7 +470,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
           }
           stack = stack.with(sp - 1, Frame { ...par, full: nfull, shown: nshown, ftime: nft, fnsec: nfn, stime: nst, snsec: nsn });
         } else {
-          total = total + o_size;
+          total += o_size;
           if (!thave || newer(o_time, o_nsec, ttime, tnsec)) {
             ttime = o_time;
             tnsec = o_nsec;
@@ -482,9 +482,9 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
 
       if (pending) {
         pending = false;
-        let known: boolean = false;
+        let known = false;
         if (!c.count_links) {
-          let key: string = inode_key(p_st.dev, p_st.ino);
+          let key = inode_key(p_st.dev, p_st.ino);
           match (seen.get(key)) {
             Some(_) => {
               known = true;
@@ -498,17 +498,17 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         if (known) {
           continue;
         }
-        let own: u64 = entry_size(c, p_st, p_st.is_dir);
+        let own = entry_size(c, p_st, p_st.is_dir);
         let stamp: (i64, i64) = stamp_of(c, p_st);
         if (p_st.is_dir) {
-          let cycle: boolean = false;
-          let f: i32 = 0;
+          let cycle = false;
+          let f = 0;
           while (f < sp) {
             if (stack[f].dev == p_st.dev && stack[f].ino == p_st.ino) {
               cycle = true;
               break;
             }
-            f = f + 1;
+            f += 1;
           }
           if (cycle) {
             continue;
@@ -538,13 +538,13 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
               failed = true;
             }
           }
-          let pushed: Frame = Frame { path: p_path, display: p_display, dir: held, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
+          let pushed = Frame { path: p_path, display: p_display, dir: held, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
           if (sp < stack.len()) {
             stack = stack.with(sp, pushed);
           } else {
             stack = stack.append(pushed);
           }
-          sp = sp + 1;
+          sp += 1;
           continue;
         }
         if (wants_line(c, p_depth, false) && passes_threshold(c, own)) {
@@ -558,9 +558,9 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         continue;
       }
 
-      let top: Frame = stack[sp - 1];
+      let top = stack[sp - 1];
       if (top.idx >= top.names.len()) {
-        sp = sp - 1;
+        sp -= 1;
         let (frame, kept) = stack.swap_at(sp, Frame { ...top, dir: None });
         stack = kept;
         match (frame.dir) {
@@ -579,16 +579,16 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         o_dir = true;
         continue;
       }
-      let nm: string = top.names[top.idx];
+      let nm = top.names[top.idx];
       stack = stack.with(sp - 1, Frame { ...top, idx: top.idx + 1 });
-      let cpath: string = join_path(top.path, nm);
-      let cname: string = join_path(top.display, nm);
+      let cpath = join_path(top.path, nm);
+      let cname = join_path(top.display, nm);
       if (excluded(c, cname)) {
         continue;
       }
-      let cst: FileStat = zero_stat();
-      let cgot: boolean = false;
-      let clink: boolean = false;
+      let cst = zero_stat();
+      let cgot = false;
+      let clink = false;
       match (lstat_child(top, cpath, nm)) {
         Ok(s) => {
           cst = s;
@@ -604,7 +604,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       }
       if (c.deref == deref_all() && is_symlink(cst)) {
         clink = true;
-        let cres: boolean = false;
+        let cres = false;
         match (stat_child(top, cpath, nm)) {
           Ok(s) => {
             cst = s;
@@ -631,7 +631,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       pending = true;
     }
 
-    grand = grand + total;
+    grand += total;
     if (thave && newer(ttime, tnsec, gtime, gnsec)) {
       gtime = ttime;
       gnsec = tnsec;
@@ -655,7 +655,7 @@ function zero_stat(): FileStat {
 struct Slurp { bytes: u8[], ok: boolean, at_open: boolean, err: Option[IoError] }
 
 function slurp(path: string): Slurp {
-  let r: Reader = stdin();
+  let r = stdin();
   if (path != "-") {
     match (open_reader(path)) {
       Ok(f) => {
@@ -666,7 +666,7 @@ function slurp(path: string): Slurp {
       }
     }
   }
-  let result: Result[u8[], IoError] = io.read_all_bytes(r);
+  let result = io.read_all_bytes(r);
   if (path != "-") {
     r.close();
   }
@@ -682,38 +682,38 @@ function slurp(path: string): Slurp {
 
 function exclude_patterns(text: u8[]): fnmatch.BytePattern[] {
   let out: fnmatch.BytePattern[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i <= text.len()) {
     if (i == text.len() || text[i] as i32 == 10) {
-      let stop: i32 = i;
+      let stop = i;
       while (stop > start && text[stop - 1] as i32 == 13) {
-        stop = stop - 1;
+        stop -= 1;
       }
-      let j: i32 = start;
+      let j = start;
       while (j < stop && text[j] as i32 != 0) {
-        j = j + 1;
+        j += 1;
       }
       if (j > start) {
         out = out.append(fnmatch.BytePattern { data: text, lo: start, hi: j });
       }
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function files0_names(bytes: u8[], origin: string): Option[string[]] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let ordinal: i32 = 0;
+  let start = 0;
+  let ordinal = 0;
   while (start < bytes.len()) {
-    let end: i32 = __memchr_bytes(bytes, 0, start);
+    let end = __memchr_bytes(bytes, 0, start);
     if (end < 0) {
       end = bytes.len();
     }
-    ordinal = ordinal + 1;
+    ordinal += 1;
     match (utf8.from_bytes(array.slice(bytes, start, end))) {
       Ok(name) => {
         out = out.append(name);
@@ -731,9 +731,9 @@ function files0_names(bytes: u8[], origin: string): Option[string[]] {
 function time_word(v: string): i32 {
   let names: string[] = ["atime", "access", "use", "ctime", "status"];
   let kinds: i32[] = [time_atime(), time_atime(), time_atime(), time_ctime(), time_ctime()];
-  let found: i32 = 0 - 1;
-  let ambiguous: boolean = false;
-  let i: i32 = 0;
+  let found: i32 = -1;
+  let ambiguous = false;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return kinds[i];
@@ -745,12 +745,12 @@ function time_word(v: string): i32 {
         ambiguous = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (found >= 0 && !ambiguous) {
     return kinds[found];
   }
-  let what: string = "invalid";
+  let what = "invalid";
   if (ambiguous) {
     what = "ambiguous";
   }
@@ -765,14 +765,14 @@ function time_word(v: string): i32 {
 pub function die_time_style(spec: string, names: string[], posix: boolean, status: i32, what: string): void {
   gnu.error(what + " argument " + gnu.quote(spec) + " for " + gnu.quote("time style"));
   eprint("Valid arguments are:");
-  let prefix: string = "";
+  let prefix = "";
   if (posix) {
     prefix = "[posix-]";
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     eprint("  - " + prefix + names[i]);
-    i = i + 1;
+    i += 1;
   }
   eprint("  - +FORMAT (e.g., +%H:%M) for a 'date'-style format");
   gnu.try_help(status);
@@ -784,10 +784,10 @@ function style_format(v: string): string {
   }
   let names: string[] = ["full-iso", "long-iso", "iso"];
   let formats: string[] = ["%Y-%m-%d %H:%M:%S.%N %z", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
-  let k: i32 = gnu.argmatch_find(v, names, [0, 1, 2]);
+  let k = gnu.argmatch_find(v, names, [0, 1, 2]);
   if (k < 0) {
-    let what: string = "invalid";
-    if (k == 0 - 2) {
+    let what = "invalid";
+    if (k == -2) {
       what = "ambiguous";
     }
     die_time_style(v, names, false, 1, what);
@@ -799,7 +799,7 @@ function env_style(v: string): string {
   if (v == "locale") {
     return "%Y-%m-%d %H:%M";
   }
-  let s: string = v;
+  let s = v;
   if (s.starts_with("posix-")) {
     s = slice_unchecked(s, 6, s.len()) + "";
   }
@@ -807,16 +807,16 @@ function env_style(v: string): string {
 }
 
 function parse_depth(spec: string): u64 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < spec.len() && gnu.is_blank(spec[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < spec.len() && spec[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   } else if (i < spec.len() && spec[i] as i32 == 45) {
     neg = true;
-    i = i + 1;
+    i += 1;
   }
   let n: (u64, i32, boolean) = blocks.scan_number(spec, i);
   if (n.1 == i || n.1 != spec.len() || n.2 || neg && n.0 != 0 as u64) {
@@ -857,25 +857,25 @@ function declare_options(): gnu.Opt[] {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
-  let opts: gnu.Opt[] = declare_options();
+  let argv = args();
+  let opts = declare_options();
 
-  let c: Conf = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: timefmt.compile("%Y-%m-%d %H:%M"), zone: tz.utc_zone(), excludes: [], one_file_system: false, terminator: "\n" };
-  let unit: blocks.Unit = blocks.default_unit();
-  let summarize: boolean = false;
-  let depth_text: string = "";
-  let have_depth: boolean = false;
-  let depth: u64 = 0 as u64;
-  let files0: string = "";
-  let have_files0: boolean = false;
-  let style: string = "";
-  let have_style: boolean = false;
+  let c = Conf { all: false, apparent: false, block_size: 1024 as u64, suffix: "", human: 0 as u64, total: false, deref: deref_none(), max_depth: 0 as u64 - 1 as u64, inodes: false, count_links: false, separate_dirs: false, threshold: 0 as i64, has_threshold: false, time_kind: time_none(), time_format: timefmt.compile("%Y-%m-%d %H:%M"), zone: tz.utc_zone(), excludes: [], one_file_system: false, terminator: "\n" };
+  let unit = blocks.default_unit();
+  let summarize = false;
+  let depth_text = "";
+  let have_depth = false;
+  let depth = 0 as u64;
+  let files0 = "";
+  let have_files0 = false;
+  let style = "";
+  let have_style = false;
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "du", help_text(), 1);
+  let g = gnu.getopt_new(argv, opts, "du", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
-    let done: boolean = false;
+    let done = false;
     match (r.0) {
       Some(m) => {
         if (m.id == opt_null()) {
@@ -885,7 +885,7 @@ pub function main(): i32 {
         } else if (m.id == opt_apparent()) {
           c = Conf { ...c, apparent: true };
         } else if (m.id == opt_block_size()) {
-          let n: blocks.Num = blocks.parse_num(m.value, false, true, false);
+          let n = blocks.parse_num(m.value, false, true, false);
           if (n.status != blocks.size_ok()) {
             blocks.die_size(n.status, blocks.option_name(m, "--block-size", "-B"), m.value);
           }
@@ -925,7 +925,7 @@ pub function main(): i32 {
         } else if (m.id == opt_summarize()) {
           summarize = true;
         } else if (m.id == opt_threshold()) {
-          let t: blocks.Num = blocks.parse_num(m.value, true, false, true);
+          let t = blocks.parse_num(m.value, true, false, true);
           if (t.status == blocks.size_ok() && t.neg && t.value == 0 as u64) {
             gnu.error("invalid --threshold argument '-0'");
             exit(1);
@@ -933,13 +933,13 @@ pub function main(): i32 {
           if (t.status != blocks.size_ok()) {
             blocks.die_size(t.status, blocks.option_name(m, "--threshold", "-t"), m.value);
           }
-          let v: i64 = t.value as i64;
+          let v = t.value as i64;
           if (t.neg) {
             v = 0 as i64 - v;
           }
           c = Conf { ...c, threshold: v, has_threshold: true };
         } else if (m.id == opt_time()) {
-          let kind: i32 = time_mtime();
+          let kind = time_mtime();
           if (m.has_value) {
             kind = time_word(m.value);
           }
@@ -1004,16 +1004,16 @@ pub function main(): i32 {
   if (c.inodes) {
     unit = blocks.Unit { ...unit, block_size: 1 as u64 };
   }
-  let suffix: string = "";
+  let suffix = "";
   if (unit.show_suffix) {
     suffix = blocks.unit_text(unit.block_size, unit.base, unit.with_b);
   }
   c = Conf { ...c, block_size: unit.block_size, human: unit.human, suffix: suffix };
 
-  let operands: string[] = g.operands();
-  let names: string[] = operands;
-  let from_stdin: boolean = false;
-  let list_name: string = "";
+  let operands = g.operands();
+  let names = operands;
+  let from_stdin = false;
+  let list_name = "";
   if (have_files0) {
     if (operands.len() > 0) {
       gnu.error("extra operand " + gnu.quote(operands[0]) + "\nfile operands cannot be combined with --files0-from");
@@ -1037,16 +1037,16 @@ pub function main(): i32 {
 }
 
 function read_exclude_file(have: fnmatch.BytePattern[], path: string): fnmatch.BytePattern[] {
-  let r: Slurp = slurp(path);
+  let r = slurp(path);
   if (!r.ok) {
     gnu.die_usage(gnu.quotef(path) + ": " + slurp_error(r), 1);
   }
-  let pats: fnmatch.BytePattern[] = exclude_patterns(r.bytes);
-  let out: fnmatch.BytePattern[] = have;
-  let i: i32 = 0;
+  let pats = exclude_patterns(r.bytes);
+  let out = have;
+  let i = 0;
   while (i < pats.len()) {
     out = out.append(pats[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1062,7 +1062,7 @@ function slurp_error(r: Slurp): string {
 }
 
 function read_name_list(path: string): Option[string[]] {
-  let r: Slurp = slurp(path);
+  let r = slurp(path);
   if (!r.ok) {
     if (r.at_open) {
       gnu.error("cannot open " + gnu.quotea(path) + " for reading: " + slurp_error(r));

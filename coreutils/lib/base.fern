@@ -14,20 +14,20 @@ pub function block_bytes(): i32 {
 
 function tables(alphabet: string): (usize, usize) {
   unsafe {
-    let n: i32 = alphabet.len();
-    let a: usize = __alloc(n + 8);
-    let d: usize = __alloc(256 * 4);
-    let i: i32 = 0;
+    let n = alphabet.len();
+    let a = __alloc(n + 8);
+    let d = __alloc(256 * 4);
+    let i = 0;
     while (i < 256) {
-      __store_i32(d + (i * 4) as usize, 0 - 1);
-      i = i + 1;
+      __store_i32(d + (i * 4) as usize, -1);
+      i += 1;
     }
     i = 0;
     while (i < n) {
-      let ch: i32 = alphabet[i] as i32;
+      let ch = alphabet[i] as i32;
       __store_i32(a + i as usize, ch);
       __store_i32(d + (ch * 4) as usize, i);
-      i = i + 1;
+      i += 1;
     }
     return (a, d);
   }
@@ -44,10 +44,10 @@ function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, p
 
 function also_decodes(c: Codec, extra: string): Codec {
   unsafe {
-    let i: i32 = 0;
+    let i = 0;
     while (i < extra.len()) {
       __store_i32(c.dec + (extra[i] as i32 * 4) as usize, i);
-      i = i + 1;
+      i += 1;
     }
     return c;
   }
@@ -82,7 +82,7 @@ pub function base2lsbf(): Codec {
 }
 
 pub function base58(): Codec {
-  return bit_codec("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz", 0 - 1, 1, 1, false, false);
+  return bit_codec("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz", -1, 1, 1, false, false);
 }
 
 pub function z85(): Codec {
@@ -90,45 +90,45 @@ pub function z85(): Codec {
 }
 
 function rev8(b: i64): i64 {
-  let v: i64 = b;
+  let v = b;
   v = (v & 170 as i64) >> 1 | (v & 85 as i64) << 1;
   v = (v & 204 as i64) >> 2 | (v & 51 as i64) << 2;
   return (v & 240 as i64) >> 4 | (v & 15 as i64) << 4;
 }
 
 function enc_chars(c: Codec, n: i32): i32 {
-  let full: i32 = n / c.in_block;
-  let out: i32 = full * c.out_block;
-  let rem: i32 = n - full * c.in_block;
+  let full = n / c.in_block;
+  let out = full * c.out_block;
+  let rem = n - full * c.in_block;
   if (rem > 0) {
-    let k: i32 = (rem * 8 + c.bits - 1) / c.bits;
+    let k = (rem * 8 + c.bits - 1) / c.bits;
     if (c.pad) {
       k = (k + c.out_block - 1) / c.out_block * c.out_block;
     }
-    out = out + k;
+    out += k;
   }
   return out;
 }
 
 function enc_tail(c: Codec, acc0: i64, nb: i32): Chars {
   unsafe {
-    let acc: i64 = acc0;
-    let chars: i32 = (nb * 8 + c.bits - 1) / c.bits;
+    let acc = acc0;
+    let chars = (nb * 8 + c.bits - 1) / c.bits;
     acc = acc << chars * c.bits - nb * 8;
-    let mask: i64 = ((1 << c.bits) - 1) as i64;
+    let mask = ((1 << c.bits) - 1) as i64;
     let out: i64 = 0;
-    let sh: i32 = chars * c.bits;
-    let u: i32 = 0;
+    let sh = chars * c.bits;
+    let u = 0;
     while (u < chars) {
-      sh = sh - c.bits;
+      sh -= c.bits;
       out = out | __load_u8(c.alpha + (acc >> sh & mask) as usize) as i64 << u * 8;
-      u = u + 1;
+      u += 1;
     }
-    let w: i32 = chars;
+    let w = chars;
     if (c.pad) {
       while (w % c.out_block != 0) {
         out = out | 61 as i64 << w * 8;
-        w = w + 1;
+        w += 1;
       }
     }
     return Chars { v: out, n: w };
@@ -144,7 +144,7 @@ function pack_bytes(c: Codec): i32 {
 
 function pack_value(bs: u8[], i: i32, p: i32): i64 {
   if (i + 8 <= bs.len()) {
-    let word: u64 = bs[i] as u64 << 56 | bs[i + 1] as u64 << 48 | bs[i + 2] as u64 << 40 | bs[i + 3] as u64 << 32 | bs[i + 4] as u64 << 24 | bs[i + 5] as u64 << 16 | bs[i + 6] as u64 << 8 | bs[i + 7] as u64;
+    let word = bs[i] as u64 << 56 | bs[i + 1] as u64 << 48 | bs[i + 2] as u64 << 40 | bs[i + 3] as u64 << 32 | bs[i + 4] as u64 << 24 | bs[i + 5] as u64 << 16 | bs[i + 6] as u64 << 8 | bs[i + 7] as u64;
     if (p == 6) {
       return (word >> 16 as u64) as i64;
     }
@@ -202,10 +202,10 @@ function pack_chars(alpha: usize, v: i64, bits: i32): i64 {
 
 function bit_table(c: Codec): usize {
   unsafe {
-    let t: usize = __alloc(256 * 8);
-    let b: i32 = 0;
+    let t = __alloc(256 * 8);
+    let b = 0;
     while (b < 256) {
-      let v: i64 = b as i64;
+      let v = b as i64;
       if (c.rev) {
         v = rev8(v);
       }
@@ -213,10 +213,10 @@ function bit_table(c: Codec): usize {
       let k: i32 = 0;
       while (k < 8) {
         w = w | __load_u8(c.alpha + (v >> 7 - k & 1 as i64) as usize) as i64 << k * 8;
-        k = k + 1;
+        k += 1;
       }
       __store_i64(t + (b * 8) as usize, w);
-      b = b + 1;
+      b += 1;
     }
     return t;
   }
@@ -224,13 +224,13 @@ function bit_table(c: Codec): usize {
 
 function z85_digits(alpha: usize, value: i64): i64 {
   unsafe {
-    let v: i64 = value;
+    let v = value;
     let out: i64 = 0;
     let u: i32 = 4;
     while (u >= 0) {
       out = out | __load_u8(alpha + (v % (85 as i64)) as usize) as i64 << u * 8;
-      v = v / (85 as i64);
-      u = u - 1;
+      v /= 85 as i64;
+      u -= 1;
     }
     return out;
   }
@@ -238,19 +238,19 @@ function z85_digits(alpha: usize, value: i64): i64 {
 
 function dec_pairs(c: Codec): usize {
   unsafe {
-    let t: usize = __alloc(65536 * 4);
+    let t = __alloc(65536 * 4);
     __memset(t, 255, 65536 * 4);
-    let n: i32 = 1 << c.bits;
-    let i: i32 = 0;
+    let n = 1 << c.bits;
+    let i = 0;
     while (i < n) {
-      let c0: i32 = __load_u8(c.alpha + i as usize);
-      let j: i32 = 0;
+      let c0 = __load_u8(c.alpha + i as usize);
+      let j = 0;
       while (j < n) {
-        let c1: i32 = __load_u8(c.alpha + j as usize);
+        let c1 = __load_u8(c.alpha + j as usize);
         __store_i32(t + ((c0 | c1 << 8) << 2) as usize, i << c.bits | j);
-        j = j + 1;
+        j += 1;
       }
-      i = i + 1;
+      i += 1;
     }
     return t;
   }
@@ -261,46 +261,46 @@ function dec_group(c: Codec, g: usize, gn: i32): Grp {
     if (c.bits == 0) {
       return z85_group(c, g, gn);
     }
-    let acc: i32 = 0;
-    let held: i32 = 0;
+    let acc = 0;
+    let held = 0;
     let out: i64 = 0;
-    let w: i32 = 0;
-    let d: i32 = 0;
-    let bad: boolean = false;
+    let w = 0;
+    let d = 0;
+    let bad = false;
     while (d < gn) {
-      let ch: i32 = __load_i32(g + (d * 4) as usize);
+      let ch = __load_i32(g + (d * 4) as usize);
       if (c.pad && ch == 61) {
         break;
       }
-      let v: i32 = __load_i32(c.dec + (ch * 4) as usize);
+      let v = __load_i32(c.dec + (ch * 4) as usize);
       if (v < 0) {
         bad = true;
         break;
       }
       acc = acc << c.bits | v;
-      held = held + c.bits;
+      held += c.bits;
       if (held >= 8) {
-        held = held - 8;
-        let byte: i32 = acc >> held & 255;
+        held -= 8;
+        let byte = acc >> held & 255;
         if (c.rev) {
           byte = rev8(byte as i64) as i32;
         }
         out = out << 8 | byte as i64;
         acc = acc & (1 << held) - 1;
-        w = w + 1;
+        w += 1;
       }
-      d = d + 1;
+      d += 1;
     }
     if (bad) {
       return Grp { v: out, n: w, ok: false };
     }
-    let padded: boolean = d < gn;
-    let k: i32 = d;
+    let padded = d < gn;
+    let k = d;
     while (k < gn) {
       if (__load_i32(g + (k * 4) as usize) != 61) {
         return Grp { v: out, n: w, ok: false };
       }
-      k = k + 1;
+      k += 1;
     }
     if (padded && gn != c.out_block) {
       if (c.bits == 5) {
@@ -327,14 +327,14 @@ function z85_group(c: Codec, g: usize, gn: i32): Grp {
       return Grp { v: 0, n: 0, ok: false };
     }
     let v: i64 = 0;
-    let k: i32 = 0;
+    let k = 0;
     while (k < 5) {
-      let d: i32 = __load_i32(c.dec + (__load_i32(g + (k * 4) as usize) * 4) as usize);
+      let d = __load_i32(c.dec + (__load_i32(g + (k * 4) as usize) * 4) as usize);
       if (d < 0) {
         return Grp { v: 0, n: 0, ok: false };
       }
       v = v * (85 as i64) + d as i64;
-      k = k + 1;
+      k += 1;
     }
     if (v > 4294967295 as i64) {
       return Grp { v: 0, n: 0, ok: false };
@@ -344,23 +344,23 @@ function z85_group(c: Codec, g: usize, gn: i32): Grp {
 }
 
 pub function parse_wrap(arg: string): i64 {
-  let n: i32 = arg.len();
-  let i: i32 = 0;
+  let n = arg.len();
+  let i = 0;
   while (i < n && is_space(arg[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < n && (arg[i] as i32 == 43 || arg[i] as i32 == 45)) {
     neg = arg[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
   if (i == n) {
     bad_wrap(arg);
   }
   let v: i64 = 0;
-  let over: boolean = false;
+  let over = false;
   while (i < n) {
-    let ch: i32 = arg[i] as i32;
+    let ch = arg[i] as i32;
     if (ch < 48 || ch > 57) {
       bad_wrap(arg);
     }
@@ -374,7 +374,7 @@ pub function parse_wrap(arg: string): i64 {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (neg && (over || v != 0 as i64)) {
     bad_wrap(arg);
@@ -411,7 +411,7 @@ function read_block(r: Reader, o: io_buffered.BufWriter, cap: i32): u8[] {
   if (chunk.len() == 0 || chunk.len() == cap) {
     return chunk;
   }
-  let carry: usize = buf_new(cap);
+  let carry = buf_new(cap);
   buf_push_bytes_range(carry, chunk, 0, chunk.len());
   while (buf_len(carry) < cap) {
     match (r.read_chunk_bytes(cap - buf_len(carry))) {
@@ -427,7 +427,7 @@ function read_block(r: Reader, o: io_buffered.BufWriter, cap: i32): u8[] {
       }
     }
   }
-  let bytes: u8[] = buf_take_bytes(carry);
+  let bytes = buf_take_bytes(carry);
   buf_free(carry);
   return bytes;
 }
@@ -466,11 +466,11 @@ function encode_kernel(h: usize, bs: u8[], whole: i32, bits: i32, alphabet: u8[]
     return col0;
   }
   let group: i32 = if (bits == 6) { 3 } else { 5 };
-  let chars: i64 = (group * 8 / bits) as i64;
-  let col: i64 = col0;
-  let i: i32 = 0;
+  let chars = (group * 8 / bits) as i64;
+  let col = col0;
+  let i = 0;
   while (i < whole) {
-    let g: i32 = (whole - i) / group;
+    let g = (whole - i) / group;
     if ((wrap - col) / chars < g as i64) {
       g = ((wrap - col) / chars) as i32;
     }
@@ -482,19 +482,19 @@ function encode_kernel(h: usize, bs: u8[], whole: i32, bits: i32, alphabet: u8[]
       col = 0 as i64;
     } else if (i < whole) {
       col = group_across(h, bs, i, group, bits, alphabet, wrap, col);
-      i = i + group;
+      i += group;
     }
   }
   return col;
 }
 
 function group_across(h: usize, bs: u8[], i: i32, group: i32, bits: i32, alphabet: u8[], wrap: i64, col0: i64): i64 {
-  let v: i64 = 0 as i64;
+  let v = 0 as i64;
   for k in 0..group {
     v = v << 8 | bs[i + k] as i64;
   }
-  let col: i64 = col0;
-  let shift: i32 = group * 8 - bits;
+  let col = col0;
+  let shift = group * 8 - bits;
   while (shift >= 0) {
     buf_push_byte(h, alphabet[(v >> shift) as i32 & (1 << bits) - 1] as i32);
     col = col + 1 as i64;
@@ -502,50 +502,50 @@ function group_across(h: usize, bs: u8[], i: i32, group: i32, bits: i32, alphabe
       buf_push_byte(h, 10);
       col = 0 as i64;
     }
-    shift = shift - bits;
+    shift -= bits;
   }
   return col;
 }
 
 function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
   unsafe {
-    let out: io_buffered.BufWriter = o;
-    let cap: i32 = block_bytes();
-    let bits: i32 = c.bits;
-    let inb: i32 = c.in_block;
-    let outb: i32 = c.out_block;
-    let alpha: usize = c.alpha;
-    let rev: boolean = c.rev;
+    let out = o;
+    let cap = block_bytes();
+    let bits = c.bits;
+    let inb = c.in_block;
+    let outb = c.out_block;
+    let alpha = c.alpha;
+    let rev = c.rev;
     let mask: i64 = 0;
     if (bits > 0) {
       mask = ((1 << bits) - 1) as i64;
     }
-    let wrapping: boolean = wrap > 0 as i64;
+    let wrapping = wrap > 0 as i64;
     let col: i64 = 0;
-    let table: usize = 0 as usize;
+    let table = 0 as usize;
     if (bits == 1) {
       table = bit_table(c);
     }
     while (true) {
-      let chunk: u8[] = read_block(r, out, cap);
-      let n: i32 = chunk.len();
+      let chunk = read_block(r, out, cap);
+      let n = chunk.len();
       if (n == 0) {
         break;
       }
       if (bits == 0 && n % inb != 0) {
         fail(out, "invalid input (length must be multiple of 4 characters)");
       }
-      let bs: u8[] = chunk;
-      let i: i32 = 0;
-      let p: i32 = pack_bytes(c);
+      let bs = chunk;
+      let i = 0;
+      let p = pack_bytes(c);
       if (c.kernel_alphabet.len() > 0) {
-        let whole: i32 = n - n % inb;
+        let whole = n - n % inb;
         col = encode_kernel(out.handle(), bs, whole, bits, c.kernel_alphabet, wrap, col);
         i = whole;
         out = gnu.settle(out);
       } else if (p > 0) {
-        let h: usize = out.handle();
-        let whole: i32 = n - n % p;
+        let h = out.handle();
+        let whole = n - n % p;
         while (i < whole) {
           let w: i64 = 0;
           if (p == 1) {
@@ -571,35 +571,35 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
                 buf_push_byte(h, 10);
                 col = 0 as i64;
               }
-              k = k + 1;
+              k += 1;
             }
           }
-          i = i + p;
+          i += p;
         }
         out = gnu.settle(out);
       }
-      let chars: i32 = enc_chars(c, n - i);
-      let nl: i32 = 0;
+      let chars = enc_chars(c, n - i);
+      let nl = 0;
       if (wrapping) {
         nl = ((col + chars as i64) / wrap) as i32;
       }
-      let buf: u8[] = __alloc_u8(chars + nl);
-      let j: i32 = 0;
+      let buf = __alloc_u8(chars + nl);
+      let j = 0;
       while (i < n) {
-        let nb: i32 = inb;
+        let nb = inb;
         if (n - i < nb) {
           nb = n - i;
         }
         let acc: i64 = 0;
-        let t: i32 = 0;
+        let t = 0;
         while (t < nb) {
           acc = acc << 8 | bs[i + t] as i64;
-          t = t + 1;
+          t += 1;
         }
         let pv: i64 = 0;
-        let pn: i32 = 0;
+        let pn = 0;
         if (nb < inb) {
-          let tail: Chars = enc_tail(c, acc, nb);
+          let tail = enc_tail(c, acc, nb);
           pv = tail.v;
           pn = tail.n;
         } else if (bits == 0) {
@@ -609,38 +609,38 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
           if (rev) {
             acc = rev8(acc);
           }
-          let sh: i32 = inb * 8;
-          let u: i32 = 0;
+          let sh = inb * 8;
+          let u = 0;
           while (u < outb) {
-            sh = sh - bits;
+            sh -= bits;
             buf = buf.with(j, __load_u8(alpha + (acc >> sh & mask) as usize) as u8);
-            j = j + 1;
-            u = u + 1;
+            j += 1;
+            u += 1;
             if (wrapping) {
               col = col + 1 as i64;
               if (col == wrap) {
                 buf = buf.with(j, 10 as u8);
-                j = j + 1;
+                j += 1;
                 col = 0 as i64;
               }
             }
           }
         }
-        let e: i32 = 0;
+        let e = 0;
         while (e < pn) {
           buf = buf.with(j, (pv >> e * 8 & 255 as i64) as u8);
-          j = j + 1;
-          e = e + 1;
+          j += 1;
+          e += 1;
           if (wrapping) {
             col = col + 1 as i64;
             if (col == wrap) {
               buf = buf.with(j, 10 as u8);
-              j = j + 1;
+              j += 1;
               col = 0 as i64;
             }
           }
         }
-        i = i + nb;
+        i += nb;
       }
       out = gnu.check(out.write_bytes(buf));
       if (n < cap) {
@@ -672,20 +672,20 @@ function word_rows(bs: u8[], i: i32, n: i32, pairs: usize, h: usize, bits: i32):
 
 function hex_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
   unsafe {
-    let i: i32 = from;
+    let i = from;
     while (i + 16 <= n) {
-      let v: u64 = 0 as u64;
-      let k: i32 = 0;
+      let v = 0 as u64;
+      let k = 0;
       while (k < 16) {
-        let pv: i32 = __load_i32(pairs + ((bs[i + k] as i32 | bs[i + k + 1] as i32 << 8) << 2) as usize);
+        let pv = __load_i32(pairs + ((bs[i + k] as i32 | bs[i + k + 1] as i32 << 8) << 2) as usize);
         if (pv < 0) {
           return i;
         }
         v = v >> 8 as u64 | pv as u64 << 56 as u64;
-        k = k + 2;
+        k += 2;
       }
       buf_push_u64(h, v);
-      i = i + 16;
+      i += 16;
     }
     return i;
   }
@@ -693,52 +693,52 @@ function hex_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
 
 function b64_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
   unsafe {
-    let i: i32 = from;
+    let i = from;
     while (i + 32 <= n) {
-      let g0: i32 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
+      let g0 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
       if (g0 < 0) {
         return i;
       }
-      let r0: u64 = (g0 >> 16 | (g0 >> 8 & 255) << 8 | (g0 & 255) << 16) as u64;
-      let g1: i32 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
+      let r0 = (g0 >> 16 | (g0 >> 8 & 255) << 8 | (g0 & 255) << 16) as u64;
+      let g1 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
       if (g1 < 0) {
         return i;
       }
-      let r1: u64 = (g1 >> 16 | (g1 >> 8 & 255) << 8 | (g1 & 255) << 16) as u64;
-      let g2: i32 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
+      let r1 = (g1 >> 16 | (g1 >> 8 & 255) << 8 | (g1 & 255) << 16) as u64;
+      let g2 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
       if (g2 < 0) {
         return i;
       }
-      let r2: u64 = (g2 >> 16 | (g2 >> 8 & 255) << 8 | (g2 & 255) << 16) as u64;
-      let g3: i32 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
+      let r2 = (g2 >> 16 | (g2 >> 8 & 255) << 8 | (g2 & 255) << 16) as u64;
+      let g3 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
       if (g3 < 0) {
         return i;
       }
-      let r3: u64 = (g3 >> 16 | (g3 >> 8 & 255) << 8 | (g3 & 255) << 16) as u64;
-      let g4: i32 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
+      let r3 = (g3 >> 16 | (g3 >> 8 & 255) << 8 | (g3 & 255) << 16) as u64;
+      let g4 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
       if (g4 < 0) {
         return i;
       }
-      let r4: u64 = (g4 >> 16 | (g4 >> 8 & 255) << 8 | (g4 & 255) << 16) as u64;
-      let g5: i32 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
+      let r4 = (g4 >> 16 | (g4 >> 8 & 255) << 8 | (g4 & 255) << 16) as u64;
+      let g5 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
       if (g5 < 0) {
         return i;
       }
-      let r5: u64 = (g5 >> 16 | (g5 >> 8 & 255) << 8 | (g5 & 255) << 16) as u64;
-      let g6: i32 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
+      let r5 = (g5 >> 16 | (g5 >> 8 & 255) << 8 | (g5 & 255) << 16) as u64;
+      let g6 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
       if (g6 < 0) {
         return i;
       }
-      let r6: u64 = (g6 >> 16 | (g6 >> 8 & 255) << 8 | (g6 & 255) << 16) as u64;
-      let g7: i32 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
+      let r6 = (g6 >> 16 | (g6 >> 8 & 255) << 8 | (g6 & 255) << 16) as u64;
+      let g7 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
       if (g7 < 0) {
         return i;
       }
-      let r7: u64 = (g7 >> 16 | (g7 >> 8 & 255) << 8 | (g7 & 255) << 16) as u64;
+      let r7 = (g7 >> 16 | (g7 >> 8 & 255) << 8 | (g7 & 255) << 16) as u64;
       buf_push_u64(h, r0 | r1 << 24 as u64 | r2 << 48 as u64);
       buf_push_u64(h, r2 >> 16 as u64 | r3 << 8 as u64 | r4 << 32 as u64 | r5 << 56 as u64);
       buf_push_u64(h, r5 >> 8 as u64 | r6 << 16 as u64 | r7 << 40 as u64);
-      i = i + 32;
+      i += 32;
     }
     return i;
   }
@@ -746,110 +746,110 @@ function b64_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
 
 function b32_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
   unsafe {
-    let i: i32 = from;
+    let i = from;
     while (i + 64 <= n) {
-      let h0: i32 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
-      let l0: i32 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
+      let h0 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
+      let l0 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
       if ((h0 | l0) < 0) {
         return i;
       }
-      let v0: u64 = h0 as u64 << 20 as u64 | l0 as u64;
-      let r0: u64 = v0 >> 32 as u64 | (v0 >> 24 as u64 & 255 as u64) << 8 as u64 | (v0 >> 16 as u64 & 255 as u64) << 16 as u64 | (v0 >> 8 as u64 & 255 as u64) << 24 as u64 | (v0 & 255 as u64) << 32 as u64;
-      let h1: i32 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
-      let l1: i32 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
+      let v0 = h0 as u64 << 20 as u64 | l0 as u64;
+      let r0 = v0 >> 32 as u64 | (v0 >> 24 as u64 & 255 as u64) << 8 as u64 | (v0 >> 16 as u64 & 255 as u64) << 16 as u64 | (v0 >> 8 as u64 & 255 as u64) << 24 as u64 | (v0 & 255 as u64) << 32 as u64;
+      let h1 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
+      let l1 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
       if ((h1 | l1) < 0) {
         return i;
       }
-      let v1: u64 = h1 as u64 << 20 as u64 | l1 as u64;
-      let r1: u64 = v1 >> 32 as u64 | (v1 >> 24 as u64 & 255 as u64) << 8 as u64 | (v1 >> 16 as u64 & 255 as u64) << 16 as u64 | (v1 >> 8 as u64 & 255 as u64) << 24 as u64 | (v1 & 255 as u64) << 32 as u64;
-      let h2: i32 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
-      let l2: i32 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
+      let v1 = h1 as u64 << 20 as u64 | l1 as u64;
+      let r1 = v1 >> 32 as u64 | (v1 >> 24 as u64 & 255 as u64) << 8 as u64 | (v1 >> 16 as u64 & 255 as u64) << 16 as u64 | (v1 >> 8 as u64 & 255 as u64) << 24 as u64 | (v1 & 255 as u64) << 32 as u64;
+      let h2 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
+      let l2 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
       if ((h2 | l2) < 0) {
         return i;
       }
-      let v2: u64 = h2 as u64 << 20 as u64 | l2 as u64;
-      let r2: u64 = v2 >> 32 as u64 | (v2 >> 24 as u64 & 255 as u64) << 8 as u64 | (v2 >> 16 as u64 & 255 as u64) << 16 as u64 | (v2 >> 8 as u64 & 255 as u64) << 24 as u64 | (v2 & 255 as u64) << 32 as u64;
-      let h3: i32 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
-      let l3: i32 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
+      let v2 = h2 as u64 << 20 as u64 | l2 as u64;
+      let r2 = v2 >> 32 as u64 | (v2 >> 24 as u64 & 255 as u64) << 8 as u64 | (v2 >> 16 as u64 & 255 as u64) << 16 as u64 | (v2 >> 8 as u64 & 255 as u64) << 24 as u64 | (v2 & 255 as u64) << 32 as u64;
+      let h3 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
+      let l3 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
       if ((h3 | l3) < 0) {
         return i;
       }
-      let v3: u64 = h3 as u64 << 20 as u64 | l3 as u64;
-      let r3: u64 = v3 >> 32 as u64 | (v3 >> 24 as u64 & 255 as u64) << 8 as u64 | (v3 >> 16 as u64 & 255 as u64) << 16 as u64 | (v3 >> 8 as u64 & 255 as u64) << 24 as u64 | (v3 & 255 as u64) << 32 as u64;
-      let h4: i32 = __load_i32(pairs + ((bs[i + 32] as i32 | bs[i + 33] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 34] as i32 | bs[i + 35] as i32 << 8) << 2) as usize);
-      let l4: i32 = __load_i32(pairs + ((bs[i + 36] as i32 | bs[i + 37] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 38] as i32 | bs[i + 39] as i32 << 8) << 2) as usize);
+      let v3 = h3 as u64 << 20 as u64 | l3 as u64;
+      let r3 = v3 >> 32 as u64 | (v3 >> 24 as u64 & 255 as u64) << 8 as u64 | (v3 >> 16 as u64 & 255 as u64) << 16 as u64 | (v3 >> 8 as u64 & 255 as u64) << 24 as u64 | (v3 & 255 as u64) << 32 as u64;
+      let h4 = __load_i32(pairs + ((bs[i + 32] as i32 | bs[i + 33] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 34] as i32 | bs[i + 35] as i32 << 8) << 2) as usize);
+      let l4 = __load_i32(pairs + ((bs[i + 36] as i32 | bs[i + 37] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 38] as i32 | bs[i + 39] as i32 << 8) << 2) as usize);
       if ((h4 | l4) < 0) {
         return i;
       }
-      let v4: u64 = h4 as u64 << 20 as u64 | l4 as u64;
-      let r4: u64 = v4 >> 32 as u64 | (v4 >> 24 as u64 & 255 as u64) << 8 as u64 | (v4 >> 16 as u64 & 255 as u64) << 16 as u64 | (v4 >> 8 as u64 & 255 as u64) << 24 as u64 | (v4 & 255 as u64) << 32 as u64;
-      let h5: i32 = __load_i32(pairs + ((bs[i + 40] as i32 | bs[i + 41] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 42] as i32 | bs[i + 43] as i32 << 8) << 2) as usize);
-      let l5: i32 = __load_i32(pairs + ((bs[i + 44] as i32 | bs[i + 45] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 46] as i32 | bs[i + 47] as i32 << 8) << 2) as usize);
+      let v4 = h4 as u64 << 20 as u64 | l4 as u64;
+      let r4 = v4 >> 32 as u64 | (v4 >> 24 as u64 & 255 as u64) << 8 as u64 | (v4 >> 16 as u64 & 255 as u64) << 16 as u64 | (v4 >> 8 as u64 & 255 as u64) << 24 as u64 | (v4 & 255 as u64) << 32 as u64;
+      let h5 = __load_i32(pairs + ((bs[i + 40] as i32 | bs[i + 41] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 42] as i32 | bs[i + 43] as i32 << 8) << 2) as usize);
+      let l5 = __load_i32(pairs + ((bs[i + 44] as i32 | bs[i + 45] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 46] as i32 | bs[i + 47] as i32 << 8) << 2) as usize);
       if ((h5 | l5) < 0) {
         return i;
       }
-      let v5: u64 = h5 as u64 << 20 as u64 | l5 as u64;
-      let r5: u64 = v5 >> 32 as u64 | (v5 >> 24 as u64 & 255 as u64) << 8 as u64 | (v5 >> 16 as u64 & 255 as u64) << 16 as u64 | (v5 >> 8 as u64 & 255 as u64) << 24 as u64 | (v5 & 255 as u64) << 32 as u64;
-      let h6: i32 = __load_i32(pairs + ((bs[i + 48] as i32 | bs[i + 49] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 50] as i32 | bs[i + 51] as i32 << 8) << 2) as usize);
-      let l6: i32 = __load_i32(pairs + ((bs[i + 52] as i32 | bs[i + 53] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 54] as i32 | bs[i + 55] as i32 << 8) << 2) as usize);
+      let v5 = h5 as u64 << 20 as u64 | l5 as u64;
+      let r5 = v5 >> 32 as u64 | (v5 >> 24 as u64 & 255 as u64) << 8 as u64 | (v5 >> 16 as u64 & 255 as u64) << 16 as u64 | (v5 >> 8 as u64 & 255 as u64) << 24 as u64 | (v5 & 255 as u64) << 32 as u64;
+      let h6 = __load_i32(pairs + ((bs[i + 48] as i32 | bs[i + 49] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 50] as i32 | bs[i + 51] as i32 << 8) << 2) as usize);
+      let l6 = __load_i32(pairs + ((bs[i + 52] as i32 | bs[i + 53] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 54] as i32 | bs[i + 55] as i32 << 8) << 2) as usize);
       if ((h6 | l6) < 0) {
         return i;
       }
-      let v6: u64 = h6 as u64 << 20 as u64 | l6 as u64;
-      let r6: u64 = v6 >> 32 as u64 | (v6 >> 24 as u64 & 255 as u64) << 8 as u64 | (v6 >> 16 as u64 & 255 as u64) << 16 as u64 | (v6 >> 8 as u64 & 255 as u64) << 24 as u64 | (v6 & 255 as u64) << 32 as u64;
-      let h7: i32 = __load_i32(pairs + ((bs[i + 56] as i32 | bs[i + 57] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 58] as i32 | bs[i + 59] as i32 << 8) << 2) as usize);
-      let l7: i32 = __load_i32(pairs + ((bs[i + 60] as i32 | bs[i + 61] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 62] as i32 | bs[i + 63] as i32 << 8) << 2) as usize);
+      let v6 = h6 as u64 << 20 as u64 | l6 as u64;
+      let r6 = v6 >> 32 as u64 | (v6 >> 24 as u64 & 255 as u64) << 8 as u64 | (v6 >> 16 as u64 & 255 as u64) << 16 as u64 | (v6 >> 8 as u64 & 255 as u64) << 24 as u64 | (v6 & 255 as u64) << 32 as u64;
+      let h7 = __load_i32(pairs + ((bs[i + 56] as i32 | bs[i + 57] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 58] as i32 | bs[i + 59] as i32 << 8) << 2) as usize);
+      let l7 = __load_i32(pairs + ((bs[i + 60] as i32 | bs[i + 61] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 62] as i32 | bs[i + 63] as i32 << 8) << 2) as usize);
       if ((h7 | l7) < 0) {
         return i;
       }
-      let v7: u64 = h7 as u64 << 20 as u64 | l7 as u64;
-      let r7: u64 = v7 >> 32 as u64 | (v7 >> 24 as u64 & 255 as u64) << 8 as u64 | (v7 >> 16 as u64 & 255 as u64) << 16 as u64 | (v7 >> 8 as u64 & 255 as u64) << 24 as u64 | (v7 & 255 as u64) << 32 as u64;
+      let v7 = h7 as u64 << 20 as u64 | l7 as u64;
+      let r7 = v7 >> 32 as u64 | (v7 >> 24 as u64 & 255 as u64) << 8 as u64 | (v7 >> 16 as u64 & 255 as u64) << 16 as u64 | (v7 >> 8 as u64 & 255 as u64) << 24 as u64 | (v7 & 255 as u64) << 32 as u64;
       buf_push_u64(h, r0 | r1 << 40 as u64);
       buf_push_u64(h, r1 >> 24 as u64 | r2 << 16 as u64 | r3 << 56 as u64);
       buf_push_u64(h, r3 >> 8 as u64 | r4 << 32 as u64);
       buf_push_u64(h, r4 >> 32 as u64 | r5 << 8 as u64 | r6 << 48 as u64);
       buf_push_u64(h, r6 >> 16 as u64 | r7 << 24 as u64);
-      i = i + 64;
+      i += 64;
     }
     return i;
   }
 }
 
 function push_low_bytes(h: usize, word: u64, bits: i32): void {
-  let k: i32 = 0;
+  let k = 0;
   while (k < bits) {
     buf_push_byte(h, (word >> k as u64 & 255 as u64) as i32);
-    k = k + 8;
+    k += 8;
   }
 }
 
 function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
   unsafe {
-    let out: io_buffered.BufWriter = o;
-    let cap: i32 = block_bytes();
-    let fast: boolean = c.bits > 0 && !c.rev;
-    let pairs: usize = 0 as usize;
+    let out = o;
+    let cap = block_bytes();
+    let fast = c.bits > 0 && !c.rev;
+    let pairs = 0 as usize;
     if (fast) {
       pairs = dec_pairs(c);
     }
-    let gbuf: usize = __alloc(64);
-    let gn: i32 = 0;
-    let inb: i32 = c.in_block;
-    let outb: i32 = c.out_block;
-    let pbits: i32 = c.bits * 2;
+    let gbuf = __alloc(64);
+    let gn = 0;
+    let inb = c.in_block;
+    let outb = c.out_block;
+    let pbits = c.bits * 2;
     while (true) {
-      let chunk: u8[] = read_block(r, out, cap);
-      let n: i32 = chunk.len();
+      let chunk = read_block(r, out, cap);
+      let n = chunk.len();
       if (n == 0) {
         break;
       }
-      let bs: u8[] = chunk;
-      let h: usize = out.handle();
-      let word: u64 = 0 as u64;
-      let fill: i32 = 0;
-      let bad: boolean = false;
-      let i: i32 = 0;
-      let rows: boolean = fast;
+      let bs = chunk;
+      let h = out.handle();
+      let word = 0 as u64;
+      let fill = 0;
+      let bad = false;
+      let i = 0;
+      let rows = fast;
       while (i < n) {
         if (rows && gn == 0) {
           push_low_bytes(h, word, fill);
@@ -861,33 +861,33 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
         }
         if (fast && gn == 0 && i + outb <= n) {
           let acc: i64 = 0;
-          let t: i32 = 0;
+          let t = 0;
           while (t < outb) {
-            let pv: i32 = __load_i32(pairs + ((bs[i + t] as i32 | bs[i + t + 1] as i32 << 8) << 2) as usize);
+            let pv = __load_i32(pairs + ((bs[i + t] as i32 | bs[i + t + 1] as i32 << 8) << 2) as usize);
             if (pv < 0) {
               break;
             }
             acc = acc << pbits | pv as i64;
-            t = t + 2;
+            t += 2;
           }
           if (t == outb) {
-            let u: i32 = inb;
+            let u = inb;
             while (u > 0) {
-              u = u - 1;
+              u -= 1;
               word = word | (acc >> u * 8 & 255 as i64) as u64 << fill as u64;
-              fill = fill + 8;
+              fill += 8;
               if (fill == 64) {
                 buf_push_u64(h, word);
                 word = 0 as u64;
                 fill = 0;
               }
             }
-            i = i + outb;
+            i += outb;
             continue;
           }
         }
-        let b: i32 = bs[i] as i32;
-        i = i + 1;
+        let b = bs[i] as i32;
+        i += 1;
         rows = fast;
         if (ignore) {
           if (!(c.pad && b == 61) && !(c.bits == 0 && b == 0) && __load_i32(c.dec + (b * 4) as usize) < 0) {
@@ -897,16 +897,16 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
           continue;
         }
         __store_i32(gbuf + (gn * 4) as usize, b);
-        gn = gn + 1;
+        gn += 1;
         if (gn == outb) {
-          let g: Grp = dec_group(c, gbuf, gn);
+          let g = dec_group(c, gbuf, gn);
           gn = 0;
           push_low_bytes(h, word, fill);
           word = 0 as u64;
           fill = 0;
-          let k: i32 = g.n;
+          let k = g.n;
           while (k > 0) {
-            k = k - 1;
+            k -= 1;
             buf_push_byte(h, (g.v >> k * 8 & 255 as i64) as i32);
           }
           if (!g.ok) {
@@ -925,13 +925,13 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
       }
     }
     if (gn > 0) {
-      let last: Grp = dec_group(c, gbuf, gn);
+      let last = dec_group(c, gbuf, gn);
       if (last.n > 0) {
-        let tail: u8[] = __alloc_u8(last.n);
-        let v: i64 = last.v;
-        let k: i32 = last.n;
+        let tail = __alloc_u8(last.n);
+        let v = last.v;
+        let k = last.n;
         while (k > 0) {
-          k = k - 1;
+          k -= 1;
           tail = tail.with(k, (v & 255 as i64) as u8);
           v = v >> 8;
         }
@@ -951,8 +951,8 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
 
 pub function run(c: Codec, decoding: boolean, ignore: boolean, wrap: i64, has_file: boolean, file: string): void {
   unsafe {
-    let r: Reader = open_input(has_file, file);
-    let o: io_buffered.BufWriter = gnu.out_new();
+    let r = open_input(has_file, file);
+    let o = gnu.out_new();
     if (c.bits < 0) {
       if (decoding) {
         b58_decode(r, c, ignore, o);
@@ -970,42 +970,42 @@ pub function run(c: Codec, decoding: boolean, ignore: boolean, wrap: i64, has_fi
 }
 
 function read_all(r: Reader, o: io_buffered.BufWriter): u8[] {
-  let all: usize = buf_new(block_bytes());
+  let all = buf_new(block_bytes());
   while (true) {
-    let chunk: u8[] = read_block(r, o, block_bytes());
+    let chunk = read_block(r, o, block_bytes());
     if (chunk.len() == 0) {
       break;
     }
     buf_push_bytes_range(all, chunk, 0, chunk.len());
   }
-  let bytes: u8[] = buf_take_bytes(all);
+  let bytes = buf_take_bytes(all);
   buf_free(all);
   return bytes;
 }
 
 function rebase(digits: u8[], from: i32, to: i32): u8[] {
-  let cur: u8[] = digits;
+  let cur = digits;
   let rev: u8[] = [];
   while (cur.len() > 0) {
     let next: u8[] = [];
-    let rem: i32 = 0;
-    let i: i32 = 0;
+    let rem = 0;
+    let i = 0;
     while (i < cur.len()) {
-      let acc: i32 = rem * from + cur[i] as i32;
-      let q: i32 = acc / to;
+      let acc = rem * from + cur[i] as i32;
+      let q = acc / to;
       rem = acc - q * to;
       if (next.len() > 0 || q != 0) {
         next = next.append(q as u8);
       }
-      i = i + 1;
+      i += 1;
     }
     rev = rev.append(rem as u8);
     cur = next;
   }
   let out: u8[] = [];
-  let k: i32 = rev.len();
+  let k = rev.len();
   while (k > 0) {
-    k = k - 1;
+    k -= 1;
     out = out.append(rev[k]);
   }
   return out;
@@ -1013,28 +1013,28 @@ function rebase(digits: u8[], from: i32, to: i32): u8[] {
 
 function b58_encode(r: Reader, c: Codec, wrap: i64, own o: io_buffered.BufWriter): void {
   unsafe {
-    let data: u8[] = read_all(r, o);
-    let zeros: i32 = 0;
+    let data = read_all(r, o);
+    let zeros = 0;
     while (zeros < data.len() && data[zeros] as i32 == 0) {
-      zeros = zeros + 1;
+      zeros += 1;
     }
     let rest: u8[] = [];
-    let i: i32 = zeros;
+    let i = zeros;
     while (i < data.len()) {
       rest = rest.append(data[i]);
-      i = i + 1;
+      i += 1;
     }
-    let digits: u8[] = rebase(rest, 256, 58);
+    let digits = rebase(rest, 256, 58);
     let text: u8[] = [];
-    let z: i32 = 0;
+    let z = 0;
     while (z < zeros) {
       text = text.append(49 as u8);
-      z = z + 1;
+      z += 1;
     }
-    let d: i32 = 0;
+    let d = 0;
     while (d < digits.len()) {
       text = text.append(__load_i32(c.alpha + digits[d] as usize) as u8);
-      d = d + 1;
+      d += 1;
     }
     o = gnu.put(o, wrapped(string_from_bytes_unchecked(text), wrap));
     gnu.finish(o);
@@ -1048,10 +1048,10 @@ function wrapped(text: string, wrap: i64): string {
   if (wrap <= 0 as i64) {
     return text;
   }
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < text.len()) {
-    let e: i32 = i + wrap as i32;
+    let e = i + wrap as i32;
     if (e > text.len()) {
       e = text.len();
     }
@@ -1063,16 +1063,16 @@ function wrapped(text: string, wrap: i64): string {
 
 function b58_decode(r: Reader, c: Codec, ignore: boolean, own o: io_buffered.BufWriter): void {
   unsafe {
-    let text: u8[] = read_all(r, o);
+    let text = read_all(r, o);
     let vals: u8[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i < text.len()) {
-      let b: i32 = text[i] as i32;
-      i = i + 1;
+      let b = text[i] as i32;
+      i += 1;
       if (b == 10) {
         continue;
       }
-      let v: i32 = __load_i32(c.dec + (b * 4) as usize);
+      let v = __load_i32(c.dec + (b * 4) as usize);
       if (v < 0) {
         if (ignore) {
           continue;
@@ -1081,27 +1081,27 @@ function b58_decode(r: Reader, c: Codec, ignore: boolean, own o: io_buffered.Buf
       }
       vals = vals.append(v as u8);
     }
-    let zeros: i32 = 0;
+    let zeros = 0;
     while (zeros < vals.len() && vals[zeros] as i32 == 0) {
-      zeros = zeros + 1;
+      zeros += 1;
     }
     let rest: u8[] = [];
-    let k: i32 = zeros;
+    let k = zeros;
     while (k < vals.len()) {
       rest = rest.append(vals[k]);
-      k = k + 1;
+      k += 1;
     }
-    let bytes: u8[] = rebase(rest, 58, 256);
+    let bytes = rebase(rest, 58, 256);
     let all: u8[] = [];
-    let z: i32 = 0;
+    let z = 0;
     while (z < zeros) {
       all = all.append(0 as u8);
-      z = z + 1;
+      z += 1;
     }
-    let d: i32 = 0;
+    let d = 0;
     while (d < bytes.len()) {
       all = all.append(bytes[d]);
-      d = d + 1;
+      d += 1;
     }
     if (all.len() > 0) {
       o = gnu.check(o.write_bytes(all));

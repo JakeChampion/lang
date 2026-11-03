@@ -53,32 +53,32 @@ function opt_digit(d: i32): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [INPUT [OUTPUT]]\n";
-  out = out + "Filter adjacent matching lines from INPUT (or standard input),\n";
-  out = out + "writing to OUTPUT (or standard output).\n";
-  out = out + "\n";
-  out = out + "With no options, matching lines are merged to the first occurrence.\n";
-  out = out + "\n";
-  out = out + "  -c, --count           prefix lines by the number of occurrences\n";
-  out = out + "  -d, --repeated        only print duplicate lines, one for each group\n";
-  out = out + "  -D                    print all duplicate lines\n";
-  out = out + "      --all-repeated[=METHOD]  like -D, but allow separating groups\n";
-  out = out + "                          with an empty line;\n";
-  out = out + "                          METHOD={none(default),prepend,separate}\n";
-  out = out + "  -f, --skip-fields=N   avoid comparing the first N fields\n";
-  out = out + "      --group[=METHOD]  show all items, separating groups with an empty line;\n";
-  out = out + "                          METHOD={separate(default),prepend,append,both}\n";
-  out = out + "  -i, --ignore-case     ignore differences in case when comparing\n";
-  out = out + "  -s, --skip-chars=N    avoid comparing the first N characters\n";
-  out = out + "  -u, --unique          only print unique lines\n";
-  out = out + "  -z, --zero-terminated  line delimiter is NUL, not newline\n";
-  out = out + "  -w, --check-chars=N   compare no more than N characters in lines\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "A field is a run of blanks (usually spaces and/or TABs), then non-blank\n";
-  out = out + "characters.  Fields are skipped before chars.\n";
+  out += "Filter adjacent matching lines from INPUT (or standard input),\n";
+  out += "writing to OUTPUT (or standard output).\n";
+  out += "\n";
+  out += "With no options, matching lines are merged to the first occurrence.\n";
+  out += "\n";
+  out += "  -c, --count           prefix lines by the number of occurrences\n";
+  out += "  -d, --repeated        only print duplicate lines, one for each group\n";
+  out += "  -D                    print all duplicate lines\n";
+  out += "      --all-repeated[=METHOD]  like -D, but allow separating groups\n";
+  out += "                          with an empty line;\n";
+  out += "                          METHOD={none(default),prepend,separate}\n";
+  out += "  -f, --skip-fields=N   avoid comparing the first N fields\n";
+  out += "      --group[=METHOD]  show all items, separating groups with an empty line;\n";
+  out += "                          METHOD={separate(default),prepend,append,both}\n";
+  out += "  -i, --ignore-case     ignore differences in case when comparing\n";
+  out += "  -s, --skip-chars=N    avoid comparing the first N characters\n";
+  out += "  -u, --unique          only print unique lines\n";
+  out += "  -z, --zero-terminated  line delimiter is NUL, not newline\n";
+  out += "  -w, --check-chars=N   compare no more than N characters in lines\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "A field is a run of blanks (usually spaces and/or TABs), then non-blank\n";
+  out += "characters.  Fields are skipped before chars.\n";
   return out;
 }
 
@@ -91,20 +91,20 @@ function is_space(c: i32): boolean {
 }
 
 function parse_size(s: string): (u64, i32) {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && is_space(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i < s.len() && s[i] as i32 == 43) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= s.len() || !is_digit(s[i] as i32)) {
     return (0 as u64, 1);
   }
-  let v: u64 = 0 as u64;
-  let over: boolean = false;
+  let v = 0 as u64;
+  let over = false;
   while (i < s.len() && is_digit(s[i] as i32)) {
-    let d: u64 = (s[i] as i32 - 48) as u64;
+    let d = (s[i] as i32 - 48) as u64;
     match (v.checked_mul(10 as u64)) {
       Some(m) => {
         match (m.checked_add(d)) {
@@ -120,7 +120,7 @@ function parse_size(s: string): (u64, i32) {
         over = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (i != s.len()) {
     return (0 as u64, 1);
@@ -148,7 +148,7 @@ function size_max(): u64 {
 }
 
 function obsolete_plus_allowed(): boolean {
-  let v: i64 = gnu.posix2_version();
+  let v = gnu.posix2_version();
   return v < 200112 as i64 || v >= 200809 as i64;
 }
 
@@ -185,9 +185,9 @@ function gm_both(): i32 {
 }
 
 function argmatch(v: string, names: string[], opt: string): i32 {
-  let found: i32 = 0 - 1;
-  let ambiguous: boolean = false;
-  let i: i32 = 0;
+  let found: i32 = -1;
+  let ambiguous = false;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == v) {
       return i;
@@ -199,21 +199,21 @@ function argmatch(v: string, names: string[], opt: string): i32 {
         ambiguous = true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (found >= 0 && !ambiguous) {
     return found;
   }
-  let what: string = "invalid";
+  let what = "invalid";
   if (ambiguous) {
     what = "ambiguous";
   }
-  let msg: string = what + " argument " + gnu.quote(v) + " for '" + opt + "'\n";
-  msg = msg + "Valid arguments are:\n";
+  let msg = what + " argument " + gnu.quote(v) + " for '" + opt + "'\n";
+  msg += "Valid arguments are:\n";
   i = 0;
   while (i < names.len()) {
     msg = msg + "  - " + gnu.quote(names[i]) + "\n";
-    i = i + 1;
+    i += 1;
   }
   eprint(gnu.prog() + ": " + slice_unchecked(msg, 0, msg.len() - 1));
   gnu.try_help(1);
@@ -237,10 +237,10 @@ function cap(v: u64, hi: i32): i32 {
 }
 
 function field_offset(s: u8[], at: i32, len: i32, cfg: Cfg): i32 {
-  let size: i32 = len - 1;
-  let i: i32 = 0;
-  let n: i32 = cap(cfg.skip_fields, size);
-  let c: i32 = 0;
+  let size = len - 1;
+  let i = 0;
+  let n = cap(cfg.skip_fields, size);
+  let c = 0;
   while (c < n && i < size) {
     i = __scan_set_bytes(s, at + i, cfg.ink) - at;
     if (i < size) {
@@ -249,15 +249,15 @@ function field_offset(s: u8[], at: i32, len: i32, cfg: Cfg): i32 {
     if (i > size) {
       i = size;
     }
-    c = c + 1;
+    c += 1;
   }
   return i + cap(cfg.skip_chars, size - i);
 }
 
 function field_sets(cfg: Cfg): Cfg {
-  let seps: u8[] = __alloc_u8(256);
-  let ink: u8[] = __alloc_u8(256);
-  let c: i32 = 0;
+  let seps = __alloc_u8(256);
+  let ink = __alloc_u8(256);
+  let c = 0;
   while (c < 256) {
     if (is_field_sep(c) || c == cfg.term) {
       seps = seps.with(c, 1 as u8);
@@ -265,7 +265,7 @@ function field_sets(cfg: Cfg): Cfg {
     if (!is_field_sep(c)) {
       ink = ink.with(c, 1 as u8);
     }
-    c = c + 1;
+    c += 1;
   }
   return Cfg { ...cfg, seps: seps, ink: ink };
 }
@@ -278,18 +278,18 @@ function to_lower(c: i32): i32 {
 }
 
 function eq_fold(a: u8[], ao: i32, b: u8[], bo: i32, n: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (to_lower(a[ao + i] as i32) != to_lower(b[bo + i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function same_key(a: u8[], at: i32, len: i32, af: i32, key: u8[], key_at: i32, key_len: i32, cfg: Cfg): boolean {
-  let an: i32 = cap(cfg.check_chars, len - 1 - af);
+  let an = cap(cfg.check_chars, len - 1 - af);
   if (an != key_len) {
     return false;
   }
@@ -308,35 +308,35 @@ function write_block(): i32 {
 }
 
 function run(own r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
-  let out: io_buffered.BufWriter = io_buffered.buf_writer_new(w, write_block());
-  let h: usize = out.handle();
-  let block: i32 = write_block();
-  let term: i32 = cfg.term;
-  let plain: boolean = cfg.plain;
-  let grouped: boolean = cfg.grouping != gm_none();
+  let out = io_buffered.buf_writer_new(w, write_block());
+  let h = out.handle();
+  let block = write_block();
+  let term = cfg.term;
+  let plain = cfg.plain;
+  let grouped = cfg.grouping != gm_none();
 
   let chunk: u8[] = [];
-  let pos: i32 = 0;
-  let eof: boolean = false;
+  let pos = 0;
+  let eof = false;
 
   let prev: u8[] = [];
-  let pat: i32 = 0;
-  let plen: i32 = 0;
-  let prev_key_at: i32 = 0;
-  let prev_key_len: i32 = 0;
-  let have_prev: boolean = false;
-  let match_count: u64 = 0 as u64;
-  let first_delimiter: boolean = true;
-  let first_group_printed: boolean = false;
+  let pat = 0;
+  let plen = 0;
+  let prev_key_at = 0;
+  let prev_key_len = 0;
+  let have_prev = false;
+  let match_count = 0 as u64;
+  let first_delimiter = true;
+  let first_group_printed = false;
 
   while (true) {
-    let at: i32 = 0;
-    let len: i32 = 0;
-    let spanned: boolean = false;
-    let got: boolean = false;
-    let carry: usize = 0 as usize;
+    let at = 0;
+    let len = 0;
+    let spanned = false;
+    let got = false;
+    let carry = 0 as usize;
     while (true) {
-      let j: i32 = __memchr_bytes(chunk, term, pos);
+      let j = __memchr_bytes(chunk, term, pos);
       if (j >= 0) {
         at = pos;
         len = j + 1 - pos;
@@ -385,7 +385,7 @@ function run(own r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
       }
       break;
     }
-    let src: u8[] = chunk;
+    let src = chunk;
     if (spanned) {
       src = buf_take_bytes(carry);
       buf_free(carry);
@@ -393,11 +393,11 @@ function run(own r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
       len = src.len();
     }
 
-    let field: i32 = 0;
+    let field = 0;
     if (cfg.skip_fields > 0 as u64 || cfg.skip_chars > 0 as u64) {
       field = field_offset(src, at, len, cfg);
     }
-    let matched: boolean = false;
+    let matched = false;
     if (have_prev) {
       if (plain) {
         if (len == plen && (len < 2 || src[at + len - 2] as i32 == prev[pat + len - 2] as i32)) {
@@ -487,10 +487,10 @@ function run(own r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
 }
 
 function push_count(h: usize, v: u64): void {
-  let nd: i32 = gnu.decimal_len(v);
+  let nd = gnu.decimal_len(v);
   while (nd < 7) {
     buf_push_byte(h, 32);
-    nd = nd + 1;
+    nd += 1;
   }
   buf_push_decimal(h, v);
   buf_push_byte(h, 32);
@@ -520,7 +520,7 @@ function take_file(f: Files, tok: string): Files {
 }
 
 pub function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("c", "count", opt_count()));
   opts = opts.append(gnu.flag("d", "repeated", opt_repeated()));
@@ -533,26 +533,26 @@ pub function main(): i32 {
   opts = opts.append(gnu.valued("s", "skip-chars", opt_skip_chars()));
   opts = opts.append(gnu.valued("w", "check-chars", opt_check_chars()));
   opts = opts.append(gnu.flag("z", "zero-terminated", opt_zero()));
-  let d: i32 = 0;
+  let d = 0;
   while (d < 10) {
     opts = opts.append(gnu.flag(slice_unchecked("0123456789", d, d + 1) + "", "", opt_digit(d)));
-    d = d + 1;
+    d += 1;
   }
 
-  let cfg: Cfg = Cfg { count: false, unique: true, first_repeated: true, later_repeated: false, delimit: dm_none(), grouping: gm_none(), skip_fields: 0 as u64, skip_chars: 0 as u64, check_chars: size_max(), ignore_case: false, term: 10, plain: true, seps: [], ink: [] };
-  let sfo: i32 = 0;
+  let cfg = Cfg { count: false, unique: true, first_repeated: true, later_repeated: false, delimit: dm_none(), grouping: gm_none(), skip_fields: 0 as u64, skip_chars: 0 as u64, check_chars: size_max(), ignore_case: false, term: 10, plain: true, seps: [], ink: [] };
+  let sfo = 0;
 
-  let files: Files = Files { n: 0, in_name: "-", out_name: "-" };
-  let posixly: boolean = false;
+  let files = Files { n: 0, in_name: "-", out_name: "-" };
+  let posixly = false;
   match (env("POSIXLY_CORRECT")) {
     Some(_) => {
       posixly = true;
     },
     None => {}
   }
-  let obsolete_plus: boolean = obsolete_plus_allowed();
+  let obsolete_plus = obsolete_plus_allowed();
 
-  let g: gnu.Getopt = gnu.getopt_new(argv, opts, "uniq", help_text(), 1).return_in_order();
+  let g = gnu.getopt_new(argv, opts, "uniq", help_text(), 1).return_in_order();
   while (true) {
     if (posixly && files.n > 0) {
       g = g.stop();
@@ -560,15 +560,15 @@ pub function main(): i32 {
     }
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
-    let done: boolean = false;
+    let done = false;
     match (r.0) {
       Some(m) => {
         if (m.id == gnu.operand_id()) {
-          let used: boolean = false;
+          let used = false;
           if (obsolete_plus && m.value.len() > 0 && m.value[0] as i32 == 43) {
             let p: (u64, i32) = parse_size(m.value);
             if (p.1 == 0 || p.1 == 2) {
-              let n: u64 = p.0;
+              let n = p.0;
               if (p.1 == 2 || n > 9223372036854775807 as u64) {
                 n = 9223372036854775807 as u64;
               }
@@ -586,17 +586,17 @@ pub function main(): i32 {
         } else if (m.id == opt_all_short()) {
           cfg = Cfg { ...cfg, unique: false, later_repeated: true, delimit: dm_none() };
         } else if (m.id == opt_all_long()) {
-          let dm: i32 = dm_none();
+          let dm = dm_none();
           if (m.has_value) {
             let names: string[] = ["none", "prepend", "separate"];
             dm = argmatch(m.value, names, "--all-repeated");
           }
           cfg = Cfg { ...cfg, unique: false, later_repeated: true, delimit: dm };
         } else if (m.id == opt_group()) {
-          let gm: i32 = gm_separate();
+          let gm = gm_separate();
           if (m.has_value) {
             let gnames: string[] = ["prepend", "append", "separate", "both"];
-            let k: i32 = argmatch(m.value, gnames, "--group");
+            let k = argmatch(m.value, gnames, "--group");
             if (k == 0) {
               gm = gm_prepend();
             } else if (k == 1) {
@@ -620,8 +620,8 @@ pub function main(): i32 {
         } else if (m.id == opt_zero()) {
           cfg = Cfg { ...cfg, term: 0 };
         } else {
-          let digit: u64 = (m.id - opt_digit(0)) as u64;
-          let acc: u64 = cfg.skip_fields;
+          let digit = (m.id - opt_digit(0)) as u64;
+          let acc = cfg.skip_fields;
           if (sfo == 1) {
             acc = 0 as u64;
           }
@@ -637,11 +637,11 @@ pub function main(): i32 {
       break;
     }
   }
-  let rest: string[] = g.operands();
-  let i: i32 = 0;
+  let rest = g.operands();
+  let i = 0;
   while (i < rest.len()) {
     files = take_file(files, rest[i]);
-    i = i + 1;
+    i += 1;
   }
 
   if (cfg.grouping != gm_none() && (cfg.count || cfg.later_repeated || !cfg.unique || !cfg.first_repeated)) {
@@ -658,7 +658,7 @@ pub function main(): i32 {
     cfg = field_sets(cfg);
   }
 
-  let r: Reader = stdin();
+  let r = stdin();
   if (files.in_name != "-") {
     match (open_reader(files.in_name)) {
       Ok(f) => {
@@ -670,7 +670,7 @@ pub function main(): i32 {
       }
     }
   }
-  let w: Writer = stdout();
+  let w = stdout();
   if (files.out_name != "-") {
     match (open_writer(files.out_name)) {
       Ok(f) => {

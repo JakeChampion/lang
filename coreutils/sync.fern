@@ -22,17 +22,17 @@ function mode_file_system(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION] [FILE]...\n";
-  out = out + "Synchronize cached writes to persistent storage\n";
-  out = out + "\n";
-  out = out + "If one or more files are specified, sync only them,\n";
-  out = out + "or their containing file systems.\n";
-  out = out + "\n";
-  out = out + "  -d, --data             sync only file data, no unneeded metadata\n";
-  out = out + "  -f, --file-system      sync the file systems that contain the files\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Synchronize cached writes to persistent storage\n";
+  out += "\n";
+  out += "If one or more files are specified, sync only them,\n";
+  out += "or their containing file systems.\n";
+  out += "\n";
+  out += "  -d, --data             sync only file data, no unneeded metadata\n";
+  out += "  -f, --file-system      sync the file systems that contain the files\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -57,7 +57,7 @@ function flush_writer(w: Writer, mode: i32): Result[void, IoError] {
 }
 
 function report(name: string, flushed: Result[void, IoError], closed: Result[void, IoError]): boolean {
-  let ok: boolean = true;
+  let ok = true;
   if let Err(e) = flushed {
     gnu.error("error syncing " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
     ok = false;
@@ -92,9 +92,9 @@ pub function main(): i32 {
   let opts: gnu.Opt[] = [];
   opts = opts.append(gnu.flag("d", "data", opt_data()));
   opts = opts.append(gnu.flag("f", "file-system", opt_file_system()));
-  let data: boolean = false;
-  let file_system: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "sync", help_text(), 1);
+  let data = false;
+  let file_system = false;
+  let g = gnu.getopt_new(args(), opts, "sync", help_text(), 1);
   while (true) {
     let res: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = res.1;
@@ -115,7 +115,7 @@ pub function main(): i32 {
     gnu.error("cannot specify both --data and --file-system");
     exit(1);
   }
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() == 0 && data) {
     gnu.error("--data needs at least one argument");
     exit(1);
@@ -124,19 +124,19 @@ pub function main(): i32 {
     sync();
     return 0;
   }
-  let mode: i32 = mode_file();
+  let mode = mode_file();
   if (data) {
     mode = mode_data();
   } else if (file_system) {
     mode = mode_file_system();
   }
-  let ok: boolean = true;
-  let i: i32 = 0;
+  let ok = true;
+  let i = 0;
   while (i < operands.len()) {
     if (!sync_arg(operands[i], mode)) {
       ok = false;
     }
-    i = i + 1;
+    i += 1;
   }
   if (ok) {
     return 0;

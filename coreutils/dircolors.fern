@@ -7,20 +7,20 @@ function eq_fold(a: u8[], lo: i32, hi: i32, b: string): boolean {
   if (hi - lo != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < hi - lo) {
-    let x: i32 = a[lo + i] as i32;
-    let y: i32 = b[i] as i32;
+    let x = a[lo + i] as i32;
+    let y = b[i] as i32;
     if (x >= 65 && x <= 90) {
-      x = x + 32;
+      x += 32;
     }
     if (y >= 65 && y <= 90) {
-      y = y + 32;
+      y += 32;
     }
     if (x != y) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -158,62 +158,62 @@ function entry_push(h: usize, text: u8[], item_lo: i32, item_hi: i32, star: bool
 }
 
 function unknown_keyword(name: string, lineno: i32, text: u8[], lo: i32, hi: i32): void {
-  let h: usize = buf_new(0);
+  let h = buf_new(0);
   buf_push(h, gnu.prog() + ": " + name + ":" + lineno.to_string() + ": unrecognized keyword ");
   buf_push_bytes_range(h, text, lo, hi);
   buf_push_byte(h, 10);
-  let message: u8[] = buf_take_bytes(h);
+  let message = buf_take_bytes(h);
   buf_free(h);
   stderr().write_bytes(message);
 }
 
 function parse(text: u8[], name: string, term: string, colorterm: string, ls: boolean): Parse {
-  let h: usize = buf_new(text.len() + 16);
-  let ok: boolean = true;
-  let state: i32 = st_global();
-  let pos: i32 = 0;
-  let lineno: i32 = 0;
-  let nul: i32 = __memchr_bytes(text, 0, 0);
+  let h = buf_new(text.len() + 16);
+  let ok = true;
+  let state = st_global();
+  let pos = 0;
+  let lineno = 0;
+  let nul = __memchr_bytes(text, 0, 0);
   while (pos < text.len()) {
-    let nl: i32 = __memchr_bytes(text, 10, pos);
-    let end: i32 = nl;
+    let nl = __memchr_bytes(text, 10, pos);
+    let end = nl;
     if (nl < 0) {
       end = text.len();
     }
-    lineno = lineno + 1;
+    lineno += 1;
     if (nul >= 0 && nul < pos) {
       nul = __memchr_bytes(text, 0, pos);
     }
-    let cut: i32 = end;
+    let cut = end;
     if (nul >= 0 && nul < end) {
       cut = nul;
     }
-    let i: i32 = pos;
+    let i = pos;
     while (i < cut && is_space(text[i] as i32)) {
-      i = i + 1;
+      i += 1;
     }
-    let kind: i32 = 0;
-    let ks: i32 = i;
-    let ke: i32 = i;
-    let as0: i32 = i;
-    let ae: i32 = i;
+    let kind = 0;
+    let ks = i;
+    let ke = i;
+    let as0 = i;
+    let ae = i;
     if (i < cut && text[i] as i32 != 35) {
       while (i < cut && !is_space(text[i] as i32)) {
-        i = i + 1;
+        i += 1;
       }
       ke = i;
       while (i < cut && is_space(text[i] as i32)) {
-        i = i + 1;
+        i += 1;
       }
       kind = 2;
       if (i < cut && text[i] as i32 != 35) {
         as0 = i;
         while (i < cut && text[i] as i32 != 35) {
-          i = i + 1;
+          i += 1;
         }
         ae = i;
         while (ae > as0 && is_space(text[ae - 1] as i32)) {
-          ae = ae - 1;
+          ae -= 1;
         }
         kind = 1;
       }
@@ -222,8 +222,8 @@ function parse(text: u8[], name: string, term: string, colorterm: string, ls: bo
       gnu.error(name + ":" + lineno.to_string() + ": invalid line;  missing second token");
       ok = false;
     } else if (kind == 1) {
-      let lead: i32 = text[ks] as i32;
-      let extension: boolean = lead == 46 || lead == 42;
+      let lead = text[ks] as i32;
+      let extension = lead == 46 || lead == 42;
       if (extension) {
         if (state == st_termsure()) {
           state = st_termyes();
@@ -233,7 +233,7 @@ function parse(text: u8[], name: string, term: string, colorterm: string, ls: bo
         }
       } else {
         if (eq_fold(text, ks, ke, "TERM") || eq_fold(text, ks, ke, "COLORTERM")) {
-          let value: string = colorterm;
+          let value = colorterm;
           if (eq_fold(text, ks, ke, "TERM")) {
             value = term;
           }
@@ -273,11 +273,11 @@ function parse(text: u8[], name: string, term: string, colorterm: string, ls: bo
 }
 
 function escape_push(h: usize, s: u8[], lo: i32, hi: i32): void {
-  let need: boolean = true;
-  let i: i32 = lo;
-  let run: i32 = lo;
+  let need = true;
+  let i = lo;
+  let run = lo;
   while (i < hi) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 58 || c == 61 || c == 92 || c == 94 || c == 39) {
       if (i > run) {
         buf_push_bytes_range(h, s, run, i);
@@ -296,10 +296,10 @@ function escape_push(h: usize, s: u8[], lo: i32, hi: i32): void {
         buf_push_byte(h, c);
         need = true;
       }
-      i = i + 1;
+      i += 1;
       run = i;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
   if (i > run) {
@@ -310,8 +310,8 @@ function escape_push(h: usize, s: u8[], lo: i32, hi: i32): void {
 struct Input { bytes: u8[], ok: boolean }
 
 function read_stream(own r: Reader, name: string): Input {
-  let h: usize = buf_new(0);
-  let ok: boolean = true;
+  let h = buf_new(0);
+  let ok = true;
   while (true) {
     match (r.read_chunk_bytes(65536)) {
       Ok(chunk) => {
@@ -331,13 +331,13 @@ function read_stream(own r: Reader, name: string): Input {
     gnu.error(name + ": " + gnu.io_error_text(e));
     ok = false;
   }
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return Input { bytes: bytes, ok: ok };
 }
 
 function read_input(path: string): Input {
-  let name: string = gnu.quotef(path);
+  let name = gnu.quotef(path);
   if (path == "-") {
     return read_stream(stdin(), name);
   }
@@ -370,26 +370,26 @@ function opt_print_ls(): i32 {
 }
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... [FILE]\n";
-  out = out + "Write the shell commands that set LS_COLORS, which GNU ls reads.\n";
-  out = out + "\n";
-  out = out + "  -b, --sh, --bourne-shell   write Bourne shell syntax\n";
-  out = out + "  -c, --csh, --c-shell       write C shell syntax\n";
-  out = out + "  -p, --print-database       write the built-in database instead\n";
-  out = out + "      --print-ls-colors      write one escaped line per entry\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
-  out = out + "\n";
-  out = out + "With no FILE the built-in database is read; `-` reads standard input.\n";
-  out = out + "Without -b or -c the shell is taken from $SHELL. The entries a FILE\n";
-  out = out + "contributes are filtered by its TERM and COLORTERM lines against the\n";
-  out = out + "environment.\n";
+  out += "Write the shell commands that set LS_COLORS, which GNU ls reads.\n";
+  out += "\n";
+  out += "  -b, --sh, --bourne-shell   write Bourne shell syntax\n";
+  out += "  -c, --csh, --c-shell       write C shell syntax\n";
+  out += "  -p, --print-database       write the built-in database instead\n";
+  out += "      --print-ls-colors      write one escaped line per entry\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
+  out += "\n";
+  out += "With no FILE the built-in database is read; `-` reads standard input.\n";
+  out += "Without -b or -c the shell is taken from $SHELL. The entries a FILE\n";
+  out += "contributes are filtered by its TERM and COLORTERM lines against the\n";
+  out += "environment.\n";
   return out;
 }
 
 function shell_is_csh(shell: string): boolean {
-  let base: string = shell;
+  let base = shell;
   if let Some(cut) = shell.last_index_of("/") {
     base = slice_unchecked(shell, cut + 1, shell.len()) + "";
   }
@@ -417,10 +417,10 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("", "c-shell", opt_csh()));
   opts = opts.append(gnu.flag("p", "print-database", opt_print_db()));
   opts = opts.append(gnu.flag("", "print-ls-colors", opt_print_ls()));
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "dircolors", help_text(), 1);
-  let syntax: i32 = 0;
-  let print_db: boolean = false;
-  let print_ls: boolean = false;
+  let g = gnu.getopt_new(args(), opts, "dircolors", help_text(), 1);
+  let syntax = 0;
+  let print_db = false;
+  let print_ls = false;
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -448,8 +448,8 @@ pub function main(): i32 {
   if (print_db && print_ls) {
     gnu.die_usage("options --print-database and --print-ls-colors are mutually exclusive", 1);
   }
-  let operands: string[] = g.operands();
-  let limit: i32 = 1;
+  let operands = g.operands();
+  let limit = 1;
   if (print_db) {
     limit = 0;
   }
@@ -462,11 +462,11 @@ pub function main(): i32 {
   }
 
   if (print_db) {
-    let od: gnu.Stdio = gnu.stdio_new();
-    let db: string = colordb.text();
-    let at: i32 = 0;
+    let od = gnu.stdio_new();
+    let db = colordb.text();
+    let at = 0;
     while (at < db.len()) {
-      let nl: i32 = __memchr(db, 10, at);
+      let nl = __memchr(db, 10, at);
       od = od.fwrite(slice_unchecked(db, at, nl) + "");
       od = od.fwrite("\n");
       at = nl + 1;
@@ -496,9 +496,9 @@ pub function main(): i32 {
   }
 
   let text: u8[] = [];
-  let name: string = "";
+  let name = "";
   if (operands.len() == 1) {
-    let input: Input = read_input(operands[0]);
+    let input = read_input(operands[0]);
     if (!input.ok) {
       return 1;
     }
@@ -508,18 +508,18 @@ pub function main(): i32 {
     text = colordb.text().bytes();
   }
 
-  let p: Parse = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""), print_ls);
+  let p = parse(text, name, env_or("TERM", "none"), env_or("COLORTERM", ""), print_ls);
   if (!p.ok) {
     return 1;
   }
 
-  let o: gnu.Stdio = gnu.stdio_new();
+  let o = gnu.stdio_new();
   if (print_ls) {
     o = o.fwrite_bytes(p.body);
     o.close_stdout();
     return 0;
   }
-  let body: u8[] = p.body;
+  let body = p.body;
   if (syntax == 2) {
     o = o.fwrite("setenv LS_COLORS '");
     o = o.fwrite_bytes(body);

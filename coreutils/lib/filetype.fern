@@ -63,7 +63,7 @@ pub function is_sock(mode: u32): boolean {
 }
 
 pub function type_name(mode: u32, size: i64): string {
-  let t: u32 = kind(mode);
+  let t = kind(mode);
   if (t == s_ifreg()) {
     if (size == 0 as i64) {
       return "regular empty file";
@@ -92,15 +92,15 @@ pub function type_name(mode: u32, size: i64): string {
 }
 
 pub function type_letter(mode: u32): string {
-  let h: usize = buf_new(1);
+  let h = buf_new(1);
   buf_push_byte(h, type_letter_byte(mode));
-  let letter: string = buf_take(h);
+  let letter = buf_take(h);
   buf_free(h);
   return letter;
 }
 
 function type_letter_byte(mode: u32): i32 {
-  let t: u32 = kind(mode);
+  let t = kind(mode);
   if (t == s_ifdir()) {
     return 100;
   }
@@ -126,7 +126,7 @@ function type_letter_byte(mode: u32): i32 {
 }
 
 function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i32): void {
-  let bits: u32 = mode >> shift as u32 & 7 as u32;
+  let bits = mode >> shift as u32 & 7 as u32;
   if ((bits & 4 as u32) != 0 as u32) {
     buf_push_byte(h, 114);
   } else {
@@ -137,7 +137,7 @@ function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i
   } else {
     buf_push_byte(h, 45);
   }
-  let x: i32 = 45;
+  let x = 45;
   if ((bits & 1 as u32) != 0 as u32) {
     x = 120;
   }
@@ -152,12 +152,12 @@ function push_triple(h: usize, mode: u32, shift: i32, extra: u32, hi: i32, lo: i
 }
 
 pub function mode_string(mode: u32): string {
-  let h: usize = buf_new(10);
+  let h = buf_new(10);
   buf_push_byte(h, type_letter_byte(mode));
   push_triple(h, mode, 6, 0x800 as u32, 115, 83);
   push_triple(h, mode, 3, 0x400 as u32, 115, 83);
   push_triple(h, mode, 0, 0x200 as u32, 116, 84);
-  let text: string = buf_take(h);
+  let text = buf_take(h);
   buf_free(h);
   return text;
 }

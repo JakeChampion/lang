@@ -283,13 +283,13 @@ function names(): string[] {
 }
 
 pub function name(magic: i64): Option[string] {
-  let ms: i64[] = magics();
-  let i: i32 = 0;
+  let ms = magics();
+  let i = 0;
   while (i < ms.len()) {
     if (ms[i] == magic) {
       return Some(names()[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }

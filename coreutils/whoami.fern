@@ -4,22 +4,22 @@ import "./lib/gnu";
 import "./lib/pwdb";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]...\n";
-  out = out + "Print the user name associated with the current effective user ID.\n";
-  out = out + "Same as id -un.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print the user name associated with the current effective user ID.\n";
+  out += "Same as id -un.\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 pub function main(): i32 {
-  let operands: string[] = gnu.parse_standard_options_only(args(), "whoami", help_text(), 1);
+  let operands = gnu.parse_standard_options_only(args(), "whoami", help_text(), 1);
   if (operands.len() > 0) {
     gnu.die_usage("extra operand " + gnu.quote(operands[0]), 1);
   }
-  let uid: i64 = geteuid() as i64;
+  let uid = geteuid() as i64;
   match (pwdb.user_name(uid)) {
     Some(name) => {
       gnu.write_out(name + "\n");

@@ -5,26 +5,26 @@ import "./lib/gnu";
 import "./lib/canon";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
-  out = out + "Print value of a symbolic link or canonical file name\n";
-  out = out + "\n";
-  out = out + "  -f, --canonicalize            canonicalize by following every symlink in\n";
-  out = out + "                                every component of the given name recursively;\n";
-  out = out + "                                all but the last component must exist\n";
-  out = out + "  -e, --canonicalize-existing   canonicalize by following every symlink in\n";
-  out = out + "                                every component of the given name recursively,\n";
-  out = out + "                                all components must exist\n";
-  out = out + "  -m, --canonicalize-missing    canonicalize by following every symlink in\n";
-  out = out + "                                every component of the given name recursively,\n";
-  out = out + "                                without requirements on components existence\n";
-  out = out + "  -n, --no-newline              do not output the trailing delimiter\n";
-  out = out + "  -q, --quiet\n";
-  out = out + "  -s, --silent                  suppress most error messages (on by default)\n";
-  out = out + "  -v, --verbose                 report error messages\n";
-  out = out + "  -z, --zero                    end each output line with NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print value of a symbolic link or canonical file name\n";
+  out += "\n";
+  out += "  -f, --canonicalize            canonicalize by following every symlink in\n";
+  out += "                                every component of the given name recursively;\n";
+  out += "                                all but the last component must exist\n";
+  out += "  -e, --canonicalize-existing   canonicalize by following every symlink in\n";
+  out += "                                every component of the given name recursively,\n";
+  out += "                                all components must exist\n";
+  out += "  -m, --canonicalize-missing    canonicalize by following every symlink in\n";
+  out += "                                every component of the given name recursively,\n";
+  out += "                                without requirements on components existence\n";
+  out += "  -n, --no-newline              do not output the trailing delimiter\n";
+  out += "  -q, --quiet\n";
+  out += "  -s, --silent                  suppress most error messages (on by default)\n";
+  out += "  -v, --verbose                 report error messages\n";
+  out += "  -z, --zero                    end each output line with NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -61,7 +61,7 @@ function opt_zero(): i32 {
 }
 
 function mode_none(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 pub function main(): i32 {
@@ -75,11 +75,11 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("v", "verbose", opt_verbose()));
   opts = opts.append(gnu.flag("z", "zero", opt_zero()));
 
-  let mode: i32 = mode_none();
-  let no_newline: boolean = false;
-  let verbose: boolean = false;
-  let zero: boolean = false;
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "readlink", help_text(), 1);
+  let mode = mode_none();
+  let no_newline = false;
+  let verbose = false;
+  let zero = false;
+  let g = gnu.getopt_new(args(), opts, "readlink", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -107,7 +107,7 @@ pub function main(): i32 {
     }
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
@@ -115,13 +115,13 @@ pub function main(): i32 {
     gnu.error("ignoring --no-newline with multiple arguments");
     no_newline = false;
   }
-  let term: string = "\n";
+  let term = "\n";
   if (no_newline) {
     term = "";
   } else if (zero) {
     term = "\x00";
   }
-  let qstyle: i32 = 0;
+  let qstyle = 0;
   if (!zero && stdout().isatty()) {
     qstyle = gnu.quoting_style_from_env_with(3);
   }
@@ -132,11 +132,11 @@ pub function main(): i32 {
     None => {}
   }
 
-  let status: i32 = 0;
-  let o: io_buffered.BufWriter = gnu.out_new();
-  let i: i32 = 0;
+  let status = 0;
+  let o = gnu.out_new();
+  let i = 0;
   while (i < operands.len()) {
-    let name: string = operands[i];
+    let name = operands[i];
     let answer: Result[string, IoError] = Err(Unsupported);
     if (mode == mode_none()) {
       answer = canon.byte_link_target(name);
@@ -154,7 +154,7 @@ pub function main(): i32 {
         status = 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   gnu.finish(o);
   return status;

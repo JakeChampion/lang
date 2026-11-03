@@ -196,13 +196,13 @@ function low_bits_set(hi: u64, lo: u64, k: i32): boolean {
 function cmp128(ah: u64, al: u64, bh: u64, bl: u64): i32 {
   if (ah != bh) {
     if (ah < bh) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
   if (al != bl) {
     if (al < bl) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
@@ -210,21 +210,21 @@ function cmp128(ah: u64, al: u64, bh: u64, bl: u64): i32 {
 }
 
 function mul_hi64(x: u64, y: u64): u64 {
-  let m: u64 = 4294967295 as u64;
-  let sh: u64 = 32 as u64;
-  let a: u64 = x >> sh;
-  let b: u64 = x & m;
-  let c: u64 = y >> sh;
-  let d: u64 = y & m;
-  let bd: u64 = b * d;
-  let ad: u64 = a * d;
-  let bc: u64 = b * c;
+  let m = 4294967295 as u64;
+  let sh = 32 as u64;
+  let a = x >> sh;
+  let b = x & m;
+  let c = y >> sh;
+  let d = y & m;
+  let bd = b * d;
+  let ad = a * d;
+  let bc = b * c;
   let mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
   return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
 }
 
 function sub_hi(ah: u64, al: u64, bh: u64, bl: u64): u64 {
-  let hi: u64 = ah - bh;
+  let hi = ah - bh;
   if (al < bl) {
     hi = hi - 1 as u64;
   }
@@ -239,28 +239,28 @@ function to_big(hi: u64, lo: u64): bigint.BigInt {
 }
 
 function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boolean): LD {
-  let bl: i32 = 64 - __clz64(lo);
+  let bl = 64 - __clz64(lo);
   if (hi != 0 as u64) {
     bl = 128 - __clz64(hi);
   }
   if (bl == 0) {
     return f.zero(neg);
   }
-  let top: i32 = e + bl - 1;
+  let top = e + bl - 1;
   if (top > f.emax) {
     return inf(neg);
   }
-  let min_exp: i32 = 2 - f.emax - f.mant;
+  let min_exp = 2 - f.emax - f.mant;
   if (top < min_exp - 1) {
     return f.zero(neg);
   }
-  let at: i32 = top - (f.mant - 1);
+  let at = top - (f.mant - 1);
   if (top < 1 - f.emax) {
     at = min_exp;
   }
-  let shift: i32 = at - e;
+  let shift = at - e;
   if (shift <= 0) {
-    let k: i32 = 0 - shift;
+    let k = -shift;
     if (k == 0) {
       return LD { neg: neg, kind: 0, hi: hi, lo: lo, e: at };
     }
@@ -269,10 +269,10 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     }
     return LD { neg: neg, kind: 0, hi: hi << k as u64 | lo >> (64 - k) as u64, lo: lo << k as u64, e: at };
   }
-  let mh: u64 = 0 as u64;
-  let ml: u64 = 0 as u64;
-  let round: boolean = false;
-  let below: boolean = sticky;
+  let mh = 0 as u64;
+  let ml = 0 as u64;
+  let round = false;
+  let below = sticky;
   if (shift < 64) {
     mh = hi >> shift as u64;
     ml = lo >> shift as u64 | hi << (64 - shift) as u64;
@@ -283,7 +283,7 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     round = lo >> 63 as u64 == 1 as u64;
     below = below || lo << 1 as u64 != 0 as u64;
   } else if (shift < 128) {
-    let t: i32 = shift - 64;
+    let t = shift - 64;
     ml = hi >> t as u64;
     round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
     below = below || lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
@@ -296,7 +296,7 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     if (ml == 0 as u64) {
       mh = mh + 1 as u64;
     }
-    let wide: boolean = false;
+    let wide = false;
     if (mh != 0 as u64) {
       wide = 128 - __clz64(mh) > f.mant;
     } else {
@@ -305,7 +305,7 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
     if (wide) {
       ml = ml >> 1 as u64 | mh << 63 as u64;
       mh = mh >> 1 as u64;
-      at = at + 1;
+      at += 1;
     }
   }
   if (at + (f.mant - 1) > f.emax) {
@@ -315,19 +315,19 @@ function round128(f: Format, hi: u64, lo: u64, e: i32, sticky: boolean, neg: boo
 }
 
 pub function (f: Format) round(q: bigint.BigInt, e: i32, sticky: boolean, neg: boolean): (LD, boolean) {
-  let bl: i32 = q.bit_length();
+  let bl = q.bit_length();
   if (bl == 0) {
     return (f.zero(neg), false);
   }
-  let k: i32 = bl - 128;
+  let k = bl - 128;
   if (k < 0) {
     k = 0;
   }
-  let t: bigint.BigInt = q.shr(k);
-  let hi: u64 = t.word64(1);
-  let lo: u64 = t.word64(0);
-  let st: boolean = sticky || q.has_low_bits(k);
-  let r: LD = round128(f, hi, lo, e + k, st, neg);
+  let t = q.shr(k);
+  let hi = t.word64(1);
+  let lo = t.word64(0);
+  let st = sticky || q.has_low_bits(k);
+  let r = round128(f, hi, lo, e + k, st, neg);
   if (r.kind == 1) {
     return (r, true);
   }
@@ -341,8 +341,8 @@ pub function (f: Format) round(q: bigint.BigInt, e: i32, sticky: boolean, neg: b
 }
 
 pub function (f: Format) from_i64(v: i64): LD {
-  let neg: boolean = v < 0 as i64;
-  let mag: u64 = v as u64;
+  let neg = v < 0 as i64;
+  let mag = v as u64;
   if (neg) {
     mag = 0 as u64 - mag;
   }
@@ -363,11 +363,11 @@ pub function (v: LD) as_i64(): Option[i64] {
   if (top_of(v) >= 64) {
     return None;
   }
-  let u: u64 = v.lo;
+  let u = v.lo;
   if (v.e >= 0) {
     u = shl_lo(v.lo, v.e);
   } else {
-    let drop: i32 = 0 - v.e;
+    let drop = 0 - v.e;
     if (low_bits_set(v.hi, v.lo, drop)) {
       return None;
     }
@@ -393,15 +393,15 @@ pub function (f: Format) max_exact_u64(): u64 {
 }
 
 pub function (f: Format) pow10(k: i32): LD {
-  let v: LD = f.from_i64(1 as i64);
+  let v = f.from_i64(1 as i64);
   if (k <= 0) {
     return v;
   }
-  let ten: LD = f.from_i64(10 as i64);
-  let i: i32 = 0;
+  let ten = f.from_i64(10 as i64);
+  let i = 0;
   while (i < k) {
     v = f.mul(v, ten);
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -418,14 +418,14 @@ pub function (f: Format) from_decimal(digits: string, k: i32, neg: boolean): (LD
   if (digits.len() == 0) {
     return (f.zero(neg), false);
   }
-  let mag: i32 = digits.len() + k;
+  let mag = digits.len() + k;
   if (mag > decimal_hi(f)) {
     return (inf(neg), true);
   }
   if (mag < decimal_lo(f)) {
     return (f.zero(neg), true);
   }
-  let d: bigint.BigInt = bigint.zero();
+  let d = bigint.zero();
   match (bigint.parse(digits)) {
     Ok(v) => {
       d = v;
@@ -435,13 +435,13 @@ pub function (f: Format) from_decimal(digits: string, k: i32, neg: boolean): (LD
   if (k >= 0) {
     return f.round(d.mul_pow10(k), 0, false, neg);
   }
-  let b: bigint.BigInt = bigint.from_i64(1 as i64).mul_pow10(0 - k);
-  let s: i32 = f.mant + 2 + b.bit_length() - d.bit_length();
+  let b = bigint.from_i64(1 as i64).mul_pow10(-k);
+  let s = f.mant + 2 + b.bit_length() - d.bit_length();
   if (s < 0) {
     s = 0;
   }
   let qr: (bigint.BigInt, bigint.BigInt) = d.shl(s).divmod(b);
-  return f.round(qr.0, 0 - s, !qr.1.is_zero(), neg);
+  return f.round(qr.0, -s, !qr.1.is_zero(), neg);
 }
 
 function is_digit(b: i32): boolean {
@@ -456,7 +456,7 @@ function lower(b: i32): i32 {
 }
 
 function is_alpha(b: i32): boolean {
-  let l: i32 = lower(b);
+  let l = lower(b);
   return l >= 97 && l <= 122;
 }
 
@@ -474,7 +474,7 @@ function hex_digit(b: i32): i32 {
   if (b >= 65 && b <= 70) {
     return b - 55;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function hex_char(v: i32): i32 {
@@ -494,35 +494,35 @@ function has_word[S: byte_input.Input](s: S, i: i32, word: string): boolean {
   if (i + word.len() > s.byte_count()) {
     return false;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < word.len()) {
     if (lower(s.byte_at(i + k) as i32) != word[k] as i32) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return true;
 }
 
 function read_exponent[S: byte_input.Input](s: S, i: i32): (i32, i32) {
-  let j: i32 = i;
-  let neg: boolean = false;
+  let j = i;
+  let neg = false;
   if (j < s.byte_count() && (s.byte_at(j) as i32 == 43 || s.byte_at(j) as i32 == 45)) {
     neg = s.byte_at(j) as i32 == 45;
-    j = j + 1;
+    j += 1;
   }
   if (j >= s.byte_count() || !is_digit(s.byte_at(j) as i32)) {
     return (0, i);
   }
-  let v: i32 = 0;
+  let v = 0;
   while (j < s.byte_count() && is_digit(s.byte_at(j) as i32)) {
     if (v < 100000000) {
       v = v * 10 + (s.byte_at(j) as i32 - 48);
     }
-    j = j + 1;
+    j += 1;
   }
   if (neg) {
-    v = 0 - v;
+    v = -v;
   }
   return (v, j);
 }
@@ -540,29 +540,29 @@ pub function (f: Format) strtold_array(s: u8[], lo: i32, hi: i32): Parse {
 }
 
 function strtold_input[S: byte_input.Input](f: Format, s: S): Parse {
-  let n: i32 = s.byte_count();
-  let i: i32 = 0;
+  let n = s.byte_count();
+  let i = 0;
   while (i < n && is_space(s.byte_at(i) as i32)) {
-    i = i + 1;
+    i += 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < n && (s.byte_at(i) as i32 == 45 || s.byte_at(i) as i32 == 43)) {
     neg = s.byte_at(i) as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
   if (has_word(s, i, "inf")) {
-    i = i + 3;
+    i += 3;
     if (has_word(s, i, "inity")) {
-      i = i + 5;
+      i += 5;
     }
     return Parse { v: inf(neg), erange: false, end: i };
   }
   if (has_word(s, i, "nan")) {
-    i = i + 3;
+    i += 3;
     if (i < n && s.byte_at(i) as i32 == 40) {
-      let k: i32 = i + 1;
+      let k = i + 1;
       while (k < n && (is_digit(s.byte_at(k) as i32) || is_alpha(s.byte_at(k) as i32) || s.byte_at(k) as i32 == 95)) {
-        k = k + 1;
+        k += 1;
       }
       if (k < n && s.byte_at(k) as i32 == 41) {
         i = k + 1;
@@ -571,8 +571,8 @@ function strtold_input[S: byte_input.Input](f: Format, s: S): Parse {
     return Parse { v: nan(neg), erange: false, end: i };
   }
   if (i + 1 < n && s.byte_at(i) as i32 == 48 && lower(s.byte_at(i + 1) as i32) == 120) {
-    let j: i32 = i + 2;
-    let hex_start: boolean = j < n && hex_digit(s.byte_at(j) as i32) >= 0;
+    let j = i + 2;
+    let hex_start = j < n && hex_digit(s.byte_at(j) as i32) >= 0;
     if (!hex_start && j + 1 < n && s.byte_at(j) as i32 == 46 && hex_digit(s.byte_at(j + 1) as i32) >= 0) {
       hex_start = true;
     }
@@ -584,21 +584,21 @@ function strtold_input[S: byte_input.Input](f: Format, s: S): Parse {
 }
 
 function hex_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: boolean): Parse {
-  let n: i32 = s.byte_count();
-  let i: i32 = start;
-  let q: bigint.BigInt = bigint.zero();
-  let sixteen: bigint.BigInt = bigint.from_i64(16 as i64);
-  let frac: i32 = 0;
-  let in_frac: boolean = false;
-  let any: boolean = false;
+  let n = s.byte_count();
+  let i = start;
+  let q = bigint.zero();
+  let sixteen = bigint.from_i64(16 as i64);
+  let frac = 0;
+  let in_frac = false;
+  let any = false;
   while (i < n) {
-    let b: i32 = s.byte_at(i) as i32;
+    let b = s.byte_at(i) as i32;
     if (b == 46 && !in_frac) {
       in_frac = true;
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let d: i32 = hex_digit(b);
+    let d = hex_digit(b);
     if (d < 0) {
       break;
     }
@@ -607,11 +607,11 @@ function hex_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: boolea
       any = true;
     }
     if (in_frac) {
-      frac = frac + 1;
+      frac += 1;
     }
-    i = i + 1;
+    i += 1;
   }
-  let exp: i32 = 0;
+  let exp = 0;
   if (i < n && lower(s.byte_at(i) as i32) == 112) {
     let r: (i32, i32) = read_exponent(s, i + 1);
     if (r.1 > i + 1) {
@@ -627,25 +627,25 @@ function hex_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: boolea
 }
 
 function decimal_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: boolean): Parse {
-  let n: i32 = s.byte_count();
-  let i: i32 = start;
+  let n = s.byte_count();
+  let i = start;
   let digits: u8[] = [];
-  let frac: i32 = 0;
-  let in_frac: boolean = false;
-  let seen: boolean = false;
-  let lead_zero: boolean = true;
+  let frac = 0;
+  let in_frac = false;
+  let seen = false;
+  let lead_zero = true;
   while (i < n) {
-    let b: i32 = s.byte_at(i) as i32;
+    let b = s.byte_at(i) as i32;
     if (b == 46 && !in_frac) {
       if (i + 1 >= n || !is_digit(s.byte_at(i + 1) as i32)) {
         if (!seen) {
           return no_float(f);
         }
-        i = i + 1;
+        i += 1;
         break;
       }
       in_frac = true;
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (!is_digit(b)) {
@@ -654,21 +654,21 @@ function decimal_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: bo
     seen = true;
     if (lead_zero && b == 48) {
       if (in_frac) {
-        frac = frac + 1;
+        frac += 1;
       }
     } else {
       lead_zero = false;
       digits = digits.append(b as u8);
       if (in_frac) {
-        frac = frac + 1;
+        frac += 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (!seen) {
     return no_float(f);
   }
-  let exp: i32 = 0;
+  let exp = 0;
   if (i < n && lower(s.byte_at(i) as i32) == 101) {
     let r: (i32, i32) = read_exponent(s, i + 1);
     if (r.1 > i + 1) {
@@ -676,18 +676,18 @@ function decimal_float[S: byte_input.Input](f: Format, s: S, start: i32, neg: bo
       i = r.1;
     }
   }
-  let last: i32 = digits.len();
+  let last = digits.len();
   while (last > 0 && digits[last - 1] as i32 == 48) {
-    last = last - 1;
+    last -= 1;
   }
-  let k: i32 = exp - frac + (digits.len() - last);
-  let ds: string = "";
+  let k = exp - frac + (digits.len() - last);
+  let ds = "";
   if (last > 0) {
     let kept: u8[] = [];
-    let j: i32 = 0;
+    let j = 0;
     while (j < last) {
       kept = kept.append(digits[j]);
-      j = j + 1;
+      j += 1;
     }
     ds = string_from_bytes_unchecked(kept);
   }
@@ -720,8 +720,8 @@ pub function (f: Format) add(a: LD, b: LD): LD {
   if (b.is_zero()) {
     return a;
   }
-  let e: i32 = a.e + trailing_zeros128(a.hi, a.lo);
-  let eb: i32 = b.e + trailing_zeros128(b.hi, b.lo);
+  let e = a.e + trailing_zeros128(a.hi, a.lo);
+  let eb = b.e + trailing_zeros128(b.hi, b.lo);
   if (eb < e) {
     e = eb;
   }
@@ -732,19 +732,19 @@ pub function (f: Format) add(a: LD, b: LD): LD {
 }
 
 function add128(f: Format, a: LD, b: LD, e: i32): LD {
-  let ah: u64 = aligned_hi(a, e);
-  let al: u64 = aligned_lo(a, e);
-  let bh: u64 = aligned_hi(b, e);
-  let bl: u64 = aligned_lo(b, e);
+  let ah = aligned_hi(a, e);
+  let al = aligned_lo(a, e);
+  let bh = aligned_hi(b, e);
+  let bl = aligned_lo(b, e);
   if (a.neg == b.neg) {
-    let lo: u64 = al + bl;
-    let hi: u64 = ah + bh;
+    let lo = al + bl;
+    let hi = ah + bh;
     if (lo < al) {
       hi = hi + 1 as u64;
     }
     return round128(f, hi, lo, e, false, a.neg);
   }
-  let c: i32 = cmp128(ah, al, bh, bl);
+  let c = cmp128(ah, al, bh, bl);
   if (c == 0) {
     return f.zero(false);
   }
@@ -769,19 +769,19 @@ function aligned_lo(v: LD, e: i32): u64 {
 }
 
 pub function (f: Format) add_exact(a: LD, b: LD): LD {
-  let e: i32 = a.e;
+  let e = a.e;
   if (b.e < e) {
     e = b.e;
   }
-  let av: bigint.BigInt = to_big(a.hi, a.lo).shl(a.e - e);
+  let av = to_big(a.hi, a.lo).shl(a.e - e);
   if (a.neg) {
     av = av.negate();
   }
-  let bv: bigint.BigInt = to_big(b.hi, b.lo).shl(b.e - e);
+  let bv = to_big(b.hi, b.lo).shl(b.e - e);
   if (b.neg) {
     bv = bv.negate();
   }
-  let s: bigint.BigInt = av.add(bv);
+  let s = av.add(bv);
   if (s.is_zero()) {
     return f.zero(false);
   }
@@ -795,7 +795,7 @@ pub function (f: Format) mul_exact(a: LD, b: LD): LD {
 }
 
 pub function (f: Format) div_exact(a: LD, b: LD): LD {
-  let s: i32 = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
+  let s = f.mant + 3 + bit_length128(b.hi, b.lo) - bit_length128(a.hi, a.lo);
   if (s < 0) {
     s = 0;
   }
@@ -815,7 +815,7 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
   if (b.kind == 2) {
     return b;
   }
-  let neg: boolean = a.neg != b.neg;
+  let neg = a.neg != b.neg;
   if (a.kind == 1 || b.kind == 1) {
     if (a.is_zero() || b.is_zero()) {
       return nan(false);
@@ -826,15 +826,15 @@ pub function (f: Format) mul(a: LD, b: LD): LD {
     return f.zero(neg);
   }
   if (a.hi == 0 as u64 && b.hi == 0 as u64) {
-    let ta: i32 = __ctz64(a.lo);
-    let tb: i32 = __ctz64(b.lo);
-    let xa: u64 = a.lo >> ta as u64;
-    let yb: u64 = b.lo >> tb as u64;
+    let ta = __ctz64(a.lo);
+    let tb = __ctz64(b.lo);
+    let xa = a.lo >> ta as u64;
+    let yb = b.lo >> tb as u64;
     return round128(f, mul_hi64(xa, yb), xa * yb, a.e + ta + b.e + tb, false, neg);
   }
   if (fits_word(a) && fits_word(b)) {
-    let x: u64 = reduced(a);
-    let y: u64 = reduced(b);
+    let x = reduced(a);
+    let y = reduced(b);
     return round128(f, mul_hi64(x, y), x * y, a.e + trailing_zeros128(a.hi, a.lo) + b.e + trailing_zeros128(b.hi, b.lo), false, neg);
   }
   return f.mul_exact(a, b);
@@ -857,7 +857,7 @@ function reduced(v: LD): u64 {
   if (v.lo == 0 as u64) {
     return v.hi >> __ctz64(v.hi) as u64;
   }
-  let t: i32 = __ctz64(v.lo);
+  let t = __ctz64(v.lo);
   return v.lo >> t as u64 | v.hi << (64 - t) as u64;
 }
 
@@ -868,7 +868,7 @@ pub function (f: Format) div(a: LD, b: LD): LD {
   if (b.kind == 2) {
     return b;
   }
-  let neg: boolean = a.neg != b.neg;
+  let neg = a.neg != b.neg;
   if (a.kind == 1) {
     if (b.kind == 1) {
       return nan(false);
@@ -888,14 +888,14 @@ pub function (f: Format) div(a: LD, b: LD): LD {
     return f.zero(neg);
   }
   if (a.hi == 0 as u64 && b.hi == 0 as u64) {
-    let tb: i32 = __ctz64(b.lo);
-    let d1: u64 = b.lo >> tb as u64;
+    let tb = __ctz64(b.lo);
+    let d1 = b.lo >> tb as u64;
     if (d1 <= 4294967295 as u64) {
-      let ta: i32 = __ctz64(a.lo);
+      let ta = __ctz64(a.lo);
       return div_small(f, a.lo >> ta as u64, a.e + ta, d1, b.e + tb, neg);
     }
   } else if (fits_word(a) && fits_word(b)) {
-    let d: u64 = reduced(b);
+    let d = reduced(b);
     if (d <= 4294967295 as u64) {
       return div_small(f, reduced(a), a.e + trailing_zeros128(a.hi, a.lo), d, b.e + trailing_zeros128(b.hi, b.lo), neg);
     }
@@ -904,32 +904,32 @@ pub function (f: Format) div(a: LD, b: LD): LD {
 }
 
 function div_small(f: Format, x: u64, ex: i32, d: u64, ed: i32, neg: boolean): LD {
-  let s: i32 = f.mant + 3 + (64 - __clz64(d)) - (64 - __clz64(x));
+  let s = f.mant + 3 + (64 - __clz64(d)) - (64 - __clz64(x));
   if (s < 0) {
     s = 0;
   }
-  let pos: i32 = 64 - __clz64(x) + s;
-  let width: i32 = pos % 32;
+  let pos = 64 - __clz64(x) + s;
+  let width = pos % 32;
   if (width == 0) {
     width = 32;
   }
-  let qh: u64 = 0 as u64;
-  let ql: u64 = 0 as u64;
-  let rem: u64 = 0 as u64;
+  let qh = 0 as u64;
+  let ql = 0 as u64;
+  let rem = 0 as u64;
   while (pos > 0) {
-    let from: i32 = pos - width - s;
-    let chunk: u64 = 0 as u64;
+    let from = pos - width - s;
+    let chunk = 0 as u64;
     if (from >= 0) {
       chunk = x >> from as u64 & (1 as u64 << width as u64) - 1 as u64;
     } else if (from + width > 0) {
-      chunk = x << (0 - from) as u64 & (1 as u64 << width as u64) - 1 as u64;
+      chunk = x << (-from) as u64 & (1 as u64 << width as u64) - 1 as u64;
     }
-    let cur: u64 = rem << 32 as u64 | chunk;
-    let q: u64 = cur / d;
+    let cur = rem << 32 as u64 | chunk;
+    let q = cur / d;
     rem = cur % d;
     qh = qh << width as u64 | ql >> (64 - width) as u64;
     ql = ql << width as u64 | q;
-    pos = pos - width;
+    pos -= width;
     width = 32;
   }
   return round128(f, qh, ql, ex - ed - s, rem != 0 as u64, neg);
@@ -939,17 +939,17 @@ pub function (a: LD) cmp(b: LD): i32 {
   if (a.kind == 2 || b.kind == 2) {
     return 2;
   }
-  let an: boolean = a.neg && !a.is_zero();
-  let bn: boolean = b.neg && !b.is_zero();
+  let an = a.neg && !a.is_zero();
+  let bn = b.neg && !b.is_zero();
   if (an != bn) {
     if (an) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
-  let c: i32 = a.cmp_abs(b);
+  let c = a.cmp_abs(b);
   if (an) {
-    return 0 - c;
+    return -c;
   }
   return c;
 }
@@ -959,7 +959,7 @@ pub function (a: LD) eq(b: LD): boolean {
 }
 
 pub function (a: LD) lt(b: LD): boolean {
-  return a.cmp(b) == 0 - 1;
+  return a.cmp(b) == -1;
 }
 
 function mag_class(v: LD): i32 {
@@ -967,7 +967,7 @@ function mag_class(v: LD): i32 {
     return 1;
   }
   if ((v.hi | v.lo) == 0 as u64) {
-    return 0 - 1;
+    return -1;
   }
   return 0;
 }
@@ -977,34 +977,34 @@ pub function (a: LD) cmp_abs(b: LD): i32 {
     return 2;
   }
   if (a.kind == 1 || b.kind == 1 || (a.hi | a.lo) == 0 as u64 || (b.hi | b.lo) == 0 as u64) {
-    let ca: i32 = mag_class(a);
-    let cb: i32 = mag_class(b);
+    let ca = mag_class(a);
+    let cb = mag_class(b);
     if (ca < cb) {
-      return 0 - 1;
+      return -1;
     }
     if (ca > cb) {
       return 1;
     }
     return 0;
   }
-  let ta: i32 = a.e + 63 - __clz64(a.lo);
+  let ta = a.e + 63 - __clz64(a.lo);
   if (a.hi != 0 as u64) {
     ta = a.e + 127 - __clz64(a.hi);
   }
-  let tb: i32 = b.e + 63 - __clz64(b.lo);
+  let tb = b.e + 63 - __clz64(b.lo);
   if (b.hi != 0 as u64) {
     tb = b.e + 127 - __clz64(b.hi);
   }
   if (ta != tb) {
     if (ta < tb) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
   if (a.e == b.e) {
     return cmp128(a.hi, a.lo, b.hi, b.lo);
   }
-  let e: i32 = a.e;
+  let e = a.e;
   if (b.e < e) {
     e = b.e;
   }
@@ -1038,9 +1038,9 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
   if (mode == round_nearest()) {
     return trunc_mag(f, plus_half(f, v), v.neg);
   }
-  let drop: i32 = 0 - v.e;
-  let wh: u64 = 0 as u64;
-  let wl: u64 = 0 as u64;
+  let drop = 0 - v.e;
+  let wh = 0 as u64;
+  let wl = 0 as u64;
   if (drop < 64) {
     if ((v.lo & (1 as u64 << drop as u64) - 1 as u64) == 0 as u64) {
       return v;
@@ -1064,14 +1064,14 @@ pub function (f: Format) round_to_int(v: LD, mode: i32): LD {
 }
 
 function plus_half(f: Format, v: LD): LD {
-  let k: i32 = 0 - 1 - v.e;
+  let k = -1 - v.e;
   if (k < 127 && top_of(v) - v.e < 127) {
-    let sh: u64 = v.hi;
-    let sl: u64 = v.lo;
+    let sh = v.hi;
+    let sl = v.lo;
     if (k >= 64) {
-      sh = sh + (1 as u64 << (k - 64) as u64);
+      sh += 1 as u64 << (k - 64) as u64;
     } else {
-      sl = sl + (1 as u64 << k as u64);
+      sl += 1 as u64 << k as u64;
       if (sl < v.lo) {
         sh = sh + 1 as u64;
       }
@@ -1082,7 +1082,7 @@ function plus_half(f: Format, v: LD): LD {
 }
 
 pub function (f: Format) half(): LD {
-  return round128(f, 0 as u64, 1 as u64, 0 - 1, false, false);
+  return round128(f, 0 as u64, 1 as u64, -1, false, false);
 }
 
 function away_from_zero(mode: i32, neg: boolean): boolean {
@@ -1111,32 +1111,32 @@ pub function (v: LD) dec(): Dec {
   if (v.is_zero()) {
     return Dec { digits: "", dp: 0 };
   }
-  let tz: i32 = trailing_zeros128(v.hi, v.lo);
-  let hi: u64 = shr_hi(v.hi, tz);
-  let lo: u64 = shr_lo(v.hi, v.lo, tz);
-  let e: i32 = v.e + tz;
+  let tz = trailing_zeros128(v.hi, v.lo);
+  let hi = shr_hi(v.hi, tz);
+  let lo = shr_lo(v.hi, v.lo, tz);
+  let e = v.e + tz;
   if (e >= 0) {
     if (hi == 0 as u64 && 64 - __clz64(lo) + e <= 64) {
-      let w: string = (lo << e as u64).to_string();
+      let w = (lo << e as u64).to_string();
       return Dec { digits: w, dp: w.len() };
     }
-    let s: string = to_big(hi, lo).shl(e).to_string();
+    let s = to_big(hi, lo).shl(e).to_string();
     return Dec { digits: s, dp: s.len() };
   }
-  if (hi == 0 as u64 && 0 - e <= 27 && 64 - __clz64(lo) + pow5_bits(0 - e) <= 64) {
-    let u: string = (lo * pow5_u64(0 - e)).to_string();
+  if (hi == 0 as u64 && -e <= 27 && 64 - __clz64(lo) + pow5_bits(-e) <= 64) {
+    let u = (lo * pow5_u64(-e)).to_string();
     return Dec { digits: u, dp: u.len() + e };
   }
-  let t: string = to_big(hi, lo).mul_pow5(0 - e).to_string();
+  let t = to_big(hi, lo).mul_pow5(-e).to_string();
   return Dec { digits: t, dp: t.len() + e };
 }
 
 function pow5_u64(k: i32): u64 {
-  let p: u64 = 1 as u64;
-  let i: i32 = 0;
+  let p = 1 as u64;
+  let i = 0;
   while (i < k) {
-    p = p * (5 as u64);
-    i = i + 1;
+    p *= 5 as u64;
+    i += 1;
   }
   return p;
 }
@@ -1149,7 +1149,7 @@ pub function (f: Format) canonical(v: LD): LD {
   if (v.kind != 0 || v.hi != 0 as u64 || v.lo == 0 as u64) {
     return v;
   }
-  let shift: i32 = f.mant - (64 - __clz64(v.lo));
+  let shift = f.mant - (64 - __clz64(v.lo));
   if (shift > v.e - f.min_exp()) {
     shift = v.e - f.min_exp();
   }
@@ -1160,60 +1160,60 @@ pub function (f: Format) canonical(v: LD): LD {
 }
 
 pub function (f: Format) round_to(v: LD, x: i32, p: i32): (Dec, boolean) {
-  let s: i32 = p - 1 - x;
+  let s = p - 1 - x;
   let fast: (Dec, i32) = round_fast(f, v, x, p, s);
   if (fast.1 != 0) {
     return (fast.0, fast.1 == 2);
   }
-  let m: bigint.BigInt = bigint.from_u64(v.lo);
-  let e2: i32 = v.e + s;
-  let q: bigint.BigInt = m;
-  let r: bigint.BigInt = bigint.zero();
-  let d: bigint.BigInt = bigint.from_u64(1 as u64);
-  let h: bigint.BigInt = d;
+  let m = bigint.from_u64(v.lo);
+  let e2 = v.e + s;
+  let q = m;
+  let r = bigint.zero();
+  let d = bigint.from_u64(1 as u64);
+  let h = d;
   if (s >= 0) {
     h = h.mul_pow5(s);
-    let a: bigint.BigInt = m.mul(h);
+    let a = m.mul(h);
     if (e2 >= 0) {
       q = a.shl(e2);
     } else {
-      q = a.shr(0 - e2);
-      r = a.sub(q.shl(0 - e2));
-      d = d.shl(0 - e2);
+      q = a.shr(-e2);
+      r = a.sub(q.shl(-e2));
+      d = d.shl(-e2);
     }
   } else {
-    d = d.mul_pow5(0 - s);
-    let b: bigint.BigInt = m;
+    d = d.mul_pow5(-s);
+    let b = m;
     if (e2 >= 0) {
       b = m.shl(e2);
       h = h.shl(e2);
     } else {
-      d = d.shl(0 - e2);
+      d = d.shl(-e2);
     }
     let qr: (bigint.BigInt, bigint.BigInt) = b.divmod(d);
     q = qr.0;
     r = qr.1;
   }
-  let c: i32 = r.shl(1).cmp(d);
-  let up: boolean = c > 0 || c == 0 && q.bit(0);
-  let dist: bigint.BigInt = r;
-  let twice: i32 = 1;
+  let c = r.shl(1).cmp(d);
+  let up = c > 0 || c == 0 && q.bit(0);
+  let dist = r;
+  let twice = 1;
   if (up) {
     dist = d.sub(r);
   } else if (v.lo == 1 as u64 << (f.mant - 1) as u64 && v.e > f.min_exp()) {
     twice = 2;
   }
-  let cg: i32 = dist.shl(twice).cmp(h);
-  let reads_back: boolean = cg < 0 || cg == 0 && (v.lo & 1 as u64) == 0 as u64;
-  let n: u64 = q.low_u64();
+  let cg = dist.shl(twice).cmp(h);
+  let reads_back = cg < 0 || cg == 0 && (v.lo & 1 as u64) == 0 as u64;
+  let n = q.low_u64();
   if (up) {
     n = n + 1 as u64;
   }
-  let digits: string = n.to_string();
-  let dp: i32 = x + 1;
+  let digits = n.to_string();
+  let dp = x + 1;
   if (digits.len() > p) {
     digits = "1";
-    dp = dp + 1;
+    dp += 1;
   }
   return (Dec { digits: digits, dp: dp }, reads_back);
 }
@@ -1223,25 +1223,25 @@ function no_dec(): (Dec, i32) {
 }
 
 function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
-  if (s < 0 - 292 || s > 326) {
+  if (s < -292 || s > 326) {
     return no_dec();
   }
-  let chi: u64 = cached_powers.hi(s);
-  let clo: u64 = cached_powers.lo(s);
-  let t: i32 = 63 - cached_powers.log2(s) - v.e;
+  let chi = cached_powers.hi(s);
+  let clo = cached_powers.lo(s);
+  let t = 63 - cached_powers.log2(s) - v.e;
   if (t < 48 || t > 126) {
     return no_dec();
   }
-  let m: u64 = v.lo;
-  let mc: u64 = m * chi;
-  let p0: u64 = m * clo;
-  let p1: u64 = mc + mul_hi64(m, clo);
-  let p2: u64 = mul_hi64(m, chi);
+  let m = v.lo;
+  let mc = m * chi;
+  let p0 = m * clo;
+  let p1 = mc + mul_hi64(m, clo);
+  let p2 = mul_hi64(m, chi);
   if (p1 < mc) {
     p2 = p2 + 1 as u64;
   }
-  let q: u64 = 0 as u64;
-  let fr: u64 = 0 as u64;
+  let q = 0 as u64;
+  let fr = 0 as u64;
   if (t >= 64) {
     q = shr_hi(p2, t - 64);
     fr = shr_lo(p2, p1, t - 64);
@@ -1249,25 +1249,25 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
     q = shr_lo(p2, p1, t);
     fr = shr_lo(p1, p0, t);
   }
-  let margin: u64 = 1 as u64;
+  let margin = 1 as u64;
   if (t < 64) {
     margin = (m >> t as u64) + 1 as u64;
   }
   if (fr < margin) {
     return no_dec();
   }
-  let half: u64 = 9223372036854775808 as u64;
-  let up: boolean = fr - margin >= half;
+  let half = 9223372036854775808 as u64;
+  let up = fr - margin >= half;
   if (!up && fr >= half) {
     return no_dec();
   }
-  let hh: u64 = shr_hi(chi, t + 1);
-  let hl: u64 = shr_lo(chi, clo, t + 1);
-  let reads: i32 = 0;
+  let hh = shr_hi(chi, t + 1);
+  let hl = shr_lo(chi, clo, t + 1);
+  let reads = 0;
   if (hh != 0 as u64) {
     reads = 2;
   } else if (up) {
-    let dc: u64 = 0 as u64 - fr;
+    let dc = 0 as u64 - fr;
     if (dc - 1 as u64 > hl) {
       reads = 1;
     } else if (hl >= margin + 1 as u64 && dc <= hl - margin - 1 as u64) {
@@ -1289,15 +1289,15 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   if (reads == 0) {
     return no_dec();
   }
-  let n: u64 = q;
+  let n = q;
   if (up) {
     n = n + 1 as u64;
   }
-  let digits: string = n.to_string();
-  let dp: i32 = x + 1;
+  let digits = n.to_string();
+  let dp = x + 1;
   if (digits.len() > p) {
     digits = "1";
-    dp = dp + 1;
+    dp += 1;
   }
   return (Dec { digits: digits, dp: dp }, reads);
 }
@@ -1307,7 +1307,7 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
     if (n < 0) {
       return ("", false);
     }
-    let first: i32 = d[0] as i32;
+    let first = d[0] as i32;
     if (first > 53 || first == 53 && has_nonzero(d, 1)) {
       return ("1", true);
     }
@@ -1316,8 +1316,8 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
   if (n >= d.len()) {
     return (d, false);
   }
-  let c: i32 = d[n] as i32;
-  let up: boolean = false;
+  let c = d[n] as i32;
+  let up = false;
   if (c > 53) {
     up = true;
   } else if (c == 53) {
@@ -1327,11 +1327,11 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
       up = (d[n - 1] as i32 - 48) % 2 == 1;
     }
   }
-  let kept: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let kept = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     kept = kept.with(i, d[i]);
-    i = i + 1;
+    i += 1;
   }
   if (!up) {
     return (string_from_bytes_unchecked(kept), false);
@@ -1340,7 +1340,7 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
   while (i >= 0) {
     if (kept[i] as i32 == 57) {
       kept = kept.with(i, 48 as u8);
-      i = i - 1;
+      i -= 1;
     } else {
       kept = kept.with(i, (kept[i] as i32 + 1) as u8);
       return (string_from_bytes_unchecked(kept), false);
@@ -1350,12 +1350,12 @@ pub function round_digits(d: string, n: i32): (string, boolean) {
 }
 
 function has_nonzero(d: string, from: i32): boolean {
-  let i: i32 = from;
+  let i = from;
   while (i < d.len()) {
     if (d[i] as i32 != 48) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -1392,8 +1392,8 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
     }
     return fixed_shape("", 0, prec, alt, prec);
   }
-  let n: i64 = d.dp as i64 + prec;
-  let whole: i64 = d.dp as i64;
+  let n = d.dp as i64 + prec;
+  let whole = d.dp as i64;
   if (whole < 1 as i64) {
     whole = 1 as i64;
   }
@@ -1407,43 +1407,43 @@ pub function fixed(d: Dec, prec: i64, alt: boolean, extra: i64): Body {
     return fixed_shape("", 0, prec, alt, prec);
   }
   let rf: (string, boolean) = round_digits(d.digits, n as i32);
-  let dp: i32 = d.dp;
+  let dp = d.dp;
   if (rf.1) {
-    dp = dp + 1;
+    dp += 1;
   }
   return fixed_shape(rf.0, dp, prec, alt, 0 as i64);
 }
 
 function fixed_shape(digits: string, dp: i32, prec: i64, alt: boolean, zeros: i64): Body {
-  let head: string = "";
+  let head = "";
   if (dp >= 1) {
     head = slice_unchecked(digits, 0, dp) + "";
     if (prec > 0 as i64 || alt) {
-      head = head + ".";
+      head += ".";
     }
-    head = head + slice_unchecked(digits, dp, digits.len());
+    head += slice_unchecked(digits, dp, digits.len());
   } else {
     head = "0";
     if (prec > 0 as i64 || alt) {
-      head = head + ".";
+      head += ".";
     }
-    head = head + "0".repeat(0 - dp) + digits;
+    head = head + "0".repeat(-dp) + digits;
   }
   return body(head, zeros, "");
 }
 
 function exp_suffix(x: i32, upper: boolean): string {
-  let ax: i32 = x;
+  let ax = x;
   if (x < 0) {
-    ax = 0 - x;
+    ax = -x;
   }
-  let nd: i32 = 2;
-  let probe: i32 = ax / 100;
+  let nd = 2;
+  let probe = ax / 100;
   while (probe > 0) {
-    nd = nd + 1;
-    probe = probe / 10;
+    nd += 1;
+    probe /= 10;
   }
-  let out: u8[] = __alloc_u8(2 + nd);
+  let out = __alloc_u8(2 + nd);
   out = out.with(0, 101 as u8);
   if (upper) {
     out = out.with(0, 69 as u8);
@@ -1452,11 +1452,11 @@ function exp_suffix(x: i32, upper: boolean): string {
   if (x < 0) {
     out = out.with(1, 45 as u8);
   }
-  let i: i32 = 1 + nd;
+  let i = 1 + nd;
   while (i >= 2) {
     out = out.with(i, (ax % 10 + 48) as u8);
-    ax = ax / 10;
-    i = i - 1;
+    ax /= 10;
+    i -= 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -1471,57 +1471,57 @@ pub function sci(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): B
   if (prec + 2 as i64 + extra + exp_suffix(d.dp - 1, false).len() as i64 >= overflow_len()) {
     return refused();
   }
-  let n: i64 = prec + 1 as i64;
+  let n = prec + 1 as i64;
   if (n >= d.digits.len() as i64) {
     return sci_shape(d.digits, d.dp - 1, prec, alt, upper, n - d.digits.len() as i64);
   }
   let re: (string, boolean) = round_digits(d.digits, n as i32);
-  let xe: i32 = d.dp - 1;
-  let de: string = re.0;
+  let xe = d.dp - 1;
+  let de = re.0;
   if (re.1) {
-    xe = xe + 1;
+    xe += 1;
     de = slice_unchecked(de, 0, n as i32) + "";
   }
   return sci_shape(de, xe, prec, alt, upper, 0 as i64);
 }
 
 function sci_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, zeros: i64): Body {
-  let head: string = slice_unchecked(digits, 0, 1) + "";
+  let head = slice_unchecked(digits, 0, 1) + "";
   if (prec > 0 as i64 || alt) {
-    head = head + ".";
+    head += ".";
   }
-  head = head + slice_unchecked(digits, 1, digits.len());
+  head += slice_unchecked(digits, 1, digits.len());
   return body(head, zeros, exp_suffix(x, upper));
 }
 
 pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64): Body {
-  let pr: i64 = prec;
+  let pr = prec;
   if (pr == 0 as i64) {
     pr = 1 as i64;
   }
   if (d.digits.len() == 0) {
     return general_shape("0", 0, pr, alt, upper, false, extra);
   }
-  let sig: i32 = d.digits.len();
+  let sig = d.digits.len();
   if (pr >= sig as i64) {
     return general_shape(d.digits, d.dp - 1, pr, alt, upper, false, extra);
   }
   sig = pr as i32;
   let r: (string, boolean) = round_digits(d.digits, sig);
-  let x: i32 = d.dp - 1;
-  let digits: string = r.0;
+  let x = d.dp - 1;
+  let digits = r.0;
   if (r.1) {
-    x = x + 1;
+    x += 1;
     digits = slice_unchecked(digits, 0, sig) + "";
   }
   return general_shape(digits, x, pr, alt, upper, r.1, extra);
 }
 
 function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, carried: boolean, extra: i64): Body {
-  let pr: i32 = prec as i32;
-  let zeros: i64 = 0 as i64;
-  if (x < 0 - 4 || x as i64 >= prec) {
-    let end: i32 = digits.len();
+  let pr = prec as i32;
+  let zeros = 0 as i64;
+  if (x < -4 || x as i64 >= prec) {
+    let end = digits.len();
     if (carried && x as i64 == prec && target_os() != "darwin") {
       end = 1;
     } else if (alt) {
@@ -1532,11 +1532,11 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
     } else {
       end = nonzero_end(digits, 1);
     }
-    let point: i32 = 0;
+    let point = 0;
     if (end > 1 || alt) {
       point = 1;
     }
-    let mant: u8[] = __alloc_u8(end + point);
+    let mant = __alloc_u8(end + point);
     mant = mant.with(0, digits[0]);
     if (point == 1) {
       mant = mant.with(1, 46 as u8);
@@ -1544,21 +1544,21 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
     mant = copy_digits(mant, 1 + point, digits, 1, end);
     return body(string_from_bytes_unchecked(mant), zeros, exp_suffix(x, upper));
   }
-  let dp: i32 = x + 1;
-  let whole: i32 = dp;
-  let lead: i32 = 0;
-  let from: i32 = dp;
+  let dp = x + 1;
+  let whole = dp;
+  let lead = 0;
+  let from = dp;
   if (dp < 1) {
     whole = 1;
-    lead = 0 - dp;
+    lead = -dp;
     from = 0;
   }
   if (from > digits.len()) {
     from = digits.len();
   }
-  let end: i32 = digits.len();
+  let end = digits.len();
   if (alt) {
-    let want: i32 = pr - 1 - x;
+    let want = pr - 1 - x;
     if (want as i64 + extra >= overflow_len()) {
       return refused();
     }
@@ -1571,12 +1571,12 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
       lead = 0;
     }
   }
-  let point: i32 = 0;
+  let point = 0;
   if (lead + end - from > 0 || alt) {
     point = 1;
   }
-  let head: u8[] = __alloc_u8(whole + point + lead + end - from);
-  let at: i32 = 0;
+  let head = __alloc_u8(whole + point + lead + end - from);
+  let at = 0;
   if (dp < 1) {
     head = head.with(0, 48 as u8);
     at = 1;
@@ -1585,35 +1585,35 @@ function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: b
     at = from;
     while (at < whole) {
       head = head.with(at, 48 as u8);
-      at = at + 1;
+      at += 1;
     }
   }
   if (point == 1) {
     head = head.with(at, 46 as u8);
-    at = at + 1;
+    at += 1;
   }
   while (lead > 0) {
     head = head.with(at, 48 as u8);
-    at = at + 1;
-    lead = lead - 1;
+    at += 1;
+    lead -= 1;
   }
   head = copy_digits(head, at, digits, from, end);
   return body(string_from_bytes_unchecked(head), zeros, "");
 }
 
 function nonzero_end(s: string, from: i32): i32 {
-  let n: i32 = s.len();
+  let n = s.len();
   while (n > from && s[n - 1] as i32 == 48) {
-    n = n - 1;
+    n -= 1;
   }
   return n;
 }
 
 function copy_digits(own out: u8[], at: i32, s: string, from: i32, to: i32): u8[] {
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     out = out.with(at + i - from, s[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1624,13 +1624,13 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
       return fixed_u64(0 as u64, prec, v.neg);
     }
     if (v.hi == 0 as u64) {
-      let tz: i32 = __ctz64(v.lo);
-      let q1: u64 = scaled_u64(v.lo >> tz as u64, v.e + tz, prec);
+      let tz = __ctz64(v.lo);
+      let q1 = scaled_u64(v.lo >> tz as u64, v.e + tz, prec);
       if (q1 != 18446744073709551615 as u64) {
         return fixed_u64(q1, prec, v.neg);
       }
     } else if (fits_word(v)) {
-      let q: u64 = scaled_u64(reduced(v), v.e + trailing_zeros128(v.hi, v.lo), prec);
+      let q = scaled_u64(reduced(v), v.e + trailing_zeros128(v.hi, v.lo), prec);
       if (q != 18446744073709551615 as u64) {
         return fixed_u64(q, prec, v.neg);
       }
@@ -1640,20 +1640,20 @@ pub function (f: Format) to_fixed(v: LD, prec: i32): string {
 }
 
 function scaled_u64(m: u64, e: i32, prec: i32): u64 {
-  let p: u64 = pow10_u64(prec);
-  let hi: u64 = mul_hi64(m, p);
-  let lo: u64 = m * p;
-  let none: u64 = 18446744073709551615 as u64;
+  let p = pow10_u64(prec);
+  let hi = mul_hi64(m, p);
+  let lo = m * p;
+  let none = 18446744073709551615 as u64;
   if (e >= 0) {
     if (hi != 0 as u64 || e >= 64 || e > 0 && lo >> (64 - e) as u64 != 0 as u64) {
       return none;
     }
     return lo << e as u64;
   }
-  let shift: i32 = 0 - e;
-  let q: u64 = 0 as u64;
-  let round: boolean = false;
-  let below: boolean = false;
+  let shift = -e;
+  let q = 0 as u64;
+  let round = false;
+  let below = false;
   if (shift < 64) {
     if (hi >> shift as u64 != 0 as u64) {
       return none;
@@ -1666,7 +1666,7 @@ function scaled_u64(m: u64, e: i32, prec: i32): u64 {
     round = lo >> 63 as u64 == 1 as u64;
     below = lo << 1 as u64 != 0 as u64;
   } else if (shift < 128) {
-    let t: i32 = shift - 64;
+    let t = shift - 64;
     q = hi >> t as u64;
     round = (hi >> (t - 1) as u64 & 1 as u64) == 1 as u64;
     below = lo != 0 as u64 || (hi & (1 as u64 << (t - 1) as u64) - 1 as u64) != 0 as u64;
@@ -1684,55 +1684,55 @@ function scaled_u64(m: u64, e: i32, prec: i32): u64 {
 }
 
 function pow10_u64(k: i32): u64 {
-  let p: u64 = 1 as u64;
-  let i: i32 = 0;
+  let p = 1 as u64;
+  let i = 0;
   while (i < k) {
-    p = p * (10 as u64);
-    i = i + 1;
+    p *= 10 as u64;
+    i += 1;
   }
   return p;
 }
 
 function fixed_u64(q: u64, prec: i32, neg: boolean): string {
-  let digits: i32 = 1;
-  let t: u64 = q / (10 as u64);
+  let digits = 1;
+  let t = q / (10 as u64);
   while (t > 0 as u64) {
-    digits = digits + 1;
-    t = t / (10 as u64);
+    digits += 1;
+    t /= 10 as u64;
   }
-  let whole: i32 = digits - prec;
+  let whole = digits - prec;
   if (whole < 1) {
     whole = 1;
   }
-  let n: i32 = whole;
+  let n = whole;
   if (prec > 0) {
     n = n + 1 + prec;
   }
-  let start: i32 = 0;
+  let start = 0;
   if (neg) {
     start = 1;
   }
-  let out: u8[] = __alloc_u8(start + n);
+  let out = __alloc_u8(start + n);
   if (neg) {
     out = out.with(0, 45 as u8);
   }
-  let i: i32 = start + n - 1;
-  let rest: u64 = q;
-  let k: i32 = 0;
+  let i = start + n - 1;
+  let rest = q;
+  let k = 0;
   while (k < prec) {
     out = out.with(i, ((rest % (10 as u64)) as i32 + 48) as u8);
-    rest = rest / (10 as u64);
-    i = i - 1;
-    k = k + 1;
+    rest /= 10 as u64;
+    i -= 1;
+    k += 1;
   }
   if (prec > 0) {
     out = out.with(i, 46 as u8);
-    i = i - 1;
+    i -= 1;
   }
   while (i >= start) {
     out = out.with(i, ((rest % (10 as u64)) as i32 + 48) as u8);
-    rest = rest / (10 as u64);
-    i = i - 1;
+    rest /= 10 as u64;
+    i -= 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -1753,80 +1753,80 @@ pub function (f: Format) hex(v: LD, prec: i64, alt: boolean): string {
 }
 
 pub function (f: Format) hex_parts(v: LD, prec: i64, alt: boolean): Body {
-  let shift: i32 = hex_shift(f);
-  let nd: i32 = shift / 4;
-  let lead: i32 = 0;
-  let frac: u8[] = __alloc_u8(nd);
-  let pe: i32 = 0;
+  let shift = hex_shift(f);
+  let nd = shift / 4;
+  let lead = 0;
+  let frac = __alloc_u8(nd);
+  let pe = 0;
   if (!v.is_zero()) {
     lead = nibble_at(v, shift);
-    let i: i32 = 0;
+    let i = 0;
     while (i < nd) {
       frac = frac.with(i, hex_char(nibble_at(v, shift - 4 * (i + 1))) as u8);
-      i = i + 1;
+      i += 1;
     }
     pe = v.e + shift;
   } else {
-    let z: i32 = 0;
+    let z = 0;
     while (z < nd) {
       frac = frac.with(z, 48 as u8);
-      z = z + 1;
+      z += 1;
     }
   }
-  let keep: i32 = nd;
+  let keep = nd;
   if (prec >= 0 as i64 && prec < nd as i64) {
     keep = prec as i32;
-    let rd: i32 = hex_digit(frac[keep] as i32);
-    let rest: boolean = false;
-    let k: i32 = keep + 1;
+    let rd = hex_digit(frac[keep] as i32);
+    let rest = false;
+    let k = keep + 1;
     while (k < nd) {
       if (frac[k] as i32 != 48) {
         rest = true;
       }
-      k = k + 1;
+      k += 1;
     }
-    let last_odd: boolean = lead % 2 == 1;
+    let last_odd = lead % 2 == 1;
     if (keep > 0) {
       last_odd = hex_digit(frac[keep - 1] as i32) % 2 == 1;
     }
     if (rd > 8 || rd == 8 && (rest || last_odd)) {
-      let j: i32 = keep - 1;
-      let carry: boolean = true;
+      let j = keep - 1;
+      let carry = true;
       while (j >= 0 && carry) {
-        let dv: i32 = hex_digit(frac[j] as i32) + 1;
+        let dv = hex_digit(frac[j] as i32) + 1;
         if (dv == 16) {
           frac = frac.with(j, 48 as u8);
         } else {
           frac = frac.with(j, hex_char(dv) as u8);
           carry = false;
         }
-        j = j - 1;
+        j -= 1;
       }
       if (carry) {
-        lead = lead + 1;
+        lead += 1;
         if (lead == 16) {
           lead = 1;
-          pe = pe + 4;
+          pe += 4;
         }
       }
     }
   } else if (prec < 0 as i64) {
     while (keep > 0 && frac[keep - 1] as i32 == 48) {
-      keep = keep - 1;
+      keep -= 1;
     }
   }
-  let digits: string = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
-  let zeros: i64 = 0 as i64;
+  let digits = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
+  let zeros = 0 as i64;
   if (prec > nd as i64) {
     zeros = prec - nd as i64;
   }
-  let head: string = string_from_bytes_unchecked([hex_char(lead) as u8]);
+  let head = string_from_bytes_unchecked([hex_char(lead) as u8]);
   if (digits.len() > 0 || zeros > 0 as i64 || alt) {
     head = head + "." + digits;
   }
-  let ps: string = "p";
+  let ps = "p";
   if (pe < 0) {
-    ps = ps + "-" + ((0 - pe) as i64).to_string();
+    ps = ps + "-" + ((-pe) as i64).to_string();
   } else {
     ps = ps + "+" + (pe as i64).to_string();
   }

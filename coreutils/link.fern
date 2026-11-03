@@ -4,18 +4,18 @@ import "./lib/gnu";
 import "./lib/canon";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " FILE1 FILE2\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "Call the link function to create a link named FILE2 to an existing FILE1.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Call the link function to create a link named FILE2 to an existing FILE1.\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 pub function main(): i32 {
-  let operands: string[] = gnu.parse_standard_options_only(args(), "link", help_text(), 1);
+  let operands = gnu.parse_standard_options_only(args(), "link", help_text(), 1);
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
@@ -25,7 +25,7 @@ pub function main(): i32 {
   if (operands.len() > 2) {
     gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
   }
-  let src: string = operands[0];
+  let src = operands[0];
   if (target_os() == "darwin") {
     match (canon.canonicalize(src, canon.missing(), false)) {
       Ok(r) => {

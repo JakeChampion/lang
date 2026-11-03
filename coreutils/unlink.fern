@@ -3,18 +3,18 @@ import "std/array";
 import "./lib/gnu";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " FILE\n";
   out = out + "  or:  " + gnu.prog() + " OPTION\n";
-  out = out + "Call the unlink function to remove the specified FILE.\n";
-  out = out + "\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Call the unlink function to remove the specified FILE.\n";
+  out += "\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
 pub function main(): i32 {
-  let operands: string[] = gnu.parse_standard_options_only(args(), "unlink", help_text(), 1);
+  let operands = gnu.parse_standard_options_only(args(), "unlink", help_text(), 1);
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }

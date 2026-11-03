@@ -1,10 +1,10 @@
 import "std/string";
 
 pub function trim(p: string): string {
-  let n: i32 = p.len();
+  let n = p.len();
   if (n > 2 && p[n - 1] as i32 == 47) {
     while (n > 1 && p[n - 2] as i32 == 47) {
-      n = n - 1;
+      n -= 1;
     }
   }
   return slice_unchecked(p, 0, n) + "";
@@ -22,9 +22,9 @@ pub function is_slash(s: string, i: i32): boolean {
 }
 
 pub function last_component_end(dir: string): i32 {
-  let end: i32 = 0 - 1;
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let end: i32 = -1;
+  let start = 0;
+  let i = 0;
   while (i <= dir.len()) {
     if (i == dir.len() || is_slash(dir, i)) {
       if (i > start) {
@@ -32,13 +32,13 @@ pub function last_component_end(dir: string): i32 {
       }
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return end;
 }
 
 pub function is_traversed(dir: string, start: i32, stop: i32): boolean {
-  let n: i32 = stop - start;
+  let n = stop - start;
   if (n == 0) {
     return true;
   }

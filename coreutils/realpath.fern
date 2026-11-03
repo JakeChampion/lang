@@ -5,23 +5,23 @@ import "./lib/gnu";
 import "./lib/canon";
 
 function help_text(): string {
-  let out: string = "";
+  let out = "";
   out = out + "Usage: " + gnu.prog() + " [OPTION]... FILE...\n";
-  out = out + "Print the resolved absolute file name;\n";
-  out = out + "all but the last component must exist\n";
-  out = out + "\n";
-  out = out + "  -E, --canonicalize           the default; the last component need not exist\n";
-  out = out + "  -e, --canonicalize-existing  all components of the path must exist\n";
-  out = out + "  -m, --canonicalize-missing   no path components need exist or be a directory\n";
-  out = out + "  -L, --logical                resolve '..' components before symlinks\n";
-  out = out + "  -P, --physical               resolve symlinks as encountered (default)\n";
-  out = out + "  -q, --quiet                  suppress most error messages\n";
-  out = out + "      --relative-to=DIR        print the resolved path relative to DIR\n";
-  out = out + "      --relative-base=DIR      print absolute paths unless paths below DIR\n";
-  out = out + "  -s, --strip, --no-symlinks   don't expand symlinks\n";
-  out = out + "  -z, --zero                   end each output line with NUL, not newline\n";
-  out = out + "      --help        display this help and exit\n";
-  out = out + "      --version     output version information and exit\n";
+  out += "Print the resolved absolute file name;\n";
+  out += "all but the last component must exist\n";
+  out += "\n";
+  out += "  -E, --canonicalize           the default; the last component need not exist\n";
+  out += "  -e, --canonicalize-existing  all components of the path must exist\n";
+  out += "  -m, --canonicalize-missing   no path components need exist or be a directory\n";
+  out += "  -L, --logical                resolve '..' components before symlinks\n";
+  out += "  -P, --physical               resolve symlinks as encountered (default)\n";
+  out += "  -q, --quiet                  suppress most error messages\n";
+  out += "      --relative-to=DIR        print the resolved path relative to DIR\n";
+  out += "      --relative-base=DIR      print absolute paths unless paths below DIR\n";
+  out += "  -s, --strip, --no-symlinks   don't expand symlinks\n";
+  out += "  -z, --zero                   end each output line with NUL, not newline\n";
+  out += "      --help        display this help and exit\n";
+  out += "      --version     output version information and exit\n";
   return out;
 }
 
@@ -131,16 +131,16 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("L", "logical", opt_logical()));
   opts = opts.append(gnu.flag("P", "physical", opt_physical()));
 
-  let mode: i32 = canon.all_but_last();
-  let links: i32 = link_physical();
-  let quiet: boolean = false;
-  let zero: boolean = false;
-  let rel_to: string = "";
-  let have_rel_to: boolean = false;
-  let rel_base: string = "";
-  let have_rel_base: boolean = false;
+  let mode = canon.all_but_last();
+  let links = link_physical();
+  let quiet = false;
+  let zero = false;
+  let rel_to = "";
+  let have_rel_to = false;
+  let rel_base = "";
+  let have_rel_base = false;
 
-  let g: gnu.Getopt = gnu.getopt_new(args(), opts, "realpath", help_text(), 1);
+  let g = gnu.getopt_new(args(), opts, "realpath", help_text(), 1);
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
     g = r.1;
@@ -176,7 +176,7 @@ pub function main(): i32 {
     }
   }
 
-  let operands: string[] = g.operands();
+  let operands = g.operands();
   if (operands.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
@@ -185,11 +185,11 @@ pub function main(): i32 {
     rel_to = rel_base;
     have_rel_to = true;
   }
-  let from: string = "";
+  let from = "";
   if (have_rel_to) {
     from = resolve_dir(rel_to, mode, links);
   }
-  let base: string = "";
+  let base = "";
   if (have_rel_base) {
     base = resolve_dir(rel_base, mode, links);
     if (!under(base, from)) {
@@ -197,18 +197,18 @@ pub function main(): i32 {
     }
   }
 
-  let term: string = "\n";
+  let term = "\n";
   if (zero) {
     term = "\x00";
   }
-  let status: i32 = 0;
-  let o: io_buffered.BufWriter = gnu.out_new();
-  let i: i32 = 0;
+  let status = 0;
+  let o = gnu.out_new();
+  let i = 0;
   while (i < operands.len()) {
-    let name: string = operands[i];
+    let name = operands[i];
     match (resolve(name, mode, links)) {
       Ok(p) => {
-        let out: string = p;
+        let out = p;
         if (have_rel_to && (!have_rel_base || under(base, out))) {
           out = canon.relative(out, from);
         }
@@ -221,7 +221,7 @@ pub function main(): i32 {
         status = 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   gnu.finish(o);
   return status;
