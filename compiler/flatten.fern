@@ -474,7 +474,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   } else if (init_kind == 2) {
     opts = init_call;
   } else if (ii >= 0 && init_kind == 0) {
-    body = body.append(ast.StmtExpr { value: init_call, line: 0 });
+    body = body.append(ast.StmtExpr { value: init_call, line: 0, op: "" });
   }
   let supervised: boolean = target.len() == 0 || platforms.has_capability(target, "proc");
   let entry_name: string = "run";
@@ -1094,10 +1094,10 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       return ast.StmtReturn { value: rewrite_expr(r.value, ctx), line: r.line, col: r.col };
     },
     ast.StmtExpr(x) => {
-      return ast.StmtExpr { value: rewrite_expr(x.value, ctx), line: x.line };
+      return ast.StmtExpr { ...x, value: rewrite_expr(x.value, ctx) };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { target: a.target, value: rewrite_expr(a.value, ctx), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+      return ast.StmtAssign { ...a, value: rewrite_expr(a.value, ctx) };
     },
     ast.StmtIf(f) => {
       return ast.StmtIf {

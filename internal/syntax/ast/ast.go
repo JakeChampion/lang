@@ -1221,6 +1221,9 @@ type Assign struct {
 	P      Position
 	Target Expr
 	Value  Expr
+	// Op is the operator of a compound assignment as written, "+" for
+	// `x += e`, and empty for `=`.
+	Op string
 }
 
 type TryKind int
