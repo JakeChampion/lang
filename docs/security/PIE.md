@@ -1,6 +1,6 @@
 # Position-independent executables
 
-Status: implementation for [SEC-027](https://github.com/JakeChampion/lang/issues/13529), with physical arm64 verification open.
+Status: implementation for [SEC-027](https://github.com/JakeChampion/lang/issues/13529), with randomization verified on physical x86-64 and arm64 hosts.
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 The image layout and the permissions it keeps are in [ELF-INPUTS.md](ELF-INPUTS.md) and `docs/HARDENING.md`.
 
@@ -41,6 +41,7 @@ It also prints the base of its own text mapping from `/proc/self/maps`.
 
 On the Linux 6.18.44 host the x86-64 text mapped at `0x7f6ab9553000`.
 Under QEMU 8.2.2 user mode the arm64 text mapped at `0x7fb6d0ad0000`, a base that QEMU chooses itself.
+On the native arm64 shard (run 41547461116, job 125631826001, `ubuntu-24.04-arm`, kernel 7.0.0-1017-azure) two runs mapped the arm64 text at `0xffe9d79e0000`, then at `0xff2362b10000`.
 Before the x86-64 compare change, a `match` on `IoError` took the wrong arm, because the compare read the link-time shape address.
 The same program then crashed in the next string concatenation.
 
@@ -50,7 +51,7 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostPIE' -count=1 -timeout 
 
 ## Remaining limits
 
-- Randomization on physical arm64 hardware is unverified. QEMU user mode loads the image at a base it chooses, so the arm64 evidence shows relocation at a non-link base, not the kernel's randomization.
+- The physical arm64 record covers one host. QEMU user mode loads the image at a base it chooses, so an emulated run shows relocation at a non-link base, not the kernel's randomization.
 - `-pie` is opt-in. The static image at `0x400000` stays the default, because the perf and size lanes pin it.
 - The relocated words sit under `PT_GNU_RELRO`, and the startup maps them read-only after the loop ([IMAGE-PERMISSIONS.md](IMAGE-PERMISSIONS.md)).
 - The unwind tables of the `-pie` image are written for base 0. The runtime's own backtrace walks frame pointers and needs no table, and an external unwinder must add the load base.
