@@ -428,8 +428,7 @@ function negate(own w: Work, r: Ref, n: i32): Work {
 }
 
 function renormalise(own w: Work, r: Ref, n: i32, gain: f32): Work {
-  let before: f32[] = take(w, r, n);
-  let v: f32[] = vq.renormalise_vector(before, n, gain);
+  let v: f32[] = vq.renormalise_vector(take(w, r, n), n, gain);
   return put(w, r, v, n);
 }
 ```
