@@ -746,13 +746,24 @@ pub function dedupe_weak_defs(asm_text: string): string {
 const BUF_CALL_SYMS: string[] = [
   "__fern_buf_take", "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8", "__fern_buf_push_bytes_range",
   "__fern_buf_push_bytes_range_u8", "__fern_buf_push_decimal", "__fern_buf_push_base64",
+  "__fern_buf_push_base32",
 ];
 
 const BUF_CALL_NEEDS: string[] = [
-  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64",
+  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64", "buf_base32",
 ];
 
-pub function buf_call_need(sym: string): string {
+// The runtime pieces a call to the buffer helper `sym` needs.
+pub function (s: EmitState) buf_needs(sym: string): EmitState {
+  s = s.need("heap").need("buf");
+  let extra: string = buf_call_need(sym);
+  if (extra != "") {
+    return s.need(extra);
+  }
+  return s;
+}
+
+function buf_call_need(sym: string): string {
   for k in 0..BUF_CALL_SYMS.len() {
     if (BUF_CALL_SYMS[k] == sym) {
       return BUF_CALL_NEEDS[k];
@@ -771,7 +782,10 @@ pub function buf_call_need(sym: string): string {
 }
 
 // The runtime helper each buffer op calls, by IR kind.
-const BUF_KINDS: i32[] = [372, 371, 370, 347, 351, 291, 292, 293, 294, 295, 296, 297, 386, 306, 485, 487, 325, 326, 328];
+const BUF_KINDS: i32[] = [372, 371, 370, 347, 351, 291, 292, 293, 294, 295, 296, 297, 386, 306, 485, 487, 488, 325, 326, 328];
+
+// The operands each of those ops pops.
+const BUF_ARITIES: i32[] = [3, 3, 3, 1, 4, 1, 2, 4, 2, 1, 1, 1, 1, 2, 2, 5, 5, 3, 3, 3];
 
 const BUF_HELPERS: string[] = [
   "__fern_buf_push_bytes_expanded",
@@ -790,6 +804,7 @@ const BUF_HELPERS: string[] = [
   "__fern_buf_push_u64",
   "__fern_buf_push_decimal",
   "__fern_buf_push_base64",
+  "__fern_buf_push_base32",
   "__fern_buf_push_mapped",
   "__fern_buf_push_filtered",
   "__fern_buf_push_expanded",
@@ -823,20 +838,10 @@ pub function decimal_pairs(): string {
 }
 
 pub function buf_arity(kind: i32): i32 {
-  if (kind == 293 || kind == 351) {
-    return 4;
-  }
-  if (kind == 325 || kind == 326 || kind == 328 || kind == 370 || kind == 371 || kind == 372) {
-    return 3;
-  }
-  if (kind == 292 || kind == 294 || kind == 306 || kind == 485) {
-    return 2;
-  }
-  if (kind == 487) {
-    return 5;
-  }
-  if (buf_helper(kind) != "") {
-    return 1;
+  for k in 0..BUF_KINDS.len() {
+    if (BUF_KINDS[k] == kind) {
+      return BUF_ARITIES[k];
+    }
   }
   return 0;
 }
@@ -6361,7 +6366,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
-    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_push_base64", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",
+    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_push_base64", "__fern_buf_push_base32", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
