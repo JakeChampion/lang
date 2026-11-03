@@ -2999,7 +2999,7 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
   if (name == "tcp_accept") {
     return v_int(tcp_accept(fd));
   }
-  if (name == "tcp_close") {
+  if (util.has_str(["tcp_close", "__tcp_close_unchecked", "__fd_close"], name)) {
     return v_int(tcp_close(fd));
   }
   if (name == "tcp_local_port") {

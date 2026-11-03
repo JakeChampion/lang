@@ -8600,7 +8600,7 @@ pub function builtin_function_names(): string[] {
     "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_clear", "buf_free",
     "cell_new",
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
-    "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_send_bytes", "tcp_close",
+    "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_send_bytes", "tcp_close", "__tcp_close_unchecked", "__fd_close",
     "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into",
     "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
     "udp_sendto_bytes",

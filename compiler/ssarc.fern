@@ -5575,7 +5575,7 @@ function os_floor_process_site(own r: irtables.LowerState, ins: ssa.SInst): Lowe
   if (ins.str == "tcp_pollable") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_pollable()) };
   }
-  if (ins.str == "tcp_close") {
+  if (util.has_str(["tcp_close", "__tcp_close_unchecked", "__fd_close"], ins.str)) {
     return Lowered { found: true, r: emit(r, ir.op_tcp_close()) };
   }
   if (ins.str == "tcp_listen_with") {

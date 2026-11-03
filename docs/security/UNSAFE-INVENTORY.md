@@ -62,6 +62,8 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__c_call0` to `__c_call6`, with `_f32` and `_f64` forms | A foreign call through a code address. The address and the argument contract are the caller's proof. |
 | `__task_new`, `__task_free`, `__task_enter`, `__task_leave`, `__task_park`, `__task_wait`, `__task_set_ready`, `__task_set_cancelled`, `__task_cancelled`, `__task_timeout`, `__task_cur` | Runtime scheduler hooks. A task id must be live and the state transition must be valid. |
 | `__syscall3` to `__syscall6` | Arbitrary kernel calls. Admitted only in runtime helper sources today. |
+| `__tcp_close_unchecked(s)` | It closes a `Socket` through a borrow. No copy of the socket can be used after the call, and no other copy can be closed. The interpreter needs it for the reason that `close_unchecked` exists. |
+| `__fd_close(fd)` | It closes a descriptor number that has no handle type, such as a reactor or a timer. The number must not belong to a handle, and the caller must not use it again. |
 
 ## Unsafe built-in methods
 
