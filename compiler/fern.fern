@@ -5928,7 +5928,10 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
   if (f.name == "-apk-label") {
     return ApkOpts { ...o, label: f.value };
   }
-  return ApkOpts { ...o, key: f.value };
+  if (f.name == "-apk-key") {
+    return ApkOpts { ...o, key: f.value };
+  }
+  return o;
 }
 
 // The arguments of one -apk build: the command line without the -apk flags.

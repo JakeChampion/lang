@@ -80,11 +80,12 @@ function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_busy_take:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n    ret\n");
   s = s.write(".Lfern_busy_wait:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r10\n");
   s = s.write(".Lfern_busy_retry:\n    movl $2, %eax\n    xchgl %eax, __fern_busy(%rip)\n    testl %eax, %eax\n    jz .Lfern_busy_won\n");
-  s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $128, %esi\n    movl $2, %edx\n    xorl %r10d, %r10d\n    syscall\n    jmp .Lfern_busy_retry\n");
+  s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $128, %esi\n    movl $2, %edx\n    xorl %r10d, %r10d\n").syscall(202);
+  s = s.write("    jmp .Lfern_busy_retry\n");
   s = s.write(".Lfern_busy_won:\n    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
   s = s.write("__fern_busy_give:\n    pushq %r11\n    xorl %r11d, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    cmpl $2, %r11d\n    je .Lfern_busy_wake\n    popq %r11\n    ret\n");
   s = s.write(".Lfern_busy_wake:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
-  s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $129, %esi\n    movl $1, %edx\n    syscall\n");
+  s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $129, %esi\n    movl $1, %edx\n").syscall(202);
   return s.write("    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    popq %r11\n    ret\n");
 }
 
