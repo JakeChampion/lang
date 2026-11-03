@@ -1507,6 +1507,10 @@ pub function op_buf_push_base32(): Op {
   return op0(488);
 }
 
+pub function op_buf_decode_base32(): Op {
+  return op0(489);
+}
+
 pub function op_buf_len(): Op {
   return op0(295);
 }
@@ -3573,6 +3577,9 @@ function kind_id_len16(name: string): i32 {
 }
 
 function kind_id_len17(name: string): i32 {
+  if (name == "buf_decode_base32") {
+    return 489;
+  }
   if (name == "aes_gcm_seal_into") {
     return 444;
   }
@@ -4269,6 +4276,9 @@ function kind_name_4(id: i32): string {
   }
   if (id == 488) {
     return "buf_push_base32";
+  }
+  if (id == 489) {
+    return "buf_decode_base32";
   }
   if (id == 304) {
     return "open_reader_with";
@@ -5037,7 +5047,7 @@ function pops3(t: i32): boolean {
 }
 
 function pops_buf(t: i32): i32 {
-  if (t == 487 || t == 488) {
+  if (t >= 487 && t <= 489) {
     return 5;
   }
   if (t == 351) {

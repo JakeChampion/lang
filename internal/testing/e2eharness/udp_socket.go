@@ -59,9 +59,9 @@ function main(): i32 {
     if (udp_recvfrom(b, small, from) != 4 || small[3] != 100u8) { return fail(15); }
     // The port a holds is refused to a second socket, and an address of
     // neither family's length is refused before any socket exists.
-    if (udp_bind(lo, pa) >= 0) { return fail(16); }
+    if (udp_bind(lo, pa).fd >= 0) { return fail(16); }
     let odd: u8[] = [1u8, 2u8, 3u8];
-    if (udp_bind(odd, 0) != 0 - eafnosupport()) { return fail(20); }
+    if (udp_bind(odd, 0).fd != 0 - eafnosupport()) { return fail(20); }
     if (udp_sendto(a, odd, pb, "x") != 0 - eafnosupport()) { return fail(21); }
     if (target_os() == "wasi") {
         // A wasi:sockets datagram socket has no blocking mode to switch off.
@@ -122,13 +122,13 @@ function main(): i32 {
     if (a < 0) { return fail(1); }
     let port: i32 = tcp_local_port(a);
     if (port <= 0) { return fail(2); }
-    if (udp_bind(lo, port) >= 0) { return fail(3); }
-    if (udp_bind_with(lo, port, false) >= 0) { return fail(4); }
+    if (udp_bind(lo, port).fd >= 0) { return fail(3); }
+    if (udp_bind_with(lo, port, false).fd >= 0) { return fail(4); }
     let s: i32 = udp_bind(lo, 0);
     if (s < 0) { return fail(5); }
     let from: u8[] = zeros(19);
     if (target_os() == "wasi") {
-        if (udp_bind_with(lo, port, true) >= 0) { return fail(6); }
+        if (udp_bind_with(lo, port, true).fd >= 0) { return fail(6); }
         if (udp_sendto(s, lo, port, "ping") != 4) { return fail(7); }
         let buf: u8[] = zeros(16);
         if (udp_recvfrom(a, buf, from) != 4 || buf[0] != 112u8 || buf[3] != 103u8) { return fail(8); }

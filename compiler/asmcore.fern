@@ -746,11 +746,11 @@ pub function dedupe_weak_defs(asm_text: string): string {
 const BUF_CALL_SYMS: string[] = [
   "__fern_buf_take", "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8", "__fern_buf_push_bytes_range",
   "__fern_buf_push_bytes_range_u8", "__fern_buf_push_decimal", "__fern_buf_push_base64",
-  "__fern_buf_push_base32",
+  "__fern_buf_push_base32", "__fern_buf_decode_base32",
 ];
 
 const BUF_CALL_NEEDS: string[] = [
-  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64", "buf_base32",
+  "buf_text", "buf_take_bytes", "buf_take_bytes_u8", "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_decimal", "buf_base64", "buf_base32", "buf_decode32",
 ];
 
 // The runtime pieces a call to the buffer helper `sym` needs.
@@ -782,10 +782,10 @@ function buf_call_need(sym: string): string {
 }
 
 // The runtime helper each buffer op calls, by IR kind.
-const BUF_KINDS: i32[] = [372, 371, 370, 347, 351, 291, 292, 293, 294, 295, 296, 297, 386, 306, 485, 487, 488, 325, 326, 328];
+const BUF_KINDS: i32[] = [372, 371, 370, 347, 351, 291, 292, 293, 294, 295, 296, 297, 386, 306, 485, 487, 488, 489, 325, 326, 328];
 
 // The operands each of those ops pops.
-const BUF_ARITIES: i32[] = [3, 3, 3, 1, 4, 1, 2, 4, 2, 1, 1, 1, 1, 2, 2, 5, 5, 3, 3, 3];
+const BUF_ARITIES: i32[] = [3, 3, 3, 1, 4, 1, 2, 4, 2, 1, 1, 1, 1, 2, 2, 5, 5, 5, 3, 3, 3];
 
 const BUF_HELPERS: string[] = [
   "__fern_buf_push_bytes_expanded",
@@ -805,6 +805,7 @@ const BUF_HELPERS: string[] = [
   "__fern_buf_push_decimal",
   "__fern_buf_push_base64",
   "__fern_buf_push_base32",
+  "__fern_buf_decode_base32",
   "__fern_buf_push_mapped",
   "__fern_buf_push_filtered",
   "__fern_buf_push_expanded",
@@ -3719,6 +3720,8 @@ function builtin_i32_names(): string[] {
     "tcp_send_buf",
     "udp_sendto_bytes",
     "tcp_close",
+    "__tcp_close_unchecked",
+    "__fd_close",
     "tcp_pollable",
     "sleep_ms",
     "sleep_ns",
@@ -6366,7 +6369,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
-    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_push_base64", "__fern_buf_push_base32", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",
+    "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_push_base64", "__fern_buf_push_base32", "__fern_buf_decode_base32", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",

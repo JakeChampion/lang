@@ -372,6 +372,10 @@ function is_owned_array(t: typeinfo.Type): boolean {
   return false;
 }
 
+function t_socket(): typeinfo.Type {
+  return t_struct("Socket");
+}
+
 function t_struct(name: string): typeinfo.Type {
   let noargs: typeinfo.Type[] = [];
   return typeinfo.TypeStruct { name: name, args: noargs };
@@ -759,7 +763,7 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
     return t_i32();
   }
-  if (argc == 1 && name == "__sum_bytes") {
+  if (argc == 1 && util.has_str(["__sum_bytes", "__fd_close", "__tcp_close_unchecked"], name)) {
     return t_i32();
   }
   if (argc == 2 && (name == "__scale_f64" || name == "__outer_mul_f64")) {
@@ -856,7 +860,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__mulhi_u64") {
     return ([t_u64(), t_u64()], true);
   }
-  if (name == "__alloc") {
+  if (util.has_str(["__alloc", "__fd_close"], name)) {
     return ([t_i32()], true);
   }
   if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool") {
@@ -1024,6 +1028,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (name == "__str_hash") {
     return ([t_string(), t_i32()], true);
+  }
+  if (name == "__tcp_close_unchecked") {
+    return ([t_socket()], true);
   }
   if (name == "__count_byte") {
     return ([t_string(), t_i32()], true);
@@ -4809,6 +4816,7 @@ function builtin_sigs(): string[] {
     "access(string, i32): Result[void, IoError]",
     "args(): string[]",
     "buf_clear(usize): void",
+    "buf_decode_base32(usize, u8[], i32, i32, u8[]): i32",
     "buf_free(usize): void",
     "buf_len(usize): i32",
     "buf_new(i32): usize",
@@ -4973,16 +4981,16 @@ function builtin_sigs(): string[] {
     "termios_set(i32, i32, i64[]): Result[void, IoError]",
     "timer_fd(i32): i32",
     "truncate(string, i64): Result[void, IoError]",
-    "udp_bind(u8[], i32): i32",
-    "udp_bind_with(u8[], i32, boolean): i32",
-    "udp_connect(i32, u8[], i32): i32",
-    "udp_recvfrom(i32, u8[], u8[]): i32",
-    "udp_sendto(i32, u8[], i32, string): i32",
-    "udp_sendto_bytes(i32, u8[], i32, u8[]): i32",
+    "udp_bind(u8[], i32): Socket",
+    "udp_bind_with(u8[], i32, boolean): Socket",
+    "udp_connect(Socket, u8[], i32): i32",
+    "udp_recvfrom(Socket, u8[], u8[]): i32",
+    "udp_sendto(Socket, u8[], i32, string): i32",
+    "udp_sendto_bytes(Socket, u8[], i32, u8[]): i32",
     "umask(i32): i32",
     "uname_field(i32): string",
-    "unix_connect(string): i32",
-    "unix_listen(string, i32): i32",
+    "unix_connect(string): Socket",
+    "unix_listen(string, i32): Socket",
     "wasm_block(i32): i32",
     "wasm_poll(i32[]): i32",
     "wasm_pollable_drop(i32): i32",
@@ -10250,6 +10258,7 @@ pub function unsafe_intrinsics(): string[] {
     "__task_park", "__task_park_until", "__task_wait", "__task_set_ready", "__task_set_cancelled",
     "__task_cancelled", "__task_timeout", "__task_until", "__task_cur",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
+    "__fd_close", "__tcp_close_unchecked",
   ];
 }
 
@@ -17843,6 +17852,7 @@ function registered_intrinsics(): string[] {
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
+    "__fd_close", "__tcp_close_unchecked",
     "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
     "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
   ];
@@ -21753,6 +21763,7 @@ function ow_fresh_builtins(): string[] {
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
     "tcp_accept", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
+    "udp_bind", "udp_bind_with", "unix_connect", "unix_listen",
     "termios_get", "uname_field", "window_size",
     "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",
   ];

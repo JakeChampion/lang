@@ -240,6 +240,7 @@ var freshResultBuiltins = map[string]bool{
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
 	"tcp_accept": true, "tcp_connect_with": true, "tcp_listen": true, "tcp_listen_with": true,
+	"udp_bind": true, "udp_bind_with": true, "unix_connect": true, "unix_listen": true,
 }
 
 func (c *checker) signatureResultBorrows(name string) bool {

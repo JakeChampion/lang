@@ -2,7 +2,7 @@ import "std/string";
 import "std/io_buffered";
 import "./gnu";
 
-pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, alpha_bytes: i32, dec: usize, kernel_alphabet: u8[] }
+pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, alpha_bytes: i32, dec: usize, kernel_alphabet: u8[], dec_ranges: u8[] }
 
 struct Chars { v: i64, n: i32 }
 
@@ -39,7 +39,30 @@ function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, p
   if ((bits == 6 || bits == 5) && alphabet.len() == 1 << bits && !rev) {
     kernel_alphabet = alphabet.bytes();
   }
-  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, alpha_bytes: alphabet.len() + 8, dec: t.1, kernel_alphabet: kernel_alphabet };
+  let dec_ranges: u8[] = [];
+  if (bits == 5 && !rev) {
+    dec_ranges = two_runs(alphabet);
+  }
+  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, alpha_bytes: alphabet.len() + 8, dec: t.1, kernel_alphabet: kernel_alphabet, dec_ranges: dec_ranges };
+}
+
+// The start and length of the run of characters for the values from 0, then
+// of the run for the rest, as buf_decode_base32 takes them. Empty unless the
+// alphabet is two runs of consecutive characters.
+function two_runs(alphabet: string): u8[] {
+  let split: i32 = 0;
+  for k in 1..alphabet.len() {
+    if (alphabet[k] as i32 != alphabet[k - 1] as i32 + 1) {
+      if (split > 0) {
+        return [];
+      }
+      split = k;
+    }
+  }
+  if (split == 0) {
+    return [];
+  }
+  return [alphabet[0], split as u8, alphabet[split], (alphabet.len() - split) as u8];
 }
 
 function also_decodes(c: Codec, extra: string): Codec {
@@ -657,7 +680,8 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
   }
 }
 
-function word_rows(bs: u8[], i: i32, n: i32, pairs: usize, h: usize, bits: i32): i32 {
+function word_rows(bs: u8[], i: i32, n: i32, pairs: usize, h: usize, c: Codec): i32 {
+  let bits: i32 = c.bits;
   if (bits == 4) {
     return hex_rows(bs, i, n, pairs, h);
   }
@@ -665,7 +689,7 @@ function word_rows(bs: u8[], i: i32, n: i32, pairs: usize, h: usize, bits: i32):
     return b64_rows(bs, i, n, pairs, h);
   }
   if (bits == 5) {
-    return b32_rows(bs, i, n, pairs, h);
+    return buf_decode_base32(h, bs, i, n, c.dec_ranges);
   }
   return i;
 }
@@ -744,77 +768,6 @@ function b64_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
   }
 }
 
-function b32_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
-  unsafe {
-    let i = from;
-    while (i + 64 <= n) {
-      let h0 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
-      let l0 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
-      if ((h0 | l0) < 0) {
-        return i;
-      }
-      let v0 = h0 as u64 << 20 as u64 | l0 as u64;
-      let r0 = v0 >> 32 as u64 | (v0 >> 24 as u64 & 255 as u64) << 8 as u64 | (v0 >> 16 as u64 & 255 as u64) << 16 as u64 | (v0 >> 8 as u64 & 255 as u64) << 24 as u64 | (v0 & 255 as u64) << 32 as u64;
-      let h1 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
-      let l1 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
-      if ((h1 | l1) < 0) {
-        return i;
-      }
-      let v1 = h1 as u64 << 20 as u64 | l1 as u64;
-      let r1 = v1 >> 32 as u64 | (v1 >> 24 as u64 & 255 as u64) << 8 as u64 | (v1 >> 16 as u64 & 255 as u64) << 16 as u64 | (v1 >> 8 as u64 & 255 as u64) << 24 as u64 | (v1 & 255 as u64) << 32 as u64;
-      let h2 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
-      let l2 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
-      if ((h2 | l2) < 0) {
-        return i;
-      }
-      let v2 = h2 as u64 << 20 as u64 | l2 as u64;
-      let r2 = v2 >> 32 as u64 | (v2 >> 24 as u64 & 255 as u64) << 8 as u64 | (v2 >> 16 as u64 & 255 as u64) << 16 as u64 | (v2 >> 8 as u64 & 255 as u64) << 24 as u64 | (v2 & 255 as u64) << 32 as u64;
-      let h3 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
-      let l3 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
-      if ((h3 | l3) < 0) {
-        return i;
-      }
-      let v3 = h3 as u64 << 20 as u64 | l3 as u64;
-      let r3 = v3 >> 32 as u64 | (v3 >> 24 as u64 & 255 as u64) << 8 as u64 | (v3 >> 16 as u64 & 255 as u64) << 16 as u64 | (v3 >> 8 as u64 & 255 as u64) << 24 as u64 | (v3 & 255 as u64) << 32 as u64;
-      let h4 = __load_i32(pairs + ((bs[i + 32] as i32 | bs[i + 33] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 34] as i32 | bs[i + 35] as i32 << 8) << 2) as usize);
-      let l4 = __load_i32(pairs + ((bs[i + 36] as i32 | bs[i + 37] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 38] as i32 | bs[i + 39] as i32 << 8) << 2) as usize);
-      if ((h4 | l4) < 0) {
-        return i;
-      }
-      let v4 = h4 as u64 << 20 as u64 | l4 as u64;
-      let r4 = v4 >> 32 as u64 | (v4 >> 24 as u64 & 255 as u64) << 8 as u64 | (v4 >> 16 as u64 & 255 as u64) << 16 as u64 | (v4 >> 8 as u64 & 255 as u64) << 24 as u64 | (v4 & 255 as u64) << 32 as u64;
-      let h5 = __load_i32(pairs + ((bs[i + 40] as i32 | bs[i + 41] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 42] as i32 | bs[i + 43] as i32 << 8) << 2) as usize);
-      let l5 = __load_i32(pairs + ((bs[i + 44] as i32 | bs[i + 45] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 46] as i32 | bs[i + 47] as i32 << 8) << 2) as usize);
-      if ((h5 | l5) < 0) {
-        return i;
-      }
-      let v5 = h5 as u64 << 20 as u64 | l5 as u64;
-      let r5 = v5 >> 32 as u64 | (v5 >> 24 as u64 & 255 as u64) << 8 as u64 | (v5 >> 16 as u64 & 255 as u64) << 16 as u64 | (v5 >> 8 as u64 & 255 as u64) << 24 as u64 | (v5 & 255 as u64) << 32 as u64;
-      let h6 = __load_i32(pairs + ((bs[i + 48] as i32 | bs[i + 49] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 50] as i32 | bs[i + 51] as i32 << 8) << 2) as usize);
-      let l6 = __load_i32(pairs + ((bs[i + 52] as i32 | bs[i + 53] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 54] as i32 | bs[i + 55] as i32 << 8) << 2) as usize);
-      if ((h6 | l6) < 0) {
-        return i;
-      }
-      let v6 = h6 as u64 << 20 as u64 | l6 as u64;
-      let r6 = v6 >> 32 as u64 | (v6 >> 24 as u64 & 255 as u64) << 8 as u64 | (v6 >> 16 as u64 & 255 as u64) << 16 as u64 | (v6 >> 8 as u64 & 255 as u64) << 24 as u64 | (v6 & 255 as u64) << 32 as u64;
-      let h7 = __load_i32(pairs + ((bs[i + 56] as i32 | bs[i + 57] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 58] as i32 | bs[i + 59] as i32 << 8) << 2) as usize);
-      let l7 = __load_i32(pairs + ((bs[i + 60] as i32 | bs[i + 61] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 62] as i32 | bs[i + 63] as i32 << 8) << 2) as usize);
-      if ((h7 | l7) < 0) {
-        return i;
-      }
-      let v7 = h7 as u64 << 20 as u64 | l7 as u64;
-      let r7 = v7 >> 32 as u64 | (v7 >> 24 as u64 & 255 as u64) << 8 as u64 | (v7 >> 16 as u64 & 255 as u64) << 16 as u64 | (v7 >> 8 as u64 & 255 as u64) << 24 as u64 | (v7 & 255 as u64) << 32 as u64;
-      buf_push_u64(h, r0 | r1 << 40 as u64);
-      buf_push_u64(h, r1 >> 24 as u64 | r2 << 16 as u64 | r3 << 56 as u64);
-      buf_push_u64(h, r3 >> 8 as u64 | r4 << 32 as u64);
-      buf_push_u64(h, r4 >> 32 as u64 | r5 << 8 as u64 | r6 << 48 as u64);
-      buf_push_u64(h, r6 >> 16 as u64 | r7 << 24 as u64);
-      i += 64;
-    }
-    return i;
-  }
-}
-
 function push_low_bytes(h: usize, word: u64, bits: i32): void {
   let k = 0;
   while (k < bits) {
@@ -855,7 +808,7 @@ function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter):
           push_low_bytes(h, word, fill);
           word = 0 as u64;
           fill = 0;
-          i = word_rows(bs, i, n, pairs, h, c.bits);
+          i = word_rows(bs, i, n, pairs, h, c);
           rows = false;
           continue;
         }

@@ -22,7 +22,8 @@ A built-in handle is a descriptor.
 The reference-count lowering treats them as scalars (`semtypes.is_handle` in `compiler/ssarc.fern`).
 Each one exposes its descriptor as the field `fd`, and `close` consumes its receiver.
 
-`Socket` is the built-in handle of the socket API. `tcp_listen`, `tcp_listen_with`, `tcp_accept` and `tcp_connect_with` return one, the other `tcp_*` builtins borrow it, and `tcp_close` consumes it.
+`Socket` is the built-in handle of the socket API. `tcp_listen`, `tcp_listen_with`, `tcp_accept`, `tcp_connect_with`, `udp_bind`, `udp_bind_with`, `unix_listen` and `unix_connect` return one. The other `tcp_*` and `udp_*` builtins borrow it, and `tcp_close` consumes it.
+A descriptor with no handle type, such as a reactor or a timer, closes through `__fd_close`, which only an unsafe block can call.
 A failed open returns a `Socket` whose `fd` is the negative error number.
 At run time a `Socket` is its descriptor number in compiled code and in both interpreters.
 
