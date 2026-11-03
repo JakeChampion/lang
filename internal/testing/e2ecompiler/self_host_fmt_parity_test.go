@@ -22,6 +22,11 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"scalar-match-bindings", `function f(tag: i32): i32 {
+  let value = match (tag) { 0 => 10, n when n > 100 => n, rest => rest + 14 };
+  match (tag) { n when n > 0 => { return n + value; }, 0..5 => { return 1; }, rest => { return rest; } }
+}
+`},
 	{"comment-only-blocks", `struct P { x: i32 }
 
 function f(a: boolean, b: boolean, o: Option[i32]): i32 {

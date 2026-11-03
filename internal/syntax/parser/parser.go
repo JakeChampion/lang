@@ -3557,7 +3557,8 @@ func stmtAsBlock(s ast.Stmt) *ast.Block {
 
 func stmtArmFromPattern(pat matchPattern, guard ast.Expr, body *ast.Block) *ast.MatchArm {
 	return &ast.MatchArm{
-		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
+		BareName: pat.bareName,
+		P:        pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,
@@ -3674,6 +3675,7 @@ type namedFieldPattern struct {
 }
 
 type matchPattern struct {
+	bareName       bool
 	P              ast.Position
 	VariantName    string
 	VariantModule  string
@@ -3884,7 +3886,9 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 	} else if t.Kind == lexer.Ident {
 		p.advance()
 		pat.VariantName = t.Text
+		pat.bareName = true
 		for p.match(lexer.Punct, ".") {
+			pat.bareName = false
 			p.advance()
 			nameTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
@@ -3897,6 +3901,7 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			pat.VariantName = nameTok.Text
 		}
 		if _, ok := p.accept(lexer.Punct, "("); ok {
+			pat.bareName = false
 			if !p.match(lexer.Punct, ")") {
 				for {
 					if p.isNestedPatternStart() {
@@ -3930,6 +3935,7 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 		} else if nf, ok, err := p.parseNamedFieldPattern(); err != nil {
 			return pat, err
 		} else if ok {
+			pat.bareName = false
 			pat.NamedFields = true
 			pat.Bindings = nf.bindings
 			pat.fieldNames = nf.fields
@@ -4044,7 +4050,8 @@ func (p *parser) parseExprRawArms() ([]exprRawArm, error) {
 
 func exprArmFromPattern(pat matchPattern, guard, body ast.Expr) *ast.MatchExprArm {
 	return &ast.MatchExprArm{
-		P: pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
+		BareName: pat.bareName,
+		P:        pat.P, VariantName: pat.VariantName, VariantModule: pat.VariantModule,
 		Bindings: pat.Bindings, NamedFields: pat.NamedFields, IsWildcard: pat.IsWildcard,
 		Literal: pat.Literal, RangeHi: pat.RangeHi, RangeInclusive: pat.RangeInclusive,
 		TupleElems: pat.TupleElems, AtBinding: pat.atBinding, FieldNames: pat.fieldNames,

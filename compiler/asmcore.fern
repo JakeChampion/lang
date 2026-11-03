@@ -5374,8 +5374,19 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
       while (ai < m.arms.len()) {
         let actx: CheckCtx = ctx;
         match (m.arms[ai].pattern) {
+          ast.PatLiteral(literal) => {
+            if (literal.at_binding.len() > 0) {
+              actx = CheckCtx { st: ctx.st.bind_local_typed(literal.at_binding, infer_expr_type(m.scrutinee, ctx.st)), diags: ctx.diags };
+            }
+          },
           ast.PatVariant(pv) => {
-            if ((pv.type_name == "Some" || pv.type_name == "Ok")
+            if (pv.scalar_binding) {
+              let st: EmitState = ctx.st.bind_local_typed(pv.type_name, infer_expr_type(m.scrutinee, ctx.st));
+              if (pv.at_binding.len() > 0) {
+                st = st.bind_local_typed(pv.at_binding, infer_expr_type(m.scrutinee, ctx.st));
+              }
+              actx = CheckCtx { st: st, diags: ctx.diags };
+            } else if ((pv.type_name == "Some" || pv.type_name == "Ok")
               && pv.binding.len() > 0) {
               actx = CheckCtx {
                 st: ctx.st.bind_local_typed(

@@ -12507,22 +12507,63 @@ func literalPatternExprs(arms []*ast.MatchExprArm) []ast.Expr {
 	return out
 }
 
+func scalarPatternType(tagT ast.Type) bool {
+	switch tagT.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.StrType, ast.CharType:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *checker) scalarPatternBinding(bare bool, name string, tagT ast.Type) bool {
+	return scalarPatternType(tagT) && bare && len(c.visibleVariants(name)) == 0 && c.info.Structs[name] == nil && c.info.Enums[name] == nil
+}
+
+func literalMatchPatternError(tagT ast.Type) string {
+	expected := "literal patterns or `_`"
+	if scalarPatternType(tagT) {
+		expected = "literal patterns, a binding name, or `_`"
+	}
+	return fmt.Sprintf("match on non-enum value `%s` only accepts %s", tagT, expected)
+}
+
+func (c *checker) scalarPatternScope(s *scope, name, atBinding string, tagT ast.Type) *scope {
+	armScope := newScope(s)
+	armScope.set(name, tagT)
+	if atBinding != "" {
+		armScope.set(atBinding, tagT)
+	}
+	return armScope
+}
+
 func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatterns(n.Arms))
 	sawWildcard := false
 	var closing []ast.Expr
 	for i, arm := range n.Arms {
-		if binder := arm.BareBinder(); binder != "" || arm.IsWildcard {
+		if c.scalarPatternBinding(arm.BareName, arm.VariantName, tagT) {
+			arm.ScalarBinding = arm.VariantName
+			armScope := c.scalarPatternScope(s, arm.ScalarBinding, arm.AtBinding, tagT)
+			if arm.Guard == nil {
+				sawWildcard = true
+				if i != len(n.Arms)-1 {
+					c.errIrrefutableArmNotLast(arm.P, arm.ScalarBinding)
+				}
+			} else if gt := c.checkExpr(arm.Guard, armScope); gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+			c.checkBlock(arm.Body, armScope)
+			continue
+		}
+		if arm.IsWildcard {
 			if arm.Guard == nil {
 				if i != len(n.Arms)-1 {
-					c.errIrrefutableArmNotLast(arm.P, binder)
+					c.errIrrefutableArmNotLast(arm.P, "")
 				}
 				sawWildcard = true
 			}
 			armScope := newScope(s)
-			if binder != "" {
-				armScope.set(binder, tagT)
-			}
 			if arm.Guard != nil {
 				gt := c.checkExpr(arm.Guard, armScope)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
@@ -12533,7 +12574,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 			continue
 		}
 		if arm.Literal == nil {
-			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns, a binding name, or `_`", tagT)
+			c.errfCode(arm.P, "E035", "%s", literalMatchPatternError(tagT))
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -12821,17 +12862,28 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
 	}
 	for i, arm := range n.Arms {
-		if binder := arm.BareBinder(); binder != "" || arm.IsWildcard {
+		if c.scalarPatternBinding(arm.BareName, arm.VariantName, tagT) {
+			arm.ScalarBinding = arm.VariantName
+			armScope := c.scalarPatternScope(s, arm.ScalarBinding, arm.AtBinding, tagT)
+			if arm.Guard == nil {
+				sawWildcard = true
+				if i != len(n.Arms)-1 {
+					c.errIrrefutableArmNotLast(arm.P, arm.ScalarBinding)
+				}
+			} else if gt := c.checkExpr(arm.Guard, armScope); gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+			unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+			continue
+		}
+		if arm.IsWildcard {
 			if arm.Guard == nil {
 				if i != len(n.Arms)-1 {
-					c.errIrrefutableArmNotLast(arm.P, binder)
+					c.errIrrefutableArmNotLast(arm.P, "")
 				}
 				sawWildcard = true
 			}
 			armScope := newScope(s)
-			if binder != "" {
-				armScope.set(binder, tagT)
-			}
 			if arm.Guard != nil {
 				gt := c.checkExpr(arm.Guard, armScope)
 				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
@@ -12842,7 +12894,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			continue
 		}
 		if arm.Literal == nil {
-			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns, a binding name, or `_`", tagT)
+			c.errfCode(arm.P, "E035", "%s", literalMatchPatternError(tagT))
 			continue
 		}
 		if arm.Guard == nil && arm.RangeHi == nil && arm.AtBinding == "" {

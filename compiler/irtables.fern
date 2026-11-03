@@ -1279,6 +1279,21 @@ pub function lambda_write_targets(stmts: ast.Stmt[]): string[] {
   return out;
 }
 
+pub function capture_frame_descend(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return parser.is_value_block_origin(lm.origin);
+  }
+  return true;
+}
+
+pub function capture_assign_targets(stmts: ast.Stmt[]): string[] {
+  let out: string[] = [];
+  for stmt in stmts {
+    out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, keep_targets, capture_frame_descend);
+  }
+  return out;
+}
+
 function keep_targets(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }

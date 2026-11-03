@@ -1,4 +1,5 @@
 import "./ast";
+import "./capturebox";
 import "./astwalk";
 import "./parser";
 import "./lexer";
@@ -4635,12 +4636,15 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
 
 function match_arm(a: ast.MatchArm, scrut: i32, owner: string, layout: i32, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
   match (a.pattern) {
+    ast.PatLiteral(literal) => {
+      return scalar_arm(a, scrut, arms, entry, join, count, scope, closing, ty);
+    },
     ast.PatWildcard(_) => {
       return wildcard_arm(a, arms, entry, join, count, scope, ty);
     },
     ast.PatVariant(pv) => {
-      if (owner == "" && ast.bare_binder(pv).len() > 0) {
-        return binder_arm(a, pv, scrut, arms, entry, join, count, scope, ty);
+      if (pv.scalar_binding) {
+        return scalar_arm(a, scrut, arms, entry, join, count, scope, true, ty);
       }
       return variant_arm(a, pv, scrut, owner, layout, arms, entry, join, count, scope, closing, ty);
     }
@@ -4648,32 +4652,94 @@ function match_arm(a: ast.MatchArm, scrut: i32, owner: string, layout: i32, arms
   return Arms { ...arms, s: fail(arms.s, "unsupported pattern") };
 }
 
-// A bare name arm on a non-enum scrutinee is a `_` arm that also binds the value.
-function binder_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): Arms {
+struct ScalarGate { s: State, hit: i32[], miss: i32[] }
+
+function scalar_literal_gate(literal: ast.PatLiteral, scrut: i32, s: State, hit: i32, miss: i32): ScalarGate {
+  let low: Value = expr(literal.lit, s, s.values[scrut]);
+  if (!low.s.ok) {
+    return ScalarGate { s: low.s, hit: [], miss: [] };
+  }
+  let op: string = if (literal.has_range) { ">=" } else { "==" };
+  let test: Value = define(low.s, 9, [scrut, low.id], 0, op, t_bool());
+  let pred: i32 = test.s.cur.id;
+  if (!literal.has_range) {
+    return ScalarGate { s: terminate(test.s, t_brif(test.id, hit, miss)), hit: [pred], miss: [pred] };
+  }
+  let upper: i32 = test.s.next_block;
+  s = terminate(State { ...test.s, next_block: upper + 1 }, t_brif(test.id, upper, miss));
+  let high: Value = expr(literal.range_hi, open(s, upper, [pred]), s.values[scrut]);
+  if (!high.s.ok) {
+    return ScalarGate { s: high.s, hit: [], miss: [] };
+  }
+  let upper_op: string = if (literal.range_inclusive) { "<=" } else { "<" };
+  let test_high: Value = define(high.s, 9, [scrut, high.id], 0, upper_op, t_bool());
+  let upper_pred: i32 = test_high.s.cur.id;
+  return ScalarGate { s: terminate(test_high.s, t_brif(test_high.id, hit, miss)), hit: [upper_pred], miss: [pred, upper_pred] };
+}
+
+function bind_scalar_pattern(a: ast.MatchArm, scrut: i32, s: State): State {
+  let cells: string[] = [];
+  match (a.pattern) {
+    ast.PatVariant(pv) => {
+      cells = pv.scalar_cells;
+      s = bind_var(s, pv.type_name, scrut);
+      if (pv.at_binding.len() > 0) {
+        s = bind_var(s, pv.at_binding, scrut);
+      }
+    },
+    ast.PatLiteral(literal) => {
+      cells = literal.scalar_cells;
+      if (literal.at_binding.len() > 0) {
+        s = bind_var(s, literal.at_binding, scrut);
+      }
+    },
+    ast.PatWildcard(_) => {}
+  }
+  let whole: typeinfo.Type = s.values[scrut];
+  s = State { ...s, scope: checker.arm_scope(a, s.scope, whole) };
+  for name in cells {
+    let init: ast.Expr = ast.ExprIdent { name: name, line: a.line, col: a.col, ty: "", builtin: false };
+    s = stmt(capturebox.cell_decl(name, typeinfo.spelling(whole), init, a.line, a.col), s);
+  }
+  return s;
+}
+
+function scalar_arm(a: ast.MatchArm, scrut: i32, arms: Arms, entry: i32[], join: i32, count: i32, scope: checker.Scope, closing: boolean, ty: typeinfo.Type): Arms {
   let g: Gathered = parts(arms);
   let s: State = arms.s;
   let pred: i32 = s.cur.id;
   let id: i32 = s.next_block;
-  if (!a.has_guard) {
-    s = terminate(State { ...s, next_block: id + 1 }, t_br(id));
-    let bound: State = binder_bound(a, pv, scrut, open(State { ...s, vals: entry }, id, [pred]), scope);
-    return collect(g, arm_body(a.body, bound, join, count, scope, ty));
-  }
   let next: i32 = id + 1;
-  s = terminate(State { ...s, next_block: next + 1 }, t_br(id));
-  let gate: Gate = guard_gate(a, binder_bound(a, pv, scrut, open(State { ...s, vals: entry }, id, [pred]), scope), next);
+  s = State { ...s, next_block: next + 1 };
+  let branch: ScalarGate = ScalarGate { s: terminate(s, t_br(id)), hit: [pred], miss: [] };
+  if (!closing) {
+    if let ast.PatLiteral(literal) = a.pattern {
+      branch = scalar_literal_gate(literal, scrut, s, id, next);
+    }
+  }
+  if (!branch.s.ok) {
+    return gathered(branch.s, g);
+  }
+  let opened: State = bind_scalar_pattern(a, scrut, open(State { ...branch.s, vals: entry }, id, branch.hit));
+  let gate: Gate = guard_gate(a, opened, next);
   if (!gate.s.ok) {
     return gathered(gate.s, g);
   }
-  let from: i32 = gate.from;
+  let missed: i32[] = branch.miss;
+  let missed_envs: i32[][] = [];
+  for _ in branch.miss {
+    missed_envs = missed_envs.append(prefix(entry, count));
+  }
+  if (gate.from >= 0) {
+    missed = missed.append(gate.from);
+    missed_envs = missed_envs.append(prefix(gate.s.vals, count));
+  }
   let done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
-  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [from]) };
+  if (missed.len() > 0) {
+    let next_state: State = open(State { ...done.s, vals: entry }, next, missed);
+    done = Arm { ...done, s: merge_env(next_state, missed_envs, count) };
+  }
   return collect(g, done);
-}
-
-function binder_bound(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, s: State, scope: checker.Scope): State {
-  let bound: State = bind(at_bound(pv, scrut, s), ast.bare_binder(pv), scrut);
-  return State { ...bound, scope: checker.arm_scope(a, scope, bound.values[scrut]) };
 }
 
 function variant_names(s: State, whole: typeinfo.Type, layout: i32): string[] {
@@ -4765,16 +4831,10 @@ function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner:
   return s;
 }
 
-// Every arm of a match on a non-enum value is `_` or a bare binding name.
-function only_binders(m: ast.StmtMatch): boolean {
+function only_wildcards(m: ast.StmtMatch): boolean {
   for a in m.arms {
-    match (a.pattern) {
-      ast.PatWildcard(_) => {},
-      ast.PatVariant(pv) => {
-        if (ast.bare_binder(pv).len() == 0) {
-          return false;
-        }
-      }
+    if let ast.PatWildcard(_) = a.pattern {} else {
+      return false;
     }
   }
   return m.arms.len() > 0;
@@ -4782,6 +4842,14 @@ function only_binders(m: ast.StmtMatch): boolean {
 
 function no_chain(s: State): Chain {
   return Chain { arms: Arms { s: s, preds: [], envs: [], values: [] }, join: 0, count: 0 };
+}
+
+function scalar_match_type(t: typeinfo.Type): boolean {
+  return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t) || ssasem.is_string(t);
+}
+
+function supported_match_scrutinee(m: ast.StmtMatch, owner: string, layout: i32, scalar: boolean): boolean {
+  return owner != "" && layout != 0 || scalar || only_wildcards(m);
 }
 
 function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
@@ -4796,11 +4864,15 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   let layout: i32 = union_layout(s, owner);
   let variants: semrecords.Variant[] = laid_variants(s, whole, layout);
   m = inhabited_arms(m, whole, variants);
-  if ((owner == "" || layout == 0) && !only_binders(m)) {
+  let scalar: boolean = scalar_match_type(whole);
+  if (!supported_match_scrutinee(m, owner, layout, scalar)) {
     return no_chain(fail(s, "unsupported match scrutinee"));
   }
   let closes: i32 = 0 - 1;
   if (total_match(m, whole, variants)) {
+    closes = m.arms.len() - 1;
+  }
+  if (ssasem.is_bool(whole) && scalar_boolean_total(m)) {
     closes = m.arms.len() - 1;
   }
   s = learn_escaping(m, s, whole, owner, layout);
@@ -4812,10 +4884,27 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
   let arms: Arms = Arms { s: s, preds: [], envs: [], values: [] };
   let i: i32 = 0;
   while (i < m.arms.len() && arms.s.ok && arms.s.live) {
-    arms = match_arm(m.arms[i], scrut, owner, layout, arms, entry, join, count, scope, i == closes, ty);
+    let current: i32[] = if (scalar) { arms.s.vals } else { entry };
+    arms = match_arm(m.arms[i], scrut, owner, layout, arms, current, join, count, scope, i == closes, ty);
     i = i + 1;
   }
   return Chain { arms: arms, join: join, count: count };
+}
+
+function scalar_boolean_total(m: ast.StmtMatch): boolean {
+  let yes: boolean = false;
+  let no: boolean = false;
+  for a in m.arms {
+    if (!a.has_guard) {
+      if let ast.PatLiteral(literal) = a.pattern {
+        if let ast.ExprBool(value) = literal.lit {
+          yes = yes || value.value;
+          no = no || !value.value;
+        }
+      }
+    }
+  }
+  return yes && no;
 }
 
 function inhabited_arms(m: ast.StmtMatch, whole: typeinfo.Type, variants: semrecords.Variant[]): ast.StmtMatch {

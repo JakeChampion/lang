@@ -3632,7 +3632,28 @@ function nested_payload_args(s: Scope, us: UnionSig, spelling: string, at: typei
   return out;
 }
 
+function scalar_binding_name(pattern: ast.PatVariant, whole: typeinfo.Type, s: Scope): string {
+  if (pattern.scalar_binding) {
+    return pattern.type_name;
+  }
+  if (!pattern.bare_name || !is_primitive_type(whole) || s.has_struct(pattern.type_name) || s.has_union(pattern.type_name) || parser.builtin_enum_of(pattern.type_name).len() > 0) {
+    return "";
+  }
+  if let Some(_) = s.lookup_variant(pattern.type_name) {
+    return "";
+  }
+  return pattern.type_name;
+}
+
 function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, whole: typeinfo.Type): Scope {
+  let scalar_name: string = scalar_binding_name(pvin0, whole, look);
+  if (scalar_name.len() > 0) {
+    arm = arm.bind(scalar_name, whole);
+    if (pvin0.at_binding.len() > 0) {
+      arm = arm.bind(pvin0.at_binding, whole);
+    }
+    return arm;
+  }
   let scrut_enum: string = "";
   if let typeinfo.TypeUnion(u) = whole {
     scrut_enum = u.name;
@@ -7072,12 +7093,20 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       for arm in m.arms {
         let armScope: Scope = s;
         match (arm.pattern) {
+          ast.PatLiteral(literal) => {
+            if (!is_primitive_type(sct)) {
+              ok = false;
+            }
+            armScope = annotate_arm_scope(arm, s, sct);
+          },
           ast.PatWildcard(_) => {},
           ast.PatVariant(pv) => {
             let pvn: string = variant_pattern_name(pv.type_name);
             let found: boolean = match (s.lookup_variant(pvn)) { Some(_) => true, None => false };
             let builtin_arm: boolean = union_name.len() > 0 && parser.builtin_enum_of(pvn) == union_name;
-            if (!found && !builtin_arm) {
+            if (scalar_binding_name(pv, sct, s).len() > 0) {
+              armScope = bind_variant_payloads(armScope, s, pv, sct);
+            } else if (!found && !builtin_arm) {
               ok = false;
             } else {
               if (union_name.len() > 0) {
@@ -11187,13 +11216,7 @@ function mx_body_result_exprs(body: ast.Stmt[]): ast.Expr[] {
 function mx_match_arm_types(m: ast.StmtMatch, s: Scope): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for arm in m.arms {
-    let armScope: Scope = s;
-    match (arm.pattern) {
-      ast.PatVariant(pv) => {
-        armScope = bind_variant_payloads(armScope, s, pv, check_expr(m.scrutinee, s));
-      },
-      _ => {}
-    }
+    let armScope: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
     for ty in mx_body_result_types(arm.body, armScope) {
       out = out.append(ty);
     }
@@ -12221,6 +12244,9 @@ function sugar_unreachable_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope)
 
 function variant_unreachable_diags(arms: ast.MatchArm[], t: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
+  if (literal_match_type(t)) {
+    return scalar_unreachable_diags(arms, t, s);
+  }
   if let typeinfo.TypeUnion(_) = t {
     let covered: string[] = [];
     let all: boolean = false;
@@ -12230,6 +12256,7 @@ function variant_unreachable_diags(arms: ast.MatchArm[], t: typeinfo.Type, s: Sc
         continue;
       }
       match (arm.pattern) {
+        ast.PatLiteral(_) => {},
         ast.PatWildcard(_) => {
           if (!arm.has_guard) {
             all = true;
@@ -12259,6 +12286,20 @@ function cover_binders_only(args: CoverPat[]): boolean {
     }
   }
   return true;
+}
+
+function scalar_unreachable_diags(arms: ast.MatchArm[], t: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  for i in 0..arms.len() {
+    let arm: ast.MatchArm = arms[i];
+    if let ast.PatVariant(pv) = arm.pattern {
+      let name: string = scalar_binding_name(pv, t, s);
+      if (name.len() > 0 && !arm.has_guard && i < arms.len() - 1) {
+        out = out.append(dg_at("E026", "binding arm `" + name + "` matches every value and must be last in the match", arm.line, arm.col));
+      }
+    }
+  }
+  return out;
 }
 
 function tuple_unreachable_diags(arms: ast.TupArm[]): util.Diag[] {
@@ -12308,6 +12349,10 @@ function tuple_binders_only(kinds: i32[], pats: ast.Pattern[]): boolean {
   return true;
 }
 
+function is_variant_pattern(pv: ast.PatVariant, structs: StructTable): boolean {
+  return !pv.bare_name || structs.index.has(pv.type_name) || variant_owner_count(pv.type_name, structs) > 0 || parser.builtin_enum_of(pv.type_name).len() > 0;
+}
+
 function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable): util.Diag[] {
   let out: util.Diag[] = [];
   for stmt in stmts {
@@ -12317,6 +12362,7 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
         let a: i32 = 0;
         while (a < m.arms.len()) {
           match (m.arms[a].pattern) {
+            ast.PatLiteral(_) => {},
             ast.PatWildcard(_) => {
               if (a < m.arms.len() - 1 && !m.arms[a].has_guard) {
                 out = out.append(dg_at("E026", "wildcard `_` arm must be last in the match", m.arms[a].line, m.arms[a].col));
@@ -12325,9 +12371,10 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
             ast.PatVariant(pv) => {
               out = util.append_diags(out, payloadless_binder_diags(pv, structs, unions, m.arms[a].line, m.arms[a].col));
               if (pv.type_name.len() > 0) {
-                if (util.has_str(seen, pv.type_name)) {
+                let variant_name: boolean = is_variant_pattern(pv, structs);
+                if (variant_name && util.has_str(seen, pv.type_name)) {
                   out = out.append(dg_at("E028", "variant \"" + shown_variant_in(structs, pv.type_name) + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
-                } else if (!m.arms[a].has_guard) {
+                } else if (variant_name && !m.arms[a].has_guard) {
                   seen = seen.append(pv.type_name);
                 }
                 if (parser.is_record_pattern(pv)) {
@@ -16478,6 +16525,12 @@ function struct_cover(a: ast.StructArm, t: typeinfo.Type, s: Scope): CoverPat {
 
 function pattern_cover(p: ast.Pattern): CoverPat {
   match (p) {
+    ast.PatLiteral(literal) => {
+      if (literal.has_range) {
+        return CoverPat { ctor: "", opaque: true, args: [] };
+      }
+      return literal_cover(literal.lit);
+    },
     ast.PatWildcard(_) => {
       return cover_any();
     },
@@ -16793,6 +16846,19 @@ function literal_bound_diags(value: ast.Expr, scrut: typeinfo.Type, scope: Scope
   return [];
 }
 
+function scalar_literal_diags(pattern: ast.PatLiteral, scrut: typeinfo.Type, scope: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = literal_bound_diags(pattern.lit, scrut, scope, "literal pattern", line, col);
+  if (pattern.has_range) {
+    if (!is_integer(scrut) && !is_float(scrut)) {
+      out = out.append(dg_at("E035", "range patterns require a numeric scrutinee, got " + type_label(scrut), line, col));
+    } else if (int_is_unsigned(scrut)) {
+      out = out.append(dg_at("E035", "range patterns are not yet supported on an unsigned scrutinee (" + type_label(scrut) + ")", line, col));
+    }
+    out = util.append_diags(out, literal_bound_diags(pattern.range_hi, scrut, scope, "range pattern bound", line, col));
+  }
+  return out;
+}
+
 function literal_comparison_diags(cond: ast.Expr, arm: ast.LitArm, scope: Scope): util.Diag[] {
   if let ast.ExprBinary(compare) = cond {
     let scrut: typeinfo.Type = check_expr(compare.left, scope);
@@ -16858,6 +16924,28 @@ function literal_chain_diags(chain: ast.StmtIf, arms: ast.LitArm[], at: i32, sco
     }
   }
   return util.append_diags(out, stmts_call_diags(chain.else_body, scope));
+}
+
+function scalar_pattern_diags(m: ast.StmtMatch, mst: typeinfo.Type, cur: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (literal_match_type(mst) && ordinary_match_origin(m.origin)) {
+    out = util.append_diags(out, scalar_unreachable_diags(m.arms, mst, cur));
+    for arm in m.arms {
+      match (arm.pattern) {
+        ast.PatLiteral(literal) => {
+          out = util.append_diags(out, scalar_literal_diags(literal, mst, cur, arm.line, arm.col));
+        },
+        ast.PatVariant(epv) => {
+          if (epv.type_name.len() > 0 && scalar_binding_name(epv, mst, cur).len() == 0) {
+            let expected: string = if (is_primitive_type(mst)) { "literal patterns, a binding name, or `_`" } else { "literal patterns or `_`" };
+            out = out.append(dg_at("E035", "match on non-enum value `" + type_label(mst) + "` only accepts " + expected, arm.line, arm.col));
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  return out;
 }
 
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
@@ -16965,23 +17053,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
-        if (literal_match_type(mst) && ordinary_match_origin(m.origin)) {
-          let ai: i32 = 0;
-          while (ai < m.arms.len()) {
-            let arm: ast.MatchArm = m.arms[ai];
-            if let ast.PatVariant(epv) = arm.pattern {
-              let binder: string = ast.bare_binder(epv);
-              if (binder.len() > 0) {
-                if (!arm.has_guard && ai < m.arms.len() - 1) {
-                  out = out.append(dg_at("E026", "binding arm `" + binder + "` matches every value and must be last in the match", arm.line, arm.col));
-                }
-              } else if (epv.type_name.len() > 0 && epv.type_name != "true" && epv.type_name != "false") {
-                out = out.append(dg_at("E035", "match on non-enum value `" + type_label(mst) + "` only accepts literal patterns, a binding name, or `_`", arm.line, arm.col));
-              }
-            }
-            ai = ai + 1;
-          }
-        }
+        out = util.append_diags(out, scalar_pattern_diags(m, mst, cur));
         match (mst) {
           typeinfo.TypeUnion(mun) => {
             if let Some(usig) = enum_sig(cur, mun.name) {
@@ -16989,6 +17061,9 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               let covered: string[] = [];
               for elem in m.arms {
                 match (elem.pattern) {
+                  ast.PatLiteral(_) => {
+                    out = out.append(dg_at("E035", "literal pattern requires a scalar scrutinee", elem.line, elem.col));
+                  },
                   ast.PatWildcard(_) => {
                     if (!elem.has_guard) {
                       saw_wild = true;
@@ -17038,26 +17113,29 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           },
           typeinfo.TypeBool(_) => {
-            out = scalar_match_exhaustive_diags(m, out, true);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           typeinfo.TypeI32(_) => {
-            out = scalar_match_exhaustive_diags(m, out, false);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           typeinfo.TypeString(_) => {
-            out = scalar_match_exhaustive_diags(m, out, false);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           typeinfo.TypeFloat(_) => {
-            out = scalar_match_exhaustive_diags(m, out, false);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           _ => {
             if (literal_match_type(mst)) {
-              out = scalar_match_exhaustive_diags(m, out, false);
+              out = scalar_match_exhaustive_diags(m, out, mst, cur);
             }
           }
         }
         for elem in m.arms {
           let armScope: Scope = cur;
           match (elem.pattern) {
+            ast.PatLiteral(_) => {
+              armScope = annotate_arm_scope(elem, cur, mst);
+            },
             ast.PatVariant(apv) => {
               let foreign: boolean = false;
               match (mst) {
@@ -17070,9 +17148,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                 },
                 _ => {}
               }
-              if (literal_match_type(mst) && ast.bare_binder(apv).len() > 0) {
-                armScope = armScope.bind(ast.bare_binder(apv), mst);
-              } else if (!foreign) {
+              if (!foreign) {
                 armScope = bind_variant_payloads(armScope, cur, apv, check_expr(m.scrutinee, cur));
                 out = util.append_diags(out, generic_binder_diags(apv, cur, mst, elem.line, elem.col));
               }
@@ -17248,6 +17324,18 @@ function place_assign_diags(place: ast.Expr, value: ast.Expr, line: i32, col: i3
 }
 
 function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  if let ast.StmtMatch(m) = st {
+    let subject: ast.Stmt = ast.StmtExpr { value: m.scrutinee, line: m.line, op: "" };
+    let out: util.Diag[] = assign_stmt_own_lambdas(subject, cur, unions);
+    let whole: typeinfo.Type = check_expr(m.scrutinee, cur);
+    for arm in m.arms {
+      if (arm.has_guard) {
+        let guard: ast.Stmt = ast.StmtExpr { value: arm.guard, line: arm.line, op: "" };
+        out = util.append_diags(out, assign_stmt_own_lambdas(guard, annotate_arm_scope(arm, cur, whole), unions));
+      }
+    }
+    return out;
+  }
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
@@ -17339,13 +17427,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
       },
       ast.StmtMatch(m) => {
         for elem in m.arms {
-          let asc: Scope = cur;
-          match (elem.pattern) {
-            ast.PatVariant(apv) => {
-              asc = bind_variant_payloads(asc, cur, apv, check_expr(m.scrutinee, cur));
-            },
-            _ => {}
-          }
+          let asc: Scope = annotate_arm_scope(elem, cur, check_expr(m.scrutinee, cur));
           out = util.append_diags(out, stmts_assign_diags(elem.body, asc, unions));
         }
       },
@@ -17467,26 +17549,40 @@ function name_after(a: string, b: string): boolean {
   return a > b;
 }
 
-function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[], boolean_tag: boolean): util.Diag[] {
+struct ScalarCoverage { all: boolean, yes: boolean, no: boolean }
+
+function scalar_arm_coverage(arm: ast.MatchArm, whole: typeinfo.Type, scope: Scope, covered: ScalarCoverage): ScalarCoverage {
+  if (arm.has_guard) {
+    return covered;
+  }
+  match (arm.pattern) {
+    ast.PatVariant(pv) => {
+      return ScalarCoverage { ...covered, all: covered.all || scalar_binding_name(pv, whole, scope).len() > 0 };
+    },
+    ast.PatLiteral(literal) => {
+      if (!literal.has_range) {
+        if let ast.ExprBool(value) = literal.lit {
+          return ScalarCoverage { ...covered, yes: covered.yes || value.value, no: covered.no || !value.value };
+        }
+      }
+    },
+    ast.PatWildcard(_) => {
+      return ScalarCoverage { ...covered, all: true };
+    }
+  }
+  return covered;
+}
+
+function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[], whole: typeinfo.Type, scope: Scope): util.Diag[] {
   if (m.origin.len() > 0) {
     return acc;
   }
-  let saw_wild: boolean = false;
+  let boolean_tag: boolean = match (whole) { typeinfo.TypeBool(_) => true, _ => false };
+  let covered: ScalarCoverage = ScalarCoverage { all: false, yes: false, no: false };
   for arm in m.arms {
-    match (arm.pattern) {
-      ast.PatWildcard(_) => {
-        if (!arm.has_guard) {
-          saw_wild = true;
-        }
-      },
-      ast.PatVariant(pv) => {
-        if (!arm.has_guard && ast.bare_binder(pv).len() > 0) {
-          saw_wild = true;
-        }
-      }
-    }
+    covered = scalar_arm_coverage(arm, whole, scope, covered);
   }
-  if (saw_wild) {
+  if (covered.all || boolean_tag && covered.yes && covered.no) {
     return acc;
   }
   if (boolean_tag) {
@@ -19452,15 +19548,16 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
     return true;
   }
   if let ast.StmtMatch(m) = st {
+    let r: i32 = LU_CONTINUES;
     if (lu_same_ident(m.scrutinee, aid)) {
-      let r: i32 = lu_match_tag_live(fx, m, aid.name);
-      if (r == LU_LIVE) {
-        return true;
-      }
-      if (r == LU_SETTLED) {
-        return false;
-      }
-      return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
+      r = lu_match_tag_live(fx, m, aid.name);
+    } else if (lu_mentions_at(m.scrutinee, aid)) {
+      r = lu_call_tag_settles(fx, m, aid);
+    } else {
+      r = LU_NOT_TAG;
+    }
+    if (r != LU_NOT_TAG) {
+      return r == LU_LIVE || r == LU_CONTINUES && lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
     }
   }
   if (lu_later_in(st, aid)) {
@@ -19474,6 +19571,48 @@ const LU_CONTINUES: i32 = 0;
 const LU_LIVE: i32 = 1;
 
 const LU_SETTLED: i32 = 2;
+
+const LU_NOT_TAG: i32 = 3;
+
+// The argument at aid is in the expression, so a call in a match tag takes it.
+function lu_mentions_at(e: ast.Expr, aid: ast.ExprIdent): boolean {
+  let facts: LuFacts = astwalk.fold_expr_nodes(e, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == aid.name && o.line == aid.line && o.col == aid.col) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A local that a call in a match tag takes. LU_LIVE: a later read in the
+// tag, or a read in a guard or an arm before a whole assignment. LU_SETTLED:
+// every arm assigns the local whole or leaves the statement.
+function lu_call_tag_settles(fx: LuFn, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
+  let facts: LuFacts = astwalk.fold_expr_nodes(m.scrutinee, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == aid.name && (o.line > aid.line || o.line == aid.line && o.col > aid.col)) {
+      return LU_LIVE;
+    }
+  }
+  let settled: boolean = m.arms.len() > 0;
+  for arm in m.arms {
+    if (arm.has_guard && astwalk.count_ident_expr(arm.guard, aid.name) > 0) {
+      return LU_LIVE;
+    }
+    let r: i32 = lu_stmts_settle(fx, arm.body, aid.name);
+    if (r == LU_LIVE) {
+      return LU_LIVE;
+    }
+    if (r != LU_SETTLED) {
+      settled = false;
+    }
+  }
+  if (settled) {
+    return LU_SETTLED;
+  }
+  return LU_CONTINUES;
+}
 
 function lu_same_ident(e: ast.Expr, aid: ast.ExprIdent): boolean {
   if let ast.ExprIdent(id) = e {
@@ -27652,10 +27791,13 @@ function annotate_variant_struct(name: string, s: Scope): string {
 
 function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {
   match (arm.pattern) {
-    ast.PatVariant(pv) => {
-      if (literal_match_type(whole) && ast.bare_binder(pv).len() > 0) {
-        return s.bind(ast.bare_binder(pv), whole);
+    ast.PatLiteral(literal) => {
+      if (literal.at_binding.len() > 0) {
+        return s.bind(literal.at_binding, whole);
       }
+      return s;
+    },
+    ast.PatVariant(pv) => {
       let vn: string = annotate_variant_struct(pv.type_name, s);
       if (vn.len() == 0) {
         return bind_variant_payloads(s, s, pv, whole);
@@ -27667,6 +27809,24 @@ function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): 
     }
   }
   return s;
+}
+
+function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
+  let narms: ast.MatchArm[] = [];
+  for arm in m.arms {
+    let whole: typeinfo.Type = check_expr(m.scrutinee, s);
+    let pattern: ast.Pattern = arm.pattern;
+    if let ast.PatVariant(pv) = pattern {
+      pattern = ast.PatVariant { ...pv, bare_name: false, scalar_binding: scalar_binding_name(pv, whole, s).len() > 0 };
+    }
+    let asc: Scope = annotate_arm_scope(arm, s, whole);
+    let g: ast.Expr = arm.guard;
+    if (arm.has_guard) {
+      g = annotate_expr(arm.guard, asc);
+    }
+    narms = narms.append(ast.MatchArm { ...arm, pattern: pattern, body: annotate_block(arm.body, asc), guard: g });
+  }
+  return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
 }
 
 function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
@@ -27706,16 +27866,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target)) };
     },
     ast.StmtMatch(m) => {
-      let narms: ast.MatchArm[] = [];
-      for arm in m.arms {
-        let asc: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
-        let g: ast.Expr = arm.guard;
-        if (arm.has_guard) {
-          g = annotate_expr(arm.guard, asc);
-        }
-        narms = narms.append(ast.MatchArm { ...arm, body: annotate_block(arm.body, asc), guard: g });
-      }
-      return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
+      return annotate_match_stmt(m, s);
     },
     ast.StmtFor(fr) => {
       if let Some(lowered) = iterator_lowering(fr, s) {
@@ -27805,7 +27956,20 @@ function display_unrewritten(e: ast.Expr, own found: boolean): boolean {
 function unannotated(stmts: ast.Stmt[]): boolean {
   let found: boolean = false;
   for st in stmts {
-    found = astwalk.fold_stmt(st, found, unchecked_or_unrewritten);
+    found = astwalk.fold_stmt_nodes(st, found, unresolved_scalar_pattern, unchecked_or_unrewritten, astwalk.descend_all);
+  }
+  return found;
+}
+
+function unresolved_scalar_pattern(st: ast.Stmt, own found: boolean): boolean {
+  if let ast.StmtMatch(m) = st {
+    for arm in m.arms {
+      if let ast.PatVariant(pv) = arm.pattern {
+        if (pv.bare_name && !pv.scalar_binding) {
+          return true;
+        }
+      }
+    }
   }
   return found;
 }

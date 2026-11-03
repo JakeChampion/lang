@@ -8315,6 +8315,13 @@ function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scr
   return "";
 }
 
+function match_test_passes(value: Value): boolean {
+  if let VBool(test) = value {
+    return test.v;
+  }
+  return false;
+}
+
 function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolean, expect: string): StepResult {
   let sv: Value = eval_expr(m.scrutinee, env);
   if (is_err(sv)) {
@@ -8328,10 +8335,41 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
     let bind_values: Value[] = [];
     let bind_types: string[] = [];
     match (arm.pattern) {
+      ast.PatLiteral(literal) => {
+        let low: Value = eval_expr(literal.lit, env);
+        if (is_err(low)) {
+          return step_stop(env, low);
+        }
+        matched = match_test_passes(eval_binary("==", sv, low));
+        if (literal.has_range) {
+          let high: Value = eval_expr(literal.range_hi, env);
+          if (is_err(high)) {
+            return step_stop(env, high);
+          }
+          let upper: string = if (literal.range_inclusive) { "<=" } else { "<" };
+          matched = match_test_passes(eval_binary(">=", sv, low)) && match_test_passes(eval_binary(upper, sv, high));
+        }
+        if (matched && literal.at_binding.len() > 0) {
+          bind_names = bind_names.append(literal.at_binding);
+          bind_values = bind_values.append(sv);
+          bind_types = bind_types.append("");
+        }
+      },
       ast.PatWildcard(_) => {
         matched = true;
       },
       ast.PatVariant(pv) => {
+        if (pv.scalar_binding) {
+          matched = true;
+          bind_names = bind_names.append(pv.type_name);
+          bind_values = bind_values.append(sv);
+          bind_types = bind_types.append("");
+          if (pv.at_binding.len() > 0) {
+            bind_names = bind_names.append(pv.at_binding);
+            bind_values = bind_values.append(sv);
+            bind_types = bind_types.append("");
+          }
+        }
         if (pv.type_name == "true" || pv.type_name == "false") {
           match (sv) {
             VBool(bv) => {
@@ -8394,6 +8432,14 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
       while (bk < bind_names.len()) {
         bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
         bk = bk + 1;
+      }
+      let reassigned: string[] = body_assign_names(arm.body, []);
+      for st in arm.body {
+        bodyEnv = cellify_captures(bodyEnv, st, reassigned);
+      }
+      if (arm.has_guard) {
+        let guard_stmt: ast.Stmt = ast.StmtExpr { value: arm.guard, line: arm.line, op: "" };
+        bodyEnv = cellify_captures(bodyEnv, guard_stmt, reassigned);
       }
       let pass: boolean = true;
       if (arm.has_guard) {

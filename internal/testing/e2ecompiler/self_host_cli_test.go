@@ -1291,7 +1291,8 @@ function main(): i32 {
 
 	t.Run("check-position-match-nonenum", func(t *testing.T) {
 		for _, c := range []struct{ name, src, want string }{
-			{"variant_on_i32", "enum E { A, B }\nfunction main(): i32 { let n: i32 = 5; match (n) { A => { return 1; }, _ => { return 0; } } }\n", "2:52: error[E035]"},
+			{"variant_on_i32", "enum E { A, B }\nfunction main(): i32 { let n: i32 = 5; match (n) { E.A => { return 1; }, _ => { return 0; } } }\n", "2:52: error[E035]"},
+			{"binder_on_i32_not_last", "function main(): i32 { let n: i32 = 5; match (n) { m => { return m; }, _ => { return 0; } } }\n", "1:52: error[E026]"},
 		} {
 			sp := filepath.Join(dir, c.name+".fern")
 			if err := os.WriteFile(sp, []byte(c.src), 0o644); err != nil {

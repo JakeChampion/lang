@@ -1498,6 +1498,20 @@ function print_pattern(pat: ast.Pattern): string {
 
 function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
   match (pat) {
+    ast.PatLiteral(literal) => {
+      let out: string = print_lit(literal.lit);
+      if (literal.has_range) {
+        let dots: string = "..";
+        if (literal.range_inclusive) {
+          dots = "..=";
+        }
+        out = out + dots + print_lit(literal.range_hi);
+      }
+      if (literal.at_binding.len() > 0) {
+        out = literal.at_binding + " @ " + out;
+      }
+      return out;
+    },
     ast.PatWildcard(_) => {
       return "_";
     },
@@ -1548,6 +1562,9 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
 
 function pv_pattern_name(pat: ast.Pattern): string {
   match (pat) {
+    ast.PatLiteral(_) => {
+      return "";
+    },
     ast.PatVariant(v) => {
       return v.type_name;
     },

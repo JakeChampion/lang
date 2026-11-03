@@ -942,7 +942,7 @@ function p_variant(type_name: string, binding: string): ast.Pattern {
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  return ast.PatVariant { type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
+  return ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
 }
 
 function p_variant_n(type_name: string, prefix: string, n: i32): ast.Pattern {
@@ -960,7 +960,7 @@ function p_variant_n(type_name: string, prefix: string, n: i32): ast.Pattern {
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  return ast.PatVariant { type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
+  return ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
 }
 
 function fold_lit_cond(pat: ast.Pattern, guard: ast.Expr, has_guard: boolean): (ast.Pattern, ast.Expr, boolean) {
@@ -1715,47 +1715,6 @@ function (p: Par) peek_at_literal(): boolean {
     return false;
   }
   return p.advance().advance().peek_is_pat_literal();
-}
-
-// A bare name in arm position: an identifier followed by `=>` or `when`.
-function (p: Par) peek_arm_binder(): string {
-  let name: string = p.peek_ident();
-  if (name.len() == 0 || name == "_") {
-    return "";
-  }
-  let after: Par = p.advance();
-  if (after.peek_punct() == "=>" || after.peek_keyword() == "when") {
-    return name;
-  }
-  return "";
-}
-
-// A match is a literal match when its first arm is a literal, or when its
-// first arm binds a name and a later arm head is a literal.
-function literal_arms_ahead(p: Par): boolean {
-  if (p.peek_is_pat_literal() || p.peek_at_literal()) {
-    return true;
-  }
-  if (p.peek_arm_binder().len() == 0) {
-    return false;
-  }
-  let depth: i32 = 0;
-  let k: i32 = 1;
-  while (p.pos + k < p.toks.len()) {
-    let t: string = p.peek_punct_at(k);
-    if (depth == 0 && t == "}") {
-      return false;
-    }
-    if (depth == 0 && t == ",") {
-      let head: Par = Par { ...p, pos: p.pos + k + 1 };
-      if (head.peek_is_pat_literal() || head.peek_at_literal()) {
-        return true;
-      }
-    }
-    depth = depth + bracket_step(t);
-    k = k + 1;
-  }
-  return false;
 }
 
 function take_at_binding(p: Par): (string, Par) {
@@ -3092,6 +3051,23 @@ function close_bool_arms(arms: ast.LitArm[]): ast.LitArm[] {
   return out.append(ast.LitArm { ...arms[k], is_wild: true });
 }
 
+function literal_pattern(arm: ast.LitArm): ast.Pattern {
+  if (arm.is_wild) {
+    return p_wildcard();
+  }
+  return ast.PatLiteral { scalar_cells: [], lit: arm.lit, range_hi: arm.range_hi, has_range: arm.has_range, range_inclusive: arm.range_inclusive, at_binding: arm.at_binding };
+}
+
+function literal_pattern_match(scrut: ast.Expr, arms: ast.LitArm[], patterns: ast.Pattern[], line: i32, col: i32): ast.Stmt {
+  let out: ast.MatchArm[] = [];
+  let i: i32 = 0;
+  for arm in arms {
+    out = out.append(ast.MatchArm { pattern: patterns[i], body: arm.body, line: arm.line, col: arm.col, guard: arm.guard, has_guard: arm.has_guard, alt_cont: arm.alt_cont });
+    i = i + 1;
+  }
+  return s_match_at(scrut, out, line, col);
+}
+
 function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, mkcol: i32): ast.Stmt {
   let written_arms: ast.LitArm[] = arms;
   arms = close_bool_arms(arms);
@@ -3112,14 +3088,9 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
     let mi: i32 = 0;
     while (mi < arms.len()) {
       let la: ast.LitArm = arms[mi];
-      let pat: ast.Pattern = p_variant("", "");
+      let pat: ast.Pattern = literal_pattern(la);
       let lbody: ast.Stmt[] = la.body;
-      if (la.is_wild) {
-        pat = p_wildcard();
-        if (la.at_binding.len() > 0) {
-          pat = p_variant(la.at_binding, "");
-        }
-      } else if (la.at_binding.len() > 0) {
+      if (la.at_binding.len() > 0) {
         lbody = prepend_stmt(s_var_at(la.at_binding, "", scrut, la.line, la.col), la.body);
       }
       marms = marms.append(ast.MatchArm { pattern: pat, body: lbody, line: la.line, col: la.col, guard: la.guard, has_guard: la.has_guard, alt_cont: false });
@@ -3138,18 +3109,10 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
   while (i >= 0) {
     let a: ast.LitArm = arms[i];
     if (a.is_wild) {
-      let wbody: ast.Stmt[] = a.body;
-      let wguard: ast.Expr = a.guard;
-      if (a.at_binding.len() > 0) {
-        wbody = prepend_stmt(s_var_at(a.at_binding, "", scrut, a.line, a.col), a.body);
-        if let ast.ExprIdent(wsid) = scrut {
-          wguard = astwalk.subst_ident_expr(a.guard, a.at_binding, wsid.name);
-        }
-      }
       if (a.has_guard) {
-        else_body = [s_if(wguard, wbody, else_body)];
+        else_body = [s_if(a.guard, a.body, else_body)];
       } else {
-        else_body = wbody;
+        else_body = a.body;
       }
     } else {
       let abody: ast.Stmt[] = a.body;
@@ -3233,7 +3196,7 @@ function with_sugar_origin(st: ast.Stmt, origin: string, else_chained: boolean):
 function p_tuple_carrier(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): ast.Pattern {
   let no_extra: string[] = [];
   let no_nested: ast.Pattern[] = [];
-  return ast.PatVariant { type_name: "", binding: "", extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: kinds, tup_binds: binds, tup_lits: lits, tup_pats: pats, rest_written: false };
+  return ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: "", binding: "", extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: kinds, tup_binds: binds, tup_lits: lits, tup_pats: pats, rest_written: false };
 }
 
 function parse_tuple_arm_pattern(p: Par): (i32[], string[], ast.Expr[], ast.Pattern[], Par) {
@@ -4187,6 +4150,98 @@ function with_arms_open(st: ast.Stmt, line: i32): ast.Stmt {
   }
 }
 
+function parse_literal_match_expr(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol: i32): IfChain {
+  let rt: string = "i32";
+  let lit_arms: ast.LitArm[] = [];
+  let patterns: ast.Pattern[] = [];
+  let preserve_patterns: boolean = false;
+  let lfirst: boolean = true;
+  while (p.peek_punct() != "}" && !p.at_end()) {
+    let laline: i32 = p.peek_line();
+    let lacol: i32 = p.peek_col();
+    let lwild: boolean = false;
+    let lpattern: ast.Pattern = p_wildcard();
+    let pattern_start: Par = p;
+    let (lat, lat_p) = take_at_binding(p);
+    p = lat_p;
+    let lalt_lits: ast.Expr[] = [];
+    let lalt_his: ast.Expr[] = [];
+    let lalt_hrs: boolean[] = [];
+    let lalt_incs: boolean[] = [];
+    if (p.peek_is_pat_literal()) {
+      let (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
+      p = la_p;
+      lalt_lits = la_lits;
+      lalt_his = la_his;
+      lalt_hrs = la_hrs;
+      lalt_incs = la_incs;
+    } else {
+      let (lpr_pattern, lpr_p) = parse_pattern(pattern_start);
+      p = lpr_p;
+      lwild = true;
+      lpattern = lpr_pattern;
+      if let ast.PatWildcard(_) = lpattern {} else {
+        preserve_patterns = true;
+      }
+    }
+    let lguard: ast.Expr = e_bool(true);
+    let lhas_guard: boolean = false;
+    if (p.peek_keyword() == "when") {
+      p = p.advance();
+      let (lgr_expr, lgr_p) = parse_expr(p);
+      p = lgr_p;
+      lguard = lgr_expr;
+      lhas_guard = true;
+    }
+    p = p.expect("=>");
+    let lbody: ast.Stmt[] = [];
+    let lrt: string = "i32";
+    if (p.peek_punct() == "{") {
+      let (lbb_body, lbb_rt, lbb_p) = parse_branch_body(p);
+      p = lbb_p;
+      lbody = lbb_body;
+      lrt = lbb_rt;
+    } else {
+      let (ler_expr, ler_p) = parse_expr(p);
+      p = ler_p;
+      lbody = [s_return(ler_expr)];
+      lrt = if_expr_rt(ler_expr);
+    }
+    if (lfirst) {
+      rt = lrt;
+      lfirst = false;
+    }
+    if (lwild) {
+      lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
+      patterns = patterns.append(lpattern);
+    } else {
+      let lai: i32 = 0;
+      while (lai < lalt_lits.len()) {
+        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
+        patterns = patterns.append(literal_pattern(lit_arms[lit_arms.len() - 1]));
+        lai = lai + 1;
+      }
+    }
+    if (p.peek_punct() == ",") {
+      p = p.advance();
+      continue;
+    }
+    break;
+  }
+  p = p.expect("}");
+  if (preserve_patterns) {
+    return IfChain { par: p, stmt: literal_pattern_match(sr_expr, lit_arms, patterns, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
+  }
+  if let ast.ExprIdent(_) = sr_expr {} else {
+    let lm: string = literal_scrut_local(mkline, mkcol);
+    let lchain: ast.Stmt = build_literal_match(e_ident(lm), lit_arms, mkline, mkcol);
+    if let ast.StmtIf(_) = lchain {
+      return IfChain { par: p, stmt: with_written_scrut(lchain, sr_expr), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [s_var_at(lm, "", sr_expr, mkline, mkcol)] };
+    }
+  }
+  return IfChain { par: p, stmt: build_literal_match(sr_expr, lit_arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
+}
+
 function parse_match_expr_arms(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol: i32): IfChain {
   let rt: string = "i32";
   if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
@@ -4299,87 +4354,8 @@ function parse_match_expr_arms(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol: i3
     }
     return IfChain { par: p, stmt: build_struct_match(sr_expr, smvarms, mkline, mkcol), rt: smrt, needs_default_return: false, value_local: smval, scrut_bind: [] };
   }
-  if (literal_arms_ahead(p)) {
-    let lit_arms: ast.LitArm[] = [];
-    let lfirst: boolean = true;
-    while (p.peek_punct() != "}" && !p.at_end()) {
-      let laline: i32 = p.peek_line();
-      let lacol: i32 = p.peek_col();
-      let lwild: boolean = false;
-      let lbind: string = "";
-      let (lat, lat_p) = take_at_binding(p);
-      p = lat_p;
-      let lalt_lits: ast.Expr[] = [];
-      let lalt_his: ast.Expr[] = [];
-      let lalt_hrs: boolean[] = [];
-      let lalt_incs: boolean[] = [];
-      if (p.peek_is_pat_literal()) {
-        let (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
-        p = la_p;
-        lalt_lits = la_lits;
-        lalt_his = la_his;
-        lalt_hrs = la_hrs;
-        lalt_incs = la_incs;
-      } else if (p.peek_arm_binder().len() > 0) {
-        lbind = p.peek_arm_binder();
-        p = p.advance();
-        lwild = true;
-      } else {
-        let (lpr_pattern, lpr_p) = parse_pattern(p);
-        p = lpr_p;
-        lwild = true;
-      }
-      let lguard: ast.Expr = e_bool(true);
-      let lhas_guard: boolean = false;
-      if (p.peek_keyword() == "when") {
-        p = p.advance();
-        let (lgr_expr, lgr_p) = parse_expr(p);
-        p = lgr_p;
-        lguard = lgr_expr;
-        lhas_guard = true;
-      }
-      p = p.expect("=>");
-      let lbody: ast.Stmt[] = [];
-      let lrt: string = "i32";
-      if (p.peek_punct() == "{") {
-        let (lbb_body, lbb_rt, lbb_p) = parse_branch_body(p);
-        p = lbb_p;
-        lbody = lbb_body;
-        lrt = lbb_rt;
-      } else {
-        let (ler_expr, ler_p) = parse_expr(p);
-        p = ler_p;
-        lbody = [s_return(ler_expr)];
-        lrt = if_expr_rt(ler_expr);
-      }
-      if (lfirst) {
-        rt = lrt;
-        lfirst = false;
-      }
-      if (lwild) {
-        lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: lbind });
-      } else {
-        let lai: i32 = 0;
-        while (lai < lalt_lits.len()) {
-          lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
-          lai = lai + 1;
-        }
-      }
-      if (p.peek_punct() == ",") {
-        p = p.advance();
-        continue;
-      }
-      break;
-    }
-    p = p.expect("}");
-    if let ast.ExprIdent(_) = sr_expr {} else {
-      let lm: string = literal_scrut_local(mkline, mkcol);
-      let lchain: ast.Stmt = build_literal_match(e_ident(lm), lit_arms, mkline, mkcol);
-      if let ast.StmtIf(_) = lchain {
-        return IfChain { par: p, stmt: with_written_scrut(lchain, sr_expr), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [s_var_at(lm, "", sr_expr, mkline, mkcol)] };
-      }
-    }
-    return IfChain { par: p, stmt: build_literal_match(sr_expr, lit_arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
+  if (p.peek_is_pat_literal() || p.peek_at_literal()) {
+    return parse_literal_match_expr(p, sr_expr, mkline, mkcol);
   }
   let arms: ast.MatchArm[] = [];
   let ewritten: ast.MatchArm[] = [];
@@ -4478,7 +4454,8 @@ function arms_have_tuple_subpattern(arms: ast.MatchArm[]): boolean {
           return true;
         }
       },
-      ast.PatWildcard(w) => {}
+      ast.PatWildcard(w) => {},
+      ast.PatLiteral(_) => {}
     }
     i = i + 1;
   }
@@ -4819,14 +4796,16 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     return (p_wildcard(), p);
   }
   if (p.peek_is_pat_literal()) {
-    p = p.advance();
-    return (p_variant("", ""), p);
+    let (lo, hi, has_range, inclusive, next) = parse_lit_or_range(p);
+    return (ast.PatLiteral { scalar_cells: [], lit: lo, range_hi: hi, has_range: has_range, range_inclusive: inclusive, at_binding: at_binding }, next);
   }
   if (name.len() == 0) {
     return (p_variant("", ""), p);
   }
   p = p.advance();
+  let bare_name: boolean = true;
   while (p.peek_punct() == ".") {
+    bare_name = false;
     p = p.advance();
     let seg: string = p.peek_ident();
     if (seg.len() == 0) {
@@ -4845,6 +4824,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     return parse_record_variant_pattern(p, name, at_binding);
   }
   if (p.peek_punct() == "(") {
+    bare_name = false;
     p = p.advance();
     let bn: i32 = 0;
     while (p.peek_punct() != ")" && !p.at_end()) {
@@ -4932,7 +4912,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     }
   }
   let no_fields: string[] = [];
-  return (ast.PatVariant { type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: no_fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: tup_kinds, tup_binds: tup_binds, tup_lits: tup_lits, tup_pats: tup_pats, rest_written: false }, p);
+  return (ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: bare_name, type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: no_fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: tup_kinds, tup_binds: tup_binds, tup_lits: tup_lits, tup_pats: tup_pats, rest_written: false }, p);
 }
 
 function parse_record_variant_pattern(p: Par, name: string, at_binding: string): (ast.Pattern, Par) {
@@ -4968,7 +4948,7 @@ function parse_record_variant_pattern(p: Par, name: string, at_binding: string):
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  return (ast.PatVariant { type_name: name, binding: binding, extra_bindings: extra, nested: nested, at_binding: at_binding, field_names: sap.fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: sap.rest_written }, sp);
+  return (ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: name, binding: binding, extra_bindings: extra, nested: nested, at_binding: at_binding, field_names: sap.fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: sap.rest_written }, sp);
 }
 
 function and_cond(acc: ast.Expr, has_acc: boolean, one: ast.Expr): ast.Expr {
@@ -5013,6 +4993,9 @@ pub function pv_tup(pat: ast.Pattern): (i32[], string[], ast.Expr[], ast.Pattern
     },
     ast.PatWildcard(w) => {
       return (no_k, no_b, no_l, no_p);
+    },
+    ast.PatLiteral(_) => {
+      return (no_k, no_b, no_l, no_p);
     }
   }
   return (no_k, no_b, no_l, no_p);
@@ -5025,9 +5008,26 @@ function pv_name(pat: ast.Pattern): string {
     },
     ast.PatWildcard(w) => {
       return "";
+    },
+    ast.PatLiteral(_) => {
+      return "";
     }
   }
   return "";
+}
+
+function pattern_is_wildcard(pat: ast.Pattern): boolean {
+  if let ast.PatWildcard(_) = pat {
+    return true;
+  }
+  return false;
+}
+
+function pattern_needs_probe(pat: ast.Pattern): boolean {
+  if let ast.PatLiteral(_) = pat {
+    return true;
+  }
+  return pv_name(pat).len() > 0;
 }
 
 function arm_is_nested(arm: ast.MatchArm): boolean {
@@ -5036,6 +5036,9 @@ function arm_is_nested(arm: ast.MatchArm): boolean {
       return v.nested.len() > 0 || v.tup_kinds.len() > 0;
     },
     ast.PatWildcard(w) => {
+      return false;
+    },
+    ast.PatLiteral(_) => {
       return false;
     }
   }
@@ -5055,7 +5058,10 @@ function arms_take_flag_chain(arms: ast.MatchArm[]): boolean {
           any_nested = true;
         }
       },
-      ast.PatWildcard(w) => {}
+      ast.PatWildcard(w) => {},
+      ast.PatLiteral(_) => {
+        return false;
+      }
     }
     i = i + 1;
   }
@@ -5131,7 +5137,7 @@ pub function lower_struct_record_match(m: ast.StmtMatch, value: string): ast.Stm
           kind = 2;
           lit = found;
         } else {
-          if (i < pv.nested.len() && pv_name(pv.nested[i]).len() > 0) {
+          if (i < pv.nested.len() && pattern_needs_probe(pv.nested[i])) {
             kind = 3;
             pat = pv.nested[i];
           }
@@ -5212,7 +5218,8 @@ function match_sub_pattern(path: ast.Stmt[], scrut: string, pat: ast.Pattern, li
         flat = clear_nested_pat(pv);
       }
     },
-    ast.PatWildcard(w) => {}
+    ast.PatWildcard(w) => {},
+    ast.PatLiteral(_) => {}
   }
   let (mk_pat, mk_guard, mk_hg) = fold_lit_cond(flat, e_bool(true), false);
   let mk_arms: ast.MatchArm[] = [];
@@ -5229,7 +5236,7 @@ function wrap_payload_pats(path: ast.Stmt[], pv: ast.PatVariant, line: i32, col:
   let cur: ast.Stmt[] = path;
   let wi: i32 = pv.nested.len() - 1;
   while (wi >= 0) {
-    if (pv_name(pv.nested[wi]) != "") {
+    if (pattern_needs_probe(pv.nested[wi])) {
       cur = match_sub_pattern(cur, payload_binder(pv, wi), pv.nested[wi], line, col);
     }
     wi = wi - 1;
@@ -5275,6 +5282,13 @@ function build_nested_arm_match(scrut: ast.Expr, arms: ast.MatchArm[], written: 
         let skip: ast.Stmt[] = [];
         marms = marms.append(ast.MatchArm { pattern: p_wildcard(), body: skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
         inner = [s_match_origin(e_ident_at(sname, a.line, a.col), marms, a.line, a.col, ORIGIN_PATTERN_PROBE)];
+      },
+      ast.PatLiteral(_) => {
+        let marms: ast.MatchArm[] = [
+          ast.MatchArm { ...a, body: flagged },
+          ast.MatchArm { pattern: p_wildcard(), body: [], line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false },
+        ];
+        inner = [s_match_origin(e_ident_at(sname, a.line, a.col), marms, a.line, a.col, ORIGIN_PATTERN_PROBE)];
       }
     }
     outer = outer.append(s_if(cond, inner, []));
@@ -5303,7 +5317,7 @@ function desugar_nested_arms(arms: ast.MatchArm[], depth: i32, tag: string): ast
   let has_fall: boolean = false;
   if (arms.len() > 0) {
     let last: ast.MatchArm = arms[arms.len() - 1];
-    if (pv_name(last.pattern) == "" && !last.has_guard) {
+    if (pattern_is_wildcard(last.pattern) && !last.has_guard) {
       fall = last.body;
       has_fall = true;
     }
@@ -5352,7 +5366,8 @@ function group_has_tuple(arms: ast.MatchArm[], lo: i32, hi: i32): boolean {
           return true;
         }
       },
-      ast.PatWildcard(w) => {}
+      ast.PatWildcard(w) => {},
+      ast.PatLiteral(_) => {}
     }
     i = i + 1;
   }
@@ -5387,17 +5402,14 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
     let g: ast.MatchArm = arms[k];
     let inner_pat: ast.Pattern = p_wildcard();
     let inner_body: ast.Stmt[] = g.body;
-    match (g.pattern) {
-      ast.PatVariant(gv) => {
-        if (gv.nested.len() > 0) {
-          inner_pat = gv.nested[0];
-        } else if (gv.binding.len() > 0 && gv.binding != "_") {
-          inner_body = prepend_stmt(s_var(gv.binding, "", e_ident(tmp)), g.body);
-        }
-      },
-      ast.PatWildcard(w) => {}
+    if let ast.PatVariant(gv) = g.pattern {
+      if (gv.nested.len() > 0) {
+        inner_pat = gv.nested[0];
+      } else if (gv.binding.len() > 0 && gv.binding != "_") {
+        inner_body = prepend_stmt(s_var(gv.binding, "", e_ident(tmp)), g.body);
+      }
     }
-    if (pv_name(inner_pat) == "" && !g.has_guard) {
+    if (pattern_is_wildcard(inner_pat) && !g.has_guard) {
       has_inner_wild = true;
     }
     let (fn_pat, fn_g, fn_hg) = fold_lit_cond(inner_pat, g.guard, g.has_guard);
@@ -5417,25 +5429,22 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
     let q: i32 = lo;
     while (q < hi) {
       let ga: ast.MatchArm = arms[q];
-      match (ga.pattern) {
-        ast.PatVariant(gv2) => {
-          if (gv2.tup_kinds.len() > 0) {
-            if (!ga.has_guard && tuple_elems_irrefutable(gv2.tup_kinds, gv2.tup_pats)) {
-              tuple_covers = true;
-            }
-            tarms = tarms.append(ast.TupArm { is_wild: false, elem_kinds: gv2.tup_kinds, binds: gv2.tup_binds, lits: gv2.tup_lits, elem_pats: gv2.tup_pats, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: ga.body, line: ga.line, col: ga.col, alt_cont: false });
-          } else {
-            let b2: ast.Stmt[] = ga.body;
-            if (gv2.binding.len() > 0 && gv2.binding != "_") {
-              b2 = prepend_stmt(s_var(gv2.binding, "", e_ident(tmp)), ga.body);
-            }
-            if (!ga.has_guard) {
-              tuple_covers = true;
-            }
-            tarms = tarms.append(ast.TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: b2, line: ga.line, col: ga.col, alt_cont: false });
+      if let ast.PatVariant(gv2) = ga.pattern {
+        if (gv2.tup_kinds.len() > 0) {
+          if (!ga.has_guard && tuple_elems_irrefutable(gv2.tup_kinds, gv2.tup_pats)) {
+            tuple_covers = true;
           }
-        },
-        ast.PatWildcard(w2) => {}
+          tarms = tarms.append(ast.TupArm { is_wild: false, elem_kinds: gv2.tup_kinds, binds: gv2.tup_binds, lits: gv2.tup_lits, elem_pats: gv2.tup_pats, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: ga.body, line: ga.line, col: ga.col, alt_cont: false });
+        } else {
+          let b2: ast.Stmt[] = ga.body;
+          if (gv2.binding.len() > 0 && gv2.binding != "_") {
+            b2 = prepend_stmt(s_var(gv2.binding, "", e_ident(tmp)), ga.body);
+          }
+          if (!ga.has_guard) {
+            tuple_covers = true;
+          }
+          tarms = tarms.append(ast.TupArm { is_wild: true, elem_kinds: no_k, binds: no_b, lits: no_l, elem_pats: no_p, at_binding: "", guard: ga.guard, has_guard: ga.has_guard, body: b2, line: ga.line, col: ga.col, alt_cont: false });
+        }
       }
       q = q + 1;
     }
@@ -5449,7 +5458,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
     let t_nb: string[] = [];
     let t_nl: ast.Expr[] = [];
     let t_np: ast.Pattern[] = [];
-    let t_merged: ast.Pattern = ast.PatVariant { type_name: vn, binding: tmp, extra_bindings: t_no_extra, nested: t_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: t_nk, tup_binds: t_nb, tup_lits: t_nl, tup_pats: t_np, rest_written: false };
+    let t_merged: ast.Pattern = ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: vn, binding: tmp, extra_bindings: t_no_extra, nested: t_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: t_nk, tup_binds: t_nb, tup_lits: t_nl, tup_pats: t_np, rest_written: false };
     let t_body: ast.Stmt[] = [tmatch];
     return ast.MatchArm { pattern: t_merged, body: t_body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false };
   }
@@ -5461,7 +5470,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  let merged_pat: ast.Pattern = ast.PatVariant { type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
+  let merged_pat: ast.Pattern = ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
   let body: ast.Stmt[] = [inner_match];
   return ast.MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false };
 }
@@ -5492,6 +5501,74 @@ function parse_match_stmt_body(p: Par): (ast.Stmt[], Par) {
 
 // parse_match_stmt reads a statement match with comma-separated arms.
 // Each arm has a bare expression or a block body.
+function parse_literal_match_stmt(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol: i32): (ast.Stmt, Par) {
+  let lit_arms: ast.LitArm[] = [];
+  let patterns: ast.Pattern[] = [];
+  let preserve_patterns: boolean = false;
+  while (p.peek_punct() != "}" && !p.at_end()) {
+    let laline: i32 = p.peek_line();
+    let lacol: i32 = p.peek_col();
+    let lwild: boolean = false;
+    let lpattern: ast.Pattern = p_wildcard();
+    let pattern_start: Par = p;
+    let (lat, lat_p) = take_at_binding(p);
+    p = lat_p;
+    let lalt_lits: ast.Expr[] = [];
+    let lalt_his: ast.Expr[] = [];
+    let lalt_hrs: boolean[] = [];
+    let lalt_incs: boolean[] = [];
+    if (p.peek_is_pat_literal()) {
+      let (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
+      p = la_p;
+      lalt_lits = la_lits;
+      lalt_his = la_his;
+      lalt_hrs = la_hrs;
+      lalt_incs = la_incs;
+    } else {
+      let (lpr_pattern, lpr_p) = parse_pattern(pattern_start);
+      p = lpr_p;
+      lwild = true;
+      lpattern = lpr_pattern;
+      if let ast.PatWildcard(_) = lpattern {} else {
+        preserve_patterns = true;
+      }
+    }
+    let lguard: ast.Expr = e_bool(true);
+    let lhas_guard: boolean = false;
+    if (p.peek_keyword() == "when") {
+      p = p.advance();
+      let (lgr_expr, lgr_p) = parse_expr(p);
+      p = lgr_p;
+      lguard = lgr_expr;
+      lhas_guard = true;
+    }
+    p = p.expect("=>");
+    let (lbb_body, lbb_p) = parse_match_stmt_body(p);
+    p = lbb_p;
+    if (lwild) {
+      lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
+      patterns = patterns.append(lpattern);
+    } else {
+      let lai: i32 = 0;
+      while (lai < lalt_lits.len()) {
+        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
+        patterns = patterns.append(literal_pattern(lit_arms[lit_arms.len() - 1]));
+        lai = lai + 1;
+      }
+    }
+    if (p.peek_punct() == ",") {
+      p = p.advance();
+      continue;
+    }
+    break;
+  }
+  p = p.expect("}");
+  if (preserve_patterns) {
+    return (literal_pattern_match(sr_expr, lit_arms, patterns, mkline, mkcol), p);
+  }
+  return (build_literal_match(sr_expr, lit_arms, mkline, mkcol), p);
+}
+
 function parse_match_stmt(p: Par): (ast.Stmt, Par) {
   let mkline: i32 = p.peek_line();
   let mkcol: i32 = p.peek_col();
@@ -5575,64 +5652,8 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
     }
     return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);
   }
-  if (literal_arms_ahead(p)) {
-    let lit_arms: ast.LitArm[] = [];
-    while (p.peek_punct() != "}" && !p.at_end()) {
-      let laline: i32 = p.peek_line();
-      let lacol: i32 = p.peek_col();
-      let lwild: boolean = false;
-      let lbind: string = "";
-      let (lat, lat_p) = take_at_binding(p);
-      p = lat_p;
-      let lalt_lits: ast.Expr[] = [];
-      let lalt_his: ast.Expr[] = [];
-      let lalt_hrs: boolean[] = [];
-      let lalt_incs: boolean[] = [];
-      if (p.peek_is_pat_literal()) {
-        let (la_lits, la_his, la_hrs, la_incs, la_p) = parse_lit_alts(p);
-        p = la_p;
-        lalt_lits = la_lits;
-        lalt_his = la_his;
-        lalt_hrs = la_hrs;
-        lalt_incs = la_incs;
-      } else if (p.peek_arm_binder().len() > 0) {
-        lbind = p.peek_arm_binder();
-        p = p.advance();
-        lwild = true;
-      } else {
-        let (lpr_pattern, lpr_p) = parse_pattern(p);
-        p = lpr_p;
-        lwild = true;
-      }
-      let lguard: ast.Expr = e_bool(true);
-      let lhas_guard: boolean = false;
-      if (p.peek_keyword() == "when") {
-        p = p.advance();
-        let (lgr_expr, lgr_p) = parse_expr(p);
-        p = lgr_p;
-        lguard = lgr_expr;
-        lhas_guard = true;
-      }
-      p = p.expect("=>");
-      let (lbb_body, lbb_p) = parse_match_stmt_body(p);
-      p = lbb_p;
-      if (lwild) {
-        lit_arms = lit_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: lbind });
-      } else {
-        let lai: i32 = 0;
-        while (lai < lalt_lits.len()) {
-          lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
-          lai = lai + 1;
-        }
-      }
-      if (p.peek_punct() == ",") {
-        p = p.advance();
-        continue;
-      }
-      break;
-    }
-    p = p.expect("}");
-    return (build_literal_match(sr_expr, lit_arms, mkline, mkcol), p);
+  if (p.peek_is_pat_literal() || p.peek_at_literal()) {
+    return parse_literal_match_stmt(p, sr_expr, mkline, mkcol);
   }
   let arms: ast.MatchArm[] = [];
   let written: ast.MatchArm[] = [];
@@ -5697,7 +5718,10 @@ function arms_have_written_form(written: ast.MatchArm[]): boolean {
           return true;
         }
       },
-      ast.PatWildcard(w) => {}
+      ast.PatWildcard(w) => {},
+      ast.PatLiteral(_) => {
+        return true;
+      }
     }
     i = i + 1;
   }
