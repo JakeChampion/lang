@@ -16,6 +16,8 @@ import base64
 import json
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 
 TAG = "android-15.0.0_r1"
@@ -29,9 +31,22 @@ HEADERS = {
 LP64 = ("arm64", "x86_64", "riscv64")
 
 
-def fetch(path):
-    with urllib.request.urlopen(BASE + path + "?format=TEXT", timeout=60) as r:
-        return base64.b64decode(r.read()).decode()
+# googlesource answers a burst of requests with 429 or 503. The pages at
+# a tag do not change, so a retry after a wait gets the same text.
+RETRY_CODES = (429, 500, 502, 503, 504)
+RETRY_WAITS = (5, 15, 45, 90)
+
+
+def fetch(path, sleep=time.sleep, urlopen=urllib.request.urlopen):
+    for wait in RETRY_WAITS + (None,):
+        try:
+            with urlopen(BASE + path + "?format=TEXT", timeout=60) as r:
+                return base64.b64decode(r.read()).decode()
+        except urllib.error.HTTPError as e:
+            if e.code not in RETRY_CODES or wait is None:
+                raise
+            print(f"{path}: HTTP {e.code}; trying again in {wait} s", file=sys.stderr)
+            sleep(wait)
 
 
 def arches(spec):
