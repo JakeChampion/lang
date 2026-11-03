@@ -1,5 +1,6 @@
 import "std/hash/crc32";
 import "std/opus/celt_encoder";
+import "std/opus/range";
 import "std/test";
 
 // Each case runs one analysis function of the encoder on random values: the
@@ -138,6 +139,134 @@ function trace(seed: u32, cases: i32): u32 {
   return c.finish();
 }
 
+function ints(xs: [i32], from: i32): string {
+  let s: string = "";
+  for i in from..xs.len() {
+    s = s + " " + xs[i].to_string();
+  }
+  return s;
+}
+
+function tf_case(own g: Gen, lm: i32, n0: i32, c: i32, x: [f32]): (Gen, string) {
+  let (g1, len0) = rnd(g);
+  let len: i32 = 13 + len0 % 9;
+  let (g2, tr0) = rnd(g1);
+  let tr: boolean = tr0 % 2 == 1;
+  let (g3, l0) = rnd(g2);
+  let lambda: i32 = 80 + l0 % 320;
+  let (g4, ch0) = rnd(g3);
+  let chan: i32 = ch0 % c;
+  let (g5, tfe) = frand(g4, 0.0f32, 1.0f32);
+  let imp: i32[] = [];
+  for i in 0..21 {
+    let (g6, v) = rnd(g5);
+    g5 = g6;
+    imp = imp.append(v % 40);
+  }
+  let t: celt_encoder.Tf = celt_encoder.tf_analysis(len, tr, lambda, x, n0, lm, tfe, chan, imp);
+  let line: string = "a " + lm.to_string() + " " + len.to_string() + " " + flag(tr) + " " + lambda.to_string() + " " + chan.to_string() + " " + t.select.to_string() + ints(t.res, 0);
+  let (g7, size0) = rnd(g5);
+  let size: i32 = 2 + size0 % 60;
+  let (g8, pre0) = rnd(g7);
+  let e: range.Encoder = range.encoder(size);
+  let g9: Gen = g8;
+  for i in 0..pre0 % 40 {
+    let (ga, v) = rnd(g9);
+    let (gb, lp) = rnd(ga);
+    g9 = gb;
+    e = e.bit_logp(v % 2 == 1, 1 + lp % 3);
+  }
+  let (gc, start0) = rnd(g9);
+  let start: i32 = start0 % 3;
+  let (e1, res) = celt_encoder.tf_encode(e, start, len, tr, t.res, lm, t.select);
+  let tell: i32 = e1.tell();
+  let done: range.Encoder = e1.done();
+  let h: u32 = 0u32;
+  for b in done.bytes() {
+    h = h * 31u32 + b as u32;
+  }
+  return (gc, line + " | " + size.to_string() + " " + start.to_string() + " " + tell.to_string() + " " + h.to_string() + " |" + ints(res, start));
+}
+
+function trim_case(own g: Gen, lm: i32, n0: i32, c: i32, x: [f32]): (Gen, string) {
+  let (g1, end0) = rnd(g);
+  let end: i32 = 13 + end0 % 9;
+  let (g2, in0) = rnd(g1);
+  let intensity: i32 = in0 % (end + 1);
+  let f: Fill = fill(g2, 42, -10.0f32, 20.0f32);
+  let (g3, valid0) = rnd(f.g);
+  let (g4, slope) = frand(g3, -1.0f32, 1.0f32);
+  let (g5, saving) = frand(g4, -1.0f32, 1.0f32);
+  let (g6, tfe) = frand(g5, 0.0f32, 1.0f32);
+  let (g7, surround) = frand(g6, -1.0f32, 1.0f32);
+  let (g8, rate0) = rnd(g7);
+  let rate: i32 = 6000 + rate0 % 114000;
+  let an: celt_encoder.Analysis = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid0 % 2 == 1, tonality_slope: slope };
+  let t: celt_encoder.Trim = celt_encoder.alloc_trim_analysis(x, f.xs, end, lm, c, n0, an, saving, tfe, intensity, surround, rate);
+  return (g8, "r " + lm.to_string() + " " + c.to_string() + " " + end.to_string() + " " + intensity.to_string() + " " + rate.to_string() + " " + t.index.to_string() + " " + (f32_bits(t.stereo_saving) as u32).to_string());
+}
+
+function trace2(seed: u32, cases: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let crc: crc32.Crc32 = crc32.new();
+  for k in 0..cases {
+    let (g1, what) = rnd(g);
+    let (g2, lm0) = rnd(g1);
+    let lm: i32 = lm0 % 4;
+    let n0: i32 = 120 << lm;
+    let (g3, c0) = rnd(g2);
+    let c: i32 = 1 + c0 % 2;
+    let (g4, amp) = frand(g3, 0.01f32, 2.0f32);
+    let f: Fill = fill(g4, c * n0, 0.0f32 - amp, amp);
+    let line: string = "";
+    if (what % 3 == 0) {
+      let (g5, s) = tf_case(f.g, lm, n0, c, f.xs);
+      g = g5;
+      line = s;
+    } else if (what % 3 == 1) {
+      let (g5, s) = trim_case(f.g, lm, n0, c, f.xs);
+      g = g5;
+      line = s;
+    } else {
+      let x: f32[] = f.xs;
+      g = f.g;
+      if (c == 1) {
+        let f2: Fill = fill(g, n0, 0.0f32 - amp, amp);
+        g = f2.g;
+        for v in f2.xs {
+          x = x.append(v);
+        }
+      }
+      line = "s " + lm.to_string() + " " + flag(celt_encoder.stereo_analysis(x, lm, n0));
+    }
+    crc = crc.update((line + "\n").as_bytes());
+  }
+  return crc.finish();
+}
+
+function test_short_band_trace(): test.TestOutcome {
+  return test.assert_eq(trace2(5u32, 12), 1594132621u32);
+}
+
+function test_long_band_trace(): test.TestOutcome {
+  return test.assert_eq(trace2(23u32, 2000), 11123827u32);
+}
+
+// With no importance, the two costs of a transient tie at each band, and
+// libopus takes flag 1 on a tie.
+function test_tf_tie_takes_flag_one(): test.TestOutcome {
+  let x: f32[] = [];
+  for i in 0..480 {
+    x = x.append(0.0f32);
+  }
+  let imp: i32[] = [];
+  for i in 0..21 {
+    imp = imp.append(0);
+  }
+  let t: celt_encoder.Tf = celt_encoder.tf_analysis(21, true, 100, x, 480, 2, 0.0f32, 0, imp);
+  return test.assert_eq(t.select.to_string() + " |" + ints(t.res, 0), "0 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1");
+}
+
 function test_short_analysis_trace(): test.TestOutcome {
   return test.assert_eq(trace(3u32, 12), 4047543119u32);
 }
@@ -150,5 +279,8 @@ function main(): i32 {
   let r: test.TestRunner = test.new("std/opus/celt_encoder");
   r = r.it("a short analysis trace is the libopus trace", test_short_analysis_trace);
   r = r.it("a long analysis trace is the libopus trace", test_long_analysis_trace);
+  r = r.it("a short TF, trim and stereo trace is the libopus trace", test_short_band_trace);
+  r = r.it("a long TF, trim and stereo trace is the libopus trace", test_long_band_trace);
+  r = r.it("a TF tie takes flag 1", test_tf_tie_takes_flag_one);
   return r.finish();
 }
