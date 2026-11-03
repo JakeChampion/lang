@@ -13,6 +13,38 @@ type soleLoopWithCase struct {
 }
 
 var soleLoopWithCases = []soleLoopWithCase{
+	{"bytes-to-string", "marks", true, `@noinline
+function marks(s: string): string {
+    let bs: u8[] = [];
+    let i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] as i32 == 10) {
+            bs = bs.append(63 as u8);
+        } else {
+            bs = bs.append(s[i]);
+        }
+        i = i + 1;
+    }
+    return string_from_bytes_unchecked(bs);
+}
+function main(): i32 {
+    let t: string = marks("ab\ncd\n");
+    return t.len() + (t[2] as i32) % 50;
+}`},
+	{"bytes-to-string-range", "tail", true, `@noinline
+function tail(s: string): string {
+    let bs: u8[] = [];
+    let i: i32 = 0;
+    while (i < s.len()) {
+        bs = bs.append(s[i]);
+        i = i + 1;
+    }
+    return string_from_bytes_range_unchecked(bs, 1, bs.len());
+}
+function main(): i32 {
+    let t: string = tail("xyz");
+    return t.len() * 10 + (t[0] as i32) % 10;
+}`},
 	{"fill-fresh", "fill", true, `@noinline
 function fill(n: i32): i32[] {
     let out: i32[] = __alloc_i32(n);
