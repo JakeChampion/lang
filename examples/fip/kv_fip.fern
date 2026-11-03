@@ -97,20 +97,20 @@ struct Db {
 
 function zeros_i64(n: i32): i64[] {
   let xs: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     xs = xs.append(0 as i64);
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
 
 function zeros_u8(n: i32): u8[] {
-  let xs: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let xs = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     xs = xs.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
@@ -129,11 +129,11 @@ function new_db(): Db {
 }
 
 fip function pow256(k: i32): i64 {
-  let v: i64 = 1 as i64;
-  let i: i32 = 0;
+  let v = 1 as i64;
+  let i = 0;
   while (i < k) {
-    v = v * (256 as i64);
-    i = i + 1;
+    v *= 256 as i64;
+    i += 1;
   }
   return v;
 }
@@ -143,21 +143,21 @@ fip function byte_of(v: i64, k: i32): u8 {
 }
 
 fip function read_i64(bytes: u8[], at: i32): i64 {
-  let v: i64 = 0 as i64;
-  let k: i32 = 7;
+  let v = 0 as i64;
+  let k = 7;
   while (k >= 0) {
     v = v * (256 as i64) + bytes[at + k] as i64;
-    k = k - 1;
+    k -= 1;
   }
   return v;
 }
 
 fip function hash_key(reqs: u8[], at: i32): i64 {
   let h: i64 = 1469598103934665603i64;
-  let j: i32 = 0;
+  let j = 0;
   while (j < key_size()) {
     h = (h ^ reqs[at + j] as i64) * 1099511628211i64;
-    j = j + 1;
+    j += 1;
   }
   return h;
 }
@@ -167,35 +167,35 @@ fip function home_slot(h: i64): i32 {
 }
 
 fip function key_equal(keys: u8[], slot: i32, reqs: u8[], at: i32): boolean {
-  let base: i32 = slot * key_size();
-  let j: i32 = 0;
+  let base = slot * key_size();
+  let j = 0;
   while (j < key_size()) {
     if (keys[base + j] != reqs[at + j]) {
       return false;
     }
-    j = j + 1;
+    j += 1;
   }
   return true;
 }
 
 fip function find(db: Db, reqs: u8[], at: i32, h: i64): i32 {
-  let slot: i32 = home_slot(h);
-  let probes: i32 = 0;
+  let slot = home_slot(h);
+  let probes = 0;
   while (probes < slot_count()) {
     if (db.used[slot] == 0 as i64) {
-      return 0 - 1;
+      return -1;
     }
     if (db.hashes[slot] == h && key_equal(db.keys, slot, reqs, at)) {
       return slot;
     }
     slot = slot + 1 & slot_mask();
-    probes = probes + 1;
+    probes += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 fip function free_slot(db: Db, h: i64): i32 {
-  let slot: i32 = home_slot(h);
+  let slot = home_slot(h);
   while (db.used[slot] != 0 as i64) {
     slot = slot + 1 & slot_mask();
   }
@@ -211,60 +211,60 @@ fip function put_val_byte(own db: Db, idx: i32, b: u8): Db {
 }
 
 fip function copy_key(own db: Db, slot: i32, reqs: u8[], at: i32): Db {
-  let base: i32 = slot * key_size();
-  let j: i32 = 0;
+  let base = slot * key_size();
+  let j = 0;
   while (j < key_size()) {
     db = put_key_byte(db, base + j, reqs[at + j]);
-    j = j + 1;
+    j += 1;
   }
   return db;
 }
 
 fip function copy_val(own db: Db, slot: i32, reqs: u8[], at: i32): Db {
-  let base: i32 = slot * value_size();
-  let j: i32 = 0;
+  let base = slot * value_size();
+  let j = 0;
   while (j < value_size()) {
     db = put_val_byte(db, base + j, reqs[at + j]);
-    j = j + 1;
+    j += 1;
   }
   return db;
 }
 
 fip function move_entry(own db: Db, from: i32, to: i32): Db {
-  let j: i32 = 0;
+  let j = 0;
   while (j < key_size()) {
-    let b: u8 = db.keys[from * key_size() + j];
+    let b = db.keys[from * key_size() + j];
     db = put_key_byte(db, to * key_size() + j, b);
-    j = j + 1;
+    j += 1;
   }
   j = 0;
   while (j < value_size()) {
-    let v: u8 = db.vals[from * value_size() + j];
+    let v = db.vals[from * value_size() + j];
     db = put_val_byte(db, to * value_size() + j, v);
-    j = j + 1;
+    j += 1;
   }
-  let h: i64 = db.hashes[from];
+  let h = db.hashes[from];
   return Db { ...db, hashes: db.hashes.with(to, h) };
 }
 
 fip function remove_at(own db: Db, slot: i32): Db {
-  let hole: i32 = slot;
-  let j: i32 = slot + 1 & slot_mask();
-  let steps: i32 = 1;
+  let hole = slot;
+  let j = slot + 1 & slot_mask();
+  let steps = 1;
   while (steps < slot_count() && db.used[j] != 0 as i64) {
-    let home: i32 = home_slot(db.hashes[j]);
+    let home = home_slot(db.hashes[j]);
     if ((hole - home & slot_mask()) < (j - home & slot_mask())) {
       db = move_entry(db, j, hole);
       hole = j;
     }
     j = j + 1 & slot_mask();
-    steps = steps + 1;
+    steps += 1;
   }
   return Db { ...db, used: db.used.with(hole, 0 as i64), live: db.live - 1 };
 }
 
 fip function emit_byte(own db: Db, b: u8): Db {
-  let o: i32 = db.out_count;
+  let o = db.out_count;
   return Db {
     ...db,
     out: db.out.with(o, b),
@@ -279,19 +279,19 @@ fip function respond(own db: Db, status: i32): Db {
 
 fip function respond_value(own db: Db, slot: i32): Db {
   db = emit_byte(db, st_value() as u8);
-  let base: i32 = slot * value_size();
-  let j: i32 = 0;
+  let base = slot * value_size();
+  let j = 0;
   while (j < value_size()) {
-    let b: u8 = db.vals[base + j];
+    let b = db.vals[base + j];
     db = emit_byte(db, b);
-    j = j + 1;
+    j += 1;
   }
   return Db { ...db, m_val: db.m_val + 1 as i64 };
 }
 
 fip function apply_put(own db: Db, reqs: u8[], at: i32): Db {
-  let h: i64 = hash_key(reqs, at + 1);
-  let slot: i32 = find(db, reqs, at + 1, h);
+  let h = hash_key(reqs, at + 1);
+  let slot = find(db, reqs, at + 1, h);
   if (slot >= 0) {
     db = copy_val(db, slot, reqs, at + 1 + key_size());
     db = Db { ...db, m_ok: db.m_ok + 1 as i64 };
@@ -301,7 +301,7 @@ fip function apply_put(own db: Db, reqs: u8[], at: i32): Db {
     db = Db { ...db, m_full: db.m_full + 1 as i64 };
     return respond(db, st_full());
   }
-  let free: i32 = free_slot(db, h);
+  let free = free_slot(db, h);
   db = copy_key(db, free, reqs, at + 1);
   db = copy_val(db, free, reqs, at + 1 + key_size());
   db = Db {
@@ -315,8 +315,8 @@ fip function apply_put(own db: Db, reqs: u8[], at: i32): Db {
 }
 
 fip function apply_get(own db: Db, reqs: u8[], at: i32): Db {
-  let h: i64 = hash_key(reqs, at + 1);
-  let slot: i32 = find(db, reqs, at + 1, h);
+  let h = hash_key(reqs, at + 1);
+  let slot = find(db, reqs, at + 1, h);
   if (slot < 0) {
     db = Db { ...db, m_miss: db.m_miss + 1 as i64 };
     return respond(db, st_missing());
@@ -325,8 +325,8 @@ fip function apply_get(own db: Db, reqs: u8[], at: i32): Db {
 }
 
 fip function apply_delete(own db: Db, reqs: u8[], at: i32): Db {
-  let h: i64 = hash_key(reqs, at + 1);
-  let slot: i32 = find(db, reqs, at + 1, h);
+  let h = hash_key(reqs, at + 1);
+  let slot = find(db, reqs, at + 1, h);
   if (slot < 0) {
     db = Db { ...db, m_miss: db.m_miss + 1 as i64 };
     return respond(db, st_missing());
@@ -337,26 +337,26 @@ fip function apply_delete(own db: Db, reqs: u8[], at: i32): Db {
 }
 
 fip function apply_incr(own db: Db, reqs: u8[], at: i32): Db {
-  let h: i64 = hash_key(reqs, at + 1);
-  let slot: i32 = find(db, reqs, at + 1, h);
+  let h = hash_key(reqs, at + 1);
+  let slot = find(db, reqs, at + 1, h);
   if (slot < 0) {
     db = Db { ...db, m_miss: db.m_miss + 1 as i64 };
     return respond(db, st_missing());
   }
-  let base: i32 = slot * value_size();
-  let current: i64 = read_i64(db.vals, base);
-  let delta: i64 = read_i64(reqs, at + 1 + key_size());
-  let next: i64 = current + delta;
-  let k: i32 = 0;
+  let base = slot * value_size();
+  let current = read_i64(db.vals, base);
+  let delta = read_i64(reqs, at + 1 + key_size());
+  let next = current + delta;
+  let k = 0;
   while (k < 8) {
     db = put_val_byte(db, base + k, byte_of(next, k));
-    k = k + 1;
+    k += 1;
   }
   return respond_value(db, slot);
 }
 
 fip function apply(own db: Db, reqs: u8[], at: i32): Db {
-  let op: i32 = reqs[at] as i32;
+  let op = reqs[at] as i32;
   if (op == op_put()) {
     return apply_put(db, reqs, at);
   }
@@ -374,10 +374,10 @@ fip function apply(own db: Db, reqs: u8[], at: i32): Db {
 
 fip function process_batch(own db: Db, reqs: u8[], count: i32): Db {
   db = Db { ...db, out_count: 0 };
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
     db = apply(db, reqs, i * req_size());
-    i = i + 1;
+    i += 1;
   }
   return db;
 }
@@ -391,21 +391,21 @@ fip function reset_metrics(own db: Db): Db {
 }
 
 fip function mix64(n: i64): i64 {
-  let x: i64 = n * (2654435761 as i64);
+  let x = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;
-  x = x * (2246822519 as i64);
+  x *= 2246822519 as i64;
   x = x ^ x >> 13 as i64;
   if (x < 0 as i64) {
-    x = 0 - x;
+    x = -x;
   }
   return x;
 }
 
 fip function op_for(n: i64, mix: i32): i32 {
-  let bucket: i32 = (n % (100 as i64)) as i32;
-  let gets: i32 = 50;
-  let puts: i32 = 25;
-  let incrs: i32 = 15;
+  let bucket = (n % (100 as i64)) as i32;
+  let gets = 50;
+  let puts = 25;
+  let incrs = 15;
   if (mix == mix_read()) {
     gets = 80;
     puts = 10;
@@ -443,38 +443,38 @@ fip function value_byte(v: i64, j: i32): u8 {
 }
 
 fip function write_record(own reqs: u8[], i: i32, op: i32, idx: i64, v: i64): u8[] {
-  let at: i32 = i * req_size();
+  let at = i * req_size();
   reqs = reqs.with(at, op as u8);
-  let j: i32 = 0;
+  let j = 0;
   while (j < key_size()) {
     reqs = reqs.with(at + 1 + j, key_byte(idx, j));
-    j = j + 1;
+    j += 1;
   }
   j = 0;
   while (j < value_size()) {
     reqs = reqs.with(at + 1 + key_size() + j, value_byte(v, j));
-    j = j + 1;
+    j += 1;
   }
   return reqs;
 }
 
 fip function fill_batch(own reqs: u8[], seed: i64, universe: i64, mix: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < batch_size()) {
-    let n: i64 = seed + i as i64;
-    let h: i64 = mix64(n);
+    let n = seed + i as i64;
+    let h = mix64(n);
     reqs = write_record(reqs, i, op_for(n, mix), h % universe, h / (7 as i64) % (1000000 as i64));
-    i = i + 1;
+    i += 1;
   }
   return reqs;
 }
 
 fip function fill_prefill(own reqs: u8[], first_key: i64): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < batch_size()) {
-    let idx: i64 = first_key + i as i64;
+    let idx = first_key + i as i64;
     reqs = write_record(reqs, i, op_put(), idx, idx * (10 as i64));
-    i = i + 1;
+    i += 1;
   }
   return reqs;
 }
@@ -490,9 +490,9 @@ function mix_of(name: string): i32 {
 }
 
 function options(argv: string[]): (string, i32, i32) {
-  let mix_name: string = "mixed";
-  let load_pct: i32 = 50;
-  let rounds: i32 = 10000;
+  let mix_name = "mixed";
+  let load_pct = 50;
+  let rounds = 10000;
   if (argv.len() > 1) {
     mix_name = argv[1];
   }
@@ -516,36 +516,36 @@ function options(argv: string[]): (string, i32, i32) {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let (mix_name, load_pct, rounds) = options(argv);
-  let mix: i32 = mix_of(mix_name);
-  let universe: i64 = max_entries() as i64 * (load_pct as i64) / (100 as i64);
+  let mix = mix_of(mix_name);
+  let universe = max_entries() as i64 * (load_pct as i64) / (100 as i64);
 
-  let db: Db = new_db();
-  let reqs: u8[] = zeros_u8(batch_size() * req_size());
-  let prefilled: i64 = 0 as i64;
+  let db = new_db();
+  let reqs = zeros_u8(batch_size() * req_size());
+  let prefilled = 0 as i64;
   while (prefilled + batch_size() as i64 <= universe / (2 as i64)) {
     reqs = fill_prefill(reqs, prefilled);
     db = process_batch(db, reqs, batch_size());
     prefilled = prefilled + batch_size() as i64;
   }
   db = reset_metrics(db);
-  let samples: i64[] = zeros_i64(rounds);
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
+  let samples = zeros_i64(rounds);
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  let r = 0;
   while (r < rounds) {
-    let t0: i64 = monotonic_ns();
+    let t0 = monotonic_ns();
     reqs = fill_batch(reqs, r as i64 * (97 as i64) + 1 as i64, universe, mix);
     db = process_batch(db, reqs, batch_size());
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
+    r += 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let requests: i64 = rounds as i64 * (batch_size() as i64);
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let requests = rounds as i64 * (batch_size() as i64);
   let rep: bench.Report = bench.Report {
     name: "fip",
     iterations: rounds,

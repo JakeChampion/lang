@@ -36,46 +36,46 @@ function slurp(path: string): string {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let o: Opts = Opts { body: "t", width: 6, sep: "\t", start: 1, incr: 1 };
+  let argv = args();
+  let o = Opts { body: "t", width: 6, sep: "\t", start: 1, incr: 1 };
   let inputs: string[] = [];
 
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "-b" && i + 1 < argv.len()) {
       o = Opts { ...o, body: argv[i + 1] };
-      i = i + 1;
+      i += 1;
     } else if (a == "-w" && i + 1 < argv.len()) {
       o = Opts { ...o, width: i32.parse_i32(argv[i + 1]).unwrap_or(6) };
-      i = i + 1;
+      i += 1;
     } else if (a == "-s" && i + 1 < argv.len()) {
       o = Opts { ...o, sep: argv[i + 1] };
-      i = i + 1;
+      i += 1;
     } else if (a == "-v" && i + 1 < argv.len()) {
       o = Opts { ...o, start: i32.parse_i32(argv[i + 1]).unwrap_or(1) };
-      i = i + 1;
+      i += 1;
     } else if (a == "-i" && i + 1 < argv.len()) {
       o = Opts { ...o, incr: i32.parse_i32(argv[i + 1]).unwrap_or(1) };
-      i = i + 1;
+      i += 1;
     } else {
       inputs = inputs.append(a);
     }
-    i = i + 1;
+    i += 1;
   }
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }
 
-  let num: i32 = o.start;
-  let blanks: string = "".pad_start(o.width, ' ');
-  let j: i32 = 0;
+  let num = o.start;
+  let blanks = "".pad_start(o.width, ' ');
+  let j = 0;
   while (j < inputs.len()) {
-    let lines: string[] = slurp(inputs[j]).lines();
-    let k: i32 = 0;
+    let lines = slurp(inputs[j]).lines();
+    let k = 0;
     while (k < lines.len()) {
-      let line: string = lines[k];
-      let number_it: boolean = false;
+      let line = lines[k];
+      let number_it = false;
       if (o.body == "a") {
         number_it = true;
       } else if (o.body == "t") {
@@ -83,13 +83,13 @@ function main(): i32 {
       }
       if (number_it) {
         print(num.to_string().pad_start(o.width, ' ') + o.sep + line);
-        num = num + o.incr;
+        num += o.incr;
       } else {
         print(blanks + o.sep + line);
       }
-      k = k + 1;
+      k += 1;
     }
-    j = j + 1;
+    j += 1;
   }
   return 0;
 }

@@ -35,10 +35,10 @@ function snapshot_fip(w: simulation_fip.World): simulation_fip.World {
 
 function report(r: Measurement, variant: string, count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
   if (export_samples) {
-    let i: i32 = 0;
+    let i = 0;
     while (i < ticks) {
       print("sample," + i.to_string() + "," + r.samples[i].to_string());
-      i = i + 1;
+      i += 1;
     }
   }
   let stats: bench.Report = bench.Report {
@@ -64,31 +64,31 @@ function report(r: Measurement, variant: string, count: i32, ticks: i32, layout:
 }
 
 function run_persistent(count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
-  let start_allocs: i64 = bench.alloc_count();
-  let start_fresh: i64 = bench.bump_bytes();
-  let start_ns: i64 = monotonic_ns();
+  let start_allocs = bench.alloc_count();
+  let start_fresh = bench.bump_bytes();
+  let start_ns = monotonic_ns();
   match (simulation_persistent.new_world(count, layout == "cluster")) {
     None => {
       return 2;
     },
     Some(w) => {
       w = simulation_persistent.step(w);
-      let samples: i64[] = __alloc_i64(ticks);
-      let startup_ns: i64 = monotonic_ns() - start_ns;
-      let startup_allocs: i64 = bench.allocs_after(start_allocs);
-      let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
-      let mark_allocs: i64 = bench.alloc_count();
-      let mark_fresh: i64 = bench.bump_bytes();
-      let started: i64 = monotonic_ns();
-      let i: i32 = 0;
+      let samples = __alloc_i64(ticks);
+      let startup_ns = monotonic_ns() - start_ns;
+      let startup_allocs = bench.allocs_after(start_allocs);
+      let startup_fresh = bench.fresh_bytes_after(start_fresh);
+      let mark_allocs = bench.alloc_count();
+      let mark_fresh = bench.bump_bytes();
+      let started = monotonic_ns();
+      let i = 0;
       let candidates: i64 = 0i64;
       let checks: i64 = 0i64;
       while (i < ticks) {
-        let expected: i64 = w.checksum;
+        let expected = w.checksum;
         let observed: i64 = 0i64;
-        let t0: i64 = monotonic_ns();
+        let t0 = monotonic_ns();
         if (sharing == "shared") {
-          let saved: simulation_persistent.World = snapshot_persistent(w);
+          let saved = snapshot_persistent(w);
           w = simulation_persistent.step(w);
           observed = simulation_persistent.checksum(saved);
         } else {
@@ -101,12 +101,12 @@ function run_persistent(count: i32, ticks: i32, layout: string, sharing: string,
           return 1;
         }
         checks = (checks + observed) % 1000000007i64;
-        candidates = candidates + w.candidates;
-        i = i + 1;
+        candidates += w.candidates;
+        i += 1;
       }
-      let elapsed: i64 = monotonic_ns() - started;
-      let allocations: i64 = bench.allocs_after(mark_allocs);
-      let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+      let elapsed = monotonic_ns() - started;
+      let allocations = bench.allocs_after(mark_allocs);
+      let fresh = bench.fresh_bytes_after(mark_fresh);
       return report(
         Measurement {
           samples: samples, wall_ns: elapsed, allocs: allocations, fresh: fresh,
@@ -120,31 +120,31 @@ function run_persistent(count: i32, ticks: i32, layout: string, sharing: string,
 }
 
 function run_fbip(count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
-  let start_allocs: i64 = bench.alloc_count();
-  let start_fresh: i64 = bench.bump_bytes();
-  let start_ns: i64 = monotonic_ns();
+  let start_allocs = bench.alloc_count();
+  let start_fresh = bench.bump_bytes();
+  let start_ns = monotonic_ns();
   match (simulation_fbip.new_world(count, layout == "cluster")) {
     None => {
       return 2;
     },
     Some(w) => {
       w = simulation_fbip.step(w);
-      let samples: i64[] = __alloc_i64(ticks);
-      let startup_ns: i64 = monotonic_ns() - start_ns;
-      let startup_allocs: i64 = bench.allocs_after(start_allocs);
-      let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
-      let mark_allocs: i64 = bench.alloc_count();
-      let mark_fresh: i64 = bench.bump_bytes();
-      let started: i64 = monotonic_ns();
-      let i: i32 = 0;
+      let samples = __alloc_i64(ticks);
+      let startup_ns = monotonic_ns() - start_ns;
+      let startup_allocs = bench.allocs_after(start_allocs);
+      let startup_fresh = bench.fresh_bytes_after(start_fresh);
+      let mark_allocs = bench.alloc_count();
+      let mark_fresh = bench.bump_bytes();
+      let started = monotonic_ns();
+      let i = 0;
       let candidates: i64 = 0i64;
       let checks: i64 = 0i64;
       while (i < ticks) {
-        let expected: i64 = w.checksum;
+        let expected = w.checksum;
         let observed: i64 = 0i64;
-        let t0: i64 = monotonic_ns();
+        let t0 = monotonic_ns();
         if (sharing == "shared") {
-          let saved: simulation_fbip.World = snapshot_fbip(w);
+          let saved = snapshot_fbip(w);
           w = simulation_fbip.step(w);
           observed = simulation_fbip.checksum(saved);
         } else {
@@ -157,12 +157,12 @@ function run_fbip(count: i32, ticks: i32, layout: string, sharing: string, expor
           return 1;
         }
         checks = (checks + observed) % 1000000007i64;
-        candidates = candidates + w.candidates;
-        i = i + 1;
+        candidates += w.candidates;
+        i += 1;
       }
-      let elapsed: i64 = monotonic_ns() - started;
-      let allocations: i64 = bench.allocs_after(mark_allocs);
-      let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+      let elapsed = monotonic_ns() - started;
+      let allocations = bench.allocs_after(mark_allocs);
+      let fresh = bench.fresh_bytes_after(mark_fresh);
       return report(
         Measurement {
           samples: samples, wall_ns: elapsed, allocs: allocations, fresh: fresh,
@@ -176,31 +176,31 @@ function run_fbip(count: i32, ticks: i32, layout: string, sharing: string, expor
 }
 
 function run_fip(count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
-  let start_allocs: i64 = bench.alloc_count();
-  let start_fresh: i64 = bench.bump_bytes();
-  let start_ns: i64 = monotonic_ns();
+  let start_allocs = bench.alloc_count();
+  let start_fresh = bench.bump_bytes();
+  let start_ns = monotonic_ns();
   match (simulation_fip.new_world(count, layout == "cluster")) {
     None => {
       return 2;
     },
     Some(w) => {
       w = simulation_fip.step(w);
-      let samples: i64[] = __alloc_i64(ticks);
-      let startup_ns: i64 = monotonic_ns() - start_ns;
-      let startup_allocs: i64 = bench.allocs_after(start_allocs);
-      let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
-      let mark_allocs: i64 = bench.alloc_count();
-      let mark_fresh: i64 = bench.bump_bytes();
-      let started: i64 = monotonic_ns();
-      let i: i32 = 0;
+      let samples = __alloc_i64(ticks);
+      let startup_ns = monotonic_ns() - start_ns;
+      let startup_allocs = bench.allocs_after(start_allocs);
+      let startup_fresh = bench.fresh_bytes_after(start_fresh);
+      let mark_allocs = bench.alloc_count();
+      let mark_fresh = bench.bump_bytes();
+      let started = monotonic_ns();
+      let i = 0;
       let candidates: i64 = 0i64;
       let checks: i64 = 0i64;
       while (i < ticks) {
-        let expected: i64 = w.checksum;
+        let expected = w.checksum;
         let observed: i64 = 0i64;
-        let t0: i64 = monotonic_ns();
+        let t0 = monotonic_ns();
         if (sharing == "shared") {
-          let saved: simulation_fip.World = snapshot_fip(w);
+          let saved = snapshot_fip(w);
           w = simulation_fip.step(w);
           observed = simulation_fip.checksum(saved);
         } else {
@@ -213,12 +213,12 @@ function run_fip(count: i32, ticks: i32, layout: string, sharing: string, export
           return 1;
         }
         checks = (checks + observed) % 1000000007i64;
-        candidates = candidates + w.candidates;
-        i = i + 1;
+        candidates += w.candidates;
+        i += 1;
       }
-      let elapsed: i64 = monotonic_ns() - started;
-      let allocations: i64 = bench.allocs_after(mark_allocs);
-      let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+      let elapsed = monotonic_ns() - started;
+      let allocations = bench.allocs_after(mark_allocs);
+      let fresh = bench.fresh_bytes_after(mark_fresh);
       return report(
         Measurement {
           samples: samples, wall_ns: elapsed, allocs: allocations, fresh: fresh,
@@ -232,15 +232,15 @@ function run_fip(count: i32, ticks: i32, layout: string, sharing: string, export
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() < 6 || argv.len() > 7) {
     return 2;
   }
   if (argv[1] != "fip" && argv[1] != "fbip" && argv[1] != "persistent") {
     return 2;
   }
-  let count: i32 = -1;
-  let ticks: i32 = 0;
+  let count = -1;
+  let ticks = 0;
   match (i32.parse_i32(argv[2])) {
     Ok(n) => {
       count = n;
@@ -266,7 +266,7 @@ function main(): i32 {
   if (argv[5] != "unique" && argv[5] != "shared") {
     return 2;
   }
-  let export_samples: boolean = argv.len() == 7;
+  let export_samples = argv.len() == 7;
   if (export_samples && argv[6] != "samples") {
     return 2;
   }

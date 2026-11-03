@@ -13,11 +13,11 @@ function snapshot(g: dsp_core.Graph): dsp_core.Graph {
 
 function checksum(values: f64[], count: i32): i64 {
   let hash: i64 = 0i64;
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
-    let quantized: i64 = (values[i] * 4096.0) as i64;
+    let quantized = (values[i] * 4096.0) as i64;
     hash = (hash * 65599i64 + quantized + 1048576i64) % 1000000007i64;
-    i = i + 1;
+    i += 1;
   }
   return hash;
 }
@@ -30,23 +30,23 @@ function process(own g: dsp_core.Graph, input: f64[], block: i32, variant: strin
 }
 
 function run(variant: string, block: i32, blocks: i32, delay: i32, sharing: string, export_samples: boolean): i32 {
-  let startup_alloc: i64 = bench.alloc_count();
-  let startup_fresh: i64 = bench.bump_bytes();
-  let startup: i64 = monotonic_ns();
-  let input: f64[] = dsp_core.dataset(block);
-  let samples: i64[] = __alloc_i64(blocks);
+  let startup_alloc = bench.alloc_count();
+  let startup_fresh = bench.bump_bytes();
+  let startup = monotonic_ns();
+  let input = dsp_core.dataset(block);
+  let samples = __alloc_i64(blocks);
   match (dsp_core.new_graph(block, delay)) {
     None => {
       return 2;
     },
     Some(g) => {
-      let startup_ns: i64 = monotonic_ns() - startup;
-      let startup_allocs: i64 = bench.allocs_after(startup_alloc);
-      let startup_bytes: i64 = bench.fresh_bytes_after(startup_fresh);
-      let mark: i64 = bench.alloc_count();
-      let fresh_mark: i64 = bench.bump_bytes();
-      let started: i64 = monotonic_ns();
-      let i: i32 = 0;
+      let startup_ns = monotonic_ns() - startup;
+      let startup_allocs = bench.allocs_after(startup_alloc);
+      let startup_bytes = bench.fresh_bytes_after(startup_fresh);
+      let mark = bench.alloc_count();
+      let fresh_mark = bench.bump_bytes();
+      let started = monotonic_ns();
+      let i = 0;
       let current: i64 = 0i64;
       let checks: i64 = 0i64;
       let first_allocs: i64 = 0i64;
@@ -54,14 +54,14 @@ function run(variant: string, block: i32, blocks: i32, delay: i32, sharing: stri
         let observed: i64 = 0i64;
         let duration: i64 = 0i64;
         if (sharing == "shared") {
-          let saved: dsp_core.Graph = snapshot(g);
-          let t0: i64 = monotonic_ns();
+          let saved = snapshot(g);
+          let t0 = monotonic_ns();
           g = process(g, input, block, variant);
           duration = monotonic_ns() - t0;
           observed = checksum(saved.output, saved.output_count);
         } else {
           observed = checksum(g.output, g.output_count);
-          let t0: i64 = monotonic_ns();
+          let t0 = monotonic_ns();
           g = process(g, input, block, variant);
           duration = monotonic_ns() - t0;
         }
@@ -74,19 +74,19 @@ function run(variant: string, block: i32, blocks: i32, delay: i32, sharing: stri
         if (i == 0) {
           first_allocs = bench.allocs_after(mark);
         }
-        i = i + 1;
+        i += 1;
       }
-      let elapsed: i64 = monotonic_ns() - started;
-      let allocations: i64 = bench.allocs_after(mark);
-      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
+      let elapsed = monotonic_ns() - started;
+      let allocations = bench.allocs_after(mark);
+      let fresh = bench.fresh_bytes_after(fresh_mark);
       if (export_samples) {
         i = 0;
         while (i < blocks) {
           print("sample," + i.to_string() + "," + samples[i].to_string());
-          i = i + 1;
+          i += 1;
         }
       }
-      let stats: bench.Report = bench.Report { name: variant, iterations: blocks, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
+      let stats = bench.Report { name: variant, iterations: blocks, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
       print("{\"variant\":\"" + variant + "\",\"block_size\":" + block.to_string()
         + ",\"blocks\":" + blocks.to_string() + ",\"delay_samples\":" + delay.to_string()
         + ",\"sharing\":\"" + sharing + "\",\"processed_samples\":" + g.samples.to_string()
@@ -107,16 +107,16 @@ function run(variant: string, block: i32, blocks: i32, delay: i32, sharing: stri
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() < 6 || argv.len() > 7) {
     return 2;
   }
   if (argv[1] != "fip" && argv[1] != "direct") {
     return 2;
   }
-  let block: i32 = 0;
-  let blocks: i32 = 0;
-  let delay: i32 = 0;
+  let block = 0;
+  let blocks = 0;
+  let delay = 0;
   match (i32.parse_i32(argv[2])) {
     Ok(n) => {
       block = n;
@@ -147,7 +147,7 @@ function main(): i32 {
   if (argv[5] != "unique" && argv[5] != "shared") {
     return 2;
   }
-  let export_samples: boolean = argv.len() == 7;
+  let export_samples = argv.len() == 7;
   if (export_samples && argv[6] != "samples") {
     return 2;
   }

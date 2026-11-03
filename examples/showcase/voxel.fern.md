@@ -32,7 +32,7 @@ pub const HEIGHT: i32 = 48;
 pub const CHUNK: i32 = 16;
 
 fip function hash(x: i32, z: i32): i32 {
-  let h: u32 = x as u32 * 374761393 + z as u32 * 668265263 + 1831565813;
+  let h = x as u32 * 374761393 + z as u32 * 668265263 + 1831565813;
   h = (h ^ h >> 13) * 1274126177;
   return ((h ^ h >> 16) & 2147483647) as i32;
 }
@@ -148,7 +148,7 @@ pub function vertical(velocity: f64, grounded: i32, jump: i32, flying: i32, up: 
 
 @export("fern:showcase/voxel", "clip")
 pub function clip(x: f64, y: f64, z: f64, delta: f64, axis: i32, low: i32, high: i32): f64 {
-  let mask: u64 = (low as u32) as u64 | (high as u32) as u64 << 32;
+  let mask = (low as u32) as u64 | (high as u32) as u64 << 32;
   let ox = x.floor() as i32 - 1;
   let oy = y.floor() as i32 - 1;
   let oz = z.floor() as i32 - 1;
@@ -156,15 +156,15 @@ pub function clip(x: f64, y: f64, z: f64, delta: f64, axis: i32, low: i32, high:
   let ny = y;
   let nz = z;
   if (axis == 0) {
-    nx = nx + delta;
+    nx += delta;
   }
   if (axis == 1) {
-    ny = ny + delta;
+    ny += delta;
   }
   if (axis == 2) {
-    nz = nz + delta;
+    nz += delta;
   }
-  let at: i32 = 0;
+  let at = 0;
   while (at < 45) {
     if ((mask >> at as u64 & 1) != 0) {
       let bx = (ox + at % 3) as f64;
@@ -193,7 +193,7 @@ pub function clip(x: f64, y: f64, z: f64, delta: f64, axis: i32, low: i32, high:
         }
       }
     }
-    at = at + 1;
+    at += 1;
   }
   if (axis == 0) {
     return nx.max(0.31).min(511.69);

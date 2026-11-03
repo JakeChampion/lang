@@ -15,17 +15,17 @@ function oldest(b: broker_core.Broker): broker_core.Message {
 
 function queued_checksum(b: broker_core.Broker): i64 {
   let sum: i64 = 0i64;
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.lengths[0]) {
-    let slot: i32 = b.queues[(b.heads[0] + i) % b.queue_capacity];
-    sum = sum + broker_core.slot_message(b, slot).payload;
-    i = i + 1;
+    let slot = b.queues[(b.heads[0] + i) % b.queue_capacity];
+    sum += broker_core.slot_message(b, slot).payload;
+    i += 1;
   }
   return sum;
 }
 
 function turnover(own b: broker_core.Broker, serial: i64): broker_core.Broker {
-  let s: i32 = 0;
+  let s = 0;
   while (s < b.subscribers) {
     b = broker_core.consume(b, s);
     if (b.status != 0 || broker_core.message(b, s).serial != serial || broker_core.message(b, s).payload != payload(serial)) {
@@ -35,9 +35,9 @@ function turnover(own b: broker_core.Broker, serial: i64): broker_core.Broker {
     if (b.status != 0) {
       return broker_core.result(b, 91, -1);
     }
-    s = s + 1;
+    s += 1;
   }
-  let next: i64 = b.serial + 1i64;
+  let next = b.serial + 1i64;
   b = broker_core.reserve(b, 0, payload(next));
   if (b.status != 0) {
     return broker_core.result(b, 92, -1);
@@ -53,28 +53,28 @@ function operation(own b: broker_core.Broker, serial: i64, mode: string): broker
 }
 
 function run(subscribers: i32, occupancy: i32, turns: i32, mode: string, sharing: string, export_samples: boolean): i32 {
-  let startup_mark: i64 = bench.alloc_count();
-  let startup_fresh: i64 = bench.bump_bytes();
-  let startup: i64 = monotonic_ns();
-  let samples: i64[] = __alloc_i64(turns);
-  let pool: i32 = occupancy;
+  let startup_mark = bench.alloc_count();
+  let startup_fresh = bench.bump_bytes();
+  let startup = monotonic_ns();
+  let samples = __alloc_i64(turns);
+  let pool = occupancy;
   if (mode == "full") {
-    pool = pool + 1;
+    pool += 1;
   }
   match (broker_core.new_broker(1, subscribers, pool, occupancy)) {
     None => {
       return 2;
     },
     Some(b) => {
-      let fill_mark: i64 = bench.alloc_count();
-      let i: i32 = 0;
+      let fill_mark = bench.alloc_count();
+      let i = 0;
       while (i < occupancy) {
         b = broker_core.reserve(b, 0, payload(i as i64 + 1i64));
         b = broker_core.publish(b);
         if (b.status != 0) {
           return 3;
         }
-        i = i + 1;
+        i += 1;
       }
       if (mode == "full") {
         b = broker_core.reserve(b, 0, payload(occupancy as i64 + 1i64));
@@ -82,19 +82,19 @@ function run(subscribers: i32, occupancy: i32, turns: i32, mode: string, sharing
           return 4;
         }
       }
-      let fill_allocs: i64 = bench.allocs_after(fill_mark);
-      let startup_ns: i64 = monotonic_ns() - startup;
-      let startup_allocs: i64 = bench.allocs_after(startup_mark);
-      let startup_bytes: i64 = bench.fresh_bytes_after(startup_fresh);
-      let mark: i64 = bench.alloc_count();
-      let fresh_mark: i64 = bench.bump_bytes();
-      let started: i64 = monotonic_ns();
+      let fill_allocs = bench.allocs_after(fill_mark);
+      let startup_ns = monotonic_ns() - startup;
+      let startup_allocs = bench.allocs_after(startup_mark);
+      let startup_bytes = bench.fresh_bytes_after(startup_fresh);
+      let mark = bench.alloc_count();
+      let fresh_mark = bench.bump_bytes();
+      let started = monotonic_ns();
       let checks: i64 = 0i64;
       let first_allocs: i64 = 0i64;
       i = 0;
       while (i < turns) {
-        let serial: i64 = i as i64 + 1i64;
-        let expected_status: i32 = 0;
+        let serial = i as i64 + 1i64;
+        let expected_status = 0;
         if (mode == "full") {
           serial = 1i64;
           expected_status = 4;
@@ -102,8 +102,8 @@ function run(subscribers: i32, occupancy: i32, turns: i32, mode: string, sharing
         let observed: i64 = 0i64;
         let duration: i64 = 0i64;
         if (sharing == "shared") {
-          let saved: broker_core.Message = oldest(b);
-          let t0: i64 = monotonic_ns();
+          let saved = oldest(b);
+          let t0 = monotonic_ns();
           b = operation(b, serial, mode);
           duration = monotonic_ns() - t0;
           observed = saved.payload;
@@ -115,25 +115,25 @@ function run(subscribers: i32, occupancy: i32, turns: i32, mode: string, sharing
           if (oldest(b).serial != serial) {
             return 5;
           }
-          let t0: i64 = monotonic_ns();
+          let t0 = monotonic_ns();
           b = operation(b, serial, mode);
           duration = monotonic_ns() - t0;
         }
         if (b.status != expected_status || observed != payload(serial)) {
           return 6;
         }
-        checks = checks + observed;
+        checks += observed;
         samples = samples.with(i, duration);
         if (i == 0) {
           first_allocs = bench.allocs_after(mark);
         }
-        i = i + 1;
+        i += 1;
       }
-      let elapsed: i64 = monotonic_ns() - started;
-      let allocations: i64 = bench.allocs_after(mark);
-      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
-      let deliveries: i64 = turns as i64 * (subscribers as i64);
-      let refused: i32 = 0;
+      let elapsed = monotonic_ns() - started;
+      let allocations = bench.allocs_after(mark);
+      let fresh = bench.fresh_bytes_after(fresh_mark);
+      let deliveries = turns as i64 * (subscribers as i64);
+      let refused = 0;
       if (mode == "full") {
         deliveries = 0i64;
         refused = turns;
@@ -142,10 +142,10 @@ function run(subscribers: i32, occupancy: i32, turns: i32, mode: string, sharing
         i = 0;
         while (i < turns) {
           print("sample," + i.to_string() + "," + samples[i].to_string());
-          i = i + 1;
+          i += 1;
         }
       }
-      let stats: bench.Report = bench.Report { name: mode, iterations: turns, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
+      let stats = bench.Report { name: mode, iterations: turns, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
       print("{\"subscribers\":" + subscribers.to_string() + ",\"occupancy\":" + occupancy.to_string()
         + ",\"turns\":" + turns.to_string() + ",\"mode\":\"" + mode + "\",\"sharing\":\"" + sharing + "\""
         + ",\"observed_checksum\":" + checks.to_string() + ",\"queued_checksum\":" + queued_checksum(b).to_string()
@@ -167,13 +167,13 @@ function run(subscribers: i32, occupancy: i32, turns: i32, mode: string, sharing
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() < 6 || argv.len() > 7) {
     return 2;
   }
-  let subscribers: i32 = 0;
-  let occupancy: i32 = 0;
-  let turns: i32 = 0;
+  let subscribers = 0;
+  let occupancy = 0;
+  let turns = 0;
   match (i32.parse_i32(argv[1])) {
     Ok(n) => {
       subscribers = n;

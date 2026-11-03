@@ -72,13 +72,13 @@ fip function st_bad_checksum(): i32 {
 }
 
 fip function checksum(bytes: u8[], from: i32, n: i32): i32 {
-  let a: i32 = 0;
-  let b: i32 = 0;
-  let i: i32 = 0;
+  let a = 0;
+  let b = 0;
+  let i = 0;
   while (i < n) {
     a = (a + bytes[from + i] as i32) % 255;
     b = (b + a) % 255;
-    i = i + 1;
+    i += 1;
   }
   return b * 256 + a;
 }
@@ -99,11 +99,11 @@ fip function known_type(t: i32): boolean {
 }
 
 fip function pow256(k: i32): i64 {
-  let p: i64 = 1 as i64;
-  let i: i32 = 0;
+  let p = 1 as i64;
+  let i = 0;
   while (i < k) {
-    p = p * (256 as i64);
-    i = i + 1;
+    p *= 256 as i64;
+    i += 1;
   }
   return p;
 }
@@ -143,7 +143,7 @@ fbip function parse_into(own c: Codec, wire: u8[], wire_len: i32): Codec {
   }
   c = Codec { ...c, mtype: wire[3] as i32 };
   c = Codec { ...c, rid: read_u32(wire, 6) };
-  let n: i32 = read_u16(wire, 10);
+  let n = read_u16(wire, 10);
   if (n > max_payload()) {
     return reject(c, st_oversize());
   }
@@ -164,55 +164,55 @@ fbip function put(own c: Codec, at: i32, v: u8): Codec {
 }
 
 fbip function write_echo(own c: Codec, wire: u8[]): Codec {
-  let at: i32 = c.at;
-  let n: i32 = c.plen;
-  let i: i32 = 0;
+  let at = c.at;
+  let n = c.plen;
+  let i = 0;
   while (i < n) {
     c = put(c, header_len() + i, wire[at + i]);
-    i = i + 1;
+    i += 1;
   }
   return Codec { ...c, out_len: n };
 }
 
 fbip function write_reverse(own c: Codec, wire: u8[]): Codec {
-  let at: i32 = c.at;
-  let n: i32 = c.plen;
-  let i: i32 = 0;
+  let at = c.at;
+  let n = c.plen;
+  let i = 0;
   while (i < n) {
     c = put(c, header_len() + i, wire[at + n - 1 - i]);
-    i = i + 1;
+    i += 1;
   }
   return Codec { ...c, out_len: n };
 }
 
 fbip function write_upper(own c: Codec, wire: u8[]): Codec {
-  let at: i32 = c.at;
-  let n: i32 = c.plen;
-  let i: i32 = 0;
+  let at = c.at;
+  let n = c.plen;
+  let i = 0;
   while (i < n) {
-    let ch: i32 = wire[at + i] as i32;
+    let ch = wire[at + i] as i32;
     if (ch >= 97 && ch <= 122) {
-      ch = ch - 32;
+      ch -= 32;
     }
     c = put(c, header_len() + i, ch as u8);
-    i = i + 1;
+    i += 1;
   }
   return Codec { ...c, out_len: n };
 }
 
 fbip function write_sum(own c: Codec, wire: u8[]): Codec {
-  let at: i32 = c.at;
-  let n: i32 = c.plen;
-  let total: i64 = 0 as i64;
-  let s: i32 = 0;
+  let at = c.at;
+  let n = c.plen;
+  let total = 0 as i64;
+  let s = 0;
   while (s < n) {
     total = total + wire[at + s] as i64;
-    s = s + 1;
+    s += 1;
   }
-  let b: i32 = 0;
+  let b = 0;
   while (b < 8) {
     c = put(c, header_len() + b, (total / pow256(b) % (256 as i64)) as u8);
-    b = b + 1;
+    b += 1;
   }
   return Codec { ...c, out_len: 8 };
 }
@@ -231,21 +231,21 @@ fbip function transform(own c: Codec, wire: u8[]): Codec {
 }
 
 fbip function encode_header(own c: Codec): Codec {
-  let plen: i32 = c.out_len;
-  let mt: i32 = c.mtype;
-  let status: i32 = c.st;
-  let rid: i64 = c.rid;
-  let ck: i32 = checksum(c.out, header_len(), plen);
+  let plen = c.out_len;
+  let mt = c.mtype;
+  let status = c.st;
+  let rid = c.rid;
+  let ck = checksum(c.out, header_len(), plen);
   c = put(c, 0, magic0() as u8);
   c = put(c, 1, magic1() as u8);
   c = put(c, 2, version() as u8);
   c = put(c, 3, mt as u8);
   c = put(c, 4, status as u8);
   c = put(c, 5, 0 as u8);
-  let idb: i32 = 0;
+  let idb = 0;
   while (idb < 4) {
     c = put(c, 6 + idb, (rid / pow256(idb) % (256 as i64)) as u8);
-    idb = idb + 1;
+    idb += 1;
   }
   c = put(c, 10, (plen % 256) as u8);
   c = put(c, 11, (plen / 256) as u8);
@@ -278,11 +278,11 @@ fbip function tally(own c: Codec): Codec {
 }
 
 fbip function absorb(own c: Codec, n: i32): Codec {
-  let d: i64 = c.digest;
-  let i: i32 = 0;
+  let d = c.digest;
+  let i = 0;
   while (i < n) {
     d = mix(d, c.out[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   return Codec { ...c, digest: d };
 }
@@ -294,7 +294,7 @@ fbip function serve(own c: Codec, wire: u8[], n: i64): Codec {
     c = transform(c, wire);
   }
   c = encode_header(c);
-  let framed: i32 = header_len() + c.out_len;
+  let framed = header_len() + c.out_len;
   c = absorb(c, framed);
   c = tally(c);
   return Codec { ...c, copied: c.copied + c.out_len as i64 + header_len() as i64 };
@@ -320,24 +320,24 @@ fip function gen_byte(n: i64, j: i32): u8 {
 
 fip function corruption(n: i64): i32 {
   if (n % (17 as i64) != 0 as i64) {
-    return 0 - 1;
+    return -1;
   }
   return (n / (17 as i64) % (6 as i64)) as i32;
 }
 
 fip function build_request(own wire: u8[], n: i64): u8[] {
-  let t: i32 = 1 + (n % (4 as i64)) as i32;
-  let plen: i32 = gen_payload_len(n);
-  let corrupt: i32 = corruption(n);
-  let i: i32 = 0;
+  let t = 1 + (n % (4 as i64)) as i32;
+  let plen = gen_payload_len(n);
+  let corrupt = corruption(n);
+  let i = 0;
   while (i < plen) {
     wire = wire.with(header_len() + i, gen_byte(n, i));
-    i = i + 1;
+    i += 1;
   }
-  let ck: i32 = checksum(wire, header_len(), plen);
-  let m0: i32 = magic0();
-  let ver: i32 = version();
-  let wire_plen: i32 = plen;
+  let ck = checksum(wire, header_len(), plen);
+  let m0 = magic0();
+  let ver = version();
+  let wire_plen = plen;
   if (corrupt == 0) {
     m0 = 1;
   }
@@ -359,10 +359,10 @@ fip function build_request(own wire: u8[], n: i64): u8[] {
   wire = wire.with(3, t as u8);
   wire = wire.with(4, 0 as u8);
   wire = wire.with(5, 0 as u8);
-  let idb: i32 = 0;
+  let idb = 0;
   while (idb < 4) {
     wire = wire.with(6 + idb, (n / pow256(idb) % (256 as i64)) as u8);
-    idb = idb + 1;
+    idb += 1;
   }
   wire = wire.with(10, (wire_plen % 256) as u8);
   wire = wire.with(11, (wire_plen / 256) as u8);
@@ -373,7 +373,7 @@ fip function build_request(own wire: u8[], n: i64): u8[] {
 }
 
 fip function wire_len_for(n: i64): i32 {
-  let plen: i32 = gen_payload_len(n);
+  let plen = gen_payload_len(n);
   if (corruption(n) == 4) {
     return header_len() + plen - 1;
   }
@@ -381,21 +381,21 @@ fip function wire_len_for(n: i64): i32 {
 }
 
 fip function mix(d: i64, b: i32): i64 {
-  let x: i64 = d ^ b as i64;
-  x = x * (1099511628211 as i64);
+  let x = d ^ b as i64;
+  x *= 1099511628211 as i64;
   x = x ^ x >> 29 as i64;
   if (x < 0 as i64) {
-    x = 0 - x;
+    x = -x;
   }
   return x % (1000000007 as i64);
 }
 
 function zeros_u8(n: i32): u8[] {
-  let xs: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let xs = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     xs = xs.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
@@ -411,43 +411,43 @@ function new_codec(): Codec {
 }
 
 function main(): i32 {
-  let batch: i32 = 64;
-  let rounds: i32 = 4000;
-  let wire: u8[] = zeros_u8(max_packet());
-  let c: Codec = new_codec();
-  let w: i32 = 0;
+  let batch = 64;
+  let rounds = 4000;
+  let wire = zeros_u8(max_packet());
+  let c = new_codec();
+  let w = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);
     c = serve(c, wire, w as i64);
-    w = w + 1;
+    w += 1;
   }
   c = reset(c);
   let samples: i64[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
-    p = p + 1;
+    p += 1;
   }
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  let r = 0;
   while (r < rounds) {
-    let t0: i64 = monotonic_ns();
-    let k: i32 = 0;
+    let t0 = monotonic_ns();
+    let k = 0;
     while (k < batch) {
-      let n: i64 = r as i64 * (batch as i64) + k as i64;
+      let n = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       c = serve(c, wire, n);
-      k = k + 1;
+      k += 1;
     }
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
+    r += 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let requests: i64 = rounds as i64 * (batch as i64);
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let requests = rounds as i64 * (batch as i64);
   let rep: bench.Report = bench.Report {
     name: "fbip",
     iterations: rounds,

@@ -13,10 +13,10 @@ function scale(own a: ndarray.NdArray[f64]): ndarray.NdArray[f64] {
 
 function build(n: i32): ndarray.NdArray[f64] {
   let xs: f64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     xs = xs.append((i % 127 + 1) as f64);
-    i = i + 1;
+    i += 1;
   }
   return ndarray.from_flat(xs, [n]);
 }
@@ -25,23 +25,23 @@ function correct(a: ndarray.NdArray[f64], n: i32, factor: f64): boolean {
   if (a.len() != n || a.shape()[0] != n || !a.is_packed()) {
     return false;
   }
-  let xs: f64[] = a.to_flat();
-  let i: i32 = 0;
+  let xs = a.to_flat();
+  let i = 0;
   while (i < n) {
-    let expected: f64 = (i % 127 + 1) as f64 * factor;
+    let expected = (i % 127 + 1) as f64 * factor;
     if (xs[i] != expected) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let n: i32 = 1000;
-  let rounds: i32 = 2;
-  let shared: boolean = false;
+  let argv = args();
+  let n = 1000;
+  let rounds = 2;
+  let shared = false;
   if (argv.len() > 1) {
     n = i32.parse_i32(argv[1]).unwrap_or(n);
   }
@@ -54,35 +54,35 @@ function main(): i32 {
   if (n < 1 || rounds < 1 || rounds > 1000) {
     return 1;
   }
-  let current: ndarray.NdArray[f64] = build(n);
-  let mark_calls: i64 = __heap_alloc_count();
-  let mark_bytes: i64 = __heap_bump_bytes();
-  let elapsed: i64 = 0 as i64;
+  let current = build(n);
+  let mark_calls = __heap_alloc_count();
+  let mark_bytes = __heap_bump_bytes();
+  let elapsed = 0 as i64;
   let factor: f64 = 1.0;
-  let r: i32 = 0;
+  let r = 0;
   while (r < rounds) {
     if (shared) {
-      let alias: ndarray.NdArray[f64] = current;
-      let start: i64 = monotonic_ns();
+      let alias = current;
+      let start = monotonic_ns();
       current = scale(current);
       elapsed = elapsed + monotonic_ns() - start;
       if (!correct(alias, n, factor)) {
         return 2;
       }
     } else {
-      let start: i64 = monotonic_ns();
+      let start = monotonic_ns();
       current = scale(current);
       elapsed = elapsed + monotonic_ns() - start;
     }
-    factor = factor * 2.0;
+    factor *= 2.0;
     if (!correct(current, n, factor)) {
       return 3;
     }
-    r = r + 1;
+    r += 1;
   }
-  let calls: i64 = __heap_alloc_count() - mark_calls;
-  let bytes: i64 = __heap_bump_bytes() - mark_bytes;
-  let mode: string = "unique";
+  let calls = __heap_alloc_count() - mark_calls;
+  let bytes = __heap_bump_bytes() - mark_bytes;
+  let mode = "unique";
   if (shared) {
     mode = "shared";
   }

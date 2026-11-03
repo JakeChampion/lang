@@ -21,7 +21,7 @@ pub function new_state(entries: i32, capacity: i32): Option[State] {
   if (entries < 1 || entries > 256 || capacity < 1 || capacity > 4096) {
     return None;
   }
-  let empty: Event = Event { kind: 0i64, id: 0i64, value: 0i64 };
+  let empty = Event { kind: 0i64, id: 0i64, value: 0i64 };
   match (bounded_ring.new_ring(capacity, empty)) {
     None => {
       return None;
@@ -86,12 +86,12 @@ fip function respond(own s: State, value: i64): State {
 }
 
 pub fip function lookup(s: State, id: i64): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.entries) {
     if (s.table[s.entries * 2 + i] != 0i64 && s.table[i] == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -113,7 +113,7 @@ pub fip function step(own s: State): State {
     if (at < 0) {
       at = 0;
       while (at < s.entries && s.table[s.entries * 2 + at] != 0i64) {
-        at = at + 1;
+        at += 1;
       }
       if (at == s.entries) {
         s = State { ...s, full: s.full + 1i64 };

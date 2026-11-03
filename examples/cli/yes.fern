@@ -3,13 +3,13 @@ import "std/i32";
 import "std/array";
 
 function main(): i32 {
-  let argv: string[] = args();
-  let limit: i32 = 0 - 1;
+  let argv = args();
+  let limit: i32 = -1;
   let words: string[] = [];
 
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "-n" && i + 1 < argv.len()) {
       match (i32.parse_i32(argv[i + 1])) {
         Ok(n) => {
@@ -17,22 +17,22 @@ function main(): i32 {
         },
         Err(_) => {}
       }
-      i = i + 1;
+      i += 1;
     } else {
       words = words.append(a);
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let line: string = "y";
+  let line = "y";
   if (words.len() > 0) {
     line = words.join(" ");
   }
 
-  let count: i32 = 0;
+  let count = 0;
   while (limit < 0 || count < limit) {
     print(line);
-    count = count + 1;
+    count += 1;
   }
   return 0;
 }

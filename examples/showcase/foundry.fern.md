@@ -80,7 +80,7 @@ pub function clear(factory: Factory, points: i32[]): Factory {
   let cargo = factory.cargo;
   let removed = factory.removed;
   for at in points {
-    removed = removed + cargo[at];
+    removed += cargo[at];
     cargo = cargo.with(at, 0);
   }
   return Factory { ...factory, cargo: cargo, removed: removed };
@@ -138,13 +138,13 @@ pub function machine_state(kind: i32, state: i32, incoming: i32, outgoing: i32, 
   let ingots = (state >> 4 & 15) - (outgoing >> 4 & 15) + (incoming >> 4 & 15);
   let progress = 0;
   if (kind == 1 && tick % 8 == 0 && ore < 15) {
-    ore = ore + 1;
+    ore += 1;
   }
   if (kind == 7 && powered > 0 && ore >= 2 && ingots + ore <= 15) {
     progress = (state >> 8 & 15) + 1;
     if (progress >= 8) {
-      ore = ore - 2;
-      ingots = ingots + 1;
+      ore -= 2;
+      ingots += 1;
       progress = 0;
     }
   }
@@ -161,8 +161,8 @@ Layout edits recompute this derived network. Recovery recomputes it from the sav
 ```fern
 <<Power network>>=
 pub function power(layout: i32[], width: i32): i32[] {
-  let powered: i32[] = __alloc_i32(layout.len());
-  let queue: i32[] = __alloc_i32(layout.len());
+  let powered = __alloc_i32(layout.len());
+  let queue = __alloc_i32(layout.len());
   let head = 0;
   let tail = 0;
   let at = 0;
@@ -170,19 +170,19 @@ pub function power(layout: i32[], width: i32): i32[] {
     if (kind == 8) {
       powered = powered.with(at, 1);
       queue = queue.with(tail, at);
-      tail = tail + 1;
+      tail += 1;
     }
-    at = at + 1;
+    at += 1;
   }
   while (head < tail) {
     let source = queue[head];
-    head = head + 1;
-    for direction in [0 - 1, 1, 0 - width, width] {
+    head += 1;
+    for direction in [-1, 1, -width, width] {
       let target = source + direction;
-      if (target >= 0 && target < layout.len() && (direction != 1 && direction != 0 - 1 || source / width == target / width) && powered[target] == 0 && conducts(layout[target])) {
+      if (target >= 0 && target < layout.len() && (direction != 1 && direction != -1 || source / width == target / width) && powered[target] == 0 && conducts(layout[target])) {
         powered = powered.with(target, 1);
         queue = queue.with(tail, target);
-        tail = tail + 1;
+        tail += 1;
       }
     }
   }
@@ -204,13 +204,13 @@ A test verifies production equals delivery, removal, and the ore-equivalent inve
 <<Advance one tick>>=
 pub function step(layout: i32[], before: Factory, width: i32): Factory {
   let size = before.cargo.len();
-  let incoming: i32[] = __alloc_i32(size);
-  let outgoing: i32[] = __alloc_i32(size);
-  let capacity: i32[] = __alloc_i32(size);
+  let incoming = __alloc_i32(size);
+  let outgoing = __alloc_i32(size);
+  let capacity = __alloc_i32(size);
   let i = 0;
   while (i < size) {
     capacity = capacity.with(i, 15 - (before.cargo[i] & 15) - (before.cargo[i] >> 4 & 15));
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < size) {
@@ -231,7 +231,7 @@ pub function step(layout: i32[], before: Factory, width: i32): Factory {
         capacity = capacity.with(target, capacity[target] - 1);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   let cargo = before.cargo;
   let produced = before.produced;
@@ -244,14 +244,14 @@ pub function step(layout: i32[], before: Factory, width: i32): Factory {
       consumed = consumed + units(incoming[i]) as i64;
     }
     if (kind == 1 && before.tick % 8 == 0 && (before.cargo[i] & 15) - (outgoing[i] & 15) < 15) {
-      produced = produced + 1;
+      produced += 1;
     }
     let next = machine_state(kind, before.cargo[i], incoming[i], outgoing[i], (before.tick % 8) as i32, before.powered[i]);
     if (kind == 7 && (next >> 4 & 15) > (before.cargo[i] >> 4 & 15) + (incoming[i] >> 4 & 15) - (outgoing[i] >> 4 & 15)) {
-      refined = refined + 1;
+      refined += 1;
     }
     cargo = cargo.with(i, next);
-    i = i + 1;
+    i += 1;
   }
   return Factory { ...before, cargo: cargo, tick: before.tick + 1, produced: produced, consumed: consumed, refined: refined };
 }

@@ -18,7 +18,7 @@ pub function initial(index: i32, count: i32, clustered: boolean): Entity {
     x = index % 8;
     y = index / 8 % 8;
   }
-  let target: i32 = -1;
+  let target = -1;
   if (index % 3 != 0) {
     target = (index + 1) % count;
   }
@@ -30,8 +30,8 @@ pub function initial(index: i32, count: i32, clustered: boolean): Entity {
 }
 
 pub fbip function input_ai(own row: Entity, index: i32, tick: i32, target: i32, target_x: i32, target_y: i32): Entity {
-  let vx: i32 = 0;
-  let vy: i32 = 0;
+  let vx = 0;
+  let vy = 0;
   if (row.mode != 2) {
     if (target >= 0) {
       vx = simulation_rules.steer(simulation_rules.delta(target_x, row.x), row.kind);

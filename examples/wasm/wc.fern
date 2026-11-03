@@ -5,14 +5,14 @@ import "std/io_buffered";
 struct Counts { lines: i32, words: i32, bytes: i32 }
 
 function count_chunk(chunk: string, acc: Counts): Counts {
-  let parts: string[] = chunk.split(" ");
-  let nwords: i32 = 0;
-  let i: i32 = 0;
+  let parts = chunk.split(" ");
+  let nwords = 0;
+  let i = 0;
   while (i < parts.len()) {
     if (!parts[i].is_empty()) {
-      nwords = nwords + 1;
+      nwords += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return Counts {
     ...acc,
@@ -23,9 +23,9 @@ function count_chunk(chunk: string, acc: Counts): Counts {
 }
 
 function count_reader(own r: Reader): Result[Counts, IoError] {
-  let acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
+  let acc = Counts { lines: 0, words: 0, bytes: 0 };
   defer r.close();
-  let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, 65536);
+  let lr = io_buffered.line_reader_new(r, 10, 65536);
   while (true) {
     let (line, next) = lr.next_line()?;
     lr = next;
@@ -46,13 +46,13 @@ function format_counts(label: string, c: Counts): string {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let total: Counts = Counts { lines: 0, words: 0, bytes: 0 };
-  let nfiles: i32 = 0;
-  let status: i32 = 0;
-  let i: i32 = 1;
+  let argv = args();
+  let total = Counts { lines: 0, words: 0, bytes: 0 };
+  let nfiles = 0;
+  let status = 0;
+  let i = 1;
   while (i < argv.len()) {
-    let path: string = argv[i];
+    let path = argv[i];
     match (open_reader(path)) {
       Ok(r) => {
         match (count_reader(r)) {
@@ -63,7 +63,7 @@ function main(): i32 {
               words: total.words + got.words,
               bytes: total.bytes + got.bytes,
             };
-            nfiles = nfiles + 1;
+            nfiles += 1;
           },
           Err(_) => {
             eprint("wc: " + path + ": read error");
@@ -76,7 +76,7 @@ function main(): i32 {
         status = 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (argv.len() <= 1) {
     match (count_reader(stdin())) {

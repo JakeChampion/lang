@@ -6,17 +6,17 @@ function width_of(n: i32): i32 {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let sep: string = "\n";
-  let equal_width: boolean = false;
+  let argv = args();
+  let sep = "\n";
+  let equal_width = false;
   let nums: i32[] = [];
 
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "-s" && i + 1 < argv.len()) {
       sep = argv[i + 1];
-      i = i + 1;
+      i += 1;
     } else if (a == "-w") {
       equal_width = true;
     } else {
@@ -30,12 +30,12 @@ function main(): i32 {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let first: i32 = 1;
-  let step: i32 = 1;
-  let last: i32 = 0;
+  let first = 1;
+  let step = 1;
+  let last = 0;
   if (nums.len() == 1) {
     last = nums[0];
   } else if (nums.len() == 2) {
@@ -54,7 +54,7 @@ function main(): i32 {
     return 1;
   }
 
-  let pad: i32 = 0;
+  let pad = 0;
   if (equal_width) {
     pad = width_of(first);
     if (width_of(last) > pad) {
@@ -62,20 +62,20 @@ function main(): i32 {
     }
   }
 
-  let out: string = "";
-  let n: i32 = first;
-  let count: i32 = 0;
+  let out = "";
+  let n = first;
+  let count = 0;
   while (step > 0 && n <= last || step < 0 && n >= last) {
-    let piece: string = n.to_string();
+    let piece = n.to_string();
     if (equal_width) {
       piece = piece.pad_start(pad, '0');
     }
     if (count > 0) {
-      out = out + sep;
+      out += sep;
     }
-    out = out + piece;
-    n = n + step;
-    count = count + 1;
+    out += piece;
+    n += step;
+    count += 1;
   }
   if (count > 0) {
     print(out);

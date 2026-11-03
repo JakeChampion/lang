@@ -140,7 +140,7 @@ pub function search(index: Index, query: string): Results {
     let postings = index.terms.get(term).unwrap_or([] as Posting[]);
     let idf = (1.0 + (index.documents.len() as f64 - postings.len() as f64 + 0.5) / (postings.len() as f64 + 0.5)).log();
     for posting in postings {
-      visits = visits + 1;
+      visits += 1;
       let frequency = posting.frequency as f64;
       let score = idf * frequency * 2.2 / (frequency + 1.2 * (0.25 + 0.75 * (index.lengths[posting.id] as f64) / average));
       scores = scores.insert(posting.id, scores.get(posting.id).unwrap_or(0.0) + score);

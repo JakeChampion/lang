@@ -118,7 +118,7 @@ pub function register(state: State, req: HttpRequest): Result[HttpResponse, http
   }
   let now = monotonic_ns();
   let swarms = live_swarms(state, now);
-  let swarm: Swarm = Swarm { hash: offer.info_hash, name: offer.name, length: offer.length, expires: now + LIFETIME_NS, peers: [] };
+  let swarm = Swarm { hash: offer.info_hash, name: offer.name, length: offer.length, expires: now + LIFETIME_NS, peers: [] };
   match (find_swarm(state, offer.info_hash)) {
     Some(existing) => {
       swarm = existing;
@@ -150,10 +150,10 @@ function latin1(s: string): u8[] {
     let c = b[i];
     if (c < 128) {
       out = out.append(c);
-      i = i + 1;
+      i += 1;
     } else if ((c == 194 as u8 || c == 195 as u8) && i + 1 < b.len()) {
       out = out.append(((c & 31) << 6 | b[i + 1] & 63) as u8);
-      i = i + 2;
+      i += 2;
     } else {
       return [];
     }
@@ -312,7 +312,7 @@ function announce(state: State, conn: string, msg: json.JsonValue): string {
   for other in current.peers {
     if (other != conn && k < offers.len() && k < 10) {
       deliver(state, other, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("offer", json.get(offers[k], "offer").unwrap_or(json.JNull)), ("offer_id", json.get(offers[k], "offer_id").unwrap_or(json.JNull))]));
-      k = k + 1;
+      k += 1;
     }
   }
   return reply([("action", json.JString("announce")), ("info_hash", hash_text), ("interval", json.JNumber(INTERVAL_S.to_string())), ("complete", json.JNumber((current.peers.len() - 1).to_string())), ("incomplete", json.JNumber("0"))]);

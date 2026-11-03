@@ -37,14 +37,14 @@ pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity
     || pool < 1 || pool > 4096 || queue_capacity < 1 || queue_capacity > 4096) {
     return None;
   }
-  let empty: Message = Message { topic: -1, serial: 0i64, payload: 0i64 };
+  let empty = Message { topic: -1, serial: 0i64, payload: 0i64 };
   let slots: Message[] = [];
   let free: i32[] = __alloc_i32(pool);
-  let i: i32 = 0;
+  let i = 0;
   while (i < pool) {
     slots = slots.append(Message { topic: no_topic(), serial: 0i64, payload: 0i64 });
     free = free.with(i, pool - i - 1);
-    i = i + 1;
+    i += 1;
   }
   let leases: Message[] = [];
   let lease_slots: i32[] = __alloc_i32(subscribers);
@@ -52,7 +52,7 @@ pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity
   while (i < subscribers) {
     leases = leases.append(empty);
     lease_slots = lease_slots.with(i, -1);
-    i = i + 1;
+    i += 1;
   }
   let queues: bounded_ring.Ring[i32][] = [];
   i = 0;
@@ -65,7 +65,7 @@ pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity
         return None;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   match (bounded_ring.new_ring(1, -1)) {
     None => {
@@ -88,13 +88,13 @@ pub fip function result(own b: Broker, status: i32, slot: i32): Broker {
 }
 
 pub fip function recipients(b: Broker, topic: i32): i32 {
-  let total: i32 = 0;
-  let s: i32 = 0;
+  let total = 0;
+  let s = 0;
   while (s < b.subscribers) {
     if (s % b.topics == topic) {
-      total = total + 1;
+      total += 1;
     }
-    s = s + 1;
+    s += 1;
   }
   return total;
 }
@@ -154,28 +154,28 @@ pub fip function cancel(own b: Broker): Broker {
 }
 
 pub fip function queues_fit(b: Broker, topic: i32): boolean {
-  let s: i32 = 0;
+  let s = 0;
   while (s < b.subscribers) {
     if (s % b.topics == topic && b.queues[s].count == b.queue_capacity) {
       return false;
     }
-    s = s + 1;
+    s += 1;
   }
   return true;
 }
 
 pub fip function enqueue(own b: Broker, slot: i32, topic: i32): Broker {
-  let count: i32 = 0;
-  let s: i32 = 0;
+  let count = 0;
+  let s = 0;
   while (s < b.subscribers) {
     if (s % b.topics == topic) {
       let q: bounded_ring.Ring[i32] = subscriber_queue(b, s);
       b = Broker { ...b, queues: b.queues.with(s, b.empty_queue) };
       q = bounded_ring.push(q, slot);
       b = Broker { ...b, queues: b.queues.with(s, q) };
-      count = count + 1;
+      count += 1;
     }
-    s = s + 1;
+    s += 1;
   }
   b = Broker { ...b, refs: b.refs.with(slot, count) };
   return b;

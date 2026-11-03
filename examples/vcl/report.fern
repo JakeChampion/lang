@@ -19,14 +19,14 @@ pub struct Args { method: string, url: string, client_ip: string, names: string[
 pub function parse_args(argv: string[], first: i32): Args {
   let n: string[] = [];
   let v: string[] = [];
-  let bad: Args = Args { method: "", url: "", client_ip: "", names: n, values: v, repeat: 1, ok: false };
+  let bad = Args { method: "", url: "", client_ip: "", names: n, values: v, repeat: 1, ok: false };
   if (argv.len() < first + 2) {
     return bad;
   }
-  let a: Args = Args { method: argv[first], url: argv[first + 1], client_ip: "127.0.0.1", names: n, values: v, repeat: 1, ok: true };
-  let i: i32 = first + 2;
+  let a = Args { method: argv[first], url: argv[first + 1], client_ip: "127.0.0.1", names: n, values: v, repeat: 1, ok: true };
+  let i = first + 2;
   while (i < argv.len()) {
-    let arg: string = argv[i];
+    let arg = argv[i];
     if (arg == "-n" && i + 1 < argv.len()) {
       match (i32.parse_i32(argv[i + 1])) {
         Ok(c) => {
@@ -36,7 +36,7 @@ pub function parse_args(argv: string[], first: i32): Args {
           return bad;
         }
       }
-      i = i + 2;
+      i += 2;
     } else if (arg.contains(":")) {
       match (arg.split_once(":")) {
         Some(pair) => {
@@ -44,40 +44,40 @@ pub function parse_args(argv: string[], first: i32): Args {
         },
         None => {}
       }
-      i = i + 1;
+      i += 1;
     } else {
       a = Args { ...a, client_ip: arg };
-      i = i + 1;
+      i += 1;
     }
   }
   return a;
 }
 
 pub function join(items: string[], sep: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < items.len()) {
     if (i > 0) {
-      out = out + sep;
+      out += sep;
     }
-    out = out + items[i];
-    i = i + 1;
+    out += items[i];
+    i += 1;
   }
   return out;
 }
 
 function print_headers(h: runtime.Headers, indent: string): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.names.len()) {
     print(indent + h.names[i] + ": " + h.values[i]);
-    i = i + 1;
+    i += 1;
   }
 }
 
 pub function print_outcome(o: machine.Outcome, n: i32): void {
   print("--- request " + n.to_string() + " ---");
   print("  path:        " + join(o.steps, " -> "));
-  let hit: string = "miss";
+  let hit = "miss";
   if (o.hit) {
     hit = "HIT";
   }
@@ -87,19 +87,19 @@ pub function print_outcome(o: machine.Outcome, n: i32): void {
   print_headers(o.txn.resp.headers, "    ");
   if (o.txn.log.len() > 0) {
     print("  log:");
-    let i: i32 = 0;
+    let i = 0;
     while (i < o.txn.log.len()) {
       print("    " + o.txn.log[i]);
-      i = i + 1;
+      i += 1;
     }
   }
 }
 
 pub function run_all(d: machine.Driver, a: Args): i32 {
-  let cache: runtime.Cache = runtime.cache_new();
-  let i: i32 = 0;
+  let cache = runtime.cache_new();
+  let i = 0;
   while (i < a.repeat) {
-    let o: machine.Outcome = machine.run_with(d, a.method, a.url, a.client_ip, a.names, a.values, cache);
+    let o = machine.run_with(d, a.method, a.url, a.client_ip, a.names, a.values, cache);
     if (!o.ok) {
       eprint("vcl: " + o.err);
       eprint("     after " + join(o.steps, " -> "));
@@ -107,13 +107,13 @@ pub function run_all(d: machine.Driver, a: Args): i32 {
     }
     print_outcome(o, i + 1);
     cache = o.cache;
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }
 
 pub function drive(d: machine.Driver, argv: string[]): i32 {
-  let a: Args = parse_args(argv, 1);
+  let a = parse_args(argv, 1);
   if (!a.ok) {
     eprint("usage: POLICY METHOD URL [CLIENT_IP] [Name:Value ...] [-n COUNT]");
     return 2;

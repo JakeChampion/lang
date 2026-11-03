@@ -12,12 +12,12 @@ pub function process_baseline(own s: etl_core.State, data: u8[], offset: i32, co
     return etl_core.refuse(s);
   }
   s = etl_core.State { ...s, output_count: 0 };
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
-    let at: i32 = offset + i * 8;
-    let row: etl_core.Record = decode(data, at);
+    let at = offset + i * 8;
+    let row = decode(data, at);
     s = etl_core.apply(s, data, at, row.sensor, row.quality, row.value);
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
@@ -27,17 +27,17 @@ pub function process_batched(own s: etl_core.State, data: u8[], offset: i32, cou
     return etl_core.refuse(s);
   }
   let rows: etl_core.Record[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
     rows = rows.append(decode(data, offset + i * 8));
-    i = i + 1;
+    i += 1;
   }
   s = etl_core.State { ...s, output_count: 0 };
   i = 0;
   while (i < count) {
-    let row: etl_core.Record = rows[i];
+    let row = rows[i];
     s = etl_core.apply(s, data, offset + i * 8, row.sensor, row.quality, row.value);
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
@@ -53,15 +53,15 @@ pub fbip function process_fbip(own s: etl_core.State, data: u8[], offset: i32, c
     return etl_core.refuse(s);
   }
   s = etl_core.State { ...s, output_count: 0 };
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
-    let at: i32 = offset + i * 8;
+    let at = offset + i * 8;
     s = etl_core.State { ...s, scratch: decode_reuse(s.scratch, data, at) };
-    let sensor: i32 = s.scratch.sensor;
-    let quality: i32 = s.scratch.quality;
-    let value: i32 = s.scratch.value;
+    let sensor = s.scratch.sensor;
+    let quality = s.scratch.quality;
+    let value = s.scratch.value;
     s = etl_core.apply(s, data, at, sensor, quality, value);
-    i = i + 1;
+    i += 1;
   }
   return s;
 }

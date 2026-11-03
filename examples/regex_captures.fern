@@ -15,8 +15,8 @@ import "std/string";
 import "std/option";
 
 function main(): i32 {
-  let line: string = "GET /api/users 200 15ms";
-  let pat: string = "(?<method>\\w+) (?<path>\\S+) (?<status>\\d+) (?<ms>\\d+)ms";
+  let line = "GET /api/users 200 15ms";
+  let pat = "(?<method>\\w+) (?<path>\\S+) (?<status>\\d+) (?<ms>\\d+)ms";
   let Some(m) = { let __checked_regex_2: regex.Regex = match (regex.compile(pat)) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.captures(line) } else {
     return 1;
   };
@@ -32,7 +32,7 @@ function main(): i32 {
   // A whole-token scan: four fields in the log line.
   let fields: i32 = { let __checked_regex_0: regex.Regex = match (regex.compile("\\S+")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.count(line) };  // 4
 
-  let result: i32 = status + ms + fields;
+  let result = status + ms + fields;
   if (require_regex_text(match (m.group_named("method")) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "GET" && m.group_index("path").unwrap_or(0) == 2 && swapped == "1=a 2=b") {
     return result;
   }

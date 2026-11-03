@@ -12,19 +12,19 @@ function matches(line: string, pat: string, ci: boolean): boolean {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let o: Opts = Opts { ignore_case: false, invert: false, show_num: false, count_only: false };
-  let pat: string = "";
-  let have_pat: boolean = false;
+  let argv = args();
+  let o = Opts { ignore_case: false, invert: false, show_num: false, count_only: false };
+  let pat = "";
+  let have_pat = false;
   let inputs: string[] = [];
 
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a.starts_with("-") && a.len() > 1 && !have_pat) {
-      let f: i32 = 1;
+      let f = 1;
       while (f < a.len()) {
-        let c: i32 = a[f] as i32;
+        let c = a[f] as i32;
         if (c == 105) {
           o = Opts { ...o, ignore_case: true };
         } else if (c == 118) {
@@ -37,7 +37,7 @@ function main(): i32 {
           eprint("grep: invalid option -- '" + slice_unchecked(a, f, f + 1) + "'");
           return 2;
         }
-        f = f + 1;
+        f += 1;
       }
     } else if (!have_pat) {
       pat = a;
@@ -45,7 +45,7 @@ function main(): i32 {
     } else {
       inputs = inputs.append(a);
     }
-    i = i + 1;
+    i += 1;
   }
 
   if (!have_pat) {
@@ -56,28 +56,28 @@ function main(): i32 {
     inputs = inputs.append("-");
   }
 
-  let multi: boolean = inputs.len() > 1;
-  let any_match: boolean = false;
-  let status: i32 = 1;
+  let multi = inputs.len() > 1;
+  let any_match = false;
+  let status = 1;
 
-  let j: i32 = 0;
+  let j = 0;
   while (j < inputs.len()) {
-    let name: string = inputs[j];
+    let name = inputs[j];
     match (io.read_input(name)) {
       Ok(text) => {
-        let lines: string[] = text.lines();
-        let hits: i32 = 0;
-        let ln: i32 = 0;
+        let lines = text.lines();
+        let hits = 0;
+        let ln = 0;
         while (ln < lines.len()) {
-          let hit: boolean = matches(lines[ln], pat, o.ignore_case);
+          let hit = matches(lines[ln], pat, o.ignore_case);
           if (o.invert) {
             hit = !hit;
           }
           if (hit) {
-            hits = hits + 1;
+            hits += 1;
             any_match = true;
             if (!o.count_only) {
-              let prefix: string = "";
+              let prefix = "";
               if (multi) {
                 prefix = name + ":";
               }
@@ -87,7 +87,7 @@ function main(): i32 {
               print(prefix + lines[ln]);
             }
           }
-          ln = ln + 1;
+          ln += 1;
         }
         if (o.count_only) {
           if (multi) {
@@ -102,7 +102,7 @@ function main(): i32 {
         status = 2;
       }
     }
-    j = j + 1;
+    j += 1;
   }
   if (any_match) {
     return 0;

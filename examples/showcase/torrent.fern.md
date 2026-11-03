@@ -50,19 +50,19 @@ function digits(b: u8[], at: i32, stop: u8): (i64, i32) {
   let negative = false;
   if (i < b.len() && b[i] == b'-') {
     negative = true;
-    i = i + 1;
+    i += 1;
   }
   let n: i64 = 0;
   let start = i;
   while (i < b.len() && b[i] >= b'0' && b[i] <= b'9' && i - start < 18) {
     n = n * 10 + (b[i] - b'0') as i64;
-    i = i + 1;
+    i += 1;
   }
   if (i == start || i >= b.len() || b[i] != stop) {
-    return (0, 0 - 1);
+    return (0, -1);
   }
   if (negative) {
-    n = 0 - n;
+    n = -n;
   }
   return (n, i + 1);
 }
@@ -70,7 +70,7 @@ function digits(b: u8[], at: i32, stop: u8): (i64, i32) {
 // The end of the bencoded value at `at`, or -1.
 function skip(b: u8[], at: i32, depth: i32): i32 {
   if (at >= b.len() || depth > 32) {
-    return 0 - 1;
+    return -1;
   }
   let c = b[at];
   if (c == b'i') {
@@ -83,13 +83,13 @@ function skip(b: u8[], at: i32, depth: i32): i32 {
       i = skip(b, i, depth + 1);
     }
     if (i < 0 || i >= b.len()) {
-      return 0 - 1;
+      return -1;
     }
     return i + 1;
   }
   let (len, start) = digits(b, at, b':');
   if (start < 0 || len < 0 || len > (b.len() - start) as i64) {
-    return 0 - 1;
+    return -1;
   }
   return start + len as i32;
 }
@@ -97,14 +97,14 @@ function skip(b: u8[], at: i32, depth: i32): i32 {
 // The start of the value under `key` in the dictionary at `at`, or -1.
 function lookup(b: u8[], at: i32, key: string): i32 {
   if (at >= b.len() || b[at] != b'd') {
-    return 0 - 1;
+    return -1;
   }
   let want = key.bytes();
   let i = at + 1;
   while (i >= 0 && i < b.len() && b[i] != b'e') {
     let (len, start) = digits(b, i, b':');
     if (start < 0 || len < 0 || len > (b.len() - start) as i64) {
-      return 0 - 1;
+      return -1;
     }
     let value = start + len as i32;
     if (crypto.consteq(b[start:value], want[:])) {
@@ -112,16 +112,16 @@ function lookup(b: u8[], at: i32, key: string): i32 {
     }
     i = skip(b, value, 1);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function int_at(b: u8[], at: i32): i64 {
   if (at < 0 || at >= b.len() || b[at] != b'i') {
-    return 0 - 1;
+    return -1;
   }
   let (n, end) = digits(b, at + 1, b'e');
   if (end < 0) {
-    return 0 - 1;
+    return -1;
   }
   return n;
 }
@@ -325,7 +325,7 @@ pub function sample(seed: i32, size: i32): u8[] {
       words = words.append(WORDS[(s % 16) as i32]);
     }
     out = out.concat(text(line.to_string() + " " + words.join(" ") + "\n"));
-    line = line + 1;
+    line += 1;
   }
   return array.slice(out, 0, size);
 }

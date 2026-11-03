@@ -74,7 +74,7 @@ pub function json_document(seed: i32, size: i32): string {
     s = rand(s);
     let followers: u32 = s % 100000;
     s = rand(s);
-    let geo: string = "null";
+    let geo = "null";
     if (s % 3 == 0) {
       s = rand(s);
       geo = "{\"lat\":" + decimal(s, 90) + ",\"lon\":" + decimal(rand(s), 180) + "}";
@@ -87,8 +87,8 @@ pub function json_document(seed: i32, size: i32): string {
       record = "," + record;
     }
     parts = parts.append(record);
-    bytes = bytes + record.len();
-    id = id + 1;
+    bytes += record.len();
+    id += 1;
   }
   return parts.append("]").join("");
 }
@@ -109,7 +109,7 @@ pub function access_log(seed: i32, size: i32): u8[] {
       + " " + (s % 20000).to_string() + "b " + decimal(rand(s), 250) + "ms ip=10." + (s % 256).to_string() + "." + (s >> 8 & 255).to_string()
       + " ua=\"fern-client/1." + (s % 9).to_string() + "\"\n";
     parts = parts.append(line);
-    bytes = bytes + line.len();
+    bytes += line.len();
   }
   return parts.join("").bytes();
 }
@@ -144,14 +144,14 @@ function tree_count(value: json.JsonValue): i32 {
     JArray(items) => {
       let total = 1;
       for item in items {
-        total = total + tree_count(item);
+        total += tree_count(item);
       }
       return total;
     },
     JObject(object) => {
       let total = 1;
       for item in object.items {
-        total = total + tree_count(item);
+        total += tree_count(item);
       }
       return total;
     },
@@ -167,9 +167,9 @@ function tape_count(doc: json.Document, node: i32): i32 {
     let child = doc.first(node);
     while (child >= 0) {
       if (doc.is_object(node)) {
-        total = total + tape_count(doc, doc.value(child));
+        total += tape_count(doc, doc.value(child));
       } else {
-        total = total + tape_count(doc, child);
+        total += tape_count(doc, child);
       }
       child = doc.next(node, child);
     }

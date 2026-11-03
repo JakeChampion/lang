@@ -135,20 +135,20 @@ struct App {
 
 function zeros_i64(n: i32): i64[] {
   let xs: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     xs = xs.append(0 as i64);
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
 
 function zeros_u8(n: i32): u8[] {
-  let xs: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let xs = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     xs = xs.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
@@ -173,37 +173,37 @@ fip function lower(b: u8): u8 {
 }
 
 fip function find_crlf(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i + 1 < end) {
     if (buf[i] == cr() && buf[i + 1] == lf()) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 fip function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     if (buf[i] == b) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 fip function name_is(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from != lit.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < lit.len()) {
     if (lower(buf[from + i]) != lit[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -212,12 +212,12 @@ fip function bytes_are(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from != lit.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < lit.len()) {
     if (buf[from + i] != lit[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -226,12 +226,12 @@ fip function starts_with(buf: u8[], from: i32, end: i32, lit: string): boolean {
   if (end - from < lit.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < lit.len()) {
     if (buf[from + i] != lit[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -241,80 +241,80 @@ fip function is_space(b: u8): boolean {
 }
 
 fip function trim_start(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < end && is_space(buf[i])) {
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
 
 fip function trim_end(buf: u8[], from: i32, end: i32): i32 {
-  let e: i32 = end;
+  let e = end;
   while (e > from && is_space(buf[e - 1])) {
-    e = e - 1;
+    e -= 1;
   }
   return e;
 }
 
 fip function parse_int(buf: u8[], from: i32, end: i32): i32 {
-  let s: i32 = trim_start(buf, from, end);
-  let e: i32 = trim_end(buf, s, end);
+  let s = trim_start(buf, from, end);
+  let e = trim_end(buf, s, end);
   if (e <= s) {
-    return 0 - 1;
+    return -1;
   }
-  let acc: i32 = 0;
-  let i: i32 = s;
+  let acc = 0;
+  let i = s;
   while (i < e) {
-    let b: i32 = buf[i] as i32;
+    let b = buf[i] as i32;
     if (b < 48 || b > 57) {
-      return 0 - 1;
+      return -1;
     }
-    let digit: i32 = b - 48;
+    let digit = b - 48;
     if (acc > 214748364 || acc == 214748364 && digit > 7) {
-      return 0 - 1;
+      return -1;
     }
     acc = acc * 10 + digit;
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
 
 fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < lit.len()) {
     out = out.with(at + i, lit[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 fip function put_bytes(own out: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.with(at + i, src[from + i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 fip function digits(n: i32): i32 {
-  let d: i32 = 1;
-  let v: i32 = n;
+  let d = 1;
+  let v = n;
   while (v >= 10) {
-    v = v / 10;
-    d = d + 1;
+    v /= 10;
+    d += 1;
   }
   return d;
 }
 
 fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
-  let d: i32 = digits(n);
-  let v: i32 = n;
-  let i: i32 = d - 1;
+  let d = digits(n);
+  let v = n;
+  let i = d - 1;
   while (i >= 0) {
     out = out.with(at + i, (48 + v % 10) as u8);
-    v = v / 10;
-    i = i - 1;
+    v /= 10;
+    i -= 1;
   }
   return out;
 }
@@ -324,23 +324,23 @@ fip function home_slot(id: i32): i32 {
 }
 
 fip function find_slot(app: App, id: i32): i32 {
-  let slot: i32 = home_slot(id);
-  let probes: i32 = 0;
+  let slot = home_slot(id);
+  let probes = 0;
   while (probes < max_counters()) {
     if (app.used[slot] == 0 as i64) {
-      return 0 - 1;
+      return -1;
     }
     if (app.ids[slot] == id as i64) {
       return slot;
     }
     slot = slot + 1 & slot_mask();
-    probes = probes + 1;
+    probes += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 fip function free_slot(app: App, id: i32): i32 {
-  let slot: i32 = home_slot(id);
+  let slot = home_slot(id);
   while (app.used[slot] != 0 as i64) {
     slot = slot + 1 & slot_mask();
   }
@@ -348,7 +348,7 @@ fip function free_slot(app: App, id: i32): i32 {
 }
 
 fbip function bump(own app: App, slot: i32): App {
-  let c: i64 = app.counts[slot] + 1 as i64;
+  let c = app.counts[slot] + 1 as i64;
   return App { ...app, counts: app.counts.with(slot, c), total: app.total + 1 as i64 };
 }
 
@@ -364,8 +364,8 @@ fbip function insert(own app: App, slot: i32, id: i32): App {
 }
 
 fbip function decide(own app: App, class: i32, status: i32, kind: i32, from: i32, len: i32, value: i32, rid_at: i32, rid_len: i32): App {
-  let served: i64 = app.served;
-  let refused: i64 = app.refused;
+  let served = app.served;
+  let refused = app.refused;
   if (status == 200) {
     served = served + 1 as i64;
   } else {
@@ -396,16 +396,16 @@ fbip function answer(own app: App, class: i32, status: i32, rid_at: i32, rid_len
 }
 
 fbip function counter(own app: App, wire: u8[], sp1: i32, id_at: i32, id_end: i32, rid_at: i32, rid_len: i32): App {
-  let id: i32 = parse_int(wire, id_at, id_end);
+  let id = parse_int(wire, id_at, id_end);
   if (id < 0 || id >= id_space()) {
     return answer(app, cl_not_found(), 404, rid_at, rid_len);
   }
-  let slot: i32 = find_slot(app, id);
+  let slot = find_slot(app, id);
   if (bytes_are(wire, 0, sp1, "GET")) {
     if (slot < 0) {
       return answer(app, cl_not_found(), 404, rid_at, rid_len);
     }
-    let have: i32 = app.counts[slot] as i32;
+    let have = app.counts[slot] as i32;
     return decide(app, cl_ok(), 200, body_int(), 0, 0, have, rid_at, rid_len);
   }
   if (!bytes_are(wire, 0, sp1, "POST")) {
@@ -413,20 +413,20 @@ fbip function counter(own app: App, wire: u8[], sp1: i32, id_at: i32, id_end: i3
   }
   if (slot >= 0) {
     app = bump(app, slot);
-    let now: i32 = app.counts[slot] as i32;
+    let now = app.counts[slot] as i32;
     return decide(app, cl_ok(), 200, body_int(), 0, 0, now, rid_at, rid_len);
   }
   if (app.live >= max_counters()) {
     app = App { ...app, full: app.full + 1 as i64 };
     return answer(app, cl_full(), 503, rid_at, rid_len);
   }
-  let free: i32 = free_slot(app, id);
+  let free = free_slot(app, id);
   app = insert(app, free, id);
   return decide(app, cl_ok(), 200, body_int(), 0, 0, 1, rid_at, rid_len);
 }
 
 fbip function route(own app: App, wire: u8[], sp1: i32, path_at: i32, path_end: i32, rid_at: i32, rid_len: i32): App {
-  let get: boolean = bytes_are(wire, 0, sp1, "GET");
+  let get = bytes_are(wire, 0, sp1, "GET");
   if (bytes_are(wire, path_at, path_end, "/health")) {
     if (!get) {
       return answer(app, cl_method(), 405, rid_at, rid_len);
@@ -453,44 +453,44 @@ fbip function route(own app: App, wire: u8[], sp1: i32, path_at: i32, path_end: 
 
 // fern-lint: allow cyclomatic-complexity
 fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
-  let hend: i32 = 0 - 1;
-  let i: i32 = 0;
+  let hend: i32 = -1;
+  let i = 0;
   while (i + 3 < wire_len) {
     if (wire[i] == cr() && wire[i + 1] == lf() && wire[i + 2] == cr() && wire[i + 3] == lf()) {
       hend = i;
       i = wire_len;
     }
-    i = i + 1;
+    i += 1;
   }
   if (hend < 0) {
     return reject(app, cl_truncated());
   }
-  let body_at: i32 = hend + 4;
-  let line_end: i32 = find_crlf(wire, 0, wire_len);
+  let body_at = hend + 4;
+  let line_end = find_crlf(wire, 0, wire_len);
 
-  let cl: i32 = 0;
-  let cl_seen: i32 = 0;
-  let fields: i32 = 0;
-  let te_seen: boolean = false;
-  let bad_cl: boolean = false;
-  let rid_at: i32 = 0;
-  let rid_len: i32 = 0;
-  let rid_seen: boolean = false;
-  let at: i32 = line_end + 2;
+  let cl = 0;
+  let cl_seen = 0;
+  let fields = 0;
+  let te_seen = false;
+  let bad_cl = false;
+  let rid_at = 0;
+  let rid_len = 0;
+  let rid_seen = false;
+  let at = line_end + 2;
   if (at > hend) {
     at = hend;
   }
   while (at < hend) {
-    let e: i32 = find_crlf(wire, at, hend);
+    let e = find_crlf(wire, at, hend);
     if (e < 0) {
       e = hend;
     }
-    let c: i32 = find_byte(wire, at, e, colon());
+    let c = find_byte(wire, at, e, colon());
     if (c > at) {
-      fields = fields + 1;
+      fields += 1;
       if (name_is(wire, at, c, "content-length")) {
-        cl_seen = cl_seen + 1;
-        let v: i32 = parse_int(wire, c + 1, e);
+        cl_seen += 1;
+        let v = parse_int(wire, c + 1, e);
         if (v < 0) {
           bad_cl = true;
         }
@@ -523,11 +523,11 @@ fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
     return reject(app, cl_truncated());
   }
 
-  let sp1: i32 = find_byte(wire, 0, line_end, sp());
+  let sp1 = find_byte(wire, 0, line_end, sp());
   if (sp1 < 0) {
     return reject(app, cl_bad_request_line());
   }
-  let sp2: i32 = find_byte(wire, sp1 + 1, line_end, sp());
+  let sp2 = find_byte(wire, sp1 + 1, line_end, sp());
   if (sp2 < 0) {
     return reject(app, cl_no_version());
   }
@@ -546,31 +546,31 @@ fbip function emit(own app: App, at: i32, b: u8): App {
 }
 
 fbip function emit_str(own app: App, at: i32, lit: string): App {
-  let i: i32 = 0;
+  let i = 0;
   while (i < lit.len()) {
     app = emit(app, at + i, lit[i]);
-    i = i + 1;
+    i += 1;
   }
   return app;
 }
 
 fbip function emit_bytes(own app: App, at: i32, src: u8[], from: i32, n: i32): App {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     app = emit(app, at + i, src[from + i]);
-    i = i + 1;
+    i += 1;
   }
   return app;
 }
 
 fbip function emit_int(own app: App, at: i32, n: i32): App {
-  let d: i32 = digits(n);
-  let v: i32 = n;
-  let i: i32 = d - 1;
+  let d = digits(n);
+  let v = n;
+  let i = d - 1;
   while (i >= 0) {
     app = emit(app, at + i, (48 + v % 10) as u8);
-    v = v / 10;
-    i = i - 1;
+    v /= 10;
+    i -= 1;
   }
   return app;
 }
@@ -679,12 +679,12 @@ fbip function emit_line(own app: App, at: i32, name: string, n: i32): App {
 }
 
 fbip function emit_metrics(own app: App, at: i32): App {
-  let seen: i32 = app.seen as i32;
-  let served: i32 = app.served as i32;
-  let refused: i32 = app.refused as i32;
-  let full: i32 = app.full as i32;
-  let live: i32 = app.live;
-  let total: i32 = app.total as i32;
+  let seen = app.seen as i32;
+  let served = app.served as i32;
+  let refused = app.refused as i32;
+  let full = app.full as i32;
+  let live = app.live;
+  let total = app.total as i32;
   app = emit_line(app, at, "requests ", seen);
   at = at + 9 + digits(seen) + 1;
   app = emit_line(app, at, "served ", served);
@@ -712,7 +712,7 @@ fip function body_len(app: App): i32 {
 }
 
 fip function head_len(status: i32, rid_len: i32, blen: i32): i32 {
-  let n: i32 = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(blen) + 23;
+  let n = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(blen) + 23;
   if (rid_len > 0) {
     n = n + 14 + rid_len + 2;
   }
@@ -720,44 +720,44 @@ fip function head_len(status: i32, rid_len: i32, blen: i32): i32 {
 }
 
 fbip function emit_head(own app: App, status: i32, src: u8[], rid_at: i32, rid_len: i32, blen: i32): App {
-  let at: i32 = 0;
+  let at = 0;
   app = emit_str(app, at, "HTTP/1.1 ");
-  at = at + 9;
+  at += 9;
   app = emit_int(app, at, status);
-  at = at + 3;
+  at += 3;
   app = emit(app, at, sp());
-  at = at + 1;
+  at += 1;
   app = emit_reason(app, at, status);
-  at = at + reason_len(status);
+  at += reason_len(status);
   app = emit(app, at, cr());
   app = emit(app, at + 1, lf());
-  at = at + 2;
+  at += 2;
   if (rid_len > 0) {
     app = emit_str(app, at, "X-Request-Id: ");
-    at = at + 14;
+    at += 14;
     app = emit_bytes(app, at, src, rid_at, rid_len);
-    at = at + rid_len;
+    at += rid_len;
     app = emit(app, at, cr());
     app = emit(app, at + 1, lf());
-    at = at + 2;
+    at += 2;
   }
   app = emit_str(app, at, "Content-Length: ");
-  at = at + 16;
+  at += 16;
   app = emit_int(app, at, blen);
-  at = at + digits(blen);
+  at += digits(blen);
   return emit_str(app, at, "\r\nConnection: close\r\n\r\n");
 }
 
 fbip function frame(own app: App, wire: u8[]): App {
-  let blen: i32 = body_len(app);
-  let status: i32 = app.r_status;
-  let kind: i32 = app.r_kind;
-  let rid_at: i32 = app.r_rid_at;
-  let rid_len: i32 = app.r_rid_len;
-  let from: i32 = app.r_from;
-  let len: i32 = app.r_len;
-  let value: i32 = app.r_value;
-  let h: i32 = head_len(status, rid_len, blen);
+  let blen = body_len(app);
+  let status = app.r_status;
+  let kind = app.r_kind;
+  let rid_at = app.r_rid_at;
+  let rid_len = app.r_rid_len;
+  let from = app.r_from;
+  let len = app.r_len;
+  let value = app.r_value;
+  let h = head_len(status, rid_len, blen);
   app = emit_head(app, status, wire, rid_at, rid_len, blen);
   if (kind == body_wire()) {
     app = emit_bytes(app, h, wire, from, len);
@@ -793,7 +793,7 @@ fip function gen_byte(n: i64, j: i32): u8 {
 
 fip function corruption(n: i64): i32 {
   if (n % (17 as i64) != 0 as i64) {
-    return 0 - 1;
+    return -1;
   }
   return (n / (17 as i64) % (6 as i64)) as i32;
 }
@@ -803,12 +803,12 @@ fip function extra_headers(n: i64): boolean {
 }
 
 fip function mix64(n: i64): i64 {
-  let x: i64 = n * (2654435761 as i64);
+  let x = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;
-  x = x * (2246822519 as i64);
+  x *= 2246822519 as i64;
   x = x ^ x >> 13 as i64;
   if (x < 0 as i64) {
-    x = 0 - x;
+    x = -x;
   }
   return x;
 }
@@ -818,7 +818,7 @@ fip function id_of(n: i64): i32 {
 }
 
 fip function method_for(n: i64, p: i32): i32 {
-  let bucket: i32 = (mix64(n + 1 as i64) % (20 as i64)) as i32;
+  let bucket = (mix64(n + 1 as i64) % (20 as i64)) as i32;
   if (p == 2) {
     if (bucket < 14) {
       return 1;
@@ -919,86 +919,86 @@ fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
 
 // fern-lint: allow cyclomatic-complexity
 fip function build_request(own w: u8[], n: i64): u8[] {
-  let id: i32 = id_of(n);
-  let p: i32 = path_of(n);
-  let m: i32 = method_for(n, p);
-  let corrupt: i32 = corruption(n);
-  let has_body: boolean = m == 1 || m == 2;
-  let blen: i32 = 0;
+  let id = id_of(n);
+  let p = path_of(n);
+  let m = method_for(n, p);
+  let corrupt = corruption(n);
+  let has_body = m == 1 || m == 2;
+  let blen = 0;
   if (has_body) {
     blen = gen_body_len(n);
   }
-  let at: i32 = 0;
+  let at = 0;
   w = put_method(w, at, m);
-  at = at + method_len(m);
+  at += method_len(m);
   if (corrupt != 0) {
     w = w.with(at, sp());
-    at = at + 1;
+    at += 1;
   }
   w = put_path(w, at, p, id);
-  at = at + path_len(p, id);
+  at += path_len(p, id);
   if (corrupt != 0 && corrupt != 1) {
     w = w.with(at, sp());
-    at = at + 1;
+    at += 1;
   }
   if (corrupt != 1) {
     w = put_str(w, at, "HTTP/1.1");
-    at = at + 8;
+    at += 8;
   }
   w = put_crlf(w, at);
-  at = at + 2;
+  at += 2;
   w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
-  at = at + 38;
-  let ua: i32 = (n % (61 as i64)) as i32;
-  let j: i32 = 0;
+  at += 38;
+  let ua = (n % (61 as i64)) as i32;
+  let j = 0;
   while (j < ua) {
     w = w.with(at + j, 97 as u8);
-    j = j + 1;
+    j += 1;
   }
-  at = at + ua;
+  at += ua;
   w = put_str(w, at, "\r\nAccept: */*\r\nX-Request-Id: ");
-  at = at + 29;
+  at += 29;
   w = put_int(w, at, n as i32);
-  at = at + digits(n as i32);
+  at += digits(n as i32);
   w = put_crlf(w, at);
-  at = at + 2;
+  at += 2;
   if (extra_headers(n)) {
-    let x: i32 = 0;
+    let x = 0;
     while (x < 6) {
       w = put_str(w, at, "X-Extra-");
       w = put_int(w, at + 8, x);
       w = put_str(w, at + 9, ": v\r\n");
-      at = at + 14;
-      x = x + 1;
+      at += 14;
+      x += 1;
     }
   }
   if (corrupt == 2) {
     w = put_str(w, at, "Transfer-Encoding: chunked\r\n");
-    at = at + 28;
+    at += 28;
   }
   if (corrupt == 4) {
     w = put_str(w, at, "Content-Length: 12a\r\n");
-    at = at + 21;
+    at += 21;
   } else if (has_body || corrupt == 3 || corrupt == 5) {
-    let declared: i32 = blen;
+    let declared = blen;
     if (corrupt == 5) {
       declared = blen + 7;
     }
     w = put_length(w, at, declared);
-    at = at + length_line_len(declared);
+    at += length_line_len(declared);
     if (corrupt == 3) {
       w = put_length(w, at, declared);
-      at = at + length_line_len(declared);
+      at += length_line_len(declared);
     }
   }
   w = put_crlf(w, at);
-  at = at + 2;
-  let k: i32 = 0;
+  at += 2;
+  let k = 0;
   while (k < blen) {
     w = w.with(at + k, gen_byte(n, k));
-    k = k + 1;
+    k += 1;
   }
-  at = at + blen;
+  at += blen;
   w = w.with(wire_len_at(), (at % 256) as u8);
   w = w.with(wire_len_at() + 1, (at / 256 % 256) as u8);
   w = w.with(wire_len_at() + 2, 0 as u8);
@@ -1010,69 +1010,69 @@ fip function wire_len_of(w: u8[]): i32 {
 }
 
 fip function mix(d: i64, b: i32): i64 {
-  let x: i64 = d ^ b as i64;
-  x = x * (1099511628211 as i64);
+  let x = d ^ b as i64;
+  x *= 1099511628211 as i64;
   x = x ^ x >> 29 as i64;
   if (x < 0 as i64) {
-    x = 0 - x;
+    x = -x;
   }
   return x % (1000000007 as i64);
 }
 
 function main(): i32 {
-  let batch: i32 = 64;
-  let rounds: i32 = 2000;
-  let wire: u8[] = zeros_u8(max_wire());
-  let app: App = new_app();
+  let batch = 64;
+  let rounds = 2000;
+  let wire = zeros_u8(max_wire());
+  let app = new_app();
 
-  let tally: i64[] = zeros_i64(12);
-  let digest: i64 = 1469598103934665603 as i64;
-  let written: i64 = 0 as i64;
+  let tally = zeros_i64(12);
+  let digest = 1469598103934665603 as i64;
+  let written = 0 as i64;
 
   let samples: i64[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
-    p = p + 1;
+    p += 1;
   }
 
-  let w: i32 = 0;
+  let w = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);
     app = serve(app, wire, wire_len_of(wire));
-    w = w + 1;
+    w += 1;
   }
 
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  let r = 0;
   while (r < rounds) {
-    let t0: i64 = monotonic_ns();
-    let k: i32 = 0;
+    let t0 = monotonic_ns();
+    let k = 0;
     while (k < batch) {
-      let n: i64 = r as i64 * (batch as i64) + k as i64;
+      let n = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       app = serve(app, wire, wire_len_of(wire));
-      let len: i32 = app.out_len;
-      let class: i32 = app.r_class;
-      let i: i32 = 0;
+      let len = app.out_len;
+      let class = app.r_class;
+      let i = 0;
       while (i < len) {
         digest = mix(digest, app.out[i] as i32);
-        i = i + 1;
+        i += 1;
       }
       written = written + len as i64;
       tally = tally.with(class, tally[class] + 1 as i64);
-      k = k + 1;
+      k += 1;
     }
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
+    r += 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let requests: i64 = rounds as i64 * (batch as i64);
-  let rejected: i64 = tally[1] + tally[2] + tally[3] + tally[4] + tally[5] + tally[6];
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let requests = rounds as i64 * (batch as i64);
+  let rejected = tally[1] + tally[2] + tally[3] + tally[4] + tally[5] + tally[6];
   let rep: bench.Report = bench.Report {
     name: "fbip",
     iterations: rounds,

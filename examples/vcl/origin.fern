@@ -5,8 +5,8 @@ import "std/serve";
 import "std/platform";
 
 function main(): i32 {
-  let argv: string[] = args();
-  let port: i32 = 9000;
+  let argv = args();
+  let port = 9000;
   if (argv.len() > 1) {
     match (i32.parse_i32(argv[1])) {
       Ok(n) => {
@@ -18,10 +18,10 @@ function main(): i32 {
       }
     }
   }
-  let served: Cell[i32] = cell_new(0);
+  let served = cell_new(0);
   let handler: (HttpRequest, platform.Host) => HttpResponse = (req: HttpRequest, plat: platform.Host): HttpResponse => {
     served.set(served.get() + 1);
-    let body: string = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
+    let body = "origin-hit=" + served.get().to_string() + " path=" + req.path + "\n";
     return http.ok(body).with_header("Cache-Control", "max-age=60");
   };
   eprint("origin: serving on port " + port.to_string());

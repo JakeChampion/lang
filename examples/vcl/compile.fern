@@ -37,24 +37,24 @@ import "./eval";
 import "./machine";
 
 pub function quote(s: string): string {
-  let out: string = "\"";
-  let i: i32 = 0;
+  let out = "\"";
+  let i = 0;
   while (i < s.len()) {
-    let b: u8 = s[i];
+    let b = s[i];
     if (b == 34) {
-      out = out + "\\\"";
+      out += "\\\"";
     } else if (b == 92) {
-      out = out + "\\\\";
+      out += "\\\\";
     } else if (b == 10) {
-      out = out + "\\n";
+      out += "\\n";
     } else if (b == 9) {
-      out = out + "\\t";
+      out += "\\t";
     } else if (b == 13) {
-      out = out + "\\r";
+      out += "\\r";
     } else {
-      out = out + slice_unchecked(s, i, i + 1);
+      out += slice_unchecked(s, i, i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return out + "\"";
 }
@@ -79,8 +79,8 @@ function object_of(name: string): string {
 }
 
 function header_key(name: string): string {
-  let obj: string = object_of(name);
-  let prefix: string = obj + ".http.";
+  let obj = object_of(name);
+  let prefix = obj + ".http.";
   return slice_unchecked(name, prefix.len(), name.len()).to_owned();
 }
 
@@ -173,7 +173,7 @@ function txn_update(field: string, expr: string): string {
 // fern-lint: allow cyclomatic-complexity
 pub function write_code(name: string, v: string): string {
   if (is_header(name)) {
-    let obj: string = object_of(name);
+    let obj = object_of(name);
     return msg_update(obj, "headers", "t." + obj + ".headers.set(" + quote(header_key(name)) + ", value.to_str(" + v + "))");
   }
   if (name == "req.method") {
@@ -225,7 +225,7 @@ pub function write_code(name: string, v: string): string {
 }
 
 pub function unset_code(name: string): string {
-  let obj: string = object_of(name);
+  let obj = object_of(name);
   return msg_update(obj, "headers", "t." + obj + ".headers.unset(" + quote(header_key(name)) + ")");
 }
 
@@ -244,8 +244,8 @@ function bind(ind: string, n: i32, expr: string): Emit {
 }
 
 function bind_checked(ind: string, n: i32, expr: string): Emit {
-  let res: string = "r" + n.to_string();
-  let out: string = tmp(n);
+  let res = "r" + n.to_string();
+  let out = tmp(n);
   let code: string = ind + "let " + res + ": Result[value.Value, string] = " + expr + ";\n" + ind + "let " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(ok" + n.to_string() + ") => {\n" + ind + "    " + out + " = ok" + n.to_string() + ";\n" + ind + "  }\n" + ind + "}\n";
   return Emit { code: code, name: out, next: n + 1, ok: true, err: "" };
 }
@@ -295,7 +295,7 @@ function literal_code(e: ast.Expr): Result[string, string] {
       return Ok("VBool(false)");
     },
     ENumber(n) => {
-      let code: string = num_literal(n.text);
+      let code = num_literal(n.text);
       if (code == "") {
         return Err("malformed number '" + n.text + "'");
       }
@@ -330,23 +330,23 @@ function literal_code(e: ast.Expr): Result[string, string] {
 pub struct Env { acls: string[], backends: machine.Backend[] }
 
 function has_backend(env: Env, name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < env.backends.len()) {
     if (env.backends[i].name == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function has(items: string[], s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < items.len()) {
     if (items[i] == s) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -391,124 +391,124 @@ function acl_operand(env: Env, e: ast.Expr): string {
 struct Seq { code: string, names: string[], next: i32, ok: boolean, err: string }
 
 function emit_seq(env: Env, es: ast.Expr[], ind: string, n: i32): Seq {
-  let code: string = "";
+  let code = "";
   let names: string[] = [];
-  let cur: i32 = n;
-  let i: i32 = 0;
+  let cur = n;
+  let i = 0;
   while (i < es.len()) {
-    let e: Emit = emit_expr(env, es[i], ind, cur);
+    let e = emit_expr(env, es[i], ind, cur);
     if (!e.ok) {
       return Seq { code: "", names: names, next: cur, ok: false, err: e.err };
     }
-    code = code + e.code;
+    code += e.code;
     names = names.append(e.name);
     cur = e.next;
-    i = i + 1;
+    i += 1;
   }
   return Seq { code: code, names: names, next: cur, ok: true, err: "" };
 }
 
 function emit_call(env: Env, c: ast.CallExpr, ind: string, n: i32): Emit {
-  let args: Seq = emit_seq(env, c.args, ind, n);
+  let args = emit_seq(env, c.args, ind, n);
   if (!args.ok) {
     return emit_err(args.err);
   }
-  let cur: i32 = args.next;
-  let lst: string = "";
-  let i: i32 = 0;
+  let cur = args.next;
+  let lst = "";
+  let i = 0;
   while (i < args.names.len()) {
     if (i > 0) {
-      lst = lst + ", ";
+      lst += ", ";
     }
-    lst = lst + args.names[i];
-    i = i + 1;
+    lst += args.names[i];
+    i += 1;
   }
-  let res: string = "c" + cur.to_string();
-  let out: string = tmp(cur);
-  let code: string = args.code + ind + "let a" + cur.to_string() + ": value.Value[] = [" + lst + "];\n" + ind + "let " + res + ": eval.EvalOut = eval.call_builtin(t, " + quote(c.callee) + ", a" + cur.to_string() + ");\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return eval.failed(" + res + ".txn, " + res + ".err);\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "let " + out + ": value.Value = " + res + ".val;\n";
+  let res = "c" + cur.to_string();
+  let out = tmp(cur);
+  let code = args.code + ind + "let a" + cur.to_string() + ": value.Value[] = [" + lst + "];\n" + ind + "let " + res + ": eval.EvalOut = eval.call_builtin(t, " + quote(c.callee) + ", a" + cur.to_string() + ");\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return eval.failed(" + res + ".txn, " + res + ".err);\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "let " + out + ": value.Value = " + res + ".val;\n";
   return Emit { code: code, name: out, next: cur + 1, ok: true, err: "" };
 }
 
 function emit_logical(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
-  let left: Emit = emit_expr(env, b.lhs, ind, n);
+  let left = emit_expr(env, b.lhs, ind, n);
   if (!left.ok) {
     return left;
   }
-  let out: string = tmp(left.next);
-  let inner: i32 = left.next + 1;
-  let gate: string = "if (value.to_bool(" + left.name + "))";
-  let seed: string = "VBool(true)";
+  let out = tmp(left.next);
+  let inner = left.next + 1;
+  let gate = "if (value.to_bool(" + left.name + "))";
+  let seed = "VBool(true)";
   if (b.op == "&&") {
     seed = "VBool(false)";
   } else {
     gate = "if (!value.to_bool(" + left.name + "))";
   }
-  let right: Emit = emit_expr(env, b.rhs, ind + "  ", inner);
+  let right = emit_expr(env, b.rhs, ind + "  ", inner);
   if (!right.ok) {
     return right;
   }
-  let code: string = left.code + ind + "let " + out + ": value.Value = " + seed + ";\n" + ind + gate + " {\n" + right.code + ind + "  " + out + " = VBool(value.to_bool(" + right.name + "));\n" + ind + "}\n";
+  let code = left.code + ind + "let " + out + ": value.Value = " + seed + ";\n" + ind + gate + " {\n" + right.code + ind + "  " + out + " = VBool(value.to_bool(" + right.name + "));\n" + ind + "}\n";
   return Emit { code: code, name: out, next: right.next, ok: true, err: "" };
 }
 
 function emit_match(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
-  let negate: string = "";
+  let negate = "";
   if (b.op == "!~") {
     negate = "!";
   }
-  let left: Emit = emit_expr(env, b.lhs, ind, n);
+  let left = emit_expr(env, b.lhs, ind, n);
   if (!left.ok) {
     return left;
   }
-  let acl: string = acl_operand(env, b.rhs);
+  let acl = acl_operand(env, b.rhs);
   if (acl != "") {
-    let hit: Emit = bind(ind, left.next, "VBool(" + negate + "acl_" + acl + "(value.to_str(" + left.name + ")))");
+    let hit = bind(ind, left.next, "VBool(" + negate + "acl_" + acl + "(value.to_str(" + left.name + ")))");
     return Emit { code: left.code + hit.code, name: hit.name, next: hit.next, ok: true, err: "" };
   }
-  let right: Emit = emit_expr(env, b.rhs, ind, left.next);
+  let right = emit_expr(env, b.rhs, ind, left.next);
   if (!right.ok) {
     return right;
   }
-  let m: Emit = bind_checked(ind, right.next, "eval.match_pattern(value.to_str(" + right.name + "), value.to_str(" + left.name + "), " + (if (b.op == "!~") { "true" } else { "false" }) + ")");
+  let m = bind_checked(ind, right.next, "eval.match_pattern(value.to_str(" + right.name + "), value.to_str(" + left.name + "), " + (if (b.op == "!~") { "true" } else { "false" }) + ")");
   return Emit { code: left.code + right.code + m.code, name: m.name, next: m.next, ok: true, err: "" };
 }
 
 function emit_binary(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
-  let cls: string = eval.op_class(b.op);
+  let cls = eval.op_class(b.op);
   if (cls == "match") {
     return emit_match(env, b, ind, n);
   }
   if (cls == "logical") {
     return emit_logical(env, b, ind, n);
   }
-  let left: Emit = emit_expr(env, b.lhs, ind, n);
+  let left = emit_expr(env, b.lhs, ind, n);
   if (!left.ok) {
     return left;
   }
-  let right: Emit = emit_expr(env, b.rhs, ind, left.next);
+  let right = emit_expr(env, b.rhs, ind, left.next);
   if (!right.ok) {
     return right;
   }
-  let pre: string = left.code + right.code;
+  let pre = left.code + right.code;
   if (cls == "compare" && !is_ordering(b.op)) {
-    let neg: string = "";
+    let neg = "";
     if (b.op == "!=") {
       neg = "!";
     }
-    let eq: Emit = bind(ind, right.next, "VBool(" + neg + "value.equal(" + left.name + ", " + right.name + "))");
+    let eq = bind(ind, right.next, "VBool(" + neg + "value.equal(" + left.name + ", " + right.name + "))");
     return Emit { code: pre + eq.code, name: eq.name, next: eq.next, ok: true, err: "" };
   }
   if (is_ordering(b.op)) {
     return emit_ordering(pre, b.op, left.name, right.name, ind, right.next);
   }
-  let ar: Emit = bind_checked(ind, right.next, "value.arith(" + quote(b.op) + ", " + left.name + ", " + right.name + ")");
+  let ar = bind_checked(ind, right.next, "value.arith(" + quote(b.op) + ", " + left.name + ", " + right.name + ")");
   return Emit { code: pre + ar.code, name: ar.name, next: ar.next, ok: true, err: "" };
 }
 
 function emit_ordering(pre: string, op: string, l: string, r: string, ind: string, n: i32): Emit {
-  let res: string = "o" + n.to_string();
-  let out: string = tmp(n);
-  let test: string = res + "v " + op + " 0";
+  let res = "o" + n.to_string();
+  let out = tmp(n);
+  let test = res + "v " + op + " 0";
   let code: string = ind + "let " + res + ": Result[i32, string] = value.compare(" + l + ", " + r + ");\n" + ind + "let " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(" + res + "v) => {\n" + ind + "    " + out + " = VBool(" + test + ");\n" + ind + "  }\n" + ind + "}\n";
   return Emit { code: pre + code, name: out, next: n + 1, ok: true, err: "" };
 }
@@ -533,15 +533,15 @@ pub function emit_expr(env: Env, e: ast.Expr, ind: string, n: i32): Emit {
       return emit_binary(env, b, ind, n);
     },
     EUnary(u) => {
-      let inner: Emit = emit_expr(env, u.operand, ind, n);
+      let inner = emit_expr(env, u.operand, ind, n);
       if (!inner.ok) {
         return inner;
       }
       if (u.op == "!") {
-        let not: Emit = bind(ind, inner.next, "VBool(!value.to_bool(" + inner.name + "))");
+        let not = bind(ind, inner.next, "VBool(!value.to_bool(" + inner.name + "))");
         return Emit { code: inner.code + not.code, name: not.name, next: not.next, ok: true, err: "" };
       }
-      let neg: Emit = bind_checked(ind, inner.next, "value.arith(\"-\", VInt(0), " + inner.name + ")");
+      let neg = bind_checked(ind, inner.next, "value.arith(\"-\", VInt(0), " + inner.name + ")");
       return Emit { code: inner.code + neg.code, name: neg.name, next: neg.next, ok: true, err: "" };
     },
     EParen(inner) => {
@@ -567,17 +567,17 @@ function stmts_err(msg: string): Stmts {
 }
 
 function emit_set(env: Env, s: ast.SetStmt, ind: string, n: i32): Stmts {
-  let v: Emit = emit_expr(env, s.value, ind, n);
+  let v = emit_expr(env, s.value, ind, n);
   if (!v.ok) {
     return stmts_err(v.err);
   }
-  let code: string = v.code;
-  let src: string = v.name;
-  let cur: i32 = v.next;
+  let code = v.code;
+  let src = v.name;
+  let cur = v.next;
   if (s.op != "=") {
-    let op: string = slice_unchecked(s.op, 0, s.op.len() - 1).to_owned();
-    let old: Emit = bind(ind, cur, read_code(s.target));
-    let combined: Emit = bind_checked(ind, old.next, "value.arith(" + quote(op) + ", " + old.name + ", " + src + ")");
+    let op = slice_unchecked(s.op, 0, s.op.len() - 1).to_owned();
+    let old = bind(ind, cur, read_code(s.target));
+    let combined = bind_checked(ind, old.next, "value.arith(" + quote(op) + ", " + old.name + ", " + src + ")");
     code = code + old.code + combined.code;
     src = combined.name;
     cur = combined.next;
@@ -592,24 +592,24 @@ function emit_return(env: Env, s: ast.ReturnStmt, ind: string, n: i32): Stmts {
   if (!s.has_args || s.args.len() == 0) {
     return Stmts { code: ind + "return eval.returned(t, eval.action(" + quote(s.action) + "));\n", next: n, ok: true, err: "" };
   }
-  let args: Seq = emit_seq(env, s.args, ind, n);
+  let args = emit_seq(env, s.args, ind, n);
   if (!args.ok) {
     return stmts_err(args.err);
   }
-  let status: string = "0";
+  let status = "0";
   if (args.names.len() > 0) {
     status = "vars.as_int(" + args.names[0] + ")";
   }
-  let reason: string = "\"\"";
+  let reason = "\"\"";
   if (args.names.len() > 1) {
     reason = "value.to_str(" + args.names[1] + ")";
   }
-  let code: string = args.code + ind + "return eval.returned(t, eval.synth_action(" + quote(s.action) + ", " + status + ", " + reason + "));\n";
+  let code = args.code + ind + "return eval.returned(t, eval.synth_action(" + quote(s.action) + ", " + status + ", " + reason + "));\n";
   return Stmts { code: code, next: args.next, ok: true, err: "" };
 }
 
 function emit_call_stmt(s: ast.CallStmt, ind: string, n: i32): Stmts {
-  let res: string = "s" + n.to_string();
+  let res = "s" + n.to_string();
   let code: string = ind + "let " + res + ": eval.ExecOut = sub_" + s.name + "(t);\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return " + res + ";\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "match (" + res + ".flow) {\n" + ind + "  FReturn(a" + n.to_string() + ") => {\n" + ind + "    if (a" + n.to_string() + ".name != \"none\") {\n" + ind + "      return " + res + ";\n" + ind + "    }\n" + ind + "  },\n" + ind + "  FNext => {}\n" + ind + "}\n";
   return Stmts { code: code, next: n + 1, ok: true, err: "" };
 }
@@ -625,20 +625,20 @@ function emit_arm(env: Env, s: ast.IfStmt, idx: i32, ind: string, n: i32): Stmts
     }
     return Stmts { code: "", next: n, ok: true, err: "" };
   }
-  let arm: ast.IfArm = s.arms[idx];
-  let cond: Emit = emit_expr(env, arm.cond, ind, n);
+  let arm = s.arms[idx];
+  let cond = emit_expr(env, arm.cond, ind, n);
   if (!cond.ok) {
     return stmts_err(cond.err);
   }
-  let body: Stmts = emit_block(env, arm.body, ind + "  ", cond.next);
+  let body = emit_block(env, arm.body, ind + "  ", cond.next);
   if (!body.ok) {
     return body;
   }
-  let rest: Stmts = emit_arm(env, s, idx + 1, ind + "  ", body.next);
+  let rest = emit_arm(env, s, idx + 1, ind + "  ", body.next);
   if (!rest.ok) {
     return rest;
   }
-  let code: string = cond.code + ind + "if (value.to_bool(" + cond.name + ")) {\n" + body.code + ind + "}";
+  let code = cond.code + ind + "if (value.to_bool(" + cond.name + ")) {\n" + body.code + ind + "}";
   if (rest.code == "") {
     return Stmts { code: code + "\n", next: rest.next, ok: true, err: "" };
   }
@@ -664,7 +664,7 @@ function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
       return emit_call_stmt(x, ind, n);
     },
     SExpr(x) => {
-      let e: Emit = emit_expr(env, x.value, ind, n);
+      let e = emit_expr(env, x.value, ind, n);
       if (!e.ok) {
         return stmts_err(e.err);
       }
@@ -686,32 +686,32 @@ function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
 }
 
 function emit_block(env: Env, b: ast.Block, ind: string, n: i32): Stmts {
-  let code: string = "";
-  let cur: i32 = n;
-  let i: i32 = 0;
+  let code = "";
+  let cur = n;
+  let i = 0;
   while (i < b.stmts.len()) {
-    let s: Stmts = emit_stmt(env, b.stmts[i], ind, cur);
+    let s = emit_stmt(env, b.stmts[i], ind, cur);
     if (!s.ok) {
       return s;
     }
-    code = code + s.code;
+    code += s.code;
     cur = s.next;
-    i = i + 1;
+    i += 1;
   }
   return Stmts { code: code, next: cur, ok: true, err: "" };
 }
 
 function emit_acl(a: ast.AclDecl): Result[string, string] {
   let code: string = "// ACL `" + a.name + "`, compiled: masks folded, longest prefix wins.\n" + "function acl_" + a.name + "(addr: string): boolean {\n" + "  match (eval.parse_ipv4(addr)) {\n" + "    None => {\n      return false;\n    },\n" + "    Some(ip) => {\n" + "      let best: i32 = 0 - 1;\n" + "      let neg: boolean = false;\n";
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.entries.len()) {
-    let e: ast.AclEntry = a.entries[i];
+    let e = a.entries[i];
     match (eval.parse_ipv4(e.host)) {
       None => {
         return Err("ACL entry '" + e.host + "' is not an IPv4 address or 'localhost'");
       },
       Some(base) => {
-        let bits: i32 = 32;
+        let bits = 32;
         if (e.mask != "") {
           match (i32.parse_i32(e.mask)) {
             Ok(b) => {
@@ -725,22 +725,22 @@ function emit_acl(a: ast.AclDecl): Result[string, string] {
         if (bits < 0 || bits > 32) {
           return Err("ACL mask /" + e.mask + " is out of range");
         }
-        let m: i64 = eval.mask_of(bits);
-        let masked: i64 = base & m;
-        let negated: string = "false";
+        let m = eval.mask_of(bits);
+        let masked = base & m;
+        let negated = "false";
         if (e.negated) {
           negated = "true";
         }
         code = code + "      if ((ip & " + m.to_string() + ") == " + masked.to_string() + " && " + bits.to_string() + " > best) {\n" + "        best = " + bits.to_string() + ";\n" + "        neg = " + negated + ";\n" + "      }\n";
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(code + "      if (best < 0) {\n        return false;\n      }\n" + "      return !neg;\n    }\n  }\n}\n");
 }
 
 function emit_sub(env: Env, s: ast.SubDecl): Result[string, string] {
-  let body: Stmts = emit_block(env, s.body, "  ", 0);
+  let body = emit_block(env, s.body, "  ", 0);
   if (!body.ok) {
     return Err("in sub " + s.name + ": " + body.err);
   }
@@ -749,7 +749,7 @@ function emit_sub(env: Env, s: ast.SubDecl): Result[string, string] {
 
 pub function env_of(decls: ast.Decl[]): Env {
   let acls: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DAcl(a) => {
@@ -757,14 +757,14 @@ pub function env_of(decls: ast.Decl[]): Env {
       },
       _ => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return Env { acls: acls, backends: machine.backends_of(decls) };
 }
 
 function sub_names(decls: ast.Decl[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DSub(s) => {
@@ -772,41 +772,41 @@ function sub_names(decls: ast.Decl[]): string[] {
       },
       _ => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function emit_dispatch(names: string[]): string {
-  let code: string = "// The dispatcher `machine.Driver` calls. A subroutine this policy does\n" + "// not define falls through, so the built-in default applies.\n" + "function run_sub(name: string, t: runtime.Txn): eval.ExecOut {\n";
-  let i: i32 = 0;
+  let code = "// The dispatcher `machine.Driver` calls. A subroutine this policy does\n" + "// not define falls through, so the built-in default applies.\n" + "function run_sub(name: string, t: runtime.Txn): eval.ExecOut {\n";
+  let i = 0;
   while (i < names.len()) {
     code = code + "  if (name == " + quote(names[i]) + ") {\n" + "    return sub_" + names[i] + "(t);\n  }\n";
-    i = i + 1;
+    i += 1;
   }
   return code + "  return eval.fell_through(t);\n}\n";
 }
 
 function join(items: string[], sep: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < items.len()) {
     if (i > 0) {
-      out = out + sep;
+      out += sep;
     }
-    out = out + items[i];
-    i = i + 1;
+    out += items[i];
+    i += 1;
   }
   return out;
 }
 
 function backend_list(env: Env): string {
   let lits: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < env.backends.len()) {
-    let b: machine.Backend = env.backends[i];
+    let b = env.backends[i];
     lits = lits.append("machine.Backend { name: " + quote(b.name) + ", host: " + quote(b.host) + ", port: " + b.port.to_string() + " }");
-    i = i + 1;
+    i += 1;
   }
   if (lits.len() == 0) {
     return "let __b: machine.Backend[] = [];";
@@ -815,9 +815,9 @@ function backend_list(env: Env): string {
 }
 
 pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] {
-  let env: Env = env_of(decls);
-  let out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/f64\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
-  let i: i32 = 0;
+  let env = env_of(decls);
+  let out = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/f64\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
+  let i = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DAcl(a) => {
@@ -842,7 +842,7 @@ pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] 
       },
       _ => {}
     }
-    i = i + 1;
+    i += 1;
   }
   out = out + emit_dispatch(sub_names(decls)) + "\n";
   return Ok(out + main_code(env));

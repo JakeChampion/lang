@@ -11,45 +11,45 @@ function fail(pos: i32): Eval {
 }
 
 function skip_ws(s: string, pos: i32): i32 {
-  let p: i32 = pos;
+  let p = pos;
   while (p < s.len() && (s[p] == 32 || s[p] == 9)) {
-    p = p + 1;
+    p += 1;
   }
   return p;
 }
 
 function parse_primary(s: string, pos: i32): Eval {
-  let p: i32 = skip_ws(s, pos);
+  let p = skip_ws(s, pos);
   if (p >= s.len()) {
     return fail(p);
   }
   if (s[p] == 40) {
-    let inner: Eval = parse_expr(s, p + 1);
+    let inner = parse_expr(s, p + 1);
     if (!inner.ok) {
       return inner;
     }
-    let q: i32 = skip_ws(s, inner.pos);
+    let q = skip_ws(s, inner.pos);
     if (q >= s.len() || s[q] != 41) {
       return fail(q);
     }
     return Eval { val: inner.val, pos: q + 1, ok: true };
   }
-  let start: i32 = p;
+  let start = p;
   let v: f64 = 0.0;
-  let saw_digit: boolean = false;
+  let saw_digit = false;
   while (p < s.len() && s[p].is_ascii_digit()) {
     v = v * 10.0 + (s[p] - 48) as f64;
     saw_digit = true;
-    p = p + 1;
+    p += 1;
   }
   if (p < s.len() && s[p] == 46) {
-    p = p + 1;
+    p += 1;
     let scale: f64 = 0.1;
     while (p < s.len() && s[p].is_ascii_digit()) {
       v = v + (s[p] - 48) as f64 * scale;
-      scale = scale / 10.0;
+      scale /= 10.0;
       saw_digit = true;
-      p = p + 1;
+      p += 1;
     }
   }
   if (!saw_digit) {
@@ -59,9 +59,9 @@ function parse_primary(s: string, pos: i32): Eval {
 }
 
 function parse_unary(s: string, pos: i32): Eval {
-  let p: i32 = skip_ws(s, pos);
+  let p = skip_ws(s, pos);
   if (p < s.len() && s[p] == 45) {
-    let e: Eval = parse_unary(s, p + 1);
+    let e = parse_unary(s, p + 1);
     if (!e.ok) {
       return e;
     }
@@ -74,27 +74,27 @@ function parse_unary(s: string, pos: i32): Eval {
 }
 
 function parse_power(s: string, pos: i32): Eval {
-  let base: Eval = parse_unary(s, pos);
+  let base = parse_unary(s, pos);
   if (!base.ok) {
     return base;
   }
-  let p: i32 = skip_ws(s, base.pos);
+  let p = skip_ws(s, base.pos);
   if (p < s.len() && s[p] == 94) {
-    let exp: Eval = parse_power(s, p + 1);
+    let exp = parse_power(s, p + 1);
     if (!exp.ok) {
       return exp;
     }
-    let n: i32 = exp.val as i32;
+    let n = exp.val as i32;
     let result: f64 = 1.0;
-    let b: f64 = base.val;
-    let k: i32 = n;
+    let b = base.val;
+    let k = n;
     if (k < 0) {
-      k = 0 - k;
+      k = -k;
     }
-    let i: i32 = 0;
+    let i = 0;
     while (i < k) {
-      result = result * b;
-      i = i + 1;
+      result *= b;
+      i += 1;
     }
     if (n < 0) {
       result = 1.0 / result;
@@ -105,37 +105,37 @@ function parse_power(s: string, pos: i32): Eval {
 }
 
 function parse_term(s: string, pos: i32): Eval {
-  let left: Eval = parse_power(s, pos);
+  let left = parse_power(s, pos);
   if (!left.ok) {
     return left;
   }
-  let acc: f64 = left.val;
-  let p: i32 = left.pos;
+  let acc = left.val;
+  let p = left.pos;
   while (true) {
-    let q: i32 = skip_ws(s, p);
+    let q = skip_ws(s, p);
     if (q >= s.len()) {
       break;
     }
-    let op: i32 = s[q] as i32;
+    let op = s[q] as i32;
     if (op != 42 && op != 47 && op != 37) {
       break;
     }
-    let rhs: Eval = parse_power(s, q + 1);
+    let rhs = parse_power(s, q + 1);
     if (!rhs.ok) {
       return rhs;
     }
     if (op == 42) {
-      acc = acc * rhs.val;
+      acc *= rhs.val;
     } else if (op == 47) {
       if (rhs.val == 0.0) {
         return fail(q);
       }
-      acc = acc / rhs.val;
+      acc /= rhs.val;
     } else {
       if (rhs.val == 0.0) {
         return fail(q);
       }
-      let t: f64 = (acc / rhs.val).trunc();
+      let t = (acc / rhs.val).trunc();
       acc = acc - t * rhs.val;
     }
     p = rhs.pos;
@@ -144,29 +144,29 @@ function parse_term(s: string, pos: i32): Eval {
 }
 
 function parse_expr(s: string, pos: i32): Eval {
-  let left: Eval = parse_term(s, pos);
+  let left = parse_term(s, pos);
   if (!left.ok) {
     return left;
   }
-  let acc: f64 = left.val;
-  let p: i32 = left.pos;
+  let acc = left.val;
+  let p = left.pos;
   while (true) {
-    let q: i32 = skip_ws(s, p);
+    let q = skip_ws(s, p);
     if (q >= s.len()) {
       break;
     }
-    let op: i32 = s[q] as i32;
+    let op = s[q] as i32;
     if (op != 43 && op != 45) {
       break;
     }
-    let rhs: Eval = parse_term(s, q + 1);
+    let rhs = parse_term(s, q + 1);
     if (!rhs.ok) {
       return rhs;
     }
     if (op == 43) {
-      acc = acc + rhs.val;
+      acc += rhs.val;
     } else {
-      acc = acc - rhs.val;
+      acc -= rhs.val;
     }
     p = rhs.pos;
   }
@@ -174,7 +174,7 @@ function parse_expr(s: string, pos: i32): Eval {
 }
 
 function format_result(v: f64): string {
-  let t: f64 = v.trunc();
+  let t = v.trunc();
   if (t == v && v < 9e+15 && v > 0.0 - 9e+15) {
     return (v as i64).to_string();
   }
@@ -186,8 +186,8 @@ function eval_line(line: string): boolean {
   if (t.is_empty()) {
     return true;
   }
-  let e: Eval = parse_expr(t, 0);
-  let end: i32 = skip_ws(t, e.pos);
+  let e = parse_expr(t, 0);
+  let end = skip_ws(t, e.pos);
   if (!e.ok || end != t.len()) {
     eprint("bc: invalid expression: " + line);
     return false;
@@ -197,16 +197,16 @@ function eval_line(line: string): boolean {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let ok: boolean = true;
+  let argv = args();
+  let ok = true;
 
   if (argv.len() > 1) {
-    let i: i32 = 1;
+    let i = 1;
     while (i < argv.len()) {
       if (!eval_line(argv[i])) {
         ok = false;
       }
-      i = i + 1;
+      i += 1;
     }
     if (ok) {
       return 0;
@@ -214,7 +214,7 @@ function main(): i32 {
     return 1;
   }
 
-  let text: string = "";
+  let text = "";
   match (io.read_all_stdin()) {
     Ok(input) => {
       text = input;
@@ -224,13 +224,13 @@ function main(): i32 {
       return 1;
     }
   }
-  let lines: string[] = text.lines();
-  let j: i32 = 0;
+  let lines = text.lines();
+  let j = 0;
   while (j < lines.len()) {
     if (!eval_line(lines[j])) {
       ok = false;
     }
-    j = j + 1;
+    j += 1;
   }
   if (ok) {
     return 0;

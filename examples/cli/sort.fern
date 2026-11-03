@@ -22,7 +22,7 @@ function slurp(path: string): string {
 }
 
 function leading_int(s: string): i32 {
-  let t: str = s.trim_start();
+  let t = s.trim_start();
   match (i32.parse_i32(t)) {
     Ok(n) => {
       return n;
@@ -34,13 +34,13 @@ function leading_int(s: string): i32 {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let o: Opts = Opts { reverse: false, numeric: false, uniq: false, fold: false };
+  let argv = args();
+  let o = Opts { reverse: false, numeric: false, uniq: false, fold: false };
   let inputs: string[] = [];
 
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "-r") {
       o = Opts { ...o, reverse: true };
     } else if (a == "-n") {
@@ -52,45 +52,45 @@ function main(): i32 {
     } else {
       inputs = inputs.append(a);
     }
-    i = i + 1;
+    i += 1;
   }
   if (inputs.len() == 0) {
     inputs = inputs.append("-");
   }
 
   let lines: string[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < inputs.len()) {
-    let ls: string[] = slurp(inputs[j]).lines();
-    let k: i32 = 0;
+    let ls = slurp(inputs[j]).lines();
+    let k = 0;
     while (k < ls.len()) {
       lines = lines.append(ls[k]);
-      k = k + 1;
+      k += 1;
     }
-    j = j + 1;
+    j += 1;
   }
 
   let sorted: string[] = [];
   if (o.numeric) {
     let keys: i32[] = [];
-    let m: i32 = 0;
+    let m = 0;
     while (m < lines.len()) {
       keys = keys.append(leading_int(lines[m]));
-      m = m + 1;
+      m += 1;
     }
-    let a: i32 = 1;
+    let a = 1;
     while (a < lines.len()) {
-      let kv: i32 = keys[a];
-      let lv: string = lines[a];
-      let b: i32 = a - 1;
+      let kv = keys[a];
+      let lv = lines[a];
+      let b = a - 1;
       while (b >= 0 && keys[b] > kv) {
         keys = keys.with(b + 1, keys[b]);
         lines = lines.with(b + 1, lines[b]);
-        b = b - 1;
+        b -= 1;
       }
       keys = keys.with(b + 1, kv);
       lines = lines.with(b + 1, lv);
-      a = a + 1;
+      a += 1;
     }
     sorted = lines;
   } else if (o.fold) {
@@ -103,19 +103,19 @@ function main(): i32 {
     sorted = sorted.reverse();
   }
 
-  let prev: string = "";
-  let have_prev: boolean = false;
-  let p: i32 = 0;
+  let prev = "";
+  let have_prev = false;
+  let p = 0;
   while (p < sorted.len()) {
-    let line: string = sorted[p];
+    let line = sorted[p];
     if (o.uniq && have_prev && line == prev) {
-      p = p + 1;
+      p += 1;
       continue;
     }
     print(line);
     prev = line;
     have_prev = true;
-    p = p + 1;
+    p += 1;
   }
   return 0;
 }

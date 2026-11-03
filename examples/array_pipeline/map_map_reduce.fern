@@ -47,10 +47,10 @@ function combine(a: i64, b: i64): i64 {
 
 function build_input(n: i32): i64[] {
   let xs: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     xs = xs.append(i as i64 * (2654435761 as i64) % modulus());
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
@@ -95,11 +95,11 @@ function run_closure_loop(sel: i32, xs: i64[]): i64 {
   if (xs.len() == 0) {
     return 0 as i64;
   }
-  let acc: i64 = g(f(xs[0]));
-  let i: i32 = 1;
+  let acc = g(f(xs[0]));
+  let i = 1;
   while (i < xs.len()) {
     acc = h(acc, g(f(xs[i])));
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -108,13 +108,13 @@ function run_loop(xs: i64[]): i64 {
   if (xs.len() == 0) {
     return 0 as i64;
   }
-  let m: i64 = modulus();
-  let acc: i64 = ((xs[0] * (3 as i64) + 1 as i64) % m * (5 as i64) + 7 as i64) % m;
-  let i: i32 = 1;
+  let m = modulus();
+  let acc = ((xs[0] * (3 as i64) + 1 as i64) % m * (5 as i64) + 7 as i64) % m;
+  let i = 1;
   while (i < xs.len()) {
-    let v: i64 = ((xs[i] * (3 as i64) + 1 as i64) % m * (5 as i64) + 7 as i64) % m;
+    let v = ((xs[i] * (3 as i64) + 1 as i64) % m * (5 as i64) + 7 as i64) % m;
     acc = (acc + v) % m;
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -123,11 +123,11 @@ function run_call_loop(xs: i64[]): i64 {
   if (xs.len() == 0) {
     return 0 as i64;
   }
-  let acc: i64 = elem_g(elem_f(xs[0]));
-  let i: i32 = 1;
+  let acc = elem_g(elem_f(xs[0]));
+  let i = 1;
   while (i < xs.len()) {
     acc = combine(acc, elem_g(elem_f(xs[i])));
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -146,12 +146,12 @@ function dispatch(variant: i32, sel: i32, xs: i64[]): i64 {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let name: string = "pipeline";
+  let argv = args();
+  let name = "pipeline";
   if (argv.len() > 1) {
     name = argv[1];
   }
-  let variant: i32 = 0;
+  let variant = 0;
   if (name == "closure_loop") {
     variant = 1;
   }
@@ -162,51 +162,51 @@ function main(): i32 {
     variant = 3;
   }
 
-  let n: i32 = 4096;
+  let n = 4096;
   if (argv.len() > 2) {
     n = i32.parse_i32(argv[2]).unwrap_or(4096);
   }
-  let rounds: i32 = 200;
+  let rounds = 200;
   if (argv.len() > 3) {
     rounds = i32.parse_i32(argv[3]).unwrap_or(200);
   }
 
-  let sel: i32 = 0;
+  let sel = 0;
   if (argv.len() > 4) {
     sel = 1;
   }
 
-  let xs: i64[] = build_input(n);
+  let xs = build_input(n);
 
   let samples: i64[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
-    p = p + 1;
+    p += 1;
   }
 
-  let cold_a0: i64 = bench.alloc_count();
-  let cold_b0: i64 = bench.bump_bytes();
-  let checksum: i64 = dispatch(variant, sel, xs);
-  let cold_allocs: i64 = bench.allocs_after(cold_a0);
-  let cold_fresh: i64 = bench.fresh_bytes_after(cold_b0);
+  let cold_a0 = bench.alloc_count();
+  let cold_b0 = bench.bump_bytes();
+  let checksum = dispatch(variant, sel, xs);
+  let cold_allocs = bench.allocs_after(cold_a0);
+  let cold_fresh = bench.fresh_bytes_after(cold_b0);
 
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  let r = 0;
   while (r < rounds) {
-    let t0: i64 = monotonic_ns();
+    let t0 = monotonic_ns();
     checksum = (checksum * (31 as i64) + dispatch(variant, sel, xs)) % modulus();
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
+    r += 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
 
-  let rep: bench.Report = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
-  let elements: i64 = rounds as i64 * (n as i64);
+  let rep = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
+  let elements = rounds as i64 * (n as i64);
   print("{\"program\":\"map_map_reduce\"" + ",\"variant\":\"" + name + "\"" + ",\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"checksum\":" + checksum.to_string() + ",\"cold_allocs\":" + cold_allocs.to_string() + ",\"cold_fresh_bytes\":" + cold_fresh.to_string() + ",\"steady_allocs\":" + allocs.to_string() + ",\"steady_fresh_bytes\":" + fresh.to_string() + ",\"allocs_per_round_milli\":" + (allocs * (1000 as i64) / (rounds as i64)).to_string() + ",\"fresh_bytes_per_round\":" + (fresh / (rounds as i64)).to_string() + ",\"fresh_bytes_per_element_milli\":" + (fresh * (1000 as i64) / elements).to_string() + ",\"ns_per_round\":" + (elapsed_ns / (rounds as i64)).to_string() + ",\"ns_per_element_milli\":" + (elapsed_ns * (1000 as i64) / elements).to_string() + ",\"round_p50_ns\":" + rep.p50_ns().to_string() + ",\"round_p99_ns\":" + rep.p99_ns().to_string() + "}");
   return 0;
 }

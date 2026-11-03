@@ -189,10 +189,10 @@ function draw_sprite(s: u8[], value: i32): u8[] {
   let x = word(s, DEV + 0x28);
   let y = word(s, DEV + 0x2a);
   if (x >= 32768) {
-    x = x - 65536;
+    x -= 65536;
   }
   if (y >= 32768) {
-    y = y - 65536;
+    y -= 65536;
   }
   let addr = word(s, DEV + 0x2c);
   let mode = value >> 7;
@@ -200,15 +200,15 @@ function draw_sprite(s: u8[], value: i32): u8[] {
   let dx = 8;
   let dy = 8;
   if ((value & 16) != 0) {
-    dx = 0 - 8;
+    dx = -8;
   }
   if ((value & 32) != 0) {
-    dy = 0 - 8;
+    dy = -8;
   }
   for n in 0..(auto >> 4) + 1 {
     for row in 0..8 {
       let lo = s[addr + row & 65535] as i32;
-      let hi: i32 = 0;
+      let hi = 0;
       if (mode != 0) {
         hi = s[addr + row + 8 & 65535] as i32;
       }
@@ -232,10 +232,10 @@ function draw_sprite(s: u8[], value: i32): u8[] {
     }
     // Repeats move perpendicular to the final position increment.
     if ((auto & 2) != 0) {
-      x = x + dx;
+      x += dx;
     }
     if ((auto & 1) != 0) {
-      y = y + dy;
+      y += dy;
     }
   }
   if ((auto & 1) != 0) {
@@ -337,9 +337,9 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
     s = putword(s, META + 5, pc);
     let instruction = s[pc] as i32;
     pc = pc + 1 & 65535;
-    steps = steps + 1;
+    steps += 1;
     let op = instruction & 31;
-    let size: i32 = 1;
+    let size = 1;
     if ((instruction & 32) != 0) {
       size = 2;
     }
@@ -352,13 +352,13 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
       ptr = rp;
     }
     let sp = ptr;
-    let a: i32 = 0;
-    let b: i32 = 0;
-    let c: i32 = 0;
-    let consumed: i32 = 0;
-    let result: i32 = 0;
+    let a = 0;
+    let b = 0;
+    let c = 0;
+    let consumed = 0;
+    let result = 0;
     let outsize = size;
-    let pushes: i32 = 0;
+    let pushes = 0;
     if (op == 0) {
       if (instruction == 0) {
         active = false;
@@ -404,15 +404,15 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
       consumed = first;
       if (op == 3 || op == 4 || op == 5 || op == 7 || op >= 8 && op <= 11 || op == 0x11 || op == 0x13 || op == 0x15 || op == 0x17 || op >= 0x18) {
         b = peek(s, base, ptr, consumed, size);
-        consumed = consumed + size;
+        consumed += size;
       }
       if (op == 5) {
         c = peek(s, base, ptr, consumed, size);
-        consumed = consumed + size;
+        consumed += size;
       }
       if (op == 0x0d) {
         b = peek(s, base, ptr, consumed, 1);
-        consumed = consumed + 1;
+        consumed += 1;
       }
       if (!keep) {
         sp = ptr - consumed & 255;
@@ -505,7 +505,7 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
       if (op >= 0x10 && op <= 0x17) {
         let address = a;
         let mask = 65535;
-        let offset: i32 = 0;
+        let offset = 0;
         if (op == 0x10 || op == 0x11) {
           mask = 255;
         }
@@ -633,15 +633,15 @@ function fail(message: string): u8[] {
 
 function hex(s: string): i32 {
   if (s.len() == 0 || s.len() > 4) {
-    return 0 - 1;
+    return -1;
   }
-  let value: i32 = 0;
+  let value = 0;
   for c in s.bytes() {
     let digit = c as i32 - 48;
     if (c >= 97 && c <= 102) {
       digit = c as i32 - 87;
     } else if (c < 48 || c > 57) {
-      return 0 - 1;
+      return -1;
     }
     value = value * 16 + digit;
   }
@@ -663,9 +663,9 @@ function opcode(token: string): i32 {
   }
   let names = ["LIT", "INC", "POP", "NIP", "SWP", "ROT", "DUP", "OVR", "EQU", "NEQ", "GTH", "LTH", "JMP", "JCN", "JSR", "STH", "LDZ", "STZ", "LDR", "STR", "LDA", "STA", "DEI", "DEO", "ADD", "SUB", "MUL", "DIV", "AND", "ORA", "EOR", "SFT"];
   if (token.len() < 3) {
-    return 0 - 1;
+    return -1;
   }
-  let op: i32 = 0 - 1;
+  let op: i32 = -1;
   for i in 0..names.len() {
     if (token.take(3) == names[i]) {
       op = i;
@@ -678,7 +678,7 @@ function opcode(token: string): i32 {
     op = 128;
   }
   for c in token.drop(3).bytes() {
-    let flag: i32 = 0;
+    let flag = 0;
     if (c == b'2') {
       flag = 32;
     }
@@ -689,7 +689,7 @@ function opcode(token: string): i32 {
       flag = 128;
     }
     if (flag == 0) {
-      return 0 - 1;
+      return -1;
     }
     op = op | flag;
   }
@@ -708,26 +708,26 @@ function lex(source: string): Result[string[], string] {
     return Err("Source exceeds 64 KiB.");
   }
   let tokens: string[] = [];
-  let at: i32 = 0;
-  let depth: i32 = 0;
+  let at = 0;
+  let depth = 0;
   while (at < source.len()) {
     if (source[at] <= 32) {
-      at = at + 1;
+      at += 1;
       continue;
     }
     let start = at;
     while (at < source.len() && source[at] > 32) {
-      at = at + 1;
+      at += 1;
     }
     let t = source.drop(start).take(at - start);
     if (t.starts_with("(")) {
       if (!t.ends_with(")")) {
-        depth = depth + 1;
+        depth += 1;
       }
       continue;
     }
     if (t == ")") {
-      depth = depth - 1;
+      depth -= 1;
       if (depth < 0) {
         return Err("Unexpected comment closing parenthesis.");
       }
@@ -764,14 +764,14 @@ pub function assemble(source: string): u8[] {
   let anonymous: string[] = [];
   let image = __alloc_u8(65536);
   let scope = "";
-  let pc: i32 = 256;
-  let end: i32 = 256;
-  let i: i32 = 0;
-  let expansions: i32 = 0;
-  let unique: i32 = 0;
+  let pc = 256;
+  let end = 256;
+  let i = 0;
+  let expansions = 0;
+  let unique = 0;
   while (i < tokens.len()) {
     let t = tokens[i];
-    i = i + 1;
+    i += 1;
     if (t.starts_with("[") || t == "]") {
       continue;
     }
@@ -783,17 +783,17 @@ pub function assemble(source: string): u8[] {
       if (i >= tokens.len() || tokens[i] != "{") {
         return fail("Expected { after macro " + name);
       }
-      i = i + 1;
+      i += 1;
       let start = i;
-      let nesting: i32 = 1;
+      let nesting = 1;
       while (i < tokens.len() && nesting > 0) {
         if (tokens[i].ends_with("{") && !tokens[i].starts_with("\"")) {
-          nesting = nesting + 1;
+          nesting += 1;
         }
         if (tokens[i] == "}") {
-          nesting = nesting - 1;
+          nesting -= 1;
         }
-        i = i + 1;
+        i += 1;
       }
       if (nesting != 0) {
         return fail("Unclosed macro " + name);
@@ -803,10 +803,10 @@ pub function assemble(source: string): u8[] {
     }
     let macro_name = qualify(t, scope);
     if (macros.contains(macro_name)) {
-      expansions = expansions + 1;
+      expansions += 1;
       let body = macros.get(macro_name).unwrap_or([] as string[]);
       tokens = tokens.take(i - 1).concat(body).concat(tokens.drop(i));
-      i = i - 1;
+      i -= 1;
       if (expansions > 4096 || tokens.len() > 32768) {
         return fail("Macro expansion limit exceeded.");
       }
@@ -831,7 +831,7 @@ pub function assemble(source: string): u8[] {
       labels = labels.insert(name, pc);
       if (t.starts_with("@")) {
         scope = name;
-        let slash = name.index_of("/").unwrap_or(0 - 1);
+        let slash = name.index_of("/").unwrap_or(-1);
         if (slash >= 0) {
           scope = name.take(slash);
         }
@@ -841,7 +841,7 @@ pub function assemble(source: string): u8[] {
     if (t.starts_with("|") || t.starts_with("$")) {
       let amount = hex(t.drop(1));
       if (amount < 0) {
-        amount = labels.get(qualify(t.drop(1), scope)).unwrap_or(0 - 1);
+        amount = labels.get(qualify(t.drop(1), scope)).unwrap_or(-1);
       }
       if (amount < 0) {
         return fail("Unknown padding: " + t);
@@ -849,7 +849,7 @@ pub function assemble(source: string): u8[] {
       if (t.starts_with("|")) {
         pc = amount;
       } else {
-        pc = pc + amount;
+        pc += amount;
       }
       if (pc > 65535) {
         return fail("Padding exceeds RAM: " + t);
@@ -880,11 +880,11 @@ pub function assemble(source: string): u8[] {
         data = [0x80 as u8, value as u8];
       }
     } else {
-      let kind: i32 = 0;
+      let kind = 0;
       let prefix = t.take(1);
       let name = t.drop(1);
       let literal = false;
-      let instruction: i32 = 0;
+      let instruction = 0;
       if (prefix == "," || prefix == "_") {
         kind = 1;
         literal = prefix == ",";
@@ -911,7 +911,7 @@ pub function assemble(source: string): u8[] {
         name = t;
       }
       if (name == "{") {
-        unique = unique + 1;
+        unique += 1;
         name = "~anonymous-" + unique.to_string();
         anonymous = anonymous.append(name);
       } else {
@@ -937,7 +937,7 @@ pub function assemble(source: string): u8[] {
     }
     for value in data {
       image = image.with(pc, value);
-      pc = pc + 1;
+      pc += 1;
     }
     end = end.max(pc);
   }
@@ -951,7 +951,7 @@ pub function assemble(source: string): u8[] {
     let value = labels.get(f.name).unwrap_or(0);
     if (f.kind == 1) {
       value = value - f.at - 2;
-      if (value < 0 - 128 || value > 127) {
+      if (value < -128 || value > 127) {
         return fail("Relative address out of range: " + f.token);
       }
     }
@@ -983,7 +983,7 @@ function main(): i32 {
   if (rom[0] != 0) {
     return 1;
   }
-  let s = run(boot(rom.drop(1)), 100, 0 - 1);
+  let s = run(boot(rom.drop(1)), 100, -1);
   if (s[WST] != 5 || s[META + 2] != 1 || s[META + 4] != 0) {
     return 2;
   }

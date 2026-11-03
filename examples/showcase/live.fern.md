@@ -62,19 +62,19 @@ pub function subscribe(state: State, room: string): Result[Subscription, http.Ht
     let closed = net.close(fd);
     return Err(http.fail(503, "cannot configure a live notification"));
   }
-  let listener: Listener = Listener { id: common.token(), room: room, fd: fd, address: address };
+  let listener = Listener { id: common.token(), room: room, fd: fd, address: address };
   state.listeners.set(state.listeners.get().append(listener));
   return Ok(Subscription { state: state, listener: listener, alive: cell_new(true) });
 }
 
 pub function move(subscription: Subscription, room: string): void {
   let listeners: Listener[] = subscription.state.listeners.get();
-  let index: i32 = 0;
+  let index = 0;
   while (index < listeners.len()) {
     if (listeners[index].id == subscription.listener.id) {
       listeners = listeners.with(index, Listener { ...listeners[index], room: room });
     }
-    index = index + 1;
+    index += 1;
   }
   subscription.state.listeners.set(listeners);
 }

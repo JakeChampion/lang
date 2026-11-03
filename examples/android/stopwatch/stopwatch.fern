@@ -30,10 +30,10 @@ pub function pause(started_at: i64, anteriority: i64, now: i64): i64 {
 
 // "1:02:03", or "1:02" when the seconds are hidden.
 pub function stopwatch_text(elapsed: i64, show_seconds: boolean): string {
-  let total_s: i64 = nonneg(elapsed) / 1000;
-  let h: i64 = total_s / 3600;
-  let m: i64 = total_s / 60 % 60;
-  let text: string = h.to_string() + ":" + two_digits(m);
+  let total_s = nonneg(elapsed) / 1000;
+  let h = total_s / 3600;
+  let m = total_s / 60 % 60;
+  let text = h.to_string() + ":" + two_digits(m);
   if (show_seconds) {
     return text + ":" + two_digits(total_s % 60);
   }
@@ -42,7 +42,7 @@ pub function stopwatch_text(elapsed: i64, show_seconds: boolean): string {
 
 // "HH:MM" for a local time given as milliseconds since the epoch.
 pub function clock_text(local_ms: i64): string {
-  let minute_of_day: i64 = floor_mod(local_ms, 86400000) / 60000;
+  let minute_of_day = floor_mod(local_ms, 86400000) / 60000;
   return two_digits(minute_of_day / 60) + ":" + two_digits(minute_of_day % 60);
 }
 
@@ -79,7 +79,7 @@ pub function clock_color(opacity: i32): i32 {
 }
 
 function argb(opacity: i32, rgb: i64): i32 {
-  let alpha: i64 = clamp(opacity, 1, 20) as i64 * 255 / 20;
+  let alpha = clamp(opacity, 1, 20) as i64 * 255 / 20;
   return (alpha * 16777216 + rgb) as i32;
 }
 
@@ -104,9 +104,9 @@ pub function burn_in_origin(panel: i32, content: i32, reserved: i32, displacemen
   if (content <= 0) {
     return reserved;
   }
-  let space: i32 = clamp(panel - content - 2 * reserved, 0, panel);
-  let reach: i32 = clamp(displacement, 0, BURN_IN_MAX) * space / (2 * BURN_IN_MAX);
-  let jitter: i32 = 0;
+  let space = clamp(panel - content - 2 * reserved, 0, panel);
+  let reach = clamp(displacement, 0, BURN_IN_MAX) * space / (2 * BURN_IN_MAX);
+  let jitter = 0;
   if (reach > 0) {
     jitter = (nonneg(random as i64) % ((2 * reach + 1) as i64)) as i32 - reach;
   }
@@ -119,13 +119,13 @@ pub function next_beep_in(elapsed: i64, interval_minutes: i32): i64 {
   if (interval_minutes <= 0) {
     return -1;
   }
-  let period: i64 = interval_minutes as i64 * 60000;
+  let period = interval_minutes as i64 * 60000;
   return period - floor_mod(elapsed, period);
 }
 
 pub function about_text(total_runtime_ms: i64): string {
-  let hours: i64 = nonneg(total_runtime_ms) / 3600000;
-  let unit: string = " hours";
+  let hours = nonneg(total_runtime_ms) / 3600000;
+  let unit = " hours";
   if (hours == 1) {
     unit = " hour";
   }
@@ -146,7 +146,7 @@ pub struct Setting {
 }
 
 function toggle(key: string, section: string, title: string, summary: string, on: boolean): Setting {
-  let d: i32 = 0;
+  let d = 0;
   if (on) {
     d = 1;
   }
@@ -177,27 +177,27 @@ pub function settings(): Setting[] {
 
 // The index of the setting with `key`, or -1.
 pub function setting_index(key: string): i32 {
-  let all: Setting[] = settings();
-  let i: i32 = 0;
+  let all = settings();
+  let i = 0;
   while (i < all.len()) {
     if (all[i].key == key) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 // A value clamped to the range of setting `i`.
 pub function setting_clamp(i: i32, value: i32): i32 {
-  let s: Setting = settings()[i];
+  let s = settings()[i];
   return clamp(value, s.min, s.max);
 }
 
 // The label beside a slider.
 pub function setting_value_text(i: i32, value: i32): string {
-  let s: Setting = settings()[i];
-  let v: i32 = clamp(value, s.min, s.max);
+  let s = settings()[i];
+  let v = clamp(value, s.min, s.max);
   if (s.key == "beep_interval") {
     if (v == 0) {
       return "Off";
@@ -228,7 +228,7 @@ function nonneg(n: i64): i64 {
 }
 
 function floor_mod(n: i64, d: i64): i64 {
-  let r: i64 = n % d;
+  let r = n % d;
   if (r < 0) {
     return r + d;
   }

@@ -8,10 +8,10 @@ import "std/platform";
 
 function values_as_jarray(values: string[]): json.JsonValue {
   let arr: json.JsonValue[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < values.len()) {
     arr = arr.append(JString(values[i]));
-    i = i + 1;
+    i += 1;
   }
   return JArray(arr);
 }

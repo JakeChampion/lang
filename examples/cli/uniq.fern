@@ -23,13 +23,13 @@ function same(a: string, b: string, ci: boolean): boolean {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let o: Opts = Opts { count: false, only_dups: false, only_unique: false, ignore_case: false };
-  let path: string = "-";
+  let argv = args();
+  let o = Opts { count: false, only_dups: false, only_unique: false, ignore_case: false };
+  let path = "-";
 
-  let i: i32 = 1;
+  let i = 1;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "-c") {
       o = Opts { ...o, count: true };
     } else if (a == "-d") {
@@ -41,18 +41,18 @@ function main(): i32 {
     } else {
       path = a;
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let lines: string[] = slurp(path).lines();
-  let n: i32 = lines.len();
-  let idx: i32 = 0;
+  let lines = slurp(path).lines();
+  let n = lines.len();
+  let idx = 0;
   while (idx < n) {
-    let rep: i32 = 1;
+    let rep = 1;
     while (idx + rep < n && same(lines[idx], lines[idx + rep], o.ignore_case)) {
-      rep = rep + 1;
+      rep += 1;
     }
-    let show: boolean = true;
+    let show = true;
     if (o.only_dups && rep < 2) {
       show = false;
     }
@@ -66,7 +66,7 @@ function main(): i32 {
         print(lines[idx]);
       }
     }
-    idx = idx + rep;
+    idx += rep;
   }
   return 0;
 }

@@ -40,10 +40,10 @@ fip function elem_f(x: i64): i64 {
 
 function build_input(n: i32): i64[] {
   let xs: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     xs = xs.append(i as i64 * (2654435761 as i64) % modulus());
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
@@ -53,21 +53,21 @@ function via_map_own(own xs: i64[]): i64[] {
 }
 
 fip function via_with_own(own xs: i64[], n: i32): i64[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     xs = xs.with(i, elem_f(xs[i]));
-    i = i + 1;
+    i += 1;
   }
   return xs;
 }
 
 @noinline
 function via_with_borrowed(xs: i64[], n: i32): i64[] {
-  let out: i64[] = xs;
-  let i: i32 = 0;
+  let out = xs;
+  let i = 0;
   while (i < n) {
     out = out.with(i, elem_f(out[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -79,7 +79,7 @@ function apply(variant: i32, own xs: i64[], n: i32): i64[] {
   if (variant == 1) {
     return via_with_own(xs, n);
   }
-  let out: i64[] = via_with_borrowed(xs, n);
+  let out = via_with_borrowed(xs, n);
   if (out.len() != xs.len()) {
     return xs;
   }
@@ -87,22 +87,22 @@ function apply(variant: i32, own xs: i64[], n: i32): i64[] {
 }
 
 function digest(xs: i64[]): i64 {
-  let d: i64 = 0 as i64;
-  let i: i32 = 0;
+  let d = 0 as i64;
+  let i = 0;
   while (i < xs.len()) {
     d = (d * (31 as i64) + xs[i]) % modulus();
-    i = i + 1;
+    i += 1;
   }
   return d;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let name: string = "map_own";
+  let argv = args();
+  let name = "map_own";
   if (argv.len() > 1) {
     name = argv[1];
   }
-  let variant: i32 = 0;
+  let variant = 0;
   if (name == "with_own") {
     variant = 1;
   }
@@ -110,47 +110,47 @@ function main(): i32 {
     variant = 2;
   }
 
-  let n: i32 = 4096;
+  let n = 4096;
   if (argv.len() > 2) {
     n = i32.parse_i32(argv[2]).unwrap_or(4096);
   }
-  let rounds: i32 = 200;
+  let rounds = 200;
   if (argv.len() > 3) {
     rounds = i32.parse_i32(argv[3]).unwrap_or(200);
   }
 
-  let xs: i64[] = build_input(n);
+  let xs = build_input(n);
 
   let samples: i64[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
-    p = p + 1;
+    p += 1;
   }
 
-  let cold_a0: i64 = bench.alloc_count();
-  let cold_b0: i64 = bench.bump_bytes();
+  let cold_a0 = bench.alloc_count();
+  let cold_b0 = bench.bump_bytes();
   xs = apply(variant, xs, n);
-  let cold_allocs: i64 = bench.allocs_after(cold_a0);
-  let cold_fresh: i64 = bench.fresh_bytes_after(cold_b0);
+  let cold_allocs = bench.allocs_after(cold_a0);
+  let cold_fresh = bench.fresh_bytes_after(cold_b0);
 
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  let r = 0;
   while (r < rounds) {
-    let t0: i64 = monotonic_ns();
+    let t0 = monotonic_ns();
     xs = apply(variant, xs, n);
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
+    r += 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let checksum: i64 = digest(xs);
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let checksum = digest(xs);
 
-  let rep: bench.Report = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
-  let elements: i64 = rounds as i64 * (n as i64);
+  let rep = bench.Report { name: name, iterations: rounds, wall_ns: elapsed_ns, samples_ns: cmp.sort(samples), allocs: allocs, fresh_bytes: fresh };
+  let elements = rounds as i64 * (n as i64);
   print("{\"program\":\"own_map_inplace\"" + ",\"variant\":\"" + name + "\"" + ",\"n\":" + n.to_string() + ",\"rounds\":" + rounds.to_string() + ",\"checksum\":" + checksum.to_string() + ",\"cold_allocs\":" + cold_allocs.to_string() + ",\"cold_fresh_bytes\":" + cold_fresh.to_string() + ",\"steady_allocs\":" + allocs.to_string() + ",\"steady_fresh_bytes\":" + fresh.to_string() + ",\"allocs_per_round_milli\":" + (allocs * (1000 as i64) / (rounds as i64)).to_string() + ",\"fresh_bytes_per_round\":" + (fresh / (rounds as i64)).to_string() + ",\"fresh_bytes_per_element_milli\":" + (fresh * (1000 as i64) / elements).to_string() + ",\"ns_per_round\":" + (elapsed_ns / (rounds as i64)).to_string() + ",\"ns_per_element_milli\":" + (elapsed_ns * (1000 as i64) / elements).to_string() + ",\"round_p50_ns\":" + rep.p50_ns().to_string() + ",\"round_p99_ns\":" + rep.p99_ns().to_string() + "}");
   return 0;
 }

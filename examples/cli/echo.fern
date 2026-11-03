@@ -2,44 +2,44 @@ import "std/string";
 import "std/array";
 
 function unescape(s: string): string {
-  let n: i32 = s.len();
-  let out: string = "";
-  let i: i32 = 0;
+  let n = s.len();
+  let out = "";
+  let i = 0;
   while (i < n) {
     if (s[i] == 92 && i + 1 < n) {
-      let c: i32 = s[i + 1] as i32;
+      let c = s[i + 1] as i32;
       if (c == 110) {
-        out = out + "\n";
+        out += "\n";
       } else if (c == 116) {
-        out = out + "\t";
+        out += "\t";
       } else if (c == 114) {
-        out = out + "\r";
+        out += "\r";
       } else if (c == 92) {
-        out = out + "\\";
+        out += "\\";
       } else if (c == 48) {
-        out = out + "\x00";
+        out += "\x00";
       } else {
-        out = out + slice_unchecked(s, i, i + 2);
+        out += slice_unchecked(s, i, i + 2);
       }
-      i = i + 2;
+      i += 2;
     } else {
-      out = out + slice_unchecked(s, i, i + 1);
-      i = i + 1;
+      out += slice_unchecked(s, i, i + 1);
+      i += 1;
     }
   }
   return out;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let newline: boolean = true;
-  let escapes: boolean = false;
+  let argv = args();
+  let newline = true;
+  let escapes = false;
   let words: string[] = [];
 
-  let i: i32 = 1;
-  let still_flags: boolean = true;
+  let i = 1;
+  let still_flags = true;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (still_flags && a == "-n") {
       newline = false;
     } else if (still_flags && a == "-e") {
@@ -51,10 +51,10 @@ function main(): i32 {
       still_flags = false;
       words = words.append(a);
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let line: string = words.join(" ");
+  let line = words.join(" ");
   if (escapes) {
     line = unescape(line);
   }

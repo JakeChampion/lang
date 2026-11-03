@@ -59,60 +59,60 @@ function respond(s: State, r: Response): State {
 }
 
 function find_slot(entries: Entry[], id: i64): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < entries.len()) {
     if (entries[i].key == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function apply_create(s: State, id: i64, value: i64): State {
-  let at: i32 = find_slot(s.entries, id);
+  let at = find_slot(s.entries, id);
   if (at >= 0) {
-    let updated: Entry[] = s.entries.with(at, Entry { key: id, value: value });
+    let updated = s.entries.with(at, Entry { key: id, value: value });
     return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
   }
   if (s.entries.len() >= max_entries()) {
     return respond(State { ...s, m_full: s.m_full + 1 as i64 }, Response.Full);
   }
-  let grown: Entry[] = s.entries.append(Entry { key: id, value: value });
+  let grown = s.entries.append(Entry { key: id, value: value });
   return respond(State { ...s, entries: grown, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
 }
 
 function apply_update(s: State, id: i64, delta: i64): State {
-  let at: i32 = find_slot(s.entries, id);
+  let at = find_slot(s.entries, id);
   if (at < 0) {
     return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
   }
-  let e: Entry = s.entries[at];
-  let updated: Entry[] = s.entries.with(at, Entry { key: e.key, value: e.value + delta });
+  let e = s.entries[at];
+  let updated = s.entries.with(at, Entry { key: e.key, value: e.value + delta });
   return respond(State { ...s, entries: updated, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
 }
 
 function apply_read(s: State, id: i64): State {
-  let at: i32 = find_slot(s.entries, id);
+  let at = find_slot(s.entries, id);
   if (at < 0) {
     return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
   }
-  let e: Entry = s.entries[at];
+  let e = s.entries[at];
   return respond(State { ...s, m_ok: s.m_ok + 1 as i64 }, Response.Value(e.value));
 }
 
 function apply_delete(s: State, id: i64): State {
-  let at: i32 = find_slot(s.entries, id);
+  let at = find_slot(s.entries, id);
   if (at < 0) {
     return respond(State { ...s, m_miss: s.m_miss + 1 as i64 }, Response.Missing);
   }
   let kept: Entry[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.entries.len()) {
     if (i != at) {
       kept = kept.append(s.entries[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return respond(State { ...s, entries: kept, m_ok: s.m_ok + 1 as i64 }, Response.Ok);
 }
@@ -121,14 +121,14 @@ function iteration(s: State): State {
   if (s.queue.len() == 0) {
     return s;
   }
-  let head: Event = s.queue[0];
+  let head = s.queue[0];
   let rest: Event[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < s.queue.len()) {
     rest = rest.append(s.queue[i]);
-    i = i + 1;
+    i += 1;
   }
-  let t: State = State { ...s, queue: rest };
+  let t = State { ...s, queue: rest };
   match (head) {
     Create(id, value) => {
       return apply_create(t, id, value);
@@ -155,19 +155,19 @@ function reset_metrics(s: State): State {
 }
 
 function event_id(n: i64): i64 {
-  let x: i64 = n * (2654435761 as i64);
+  let x = n * (2654435761 as i64);
   x = x ^ x >> 15 as i64;
-  x = x * (2246822519 as i64);
+  x *= 2246822519 as i64;
   x = x ^ x >> 13 as i64;
   if (x < 0 as i64) {
-    x = 0 - x;
+    x = -x;
   }
   return x % (max_entries() as i64);
 }
 
 function event_of(n: i64): Event {
-  let bucket: i64 = n % (10 as i64);
-  let id: i64 = event_id(n);
+  let bucket = n % (10 as i64);
+  let id = event_id(n);
   if (bucket == 0 as i64) {
     return Create(id, n);
   }
@@ -181,56 +181,56 @@ function event_of(n: i64): Event {
 }
 
 function prefill(s: State): State {
-  let t: State = s;
-  let id: i32 = 0;
+  let t = s;
+  let id = 0;
   while (id < max_entries()) {
     t = apply_create(t, id as i64, id as i64 * (10 as i64));
-    id = id + 1;
+    id += 1;
   }
   return drain_output(t);
 }
 
 function round(s: State, seed: i64, batch: i32): State {
-  let t: State = s;
-  let i: i32 = 0;
+  let t = s;
+  let i = 0;
   while (i < batch) {
     t = enqueue(t, event_of(seed + i as i64));
-    i = i + 1;
+    i += 1;
   }
-  let worked: i32 = 0;
+  let worked = 0;
   while (worked < batch) {
     t = iteration(t);
-    worked = worked + 1;
+    worked += 1;
   }
   return drain_output(t);
 }
 
 function main(): i32 {
-  let s: State = new_state();
+  let s = new_state();
   s = prefill(s);
   s = round(s, 1 as i64, queue_cap());
   s = reset_metrics(s);
-  let rounds: i32 = 20000;
+  let rounds = 20000;
   let samples: i64[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < rounds) {
     samples = samples.append(0 as i64);
-    p = p + 1;
+    p += 1;
   }
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  let r = 0;
   while (r < rounds) {
-    let t0: i64 = monotonic_ns();
+    let t0 = monotonic_ns();
     s = round(s, r as i64 * (7 as i64) + 1 as i64, queue_cap());
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
+    r += 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let events: i64 = rounds as i64 * (queue_cap() as i64);
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let events = rounds as i64 * (queue_cap() as i64);
   let rep: bench.Report = bench.Report {
     name: "baseline",
     iterations: rounds,

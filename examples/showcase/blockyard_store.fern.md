@@ -162,7 +162,7 @@ pub function recover(directory: string, name: string): Result[Recovered, string]
   }
   let bytes: i64 = 0;
   if let Some(source) = text(base + ".journal")? {
-    let offset: i32 = 0;
+    let offset = 0;
     for line in source.split("\n") {
       if (offset + line.len() >= source.len()) {
         break;

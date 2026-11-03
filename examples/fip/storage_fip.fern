@@ -10,12 +10,12 @@ pub fip function submit(own s: storage_core.State, kind: i32, page: i32, offset:
   if (s.outstanding == s.capacity) {
     return storage_core.result(s, 2, -1, 0i64, 0i64);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.capacity && s.phase[i] != 0) {
-    i = i + 1;
+    i += 1;
   }
-  let ticket: i64 = s.serial + 1i64;
-  let injected: i32 = 0;
+  let ticket = s.serial + 1i64;
+  let injected = 0;
   if (fault) {
     injected = 1;
   }
@@ -44,12 +44,12 @@ fip function finish(own s: storage_core.State, slot: i32, status: i32, value: i6
 }
 
 fip function dispatch(own s: storage_core.State, slot: i32): storage_core.State {
-  let page: i32 = s.page[slot];
-  let kind: i32 = s.kind[slot];
+  let page = s.page[slot];
+  let kind = s.kind[slot];
   if (s.page_pin[page] != 0) {
     return finish(s, slot, 10, 0i64);
   }
-  let frame: i32 = storage_core.lookup(s, page);
+  let frame = storage_core.lookup(s, page);
   if (frame >= 0 && s.frame_pin[frame] != 0) {
     return finish(s, slot, 10, 0i64);
   }
@@ -76,10 +76,10 @@ fip function dispatch(own s: storage_core.State, slot: i32): storage_core.State 
 }
 
 fip function load(own s: storage_core.State, frame: i32, page: i32): storage_core.State {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.width) {
     s = storage_core.State { ...s, cache: s.cache.with(frame * s.width + i, s.disk[page * s.width + i]) };
-    i = i + 1;
+    i += 1;
   }
   s = storage_core.State { ...s, mapped: s.mapped.with(frame, page) };
   return storage_core.State { ...s, dirty: s.dirty.with(frame, 0) };
@@ -87,19 +87,19 @@ fip function load(own s: storage_core.State, frame: i32, page: i32): storage_cor
 
 fip function flush(own s: storage_core.State, frame: i32, page: i32): storage_core.State {
   if (s.dirty[frame] != 0) {
-    let i: i32 = 0;
+    let i = 0;
     while (i < s.width) {
       s = storage_core.State { ...s, disk: s.disk.with(page * s.width + i, s.cache[frame * s.width + i]) };
-      i = i + 1;
+      i += 1;
     }
   }
   return storage_core.State { ...s, dirty: s.dirty.with(frame, 0) };
 }
 
 fip function complete(own s: storage_core.State, slot: i32): storage_core.State {
-  let frame: i32 = s.frame[slot];
-  let page: i32 = s.page[slot];
-  let kind: i32 = s.kind[slot];
+  let frame = s.frame[slot];
+  let page = s.page[slot];
+  let kind = s.kind[slot];
   s = storage_core.State { ...s, frame_pin: s.frame_pin.with(frame, 0) };
   s = storage_core.State { ...s, page_pin: s.page_pin.with(page, 0) };
   if (s.fault[slot] != 0) {
@@ -120,7 +120,7 @@ fip function complete(own s: storage_core.State, slot: i32): storage_core.State 
   } else {
     s = storage_core.State { ...s, mapped: s.mapped.with(frame, -1) };
   }
-  let touched: i64 = s.tick;
+  let touched = s.tick;
   if (kind == 3) {
     touched = 0i64;
   }
@@ -134,10 +134,10 @@ pub fip function advance(own s: storage_core.State): storage_core.State {
     return storage_core.result(s, 5, -1, 0i64, 0i64);
   }
   s = storage_core.State { ...s, tick: s.tick + 1i64, work: 0, transitions: 0 };
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.batch) {
-    let slot: i32 = s.cursor;
-    let phase: i32 = s.phase[slot];
+    let slot = s.cursor;
+    let phase = s.phase[slot];
     if (phase == 1) {
       s = dispatch(s, slot);
       s = storage_core.State { ...s, transitions: s.transitions + 1 };
@@ -146,7 +146,7 @@ pub fip function advance(own s: storage_core.State): storage_core.State {
       s = storage_core.State { ...s, transitions: s.transitions + 1 };
     }
     s = storage_core.State { ...s, cursor: (slot + 1) % s.capacity, work: s.work + 1 };
-    i = i + 1;
+    i += 1;
   }
   return storage_core.result(s, 0, -1, 0i64, 0i64);
 }
@@ -161,8 +161,8 @@ pub fip function collect(own s: storage_core.State, slot: i32, ticket: i64): sto
   if (s.phase[slot] != 3) {
     return storage_core.result(s, 4, slot, ticket, 0i64);
   }
-  let status: i32 = s.completion_status[slot];
-  let value: i64 = s.completion_value[slot];
+  let status = s.completion_status[slot];
+  let value = s.completion_value[slot];
   s = storage_core.State { ...s, phase: s.phase.with(slot, 0) };
   s = storage_core.State { ...s, outstanding: s.outstanding - 1 };
   return storage_core.result(s, status, slot, ticket, value);

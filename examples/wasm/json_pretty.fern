@@ -3,8 +3,8 @@ import "std/json";
 import "std/string";
 
 function pretty(v: json.JsonValue, depth: i32): string {
-  let pad: string = "  ".repeat(depth);
-  let pad_inner: string = "  ".repeat(depth + 1);
+  let pad = "  ".repeat(depth);
+  let pad_inner = "  ".repeat(depth + 1);
   match (v) {
     JNull => {
       return "null";
@@ -25,15 +25,15 @@ function pretty(v: json.JsonValue, depth: i32): string {
       if (elems.len() == 0) {
         return "[]";
       }
-      let arr_out: string = "[\n";
-      let i: i32 = 0;
+      let arr_out = "[\n";
+      let i = 0;
       while (i < elems.len()) {
         arr_out = arr_out + pad_inner + pretty(elems[i], depth + 1);
         if (i + 1 < elems.len()) {
-          arr_out = arr_out + ",";
+          arr_out += ",";
         }
-        arr_out = arr_out + "\n";
-        i = i + 1;
+        arr_out += "\n";
+        i += 1;
       }
       return arr_out + pad + "]";
     },
@@ -41,16 +41,16 @@ function pretty(v: json.JsonValue, depth: i32): string {
       if (m.len() == 0) {
         return "{}";
       }
-      let obj_out: string = "{\n";
-      let keys: string[] = m.keys();
-      let values: json.JsonValue[] = m.values();
-      let i: i32 = 0;
+      let obj_out = "{\n";
+      let keys = m.keys();
+      let values = m.values();
+      let i = 0;
       while (i < keys.len()) {
         if (i > 0) {
-          obj_out = obj_out + ",\n";
+          obj_out += ",\n";
         }
         obj_out = obj_out + pad_inner + json.encode(JString(keys[i])) + ": " + pretty(values[i], depth + 1);
-        i = i + 1;
+        i += 1;
       }
       return obj_out + "\n" + pad + "}";
     }
@@ -59,7 +59,7 @@ function pretty(v: json.JsonValue, depth: i32): string {
 }
 
 function main(): i32 {
-  let input: string = "";
+  let input = "";
   match (io.read_all_stdin()) {
     Ok(t) => {
       input = t;

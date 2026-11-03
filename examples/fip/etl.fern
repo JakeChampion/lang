@@ -20,11 +20,11 @@ function process(variant: i32, own s: etl_core.State, data: u8[], offset: i32, c
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   if (argv.len() < 4 || argv.len() > 5) {
     return 2;
   }
-  let variant: i32 = -1;
+  let variant = -1;
   if (argv[1] == "baseline") {
     variant = 0;
   }
@@ -37,8 +37,8 @@ function main(): i32 {
   if (argv[1] == "fip") {
     variant = 3;
   }
-  let records: i32 = 0;
-  let batch: i32 = 0;
+  let records = 0;
+  let batch = 0;
   match (i32.parse_i32(argv[2])) {
     Ok(n) => {
       records = n;
@@ -58,60 +58,60 @@ function main(): i32 {
   if (variant < 0 || records <= 0 || records > 268435455 || batch <= 0 || batch > 268435455) {
     return 2;
   }
-  let export_samples: boolean = false;
+  let export_samples = false;
   if (argv.len() == 5) {
     if (argv[4] != "samples") {
       return 2;
     }
     export_samples = true;
   }
-  let start_allocs: i64 = bench.alloc_count();
-  let start_fresh: i64 = bench.bump_bytes();
-  let start_ns: i64 = monotonic_ns();
-  let data: u8[] = etl_core.dataset(records);
-  let s: etl_core.State = etl_core.new_state(batch);
-  let warm: i32 = batch;
+  let start_allocs = bench.alloc_count();
+  let start_fresh = bench.bump_bytes();
+  let start_ns = monotonic_ns();
+  let data = etl_core.dataset(records);
+  let s = etl_core.new_state(batch);
+  let warm = batch;
   if (warm > records) {
     warm = records;
   }
   s = process(variant, s, data, 0, warm);
   s = etl_core.reset(s);
-  let rounds: i32 = (records - 1) / batch + 1;
-  let samples: i64[] = __alloc_i64(rounds);
-  let startup_ns: i64 = monotonic_ns() - start_ns;
-  let startup_allocs: i64 = bench.allocs_after(start_allocs);
-  let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
+  let rounds = (records - 1) / batch + 1;
+  let samples = __alloc_i64(rounds);
+  let startup_ns = monotonic_ns() - start_ns;
+  let startup_allocs = bench.allocs_after(start_allocs);
+  let startup_fresh = bench.fresh_bytes_after(start_fresh);
 
-  let mark_allocs: i64 = bench.alloc_count();
-  let mark_fresh: i64 = bench.bump_bytes();
-  let started: i64 = monotonic_ns();
-  let first: i32 = 0;
-  let r: i32 = 0;
+  let mark_allocs = bench.alloc_count();
+  let mark_fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  let first = 0;
+  let r = 0;
   let checksum: i64 = 0i64;
   while (first < records) {
-    let count: i32 = batch;
+    let count = batch;
     if (count > records - first) {
       count = records - first;
     }
-    let t0: i64 = monotonic_ns();
+    let t0 = monotonic_ns();
     s = process(variant, s, data, first * 8, count);
     samples = samples.with(r, monotonic_ns() - t0);
-    let i: i32 = 0;
+    let i = 0;
     while (i < s.output_count * 8) {
       checksum = checksum + s.output[i] as i64;
-      i = i + 1;
+      i += 1;
     }
-    first = first + count;
-    r = r + 1;
+    first += count;
+    r += 1;
   }
-  let elapsed: i64 = monotonic_ns() - started;
-  let allocations: i64 = bench.allocs_after(mark_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+  let elapsed = monotonic_ns() - started;
+  let allocations = bench.allocs_after(mark_allocs);
+  let fresh = bench.fresh_bytes_after(mark_fresh);
   if (export_samples) {
     r = 0;
     while (r < rounds) {
       print("sample," + r.to_string() + "," + samples[r].to_string());
-      r = r + 1;
+      r += 1;
     }
   }
   let rep: bench.Report = bench.Report {

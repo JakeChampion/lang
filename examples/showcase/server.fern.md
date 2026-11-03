@@ -130,7 +130,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     return Ok(response);
   });
   app = app.get("/api/meta", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let meta: Meta = Meta { apps: 20, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
+    let meta = Meta { apps: 20, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
     return Ok(http.json_of(meta).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
@@ -204,7 +204,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   app = app.get("/mosaic/export.png", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(mosaic.export_png(mosaic.room(state.canvases, common.query(req, "room", "commons"))?)?));
   app = app.get("/wave/render.wav", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(wave.audio(req)?));
   app = app.get("/notes/{$}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let notice: string = "";
+    let notice = "";
     if (common.query(req, "posted", "") == "1") {
       notice = "Your note is on the wall. Thanks for stopping by.";
     }
@@ -234,7 +234,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     app = app.get("/" + name, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect(destination)));
   }
   app = app.get("/assets/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let asset: HttpRequest = HttpRequest { ...req, path: req.path.drop(7) };
+    let asset = HttpRequest { ...req, path: req.path.drop(7) };
     let response: HttpResponse = static.serve(asset, static.dir(root + "/showcase/web/shared"), plat);
     if (response.status == 404 && asset.path.starts_with("/fonts/")) {
       return Ok(static.serve(HttpRequest { ...asset, path: asset.path.drop(6) }, static.dir(root + "/../site/src/assets/fonts"), plat));
@@ -294,7 +294,7 @@ function main(): i32 {
       }
     }
   }
-  let root: string = "examples";
+  let root = "examples";
   if (args().len() > 1) {
     root = args()[1];
   }

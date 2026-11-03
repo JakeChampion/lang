@@ -131,13 +131,13 @@ pub function sample_hz(frame: i32, rate: i32, frequency: f64, wave: i32, age: f6
   if (wave == 3) {
     let shifted = cycle + 0.5;
     if (shifted >= 1.0) {
-      shifted = shifted - 1.0;
+      shifted -= 1.0;
     }
     value = value + blep(cycle, frequency / (rate as f64)) - blep(shifted, frequency / (rate as f64));
   }
   let envelope = (age * 100.0).min(1.0) * (-age * 2.0).exp();
   if (release >= 0.0) {
-    envelope = envelope * (-release * 25.0).exp();
+    envelope *= (-release * 25.0).exp();
   }
   return value * envelope * 0.12;
 }

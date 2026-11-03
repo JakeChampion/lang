@@ -7,15 +7,15 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartError] {
-  let out: string = "";
-  let r: multipart.Reader = multipart.open(req, multipart.limits())?;
-  let going: boolean = true;
+  let out = "";
+  let r = multipart.open(req, multipart.limits())?;
+  let going = true;
   while (going) {
     match (r.next()?) {
       NextPart(part, r1) => {
         if (part.filename.len() > 0) {
           let got: (string, multipart.Reader) = sized(part, r1)?;
-          out = out + got.0;
+          out += got.0;
           r = got.1;
         } else {
           let got: (u8[], multipart.Reader) = r1.content()?;
@@ -32,14 +32,14 @@ function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartErr
 }
 
 function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multipart.Reader), multipart.MultipartError] {
-  let bytes: i32 = 0;
-  let pieces: i32 = 0;
-  let cur: multipart.Reader = r;
-  let done: boolean = false;
+  let bytes = 0;
+  let pieces = 0;
+  let cur = r;
+  let done = false;
   while (!done) {
     let piece: (u8[], boolean, multipart.Reader) = cur.read(4)?;
-    bytes = bytes + piece.0.len();
-    pieces = pieces + 1;
+    bytes += piece.0.len();
+    pieces += 1;
     done = piece.1;
     cur = piece.2;
   }
@@ -47,8 +47,8 @@ function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multi
 }
 
 function main(): i32 {
-  let body: multipart.Builder = multipart.builder_with("example").field("title", "holiday").file("photo", "beach.png", "image/png", "PNG image".bytes()).field("tags", "sea, sand");
-  let resp: HttpResponse = handle(body.request("POST", "/upload"), platform.host());
+  let body = multipart.builder_with("example").field("title", "holiday").file("photo", "beach.png", "image/png", "PNG image".bytes()).field("tags", "sea, sand");
+  let resp = handle(body.request("POST", "/upload"), platform.host());
   print(resp.body_text_lossy());
   if (resp.status != 200) {
     return 1;

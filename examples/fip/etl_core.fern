@@ -30,10 +30,10 @@ pub function new_state(capacity: i32): State {
 }
 
 pub fip function reset(own s: State): State {
-  let i: i32 = 0;
+  let i = 0;
   while (i < 16) {
     s = State { ...s, histogram: s.histogram.with(i, 0i64) };
-    i = i + 1;
+    i += 1;
   }
   return State {
     ...s, seen: 0i64, invalid: 0i64, filtered: 0i64,
@@ -47,7 +47,7 @@ pub fip function read16(data: u8[], at: i32): i32 {
 }
 
 pub fip function reading(data: u8[], at: i32): i32 {
-  let value: i32 = read16(data, at + 2);
+  let value = read16(data, at + 2);
   if (value >= 32768) {
     return value - 65536;
   }
@@ -59,7 +59,7 @@ pub fip function valid(sensor: i32, quality: i32, value: i32): boolean {
 }
 
 pub fip function bucket(value: i32): i32 {
-  let bin: i32 = value / 1024;
+  let bin = value / 1024;
   if (bin > 15) {
     return 15;
   }
@@ -75,27 +75,27 @@ pub fip function write32(own out: u8[], at: i32, value: i32): u8[] {
 
 pub fip function encode(own out: u8[], pos: i32, normalized: i32, data: u8[], at: i32): u8[] {
   out = write32(out, pos, normalized);
-  let i: i32 = 0;
+  let i = 0;
   while (i < 4) {
     out = out.with(pos + 4 + i, data[at + 4 + i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function dataset(records: i32): u8[] {
-  let data: u8[] = __alloc_u8(records * 8);
+  let data = __alloc_u8(records * 8);
   for i in 0..records {
-    let sensor: i32 = i % 16;
+    let sensor = i % 16;
     if (i % 19 == 0) {
       sensor = 255;
     }
-    let quality: i32 = i % 4;
+    let quality = i % 4;
     if (i % 23 == 0) {
       quality = 7;
     }
-    let value: i32 = (i as i64 * 173i64 % 20000i64) as i32 - 5000;
-    let at: i32 = i * 8;
+    let value = (i as i64 * 173i64 % 20000i64) as i32 - 5000;
+    let at = i * 8;
     data = data.with(at, sensor as u8);
     data = data.with(at + 1, quality as u8);
     data = data.with(at + 2, (value & 255) as u8);
@@ -124,18 +124,18 @@ pub fip function apply(own s: State, data: u8[], at: i32, sensor: i32, quality: 
   if (quality < 2) {
     return State { ...s, filtered: s.filtered + 1i64 };
   }
-  let normalized: i32 = value + 4000;
-  let bin: i32 = bucket(normalized);
-  let low: i32 = s.low;
-  let high: i32 = s.high;
+  let normalized = value + 4000;
+  let bin = bucket(normalized);
+  let low = s.low;
+  let high = s.high;
   if (normalized < low) {
     low = normalized;
   }
   if (normalized > high) {
     high = normalized;
   }
-  let hits: i64 = s.histogram[bin] + 1i64;
-  let pos: i32 = s.output_count;
+  let hits = s.histogram[bin] + 1i64;
+  let pos = s.output_count;
   s = State { ...s, histogram: s.histogram.with(bin, hits) };
   s = State { ...s, output: encode(s.output, pos * 8, normalized, data, at) };
   return State {
@@ -153,10 +153,10 @@ pub fip function process(own s: State, data: u8[], offset: i32, count: i32): Sta
     return refuse(s);
   }
   s = State { ...s, output_count: 0 };
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
     s = record(s, data, offset + i * 8);
-    i = i + 1;
+    i += 1;
   }
   return s;
 }

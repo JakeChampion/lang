@@ -84,7 +84,7 @@ pub function sample(frame: i32, rate: i32, tone: f64): f64 {
     return 0.0;
   }
   let seconds: f64 = (frame % (rate * 8)) as f64 / (rate as f64);
-  let beat: i32 = (seconds * 2.0) as i32;
+  let beat = (seconds * 2.0) as i32;
   let phase: f64 = seconds - beat as f64 * 0.5;
   let ratio: f64 = 1.0;
   match (beat % 4) {

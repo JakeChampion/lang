@@ -63,7 +63,7 @@ function main(): i32 {
   if (lantern.add(index, lantern.Document { id: 0, title: "duplicate", text: "x" }).is_ok() || lantern.add(index, lantern.Document { id: 3, title: "", text: "x" }).is_ok()) {
     return 16;
   }
-  let layout: i32[] = __alloc_i32(16);
+  let layout = __alloc_i32(16);
   layout = layout.with(0, 1).with(1, 2).with(2, 2).with(3, 6);
   let factory = foundry.factory(16);
   for tick in 0..129 {
@@ -108,7 +108,7 @@ function main(): i32 {
   if ((cpu & 15) != 6 || (cpu & 512) == 0 || (circuit.cpu(128, 6, 4) & 256) == 0) {
     return 24;
   }
-  let machines: i32[] = __alloc_i32(32);
+  let machines = __alloc_i32(32);
   machines = machines.with(0, 1).with(1, 2).with(2, 7).with(3, 2).with(4, 6).with(10, 10).with(18, 8);
   let powered = foundry.configure(machines, foundry.factory(32), 8);
   if (powered.powered[2] != 1) {
