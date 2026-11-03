@@ -96,20 +96,20 @@ pub function encode(m: Message): u8[] {
 }
 
 // A cursor over the bytes of a message. A read past the end sets `bad`.
-struct Reader { b: u8[], at: i32, bad: boolean }
+struct Cursor { b: u8[], at: i32, bad: boolean }
 
-function take(r: Reader, n: i32): (Reader, i64) {
+function take(r: Cursor, n: i32): (Cursor, i64) {
   if (r.at + n > r.b.len()) {
-    return (Reader { ...r, bad: true }, 0 as i64);
+    return (Cursor { ...r, bad: true }, 0 as i64);
   }
   let v: i64 = 0 as i64;
   for k in 0..n {
     v = v << 8 as i64 | r.b[r.at + k] as i64;
   }
-  return (Reader { ...r, at: r.at + n }, v);
+  return (Cursor { ...r, at: r.at + n }, v);
 }
 
-function take32(r: Reader): (Reader, i32) {
+function take32(r: Cursor): (Cursor, i32) {
   let (next, v) = take(r, 4);
   return (next, v as i32);
 }
@@ -119,7 +119,7 @@ pub function decode(b: u8[]): Option[Message] {
   if (b.len() == 0) {
     return None;
   }
-  let r: Reader = Reader { b: b, at: 1, bad: false };
+  let r: Cursor = Cursor { b: b, at: 1, bad: false };
   let t: i32 = b[0] as i32;
   let m: Message = Bye(0);
   if (t == T_HELLO) {
