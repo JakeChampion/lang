@@ -42,7 +42,7 @@ function wait_until(deadline: Option[Instant]): Option[Instant] {
   return Some(now().add(left));
 }
 
-function pump(c: conn.Conn, sock: i32, peer: net.SocketAddr): conn.Conn {
+function pump(c: conn.Conn, sock: Socket, peer: net.SocketAddr): conn.Conn {
   let c2 = c.transmit(now());
   let out = c2.datagrams();
   c2 = c2.sent();
@@ -52,7 +52,7 @@ function pump(c: conn.Conn, sock: i32, peer: net.SocketAddr): conn.Conn {
   return c2;
 }
 
-function drain(c: conn.Conn, sock: i32, buf: u8[]): conn.Conn {
+function drain(c: conn.Conn, sock: Socket, buf: u8[]): conn.Conn {
   let cur = c;
   loop {
     let Ok(got) = net.recv_from(sock, buf) else {
@@ -126,7 +126,7 @@ function echoed(c: conn.Conn, e: Echo): (conn.Conn, Echo) {
   return (r.0.close(0, "fern done", true, now()), Echo { ...e, got: got, matched: matched, closing: true });
 }
 
-function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean {
+function ran(c0: conn.Conn, sock: Socket, peer: net.SocketAddr, size: i32): boolean {
   let buf = __alloc_u8(65536);
   let c = c0;
   let e = Echo { id: -1, sent: payload(size), got: [], matched: false, closing: false };
