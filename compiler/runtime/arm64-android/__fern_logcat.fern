@@ -12,15 +12,11 @@ function __fern_logcat(prio: i32, data: usize, len: i32): i32 {
     return fd;
   }
   let b: usize = __raw_scratch(128);
-  let path: string = "/dev/socket/logdw";
-  __raw_store8(b, 0, 1);
-  __raw_store8(b, 1, 0);
-  let i: i32 = 0;
-  while (i < path.len()) {
-    __raw_store8(b, 2 + i, __raw_load8(__raw_data(path), i));
-    i = i + 1;
-  }
-  __raw_store8(b, 2 + path.len(), 0);
+  // Little-endian sockaddr_un: AF_UNIX, /dev/socket/logdw, then zero bytes.
+  // Immediate stores keep this abort path independent of string and heap support.
+  __raw_store_ptr(b, 0, 0x732f7665642f0001i64 as usize);
+  __raw_store_ptr(b, 1, 0x6f6c2f74656b636fi64 as usize);
+  __raw_store_ptr(b, 2, 0x776467 as usize);
   let rc: i32 = __syscall3(203, fd as i64, b as i64, 20) as i32;
   if (rc >= 0) {
     __syscall3(113, 0, (b + 32) as i64, 0);

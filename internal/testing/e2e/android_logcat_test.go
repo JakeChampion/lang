@@ -32,16 +32,15 @@ func androidReportBin(t *testing.T, target string) string {
 	return bin
 }
 
-// The command that runs an Android binary on this host: natively for
-// x86-64-android on an x86-64 Linux host, under qemu for arm64-android.
+// Run an Android binary on Linux with the available native or QEMU runner.
 func androidRunner(t *testing.T, target, bin string) *exec.Cmd {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skipf("Android binaries run on a Linux host only, not %s", runtime.GOOS)
 	}
 	if target == "x86-64-android" {
-		if runtime.GOARCH != "amd64" {
-			t.Skip("x86-64-android runs natively on an x86-64 host only")
+		if runner := e2eharness.X86_64Runner(t); len(runner) > 0 {
+			return exec.Command(runner[0], append(runner[1:], bin)...)
 		}
 		return exec.Command(bin)
 	}
