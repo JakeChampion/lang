@@ -232,6 +232,11 @@ It requires SIGSEGV or SIGILL during authentication or the subsequent return.
 The same control must run correctly without authentication.
 An arbitrary nonzero exit does not satisfy these fault tests.
 
+An unsigned address passes authentication when its computed code is zero.
+In QEMU, 2 of 400 runs of one control did this. So a PAC control runs up to
+eight times, and it passes on the first fault. A clean exit in all eight runs fails
+the control.
+
 QEMU Linux user mode emulates PAC and BTI.
 Successful QEMU fault tests establish emulated behavior only.
 A claim of physical enforcement follows the rule in `docs/security/GUARANTEES.md`: the fault test on a physical host whose kernel enables the feature.

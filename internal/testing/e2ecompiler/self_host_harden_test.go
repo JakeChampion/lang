@@ -223,7 +223,7 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			if err := os.WriteFile(unsignedBin, unsigned, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			expectHardenSignal(t, qemu, unsignedBin, syscall.SIGSEGV, syscall.SIGILL)
+			expectPACFault(t, qemu, unsignedBin)
 			unauthenticated := filepath.Join(dir, "direct-unauthenticated")
 			if err := os.WriteFile(unauthenticated, bytes.ReplaceAll(unsigned, auth, binary.LittleEndian.AppendUint32(nil, 0xd503201f)), 0o755); err != nil {
 				t.Fatal(err)
@@ -316,7 +316,7 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			}
 			kept = append(kept, line)
 		}
-		expectHardenSignal(t, qemu, link("unsigned", []byte(strings.Join(kept, "\n"))), syscall.SIGSEGV, syscall.SIGILL)
+		expectPACFault(t, qemu, link("unsigned", []byte(strings.Join(kept, "\n"))))
 		for i, line := range kept {
 			if strings.TrimSpace(line) == "autiasp" {
 				kept[i] = "    nop"
@@ -329,10 +329,10 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		// The runtime frame control removes one signature only, the one of
 		// the hand-written __fern_alloc frame, and keeps its authentication.
 		unsignedRuntime := strings.Replace(string(text), "__fern_alloc:\n    paciasp\n", "__fern_alloc:\n", 1)
-		expectHardenSignal(t, qemu, link("unsigned-runtime", []byte(unsignedRuntime)), syscall.SIGSEGV, syscall.SIGILL)
+		expectPACFault(t, qemu, link("unsigned-runtime", []byte(unsignedRuntime)))
 		t.Logf("PAC runtime frame control passed (%s)", mode)
 		unsignedGrowth := strings.Replace(string(text), growSignature, ".Lb64_grow:\n", 1)
-		expectHardenSignal(t, qemu, link("unsigned-base64-growth", []byte(unsignedGrowth)), syscall.SIGSEGV, syscall.SIGILL)
+		expectPACFault(t, qemu, link("unsigned-base64-growth", []byte(unsignedGrowth)))
 		t.Logf("PAC base64 grow frame control passed (%s)", mode)
 	})
 
@@ -448,7 +448,7 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			if msg, err := exec.Command(armgcc, "-nostdlib", "-static", "-o", out, s).CombinedOutput(); err != nil {
 				t.Fatalf("link %s: %v\n%s", name, err, msg)
 			}
-			expectHardenSignal(t, qemu, out, syscall.SIGSEGV, syscall.SIGILL)
+			expectPACFault(t, qemu, out)
 		}
 		compact := regexp.MustCompile(`(?m)^    paciasp\n(    (stp x[0-9]+, x30|str x30), \[sp, #-16\]!\n)`)
 		if !compact.MatchString(text) {
@@ -462,7 +462,7 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if msg, err := exec.Command(armgcc, "-nostdlib", "-static", "-o", out, s).CombinedOutput(); err != nil {
 			t.Fatalf("link unsigned-compact: %v\n%s", err, msg)
 		}
-		expectHardenSignal(t, qemu, out, syscall.SIGSEGV, syscall.SIGILL)
+		expectPACFault(t, qemu, out)
 		t.Logf("PAC runtime frame controls passed (%s)", mode)
 	})
 
@@ -629,23 +629,42 @@ func runHardened(t *testing.T, qemu, bin string) string {
 
 func expectSIGILL(t *testing.T, qemu, bin string) {
 	t.Helper()
-	expectHardenSignal(t, qemu, bin, syscall.SIGILL)
+	out, err := withoutCoreDump(runArm64Bin(qemu, bin)).CombinedOutput()
+	if signalOf(err) != syscall.SIGILL {
+		t.Fatalf("%s: err=%v, want SIGILL\n%s", filepath.Base(bin), err, out)
+	}
 }
 
-func expectHardenSignal(t *testing.T, qemu, bin string, signals ...syscall.Signal) {
+// pacFaultRuns bounds the runs of a PAC control. An unsigned address passes
+// authentication when its computed code is zero, in a small share of runs.
+const pacFaultRuns = 8
+
+// expectPACFault requires a PAC fault from bin, which has a signature
+// removed. A clean exit is the chance pass, so it runs bin again.
+func expectPACFault(t *testing.T, qemu, bin string) {
 	t.Helper()
-	out, err := withoutCoreDump(runArm64Bin(qemu, bin)).CombinedOutput()
+	for range pacFaultRuns {
+		out, err := withoutCoreDump(runArm64Bin(qemu, bin)).CombinedOutput()
+		if err == nil {
+			continue
+		}
+		if sig := signalOf(err); sig == syscall.SIGSEGV || sig == syscall.SIGILL {
+			return
+		}
+		t.Fatalf("%s: %v, want a PAC fault\n%s", filepath.Base(bin), err, out)
+	}
+	t.Fatalf("%s: exited cleanly in %d runs, want a PAC fault", filepath.Base(bin), pacFaultRuns)
+}
+
+// signalOf is the signal that ended a run, or zero.
+func signalOf(err error) syscall.Signal {
 	ee, ok := err.(*exec.ExitError)
 	if !ok {
-		t.Fatalf("%s: err=%v, want signals %v\n%s", filepath.Base(bin), err, signals, out)
+		return 0
 	}
 	ws, ok := ee.Sys().(syscall.WaitStatus)
-	if ok && ws.Signaled() {
-		for _, signal := range signals {
-			if ws.Signal() == signal {
-				return
-			}
-		}
+	if !ok || !ws.Signaled() {
+		return 0
 	}
-	t.Fatalf("%s: %v, want signals %v\n%s", filepath.Base(bin), err, signals, out)
+	return ws.Signal()
 }
