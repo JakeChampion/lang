@@ -11,6 +11,7 @@ import (
 
 var stdModuleReach = map[string]string{
 	"std/_test_empty":   "",
+	"std/android":       "",
 	"std/ansi":          "",
 	"std/array":         "",
 	"std/async":         "now,pollable,reactor,tcp,uring",

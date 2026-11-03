@@ -62,7 +62,7 @@ function check_wasm(target: string): void {
 }
 
 function main(): i32 {
-  for target in ["x86-64-linux", "arm64-linux", "arm64-darwin"] {
+  for target in ["x86-64-linux", "arm64-linux", "arm64-darwin", "x86-64-android", "arm64-android"] {
     check_target(target);
   }
   for target in ["wasm32-wasi", "wasm32-wasi-http"] {

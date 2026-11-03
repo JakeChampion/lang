@@ -2218,6 +2218,20 @@ pub function wasi_socket_error_errnos(): i32[] {
   return [29, 2, 58, 28, 48, 73, 7, 28, 6, 28, 33, 4, 3, 23, 14, 15, 13, 35, 44, 6, 29];
 }
 
+// The runtime file set for a build: the Android targets have their own, which
+// is their Linux twin's with some files replaced. `isa_key` is the Linux or
+// Darwin key that the syscall and flag tables use.
+pub function runtime_files(s: EmitState, isa_key: string): string {
+  if (is_android(s.build_target)) {
+    return s.build_target;
+  }
+  return isa_key;
+}
+
+pub function is_android(target: string): boolean {
+  return target == "arm64-android" || target == "x86-64-android";
+}
+
 pub function vdso_wanted(s: EmitState, t: string): boolean {
   return t != "arm64-darwin" && s.any_need(["monotonic_ns", "now_unix_ms", "now_ns"]);
 }
@@ -6136,14 +6150,14 @@ pub function check_undefined_calls(mod: parser.Module): util.Diag[] {
 // data segment. Fixed-address images map it read-only at load time. PIE
 // images protect it after relocation.
 pub function relro_wanted(s: EmitState): boolean {
-  return !s.shared && (s.build_target == "x86-64-linux" || s.build_target == "arm64-linux" || s.build_target == "arm64-android");
+  return !s.shared && (s.build_target == "x86-64-linux" || s.build_target == "arm64-linux" || is_android(s.build_target));
 }
 
 // Without constants or runtime needs, the region has no bytes to protect.
 // Keep the conservative runtime test: a runtime body can add constant boxes.
 // Only images that relocate at startup need the protection syscall.
 pub function relro_protection_needed(s: EmitState): boolean {
-  return relro_wanted(s) && (s.pie || s.build_target == "arm64-android")
+  return relro_wanted(s) && (s.pie || is_android(s.build_target))
     && (s.needed.len() > 0 || s.string_lits.len() > 0 || s.const_aggs.len() > 0 || s.sym_addrs.len() > 0);
 }
 

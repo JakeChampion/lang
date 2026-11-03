@@ -1,6 +1,6 @@
 // The JNI methods of dev.fern.stopwatch.Core. Each one adapts JNI types to a
 // function in stopwatch.fern: a jboolean is a u8, and a String result is a
-// new Java string. build.sh exports every function named Java_*.
+// new Java string. build.sh writes Core.java from the @jni declarations.
 import "std/jni";
 import "./stopwatch";
 
@@ -15,114 +15,137 @@ function jbool(b: boolean): u8 {
   return 0;
 }
 
-pub function Java_dev_fern_stopwatch_Core_elapsedMs(env: usize, cls: usize, started_at: i64, anteriority: i64, now: i64): i64 {
+@jni("dev.fern.stopwatch.Core", "static long elapsedMs(long, long, long)")
+pub function elapsed_ms(env: usize, cls: usize, started_at: i64, anteriority: i64, now: i64): i64 {
   return stopwatch.elapsed_ms(started_at, anteriority, now);
 }
 
-pub function Java_dev_fern_stopwatch_Core_isRunning(env: usize, cls: usize, started_at: i64): u8 {
+@jni("dev.fern.stopwatch.Core", "static boolean isRunning(long)")
+pub function is_running(env: usize, cls: usize, started_at: i64): u8 {
   return jbool(stopwatch.is_running(started_at));
 }
 
-pub function Java_dev_fern_stopwatch_Core_start(env: usize, cls: usize, started_at: i64, now: i64): i64 {
+@jni("dev.fern.stopwatch.Core", "static long start(long, long)")
+pub function start(env: usize, cls: usize, started_at: i64, now: i64): i64 {
   return stopwatch.start(started_at, now);
 }
 
-pub function Java_dev_fern_stopwatch_Core_pause(env: usize, cls: usize, started_at: i64, anteriority: i64, now: i64): i64 {
+@jni("dev.fern.stopwatch.Core", "static long pause(long, long, long)")
+pub function pause(env: usize, cls: usize, started_at: i64, anteriority: i64, now: i64): i64 {
   return stopwatch.pause(started_at, anteriority, now);
 }
 
-pub function Java_dev_fern_stopwatch_Core_stopwatchText(env: usize, cls: usize, elapsed: i64, show_seconds: u8): usize {
+@jni("dev.fern.stopwatch.Core", "static String stopwatchText(long, boolean)")
+pub function stopwatch_text(env: usize, cls: usize, elapsed: i64, show_seconds: u8): usize {
   return jni.new_string(env, stopwatch.stopwatch_text(elapsed, flag(show_seconds)));
 }
 
-pub function Java_dev_fern_stopwatch_Core_clockText(env: usize, cls: usize, local_ms: i64): usize {
+@jni("dev.fern.stopwatch.Core", "static String clockText(long)")
+pub function clock_text(env: usize, cls: usize, local_ms: i64): usize {
   return jni.new_string(env, stopwatch.clock_text(local_ms));
 }
 
-pub function Java_dev_fern_stopwatch_Core_stopwatchTickIn(env: usize, cls: usize, elapsed: i64, show_seconds: u8): i64 {
+@jni("dev.fern.stopwatch.Core", "static long stopwatchTickIn(long, boolean)")
+pub function stopwatch_tick_in(env: usize, cls: usize, elapsed: i64, show_seconds: u8): i64 {
   return stopwatch.stopwatch_tick_in(elapsed, flag(show_seconds));
 }
 
-pub function Java_dev_fern_stopwatch_Core_clockTickIn(env: usize, cls: usize, local_ms: i64): i64 {
+@jni("dev.fern.stopwatch.Core", "static long clockTickIn(long)")
+pub function clock_tick_in(env: usize, cls: usize, local_ms: i64): i64 {
   return stopwatch.clock_tick_in(local_ms);
 }
 
-pub function Java_dev_fern_stopwatch_Core_stopwatchColor(env: usize, cls: usize, running: u8, opacity: i32): i32 {
+@jni("dev.fern.stopwatch.Core", "static int stopwatchColor(boolean, int)")
+pub function stopwatch_color(env: usize, cls: usize, running: u8, opacity: i32): i32 {
   return stopwatch.stopwatch_color(flag(running), opacity);
 }
 
-pub function Java_dev_fern_stopwatch_Core_clockColor(env: usize, cls: usize, opacity: i32): i32 {
+@jni("dev.fern.stopwatch.Core", "static int clockColor(int)")
+pub function clock_color(env: usize, cls: usize, opacity: i32): i32 {
   return stopwatch.clock_color(opacity);
 }
 
-pub function Java_dev_fern_stopwatch_Core_keepScreenOn(env: usize, cls: usize, running: u8, stopwatch_enabled: u8): u8 {
+@jni("dev.fern.stopwatch.Core", "static boolean keepScreenOn(boolean, boolean)")
+pub function keep_screen_on(env: usize, cls: usize, running: u8, stopwatch_enabled: u8): u8 {
   return jbool(stopwatch.keep_screen_on(flag(running), flag(stopwatch_enabled)));
 }
 
-pub function Java_dev_fern_stopwatch_Core_buttonsHideDelayMs(env: usize, cls: usize): i32 {
+@jni("dev.fern.stopwatch.Core", "static int buttonsHideDelayMs()")
+pub function buttons_hide_delay_ms(env: usize, cls: usize): i32 {
   return stopwatch.BUTTONS_HIDE_DELAY_MS;
 }
 
-pub function Java_dev_fern_stopwatch_Core_burnInPeriodMs(env: usize, cls: usize): i32 {
+@jni("dev.fern.stopwatch.Core", "static int burnInPeriodMs()")
+pub function burn_in_period_ms(env: usize, cls: usize): i32 {
   return stopwatch.BURN_IN_PERIOD_MS;
 }
 
-pub function Java_dev_fern_stopwatch_Core_burnInOrigin(env: usize, cls: usize, panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
-  return stopwatch.burn_in_origin(panel, content, reserved, displacement, random);
+@jni("dev.fern.stopwatch.Core", "static int burnInOffset(int, int, int, int, int)")
+pub function burn_in_offset(env: usize, cls: usize, panel: i32, content: i32, reserved: i32, displacement: i32, random: i32): i32 {
+  return stopwatch.burn_in_offset(panel, content, reserved, displacement, random);
 }
 
-pub function Java_dev_fern_stopwatch_Core_nextBeepIn(env: usize, cls: usize, elapsed: i64, interval_minutes: i32): i64 {
+@jni("dev.fern.stopwatch.Core", "static long nextBeepIn(long, int)")
+pub function next_beep_in(env: usize, cls: usize, elapsed: i64, interval_minutes: i32): i64 {
   return stopwatch.next_beep_in(elapsed, interval_minutes);
 }
 
-pub function Java_dev_fern_stopwatch_Core_aboutText(env: usize, cls: usize, total_runtime_ms: i64): usize {
+@jni("dev.fern.stopwatch.Core", "static String aboutText(long)")
+pub function about_text(env: usize, cls: usize, total_runtime_ms: i64): usize {
   return jni.new_string(env, stopwatch.about_text(total_runtime_ms));
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingCount(env: usize, cls: usize): i32 {
+@jni("dev.fern.stopwatch.Core", "static int settingCount()")
+pub function setting_count(env: usize, cls: usize): i32 {
   return stopwatch.settings().len();
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingKey(env: usize, cls: usize, i: i32): usize {
+@jni("dev.fern.stopwatch.Core", "static String settingKey(int)")
+pub function setting_key(env: usize, cls: usize, i: i32): usize {
   return jni.new_string(env, stopwatch.settings()[i].key);
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingSection(env: usize, cls: usize, i: i32): usize {
+@jni("dev.fern.stopwatch.Core", "static String settingSection(int)")
+pub function setting_section(env: usize, cls: usize, i: i32): usize {
   return jni.new_string(env, stopwatch.settings()[i].section);
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingTitle(env: usize, cls: usize, i: i32): usize {
+@jni("dev.fern.stopwatch.Core", "static String settingTitle(int)")
+pub function setting_title(env: usize, cls: usize, i: i32): usize {
   return jni.new_string(env, stopwatch.settings()[i].title);
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingSummary(env: usize, cls: usize, i: i32): usize {
+@jni("dev.fern.stopwatch.Core", "static String settingSummary(int)")
+pub function setting_summary(env: usize, cls: usize, i: i32): usize {
   return jni.new_string(env, stopwatch.settings()[i].summary);
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingIsToggle(env: usize, cls: usize, i: i32): u8 {
+@jni("dev.fern.stopwatch.Core", "static boolean settingIsToggle(int)")
+pub function setting_is_toggle(env: usize, cls: usize, i: i32): u8 {
   return jbool(stopwatch.settings()[i].toggle);
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingMin(env: usize, cls: usize, i: i32): i32 {
+@jni("dev.fern.stopwatch.Core", "static int settingMin(int)")
+pub function setting_min(env: usize, cls: usize, i: i32): i32 {
   return stopwatch.settings()[i].min;
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingMax(env: usize, cls: usize, i: i32): i32 {
+@jni("dev.fern.stopwatch.Core", "static int settingMax(int)")
+pub function setting_max(env: usize, cls: usize, i: i32): i32 {
   return stopwatch.settings()[i].max;
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingDefault(env: usize, cls: usize, i: i32): i32 {
+@jni("dev.fern.stopwatch.Core", "static int settingDefault(int)")
+pub function setting_default(env: usize, cls: usize, i: i32): i32 {
   return stopwatch.settings()[i].default;
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingClamp(env: usize, cls: usize, i: i32, value: i32): i32 {
+@jni("dev.fern.stopwatch.Core", "static int settingClamp(int, int)")
+pub function setting_clamp(env: usize, cls: usize, i: i32, value: i32): i32 {
   return stopwatch.setting_clamp(i, value);
 }
 
-pub function Java_dev_fern_stopwatch_Core_settingValueText(env: usize, cls: usize, i: i32, value: i32): usize {
+@jni("dev.fern.stopwatch.Core", "static String settingValueText(int, int)")
+pub function setting_value_text(env: usize, cls: usize, i: i32, value: i32): usize {
   return jni.new_string(env, stopwatch.setting_value_text(i, value));
-}
-
-function main(): i32 {
-  return 0;
 }

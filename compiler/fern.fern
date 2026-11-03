@@ -32,6 +32,7 @@ import "./ambient";
 import "./arm64_native";
 import "./x86_native";
 import "./elf";
+import "./apk";
 import "./ircore";
 import "./emitforms";
 import "./semarrayreport";
@@ -943,11 +944,20 @@ function x86_self_relocation(own a: x86_native.X86Asm, tv: i32, dv: i32, reloc_a
   return x86_native.X86Asm { ...a, rodata: data };
 }
 
-function shared_export_names(list: string): string[] {
-  if (list.len() == 0) {
+// The -export names and the JNI symbols. With neither, a shared object
+// exports main.
+function shared_export_names(list: string, jni: JniMethod[]): string[] {
+  let out: string[] = [];
+  if (list.len() > 0) {
+    out = list.split(",");
+  }
+  for jm in jni {
+    out = out.append(jm.symbol);
+  }
+  if (out.len() == 0) {
     return ["main"];
   }
-  return list.split(",");
+  return out;
 }
 
 function shared_export_refusal(merged: parser.Module, names: string[]): string {
@@ -959,8 +969,611 @@ function shared_export_refusal(merged: parser.Module, names: string[]): string {
     if (merged.funcs[k].all_type_params.len() > 0) {
       return "-export " + n + ": a generic function has no single body to export";
     }
+    let jni: string = jni_export_refusal(merged.funcs[k]);
+    if (jni.len() > 0) {
+      return "-export " + n + ": " + jni;
+    }
   }
   return "";
+}
+
+// A C import is a function with @import(library, symbol) and no body, where
+// the library is a shared-object name such as "liblog.so" or "libc.so.6". A
+// WIT interface such as "wasi:http/types@0.2.0" names a wasm import instead.
+function is_c_library(iface: string): boolean {
+  return !iface.contains(":") && (iface.ends_with(".so") || iface.contains(".so."));
+}
+
+// On a native target a C import becomes a Fern function that calls through a slot, which
+// the dynamic loader fills with the symbol's address. The stub
+// __fern_import_<k> keeps the @import, and the emitter gives it a body that
+// reads that slot.
+function import_stub(k: i32): string {
+  return "__fern_import_" + util.i32_to_string(k);
+}
+
+function c_import_int(t: string): boolean {
+  return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64"], t);
+}
+
+function c_import_refusal(f: parser.FuncDecl, target: string, shared: boolean): string {
+  let what: string = "@import " + f.name + ": ";
+  if (!shared) {
+    return what + "an executable for -target " + target + " has no dynamic loader; build a -shared object to import " + f.import_wit + " from " + f.import_iface;
+  }
+  if (f.params.len() > 6) {
+    return what + "a C import takes at most 6 parameters (it has " + util.i32_to_string(f.params.len()) + ")";
+  }
+  for p in f.params {
+    if (!c_import_int(p.type_name)) {
+      return what + "parameter " + p.name + " is " + p.type_name + "; a C import takes integer and usize parameters";
+    }
+  }
+  if (f.ret_type != "" && f.ret_type != "void" && f.ret_type != "f32" && f.ret_type != "f64" && !c_import_int(f.ret_type)) {
+    return what + "the result is " + f.ret_type + "; a C import returns an integer, a usize, an f32, an f64 or nothing";
+  }
+  return "";
+}
+
+pub function native_import_refusal(m: parser.Module, target: string, shared: boolean): string {
+  for f in m.funcs {
+    if (is_c_library(f.import_iface) && !is_native_target(target)) {
+      return "@import " + f.name + ": -target " + target + " cannot load the C library " + f.import_iface;
+    }
+    if (is_c_library(f.import_iface)) {
+      let bad: string = c_import_refusal(f, target, shared);
+      if (bad.len() > 0) {
+        return bad;
+      }
+    }
+  }
+  return "";
+}
+
+// The data slot of import stub `stub`.
+function got_label(stub: string): string {
+  return "__fern_got" + slice_unchecked(stub, "__fern_import".len(), stub.len());
+}
+
+function is_callback(f: parser.FuncDecl): boolean {
+  return f.import_iface == parser.CALLBACK_IFACE;
+}
+
+// The functions that @callback declarations give to C. Each one gets a C
+// entry, and no dynamic symbol.
+function callback_targets(m: parser.Module): string[] {
+  let out: string[] = [];
+  for f in m.funcs {
+    if (is_callback(f) && !util.has_str(out, f.import_wit)) {
+      out = out.append(f.import_wit);
+    }
+  }
+  return out;
+}
+
+function callback_refusal(m: parser.Module, target: string, shared: boolean): string {
+  for f in m.funcs {
+    if (is_callback(f)) {
+      let what: string = "@callback " + f.name + ": ";
+      if (!(shared && is_native_target(target))) {
+        return what + "a callback needs -shared and a native target";
+      }
+      if (f.params.len() > 0 || f.ret_type != "usize") {
+        return what + "the declaration takes no parameters and returns usize";
+      }
+      let k: i32 = export_func_index(m, f.import_wit);
+      if (k < 0) {
+        return what + "the program has no top-level function " + f.import_wit;
+      }
+      if (m.funcs[k].all_type_params.len() > 0) {
+        return what + "a generic function has no single body to give to C";
+      }
+    }
+  }
+  return "";
+}
+
+// The C entries of a shared object: its exports, then the callback targets
+// that are not exports.
+function entry_names(merged: parser.Module, roots: string[]): string[] {
+  let out: string[] = roots;
+  for t in callback_targets(merged) {
+    if (!util.has_str(out, t)) {
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
+// The body of callback declaration `f`: it returns the address of the C
+// entry of its target.
+function callback_entry(f: parser.FuncDecl, arm64: boolean): string {
+  let entry: string = "__fern_export_" + f.import_wit;
+  if (arm64) {
+    return "__fn_" + f.name + ":\n    adrp x0, " + entry + "\n    add x0, x0, :lo12:" + entry + "\n    ret\n";
+  }
+  return "__fn_" + f.name + ":\n    leaq " + entry + "(%rip), %rax\n    ret\n";
+}
+
+// Each import stub's slot, and the stub's body, which returns the slot's
+// contents: the address that the dynamic loader writes there. Then the body
+// of each callback declaration.
+function import_entries(merged: parser.Module, arm64: boolean): string {
+  let out: string = "";
+  for f in merged.funcs {
+    if (is_callback(f)) {
+      out = out + callback_entry(f, arm64);
+    }
+    if (is_c_library(f.import_iface)) {
+      let got: string = got_label(f.name);
+      if (arm64) {
+        out = out + "    .section .data\n    .align 3\n" + got + ":\n    .quad 0\n    .text\n";
+        out = out + "__fn_" + f.name + ":\n    adrp x0, " + got + "\n    ldr x0, [x0, :lo12:" + got + "]\n    ret\n";
+      } else {
+        out = out + "    .section .data\n    .align 8\n" + got + ":\n    .quad 0\n    .text\n";
+        out = out + "__fn_" + f.name + ":\n    movq " + got + "(%rip), %rax\n    ret\n";
+      }
+    }
+  }
+  return out;
+}
+
+// The libraries and symbols of the import stubs. The slots are found after
+// assembly.
+function so_imports(merged: parser.Module): elf.SoImports {
+  let imp: elf.SoImports = elf.no_so_imports();
+  for f in merged.funcs {
+    if (is_c_library(f.import_iface)) {
+      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0) };
+    }
+  }
+  return imp;
+}
+
+function import_stub_names(merged: parser.Module): string[] {
+  let out: string[] = [];
+  for f in merged.funcs {
+    if (is_c_library(f.import_iface)) {
+      out = out.append(f.name);
+    }
+  }
+  return out;
+}
+
+// The source of the body that calls C import `f` through stub `k`.
+function c_import_body(f: parser.FuncDecl, k: i32): string {
+  let args: string = import_stub(k) + "()";
+  let params: string = "";
+  for p in f.params {
+    args = args + ", " + p.name + " as usize";
+    if (params.len() > 0) {
+      params = params + ", ";
+    }
+    params = params + p.name + ": " + p.type_name;
+  }
+  let n: string = util.i32_to_string(f.params.len());
+  let call: string = "__c_call" + n + "(" + args + ")";
+  let ret: string = "";
+  let stmt: string = "let ignored: usize = " + call + ";";
+  if (f.ret_type == "f32" || f.ret_type == "f64") {
+    ret = ": " + f.ret_type;
+    stmt = "return __c_call" + n + "_" + f.ret_type + "(" + args + ");";
+  } else if (f.ret_type != "" && f.ret_type != "void") {
+    ret = ": " + f.ret_type;
+    stmt = "return " + call + " as " + f.ret_type + ";";
+  }
+  return "function body_" + util.i32_to_string(k) + "(" + params + ")" + ret + " {\n  unsafe {\n    " + stmt + "\n  }\n}\n"
+    + "@import(\"" + f.import_iface + "\", \"" + f.import_wit + "\")\nfunction " + import_stub(k) + "(): usize;\n";
+}
+
+function has_c_imports(m: parser.Module): boolean {
+  for f in m.funcs {
+    if (is_c_library(f.import_iface)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+pub function native_imports(m: parser.Module, target: string): parser.Module {
+  if (!is_native_target(target) || !has_c_imports(m)) {
+    return m;
+  }
+  let funcs: parser.FuncDecl[] = [];
+  for k in 0..m.funcs.len() {
+    let f: parser.FuncDecl = m.funcs[k];
+    if (!is_c_library(f.import_iface)) {
+      funcs = funcs.append(f);
+    } else {
+      let gen: parser.Module = parser.parse_module(lexer.tokenize(c_import_body(f, k)));
+      let body: parser.FuncDecl = gen.funcs[0];
+      let stub: parser.FuncDecl = gen.funcs[1];
+      funcs = funcs.append(parser.FuncDecl { ...f, body: body.body, import_iface: "", import_wit: "" });
+      funcs = funcs.append(parser.FuncDecl { ...stub, module: f.module, stdlib: f.stdlib, line: f.line, col: f.col });
+    }
+  }
+  return parser.Module { ...m, funcs: funcs };
+}
+
+// A JNI method from @jni(class, declaration). The declaration is Java:
+// "[static] result name(type, ...)". `symbol` is the JNI symbol of the
+// generated wrapper that calls `func`.
+struct JniMethod { func: parser.FuncDecl, class: string, is_static: boolean, result: string, name: string, types: string[], params: string[], symbol: string }
+
+// The Fern type with the width of Java type `t`, or "" for void. A Java
+// reference, such as String or int[], is a usize.
+function jni_fern_type(t: string): string {
+  let java: string[] = ["void", "boolean", "byte", "char", "short", "int", "long", "float", "double"];
+  let fern: string[] = ["", "u8", "i8", "u16", "i16", "i32", "i64", "f32", "f64"];
+  let k: i32 = util.index_of_str(java, t);
+  if (k >= 0) {
+    return fern[k];
+  }
+  return "usize";
+}
+
+function jni_name_char(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.';
+}
+
+function jni_name_ok(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  for c in s.bytes() {
+    if (!jni_name_char(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A Java name as a JNI symbol spells it: "." becomes "_" and "_" becomes "_1".
+function jni_mangle(s: string): string {
+  let out: string = "";
+  for c in s.bytes() {
+    if (c == b'.') {
+      out = out + "_";
+    } else if (c == b'_') {
+      out = out + "_1";
+    } else {
+      out = out + string_from_bytes_unchecked([c]);
+    }
+  }
+  return out;
+}
+
+function char_at(s: string, c: u8): i32 {
+  for i in 0..s.len() {
+    if (s[i] == c) {
+      return i;
+    }
+  }
+  return 0 - 1;
+}
+
+function jni_bad(f: parser.FuncDecl, why: string): (JniMethod, string) {
+  let none: string[] = [];
+  return (JniMethod { func: f, class: "", is_static: false, result: "", name: "", types: none, params: none, symbol: "" }, "@jni " + f.name + ": " + why);
+}
+
+// A parsed Java declaration "[static] result name(type, ...)". `ok` is
+// false when it does not parse.
+struct JavaDecl { ok: boolean, is_static: boolean, result: string, name: string, types: string[] }
+
+function java_decl(class: string, decl: string): JavaDecl {
+  let none: string[] = [];
+  let bad: JavaDecl = JavaDecl { ok: false, is_static: false, result: "", name: "", types: none };
+  let d: string = decl.trim();
+  let is_static: boolean = util.str_has_prefix(d, "static ");
+  if (is_static) {
+    d = slice_unchecked(d, 7, d.len()).trim();
+  }
+  let open: i32 = char_at(d, b'(');
+  if (open < 0 || d[d.len() - 1] != b')') {
+    return bad;
+  }
+  let head: string[] = slice_unchecked(d, 0, open).trim().split(" ");
+  if (head.len() != 2 || !jni_name_ok(class) || !jni_name_ok(head[1])) {
+    return bad;
+  }
+  let types: string[] = [];
+  let inner: string = slice_unchecked(d, open + 1, d.len() - 1).trim();
+  if (inner.len() > 0) {
+    for part in inner.split(",") {
+      types = types.append(part.trim().split(" ")[0]);
+    }
+  }
+  return JavaDecl { ok: true, is_static: is_static, result: head[0], name: head[1], types: types };
+}
+
+// Why the Fern signature of `f` does not fit the Java declaration `jd`, or "".
+function jni_signature_refusal(f: parser.FuncDecl, jd: JavaDecl): string {
+  if (f.params.len() != jd.types.len() + 2) {
+    return "it takes the JNIEnv*, the jobject or jclass and " + util.i32_to_string(jd.types.len()) + " arguments, so it needs " + util.i32_to_string(jd.types.len() + 2) + " parameters (it has " + util.i32_to_string(f.params.len()) + ")";
+  }
+  if (f.params[0].type_name != "usize" || f.params[1].type_name != "usize") {
+    return "the JNIEnv* and the jobject or jclass come first, each as usize";
+  }
+  for k in 0..jd.types.len() {
+    let p = f.params[k + 2];
+    if (p.type_name != jni_fern_type(jd.types[k])) {
+      return "parameter " + p.name + " is " + p.type_name + ", but the Java " + jd.types[k] + " needs " + jni_fern_type(jd.types[k]);
+    }
+  }
+  let ret: string = f.ret_type;
+  if (ret == "void") {
+    ret = "";
+  }
+  if (ret != jni_fern_type(jd.result)) {
+    return "the result is " + f.ret_type + ", but the Java " + jd.result + " needs " + jni_fern_type(jd.result);
+  }
+  return "";
+}
+
+// The JNI method of `f`, or a refusal: the Java declaration must parse, and
+// each Fern type must have the width of its Java type.
+function jni_method(f: parser.FuncDecl, class: string, decl: string): (JniMethod, string) {
+  let jd: JavaDecl = java_decl(class, decl);
+  if (!jd.ok) {
+    return jni_bad(f, "the declaration \"" + decl + "\" is not \"[static] result name(type, ...)\"");
+  }
+  let bad: string = jni_signature_refusal(f, jd);
+  if (bad.len() > 0) {
+    return jni_bad(f, bad);
+  }
+  let params: string[] = [];
+  for k in 0..jd.types.len() {
+    params = params.append(f.params[k + 2].name);
+  }
+  let symbol: string = "Java_" + jni_mangle(class) + "_" + jni_mangle(jd.name);
+  return (JniMethod { func: f, class: class, is_static: jd.is_static, result: jd.result, name: jd.name, types: jd.types, params: params, symbol: symbol }, "");
+}
+
+// The module with its C imports and its JNI wrappers, and the JNI methods,
+// or the first refusal of either.
+function native_bindings(m: parser.Module, target: string, shared: boolean, java_dir: string): (parser.Module, JniMethod[], string) {
+  let none: JniMethod[] = [];
+  let callback_bad: string = callback_refusal(m, target, shared);
+  if (callback_bad.len() > 0) {
+    return (m, none, callback_bad);
+  }
+  let import_bad: string = native_import_refusal(m, target, shared);
+  if (import_bad.len() > 0) {
+    return (m, none, import_bad);
+  }
+  let imported: parser.Module = native_imports(m, target);
+  let (jni, jni_bad) = jni_build_methods(imported, target, shared, java_dir);
+  if (jni_bad.len() > 0) {
+    return (imported, jni, jni_bad);
+  }
+  return (jni_wrappers(imported, jni), jni, "");
+}
+
+// The JNI methods of a build, or a refusal: they need a native -shared
+// build, and -jni-java needs at least one.
+function jni_build_methods(m: parser.Module, target: string, shared: boolean, java_dir: string): (JniMethod[], string) {
+  let (jni, bad) = jni_methods(m);
+  if (bad.len() > 0) {
+    return (jni, bad);
+  }
+  if (jni.len() > 0 && !(shared && is_native_target(target))) {
+    return (jni, "@jni " + jni[0].func.name + ": a JNI method needs -shared and a native target");
+  }
+  if (java_dir.len() > 0 && jni.len() == 0) {
+    return (jni, "-jni-java: the program has no @jni function");
+  }
+  return (jni, "");
+}
+
+// The JNI methods of the module, or the first refusal.
+pub function jni_methods(m: parser.Module): (JniMethod[], string) {
+  let out: JniMethod[] = [];
+  let symbols: string[] = [];
+  for b in m.exports {
+    if (b.jni) {
+      let k: i32 = export_func_index(m, b.func_name);
+      if (k < 0) {
+        let none: JniMethod[] = [];
+        return (none, "@jni " + b.func_name + ": no such function");
+      }
+      let (jm, bad) = jni_method(m.funcs[k], b.iface, b.wit);
+      if (bad.len() > 0) {
+        let none: JniMethod[] = [];
+        return (none, bad);
+      }
+      if (util.has_str(symbols, jm.symbol)) {
+        let none: JniMethod[] = [];
+        return (none, "@jni " + b.func_name + ": " + jm.class + "." + jm.name + " is bound twice, and JNI overloads are not supported");
+      }
+      symbols = symbols.append(jm.symbol);
+      out = out.append(jm);
+    }
+  }
+  return (out, "");
+}
+
+// Each JNI method becomes a C-ABI export named by its JNI symbol, which
+// calls the Fern function.
+pub function jni_wrappers(m: parser.Module, methods: JniMethod[]): parser.Module {
+  if (methods.len() == 0) {
+    return m;
+  }
+  let src: string = "";
+  for jm in methods {
+    let f: parser.FuncDecl = jm.func;
+    let decl: string = "";
+    let args: string = "";
+    for p in f.params {
+      if (decl.len() > 0) {
+        decl = decl + ", ";
+        args = args + ", ";
+      }
+      decl = decl + p.name + ": " + p.type_name;
+      args = args + p.name;
+    }
+    let call: string = f.name + "(" + args + ");";
+    if (f.ret_type.len() > 0 && f.ret_type != "void") {
+      src = src + "pub function " + jm.symbol + "(" + decl + "): " + f.ret_type + " {\n  return " + call + "\n}\n";
+    } else {
+      src = src + "pub function " + jm.symbol + "(" + decl + "): void {\n  " + call + "\n}\n";
+    }
+  }
+  let gen: parser.Module = parser.parse_module(lexer.tokenize(src));
+  let funcs: parser.FuncDecl[] = m.funcs;
+  let exports: parser.ExportBinding[] = [];
+  for b in m.exports {
+    if (!b.jni) {
+      exports = exports.append(b);
+    }
+  }
+  for i in 0..gen.funcs.len() {
+    let g: parser.FuncDecl = gen.funcs[i];
+    let f: parser.FuncDecl = methods[i].func;
+    funcs = funcs.append(parser.FuncDecl { ...g, module: f.module, stdlib: f.stdlib, line: f.line, col: f.col });
+  }
+  return parser.Module { ...m, funcs: funcs, exports: exports };
+}
+
+// The native declaration of `jm` in its Java class.
+function jni_java_method(jm: JniMethod): string {
+  let args: string = "";
+  for k in 0..jm.types.len() {
+    if (k > 0) {
+      args = args + ", ";
+    }
+    args = args + jm.types[k] + " " + jm.params[k];
+  }
+  let st: string = "";
+  if (jm.is_static) {
+    st = "static ";
+  }
+  return "    " + st + "native " + jm.result + " " + jm.name + "(" + args + ");\n";
+}
+
+// The header and the static block of `class`. A class of static methods
+// alone is final, with a private constructor.
+function jni_java_head(class: string, library: string, all_static: boolean): string {
+  let dot: i32 = 0 - 1;
+  for i in 0..class.len() {
+    if (class[i] == b'.') {
+      dot = i;
+    }
+  }
+  let simple: string = slice_unchecked(class, dot + 1, class.len()) + "";
+  let out: string = "// Generated by fern -jni-java from the @jni functions. Do not edit.\n";
+  if (dot > 0) {
+    out = out + "package " + slice_unchecked(class, 0, dot) + ";\n\n";
+  }
+  let mods: string = "";
+  let ctor: string = "";
+  if (all_static) {
+    mods = "final ";
+    ctor = "\n    private " + simple + "() {}\n";
+  }
+  return out + mods + "class " + simple + " {\n    static {\n        System.loadLibrary(\"" + library + "\");\n    }\n" + ctor + "\n";
+}
+
+// The Java source of `class`: its JNI methods as native declarations, and
+// the static block that loads `library`.
+function jni_java_class(class: string, library: string, methods: JniMethod[]): string {
+  let all_static: boolean = true;
+  let body: string = "";
+  for jm in methods {
+    if (jm.class == class) {
+      all_static = all_static && jm.is_static;
+      body = body + jni_java_method(jm);
+    }
+  }
+  return jni_java_head(class, library, all_static) + body + "}\n";
+}
+
+// The library name that System.loadLibrary takes for `out_path`, such as
+// "fern" for "lib/arm64-v8a/libfern.so".
+function jni_library(out_path: string): string {
+  let base: string = slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "";
+  if (util.str_has_prefix(base, "lib")) {
+    base = slice_unchecked(base, 3, base.len()) + "";
+  }
+  if (base.ends_with(".so")) {
+    base = slice_unchecked(base, 0, base.len() - 3) + "";
+  }
+  return base;
+}
+
+// Writes one Java file for each class of `methods` under `dir`, when -jni-java
+// names one.
+function write_jni_java(dir: string, out_path: string, methods: JniMethod[]): string {
+  if (dir.len() == 0) {
+    return "";
+  }
+  let classes: string[] = [];
+  for jm in methods {
+    if (!util.has_str(classes, jm.class)) {
+      classes = classes.append(jm.class);
+    }
+  }
+  for class in classes {
+    let path: string = dir + "/" + class.replace(".", "/") + ".java";
+    let parent: string = slice_unchecked(path, 0, util.last_slash(path)) + "";
+    match (create_dir_all(parent)) {
+      Err(e) => {
+        return "cannot make " + parent + ": " + e.message();
+      },
+      Ok(_) => {}
+    }
+    match (write_file(path, jni_java_class(class, jni_library(out_path), methods))) {
+      Err(e) => {
+        return "cannot write " + path + ": " + e.message();
+      },
+      Ok(_) => {}
+    }
+  }
+  return "";
+}
+
+// The Fern types with the width of a JNI type: usize for a reference or a
+// JNIEnv*, and the scalars jbyte, jboolean, jshort, jchar, jint, jlong,
+// jfloat and jdouble.
+function jni_width(t: string): boolean {
+  return util.has_str(["usize", "i8", "u8", "i16", "u16", "i32", "i64", "f32", "f64"], t);
+}
+
+// A JNI method named Java_* takes the JNIEnv* and a jobject or jclass, then
+// its arguments. The JVM passes a 32-bit jint in a 64-bit register with
+// undefined upper bits, so each type must have the width of its JNI type.
+function jni_export_refusal(f: parser.FuncDecl): string {
+  if (!util.str_has_prefix(f.name, "Java_")) {
+    return "";
+  }
+  if (f.params.len() < 2 || f.params[0].type_name != "usize" || f.params[1].type_name != "usize") {
+    return "a JNI method takes the JNIEnv* and a jobject or jclass first, each as usize";
+  }
+  for p in f.params {
+    if (!jni_width(p.type_name)) {
+      return "parameter " + p.name + " is " + p.type_name + ", which has no JNI type of its width; use usize for a reference, i32 for jint, i64 for jlong or u8 for jboolean";
+    }
+  }
+  if (f.ret_type != "void" && f.ret_type != "" && !jni_width(f.ret_type)) {
+    return "the result is " + f.ret_type + ", which has no JNI type of its width; use usize for a reference, i32 for jint, i64 for jlong or u8 for jboolean";
+  }
+  return "";
+}
+
+function shared_exports(merged: parser.Module, shared: boolean, export_list: string, jni: JniMethod[]): (parser.Module, string[], string) {
+  let roots: string[] = [];
+  if (!shared) {
+    return (merged, roots, "");
+  }
+  roots = shared_export_names(export_list, jni);
+  let bad: string = shared_export_refusal(merged, roots);
+  if (bad.len() > 0) {
+    return (merged, roots, bad);
+  }
+  for name in entry_names(merged, roots) {
+    merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: name, iface: "", wit: "", c_abi: true, method: false, jni: false }) };
+  }
+  return (merged, roots, "");
 }
 
 function export_func_index(merged: parser.Module, name: string): i32 {
@@ -1007,19 +1620,19 @@ function export_entry(f: parser.FuncDecl): string {
       stack = stack + 8;
     }
   }
-  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n" + asm_ir.busy_take_x86();
+  let out: string = "__fern_export_" + f.name + ":\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $16, %rsp\n" + asm_ir.busy_take_x86() + "    movq __fern_stack_top(%rip), %rax\n    movq %rax, -8(%rbp)\n    movq %rbp, __fern_stack_top(%rip)\n";
   let i: i32 = f.params.len() - 1;
   while (i >= 0) {
     out = out + export_arg(srcs[i], f.params[i].type_name) + "    pushq %rax\n";
     i = i - 1;
   }
-  out = out + "    call __fn_" + f.name + "\n    movl $0, __fern_busy(%rip)\n";
+  out = out + "    call __fn_" + f.name + "\n";
   if (f.ret_type == "f64") {
     out = out + "    movq %rax, %xmm0\n";
   } else if (f.ret_type == "f32") {
     out = out + "    movq %rax, %xmm0\n    cvtsd2ss %xmm0, %xmm0\n";
   }
-  return out + "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+  return out + "    movq -8(%rbp), %rcx\n    movq %rcx, __fern_stack_top(%rip)\n" + asm_ir.busy_give_x86() + "    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
 }
 
 function export_arg(src: string, t: string): string {
@@ -1061,7 +1674,7 @@ function export_entry_arm64(f: parser.FuncDecl): string {
     }
   }
   let n: i32 = f.params.len();
-  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n" + asm_arm64_ir.busy_take_arm64();
+  let out: string = "__fern_export_" + f.name + ":\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n" + asm_arm64_ir.busy_take_arm64() + "    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    ldr x17, [x16]\n    str x17, [sp, #-16]!\n    str x29, [x16]\n";
   if (n > 0) {
     out = out + "    sub sp, sp, #" + util.i32_to_string(16 * n) + "\n";
   }
@@ -1070,13 +1683,13 @@ function export_entry_arm64(f: parser.FuncDecl): string {
     out = out + export_arg_arm64(srcs[i], f.params[i].type_name) + "    str x16, [sp, #" + util.i32_to_string(16 * i) + "]\n";
     i = i + 1;
   }
-  out = out + "    bl __fn_" + f.name + "\n" + asm_arm64_ir.busy_release_arm64();
+  out = out + "    bl __fn_" + f.name + "\n";
   if (f.ret_type == "f64") {
     out = out + "    fmov d0, x0\n";
   } else if (f.ret_type == "f32") {
     out = out + "    fmov d0, x0\n    fcvt s0, d0\n";
   }
-  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
+  return out + "    ldr x17, [x29, #-16]\n    adrp x16, __fern_stack_top\n    add x16, x16, :lo12:__fern_stack_top\n    str x17, [x16]\n" + asm_arm64_ir.busy_give_arm64() + "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n";
 }
 
 function export_arg_arm64(src: string, t: string): string {
@@ -1111,7 +1724,7 @@ function export_widen_arm64(x: string, w: string, t: string): string {
   return "    mov x16, " + x + "\n";
 }
 
-function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string): string {
+function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "assembler", p.unknown);
@@ -1146,11 +1759,17 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let imp: elf.SoImports = so_imports(merged);
+  let slots: i32[] = [];
+  for stub in import_stub_names(merged) {
+    slots = slots.append(arm64_native.arm64_symbol_addr(p, got_label(stub), tv as i64, dv as i64) as i32);
+  }
+  imp = elf.SoImports { ...imp, slots: slots };
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
-function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
+function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string, merged: parser.Module): string {
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   let tv: i32 = elf.elf_text_off_so();
   let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
@@ -1184,7 +1803,14 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let imp: elf.SoImports = so_imports(merged);
+  let slots: i32[] = [];
+  let base: i32 = x86_native.x86_data_base(a, a.text.len());
+  for stub in import_stub_names(merged) {
+    slots = slots.append(data_at + x86_native.x86_symbol_addr(a, got_label(stub), 0) - base);
+  }
+  imp = elf.SoImports { ...imp, slots: slots };
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -1339,8 +1965,13 @@ function is_flag(a: string): boolean {
   return a[0] == b'-';
 }
 
+// The targets with a native backend and a binary image.
+function is_native_target(t: string): boolean {
+  return t == "x86-64-linux" || t == "arm64-linux" || t == "x86-64-android" || t == "arm64-android" || t == "arm64-darwin";
+}
+
 function sanitize_warning(target: string): string {
-  if (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin") {
+  if (is_native_target(target)) {
     return "";
   }
   let census: string = "the leak census only, not the rc over-release or use-after-free detectors";
@@ -1448,7 +2079,7 @@ function heap_limit_bytes(text: string, target: string): i64 {
   if (text.len() == 0) {
     return 0i64;
   }
-  if (!(target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin")) {
+  if (!is_native_target(target)) {
     eprint("fern: -heap-limit is only supported for the native targets (got \"" + target + "\")");
     return 0i64 - 1i64;
   }
@@ -1549,7 +2180,12 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
-      cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
+      cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export, besides the @jni ones (default main)"),
+      cli_flag("-jni-java", "DIR", "with -shared: write the Java class of each @jni class under DIR, with its native methods and System.loadLibrary"),
+      cli_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
+      cli_flag("-apk-package", "NAME", "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
+      cli_flag("-apk-label", "TEXT", "with -apk: the name of the app on the launcher (default LIB)"),
+      cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
@@ -1881,7 +2517,7 @@ function target_writes_binary(t: string, emit: string): boolean {
   if (emit.len() > 0) {
     return false;
   }
-  return t == "x86-64-linux" || t == "arm64-linux" || t == "arm64-android" || t == "arm64-darwin";
+  return is_native_target(t);
 }
 
 function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
@@ -5239,12 +5875,17 @@ function coverage_refusal(cover_on: boolean, mode_interp: boolean, mode_check: b
   return "";
 }
 
+// An x86 Android executable uses PIE, like its ARM counterpart.
+function executable_pie(pie: boolean, target: string, shared: boolean): boolean {
+  return pie || target == "x86-64-android" && !shared;
+}
+
 function shared_refusal(shared: boolean, target: string, out_path: string, emit: string): string {
   if (!shared) {
     return "";
   }
-  if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
-    return "fern: -shared is only supported with -target x86-64-linux, arm64-linux or arm64-android (got \"" + target + "\")";
+  if (!is_native_target(target) || target == "arm64-darwin") {
+    return "fern: -shared is only supported with -target x86-64-linux, arm64-linux, x86-64-android or arm64-android (got \"" + target + "\")";
   }
   if (out_path.len() == 0 && emit != "asm") {
     return "fern: -shared requires -o OUTPUT.so";
@@ -5258,12 +5899,214 @@ function cli_backend_refusal(backend: string, target: string): string {
   }
   let ssa_isa: boolean = platforms.for_target(target).isa == "arm64" || platforms.for_target(target).isa == "x86-64";
   if (backend == "ssa" && !ssa_isa) {
-    return "fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux)";
+    return "fern: -backend ssa is not available for -target " + target + " (available for: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, x86-64-android)";
   }
   if (backend == "flat" && ssa_isa) {
     return "fern: -backend flat is not available for -target " + target + ": the stack machine's function emitter was retired, and the register path (-backend ssa, the default) is the only emitter on arm64 and x86-64";
   }
   return "";
+}
+
+// The Android flags: -jni-java, and the output, package, label and key file
+// of -apk.
+struct ApkOpts { jni_java: string, out: string, package: string, label: string, key: string }
+
+function is_android_flag(name: string): boolean {
+  return util.has_str(["-jni-java", "-apk", "-apk-package", "-apk-label", "-apk-key"], name);
+}
+
+function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
+  if (f.name == "-jni-java") {
+    return ApkOpts { ...o, jni_java: f.value };
+  }
+  if (f.name == "-apk") {
+    return ApkOpts { ...o, out: f.value };
+  }
+  if (f.name == "-apk-package") {
+    return ApkOpts { ...o, package: f.value };
+  }
+  if (f.name == "-apk-label") {
+    return ApkOpts { ...o, label: f.value };
+  }
+  if (f.name == "-apk-key") {
+    return ApkOpts { ...o, key: f.value };
+  }
+  return o;
+}
+
+// The arguments of one -apk build: the command line without the -apk flags.
+function apk_build_args(av: string[]): (string[], string) {
+  let out: string[] = [];
+  let value_next: boolean = false;
+  for a in av[1:av.len()] {
+    let name: string = apk_flag_name(a);
+    if (value_next) {
+      value_next = false;
+    } else if (util.has_str(["-target", "-o", "-shared", "-export", "-run", "-emit", "-jni-java"], name)) {
+      return (out, "fern: -apk builds the library for both Android ABIs itself, so it takes no " + a);
+    } else if (util.str_has_prefix(name, "-apk")) {
+      value_next = !a.contains("=");
+    } else {
+      out = out.append(a);
+    }
+  }
+  return (out, "");
+}
+
+// The name of flag `a`, with one dash and no "=value".
+function apk_flag_name(a: string): string {
+  if (!is_flag(a)) {
+    return "";
+  }
+  let body: string = slice_unchecked(a, 1, a.len()) + "";
+  if (util.str_has_prefix(body, "-")) {
+    body = slice_unchecked(body, 1, body.len()) + "";
+  }
+  let eq: i32 = util.index_of_sub(body, "=");
+  if (eq >= 0) {
+    body = slice_unchecked(body, 0, eq) + "";
+  }
+  return "-" + body;
+}
+
+// The library name of the app: the base name of FILE, as a C identifier.
+function apk_lib_name(entry_path: string): string {
+  let base: string = modloader.base_name(entry_path);
+  let out: string = "";
+  for i in 0..base.len() {
+    let c: u8 = base[i];
+    if (c == b'.') {
+      break;
+    }
+    if (c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9') {
+      out = out + slice_unchecked(base, i, i + 1);
+    } else {
+      out = out + "_";
+    }
+  }
+  return out;
+}
+
+function apk_write_key(path: string, pem: string): Result[void, IoError] {
+  match (open_exclusive(path)) {
+    Ok(writer) => {
+      let written: Result[void, IoError] = writer.write(pem);
+      let closed: Result[void, IoError] = writer.close();
+      match (written) {
+        Ok(_) => {
+          return closed;
+        },
+        Err(e) => {
+          return Err(e);
+        }
+      }
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+// The signing scalar from `path`, or a new one, which it writes there.
+function apk_key(path: string): (u8[], string) {
+  match (read_file(path)) {
+    Ok(pem) => {
+      let d: u8[] = apk.key_scalar(pem);
+      if (d.len() != 32) {
+        return (d, "fern: " + path + " is not a P-256 private key in PEM form");
+      }
+      return (d, "");
+    },
+    Err(_) => {}
+  }
+  let d: u8[] = apk.new_scalar();
+  match (apk_write_key(path, apk.key_pem(d))) {
+    Ok(_) => {
+      eprint("fern: wrote a new signing key to " + path + "; sign each update of the app with it");
+      return (d, "");
+    },
+    Err(e) => {
+      return (d, "fern: cannot write " + path + ": " + e.message());
+    }
+  }
+}
+
+// The library of the app for each Android ABI, built under `dir` with the
+// name lib<lib>.so, which is also its SONAME.
+function apk_libs(fern: string, rest: string[], dir: string, lib: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): (apk.Lib[], i32) {
+  let libs: apk.Lib[] = [];
+  let status: i32 = 0;
+  for abi in [("arm64-v8a", "arm64-android"), ("x86_64", "x86-64-android")] {
+    let so: string = dir + "/" + abi.0 + "/lib" + lib + ".so";
+    let _ = create_dir_all(dir + "/" + abi.0);
+    if (status == 0) {
+      status = run_with_gate(util.append_all([fern, "-target", abi.1, "-shared", "-export", "ANativeActivity_onCreate", "-o", so], rest), embedded_root, fetcher, gate);
+    }
+    match (read_file_bytes(so)) {
+      Ok(image) => {
+        libs = libs.append(apk.Lib { abi: abi.0, image: image });
+      },
+      Err(e) => {
+        if (status == 0) {
+          eprint("fern: cannot read " + so + ": " + e.message());
+          status = 1;
+        }
+      }
+    }
+  }
+  let _ = remove_dir_all(dir);
+  return (libs, status);
+}
+
+// The -apk-key file, or by default the APK path with .key.pem for .apk.
+function apk_key_path(o: ApkOpts): string {
+  if (o.key.len() > 0) {
+    return o.key;
+  }
+  if (o.out.ends_with(".apk")) {
+    return slice_unchecked(o.out, 0, o.out.len() - 4) + ".key.pem";
+  }
+  return o.out + ".key.pem";
+}
+
+function apk_app(o: ApkOpts, lib: string): apk.App {
+  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0" };
+  if (o.package.len() > 0) {
+    app = apk.App { ...app, package: o.package };
+  }
+  if (o.label.len() > 0) {
+    app = apk.App { ...app, label: o.label };
+  }
+  return app;
+}
+
+// fern -apk: builds the library of the app for each Android ABI, then
+// writes the signed APK.
+function run_apk(av: string[], o: ApkOpts, entry_path: string, embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
+  let (rest, bad) = apk_build_args(av);
+  if (bad.len() > 0) {
+    eprint(bad);
+    return 2;
+  }
+  let lib: string = apk_lib_name(entry_path);
+  let (libs, status) = apk_libs(av[0], rest, o.out + ".lib", lib, embedded_root, fetcher, gate);
+  if (status != 0) {
+    return status;
+  }
+  let (d, key_bad) = apk_key(apk_key_path(o));
+  if (key_bad.len() > 0) {
+    eprint(key_bad);
+    return 1;
+  }
+  match (write_file_bytes(o.out, apk.write(apk_app(o, lib), libs, d))) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(e) => {
+      eprint("fern: cannot write " + o.out + ": " + e.message());
+      return 1;
+    }
+  }
 }
 
 function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
@@ -5308,6 +6151,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag: boolean = false;
   let shared: boolean = false;
   let export_list: string = "";
+  let apk_opts: ApkOpts = ApkOpts { jni_java: "", out: "", package: "", label: "", key: "" };
   let harden: boolean = false;
   let heap_limit_text: string = "";
   let quarantine_text: string = "";
@@ -5404,6 +6248,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       shared = f.on;
     } else if (f.name == "-export") {
       export_list = f.value;
+    } else if (is_android_flag(f.name)) {
+      apk_opts = android_flag(apk_opts, f);
     } else if (f.name == "-capabilities") {
       mode_caps = f.on;
     } else if (f.name == "-effects") {
@@ -5560,6 +6406,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     eprint("fern: -array-report prints the report and writes no output, so it takes neither -o nor -run");
     return 2;
   }
+  if (apk_opts.out.len() > 0) {
+    return run_apk(av, apk_opts, entry_path, embedded_root, fetcher, gate);
+  }
 
   if (mode_check && util.is_dir(entry_path)) {
     return check_dir(st, entry_path, root, target, target_given, embed_dir);
@@ -5601,6 +6450,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
     return 2;
   }
+  pie = executable_pie(pie, target, shared);
   let (remaps, remaps_ok) = path_remaps(remap_specs);
   if (!remaps_ok) {
     return 2;
@@ -5696,6 +6546,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 1;
   }
 
+  let (bound, jni, bind_bad) = native_bindings(merged, target, shared, apk_opts.jni_java);
+  if (bind_bad.len() > 0) {
+    eprint("fern: " + bind_bad);
+    return 2;
+  }
+  merged = bound;
   if (eprint_findings(st, errors_of(gate(merged, modloader.base_name(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
     return 1;
   }
@@ -5707,18 +6563,12 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
 
-  let shared_roots: string[] = [];
-  if (shared) {
-    shared_roots = shared_export_names(export_list);
-    let bad: string = shared_export_refusal(merged, shared_roots);
-    if (bad.len() > 0) {
-      eprint("fern: " + bad);
-      return 2;
-    }
-    for n in shared_roots {
-      merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true, method: false }) };
-    }
+  let (exported_module, shared_roots, export_bad) = shared_exports(merged, shared, export_list, jni);
+  if (export_bad.len() > 0) {
+    eprint("fern: " + export_bad);
+    return 2;
   }
+  merged = exported_module;
   if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {
     return 1;
   }
@@ -5774,11 +6624,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+      out_asm = export_entries(merged, entry_names(merged, shared_roots), true) + import_entries(merged, true) + out_asm;
     }
     out_asm = out_asm + bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged);
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -5796,10 +6646,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (shared) {
-      out_asm = export_entries(merged, shared_roots, true) + out_asm;
+      out_asm = export_entries(merged, entry_names(merged, shared_roots), true) + import_entries(merged, true) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target);
+      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged);
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -5891,10 +6741,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared && out_asm.len() > 0) {
-      out_asm = export_entries(merged, shared_roots, false) + out_asm;
+      out_asm = export_entries(merged, entry_names(merged, shared_roots), false) + import_entries(merged, false) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "");
+      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", merged);
       if (out_asm.len() == 0) {
         return 2;
       }
@@ -5915,6 +6765,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     }
   } else {
     write(out_asm);
+  }
+  let java_bad: string = write_jni_java(apk_opts.jni_java, out_path, jni);
+  if (java_bad.len() > 0) {
+    eprint("fern: -jni-java: " + java_bad);
+    return 1;
   }
   if (tf.run_it) {
     return run_and_clean(target, out_path, run_dir, prog_args, tf.qemu);

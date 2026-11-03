@@ -140,7 +140,7 @@ public final class MainActivity extends Activity {
 
         root.addView(content, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.START));
+                Gravity.CENTER));
         content.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override
             public void onLayoutChange(View v, int l, int t, int r, int b, int ol, int ot, int or, int ob) {
@@ -315,22 +315,20 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** Moves the content to the position Core picks for burn-in protection. */
+    /**
+     * Moves the centred content by the offset Core picks for burn-in
+     * protection. A translation needs no second layout pass, so a call from a
+     * layout listener shows in the frame that the layout is for.
+     */
     private void place() {
         if (root.getWidth() == 0 || content.getWidth() == 0) {
             return;
         }
         boolean portrait = getResources().getConfiguration().orientation != Configuration.ORIENTATION_LANDSCAPE;
-        int left = Core.burnInOrigin(root.getWidth(), content.getWidth(), portrait ? 0 : bar(),
-                displacement, random.nextInt(Integer.MAX_VALUE));
-        int top = Core.burnInOrigin(root.getHeight(), content.getHeight(), portrait ? bar() : 0,
-                displacement, random.nextInt(Integer.MAX_VALUE));
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) content.getLayoutParams();
-        if (params.leftMargin != left || params.topMargin != top) {
-            params.leftMargin = left;
-            params.topMargin = top;
-            content.setLayoutParams(params);
-        }
+        content.setTranslationX(Core.burnInOffset(root.getWidth(), content.getWidth(), portrait ? 0 : bar(),
+                displacement, random.nextInt(Integer.MAX_VALUE)));
+        content.setTranslationY(Core.burnInOffset(root.getHeight(), content.getHeight(), portrait ? bar() : 0,
+                displacement, random.nextInt(Integer.MAX_VALUE)));
     }
 
     private void showMenuButton() {

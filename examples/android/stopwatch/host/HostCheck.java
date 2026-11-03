@@ -37,8 +37,8 @@ public final class HostCheck {
 
         check("buttonsHideDelayMs", Core.buttonsHideDelayMs(), 5000);
         check("burnInPeriodMs", Core.burnInPeriodMs(), 60_000);
-        check("burnInOrigin", Core.burnInOrigin(1000, 400, 50, 0, 99), 300);
-        check("burnInOrigin moved", Core.burnInOrigin(1000, 400, 50, 10, 0), 50);
+        check("burnInOffset", Core.burnInOffset(1000, 400, 50, 0, 99), 0);
+        check("burnInOffset moved", Core.burnInOffset(1000, 400, 50, 10, 0), -250);
         check("nextBeepIn", Core.nextBeepIn(299_000, 5), 1000L);
         check("nextBeepIn off", Core.nextBeepIn(299_000, 0), -1L);
         check("aboutText", Core.aboutText(2 * 3_600_000L).contains("Total runtime: 2 hours"), true);

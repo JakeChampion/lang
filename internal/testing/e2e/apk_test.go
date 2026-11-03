@@ -1,0 +1,269 @@
+package e2e
+
+import (
+	"archive/zip"
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/binary"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+)
+
+func buildApk(t *testing.T, dir string, extra ...string) (string, []byte) {
+	t.Helper()
+	out := filepath.Join(dir, "app.apk")
+	args := append([]string{"-apk", out}, extra...)
+	args = append(args, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, raw
+}
+
+// fern -apk writes a zip of stored, aligned entries with the manifest and a
+// library for each ABI, and a v2 signature that verifies.
+func TestApkWriter(t *testing.T) {
+	dir := t.TempDir()
+	path, raw := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test")
+	if info, err := os.Stat(filepath.Join(dir, "app.key.pem")); err != nil {
+		t.Fatalf("no new key next to the APK: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Errorf("the signing key has permissions %04o, want 0600", info.Mode().Perm())
+	}
+	if _, err := os.Stat(path + ".lib"); err == nil {
+		t.Errorf("the build directory %s.lib is left behind", path)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+		if f.Method != zip.Store {
+			t.Errorf("%s: method %d, want stored", f.Name, f.Method)
+		}
+		off, err := f.DataOffset()
+		if err != nil {
+			t.Fatal(err)
+		}
+		align := int64(4)
+		if strings.HasSuffix(f.Name, ".so") {
+			align = 16384
+		}
+		if off%align != 0 {
+			t.Errorf("%s: data at %d, want a multiple of %d", f.Name, off, align)
+		}
+	}
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+		t.Errorf("entries = %s", got)
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	for _, s := range []string{"dev.fern.test", "Fern Stopwatch", "android.app.NativeActivity", "android.app.lib_name", "app"} {
+		if !bytes.Contains(man, utf16le(s)) {
+			t.Errorf("the manifest has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+	if apksigner, err := exec.LookPath("apksigner"); err == nil {
+		if o, err := exec.Command(apksigner, "verify", "--min-sdk-version", "24", path).CombinedOutput(); err != nil {
+			t.Errorf("apksigner verify: %v\n%s", err, o)
+		}
+	}
+	if aapt, err := exec.LookPath("aapt"); err == nil {
+		o, err := exec.Command(aapt, "dump", "badging", path).CombinedOutput()
+		if err != nil || !strings.Contains(string(o), "package: name='dev.fern.test'") || !strings.Contains(string(o), "native-code: 'arm64-v8a' 'x86_64'") {
+			t.Errorf("aapt dump badging: %v\n%s", err, o)
+		}
+	}
+
+	// The same key gives the same APK.
+	_, again := buildApk(t, dir, "-apk-label", "Fern Stopwatch", "-apk-package", "dev.fern.test")
+	if !bytes.Equal(raw, again) {
+		t.Error("two builds with the same key give different APKs")
+	}
+}
+
+func TestApkRefusals(t *testing.T) {
+	dir := t.TempDir()
+	for _, flag := range [][]string{{"-target", "arm64-android"}, {"-shared"}, {"-o", filepath.Join(dir, "x")}} {
+		args := append([]string{"-apk", filepath.Join(dir, "x.apk")}, flag...)
+		args = append(args, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		o, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(o), "-apk builds the library for both Android ABIs itself, so it takes no "+flag[0]) {
+			t.Errorf("%v: want a refusal, got %v\n%s", flag, err, o)
+		}
+	}
+	bad := filepath.Join(dir, "bad.pem")
+	if err := os.WriteFile(bad, []byte("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-apk", filepath.Join(dir, "y.apk"), "-apk-key", bad, e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "is not a P-256 private key in PEM form") {
+		t.Errorf("a bad key: want a refusal, got %v\n%s", err, o)
+	}
+	t.Run("existing-key-link", func(t *testing.T) {
+		target := filepath.Join(dir, "missing-key.pem")
+		key := filepath.Join(dir, "linked-key.pem")
+		if err := os.Symlink(target, key); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"-apk", filepath.Join(dir, "linked.apk"), "-apk-key", key,
+			e2eharness.RepoPath(nativeApp, "app.fern"), e2eharness.SelfHostStdlibRoot(t)}
+		cmd := exec.Command(e2eharness.SelfHostCLI(t), args...)
+		cmd.Env = e2eharness.ChildEnv()
+		if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "cannot write") {
+			t.Errorf("an existing key link: want a refusal, got %v\n%s", err, out)
+		}
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Errorf("the key link target changed: %v", err)
+		}
+	})
+}
+
+func readZipEntry(t *testing.T, zr *zip.Reader, name string) []byte {
+	t.Helper()
+	f, err := zr.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var b bytes.Buffer
+	if _, err := b.ReadFrom(f); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func utf16le(s string) []byte {
+	var out []byte
+	for _, r := range s {
+		out = append(out, byte(r), byte(r>>8))
+	}
+	return out
+}
+
+// verifyApkV2 checks the APK Signature Scheme v2 block as Android does: the
+// chunked digest of the entries, the central directory and the end record,
+// and the ECDSA signature of the signed data with the certificate's key.
+func verifyApkV2(t *testing.T, raw []byte) {
+	t.Helper()
+	eocd := len(raw) - 22
+	if binary.LittleEndian.Uint32(raw[eocd:]) != 0x06054b50 {
+		t.Fatal("no end of central directory record at the end")
+	}
+	cdOff := int(binary.LittleEndian.Uint32(raw[eocd+16:]))
+	if string(raw[cdOff-16:cdOff]) != "APK Sig Block 42" {
+		t.Fatal("no APK Signing Block before the central directory")
+	}
+	size := int(binary.LittleEndian.Uint64(raw[cdOff-24:]))
+	start := cdOff - size - 8
+	if int(binary.LittleEndian.Uint64(raw[start:])) != size {
+		t.Fatal("the two sizes of the signing block differ")
+	}
+	pairs := raw[start+8 : cdOff-24]
+	var v2 []byte
+	for len(pairs) > 0 {
+		n := int(binary.LittleEndian.Uint64(pairs))
+		if binary.LittleEndian.Uint32(pairs[8:]) == 0x7109871a {
+			v2 = pairs[12 : 8+n]
+		}
+		pairs = pairs[8+n:]
+	}
+	if v2 == nil {
+		t.Fatal("no v2 block")
+	}
+	signers, _ := lp(t, v2)
+	signer, _ := lp(t, signers)
+	signed, rest := lp(t, signer)
+	sigs, rest := lp(t, rest)
+	pub, _ := lp(t, rest)
+	digests, srest := lp(t, signed)
+	certs, _ := lp(t, srest)
+	cert, _ := lp(t, certs)
+	c, err := x509.ParseCertificate(cert)
+	if err != nil {
+		t.Fatalf("certificate: %v", err)
+	}
+	key, ok := c.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("the certificate key is %T", c.PublicKey)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil || !bytes.Equal(spki, pub) {
+		t.Error("the signer's public key is not the certificate's")
+	}
+	if err := c.CheckSignature(x509.ECDSAWithSHA256, c.RawTBSCertificate, c.Signature); err != nil {
+		t.Errorf("the certificate is not self-signed: %v", err)
+	}
+	sig, _ := lp(t, sigs)
+	if binary.LittleEndian.Uint32(sig) != 0x0201 {
+		t.Fatalf("signature algorithm %#x, want ECDSA with SHA-256", binary.LittleEndian.Uint32(sig))
+	}
+	sigBytes, _ := lp(t, sig[4:])
+	h := sha256.Sum256(signed)
+	if !ecdsa.VerifyASN1(key, h[:], sigBytes) {
+		t.Error("the v2 signature does not verify")
+	}
+	dg, _ := lp(t, digests)
+	want, _ := lp(t, dg[4:])
+	end := append([]byte{}, raw[eocd:]...)
+	binary.LittleEndian.PutUint32(end[16:], uint32(start))
+	if got := v2Digest(raw[:start], raw[cdOff:eocd], end); !bytes.Equal(got, want) {
+		t.Errorf("content digest %x, want %x", got, want)
+	}
+}
+
+func lp(t *testing.T, b []byte) ([]byte, []byte) {
+	t.Helper()
+	if len(b) < 4 {
+		t.Fatal("a length-prefixed field is cut short")
+	}
+	n := int(binary.LittleEndian.Uint32(b))
+	if 4+n > len(b) {
+		t.Fatalf("a field of %d bytes in %d", n, len(b)-4)
+	}
+	return b[4 : 4+n], b[4+n:]
+}
+
+func v2Digest(sections ...[]byte) []byte {
+	var chunks []byte
+	count := 0
+	for _, s := range sections {
+		for at := 0; at < len(s); at += 1 << 20 {
+			end := min(at+1<<20, len(s))
+			h := sha256.New()
+			var head [5]byte
+			head[0] = 0xa5
+			binary.LittleEndian.PutUint32(head[1:], uint32(end-at))
+			h.Write(head[:])
+			h.Write(s[at:end])
+			chunks = h.Sum(chunks)
+			count++
+		}
+	}
+	var head [5]byte
+	head[0] = 0x5a
+	binary.LittleEndian.PutUint32(head[1:], uint32(count))
+	h := sha256.New()
+	h.Write(head[:])
+	h.Write(chunks)
+	return h.Sum(nil)
+}

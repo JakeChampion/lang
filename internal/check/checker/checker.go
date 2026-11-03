@@ -2298,7 +2298,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
-	for n, params := range map[string]int{"__c_call0": 1, "__c_call1": 2, "__c_call2": 3, "__c_call3": 4, "__c_call4": 5} {
+	for n, params := range map[string]int{"__c_call0": 1, "__c_call1": 2, "__c_call2": 3, "__c_call3": 4, "__c_call4": 5, "__c_call5": 6, "__c_call6": 7} {
 		ps := make([]ast.Type, params)
 		for i := range ps {
 			ps[i] = usizeT
@@ -9096,6 +9096,8 @@ var UnsafeIntrinsics = map[string]bool{
 	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
 	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
 	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+	"__c_call5": true, "__c_call5_f32": true, "__c_call5_f64": true,
+	"__c_call6": true, "__c_call6_f32": true, "__c_call6_f64": true,
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,

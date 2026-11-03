@@ -450,7 +450,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { leg: x86-64, test: "TestFernFixturesSelfHostX86_64", wasmtime: "false", qemu: "false" }
+          - { leg: x86-64-linux-android, test: "TestFernFixturesSelfHostX86_64|TestFernFixturesSelfHostX86_64Android", wasmtime: "false", qemu: "false" }
           - { leg: x86-64-quarantine, test: "TestFernFixturesSelfHostX86_64Quarantine", wasmtime: "false", qemu: "false" }
           - { leg: arm64-linux-android, test: "TestFernFixturesSelfHostArm64|TestFernFixturesSelfHostArm64Android", wasmtime: "false", qemu: "true" }
           - { leg: wasm-core-component-http, test: "TestFernFixturesSelfHostWasm|TestFernFixturesSelfHostWasmComponent|TestFernFixturesSelfHostWasiHttp", wasmtime: "true", qemu: "false" }

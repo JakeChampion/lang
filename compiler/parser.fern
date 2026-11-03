@@ -207,7 +207,10 @@ function else_owner(toks: lexer.Token[], i: i32, closed: i32): i32 {
 
 pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, col: i32 }
 
-pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean, method: boolean }
+// A function that the image exports. @export names a wasm world export,
+// and -export a C symbol (c_abi). @jni names a JNI method: `iface` is the
+// Java class and `wit` the Java declaration.
+pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean, method: boolean, jni: boolean }
 
 pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], const_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
 
@@ -270,6 +273,10 @@ pub function is_cast_op(op: string): boolean {
 }
 
 pub const BARE_RETURN: string = "bare-return";
+
+// The import interface of a @callback("f") declaration. The compiler gives
+// the declaration a body that returns the address of the C entry of f.
+pub const CALLBACK_IFACE: string = "fern:callback";
 
 pub const REPORTED: string = "reported";
 
@@ -23532,6 +23539,14 @@ function std_json_alias(imports: Import[]): string {
 
 struct DeclAttr { name: string, derives: string[], iface: string, wit: string }
 
+// The export binding of an @export or @jni attribute on `f`.
+function with_attr_export(exports: ExportBinding[], attr: DeclAttr, f: FuncDecl): ExportBinding[] {
+  if (!util.has_str(["export", "jni"], attr.name)) {
+    return exports;
+  }
+  return exports.append(ExportBinding { func_name: f.name, iface: attr.iface, wit: attr.wit, c_abi: false, method: f.receiver_name.len() > 0, jni: attr.name == "jni" });
+}
+
 function no_decl_attr(): DeclAttr {
   return DeclAttr { name: "", derives: [], iface: "", wit: "" };
 }
@@ -23558,13 +23573,43 @@ function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
   if (name == "derive") {
     return parse_derive_args(p);
   }
-  if (name == "import" || name == "export") {
-    return parse_wit_pair(name, p);
+  if (util.has_str(["import", "export", "jni", "callback"], name)) {
+    return parse_binding_args(name, p);
   }
   if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline") {
     return (DeclAttr { ...no_decl_attr(), name: name }, [], p);
   }
-  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)")], p);
+  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @jni, @callback, @must_consume, @try, @inline, and @noinline are supported)")], p);
+}
+
+function parse_binding_args(name: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
+  if (name == "callback") {
+    return parse_callback_arg(p);
+  }
+  return parse_wit_pair(name, p);
+}
+
+// @callback("f"): the name of the function whose C entry address the
+// declaration returns.
+function parse_callback_arg(p: Par): (DeclAttr, ast.Stmt[], Par) {
+  if (p.peek_punct() != "(") {
+    return (no_decl_attr(), expected_here(p, "\"(\""), p);
+  }
+  p = p.advance();
+  let target: string = "";
+  match (p.peek()) {
+    lexer.TokString(s) => {
+      target = s.value;
+    },
+    _ => {
+      return (no_decl_attr(), expected_here(p, "a string literal"), p);
+    }
+  }
+  p = p.advance();
+  if (p.peek_punct() != ")") {
+    return (no_decl_attr(), expected_here(p, "\")\""), p);
+  }
+  return (DeclAttr { ...no_decl_attr(), name: "callback", iface: CALLBACK_IFACE, wit: target }, [], p.advance());
 }
 
 function parse_derive_args(p: Par): (DeclAttr, ast.Stmt[], Par) {
@@ -23655,6 +23700,12 @@ function attr_misplaced(name: string): string {
   }
   if (name == "export") {
     return "@export only applies to a function declaration";
+  }
+  if (name == "jni") {
+    return "@jni only applies to a function declaration";
+  }
+  if (name == "callback") {
+    return "@callback only applies to a function declaration";
   }
   return "@inline / @noinline only applies to a function declaration";
 }
@@ -25573,12 +25624,10 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: attr.name == "noinline" });
       }
       let fr_pub: FuncDecl = FuncDecl { ...fr_func, is_pub: decl_pub, is_package: decl_package, no_inline: attr.name == "noinline", always_inline: attr.name == "inline" };
-      if (attr.name == "import") {
+      if (attr.name == "import" || attr.name == "callback") {
         fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
       }
-      if (attr.name == "export") {
-        exports = exports.append(ExportBinding { func_name: fr_func.name, iface: attr.iface, wit: attr.wit, c_abi: false, method: fr_func.receiver_name.len() > 0 });
-      }
+      exports = with_attr_export(exports, attr, fr_func);
       let fr_out: FuncDecl = fr_pub;
       if (decl_fip || decl_fbip) {
         fr_out = FuncDecl { ...fr_pub, fip: decl_fip, fbip: decl_fbip, fip_allowance: decl_fip_allowance };
@@ -25909,7 +25958,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
   let xi: i32 = 0;
   while (xi < from.exports.len()) {
     let xb: ExportBinding = from.exports[xi];
-    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit, c_abi: xb.c_abi, method: xb.method });
+    nexports = nexports.append(ExportBinding { func_name: prefix + "." + xb.func_name, iface: xb.iface, wit: xb.wit, c_abi: xb.c_abi, method: xb.method, jni: xb.jni });
     xi = xi + 1;
   }
   let nimpls: ImplInfo[] = into.impls;

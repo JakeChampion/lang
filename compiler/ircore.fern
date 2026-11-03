@@ -132,8 +132,7 @@ pub function is_c_call(name: string): boolean {
   if (slice_unchecked(name, 0, 8) != "__c_call") {
     return false;
   }
-  let d: str = slice_unchecked(name, 8, 9);
-  if (d != "0" && d != "1" && d != "2" && d != "3" && d != "4") {
+  if (name[8] < b'0' || name[8] > b'6') {
     return false;
   }
   let rest: str = slice_unchecked(name, 9, name.len());

@@ -515,8 +515,8 @@ func TestStdJNITypedWrappers(t *testing.T) {
 		t.Skip("host is not amd64")
 	}
 	src := `import "std/jni";
-function probe_find(env: usize, cls: usize, jenv: usize, a0: usize): i32 {
-    return jni.find_class(jenv, a0) as i32;
+function probe_find(env: usize, cls: usize, jenv: usize): i32 {
+    return jni.find_class(jenv, "java/lang/String") as i32;
 }
 function probe_newstr(env: usize, cls: usize, jenv: usize, a0: usize): i32 {
     return jni.new_string_utf(jenv, a0) as i32;
@@ -531,17 +531,19 @@ function main(): i32 { return 0; }`
 	}
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
+#include <string.h>
 static long inc(void* env, long x){ (void)env; return x + 1; }
+static long findclass(void* env, const char* name){ (void)env; return strcmp(name, "java/lang/String") == 0 ? 42 : 1; }
 int main(int c, char** v){
   void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   void* table[256] = {0};
-  table[6]   = (void*)inc;  /* FindClass     */
+  table[6]   = (void*)findclass;  /* FindClass */
   table[167] = (void*)inc;  /* NewStringUTF  */
   void* tptr = table; void* env = &tptr;
-  int (*pf)(long,long,long,long) = (int(*)(long,long,long,long)) dlsym(h, "probe_find");
+  int (*pf)(long,long,long) = (int(*)(long,long,long)) dlsym(h, "probe_find");
   int (*pn)(long,long,long,long) = (int(*)(long,long,long,long)) dlsym(h, "probe_newstr");
   if(!pf||!pn) return 101;
-  if(pf(0,0,(long)env,41) != 42) return 1;
+  if(pf(0,0,(long)env) != 42) return 1;
   if(pn(0,0,(long)env,41) != 42) return 2;
   return 42;
 }`
@@ -569,8 +571,8 @@ func TestStdJNIGetMethodId(t *testing.T) {
 		t.Skip("host is not amd64")
 	}
 	src := `import "std/jni";
-function probe_gmid(env: usize, cls: usize, jenv: usize, a0: usize, a1: usize, a2: usize): i32 {
-    return jni.get_method_id(jenv, a0, a1, a2) as i32;
+function probe_gmid(env: usize, cls: usize, jenv: usize, clazz: usize): i32 {
+    return jni.get_method_id(jenv, clazz, "charAt", "(I)C") as i32;
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_gmid"}
@@ -582,15 +584,19 @@ function main(): i32 { return 0; }`
 	}
 	loader := `#include <dlfcn.h>
 #include <stdio.h>
-static long gmid(void* env, long a, long b, long c){ (void)env; return a + b + c; }
+#include <string.h>
+static long gmid(void* env, long clazz, const char* name, const char* sig){
+  (void)env;
+  return clazz == 10 && strcmp(name, "charAt") == 0 && strcmp(sig, "(I)C") == 0 ? 42 : 1;
+}
 int main(int c, char** v){
   void* h = dlopen(v[1], RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   void* table[256] = {0};
   table[33] = (void*)gmid;  /* GetMethodID */
   void* tptr = table; void* env = &tptr;
-  int (*pg)(long,long,long,long,long,long) = (int(*)(long,long,long,long,long,long)) dlsym(h, "probe_gmid");
+  int (*pg)(long,long,long,long) = (int(*)(long,long,long,long)) dlsym(h, "probe_gmid");
   if(!pg) return 101;
-  if(pg(0,0,(long)env,10,20,12) != 42) return 1;
+  if(pg(0,0,(long)env,10) != 42) return 1;
   return 42;
 }`
 	cPath := filepath.Join(dir, "loader.c")
@@ -618,13 +624,13 @@ func TestStdJNIStaticIds(t *testing.T) {
 	}
 	src := `import "std/jni";
 function probe_field(env: usize, cls: usize, jenv: usize): i32 {
-    return jni.get_field_id(jenv, 0 as usize, 0 as usize, 0 as usize) as i32;
+    return jni.get_field_id(jenv, 0 as usize, "count", "I") as i32;
 }
 function probe_smethod(env: usize, cls: usize, jenv: usize): i32 {
-    return jni.get_static_method_id(jenv, 0 as usize, 0 as usize, 0 as usize) as i32;
+    return jni.get_static_method_id(jenv, 0 as usize, "valueOf", "(I)Ljava/lang/String;") as i32;
 }
 function probe_sfield(env: usize, cls: usize, jenv: usize): i32 {
-    return jni.get_static_field_id(jenv, 0 as usize, 0 as usize, 0 as usize) as i32;
+    return jni.get_static_field_id(jenv, 0 as usize, "MAX_VALUE", "I") as i32;
 }
 function main(): i32 { return 0; }`
 	exps := []string{"probe_field", "probe_smethod", "probe_sfield"}
@@ -811,7 +817,7 @@ func TestStdJNIExceptionAndRefWrappers(t *testing.T) {
 	}
 	src := `import "std/jni";
 function p_throw(env: usize, cls: usize, j: usize): i32 { return jni.throw(j, 0 as usize); }
-function p_thrownew(env: usize, cls: usize, j: usize): i32 { return jni.throw_new(j, 0 as usize, 0 as usize); }
+function p_thrownew(env: usize, cls: usize, j: usize): i32 { return jni.throw_new(j, 0 as usize, "boom"); }
 function p_excocc(env: usize, cls: usize, j: usize): i32 { return jni.exception_occurred(j) as i32; }
 function p_excdesc(env: usize, cls: usize, j: usize): i32 { return jni.exception_describe(j) as i32; }
 function p_excclr(env: usize, cls: usize, j: usize): i32 { return jni.exception_clear(j) as i32; }
@@ -1355,6 +1361,9 @@ func sharedSectionCheck(t *testing.T, f *elf.File, so []byte) {
 		t.Fatalf("dynamic symbols: %v", err)
 	}
 	for _, s := range syms {
+		if s.Section == elf.SHN_UNDEF {
+			continue
+		}
 		if int(s.Section) >= len(f.Sections) || f.Sections[s.Section].Name != ".text" {
 			t.Errorf("export %s is in section %d, not .text", s.Name, s.Section)
 		}
@@ -1495,7 +1504,7 @@ func TestSelfHostSharedRefusals(t *testing.T) {
 		want string
 	}{
 		{"no_output", []string{"-shared"}, "fern: -shared requires -o OUTPUT.so"},
-		{"wasm", []string{"-shared", "-target", "wasm32-wasi", "-o", so}, `fern: -shared is only supported with -target x86-64-linux, arm64-linux or arm64-android (got "wasm32-wasi")`},
+		{"wasm", []string{"-shared", "-target", "wasm32-wasi", "-o", so}, `fern: -shared is only supported with -target x86-64-linux, arm64-linux, x86-64-android or arm64-android (got "wasm32-wasi")`},
 		{"missing", []string{"-shared", "-export", "answer,nope", "-o", so}, "fern: -export nope: the program has no top-level function nope"},
 		{"generic", []string{"-shared", "-export=id", "-o", so}, "fern: -export id: a generic function has no single body to export"},
 	}

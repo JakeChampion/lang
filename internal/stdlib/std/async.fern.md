@@ -215,38 +215,41 @@ pub function real_driver_io_uring(): RealDriver {
 
 ### `9 function __ring_new(entries: i32): i64`
 
+Android's app filter forbids io_uring. `real_driver_io_uring()` uses the
+reactor there without a forbidden syscall probe.
+
 ```fern
 <<9 function __ring_new(entries: i32): i64>>=
 function __ring_new(entries: i32): i64 {
-  if (target_os() == "linux" || target_os() == "android") {
+  if (target_os() == "linux") {
     return ring_new(entries);
   }
   return (0 - 38) as i64;
 }
 
 function __ring_ctl(ring: i64, op: i32, fd: i32, arg: i32): i32 {
-  if (target_os() == "linux" || target_os() == "android") {
+  if (target_os() == "linux") {
     return ring_ctl(ring, op, fd, arg);
   }
   return 0 - 9;
 }
 
 function __ring_wait(ring: i64, events: i32[], timeout_ms: i32): i32 {
-  if (target_os() == "linux" || target_os() == "android") {
+  if (target_os() == "linux") {
     return ring_wait(ring, events, timeout_ms);
   }
   return 0 - 9;
 }
 
 function __ring_recv(ring: i64, fd: i32, buf: u8[]): i32 {
-  if (target_os() == "linux" || target_os() == "android") {
+  if (target_os() == "linux") {
     return ring_recv(ring, fd, buf);
   }
   return 0 - 9;
 }
 
 function __ring_send_zc(ring: i64, fd: i32, data: u8[], from: i32): i32 {
-  if (target_os() == "linux" || target_os() == "android") {
+  if (target_os() == "linux") {
     return ring_send_zc(ring, fd, data, from);
   }
   return 0 - 9;

@@ -1,6 +1,7 @@
 package e2eharness
 
 import (
+	"os"
 	"os/exec"
 	"runtime"
 	"testing"
@@ -19,6 +20,23 @@ func Arm64Tooling(t *testing.T) (gcc, qemu string) {
 		t.Skipf("aarch64 cross toolchain not available (gcc=%q qemu=%q)", gcc, qemu)
 	}
 	return gcc, qemu
+}
+
+// Arm64CLibc checks that gcc, the compiler Arm64Tooling found, can link a C
+// program against the aarch64 glibc. A cross gcc needs the
+// libc6-dev-arm64-cross headers and libraries for that.
+func Arm64CLibc(t *testing.T, gcc string) {
+	t.Helper()
+	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+		return
+	}
+	if _, err := os.Stat("/usr/aarch64-linux-gnu/include/stdio.h"); err == nil {
+		return
+	}
+	if envflag.On("FERN_REQUIRE_ARM64_TOOLING") {
+		t.Fatalf("%s has no aarch64 glibc (install libc6-dev-arm64-cross) and FERN_REQUIRE_ARM64_TOOLING=1", gcc)
+	}
+	t.Skipf("%s has no aarch64 glibc (install libc6-dev-arm64-cross)", gcc)
 }
 
 func Arm64Runner(t *testing.T) string {

@@ -44,7 +44,8 @@ func (e EntryShape) OrDefault() EntryShape {
 type capabilityProfile = []string
 
 var capabilityProfiles = map[string]capabilityProfile{
-	"hosted-linux": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "ktls"},
+	"hosted-android": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "ktls"},
+	"hosted-linux":   {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "ktls"},
 
 	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"},
 
@@ -65,7 +66,7 @@ type environment struct {
 var environments = map[string]environment{
 	"linux":   {profile: "hosted-linux", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
 	"darwin":  {profile: "hosted-darwin", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
-	"android": {profile: "hosted-linux", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"android": {profile: "hosted-android", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
 	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main", "handle"}, entry: EntryProcess},
 
 	"wasi-http": {
@@ -106,6 +107,12 @@ var table = map[string]struct {
 	"x86-64-linux": {
 		isa: "x86-64", environment: "linux",
 		description: "x86-64 Linux ELF (native exec on x86_64 hosts, qemu-x86_64 elsewhere).",
+	},
+	"x86-64-android": {
+		isa: "x86-64", environment: "android",
+		description: "x86-64 Android (emulators and x86-64 devices) — Linux ELF as a " +
+			"static position-independent executable, like arm64-android. Same " +
+			"syscalls / System V ABI as x86-64-linux.",
 	},
 	"x86-64-freestanding": {
 		isa: "x86-64", environment: "freestanding", noBackend: true,

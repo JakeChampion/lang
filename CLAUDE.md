@@ -72,7 +72,7 @@ Unscheduled; it constrains design choices today, it is not work in flight.
   selected instruction is a hard requirement, not a fast path. Note LZCNT/TZCNT fail
   **silently** below the baseline (same opcodes as bsr/bsf plus an F3 the older
   CPU ignores) where POPCNT faults. No Darwin x86-64.
-- **Also shipped:** `arm64-android`, and `arm64-freestanding` /
+- **Also shipped:** `arm64-android` / `x86-64-android`, and `arm64-freestanding` /
   `x86-64-freestanding` for code with no OS beneath it
   (`docs/FREESTANDING-CORE.md`).
 
