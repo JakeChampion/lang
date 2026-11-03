@@ -1026,7 +1026,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([t_string(), t_i32()], true);
   }
   if (name == "__tcp_close_unchecked") {
-    return ([typeinfo.TypeStruct { name: "Socket", args: [] }], true);
+    return ([t_struct("Socket")], true);
   }
   if (name == "__count_byte") {
     return ([t_string(), t_i32()], true);

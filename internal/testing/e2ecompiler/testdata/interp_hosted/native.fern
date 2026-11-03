@@ -170,7 +170,7 @@ function main(): i32 {
   if (t >= 0) {
     print(f"poll timer: {poll([t], 1000)}");
   }
-  print(f"unix_connect missing<0: {unix_connect(d + "/nosock") < 0}");
+  print(f"unix_connect missing<0: {unix_connect(d + "/nosock").fd < 0}");
   let ls: i32 = unix_listen(d + "/sock", 4);
   print(f"unix_listen ok: {ls >= 0}");
   let cs: i32 = unix_connect(d + "/sock");
