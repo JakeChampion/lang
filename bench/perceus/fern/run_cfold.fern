@@ -4,13 +4,12 @@ import "std/i32";
 import "std/i64";
 
 function main(): i32 {
-  let n: i32 = scale.read(20);
-  if (n < 0) {
+  let Some(n) = scale.read(20) else {
     return 2;
-  }
-  let e: cfold.Expr = cfold.mk_expr(n, 1i64);
-  let before: i64 = cfold.eval(e);
-  let after: i64 = cfold.eval(cfold.cfold(cfold.reassoc(e)));
+  };
+  let e = cfold.mk_expr(n, 1i64);
+  let before = cfold.eval(e);
+  let after = cfold.eval(cfold.cfold(cfold.reassoc(e)));
   print(before.to_string());
   print(after.to_string());
   return 0;

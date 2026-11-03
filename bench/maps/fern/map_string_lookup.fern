@@ -6,25 +6,23 @@ import "./shared";
 
 function build(keys: string[]): Map[string, u64] {
   let m: Map[string, u64] = Map { };
-  let i: i32 = 0;
-  while (i < keys.len()) {
+  for i in 0..keys.len() {
     m = m.insert(keys[i], i as u64);
-    i = i + 1;
   }
   return m;
 }
 
 function main(): i32 {
-  let p: shared.Params = shared.params(args());
-  let keys: string[] = shared.string_keys(p.n);
-  let m: Map[string, u64] = build(keys);
-  let probe: i32[] = shared.order(p.n);
+  let p = shared.params(args());
+  let keys = shared.string_keys(p.n);
+  let m = build(keys);
+  let probe = shared.order(p.n);
   let sum: u64 = 0;
-  let r: bench.Report = bench.run("map_string", 1, p.rounds, () => {
-    let j: i32 = 0;
+  let r = bench.run("map_string", 1, p.rounds, () => {
+    let j = 0;
     while (j < probe.len()) {
-      sum = sum + m.get_or(keys[probe[j]], 0);
-      j = j + 1;
+      sum += m.get_or(keys[probe[j]], 0);
+      j += 1;
     }
   });
   shared.report("Map[string,u64]", p.n, r.wall_ns, p.rounds, sum);

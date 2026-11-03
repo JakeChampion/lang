@@ -1,19 +1,15 @@
 function main(): i32 {
   let xs: i32[] = [];
-  let n: i32 = 0;
-  while (n < 20000) {
+  for n in 0..20000 {
     xs = xs.append(n);
-    n = n + 1;
   }
-  let total: i64 = 0i64;
-  let r: i32 = 0;
-  while (r < 100) {
-    let i: i32 = 0;
+  let total = 0i64;
+  for _ in 0..100 {
+    let i = 0;
     while (i < xs.len()) {
-      total = total + xs[i] as i64;
-      i = i + 1;
+      total += xs[i] as i64;
+      i += 1;
     }
-    r = r + 1;
   }
   return (total % 97i64) as i32;
 }

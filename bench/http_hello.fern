@@ -1,21 +1,15 @@
 import "std/http";
 
 function main(): i32 {
-  let wire: string = "GET /hello HTTP/1.1\r\nHost: bench\r\nUser-Agent: perf-bench\r\nAccept: */*\r\n\r\n";
-  let total: i64 = 0i64;
-  let i: i32 = 0;
-  while (i < 4000) {
-    match (http.parse_request(wire)) {
-      Ok(req) => {
-        let resp: HttpResponse = http.ok("hello " + req.path);
-        let out: string = http.serialize_response(resp);
-        total = total + (out.len() + req.headers.len()) as i64;
-      },
-      Err(_) => {
-        return 100;
-      }
-    }
-    i = i + 1;
+  let wire = "GET /hello HTTP/1.1\r\nHost: bench\r\nUser-Agent: perf-bench\r\nAccept: */*\r\n\r\n";
+  let total = 0i64;
+  for _ in 0..4000 {
+    let Ok(req) = http.parse_request(wire) else {
+      return 100;
+    };
+    let resp = http.ok("hello " + req.path);
+    let out = http.serialize_response(resp);
+    total += (out.len() + req.headers.len()) as i64;
   }
   return (total % 97i64) as i32;
 }

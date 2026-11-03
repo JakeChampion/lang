@@ -84,14 +84,7 @@ function ins(t: Tree, k: i32, v: boolean): Tree {
 }
 
 function set_black(t: Tree): Tree {
-  match (t) {
-    Node(_, l, k, v, r) => {
-      return Node(Black, l, k, v, r);
-    },
-    _ => {
-      return t;
-    }
-  }
+  return match (t) { Node(_, l, k, v, r) => Node(Black, l, k, v, r), _ => t };
 }
 
 pub function insert(t: Tree, k: i32, v: boolean): Tree {
@@ -99,21 +92,14 @@ pub function insert(t: Tree, k: i32, v: boolean): Tree {
 }
 
 pub function fold(t: Tree, b: i32, f: (i32, boolean, i32) => i32): i32 {
-  match (t) {
-    Node(_, l, k, v, r) => {
-      return fold(r, f(k, v, fold(l, b, f)), f);
-    },
-    Leaf => {
-      return b;
-    }
-  }
+  return match (t) { Node(_, l, k, v, r) => fold(r, f(k, v, fold(l, b, f)), f), Leaf => b };
 }
 
 function make_tree_aux(n: i32, t: Tree): Tree {
   if (n <= 0) {
     return t;
   }
-  let n1: i32 = n - 1;
+  let n1 = n - 1;
   return make_tree_aux(n1, insert(t, n1, n1 % 10 == 0));
 }
 

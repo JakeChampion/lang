@@ -3,25 +3,21 @@ import "std/i32";
 import "std/string";
 
 function main(): i32 {
-  let total: i64 = 0i64;
-  let r: i32 = 0;
-  while (r < 2) {
+  let total = 0i64;
+  for r in 0..2 {
     let xs: string[] = [];
-    let i: i32 = 0;
-    let seed: i32 = 12345 + r;
-    while (i < 16000) {
+    let seed = 12345 + r;
+    for _ in 0..16000 {
       seed = (seed * 1103515 + 12345) % 100000;
       if (seed < 0) {
-        seed = 0 - seed;
+        seed = -seed;
       }
-      xs = xs.append("n" + seed.to_string());
-      i = i + 1;
+      xs = xs.append(f"n{seed}");
     }
-    let sorted: string[] = cmp.sort(xs);
-    let first: string = sorted[0];
-    let last: string = sorted[sorted.len() - 1];
+    let sorted = cmp.sort(xs);
+    let first = sorted[0];
+    let last = sorted[sorted.len() - 1];
     total = total + first.len() as i64 + (first[1] as i32) as i64 + (last[last.len() - 1] as i32) as i64;
-    r = r + 1;
   }
   return (total % 97i64) as i32;
 }
