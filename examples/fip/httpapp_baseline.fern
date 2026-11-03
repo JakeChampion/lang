@@ -52,39 +52,17 @@ function decision(status: i32): Decision {
 }
 
 function literal_body(status: i32): string {
-  if (status == 200) {
-    return "ok";
-  }
-  if (status == 404) {
-    return "not found";
-  }
-  if (status == 405) {
-    return "method not allowed";
-  }
-  if (status == 413) {
-    return "body too large";
-  }
-  if (status == 431) {
-    return "too many headers";
-  }
-  if (status == 503) {
-    return "counter table full";
-  }
-  return "bad request";
+  return match (status) { 200 => "ok", 404 => "not found", 405 => "method not allowed", 413 => "body too large", 431 => "too many headers", 503 => "counter table full", _ => "bad request" };
 }
 
 function counter_id(path: string): i32 {
-  match (i32.parse_i32(slice_unchecked(path, 9, path.len()).to_owned())) {
-    Ok(id) => {
-      if (id < 0 || id >= id_space()) {
-        return -1;
-      }
-      return id;
-    },
-    Err(_) => {
-      return -1;
-    }
+  let Ok(id) = i32.parse_i32(slice_unchecked(path, 9, path.len()).to_owned()) else {
+    return -1;
+  };
+  if (id < 0 || id >= id_space()) {
+    return -1;
   }
+  return id;
 }
 
 function counter(counters: Map[string, i64], req: HttpRequest): Decision {
@@ -98,13 +76,13 @@ function counter(counters: Map[string, i64], req: HttpRequest): Decision {
     if (!present) {
       return decision(404);
     }
-    return Decision { status: 200, kind: body_text(), text: counters.get_or(key, 0 as i64).to_string(), key: key, create: false, bump: false };
+    return Decision { status: 200, kind: body_text(), text: counters.get_or(key, 0i64).to_string(), key: key, create: false, bump: false };
   }
   if (req.method != "POST") {
     return decision(405);
   }
   if (present) {
-    return Decision { status: 200, kind: body_text(), text: (counters.get_or(key, 0 as i64) + 1 as i64).to_string(), key: key, create: false, bump: true };
+    return Decision { status: 200, kind: body_text(), text: (counters.get_or(key, 0i64) + 1i64).to_string(), key: key, create: false, bump: true };
   }
   if (counters.len() >= max_counters()) {
     return decision(503);
@@ -145,11 +123,11 @@ function route(counters: Map[string, i64], req: HttpRequest): Decision {
 }
 
 function create(own counters: Map[string, i64], d: Decision): Map[string, i64] {
-  return counters.insert(d.key, 1 as i64);
+  return counters.insert(d.key, 1i64);
 }
 
 function bump(own counters: Map[string, i64], d: Decision): Map[string, i64] {
-  let next = counters.get_or(d.key, 0 as i64) + 1 as i64;
+  let next = counters.get_or(d.key, 0i64) + 1i64;
   return counters.insert(d.key, next);
 }
 
@@ -164,60 +142,36 @@ function update(own counters: Map[string, i64], d: Decision): Map[string, i64] {
 }
 
 function tally(own t: Tallies, d: Decision): Tallies {
-  let total = t.total;
-  if (d.create || d.bump) {
-    total = total + 1 as i64;
-  }
-  let served = t.served;
-  let refused = t.refused;
-  if (d.status == 200) {
-    served = served + 1 as i64;
-  } else {
-    refused = refused + 1 as i64;
-  }
-  let full = t.full;
-  if (d.status == 503) {
-    full = full + 1 as i64;
-  }
-  return Tallies { total: total, seen: t.seen + 1 as i64, served: served, refused: refused, full: full };
+  let total = if (d.create || d.bump) { t.total + 1i64 } else { t.total };
+  let served = if (d.status == 200) { t.served + 1i64 } else { t.served };
+  let refused = if (d.status == 200) { t.refused } else { t.refused + 1i64 };
+  let full = if (d.status == 503) { t.full + 1i64 } else { t.full };
+  return Tallies { total: total, seen: t.seen + 1i64, served: served, refused: refused, full: full };
 }
 
 function metrics(t: Tallies, live: i32): string {
-  return "requests " + t.seen.to_string() + "\n"
-    + "served " + t.served.to_string() + "\n"
-    + "refused " + t.refused.to_string() + "\n"
-    + "full " + t.full.to_string() + "\n"
-    + "counters " + live.to_string() + "\n"
-    + "counter_total " + t.total.to_string() + "\n";
+  return f"requests {t.seen}\nserved {t.served}\nrefused {t.refused}\nfull {t.full}\ncounters {live}\ncounter_total {t.total}\n";
 }
 
 function render(d: Decision, req: HttpRequest, t: Tallies, live: i32): HttpResponse {
-  let body = literal_body(d.status);
-  if (d.kind == body_text()) {
-    body = d.text;
-  } else if (d.kind == body_metrics()) {
-    body = metrics(t, live);
-  }
+  let body = if (d.kind == body_text()) { d.text } else if (d.kind == body_metrics()) { metrics(t, live) } else { literal_body(d.status) };
   let resp = http.text(d.status, body);
-  match (req.headers.get("x-request-id")) {
-    Some(v) => {
-      resp = HttpResponse { ...resp, headers: resp.headers.set("X-Request-Id", v) };
-    },
-    None => {}
+  if let Some(v) = req.headers.get("x-request-id") {
+    resp = HttpResponse { ...resp, headers: resp.headers.set("X-Request-Id", v) };
   }
   return resp;
 }
 
 fip function cr(): u8 {
-  return 13 as u8;
+  return b'\r';
 }
 
 fip function lf(): u8 {
-  return 10 as u8;
+  return b'\n';
 }
 
 fip function sp(): u8 {
-  return 32 as u8;
+  return b' ';
 }
 
 fip function max_wire(): i32 {
@@ -261,10 +215,8 @@ fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
 
 function zeros_u8(n: i32): u8[] {
   let xs = __alloc_u8(n);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     xs = xs.with(i, 0 as u8);
-    i += 1;
   }
   return xs;
 }
@@ -274,33 +226,33 @@ fip function wire_len_at(): i32 {
 }
 
 fip function gen_body_len(n: i64): i32 {
-  if (n % (29 as i64) == 0 as i64) {
+  if (n % 29i64 == 0i64) {
     return 300;
   }
-  return (n * (37 as i64) % (241 as i64)) as i32;
+  return (n * 37i64 % 241i64) as i32;
 }
 
 fip function gen_byte(n: i64, j: i32): u8 {
-  return (((n + j as i64) % (26 as i64)) as i32 + 97) as u8;
+  return (((n + j as i64) % 26i64) as i32 + 97) as u8;
 }
 
 fip function corruption(n: i64): i32 {
-  if (n % (17 as i64) != 0 as i64) {
+  if (n % 17i64 != 0i64) {
     return -1;
   }
-  return (n / (17 as i64) % (6 as i64)) as i32;
+  return (n / 17i64 % 6i64) as i32;
 }
 
 fip function extra_headers(n: i64): boolean {
-  return n % (23 as i64) == 0 as i64;
+  return n % 23i64 == 0i64;
 }
 
 fip function mix64(n: i64): i64 {
-  let x = n * (2654435761 as i64);
-  x = x ^ x >> 15 as i64;
-  x *= 2246822519 as i64;
-  x = x ^ x >> 13 as i64;
-  if (x < 0 as i64) {
+  let x = n * 2654435761i64;
+  x ^= x >> 15i64;
+  x *= 2246822519i64;
+  x ^= x >> 13i64;
+  if (x < 0i64) {
     x = -x;
   }
   return x;
@@ -311,7 +263,7 @@ fip function id_of(n: i64): i32 {
 }
 
 fip function method_for(n: i64, p: i32): i32 {
-  let bucket = (mix64(n + 1 as i64) % (20 as i64)) as i32;
+  let bucket = (mix64(n + 1i64) % 20i64) as i32;
   if (p == 2) {
     if (bucket < 14) {
       return 1;
@@ -357,7 +309,7 @@ fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
 }
 
 fip function path_of(n: i64): i32 {
-  return (n % (5 as i64)) as i32;
+  return (n % 5i64) as i32;
 }
 
 fip function path_len(p: i32, id: i32): i32 {
@@ -442,10 +394,10 @@ fip function build_request(own w: u8[], n: i64): u8[] {
   at += 2;
   w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
   at += 38;
-  let ua = (n % (61 as i64)) as i32;
+  let ua = (n % 61i64) as i32;
   let j = 0;
   while (j < ua) {
-    w = w.with(at + j, 97 as u8);
+    w = w.with(at + j, b'a');
     j += 1;
   }
   at += ua;
@@ -508,12 +460,12 @@ fip function out_len_of(o: u8[]): i32 {
 
 fip function mix(d: i64, b: i32): i64 {
   let x = d ^ b as i64;
-  x *= 1099511628211 as i64;
-  x = x ^ x >> 29 as i64;
-  if (x < 0 as i64) {
+  x *= 1099511628211i64;
+  x ^= x >> 29i64;
+  if (x < 0i64) {
     x = -x;
   }
-  return x % (1000000007 as i64);
+  return x % 1000000007i64;
 }
 
 // fern-lint: allow cyclomatic-complexity
@@ -522,27 +474,24 @@ function main(): i32 {
   let rounds = 2000;
   let wire = zeros_u8(max_wire());
   let counters: Map[string, i64] = map_new(512);
-  let t = Tallies { total: 0 as i64, seen: 0 as i64, served: 0 as i64, refused: 0 as i64, full: 0 as i64 };
+  let t = Tallies { total: 0i64, seen: 0i64, served: 0i64, refused: 0i64, full: 0i64 };
 
-  let ok = 0 as i64;
-  let rejected = 0 as i64;
-  let not_found = 0 as i64;
-  let method = 0 as i64;
-  let too_many = 0 as i64;
-  let too_large = 0 as i64;
-  let full = 0 as i64;
-  let digest = 1469598103934665603 as i64;
-  let written = 0 as i64;
+  let ok = 0i64;
+  let rejected = 0i64;
+  let not_found = 0i64;
+  let method = 0i64;
+  let too_many = 0i64;
+  let too_large = 0i64;
+  let full = 0i64;
+  let digest = 1469598103934665603i64;
+  let written = 0i64;
 
   let samples: i64[] = [];
-  let p = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p += 1;
+  for _ in 0..rounds {
+    samples = samples.append(0i64);
   }
 
-  let w = 0;
-  while (w < batch) {
+  for w in 0..batch {
     wire = build_request(wire, w as i64);
     match (http.parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
       Ok(req) => {
@@ -556,63 +505,44 @@ function main(): i32 {
         let warm = http.serialize_response(http.bad_request("bad request"));
       }
     }
-    w += 1;
   }
 
   let at_allocs = bench.alloc_count();
   let at_fresh = bench.bump_bytes();
   let started_ns = monotonic_ns();
-  let r = 0;
-  while (r < rounds) {
+  for r in 0..rounds {
     let t0 = monotonic_ns();
-    let k = 0;
-    while (k < batch) {
+    for k in 0..batch {
       let n = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
-      let resp = "";
-      match (http.parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
-        Ok(req) => {
-          let d = route(counters, req);
-          counters = update(counters, d);
-          t = tally(t, d);
-          resp = http.serialize_response(render(d, req, t, counters.len()));
-        },
-        Err(_) => {
-          t = tally(t, decision(400));
-          resp = http.serialize_response(http.bad_request("bad request"));
-        }
+      let resp = match (http.parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) { Ok(req) => { let d = route(counters, req); counters = update(counters, d); t = tally(t, d); http.serialize_response(render(d, req, t, counters.len())) }, Err(_) => { t = tally(t, decision(400)); http.serialize_response(http.bad_request("bad request")) } };
+      for b in resp {
+        digest = mix(digest, b as i32);
       }
-      let i = 0;
-      while (i < resp.len()) {
-        digest = mix(digest, resp[i] as i32);
-        i += 1;
-      }
-      written = written + resp.len() as i64;
+      written += resp.len() as i64;
       if (resp.starts_with("HTTP/1.1 200 ")) {
-        ok = ok + 1 as i64;
+        ok += 1i64;
       } else if (resp.starts_with("HTTP/1.1 400 ")) {
-        rejected = rejected + 1 as i64;
+        rejected += 1i64;
       } else if (resp.starts_with("HTTP/1.1 404 ")) {
-        not_found = not_found + 1 as i64;
+        not_found += 1i64;
       } else if (resp.starts_with("HTTP/1.1 405 ")) {
-        method = method + 1 as i64;
+        method += 1i64;
       } else if (resp.starts_with("HTTP/1.1 431 ")) {
-        too_many = too_many + 1 as i64;
+        too_many += 1i64;
       } else if (resp.starts_with("HTTP/1.1 413 ")) {
-        too_large = too_large + 1 as i64;
+        too_large += 1i64;
       } else if (resp.starts_with("HTTP/1.1 503 ")) {
-        full = full + 1 as i64;
+        full += 1i64;
       }
-      k += 1;
     }
     samples = samples.with(r, monotonic_ns() - t0);
-    r += 1;
   }
   let elapsed_ns = monotonic_ns() - started_ns;
   let allocs = bench.allocs_after(at_allocs);
   let fresh = bench.fresh_bytes_after(at_fresh);
   let requests = rounds as i64 * (batch as i64);
-  let rep: bench.Report = bench.Report {
+  let rep = bench.Report {
     name: "baseline",
     iterations: rounds,
     wall_ns: elapsed_ns,
@@ -620,32 +550,16 @@ function main(): i32 {
     allocs: allocs,
     fresh_bytes: fresh,
   };
-  print("{\"variant\":\"baseline\""
-    + ",\"requests\":" + requests.to_string()
-    + ",\"requests_per_round\":" + batch.to_string()
-    + ",\"ok\":" + ok.to_string()
-    + ",\"rejected\":" + rejected.to_string()
-    + ",\"not_found\":" + not_found.to_string()
-    + ",\"method_not_allowed\":" + method.to_string()
-    + ",\"too_many_headers\":" + too_many.to_string()
-    + ",\"body_too_large\":" + too_large.to_string()
-    + ",\"full\":" + full.to_string()
-    + ",\"counters_live\":" + counters.len().to_string()
-    + ",\"counter_total\":" + t.total.to_string()
-    + ",\"digest\":" + digest.to_string()
-    + ",\"response_bytes\":" + written.to_string()
-    + ",\"response_bytes_per_request\":" + (written / requests).to_string()
-    + ",\"steady_allocs\":" + allocs.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
-    + ",\"fresh_bytes_per_request\":" + (fresh / requests).to_string()
-    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
-    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
-    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"round_max_ns\":" + rep.max_ns().to_string()
-    + "}");
+  print(f"{{\"variant\":\"baseline\",\"requests\":{requests},\"requests_per_round\":{batch},\"ok\":{ok}"
+    + f",\"rejected\":{rejected},\"not_found\":{not_found},\"method_not_allowed\":{method}"
+    + f",\"too_many_headers\":{too_many},\"body_too_large\":{too_large},\"full\":{full}"
+    + f",\"counters_live\":{counters.len()},\"counter_total\":{t.total},\"digest\":{digest}"
+    + f",\"response_bytes\":{written},\"response_bytes_per_request\":{written / requests}"
+    + f",\"steady_allocs\":{allocs},\"steady_fresh_bytes\":{fresh}"
+    + f",\"allocs_per_request_milli\":{allocs * 1000i64 / requests}"
+    + f",\"fresh_bytes_per_request\":{fresh / requests},\"ns_per_request\":{elapsed_ns / requests}"
+    + f",\"requests_per_sec\":{requests * 1000000000i64 / elapsed_ns},\"round_p50_ns\":{rep.p50_ns()}"
+    + f",\"round_p95_ns\":{rep.p95_ns()},\"round_p99_ns\":{rep.p99_ns()}"
+    + f",\"round_p999_ns\":{rep.p999_ns()},\"round_max_ns\":{rep.max_ns()}}}");
   return 0;
 }

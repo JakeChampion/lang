@@ -54,11 +54,9 @@ pub function process(own db: Db, input: u8[], offset: i32, count: i32): Db {
   }
   db = Db { ...db, output: [], refused: false };
   let stride = 1 + db.key_bytes + db.value_bytes;
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     let req = kv_config_records.decode(input, offset + i * stride, db.key_bytes, db.value_bytes);
     db = apply(db, req);
-    i += 1;
   }
   return db;
 }

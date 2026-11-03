@@ -96,19 +96,19 @@ fip function body_metrics(): i32 {
 }
 
 fip function cr(): u8 {
-  return 13 as u8;
+  return b'\r';
 }
 
 fip function lf(): u8 {
-  return 10 as u8;
+  return b'\n';
 }
 
 fip function sp(): u8 {
-  return 32 as u8;
+  return b' ';
 }
 
 fip function colon(): u8 {
-  return 58 as u8;
+  return b':';
 }
 
 struct App {
@@ -135,27 +135,23 @@ struct App {
 
 function zeros_i64(n: i32): i64[] {
   let xs: i64[] = [];
-  let i = 0;
-  while (i < n) {
-    xs = xs.append(0 as i64);
-    i += 1;
+  for _ in 0..n {
+    xs = xs.append(0i64);
   }
   return xs;
 }
 
 function zeros_u8(n: i32): u8[] {
   let xs = __alloc_u8(n);
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     xs = xs.with(i, 0 as u8);
-    i += 1;
   }
   return xs;
 }
 
 function new_app(): App {
   return App {
-    live: 0, total: 0 as i64, seen: 0 as i64, served: 0 as i64, refused: 0 as i64, full: 0 as i64,
+    live: 0, total: 0i64, seen: 0i64, served: 0i64, refused: 0i64, full: 0i64,
     r_class: 0, r_status: 0, r_kind: 0, r_from: 0, r_len: 0, r_value: 0, r_rid_at: 0, r_rid_len: 0,
     out_len: 0,
     used: zeros_i64(max_counters()),
@@ -166,7 +162,7 @@ function new_app(): App {
 }
 
 fip function lower(b: u8): u8 {
-  if (b >= 65 as u8 && b <= 90 as u8) {
+  if (b >= b'A' && b <= b'Z') {
     return (b as i32 + 32) as u8;
   }
   return b;
@@ -237,7 +233,7 @@ fip function starts_with(buf: u8[], from: i32, end: i32, lit: string): boolean {
 }
 
 fip function is_space(b: u8): boolean {
-  return b == sp() || b == 9 as u8;
+  return b == sp() || b == b'\t';
 }
 
 fip function trim_start(buf: u8[], from: i32, end: i32): i32 {
@@ -327,7 +323,7 @@ fip function find_slot(app: App, id: i32): i32 {
   let slot = home_slot(id);
   let probes = 0;
   while (probes < max_counters()) {
-    if (app.used[slot] == 0 as i64) {
+    if (app.used[slot] == 0i64) {
       return -1;
     }
     if (app.ids[slot] == id as i64) {
@@ -341,25 +337,25 @@ fip function find_slot(app: App, id: i32): i32 {
 
 fip function free_slot(app: App, id: i32): i32 {
   let slot = home_slot(id);
-  while (app.used[slot] != 0 as i64) {
+  while (app.used[slot] != 0i64) {
     slot = slot + 1 & slot_mask();
   }
   return slot;
 }
 
 fbip function bump(own app: App, slot: i32): App {
-  let c = app.counts[slot] + 1 as i64;
-  return App { ...app, counts: app.counts.with(slot, c), total: app.total + 1 as i64 };
+  let c = app.counts[slot] + 1i64;
+  return App { ...app, counts: app.counts.with(slot, c), total: app.total + 1i64 };
 }
 
 fbip function insert(own app: App, slot: i32, id: i32): App {
   return App {
     ...app,
-    used: app.used.with(slot, 1 as i64),
+    used: app.used.with(slot, 1i64),
     ids: app.ids.with(slot, id as i64),
-    counts: app.counts.with(slot, 1 as i64),
+    counts: app.counts.with(slot, 1i64),
     live: app.live + 1,
-    total: app.total + 1 as i64,
+    total: app.total + 1i64,
   };
 }
 
@@ -367,13 +363,13 @@ fbip function decide(own app: App, class: i32, status: i32, kind: i32, from: i32
   let served = app.served;
   let refused = app.refused;
   if (status == 200) {
-    served = served + 1 as i64;
+    served += 1i64;
   } else {
-    refused = refused + 1 as i64;
+    refused += 1i64;
   }
   return App {
     ...app,
-    seen: app.seen + 1 as i64,
+    seen: app.seen + 1i64,
     served: served,
     refused: refused,
     r_class: class,
@@ -417,7 +413,7 @@ fbip function counter(own app: App, wire: u8[], sp1: i32, id_at: i32, id_end: i3
     return decide(app, cl_ok(), 200, body_int(), 0, 0, now, rid_at, rid_len);
   }
   if (app.live >= max_counters()) {
-    app = App { ...app, full: app.full + 1 as i64 };
+    app = App { ...app, full: app.full + 1i64 };
     return answer(app, cl_full(), 503, rid_at, rid_len);
   }
   let free = free_slot(app, id);
@@ -453,7 +449,7 @@ fbip function route(own app: App, wire: u8[], sp1: i32, path_at: i32, path_end: 
 
 // fern-lint: allow cyclomatic-complexity
 fbip function apply(own app: App, wire: u8[], wire_len: i32): App {
-  let hend: i32 = -1;
+  let hend = -1;
   let i = 0;
   while (i + 3 < wire_len) {
     if (wire[i] == cr() && wire[i + 1] == lf() && wire[i + 2] == cr() && wire[i + 3] == lf()) {
@@ -686,15 +682,15 @@ fbip function emit_metrics(own app: App, at: i32): App {
   let live = app.live;
   let total = app.total as i32;
   app = emit_line(app, at, "requests ", seen);
-  at = at + 9 + digits(seen) + 1;
+  at += 9 + digits(seen) + 1;
   app = emit_line(app, at, "served ", served);
-  at = at + 7 + digits(served) + 1;
+  at += 7 + digits(served) + 1;
   app = emit_line(app, at, "refused ", refused);
-  at = at + 8 + digits(refused) + 1;
+  at += 8 + digits(refused) + 1;
   app = emit_line(app, at, "full ", full);
-  at = at + 5 + digits(full) + 1;
+  at += 5 + digits(full) + 1;
   app = emit_line(app, at, "counters ", live);
-  at = at + 9 + digits(live) + 1;
+  at += 9 + digits(live) + 1;
   return emit_line(app, at, "counter_total ", total);
 }
 
@@ -714,7 +710,7 @@ fip function body_len(app: App): i32 {
 fip function head_len(status: i32, rid_len: i32, blen: i32): i32 {
   let n = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(blen) + 23;
   if (rid_len > 0) {
-    n = n + 14 + rid_len + 2;
+    n += 14 + rid_len + 2;
   }
   return n;
 }
@@ -781,33 +777,33 @@ fip function wire_len_at(): i32 {
 }
 
 fip function gen_body_len(n: i64): i32 {
-  if (n % (29 as i64) == 0 as i64) {
+  if (n % 29i64 == 0i64) {
     return 300;
   }
-  return (n * (37 as i64) % (241 as i64)) as i32;
+  return (n * 37i64 % 241i64) as i32;
 }
 
 fip function gen_byte(n: i64, j: i32): u8 {
-  return (((n + j as i64) % (26 as i64)) as i32 + 97) as u8;
+  return (((n + j as i64) % 26i64) as i32 + 97) as u8;
 }
 
 fip function corruption(n: i64): i32 {
-  if (n % (17 as i64) != 0 as i64) {
+  if (n % 17i64 != 0i64) {
     return -1;
   }
-  return (n / (17 as i64) % (6 as i64)) as i32;
+  return (n / 17i64 % 6i64) as i32;
 }
 
 fip function extra_headers(n: i64): boolean {
-  return n % (23 as i64) == 0 as i64;
+  return n % 23i64 == 0i64;
 }
 
 fip function mix64(n: i64): i64 {
-  let x = n * (2654435761 as i64);
-  x = x ^ x >> 15 as i64;
-  x *= 2246822519 as i64;
-  x = x ^ x >> 13 as i64;
-  if (x < 0 as i64) {
+  let x = n * 2654435761i64;
+  x ^= x >> 15i64;
+  x *= 2246822519i64;
+  x ^= x >> 13i64;
+  if (x < 0i64) {
     x = -x;
   }
   return x;
@@ -818,7 +814,7 @@ fip function id_of(n: i64): i32 {
 }
 
 fip function method_for(n: i64, p: i32): i32 {
-  let bucket = (mix64(n + 1 as i64) % (20 as i64)) as i32;
+  let bucket = (mix64(n + 1i64) % 20i64) as i32;
   if (p == 2) {
     if (bucket < 14) {
       return 1;
@@ -864,7 +860,7 @@ fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
 }
 
 fip function path_of(n: i64): i32 {
-  return (n % (5 as i64)) as i32;
+  return (n % 5i64) as i32;
 }
 
 fip function path_len(p: i32, id: i32): i32 {
@@ -949,10 +945,10 @@ fip function build_request(own w: u8[], n: i64): u8[] {
   at += 2;
   w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
   at += 38;
-  let ua = (n % (61 as i64)) as i32;
+  let ua = (n % 61i64) as i32;
   let j = 0;
   while (j < ua) {
-    w = w.with(at + j, 97 as u8);
+    w = w.with(at + j, b'a');
     j += 1;
   }
   at += ua;
@@ -1011,12 +1007,12 @@ fip function wire_len_of(w: u8[]): i32 {
 
 fip function mix(d: i64, b: i32): i64 {
   let x = d ^ b as i64;
-  x *= 1099511628211 as i64;
-  x = x ^ x >> 29 as i64;
-  if (x < 0 as i64) {
+  x *= 1099511628211i64;
+  x ^= x >> 29i64;
+  if (x < 0i64) {
     x = -x;
   }
-  return x % (1000000007 as i64);
+  return x % 1000000007i64;
 }
 
 function main(): i32 {
@@ -1026,54 +1022,44 @@ function main(): i32 {
   let app = new_app();
 
   let tally = zeros_i64(12);
-  let digest = 1469598103934665603 as i64;
-  let written = 0 as i64;
+  let digest = 1469598103934665603i64;
+  let written = 0i64;
 
   let samples: i64[] = [];
-  let p = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p += 1;
+  for _ in 0..rounds {
+    samples = samples.append(0i64);
   }
 
-  let w = 0;
-  while (w < batch) {
+  for w in 0..batch {
     wire = build_request(wire, w as i64);
     app = serve(app, wire, wire_len_of(wire));
-    w += 1;
   }
 
   let at_allocs = bench.alloc_count();
   let at_fresh = bench.bump_bytes();
   let started_ns = monotonic_ns();
-  let r = 0;
-  while (r < rounds) {
+  for r in 0..rounds {
     let t0 = monotonic_ns();
-    let k = 0;
-    while (k < batch) {
+    for k in 0..batch {
       let n = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       app = serve(app, wire, wire_len_of(wire));
       let len = app.out_len;
       let class = app.r_class;
-      let i = 0;
-      while (i < len) {
+      for i in 0..len {
         digest = mix(digest, app.out[i] as i32);
-        i += 1;
       }
-      written = written + len as i64;
-      tally = tally.with(class, tally[class] + 1 as i64);
-      k += 1;
+      written += len as i64;
+      tally = tally.with(class, tally[class] + 1i64);
     }
     samples = samples.with(r, monotonic_ns() - t0);
-    r += 1;
   }
   let elapsed_ns = monotonic_ns() - started_ns;
   let allocs = bench.allocs_after(at_allocs);
   let fresh = bench.fresh_bytes_after(at_fresh);
   let requests = rounds as i64 * (batch as i64);
   let rejected = tally[1] + tally[2] + tally[3] + tally[4] + tally[5] + tally[6];
-  let rep: bench.Report = bench.Report {
+  let rep = bench.Report {
     name: "fbip",
     iterations: rounds,
     wall_ns: elapsed_ns,
@@ -1081,38 +1067,18 @@ function main(): i32 {
     allocs: allocs,
     fresh_bytes: fresh,
   };
-  print("{\"variant\":\"fbip\""
-    + ",\"requests\":" + requests.to_string()
-    + ",\"requests_per_round\":" + batch.to_string()
-    + ",\"ok\":" + tally[0].to_string()
-    + ",\"rejected\":" + rejected.to_string()
-    + ",\"bad_request_line\":" + tally[1].to_string()
-    + ",\"no_version\":" + tally[2].to_string()
-    + ",\"transfer_encoding\":" + tally[3].to_string()
-    + ",\"duplicate_length\":" + tally[4].to_string()
-    + ",\"bad_length\":" + tally[5].to_string()
-    + ",\"truncated\":" + tally[6].to_string()
-    + ",\"not_found\":" + tally[7].to_string()
-    + ",\"method_not_allowed\":" + tally[8].to_string()
-    + ",\"too_many_headers\":" + tally[9].to_string()
-    + ",\"body_too_large\":" + tally[10].to_string()
-    + ",\"full\":" + tally[11].to_string()
-    + ",\"counters_live\":" + app.live.to_string()
-    + ",\"counter_total\":" + app.total.to_string()
-    + ",\"digest\":" + digest.to_string()
-    + ",\"response_bytes\":" + written.to_string()
-    + ",\"response_bytes_per_request\":" + (written / requests).to_string()
-    + ",\"steady_allocs\":" + allocs.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
-    + ",\"fresh_bytes_per_request\":" + (fresh / requests).to_string()
-    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
-    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
-    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"round_max_ns\":" + rep.max_ns().to_string()
-    + "}");
+  print(f"{{\"variant\":\"fbip\",\"requests\":{requests},\"requests_per_round\":{batch},\"ok\":{tally[0]}"
+    + f",\"rejected\":{rejected},\"bad_request_line\":{tally[1]},\"no_version\":{tally[2]}"
+    + f",\"transfer_encoding\":{tally[3]},\"duplicate_length\":{tally[4]},\"bad_length\":{tally[5]}"
+    + f",\"truncated\":{tally[6]},\"not_found\":{tally[7]},\"method_not_allowed\":{tally[8]}"
+    + f",\"too_many_headers\":{tally[9]},\"body_too_large\":{tally[10]},\"full\":{tally[11]}"
+    + f",\"counters_live\":{app.live},\"counter_total\":{app.total},\"digest\":{digest}"
+    + f",\"response_bytes\":{written},\"response_bytes_per_request\":{written / requests}"
+    + f",\"steady_allocs\":{allocs},\"steady_fresh_bytes\":{fresh}"
+    + f",\"allocs_per_request_milli\":{allocs * 1000i64 / requests}"
+    + f",\"fresh_bytes_per_request\":{fresh / requests},\"ns_per_request\":{elapsed_ns / requests}"
+    + f",\"requests_per_sec\":{requests * 1000000000i64 / elapsed_ns},\"round_p50_ns\":{rep.p50_ns()}"
+    + f",\"round_p95_ns\":{rep.p95_ns()},\"round_p99_ns\":{rep.p99_ns()}"
+    + f",\"round_p999_ns\":{rep.p999_ns()},\"round_max_ns\":{rep.max_ns()}}}");
   return 0;
 }

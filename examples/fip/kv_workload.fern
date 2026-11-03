@@ -25,27 +25,20 @@ pub function universe(c: Config): i32 {
   return n;
 }
 
-function number(argv: string[], at: i32): i32 {
-  match (i32.parse_i32(argv[at])) {
-    Ok(n) => {
-      return n;
-    },
-    Err(_) => {
-      return -1;
-    }
-  }
+function number(argv: string[], at: i32): Option[i32] {
+  return match (i32.parse_i32(argv[at])) { Ok(n) => Some(n), Err(_) => None };
 }
 
 pub function parse(argv: string[]): Option[Config] {
   if (argv.len() < 10 || argv.len() > 11) {
     return None;
   }
-  let capacity = number(argv, 2);
-  let key_bytes = number(argv, 3);
-  let value_bytes = number(argv, 4);
-  let batch = number(argv, 5);
-  let turns = number(argv, 6);
-  let load = number(argv, 8);
+  let capacity = number(argv, 2)?;
+  let key_bytes = number(argv, 3)?;
+  let value_bytes = number(argv, 4)?;
+  let batch = number(argv, 5)?;
+  let turns = number(argv, 6)?;
+  let load = number(argv, 8)?;
   if (!kv_config_core.valid_config(capacity, key_bytes, value_bytes, batch) || turns < 1 || turns > 1000000 || load < 1 || load > 200) {
     return None;
   }
@@ -70,15 +63,18 @@ function operation(n: i32, mix: string): u8 {
   let read = 50;
   let put = 25;
   let increment = 15;
-  if (mix == "read") {
-    read = 80;
-    put = 10;
-    increment = 5;
-  }
-  if (mix == "write") {
-    read = 20;
-    put = 45;
-    increment = 20;
+  match (mix) {
+    "read" => {
+      read = 80;
+      put = 10;
+      increment = 5;
+    },
+    "write" => {
+      read = 20;
+      put = 45;
+      increment = 20;
+    },
+    _ => {}
   }
   let k = n * 37 % 100;
   if (k < read) {
@@ -95,22 +91,12 @@ function operation(n: i32, mix: string): u8 {
 
 function request(own bytes: u8[], c: Config, id: i32, n: i32, op: u8): u8[] {
   bytes = bytes.append(op);
-  let j = 0;
-  while (j < c.key_bytes) {
-    let b = id * 31 + j;
-    if (j == 0) {
-      b = id & 255;
-    }
-    if (j == 1) {
-      b = id >> 8;
-    }
+  for j in 0..c.key_bytes {
+    let b = match (j) { 0 => id & 255, 1 => id >> 8, _ => id * 31 + j };
     bytes = bytes.append((b & 255) as u8);
-    j += 1;
   }
-  j = 0;
-  while (j < c.value_bytes) {
+  for j in 0..c.value_bytes {
     bytes = bytes.append((n * 17 + j * 13 + 7 & 255) as u8);
-    j += 1;
   }
   return bytes;
 }
@@ -119,32 +105,24 @@ pub function build(c: Config): Tape {
   let input: u8[] = [];
   let probes: string[] = [];
   let seed: u8[] = [];
-  let n = 0;
-  while (n < c.batch * 100) {
+  for n in 0..c.batch * 100 {
     let id = ((n as i64 * 1103515245i64 + 12345i64) % 2147483647i64 % (universe(c) as i64)) as i32;
     input = request(input, c, id, n, operation(n, c.mix));
-    n += 1;
   }
-  n = 0;
-  while (n < 100) {
+  for n in 0..100 {
     let key: u8[] = [];
-    let j = 0;
-    while (j < c.key_bytes) {
+    for j in 0..c.key_bytes {
       key = key.append(input[n * c.batch * stride(c) + 1 + j]);
-      j += 1;
     }
     probes = probes.append(string_from_bytes_unchecked(key));
-    n += 1;
   }
   let count = universe(c);
   if (count > c.capacity) {
     count = c.capacity;
   }
   count /= 2;
-  n = 0;
-  while (n < count) {
+  for n in 0..count {
     seed = request(seed, c, n, n, 1 as u8);
-    n += 1;
   }
   return Tape { input: input, probes: probes, seed: seed, seed_count: count };
 }
@@ -155,20 +133,16 @@ pub function fold(digest: i64, byte: i64): i64 {
 
 pub function bytes_digest(digest: i64, bytes: u8[], count: i32): i64 {
   let d = digest;
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     d = fold(d, bytes[i] as i64);
-    i += 1;
   }
   return d;
 }
 
 pub function string_digest(digest: i64, value: string): i64 {
   let d = digest;
-  let i = 0;
-  while (i < value.len()) {
-    d = fold(d, value[i] as i64);
-    i += 1;
+  for b in value {
+    d = fold(d, b as i64);
   }
   return d;
 }
@@ -176,12 +150,10 @@ pub function string_digest(digest: i64, value: string): i64 {
 pub function hex(bytes: u8[], at: i32, count: i32): string {
   let digits = "0123456789abcdef";
   let out: u8[] = [];
-  let i = 0;
-  while (i < count) {
+  for i in 0..count {
     let b = bytes[at + i] as i32;
     out = out.append(digits[b >> 4]);
     out = out.append(digits[b & 15]);
-    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
