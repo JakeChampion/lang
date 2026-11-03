@@ -28,7 +28,7 @@ paid a call and a frame of five saved registers for two loads and one
 ## The rule
 
 - A small branch is a body of at most `max_shared_insts` instructions with
-  two callers, no loop, and no box in its result. It joins the shared set,
+  two callers, no loop, and a scalar result. It joins the shared set,
   and each call to it is spliced, whatever the caller does with the result.
 - A body called once stays out of a shared host when the splice grows the
   host past the host's own limit. The check runs in each round with the

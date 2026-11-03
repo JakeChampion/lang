@@ -650,14 +650,14 @@ function shared_body(f: ssasem.Func, calls: i32, cycle: i32, unnamed: boolean): 
 }
 
 // A small body with no loop that two callers share is spliced into both. It
-// returns no box, so a call to it saves no box and is spliced whatever its
+// returns a scalar, so a call to it saves no box and is spliced whatever its
 // caller does with the result.
 function small_branch(f: ssasem.Func, calls: i32, cycle: i32): boolean {
   return calls > 1 && calls <= max_shared_callers() && cycle < 0 && !lends_view(f) && small_branch_body(f);
 }
 
 function small_branch_body(f: ssasem.Func): boolean {
-  return spliceable(f, max_shared_insts()) && !loops(f.graph) && !returns_boxes(f) && !record_leaf(f);
+  return scalar(f.result) && spliceable(f, max_shared_insts()) && !loops(f.graph);
 }
 
 function shared_limit(f: ssasem.Func): i32 {
