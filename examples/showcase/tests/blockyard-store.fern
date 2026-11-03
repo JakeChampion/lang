@@ -55,10 +55,7 @@ function main(): i32 {
   let Ok(data) = read_file(directory + "/test.snapshot") else {
     return 14;
   };
-  let digest_prefix = "0";
-  if (data[0] == b'0') {
-    digest_prefix = "1";
-  }
+  let digest_prefix = if (data[0] == b'0') { "1" } else { "0" };
   let damaged = digest_prefix + data.drop(1);
   let result = write_file(directory + "/test.snapshot", damaged);
   if (store.recover(directory, "test").is_ok()) {

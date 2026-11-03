@@ -550,7 +550,7 @@ function s_return_at(value: ast.Expr, line: i32, col: i32): ast.Stmt {
 }
 
 function s_expr(value: ast.Expr): ast.Stmt {
-  return ast.StmtExpr { value: value, line: 0 };
+  return ast.StmtExpr { value: value, line: 0, op: "" };
 }
 
 pub function s_if(cond: ast.Expr, then_body: ast.Stmt[], else_body: ast.Stmt[]): ast.Stmt {
@@ -670,11 +670,11 @@ function s_break(): ast.Stmt {
 }
 
 pub function s_assign(target: string, value: ast.Expr): ast.Stmt {
-  return ast.StmtAssign { target: target, value: value, line: 0, col: 0, target_line: 0, target_col: 0 };
+  return ast.StmtAssign { target: target, value: value, line: 0, col: 0, target_line: 0, target_col: 0, op: "" };
 }
 
 function s_assign_at(target: string, value: ast.Expr, line: i32, col: i32, target_line: i32, target_col: i32): ast.Stmt {
-  return ast.StmtAssign { target: target, value: value, line: line, col: col, target_line: target_line, target_col: target_col };
+  return ast.StmtAssign { target: target, value: value, line: line, col: col, target_line: target_line, target_col: target_col, op: "" };
 }
 
 function s_match(scrutinee: ast.Expr, arms: ast.MatchArm[]): ast.Stmt {
@@ -5821,7 +5821,7 @@ function for_refused(p: Par, kind: string): (ast.Stmt, Par) {
 function with_stmt_line(st: ast.Stmt, line: i32): ast.Stmt {
   match (st) {
     ast.StmtExpr(x) => {
-      return ast.StmtExpr { value: x.value, line: line };
+      return ast.StmtExpr { ...x, line: line };
     },
     ast.StmtIf(f) => {
       return ast.StmtIf { ...f, line: line };
@@ -6283,11 +6283,12 @@ function parse_expression_stmt(p: Par): (ast.Stmt, Par) {
       return parse_assign_chain(p, [e_expr, av_expr], [aline], [acol]);
     }
     p = p.end_of(av_expr);
-    let rhs: ast.Expr = av_expr;
-    if (is_compound) {
-      rhs = e_binary_at(slice_unchecked(assign_op, 0, assign_op.len() - 1), read_back(e_expr), av_expr, aline, acol);
+    if (!is_compound) {
+      return (assign_to(e_expr, av_expr, aline, acol), p);
     }
-    return (assign_to(e_expr, rhs, aline, acol), p);
+    let bin_op = slice_unchecked(assign_op, 0, assign_op.len() - 1) + "";
+    let st = assign_to(e_expr, e_binary_at(bin_op, read_back(e_expr), av_expr, aline, acol), aline, acol);
+    return (with_compound_op(st, bin_op), p);
   }
   if (p.strict_semi || p.peek_punct() != "}") {
     p = p.end_of(e_expr);
@@ -6526,6 +6527,16 @@ function assign_to(target: ast.Expr, rhs: ast.Expr, line: i32, col: i32): ast.St
       return s_unknown_at(coded_kind("P003", "left-hand side of assignment is not assignable"), line, col);
     }
   }
+}
+
+function with_compound_op(st: ast.Stmt, op: string): ast.Stmt {
+  if let ast.StmtAssign(a) = st {
+    return ast.StmtAssign { ...a, op: op };
+  }
+  if let ast.StmtExpr(x) = st {
+    return ast.StmtExpr { ...x, op: op };
+  }
+  return st;
 }
 
 function read_back(target: ast.Expr): ast.Expr {
@@ -8585,7 +8596,7 @@ pub function builtin_function_names(): string[] {
     "clock_resolution", "clock_set",
     "wasm_pollable_drop", "wasm_block", "wasm_poll",
     "map_new", "__map_new_i32", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked",
-    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_len",
+    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_len",
     "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_clear", "buf_free",
     "cell_new",
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
@@ -11905,11 +11916,11 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
     },
     ast.StmtExpr(x) => {
       let xv: RExpr = mono_expr(x.value, env, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
+      return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0, op: "" }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
       let av: RExpr = mono_call_expected(a.value, env.elook(a.target), env, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+      return RStmtOne { rstmt: ast.StmtAssign { ...a, value: av.rexpr }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {
       let cv: RExpr = mono_expr(f.cond, env, funcs, ins);
@@ -12207,10 +12218,10 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
         out = out.append(ast.StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col });
       },
       ast.StmtExpr(x) => {
-        out = out.append(ast.StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line });
+        out = out.append(ast.StmtExpr { ...x, value: subst_expr(x.value, tparams, cts) });
       },
       ast.StmtAssign(a) => {
-        out = out.append(ast.StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
+        out = out.append(ast.StmtAssign { ...a, value: subst_expr(a.value, tparams, cts) });
       },
       ast.StmtIf(f) => {
         out = out.append(ast.StmtIf { ...f, cond: subst_expr(f.cond, tparams, cts), then_body: subst_stmts(f.then_body, tparams, cts), else_body: subst_stmts(f.else_body, tparams, cts) });
@@ -14645,12 +14656,12 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
     },
     ast.StmtExpr(x) => {
       let xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
+      return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0, op: "" }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
       let dest: string = env.elook(a.target);
       let av: RExpr = ms_expr_to(a.value, dest, env, gstructs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: retype_assoc_ctor(av.rexpr, dest, gstructs, funcs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+      return RStmtOne { rstmt: ast.StmtAssign { ...a, value: retype_assoc_ctor(av.rexpr, dest, gstructs, funcs) }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {
       let cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
@@ -16310,13 +16321,13 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
     },
     ast.StmtExpr(x) => {
       let xv: RExpr = me_expr(x.value, "", env, enums, structs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
+      return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0, op: "" }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
       let dest: string = env.elook(a.target);
       let av: RExpr = me_expr(a.value, dest, env, enums, structs, funcs, ins);
       let aval: ast.Expr = retype_enum_assoc(av.rexpr, me_rewrite_ty(dest, enums), enums, funcs);
-      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: aval, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+      return RStmtOne { rstmt: ast.StmtAssign { ...a, value: aval }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {
       let cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
@@ -17400,7 +17411,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
       ast.StmtAssign(a) => {
         let ave: DeferEdgeExpr = dl_edges_expr(a.value, actions, flags, start, armed, label, own_level);
         armed = ave.armed;
-        let ast: ast.StmtAssign = ast.StmtAssign { target: a.target, value: ave.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+        let ast: ast.StmtAssign = ast.StmtAssign { ...a, value: ave.expr };
         let ax: i32 = defer_armed(ast);
         if (ax >= armed) {
           armed = ax + 1;
@@ -17415,7 +17426,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
       ast.StmtExpr(x) => {
         let xve: DeferEdgeExpr = dl_edges_expr(x.value, actions, flags, start, armed, label, own_level);
         armed = xve.armed;
-        out = out.append(ast.StmtExpr { value: xve.expr, line: x.line });
+        out = out.append(ast.StmtExpr { ...x, value: xve.expr });
       },
       ast.StmtReturn(r) => {
         let rve: DeferEdgeExpr = dl_edges_expr(r.value, actions, flags, start, armed, label, own_level);
@@ -17599,12 +17610,12 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
     },
     ast.StmtExpr(x) => {
       let xr: DeferExprAcc = dl_collect_expr(x.value, actions, flags);
-      let one: ast.Stmt[] = [ast.StmtExpr { value: xr.expr, line: x.line }];
+      let one: ast.Stmt[] = [ast.StmtExpr { ...x, value: xr.expr }];
       return DeferAcc { stmts: one, actions: xr.actions, flags: xr.flags };
     },
     ast.StmtAssign(a) => {
       let ar: DeferExprAcc = dl_collect_expr(a.value, actions, flags);
-      let one: ast.Stmt[] = [ast.StmtAssign { target: a.target, value: ar.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }];
+      let one: ast.Stmt[] = [ast.StmtAssign { ...a, value: ar.expr }];
       return DeferAcc { stmts: one, actions: ar.actions, flags: ar.flags };
     },
     ast.StmtIf(f) => {
@@ -17803,11 +17814,11 @@ function dl_expand_return_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[], 
       return one;
     },
     ast.StmtExpr(x) => {
-      let one: ast.Stmt[] = [ast.StmtExpr { value: dl_return_expr(x.value, actions, flags, armed), line: x.line }];
+      let one: ast.Stmt[] = [ast.StmtExpr { ...x, value: dl_return_expr(x.value, actions, flags, armed) }];
       return one;
     },
     ast.StmtAssign(a) => {
-      let one: ast.Stmt[] = [ast.StmtAssign { target: a.target, value: dl_return_expr(a.value, actions, flags, armed), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }];
+      let one: ast.Stmt[] = [ast.StmtAssign { ...a, value: dl_return_expr(a.value, actions, flags, armed) }];
       return one;
     },
     ast.StmtIf(f) => {
@@ -18750,7 +18761,7 @@ pub function is_reserved_struct_name(name: string): boolean {
     "BodySource", "ByteStream", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Dir", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MountEntry", "Pipe", "ProcessResult",
-    "Reader", "Span", "Time", "Url", "WinSize", "Writer",
+    "Reader", "Socket", "Span", "Time", "Url", "WinSize", "Writer",
   ];
   return util.index_of_str(reserved, name) >= 0;
 }
@@ -19270,6 +19281,57 @@ function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt
   return [ivar, hivar, govar, back, with_loop_label(s_while(e_ident(go_name), wbody), fr.label)];
 }
 
+// A counted loop steps at its latch, as a `while` written by hand does, so a
+// `continue` that targets the loop takes the step with it. `shadowed` records a
+// body that rebinds the counter or defers work, where the step stays at the head.
+struct StepCtx { step: ast.Stmt, var_name: string, label: string, depth: i32, shadowed: boolean }
+
+function step_continues(body: ast.Stmt[], ctx: StepCtx): (ast.Stmt[], StepCtx) {
+  return astwalk.map_stmts_acc(body, ctx, step_continue_stmt, step_continue_expr);
+}
+
+function step_continue_stmt(st: ast.Stmt, ctx: StepCtx): (ast.Stmt, StepCtx, boolean) {
+  match (st) {
+    ast.StmtContinue(c) => {
+      if (c.label.len() == 0 && ctx.depth == 0 || c.label.len() > 0 && c.label == ctx.label) {
+        return (s_block([ctx.step, st]), ctx, true);
+      }
+    },
+    ast.StmtWhile(w) => {
+      let (body, inner) = step_continues(w.body, nested_step(ctx, w.label));
+      return (ast.StmtWhile { ...w, body: body }, StepCtx { ...ctx, shadowed: inner.shadowed }, true);
+    },
+    ast.StmtFor(f) => {
+      let (body, inner) = step_continues(f.body, nested_step(ctx, f.label));
+      let shadowed = inner.shadowed || util.has_str(astwalk.binders_of(st, []), ctx.var_name);
+      return (ast.StmtFor { ...f, body: body }, StepCtx { ...ctx, shadowed: shadowed }, true);
+    },
+    ast.StmtDefer(_) => {
+      return (st, StepCtx { ...ctx, shadowed: true }, true);
+    },
+    _ => {
+      if (util.has_str(astwalk.binders_of(st, []), ctx.var_name)) {
+        return (st, StepCtx { ...ctx, shadowed: true }, false);
+      }
+    }
+  }
+  return (st, ctx, false);
+}
+
+function nested_step(ctx: StepCtx, label: string): StepCtx {
+  if (label == ctx.label) {
+    return StepCtx { ...ctx, label: "", depth: ctx.depth + 1 };
+  }
+  return StepCtx { ...ctx, depth: ctx.depth + 1 };
+}
+
+function step_continue_expr(e: ast.Expr, ctx: StepCtx): (ast.Expr, StepCtx, boolean) {
+  if let ast.ExprLambda(_) = e {
+    return (e, ctx, true);
+  }
+  return (e, ctx, false);
+}
+
 function dr_expr(e: ast.Expr): ast.Expr {
   match (e) {
     ast.ExprLambda(lm) => {
@@ -19303,18 +19365,25 @@ pub function desugar_ranges_block(body: ast.Stmt[]): ast.Stmt[] {
 
 function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
   match (st) {
-    ast.StmtFor(fr) => {
-      let dbody: ast.Stmt[] = desugar_ranges_block(fr.body);
-      let rargs: ast.Expr[] = iter_range_args(fr.iter);
+    ast.StmtFor(written) => {
+      let dbody: ast.Stmt[] = desugar_ranges_block(written.body);
+      let rargs: ast.Expr[] = iter_range_args(written.iter);
       if (rargs.len() == 2) {
+        // A nested `for _` must not step this counter.
+        let fr = ast.StmtFor { ...written, var_name: discard_name(written.var_name, written.line, written.col, 0) };
         let hi_name: string = "$hi_" + fr.var_name;
         let rty: string = range_bound_type(rargs);
         let hivar: ast.Stmt = s_var(hi_name, rty, rargs[1]);
         if (range_call_name(fr.iter) == "__range_incl") {
           return inclusive_range_loop(fr, dbody, s_var(fr.var_name, rty, rargs[0]), hivar, hi_name);
         }
-        let ivar: ast.Stmt = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
         let incr: ast.Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
+        let (stepped, plain) = step_continues(dbody, StepCtx { step: incr, var_name: fr.var_name, label: fr.label, depth: 0, shadowed: false });
+        if (!plain.shadowed) {
+          let cond: ast.Expr = e_binary("<", e_ident(fr.var_name), e_ident(hi_name));
+          return [s_var(fr.var_name, rty, rargs[0]), hivar, with_loop_label(s_while(cond, stepped.append(incr)), fr.label)];
+        }
+        let ivar: ast.Stmt = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
         let brk: ast.Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
         let wbody: ast.Stmt[] = [incr, brk];
         let k: i32 = 0;
@@ -19324,7 +19393,7 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
         }
         return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
       }
-      return [ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: dbody, label: fr.label, line: fr.line, col: fr.col }];
+      return [ast.StmtFor { ...written, body: dbody }];
     },
     ast.StmtIf(f) => {
       return [ast.StmtIf { ...f, cond: f.cond, then_body: desugar_ranges_block(f.then_body), else_body: desugar_ranges_block(f.else_body) }];
@@ -19609,7 +19678,7 @@ function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
       return ast.StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col };
     },
     ast.StmtExpr(x) => {
-      return ast.StmtExpr { value: rvf_expr(x.value, structs), line: x.line };
+      return ast.StmtExpr { ...x, value: rvf_expr(x.value, structs) };
     },
     ast.StmtIf(f) => {
       return ast.StmtIf { ...f, cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs), sugar: rvf_sugar(f.sugar, structs) };
@@ -19618,7 +19687,7 @@ function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
       return ast.StmtWhile { cond: rvf_expr(w.cond, structs), body: rvf_block(w.body, structs), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { target: a.target, value: rvf_expr(a.value, structs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+      return ast.StmtAssign { ...a, value: rvf_expr(a.value, structs) };
     },
     ast.StmtFor(fr) => {
       return ast.StmtFor { var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label, line: fr.line, col: fr.col };
@@ -21400,10 +21469,10 @@ function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
       return ast.StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col };
     },
     ast.StmtExpr(x) => {
-      return ast.StmtExpr { value: elb_mark_expr(x.value, idx, arr), line: x.line };
+      return ast.StmtExpr { ...x, value: elb_mark_expr(x.value, idx, arr) };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+      return ast.StmtAssign { ...a, value: elb_mark_expr(a.value, idx, arr) };
     },
     ast.StmtIf(f) => {
       return ast.StmtIf { ...f, cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr) };
@@ -25261,10 +25330,10 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
     },
     ast.StmtAssign(a) => {
       let val: ast.Expr = settle_to_name(settle_expr(a.value, names, types, fns, structs), settle_local_type(names, types, a.target));
-      return ast.StmtAssign { target: a.target, value: val, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+      return ast.StmtAssign { ...a, value: val };
     },
     ast.StmtExpr(x) => {
-      return ast.StmtExpr { value: settle_expr(x.value, names, types, fns, structs), line: x.line };
+      return ast.StmtExpr { ...x, value: settle_expr(x.value, names, types, fns, structs) };
     },
     ast.StmtIf(f) => {
       return ast.StmtIf { ...f, cond: settle_expr(f.cond, names, types, fns, structs), then_body: settle_block(f.then_body, ret_type, names, types, fns, structs), else_body: settle_block(f.else_body, ret_type, names, types, fns, structs) };

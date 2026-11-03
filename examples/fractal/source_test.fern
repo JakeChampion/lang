@@ -7,7 +7,7 @@ import "./source";
 import "./server";
 
 function test_highlight(): test.TestOutcome {
-  let html: string = source.highlight("pub fip function write(own value: u32): u32 { return 42; }");
+  let html = source.highlight("pub fip function write(own value: u32): u32 { return 42; }");
   return test.assert_true(
     html.contains("<span class=\"k\">fip</span>") && html.contains("<span class=\"k\">own</span>")
       && html.contains("<span class=\"t\">u32</span>") && html.contains("<span class=\"n\">42</span>"),
@@ -15,7 +15,7 @@ function test_highlight(): test.TestOutcome {
 }
 
 function test_imports(): test.TestOutcome {
-  let html: string = source.highlight("  import \"./fractal\" as tiles; // use the renderer");
+  let html = source.highlight("  import \"./fractal\" as tiles; // use the renderer");
   return test.assert_true(
     html.starts_with("  ") && html.contains("href=\"/_src/fractal.fern\"")
       && html.contains("<span class=\"s\">&quot;./fractal&quot;</span></a>")
@@ -44,7 +44,7 @@ function test_fake_imports(): test.TestOutcome {
 }
 
 function test_escape_html(): test.TestOutcome {
-  let html: string = source.render("<title>&", "// </code></pre><script>alert('x')</script>\nlet text: string = \"<&>\";\n");
+  let html = source.render("<title>&", "// </code></pre><script>alert('x')</script>\nlet text: string = \"<&>\";\n");
   return test.assert_true(
     !html.contains("<script>alert(") && html.contains("&lt;script&gt;alert(") && html.contains("&lt;title&gt;&amp;")
       && html.contains("&lt;&amp;&gt;"),
@@ -52,7 +52,7 @@ function test_escape_html(): test.TestOutcome {
 }
 
 function test_line_links(): test.TestOutcome {
-  let html: string = source.render("fractal.fern", "// first\n\nlet count: i32 = 3;\n");
+  let html = source.render("fractal.fern", "// first\n\nlet count: i32 = 3;\n");
   return test.assert_true(
     html.contains("id=\"L1\"") && html.contains("id=\"L2\"") && html.contains("id=\"L3\"")
       && html.contains("href=\"#L3\"") && !html.contains("id=\"L4\"")
@@ -61,12 +61,12 @@ function test_line_links(): test.TestOutcome {
 }
 
 function test_routes(): test.TestOutcome {
-  let pages: source.Page[] = [source.Page { name: "fractal.fern", html: source.render("fractal.fern", "pub const SIZE: i32 = 256;\n") }];
+  let pages = [source.Page { name: "fractal.fern", html: source.render("fractal.fern", "pub const SIZE: i32 = 256;\n") }];
   let routes = server.routes[platform.Host](server.stats("test", 0, 0, "test-version"), "web", pages);
-  let index: HttpResponse = routes.handle(http.request("GET", "/_src/"), platform.host());
-  let file: HttpResponse = routes.handle(http.request("GET", "/_src/fractal.fern"), platform.host());
-  let missing: HttpResponse = routes.handle(http.request("GET", "/_src/missing.fern"), platform.host());
-  let redirect: HttpResponse = routes.handle(http.request("GET", "/_src"), platform.host());
+  let index = routes.handle(http.request("GET", "/_src/"), platform.host());
+  let file = routes.handle(http.request("GET", "/_src/fractal.fern"), platform.host());
+  let missing = routes.handle(http.request("GET", "/_src/missing.fern"), platform.host());
+  let redirect = routes.handle(http.request("GET", "/_src"), platform.host());
   return test.assert_true(
     index.status == 200 && index.body_text_lossy().contains("Application source")
       && file.status == 200 && file.body_text_lossy().contains("<span class=\"k\">const</span>")
@@ -111,25 +111,25 @@ function test_request_errors(): test.TestOutcome {
 }
 
 function test_version_and_cancel(): test.TestOutcome {
-  let state: server.Stats = server.stats("test", 0, 1, "test-version");
+  let state = server.stats("test", 0, 1, "test-version");
   let routes = server.routes[platform.Host](state, "web", []);
-  let config: HttpResponse = routes.handle(http.request("GET", "/api/config"), platform.host());
-  let old: HttpResponse = routes.handle(http.request("GET", "/tile/42/0/0"), platform.host());
-  let wrong: HttpResponse = routes.handle(http.request("GET", "/tile/old-version/42/0/0"), platform.host());
+  let config = routes.handle(http.request("GET", "/api/config"), platform.host());
+  let old = routes.handle(http.request("GET", "/tile/42/0/0"), platform.host());
+  let wrong = routes.handle(http.request("GET", "/tile/old-version/42/0/0"), platform.host());
   if (config.status != 200 || !config.body_text_lossy().contains("test-version") || config.headers.get("Cache-Control").unwrap_or("") != "no-store") {
     return test.fail("renderer configuration is missing or cacheable");
   }
   if (old.headers.get("Location").unwrap_or("") != "/tile/test-version/42/0/0" || old.headers.get("Cache-Control").unwrap_or("") != "no-store" || wrong.status != 404) {
     return test.fail("renderer versions share a cache URL");
   }
-  let session_id: string = "0123456789abcdef";
-  let cancelled: HttpResponse = routes.handle(http.request("POST", "/cancel/" + session_id + "/1"), platform.host());
-  let request: HttpRequest = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", session_id).with_header("X-Fern-Request", "1");
-  let refused: HttpResponse = routes.handle(request, platform.host());
+  let session_id = "0123456789abcdef";
+  let cancelled = routes.handle(http.request("POST", f"/cancel/{session_id}/1"), platform.host());
+  let request = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", session_id).with_header("X-Fern-Request", "1");
+  let refused = routes.handle(request, platform.host());
   if (cancelled.status != 204 || refused.status != 499 || state.tiles.get() != 0 || state.cancelled.get().len() != 0) {
     return test.fail("cancelled work was rendered or retained");
   }
-  let rendered: HttpResponse = routes.handle(http.request("GET", "/tile/test-version/42/0/0"), platform.host());
+  let rendered = routes.handle(http.request("GET", "/tile/test-version/42/0/0"), platform.host());
   if (rendered.status != 200 || rendered.headers.get("X-Fern-Renderer").unwrap_or("") != "test-version"
     || !rendered.headers.get("Server-Timing").unwrap_or("").contains("png;dur=")
     || rendered.headers.get("Cache-Control").unwrap_or("") != "public, max-age=31536000, immutable") {
@@ -141,11 +141,11 @@ function test_version_and_cancel(): test.TestOutcome {
     return test.fail("cancellation token bounds differ");
   }
   let no_binary = server.routes[platform.Host](server.stats("test", 0, 0, "source-version"), "web", []);
-  let uncacheable: HttpResponse = no_binary.handle(http.request("GET", "/tile/source-version/42/0/0"), platform.host());
+  let uncacheable = no_binary.handle(http.request("GET", "/tile/source-version/42/0/0"), platform.host());
   if (uncacheable.headers.get("Cache-Control").unwrap_or("") != "no-store") {
     return test.fail("fallback identity received an immutable cache policy");
   }
-  let invalid_token: HttpRequest = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", "short");
+  let invalid_token = http.request("GET", "/tile/test-version/42/0/0").with_header("X-Fern-Session", "short");
   if (routes.handle(invalid_token, platform.host()).status != 400) {
     return test.fail("malformed cancellation headers were ignored");
   }
@@ -153,7 +153,7 @@ function test_version_and_cancel(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner: test.TestRunner = test.new("fractal source browser");
+  let runner = test.new("fractal source browser");
   runner = runner.it("Fern tokens", test_highlight);
   runner = runner.it("import links and aliases", test_imports);
   runner = runner.it("local and library targets", test_import_targets);

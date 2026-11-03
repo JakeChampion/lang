@@ -542,12 +542,12 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     },
     ast.StmtExpr(s) => {
       let e: LiftExpr = lift_expr_walk(s.value, acc, gfns);
-      let ns: ast.Stmt = ast.StmtExpr { value: e.expr, line: 0 };
+      let ns: ast.Stmt = ast.StmtExpr { value: e.expr, line: 0, op: "" };
       return LiftStmts { stmts: [ns], acc: e.acc };
     },
     ast.StmtAssign(asg) => {
       let e: LiftExpr = lift_call_arg(asg.value, acc, gfns);
-      let ns: ast.Stmt = ast.StmtAssign { target: asg.target, value: e.expr, line: asg.line, col: asg.col, target_line: asg.target_line, target_col: asg.target_col };
+      let ns: ast.Stmt = ast.StmtAssign { ...asg, value: e.expr };
       return LiftStmts { stmts: [ns], acc: e.acc };
     },
     ast.StmtIf(f) => {
@@ -919,7 +919,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
       let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: fnname, line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
       let body: ast.Stmt = ast.StmtReturn { value: call, line: 0, col: 0 };
       if (tgt.ret_type == "void") {
-        body = ast.StmtExpr { value: call, line: 0 };
+        body = ast.StmtExpr { value: call, line: 0, op: "" };
       }
       let bd: ast.Stmt[] = [body];
       let notp: string[] = [];
@@ -2902,24 +2902,24 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, vars:
     },
     ast.StmtExpr(es) => {
       let er: InlineCloRes = lift_inline_closures_expr(es.value, fd, vars, fs, ct, gfns, structs, mfuncs);
-      return (ast.StmtExpr { value: er.expr, line: 0 }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
+      return (ast.StmtExpr { value: er.expr, line: 0, op: "" }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
     },
     ast.StmtAssign(a) => {
       match (a.value) {
         ast.ExprLambda(_) => {
           let asgr: InlineCloRes = try_fn_field_value(a.value, fd, vars, fs, ct, gfns, mfuncs, structs);
-          return (ast.StmtAssign { target: a.target, value: asgr.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, InlineCloAcc { funcs: asgr.funcs, counter: asgr.counter }, true);
+          return (ast.StmtAssign { ...a, value: asgr.expr }, InlineCloAcc { funcs: asgr.funcs, counter: asgr.counter }, true);
         },
         ast.ExprIdent(avid) => {
           if (lift_names_fn_value(mfuncs, avid.name)) {
             let asgr2: InlineCloRes = try_fn_field_value(a.value, fd, vars, fs, ct, gfns, mfuncs, structs);
-            return (ast.StmtAssign { target: a.target, value: asgr2.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, InlineCloAcc { funcs: asgr2.funcs, counter: asgr2.counter }, true);
+            return (ast.StmtAssign { ...a, value: asgr2.expr }, InlineCloAcc { funcs: asgr2.funcs, counter: asgr2.counter }, true);
           }
         },
         _ => {}
       }
       let er: InlineCloRes = lift_inline_closures_expr(a.value, fd, vars, fs, ct, gfns, structs, mfuncs);
-      return (ast.StmtAssign { target: a.target, value: er.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
+      return (ast.StmtAssign { ...a, value: er.expr }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
     },
     ast.StmtDefer(_) => {
       return (st, acc, true);
@@ -3351,7 +3351,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
     },
     ast.StmtAssign(a) => {
       let r: WCapExpr = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtAssign { target: a.target, value: r.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, caps: r.caps, changed: r.changed };
+      return WCapStmt { stmt: ast.StmtAssign { ...a, value: r.expr }, caps: r.caps, changed: r.changed };
     },
     ast.StmtReturn(r) => {
       let rr: WCapExpr = wcap_expr(r.value, fd, gfns, structs, mfuncs, acc, atargets);
@@ -3359,7 +3359,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
     },
     ast.StmtExpr(e) => {
       let er: WCapExpr = wcap_expr(e.value, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapStmt { stmt: ast.StmtExpr { value: er.expr, line: 0 }, caps: er.caps, changed: er.changed };
+      return WCapStmt { stmt: ast.StmtExpr { value: er.expr, line: 0, op: "" }, caps: er.caps, changed: er.changed };
     },
     ast.StmtIf(f) => {
       let cr: WCapExpr = wcap_expr(f.cond, fd, gfns, structs, mfuncs, acc, atargets);

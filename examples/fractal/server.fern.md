@@ -82,11 +82,11 @@ pub function stats(instance: string, started_ms: i64, binary_bytes: i64, version
     started_ms: started_ms,
     binary_bytes: binary_bytes,
     render_version: version,
-    tiles: cell_new(0 as i64),
-    iterations: cell_new(0 as i64),
-    render_ns: cell_new(0 as i64),
-    sockets: cell_new(0 as i64),
-    active: cell_new(0 as i64),
+    tiles: cell_new(0i64),
+    iterations: cell_new(0i64),
+    render_ns: cell_new(0i64),
+    sockets: cell_new(0i64),
+    active: cell_new(0i64),
     cancelled: cell_new([] as string[]),
   };
 }
@@ -120,14 +120,14 @@ struct Rendered {
 }
 
 function (state: Stats) render(z: i32, x: i64, y: i64, key: Option[string]): Result[Rendered, fractal.RenderError] {
-  let started_ns: i64 = now_ns();
+  let started_ns = now_ns();
   state.active.set(state.active.get() + 1);
-  let next_yield: Cell[i64] = cell_new(0 as i64);
-  let result: Result[fractal.Tile, fractal.RenderError] = fractal.render_cancellable(z, x, y, (): boolean => request_stopped(state, key, next_yield));
+  let next_yield = cell_new(0i64);
+  let result = fractal.render_cancellable(z, x, y, (): boolean => request_stopped(state, key, next_yield));
   state.active.set(state.active.get() - 1);
   forget_cancel(state, key);
-  let tile: fractal.Tile = result?;
-  let elapsed_ns: i64 = now_ns() - started_ns;
+  let tile = result?;
+  let elapsed_ns = now_ns() - started_ns;
   state.tiles.set(state.tiles.get() + 1);
   state.iterations.set(state.iterations.get() + tile.iterations);
   state.render_ns.set(state.render_ns.get() + elapsed_ns);
@@ -143,14 +143,14 @@ The controller validates coordinates before work. Responses report timing and in
 ```fern
 <<Serve tiles and sockets>>=
 pub function routes[P: platform.Platform](state: Stats, web: string, sources: source.Page[]): router.Router[P] {
-  let app: router.Router[P] = router.new[P]();
+  let app = router.new[P]();
   app = app.get("/tile/{version}/{z}/{x}/{y}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => tile(state, req, params));
-  app = app.get("/tile/{z}/{x}/{y}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/tile/" + state.render_version + "/" + params.param("z")? + "/" + params.param("x")? + "/" + params.param("y")?).with_header("Cache-Control", "no-store")));
+  app = app.get("/tile/{z}/{x}/{y}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect(f"/tile/{state.render_version}/{params.param("z")?}/{params.param("x")?}/{params.param("y")?}").with_header("Cache-Control", "no-store")));
   app = app.post("/cancel/{session}/{id}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let session_id: string = params.param("session")?;
-    let id: string = params.param("id")?;
-    let key: string = request_key(session_id, id).map_err((error: TokenError): http.HttpError => http.fail(400, "invalid cancellation token"))?;
-    let cancelled: string[] = state.cancelled.get();
+    let session_id = params.param("session")?;
+    let id = params.param("id")?;
+    let key = request_key(session_id, id).map_err((error: TokenError): http.HttpError => http.fail(400, "invalid cancellation token"))?;
+    let cancelled = state.cancelled.get();
     if (!cancelled.contains(key)) {
       if (cancelled.len() >= 256) {
         cancelled = cancelled.drop(1);
@@ -160,8 +160,8 @@ pub function routes[P: platform.Platform](state: Stats, web: string, sources: so
     return Ok(http.bytes(204, []).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/ws/{version}/{session}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let version: string = params.param("version")?;
-    let session_id: string = params.param("session")?;
+    let version = params.param("version")?;
+    let session_id = params.param("session")?;
     if (version != state.render_version || request_key(session_id, "1").is_err()) {
       return Ok(http.not_found());
     }
@@ -172,7 +172,7 @@ pub function routes[P: platform.Platform](state: Stats, web: string, sources: so
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
   app = app.get("/_src", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/_src/")));
   app = app.get("/_src/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let path: string = params.param("path")?;
+    let path = params.param("path")?;
     return Ok(source.serve(sources, path));
   });
   return app.get("/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(static.serve(req, static.dir(web), plat)));
@@ -182,20 +182,20 @@ function tile(state: Stats, req: HttpRequest, params: router.Params): Result[Htt
   if (params.param("version")? != state.render_version) {
     return Ok(http.not_found().with_header("Cache-Control", "no-store"));
   }
-  let z: i32 = params.int("z")?;
-  let x: i64 = coordinate(params, "x")?;
-  let y: i64 = coordinate(params, "y")?;
+  let z = params.int("z")?;
+  let x = coordinate(params, "x")?;
+  let y = coordinate(params, "y")?;
   if (!fractal.valid(z, x, y)) {
     return Ok(http.bad_request("no such tile"));
   }
-  let session_id: string = req.headers.get("X-Fern-Session").unwrap_or("");
-  let request_id: string = req.headers.get("X-Fern-Request").unwrap_or("");
+  let session_id = req.headers.get("X-Fern-Session").unwrap_or("");
+  let request_id = req.headers.get("X-Fern-Request").unwrap_or("");
   let key: Option[string] = None;
   if (session_id.len() > 0 || request_id.len() > 0) {
     key = Some(request_key(session_id, request_id).map_err((error: TokenError): http.HttpError => http.fail(400, "invalid cancellation token"))?);
   }
-  let rendered: Rendered = state.render(z, x, y, key).map_err((error: fractal.RenderError): http.HttpError => render_http_error(error))?;
-  let response: HttpResponse = http.bytes(200, rendered.tile.png).with_content_type("image/png");
+  let rendered = state.render(z, x, y, key).map_err((error: fractal.RenderError): http.HttpError => render_http_error(error))?;
+  let response = http.bytes(200, rendered.tile.png).with_content_type("image/png");
   if (state.binary_bytes > 0) {
     response = response.with_header("Cache-Control", "public, max-age=31536000, immutable");
     response = response.with_header("Netlify-CDN-Cache-Control", "public, durable, max-age=31536000, immutable");
@@ -220,7 +220,7 @@ function session(state: Stats, session_id: string): websocket.Handlers {
   return websocket.Handlers {
     open: (connection: websocket.Conn): void => {
       state.sockets.set(state.sockets.get() + 1);
-      let sent: websocket.SendResult = connection.send_text(state.view(now_unix_ms()).to_json());
+      let sent = connection.send_text(state.view(now_unix_ms()).to_json());
     },
     message: (connection: websocket.Conn, message: websocket.Message): void => on_message(state, session_id, connection, message),
     drain: (connection: websocket.Conn): void => {},
@@ -233,14 +233,11 @@ function on_message(state: Stats, session_id: string, connection: websocket.Conn
     Text(request) => {
       match (answer(state, session_id, request)) {
         Ok(response) => {
-          let sent: websocket.SendResult = connection.send_binary(response);
+          let sent = connection.send_binary(response);
         },
         Err(Rendering(fractal.RenderError.Cancelled())) => {
-          match (parse_request(request)) {
-            Ok(tile) => {
-              let sent: websocket.SendResult = connection.send_text("{\"cancelled\":" + tile.id.to_string() + "}");
-            },
-            Err(_) => {}
+          if let Ok(tile) = parse_request(request) {
+            let sent = connection.send_text(f"{{\"cancelled\":{tile.id}}}");
           }
         },
         Err(Rendering(_)) => {
@@ -276,14 +273,14 @@ pub enum RequestError {
 }
 
 pub function parse_request(request: string): Result[TileRequest, RequestError] {
-  let fields: string[] = request.split(" ");
+  let fields = request.split(" ");
   if (fields.len() != 4) {
     return Err(InvalidFields);
   }
-  let id: i64 = request_integer(fields[0], "id")?;
-  let z: i64 = request_integer(fields[1], "zoom")?;
-  let x: i64 = request_integer(fields[2], "x")?;
-  let y: i64 = request_integer(fields[3], "y")?;
+  let id = request_integer(fields[0], "id")?;
+  let z = request_integer(fields[1], "zoom")?;
+  let x = request_integer(fields[2], "x")?;
+  let y = request_integer(fields[3], "y")?;
   if (!request_range(id, z) || !fractal.valid(z as i32, x, y)) {
     return Err(RequestError.OutOfRange);
   }
@@ -295,10 +292,10 @@ fip function request_range(id: i64, z: i64): boolean {
 }
 
 function answer(state: Stats, session_id: string, request: string): Result[u8[], RequestError] {
-  let tile: TileRequest = parse_request(request)?;
-  let key: string = request_key(session_id, tile.id.to_string()).map_err((error: TokenError): RequestError => InvalidToken(error))?;
-  let rendered: Rendered = state.render(tile.z, tile.x, tile.y, Some(key)).map_err((error: fractal.RenderError): RequestError => Rendering(error))?;
-  let response: u8[] = binary.append_u32_be([], tile.id);
+  let tile = parse_request(request)?;
+  let key = request_key(session_id, tile.id.to_string()).map_err((error: TokenError): RequestError => InvalidToken(error))?;
+  let rendered = state.render(tile.z, tile.x, tile.y, Some(key)).map_err((error: fractal.RenderError): RequestError => Rendering(error))?;
+  let response = binary.append_u32_be([], tile.id);
   response = binary.append_u32_be(response, (rendered.elapsed_ns / 1000) as u32);
   response = binary.append_u64_be(response, rendered.tile.iterations as u64);
   response = binary.append_u32_be(response, state.tiles.get() as u32);
@@ -309,26 +306,12 @@ function answer(state: Stats, session_id: string, request: string): Result[u8[],
 }
 
 function request_integer(text: string, field: string): Result[i64, RequestError] {
-  match (i64.parse_i64(text)) {
-    Ok(value) => {
-      return Ok(value);
-    },
-    Err(error) => {
-      return Err(InvalidNumber(field, error));
-    }
-  }
+  return i64.parse_i64(text).map_err((error: number_parse.ParseNumberError): RequestError => InvalidNumber(field, error));
 }
 
 function coordinate(params: router.Params, name: string): Result[i64, http.HttpError] {
-  let text: string = params.param(name)?;
-  match (i64.parse_i64(text)) {
-    Ok(value) => {
-      return Ok(value);
-    },
-    Err(_) => {
-      return Err(http.fail(400, "path parameter " + name + " is not an integer"));
-    }
-  }
+  let text = params.param(name)?;
+  return i64.parse_i64(text).map_err((error: number_parse.ParseNumberError): http.HttpError => http.fail(400, f"path parameter {name} is not an integer"));
 }
 
 pub enum TokenError { InvalidSession, InvalidID(number_parse.ParseNumberError), InvalidIDRange }
@@ -351,38 +334,31 @@ pub function request_key(session_id: string, id: string): Result[string, TokenEr
       return Err(InvalidSession);
     }
   }
-  let value: i64 = i64.parse_i64(id).map_err((error: number_parse.ParseNumberError): TokenError => InvalidID(error))?;
+  let value = i64.parse_i64(id).map_err((error: number_parse.ParseNumberError): TokenError => InvalidID(error))?;
   if (value < 1 || value > 4294967295) {
     return Err(InvalidIDRange);
   }
-  return Ok(session_id + ":" + value.to_string());
+  return Ok(f"{session_id}:{value}");
 }
 
 function forget_cancel(state: Stats, key: Option[string]): void {
-  match (key) {
-    Some(token) => {
-      state.cancelled.set(state.cancelled.get().filter((value: string): boolean => value != token));
-    },
-    None => {}
+  if let Some(token) = key {
+    state.cancelled.set(state.cancelled.get().filter((value: string): boolean => value != token));
   }
 }
 
 function request_stopped(state: Stats, key: Option[string], next_yield: Cell[i64]): boolean {
   if (async.in_task() && now_ns() >= next_yield.get()) {
     next_yield.set(now_ns() + 4000000);
-    let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(1))));
+    let ready = async.wait_any([], Some(clock.instant().add(time.duration_millis(1))));
   }
   if (async.task_cancelled()) {
     return true;
   }
-  match (key) {
-    Some(token) => {
-      return state.cancelled.get().contains(token);
-    },
-    None => {
-      return false;
-    }
+  if let Some(token) = key {
+    return state.cancelled.get().contains(token);
   }
+  return false;
 }
 ```
 
@@ -394,59 +370,43 @@ The executable hash gives tile URLs a stable build identity.
 ```fern
 <<Report work and identify the binary>>=
 function render_http_error(error: fractal.RenderError): http.HttpError {
-  match (error) {
-    fractal.RenderError.Cancelled => {
-      return http.fail(499, "tile request cancelled");
-    },
-    _ => {
-      return http.fail(500, "tile renderer failed");
-    }
-  }
+  return match (error) { fractal.RenderError.Cancelled => http.fail(499, "tile request cancelled"), _ => http.fail(500, "tile renderer failed") };
 }
 
 function timing(rendered: Rendered): string {
-  return "render;dur=" + millis(rendered.elapsed_ns) + ", compute;dur=" + millis(rendered.tile.compute_ns)
-    + ", color;dur=" + millis(rendered.tile.color_ns) + ", png;dur=" + millis(rendered.tile.png_ns);
+  return f"render;dur={millis(rendered.elapsed_ns)}, compute;dur={millis(rendered.tile.compute_ns)}, color;dur={millis(rendered.tile.color_ns)}, png;dur={millis(rendered.tile.png_ns)}";
 }
 
 function millis(nanoseconds: i64): string {
-  let microseconds: i64 = nanoseconds / 1000;
-  let fraction: string = (1000 + microseconds % 1000).to_string();
-  return (microseconds / 1000).to_string() + "." + fraction.drop(1);
+  let microseconds = nanoseconds / 1000;
+  let fraction = (1000 + microseconds % 1000).to_string();
+  return f"{microseconds / 1000}.{fraction.drop(1)}";
 }
 
 function hex6(value: i32): string {
-  let digits: string = "0123456789abcdef";
-  let result: string = "";
-  let index: i32 = 0;
-  while (index < 6) {
-    let digit: i32 = value >> 20 - 4 * index & 15;
-    result = result + digits.drop(digit).take(1);
-    index = index + 1;
+  let digits = "0123456789abcdef";
+  let result = "";
+  for index in 0..6 {
+    let digit = value >> 20 - 4 * index & 15;
+    result += digits.drop(digit).take(1);
   }
   return result;
 }
 
 function own_binary(): (i64, string) {
-  let paths: string[] = ["/proc/self/exe"];
+  let paths = ["/proc/self/exe"];
   if (args().len() > 0) {
     paths = paths.append(args()[0]);
   }
   for path in paths {
-    match (read_file_bytes(path)) {
-      Ok(bytes) => {
-        return (bytes.len() as i64, hex.encode(crypto.sha256_new().update(bytes).finish()).take(24));
-      },
-      Err(_) => {}
+    if let Ok(bytes) = read_file_bytes(path) {
+      return (bytes.len() as i64, hex.encode(crypto.sha256_new().update(bytes).finish()).take(24));
     }
   }
-  let text: string = "";
+  let text = "";
   for name in ["fractal.fern", "kernel.fern", "linear.fern", "series.fern"] {
-    match (read_file(name)) {
-      Ok(source) => {
-        text = text + source;
-      },
-      Err(_) => {}
+    if let Ok(source) = read_file(name) {
+      text += source;
     }
   }
   return (0, hex.encode(crypto.sha256(text.as_bytes())).take(24));
@@ -464,12 +424,12 @@ The standalone server retains unprefixed API routes for the numerical and cancel
 ```fern
 <<Mount the standalone application>>=
 pub function mounted_routes[P: platform.Platform](state: Stats, web: string, sources: source.Page[]): router.Router[P] {
-  let inner: router.Router[P] = routes[P](state, web, sources);
-  let app: router.Router[P] = router.new[P]();
+  let inner = routes[P](state, web, sources);
+  let app = router.new[P]();
   app = app.get("/{$}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/fractal/")));
   app = app.get("/fractal", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/fractal/")));
   app = app.route("/fractal/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let response: HttpResponse = inner.handle(HttpRequest { ...req, path: req.path.drop(8) }, plat);
+    let response = inner.handle(HttpRequest { ...req, path: req.path.drop(8) }, plat);
     if let Some(location) = response.headers.get("Location") {
       if (location.starts_with("/tile/")) {
         response = response.with_header("Location", "/fractal" + location);
@@ -481,11 +441,11 @@ pub function mounted_routes[P: platform.Platform](state: Stats, web: string, sou
 }
 
 function main(): i32 {
-  let identity: (i64, string) = own_binary();
-  let state: Stats = stats(hex6(rand.next_i32()), now_unix_ms(), identity.0, identity.1);
+  let (binary_bytes, version) = own_binary();
+  let state = stats(hex6(rand.next_i32()), now_unix_ms(), binary_bytes, version);
   match (source.load(".")) {
     Ok(sources) => {
-      let handler: (HttpRequest, platform.Host) => HttpResponse = mounted_routes[platform.Host](state, "web", sources).handler();
+      let handler = mounted_routes[platform.Host](state, "web", sources).handler();
       return serve.exit_code(serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason)));
     },
     Err(message) => {

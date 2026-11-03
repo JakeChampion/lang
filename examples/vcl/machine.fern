@@ -22,6 +22,8 @@ import "std/i32";
 import "std/string";
 import "std/i64";
 import "std/f64";
+import "std/array";
+import "core/cmp";
 import "./ast";
 import "./value";
 import "./runtime";
@@ -37,63 +39,33 @@ pub struct FetchOut { status: i64, reason: string, headers: runtime.Headers, bod
 pub struct Driver { run_sub: (string, runtime.Txn) => eval.ExecOut, backends: Backend[], fetch: (Backend, runtime.Txn) => FetchOut }
 
 function prop_string(props: ast.PropBlock, name: string): string {
-  let i: i32 = 0;
-  while (i < props.props.len()) {
-    let pr: ast.Prop = props.props[i];
+  for pr in props.props {
     if (pr.name == name) {
-      match (pr.value) {
-        PVExpr(e) => {
-          match (e) {
-            EString(sl) => {
-              return sl.value;
-            },
-            ENumber(n) => {
-              return n.text;
-            },
-            _ => {
-              return "";
-            }
-          }
-        },
-        _ => {
-          return "";
-        }
-      }
+      let PVExpr(e) = pr.value else {
+        return "";
+      };
+      return match (e) { EString(sl) => sl.value, ENumber(n) => n.text, _ => "" };
     }
-    i = i + 1;
   }
   return "";
 }
 
 pub function backends_of(decls: ast.Decl[]): Backend[] {
   let out: Backend[] = [];
-  let i: i32 = 0;
-  while (i < decls.len()) {
-    match (decls[i]) {
-      DBackend(b) => {
-        let host: string = prop_string(b.props, ".host");
-        if (host == "") {
-          host = "127.0.0.1";
-        }
-        let port: i32 = 80;
-        match (i32.parse_i32(prop_string(b.props, ".port"))) {
-          Ok(n) => {
-            port = n;
-          },
-          Err(_) => {}
-        }
-        out = out.append(Backend { name: b.name, host: host, port: port });
-      },
-      _ => {}
+  for d in decls {
+    if let DBackend(b) = d {
+      let named = prop_string(b.props, ".host");
+      let host = if (named == "") { "127.0.0.1" } else { named };
+      let port = match (i32.parse_i32(prop_string(b.props, ".port"))) { Ok(n) => n, Err(_) => 80 };
+      out = out.append(Backend { name: b.name, host: host, port: port });
     }
-    i = i + 1;
   }
   return out;
 }
 
 pub function interpreting(decls: ast.Decl[]): Driver {
-  let ctx: eval.Ctx = eval.Ctx { decls: decls };
-  let runner: (string, runtime.Txn) => eval.ExecOut = (name: string, t: runtime.Txn): eval.ExecOut => eval.run_sub(ctx, t, name);
+  let ctx = eval.Ctx { decls: decls };
+  let runner = (name: string, t: runtime.Txn): eval.ExecOut => eval.run_sub(ctx, t, name);
   return Driver { run_sub: runner, backends: backends_of(decls), fetch: mock_fetch };
 }
 
@@ -110,46 +82,30 @@ function max_restarts(): i32 {
 struct Staged { run: Run, act: eval.Action }
 
 function run_stage(ctx: Driver, r: Run, name: string): Staged {
-  let stepped: Run = Run { ...r, steps: r.steps.append(name) };
-  let out: eval.ExecOut = ctx.run_sub(name, stepped.txn);
+  let stepped = Run { ...r, steps: r.steps.append(name) };
+  let out = ctx.run_sub(name, stepped.txn);
   if (!out.ok) {
-    return Staged { run: fail(Run { ...stepped, txn: out.txn }, name + ": " + out.err), act: eval.action("") };
+    return Staged { run: fail(Run { ...stepped, txn: out.txn }, f"{name}: {out.err}"), act: eval.action("") };
   }
-  let next: Run = Run { ...stepped, txn: out.txn };
-  match (out.flow) {
-    FReturn(a) => {
-      if (a.name == "none") {
-        return Staged { run: next, act: eval.action("") };
-      }
+  let next = Run { ...stepped, txn: out.txn };
+  if let FReturn(a) = out.flow {
+    if (a.name != "none") {
       return Staged { run: next, act: a };
-    },
-    FNext => {
-      return Staged { run: next, act: eval.action("") };
     }
   }
+  return Staged { run: next, act: eval.action("") };
 }
 
 function known_methods(): string[] {
   return ["GET", "HEAD", "PUT", "POST", "TRACE", "OPTIONS", "DELETE"];
 }
 
-function in_list(s: string, items: string[]): boolean {
-  let i: i32 = 0;
-  while (i < items.len()) {
-    if (items[i] == s) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
 function builtin_recv(t: runtime.Txn): string {
-  let m: string = t.req.method;
+  let m = t.req.method;
   if (m == "PRI") {
     return "synth";
   }
-  if (!in_list(m, known_methods())) {
+  if (!cmp.contains(known_methods(), m)) {
     return "pipe";
   }
   if (m != "GET" && m != "HEAD") {
@@ -176,47 +132,36 @@ function resolve(act: eval.Action, fallback: string): string {
 }
 
 pub function mock_fetch(b: Backend, t: runtime.Txn): FetchOut {
-  let url: string = t.bereq.url;
+  let url = t.bereq.url;
   let status: i64 = 200;
-  let reason: string = "OK";
+  let reason = "OK";
   if (url.starts_with("/status/")) {
-    match (i32.parse_i32(slice_unchecked(url, 8, url.len()).to_owned())) {
-      Ok(n) => {
-        status = n as i64;
-        reason = "Synthetic";
-      },
-      Err(_) => {}
+    if let Ok(n) = i32.parse_i32(slice_unchecked(url, 8, url.len()).to_owned()) {
+      status = n as i64;
+      reason = "Synthetic";
     }
   }
-  let h: runtime.Headers = runtime.headers_new();
-  h = h.set("Content-Type", "text/plain");
-  h = h.set("X-Backend", b.name);
-  let body: string = "mock origin " + b.name + " " + url + "\n";
-  return FetchOut { status: status, reason: reason, headers: h, body: body, ttl: 0.0 - 1.0, ok: true, err: "" };
+  let h = runtime.headers_new().set("Content-Type", "text/plain").set("X-Backend", b.name);
+  return FetchOut { status: status, reason: reason, headers: h, body: f"mock origin {b.name} {url}\n", ttl: -1.0, ok: true, err: "" };
 }
 
 function apply_fetch(ctx: Driver, r: Run, b: Backend): Run {
-  let out: FetchOut = ctx.fetch(b, r.txn);
+  let out = ctx.fetch(b, r.txn);
   if (!out.ok) {
-    return fail(r, "fetch from " + b.name + " failed: " + out.err);
+    return fail(r, f"fetch from {b.name} failed: {out.err}");
   }
-  let resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: out.status, reason: out.reason, headers: out.headers, body: out.body };
-  let ttl: f64 = 120.0;
-  if (out.ttl >= 0.0) {
-    ttl = out.ttl;
-  }
-  let t: runtime.Txn = runtime.Txn { ...r.txn, beresp: resp, beresp_ttl: ttl, beresp_uncacheable: false };
-  return Run { ...r, txn: t.note("fetch " + b.name + " -> " + out.status.to_string()) };
+  let resp = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: out.status, reason: out.reason, headers: out.headers, body: out.body };
+  let ttl = if (out.ttl >= 0.0) { out.ttl } else { 120.0 };
+  let t = runtime.Txn { ...r.txn, beresp: resp, beresp_ttl: ttl, beresp_uncacheable: false };
+  return Run { ...r, txn: t.note(f"fetch {b.name} -> {out.status}") };
 }
 
 function backend_for(ctx: Driver, t: runtime.Txn): Backend {
   if (t.backend_hint != "") {
-    let i: i32 = 0;
-    while (i < ctx.backends.len()) {
-      if (ctx.backends[i].name == t.backend_hint) {
-        return ctx.backends[i];
+    for b in ctx.backends {
+      if (b.name == t.backend_hint) {
+        return b;
       }
-      i = i + 1;
     }
   }
   if (ctx.backends.len() > 0) {
@@ -227,50 +172,38 @@ function backend_for(ctx: Driver, t: runtime.Txn): Backend {
 
 function hash_key(t: runtime.Txn): string {
   if (t.hash_parts.len() == 0) {
-    return t.req.url + "|" + value.to_str(t.req.headers.get("Host"));
+    return f"{t.req.url}|{value.to_str(t.req.headers.get("Host"))}";
   }
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < t.hash_parts.len()) {
-    if (i > 0) {
-      out = out + "|";
-    }
-    out = out + t.hash_parts[i];
-    i = i + 1;
-  }
-  return out;
+  return t.hash_parts.join("|");
 }
 
 function start_bereq(r: Run): Run {
-  let b: runtime.Msg = runtime.Msg { method: r.txn.req.method, url: r.txn.req.url, proto: r.txn.req.proto, status: 0, reason: "", headers: r.txn.req.headers, body: r.txn.req.body };
+  let b = runtime.Msg { method: r.txn.req.method, url: r.txn.req.url, proto: r.txn.req.proto, status: 0, reason: "", headers: r.txn.req.headers, body: r.txn.req.body };
   return Run { ...r, txn: runtime.Txn { ...r.txn, bereq: b } };
 }
 
 function deliver_from_beresp(r: Run): Run {
-  let resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: r.txn.beresp.proto, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body };
+  let resp = runtime.Msg { method: "", url: "", proto: r.txn.beresp.proto, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body };
   return Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
 }
 
 function deliver_from_obj(r: Run, e: runtime.CacheEntry): Run {
-  let obj: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: e.status, reason: e.reason, headers: e.headers, body: e.body };
-  let resp: runtime.Msg = runtime.Msg { ...obj };
-  let t: runtime.Txn = runtime.Txn { ...r.txn, obj: obj, resp: resp, obj_ttl: e.ttl, obj_hits: e.hits };
+  let obj = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: e.status, reason: e.reason, headers: e.headers, body: e.body };
+  let resp = runtime.Msg { ...obj };
+  let t = runtime.Txn { ...r.txn, obj: obj, resp: resp, obj_ttl: e.ttl, obj_hits: e.hits };
   return Run { ...r, txn: t };
 }
 
 function store_object(r: Run, key: string): Run {
-  let e: runtime.CacheEntry = runtime.CacheEntry { key: key, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body, ttl: r.txn.beresp_ttl, hits: 0 };
-  return Run { ...r, cache: r.cache.store(e), txn: r.txn.note("store " + key + " ttl=" + r.txn.beresp_ttl.to_string_prec(3)) };
+  let e = runtime.CacheEntry { key: key, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body, ttl: r.txn.beresp_ttl, hits: 0 };
+  return Run { ...r, cache: r.cache.store(e), txn: r.txn.note(f"store {key} ttl={r.txn.beresp_ttl.to_string_prec(3)}") };
 }
 
 function synth(ctx: Driver, r: Run, a: eval.Action): Outcome {
-  let status: i64 = a.status;
-  if (status == 0) {
-    status = 503;
-  }
-  let resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: a.reason, headers: runtime.headers_new(), body: "" };
-  let withresp: Run = Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
-  let s: Staged = run_stage(ctx, withresp, "vcl_synth");
+  let status = if (a.status == 0) { 503 } else { a.status };
+  let resp = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: a.reason, headers: runtime.headers_new(), body: "" };
+  let withresp = Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
+  let s = run_stage(ctx, withresp, "vcl_synth");
   if (!s.run.ok) {
     return outcome_err(s.run);
   }
@@ -286,8 +219,8 @@ function done(r: Run, disposition: string, hit: boolean): Outcome {
 }
 
 function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcome {
-  let r: Run = start_bereq(r0);
-  let bf: Staged = run_stage(ctx, r, "vcl_backend_fetch");
+  let r = start_bereq(r0);
+  let bf = run_stage(ctx, r, "vcl_backend_fetch");
   if (!bf.run.ok) {
     return outcome_err(bf.run);
   }
@@ -295,15 +228,15 @@ function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcom
     return done(bf.run, "abandon", false);
   }
 
-  let fetched: Run = apply_fetch(ctx, bf.run, backend_for(ctx, bf.run.txn));
+  let fetched = apply_fetch(ctx, bf.run, backend_for(ctx, bf.run.txn));
   if (!fetched.ok) {
     return outcome_err(fetched);
   }
-  let br: Staged = run_stage(ctx, fetched, "vcl_backend_response");
+  let br = run_stage(ctx, fetched, "vcl_backend_response");
   if (!br.run.ok) {
     return outcome_err(br.run);
   }
-  let act: string = resolve(br.act, builtin_backend_response(br.run));
+  let act = resolve(br.act, builtin_backend_response(br.run));
   if (act == "abandon") {
     return done(br.run, "abandon", false);
   }
@@ -311,11 +244,7 @@ function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcom
     return done(br.run, "retry", false);
   }
 
-  let cacheable: boolean = should_store(act, store, br.run.txn);
-  let stored: Run = br.run;
-  if (cacheable) {
-    stored = store_object(br.run, key);
-  }
+  let stored = if (should_store(act, store, br.run.txn)) { store_object(br.run, key) } else { br.run };
   return client_deliver(ctx, deliver_from_beresp(stored), false);
 }
 
@@ -327,11 +256,11 @@ function should_store(act: string, inserts: boolean, t: runtime.Txn): boolean {
 }
 
 function client_deliver(ctx: Driver, r: Run, hit: boolean): Outcome {
-  let d: Staged = run_stage(ctx, r, "vcl_deliver");
+  let d = run_stage(ctx, r, "vcl_deliver");
   if (!d.run.ok) {
     return outcome_err(d.run);
   }
-  let act: string = resolve(d.act, "deliver");
+  let act = resolve(d.act, "deliver");
   if (act == "synth") {
     return synth(ctx, d.run, d.act);
   }
@@ -341,14 +270,14 @@ function client_deliver(ctx: Driver, r: Run, hit: boolean): Outcome {
 function lookup_side(ctx: Driver, r: Run, key: string): Outcome {
   match (r.cache.lookup(key)) {
     Some(e) => {
-      let bumped: runtime.Cache = r.cache.touch(key);
-      let touched: Run = Run { ...r, cache: bumped };
-      let onhit: Run = deliver_from_obj(touched, runtime.CacheEntry { ...e, hits: e.hits + 1 });
-      let h: Staged = run_stage(ctx, onhit, "vcl_hit");
+      let bumped = r.cache.touch(key);
+      let touched = Run { ...r, cache: bumped };
+      let onhit = deliver_from_obj(touched, runtime.CacheEntry { ...e, hits: e.hits + 1 });
+      let h = run_stage(ctx, onhit, "vcl_hit");
       if (!h.run.ok) {
         return outcome_err(h.run);
       }
-      let act: string = resolve(h.act, "deliver");
+      let act = resolve(h.act, "deliver");
       if (act == "pass") {
         return backend_side(ctx, h.run, key, false);
       }
@@ -358,11 +287,11 @@ function lookup_side(ctx: Driver, r: Run, key: string): Outcome {
       return client_deliver(ctx, h.run, true);
     },
     None => {
-      let m: Staged = run_stage(ctx, r, "vcl_miss");
+      let m = run_stage(ctx, r, "vcl_miss");
       if (!m.run.ok) {
         return outcome_err(m.run);
       }
-      let mact: string = resolve(m.act, "fetch");
+      let mact = resolve(m.act, "fetch");
       if (mact == "pass") {
         return backend_side(ctx, m.run, key, false);
       }
@@ -375,8 +304,8 @@ function lookup_side(ctx: Driver, r: Run, key: string): Outcome {
 }
 
 function purge(ctx: Driver, r: Run, key: string): Outcome {
-  let evicted: Run = Run { ...r, cache: r.cache.evict(key), txn: r.txn.note("purge " + key) };
-  let p: Staged = run_stage(ctx, evicted, "vcl_purge");
+  let evicted = Run { ...r, cache: r.cache.evict(key), txn: r.txn.note("purge " + key) };
+  let p = run_stage(ctx, evicted, "vcl_purge");
   if (!p.run.ok) {
     return outcome_err(p.run);
   }
@@ -385,7 +314,7 @@ function purge(ctx: Driver, r: Run, key: string): Outcome {
 
 function dispatch(ctx: Driver, r: Run, act: string, a: eval.Action): Outcome {
   if (act == "pipe") {
-    let p: Staged = run_stage(ctx, start_bereq(r), "vcl_pipe");
+    let p = run_stage(ctx, start_bereq(r), "vcl_pipe");
     if (!p.run.ok) {
       return outcome_err(p.run);
     }
@@ -394,16 +323,16 @@ function dispatch(ctx: Driver, r: Run, act: string, a: eval.Action): Outcome {
   if (act == "synth") {
     return synth(ctx, r, a);
   }
-  let hashed: Staged = run_stage(ctx, r, "vcl_hash");
+  let hashed = run_stage(ctx, r, "vcl_hash");
   if (!hashed.run.ok) {
     return outcome_err(hashed.run);
   }
-  let key: string = hash_key(hashed.run.txn);
+  let key = hash_key(hashed.run.txn);
   if (act == "purge") {
     return purge(ctx, hashed.run, key);
   }
   if (act == "pass") {
-    let ps: Staged = run_stage(ctx, hashed.run, "vcl_pass");
+    let ps = run_stage(ctx, hashed.run, "vcl_pass");
     if (!ps.run.ok) {
       return outcome_err(ps.run);
     }
@@ -416,11 +345,11 @@ function dispatch(ctx: Driver, r: Run, act: string, a: eval.Action): Outcome {
 }
 
 function one_pass(ctx: Driver, r: Run): Outcome {
-  let recv: Staged = run_stage(ctx, r, "vcl_recv");
+  let recv = run_stage(ctx, r, "vcl_recv");
   if (!recv.run.ok) {
     return outcome_err(recv.run);
   }
-  let act: string = resolve(recv.act, builtin_recv(recv.run.txn));
+  let act = resolve(recv.act, builtin_recv(recv.run.txn));
   if (act == "restart") {
     return done(recv.run, "restart", false);
   }
@@ -437,23 +366,21 @@ pub function run_with(ctx: Driver, method: string, url: string, client_ip: strin
 
 function run_inner(ctx: Driver, method: string, url: string, client_ip: string, names: string[], values: string[], body: string, cache: runtime.Cache): Outcome {
   let empty: string[] = [];
-  let t: runtime.Txn = runtime.txn_new(method, url, client_ip);
-  let h: runtime.Headers = t.req.headers;
-  let i: i32 = 0;
+  let t = runtime.txn_new(method, url, client_ip);
+  let h = t.req.headers;
+  let i = 0;
   while (i < names.len() && i < values.len()) {
     h = h.set(names[i], values[i]);
-    i = i + 1;
+    i += 1;
   }
-  let seeded: runtime.Txn = runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h, body: body } };
-  let r: Run = Run { txn: seeded, cache: cache, steps: empty, ok: true, err: "" };
-  let tries: i32 = 0;
-  while (tries <= max_restarts()) {
-    let o: Outcome = one_pass(ctx, r);
+  let seeded = runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h, body: body } };
+  let r = Run { txn: seeded, cache: cache, steps: empty, ok: true, err: "" };
+  for _ in 0..=max_restarts() {
+    let o = one_pass(ctx, r);
     if (!o.ok || o.disposition != "restart") {
       return o;
     }
     r = Run { txn: runtime.Txn { ...o.txn, hash_parts: empty }, cache: o.cache, steps: o.steps, ok: true, err: "" };
-    tries = tries + 1;
   }
   return Outcome { txn: r.txn, cache: r.cache, disposition: "error", hit: false, steps: r.steps, ok: false, err: "too many restarts" };
 }

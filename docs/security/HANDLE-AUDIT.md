@@ -22,7 +22,14 @@ A built-in handle is a descriptor.
 The reference-count lowering treats them as scalars (`semtypes.is_handle` in `compiler/ssarc.fern`).
 Each one exposes its descriptor as the field `fd`, and `close` consumes its receiver.
 
-The socket API (`tcp_listen`, `tcp_accept`, `tcp_close`, and the other `tcp_*` builtins) takes and returns a plain `i32`.
+`Socket` is the built-in handle of the socket API. `tcp_listen`, `tcp_listen_with`, `tcp_accept` and `tcp_connect_with` return one, the other `tcp_*` builtins borrow it, and `tcp_close` consumes it.
+A failed open returns a `Socket` whose `fd` is the negative error number.
+At run time a `Socket` is its descriptor number in compiled code and in both interpreters.
+
+For one release a `Socket` and its `i32` descriptor convert both ways (#13544).
+The published stage0 must compile the standard library before and after it moves to `Socket`, by the rule in `docs/BOOTSTRAP.md`.
+While the conversion exists, code that holds the descriptor as an `i32` still reaches the hazard below.
+The next step moves every caller to `Socket` and deletes the conversion.
 A `resource R` declaration is the WIT import surface only.
 Its `own R` and `borrow R` types erase to `i32`, and no standard library type uses them.
 
@@ -68,11 +75,13 @@ Safe code reaches them today through `Reader`, `Writer`, `Dir`, and every `tcp_*
 The accepted design in `docs/SAFETY-CONTRACT.md` requires a refusal when a resource handle escapes after close or ownership transfer.
 The owner chose the direct implementation on 2026-10-29: the built-in `close` consumes its receiver in both checkers.
 Both probes above are now refused at compile time for `Reader`, `Writer`, and `Dir`.
-The `tcp_*` descriptors are plain `i32` values and still reach the hazard.
+A `Socket` held as a `Socket` is refused the same way. A descriptor held as an `i32` still reaches the hazard until the conversion goes.
 
 | Pattern | Code | Case |
 |---|---|---|
-| A struct literal of a built-in `Reader`, `Writer` or `Dir`, with or without a spread | `E099` | `diag_e099` |
+| A struct literal of a built-in `Reader`, `Writer`, `Dir` or `Socket`, with or without a spread | `E099` | `diag_e099` |
+| A second `tcp_close` of a `Socket` | `E051` | `diag_e051_socket_closed_twice` |
+| A read of a `Socket` after its `tcp_close` | `E051` | `diag_e051_socket_used_after_close` |
 | A second close of a built-in `Reader` | `E050` | `diag_e050_builtin_reader_closed_twice` |
 | A write to a built-in `Writer` after its close | `E051` | `diag_e051_builtin_writer_written_after_close` |
 | A function that returns `Some(h)` of a borrowed `h`, its result passed to an `own` parameter | `E051` | `diag_e051_variant_result_borrows_its_payload` |

@@ -6,23 +6,16 @@ import "./parser";
 import "./compile";
 
 function program(body: string): string {
-  return "vcl 4.1;\nbackend origin { .host = \"127.0.0.1\"; }\n" + body + "\n";
+  return f"vcl 4.1;\nbackend origin {{ .host = \"127.0.0.1\"; }}\n{body}\n";
 }
 
 function gen(body: string): string {
-  let decls: ast.Decl[] = parser.parse(program(body)).decls;
-  match (compile.compile(decls, "./")) {
-    Ok(code) => {
-      return code;
-    },
-    Err(m) => {
-      return "ERR:" + m;
-    }
-  }
+  let decls = parser.parse(program(body)).decls;
+  return match (compile.compile(decls, "./")) { Ok(code) => code, Err(m) => "ERR:" + m };
 }
 
 function gen_recv(stmts: string): string {
-  return gen("sub vcl_recv { " + stmts + " }");
+  return gen(f"sub vcl_recv {{ {stmts} }}");
 }
 
 function test_scalar_read_is_a_field_access(): test.TestOutcome {
@@ -50,7 +43,7 @@ function test_unset_compiles_to_a_header_removal(): test.TestOutcome {
 }
 
 function test_no_runtime_variable_lookup_remains(): test.TestOutcome {
-  let out: string = gen_recv("set req.http.X = req.url; unset req.http.Y; return (hash);");
+  let out = gen_recv("set req.http.X = req.url; unset req.http.Y; return (hash);");
   if (out.contains("vars.read")) {
     return test.fail("generated code still looks names up at run time");
   }
@@ -69,12 +62,12 @@ function test_byte_literal_is_folded(): test.TestOutcome {
 }
 
 function test_acl_masks_are_folded(): test.TestOutcome {
-  let out: string = gen("acl a { \"192.0.2.0\"/24; }\nsub vcl_recv { return (hash); }");
+  let out = gen("acl a { \"192.0.2.0\"/24; }\nsub vcl_recv { return (hash); }");
   return test.assert_contains(out, "(ip & 4294967040) == 3221225984");
 }
 
 function test_acl_keeps_longest_prefix_wins(): test.TestOutcome {
-  let out: string = gen("acl a { \"192.0.2.0\"/24; ! \"192.0.2.23\"; }\nsub vcl_recv { return (hash); }");
+  let out = gen("acl a { \"192.0.2.0\"/24; ! \"192.0.2.23\"; }\nsub vcl_recv { return (hash); }");
   if (!out.contains("24 > best")) {
     return test.fail("missing the /24 specificity test");
   }
@@ -85,7 +78,7 @@ function test_acl_keeps_longest_prefix_wins(): test.TestOutcome {
 }
 
 function test_and_short_circuits_via_a_branch(): test.TestOutcome {
-  let out: string = gen_recv("if (req.url == \"/a\" && std.tolower(req.url) == \"/a\") { return (pass); } return (hash);");
+  let out = gen_recv("if (req.url == \"/a\" && std.tolower(req.url) == \"/a\") { return (pass); } return (hash);");
   let Some(gate) = out.index_of("if (value.to_bool(v") else {
     return test.fail("expected a gate and a call:\n" + out);
   };
@@ -103,12 +96,12 @@ function test_if_compiles_to_a_native_if(): test.TestOutcome {
 }
 
 function test_elseif_chain_nests(): test.TestOutcome {
-  let out: string = gen_recv("if (req.url == \"/a\") { return (pass); } elseif (req.url == \"/b\") { return (pipe); } return (hash);");
+  let out = gen_recv("if (req.url == \"/a\") { return (pass); } elseif (req.url == \"/b\") { return (pipe); } return (hash);");
   return test.assert_contains(out, "} else {");
 }
 
 function test_arithmetic_is_error_checked(): test.TestOutcome {
-  let out: string = gen("sub vcl_backend_response { set beresp.status = beresp.status + 1; return (deliver); }");
+  let out = gen("sub vcl_backend_response { set beresp.status = beresp.status + 1; return (deliver); }");
   if (!out.contains("value.arith(\"+\"")) {
     return test.fail("expected a checked arith call");
   }
@@ -116,7 +109,7 @@ function test_arithmetic_is_error_checked(): test.TestOutcome {
 }
 
 function test_each_sub_becomes_a_function(): test.TestOutcome {
-  let out: string = gen("sub helper { }\nsub vcl_recv { call helper; return (hash); }");
+  let out = gen("sub helper { }\nsub vcl_recv { call helper; return (hash); }");
   if (!out.contains("function sub_vcl_recv(t0: runtime.Txn): eval.ExecOut {")) {
     return test.fail("missing vcl_recv function");
   }
@@ -124,7 +117,7 @@ function test_each_sub_becomes_a_function(): test.TestOutcome {
 }
 
 function test_dispatcher_is_generated(): test.TestOutcome {
-  let out: string = gen_recv("return (hash);");
+  let out = gen_recv("return (hash);");
   if (!out.contains("function run_sub(name: string, t: runtime.Txn): eval.ExecOut {")) {
     return test.fail("missing dispatcher");
   }
@@ -132,7 +125,7 @@ function test_dispatcher_is_generated(): test.TestOutcome {
 }
 
 function test_state_machine_is_shared_not_generated(): test.TestOutcome {
-  let out: string = gen_recv("return (hash);");
+  let out = gen_recv("return (hash);");
   if (out.contains("function builtin_recv")) {
     return test.fail("the state machine was regenerated into the policy");
   }
@@ -144,20 +137,13 @@ function test_backends_are_resolved_at_compile_time(): test.TestOutcome {
 }
 
 function test_backend_port_is_carried_through(): test.TestOutcome {
-  let src: string = "vcl 4.1;\nbackend origin { .host = \"10.0.0.9\"; .port = \"8080\"; }\n" + "sub vcl_recv { return (hash); }\n";
-  let decls: ast.Decl[] = parser.parse(src).decls;
-  match (compile.compile(decls, "./")) {
-    Err(m) => {
-      return test.fail(m);
-    },
-    Ok(code) => {
-      return test.assert_contains(code, "host: \"10.0.0.9\", port: 8080");
-    }
-  }
+  let src = "vcl 4.1;\nbackend origin { .host = \"10.0.0.9\"; .port = \"8080\"; }\n" + "sub vcl_recv { return (hash); }\n";
+  let decls = parser.parse(src).decls;
+  return match (compile.compile(decls, "./")) { Err(m) => test.fail(m), Ok(code) => test.assert_contains(code, "host: \"10.0.0.9\", port: 8080") };
 }
 
 function test_call_handles_a_bare_return(): test.TestOutcome {
-  let out: string = gen("sub early { return; }\nsub vcl_recv { call early; return (hash); }");
+  let out = gen("sub early { return; }\nsub vcl_recv { call early; return (hash); }");
   if (!out.contains("sub_early(t)")) {
     return test.fail("missing the call");
   }
@@ -165,15 +151,8 @@ function test_call_handles_a_bare_return(): test.TestOutcome {
 }
 
 function test_import_prefix_is_configurable(): test.TestOutcome {
-  let decls: ast.Decl[] = parser.parse(program("sub vcl_recv { return (hash); }")).decls;
-  match (compile.compile(decls, "../vcl/")) {
-    Err(m) => {
-      return test.fail(m);
-    },
-    Ok(code) => {
-      return test.assert_contains(code, "import \"../vcl/runtime\";");
-    }
-  }
+  let decls = parser.parse(program("sub vcl_recv { return (hash); }")).decls;
+  return match (compile.compile(decls, "../vcl/")) { Err(m) => test.fail(m), Ok(code) => test.assert_contains(code, "import \"../vcl/runtime\";") };
 }
 
 function test_new_is_refused(): test.TestOutcome {
@@ -193,7 +172,7 @@ function test_string_literals_are_escaped(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("vcl-compile");
+  let r = test.new("vcl-compile");
   r = r.it("scalar read is a field access", test_scalar_read_is_a_field_access);
   r = r.it("header read is a map get", test_header_read_is_a_map_get);
   r = r.it("header write rebuilds the message", test_header_write_rebuilds_the_message);

@@ -1517,6 +1517,22 @@ a = b = c = 7;
 return a + b + c;
 }
 `},
+	{"compound-assign-written-form", `function main(): i32 {
+let x: i32 = 1;
+x += 1;
+x -= 2 + 3;
+x *= 4;
+x /= 2;
+x %= 7;
+x &= 6;
+x |= 1;
+x ^= 3;
+x <<= 2;
+x >>= 1;
+x = x + 1;
+return x;
+}
+`},
 	{"lowering-place-assign", `struct P { f: i32 }
 function main(): i32 {
 let a: i32[] = [0, 0];

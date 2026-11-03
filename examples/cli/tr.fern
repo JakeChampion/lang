@@ -1,53 +1,44 @@
+import "std/array";
+
 function expand_set(s: string): u8[] {
-  let n: i32 = s.len();
+  let n = s.len();
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    if (i + 2 < n && s[i + 1] == 45 && s[i] <= s[i + 2]) {
-      let lo: i32 = s[i] as i32;
-      let hi: i32 = s[i + 2] as i32;
-      let c: i32 = lo;
-      while (c <= hi) {
+    if (i + 2 < n && s[i + 1] == b'-' && s[i] <= s[i + 2]) {
+      for c in s[i] as i32..=s[i + 2] as i32 {
         out = out.append(c as u8);
-        c = c + 1;
       }
-      i = i + 3;
+      i += 3;
     } else {
       out = out.append(s[i]);
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
 }
 
 function transform(set1: u8[], set2: u8[], del: boolean, squeeze: boolean): i32 {
-  let member: u8[] = __alloc_u8(256);
-  let mapped: u8[] = __alloc_u8(256);
-  let i: i32 = 0;
-  while (i < 256) {
+  let member = __alloc_u8(256);
+  let mapped = __alloc_u8(256);
+  for i in 0..256 {
     mapped = mapped.with(i, i as u8);
-    i = i + 1;
   }
-  i = 0;
-  while (i < set1.len()) {
-    let b: i32 = set1[i] as i32;
+  for i in 0..set1.len() {
+    let b = set1[i] as i32;
     if (member[b] == 0) {
-      member = member.with(b, 1 as u8);
-      let k: i32 = i;
-      if (k >= set2.len()) {
-        k = set2.len() - 1;
-      }
+      member = member.with(b, 1u8);
+      let k = if (i >= set2.len()) { set2.len() - 1 } else { i };
       if (set2.len() > 0) {
         mapped = mapped.with(b, set2[k]);
       }
     }
-    i = i + 1;
   }
   let reader = stdin();
   let writer = stdout();
-  let out: usize = buf_new(4096);
-  let prev: i32 = 0 - 1;
-  while (true) {
+  let out = buf_new(4096);
+  let prev = -1;
+  loop {
     match (reader.read_chunk_bytes(4096)) {
       Err(_) => {
         buf_free(out);
@@ -58,10 +49,9 @@ function transform(set1: u8[], set2: u8[], del: boolean, squeeze: boolean): i32 
         if (chunk.len() == 0) {
           break;
         }
-        i = 0;
-        while (i < chunk.len()) {
-          let b: i32 = chunk[i] as i32;
-          let in_set: boolean = member[b] != 0;
+        for byte in chunk {
+          let b = byte as i32;
+          let in_set = member[b] != 0;
           if (del) {
             if (!in_set) {
               buf_push_byte(out, b);
@@ -74,7 +64,6 @@ function transform(set1: u8[], set2: u8[], del: boolean, squeeze: boolean): i32 
           } else if (!in_set || set2.len() > 0) {
             buf_push_byte(out, mapped[b] as i32);
           }
-          i = i + 1;
         }
         let bytes = buf_take_bytes(out);
         if let Err(_) = writer.write_bytes(bytes) {
@@ -90,22 +79,23 @@ function transform(set1: u8[], set2: u8[], del: boolean, squeeze: boolean): i32 
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let del: boolean = false;
-  let squeeze: boolean = false;
+  let argv = args();
+  let del = false;
+  let squeeze = false;
   let sets: string[] = [];
 
-  let i: i32 = 1;
-  while (i < argv.len()) {
-    let a: string = argv[i];
-    if (a == "-d") {
-      del = true;
-    } else if (a == "-s") {
-      squeeze = true;
-    } else {
-      sets = sets.append(a);
+  for a in array.drop(argv, 1) {
+    match (a) {
+      "-d" => {
+        del = true;
+      },
+      "-s" => {
+        squeeze = true;
+      },
+      _ => {
+        sets = sets.append(a);
+      }
     }
-    i = i + 1;
   }
 
   if (sets.len() == 0) {
@@ -114,12 +104,9 @@ function main(): i32 {
   }
 
   if (!del && !squeeze && sets.len() < 2) {
-    eprint("tr: missing operand after '" + sets[0] + "'");
+    eprint(f"tr: missing operand after '{sets[0]}'");
     return 2;
   }
-  let set2: u8[] = [];
-  if (sets.len() >= 2) {
-    set2 = expand_set(sets[1]);
-  }
+  let set2: u8[] = if (sets.len() >= 2) { expand_set(sets[1]) } else { [] };
   return transform(expand_set(sets[0]), set2, del, squeeze);
 }

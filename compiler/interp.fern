@@ -5428,11 +5428,22 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
       }
       return v_err(handle_kind(hv) + " has no field `" + fa.field + "`");
     },
+    VInt(_) => {
+      return socket_field(ov, fa.field);
+    },
     _ => {
       return v_err("can only field-access a struct or tuple");
     }
   }
   return v_err("unreachable field-access arm");
+}
+
+// A Socket runs as its descriptor number, which is also its fd.
+function socket_field(ov: Value, field: string): Value {
+  if (field == "fd") {
+    return ov;
+  }
+  return v_err("can only field-access a struct or tuple");
 }
 
 function is_variant_of_alias_interp(struct_name: string, union_name: string, aliases: parser.TypeAlias[]): boolean {
@@ -6257,16 +6268,15 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
 }
 
 function is_buf_builtin(name: string): boolean {
-  if (name == "buf_push_bytes_range" || name == "buf_push_base64") {
-    return true;
-  }
-  if (name == "buf_new" || name == "buf_push" || name == "buf_push_range") {
-    return true;
-  }
-  if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_decimal" || name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
-    return true;
-  }
-  return name == "buf_len" || name == "buf_take" || name == "buf_take_bytes" || name == "buf_clear" || name == "buf_free";
+  return util.has_str(
+    [
+      "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_base64", "buf_push_base32",
+      "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_bytes_mapped", "buf_push_bytes_filtered",
+      "buf_push_bytes_expanded", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded",
+      "buf_len", "buf_take", "buf_take_bytes", "buf_clear", "buf_free",
+    ],
+    name,
+  );
 }
 
 function v_buf_handle(h: usize): Value {
@@ -6911,51 +6921,54 @@ function call_buf_push_bytes_range(h: usize, args: Value[]): Value {
   }
 }
 
-// Four alphabet characters for each whole group of three bytes in a[lo..hi).
-function call_buf_push_base64(h: usize, args: Value[]): Value {
+// The alphabet characters for each whole group of bytes in a[lo..hi), with
+// `bits` bits a character: groups of 3 bytes for 6 bits, of 5 for 5.
+function call_buf_push_based(name: string, h: usize, args: Value[], bits: i32): Value {
   if (args.len() != 5) {
-    return v_err("buf_push_base64: expected 5 args (b, bytes, lo, hi, alphabet)");
+    return v_err(name + ": expected 5 args (b, bytes, lo, hi, alphabet)");
   }
   if (!is_int_like(args[2]) || !is_int_like(args[3])) {
-    return v_err("buf_push_base64: bounds must be integers");
+    return v_err(name + ": bounds must be integers");
   }
   match (args[1]) {
     VArr(a) => {
       match (args[4]) {
         VArr(t) => {
-          let lo: i32 = int_arg_i32(args[2]);
-          let hi: i32 = int_arg_i32(args[3]);
-          if (lo < 0) {
-            lo = 0;
-          }
-          if (hi > arr_len(a)) {
-            hi = arr_len(a);
-          }
-          if (hi > lo) {
-            if (hi - lo >= 3 && arr_len(t) < 64) {
-              return index_abort(aborts.arr_oob(), "63", arr_len(t));
-            }
-            for g in 0..(hi - lo) / 3 {
-              push_base64_group(h, a, t, lo + g * 3);
-            }
-          }
-          return v_void();
+          return push_based_range(h, a, t, int_arg_i32(args[2]), int_arg_i32(args[3]), bits);
         },
         _ => {
-          return v_err("buf_push_base64: expected an alphabet array");
+          return v_err(name + ": expected an alphabet array");
         }
       }
     },
     _ => {
-      return v_err("buf_push_base64: expected byte array");
+      return v_err(name + ": expected byte array");
     }
   }
 }
 
-function push_base64_group(h: usize, a: VArr, t: VArr, at: i32): void {
-  let v: i32 = (vint_bits(arr_at(a, at)) & 255) << 16 | (vint_bits(arr_at(a, at + 1)) & 255) << 8 | vint_bits(arr_at(a, at + 2)) & 255;
-  for shift in [18, 12, 6, 0] {
-    buf_push_byte(h, vint_bits(arr_at(t, v >> shift & 63)) & 255);
+function push_based_range(h: usize, a: VArr, t: VArr, lo0: i32, hi0: i32, bits: i32): Value {
+  let lo: i32 = if (lo0 < 0) { 0 } else { lo0 };
+  let hi: i32 = if (hi0 > arr_len(a)) { arr_len(a) } else { hi0 };
+  let group: i32 = if (bits == 6) { 3 } else { 5 };
+  if (hi - lo >= group && arr_len(t) < 1 << bits) {
+    return index_abort(aborts.arr_oob(), util.i32_to_string((1 << bits) - 1), arr_len(t));
+  }
+  for g in 0..(hi - lo) / group {
+    push_based_group(h, a, t, lo + g * group, group, bits);
+  }
+  return v_void();
+}
+
+function push_based_group(h: usize, a: VArr, t: VArr, at: i32, group: i32, bits: i32): void {
+  let v: i64 = 0 as i64;
+  for k in 0..group {
+    v = v << 8 | (vint_bits(arr_at(a, at + k)) & 255) as i64;
+  }
+  let shift: i32 = group * 8 - bits;
+  while (shift >= 0) {
+    buf_push_byte(h, vint_bits(arr_at(t, (v >> shift) as i32 & (1 << bits) - 1)) & 255);
+    shift = shift - bits;
   }
 }
 
@@ -7236,7 +7249,10 @@ function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): V
     return call_buf_push_bytes_range(h, args);
   }
   if (name == "buf_push_base64") {
-    return call_buf_push_base64(h, args);
+    return call_buf_push_based(name, h, args, 6);
+  }
+  if (name == "buf_push_base32") {
+    return call_buf_push_based(name, h, args, 5);
   }
   if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return call_buf_push_table(name, h, args);

@@ -8,10 +8,8 @@ pub struct Request {
 
 function field(input: u8[], at: i32, size: i32): string {
   let bytes: u8[] = [];
-  let i: i32 = 0;
-  while (i < size) {
+  for i in 0..size {
     bytes = bytes.append(input[at + i]);
-    i = i + 1;
   }
   return string_from_bytes_unchecked(bytes);
 }
@@ -25,14 +23,12 @@ pub function decode(input: u8[], at: i32, key_bytes: i32, value_bytes: i32): Req
 }
 
 pub function increment(current: string, delta: string): string {
-  let bytes: u8[] = current.bytes();
-  let carry: i32 = 0;
-  let i: i32 = 0;
-  while (i < 8) {
-    let sum: i32 = bytes[i] as i32 + delta[i] as i32 + carry;
+  let bytes = current.bytes();
+  let carry = 0;
+  for i in 0..8 {
+    let sum = bytes[i] as i32 + delta[i] as i32 + carry;
     bytes = bytes.with(i, (sum & 255) as u8);
     carry = sum >> 8;
-    i = i + 1;
   }
   return string_from_bytes_unchecked(bytes);
 }
@@ -40,10 +36,8 @@ pub function increment(current: string, delta: string): string {
 pub function emit(own output: u8[], status: i32, value: string): u8[] {
   output = output.append(status as u8);
   if (status == 4) {
-    let i: i32 = 0;
-    while (i < value.len()) {
-      output = output.append(value[i]);
-      i = i + 1;
+    for b in value {
+      output = output.append(b);
     }
   }
   return output;

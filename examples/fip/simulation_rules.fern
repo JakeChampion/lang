@@ -28,17 +28,17 @@ pub fip function target(previous: i32, index: i32, tick: i32, count: i32): i32 {
 
 pub fip function health(previous: i32, mode: i32, neighbors: i32, kind: i32): i32 {
   if (mode == 2) {
-    let next: i32 = previous + 3;
+    let next = previous + 3;
     if (next > 100) {
       return 100;
     }
     return next;
   }
-  let damage: i32 = neighbors;
+  let damage = neighbors;
   if (damage > 4) {
     damage = 4;
   }
-  let next: i32 = previous - damage + kind;
+  let next = previous - damage + kind;
   if (next < 0) {
     return 0;
   }

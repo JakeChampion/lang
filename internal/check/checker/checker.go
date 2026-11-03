@@ -275,6 +275,10 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
 		},
 		{
+			Name:   "Socket",
+			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
+		},
+		{
 			Name: "HttpRequest",
 			Fields: []ast.Param{
 				{Name: "method", Type: ast.StringType{}},
@@ -877,6 +881,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["buf_push_base32"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
 	c.info.FuncSigs["buf_push_mapped"] = &ast.FuncType{
 		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.VoidType{},
@@ -1222,45 +1230,46 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{},
 		Result: ast.NumberType{},
 	}
+	sock := ast.StructType{Name: "Socket"}
 	c.info.FuncSigs["tcp_listen"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{},
+		Result: sock,
 	}
 	c.info.FuncSigs["tcp_accept"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{},
+		Params: []ast.Type{sock},
+		Result: sock,
 	}
 	c.info.FuncSigs["tcp_local_port"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
+		Params: []ast.Type{sock},
 		Result: ast.NumberType{},
 	}
 	u8s := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
 	c.info.FuncSigs["tcp_listen_with"] = &ast.FuncType{
 		Params: []ast.Type{u8s, ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
-		Result: ast.NumberType{},
+		Result: sock,
 	}
 	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{sock, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	// tcp_addr_into(fd, peer, out): number — one getsockname, or getpeername
 	// when peer, written into out as the 19-byte sender record that
 	// udp_recvfrom fills. 19, or -errno.
 	c.info.FuncSigs["tcp_addr_into"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.BoolType{}, u8s},
+		Params: []ast.Type{sock, ast.BoolType{}, u8s},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{sock, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_send_buf"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}, ast.NumberType{}},
+		Params: []ast.Type{sock, ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_connect_with"] = &ast.FuncType{
 		Params: []ast.Type{u8s, ast.NumberType{}, ast.BoolType{}},
-		Result: ast.NumberType{},
+		Result: sock,
 	}
 	c.info.FuncSigs["unix_listen"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{}},
@@ -1303,23 +1312,23 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_ktls"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Params: []ast.Type{sock, ast.NumberType{}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_recv_into"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Params: []ast.Type{sock, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_send_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Params: []ast.Type{sock, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_close"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
+		Params: []ast.Type{sock},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}},
+		Params: []ast.Type{sock},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["poll"] = &ast.FuncType{
@@ -2052,7 +2061,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, voidIoResult)
 	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, voidIoResult)
-	for _, h := range fdHandleNames {
+	for _, h := range []string{"Reader", "Writer", "Dir"} {
 		registerStructMethod(h, "close_unchecked", nil, voidIoResult)
 	}
 	registerStructMethod("Writer", "truncate",
@@ -2868,9 +2877,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	// The built-in close consumes its handle: a descriptor closed once is
 	// not a value the program reads again.
-	for _, h := range fdHandleNames {
+	for _, h := range []string{"Reader", "Writer", "Dir"} {
 		c.ownFuncs["__method_"+h+"_close"] = []bool{true}
 	}
+	c.ownFuncs["tcp_close"] = []bool{true}
 	c.info.OwnFuncs = c.ownFuncs
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
@@ -8064,12 +8074,30 @@ func containerNoun(t ast.Type) string {
 	return "enum"
 }
 
+// For one release a Socket and its i32 descriptor convert both ways, so the
+// published stage0 compiles the standard library before and after it moves
+// to Socket (docs/BOOTSTRAP.md). The next step deletes this rule.
+func socketDescriptorTransition(dst, src ast.Type) bool {
+	isSocket := func(t ast.Type) bool {
+		st, ok := t.(ast.StructType)
+		return ok && st.Name == "Socket"
+	}
+	isI32 := func(t ast.Type) bool {
+		n, ok := t.(ast.NumberType)
+		return ok && ast.Equal(n, ast.NumberType{})
+	}
+	return isSocket(dst) && isI32(src) || isSocket(src) && isI32(dst)
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
 	return c.assignableWith(dst, src, true)
 }
 
 func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	if ast.Equal(dst, src) {
+		return true
+	}
+	if socketDescriptorTransition(dst, src) {
 		return true
 	}
 	if dynBox && losslessNumericWiden(src, dst) {

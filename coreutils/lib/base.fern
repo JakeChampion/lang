@@ -2,7 +2,7 @@ import "std/string";
 import "std/io_buffered";
 import "./gnu";
 
-pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, alpha_bytes: i32, dec: usize, alphabet64: u8[] }
+pub struct Codec { bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean, alpha: usize, alpha_bytes: i32, dec: usize, kernel_alphabet: u8[] }
 
 struct Chars { v: i64, n: i32 }
 
@@ -35,11 +35,11 @@ function tables(alphabet: string): (usize, usize) {
 
 function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean): Codec {
   let t: (usize, usize) = tables(alphabet);
-  let alphabet64: u8[] = [];
-  if (bits == 6 && alphabet.len() == 64 && !rev) {
-    alphabet64 = alphabet.bytes();
+  let kernel_alphabet: u8[] = [];
+  if ((bits == 6 || bits == 5) && alphabet.len() == 1 << bits && !rev) {
+    kernel_alphabet = alphabet.bytes();
   }
-  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, alpha_bytes: alphabet.len() + 8, dec: t.1, alphabet64: alphabet64 };
+  return Codec { bits: bits, in_block: in_block, out_block: out_block, pad: pad, rev: rev, alpha: t.0, alpha_bytes: alphabet.len() + 8, dec: t.1, kernel_alphabet: kernel_alphabet };
 }
 
 function also_decodes(c: Codec, extra: string): Codec {
@@ -450,42 +450,59 @@ function open_input(has_file: boolean, file: string): Reader {
 
 // Whole groups of three bytes go to the base64 kernel, a line at a time. A
 // group that crosses the end of a line goes out one character at a time.
-function encode64(h: usize, bs: u8[], whole: i32, alphabet: u8[], wrap: i64, col0: i64): i64 {
+// The kernel for `bits`-bit characters: groups of 3 bytes to 4 characters for
+// base64, and of 5 bytes to 8 for base32.
+function push_groups(h: usize, bs: u8[], lo: i32, hi: i32, bits: i32, alphabet: u8[]): void {
+  if (bits == 6) {
+    buf_push_base64(h, bs, lo, hi, alphabet);
+  } else {
+    buf_push_base32(h, bs, lo, hi, alphabet);
+  }
+}
+
+function encode_kernel(h: usize, bs: u8[], whole: i32, bits: i32, alphabet: u8[], wrap: i64, col0: i64): i64 {
   if (wrap <= 0 as i64) {
-    buf_push_base64(h, bs, 0, whole, alphabet);
+    push_groups(h, bs, 0, whole, bits, alphabet);
     return col0;
   }
+  let group: i32 = if (bits == 6) { 3 } else { 5 };
+  let chars: i64 = (group * 8 / bits) as i64;
   let col: i64 = col0;
   let i: i32 = 0;
   while (i < whole) {
-    let g: i32 = (whole - i) / 3;
-    if ((wrap - col) / (4 as i64) < g as i64) {
-      g = ((wrap - col) / (4 as i64)) as i32;
+    let g: i32 = (whole - i) / group;
+    if ((wrap - col) / chars < g as i64) {
+      g = ((wrap - col) / chars) as i32;
     }
-    buf_push_base64(h, bs, i, i + g * 3, alphabet);
-    i = i + g * 3;
-    col = col + (g * 4) as i64;
+    push_groups(h, bs, i, i + g * group, bits, alphabet);
+    i = i + g * group;
+    col = col + g as i64 * chars;
     if (col == wrap) {
       buf_push_byte(h, 10);
       col = 0 as i64;
     } else if (i < whole) {
-      col = group_across(h, bs, i, alphabet, wrap, col);
-      i = i + 3;
+      col = group_across(h, bs, i, group, bits, alphabet, wrap, col);
+      i = i + group;
     }
   }
   return col;
 }
 
-function group_across(h: usize, bs: u8[], i: i32, alphabet: u8[], wrap: i64, col0: i64): i64 {
-  let v: i32 = bs[i] as i32 << 16 | bs[i + 1] as i32 << 8 | bs[i + 2] as i32;
+function group_across(h: usize, bs: u8[], i: i32, group: i32, bits: i32, alphabet: u8[], wrap: i64, col0: i64): i64 {
+  let v: i64 = 0 as i64;
+  for k in 0..group {
+    v = v << 8 | bs[i + k] as i64;
+  }
   let col: i64 = col0;
-  for shift in [18, 12, 6, 0] {
-    buf_push_byte(h, alphabet[v >> shift & 63] as i32);
+  let shift: i32 = group * 8 - bits;
+  while (shift >= 0) {
+    buf_push_byte(h, alphabet[(v >> shift) as i32 & (1 << bits) - 1] as i32);
     col = col + 1 as i64;
     if (col == wrap) {
       buf_push_byte(h, 10);
       col = 0 as i64;
     }
+    shift = shift - bits;
   }
   return col;
 }
@@ -521,10 +538,10 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
       let bs: u8[] = chunk;
       let i: i32 = 0;
       let p: i32 = pack_bytes(c);
-      if (c.alphabet64.len() == 64) {
-        let whole3: i32 = n - n % 3;
-        col = encode64(out.handle(), bs, whole3, c.alphabet64, wrap, col);
-        i = whole3;
+      if (c.kernel_alphabet.len() > 0) {
+        let whole: i32 = n - n % inb;
+        col = encode_kernel(out.handle(), bs, whole, bits, c.kernel_alphabet, wrap, col);
+        i = whole;
         out = gnu.settle(out);
       } else if (p > 0) {
         let h: usize = out.handle();

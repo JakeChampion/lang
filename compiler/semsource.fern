@@ -48,7 +48,8 @@ pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.C
 
 struct Exit { block: i32, env: i32[] }
 
-struct Loop { label: string, header: i32, exit: i32, entry_count: i32, breaks: Exit[], continues: Exit[] }
+// `next` is the block a `continue` enters: the header of a `while`, the step of a counted loop.
+struct Loop { label: string, header: i32, next: i32, exit: i32, entry_count: i32, breaks: Exit[], continues: Exit[] }
 
 struct State {
   ok: boolean,
@@ -3833,6 +3834,9 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   if (ssasem.lends_handle(s.values[v.id], expected)) {
     return define(s, ssasem.cast(), [v.id], 0, "", expected);
   }
+  if (semtypes.socket_descriptor_transition(s.values[v.id], expected)) {
+    return define(s, ssasem.cast(), [v.id], 0, "", expected);
+  }
   if (ssasem.is_view(element_type(expected)) && ssasem.is_string_array(s.values[v.id])) {
     return define(s, ssasem.str_as(), [v.id], 0, "", expected);
   }
@@ -4824,7 +4828,7 @@ function leave_loop(s: State, label: string, is_break: boolean): State {
     return terminate(s, t_br(l.exit));
   }
   s = with_loop_at(s, at, Loop { ...l, continues: l.continues.append(e) });
-  return terminate(s, t_br(l.header));
+  return terminate(s, t_br(l.next));
 }
 
 function with_loop_at(s: State, at: i32, l: Loop): State {
@@ -4877,7 +4881,7 @@ function iterate(w: ast.StmtWhile, s: State): State {
   s = terminate(s, t_br(header));
   s = header_phis(open(s, header, [pred]), count);
   let entry_env: i32[] = s.vals;
-  s = State { ...s, loops: s.loops.append(Loop { label: w.label, header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
+  s = State { ...s, loops: s.loops.append(Loop { label: w.label, header: header, next: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
   let c: Cond = cond(w.cond, s, body, exit_id);
   s = c.s;
   if (!s.ok) {
@@ -4952,39 +4956,38 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   }
   let before: i32 = s.names.len();
   let outer: checker.Scope = s.scope;
-  let start: Value = define(s, 1, [], 0 - 1, "", t_i32());
+  let start: Value = define(s, 1, [], 0, "", t_i32());
   s = bind(start.s, index_name(), start.id);
 
   let pred: i32 = s.cur.id;
   let header: i32 = s.next_block;
   let body_id: i32 = header + 1;
-  let exit_id: i32 = header + 2;
+  let step_id: i32 = header + 2;
+  let exit_id: i32 = header + 3;
   s = State { ...s, next_block: exit_id + 1 };
   let count: i32 = s.names.len();
   let scope: checker.Scope = s.scope;
   s = terminate(s, t_br(header));
   s = header_phis(open(s, header, [pred]), count);
-  s = State { ...s, loops: s.loops.append(Loop { label: fo.label, header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
+  s = State { ...s, loops: s.loops.append(Loop { label: fo.label, header: header, next: step_id, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
 
-  let one: Value = define(s, 1, [], 1, "", t_i32());
-  let step: Value = define(one.s, 9, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
-  s = replace(step.s, index_name(), step.id);
+  let at: i32 = lookup(s, index_name());
   let n: Value = define(s, ssasem.length(), [it], 0, "", t_i32());
-  let test: Value = define(n.s, 9, [step.id, n.id], 0, "<", t_bool());
+  let test: Value = define(n.s, 9, [at, n.id], 0, "<", t_bool());
   s = test.s;
   if (!s.ok) {
     return s;
   }
   let cond_end: i32 = s.cur.id;
-  let advanced: i32[] = s.vals;
+  let held: i32[] = s.vals;
   s = terminate(s, t_brif(test.id, body_id, exit_id));
 
-  let opened: State = open(State { ...s, vals: advanced }, body_id, [cond_end]);
+  let opened: State = open(State { ...s, vals: held }, body_id, [cond_end]);
   let read: i32 = ssasem.array_get();
   if (text) {
     read = ssasem.str_index();
   }
-  let item: Value = define(opened, read, [it, step.id], 1, "", elem);
+  let item: Value = define(opened, read, [it, at], 1, "", elem);
   let inner: checker.Scope = checker.for_body_scope(fo, scope);
   let body_state: State = bind_var(item.s, fo.var_name, item.id);
   if (vals >= 0) {
@@ -4992,7 +4995,7 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     if (names.len() != 2) {
       return fail(body_state, "unsupported loop binding");
     }
-    let vitem: Value = define(item.s, ssasem.array_get(), [vals, step.id], 1, "", vtype);
+    let vitem: Value = define(item.s, ssasem.array_get(), [vals, at], 1, "", vtype);
     body_state = bind_position(bind_position(vitem.s, names[0], item.id, inner), names[1], vitem.id, inner);
   } else if (util.contains(fo.var_name, ",")) {
     body_state = destructure_tuple(fo.var_name, item.id, item.s, inner);
@@ -5001,26 +5004,45 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
     return body_state;
   }
   body_state = State { ...body_state, scope: inner };
-  let latch: Arm = finish_arm(fo.body, body_state, header, count, scope);
+  let latch: Arm = finish_arm(fo.body, body_state, step_id, count, scope);
   s = latch.s;
   if (!s.ok) {
     return s;
   }
   let l: Loop = current_loop(s);
   s = State { ...s, loops: prefix_loops(s.loops, s.loops.len() - 1) };
-  let back: Exit[] = l.continues;
+  let into: Exit[] = l.continues;
   if (latch.live) {
-    back = back.append(Exit { block: latch.end, env: latch.env });
+    into = into.append(Exit { block: latch.end, env: latch.env });
   }
-  s = complete_header(s, header, back);
+  s = step_index(s, step_id, header, into, count);
   let preds: i32[] = [cond_end];
-  let envs: i32[][] = [advanced];
+  let envs: i32[][] = [held];
   for e in l.breaks {
     preds = preds.append(e.block);
     envs = envs.append(e.env);
   }
   s = merge_env(open(s, exit_id, preds), envs, count);
   return leave(s, before, outer);
+}
+
+function step_index(s: State, step_id: i32, header: i32, into: Exit[], count: i32): State {
+  if (into.len() == 0) {
+    return s;
+  }
+  let preds: i32[] = [];
+  let envs: i32[][] = [];
+  for e in into {
+    preds = preds.append(e.block);
+    envs = envs.append(e.env);
+  }
+  s = merge_env(open(s, step_id, preds), envs, count);
+  let one: Value = define(s, 1, [], 1, "", t_i32());
+  let step: Value = define(one.s, 9, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
+  s = replace(step.s, index_name(), step.id);
+  let back: Exit = Exit { block: s.cur.id, env: prefix(s.vals, count) };
+  s = terminate(s, t_br(header));
+  return complete_header(s, header, [back]);
 }
 
 function bind_position(s: State, name: string, id: i32, after: checker.Scope): State {
@@ -7025,7 +7047,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "timer_fd", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_send_bytes", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_i32() },
+    ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_handle("Socket") },
     ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_sendfile", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_send_buf", params: [t_i32(), t_usize(), t_i32()], modes: [v, v, v], result: t_i32() },
@@ -7035,7 +7057,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "udp_sendto", params: [t_i32(), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
     ssasem.Contract { name: "udp_sendto_bytes", params: [t_i32(), bytes, t_i32(), bytes], modes: [v, b, v, b], result: t_i32() },
     ssasem.Contract { name: "udp_recvfrom", params: [t_i32(), bytes, bytes], modes: [v, b, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_connect_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_i32() },
+    ssasem.Contract { name: "tcp_connect_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_handle("Socket") },
     ssasem.Contract { name: "unix_listen", params: [t_string(), t_i32()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "unix_connect", params: [t_string()], modes: [b], result: t_i32() },
     ssasem.Contract { name: "reactor_new", params: [], modes: [], result: t_i32() },
@@ -7098,8 +7120,8 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "clone_file", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "tcp_listen", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "tcp_accept", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "tcp_listen", params: [t_i32()], modes: [v], result: t_handle("Socket") },
+    ssasem.Contract { name: "tcp_accept", params: [t_i32()], modes: [v], result: t_handle("Socket") },
     ssasem.Contract { name: "tcp_local_port", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_send", params: [t_i32(), t_i32()], modes: [v, v], result: done },
     ssasem.Contract { name: "chown_at", params: [t_string(), t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: done },
@@ -7512,6 +7534,7 @@ function builder_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "buf_push_u64", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
     ssasem.Contract { name: "buf_push_decimal", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
     ssasem.Contract { name: "buf_push_base64", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_void() },
+    ssasem.Contract { name: "buf_push_base32", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32(), t_i32(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_void() },
     ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
     ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
     ssasem.Contract { name: "buf_take_bytes", params: [t_usize()], modes: handle, result: typeinfo.TypeArray { elem: t_u8(), view: false } },

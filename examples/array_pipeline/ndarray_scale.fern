@@ -12,61 +12,48 @@ function scale(xs: f64[]): ndarray.NdArray[f64] {
 }
 
 function checksum(a: ndarray.NdArray[f64]): i64 {
-  let result: i64 = 0 as i64;
-  let i: i32 = 0;
-  let xs: f64[] = a.to_flat();
-  while (i < xs.len()) {
-    result = result + xs[i] as i64;
-    i = i + 1;
+  let result = 0i64;
+  for x in a.to_flat() {
+    result += x as i64;
   }
   return result;
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let n: i32 = 1000;
-  let rounds: i32 = 2;
-  if (argv.len() > 1) {
-    n = i32.parse_i32(argv[1]).unwrap_or(n);
-  }
-  if (argv.len() > 2) {
-    rounds = i32.parse_i32(argv[2]).unwrap_or(rounds);
-  }
+  let argv = args();
+  let n = if (argv.len() > 1) { i32.parse_i32(argv[1]).unwrap_or(1000) } else { 1000 };
+  let rounds = if (argv.len() > 2) { i32.parse_i32(argv[2]).unwrap_or(2) } else { 2 };
   if (n < 1 || rounds < 1) {
     return 1;
   }
   let xs: f64[] = [];
-  let i: i32 = 0;
-  while (i < n) {
+  for i in 0..n {
     xs = xs.append((i % 127) as f64);
-    i = i + 1;
   }
 
-  let cold_a: i64 = __heap_alloc_count();
-  let cold_b: i64 = __heap_bump_bytes();
-  let first: ndarray.NdArray[f64] = scale(xs);
-  let cold_allocs: i64 = __heap_alloc_count() - cold_a;
-  let cold_bytes: i64 = __heap_bump_bytes() - cold_b;
-  let expected: i64 = checksum(first);
+  let cold_a = __heap_alloc_count();
+  let cold_b = __heap_bump_bytes();
+  let first = scale(xs);
+  let cold_allocs = __heap_alloc_count() - cold_a;
+  let cold_bytes = __heap_bump_bytes() - cold_b;
+  let expected = checksum(first);
 
-  let mark_a: i64 = __heap_alloc_count();
-  let mark_b: i64 = __heap_bump_bytes();
-  let elapsed: i64 = 0 as i64;
-  let sum: i64 = 0 as i64;
-  i = 0;
-  while (i < rounds) {
-    let start: i64 = monotonic_ns();
-    let out: ndarray.NdArray[f64] = scale(xs);
-    elapsed = elapsed + monotonic_ns() - start;
-    let got: i64 = checksum(out);
+  let mark_a = __heap_alloc_count();
+  let mark_b = __heap_bump_bytes();
+  let elapsed = 0i64;
+  let sum = 0i64;
+  for _ in 0..rounds {
+    let start = monotonic_ns();
+    let out = scale(xs);
+    elapsed += monotonic_ns() - start;
+    let got = checksum(out);
     if (got != expected) {
       return 2;
     }
-    sum = sum + got;
-    i = i + 1;
+    sum += got;
   }
-  let allocs: i64 = __heap_alloc_count() - mark_a;
-  let bytes: i64 = __heap_bump_bytes() - mark_b;
+  let allocs = __heap_alloc_count() - mark_a;
+  let bytes = __heap_bump_bytes() - mark_b;
   if (checksum(first) != expected || xs[0] != 0.0) {
     return 3;
   }

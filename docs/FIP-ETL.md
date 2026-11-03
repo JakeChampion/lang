@@ -147,8 +147,9 @@ fault counts must not be presented as cache-miss counts.
 
 The compiler accepted sequential field spreads for scratch-record reuse. A
 single spread replacing every field was rejected with E068 because the lowered
-construction had no recognized donor. The range-loop helper was not admitted
-by the FIP check; bounded `while` loops express the accepted form. These are
+construction had no recognized donor. The FIP check did not admit a range
+loop when this was measured, so these programs used bounded `while` loops. It
+admits range loops now (#14059). These are
 concrete restrictions an author encounters, not evidence that annotations
 automatically optimize ordinary code. The native FBIP pilot allocated once on
 its first call and zero times on the next; the cause of that cold allocation

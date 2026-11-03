@@ -1,0 +1,21 @@
+// A Socket is a built-in handle: the calls that open one return it, the
+// other tcp_* builtins borrow it, and tcp_close consumes it. Its fd field
+// reads the descriptor.
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: Socket = tcp_listen_with(lo, 0, 16, false);
+  if (ls.fd < 0) {
+    print("listen failed");
+    return 1;
+  }
+  let c: Socket = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: Socket = tcp_accept(ls);
+  print("sent " + tcp_send_bytes(c, [104u8, 105u8]).to_string());
+  let buf: u8[] = [0u8, 0u8];
+  let got: i32 = tcp_recv_into(s, buf);
+  print("received " + got.to_string() + ": " + buf[0].to_string() + " " + buf[1].to_string());
+  let closed: i32 = tcp_close(s) + tcp_close(c) + tcp_close(ls);
+  print("closed " + closed.to_string());
+  return 0;
+}

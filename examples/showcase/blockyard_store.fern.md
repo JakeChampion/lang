@@ -48,7 +48,8 @@ pub struct Recovered { blocks: Map[i32, i32], revision: i64, journal_bytes: i64 
 pub struct Store { directory: string, name: string, bytes: Cell[i64] }
 
 function envelope(payload: string): string {
-  return hex.encode(crypto.sha256(payload.as_bytes())) + " " + payload + "\n";
+  let digest = hex.encode(crypto.sha256(payload.as_bytes()));
+  return f"{digest} {payload}\n";
 }
 
 function payload(record: string): Result[string, string] {
@@ -90,7 +91,6 @@ function text(path: string): Result[Option[string], string] {
       return Err(error.message());
     }
   }
-  return Err("Cannot inspect world file.");
 }
 
 function sync_close(own writer: Writer, result: Result[void, IoError]): Result[void, string] {
@@ -142,7 +142,7 @@ pub function recover(directory: string, name: string): Result[Recovered, string]
     return Ok(Recovered { blocks: blocks, revision: revision, journal_bytes: 0 });
   }
   create_dir_all(directory).map_err((e: IoError): string => e.message())?;
-  let base = directory + "/" + name;
+  let base = f"{directory}/{name}";
   if let Some(source) = text(base + ".snapshot")? {
     if (!source.ends_with("\n")) {
       return Err("World snapshot is incomplete.");
@@ -162,7 +162,7 @@ pub function recover(directory: string, name: string): Result[Recovered, string]
   }
   let bytes: i64 = 0;
   if let Some(source) = text(base + ".journal")? {
-    let offset: i32 = 0;
+    let offset = 0;
     for line in source.split("\n") {
       if (offset + line.len() >= source.len()) {
         break;
@@ -195,7 +195,7 @@ pub function recover(directory: string, name: string): Result[Recovered, string]
         }
         revision = batch.revision;
       }
-      offset = offset + line.len() + 1;
+      offset += line.len() + 1;
     }
     bytes = offset as i64;
     if (offset != source.len()) {
@@ -218,7 +218,7 @@ pub function commit(store: Store, blocks: Map[i32, i32], changes: model.Change[]
   if (store.directory == "" || changes.len() == 0) {
     return Ok(());
   }
-  let base = store.directory + "/" + store.name;
+  let base = f"{store.directory}/{store.name}";
   let record = envelope(Batch { version: 1, revision: revision, changes: changes }.to_json());
   let writer = open_appender(base + ".journal").map_err((e: IoError): string => e.message())?;
   let written = writer.write(record);
@@ -237,11 +237,8 @@ pub function compact(store: Store, blocks: Map[i32, i32], revision: i64): Result
   if (store.directory == "") {
     return Ok(());
   }
-  let base = store.directory + "/" + store.name;
-  let entries: SavedBlock[] = [];
-  for entry in blocks.entries() {
-    entries = entries.append(SavedBlock { at: entry.0, material: entry.1 });
-  }
+  let base = f"{store.directory}/{store.name}";
+  let entries = blocks.entries() |> array.map((entry: (i32, i32)): SavedBlock => SavedBlock { at: entry.0, material: entry.1 });
   let snapshot = envelope(Snapshot { version: 1, revision: revision, blocks: entries }.to_json());
   atomic(base + ".snapshot", store.directory, snapshot)?;
   trim_journal(base + ".journal", 0)?;

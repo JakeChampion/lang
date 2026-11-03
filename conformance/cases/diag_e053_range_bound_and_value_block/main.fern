@@ -1,0 +1,21 @@
+// A range bound and the body of a value block are checked as fip code.
+function helper(n: i32): i32 {
+  return n;
+}
+
+fip function bad_bound(n: i32): i32 {
+  let t = 0;
+  for i in 0..helper(n) {
+    t += i;
+  }
+  return t;
+}
+
+fip function bad_block(c: i32): string {
+  let s = if (c > 0) { "a" + "b" } else { "c" };
+  return s;
+}
+
+function main(): i32 {
+  return bad_bound(1);
+}

@@ -72,13 +72,11 @@ function st_bad_checksum(): i32 {
 }
 
 function checksum(bytes: u8[], from: i32, n: i32): i32 {
-  let a: i32 = 0;
-  let b: i32 = 0;
-  let i: i32 = 0;
-  while (i < n) {
+  let a = 0;
+  let b = 0;
+  for i in 0..n {
     a = (a + bytes[from + i] as i32) % 255;
     b = (b + a) % 255;
-    i = i + 1;
   }
   return b * 256 + a;
 }
@@ -97,9 +95,9 @@ function read_u16(bytes: u8[], at: i32): i32 {
 
 function read_u32(bytes: u8[], at: i32): i64 {
   return bytes[at] as i64
-    + bytes[at + 1] as i64 * (256 as i64)
-    + bytes[at + 2] as i64 * (65536 as i64)
-    + bytes[at + 3] as i64 * (16777216 as i64);
+    + bytes[at + 1] as i64 * 256i64
+    + bytes[at + 2] as i64 * 65536i64
+    + bytes[at + 3] as i64 * 16777216i64;
 }
 
 function known_type(t: i32): boolean {
@@ -108,17 +106,17 @@ function known_type(t: i32): boolean {
 
 function parse(wire: u8[], wire_len: i32): Request {
   if (wire_len < header_len()) {
-    return Request { status: st_truncated(), msg_type: 0, req_id: 0 as i64, at: 0, len: 0 };
+    return Request { status: st_truncated(), msg_type: 0, req_id: 0i64, at: 0, len: 0 };
   }
   if (wire[0] as i32 != magic0() || wire[1] as i32 != magic1()) {
-    return Request { status: st_bad_magic(), msg_type: 0, req_id: 0 as i64, at: 0, len: 0 };
+    return Request { status: st_bad_magic(), msg_type: 0, req_id: 0i64, at: 0, len: 0 };
   }
   if (wire[2] as i32 != version()) {
-    return Request { status: st_bad_version(), msg_type: 0, req_id: 0 as i64, at: 0, len: 0 };
+    return Request { status: st_bad_version(), msg_type: 0, req_id: 0i64, at: 0, len: 0 };
   }
-  let t: i32 = wire[3] as i32;
-  let id: i64 = read_u32(wire, 6);
-  let plen: i32 = read_u16(wire, 10);
+  let t = wire[3] as i32;
+  let id = read_u32(wire, 6);
+  let plen = read_u16(wire, 10);
   if (plen > max_payload()) {
     return Request { status: st_oversize(), msg_type: t, req_id: id, at: 0, len: 0 };
   }
@@ -136,73 +134,58 @@ function parse(wire: u8[], wire_len: i32): Request {
 
 function transform(wire: u8[], req: Request): u8[] {
   let out: u8[] = [];
-  let n: i32 = req.len;
+  let n = req.len;
   if (req.msg_type == msg_echo()) {
-    let i: i32 = 0;
-    while (i < n) {
+    for i in 0..n {
       out = out.append(wire[req.at + i]);
-      i = i + 1;
     }
     return out;
   }
   if (req.msg_type == msg_reverse()) {
-    let j: i32 = n - 1;
+    let j = n - 1;
     while (j >= 0) {
       out = out.append(wire[req.at + j]);
-      j = j - 1;
+      j -= 1;
     }
     return out;
   }
   if (req.msg_type == msg_upper()) {
-    let k: i32 = 0;
-    while (k < n) {
-      let c: i32 = wire[req.at + k] as i32;
-      if (c >= 97 && c <= 122) {
-        c = c - 32;
-      }
-      out = out.append(c as u8);
-      k = k + 1;
+    for k in 0..n {
+      let c = wire[req.at + k];
+      out = out.append(if (c >= b'a' && c <= b'z') { c - 32 } else { c });
     }
     return out;
   }
-  let total: i64 = 0 as i64;
-  let s: i32 = 0;
-  while (s < n) {
-    total = total + wire[req.at + s] as i64;
-    s = s + 1;
+  let total = 0i64;
+  for s in 0..n {
+    total += wire[req.at + s] as i64;
   }
-  let b: i32 = 0;
-  while (b < 8) {
-    out = out.append((total / pow256(b) % (256 as i64)) as u8);
-    b = b + 1;
+  for b in 0..8 {
+    out = out.append((total / pow256(b) % 256i64) as u8);
   }
   return out;
 }
 
 function pow256(k: i32): i64 {
-  let p: i64 = 1 as i64;
-  let i: i32 = 0;
-  while (i < k) {
-    p = p * (256 as i64);
-    i = i + 1;
+  let p = 1i64;
+  for _ in 0..k {
+    p *= 256i64;
   }
   return p;
 }
 
 function encode(req: Request, body: u8[]): u8[] {
   let out: u8[] = [];
-  let plen: i32 = body.len();
-  let ck: i32 = checksum(body, 0, plen);
+  let plen = body.len();
+  let ck = checksum(body, 0, plen);
   out = out.append(magic0() as u8);
   out = out.append(magic1() as u8);
   out = out.append(version() as u8);
   out = out.append(req.msg_type as u8);
   out = out.append(req.status as u8);
   out = out.append(0 as u8);
-  let idb: i32 = 0;
-  while (idb < 4) {
-    out = out.append((req.req_id / pow256(idb) % (256 as i64)) as u8);
-    idb = idb + 1;
+  for idb in 0..4 {
+    out = out.append((req.req_id / pow256(idb) % 256i64) as u8);
   }
   out = out.append((plen % 256) as u8);
   out = out.append((plen / 256) as u8);
@@ -210,56 +193,55 @@ function encode(req: Request, body: u8[]): u8[] {
   out = out.append((ck / 256) as u8);
   out = out.append(0 as u8);
   out = out.append(0 as u8);
-  let i: i32 = 0;
-  while (i < plen) {
+  for i in 0..plen {
     out = out.append(body[i]);
-    i = i + 1;
   }
   return out;
 }
 
 function gen_payload_len(n: i64): i32 {
-  return (n * (37 as i64) % (241 as i64)) as i32;
+  return (n * 37i64 % 241i64) as i32;
 }
 
 function gen_byte(n: i64, j: i32): u8 {
-  return (((n + j as i64) % (251 as i64)) as i32) as u8;
+  return (((n + j as i64) % 251i64) as i32) as u8;
 }
 
 function corruption(n: i64): i32 {
-  if (n % (17 as i64) != 0 as i64) {
-    return 0 - 1;
+  if (n % 17i64 != 0i64) {
+    return -1;
   }
-  return (n / (17 as i64) % (6 as i64)) as i32;
+  return (n / 17i64 % 6i64) as i32;
 }
 
 function build_request(own wire: u8[], n: i64): u8[] {
-  let t: i32 = 1 + (n % (4 as i64)) as i32;
-  let plen: i32 = gen_payload_len(n);
-  let corrupt: i32 = corruption(n);
-  let i: i32 = 0;
-  while (i < plen) {
+  let t = 1 + (n % 4i64) as i32;
+  let plen = gen_payload_len(n);
+  let corrupt = corruption(n);
+  for i in 0..plen {
     wire = wire.with(header_len() + i, gen_byte(n, i));
-    i = i + 1;
   }
-  let ck: i32 = checksum(wire, header_len(), plen);
-  let m0: i32 = magic0();
-  let ver: i32 = version();
-  let wire_plen: i32 = plen;
-  if (corrupt == 0) {
-    m0 = 1;
-  }
-  if (corrupt == 1) {
-    ver = 9;
-  }
-  if (corrupt == 2) {
-    t = 77;
-  }
-  if (corrupt == 3) {
-    wire_plen = max_payload() + 8;
-  }
-  if (corrupt == 5) {
-    ck = ck ^ 1;
+  let ck = checksum(wire, header_len(), plen);
+  let m0 = magic0();
+  let ver = version();
+  let wire_plen = plen;
+  match (corrupt) {
+    0 => {
+      m0 = 1;
+    },
+    1 => {
+      ver = 9;
+    },
+    2 => {
+      t = 77;
+    },
+    3 => {
+      wire_plen = max_payload() + 8;
+    },
+    5 => {
+      ck ^= 1;
+    },
+    _ => {}
   }
   wire = wire.with(0, m0 as u8);
   wire = wire.with(1, magic1() as u8);
@@ -267,10 +249,8 @@ function build_request(own wire: u8[], n: i64): u8[] {
   wire = wire.with(3, t as u8);
   wire = wire.with(4, 0 as u8);
   wire = wire.with(5, 0 as u8);
-  let idb: i32 = 0;
-  while (idb < 4) {
-    wire = wire.with(6 + idb, (n / pow256(idb) % (256 as i64)) as u8);
-    idb = idb + 1;
+  for idb in 0..4 {
+    wire = wire.with(6 + idb, (n / pow256(idb) % 256i64) as u8);
   }
   wire = wire.with(10, (wire_plen % 256) as u8);
   wire = wire.with(11, (wire_plen / 256) as u8);
@@ -281,7 +261,7 @@ function build_request(own wire: u8[], n: i64): u8[] {
 }
 
 function wire_len_for(n: i64): i32 {
-  let plen: i32 = gen_payload_len(n);
+  let plen = gen_payload_len(n);
   if (corruption(n) == 4) {
     return header_len() + plen - 1;
   }
@@ -289,13 +269,13 @@ function wire_len_for(n: i64): i32 {
 }
 
 function mix(d: i64, b: i32): i64 {
-  let x: i64 = d ^ b as i64;
-  x = x * (1099511628211 as i64);
-  x = x ^ x >> 29 as i64;
-  if (x < 0 as i64) {
-    x = 0 - x;
+  let x = d ^ b as i64;
+  x *= 1099511628211i64;
+  x ^= x >> 29i64;
+  if (x < 0i64) {
+    x = -x;
   }
-  return x % (1000000007 as i64);
+  return x % 1000000007i64;
 }
 
 struct Counts {
@@ -312,101 +292,89 @@ struct Counts {
 
 function tally(c: Counts, status: i32): Counts {
   if (status == st_ok()) {
-    return Counts { ...c, ok: c.ok + 1 as i64 };
+    return Counts { ...c, ok: c.ok + 1i64 };
   }
   if (status == st_bad_magic()) {
-    return Counts { ...c, bad_magic: c.bad_magic + 1 as i64 };
+    return Counts { ...c, bad_magic: c.bad_magic + 1i64 };
   }
   if (status == st_bad_version()) {
-    return Counts { ...c, bad_version: c.bad_version + 1 as i64 };
+    return Counts { ...c, bad_version: c.bad_version + 1i64 };
   }
   if (status == st_bad_type()) {
-    return Counts { ...c, bad_type: c.bad_type + 1 as i64 };
+    return Counts { ...c, bad_type: c.bad_type + 1i64 };
   }
   if (status == st_oversize()) {
-    return Counts { ...c, oversize: c.oversize + 1 as i64 };
+    return Counts { ...c, oversize: c.oversize + 1i64 };
   }
   if (status == st_truncated()) {
-    return Counts { ...c, truncated: c.truncated + 1 as i64 };
+    return Counts { ...c, truncated: c.truncated + 1i64 };
   }
-  return Counts { ...c, bad_checksum: c.bad_checksum + 1 as i64 };
+  return Counts { ...c, bad_checksum: c.bad_checksum + 1i64 };
 }
 
 function serve(wire: u8[], n: i64, c: Counts): Counts {
-  let req: Request = parse(wire, wire_len_for(n));
+  let req = parse(wire, wire_len_for(n));
   let body: u8[] = [];
   if (req.status == st_ok()) {
     body = transform(wire, req);
   }
-  let resp: u8[] = encode(req, body);
-  let d: i64 = c.digest;
-  let i: i32 = 0;
-  while (i < resp.len()) {
-    d = mix(d, resp[i] as i32);
-    i = i + 1;
+  let resp = encode(req, body);
+  let d = c.digest;
+  for b in resp {
+    d = mix(d, b as i32);
   }
-  let moved: i64 = body.len() as i64 + resp.len() as i64;
-  let out: Counts = tally(c, req.status);
+  let moved = body.len() as i64 + resp.len() as i64;
+  let out = tally(c, req.status);
   return Counts { ...out, digest: d, copied: out.copied + moved };
 }
 
 function zero_counts(): Counts {
   return Counts {
-    ok: 0 as i64, bad_magic: 0 as i64, bad_version: 0 as i64, bad_type: 0 as i64,
-    oversize: 0 as i64, truncated: 0 as i64, bad_checksum: 0 as i64,
-    digest: 1469598103934665603 as i64, copied: 0 as i64,
+    ok: 0i64, bad_magic: 0i64, bad_version: 0i64, bad_type: 0i64,
+    oversize: 0i64, truncated: 0i64, bad_checksum: 0i64,
+    digest: 1469598103934665603i64, copied: 0i64,
   };
 }
 
 function zeros_u8(n: i32): u8[] {
-  let xs: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
-  while (i < n) {
+  let xs = __alloc_u8(n);
+  for i in 0..n {
     xs = xs.with(i, 0 as u8);
-    i = i + 1;
   }
   return xs;
 }
 
 function main(): i32 {
-  let batch: i32 = 64;
-  let rounds: i32 = 4000;
-  let wire: u8[] = zeros_u8(max_packet());
-  let c: Counts = zero_counts();
-  let w: i32 = 0;
-  while (w < batch) {
+  let batch = 64;
+  let rounds = 4000;
+  let wire = zeros_u8(max_packet());
+  let c = zero_counts();
+  for w in 0..batch {
     wire = build_request(wire, w as i64);
     c = serve(wire, w as i64, c);
-    w = w + 1;
   }
   c = zero_counts();
   let samples: i64[] = [];
-  let p: i32 = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p = p + 1;
+  for _ in 0..rounds {
+    samples = samples.append(0i64);
   }
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
-  while (r < rounds) {
-    let t0: i64 = monotonic_ns();
-    let k: i32 = 0;
-    while (k < batch) {
-      let n: i64 = r as i64 * (batch as i64) + k as i64;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  for r in 0..rounds {
+    let t0 = monotonic_ns();
+    for k in 0..batch {
+      let n = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       c = serve(wire, n, c);
-      k = k + 1;
     }
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let requests: i64 = rounds as i64 * (batch as i64);
-  let rep: bench.Report = bench.Report {
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let requests = rounds as i64 * (batch as i64);
+  let rep = bench.Report {
     name: "borrowed",
     iterations: rounds,
     wall_ns: elapsed_ns,
@@ -414,29 +382,15 @@ function main(): i32 {
     allocs: allocs,
     fresh_bytes: fresh,
   };
-  print("{\"variant\":\"borrowed\""
-    + ",\"requests\":" + requests.to_string()
-    + ",\"requests_per_round\":" + batch.to_string()
-    + ",\"ok\":" + c.ok.to_string()
-    + ",\"bad_magic\":" + c.bad_magic.to_string()
-    + ",\"bad_version\":" + c.bad_version.to_string()
-    + ",\"bad_type\":" + c.bad_type.to_string()
-    + ",\"oversize\":" + c.oversize.to_string()
-    + ",\"truncated\":" + c.truncated.to_string()
-    + ",\"bad_checksum\":" + c.bad_checksum.to_string()
-    + ",\"digest\":" + c.digest.to_string()
-    + ",\"bytes_copied\":" + c.copied.to_string()
-    + ",\"bytes_copied_per_request\":" + (c.copied / requests).to_string()
-    + ",\"steady_allocs\":" + allocs.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
-    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
-    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
-    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"round_max_ns\":" + rep.max_ns().to_string()
-    + "}");
+  print(f"{{\"variant\":\"borrowed\",\"requests\":{requests},\"requests_per_round\":{batch},\"ok\":{c.ok}"
+    + f",\"bad_magic\":{c.bad_magic},\"bad_version\":{c.bad_version},\"bad_type\":{c.bad_type}"
+    + f",\"oversize\":{c.oversize},\"truncated\":{c.truncated},\"bad_checksum\":{c.bad_checksum}"
+    + f",\"digest\":{c.digest},\"bytes_copied\":{c.copied}"
+    + f",\"bytes_copied_per_request\":{c.copied / requests},\"steady_allocs\":{allocs}"
+    + f",\"steady_fresh_bytes\":{fresh},\"allocs_per_request_milli\":{allocs * 1000i64 / requests}"
+    + f",\"ns_per_request\":{elapsed_ns / requests}"
+    + f",\"requests_per_sec\":{requests * 1000000000i64 / elapsed_ns},\"round_p50_ns\":{rep.p50_ns()}"
+    + f",\"round_p95_ns\":{rep.p95_ns()},\"round_p99_ns\":{rep.p99_ns()}"
+    + f",\"round_p999_ns\":{rep.p999_ns()},\"round_max_ns\":{rep.max_ns()}}}");
   return 0;
 }

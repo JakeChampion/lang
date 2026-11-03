@@ -13,10 +13,8 @@ pub struct Graph {
 
 function zeros(count: i32): f64[] {
   let values: f64[] = [];
-  let i: i32 = 0;
-  while (i < count) {
+  for _ in 0..count {
     values = values.append(0.0);
-    i = i + 1;
   }
   return values;
 }
@@ -53,18 +51,10 @@ pub fip function limit(value: f64): f64 {
 
 pub function dataset(count: i32): f64[] {
   let values: f64[] = [];
-  let i: i32 = 0;
-  while (i < count) {
-    let value: f64 = ((i as i64 * 73i64 % 257i64) as i32 - 128) as f64 / 64.0;
-    if (i % 31 == 0) {
-      value = 4.0;
-    } else if (i % 37 == 0) {
-      value = -4.0;
-    } else if (i % 11 == 0) {
-      value = 0.0;
-    }
+  for i in 0..count {
+    let wave = ((i as i64 * 73i64 % 257i64) as i32 - 128) as f64 / 64.0;
+    let value = if (i % 31 == 0) { 4.0 } else if (i % 37 == 0) { -4.0 } else if (i % 11 == 0) { 0.0 } else { wave };
     values = values.append(value);
-    i = i + 1;
   }
   return values;
 }

@@ -3,6 +3,6 @@ import "std/serve";
 import "std/platform";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-  plat.log(req.method + " " + req.path);
-  return http.ok("method=" + req.method + " path=" + req.path + "\n");
+  plat.log(f"{req.method} {req.path}");
+  return http.ok(f"method={req.method} path={req.path}\n");
 }

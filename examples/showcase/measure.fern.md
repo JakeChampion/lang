@@ -38,7 +38,7 @@ The text corpus is an access log, the usual input for a log compressor. Decimal 
 const WORDS: string[] = ["fern", "frond", "spore", "moss", "lichen", "cedar", "river", "stone", "light", "shade", "root", "leaf", "bark", "seed", "rain", "field"];
 
 fip function rand(state: u32): u32 {
-  let x: u32 = state ^ state << 13;
+  let x = state ^ state << 13;
   x = x ^ x >> 17;
   return x ^ x << 5;
 }
@@ -52,17 +52,17 @@ function word(state: u32): string {
 }
 
 function decimal(state: u32, whole: u32): string {
-  let fraction: string = (state % 1000).to_string();
+  let fraction = (state % 1000).to_string();
   while (fraction.len() < 3) {
     fraction = "0" + fraction;
   }
-  return ((state >> 10) % whole).to_string() + "." + fraction;
+  return f"{(state >> 10) % whole}.{fraction}";
 }
 
 @export("fern:showcase/measure", "json-document")
 pub function json_document(seed: i32, size: i32): string {
-  let s: u32 = start(seed);
-  let parts: string[] = ["["];
+  let s = start(seed);
+  let parts = ["["];
   let bytes = 1;
   let id = 0;
   while (bytes < size) {
@@ -72,51 +72,51 @@ pub function json_document(seed: i32, size: i32): string {
       text = text.append(word(s));
     }
     s = rand(s);
-    let followers: u32 = s % 100000;
+    let followers = s % 100000;
     s = rand(s);
-    let geo: string = "null";
+    let geo = "null";
     if (s % 3 == 0) {
       s = rand(s);
-      geo = "{\"lat\":" + decimal(s, 90) + ",\"lon\":" + decimal(rand(s), 180) + "}";
+      geo = f"{{\"lat\":{decimal(s, 90)},\"lon\":{decimal(rand(s), 180)}}}";
     }
     s = rand(s);
-    let record: string = "{\"id\":" + (100000 + id).to_string() + ",\"user\":{\"name\":\"" + word(s) + "_" + (s % 997).to_string()
-      + "\",\"followers\":" + followers.to_string() + ",\"verified\":" + (s % 5 == 0).to_string() + "},\"text\":\"" + text.join(" ")
-      + "\",\"tags\":[\"" + word(rand(s)) + "\",\"" + word(rand(rand(s))) + "\"],\"score\":" + decimal(rand(s), 100) + ",\"geo\":" + geo + "}";
+    let record = f"{{\"id\":{100000 + id},\"user\":{{\"name\":\"{word(s)}_{s % 997}"
+      + f"\",\"followers\":{followers},\"verified\":{s % 5 == 0}}},\"text\":\"{text.join(" ")}"
+      + f"\",\"tags\":[\"{word(rand(s))}\",\"{word(rand(rand(s)))}\"],\"score\":{decimal(rand(s), 100)},\"geo\":{geo}}}";
     if (id > 0) {
       record = "," + record;
     }
     parts = parts.append(record);
-    bytes = bytes + record.len();
-    id = id + 1;
+    bytes += record.len();
+    id += 1;
   }
   return parts.append("]").join("");
 }
 
 @export("fern:showcase/measure", "access-log")
 pub function access_log(seed: i32, size: i32): u8[] {
-  let s: u32 = start(seed);
+  let s = start(seed);
   let parts: string[] = [];
   let bytes = 0;
-  let methods: string[] = ["GET", "GET", "GET", "POST", "PUT", "DELETE"];
-  let statuses: string[] = ["200", "200", "200", "201", "304", "404", "500"];
+  let methods = ["GET", "GET", "GET", "POST", "PUT", "DELETE"];
+  let statuses = ["200", "200", "200", "201", "304", "404", "500"];
   while (bytes < size) {
     s = rand(s);
-    let seconds: u32 = s % 86400;
+    let seconds = s % 86400;
     s = rand(s);
-    let line: string = "2026-10-25T" + two(seconds / 3600) + ":" + two(seconds / 60 % 60) + ":" + two(seconds % 60) + "." + (s % 1000).to_string()
-      + "Z " + methods[(s % 6) as i32] + " /api/" + word(rand(s)) + "/" + (s % 5000).to_string() + " " + statuses[(rand(rand(s)) % 7) as i32]
-      + " " + (s % 20000).to_string() + "b " + decimal(rand(s), 250) + "ms ip=10." + (s % 256).to_string() + "." + (s >> 8 & 255).to_string()
-      + " ua=\"fern-client/1." + (s % 9).to_string() + "\"\n";
+    let line = f"2026-10-25T{two(seconds / 3600)}:{two(seconds / 60 % 60)}:{two(seconds % 60)}.{s % 1000}"
+      + f"Z {methods[(s % 6) as i32]} /api/{word(rand(s))}/{s % 5000} {statuses[(rand(rand(s)) % 7) as i32]}"
+      + f" {s % 20000}b {decimal(rand(s), 250)}ms ip=10.{s % 256}.{s >> 8 & 255}"
+      + f" ua=\"fern-client/1.{s % 9}\"\n";
     parts = parts.append(line);
-    bytes = bytes + line.len();
+    bytes += line.len();
   }
   return parts.join("").bytes();
 }
 
 function two(value: u32): string {
   if (value < 10) {
-    return "0" + value.to_string();
+    return f"0{value}";
   }
   return value.to_string();
 }
@@ -144,14 +144,14 @@ function tree_count(value: json.JsonValue): i32 {
     JArray(items) => {
       let total = 1;
       for item in items {
-        total = total + tree_count(item);
+        total += tree_count(item);
       }
       return total;
     },
     JObject(object) => {
       let total = 1;
       for item in object.items {
-        total = total + tree_count(item);
+        total += tree_count(item);
       }
       return total;
     },
@@ -167,9 +167,9 @@ function tape_count(doc: json.Document, node: i32): i32 {
     let child = doc.first(node);
     while (child >= 0) {
       if (doc.is_object(node)) {
-        total = total + tape_count(doc, doc.value(child));
+        total += tape_count(doc, doc.value(child));
       } else {
-        total = total + tape_count(doc, child);
+        total += tape_count(doc, child);
       }
       child = doc.next(node, child);
     }
@@ -225,13 +225,7 @@ A decode returns the checksum of its output, so the caller can confirm a lossles
 pub function compress(codec: i32, data: u8[], rounds: i32): u8[] {
   let packed: u8[] = [];
   for round in 0..rounds {
-    if (codec == 0) {
-      packed = deflate.gzip(data);
-    } else if (codec == 1) {
-      packed = brotli.compress(data);
-    } else {
-      packed = zstd.compress(data);
-    }
+    packed = match (codec) { 0 => deflate.gzip(data), 1 => brotli.compress(data), _ => zstd.compress(data) };
   }
   return packed;
 }
@@ -240,21 +234,25 @@ pub function compress(codec: i32, data: u8[], rounds: i32): u8[] {
 pub function decompress(codec: i32, packed: u8[], size: i32, rounds: i32): i32 {
   let sum = 0;
   for round in 0..rounds {
-    if (codec == 0) {
-      let Ok(plain) = deflate.gunzip(packed, size) else {
-        return 0;
-      };
-      sum = checksum(plain);
-    } else if (codec == 1) {
-      let Ok(plain) = brotli.decompress(packed, size) else {
-        return 0;
-      };
-      sum = checksum(plain);
-    } else {
-      let Ok(plain) = zstd.decompress(packed, size) else {
-        return 0;
-      };
-      sum = checksum(plain);
+    match (codec) {
+      0 => {
+        let Ok(plain) = deflate.gunzip(packed, size) else {
+          return 0;
+        };
+        sum = checksum(plain);
+      },
+      1 => {
+        let Ok(plain) = brotli.decompress(packed, size) else {
+          return 0;
+        };
+        sum = checksum(plain);
+      },
+      _ => {
+        let Ok(plain) = zstd.decompress(packed, size) else {
+          return 0;
+        };
+        sum = checksum(plain);
+      }
     }
   }
   return sum;

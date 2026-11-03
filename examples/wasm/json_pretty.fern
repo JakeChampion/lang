@@ -3,17 +3,14 @@ import "std/json";
 import "std/string";
 
 function pretty(v: json.JsonValue, depth: i32): string {
-  let pad: string = "  ".repeat(depth);
-  let pad_inner: string = "  ".repeat(depth + 1);
+  let pad = "  ".repeat(depth);
+  let pad_inner = "  ".repeat(depth + 1);
   match (v) {
     JNull => {
       return "null";
     },
     JBool(b) => {
-      if (b) {
-        return "true";
-      }
-      return "false";
+      return if (b) { "true" } else { "false" };
     },
     JNumber(n) => {
       return n;
@@ -25,59 +22,43 @@ function pretty(v: json.JsonValue, depth: i32): string {
       if (elems.len() == 0) {
         return "[]";
       }
-      let arr_out: string = "[\n";
-      let i: i32 = 0;
-      while (i < elems.len()) {
-        arr_out = arr_out + pad_inner + pretty(elems[i], depth + 1);
+      let arr_out = "[\n";
+      for i in 0..elems.len() {
+        arr_out += pad_inner + pretty(elems[i], depth + 1);
         if (i + 1 < elems.len()) {
-          arr_out = arr_out + ",";
+          arr_out += ",";
         }
-        arr_out = arr_out + "\n";
-        i = i + 1;
+        arr_out += "\n";
       }
-      return arr_out + pad + "]";
+      return f"{arr_out}{pad}]";
     },
     JObject(m) => {
       if (m.len() == 0) {
         return "{}";
       }
-      let obj_out: string = "{\n";
-      let keys: string[] = m.keys();
-      let values: json.JsonValue[] = m.values();
-      let i: i32 = 0;
-      while (i < keys.len()) {
+      let obj_out = "{\n";
+      let keys = m.keys();
+      let values = m.values();
+      for i in 0..keys.len() {
         if (i > 0) {
-          obj_out = obj_out + ",\n";
+          obj_out += ",\n";
         }
-        obj_out = obj_out + pad_inner + json.encode(JString(keys[i])) + ": " + pretty(values[i], depth + 1);
-        i = i + 1;
+        obj_out += f"{pad_inner}{json.encode(JString(keys[i]))}: {pretty(values[i], depth + 1)}";
       }
-      return obj_out + "\n" + pad + "}";
+      return f"{obj_out}\n{pad}}}";
     }
   }
-  return "";
 }
 
 function main(): i32 {
-  let input: string = "";
-  match (io.read_all_stdin()) {
-    Ok(t) => {
-      input = t;
-    },
-    Err(_) => {
-      eprint("json_pretty: cannot read stdin");
-      return 1;
-    }
-  }
-  match (json.parse(input)) {
-    Ok(v) => {
-      print(pretty(v, 0));
-      return 0;
-    },
-    Err(_) => {
-      eprint("json_pretty: malformed input");
-      return 1;
-    }
-  }
+  let Ok(input) = io.read_all_stdin() else {
+    eprint("json_pretty: cannot read stdin");
+    return 1;
+  };
+  let Ok(v) = json.parse(input) else {
+    eprint("json_pretty: malformed input");
+    return 1;
+  };
+  print(pretty(v, 0));
   return 0;
 }

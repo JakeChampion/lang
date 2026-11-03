@@ -1,6 +1,7 @@
 import "std/string";
 import "std/i64";
 import "std/f64";
+import "std/option";
 import "./value";
 
 pub struct Headers { names: string[], values: string[] }
@@ -11,47 +12,41 @@ pub function headers_new(): Headers {
   return Headers { names: n, values: v };
 }
 
-function index_of(h: Headers, name: string): i32 {
-  let i: i32 = 0;
-  while (i < h.names.len()) {
+function index_of(h: Headers, name: string): Option[i32] {
+  for i in 0..h.names.len() {
     if (h.names[i].eq_ignore_ascii_case(name)) {
-      return i;
+      return Some(i);
     }
-    i = i + 1;
   }
-  return 0 - 1;
+  return None;
 }
 
 pub function (h: Headers) get(name: string): value.Value {
-  let i: i32 = index_of(h, name);
-  if (i < 0) {
+  let Some(i) = index_of(h, name) else {
     return VNone;
-  }
+  };
   return VString(h.values[i]);
 }
 
 pub function (h: Headers) has(name: string): boolean {
-  return index_of(h, name) >= 0;
+  return index_of(h, name).is_some();
 }
 
 pub function (h: Headers) set(name: string, v: string): Headers {
-  let i: i32 = index_of(h, name);
-  if (i < 0) {
+  let Some(i) = index_of(h, name) else {
     return Headers { names: h.names.append(name), values: h.values.append(v) };
-  }
+  };
   return Headers { names: h.names, values: h.values.with(i, v) };
 }
 
 pub function (h: Headers) unset(name: string): Headers {
   let names: string[] = [];
   let vals: string[] = [];
-  let i: i32 = 0;
-  while (i < h.names.len()) {
+  for i in 0..h.names.len() {
     if (!h.names[i].eq_ignore_ascii_case(name)) {
       names = names.append(h.names[i]);
       vals = vals.append(h.values[i]);
     }
-    i = i + 1;
   }
   return Headers { names: names, values: vals };
 }
@@ -111,50 +106,43 @@ pub function cache_new(): Cache {
   return Cache { entries: e };
 }
 
-function cache_index(c: Cache, key: string): i32 {
-  let i: i32 = 0;
-  while (i < c.entries.len()) {
+function cache_index(c: Cache, key: string): Option[i32] {
+  for i in 0..c.entries.len() {
     if (c.entries[i].key == key) {
-      return i;
+      return Some(i);
     }
-    i = i + 1;
   }
-  return 0 - 1;
+  return None;
 }
 
 pub function (c: Cache) lookup(key: string): Option[CacheEntry] {
-  let i: i32 = cache_index(c, key);
-  if (i < 0) {
+  let Some(i) = cache_index(c, key) else {
     return None;
-  }
+  };
   return Some(c.entries[i]);
 }
 
 pub function (c: Cache) store(e: CacheEntry): Cache {
-  let i: i32 = cache_index(c, e.key);
-  if (i < 0) {
+  let Some(i) = cache_index(c, e.key) else {
     return Cache { entries: c.entries.append(e) };
-  }
+  };
   return Cache { entries: c.entries.with(i, e) };
 }
 
 pub function (c: Cache) touch(key: string): Cache {
-  let i: i32 = cache_index(c, key);
-  if (i < 0) {
+  let Some(i) = cache_index(c, key) else {
     return c;
-  }
-  let e: CacheEntry = c.entries[i];
+  };
+  let e = c.entries[i];
   return Cache { entries: c.entries.with(i, CacheEntry { ...e, hits: e.hits + 1 }) };
 }
 
 pub function (c: Cache) evict(key: string): Cache {
   let out: CacheEntry[] = [];
-  let i: i32 = 0;
-  while (i < c.entries.len()) {
-    if (c.entries[i].key != key) {
-      out = out.append(c.entries[i]);
+  for e in c.entries {
+    if (e.key != key) {
+      out = out.append(e);
     }
-    i = i + 1;
   }
   return Cache { entries: out };
 }

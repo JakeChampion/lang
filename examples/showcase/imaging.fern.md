@@ -34,7 +34,7 @@ Integer arithmetic sets every pixel, and no float result differs between targets
 ```fern
 <<Test image>>=
 fip function rand(state: u32): u32 {
-  let x: u32 = state ^ state << 13;
+  let x = state ^ state << 13;
   x = x ^ x >> 17;
   return x ^ x << 5;
 }
@@ -43,7 +43,7 @@ struct Disc { x: i32, y: i32, r2: i32, color: u32 }
 
 @export("fern:showcase/image", "sample")
 pub function sample(seed: i32, width: i32, height: i32): u8[] {
-  let s: u32 = seed as u32 * 2654435761 | 1;
+  let s = seed as u32 * 2654435761 | 1;
   let discs: Disc[] = [];
   for i in 0..12 {
     s = rand(s);
@@ -55,7 +55,7 @@ pub function sample(seed: i32, width: i32, height: i32): u8[] {
     s = rand(s);
     discs = discs.append(Disc { x: x, y: y, r2: r * r, color: s });
   }
-  let data: u8[] = __alloc_u8(width * height * 4);
+  let data = __alloc_u8(width * height * 4);
   let span = width + height;
   for y in 0..height {
     for x in 0..width {
@@ -111,10 +111,7 @@ pub function scale(rgba: u8[], width: i32, height: i32, target: i32, filter: i32
   let Ok(source) = image(rgba, width, height) else {
     return [];
   };
-  let mode = resize.Bilinear;
-  if (filter == 1) {
-    mode = resize.Nearest;
-  }
+  let mode = if (filter == 1) { resize.Nearest } else { resize.Bilinear };
   let Ok(output) = resize.resize(source, target, fit(width, height, target), mode, pixels.default_limits()) else {
     return [];
   };

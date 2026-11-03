@@ -3800,9 +3800,9 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 
 // The opcode of each VEX three-operand integer and FMA instruction: 256 plus
 // the 0F opcode, or 512 plus the 0F38 opcode.
-const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq"];
+const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb"];
 
-const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567];
+const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359];
 
 function x86_vex_three_op(mnem: string): i32 {
   if (mnem.len() >= 4 && mnem[0] == b'v') {

@@ -107,7 +107,7 @@ pub function compress_bench(state: State, req: HttpRequest): Result[HttpResponse
   let log = measure.access_log(seed, size);
   let sum = measure.checksum(log);
   let count = rounds(1048576, log.len(), 16);
-  let names: string[] = ["gzip", "Brotli", "zstd"];
+  let names = ["gzip", "Brotli", "zstd"];
   let codecs: Codec[] = [];
   for codec in 0..3 {
     let started = monotonic_ns();

@@ -156,9 +156,9 @@ pub function reserve(world: World, now: i64): Result[Seat, string] {
   }
   let players = world.players.get();
   world.players.set([] as Player[]);
-  let at: i32 = 0;
+  let at = 0;
   while (at < players.len() && players[at].key != "") {
-    at = at + 1;
+    at += 1;
   }
   let lease = common.token();
   let angle = (at % 32) as f64 * 0.196349540849362;
@@ -195,11 +195,7 @@ pub function release(world: World, seat: Seat): void {
 }
 
 function signed(byte: u8): i32 {
-  if (byte > 127) {
-    return byte as i32 - 256;
-  }
-
-  return byte as i32;
+  return if (byte > 127) { byte as i32 - 256 } else { byte as i32 };
 }
 
 pub function control(world: World, seat: Seat, bytes: u8[], now: i64): Result[i64, string] {
@@ -213,7 +209,7 @@ pub function control(world: World, seat: Seat, bytes: u8[], now: i64): Result[i6
   let old = world.players.get()[seat.at];
   let pitch = read16(bytes, 8);
   if (pitch > 32767) {
-    pitch = pitch - 65536;
+    pitch -= 65536;
   }
   if (seq <= old.seq || pitch < -15500 || pitch > 15500) {
     return Err("Invalid movement sequence or view angle.");
@@ -250,22 +246,9 @@ pub function travel(world: World, seat: Seat, bytes: u8[], now: i64): Result[Pla
       return Err("Wait three seconds between landmark trips.");
     }
   }
-  let x: f64 = 256.5;
-  let z: f64 = 256.5;
-  if (bytes[1] == 1 || bytes[1] == 3) {
-    x = 96.5;
-  }
-  if (bytes[1] == 2) {
-    x = 416.5;
-  }
-  if (bytes[1] == 1 || bytes[1] == 2) {
-    z = 96.5;
-  }
-  if (bytes[1] == 3) {
-    z = 416.5;
-  }
-  x = x + (seat.at % 16) as f64 * 0.4 - 3.0;
-  z = z + (seat.at / 16 % 16) as f64 * 0.4 - 3.0;
+  let (landmark_x, landmark_z) = match (bytes[1]) { 1 => (96.5, 96.5), 2 => (416.5, 96.5), 3 => (96.5, 416.5), _ => (256.5, 256.5) };
+  let x = landmark_x + (seat.at % 16) as f64 * 0.4 - 3.0;
+  let z = landmark_z + (seat.at / 16 % 16) as f64 * 0.4 - 3.0;
   let player = Player { ...old, x: x, y: 25, z: z, vy: 0, grounded: false, mx: 0, mz: 0, up: 0, seq: seq, applied: seq, travelled: Some(now), seen: now };
   let players = world.players.get();
   world.players.set([] as Player[]);
@@ -288,7 +271,7 @@ pub function mask(blocks: Map[i32, i32], x: f64, y: f64, z: f64): (i32, i32) {
     let by = y.floor() as i32 - 1 + at / 9;
     let bz = z.floor() as i32 - 1 + at / 3 % 3;
     if (voxel.solid(material(blocks, bx, by, bz)) != 0) {
-      bits = bits | 1 as u64 << at as u64;
+      bits |= 1 as u64 << at as u64;
     }
   }
   return ((bits as u32) as i32, (bits >> 32) as i32);
@@ -296,16 +279,10 @@ pub function mask(blocks: Map[i32, i32], x: f64, y: f64, z: f64): (i32, i32) {
 
 pub function move(blocks: Map[i32, i32], own player: Player, seconds: f64): Player {
   let dt = seconds.max(0.0).min(0.1) / 4.0;
-  let fly: i32 = player.flags >> 1 & 1;
-  let speed = 5.5;
-  if (fly != 0) {
-    speed = 7.0;
-  }
+  let fly = player.flags >> 1 & 1;
+  let speed = if (fly != 0) { 7.0 } else { 5.5 };
   for substep in 0..4 {
-    let grounded: i32 = 0;
-    if (player.grounded) {
-      grounded = 1;
-    }
+    let grounded = if (player.grounded) { 1 } else { 0 };
     let vy = voxel.vertical(player.vy, grounded, player.flags & 1, fly, player.up, dt);
     let (lo, hi) = mask(blocks, player.x, player.y, player.z);
     let x = voxel.clip(player.x, player.y, player.z, player.mx * speed * dt, 0, lo, hi);
@@ -349,24 +326,15 @@ pub function ray(blocks: Map[i32, i32], player: Player): Option[Hit] {
   let ax = x;
   let ay = y;
   let az = z;
-  let sx: i32 = 1;
-  let sy: i32 = 1;
-  let sz: i32 = 1;
-  if (dx < 0.0) {
-    sx = -1;
-  }
-  if (dy < 0.0) {
-    sy = -1;
-  }
-  if (dz < 0.0) {
-    sz = -1;
-  }
-  let tx: f64 = 1e30;
-  let ty: f64 = 1e30;
-  let tz: f64 = 1e30;
-  let stepx: f64 = 1e30;
-  let stepy: f64 = 1e30;
-  let stepz: f64 = 1e30;
+  let sx = if (dx < 0.0) { -1 } else { 1 };
+  let sy = if (dy < 0.0) { -1 } else { 1 };
+  let sz = if (dz < 0.0) { -1 } else { 1 };
+  let tx = 1e30;
+  let ty = 1e30;
+  let tz = 1e30;
+  let stepx = 1e30;
+  let stepy = 1e30;
+  let stepz = 1e30;
   if (dx.abs() > 0.0000001) {
     stepx = 1.0 / dx.abs();
     tx = (x as f64 + (sx + 1) as f64 / 2.0 - ex) / dx;
@@ -379,7 +347,7 @@ pub function ray(blocks: Map[i32, i32], player: Player): Option[Hit] {
     stepz = 1.0 / dz.abs();
     tz = (z as f64 + (sz + 1) as f64 / 2.0 - ez) / dz;
   }
-  let distance: f64 = 0;
+  let distance = 0.0;
   while (distance <= 6.0) {
     if (voxel.solid(material(blocks, x, y, z)) != 0) {
       return Some(Hit { x: x, y: y, z: z, ax: ax, ay: ay, az: az });
@@ -388,17 +356,17 @@ pub function ray(blocks: Map[i32, i32], player: Player): Option[Hit] {
     ay = y;
     az = z;
     if (tx <= ty && tx <= tz) {
-      x = x + sx;
+      x += sx;
       distance = tx;
-      tx = tx + stepx;
+      tx += stepx;
     } else if (ty <= tz) {
-      y = y + sy;
+      y += sy;
       distance = ty;
-      ty = ty + stepy;
+      ty += stepy;
     } else {
-      z = z + sz;
+      z += sz;
       distance = tz;
-      tz = tz + stepz;
+      tz += stepz;
     }
   }
   return None;
@@ -475,12 +443,7 @@ function index_change(world: World, change: Change, revision: i64): void {
   let chunks = world.chunks.get();
   world.chunks.set(map_new(32));
   let entries = chunks.get(chunk).unwrap_or([] as (i32, i32)[]);
-  let next: (i32, i32)[] = [];
-  for entry in entries {
-    if (entry.0 != local) {
-      next = next.append(entry);
-    }
-  }
+  let next = entries |> array.filter((entry: (i32, i32)): boolean => entry.0 != local);
   if (change.material != voxel.terrain(change.x, change.y, change.z)) {
     next = next.append((local, change.material));
   }
@@ -501,7 +464,7 @@ function commit(world: World): void {
   let events: Event[] = [];
   let serial = world.serial.get();
   for request in pending {
-    serial = serial + 1;
+    serial += 1;
     let stub = Change { x: request.x, y: request.y, z: request.z, material: 0, actor: request.seat.at + 1, nonce: request.nonce };
     match (validate(world, blocks, request)) {
       Ok(change) => {
@@ -533,9 +496,7 @@ function commit(world: World): void {
   }
   let history = world.history.get();
   world.history.set([] as Event[]);
-  for event in events {
-    history = history.append(event);
-  }
+  history = history.concat(events);
   if (history.len() > 4096) {
     history = history.drop(history.len() - 4096);
   }
@@ -576,14 +537,13 @@ pub function spatial(players: Player[]): Index {
   for at in 0..starts[256] {
     ids = ids.append(0);
   }
-  let id: i32 = 0;
-  for player in players {
+  for id in 0..players.len() {
+    let player = players[id];
     if (player.key != "") {
       let cell = sector(player);
       ids = ids.with(starts[cell] + counts[cell], id);
       counts = counts.with(cell, counts[cell] + 1);
     }
-    id = id + 1;
   }
   return Index { starts: starts, ids: ids };
 }
@@ -592,7 +552,7 @@ pub function advance(world: World, now: i64): void {
   if (world.count.get() == 0 || world.fault.get() != "") {
     return;
   }
-  let seconds: f64 = 0;
+  let seconds = 0.0;
   if let Some(last) = world.updated.get() {
     if (now - last < PERIOD) {
       return;
@@ -603,8 +563,7 @@ pub function advance(world: World, now: i64): void {
   world.tick.set(world.tick.get() + 1);
   let players = world.players.get();
   world.players.set([] as Player[]);
-  let at: i32 = 0;
-  while (at < players.len()) {
+  for at in 0..players.len() {
     let player = players[at];
     if (player.key != "") {
       if (now - player.seen > 60000000000) {
@@ -614,7 +573,6 @@ pub function advance(world: World, now: i64): void {
         players = players.with(at, move(world.blocks.get(), Player { ...player }, seconds));
       }
     }
-    at = at + 1;
   }
   world.players.set(players);
   commit(world);
@@ -624,7 +582,7 @@ pub function advance(world: World, now: i64): void {
 }
 
 pub function event_start(history: Event[], cursor: i64): i32 {
-  let low: i32 = 0;
+  let low = 0;
   let high = history.len();
   while (low < high) {
     let mid = low + (high - low) / 2;
@@ -645,7 +603,7 @@ pub function visible(change: Change, cell: i32): boolean {
 }
 
 pub function delta(world: World, cell: i32, cursor: i64): string {
-  let cache_key = cursor.to_string() + "/" + cell.to_string();
+  let cache_key = f"{cursor}/{cell}";
   if let Some(cached) = world.deltas.get().get(cache_key) {
     return cached;
   }
@@ -653,14 +611,12 @@ pub function delta(world: World, cell: i32, cursor: i64): string {
   let reset = history.len() > 0 && cursor < history[0].serial - 1;
   let changes: Change[] = [];
   if (!reset) {
-    let at = event_start(history, cursor);
-    while (at < history.len()) {
+    for at in event_start(history, cursor)..history.len() {
       let event = history[at];
       let change = event.change;
       if (event.error == "" && visible(change, cell)) {
         changes = changes.append(change);
       }
-      at = at + 1;
     }
   }
   let result = Delta { kind: "edits", cursor: world.serial.get(), revision: world.revision.get(), reset: reset, blocks: changes }.to_json();
@@ -704,30 +660,23 @@ pub function packet(world: World, cell: i32): u8[] {
   if (index.starts.len() != 257) {
     return [] as u8[];
   }
-  let count: i32 = 0;
-  let z = (cell / 16 - 1).max(0);
-  while (z <= (cell / 16 + 1).min(15)) {
-    let x = (cell % 16 - 1).max(0);
-    while (x <= (cell % 16 + 1).min(15)) {
+  let count = 0;
+  for z in (cell / 16 - 1).max(0)..=(cell / 16 + 1).min(15) {
+    for x in (cell % 16 - 1).max(0)..=(cell % 16 + 1).min(15) {
       let bucket = z * 16 + x;
-      count = count + index.starts[bucket + 1] - index.starts[bucket];
-      x = x + 1;
+      count += index.starts[bucket + 1] - index.starts[bucket];
     }
-    z = z + 1;
   }
   let out = __alloc_u8(16 + count * 16);
-  out = out.with(0, 66).with(1, 80).with(2, 1).with(3, 0).with(12, (cell % 16) as u8).with(13, (cell / 16) as u8).with(14, 0).with(15, 0);
+  out = out.with(0, b'B').with(1, b'P').with(2, 1).with(3, 0).with(12, (cell % 16) as u8).with(13, (cell / 16) as u8).with(14, 0).with(15, 0);
   out = put32(out, 4, world.tick.get());
   out = put16(out, 8, count);
   out = put16(out, 10, world.count.get());
-  let at: i32 = 16;
-  z = (cell / 16 - 1).max(0);
-  while (z <= (cell / 16 + 1).min(15)) {
-    let x = (cell % 16 - 1).max(0);
-    while (x <= (cell % 16 + 1).min(15)) {
+  let at = 16;
+  for z in (cell / 16 - 1).max(0)..=(cell / 16 + 1).min(15) {
+    for x in (cell % 16 - 1).max(0)..=(cell % 16 + 1).min(15) {
       let bucket = z * 16 + x;
-      let row = index.starts[bucket];
-      while (row < index.starts[bucket + 1]) {
+      for row in index.starts[bucket]..index.starts[bucket + 1] {
         let id = index.ids[row];
         let player = world.players.get()[id];
         out = put16(out, at, id + 1);
@@ -737,16 +686,13 @@ pub function packet(world: World, cell: i32): u8[] {
         out = put16(out, at + 8, player.yaw);
         let state = (player.vy * 256.0) as i32 << 2 | player.flags >> 1 & 1;
         if (player.grounded) {
-          state = state | 2;
+          state |= 2;
         }
         out = put16(out, at + 10, state);
         out = put32(out, at + 12, player.applied);
-        at = at + 16;
-        row = row + 1;
+        at += 16;
       }
-      x = x + 1;
     }
-    z = z + 1;
   }
   let cache = world.packets.get();
   world.packets.set(map_new(16));
@@ -756,7 +702,7 @@ pub function packet(world: World, cell: i32): u8[] {
 
 pub function acknowledgement(seq: i64, started: i64): u8[] {
   let out = __alloc_u8(12);
-  out = out.with(0, 66).with(1, 65).with(2, 1).with(3, 0);
+  out = out.with(0, b'B').with(1, b'A').with(2, 1).with(3, 0);
   out = put32(out, 4, seq);
   return put32(out, 8, (monotonic_ns() - started) / 1000);
 }

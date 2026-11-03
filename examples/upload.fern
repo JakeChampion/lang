@@ -7,24 +7,23 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartError] {
-  let out: string = "";
-  let r: multipart.Reader = multipart.open(req, multipart.limits())?;
-  let going: boolean = true;
-  while (going) {
+  let out = "";
+  let r = multipart.open(req, multipart.limits())?;
+  loop {
     match (r.next()?) {
       NextPart(part, r1) => {
         if (part.filename.len() > 0) {
-          let got: (string, multipart.Reader) = sized(part, r1)?;
-          out = out + got.0;
-          r = got.1;
+          let (line, r2) = sized(part, r1)?;
+          out += line;
+          r = r2;
         } else {
-          let got: (u8[], multipart.Reader) = r1.content()?;
-          out = out + part.name + " = " + string_from_bytes_unchecked(got.0) + "\n";
-          r = got.1;
+          let (content, r2) = r1.content()?;
+          out += f"{part.name} = {string_from_bytes_unchecked(content)}\n";
+          r = r2;
         }
       },
       NoMoreParts => {
-        going = false;
+        break;
       }
     }
   }
@@ -32,23 +31,24 @@ function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartErr
 }
 
 function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multipart.Reader), multipart.MultipartError] {
-  let bytes: i32 = 0;
-  let pieces: i32 = 0;
-  let cur: multipart.Reader = r;
-  let done: boolean = false;
-  while (!done) {
-    let piece: (u8[], boolean, multipart.Reader) = cur.read(4)?;
-    bytes = bytes + piece.0.len();
-    pieces = pieces + 1;
-    done = piece.1;
-    cur = piece.2;
+  let bytes = 0;
+  let pieces = 0;
+  let cur = r;
+  loop {
+    let (chunk, last, next) = cur.read(4)?;
+    bytes += chunk.len();
+    pieces += 1;
+    cur = next;
+    if (last) {
+      break;
+    }
   }
-  return Ok((part.name + " = " + part.filename + " (" + part.content_type + ", " + bytes.to_string() + " bytes in " + pieces.to_string() + " pieces)\n", cur));
+  return Ok((f"{part.name} = {part.filename} ({part.content_type}, {bytes} bytes in {pieces} pieces)\n", cur));
 }
 
 function main(): i32 {
-  let body: multipart.Builder = multipart.builder_with("example").field("title", "holiday").file("photo", "beach.png", "image/png", "PNG image".bytes()).field("tags", "sea, sand");
-  let resp: HttpResponse = handle(body.request("POST", "/upload"), platform.host());
+  let body = multipart.builder_with("example").field("title", "holiday").file("photo", "beach.png", "image/png", "PNG image".bytes()).field("tags", "sea, sand");
+  let resp = handle(body.request("POST", "/upload"), platform.host());
   print(resp.body_text_lossy());
   if (resp.status != 200) {
     return 1;

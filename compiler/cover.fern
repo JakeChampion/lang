@@ -153,7 +153,7 @@ function hit(key: string): ast.Expr {
 }
 
 function hit_stmt(key: string): ast.Stmt {
-  return ast.StmtExpr { value: hit(key), line: 0 };
+  return ast.StmtExpr { value: hit(key), line: 0, op: "" };
 }
 
 function and(a: ast.Expr, b: ast.Expr): ast.Expr {
@@ -162,7 +162,7 @@ function and(a: ast.Expr, b: ast.Expr): ast.Expr {
 
 function report_stmt(): ast.Stmt {
   let none: ast.Expr[] = [];
-  return ast.StmtExpr { value: ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_report", line: 0, col: 0, ty: "", builtin: false }, args: none, line: 0, col: 0, type_args: [], ty: "" }, line: 0 };
+  return ast.StmtExpr { value: ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_report", line: 0, col: 0, ty: "", builtin: false }, args: none, line: 0, col: 0, type_args: [], ty: "" }, line: 0, op: "" };
 }
 
 function cover_stmts(stmts: ast.Stmt[], c: Ctx, exprs: boolean): ast.Stmt[] {

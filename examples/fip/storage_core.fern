@@ -44,23 +44,17 @@ pub function new_state(pages: i32, frames: i32, width: i32, capacity: i32, batch
     || width < 1 || width > 256 || capacity < 1 || capacity > 128 || batch < 1 || batch > capacity) {
     return None;
   }
-  let disk: i64[] = __alloc_i64(pages * width);
-  let i: i32 = 0;
-  while (i < disk.len()) {
+  let disk = __alloc_i64(pages * width);
+  for i in 0..disk.len() {
     disk = disk.with(i, initial_word(i / width, i % width));
-    i = i + 1;
   }
-  let mapped: i32[] = __alloc_i32(frames);
-  i = 0;
-  while (i < frames) {
+  let mapped = __alloc_i32(frames);
+  for i in 0..frames {
     mapped = mapped.with(i, -1);
-    i = i + 1;
   }
-  let frame: i32[] = __alloc_i32(capacity);
-  i = 0;
-  while (i < capacity) {
+  let frame = __alloc_i32(capacity);
+  for i in 0..capacity {
     frame = frame.with(i, -1);
-    i = i + 1;
   }
   return Some(State {
     pages: pages, frames: frames, width: width, capacity: capacity, batch: batch,
@@ -79,19 +73,19 @@ pub fip function result(own s: State, status: i32, slot: i32, ticket: i64, value
 }
 
 pub fip function lookup(s: State, page: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.frames) {
     if (s.mapped[i] == page) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 pub fip function victim(s: State): i32 {
-  let best: i32 = -1;
-  let i: i32 = 0;
+  let best = -1;
+  let i = 0;
   while (i < s.frames) {
     if (s.frame_pin[i] == 0 && s.dirty[i] == 0) {
       if (s.mapped[i] < 0) {
@@ -101,7 +95,7 @@ pub fip function victim(s: State): i32 {
         best = i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return best;
 }

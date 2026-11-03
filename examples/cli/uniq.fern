@@ -1,18 +1,13 @@
+import "std/result";
 import "std/string";
 import "std/i32";
 import "std/io";
+import "std/array";
 
 struct Opts { count: boolean, only_dups: boolean, only_unique: boolean, ignore_case: boolean }
 
 function slurp(path: string): string {
-  match (io.read_input(path)) {
-    Ok(contents) => {
-      return contents;
-    },
-    Err(_) => {
-      return "";
-    }
-  }
+  return io.read_input(path).unwrap_or("");
 }
 
 function same(a: string, b: string, ci: boolean): boolean {
@@ -23,42 +18,39 @@ function same(a: string, b: string, ci: boolean): boolean {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let o: Opts = Opts { count: false, only_dups: false, only_unique: false, ignore_case: false };
-  let path: string = "-";
+  let argv = args();
+  let o = Opts { count: false, only_dups: false, only_unique: false, ignore_case: false };
+  let path = "-";
 
-  let i: i32 = 1;
-  while (i < argv.len()) {
-    let a: string = argv[i];
-    if (a == "-c") {
-      o = Opts { ...o, count: true };
-    } else if (a == "-d") {
-      o = Opts { ...o, only_dups: true };
-    } else if (a == "-u") {
-      o = Opts { ...o, only_unique: true };
-    } else if (a == "-i") {
-      o = Opts { ...o, ignore_case: true };
-    } else {
-      path = a;
+  for a in array.drop(argv, 1) {
+    match (a) {
+      "-c" => {
+        o = Opts { ...o, count: true };
+      },
+      "-d" => {
+        o = Opts { ...o, only_dups: true };
+      },
+      "-u" => {
+        o = Opts { ...o, only_unique: true };
+      },
+      "-i" => {
+        o = Opts { ...o, ignore_case: true };
+      },
+      _ => {
+        path = a;
+      }
     }
-    i = i + 1;
   }
 
-  let lines: string[] = slurp(path).lines();
-  let n: i32 = lines.len();
-  let idx: i32 = 0;
+  let lines = slurp(path).lines();
+  let n = lines.len();
+  let idx = 0;
   while (idx < n) {
-    let rep: i32 = 1;
+    let rep = 1;
     while (idx + rep < n && same(lines[idx], lines[idx + rep], o.ignore_case)) {
-      rep = rep + 1;
+      rep += 1;
     }
-    let show: boolean = true;
-    if (o.only_dups && rep < 2) {
-      show = false;
-    }
-    if (o.only_unique && rep > 1) {
-      show = false;
-    }
+    let show = !(o.only_dups && rep < 2) && !(o.only_unique && rep > 1);
     if (show) {
       if (o.count) {
         print(rep.to_string().pad_start(7, ' ') + " " + lines[idx]);
@@ -66,7 +58,7 @@ function main(): i32 {
         print(lines[idx]);
       }
     }
-    idx = idx + rep;
+    idx += rep;
   }
   return 0;
 }

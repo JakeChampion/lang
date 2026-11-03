@@ -1,0 +1,8 @@
+// tcp_close consumes its Socket, so a second close of the same Socket is
+// refused at the first close.
+
+function main(): i32 {
+    let ls: Socket = tcp_listen(0);
+    let first: i32 = tcp_close(ls);
+    return tcp_close(ls) + first;
+}

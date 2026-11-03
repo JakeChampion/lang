@@ -78,31 +78,23 @@ pub function room(state: State, name: string): Result[Room, http.HttpError] {
   if (!common.room_name(name)) {
     return Err(http.fail(400, "room names use 1 to 32 lowercase letters, numbers, dashes, or underscores"));
   }
-  let index: i32 = 0;
-  for found in state.rooms.get() {
-    if (found.name == name) {
-      return Ok(Room { state: state, at: index });
-    }
-    index = index + 1;
+  if let Some(index) = array.position(state.rooms.get(), (found: Board): boolean => found.name == name) {
+    return Ok(Room { state: state, at: index });
   }
   if (state.rooms.get().len() >= 32) {
     return Err(http.fail(429, "all canvas rooms are in use"));
   }
-  let pixels: i32[] = __alloc_i32(WIDTH * HEIGHT);
-  let y: i32 = 7;
-  while (y < 33) {
-    let x: i32 = 17;
-    while (x < 47) {
-      let dx: i32 = x - 32;
-      let dy: i32 = y - 20;
+  let pixels = __alloc_i32(WIDTH * HEIGHT);
+  for y in 7..33 {
+    for x in 17..47 {
+      let dx = x - 32;
+      let dy = y - 20;
       if (dx * dx * 2 + dy * dy < 220 && (x + y) % 5 != 0) {
         pixels = pixels.with(y * WIDTH + x, 2 + (x + y) % 3);
       }
-      x = x + 1;
     }
-    y = y + 1;
   }
-  let at: i32 = state.rooms.get().len();
+  let at = state.rooms.get().len();
   state.rooms.set(state.rooms.get().append(Board { name: name, pixels: pixels, revision: 0, history: [] }));
   return Ok(Room { state: state, at: at });
 }
@@ -117,7 +109,7 @@ The browser draws optimistically, then reconciles its pixels with server events.
 ```fern
 <<Commit a stroke>>=
 pub function snapshot(room: Room): Snapshot {
-  let board: Board = room.state.rooms.get()[room.at];
+  let board = room.state.rooms.get()[room.at];
   return Snapshot { revision: board.revision, width: WIDTH, height: HEIGHT, pixels: board.pixels, palette: COLORS };
 }
 
@@ -130,13 +122,13 @@ pub function paint(room: Room, stroke: Stroke): Result[Change, http.HttpError] {
       return Err(http.fail(400, "pixel is outside the board"));
     }
   }
-  let board: Board = room.state.rooms.get()[room.at];
-  let pixels: i32[] = board.pixels;
+  let board = room.state.rooms.get()[room.at];
+  let pixels = board.pixels;
   for point in stroke.points {
     pixels = pixels.with(point, stroke.color);
   }
-  let change: Change = Change { revision: board.revision + 1, color: stroke.color, points: stroke.points };
-  let history: Change[] = board.history.append(change);
+  let change = Change { revision: board.revision + 1, color: stroke.color, points: stroke.points };
+  let history = board.history.append(change);
   if (history.len() > 256) {
     history = history.drop(1);
   }
@@ -155,7 +147,7 @@ The producer yields between checks and exits on task cancellation. SSE heartbeat
 ```fern
 <<Resume the event log>>=
 pub function changes(room: Room, after: Option[i64]): Option[sse.Event] {
-  let board: Board = room.state.rooms.get()[room.at];
+  let board = room.state.rooms.get()[room.at];
   let Some(cursor) = after else {
     return Some(sse.event(snapshot(room).to_json()).with_name("snapshot").with_id(board.revision.to_string()).with_retry(time.duration_millis(1000)));
   };
@@ -171,17 +163,14 @@ pub function changes(room: Room, after: Option[i64]): Option[sse.Event] {
 }
 
 pub function events(room: Room, req: HttpRequest): HttpResponse {
-  let cursor: Cell[Option[i64]] = cell_new(i64.parse_i64(sse.last_event_id(req).unwrap_or("")).ok());
+  let cursor = cell_new(i64.parse_i64(sse.last_event_id(req).unwrap_or("")).ok());
   return sse.respond_with(time.duration_seconds(15), (index: i32): Option[sse.Event] => {
     while (!async.task_cancelled()) {
-      match (changes(room, cursor.get())) {
-        Some(event) => {
-          cursor.set(i64.parse_i64(event.id).ok());
-          return Some(event);
-        },
-        None => {}
+      if let Some(event) = changes(room, cursor.get()) {
+        cursor.set(i64.parse_i64(event.id).ok());
+        return Some(event);
       }
-      let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(100))));
+      let ready = async.wait_any([], Some(clock.instant().add(time.duration_millis(100))));
     }
     return None;
   }).with_header("X-Accel-Buffering", "no");
@@ -196,15 +185,13 @@ The response supplies an attachment name so the browser can save the current boa
 ```fern
 <<Export a real image>>=
 pub function export_png(room: Room): Result[HttpResponse, http.HttpError] {
-  let pixels: i32[] = room.state.rooms.get()[room.at].pixels;
-  let rgb: u8[] = __alloc_u8(WIDTH * HEIGHT * 3);
-  let at: i32 = 0;
-  while (at < pixels.len()) {
-    let color: i32 = COLORS[pixels[at]];
+  let pixels = room.state.rooms.get()[room.at].pixels;
+  let rgb = __alloc_u8(WIDTH * HEIGHT * 3);
+  for at in 0..pixels.len() {
+    let color = COLORS[pixels[at]];
     rgb = rgb.with(at * 3, (color >> 16 & 255) as u8).with(at * 3 + 1, (color >> 8 & 255) as u8).with(at * 3 + 2, (color & 255) as u8);
-    at = at + 1;
   }
-  let bytes: u8[] = png.encode_rgb8(WIDTH, HEIGHT, rgb).map_err((e: png.EncodeError): http.HttpError => http.fail(500, "image encoder failed"))?;
+  let bytes = png.encode_rgb8(WIDTH, HEIGHT, rgb).map_err((e: png.EncodeError): http.HttpError => http.fail(500, "image encoder failed"))?;
   return Ok(http.bytes(200, bytes).with_content_type("image/png").with_header("Content-Disposition", "attachment; filename=fern-mosaic.png").with_header("Cache-Control", "no-store"));
 }
 ```
@@ -245,11 +232,11 @@ struct Ack { kind: string, seq: i64, revision: i64, server_us: i64 }
 struct Failure { kind: string, seq: i64, message: string }
 
 function send_pending(room: Room, cursor: Cell[Option[i64]], connection: websocket.Conn): void {
-  while (true) {
+  loop {
     let Some(event) = changes(room, cursor.get()) else {
       return;
     };
-    let sent = connection.send_text("{\"kind\":\"" + event.name + "\",\"data\":" + event.data + "}");
+    let sent = connection.send_text(f"{{\"kind\":\"{event.name}\",\"data\":{event.data}}}");
     if let websocket.Dropped = sent {
       connection.close(1013, "canvas receiver is too slow");
       return;
@@ -259,16 +246,16 @@ function send_pending(room: Room, cursor: Cell[Option[i64]], connection: websock
 }
 
 pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
-  let room: Room = room(state, common.query(req, "room", "commons"))?;
-  let subscription: live.Subscription = live.subscribe(state.live, state.rooms.get()[room.at].name)?;
-  let cursor: Cell[Option[i64]] = cell_new(None as Option[i64]);
-  let handlers: websocket.Handlers = websocket.Handlers {
+  let room = room(state, common.query(req, "room", "commons"))?;
+  let subscription = live.subscribe(state.live, state.rooms.get()[room.at].name)?;
+  let cursor = cell_new(None as Option[i64]);
+  let handlers = websocket.Handlers {
     open: (connection: websocket.Conn): void => {
       send_pending(room, cursor, connection);
       live.wake(subscription);
     },
     message: (connection: websocket.Conn, message: websocket.Message): void => {
-      let started: i64 = now_ns();
+      let started = now_ns();
       match (message) {
         Text(text) => {
           let Ok(input) = Input.from_json(text) else {
@@ -279,17 +266,13 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
             connection.close(1008, "unknown canvas command");
             return;
           }
-          let kind: string = "pong";
+          let kind = "pong";
           if (input.kind == "paint") {
-            match (paint(room, Stroke { color: input.color, points: input.points })) {
-              Ok(_) => {
-                kind = "ack";
-              },
-              Err(error) => {
-                let sent = connection.send_text(Failure { kind: "error", seq: input.seq, message: error.detail }.to_json());
-                return;
-              }
+            if let Err(error) = paint(room, Stroke { color: input.color, points: input.points }) {
+              let sent = connection.send_text(Failure { kind: "error", seq: input.seq, message: error.detail }.to_json());
+              return;
             }
+            kind = "ack";
           }
           let sent = connection.send_text(Ack { kind: kind, seq: input.seq, revision: snapshot(room).revision, server_us: (now_ns() - started) / 1000 }.to_json());
           send_pending(room, cursor, connection);
@@ -302,15 +285,12 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
     drain: (connection: websocket.Conn): void => {},
     close: (connection: websocket.Conn, code: i32, reason: string): void => live.cancel(subscription),
   };
-  let options: websocket.Options = websocket.Options { ...websocket.options(), max_message: 4096, backpressure: 32768, max_backpressure: 131072 };
+  let options = websocket.Options { ...websocket.options(), max_message: 4096, backpressure: 32768, max_backpressure: 131072 };
   match (websocket.accept_with_push(req, options, handlers, (connection: websocket.Conn): void => {
     while (live.wait(subscription)) {
       send_pending(room, cursor, connection);
-      match (connection.flush()) {
-        Dropped => {
-          break;
-        },
-        _ => {}
+      if let Dropped = connection.flush() {
+        break;
       }
     }
     live.dispose(subscription);

@@ -1,18 +1,16 @@
 import "std/string";
 import "std/i32";
 import "std/io_buffered";
+import "std/array";
 
 struct Counts { lines: i32, words: i32, bytes: i32 }
 
 function count_chunk(chunk: string, acc: Counts): Counts {
-  let parts: string[] = chunk.split(" ");
-  let nwords: i32 = 0;
-  let i: i32 = 0;
-  while (i < parts.len()) {
-    if (!parts[i].is_empty()) {
-      nwords = nwords + 1;
+  let nwords = 0;
+  for part in chunk.split(" ") {
+    if (!part.is_empty()) {
+      nwords += 1;
     }
-    i = i + 1;
   }
   return Counts {
     ...acc,
@@ -23,22 +21,17 @@ function count_chunk(chunk: string, acc: Counts): Counts {
 }
 
 function count_reader(own r: Reader): Result[Counts, IoError] {
-  let acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
+  let acc = Counts { lines: 0, words: 0, bytes: 0 };
   defer r.close();
-  let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, 65536);
-  while (true) {
+  let lr = io_buffered.line_reader_new(r, 10, 65536);
+  loop {
     let (line, next) = lr.next_line()?;
     lr = next;
-    match (line) {
-      Some(l) => {
-        acc = count_chunk(l, acc);
-      },
-      None => {
-        return Ok(acc);
-      }
-    }
+    let Some(l) = line else {
+      return Ok(acc);
+    };
+    acc = count_chunk(l, acc);
   }
-  return Ok(acc);
 }
 
 function format_counts(label: string, c: Counts): string {
@@ -46,13 +39,11 @@ function format_counts(label: string, c: Counts): string {
 }
 
 function main(): i32 {
-  let argv: string[] = args();
-  let total: Counts = Counts { lines: 0, words: 0, bytes: 0 };
-  let nfiles: i32 = 0;
-  let status: i32 = 0;
-  let i: i32 = 1;
-  while (i < argv.len()) {
-    let path: string = argv[i];
+  let argv = args();
+  let total = Counts { lines: 0, words: 0, bytes: 0 };
+  let nfiles = 0;
+  let status = 0;
+  for path in array.drop(argv, 1) {
     match (open_reader(path)) {
       Ok(r) => {
         match (count_reader(r)) {
@@ -63,20 +54,19 @@ function main(): i32 {
               words: total.words + got.words,
               bytes: total.bytes + got.bytes,
             };
-            nfiles = nfiles + 1;
+            nfiles += 1;
           },
           Err(_) => {
-            eprint("wc: " + path + ": read error");
+            eprint(f"wc: {path}: read error");
             status = 1;
           }
         }
       },
       Err(_) => {
-        eprint("wc: " + path + ": cannot open");
+        eprint(f"wc: {path}: cannot open");
         status = 1;
       }
     }
-    i = i + 1;
   }
   if (argv.len() <= 1) {
     match (count_reader(stdin())) {

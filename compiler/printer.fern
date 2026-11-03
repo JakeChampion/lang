@@ -2099,18 +2099,34 @@ function print_chain_assign(stmts: ast.Stmt[], depth: i32): Option[string] {
   return Some(out + print_expr(first.place, depth) + " = " + print_expr(first.value, depth) + ";");
 }
 
-struct AssignParts { place: ast.Expr, value: ast.Expr }
+struct AssignParts { place: ast.Expr, value: ast.Expr, op: string }
+
+function ident_assign(a: ast.StmtAssign): AssignParts {
+  return AssignParts { place: ast.ExprIdent { name: a.target, line: 0, col: 0, ty: "", builtin: false }, value: a.value, op: a.op };
+}
+
+function print_assign(set: AssignParts, depth: i32, f: Fmt): (string, Fmt) {
+  let (pv, pf) = print_expr_c(set.place, prec_lowest(), depth, f);
+  if let ast.ExprBinary(b) = set.value {
+    if (set.op.len() > 0 && b.op == set.op) {
+      let (rv, rf) = print_expr_c(b.right, prec_lowest(), depth, pf);
+      return (f"{pv} {set.op}= {rv};", rf);
+    }
+  }
+  let (sv, sf) = print_expr_c(set.value, prec_lowest(), depth, pf);
+  return (f"{pv} = {sv};", sf);
+}
 
 function assign_parts(st: ast.Stmt): Option[AssignParts] {
   match (st) {
     ast.StmtAssign(a) => {
-      return Some(AssignParts { place: ast.ExprIdent { name: a.target, line: 0, col: 0, ty: "", builtin: false }, value: a.value });
+      return Some(ident_assign(a));
     },
     ast.StmtExpr(x) => {
       if let ast.ExprCall(c) = x.value {
         if let ast.ExprIdent(callee) = c.callee {
           if (c.args.len() == 2 && (callee.name == "__set_index" || callee.name == "__set_field")) {
-            return Some(AssignParts { place: c.args[0], value: c.args[1] });
+            return Some(AssignParts { place: c.args[0], value: c.args[1], op: x.op });
           }
         }
       }
@@ -2677,13 +2693,8 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return ("return " + rv + ";", rf);
     },
     ast.StmtExpr(x) => {
-      match (assign_parts(st)) {
-        Some(set) => {
-          let (pv, pf) = print_expr_c(set.place, prec_lowest(), depth, f);
-          let (sv, sf) = print_expr_c(set.value, prec_lowest(), depth, pf);
-          return (pv + " = " + sv + ";", sf);
-        },
-        None => {}
+      if let Some(set) = assign_parts(st) {
+        return print_assign(set, depth, f);
       }
       let (xv, xf) = print_expr_c(x.value, prec_lowest(), depth, f);
       return (xv + ";", xf);
@@ -2739,8 +2750,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return (loop_label(w.label) + "while (" + wc + ") " + wb, wg);
     },
     ast.StmtAssign(a) => {
-      let (av, af) = print_expr_c(a.value, prec_lowest(), depth, f);
-      return (a.target + " = " + av + ";", af);
+      return print_assign(ident_assign(a), depth, f);
     },
     ast.StmtMatch(m) => {
       if (m.origin == "let_else" && m.arms.len() >= 2) {

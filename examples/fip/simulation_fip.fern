@@ -23,25 +23,17 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
   if (count < 0 || count > 4096) {
     return None;
   }
-  let w: World = World {
+  let w = World {
     count: count, tick: 0, x: __alloc_i32(count), y: __alloc_i32(count),
     vx: __alloc_i32(count), vy: __alloc_i32(count), health: __alloc_i32(count),
     kind: __alloc_i32(count), target: __alloc_i32(count), mode: __alloc_i32(count),
     heads: __alloc_i32(256), next: __alloc_i32(count), neighbors: __alloc_i32(count),
     candidates: 0i64, checksum: 0i64, refused: 0,
   };
-  let i: i32 = 0;
-  while (i < count) {
-    let x: i32 = i * 73 % 4096;
-    let y: i32 = i * 151 % 4096;
-    if (clustered) {
-      x = i % 8;
-      y = i / 8 % 8;
-    }
-    let target: i32 = -1;
-    if (i % 3 != 0) {
-      target = (i + 1) % count;
-    }
+  for i in 0..count {
+    let x = if (clustered) { i % 8 } else { i * 73 % 4096 };
+    let y = if (clustered) { i / 8 % 8 } else { i * 151 % 4096 };
+    let target = if (i % 3 != 0) { (i + 1) % count } else { -1 };
     w = World { ...w, x: w.x.with(i, x) };
     w = World { ...w, y: w.y.with(i, y) };
     w = World { ...w, vx: w.vx.with(i, i * 7 % 9 - 4) };
@@ -50,17 +42,16 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
     w = World { ...w, kind: w.kind.with(i, i % 3) };
     w = World { ...w, target: w.target.with(i, target) };
     w = World { ...w, mode: w.mode.with(i, simulation_rules.mode(0, 100, target)) };
-    i = i + 1;
   }
   return Some(w);
 }
 
 pub fip function input_ai(own w: World): World {
-  let i: i32 = 0;
+  let i = 0;
   while (i < w.count) {
-    let target: i32 = simulation_rules.target(w.target[i], i, w.tick, w.count);
-    let vx: i32 = 0;
-    let vy: i32 = 0;
+    let target = simulation_rules.target(w.target[i], i, w.tick, w.count);
+    let vx = 0;
+    let vy = 0;
     if (w.mode[i] != 2) {
       if (target >= 0) {
         vx = simulation_rules.steer(simulation_rules.delta(w.x[target], w.x[i]), w.kind[i]);
@@ -73,88 +64,88 @@ pub fip function input_ai(own w: World): World {
     w = World { ...w, target: w.target.with(i, target) };
     w = World { ...w, vx: w.vx.with(i, vx) };
     w = World { ...w, vy: w.vy.with(i, vy) };
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
 
 pub fip function move(own w: World): World {
-  let i: i32 = 0;
+  let i = 0;
   while (i < w.count) {
-    let x: i32 = simulation_rules.wrap(w.x[i] + w.vx[i]);
-    let y: i32 = simulation_rules.wrap(w.y[i] + w.vy[i]);
+    let x = simulation_rules.wrap(w.x[i] + w.vx[i]);
+    let y = simulation_rules.wrap(w.y[i] + w.vy[i]);
     w = World { ...w, x: w.x.with(i, x) };
     w = World { ...w, y: w.y.with(i, y) };
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
 
 pub fip function rebuild(own w: World): World {
-  let cell: i32 = 0;
+  let cell = 0;
   while (cell < 256) {
     w = World { ...w, heads: w.heads.with(cell, -1) };
-    cell = cell + 1;
+    cell += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < w.count) {
     cell = w.y[i] / 256 * 16 + w.x[i] / 256;
-    let next: i32 = w.heads[cell];
+    let next = w.heads[cell];
     w = World { ...w, next: w.next.with(i, next) };
     w = World { ...w, heads: w.heads.with(cell, i) };
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
 
 pub fip function proximity(own w: World): World {
-  let candidates: i64 = 0i64;
-  let i: i32 = 0;
+  let candidates = 0i64;
+  let i = 0;
   while (i < w.count) {
-    let neighbors: i32 = 0;
-    let oy: i32 = -1;
+    let neighbors = 0;
+    let oy = -1;
     while (oy <= 1) {
-      let cy: i32 = w.y[i] / 256 + oy & 15;
-      let ox: i32 = -1;
+      let cy = w.y[i] / 256 + oy & 15;
+      let ox = -1;
       while (ox <= 1) {
-        let cx: i32 = w.x[i] / 256 + ox & 15;
-        let j: i32 = w.heads[cy * 16 + cx];
+        let cx = w.x[i] / 256 + ox & 15;
+        let j = w.heads[cy * 16 + cx];
         while (j >= 0) {
-          candidates = candidates + 1i64;
+          candidates += 1i64;
           if (i != j) {
-            let dx: i32 = simulation_rules.delta(w.x[j], w.x[i]);
-            let dy: i32 = simulation_rules.delta(w.y[j], w.y[i]);
+            let dx = simulation_rules.delta(w.x[j], w.x[i]);
+            let dy = simulation_rules.delta(w.y[j], w.y[i]);
             if (dx * dx + dy * dy <= 16384) {
-              neighbors = neighbors + 1;
+              neighbors += 1;
             }
           }
           j = w.next[j];
         }
-        ox = ox + 1;
+        ox += 1;
       }
-      oy = oy + 1;
+      oy += 1;
     }
     w = World { ...w, neighbors: w.neighbors.with(i, neighbors) };
-    i = i + 1;
+    i += 1;
   }
   return World { ...w, candidates: candidates };
 }
 
 pub fip function update(own w: World): World {
-  let i: i32 = 0;
+  let i = 0;
   while (i < w.count) {
-    let health: i32 = simulation_rules.health(w.health[i], w.mode[i], w.neighbors[i], w.kind[i]);
-    let mode: i32 = simulation_rules.mode(w.mode[i], health, w.target[i]);
+    let health = simulation_rules.health(w.health[i], w.mode[i], w.neighbors[i], w.kind[i]);
+    let mode = simulation_rules.mode(w.mode[i], health, w.target[i]);
     w = World { ...w, health: w.health.with(i, health) };
     w = World { ...w, mode: w.mode.with(i, mode) };
-    i = i + 1;
+    i += 1;
   }
   return w;
 }
 
 pub fip function checksum(w: World): i64 {
-  let hash: i64 = w.tick as i64;
-  let i: i32 = 0;
+  let hash = w.tick as i64;
+  let i = 0;
   while (i < w.count) {
     hash = simulation_rules.mix(hash, w.x[i]);
     hash = simulation_rules.mix(hash, w.y[i]);
@@ -165,7 +156,7 @@ pub fip function checksum(w: World): i64 {
     hash = simulation_rules.mix(hash, w.target[i] + 1);
     hash = simulation_rules.mix(hash, w.mode[i]);
     hash = simulation_rules.mix(hash, w.neighbors[i]);
-    i = i + 1;
+    i += 1;
   }
   return hash;
 }
@@ -180,6 +171,6 @@ pub fip function step(own w: World): World {
   w = proximity(w);
   w = update(w);
   w = World { ...w, tick: w.tick + 1 };
-  let hash: i64 = checksum(w);
+  let hash = checksum(w);
   return World { ...w, checksum: hash };
 }

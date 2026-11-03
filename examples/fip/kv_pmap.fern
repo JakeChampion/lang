@@ -85,31 +85,29 @@ struct Counters {
 }
 
 function pow256(k: i32): i64 {
-  let v: i64 = 1 as i64;
-  let i: i32 = 0;
-  while (i < k) {
-    v = v * (256 as i64);
-    i = i + 1;
+  let v = 1i64;
+  for _ in 0..k {
+    v *= 256i64;
   }
   return v;
 }
 
 function byte_of(v: i64, k: i32): u8 {
-  return (v / pow256(k) % (256 as i64)) as u8;
+  return (v / pow256(k) % 256i64) as u8;
 }
 
 function read_i64(s: string, at: i32): i64 {
-  let v: i64 = 0 as i64;
-  let k: i32 = 7;
+  let v = 0i64;
+  let k = 7;
   while (k >= 0) {
-    v = v * (256 as i64) + s[at + k] as i64;
-    k = k - 1;
+    v = v * 256i64 + s[at + k] as i64;
+    k -= 1;
   }
   return v;
 }
 
 function classify(entries: pmap.PMap[string, string], req: Request): i32 {
-  let present: boolean = entries.contains(req.key);
+  let present = entries.contains(req.key);
   if (req.op == op_put()) {
     if (!present && entries.len() >= max_entries()) {
       return st_full();
@@ -126,12 +124,10 @@ function classify(entries: pmap.PMap[string, string], req: Request): i32 {
 }
 
 function incremented(current: string, delta: i64): string {
-  let next: i64 = read_i64(current, 0) + delta;
-  let bytes: u8[] = current.bytes();
-  let k: i32 = 0;
-  while (k < 8) {
+  let next = read_i64(current, 0) + delta;
+  let bytes = current.bytes();
+  for k in 0..8 {
     bytes = bytes.with(k, byte_of(next, k));
-    k = k + 1;
   }
   return string_from_bytes_unchecked(bytes);
 }
@@ -145,7 +141,7 @@ function delete(own entries: pmap.PMap[string, string], req: Request): pmap.PMap
 }
 
 function incr(own entries: pmap.PMap[string, string], req: Request): pmap.PMap[string, string] {
-  let next: string = incremented(entries.get_or(req.key, ""), read_i64(req.value, 0));
+  let next = incremented(entries.get_or(req.key, ""), read_i64(req.value, 0));
   return entries.insert(req.key, next);
 }
 
@@ -164,15 +160,15 @@ function update(own entries: pmap.PMap[string, string], req: Request): pmap.PMap
 
 function counted(own c: Counters, status: i32): Counters {
   if (status == st_ok()) {
-    return Counters { ...c, m_ok: c.m_ok + 1 as i64 };
+    return Counters { ...c, m_ok: c.m_ok + 1i64 };
   }
   if (status == st_full()) {
-    return Counters { ...c, m_full: c.m_full + 1 as i64 };
+    return Counters { ...c, m_full: c.m_full + 1i64 };
   }
   if (status == st_value()) {
-    return Counters { ...c, m_val: c.m_val + 1 as i64 };
+    return Counters { ...c, m_val: c.m_val + 1i64 };
   }
-  return Counters { ...c, m_miss: c.m_miss + 1 as i64 };
+  return Counters { ...c, m_miss: c.m_miss + 1i64 };
 }
 
 function fold_byte(d: i64, b: i64): i64 {
@@ -180,62 +176,55 @@ function fold_byte(d: i64, b: i64): i64 {
 }
 
 function digest_responses(own c: Counters, rsps: Response[]): Counters {
-  let d: i64 = c.digest;
-  let i: i32 = 0;
-  while (i < rsps.len()) {
-    d = fold_byte(d, rsps[i].status as i64);
-    if (rsps[i].status == st_value()) {
-      let j: i32 = 0;
-      while (j < value_size()) {
-        d = fold_byte(d, rsps[i].value[j] as i64);
-        j = j + 1;
+  let d = c.digest;
+  for rsp in rsps {
+    d = fold_byte(d, rsp.status as i64);
+    if (rsp.status == st_value()) {
+      for j in 0..value_size() {
+        d = fold_byte(d, rsp.value[j] as i64);
       }
     }
-    i = i + 1;
   }
   return Counters { ...c, digest: d };
 }
 
 function process_batch(own entries: pmap.PMap[string, string], own c: Counters, reqs: Request[]): (pmap.PMap[string, string], Counters) {
   let out: Response[] = [];
-  let i: i32 = 0;
-  while (i < reqs.len()) {
-    let req: Request = reqs[i];
-    let status: i32 = classify(entries, req);
+  for req in reqs {
+    let status = classify(entries, req);
     if (status == st_ok() || status == st_value()) {
       entries = update(entries, req);
     }
-    let value: string = "";
+    let value = "";
     if (status == st_value()) {
       value = entries.get_or(req.key, "");
     }
     out = out.append(Response { status: status, value: value });
     c = counted(c, status);
-    i = i + 1;
   }
   return (entries, digest_responses(c, out));
 }
 
 function fresh_counters(): Counters {
-  return Counters { m_ok: 0 as i64, m_miss: 0 as i64, m_full: 0 as i64, m_val: 0 as i64, digest: 0 as i64 };
+  return Counters { m_ok: 0i64, m_miss: 0i64, m_full: 0i64, m_val: 0i64, digest: 0i64 };
 }
 
 function mix64(n: i64): i64 {
-  let x: i64 = n * (2654435761 as i64);
-  x = x ^ x >> 15 as i64;
-  x = x * (2246822519 as i64);
-  x = x ^ x >> 13 as i64;
-  if (x < 0 as i64) {
-    x = 0 - x;
+  let x = n * 2654435761i64;
+  x ^= x >> 15i64;
+  x *= 2246822519i64;
+  x ^= x >> 13i64;
+  if (x < 0i64) {
+    x = -x;
   }
   return x;
 }
 
 function op_for(n: i64, mix: i32): i32 {
-  let bucket: i32 = (n % (100 as i64)) as i32;
-  let gets: i32 = 50;
-  let puts: i32 = 25;
-  let incrs: i32 = 15;
+  let bucket = (n % 100i64) as i32;
+  let gets = 50;
+  let puts = 25;
+  let incrs = 15;
   if (mix == mix_read()) {
     gets = 80;
     puts = 10;
@@ -262,152 +251,122 @@ function key_byte(idx: i64, j: i32): u8 {
   if (j < 8) {
     return byte_of(idx, j);
   }
-  return ((idx * (2654435761 as i64) + j as i64 * (40503 as i64)) / (256 as i64) % (256 as i64)) as u8;
+  return ((idx * 2654435761i64 + j as i64 * 40503i64) / 256i64 % 256i64) as u8;
 }
 
 function value_byte(v: i64, j: i32): u8 {
   if (j < 8) {
     return byte_of(v, j);
   }
-  return ((v + j as i64 * (13 as i64)) % (256 as i64)) as u8;
+  return ((v + j as i64 * 13i64) % 256i64) as u8;
 }
 
 function key_string(idx: i64): string {
-  let bytes: u8[] = __alloc_u8(key_size());
-  let j: i32 = 0;
-  while (j < key_size()) {
+  let bytes = __alloc_u8(key_size());
+  for j in 0..key_size() {
     bytes = bytes.with(j, key_byte(idx, j));
-    j = j + 1;
   }
   return string_from_bytes_unchecked(bytes);
 }
 
 function value_string(v: i64): string {
-  let bytes: u8[] = __alloc_u8(value_size());
-  let j: i32 = 0;
-  while (j < value_size()) {
+  let bytes = __alloc_u8(value_size());
+  for j in 0..value_size() {
     bytes = bytes.with(j, value_byte(v, j));
-    j = j + 1;
   }
   return string_from_bytes_unchecked(bytes);
 }
 
 function gen_batch(seed: i64, universe: i64, mix: i32): Request[] {
   let reqs: Request[] = [];
-  let i: i32 = 0;
-  while (i < batch_size()) {
-    let n: i64 = seed + i as i64;
-    let h: i64 = mix64(n);
+  for i in 0..batch_size() {
+    let n = seed + i as i64;
+    let h = mix64(n);
     reqs = reqs.append(Request {
       op: op_for(n, mix),
       key: key_string(h % universe),
-      value: value_string(h / (7 as i64) % (1000000 as i64)),
+      value: value_string(h / 7i64 % 1000000i64),
     });
-    i = i + 1;
   }
   return reqs;
 }
 
 function gen_prefill(first_key: i64): Request[] {
   let reqs: Request[] = [];
-  let i: i32 = 0;
-  while (i < batch_size()) {
-    let idx: i64 = first_key + i as i64;
-    reqs = reqs.append(Request { op: op_put(), key: key_string(idx), value: value_string(idx * (10 as i64)) });
-    i = i + 1;
+  for i in 0..batch_size() {
+    let idx = first_key + i as i64;
+    reqs = reqs.append(Request { op: op_put(), key: key_string(idx), value: value_string(idx * 10i64) });
   }
   return reqs;
 }
 
 function mix_of(name: string): i32 {
-  if (name == "read") {
-    return mix_read();
-  }
-  if (name == "write") {
-    return mix_write();
-  }
-  return mix_mixed();
+  return match (name) { "read" => mix_read(), "write" => mix_write(), _ => mix_mixed() };
 }
 
 function options(argv: string[]): (string, i32, i32) {
-  let mix_name: string = "mixed";
-  let load_pct: i32 = 50;
-  let rounds: i32 = 10000;
-  if (argv.len() > 1) {
-    mix_name = argv[1];
-  }
+  let mix_name = if (argv.len() > 1) { argv[1] } else { "mixed" };
+  let load_pct = 50;
+  let rounds = 10000;
   if (argv.len() > 2) {
-    match (i32.parse_i32(argv[2])) {
-      Ok(n) => {
-        load_pct = n;
-      },
-      Err(_) => {}
+    if let Ok(n) = i32.parse_i32(argv[2]) {
+      load_pct = n;
     }
   }
   if (argv.len() > 3) {
-    match (i32.parse_i32(argv[3])) {
-      Ok(n) => {
-        rounds = n;
-      },
-      Err(_) => {}
+    if let Ok(n) = i32.parse_i32(argv[3]) {
+      rounds = n;
     }
   }
   return (mix_name, load_pct, rounds);
 }
 
 function main(): i32 {
-  let argv: string[] = args();
+  let argv = args();
   let (mix_name, load_pct, rounds) = options(argv);
-  let shared: boolean = argv.len() > 4 && argv[4] == "shared";
-  let variant: string = "pmap";
-  if (shared) {
-    variant = "pmap-shared";
-  }
-  let mix: i32 = mix_of(mix_name);
-  let universe: i64 = max_entries() as i64 * (load_pct as i64) / (100 as i64);
+  let shared = argv.len() > 4 && argv[4] == "shared";
+  let variant = if (shared) { "pmap-shared" } else { "pmap" };
+  let mix = mix_of(mix_name);
+  let universe = max_entries() as i64 * (load_pct as i64) / 100i64;
 
   let entries: pmap.PMap[string, string] = pmap.new();
-  let c: Counters = fresh_counters();
-  let prefilled: i64 = 0 as i64;
-  while (prefilled + batch_size() as i64 <= universe / (2 as i64)) {
+  let c = fresh_counters();
+  let prefilled = 0i64;
+  while (prefilled + batch_size() as i64 <= universe / 2i64) {
     let (e2, c2) = process_batch(entries, c, gen_prefill(prefilled));
     entries = e2;
     c = c2;
-    prefilled = prefilled + batch_size() as i64;
+    prefilled += batch_size() as i64;
   }
   c = fresh_counters();
   let samples: i64[] = [];
-  let p: i32 = 0;
-  while (p < rounds) {
-    samples = samples.append(0 as i64);
-    p = p + 1;
+  for _ in 0..rounds {
+    samples = samples.append(0i64);
   }
-  let snapshot_entries: i64 = 0 as i64;
-  let at_allocs: i64 = bench.alloc_count();
-  let at_fresh: i64 = bench.bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let r: i32 = 0;
-  while (r < rounds) {
-    let t0: i64 = monotonic_ns();
+  let snapshot_entries = 0i64;
+  let at_allocs = bench.alloc_count();
+  let at_fresh = bench.bump_bytes();
+  let started_ns = monotonic_ns();
+  for r in 0..rounds {
+    let t0 = monotonic_ns();
     if (shared) {
-      let snapshot: pmap.PMap[string, string] = entries;
-      let (e2, c2) = process_batch(entries, c, gen_batch(r as i64 * (97 as i64) + 1 as i64, universe, mix));
+      let snapshot = entries;
+      let (e2, c2) = process_batch(entries, c, gen_batch(r as i64 * 97i64 + 1i64, universe, mix));
       entries = e2;
       c = c2;
-      snapshot_entries = snapshot_entries + snapshot.len() as i64;
+      snapshot_entries += snapshot.len() as i64;
     } else {
-      let (e2, c2) = process_batch(entries, c, gen_batch(r as i64 * (97 as i64) + 1 as i64, universe, mix));
+      let (e2, c2) = process_batch(entries, c, gen_batch(r as i64 * 97i64 + 1i64, universe, mix));
       entries = e2;
       c = c2;
     }
     samples = samples.with(r, monotonic_ns() - t0);
-    r = r + 1;
   }
-  let elapsed_ns: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = bench.allocs_after(at_allocs);
-  let fresh: i64 = bench.fresh_bytes_after(at_fresh);
-  let requests: i64 = rounds as i64 * (batch_size() as i64);
-  let rep: bench.Report = bench.Report {
+  let elapsed_ns = monotonic_ns() - started_ns;
+  let allocs = bench.allocs_after(at_allocs);
+  let fresh = bench.fresh_bytes_after(at_fresh);
+  let requests = rounds as i64 * (batch_size() as i64);
+  let rep = bench.Report {
     name: variant,
     iterations: rounds,
     wall_ns: elapsed_ns,
@@ -415,28 +374,14 @@ function main(): i32 {
     allocs: allocs,
     fresh_bytes: fresh,
   };
-  print("{\"variant\":\"" + variant + "\""
-    + ",\"mix\":\"" + mix_name + "\""
-    + ",\"load_pct\":" + load_pct.to_string()
-    + ",\"requests\":" + requests.to_string()
-    + ",\"requests_per_round\":" + batch_size().to_string()
-    + ",\"live_entries\":" + entries.len().to_string()
-    + ",\"ok\":" + c.m_ok.to_string()
-    + ",\"missing\":" + c.m_miss.to_string()
-    + ",\"table_full\":" + c.m_full.to_string()
-    + ",\"values\":" + c.m_val.to_string()
-    + ",\"digest\":" + c.digest.to_string()
-    + ",\"snapshot_entries\":" + snapshot_entries.to_string()
-    + ",\"steady_allocs\":" + allocs.to_string()
-    + ",\"steady_fresh_bytes\":" + fresh.to_string()
-    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
-    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
-    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
-    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-    + ",\"round_max_ns\":" + rep.max_ns().to_string()
-    + "}");
+  print(f"{{\"variant\":\"{variant}\",\"mix\":\"{mix_name}\",\"load_pct\":{load_pct}"
+    + f",\"requests\":{requests},\"requests_per_round\":{batch_size()},\"live_entries\":{entries.len()}"
+    + f",\"ok\":{c.m_ok},\"missing\":{c.m_miss},\"table_full\":{c.m_full},\"values\":{c.m_val}"
+    + f",\"digest\":{c.digest},\"snapshot_entries\":{snapshot_entries},\"steady_allocs\":{allocs}"
+    + f",\"steady_fresh_bytes\":{fresh},\"allocs_per_request_milli\":{allocs * 1000i64 / requests}"
+    + f",\"ns_per_request\":{elapsed_ns / requests}"
+    + f",\"requests_per_sec\":{requests * 1000000000i64 / elapsed_ns},\"round_p50_ns\":{rep.p50_ns()}"
+    + f",\"round_p95_ns\":{rep.p95_ns()},\"round_p99_ns\":{rep.p99_ns()}"
+    + f",\"round_p999_ns\":{rep.p999_ns()},\"round_max_ns\":{rep.max_ns()}}}");
   return 0;
 }

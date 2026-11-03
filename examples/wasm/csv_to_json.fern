@@ -1,43 +1,33 @@
 import "std/io";
 import "std/json";
 import "std/string";
+import "std/i32";
+import "std/array";
 
 function row_to_object(headers: string[], row: string[]): json.JsonValue {
-  let m: json.JsonObject = json.object();
-  let i: i32 = 0;
-  while (i < headers.len() && i < row.len()) {
+  let m = json.object();
+  for i in 0..headers.len().min(row.len()) {
     m = m.insert(headers[i].trim().to_owned(), JString(row[i].trim().to_owned()));
-    i = i + 1;
   }
   return JObject(m);
 }
 
 function main(): i32 {
-  let text: string = "";
-  match (io.read_all_stdin()) {
-    Ok(t) => {
-      text = t;
-    },
-    Err(_) => {
-      eprint("csv_to_json: cannot read stdin");
-      return 1;
-    }
-  }
-  let raw: str = text.trim();
-  let lines: string[] = raw.split("\n");
+  let Ok(text) = io.read_all_stdin() else {
+    eprint("csv_to_json: cannot read stdin");
+    return 1;
+  };
+  let lines = text.trim().split("\n");
   if (lines.len() == 0 || lines[0].is_empty()) {
     print("[]");
     return 0;
   }
-  let headers: string[] = lines[0].split(",");
+  let headers = lines[0].split(",");
   let rows: json.JsonValue[] = [];
-  let i: i32 = 1;
-  while (i < lines.len()) {
-    if (!lines[i].is_empty()) {
-      let fields: string[] = lines[i].split(",");
-      rows = rows.append(row_to_object(headers, fields));
+  for line in array.drop(lines, 1) {
+    if (!line.is_empty()) {
+      rows = rows.append(row_to_object(headers, line.split(",")));
     }
-    i = i + 1;
   }
   print(json.encode(JArray(rows)));
   return 0;

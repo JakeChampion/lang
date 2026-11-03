@@ -33,9 +33,9 @@ function main(): i32 {
   let value = parser.e_number("7", "", false);
   let valid = parser.s_assign("x", value);
   let ret = parser.s_return(value);
-  let expr = ast.StmtExpr { value: value, line: 0 };
-  let wrong_name = ast.StmtExpr { value: parser.e_call(parser.e_ident("call"), [value, value]), line: 0 };
-  let wrong_arity = ast.StmtExpr { value: parser.e_call(parser.e_ident("__set_field"), [value]), line: 0 };
+  let expr = ast.StmtExpr { value: value, op: "", line: 0 };
+  let wrong_name = ast.StmtExpr { value: parser.e_call(parser.e_ident("call"), [value, value]), op: "", line: 0 };
+  let wrong_arity = ast.StmtExpr { value: parser.e_call(parser.e_ident("__set_field"), [value]), op: "", line: 0 };
   if (!unchanged([])) { return 1; }
   if (!unchanged([ret])) { return 2; }
   if (!unchanged([expr])) { return 3; }

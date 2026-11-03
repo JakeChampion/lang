@@ -22,24 +22,24 @@ pub function utf8_length(env: usize, thiz: usize, s: usize): i32 {
 
 @jni("dev.fern.demo.Native", "boolean isString(Object)")
 pub function is_string(env: usize, thiz: usize, obj: usize): u8 {
-  let strCls: usize = jni.find_class(env, "java/lang/String");
+  let strCls = jni.find_class(env, "java/lang/String");
   return jni.is_instance_of(env, obj, strCls) as u8;
 }
 
 @jni("dev.fern.demo.Native", "int objectHashCode(Object)")
 pub function object_hash_code(env: usize, thiz: usize, obj: usize): i32 {
-  let mid: usize = jni.get_method_id(env, jni.get_object_class(env, obj), "hashCode", "()I");
-  let args: usize = jni.jvalues([]);
-  let h: i32 = jni.call_int_method_a(env, obj, mid, args);
+  let mid = jni.get_method_id(env, jni.get_object_class(env, obj), "hashCode", "()I");
+  let args = jni.jvalues([]);
+  let h = jni.call_int_method_a(env, obj, mid, args);
   jni.free_buffer(args);
   return h;
 }
 
 @jni("dev.fern.demo.Native", "int charCodeAt(String, int)")
 pub function char_code_at(env: usize, thiz: usize, s: usize, i: i32): i32 {
-  let mid: usize = jni.get_method_id(env, jni.get_object_class(env, s), "charAt", "(I)C");
-  let args: usize = jni.jvalues([i as usize]);
-  let c: i32 = jni.call_int_method_a(env, s, mid, args);
+  let mid = jni.get_method_id(env, jni.get_object_class(env, s), "charAt", "(I)C");
+  let args = jni.jvalues([i as usize]);
+  let c = jni.call_int_method_a(env, s, mid, args);
   jni.free_buffer(args);
   return c;
 }

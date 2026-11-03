@@ -11,8 +11,8 @@ pub function routes[P: platform.Platform](): router.Router[P] {
 
 function user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
   use logged <- accesslog.logged(req, plat);
-  let id: string = params.param("id")?;
-  let resp: HttpResponse = plat.http(fetch.get("http://directory.internal/users/" + id))?;
+  let id = params.param("id")?;
+  let resp = plat.http(fetch.get("http://directory.internal/users/" + id))?;
   return Ok(http.json_status(resp.status, resp.body_text_lossy()));
 }
 

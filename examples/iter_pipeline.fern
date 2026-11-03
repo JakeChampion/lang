@@ -2,7 +2,7 @@ import "core/iter" as iter;
 import "core/cmp" as cmp;
 
 function main(): i32 {
-  let xs: i32[] = [5, 2, 8, 1, 4, 7, 6];
+  let xs = [5, 2, 8, 1, 4, 7, 6];
 
   let evens = iter.of(xs).filter((x: i32): boolean => x % 2 == 0).collect();
 
