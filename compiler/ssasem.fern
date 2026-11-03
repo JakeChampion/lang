@@ -2793,11 +2793,15 @@ pub function lends_handle(from: typeinfo.Type, to: typeinfo.Type): boolean {
   return false;
 }
 
+function casts_descriptor(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  return semtypes.is_fd_handle(from) && is_i32(to) || semtypes.socket_descriptor_transition(from, to);
+}
+
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
   if (reinterprets(from, to)) {
     return true;
   }
-  if (semtypes.is_fd_handle(from) && is_i32(to)) {
+  if (casts_descriptor(from, to)) {
     return true;
   }
   if (lends_handle(from, to)) {
@@ -2828,7 +2832,7 @@ function cast_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.args.len() != 1) {
     return "cast arity";
   }
-  if (!converts_as_integer(result) && !is_float(result) && !reference(result) && !semtypes.is_resource_handle(result)) {
+  if (!converts_as_integer(result) && !is_float(result) && !reference(result) && !semtypes.is_resource_handle(result) && !semtypes.is_socket(result)) {
     return "cast result type";
   }
   if (!cast_admits(f.values[ins.args[0]], result)) {
