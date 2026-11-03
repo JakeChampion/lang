@@ -1,0 +1,279 @@
+import "std/test";
+import "./protocol";
+import "./session";
+
+// Two engines joined by a simulated link: each message arrives `delay`
+// milliseconds after it is sent, in order. The capture flags follow the
+// Capture actions, as the audio pipeline would.
+struct Flight { at: i64, to_b: boolean, m: protocol.Message }
+
+struct Sim { a: session.Session, b: session.Session, cap_a: boolean, cap_b: boolean, wire: Flight[], head: i32, now: i64, delay: i64, notices: string[], both: i32, mismatch: i32 }
+
+function sim(delay: i32): Sim {
+  let s: Sim = Sim { a: session.new(), b: session.new(), cap_a: false, cap_b: false, wire: [], head: 0, now: 0 as i64, delay: delay as i64, notices: [], both: 0, mismatch: 0 };
+  s = event(s, true, session.Start(session.Offline));
+  s = event(s, false, session.Start(session.Offline));
+  s = event(s, true, session.PeerFound);
+  s = event(s, false, session.PeerFound);
+  s = event(s, true, session.TransportUp(true, 1, 2, 77 as i64));
+  s = event(s, false, session.TransportUp(false, 2, 1, 77 as i64));
+  s = event(s, true, session.Authenticated);
+  return event(s, false, session.Authenticated);
+}
+
+// Applies one event to side A (`to_a`) or B, then the resulting actions.
+function event(s: Sim, to_a: boolean, e: session.Event): Sim {
+  let acts: session.Action[] = [];
+  if (to_a) {
+    let (next, out) = session.step(s.a, e, s.now);
+    s = Sim { ...s, a: next };
+    acts = out;
+  } else {
+    let (next, out) = session.step(s.b, e, s.now);
+    s = Sim { ...s, b: next };
+    acts = out;
+  }
+  for act in acts {
+    match (act) {
+      session.Send(m) => {
+        s = Sim { ...s, wire: s.wire.append(Flight { at: s.now + s.delay, to_b: to_a, m: m }) };
+      },
+      session.Capture(on) => {
+        if (to_a) {
+          s = Sim { ...s, cap_a: on };
+        } else {
+          s = Sim { ...s, cap_b: on };
+        }
+      },
+      session.Notice(text) => {
+        s = Sim { ...s, notices: s.notices.append(text) };
+      }
+    }
+  }
+  return check(s);
+}
+
+// Counts the moments with two transmitters, and with a capture flag that does
+// not match the transmitting state.
+function check(s: Sim): Sim {
+  if (session.transmitting(s.a) && session.transmitting(s.b)) {
+    s = Sim { ...s, both: s.both + 1 };
+  }
+  if (s.cap_a != session.transmitting(s.a) || s.cap_b != session.transmitting(s.b)) {
+    s = Sim { ...s, mismatch: s.mismatch + 1 };
+  }
+  return s;
+}
+
+// Moves time forward by `ms`, delivers what arrives on the way, and ticks
+// both engines every 100 ms.
+function run(s: Sim, ms: i32): Sim {
+  let end: i64 = s.now + ms as i64;
+  while (s.now < end) {
+    s = Sim { ...s, now: s.now + 10 as i64 };
+    s = deliver(s);
+    if (s.now % (100 as i64) == 0 as i64) {
+      s = event(event(s, true, session.Tick), false, session.Tick);
+    }
+  }
+  return s;
+}
+
+function deliver(s: Sim): Sim {
+  while (s.head < s.wire.len() && s.wire[s.head].at <= s.now) {
+    let f: Flight = s.wire[s.head];
+    s = Sim { ...s, head: s.head + 1 };
+    s = event(s, !f.to_b, session.Received(f.m));
+  }
+  return s;
+}
+
+function state_of(x: session.Session): string {
+  return session.state_name(x.state);
+}
+
+function test_codec_round_trip(): test.TestOutcome {
+  let ms: protocol.Message[] = [protocol.Hello(1, 1234567890123 as i64, 1, 5), protocol.PttRequest(9 as i64, 2, 3, 4000 as i64), protocol.PttGrant(3, 2, 3000), protocol.PttDeny(4, 1), protocol.PttRelease(3), protocol.Heartbeat(9 as i64, 12), protocol.Bye(1), protocol.Error(4)];
+  let ok: i32 = 0;
+  for m in ms {
+    let b: u8[] = protocol.encode(m);
+    match (protocol.decode(b)) {
+      Some(back) => {
+        if (protocol.encode(back) == b) {
+          ok = ok + 1;
+        }
+      },
+      None => {}
+    }
+  }
+  return test.assert_eq(ok, ms.len());
+}
+
+function test_codec_rejects_bad_bytes(): test.TestOutcome {
+  let short: u8[] = protocol.encode(protocol.PttGrant(3, 2, 3000));
+  let cut: u8[] = [];
+  for k in 0..short.len() - 1 {
+    cut = cut.append(short[k]);
+  }
+  let long: u8[] = short.append(0 as u8);
+  let unknown: u8[] = [99 as u8];
+  let bad: i32 = 0;
+  for b in [cut, long, unknown, []] {
+    match (protocol.decode(b)) {
+      Some(_) => {},
+      None => {
+        bad = bad + 1;
+      }
+    }
+  }
+  return test.assert_eq(bad, 4);
+}
+
+function test_connects_and_listens(): test.TestOutcome {
+  let s: Sim = run(sim(20), 100);
+  return test.assert_eq(state_of(s.a) + " " + state_of(s.b), "CONNECTED_LISTENING CONNECTED_LISTENING");
+}
+
+function test_peer_talks_after_grant(): test.TestOutcome {
+  let s: Sim = event(run(sim(20), 100), false, session.PttDown);
+  let requesting: string = state_of(s.b);
+  s = run(s, 100);
+  return test.assert_eq(requesting + " " + state_of(s.b) + " " + s.cap_b.to_string() + " " + s.a.receiving.to_string(), "REQUESTING_FLOOR TRANSMITTING true true");
+}
+
+function test_release_stops_capture_at_once(): test.TestOutcome {
+  let s: Sim = event(run(event(run(sim(20), 100), false, session.PttDown), 100), false, session.PttUp);
+  let at_once: string = state_of(s.b) + " " + s.cap_b.to_string();
+  s = run(s, 100);
+  return test.assert_eq(at_once + " " + s.a.receiving.to_string(), "CONNECTED_LISTENING false false");
+}
+
+function test_controller_talks_at_once(): test.TestOutcome {
+  let s: Sim = event(run(sim(20), 100), true, session.PttDown);
+  let at_once: string = state_of(s.a) + " " + s.cap_a.to_string();
+  s = run(s, 100);
+  return test.assert_eq(at_once + " " + s.b.receiving.to_string(), "TRANSMITTING true true");
+}
+
+function test_busy_floor_is_denied(): test.TestOutcome {
+  let s: Sim = run(event(run(sim(20), 100), true, session.PttDown), 100);
+  s = run(event(s, false, session.PttDown), 100);
+  return test.assert_eq(state_of(s.a) + " " + state_of(s.b) + " " + s.cap_b.to_string(), "TRANSMITTING CONNECTED_LISTENING false");
+}
+
+function test_simultaneous_presses_give_one_speaker(): test.TestOutcome {
+  let s: Sim = run(sim(40), 100);
+  s = event(event(s, true, session.PttDown), false, session.PttDown);
+  s = run(s, 300);
+  return test.assert_eq(state_of(s.a) + " " + state_of(s.b) + " " + s.both.to_string(), "TRANSMITTING CONNECTED_LISTENING 0");
+}
+
+function test_held_button_keeps_the_floor(): test.TestOutcome {
+  let s: Sim = run(event(run(sim(20), 100), false, session.PttDown), 10000);
+  return test.assert_eq(state_of(s.b) + " " + s.cap_b.to_string(), "TRANSMITTING true");
+}
+
+function test_lost_speaker_loses_the_floor(): test.TestOutcome {
+  let s: Sim = run(event(run(sim(20), 100), false, session.PttDown), 200);
+  let (dead, _) = session.step(s.b, session.TransportLost, s.now);
+  s = Sim { ...s, b: dead, cap_b: false };
+  // B is gone: nothing more arrives from it, and A frees the floor when the
+  // lease ends.
+  let until: i64 = s.now + (session.LEASE_MS + 200) as i64;
+  while (s.now < until) {
+    s = Sim { ...s, now: s.now + 100 as i64, head: s.wire.len() };
+    s = event(s, true, session.Tick);
+  }
+  return test.assert_eq(s.a.owner.to_string() + " " + s.a.receiving.to_string(), "0 false");
+}
+
+function test_silent_peer_is_lost(): test.TestOutcome {
+  let s: Sim = run(sim(20), 100);
+  let a: session.Session = s.a;
+  let now: i64 = s.now;
+  let acts: session.Action[] = [];
+  while (now < s.now + (session.PEER_TIMEOUT_MS + 200) as i64) {
+    now = now + 100 as i64;
+    let (next, out) = session.step(a, session.Tick, now);
+    a = next;
+    acts = out;
+  }
+  return test.assert_eq(state_of(a), "RECONNECTING");
+}
+
+function test_transmitter_stops_when_link_drops(): test.TestOutcome {
+  let s: Sim = run(event(run(sim(20), 100), true, session.PttDown), 100);
+  s = event(s, true, session.TransportLost);
+  return test.assert_eq(state_of(s.a) + " " + s.cap_a.to_string(), "RECONNECTING false");
+}
+
+function test_mic_loss_releases_the_floor(): test.TestOutcome {
+  let s: Sim = run(event(run(sim(20), 100), false, session.PttDown), 100);
+  s = run(event(s, false, session.MicLost), 100);
+  return test.assert_eq(state_of(s.b) + " " + s.cap_b.to_string() + " " + s.a.owner.to_string(), "CONNECTED_LISTENING false 0");
+}
+
+function test_version_mismatch_fails(): test.TestOutcome {
+  let s: Sim = run(sim(20), 100);
+  let (a, _) = session.step(s.a, session.Received(protocol.Hello(9, 77 as i64, 1, 0)), s.now);
+  return test.assert_eq(state_of(a), "ERROR");
+}
+
+function test_leave_says_bye(): test.TestOutcome {
+  let s: Sim = run(event(run(sim(20), 100), false, session.Leave), 100);
+  return test.assert_eq(state_of(s.b) + " " + state_of(s.a), "IDLE RECONNECTING");
+}
+
+// A long run of random presses and releases on both sides, with a random
+// link delay: never two transmitters, and the capture always matches.
+function test_random_presses_never_overlap(): test.TestOutcome {
+  let seed: i64 = 12345 as i64;
+  let total_both: i32 = 0;
+  let total_mismatch: i32 = 0;
+  let talks: i32 = 0;
+  for round in 0..20 {
+    seed = (seed * (1103515245 as i64) + 12345 as i64) % (2147483648 as i64);
+    let s: Sim = run(sim((seed % (120 as i64)) as i32 + 1), 100);
+    for k in 0..200 {
+      seed = (seed * (1103515245 as i64) + 12345 as i64) % (2147483648 as i64);
+      let r: i64 = seed % (8 as i64);
+      if (r == 0 as i64) {
+        s = event(s, true, session.PttDown);
+      } else if (r == 1 as i64) {
+        s = event(s, false, session.PttDown);
+      } else if (r == 2 as i64) {
+        s = event(s, true, session.PttUp);
+      } else if (r == 3 as i64) {
+        s = event(s, false, session.PttUp);
+      }
+      s = run(s, (seed / (8 as i64) % (300 as i64)) as i32 + 10);
+      if (session.transmitting(s.a) || session.transmitting(s.b)) {
+        talks = talks + 1;
+      }
+    }
+    total_both = total_both + s.both;
+    total_mismatch = total_mismatch + s.mismatch;
+  }
+  return test.assert_eq(total_both.to_string() + " " + total_mismatch.to_string() + " " + (talks > 100).to_string(), "0 0 true");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("walkie session engine");
+  r = r.it("the codec round-trips each message", test_codec_round_trip);
+  r = r.it("the codec rejects cut, long and unknown bytes", test_codec_rejects_bad_bytes);
+  r = r.it("two engines connect and listen", test_connects_and_listens);
+  r = r.it("the peer talks after the grant", test_peer_talks_after_grant);
+  r = r.it("a release stops the capture at once", test_release_stops_capture_at_once);
+  r = r.it("the controller talks at once", test_controller_talks_at_once);
+  r = r.it("a busy floor is denied", test_busy_floor_is_denied);
+  r = r.it("simultaneous presses give one speaker", test_simultaneous_presses_give_one_speaker);
+  r = r.it("a held button keeps the floor", test_held_button_keeps_the_floor);
+  r = r.it("a lost speaker loses the floor at the lease end", test_lost_speaker_loses_the_floor);
+  r = r.it("a silent peer is lost", test_silent_peer_is_lost);
+  r = r.it("a transmitter stops when the link drops", test_transmitter_stops_when_link_drops);
+  r = r.it("a microphone loss releases the floor", test_mic_loss_releases_the_floor);
+  r = r.it("a version mismatch fails the session", test_version_mismatch_fails);
+  r = r.it("leave says bye", test_leave_says_bye);
+  r = r.it("random presses never overlap", test_random_presses_never_overlap);
+  return r.finish();
+}
