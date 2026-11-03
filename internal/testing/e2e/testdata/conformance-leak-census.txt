@@ -108,6 +108,7 @@ array_sort                                           0
 array_tuple_cmp_traits                               0
 array_tuple_trait_impls                              0
 array_views_see_builtin_writes                       0
+array_with_narrow_index                              0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
 arrpush                                              0
@@ -308,6 +309,7 @@ float_to_int_saturating                              0
 float_to_string_parity                               0
 float_width_conversion                               0
 for_in_squares                                       0
+for_loop_continue_steps                              0
 for_over_collections                                 0
 for_over_iterator                                    0
 for_over_range_value                                 0
