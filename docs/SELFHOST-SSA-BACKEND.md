@@ -79,7 +79,10 @@ lowered function it:
    loads, stores, calls or divides, and the join holds at most two phis; a
    float the arms choose between stays a phi in its float register, and a
    branch whose condition a call or an inline rc primitive computes, or
-   negates, stays a branch, since computing it already branches. What
+   negates, stays a branch, since computing it already branches. Only the
+   branching block then enters the join, so the join folds into that block,
+   and two such branches in a row become one block. A join that jumps back to
+   the branching block stays a block of its own. What
    moves holds no reference-count operation, so the certifier's proof of the
    branching form holds of this one. A branch the data decides at random
    mispredicts half the time and a conditional move never does: a min over

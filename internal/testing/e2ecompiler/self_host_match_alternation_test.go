@@ -81,3 +81,58 @@ func TestSelfHostLiteralAlternationSharesBody(t *testing.T) {
 		})
 	}
 }
+
+const selectLetForm = `@noinline function picked(c: boolean, a: i32, b: i32): i32 {
+  let base = if (c) { 7 } else { 3 };
+  let ptr = if (c) { a } else { b };
+  return base * 100 + ptr;
+}
+`
+
+const selectAssignForm = `@noinline function picked(c: boolean, a: i32, b: i32): i32 {
+  let base = 3;
+  let ptr = b;
+  if (c) {
+    base = 7;
+    ptr = a;
+  }
+  return base * 100 + ptr;
+}
+`
+
+const selectMain = `
+function main(): i32 {
+  print(picked(true, 5, 6) + picked(false, 5, 6));
+  return 0;
+}
+`
+
+// TestSelfHostSelectJoinsFoldIntoHead pins #14074: two `let` bindings from
+// `if` expressions on one condition become selects in one block, as the
+// assignment form does. A block boundary between them made the register
+// allocator load values again.
+func TestSelfHostSelectJoinsFoldIntoHead(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	label := regexp.MustCompile(`(?m)^\.Lssa_picked_\d+:$`)
+	for name, form := range map[string]string{"let": selectLetForm, "assign": selectAssignForm} {
+		src := filepath.Join(t.TempDir(), "main.fern")
+		if err := os.WriteFile(src, []byte(form+selectMain), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		asm, err := os.ReadFile(cli.emit(t, src, "x86-64-linux"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := asmFunction(string(asm), "__fn_picked:")
+		if body == "" {
+			t.Fatalf("%s form: no __fn_picked in the emitted assembly", name)
+		}
+		if n := len(label.FindAllString(body, -1)); n != 1 {
+			t.Errorf("%s form: picked has %d blocks, want 1:\n%s", name, n, body)
+		}
+		out, err := runX86_64Bin(cli.runner, cli.x86Binary(t, src)).CombinedOutput()
+		if err != nil || string(out) != "1011\n" {
+			t.Errorf("%s form: run: %v: got %q, want %q", name, err, out, "1011\n")
+		}
+	}
+}
