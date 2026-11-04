@@ -190,6 +190,11 @@ function move_ops(): string[] {
   return ["scale_f64_in_place"];
 }
 
+// The operand is given up and the result is its address, a plain word.
+function handing_ops(): string[] {
+  return ["send_root"];
+}
+
 function sealing_ops(): string[] {
   return ["aes_gcm_seal_into", "aes_gcm_open_into"];
 }
@@ -200,6 +205,7 @@ pub function op_table(): OpTable {
   let rows: Rows = Rows { names: [], sigs: [] };
   rows = add(rows, fresh_ops(), inert(result_fresh()));
   rows = add(rows, move_ops(), sig(0, effect_move(), result_fresh()));
+  rows = add(rows, handing_ops(), sig(0, effect_move(), result_none()));
   rows = add(rows, sealing_ops(), sig(4, effect_move(), result_fresh()));
   rows = add(rows, ["ret_word"], inert(result_none()));
   rows = add(rows, ["call_word"], inert(result_unknown()));

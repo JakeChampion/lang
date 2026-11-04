@@ -10492,7 +10492,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 112 || o.kind_tag == 495) {
+  if (o.kind_tag == 112 || o.kind_tag == 495 || o.kind_tag == 497) {
     return s;
   }
 

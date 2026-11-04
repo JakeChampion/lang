@@ -336,6 +336,12 @@ which task `i` is cancelled: a scripted disconnect. `Sim.advance_to(at)`
 inside a task parks until `at`. Code in a task that calls `async.wait`
 parks on `run_tasks` the same way.
 
+`sim.Sim` is also a `worker.Scheduler`. A worker spawned with
+`worker.spawn_on(d, body)` runs as a task on the virtual clock. At each
+spawn the seed says whether a parked worker runs before the spawner goes
+on. A join resumes the parked workers in deadline order until the joined
+one is done (`docs/WORKERS.md`, step 3).
+
 ### Scripted upstreams: `std/sim_fetch`
 
 `sim_fetch.Net` is a `fetch.Transport` on the sim clock: names,
