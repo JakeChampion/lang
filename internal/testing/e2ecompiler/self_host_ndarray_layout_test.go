@@ -91,26 +91,19 @@ function main(): i32 {
   // Its only visible caller is packed. An external caller is unrestricted.
   if (!check(exported_scale(a), xs, false)) { return 13; }
   if (!check(mixed_recursive_scale(xs), xs, true)) { return 14; }
-  // The no-base arm is not executed. semreach proves that no_base never
-  // returns and prunes the arm, so maybe_cycle returns the packed grid. With
-  // semreach off, the layout analysis sees the cycle: it must terminate and
-  // cannot treat the unseen return as a packed-layout proof.
+  // The no-base arm is not executed. Analyzing it must still terminate.
   if (!check(unseeded_scale(xs, args().len()), xs, false)) { return 15; }
   return 0;
 }
 `
 
+type layoutCase struct {
+	name   string
+	kernel bool
+}
+
 func TestSelfHostNdarrayLayoutPropagation(t *testing.T) {
-	gcc, runner, driver := buildModloadDriverX86(t)
-	asm, dir := compileSourceModload(t, runner, driver, ndarrayLayoutSrc)
-	bin := buildBin(t, gcc, dir, "ndarray-layout", asm)
-	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
-		t.Fatalf("ndarray layout: %v\n%s", err, out)
-	}
-	for _, tc := range []struct {
-		name   string
-		kernel bool
-	}{
+	checkLayoutKernels(t, []layoutCase{
 		{"helper_scale", true},
 		{"parameter_scale", true},
 		{"recursive_scale", true},
@@ -121,28 +114,35 @@ func TestSelfHostNdarrayLayoutPropagation(t *testing.T) {
 		{"indirect_scale", false},
 		{"exported_scale", false},
 		{"mixed_recursive_scale", false},
+		// semreach proves that no_base cannot return, so maybe_cycle returns a packed array.
 		{"unseeded_scale", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			checkNdarrayKernel(t, string(asm), tc.name, tc.kernel)
-		})
-	}
-	// Without semreach the no-base arm stays, and the layout analysis meets a
-	// cycle whose return it has not seen.
-	t.Run("unseeded_scale/no-semreach", func(t *testing.T) {
-		t.Setenv("FERN_NO_SEM_REACH", "1")
-		asm, _ := compileSourceModload(t, runner, driver, ndarrayLayoutSrc)
-		checkNdarrayKernel(t, string(asm), "unseeded_scale", false)
 	})
 }
 
-func checkNdarrayKernel(t *testing.T, asm, name string, kernel bool) {
+// Without semreach the layout pass sees the no-base cycle itself. Its
+// unseen return must become unknown, not a packed-layout proof.
+func TestSelfHostNdarrayLayoutUnseenReturn(t *testing.T) {
+	t.Setenv("FERN_NO_SEM_REACH", "1")
+	checkLayoutKernels(t, []layoutCase{{"helper_scale", true}, {"unseeded_scale", false}})
+}
+
+func checkLayoutKernels(t *testing.T, cases []layoutCase) {
 	t.Helper()
-	body := emittedBody(t, asm, "__fn_"+name)
-	mapped := reachesCall(body, "__fn___smm_ndarray__NdArray_map__")
-	vector := strings.Contains(body, "vbroadcastsd")
-	if mapped == kernel || vector != kernel {
-		t.Fatalf("kernel=%t, map call=%t, vector splat=%t\n%s", kernel, mapped, vector, body)
+	gcc, runner, driver := buildModloadDriverX86(t)
+	asm, dir := compileSourceModload(t, runner, driver, ndarrayLayoutSrc)
+	bin := buildBin(t, gcc, dir, "ndarray-layout", asm)
+	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
+		t.Fatalf("ndarray layout: %v\n%s", err, out)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := emittedBody(t, string(asm), "__fn_"+tc.name)
+			mapped := reachesCall(body, "__fn___smm_ndarray__NdArray_map__")
+			vector := strings.Contains(body, "vbroadcastsd")
+			if mapped == tc.kernel || vector != tc.kernel {
+				t.Fatalf("kernel=%t, map call=%t, vector splat=%t\n%s", tc.kernel, mapped, vector, body)
+			}
+		})
 	}
 }
 

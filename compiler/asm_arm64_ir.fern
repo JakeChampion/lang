@@ -4088,7 +4088,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.low_word_pair(blk, ii - 1, fr.uses)) {
     return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
-  if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_select_fuse(ssa_fuse_view(fr), blk, ii + 1).fu.n > 0) {
+  if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_feeds_select(fr, blk, ii + 1)) {
     return s;
   }
   return ssa_inst(ins, reg_of, fr, lp, r, s);
@@ -4096,9 +4096,20 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
 
 struct SelectCond { fu: SsaFuse, first: boolean }
 
+// Whether the instruction at ii is a select that takes the flags of the compare
+// before it, so that the compare emits nothing of its own.
+function ssa_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
+  return ssa_is_select(blk, ii) && ssa_select_fuse(ssa_fuse_view(fr), blk, ii).fu.n > 0;
+}
+
+// A select past the first instruction, which the select fusion can read.
+function ssa_is_select(blk: ssa.SBlock, ii: i32): boolean {
+  return ii >= 1 && ii < blk.insts.len() && blk.insts[ii].kind_tag == 36;
+}
+
 function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
   let none: SelectCond = SelectCond { fu: ssa_no_fuse(), first: false };
-  if (ii < 1 || ii >= blk.insts.len() || blk.insts[ii].kind_tag != 36) {
+  if (!ssa_is_select(blk, ii)) {
     return none;
   }
   let c: i32 = blk.insts[ii].args[0];
@@ -4982,6 +4993,9 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // Whether the select at `ii` starts a run that reads the flags of the compare
 // just before it.
 function ssa_select_head(fv: FuseView, blk: ssa.SBlock, ii: i32): boolean {
+  if (!ssa_is_select(blk, ii)) {
+    return false;
+  }
   let sc: SelectCond = ssa_select_fuse(fv, blk, ii);
   return sc.fu.n > 0 && sc.first;
 }
@@ -5669,11 +5683,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 269) {
+    let helper: string = if (o.i32_imm == 1) { "writer_set_times" } else { "set_file_times" };
     s = s.need("heap");
-    s = s.need("set_file_times");
+    s = s.need(helper);
     s = s.write("    ldr x5, [sp], #16\n    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x5, [sp, #-16]!\n    str x4, [sp, #-16]!\n    str x3, [sp, #-16]!\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_set_file_times\n    add sp, sp, #96\n    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_" + helper + "\n    add sp, sp, #96\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 265) {
     s = s.need("umask");
     s = s.write("    bl __fn___fern_umask\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -6069,6 +6084,7 @@ function arm64_zero_words(s: asmcore.EmitState, dst: string, n: i32): asmcore.Em
 // zeroed so no block outside the region is handed out again.
 function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("heap");
+  s = s.need("heap_adopt");
   s = s.write("    ldr x1, [sp], #16\n");
   s = s.write("    ldr x0, [sp], #16\n");
   let move: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -7000,7 +7016,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
   if (s.any_need([
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
-    "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
+    "sleep_ns", "set_file_times", "writer_set_times", "statfs", "poll", "proc_waitpid",
     "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8",
@@ -8013,10 +8029,14 @@ function lc_grow_bytes(s: asmcore.EmitState, old: string, grown: string, t: RegT
 
 // A free counts only inside the census bounds, once heap_adopt has set
 // them: a worker's child frees boxes of the parent's image, and those are
-// the parent's to count. `box` holds the block.
+// the parent's to count. `box` holds the block. A program with no
+// heap_adopt never sets the bounds, so it counts every free.
 function lc_bump_free_add(s: asmcore.EmitState, addend: string, t1: string, t2: string, box: string): asmcore.EmitState {
   if (!s.leak_check) {
     return s;
+  }
+  if (!s.has_need("heap_adopt")) {
+    return lc_bump_free_counted(s, addend, t1, t2);
   }
   let skip: asmcore.LabelOut = asmcore.fresh_label(s);
   let count: asmcore.LabelOut = asmcore.fresh_label(skip.state);
@@ -10918,6 +10938,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("set_file_times")) {
       fs_roots = fs_roots + " " + "__fern_set_file_times";
     }
+    if (s.has_need("writer_set_times")) {
+      fs_roots = fs_roots + " " + "__fern_writer_set_times";
+    }
     if (s.has_need("read_link")) {
       fs_roots = fs_roots + " " + "__fern_read_link";
     }
@@ -12028,7 +12051,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
     "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
-    "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "read_link",
+    "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "writer_set_times", "read_link",
     "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",

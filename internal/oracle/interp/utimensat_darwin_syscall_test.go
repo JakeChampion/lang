@@ -4,6 +4,7 @@ package interp
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -115,6 +116,45 @@ func TestSetFileTimesDarwinSymlink(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSetFileTimesDarwinTrailingSlash(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		for _, nofollow := range []bool{false, true} {
+			t.Run(fmt.Sprintf("directory=%t/nofollow=%t", directory, nofollow), func(t *testing.T) {
+				dir := t.TempDir()
+				target, link := filepath.Join(dir, "target"), filepath.Join(dir, "link")
+				if directory {
+					if err := os.Mkdir(target, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.WriteFile(target, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+				before := darwinFileTimes(t, target)
+				times := [2]syscall.Timespec{{Sec: 1_600_000_000}, {Sec: 1_650_000_000}}
+				err := setFileTimes(link+"/", &times, nofollow)
+				if directory {
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got := darwinFileTimes(t, target); got != times {
+						t.Fatalf("directory times=%+v, want %+v", got, times)
+					}
+				} else {
+					if !errors.Is(err, syscall.ENOTDIR) {
+						t.Fatalf("file slash error=%v, want ENOTDIR", err)
+					}
+					if got := darwinFileTimes(t, target); got != before {
+						t.Fatalf("rejected update changed file times: %+v, before %+v", got, before)
+					}
+				}
+			})
+		}
 	}
 }
 

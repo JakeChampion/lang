@@ -71,14 +71,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The lane's selection measured 41.7 minutes in two workers on the
-          # 4-core dev container on 2026-10-25, after the interpreter re-runs
-          # of the stdtest suites left it (docs/ci-log/2026-10-25-pr-ci-queue.md).
-          # Three shards keep every worker well inside the 25m budget, with
-          # .github/other-test-weights.txt balancing the 64 tests above 10 s.
-          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 0 }
-          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 1 }
-          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 3, shard: 2 }
+          # On 2026-11-04, shard1's workers reached 1500.031s and 1452.298s.
+          # The first worker hit the 25m limit with five tests unfinished.
+          # Four shards divide the same selection without a timeout increase.
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 0 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 1 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 2 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 3 }
     name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     steps:
@@ -106,6 +105,7 @@ jobs:
           go test -c -o "$RUNNER_TEMP/e2e-other.test" ./internal/testing/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
       - name: go test (e2e — non-backend-specific, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
+        id: run
         # SHARDED, RATHER THAN GIVEN A THIRD TIMEOUT. The ceiling here was
         # raised twice — the lane inherited Go's 10m default, then 18m, and
         # each time a ~1% compiler change or a slow runner draw hit the wall
@@ -166,3 +166,15 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$RUNNER_TEMP"/other-test-results/worker-*.jsonl
+      - name: record measured test durations
+        if: ${{ !cancelled() && steps.run.outcome != 'skipped' }}
+        run: |
+          scripts/ci-test-weights extract "$RUNNER_TEMP"/other-test-results/worker-*.jsonl > "$RUNNER_TEMP/other-test-shard${{ matrix.shard }}.timings"
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.run.outcome != 'skipped' }}
+        with:
+          name: other-test-timings-${{ matrix.host }}-shard${{ matrix.shard }}
+          path: ${{ runner.temp }}/other-test-shard${{ matrix.shard }}.timings
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1

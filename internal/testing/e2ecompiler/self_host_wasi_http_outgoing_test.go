@@ -19,7 +19,7 @@ func TestSelfHostWasiHttpOutgoing(t *testing.T) {
 	up := e2eharness.StartFetchUpstream(t)
 	closed := e2eharness.ClosedLoopbackPort(t)
 	dir := t.TempDir()
-	component := compileWasiHttp(t, dir, e2eharness.FetchHostedSource(up.Port, closed), "hosted.wasm")
+	component := compileWasiHttp(t, dir, e2eharness.FetchHostedSource(up.Port, up.Port2, closed), "hosted.wasm")
 	if out, err := exec.Command(wasmtools, "validate", component).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
 	}

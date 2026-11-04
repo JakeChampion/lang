@@ -249,26 +249,16 @@ pub function lanes_width(t: string): i32 {
 }
 
 pub function lane_builtin_width(name: string): i32 {
-  if (lane_head_is(name, "__f64x2_")) {
+  if (name.len() <= 8) {
+    return 0;
+  }
+  if (__mismatch(name, 0, "__f64x2_", 0, 8) == 8) {
     return 64;
   }
-  if (lane_head_is(name, "__f32x4_")) {
+  if (__mismatch(name, 0, "__f32x4_", 0, 8) == 8) {
     return 32;
   }
   return 0;
-}
-
-// Whether `name` starts with `head` and goes on past it, read in place.
-function lane_head_is(name: string, head: string): boolean {
-  if (name.len() <= head.len()) {
-    return false;
-  }
-  for i in 0..head.len() {
-    if (name[i] != head[i]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 pub function lane_builtin_verb(name: string): string {

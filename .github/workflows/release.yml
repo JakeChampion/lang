@@ -223,7 +223,7 @@ jobs:
           mkdir -p dist/apk
           cp build/android-stopwatch/fern-stopwatch.apk dist/apk/
           ./bin/fern -apk dist/apk/fern-native.apk -apk-key "$key" -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
-          ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS examples/android/walkie/app.fern
+          ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION examples/android/walkie/app.fern
 
       # apksigner is the check Android itself applies at install. The
       # certificate digests in the log let a user compare the signer of an

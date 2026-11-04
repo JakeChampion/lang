@@ -438,6 +438,10 @@ pub function get_static_long_field(env: usize, clazz: usize, field: usize): usiz
   return call2(env, 151, clazz, field);
 }
 
+pub function set_static_long_field(env: usize, clazz: usize, field: usize, value: usize): usize {
+  return call3(env, 160, clazz, field, value);
+}
+
 pub function get_static_float_field(env: usize, clazz: usize, field: usize): f32 {
   return call2_f32(env, 152, clazz, field);
 }
@@ -468,6 +472,10 @@ pub function string_array(env: usize, items: string[]): usize {
 
 pub function get_array_length(env: usize, array: usize): i32 {
   return call1(env, 171, array) as i32;
+}
+
+pub function get_object_array_element(env: usize, array: usize, index: i32): usize {
+  return call2(env, 173, array, index as usize);
 }
 
 // A jvalue array of `args`. Free it with free_buffer.

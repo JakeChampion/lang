@@ -31,3 +31,12 @@ func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error 
 	}
 	return nil
 }
+
+func setFdTimes(fd int, times *[2]syscall.Timespec) error {
+	_, _, errno := syscall.Syscall6(syscall.SYS_UTIMENSAT, uintptr(fd), 0,
+		uintptr(unsafe.Pointer(times)), 0, 0, 0)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}

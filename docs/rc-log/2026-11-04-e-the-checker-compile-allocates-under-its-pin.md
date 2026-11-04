@@ -1,47 +1,31 @@
-# 2026-11-04 — the checker compile allocates under its pin
+# 2026-11-04: skip AST map visitors for unrelated nodes
 
-The allocation lane on main (#14175), the `x86_64/checker.allocs` row.
+An AST map visitor returns a boxed triple even when its expression stays
+unchanged. The map now accepts a predicate before the visitor call. Asset
+and target-name passes select calls. Literal-branch pruning selects lambdas.
+Other passes retain a predicate that admits every expression. Recursive
+descent, statement callbacks and accumulator order remain the same.
 
-## The shape
+Main already contains the shared last-use, flat-edge, name and integer
+repairs from #14190. This integration retains those implementations and
+adds the filtered map visits. The generic-function census stays at 16.
 
-The lane compiles `compiler/checker.fern` to assembly with a leak-check
-build of the compiler and counts the allocations. The pin was 36,037,176.
-Main at `49a78a6c` measured 38,923,162. The baseline note blamed two
-checker merges. A compiler from before those merges measured 37.9M on
-the old subject. The growth was spread over many sites, so the sites
-below are the largest, not the newest.
+Two x86-64 leak-check compilers use the same qualified producer. One contains
+main 05a98461. The other contains the integrated source. Both compile the
+candidate's checker and imports, so the subject stays fixed.
 
-## The measurement
+| Subject | Main compiler allocations | Filtered compiler allocations |
+|---|---:|---:|
+| Minimal program | 21,381 | 21,379 |
+| Candidate checker | 36,293,688 | 35,901,919 |
 
-A trace build (`FERN_LEAKCHECK=1 FERN_RC_TRACE=1`) writes one line per
-allocation with its site and caller. `nm -n` maps each site to a
-function. A `-cover` run of the same compile gives the hit count of each
-line. The two together name the site and the line that allocates.
+Every count balances with an equal free count and zero live bytes. Each pair
+emits identical assembly. These are allocation events under QEMU, with no
+native timing claim. The small control passes before the checker campaign.
 
-| repair | allocations after | fewer |
-|---|--:|--:|
-| main at `49a78a6c` | 38,923,162 | |
-| three name tests read bytes in place | 38,415,666 | 507,496 |
-| the last-use questions fold a boolean | 37,748,377 | 667,289 |
-| the reach walk keeps one edge array; a map pass names its node kind | 37,089,966 | 658,411 |
-| the small integers come from a constant table | 35,915,045 | 1,174,921 |
+The allocation limit decreases from the earlier branch value of 35,915,045
+to the measured 35,901,919. It remains below main's 36,037,176 limit.
 
-The x86-64 emitter writes 448,466 integers for the subject. 440,637 of
-them lie between -256 and 256. The emitted assembly of four programs is
-byte for byte the same with the table.
-
-## Traps
-
-- A buffer-built `ssa_mem` string costs the same three allocations as
-  the concatenation it replaced, and leaks without a `buf_free`.
-- A whole-tree map that calls its visitor on every node allocates one
-  boxed triple per node to say that the node stays. A predicate on the
-  node kind is cheaper than a visitor that answers "no change".
-- The feature census pins the count of generic functions at 16. A
-  wrapper per map shape moves the count. The `_where` family keeps it.
-
-## Tests
-
-The fixture corpus on the check, interp, x86-64 and wasm legs, the leak
-census and the rctrace gates. Also the checker codes, the certifier, the
-feature census and the complexity ratchet.
+The separate stdlib scheduling change retains its measured 1 GiB case
+weight. The earlier 246-case run passed on a 4-core, 16 GB host with four
+cases in flight. Its recorded duration is 1,355.790 seconds.

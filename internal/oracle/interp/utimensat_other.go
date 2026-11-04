@@ -15,3 +15,7 @@ func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error 
 	}
 	return syscall.UtimesNano(path, times[:])
 }
+
+func setFdTimes(fd int, times *[2]syscall.Timespec) error {
+	return syscall.EOPNOTSUPP
+}

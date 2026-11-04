@@ -301,7 +301,7 @@ func TestApkJniClasses(t *testing.T) {
 	}
 	classes := readZipEntry(t, zr, "classes.dex")
 	checkDex(t, classes)
-	for _, s := range []string{"Ldev/fern/dextest/Main;", "Landroid/app/NativeActivity;", "Ldev/fern/dextest/Ping;", "Ljava/lang/Runnable;", "loadLibrary", "app"} {
+	for _, s := range []string{"Ldev/fern/dextest/Main;", "Landroid/app/NativeActivity;", "Ldev/fern/dextest/Ping;", "Ljava/lang/Runnable;", "loadLibrary", "app", "fern"} {
 		if !bytes.Contains(classes, []byte(s)) {
 			t.Errorf("classes.dex has no string %q", s)
 		}

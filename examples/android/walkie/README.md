@@ -18,7 +18,7 @@ Build and install the APK:
 
 ```sh
 fern -apk walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" \
-     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS \
+     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS,CHANGE_WIFI_STATE,NEARBY_WIFI_DEVICES,ACCESS_FINE_LOCATION \
      -apk-min-sdk 28 examples/android/walkie/app.fern
 adb install walkie.apk
 ```
@@ -35,6 +35,16 @@ Use it:
 5. Hold the button to talk. The other phone shows LISTENING and plays the
    voice. Only one phone can talk at a time.
 6. When the connection is lost, tap the button to search again.
+
+With no shared Wi-Fi network, the phones connect over Wi-Fi Direct:
+
+1. Open the app on each phone, and allow the nearby devices when the app
+   asks. Before Android 13, the app asks for the location instead.
+2. Each phone lists the other phones that it finds, under the status line.
+   Tap the other phone on one of them.
+3. The other phone asks its user to accept the invitation. Accept it.
+4. The two phones then make a group. They send the beacons on the group
+   too, and the code check and the talk button work as on a Wi-Fi network.
 
 To test discovery and the code check on one phone, build the app a second
 time with another `-apk-package` and `-apk-label`. Install both. The second

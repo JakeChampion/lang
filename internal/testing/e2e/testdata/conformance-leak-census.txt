@@ -41,6 +41,7 @@ a_module_names_variants_its_imports_reach            0
 a_returned_value_match_returns_from_each_arm         0
 a_three_trait_bound_in_an_imported_module            0
 a_two_parameter_enum_takes_generic_instances_as_arguments 0
+a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
 ackermann                                            0
 add_sub_pair                                         0

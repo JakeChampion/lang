@@ -3,6 +3,7 @@
 package interp
 
 import (
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -14,16 +15,38 @@ const (
 )
 
 func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error {
-	p, err := syscall.BytePtrFromString(path)
-	if err != nil {
-		return err
+	return setDarwinTimes(path, 0, times, nofollow, false)
+}
+
+func setFdTimes(fd int, times *[2]syscall.Timespec) error {
+	return setDarwinTimes("", fd, times, false, true)
+}
+
+func setDarwinTimes(path string, fd int, times *[2]syscall.Timespec, nofollow, descriptor bool) error {
+	var p *byte
+	if !descriptor {
+		var err error
+		p, err = syscall.BytePtrFromString(path)
+		if err != nil {
+			return err
+		}
+	}
+	if !descriptor && strings.HasSuffix(path, "/") {
+		var stat syscall.Stat_t
+		if err := syscall.Stat(path, &stat); err != nil {
+			return err
+		}
+		if stat.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+			return syscall.ENOTDIR
+		}
 	}
 	const (
+		sysFsetattrlist  = 229
 		sysSetattrlistat = 524
 		attrModtime      = 0x400
 		attrAcctime      = 0x1000
 		fsoptNofollow    = 1
-		fsoptUtimesNull  = 0x40
+		fsoptUtimesNull  = 0x400
 	)
 	attrs := struct {
 		bitmapCount uint16
@@ -38,7 +61,7 @@ func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error 
 	if nofollow {
 		options |= fsoptNofollow
 	}
-	if times[0].Nsec == utimeNow && times[1].Nsec == utimeNow {
+	if !descriptor && times[0].Nsec == utimeNow && times[1].Nsec == utimeNow {
 		options |= fsoptUtimesNull
 	}
 	var now syscall.Timespec
@@ -68,10 +91,17 @@ func setFileTimes(path string, times *[2]syscall.Timespec, nofollow bool) error 
 		values[count] = stamp
 		count++
 	}
-	dirfd := -2
-	_, _, errno := syscall.Syscall6(sysSetattrlistat, uintptr(dirfd),
-		uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&attrs)),
-		uintptr(unsafe.Pointer(&values[0])), uintptr(count)*unsafe.Sizeof(values[0]), options)
+	var errno syscall.Errno
+	if descriptor {
+		_, _, errno = syscall.Syscall6(sysFsetattrlist, uintptr(fd),
+			uintptr(unsafe.Pointer(&attrs)), uintptr(unsafe.Pointer(&values[0])),
+			uintptr(count)*unsafe.Sizeof(values[0]), 0, 0)
+	} else {
+		dirfd := -2
+		_, _, errno = syscall.Syscall6(sysSetattrlistat, uintptr(dirfd),
+			uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&attrs)),
+			uintptr(unsafe.Pointer(&values[0])), uintptr(count)*unsafe.Sizeof(values[0]), options)
+	}
 	if errno != 0 {
 		return errno
 	}

@@ -4856,6 +4856,7 @@ function builtin_sigs(): string[] {
     "__method_Writer_isatty(Writer): boolean",
     "__method_Writer_seek(Writer, i64, i32): Result[i64, IoError]",
     "__method_Writer_set_nonblocking(Writer, boolean): Result[void, IoError]",
+    "__method_Writer_set_times(Writer, i64, i64, i64, i64, i32): Result[void, IoError]",
     "__method_Writer_splice_forever(Writer, string): Result[void, IoError]",
     "__method_Writer_stat(Writer): Result[FileStat, IoError]",
     "__method_Writer_syncfs(Writer): Result[void, IoError]",
@@ -10423,8 +10424,11 @@ function unsafe_sig_named(name: string, s: Scope): boolean {
 
 function qualified_sig_name(fa: ast.ExprFieldAccess, s: Scope): string {
   if let ast.ExprIdent(ns) = fa.obj {
+    if (s.is_bound(ns.name)) {
+      return "";
+    }
     let qname: string = ns.name + "." + fa.field;
-    if (!s.is_bound(ns.name) && s.has_sig(qname)) {
+    if (s.has_sig(qname)) {
       return qname;
     }
   }
@@ -19402,57 +19406,38 @@ function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string, root: ast.S
       return lu_payload_expr_fresh(fx, f.iter, name, root) && (f.var_name == name || lu_payload_scan_fresh(fx, f.body, name, 0, root));
     },
     ast.StmtMatch(m) => {
-      if (!lu_payload_expr_fresh(fx, m.scrutinee, name, root)) {
-        return false;
-      }
-      for arm in m.arms {
-        if (!util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
-          if (arm.has_guard && !lu_payload_expr_fresh(fx, arm.guard, name, root) || !lu_payload_scan_fresh(fx, arm.body, name, 0, root)) {
-            return false;
-          }
-        }
-      }
-      return true;
+      return lu_payload_match_fresh(fx, m, name, root);
     },
     _ => {
-      let assigns: LuVar[] = astwalk.fold_stmt_nodes(st, [], lu_assign_stmt, lu_keep_vars, astwalk.descend_all);
-      return lu_payload_facts_fresh(fx, assigns, name, root);
+      let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+      return lu_payload_facts_fresh(fx, facts, name, root);
     }
   }
   return false;
 }
 
+// The scrutinee of `m`, and each arm that does not bind `name` again.
+function lu_payload_match_fresh(fx: LuFn, m: ast.StmtMatch, name: string, root: ast.Stmt[]): boolean {
+  if (!lu_payload_expr_fresh(fx, m.scrutinee, name, root)) {
+    return false;
+  }
+  for arm in m.arms {
+    if (!util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
+      if (arm.has_guard && !lu_payload_expr_fresh(fx, arm.guard, name, root) || !lu_payload_scan_fresh(fx, arm.body, name, 0, root)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function lu_payload_expr_fresh(fx: LuFn, e: ast.Expr, name: string, root: ast.Stmt[]): boolean {
-  let assigns: LuVar[] = astwalk.fold_expr_nodes(e, [], lu_assign_stmt, lu_keep_vars, astwalk.descend_all);
-  return lu_payload_facts_fresh(fx, assigns, name, root);
+  let facts: LuFacts = astwalk.fold_expr_nodes(e, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  return lu_payload_facts_fresh(fx, facts, name, root);
 }
 
-// The assigns `lu_fact_stmt` records, and nothing else: the queries below
-// read only those, so the walk keeps no occurrence.
-function lu_assign_stmt(st: ast.Stmt, own acc: LuVar[]): LuVar[] {
-  if let ast.StmtAssign(a) = st {
-    return acc.append(LuVar { name: a.target, init: a.value });
-  }
-  return acc;
-}
-
-// The vars `lu_fact_stmt` records, and nothing else.
-function lu_var_stmt(st: ast.Stmt, own acc: LuVar[]): LuVar[] {
-  let ast.StmtVar(v) = st else {
-    return acc;
-  };
-  if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
-    return lu_destr_vars(v, acc);
-  }
-  return acc.append(LuVar { name: v.name, init: v.init });
-}
-
-function lu_keep_vars(e: ast.Expr, own acc: LuVar[]): LuVar[] {
-  return acc;
-}
-
-function lu_payload_facts_fresh(fx: LuFn, assigns: LuVar[], name: string, root: ast.Stmt[]): boolean {
-  for a in assigns {
+function lu_payload_facts_fresh(fx: LuFn, facts: LuFacts, name: string, root: ast.Stmt[]): boolean {
+  for a in facts.assigns {
     if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_payload_value(fx, a.init) && !lu_fresh_local_replacement(fx, a.init, root)) {
       return false;
     }
@@ -19468,8 +19453,8 @@ function lu_replacement_keep(e: ast.Expr, own state: LuReplacement): LuReplaceme
 
 function lu_replacement_loop(st: ast.Stmt, own state: LuReplacement): LuReplacement {
   if (!state.repeats && lu_is_loop_stmt(st) && lu_loop_holds_call(st, state.value)) {
-    let vars: LuVar[] = astwalk.fold_stmt_nodes(st, [], lu_var_stmt, lu_keep_vars, astwalk.descend_all);
-    for v in vars {
+    let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+    for v in facts.vars {
       if (v.name == state.name) {
         return state;
       }
@@ -19485,7 +19470,20 @@ function lu_fresh_local_replacement(fx: LuFn, e: ast.Expr, body: ast.Stmt[]): bo
   let ast.ExprIdent(id) = e else {
     return false;
   };
-  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != 1 || !lu_fresh_init(fx, id.name) || !lu_is_last(fx, id)
+  if (!lu_fresh_init(fx, id.name) || !lu_sole_last_read(fx, id, 1) || !lu_body_declares(body, id.name)) {
+    return false;
+  }
+  let state: LuReplacement = LuReplacement { value: e, name: id.name, repeats: false };
+  for st in body {
+    state = astwalk.fold_stmt_nodes(st, state, lu_replacement_loop, lu_replacement_keep, astwalk.descend_all);
+  }
+  return !state.repeats;
+}
+
+// `id` is not a parameter, has `decls` declarations, is at its last read,
+// is not captured and does not escape, and nothing assigns it.
+function lu_sole_last_read(fx: LuFn, id: ast.ExprIdent, decls: i32): boolean {
+  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != decls || !lu_is_last(fx, id)
     || util.has_str(fx.facts.captured, id.name) || util.has_str(fx.facts.escaping, id.name)) {
     return false;
   }
@@ -19494,17 +19492,18 @@ function lu_fresh_local_replacement(fx: LuFn, e: ast.Expr, body: ast.Stmt[]): bo
       return false;
     }
   }
-  let vars: LuVar[] = [];
+  return true;
+}
+
+// `body` declares the local `name`.
+function lu_body_declares(body: ast.Stmt[], name: string): boolean {
+  let facts: LuFacts = lu_empty_facts();
   for st in body {
-    vars = astwalk.fold_stmt_nodes(st, vars, lu_var_stmt, lu_keep_vars, astwalk.descend_all);
+    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   }
-  for v in vars {
-    if (v.name == id.name) {
-      let state: LuReplacement = LuReplacement { value: e, name: id.name, repeats: false };
-      for st in body {
-        state = astwalk.fold_stmt_nodes(st, state, lu_replacement_loop, lu_replacement_keep, astwalk.descend_all);
-      }
-      return !state.repeats;
+  for v in facts.vars {
+    if (v.name == name) {
+      return true;
     }
   }
   return false;
@@ -19516,14 +19515,8 @@ function lu_fresh_payload_value(fx: LuFn, e: ast.Expr): boolean {
   let ast.ExprIdent(id) = e else {
     return false;
   };
-  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != 0 || !lu_is_last(fx, id)
-    || util.has_str(fx.facts.captured, id.name) || util.has_str(fx.facts.escaping, id.name)) {
+  if (!lu_sole_last_read(fx, id, 0)) {
     return false;
-  }
-  for a in fx.facts.assigns {
-    if (a.name == id.name) {
-      return false;
-    }
   }
   let found: boolean = false;
   for m in fx.facts.matched {
@@ -19594,9 +19587,7 @@ function lu_looped_decls(stmts: ast.Stmt[], in_loop: boolean, own acc: string[])
     match (st) {
       ast.StmtVar(v) => {
         if (in_loop) {
-          for d in lu_fact_stmt(st, lu_empty_facts()).vars {
-            acc = acc.append(d.name);
-          }
+          acc = lu_var_names(st, acc);
         }
       },
       ast.StmtIf(f) => {
@@ -19953,21 +19944,16 @@ function lu_empty_facts(): LuFacts {
   return LuFacts { occ: [], vars: [], assigns: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [] };
 }
 
-// A later mention of the name inside the statement that holds the call.
-function lu_later_in(st: ast.Stmt, aid: ast.ExprIdent): boolean {
-  return lu_occurs_in_stmt(st, aid.name, aid.line, aid.col, true);
-}
+// A search for an occurrence of a name, the same occurrences that LuFacts.occ
+// records: a read or an assignment target. When later is true, the search
+// finds an occurrence after the position. Otherwise it finds the one at it.
+struct LuMention { name: string, line: i32, col: i32, later: boolean, found: boolean }
 
-// One question over the occurrences `lu_fact_stmt` and `lu_fact_expr`
-// record, the identifiers and the assign targets: is `name` mentioned at
-// the position, or after it when `after` is set. The walk keeps no fact.
-struct LuMention { name: string, line: i32, col: i32, after: boolean, found: boolean }
-
-function lu_mention_hits(m: LuMention, name: string, line: i32, col: i32): boolean {
+function lu_mention_matches(m: LuMention, name: string, line: i32, col: i32): boolean {
   if (name != m.name) {
     return false;
   }
-  if (m.after) {
+  if (m.later) {
     return line > m.line || line == m.line && col > m.col;
   }
   return line == m.line && col == m.col;
@@ -19978,7 +19964,7 @@ function lu_mention_stmt(st: ast.Stmt, own m: LuMention): LuMention {
     return m;
   }
   if let ast.StmtAssign(a) = st {
-    if (lu_mention_hits(m, a.target, a.target_line, a.target_col)) {
+    if (lu_mention_matches(m, a.target, a.target_line, a.target_col)) {
       return LuMention { ...m, found: true };
     }
   }
@@ -19990,29 +19976,43 @@ function lu_mention_expr(e: ast.Expr, own m: LuMention): LuMention {
     return m;
   }
   if let ast.ExprIdent(id) = e {
-    if (lu_mention_hits(m, id.name, id.line, id.col)) {
+    if (lu_mention_matches(m, id.name, id.line, id.col)) {
       return LuMention { ...m, found: true };
     }
   }
   return m;
 }
 
-function lu_occurs_in_stmt(st: ast.Stmt, name: string, line: i32, col: i32, after: boolean): boolean {
-  let m: LuMention = LuMention { name: name, line: line, col: col, after: after, found: false };
-  return astwalk.fold_stmt_nodes(st, m, lu_mention_stmt, lu_mention_expr, astwalk.descend_all).found;
+function lu_mention_search(aid: ast.ExprIdent, later: boolean): LuMention {
+  return LuMention { name: aid.name, line: aid.line, col: aid.col, later: later, found: false };
 }
 
-function lu_occurs_in_expr(e: ast.Expr, name: string, line: i32, col: i32, after: boolean): boolean {
-  let m: LuMention = LuMention { name: name, line: line, col: col, after: after, found: false };
-  return astwalk.fold_expr_nodes(e, m, lu_mention_stmt, lu_mention_expr, astwalk.descend_all).found;
+// A later mention of the name inside the statement.
+function lu_later_in(st: ast.Stmt, aid: ast.ExprIdent): boolean {
+  return astwalk.fold_stmt_nodes(st, lu_mention_search(aid, true), lu_mention_stmt, lu_mention_expr, astwalk.descend_all).found;
+}
+
+function lu_expr_mentions(e: ast.Expr, aid: ast.ExprIdent, later: boolean): boolean {
+  return astwalk.fold_expr_nodes(e, lu_mention_search(aid, later), lu_mention_stmt, lu_mention_expr, astwalk.descend_all).found;
+}
+
+// The names a let declares, as LuFacts.vars records them.
+function lu_var_names(st: ast.Stmt, own acc: string[]): string[] {
+  if let ast.StmtVar(v) = st {
+    if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      for d in lu_destr_vars(v, []) {
+        acc = acc.append(d.name);
+      }
+      return acc;
+    }
+    return acc.append(v.name);
+  }
+  return acc;
 }
 
 function lu_declares(st: ast.Stmt, name: string): boolean {
-  let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.not_lambda);
-  for v in facts.vars {
-    if (v.name == name) {
-      return true;
-    }
+  if (util.has_str(astwalk.fold_stmt_nodes(st, [], lu_var_names, lu_no_binders, astwalk.not_lambda), name)) {
+    return true;
   }
   return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, lu_no_binders, astwalk.not_lambda), name);
 }
@@ -20202,66 +20202,16 @@ const LU_SETTLED: i32 = 2;
 
 const LU_NOT_TAG: i32 = 3;
 
-// The later occurrences of one name in a statement, and the field each of
-// them selects, as `lu_fact_stmt` and `lu_fact_expr` record them for
-// every name.
-struct LuBase { name: string, line: i32, col: i32, occ: LuOcc[], sels: LuSel[] }
-
-function lu_base_later(b: LuBase, line: i32, col: i32): boolean {
-  return line > b.line || line == b.line && col > b.col;
-}
-
-function lu_base_stmt(st: ast.Stmt, own b: LuBase): LuBase {
-  if let ast.StmtAssign(a) = st {
-    if (a.target == b.name && lu_base_later(b, a.target_line, a.target_col)) {
-      return LuBase { ...b, occ: b.occ.append(LuOcc { name: a.target, line: a.target_line, col: a.target_col }) };
-    }
-  }
-  return b;
-}
-
-function lu_base_expr(e: ast.Expr, own b: LuBase): LuBase {
-  match (e) {
-    ast.ExprIdent(id) => {
-      if (id.name == b.name && lu_base_later(b, id.line, id.col)) {
-        return LuBase { ...b, occ: b.occ.append(LuOcc { name: id.name, line: id.line, col: id.col }) };
-      }
-      return b;
-    },
-    ast.ExprFieldAccess(fa) => {
-      if let ast.ExprIdent(oid) = fa.obj {
-        if (oid.name == b.name && lu_base_later(b, oid.line, oid.col)) {
-          return LuBase { ...b, sels: b.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) };
-        }
-      }
-      return b;
-    },
-    _ => {
-      return b;
-    }
-  }
-  return b;
-}
-
-function lu_base_sel_at(b: LuBase, line: i32, col: i32): string {
-  for sel in b.sels {
-    if (sel.line == line && sel.col == col) {
-      return sel.field;
-    }
-  }
-  return "";
-}
-
 // The argument at aid is in the expression, so a call in a match tag takes it.
 function lu_mentions_at(e: ast.Expr, aid: ast.ExprIdent): boolean {
-  return lu_occurs_in_expr(e, aid.name, aid.line, aid.col, false);
+  return lu_expr_mentions(e, aid, false);
 }
 
 // A local that a call in a match tag takes. LU_LIVE: a later read in the
 // tag, or a read in a guard or an arm before a whole assignment. LU_SETTLED:
 // every arm assigns the local whole or leaves the statement.
 function lu_call_tag_settles(reach: LuReach, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
-  if (lu_occurs_in_expr(m.scrutinee, aid.name, aid.line, aid.col, true)) {
+  if (lu_expr_mentions(m.scrutinee, aid, true)) {
     return LU_LIVE;
   }
   let settled: boolean = m.arms.len() > 0;
@@ -20569,7 +20519,7 @@ function lu_is_last_in(fx: LuFn, site: LuSite, id: ast.ExprIdent): boolean {
   }
   let f: LuFrame = site.frames[scope];
   for j in f.idx..f.stmts.len() {
-    if (lu_occurs_in_stmt(f.stmts[j], id.name, id.line, id.col, true)) {
+    if (lu_later_in(f.stmts[j], id)) {
       return false;
     }
   }
@@ -20658,12 +20608,13 @@ function lu_field_base_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: str
     return false;
   }
   let inner: LuFrame = site.frames[site.frames.len() - 1];
-  let later: LuBase = LuBase { name: q.name, line: q.line, col: q.col, occ: [], sels: [] };
-  later = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], later, lu_base_stmt, lu_base_expr, astwalk.descend_all);
-  for o in later.occ {
-    let sel: string = lu_base_sel_at(later, o.line, o.col);
-    if (sel.len() == 0 || sel == field) {
-      return false;
+  let facts: LuFacts = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
+      let sel: string = lu_sel_at(facts, o.line, o.col);
+      if (sel.len() == 0 || sel == field) {
+        return false;
+      }
     }
   }
   return !lu_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name));
@@ -20725,27 +20676,12 @@ function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
   return false;
 }
 
-// Whether `st` declares `name`: the binders `lu_fact_stmt` records as
-// vars, read without building the facts.
 function lu_stmt_declares(st: ast.Stmt, name: string): boolean {
-  let ast.StmtVar(v) = st else {
-    return false;
-  };
-  if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
-    return lu_pattern_declares(v.name, name);
-  }
-  return v.name == name;
-}
-
-function lu_pattern_declares(pattern: string, name: string): boolean {
-  for nm in split_pattern_names(pattern) {
-    if (util.is_tuple_type_name(nm)) {
-      if (lu_pattern_declares(slice_unchecked(nm, 1, nm.len() - 1) + "", name)) {
-        return true;
-      }
-    } else if (nm == name) {
-      return true;
+  if let ast.StmtVar(v) = st {
+    if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+      return util.has_str(lu_var_names(st, []), name);
     }
+    return v.name == name;
   }
   return false;
 }
@@ -20797,8 +20733,8 @@ function lu_bind_lifetimes(sc: LuScope, frames: LuFrame[], names: string[], loop
 
 function lu_value_local_lives(st: ast.Stmt, site: LuSite, sc: LuScope): LuLife[] {
   let lives: LuLife[] = sc.bindings;
-  for local in lu_fact_stmt(st, lu_empty_facts()).vars {
-    lives = lives.append(LuLife { name: local.name, scope: site.frames.len() - 1, loop_depth: sc.loop_depth, fresh: false });
+  for local in lu_var_names(st, []) {
+    lives = lives.append(LuLife { name: local, scope: site.frames.len() - 1, loop_depth: sc.loop_depth, fresh: false });
   }
   return lives;
 }
