@@ -626,7 +626,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 			if !lastInBinding(body, c, aid, order) && arrayArgPosition(info, c, aid) {
 				continue
 			}
-			if liveAfter(info, body, c, aid, order) {
+			if liveAfterBinding(info, body, c, aid, order, declNode[aid.Name]) {
 				continue
 			}
 			markOnce(c, aid.Name)
@@ -1672,6 +1672,10 @@ func loopHeadLive(frames []liveFrame, l int, name string) bool {
 // that reaches the end of a loop body, or continues, comes back to every
 // use in that loop.
 func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
+	return liveAfterBinding(info, body, c, aid, order, nil)
+}
+
+func liveAfterBinding(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder, decl ast.Node) bool {
 	frames := enclosingFrames(body, c)
 	if len(frames) == 0 {
 		return true
@@ -1683,17 +1687,7 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	}
 	// A loop inside the statement runs the call again each round: the call
 	// sits in a loop's head, or in a loop inside an expression-level block.
-	repeats := false
-	ast.Walk(st, func(m ast.Node) bool {
-		switch m.(type) {
-		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
-			if nodeHolds(m, c) {
-				repeats = true
-			}
-		}
-		return !repeats
-	})
-	if repeats {
+	if loopRepeats(st, c, decl) {
 		return true
 	}
 	reach := settleReach{frames: frames, level: len(frames) - 1, scope: bindingLevel(frames, aid.Name)}
@@ -1902,7 +1896,7 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int)
 		// The binding ends with the block that declares it.
 		return false
 	}
-	if f.loop != nil && loopHeadLive(frames, level, name) {
+	if f.loop != nil && (scope >= 0 || loopHeadLive(frames, level, name)) {
 		return true
 	}
 	if level == 0 {
@@ -1920,7 +1914,7 @@ func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name 
 		if l >= 0 && l <= scope {
 			continue
 		}
-		if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
+		if l < 0 || scope >= 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
 			return true
 		}
 	}

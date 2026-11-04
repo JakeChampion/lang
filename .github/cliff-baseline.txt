@@ -1,3 +1,7 @@
+# 2026-11-03: PR #14122, a local scripts/cliff-bench run on its head: 352,492 crossings and 56,769,184 bytes.
+# Main at 0a339915 measures 352,113 and 55,791,496. With the small-branch rule off, the head measures 352,073 and 55,790,160,
+# so the added 1.8% of bytes is the splice code's own copies for the added splices.
+# Preserve the original limits so the report keeps this copy cost visible.
 # 2026-11-01: #13988 retains the original main limits. CI 41287852525
 # reports 353,840 crossings and 46,919,432 bytes. Keep this cost visible against original main.
 # 2026-10-31: PR #13910, measured by CI job 124561576376.

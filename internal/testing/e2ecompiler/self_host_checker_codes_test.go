@@ -143,12 +143,81 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
+	const loopPayloadPrefix = `struct Box { data: u8[] }
+enum Choice { Wrapped(Box), Empty }
+function consume(own item: Box): i32 { return item.data.len(); }
+`
 
 	cases := []struct {
 		name string
 		src  string
 		want []string
 	}{
+		{"e051-loop-move-shadowed-by-unused-value-match", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    let item = Box { data: data };
+    let result = 0;
+    for tag in [0, 1] {
+        result = result + consume(item);
+        let unused = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => 0, Choice.Empty => 0 };
+    }
+    return result;
+}`, []string{"E051"}},
+		{"e051-loop-move-shadowed-by-unused-value-local", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    let item = Box { data: data };
+    let result = 0;
+    for tag in [0, 1] {
+        result = result + consume(item);
+        let unused = { let item = Box { data: data }; 0 };
+    }
+    return result;
+}`, []string{"E051"}},
+		{"fresh-value-payload-each-loop-round", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    let result = 0;
+    for tag in [0, 1] {
+        let value = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };
+        result = result + value;
+    }
+    return result;
+}`, nil},
+		{"fresh-value-payload-loop-in-value-block", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return {
+        let result = 0;
+        for tag in [0, 1] {
+            let value = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };
+            result = result + value;
+        }
+        result
+    };
+}`, nil},
+		{"e051-value-payload-repeats-in-inner-loop", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return match (Choice.Wrapped(Box { data: data })) {
+        Choice.Wrapped(item) => {
+            let result = 0;
+            for tag in [0, 1] { result = result + consume(item); }
+            result
+        },
+        Choice.Empty => 0
+    };
+}`, []string{"E051"}},
+		{"e051-value-payload-repeats-in-while-condition", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return match (Choice.Wrapped(Box { data: data })) {
+        Choice.Wrapped(item) => { while (consume(item) > 0) {} 0 },
+        Choice.Empty => 0
+    };
+}`, []string{"E051"}},
+		{"e051-value-payload-used-after-consume", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return match (Choice.Wrapped(Box { data: data })) {
+        Choice.Wrapped(item) => { let n = consume(item); n + consume(item) },
+        Choice.Empty => 0
+    };
+}`, []string{"E051"}},
 		{"body-fresh-value-payload-remains-copyable", "struct Box { items: i32[] } function make(s: Socket): Result[Box, i32] { return Ok(Box { items: [7] }); } function f(s: Socket): i32 { let Ok(input) = make(s) else { return 1; }; let alias = input; return input.items[0] + alias.items[0]; } function main(): i32 { return 0; }", nil},
 		{"kept-alive-local-in-lambda-stays-invalid", `struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
