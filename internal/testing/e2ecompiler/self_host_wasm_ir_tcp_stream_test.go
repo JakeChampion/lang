@@ -67,8 +67,8 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	t.Run("send_recv_roundtrip", func(t *testing.T) {
 		port := serve(t, 5, func(got []byte) string { return "ECHO:" + string(got) })
 		src := fmt.Sprintf(wasmRecvHelper+`function main(): i32 {
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    if (c < 0) { write("connect-failed\n"); return 1; }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    if (c.fd < 0) { write("connect-failed\n"); return 1; }
     let n: i32 = tcp_send_bytes(c, [104u8, 101u8, 108u8, 108u8, 111u8]);
     write("sent="); print_int(n);
     let r: string = recv(c, 64);
@@ -84,8 +84,8 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	t.Run("send_only_composes_without_recv", func(t *testing.T) {
 		port := serve(t, 4, func(got []byte) string { return "" })
 		src := fmt.Sprintf(`function main(): i32 {
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    if (c < 0) { write("connect-failed\n"); return 1; }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    if (c.fd < 0) { write("connect-failed\n"); return 1; }
     let n: i32 = tcp_send_bytes(c, [112u8, 105u8, 110u8, 103u8]);
     write("sent="); print_int(n); write("\n");
     tcp_close(c);
@@ -100,8 +100,8 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 		const payloadLen = 10000
 		port := serve(t, payloadLen, func(got []byte) string { return fmt.Sprintf("%d", len(got)) })
 		src := fmt.Sprintf(wasmRecvHelper+`function main(): i32 {
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    if (c < 0) { write("connect-failed\n"); return 1; }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    if (c.fd < 0) { write("connect-failed\n"); return 1; }
     let payload: u8[] = [];
     let k: i32 = 0;
     while (k < %d) { payload = payload.append(120u8); k = k + 1; }

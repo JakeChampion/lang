@@ -507,6 +507,7 @@ is the number of slots it leaves.
 | `buf_push_base64` | 487 | 5 | 1 |
 | `buf_push_base32` | 488 | 5 | 1 |
 | `buf_decode_base32` | 489 | 5 | 1 |
+| `writer_nonblocking` | 490 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

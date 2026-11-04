@@ -83,8 +83,8 @@ function main(): i32 {
     let events: i32[] = [0, 0, 0, 0];
     if (wait_until(r, events, 20) != 0) { return fail(4); }
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 4, false);
-    if (ln < 0) { return fail(5); }
+    let ln: Socket = tcp_listen_with(any, 0, 4, false);
+    if (ln.fd < 0) { return fail(5); }
     let port: i32 = tcp_local_port(ln);
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(6); }
     if (wait_until(r, events, 20) != 0) { return fail(7); }
@@ -92,11 +92,11 @@ function main(): i32 {
     // modification: asking it of a descriptor already in the set proves
     // the bit reached epoll_ctl rather than being masked off.
     if (target_os() == "linux" && reactor_ctl(r, 1, ln, 5) != 0 - einval()) { return fail(31); }
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    if (c < 0) { return fail(8); }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (c.fd < 0) { return fail(8); }
     if (expect_ready(r, ln, 1, 2000, 9) != 0) { return 9; }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(10); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(10); }
     if (reactor_ctl(r, 1, a, 1) != 0) { return fail(11); }
     if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(12); }
     if (wait_until(r, events, 20) != 0) { return fail(13); }
@@ -132,8 +132,8 @@ function main(): i32 {
     // alone, with a unwatched, before both are watched for the one wait.
     if (reactor_ctl(r, 2, a, 0) != 0) { return fail(36); }
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(32); }
-    let c2: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    if (c2 < 0) { return fail(33); }
+    let c2: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (c2.fd < 0) { return fail(33); }
     if (expect_ready(r, ln, 1, 2000, 37) != 0) { return 37; }
     if (reactor_ctl(r, 1, a, 1) != 0) { return fail(38); }
     if (expect_both(r, ln, 1, a, 1, 2000, 34) != 0) { return 34; }

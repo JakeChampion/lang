@@ -22,7 +22,7 @@ const MIC: string = "android.permission.RECORD_AUDIO";
 struct App {
   ctx: usize,
   window: usize,
-  sock: i32,
+  sock: Option[Socket],
   node: node.Node,
   mic: audio.Stream,
   spk: audio.Stream,
@@ -62,19 +62,19 @@ function any_addr(port: i32): net.SocketAddr {
 }
 
 // A socket on the first free port of lan.PORT and lan.SECOND_PORT, and the
-// port. The socket is -1 when both ports are busy.
-function open_socket(): (i32, i32) {
+// port. The socket is None when both ports are busy.
+function open_socket(): (Option[Socket], i32) {
   for port in [lan.PORT, lan.SECOND_PORT] {
     match (net.udp_socket(any_addr(port))) {
       Ok(s) => {
         let nb: Result[void, net.NetError] = net.set_nonblocking(s, true);
         let bc: Result[void, net.NetError] = net.set_broadcast(s, true);
-        return (s, port);
+        return (Some(s), port);
       },
       Err(_) => {}
     }
   }
-  return (-1, lan.PORT);
+  return (None, lan.PORT);
 }
 
 function fresh_node(notice: string): node.Node {
@@ -87,12 +87,15 @@ function app_main(ctx: usize): usize {
   let started: boolean = spk.start();
   let (sock, port) = open_socket();
   let notice: string = "";
-  if (sock < 0) {
+  let fd: i32 = 0 - 1;
+  if let Some(open) = sock {
+    fd = open.fd;
+  } else {
     notice = "no network: ports " + lan.PORT.to_string() + " and " + lan.SECOND_PORT.to_string() + " are busy";
   }
   android.keep_screen_on(ctx, true);
   let n: node.Node = fresh_node(notice);
-  log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + sock.to_string() + ", speaker rate " + spk.rate.to_string());
+  log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
   let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(pcm.WIRE_RATE, pcm.WIRE_RATE), down: pcm.resampler(pcm.WIRE_RATE, spk.rate), pressed: false, drawn: "", asked: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
@@ -105,8 +108,8 @@ function shut(own s: App): void {
   s.spk.stop();
   s.spk.close();
   node.close(s.node);
-  if (s.sock >= 0) {
-    let closed: Result[void, net.NetError] = net.close(s.sock);
+  if let Some(sock) = s.sock {
+    let closed: Result[void, net.NetError] = net.close(sock);
   }
 }
 
@@ -206,16 +209,16 @@ function pump(s: App, now: i64): App {
 }
 
 function receive_all(s: App, now: i64): App {
-  if (s.sock < 0) {
+  let Some(sock) = s.sock else {
     return s;
-  }
+  };
   let n: node.Node = s.node;
   let buf: u8[] = [];
   for k in 0..2048 {
     buf = buf.append(0u8);
   }
   for k in 0..64 {
-    match (net.recv_from(s.sock, buf)) {
+    match (net.recv_from(sock, buf)) {
       Ok((len, from)) => {
         n = node.receive(n, buf, len, from, now);
       },
@@ -262,14 +265,14 @@ function speak(s: App): App {
 // Sends the datagrams of the node, plays its frames and writes its log lines.
 function flush(s: App): App {
   let n: node.Node = s.node;
-  if (s.sock >= 0) {
+  if let Some(sock) = s.sock {
     for d in n.out {
       if (d.broadcast) {
         for port in [lan.PORT, lan.SECOND_PORT] {
-          let sent: Result[i32, net.NetError] = net.send_to(s.sock, d.data, net.socket_addr(net.V4([255u8, 255u8, 255u8, 255u8]), port));
+          let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, net.socket_addr(net.V4([255u8, 255u8, 255u8, 255u8]), port));
         }
       } else {
-        let sent: Result[i32, net.NetError] = net.send_to(s.sock, d.data, n.peer_addr);
+        let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, n.peer_addr);
       }
     }
   }

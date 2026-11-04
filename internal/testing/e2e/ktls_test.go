@@ -491,9 +491,9 @@ function dial(port: i32): i32 {
       return 5;
     }
   }
-  let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-  if (fd < 0) {
-    print("client: connect " + fd.to_string());
+  let fd: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+  if (fd.fd < 0) {
+    print("client: connect " + fd.fd.to_string());
     return 0;
   }
   match (client.over(fd, client.config("localhost", roots), time.duration_seconds(20 as i64))) {

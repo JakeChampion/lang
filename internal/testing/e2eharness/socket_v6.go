@@ -55,18 +55,18 @@ function no_v6(rc: i32): boolean {
 function main(): i32 {
     let lo6: u8[] = zeros(15).append(1u8);
     let peer: u8[] = [];
-    let ln: i32 = tcp_listen_with(lo6, 0, 4, false);
+    let ln: Socket = tcp_listen_with(lo6, 0, 4, false);
     if (no_v6(ln)) {
         print("nov6");
         return 43;
     }
-    if (ln < 0) { return fail(1); }
+    if (ln.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    let c: i32 = tcp_connect_with(lo6, port, false);
-    if (c < 0) { return fail(3); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(4); }
+    let c: Socket = tcp_connect_with(lo6, port, false);
+    if (c.fd < 0) { return fail(3); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(4); }
     // Both ends of a ::1 connection are ::1, family 6.
     let rec: u8[] = zeros(19);
     if (tcp_addr_into(a, false, rec) != 19 || !is_lo6(rec) || port_of(rec) != port) { return fail(46); }
@@ -80,12 +80,12 @@ function main(): i32 {
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
-    let s: i32 = udp_bind(lo6, 0);
-    if (s < 0) { return fail(9); }
+    let s: Socket = udp_bind(lo6, 0);
+    if (s.fd < 0) { return fail(9); }
     let ps: i32 = tcp_local_port(s);
     if (ps <= 0) { return fail(10); }
-    let t: i32 = udp_bind(lo6, 0);
-    if (t < 0) { return fail(11); }
+    let t: Socket = udp_bind(lo6, 0);
+    if (t.fd < 0) { return fail(11); }
     let pt: i32 = tcp_local_port(t);
     if (pt <= 0 || pt == ps) { return fail(12); }
     if (tcp_addr_into(s, false, rec) != 19 || !is_lo6(rec) || port_of(rec) != ps) { return fail(48); }
@@ -103,12 +103,12 @@ function main(): i32 {
     // as the v4-mapped address ::ffff:127.0.0.1 at the dialler's port. Not
     // on wasi:sockets, whose IPv6 socket stays IPv6-only.
     if (target_os() != "wasi") {
-        let dl: i32 = tcp_listen_with(zeros(16), 0, 4, false);
-        if (dl < 0) { return fail(30); }
-        let dc: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(dl), false);
-        if (dc < 0) { return fail(31); }
-        let da: i32 = tcp_accept(dl);
-        if (da < 0) { return fail(32); }
+        let dl: Socket = tcp_listen_with(zeros(16), 0, 4, false);
+        if (dl.fd < 0) { return fail(30); }
+        let dc: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(dl), false);
+        if (dc.fd < 0) { return fail(31); }
+        let da: Socket = tcp_accept(dl);
+        if (da.fd < 0) { return fail(32); }
         if (tcp_addr_into(da, true, rec) != 19) { return fail(49); }
         if (rec[0] != 6u8 || rec[10] != 0u8 || rec[11] != 255u8 || rec[12] != 255u8 || rec[13] != 127u8 || rec[16] != 1u8) { return fail(50); }
         if (port_of(rec) != tcp_local_port(dc)) { return fail(51); }
@@ -117,11 +117,11 @@ function main(): i32 {
         tcp_close(dl);
         // A :: datagram socket from udp_bind_with takes an IPv4 sender
         // too, reported v4-mapped: ::ffff:127.0.0.1.
-        let du: i32 = udp_bind_with(zeros(16), 0, false);
-        if (du < 0) { return fail(39); }
+        let du: Socket = udp_bind_with(zeros(16), 0, false);
+        if (du.fd < 0) { return fail(39); }
         let lo4: u8[] = [127u8, 0u8, 0u8, 1u8];
-        let d4: i32 = udp_bind(lo4, 0);
-        if (d4 < 0) { return fail(40); }
+        let d4: Socket = udp_bind(lo4, 0);
+        if (d4.fd < 0) { return fail(40); }
         if (udp_sendto(d4, lo4, tcp_local_port(du), "ping") != 4) { return fail(41); }
         if (udp_recvfrom(du, buf, from) != 4 || buf[0] != 112u8) { return fail(42); }
         if (from[0] != 6u8 || from[10] != 0u8 || from[11] != 255u8 || from[12] != 255u8 || from[13] != 127u8 || from[16] != 1u8) { return fail(43); }
@@ -196,8 +196,8 @@ function main(): i32 {
         Ok(fd) => { c = fd; },
         Err(e) => { return fail(3); },
     }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(4); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(4); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(5); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(6); }
@@ -266,8 +266,8 @@ function main(): i32 {
             Ok(fd) => { dc = fd; },
             Err(e) => { return fail(31); },
         }
-        let da: i32 = tcp_accept(dl);
-        if (da < 0) { return fail(32); }
+        let da: Socket = tcp_accept(dl);
+        if (da.fd < 0) { return fail(32); }
         match (net.peer_addr(da)) {
             Ok(pa) => { if (!pa.ip.eq(net.ipv4_loopback()) || pa.port != tcp_local_port(dc)) { return fail(33); } },
             Err(e) => { return fail(34); },
