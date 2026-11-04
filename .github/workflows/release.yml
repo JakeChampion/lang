@@ -229,7 +229,7 @@ jobs:
       - name: Verify the signatures and write the sidecars
         run: |
           set -euo pipefail
-          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)/apksigner"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)/apksigner"
           cd dist/apk
           for apk in *.apk; do
             "$apksigner" verify --print-certs "$apk"
