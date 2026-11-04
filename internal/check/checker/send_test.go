@@ -26,6 +26,8 @@ func TestSendParameterRefusesWhatCannotCrossAWorkerBoundary(t *testing.T) {
 			`captures "w" of type Writer, which cannot cross a worker boundary: a built-in handle owns a descriptor`},
 		{"function_value", `function main(): i32 { let f: () => i32 = (): i32 => 1; return spawn((): i32 => f()); }`,
 			`captures "f" of type () => i32, which cannot cross a worker boundary: a function value carries its environment`},
+		{"map", `import "core/map"; function main(): i32 { let m: Map[string, i32] = map_new(4); return spawn((): i32 => m.len()); }`,
+			`captures "m" of type Map[string, i32], which cannot cross a worker boundary: a Map does not cross a worker boundary in this release`},
 		{"dyn", `function main(): i32 { let d: dyn Shape = Box { n: 1 }; return spawn((): i32 => d.area()); }`,
 			`captures "d" of type dyn Shape, which cannot cross a worker boundary: a dyn value hides its concrete type`},
 		{"must_consume", `function main(): i32 { let t: Ticket = Ticket { id: 1 }; return spawn((): i32 => t.id); }`,
@@ -60,7 +62,7 @@ func TestSendParameterAdmitsSendSafeValues(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"scalar_and_string", `function main(): i32 { let n: i32 = 1; let s: string = "x"; return spawn((): i32 => n + s.len()); }`},
 		{"record_array_option", `function main(): i32 { let b: Box = Box { n: 1 }; let xs: i32[] = [1]; let o: Option[string] = Some("x"); return spawn((): i32 => { match (o) { Some(v) => { return b.n + xs.len() + v.len(); }, None => { return 0; } } }); }`},
-		{"tuple_and_map", `function main(): i32 { let p: (i32, string) = (1, "x"); let m: Map[string, i32] = map_new(4); return spawn((): i32 => p.0 + m.len()); }`},
+		{"tuple", `function main(): i32 { let p: (i32, string) = (1, "x"); return spawn((): i32 => p.0); }`},
 		{"generic_struct_of_scalars", `function main(): i32 { let p: Pair[i32] = Pair { a: 1, b: 2 }; return spawn((): i32 => p.a + p.b); }`},
 		{"no_captures", `function main(): i32 { return spawn((): i32 => 7); }`},
 		{"send_copy_of_record_and_option", `function main(): i32 { let b: Box = Box { n: 1 }; let c: Box = __send_copy(b); let o: Option[string] = __send_copy(Some("x")); return c.n + b.n; }`},

@@ -240,6 +240,7 @@ var coreBuiltins = map[string]bool{
 	"__send_copy":                 true,
 	"__send_adopt":                true,
 	"__send_root":                 true,
+	"__send_release":              true,
 	"string_from_bytes_unchecked": true,
 	"slice_unchecked":             true,
 

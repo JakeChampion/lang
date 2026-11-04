@@ -69,6 +69,9 @@ func (c *checker) sendUnsafeStructReason(v ast.StructType, seen map[string]bool)
 	if v.Name == "Cell" {
 		return "a Cell is shared by aliasing"
 	}
+	if v.Name == "Map" {
+		return "a Map does not cross a worker boundary in this release"
+	}
 	if builtinHandle(v.Name) {
 		return "a built-in handle owns a descriptor"
 	}

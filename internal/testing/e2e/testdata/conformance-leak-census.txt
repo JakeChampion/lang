@@ -1269,6 +1269,7 @@ wide_array_append_grow                               0
 wide_shift_by_variable                               0
 wider_use_settles_a_nested_payload_literal           0
 worker_runs_in_its_own_process                       0
+worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0

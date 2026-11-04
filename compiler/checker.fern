@@ -5258,6 +5258,9 @@ function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Ty
   if (name == "__send_adopt") {
     return t_unknown("__send_adopt takes the declared type of its binding");
   }
+  if (name == "__send_release") {
+    return t_void();
+  }
   return t_usize();
 }
 
@@ -10358,7 +10361,7 @@ pub function unsafe_intrinsics(): string[] {
     "__memcpy", "__memset", "__str_bytes", "__account_entry",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
     "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
-    "__arr_set_len", "__heap_mark", "__heap_release_to", "__heap_adopt", "__send_adopt", "__send_root", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
+    "__arr_set_len", "__heap_mark", "__heap_release_to", "__heap_adopt", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
     "__c_call0", "__c_call0_f32", "__c_call0_f64",
     "__c_call1", "__c_call1_f32", "__c_call1_f64",
     "__c_call2", "__c_call2_f32", "__c_call2_f64",
@@ -18096,7 +18099,7 @@ function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
-    "__send_copy", "__send_adopt", "__send_root", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
+    "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
@@ -21283,8 +21286,8 @@ function send_unsafe_nonview_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[
     typeinfo.TypeTuple(tup) => {
       return send_unsafe_reason_list(tup.elements, ctx, seen);
     },
-    typeinfo.TypeMap(m) => {
-      return send_unsafe_reason_list([m.key, m.value], ctx, seen);
+    typeinfo.TypeMap(_) => {
+      return "a Map does not cross a worker boundary in this release";
     },
     typeinfo.TypeFunc(_) => {
       return "a function value carries its environment";

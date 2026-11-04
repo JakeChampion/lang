@@ -5269,7 +5269,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    bl __fn___fern_proc_waitpid_status\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 492) {
     s = s.need("worker_region");
-    s = s.write("    bl __fn___fern_worker_region\n    add sp, sp, #16\n");
+    s = s.write("    bl __fn___fern_worker_region\n    ldr x1, [sp], #16\n");
+    s = arm64_worker_region_size(s);
     s = arm64_worker_region_census(s);
     s = s.write("    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 493) {
@@ -5278,8 +5279,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = arm64_worker_exit_census(s);
     s = s.write("    bl __fn___fern_worker_exit\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 494) {
+    s = s.need("worker_regions");
     s = s.write("    ldr x0, [sp], #16\n");
     s = arm64_worker_reap_census(s);
+    if (s.rc_free_debug) {
+      s = s.write(quar_addr("x1", "__fern_forget_lo") + "    str x0, [x1]\n    ldr x2, [x0, #40]\n    add x2, x2, x0\n" + quar_addr("x1", "__fern_forget_hi") + "    str x2, [x1]\n");
+    }
     s = s.write("    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 496) {
     s = emit_arm64_worker_unmap(s);
@@ -6025,14 +6030,20 @@ function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
   s = s.need("heap");
   s = s.write("    ldr x1, [sp], #16\n");
   s = s.write("    ldr x0, [sp], #16\n");
+  let move: asmcore.LabelOut = asmcore.fresh_label(s);
+  let keep: asmcore.LabelOut = asmcore.fresh_label(move.state);
+  s = keep.state;
+  s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    ldr x3, [x2]\n    cmp x0, x3\n    b.lo " + move.name + "\n");
+  s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    ldr x3, [x2]\n    cmp x0, x3\n    b.lo " + keep.name + "\n");
+  s = s.write(move.name + ":\n");
+  s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    str x0, [x2]\n");
+  if (s.leak_check) {
+    s = s.write("    adrp x2, __fern_lc_adopt_lo\n    add x2, x2, :lo12:__fern_lc_adopt_lo\n    str x0, [x2]\n");
+    s = s.write("    adrp x2, __fern_lc_adopt_hi\n    add x2, x2, :lo12:__fern_lc_adopt_hi\n    str x1, [x2]\n");
+  }
+  s = s.write(keep.name + ":\n");
   s = s.write("    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    str x0, [x2]\n");
   s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    str x1, [x2]\n");
-  if (s.leak_check) {
-    let l: asmcore.LabelOut = asmcore.fresh_label(s);
-    s = l.state.write("    adrp x2, __fern_lc_adopt_hi\n    add x2, x2, :lo12:__fern_lc_adopt_hi\n    ldr x3, [x2]\n    cmp x3, x1\n    b.eq " + l.name + "\n");
-    s = s.write("    str x1, [x2]\n    adrp x2, __fern_lc_adopt_lo\n    add x2, x2, :lo12:__fern_lc_adopt_lo\n    str x0, [x2]\n");
-    s = s.write(l.name + ":\n");
-  }
   s = arm64_zero_words(s, "__fern_freelist", 65536);
   s = arm64_zero_words(s, "__fern_large_freelist", 2560);
   s = s.write("    str xzr, [sp, #-16]!\n");
@@ -6049,6 +6060,14 @@ function arm64_lc_counters(): string[] {
 function arm64_lc_counter_addr(s: asmcore.EmitState, k: i32): asmcore.EmitState {
   let sym: string = arm64_lc_counters()[k];
   return s.write("    adrp x1, " + sym + "\n    add x1, x1, :lo12:" + sym + "\n");
+}
+
+// Word 5 of a region's header is its size, which the reap reads back.
+// x0 holds the region and x1 the size.
+function arm64_worker_region_size(s: asmcore.EmitState): asmcore.EmitState {
+  let l: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = l.state.write("    cmp x0, #0\n    b.le " + l.name + "\n    str x1, [x0, #40]\n");
+  return s.write(l.name + ":\n");
 }
 
 function arm64_worker_region_census(s: asmcore.EmitState): asmcore.EmitState {
@@ -6093,7 +6112,11 @@ function arm64_worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
 // records their reclamation. No unmapped box enters a parent free list.
 function emit_arm64_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("worker_unmap");
+  s = s.need("worker_regions");
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+  if (s.rc_free_debug) {
+    s = s.write(quar_addr("x5", "__fern_forget_lo") + "    str xzr, [x5]\n" + quar_addr("x5", "__fern_forget_hi") + "    str xzr, [x5]\n");
+  }
   let ready: asmcore.LabelOut = asmcore.fresh_label(s);
   let bad: asmcore.LabelOut = asmcore.fresh_label(ready.state);
   let done: asmcore.LabelOut = asmcore.fresh_label(bad.state);
@@ -6771,6 +6794,16 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+function emit_arm64_quarantine_data(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.rc_free_debug) {
+    s = s.write("__fern_quar_head: .quad 0\n    .align 3\n__fern_quar_tail: .quad 0\n    .align 3\n__fern_quar_bytes: .quad 0\n    .align 3\n");
+    if (s.has_need("worker_regions")) {
+      s = s.write("__fern_forget_lo: .quad 0\n    .align 3\n__fern_forget_hi: .quad 0\n    .align 3\n");
+    }
+  }
+  return s;
+}
+
 function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
   let at: i32 = s.runtime_units.roots.find(roots);
   if (at >= 0) {
@@ -7269,6 +7302,13 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_quar_push:\n");
   s = s.write("    cmp x1, #3\n");
   s = s.write("    b.lo .Lquar_ret\n");
+  // A block of a worker region the parent is forgetting does not enter the
+  // quarantine: the region goes back to the kernel at the join.
+  if (s.has_need("worker_regions")) {
+    s = s.write(quar_addr("x9", "__fern_forget_lo") + "    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lquar_keep\n");
+    s = s.write(quar_addr("x9", "__fern_forget_hi") + "    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lquar_ret\n");
+    s = s.write(".Lquar_keep:\n");
+  }
   s = s.write(rt_frame(s));
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x0, x1, [sp, #-16]!\n");
@@ -8704,9 +8744,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    .globl __fern_arr_push_copied\n");
   s = s.write("__fern_arr_push_copied: .quad 0\n");
   s = s.write("    .align 3\n");
-  if (s.rc_free_debug) {
-    s = s.write("__fern_quar_head: .quad 0\n    .align 3\n__fern_quar_tail: .quad 0\n    .align 3\n__fern_quar_bytes: .quad 0\n    .align 3\n");
-  }
+  s = emit_arm64_quarantine_data(s);
   if (s.harden) {
     s = s.write("__fern_guard_count: .quad 0\n    .align 3\n");
   }

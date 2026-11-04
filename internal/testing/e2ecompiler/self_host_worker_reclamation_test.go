@@ -79,7 +79,7 @@ func TestSelfHostWorkerReclaimsJoinedRegions(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					// Each region is one GiB. The parent must retain none.
+					// Reject the mapping growth that the original worker retained.
 					if delta := after - before; delta >= 1073741824/1024 {
 						t.Errorf("joined worker regions remain mapped: VmSize grew %d kB", delta)
 					}

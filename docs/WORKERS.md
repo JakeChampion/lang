@@ -68,11 +68,12 @@ A type is send-safe when every part of it is:
 |---|---|
 | a scalar, `boolean`, `string` | `Cell[T]`: a Cell is shared by aliasing |
 | an owned array `T[]` of send-safe elements | a function or closure type: a function value carries its environment |
-| a tuple or `Map[K, V]` of send-safe parts | `dyn Trait`: a dyn value hides its concrete type |
+| a tuple of send-safe parts | `dyn Trait`: a dyn value hides its concrete type |
 | a struct or enum whose fields and payloads are send-safe, with its type arguments applied | a view, `[T]` or `str`: a view borrows another value's storage |
 | `Option[T]` and `Result[T, E]` of send-safe arguments | `Reader`, `Writer`, `Dir`, `Socket`: a built-in handle owns a descriptor |
 | | a resource handle: it is not copied |
 | | a `@must_consume` type: a copy would double its obligation. `Worker[T]` is one, so a worker cannot be sent |
+| | `Map[K, V]`: a Map does not cross a worker boundary in this release |
 | | a type parameter: it is not known to be send-safe |
 
 The last row is the conservative choice of this release. A generic function
@@ -122,6 +123,10 @@ parent heap. It then removes the entire worker region with `munmap`.
 The returned result has no pointer into the removed region.
 Later joins and parent allocations cannot invalidate it.
 
+The region is the child's whole heap: four gigabytes of address space that
+the kernel backs page by page. A body that needs more aborts with the
+out-of-memory trap, and the parent reports the exit.
+
 The copy at the end of the body is what makes this sound. The child's heap
 is a copy-on-write image of the parent's, so a box the body builds can point
 at a box the parent owns. `__send_copy` builds a fresh tree. Every box of
@@ -136,8 +141,8 @@ A fork or a mapping that the kernel refuses runs the body inline too.
 A refused fork releases its unused region before the inline fallback.
 A failed worker releases its region before the parent reports the failure.
 
-The leak census crosses with the result. The region's header holds the four
-leak-check counters: `__worker_region` writes the parent's snapshot, the
+The leak census crosses with the result. The region's header holds its size
+and the four leak-check counters: `__worker_region` writes the parent's snapshot, the
 child writes its deltas at exit, and `__worker_reap` adds them to the
 parent's counters. The child counts a free only inside the region, because
 a box of the parent's image that the child frees is the parent's to count.
@@ -152,8 +157,9 @@ them.
 | Builtin | Role |
 |---|---|
 | `__worker_region(size)` | Maps a shared anonymous region that the fork inherits at the same address. The interpreters return zero. |
-| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. |
+| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. A range outside the heap moves its base too. |
 | `__send_root(v)` | Gives up `v` and returns the address of its root box. |
+| `__send_release(v)` | Releases `v` where it is written, not at its last use. |
 | `__send_adopt(addr)` | Takes the box at `addr` as a value of the declared type. |
 | `__worker_exit(region, root)` | Stores the root in the region and ends the child at once, with no at-exit work. |
 | `__worker_reap(region)` | Returns the root the child stored. |
@@ -183,8 +189,8 @@ enum variant allocate a fresh box and copy each field. An `Option` copies
 its payload.
 
 Both checkers refuse a value that is not send-safe with `E100`. The
-interpreters return the value itself, because their values are immutable
-and the engine shares them. A `Map` does not cross in this release.
+interpreters copy every array store, so a builtin that writes through a
+box cannot reach the original. A `Map` does not cross in this release.
 
 The case is `conformance/cases/send_copy_deep`.
 
@@ -215,6 +221,9 @@ degrade until a thread primitive ships that wasmtime implements (R5).
   x86-64 and arm64 Linux.
 - `TestSelfHostHeapAdoptIR`: after `__heap_adopt` the heap mark lies inside
   the adopted region, on both native targets.
+- `conformance/cases/worker_spawn_in_a_loop`: two hundred workers in
+  turn, each joined, on every engine. On Linux each region goes back to the
+  kernel at its join.
 - `tests/stdlib/worker_test.fern`: the module through `std/test`.
 - `TestSendParameterRefusesWhatCannotCrossAWorkerBoundary` and
   `TestSendParameterAdmitsSendSafeValues`: the Go checker, one row per reason.

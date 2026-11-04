@@ -1693,7 +1693,7 @@ pub function drop_helper_name(t: typeinfo.Type): string {
 }
 
 pub function release_helper_name(t: typeinfo.Type): string {
-  return "__sem_release_" + ssasem.type_key(t);
+  return ssasem.release_helper_name(t);
 }
 
 function release_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
@@ -2072,6 +2072,9 @@ function send_rows(own out: Fresh, f: ssasem.Func, done: util.NameIndex): Fresh 
     if (ssasem.is_root_helper(c.name) && !done.has(c.name) && !util.has_str(row_names_of(out.rows), c.name)) {
       out = Fresh { ...out, rows: out.rows.append(root_helper(c.name)) };
     }
+    if (ssasem.is_release_helper(c.name) && c.params.len() == 1 && !done.has(c.name) && !util.has_str(row_names_of(out.rows), c.name)) {
+      out = Fresh { ...out, rows: out.rows.append(release_helper(c.params[0], f)) };
+    }
   }
   return out;
 }
@@ -2162,8 +2165,11 @@ function send_refused(t: typeinfo.Type, f: ssasem.Func): string {
 // A record or an enum crosses only with a layout the function knows.
 function send_refused_shape(t: typeinfo.Type, f: ssasem.Func): string {
   if let typeinfo.TypeStruct(_) = t {
-    if (semtypes.is_env(t) || semrecords.find(f.records, t) < 0) {
+    if (semtypes.is_env(t)) {
       return "a closure environment cannot cross a worker boundary";
+    }
+    if (semrecords.find(f.records, t) < 0) {
+      return "a record without a layout cannot cross a worker boundary";
     }
   }
   if let typeinfo.TypeUnion(_) = t {
@@ -2228,7 +2234,17 @@ function send_part(own r: irtables.LowerState, part: typeinfo.Type): irtables.Lo
   return r;
 }
 
+// An array of scalars is one slice of its whole length. An array of
+// references copies each element through the element's helper.
 function send_array(own r: irtables.LowerState, elem: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  if (!ssasem.reference(elem)) {
+    r = emit(r, ir.op_load_local(0));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(0));
+    r = emit(r, ir.op_arr_len());
+    r = emit(r, ir.op_arr_slice(elem_width(elem)));
+    return emit(r, ir.op_return());
+  }
   let out: i32 = 1;
   let index: i32 = 2;
   r = reserve(r, index + 1);

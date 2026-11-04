@@ -5,7 +5,7 @@ This module runs a closure as a worker and joins its result.
 ## Model
 
 A worker owns its heap. A value crosses the worker boundary only by copy: the captures of the closure at `spawn`, and the result at `join`.
-Both checkers admit only a send-safe value at the boundary (E100). A send-safe value is a scalar, a string, or a struct, enum, array, tuple or map of send-safe values.
+Both checkers admit only a send-safe value at the boundary (E100). A send-safe value is a scalar, a string, or a struct, enum, array or tuple of send-safe values.
 A `Cell`, a function value, a `dyn` value, a view, a handle and a `@must_consume` value are not send-safe.
 
 Fern values are immutable, so a copied tree and a shared tree cannot be told apart by any accepted program. The copy is unobservable.
@@ -51,7 +51,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 function __join_process[T](own w: Worker[T]): T>>
 
-<<7 function __unmap_region(region: i64, size: i64, reaped: boolean): void>>
+<<7 function __wait_worker(pid: i32): i32>>
+
+<<8 function __adopt_region[T](root: usize): Option[T]>>
+
+<<9 function __unmap_region(region: i64, size: i64, reaped: boolean): void>>
 ```
 
 ### `module introduction`
@@ -100,7 +104,7 @@ The child copies its result, because a box the body built can point at a box the
 ```fern
 <<4 function __spawn_process[T](own body: () => T): Worker[T]>>=
 function __spawn_process[T](own body: () => T): Worker[T] {
-  let size: i64 = 1073741824i64;
+  let size: i64 = 4294967296i64;
   let region: i64 = 0i64;
   unsafe {
     region = __worker_region(size);
@@ -155,10 +159,7 @@ Waits for the process and copies its result into the parent heap. The original t
 ```fern
 <<6 function __join_process[T](own w: Worker[T]): T>>=
 function __join_process[T](own w: Worker[T]): T {
-  let status: i32 = proc_waitpid(w.pid);
-  while (status == 0 - 4) {
-    status = proc_waitpid(w.pid);
-  }
+  let status: i32 = __wait_worker(w.pid);
   if (status != 0) {
     __unmap_region(w.region, w.size, false);
     eprint("worker: the worker exited with status " + status.to_string() + " and no result");
@@ -171,7 +172,7 @@ function __join_process[T](own w: Worker[T]): T {
       eprint("worker: the worker wrote no result");
       exit(134);
     }
-    let v: Option[T] = __send_adopt(root);
+    let v: Option[T] = __adopt_region(root);
     let copied: Option[T] = __send_copy(v);
     __send_root(v);
     __unmap_region(w.region, w.size, true);
@@ -188,12 +189,41 @@ function __join_process[T](own w: Worker[T]): T {
 }
 ```
 
-### `7 function __unmap_region(region: i64, size: i64, reaped: boolean): void`
+### `7 function __wait_worker(pid: i32): i32`
+
+A signal that lands while the parent waits makes `proc_waitpid` return `EINTR`, which is not the worker's exit. The wait starts again.
+
+```fern
+<<7 function __wait_worker(pid: i32): i32>>=
+function __wait_worker(pid: i32): i32 {
+  let status: i32 = proc_waitpid(pid);
+  while (status == 0 - 4) {
+    status = proc_waitpid(pid);
+  }
+  return status;
+}
+```
+
+### `8 function __adopt_region[T](root: usize): Option[T]`
+
+Takes the root as a value. The call is what makes the value an owner the caller can give away.
+
+```fern
+<<8 function __adopt_region[T](root: usize): Option[T]>>=
+function __adopt_region[T](root: usize): Option[T] {
+  unsafe {
+    let v: Option[T] = __send_adopt(root);
+    return v;
+  }
+}
+```
+
+### `9 function __unmap_region(region: i64, size: i64, reaped: boolean): void`
 
 Removes the region before a fallback, failure, or completed join. A completed join imports the child counters first. Only a successful removal records the reclamation of the live child allocations.
 
 ```fern
-<<7 function __unmap_region(region: i64, size: i64, reaped: boolean): void>>=
+<<9 function __unmap_region(region: i64, size: i64, reaped: boolean): void>>=
 function __unmap_region(region: i64, size: i64, reaped: boolean): void {
   unsafe {
     let rc: i32 = __worker_unmap(region, size, reaped);

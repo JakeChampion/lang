@@ -513,6 +513,7 @@ is the number of slots it leaves.
 | `worker_exit` | 493 | 2 | 1 |
 | `worker_reap` | 494 | 1 | 1 |
 | `send_adopt` | 495 | 1 | 1 |
+| `worker_unmap` | 496 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

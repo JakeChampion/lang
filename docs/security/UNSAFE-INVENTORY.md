@@ -64,6 +64,7 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__send_root(v)` | The caller gives up `v`. The caller must transfer the region, remove it after a copy, or exit. Nothing recursively releases the tree. |
 | `__worker_region(size)`, `__worker_exit(region, root)`, `__worker_reap(region)` | The region is a shared mapping a fork inherits, and the caller owns it. The exit ends the process with no at-exit work, so only a forked worker calls it. The reap reads a root the parent must then adopt. |
 | `__worker_unmap(region, size, reaped)` | The caller owns the entire region and no remaining value can access it. If `reaped` is true, the child exited successfully and the parent imported its complete counters exactly once. Check the kernel status. |
+| `__send_release(v)` | The caller gives up `v`, and the release runs at the call. A caller that restores a heap mark must preserve all other live values. |
 | `__c_call0` to `__c_call6`, with `_f32` and `_f64` forms | A foreign call through a code address. The address and the argument contract are the caller's proof. |
 | `__task_new`, `__task_free`, `__task_enter`, `__task_leave`, `__task_park`, `__task_wait`, `__task_set_ready`, `__task_set_cancelled`, `__task_cancelled`, `__task_timeout`, `__task_cur` | Runtime scheduler hooks. A task id must be live and the state transition must be valid. |
 | `__syscall3` to `__syscall6` | Arbitrary kernel calls. Admitted only in runtime helper sources today. |
