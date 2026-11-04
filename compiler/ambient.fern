@@ -105,7 +105,7 @@ function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: ut
     let rs: treeshake.BodyRefs = treeshake.body_refs(fd);
     let fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-      if (parent[fi] == 0 - 2 && !is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi])) {
+      if (parent[fi] == 0 - 2 && !is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi]) && method_edge(fd, mod.funcs[fi])) {
         parent = parent.with(fi, cur);
         queue = queue.append(fi);
       }
@@ -113,6 +113,73 @@ function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: ut
     }
   }
   return out;
+}
+
+// A method on a named type is reached only by a call whose receiver has
+// that type, or whose receiver type the annotation did not settle. The
+// reference sets name an array or primitive receiver's method by its bare
+// name, which a method of the same name on an unrelated type also matches.
+function method_edge(fd: parser.FuncDecl, callee: parser.FuncDecl): boolean {
+  if (callee.receiver_type.len() == 0 || callee.impl_trait.len() > 0) {
+    return true;
+  }
+  let want: string = canonical_tag(util.base_type_name(callee.receiver_type));
+  if (want.len() == 0 || util.has_str(callee.type_params, want) || util.has_str(callee.all_type_params, want)) {
+    return true;
+  }
+  let name: string = method_base_name(callee.name);
+  function visit(e: ast.Expr, own hit: boolean): boolean {
+    if (hit) {
+      return true;
+    }
+    let ast.ExprCall(c) = e else {
+      return false;
+    };
+    let ast.ExprFieldAccess(fa) = c.callee else {
+      return false;
+    };
+    if (fa.field != name) {
+      return false;
+    }
+    let tag: string = canonical_tag(util.base_type_name(receiver_tag(fa.obj)));
+    return tag.len() == 0 || tag == want;
+  }
+  let hit: boolean = false;
+  for st in fd.body {
+    hit = astwalk.fold_stmt(st, hit, visit);
+  }
+  return hit;
+}
+
+function receiver_tag(e: ast.Expr): string {
+  if let ast.ExprStructLit(lit) = e {
+    return lit.type_name;
+  }
+  return ast.expr_ty(e);
+}
+
+function canonical_tag(tag: string): string {
+  if (tag == "str") {
+    return "string";
+  }
+  if (tag == "bool") {
+    return "boolean";
+  }
+  return tag;
+}
+
+// A trait method of an impl is declared as `Trait.method`.
+function method_base_name(name: string): string {
+  let last_dot: i32 = 0 - 1;
+  for i in 0..name.len() {
+    if (name[i] == b'.') {
+      last_dot = i;
+    }
+  }
+  if (last_dot < 0) {
+    return name;
+  }
+  return slice_unchecked(name, last_dot + 1, name.len()) + "";
 }
 
 function by_capability(vs: Violation[]): Violation[] {
