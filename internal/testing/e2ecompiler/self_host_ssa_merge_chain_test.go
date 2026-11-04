@@ -97,6 +97,52 @@ func TestSSAMergeChainShapeExcludesKernelMoves(t *testing.T) {
 	}
 }
 
+// Join forwarding can remove the chain. In that form, the arms jump to one
+// common block. Count its moves with the same limit as the original chain.
+func ssaDirectMergeShape(fn string) (int, int) {
+	label := regexp.MustCompile(`^\.Lssa_f_[0-9]+:$`)
+	jump := regexp.MustCompile(`^\s*jmp (\.Lssa_f_[0-9]+)$`)
+	preds, moves := map[string]int{}, map[string]int{}
+	current := ""
+	for _, line := range strings.Split(fn, "\n") {
+		if label.MatchString(line) {
+			current = strings.TrimSuffix(line, ":")
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "movq ") && current != "" {
+			moves[current]++
+		}
+		if m := jump.FindStringSubmatch(line); m != nil {
+			preds[m[1]]++
+		}
+	}
+	best, copies := 0, 0
+	for name, n := range preds {
+		if n > best || n == best && moves[name] > copies {
+			best, copies = n, moves[name]
+		}
+	}
+	return best, copies
+}
+
+func TestSSADirectMergeShapeCountsJoinMoves(t *testing.T) {
+	for _, tc := range []struct {
+		name, body   string
+		preds, moves int
+	}{
+		{"direct", "    jmp .Lssa_f_4\n    jmp .Lssa_f_4\n.Lssa_f_4:\n    addq $1, %rax\n", 2, 0},
+		{"join-copy", "    jmp .Lssa_f_4\n    jmp .Lssa_f_4\n.Lssa_f_4:\n    movq %rax, %rbx\n", 2, 1},
+		{"different-targets", "    jmp .Lssa_f_4\n    jmp .Lssa_f_5\n.Lssa_f_4:\n.Lssa_f_5:\n", 1, 0},
+		{"kernel-copy", "    jmp .Lssa_f_4\n.Lssa_f_3:\n    movq %rax, %rbx\n    jmp .Lssa_f_4\n.Lssa_f_4:\n", 2, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			preds, moves := ssaDirectMergeShape(tc.body)
+			if preds != tc.preds || moves != tc.moves {
+				t.Fatalf("preds=%d moves=%d, want preds=%d moves=%d", preds, moves, tc.preds, tc.moves)
+			}
+		})
+	}
+}
+
 func TestSelfHostSSAMergeChainMovesNothing(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -118,7 +164,13 @@ func TestSelfHostSSAMergeChainMovesNothing(t *testing.T) {
 	}
 	bestLabels, bestMoves := ssaMergeChainShape(fn)
 	if bestLabels < 15 {
-		t.Fatalf("the longest run of merge blocks in f spans %d labels, want at least 15:\n%s", bestLabels, fn)
+		preds, moves := ssaDirectMergeShape(fn)
+		// Each of the twenty arms appends once. The last arm falls through.
+		want := strings.Count(mergeChainProg, "stack = stack.append(k)") - 1
+		if preds != want {
+			t.Fatalf("the merge chain spans %d labels and the direct join has %d predecessors, want at least 15 labels or %d direct predecessors:\n%s", bestLabels, preds, want, fn)
+		}
+		bestMoves = max(bestMoves, moves)
 	}
 	if bestMoves > 8 {
 		t.Errorf("the merge chain of f holds %d moves, want at most 8:\n%s", bestMoves, fn)
