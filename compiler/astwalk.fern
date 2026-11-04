@@ -1119,9 +1119,30 @@ pub function collect_calls_stmt(st: ast.Stmt, want: util.NameIndex, own acc: Cal
   return fold_stmt(st, acc, visit);
 }
 
+pub function scalar_pattern_binders(p: ast.Pattern): string[] {
+  match (p) {
+    ast.PatLiteral(literal) => {
+      return append_bound_name([], literal.at_binding);
+    },
+    ast.PatVariant(pv) => {
+      if (pv.scalar_binding) {
+        return append_bound_name([pv.type_name], pv.at_binding);
+      }
+    },
+    ast.PatWildcard(_) => {}
+  }
+  return [];
+}
+
 pub function pattern_binders(p: ast.Pattern, own acc: string[]): string[] {
   match (p) {
+    ast.PatLiteral(literal) => {
+      return append_bound_name(acc, literal.at_binding);
+    },
     ast.PatVariant(pv) => {
+      if (pv.scalar_binding) {
+        acc = append_bound_name(acc, pv.type_name);
+      }
       if (pv.binding.len() > 0) {
         acc = acc.append(pv.binding);
       }

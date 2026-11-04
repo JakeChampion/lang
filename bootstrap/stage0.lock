@@ -1,7 +1,7 @@
 # stage0 pin for `make bootstrap` — docs/BOOTSTRAP.md. Refresh: dispatch
 # .github/workflows/bootstrap.yml with publish=true and commit the lock it releases.
-source 8f6abb2ed1e6c2ace056e9c38f7c987f94d89d31
-url https://github.com/JakeChampion/lang/releases/download/stage0-20261103-8f6abb2
-x86-64-linux ad99ba66298d747fae17085478f72aef841c28ca940060e3224cd97f0cb4c504
-arm64-linux afbc7e497931407d741ac5eec7594069781a28f9f8df8aad04ab334fae67e68c
-arm64-darwin 86543d420680b831c0f42adba3c7ff3e2a2bf9ecef68b88b0bde1fed15bb1b17
+source 94afc238c4a7d3e3624415a744c349519fe4e18e
+url https://github.com/JakeChampion/lang/releases/download/stage0-20261103-94afc23
+x86-64-linux b5bf66c09f5252873a10a767fcd00324a90dceb78f80bc319189ad5ca21ad4f5
+arm64-linux 03bb40e14d1508f1eec8817e2b732c29a52f51b1c8cd2da097d4ec9a8e26189a
+arm64-darwin c996b9de49f40363d56c9ecf2bba9db31a78cf41c8a47c19ee72e1a1f2151f27

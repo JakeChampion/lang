@@ -372,6 +372,13 @@ function is_owned_array(t: typeinfo.Type): boolean {
   return false;
 }
 
+function one_arg_intrinsic_result(name: string): typeinfo.Type {
+  if (name == "__socket_from_fd") {
+    return t_socket();
+  }
+  return t_i32();
+}
+
 function t_socket(): typeinfo.Type {
   return t_struct("Socket");
 }
@@ -763,8 +770,8 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
     return t_i32();
   }
-  if (argc == 1 && util.has_str(["__sum_bytes", "__fd_close", "__tcp_close_unchecked"], name)) {
-    return t_i32();
+  if (argc == 1 && util.has_str(["__sum_bytes", "__fd_close", "__tcp_close_unchecked", "__socket_from_fd"], name)) {
+    return one_arg_intrinsic_result(name);
   }
   if (argc == 2 && (name == "__scale_f64" || name == "__outer_mul_f64")) {
     return t_array(t_float());
@@ -860,7 +867,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__mulhi_u64") {
     return ([t_u64(), t_u64()], true);
   }
-  if (util.has_str(["__alloc", "__fd_close"], name)) {
+  if (util.has_str(["__alloc", "__fd_close", "__socket_from_fd"], name)) {
     return ([t_i32()], true);
   }
   if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool") {
@@ -3632,7 +3639,28 @@ function nested_payload_args(s: Scope, us: UnionSig, spelling: string, at: typei
   return out;
 }
 
+function scalar_binding_name(pattern: ast.PatVariant, whole: typeinfo.Type, s: Scope): string {
+  if (pattern.scalar_binding) {
+    return pattern.type_name;
+  }
+  if (!pattern.bare_name || !is_primitive_type(whole) || s.has_struct(pattern.type_name) || s.has_union(pattern.type_name) || parser.builtin_enum_of(pattern.type_name).len() > 0) {
+    return "";
+  }
+  if let Some(_) = s.lookup_variant(pattern.type_name) {
+    return "";
+  }
+  return pattern.type_name;
+}
+
 function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, whole: typeinfo.Type): Scope {
+  let scalar_name: string = scalar_binding_name(pvin0, whole, look);
+  if (scalar_name.len() > 0) {
+    arm = arm.bind(scalar_name, whole);
+    if (pvin0.at_binding.len() > 0) {
+      arm = arm.bind(pvin0.at_binding, whole);
+    }
+    return arm;
+  }
   let scrut_enum: string = "";
   if let typeinfo.TypeUnion(u) = whole {
     scrut_enum = u.name;
@@ -7072,12 +7100,20 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       for arm in m.arms {
         let armScope: Scope = s;
         match (arm.pattern) {
+          ast.PatLiteral(literal) => {
+            if (!is_primitive_type(sct)) {
+              ok = false;
+            }
+            armScope = annotate_arm_scope(arm, s, sct);
+          },
           ast.PatWildcard(_) => {},
           ast.PatVariant(pv) => {
             let pvn: string = variant_pattern_name(pv.type_name);
             let found: boolean = match (s.lookup_variant(pvn)) { Some(_) => true, None => false };
             let builtin_arm: boolean = union_name.len() > 0 && parser.builtin_enum_of(pvn) == union_name;
-            if (!found && !builtin_arm) {
+            if (scalar_binding_name(pv, sct, s).len() > 0) {
+              armScope = bind_variant_payloads(armScope, s, pv, sct);
+            } else if (!found && !builtin_arm) {
               ok = false;
             } else {
               if (union_name.len() > 0) {
@@ -9600,10 +9636,9 @@ function mc_list_consumes(list: ast.Expr[], name: string, tname: string, report:
   return (false, out);
 }
 
-function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
-  let none: util.Diag[] = [];
+function mc_call_enum_owner(callee: ast.Expr, enums: parser.EnumDecl[]): string {
   let owner: string = "";
-  match (c.callee) {
+  match (callee) {
     ast.ExprIdent(cid) => {
       owner = mx_enum_of(cid.name, enums);
       if (owner.len() == 0) {
@@ -9612,6 +9647,12 @@ function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: 
     },
     _ => {}
   }
+  return owner;
+}
+
+function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
+  let none: util.Diag[] = [];
+  let owner: string = mc_call_enum_owner(c.callee, enums);
   if let ast.ExprFieldAccess(fa) = c.callee {
     if (mc_is_binding(fa.obj, name)) {
       return (true, none);
@@ -10278,7 +10319,7 @@ pub function unsafe_intrinsics(): string[] {
     "__task_park", "__task_park_until", "__task_wait", "__task_set_ready", "__task_set_cancelled",
     "__task_cancelled", "__task_timeout", "__task_until", "__task_cur",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
-    "__fd_close", "__tcp_close_unchecked",
+    "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   ];
 }
 
@@ -11207,13 +11248,7 @@ function mx_body_result_exprs(body: ast.Stmt[]): ast.Expr[] {
 function mx_match_arm_types(m: ast.StmtMatch, s: Scope): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for arm in m.arms {
-    let armScope: Scope = s;
-    match (arm.pattern) {
-      ast.PatVariant(pv) => {
-        armScope = bind_variant_payloads(armScope, s, pv, check_expr(m.scrutinee, s));
-      },
-      _ => {}
-    }
+    let armScope: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
     for ty in mx_body_result_types(arm.body, armScope) {
       out = out.append(ty);
     }
@@ -12231,6 +12266,9 @@ function sugar_unreachable_diags(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope)
 
 function variant_unreachable_diags(arms: ast.MatchArm[], t: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
+  if (literal_match_type(t)) {
+    return scalar_unreachable_diags(arms, t, s);
+  }
   if let typeinfo.TypeUnion(_) = t {
     let covered: string[] = [];
     let all: boolean = false;
@@ -12240,6 +12278,7 @@ function variant_unreachable_diags(arms: ast.MatchArm[], t: typeinfo.Type, s: Sc
         continue;
       }
       match (arm.pattern) {
+        ast.PatLiteral(_) => {},
         ast.PatWildcard(_) => {
           if (!arm.has_guard) {
             all = true;
@@ -12269,6 +12308,20 @@ function cover_binders_only(args: CoverPat[]): boolean {
     }
   }
   return true;
+}
+
+function scalar_unreachable_diags(arms: ast.MatchArm[], t: typeinfo.Type, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  for i in 0..arms.len() {
+    let arm: ast.MatchArm = arms[i];
+    if let ast.PatVariant(pv) = arm.pattern {
+      let name: string = scalar_binding_name(pv, t, s);
+      if (name.len() > 0 && !arm.has_guard && i < arms.len() - 1) {
+        out = out.append(dg_at("E026", "binding arm `" + name + "` matches every value and must be last in the match", arm.line, arm.col));
+      }
+    }
+  }
+  return out;
 }
 
 function tuple_unreachable_diags(arms: ast.TupArm[]): util.Diag[] {
@@ -12318,6 +12371,10 @@ function tuple_binders_only(kinds: i32[], pats: ast.Pattern[]): boolean {
   return true;
 }
 
+function is_variant_pattern(pv: ast.PatVariant, structs: StructTable): boolean {
+  return !pv.bare_name || structs.index.has(pv.type_name) || variant_owner_count(pv.type_name, structs) > 0 || parser.builtin_enum_of(pv.type_name).len() > 0;
+}
+
 function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable): util.Diag[] {
   let out: util.Diag[] = [];
   for stmt in stmts {
@@ -12327,17 +12384,19 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
         let a: i32 = 0;
         while (a < m.arms.len()) {
           match (m.arms[a].pattern) {
+            ast.PatLiteral(_) => {},
             ast.PatWildcard(_) => {
-              if (a < m.arms.len() - 1) {
+              if (a < m.arms.len() - 1 && !m.arms[a].has_guard) {
                 out = out.append(dg_at("E026", "wildcard `_` arm must be last in the match", m.arms[a].line, m.arms[a].col));
               }
             },
             ast.PatVariant(pv) => {
               out = util.append_diags(out, payloadless_binder_diags(pv, structs, unions, m.arms[a].line, m.arms[a].col));
               if (pv.type_name.len() > 0) {
-                if (util.has_str(seen, pv.type_name)) {
+                let variant_name: boolean = is_variant_pattern(pv, structs);
+                if (variant_name && util.has_str(seen, pv.type_name)) {
                   out = out.append(dg_at("E028", "variant \"" + shown_variant_in(structs, pv.type_name) + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
-                } else if (!m.arms[a].has_guard) {
+                } else if (variant_name && !m.arms[a].has_guard) {
                   seen = seen.append(pv.type_name);
                 }
                 if (parser.is_record_pattern(pv)) {
@@ -16488,6 +16547,12 @@ function struct_cover(a: ast.StructArm, t: typeinfo.Type, s: Scope): CoverPat {
 
 function pattern_cover(p: ast.Pattern): CoverPat {
   match (p) {
+    ast.PatLiteral(literal) => {
+      if (literal.has_range) {
+        return CoverPat { ctor: "", opaque: true, args: [] };
+      }
+      return literal_cover(literal.lit);
+    },
     ast.PatWildcard(_) => {
       return cover_any();
     },
@@ -16803,6 +16868,19 @@ function literal_bound_diags(value: ast.Expr, scrut: typeinfo.Type, scope: Scope
   return [];
 }
 
+function scalar_literal_diags(pattern: ast.PatLiteral, scrut: typeinfo.Type, scope: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = literal_bound_diags(pattern.lit, scrut, scope, "literal pattern", line, col);
+  if (pattern.has_range) {
+    if (!is_integer(scrut) && !is_float(scrut)) {
+      out = out.append(dg_at("E035", "range patterns require a numeric scrutinee, got " + type_label(scrut), line, col));
+    } else if (int_is_unsigned(scrut)) {
+      out = out.append(dg_at("E035", "range patterns are not yet supported on an unsigned scrutinee (" + type_label(scrut) + ")", line, col));
+    }
+    out = util.append_diags(out, literal_bound_diags(pattern.range_hi, scrut, scope, "range pattern bound", line, col));
+  }
+  return out;
+}
+
 function literal_comparison_diags(cond: ast.Expr, arm: ast.LitArm, scope: Scope): util.Diag[] {
   if let ast.ExprBinary(compare) = cond {
     let scrut: typeinfo.Type = check_expr(compare.left, scope);
@@ -16868,6 +16946,28 @@ function literal_chain_diags(chain: ast.StmtIf, arms: ast.LitArm[], at: i32, sco
     }
   }
   return util.append_diags(out, stmts_call_diags(chain.else_body, scope));
+}
+
+function scalar_pattern_diags(m: ast.StmtMatch, mst: typeinfo.Type, cur: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (literal_match_type(mst) && ordinary_match_origin(m.origin)) {
+    out = util.append_diags(out, scalar_unreachable_diags(m.arms, mst, cur));
+    for arm in m.arms {
+      match (arm.pattern) {
+        ast.PatLiteral(literal) => {
+          out = util.append_diags(out, scalar_literal_diags(literal, mst, cur, arm.line, arm.col));
+        },
+        ast.PatVariant(epv) => {
+          if (epv.type_name.len() > 0 && scalar_binding_name(epv, mst, cur).len() == 0) {
+            let expected: string = if (is_primitive_type(mst)) { "literal patterns, a binding name, or `_`" } else { "literal patterns or `_`" };
+            out = out.append(dg_at("E035", "match on non-enum value `" + type_label(mst) + "` only accepts " + expected, arm.line, arm.col));
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  return out;
 }
 
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
@@ -16975,18 +17075,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
-        if (literal_match_type(mst) && ordinary_match_origin(m.origin)) {
-          for arm in m.arms {
-            match (arm.pattern) {
-              ast.PatVariant(epv) => {
-                if (epv.type_name.len() > 0 && epv.type_name != "true" && epv.type_name != "false") {
-                  out = out.append(dg_at("E035", "match on non-enum value `" + type_label(mst) + "` only accepts literal patterns or `_`", arm.line, arm.col));
-                }
-              },
-              _ => {}
-            }
-          }
-        }
+        out = util.append_diags(out, scalar_pattern_diags(m, mst, cur));
         match (mst) {
           typeinfo.TypeUnion(mun) => {
             if let Some(usig) = enum_sig(cur, mun.name) {
@@ -16994,8 +17083,13 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               let covered: string[] = [];
               for elem in m.arms {
                 match (elem.pattern) {
+                  ast.PatLiteral(_) => {
+                    out = out.append(dg_at("E035", "literal pattern requires a scalar scrutinee", elem.line, elem.col));
+                  },
                   ast.PatWildcard(_) => {
-                    saw_wild = true;
+                    if (!elem.has_guard) {
+                      saw_wild = true;
+                    }
                   },
                   ast.PatVariant(cpv) => {
                     if (cpv.type_name.len() > 0) {
@@ -17041,26 +17135,29 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           },
           typeinfo.TypeBool(_) => {
-            out = scalar_match_exhaustive_diags(m, out, true);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           typeinfo.TypeI32(_) => {
-            out = scalar_match_exhaustive_diags(m, out, false);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           typeinfo.TypeString(_) => {
-            out = scalar_match_exhaustive_diags(m, out, false);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           typeinfo.TypeFloat(_) => {
-            out = scalar_match_exhaustive_diags(m, out, false);
+            out = scalar_match_exhaustive_diags(m, out, mst, cur);
           },
           _ => {
             if (literal_match_type(mst)) {
-              out = scalar_match_exhaustive_diags(m, out, false);
+              out = scalar_match_exhaustive_diags(m, out, mst, cur);
             }
           }
         }
         for elem in m.arms {
           let armScope: Scope = cur;
           match (elem.pattern) {
+            ast.PatLiteral(_) => {
+              armScope = annotate_arm_scope(elem, cur, mst);
+            },
             ast.PatVariant(apv) => {
               let foreign: boolean = false;
               match (mst) {
@@ -17249,6 +17346,18 @@ function place_assign_diags(place: ast.Expr, value: ast.Expr, line: i32, col: i3
 }
 
 function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  if let ast.StmtMatch(m) = st {
+    let subject: ast.Stmt = ast.StmtExpr { value: m.scrutinee, line: m.line, op: "" };
+    let out: util.Diag[] = assign_stmt_own_lambdas(subject, cur, unions);
+    let whole: typeinfo.Type = check_expr(m.scrutinee, cur);
+    for arm in m.arms {
+      if (arm.has_guard) {
+        let guard: ast.Stmt = ast.StmtExpr { value: arm.guard, line: arm.line, op: "" };
+        out = util.append_diags(out, assign_stmt_own_lambdas(guard, annotate_arm_scope(arm, cur, whole), unions));
+      }
+    }
+    return out;
+  }
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
@@ -17340,13 +17449,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
       },
       ast.StmtMatch(m) => {
         for elem in m.arms {
-          let asc: Scope = cur;
-          match (elem.pattern) {
-            ast.PatVariant(apv) => {
-              asc = bind_variant_payloads(asc, cur, apv, check_expr(m.scrutinee, cur));
-            },
-            _ => {}
-          }
+          let asc: Scope = annotate_arm_scope(elem, cur, check_expr(m.scrutinee, cur));
           out = util.append_diags(out, stmts_assign_diags(elem.body, asc, unions));
         }
       },
@@ -17468,22 +17571,40 @@ function name_after(a: string, b: string): boolean {
   return a > b;
 }
 
-function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[], boolean_tag: boolean): util.Diag[] {
+struct ScalarCoverage { all: boolean, yes: boolean, no: boolean }
+
+function scalar_arm_coverage(arm: ast.MatchArm, whole: typeinfo.Type, scope: Scope, covered: ScalarCoverage): ScalarCoverage {
+  if (arm.has_guard) {
+    return covered;
+  }
+  match (arm.pattern) {
+    ast.PatVariant(pv) => {
+      return ScalarCoverage { ...covered, all: covered.all || scalar_binding_name(pv, whole, scope).len() > 0 };
+    },
+    ast.PatLiteral(literal) => {
+      if (!literal.has_range) {
+        if let ast.ExprBool(value) = literal.lit {
+          return ScalarCoverage { ...covered, yes: covered.yes || value.value, no: covered.no || !value.value };
+        }
+      }
+    },
+    ast.PatWildcard(_) => {
+      return ScalarCoverage { ...covered, all: true };
+    }
+  }
+  return covered;
+}
+
+function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[], whole: typeinfo.Type, scope: Scope): util.Diag[] {
   if (m.origin.len() > 0) {
     return acc;
   }
-  let saw_wild: boolean = false;
+  let boolean_tag: boolean = match (whole) { typeinfo.TypeBool(_) => true, _ => false };
+  let covered: ScalarCoverage = ScalarCoverage { all: false, yes: false, no: false };
   for arm in m.arms {
-    match (arm.pattern) {
-      ast.PatWildcard(_) => {
-        if (!arm.has_guard) {
-          saw_wild = true;
-        }
-      },
-      _ => {}
-    }
+    covered = scalar_arm_coverage(arm, whole, scope, covered);
   }
-  if (saw_wild) {
+  if (covered.all || boolean_tag && covered.yes && covered.no) {
     return acc;
   }
   if (boolean_tag) {
@@ -17862,7 +17983,7 @@ function registered_intrinsics(): string[] {
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
-    "__fd_close", "__tcp_close_unchecked",
+    "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
     "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
     "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
   ];
@@ -18644,7 +18765,7 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
-      return util.has_str(ctx.fresh_scrut, cid.name);
+      return util.has_str(ctx.fresh_scrut, cid.name) || util.has_str(ctx.fresh, cid.name) && !ow_expr_holds_no_handle(e, ctx);
     }
     return ow_qualified_ctor(c.callee, ctx) || ow_fresh_method_result(c, ctx);
   }
@@ -18677,10 +18798,7 @@ function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
   return false;
 }
 
-function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
-  if (ow_expr_is_scalar(e, ctx)) {
-    return true;
-  }
+function ow_is_fresh_literal(e: ast.Expr): boolean {
   match (e) {
     ast.ExprStructLit(_) => {
       return true;
@@ -18697,6 +18815,20 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprMapLit(_) => {
       return true;
     },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_expr_is_scalar(e, ctx)) {
+    return true;
+  }
+  if (ow_is_fresh_literal(e)) {
+    return true;
+  }
+  match (e) {
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
@@ -19589,10 +19721,11 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
   }
   if let ast.StmtMatch(m) = st {
     let r: i32 = LU_CONTINUES;
+    let reach: LuReach = LuReach { noret: fx.noret, frames: site.frames, level: site.frames.len() - 1, scope: lu_binding_level(site.frames, aid.name) };
     if (lu_same_ident(m.scrutinee, aid)) {
-      r = lu_match_tag_live(fx, m, aid.name);
+      r = lu_match_tag_live(reach, m, aid.name);
     } else if (lu_mentions_at(m.scrutinee, aid)) {
-      r = lu_call_tag_settles(fx, m, aid);
+      r = lu_call_tag_settles(reach, m, aid);
     } else {
       r = LU_NOT_TAG;
     }
@@ -19628,7 +19761,7 @@ function lu_mentions_at(e: ast.Expr, aid: ast.ExprIdent): boolean {
 // A local that a call in a match tag takes. LU_LIVE: a later read in the
 // tag, or a read in a guard or an arm before a whole assignment. LU_SETTLED:
 // every arm assigns the local whole or leaves the statement.
-function lu_call_tag_settles(fx: LuFn, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
+function lu_call_tag_settles(reach: LuReach, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
   let facts: LuFacts = astwalk.fold_expr_nodes(m.scrutinee, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   for o in facts.occ {
     if (o.name == aid.name && (o.line > aid.line || o.line == aid.line && o.col > aid.col)) {
@@ -19640,7 +19773,7 @@ function lu_call_tag_settles(fx: LuFn, m: ast.StmtMatch, aid: ast.ExprIdent): i3
     if (arm.has_guard && astwalk.count_ident_expr(arm.guard, aid.name) > 0) {
       return LU_LIVE;
     }
-    let r: i32 = lu_stmts_settle(fx, arm.body, aid.name);
+    let r: i32 = lu_stmts_settle(reach, arm.body, aid.name);
     if (r == LU_LIVE) {
       return LU_LIVE;
     }
@@ -19666,7 +19799,7 @@ function lu_same_ident(e: ast.Expr, aid: ast.ExprIdent): boolean {
 // of the taken value. LU_LIVE: an arm that binds a payload reads the taken
 // value. LU_SETTLED: every such arm gives the local a new value or leaves the
 // statement, so the statements after the match do not read the taken value.
-function lu_match_tag_live(fx: LuFn, m: ast.StmtMatch, name: string): i32 {
+function lu_match_tag_live(reach: LuReach, m: ast.StmtMatch, name: string): i32 {
   let settled: boolean = true;
   for arm in m.arms {
     if (astwalk.pattern_binders(arm.pattern, []).len() == 0) {
@@ -19675,7 +19808,7 @@ function lu_match_tag_live(fx: LuFn, m: ast.StmtMatch, name: string): i32 {
     if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
       return LU_LIVE;
     }
-    let r: i32 = lu_stmts_settle(fx, arm.body, name);
+    let r: i32 = lu_stmts_settle(reach, arm.body, name);
     if (r == LU_LIVE) {
       return LU_LIVE;
     }
@@ -19689,16 +19822,20 @@ function lu_match_tag_live(fx: LuFn, m: ast.StmtMatch, name: string): i32 {
   return LU_CONTINUES;
 }
 
+// Where a statement list sits: a break or a continue in it leaves to a loop
+// of frames, seen from level, for a binding at scope.
+struct LuReach { noret: util.NameIndex, frames: LuFrame[], level: i32, scope: i32 }
+
 // A statement list that follows a take of name. LU_LIVE: a read of name
-// before a whole assignment to it. LU_SETTLED: every path assigns name whole
-// or leaves the list early. LU_CONTINUES: a path reaches the end with the
-// taken value still in name.
-function lu_stmts_settle(fx: LuFn, stmts: ast.Stmt[], name: string): i32 {
+// before a whole assignment to it, also after a break or a continue.
+// LU_SETTLED: every path assigns name whole or leaves the list early.
+// LU_CONTINUES: a path reaches the end with the taken value still in name.
+function lu_stmts_settle(reach: LuReach, stmts: ast.Stmt[], name: string): i32 {
   for st in stmts {
     if (lu_assigns_whole(st, name)) {
       return LU_SETTLED;
     }
-    let r: i32 = lu_branch_settle(fx, st, name);
+    let r: i32 = lu_branch_settle(reach, st, name);
     if (r == LU_LIVE || r == LU_SETTLED) {
       return r;
     }
@@ -19708,8 +19845,11 @@ function lu_stmts_settle(fx: LuFn, stmts: ast.Stmt[], name: string): i32 {
     if (lu_mentions(st, name) > 0) {
       return LU_LIVE;
     }
+    if (lu_jumps_live(reach.noret, reach.frames, reach.level, lu_jumps(st), name, reach.scope)) {
+      return LU_LIVE;
+    }
     let one: ast.Stmt[] = [st];
-    if (block_diverges(one, false) || lu_never_returns(fx.noret, st)) {
+    if (block_diverges(one, false) || lu_never_returns(reach.noret, st)) {
       return LU_SETTLED;
     }
   }
@@ -19720,7 +19860,7 @@ const LU_NOT_BRANCH: i32 = 3;
 
 // A match or an if statement settles when each of its paths settles, and is
 // live when one path reads name. Any other statement is LU_NOT_BRANCH.
-function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
+function lu_branch_settle(reach: LuReach, st: ast.Stmt, name: string): i32 {
   match (st) {
     ast.StmtMatch(m) => {
       if (astwalk.count_ident_expr(m.scrutinee, name) > 0) {
@@ -19731,7 +19871,7 @@ function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
         if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
           return LU_LIVE;
         }
-        let r: i32 = lu_stmts_settle(fx, arm.body, name);
+        let r: i32 = lu_stmts_settle(reach, arm.body, name);
         if (r == LU_LIVE) {
           return LU_LIVE;
         }
@@ -19748,7 +19888,7 @@ function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
       if (astwalk.count_ident_expr(f.cond, name) > 0) {
         return LU_LIVE;
       }
-      let rt: i32 = lu_stmts_settle(fx, f.then_body, name);
+      let rt: i32 = lu_stmts_settle(reach, f.then_body, name);
       if (rt == LU_LIVE) {
         return LU_LIVE;
       }
@@ -19758,7 +19898,7 @@ function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
       if (f.else_body.len() == 0) {
         return LU_CONTINUES;
       }
-      let re: i32 = lu_stmts_settle(fx, f.else_body, name);
+      let re: i32 = lu_stmts_settle(reach, f.else_body, name);
       if (re == LU_LIVE) {
         return LU_LIVE;
       }
@@ -19866,20 +20006,15 @@ function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name
     return false;
   }
   let f: LuFrame = frames[level];
+  let reach: LuReach = LuReach { noret: noret, frames: frames, level: level, scope: scope };
   for j in f.idx + 1..f.stmts.len() {
-    let st: ast.Stmt = f.stmts[j];
-    if (lu_assigns_whole(st, name)) {
-      // A new value replaces the local before any read of the old one.
-      return false;
-    }
-    if (lu_mentions(st, name) > 0) {
+    // A new value on every path replaces the local before any read of the
+    // old one.
+    let r: i32 = lu_stmts_settle(reach, [f.stmts[j]], name);
+    if (r == LU_LIVE) {
       return true;
     }
-    if (lu_jumps_live(noret, frames, level, lu_jumps(st), name, scope)) {
-      return true;
-    }
-    let one: ast.Stmt[] = [st];
-    if (block_diverges(one, false) || lu_never_returns(noret, st)) {
+    if (r == LU_SETTLED) {
       return false;
     }
   }
@@ -20036,7 +20171,27 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
     return false;
   }
-  return lu_path_is_last(fx, q, fa.field);
+  return lu_path_is_last(fx, q, fa.field) || lu_field_base_dead(fx, site, q, fa.field);
+}
+
+// No path after the statement that holds the call reads q, and the statement
+// reads only other fields of q after q.field. A later mention in a branch
+// that the call does not reach is not a read.
+function lu_field_base_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
+  if (site.frames.len() == 0) {
+    return false;
+  }
+  let inner: LuFrame = site.frames[site.frames.len() - 1];
+  let facts: LuFacts = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
+      let sel: string = lu_sel_at(facts, o.line, o.col);
+      if (sel.len() == 0 || sel == field) {
+        return false;
+      }
+    }
+  }
+  return !lu_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name));
 }
 
 struct LuFieldReads { name: string, field: string, n: i32 }
@@ -20891,6 +21046,10 @@ function send_unsafe_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[]): stri
   if (is_str_view(t) || is_arr_view(t)) {
     return "a view borrows another value's storage";
   }
+  return send_unsafe_nonview_reason(t, ctx, seen);
+}
+
+function send_unsafe_nonview_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[]): string {
   match (t) {
     typeinfo.TypeArray(a) => {
       return send_unsafe_reason(a.elem, ctx, seen);
@@ -22222,7 +22381,7 @@ function ow_fresh_builtins(): string[] {
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
-    "tcp_accept", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
+    "__socket_from_fd", "tcp_accept", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "udp_bind", "udp_bind_with", "unix_connect", "unix_listen",
     "termios_get", "uname_field", "window_size",
     "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",
@@ -28099,6 +28258,12 @@ function annotate_variant_struct(name: string, s: Scope): string {
 
 function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {
   match (arm.pattern) {
+    ast.PatLiteral(literal) => {
+      if (literal.at_binding.len() > 0) {
+        return s.bind(literal.at_binding, whole);
+      }
+      return s;
+    },
     ast.PatVariant(pv) => {
       let vn: string = annotate_variant_struct(pv.type_name, s);
       if (vn.len() == 0) {
@@ -28111,6 +28276,24 @@ function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): 
     }
   }
   return s;
+}
+
+function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
+  let narms: ast.MatchArm[] = [];
+  for arm in m.arms {
+    let whole: typeinfo.Type = check_expr(m.scrutinee, s);
+    let pattern: ast.Pattern = arm.pattern;
+    if let ast.PatVariant(pv) = pattern {
+      pattern = ast.PatVariant { ...pv, bare_name: false, scalar_binding: scalar_binding_name(pv, whole, s).len() > 0 };
+    }
+    let asc: Scope = annotate_arm_scope(arm, s, whole);
+    let g: ast.Expr = arm.guard;
+    if (arm.has_guard) {
+      g = annotate_expr(arm.guard, asc);
+    }
+    narms = narms.append(ast.MatchArm { ...arm, pattern: pattern, body: annotate_block(arm.body, asc), guard: g });
+  }
+  return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
 }
 
 function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
@@ -28150,16 +28333,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtAssign { ...a, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target)) };
     },
     ast.StmtMatch(m) => {
-      let narms: ast.MatchArm[] = [];
-      for arm in m.arms {
-        let asc: Scope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
-        let g: ast.Expr = arm.guard;
-        if (arm.has_guard) {
-          g = annotate_expr(arm.guard, asc);
-        }
-        narms = narms.append(ast.MatchArm { ...arm, body: annotate_block(arm.body, asc), guard: g });
-      }
-      return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
+      return annotate_match_stmt(m, s);
     },
     ast.StmtFor(fr) => {
       if let Some(lowered) = iterator_lowering(fr, s) {
@@ -28249,7 +28423,20 @@ function display_unrewritten(e: ast.Expr, own found: boolean): boolean {
 function unannotated(stmts: ast.Stmt[]): boolean {
   let found: boolean = false;
   for st in stmts {
-    found = astwalk.fold_stmt(st, found, unchecked_or_unrewritten);
+    found = astwalk.fold_stmt_nodes(st, found, unresolved_scalar_pattern, unchecked_or_unrewritten, astwalk.descend_all);
+  }
+  return found;
+}
+
+function unresolved_scalar_pattern(st: ast.Stmt, own found: boolean): boolean {
+  if let ast.StmtMatch(m) = st {
+    for arm in m.arms {
+      if let ast.PatVariant(pv) = arm.pattern {
+        if (pv.bare_name && !pv.scalar_binding) {
+          return true;
+        }
+      }
+    }
   }
   return found;
 }

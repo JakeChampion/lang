@@ -11,8 +11,12 @@ pub struct Writes { scope: Scope, last: i32[] }
 pub function root(names: string[], body: ast.Stmt[]): Scope {
   let scope: Scope = Scope { names: util.name_index(names), size: names.len(), after: __alloc_bool(names.len()) };
   for st in body {
-    scope = astwalk.fold_stmt_spine(st, scope, deferred);
+    scope = astwalk.fold_stmt_nodes(st, scope, deferred, keep_scope, irtables.capture_frame_descend);
   }
+  return scope;
+}
+
+function keep_scope(e: ast.Expr, own scope: Scope): Scope {
   return scope;
 }
 
@@ -20,7 +24,7 @@ pub function root(names: string[], body: ast.Stmt[]): Scope {
 function deferred(st: ast.Stmt, own scope: Scope): Scope {
   if let ast.StmtDefer(d) = st {
     let after: boolean[] = scope.after;
-    for name in irtables.body_assign_targets([d.action]) {
+    for name in irtables.capture_assign_targets([d.action]) {
       let at: i32 = scope.names.find(name);
       if (at >= 0) {
         after = after.with(at, true);
@@ -38,7 +42,7 @@ pub function block(stmts: ast.Stmt[], scope: Scope): Writes {
     last = last.append(0 - 1);
   }
   for i in 0..stmts.len() {
-    for name in irtables.body_assign_targets([stmts[i]]) {
+    for name in irtables.capture_assign_targets([stmts[i]]) {
       let slot: i32 = scope.names.find(name);
       if (slot >= 0) {
         last = last.with(slot, i);

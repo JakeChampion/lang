@@ -22,16 +22,24 @@ func dnsTCPBytesFaultSource(t *testing.T) string {
 		t.Fatal("missing DNS TCP sender")
 	}
 	body := string(module)[start:]
-	end := strings.Index(body, "\n}\n")
-	if end < 0 {
-		t.Fatal("missing DNS TCP sender end")
+	sender := strings.Index(body, "function sent_all(")
+	if sender < 0 {
+		t.Fatal("missing DNS TCP send loop")
 	}
-	body = body[:end+3]
-	body = strings.Replace(body, "framed: u8[])", "framed: u8[], connect: (net.SocketAddr) => Result[i32, net.NetError], send: (i32, u8[]) => i32, close: (i32) => i32)", 1)
-	body = strings.NewReplacer("net.connect(", "connect(", "tcp_send_bytes(", "send(", "tcp_close(", "close(").Replace(body)
+	end := strings.Index(body[sender:], "\n}\n")
+	if end < 0 {
+		t.Fatal("missing DNS TCP send loop end")
+	}
+	body = body[:sender+end+3]
+	body = strings.NewReplacer(
+		"send_tcp(ns: net.SocketAddr, framed: u8[])", "send_tcp(ns: net.SocketAddr, framed: u8[], connect: (net.SocketAddr) => Result[Socket, net.NetError], send: (Socket, u8[]) => i32, close: (Socket) => i32)",
+		"sent_all(own sock: Socket, framed: u8[])", "sent_all(sock: Socket, framed: u8[], send: (Socket, u8[]) => i32, close: (Socket) => i32)",
+		"sent_all(sock, framed)", "sent_all(sock, framed, send, close)",
+		"net.connect(", "connect(", "tcp_send_bytes(", "send(", "tcp_close(", "close(",
+	).Replace(body)
 	return `import "std/net";
 import "std/array";
-enum DnsError { NoReply, Socket(net.NetError) }
+enum DnsError { NoReply, NetFailed(net.NetError) }
 ` + e2eharness.HostErrnoFern() + body + `
 function probe(mode: i32): void {
     let data: u8[] = [0u8, 255u8, 128u8, 65u8, 0u8, 254u8, 253u8, 10u8];
@@ -41,12 +49,13 @@ function probe(mode: i32): void {
     let closed: i32 = 0;
     let reset: net.NetError = net.ConnectionReset;
     let interrupted: net.NetError = net.Interrupted;
-    let connect = (addr: net.SocketAddr): Result[i32, net.NetError] => {
+    let connect = (addr: net.SocketAddr): Result[Socket, net.NetError] => {
         if (mode == 5) { return Err(net.ConnectionRefused); }
-        return Ok(9);
+        let made: Socket = 9;
+        return Ok(made);
     };
-    let send = (fd: i32, remaining: u8[]): i32 => {
-        assert(fd == 9 && closed == 0);
+    let send = (sock: Socket, remaining: u8[]): i32 => {
+        assert(sock.fd == 9 && closed == 0);
         calls = calls + 1;
         assert(calls <= 4);
         assert(remaining.len() == data.len() - progress);
@@ -59,12 +68,12 @@ function probe(mode: i32): void {
         progress = progress + n;
         return n;
     };
-    let close = (fd: i32): i32 => { assert(fd == 9); closed = closed + 1; return 0; };
+    let close = (sock: Socket): i32 => { assert(sock.fd == 9); closed = closed + 1; return 0; };
     match (send_tcp(net.socket_addr(net.ipv4_loopback(), 53), data, connect, send, close)) {
-        Ok(fd) => { assert(mode == 0 || mode == 1 || mode == 6); assert(fd == 9 && progress == data.len()); },
+        Ok(sock) => { assert(mode == 0 || mode == 1 || mode == 6); assert(sock.fd == 9 && progress == data.len()); },
         Err(e) => { match (e) {
             NoReply => { assert(mode == 4); },
-            Socket(error) => {
+            NetFailed(error) => {
                 if (mode == 5) { assert(error.eq(net.ConnectionRefused)); }
                 else { assert((mode == 2 || mode == 3) && error.eq(reset)); }
             }

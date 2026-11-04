@@ -1639,6 +1639,8 @@ type TuplePatElem struct {
 
 type MatchArm struct {
 	P               Position
+	BareName        bool
+	ScalarBinding   string
 	VariantName     string
 	VariantModule   string
 	Bindings        []string
@@ -1663,7 +1665,7 @@ type MatchArm struct {
 
 func MatchTakesPointerPayload(arms []*MatchArm) bool {
 	for _, a := range arms {
-		if armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
+		if a.ScalarBinding != "" || armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
 			return true
 		}
 	}
@@ -1672,7 +1674,7 @@ func MatchTakesPointerPayload(arms []*MatchArm) bool {
 
 func MatchExprTakesPointerPayload(arms []*MatchExprArm) bool {
 	for _, a := range arms {
-		if armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
+		if a.ScalarBinding != "" || armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
 			return true
 		}
 	}
@@ -1712,6 +1714,8 @@ type MatchExpr struct {
 
 type MatchExprArm struct {
 	P               Position
+	BareName        bool
+	ScalarBinding   string
 	VariantName     string
 	VariantModule   string
 	Bindings        []string
@@ -1735,11 +1739,11 @@ type MatchExprArm struct {
 }
 
 func (a *MatchArm) Binders() []string {
-	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+	return appendNonEmpty(armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads), a.ScalarBinding)
 }
 
 func (a *MatchExprArm) Binders() []string {
-	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+	return appendNonEmpty(armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads), a.ScalarBinding)
 }
 
 func armBinders(bindings []string, atBinding string, tupleElems []TuplePatElem, payloads []*TuplePatElem) []string {
@@ -1772,7 +1776,7 @@ func (a *MatchExprArm) BinderType(name string, scrutinee Type) Type {
 	if a == nil || name == "" {
 		return nil
 	}
-	if a.AtBinding == name {
+	if a.AtBinding == name || a.ScalarBinding == name {
 		return scrutinee
 	}
 	for i, bn := range a.Bindings {

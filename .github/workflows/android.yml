@@ -14,8 +14,8 @@ name: Android
 # them. tests/android/audio checks std/android/audio and a JNI call from
 # the loop thread, so the emulator runs with its audio on.
 # examples/android/walkie is the LAN walkie-talkie: its check runs two
-# copies of it against each other. It reboots the emulator with the freezer of
-# cached apps off, so it runs last.
+# copies of it against each other, with the cached-app freezer disabled and
+# its effective state checked before either copy starts.
 # The seccomp job checks the syscalls of the fixture corpus against
 # Android's app filter.
 

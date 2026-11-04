@@ -1565,6 +1565,7 @@ func New() *Interp {
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["__tcp_close_unchecked"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["__fd_close"] = &Builtin{Fn: builtinTcpClose}
+	i.Builtins["__socket_from_fd"] = &Builtin{Fn: builtinSocketFromFd}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
@@ -1724,6 +1725,17 @@ func tcpSendData(i *Interp, id Number, data []byte) (Value, error) {
 		return Number(errnoOf(err)), nil
 	}
 	return Number(n), nil
+}
+
+// A Socket runs as its descriptor number.
+func builtinSocketFromFd(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("__socket_from_fd: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("__socket_from_fd: expected number arg, got %T", args[0])
+	}
+	return args[0], nil
 }
 
 func builtinTcpClose(i *Interp, args []Value) (Value, error) {
@@ -6416,7 +6428,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			return result{}, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
 		for _, arm := range x.Arms {
-			if !arm.IsWildcard {
+			if !arm.IsWildcard && arm.ScalarBinding == "" {
 				if arm.Literal == nil {
 					continue
 				}
@@ -6429,6 +6441,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 				}
 			}
 			armEnv := newEnv(e)
+			if arm.ScalarBinding != "" {
+				armEnv.declare(arm.ScalarBinding, tag)
+			}
 			if arm.AtBinding != "" {
 				armEnv.declare(arm.AtBinding, tag)
 			}
@@ -7232,7 +7247,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			return nil, fmt.Errorf("interp: match scrutinee is %T, expected enum value", tag)
 		}
 		for _, arm := range x.Arms {
-			if !arm.IsWildcard {
+			if !arm.IsWildcard && arm.ScalarBinding == "" {
 				if arm.Literal == nil {
 					continue
 				}
@@ -7245,6 +7260,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				}
 			}
 			armEnv := newEnv(env)
+			if arm.ScalarBinding != "" {
+				armEnv.declare(arm.ScalarBinding, tag)
+			}
 			if arm.AtBinding != "" {
 				armEnv.declare(arm.AtBinding, tag)
 			}

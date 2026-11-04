@@ -34,7 +34,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			name: "two_calls",
 			src: `enum R { Full(i32[]), Empty }
 @noinline function hold(o: R): i32 { return 0; }
-function round(i: i32): i32 {
+@noinline function round(i: i32): i32 {
     let t: i32 = 0;
     if (i % 2 == 0) { let o: R = R.Full([i + 2, i + 3]); t = t + 1 + hold(o); }
     return t;

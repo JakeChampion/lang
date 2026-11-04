@@ -279,6 +279,107 @@ function exposed(own up: i32[], def_b: i32[], def_k: i32[], bi: i32, k: i32, val
   return up;
 }
 
+// For each value, whether it is live just after a call that `hard` marks, by
+// position. A value is not live after the call that defines it. Empty when
+// the liveness cannot be computed.
+pub function call_crossers(f: ssa.SFunc, hard: boolean[]): boolean[] {
+  let none: i32[][] = [];
+  for v in 0..f.nvals {
+    none = none.append([]);
+  }
+  let fl: Flow = compute(f, none);
+  if (!fl.ok) {
+    return [];
+  }
+  let w: Cross = Cross { live: __alloc_bool(f.nvals), out: __alloc_bool(f.nvals) };
+  let start: i32 = 0;
+  for bi in 0..f.blocks.len() {
+    let b: ssa.SBlock = f.blocks[bi];
+    if (any_hard(hard, start, b.insts.len())) {
+      w = crossers_in(w, live_out_ids(fl, bi), b, start, hard);
+    }
+    start = start + b.insts.len() + 1;
+  }
+  return w.out;
+}
+
+// `live` is all false between blocks. The walk of one block lists each value
+// it marks live, and clears them at its end.
+struct Cross { live: boolean[], out: boolean[] }
+
+function crossers_in(own w: Cross, live_out: i32[], b: ssa.SBlock, start: i32, hard: boolean[]): Cross {
+  let live: boolean[] = w.live;
+  let out: boolean[] = w.out;
+  let seen: i32[] = live_out.append(term_use(b.term));
+  for v in seen {
+    live = mark_live(live, v);
+  }
+  let k: i32 = b.insts.len();
+  while (k > 0) {
+    k = k - 1;
+    let ins: ssa.SInst = b.insts[k];
+    live = mark_dead(live, ins.result);
+    if (start + k < hard.len() && hard[start + k]) {
+      out = marked_live(out, live, seen);
+    }
+    if (ins.kind_tag != 8) {
+      for arg in ins.args {
+        if (arg >= 0 && !live[arg]) {
+          live = live.with(arg, true);
+          seen = seen.append(arg);
+        }
+      }
+    }
+  }
+  for v in seen {
+    live = mark_dead(live, v);
+  }
+  return Cross { live: live, out: out };
+}
+
+function marked_live(own out: boolean[], live: boolean[], seen: i32[]): boolean[] {
+  for v in seen {
+    if (v >= 0 && live[v]) {
+      out = out.with(v, true);
+    }
+  }
+  return out;
+}
+
+// The value a terminator reads, or -1.
+function term_use(t: ssa.STerm): i32 {
+  if (t.kind_tag == 1) {
+    return t.value;
+  }
+  if (t.kind_tag == 3) {
+    return t.cond;
+  }
+  return 0 - 1;
+}
+
+function mark_live(own live: boolean[], v: i32): boolean[] {
+  if (v < 0) {
+    return live;
+  }
+  return live.with(v, true);
+}
+
+function mark_dead(own live: boolean[], v: i32): boolean[] {
+  if (v < 0) {
+    return live;
+  }
+  return live.with(v, false);
+}
+
+function any_hard(hard: boolean[], start: i32, n: i32): boolean {
+  for k in start..start + n {
+    if (k < hard.len() && hard[k]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
   return compute_kept(f, dependencies, []);
 }

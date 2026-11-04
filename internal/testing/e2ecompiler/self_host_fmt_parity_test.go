@@ -22,6 +22,11 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"scalar-match-bindings", `function f(tag: i32): i32 {
+  let value = match (tag) { 0 => 10, n when n > 100 => n, rest => rest + 14 };
+  match (tag) { n when n > 0 => { return n + value; }, 0..5 => { return 1; }, rest => { return rest; } }
+}
+`},
 	{"comment-only-blocks", `struct P { x: i32 }
 
 function f(a: boolean, b: boolean, o: Option[i32]): i32 {
@@ -2071,6 +2076,34 @@ function main(): i32 { return 0; }
     k, o,
   )) { 0 => 1, _ => 2 };
   return a + b + c + d;
+}
+
+function main(): i32 { return 0; }
+`},
+	{"literal-match-binding-arm", `function f(k: i32): i32 {
+  return match (k) { 0 => 10, n when n > 100 => n, _ => 14 };
+}
+
+function g(k: i32): i32 {
+  match (k) {
+    n when n > 100 => {
+      return n;
+    },
+    0 => {
+      return 10;
+    },
+    _ => {
+      return 14;
+    }
+  }
+}
+
+function h(s: string): i32 {
+  return match (s) { "a" => 1, other => other.len() };
+}
+
+function w(k: i32): i32 {
+  return match (k) { 0 => 10, _ when k > 100 => k, _ => 14 };
 }
 
 function main(): i32 { return 0; }

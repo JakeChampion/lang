@@ -67,7 +67,7 @@ function configured(): Result[server.Config, string] {
   return match (verify.roots_from_file(path)) { Ok(roots) => Ok(cfg.with_client_roots(roots)), Err(e) => Err("roots: " + e.message()) };
 }
 
-function listening(): Result[i32, string] {
+function listening(): Result[Socket, string] {
   let Ok(port) = i32.parse_i32_radix(setting("PORT", "8443"), 10) else {
     return Err("PORT is not a number");
   };

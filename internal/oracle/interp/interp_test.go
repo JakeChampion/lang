@@ -502,6 +502,47 @@ func TestInterpMatchLiteralNonEnum(t *testing.T) {
 	}
 }
 
+func TestInterpScalarMatchBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      Number
+	}{
+		{"value-guard", `function main(): i32 { return match (101) { 0 => 10, n when n > 100 => n, _ => 14 }; }`, 101},
+		{"statement-guard", `function main(): i32 { match (101) { 0 => { return 10; }, n when n > 100 => { return n; }, _ => { return 14; } } }`, 101},
+		{"first-name-falls-through", `function main(): i32 { return match (0) { n when n > 100 => n, 0 => 10, rest => rest + 14 }; }`, 10},
+		{"unguarded-name", `function main(): i32 { match (50) { n when n > 100 => { return n; }, rest => { return rest + 14; } } }`, 64},
+		{"string", `function main(): i32 { return match ("hello") { "" => 0, text => text.len() }; }`, 5},
+		{"shadow", `function main(): i32 { let n = 8; let value = match (3) { n => n }; return value + n; }`, 11},
+		{"escaped-reassigned-binding", `function main(): i32 { let read = match (3) { n => { let saved = (): i32 => n; n = 8; saved } }; return read(); }`, 8},
+		{"guard-mutation-and-one-evaluation", `function main(): i32 {
+            let calls = 0;
+            let tag = 3;
+            let next = (): i32 => { calls += 1; return tag; };
+            let result = match (next()) {
+              n when ((): boolean => { n += 10; tag = 9; return false; })() => n,
+              3 => 4,
+              rest => rest
+            };
+            return calls * 100 + result + tag;
+        }`, 113},
+		{"identifier-is-a-snapshot", `function main(): i32 {
+            let tag = 3;
+            match (tag) {
+              n when ((): boolean => { n += 10; tag = 9; return false; })() => { return n; },
+              3 => { return 4 + tag; },
+              rest => { return rest; }
+            }
+        }`, 13},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value, _ := evalProgram(t, tc.src)
+			if got, ok := value.(Number); !ok || got != tc.want {
+				t.Fatalf("got %v, want %d", value, tc.want)
+			}
+		})
+	}
+}
+
 func TestInterpTcpSocketEcho(t *testing.T) {
 	src := `function main(): i32 {
 		let fd: i32 = tcp_listen(0);

@@ -645,6 +645,8 @@ own_inplace_sort                                     0
 own_loop_takes_and_rebinds_each_round                0
 own_param_alias_after_self_update                    0
 own_param_array_move                                 0
+own_field_move_in_one_branch                         0
+own_local_rebound_on_every_branch                    0
 own_param_assign_target                              0
 own_param_branch_transfer                            0
 own_param_destructured_receiver                      0
@@ -1059,6 +1061,7 @@ result_match                                         0
 result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
 scalar_edge_cases                                    0
+scalar_match_bindings                                0
 scalar_sum_reassign                                  0
 semver_uuid_errors                                   0
 sentinel_roundtrip                                   0
@@ -1085,6 +1088,8 @@ slice_unchecked_oob                                  0
 slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
+socket_descriptor_transition                         0
+socket_from_fd                                       0
 socket_handle_round_trip                             0
 socket_udp_round_trip                                0
 some_branch                                          0

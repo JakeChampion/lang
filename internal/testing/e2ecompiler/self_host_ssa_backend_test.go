@@ -28,6 +28,10 @@ type ssaBackendProgram struct {
 }
 
 var ssaBackendPrograms = []ssaBackendProgram{
+	{name: "discarded_call_result", src: `
+@noinline function effect(x: i32): i32 { print(x.to_string()); return x + 1; }
+function main(): i32 { effect(41); let y = effect(42); return y; }
+`},
 	{name: "defer_type_param", src: `
 trait Mk { function make(): Self; function get(self: Self): i32; }
 struct W { v: i32 }

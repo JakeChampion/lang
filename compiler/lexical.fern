@@ -135,6 +135,9 @@ function expr_at(e: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
 
 function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
   match (p) {
+    ast.PatLiteral(literal) => {
+      return ast.PatLiteral { ...literal, at_binding: names(s, literal.at_binding) };
+    },
     ast.PatVariant(v) => {
       let extra: string[] = [];
       for n in v.extra_bindings {
@@ -153,7 +156,10 @@ function pattern(p: ast.Pattern, s: Scope): ast.Pattern {
         tuple_pats = tuple_pats.append(pattern(p, s));
       }
       return ast.PatVariant {
-        ...v, binding: names(s, v.binding),
+        ...v, type_name: if (v.scalar_binding) {
+          names(s, v.type_name)
+        } else { v.type_name },
+        binding: names(s, v.binding),
         at_binding: names(s, v.at_binding), extra_bindings: extra,
         tup_binds: tuple, nested: nested, tup_pats: tuple_pats,
       };
