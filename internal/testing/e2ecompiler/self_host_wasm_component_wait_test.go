@@ -117,12 +117,12 @@ function fail(n: i32): i32 {
 
 function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 4, false);
-    if (ln < 0) { return fail(1); }
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
-    if (c < 0) { return fail(2); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(3); }
+    let ln: Socket = tcp_listen_with(any, 0, 4, false);
+    if (ln.fd < 0) { return fail(1); }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
+    if (c.fd < 0) { return fail(2); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(3); }
     if (tcp_send_bytes(c, [98u8, 121u8, 116u8, 101u8, 115u8]) != 5) { return fail(4); }
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(a, buf) != 5) { return fail(5); }
@@ -180,30 +180,32 @@ function all_report(r: i32, events: i32[], fds: i32[], bit: i32): boolean {
 
 function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 32, false);
-    if (ln < 0) { return fail(1); }
+    let ln: Socket = tcp_listen_with(any, 0, 32, false);
+    if (ln.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     let r: i32 = reactor_new();
     if (r < 0) { return fail(2); }
-    let cs: i32[] = [];
-    let accs: i32[] = [];
+    let cs: Socket[] = [];
+    let accs: Socket[] = [];
     let all: i32[] = [];
+    let acc_fds: i32[] = [];
     let i: i32 = 0;
     while (i < 20) {
-        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-        if (c < 0) { return fail(3); }
-        let a: i32 = tcp_accept(ln);
+        let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+        if (c.fd < 0) { return fail(3); }
+        let a: Socket = tcp_accept(ln);
         let tries: i32 = 0;
-        while (a < 0 && tries < 200) {
+        while (a.fd < 0 && tries < 200) {
             sleep_ms(5 as i64);
             a = tcp_accept(ln);
             tries = tries + 1;
         }
-        if (a < 0) { return fail(4); }
-        if (reactor_ctl(r, 1, c, 3) != 0 || reactor_ctl(r, 1, a, 3) != 0) { return fail(5); }
+        if (a.fd < 0) { return fail(4); }
+        if (reactor_ctl(r, 1, c.fd, 3) != 0 || reactor_ctl(r, 1, a.fd, 3) != 0) { return fail(5); }
+        all = all.append(c.fd).append(a.fd);
+        acc_fds = acc_fds.append(a.fd);
         cs = cs.append(c);
         accs = accs.append(a);
-        all = all.append(c).append(a);
         i = i + 1;
     }
     let events: i32[] = [];
@@ -221,7 +223,7 @@ function main(): i32 {
         if (tcp_send_bytes(cs[i], [120u8]) != 1) { return fail(9); }
         i = i + 1;
     }
-    if (!all_report(r, events, accs, 1)) { return fail(10); }
+    if (!all_report(r, events, acc_fds, 1)) { return fail(10); }
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8];
     i = 0;
     while (i < 20) {
@@ -230,11 +232,11 @@ function main(): i32 {
     }
     i = 0;
     while (i < 20) {
-        if (reactor_ctl(r, 2, cs[i], 0) != 0 || reactor_ctl(r, 2, accs[i], 0) != 0) { return fail(12); }
-        tcp_close(cs[i]);
-        tcp_close(accs[i]);
+        if (reactor_ctl(r, 2, cs[i].fd, 0) != 0 || reactor_ctl(r, 2, accs[i].fd, 0) != 0) { return fail(12); }
         i = i + 1;
     }
+    for conn in cs { tcp_close(conn); }
+    for acc in accs { tcp_close(acc); }
     tcp_close(ln);
     if (reactor_ctl(r, 3, 0, 0) != 0) { return fail(13); }
     print("ok");

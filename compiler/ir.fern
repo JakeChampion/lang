@@ -1145,7 +1145,7 @@ pub function op_heap_release_to(): Op {
 // region with it. Under leak check the first adoption also fixes the bounds
 // of the process's census, so a free outside them is not counted. Pushes 0.
 pub function op_heap_adopt(): Op {
-  return op0(490);
+  return op0(491);
 }
 
 // A worker region is a shared anonymous mapping that a fork inherits at the
@@ -1157,66 +1157,66 @@ pub function op_heap_adopt(): Op {
 // worker_reap(region) adds the child's deltas to the counters and pushes
 // the root.
 pub function op_worker_region(): Op {
-  return op0(491);
-}
-
-pub function op_worker_exit(): Op {
   return op0(492);
 }
 
-pub function op_worker_reap(): Op {
+pub function op_worker_exit(): Op {
   return op0(493);
+}
+
+pub function op_worker_reap(): Op {
+  return op0(494);
 }
 
 // send_adopt marks the word under it as a box this process now owns. It
 // emits nothing: the word is a root another process handed over through a
 // worker region, and the mark is what the certifier counts.
 pub function op_send_adopt(): Op {
-  return counted(op0(494));
+  return counted(op0(495));
 }
 
-// The worker ops, 490 to 494, by name and by id.
+// The worker ops, 491 to 495, by name and by id.
 function kind_id_worker(name: string): i32 {
   if (name == "heap_adopt") {
-    return 490;
-  }
-  if (name == "worker_region") {
     return 491;
   }
-  if (name == "worker_exit") {
+  if (name == "worker_region") {
     return 492;
   }
-  if (name == "worker_reap") {
+  if (name == "worker_exit") {
     return 493;
   }
-  if (name == "send_adopt") {
+  if (name == "worker_reap") {
     return 494;
+  }
+  if (name == "send_adopt") {
+    return 495;
   }
   return 0;
 }
 
 function kind_name_worker(id: i32): string {
-  if (id == 490) {
+  if (id == 491) {
     return "heap_adopt";
   }
-  if (id == 491) {
+  if (id == 492) {
     return "worker_region";
   }
-  if (id == 492) {
+  if (id == 493) {
     return "worker_exit";
   }
-  if (id == 493) {
+  if (id == 494) {
     return "worker_reap";
   }
   return "send_adopt";
 }
 
 function worker_pops1(t: i32): boolean {
-  return t == 491 || t == 493 || t == 494;
+  return t == 492 || t == 494 || t == 495;
 }
 
 function worker_pops2(t: i32): boolean {
-  return t == 490 || t == 492;
+  return t == 491 || t == 493;
 }
 
 pub function op_clz(width: i32): Op {
@@ -1465,6 +1465,10 @@ pub function op_fd_flags(): Op {
 
 pub function op_writer_truncate(): Op {
   return op0(281);
+}
+
+pub function op_writer_nonblocking(): Op {
+  return op0(490);
 }
 
 pub function op_reader_close(): Op {
@@ -3712,6 +3716,9 @@ function kind_id_len18(name: string): i32 {
   if (c == b'm' && name == "mismatch_bytes_str") {
     return 446;
   }
+  if (c == b'w' && name == "writer_nonblocking") {
+    return 490;
+  }
   return 0;
 }
 
@@ -4182,7 +4189,7 @@ function kind_name_3(id: i32): string {
 
 // The names past 160, in two halves so each stays readable.
 function kind_name_4(id: i32): string {
-  if (id >= 490 && id <= 494) {
+  if (id >= 491 && id <= 495) {
     return kind_name_worker(id);
   }
   let a: string = kind_name_4a(id);
@@ -4647,6 +4654,9 @@ function kind_name_4b(id: i32): string {
   if (id == 281) {
     return "writer_truncate";
   }
+  if (id == 490) {
+    return "writer_nonblocking";
+  }
   if (id == 366) {
     return "fd_drop_cache";
   }
@@ -5109,7 +5119,7 @@ function pops2_io(t: i32): boolean {
     || t == 362 || t == 363 || t == 374 || t == 375
     || t == 273
     || t == 304 || t == 305
-    || t == 281
+    || t == 281 || t == 490
     || t == 285
     || t == 284
     || t == 311
@@ -7290,7 +7300,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag >= 420 && tag <= 428) {
     return true;
   }
-  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 407 || tag == 366) {
+  if (util.index_of_i32([241, 242, 281, 490, 307, 330, 407, 366], tag) >= 0) {
     return true;
   }
   if (tag == 177) {
@@ -7317,7 +7327,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 80 || tag == 315) {
     return true;
   }
-  if (tag == 229 || tag == 230 || tag == 490) {
+  if (tag == 229 || tag == 230 || tag == 491) {
     return true;
   }
   if (tag == 216 || tag == 217) {

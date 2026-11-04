@@ -13,8 +13,14 @@ func TestTimerFdBecomesReady(t *testing.T) {
     let t: i32 = timer_fd(5);
     if (t < 0) { return 1; }
     if (poll([t], 2000) != 0) { return 2; }
-    if (tcp_close(t) != 0) { return 3; }
-    if (tcp_close(t) != 0 - 1) { return 4; }
+    let first: i32 = 0;
+    let second: i32 = 0;
+    unsafe {
+        first = __fd_close(t);
+        second = __fd_close(t);
+    }
+    if (first != 0) { return 3; }
+    if (second != 0 - 1) { return 4; }
     return 0;
 }`
 	if val, _ := runCapture(t, src); val != "0" {

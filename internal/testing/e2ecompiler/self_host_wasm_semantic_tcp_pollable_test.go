@@ -27,9 +27,9 @@ func TestSelfHostWasmSemanticTCPPollable(t *testing.T) {
 	}
 	src, wat := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wat")
 	const probe = `function main(): i32 {
-    let fd: i32 = tcp_listen(0);
-    if (fd < 0) { return 1; }
-    let p: i32 = tcp_pollable(fd);
+    let fd: Socket = tcp_listen(0);
+    if (fd.fd < 0) { return 1; }
+    let p: i32 = tcp_pollable(fd.fd);
     if (p < 0) { return 2; }
     if (wasm_pollable_drop(p) != 0) { return 3; }
     return tcp_close(fd);

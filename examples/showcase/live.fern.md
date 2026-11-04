@@ -4,8 +4,10 @@ A WebSocket reader can wait for client input while a separate producer sends roo
 Each subscription owns a loopback datagram socket. A publication makes that socket readable immediately.
 The event loop parks on its descriptor. Idle connections do no periodic application work.
 
-A listener registry contains only descriptor numbers, addresses, and identifiers. It never stores connections inside a `Cell`.
-The producer owns the descriptor lifetime and closes it after cancellation. A close callback removes the listener and wakes the producer.
+A listener registry contains only sockets, addresses, and identifiers. It never stores connections inside a `Cell`.
+
+The subscription holds its socket in a `Cell`. A listener only borrows the socket.
+The producer owns the descriptor lifetime. After cancellation, it takes the socket out of that `Cell` and closes it. A close callback removes the listener and wakes the producer.
 
 ```fern
 <<*>>=
@@ -29,11 +31,11 @@ import "std/option";
 import "std/array";
 import "./common";
 
-pub struct Listener { id: string, room: string, fd: i32, address: net.SocketAddr }
+pub struct Listener { id: string, room: string, sock: Socket, address: net.SocketAddr }
 
 pub struct State { listeners: Cell[Listener[]] }
 
-pub struct Subscription { state: State, listener: Listener, alive: Cell[boolean] }
+pub struct Subscription { state: State, listener: Listener, alive: Cell[boolean], held: Cell[Option[Socket]] }
 
 pub function state(): State {
   return State { listeners: cell_new([] as Listener[]) };
@@ -52,18 +54,18 @@ pub function subscribe(state: State, room: string): Result[Subscription, http.Ht
   if (state.listeners.get().len() >= 256) {
     return Err(http.fail(503, "all live subscriptions are in use"));
   }
-  let fd = net.udp_socket(net.socket_addr(net.ipv4_loopback(), 0)).map_err((e: net.NetError): http.HttpError => http.fail(503, "cannot create a live notification"))?;
-  let Ok(address) = net.local_addr(fd) else {
-    let closed = net.close(fd);
+  let sock = net.udp_socket(net.socket_addr(net.ipv4_loopback(), 0)).map_err((e: net.NetError): http.HttpError => http.fail(503, "cannot create a live notification"))?;
+  let Ok(address) = net.local_addr(sock) else {
+    let closed = net.close(sock);
     return Err(http.fail(503, "cannot locate a live notification"));
   };
-  if (net.set_nonblocking(fd, true).is_err()) {
-    let closed = net.close(fd);
+  if (net.set_nonblocking(sock, true).is_err()) {
+    let closed = net.close(sock);
     return Err(http.fail(503, "cannot configure a live notification"));
   }
-  let listener = Listener { id: common.token(), room: room, fd: fd, address: address };
+  let listener = Listener { id: common.token(), room: room, sock: sock, address: address };
   state.listeners.set(state.listeners.get().append(listener));
-  return Ok(Subscription { state: state, listener: listener, alive: cell_new(true) });
+  return Ok(Subscription { state: state, listener: listener, alive: cell_new(true), held: cell_new(Some(sock)) });
 }
 
 pub function move(subscription: Subscription, room: string): void {
@@ -87,7 +89,7 @@ Task cancellation and a close notification end the wait. The producer needs no t
 ```fern
 <<Publish and wait>>=
 function signal(listener: Listener): void {
-  let sent = net.send_to(listener.fd, [1 as u8], listener.address);
+  let sent = net.send_to(listener.sock, [1 as u8], listener.address);
 }
 
 pub function notify(state: State, room: string, except: string): void {
@@ -111,12 +113,12 @@ pub function wait_for(subscription: Subscription, timeout: Option[Duration]): bo
     return false;
   }
   let until = timeout.map((d: Duration): Instant => clock.instant().add(d));
-  let ready = async.wait_any([subscription.listener.fd, 1], until);
+  let ready = async.wait_any([subscription.listener.sock.fd, 1], until);
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
   let buffer = __alloc_u8(64);
-  while (net.recv(subscription.listener.fd, buffer).is_ok()) {}
+  while (net.recv(subscription.listener.sock, buffer).is_ok()) {}
   return true;
 }
 ```
@@ -140,6 +142,10 @@ pub function cancel(subscription: Subscription): void {
 
 pub function dispose(subscription: Subscription): void {
   cancel(subscription);
-  let closed = net.close(subscription.listener.fd);
+  let held = subscription.held.get();
+  subscription.held.set(None);
+  if let Some(sock) = held {
+    let closed = net.close(sock);
+  }
 }
 ```

@@ -587,6 +587,12 @@ MOVES a descriptor where this duplicates one, and the handle the caller still
 holds would be left dangling with a drop that closes a number it no longer
 owns. Preview 2 has no numbered table to renumber at all.
 
+**`set_nonblocking` has the same shape.** `w.set_nonblocking(on)` sets or
+clears `O_NONBLOCK` on the descriptor of the Writer with fcntl. A full pipe then
+makes `write_some` return an error, and the writer does not wait. No wasm world
+has a descriptor flag to change, so both previews return `Unsupported` from the
+call. The method has no compile-time gate.
+
 **`splice_to` is the same shape, refused at the call wherever the kernel
 cannot move the bytes itself.** `r.splice_to(w, max)` is splice(2) on Linux,
 through a pipe the runtime keeps when neither handle is one. XNU has no

@@ -952,7 +952,7 @@ function __db_shortest64(n: f64): (i64, i32) {
   // A closed interval means both endpoints round back to n, which is the
   // case exactly when the significand is even (round-half-to-even).
   let closed = (bits & 1 as u64) == 0 as u64;
-  let be: i32 = -1074;
+  let be = -1074;
   if (ebits != 0) {
     be = ebits - 1075;
     // A power of two has a shorter interval on its left side.
@@ -1069,7 +1069,7 @@ function __db_shortest32(n: f32): (i64, i32) {
   let ebits = (bits >> 23 as u64 & 255 as u64) as i32;
   let two_fc = (bits & 8388607 as u64) << 1 as u64;
   let closed = (bits & 1 as u64) == 0 as u64;
-  let be: i32 = -149;
+  let be = -149;
   if (ebits != 0) {
     be = ebits - 150;
     if (two_fc == 0 as u64) {

@@ -20,7 +20,7 @@ function text(b: u8[], n: i32): string {
 
 function main(): i32 {
   let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-  let u: i32 = udp_bind(lo, 0);
+  let u: Socket = udp_bind(lo, 0);
   print(f"udp_sendto: {udp_sendto(u, lo, tcp_local_port(u), "dgram")}");
   let dbuf: u8[] = __alloc_u8(16);
   let from: u8[] = __alloc_u8(19);

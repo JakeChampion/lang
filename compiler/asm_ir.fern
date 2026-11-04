@@ -10448,7 +10448,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 112 || o.kind_tag == 494) {
+  if (o.kind_tag == 112 || o.kind_tag == 495) {
     return s;
   }
 
@@ -10491,17 +10491,17 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == 211) {
     s = s.write("    call __fn___fern_proc_fork\n    pushq %rax\n");
     s = s.need("proc_fork");
-  } else if (o.kind_tag == 491) {
+  } else if (o.kind_tag == 492) {
     s = s.write("    call __fn___fern_worker_region\n    addq $8, %rsp\n");
     s = worker_region_census(s);
     s = s.write("    pushq %rax\n");
     s = s.need("worker_region");
-  } else if (o.kind_tag == 492) {
+  } else if (o.kind_tag == 493) {
     s = s.write("    popq %rdx\n    popq %rax\n    movq %rdx, (%rax)\n");
     s = worker_exit_census(s);
     s = s.write("    call __fn___fern_worker_exit\n    pushq %rax\n");
     s = s.need("worker_exit");
-  } else if (o.kind_tag == 493) {
+  } else if (o.kind_tag == 494) {
     s = s.write("    popq %rax\n");
     s = worker_reap_census(s);
     s = s.write("    pushq (%rax)\n");
@@ -10745,7 +10745,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = emit_ir_op_heap_mark(o, s);
   } else if (o.kind_tag == 230) {
     s = emit_ir_op_heap_release_to(o, s);
-  } else if (o.kind_tag == 490) {
+  } else if (o.kind_tag == 491) {
     s = emit_ir_op_heap_adopt(o, s);
   } else if (o.kind_tag == 260) {
     s = s.write("    popq %rsi\n    popq %rdi\n");
@@ -10940,6 +10940,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
+  } else if (o.kind_tag == 490) {
+    s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_writer_nonblocking\n    addq $16, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("writer_nonblocking");
   } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 487 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {
@@ -12385,6 +12391,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("writer_truncate")) {
       fs_roots = fs_roots + " " + "__fern_writer_truncate";
+    }
+    if (s.has_need("writer_nonblocking")) {
+      fs_roots = fs_roots + " " + "__fern_writer_nonblocking";
     }
     s = emit_runtime(fs_roots, s);
   }

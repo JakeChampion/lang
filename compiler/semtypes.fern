@@ -339,23 +339,9 @@ pub function fd_handle_names(): string[] {
   return ["Reader", "Writer", "Dir", "Socket"];
 }
 
-// For one release a Socket and its i32 descriptor convert both ways, so the
-// published stage0 compiles the standard library before and after it moves
-// to Socket (docs/BOOTSTRAP.md). The next step deletes this rule.
-pub function socket_descriptor_transition(from: typeinfo.Type, to: typeinfo.Type): boolean {
-  return is_socket(from) && is_plain_i32(to) || is_socket(to) && is_plain_i32(from);
-}
-
 pub function is_socket(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
     return s.name == "Socket";
-  }
-  return false;
-}
-
-function is_plain_i32(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeI32(n) = t {
-    return n.width == 32 && !n.unsigned && !n.is_char;
   }
   return false;
 }

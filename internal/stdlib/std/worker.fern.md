@@ -26,7 +26,7 @@ A worker that exits with a signal or without a result stops the program with exi
 import "std/worker";
 
 function main(): i32 {
-  let n: i32 = 20;
+  let n = 20;
   let w = worker.spawn((): i32 => n + 1);
   if (w.join() != 21) { return 1; }
   return 0;

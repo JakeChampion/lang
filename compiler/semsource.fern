@@ -3942,9 +3942,6 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   if (ssasem.lends_handle(s.values[v.id], expected)) {
     return define(s, ssasem.cast(), [v.id], 0, "", expected);
   }
-  if (semtypes.socket_descriptor_transition(s.values[v.id], expected)) {
-    return define(s, ssasem.cast(), [v.id], 0, "", expected);
-  }
   if (ssasem.is_view(element_type(expected)) && ssasem.is_string_array(s.values[v.id])) {
     return define(s, ssasem.str_as(), [v.id], 0, "", expected);
   }
@@ -7216,6 +7213,7 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type)
   out = out.append(ssasem.Contract { name: "Reader.set_extproc", params: [reader, t_bool()], modes: [v, v], result: done });
   out = out.append(ssasem.Contract { name: "Reader.termios_set", params: [reader, t_i32(), termios], modes: [v, v, ssaunits.borrow_mode()], result: done });
   out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
+  out = out.append(ssasem.Contract { name: "Writer.set_nonblocking", params: [writer, t_bool()], modes: [v, v], result: done });
   return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: done });
 }
 
@@ -7281,18 +7279,18 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "sync", params: [], modes: [], result: t_void() },
     ssasem.Contract { name: "poll", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "timer_fd", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "tcp_send_bytes", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_send_bytes", params: [t_handle("Socket"), bytes], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
-    ssasem.Contract { name: "tcp_sendfile", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
-    ssasem.Contract { name: "tcp_send_buf", params: [t_i32(), t_usize(), t_i32()], modes: [v, v, v], result: t_i32() },
+    ssasem.Contract { name: "tcp_socket_ctl", params: [t_handle("Socket"), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+    ssasem.Contract { name: "tcp_sendfile", params: [t_handle("Socket"), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+    ssasem.Contract { name: "tcp_send_buf", params: [t_handle("Socket"), t_usize(), t_i32()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "udp_bind", params: [bytes, t_i32()], modes: [b, v], result: t_handle("Socket") },
     ssasem.Contract { name: "udp_bind_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_handle("Socket") },
-    ssasem.Contract { name: "udp_connect", params: [t_i32(), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
-    ssasem.Contract { name: "udp_sendto", params: [t_i32(), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
-    ssasem.Contract { name: "udp_sendto_bytes", params: [t_i32(), bytes, t_i32(), bytes], modes: [v, b, v, b], result: t_i32() },
-    ssasem.Contract { name: "udp_recvfrom", params: [t_i32(), bytes, bytes], modes: [v, b, b], result: t_i32() },
+    ssasem.Contract { name: "udp_connect", params: [t_handle("Socket"), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
+    ssasem.Contract { name: "udp_sendto", params: [t_handle("Socket"), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
+    ssasem.Contract { name: "udp_sendto_bytes", params: [t_handle("Socket"), bytes, t_i32(), bytes], modes: [v, b, v, b], result: t_i32() },
+    ssasem.Contract { name: "udp_recvfrom", params: [t_handle("Socket"), bytes, bytes], modes: [v, b, b], result: t_i32() },
     ssasem.Contract { name: "tcp_connect_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_handle("Socket") },
     ssasem.Contract { name: "unix_listen", params: [t_string(), t_i32()], modes: [b, v], result: t_handle("Socket") },
     ssasem.Contract { name: "unix_connect", params: [t_string()], modes: [b], result: t_handle("Socket") },
@@ -7304,9 +7302,9 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "ring_wait", params: [t_i64(), typeinfo.TypeArray { elem: t_i32(), view: false }, t_i32()], modes: [v, b, v], result: t_i32() },
     ssasem.Contract { name: "ring_recv", params: [t_i64(), t_i32(), bytes], modes: [v, v, b], result: t_i32() },
     ssasem.Contract { name: "ring_send_zc", params: [t_i64(), t_i32(), bytes, t_i32()], modes: [v, v, b, v], result: t_i32() },
-    ssasem.Contract { name: "tcp_recv_into", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_addr_into", params: [t_i32(), t_bool(), bytes], modes: [v, v, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_ktls", params: [t_i32(), t_i32(), t_i32(), bytes], modes: [v, v, v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_recv_into", params: [t_handle("Socket"), bytes], modes: [v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_addr_into", params: [t_handle("Socket"), t_bool(), bytes], modes: [v, v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_ktls", params: [t_handle("Socket"), t_i32(), t_i32(), bytes], modes: [v, v, v, b], result: t_i32() },
     ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_catch", params: [t_i32()], modes: [v], result: t_i32() },
@@ -7327,8 +7325,8 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "termios_get", params: [t_i32()], modes: [v], result: t_io_result(gids) },
     ssasem.Contract { name: "termios_set", params: [t_i32(), t_i32(), gids], modes: [v, v, b], result: done },
     ssasem.Contract { name: "set_extproc", params: [t_i32(), t_bool()], modes: [v, v], result: done },
-    ssasem.Contract { name: "tcp_close", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "__tcp_close_unchecked", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "tcp_close", params: [t_handle("Socket")], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__tcp_close_unchecked", params: [t_handle("Socket")], modes: [v], result: t_i32() },
     ssasem.Contract { name: "__fd_close", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "setuid", params: [t_i64()], modes: [v], result: done },
     ssasem.Contract { name: "setgid", params: [t_i64()], modes: [v], result: done },
@@ -7359,8 +7357,8 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "clone_file", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "tcp_listen", params: [t_i32()], modes: [v], result: t_handle("Socket") },
-    ssasem.Contract { name: "tcp_accept", params: [t_i32()], modes: [v], result: t_handle("Socket") },
-    ssasem.Contract { name: "tcp_local_port", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "tcp_accept", params: [t_handle("Socket")], modes: [v], result: t_handle("Socket") },
+    ssasem.Contract { name: "tcp_local_port", params: [t_handle("Socket")], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_send", params: [t_i32(), t_i32()], modes: [v, v], result: done },
     ssasem.Contract { name: "chown_at", params: [t_string(), t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: done },
     ssasem.Contract { name: "truncate", params: [t_string(), t_i64()], modes: [b, v], result: done },

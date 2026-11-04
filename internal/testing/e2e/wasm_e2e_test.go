@@ -39,7 +39,7 @@ var (
 	preview2Drift error
 )
 
-const wasmtimePin = "46.0.1"
+const wasmtimePin = "50.0.1"
 
 func wasmtimeVersion() (string, error) {
 	out, err := exec.Command("wasmtime", "--version").Output()
@@ -8060,9 +8060,9 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	}
 
 	full := build("tcpfull", `function main(): i32 {
-    let s: i32 = tcp_listen(8080);
-    if (s < 0) { return 1; }
-    let c: i32 = tcp_accept(s);
+    let s: Socket = tcp_listen(8080);
+    if (s.fd < 0) { return 1; }
+    let c: Socket = tcp_accept(s);
     tcp_close(c);
     tcp_close(s);
     return 0;
@@ -8081,8 +8081,8 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	}
 
 	echo := build("tcpecho", `function main(): i32 {
-    let s: i32 = tcp_listen(8080);
-    let c: i32 = tcp_accept(s);
+    let s: Socket = tcp_listen(8080);
+    let c: Socket = tcp_accept(s);
     let d: u8[] = __alloc_u8(1024);
     let n: i32 = tcp_recv_into(c, d);
     if (n > 0) { tcp_send_bytes(c, d); }
@@ -8101,8 +8101,8 @@ func TestCmdLangComponentWrapCliWithTcpServer(t *testing.T) {
 	}
 
 	srv := build("tcplisten", `function main(): i32 {
-    let s: i32 = tcp_listen(8080);
-    if (s < 0) { return 1; }
+    let s: Socket = tcp_listen(8080);
+    if (s.fd < 0) { return 1; }
     tcp_close(s);
     return 0;
 }`)

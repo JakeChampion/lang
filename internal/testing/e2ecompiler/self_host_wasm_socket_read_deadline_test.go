@@ -33,8 +33,8 @@ func TestSelfHostWasmSocketReadDeadline(t *testing.T) {
 			program := fmt.Sprintf(`import "std/net";
 import "std/time";
 function main(): i32 {
-    let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    assert(fd >= 0);
+    let fd: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    assert(fd.fd >= 0);
     match (net.read_deadline(fd, 1, time.duration_millis(10i64))) {
         Ok(net.Elapsed()) => {},
         _ => { assert(false); }

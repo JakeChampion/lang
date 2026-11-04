@@ -41,7 +41,7 @@ function (h: Holder) buffer(): u8[] {
 }
 
 @noinline
-function written(fd: i32, bytes: u8[]): boolean {
+function written(fd: Socket, bytes: u8[]): boolean {
   let held = bytes;
   let view = bytes[0:1];
   if (held[0] != 0u8 || view[0] != 0u8) {
@@ -52,12 +52,12 @@ function written(fd: i32, bytes: u8[]): boolean {
 }
 
 @noinline
-function other_written(fd: i32, bytes: u8[]): boolean {
+function other_written(fd: Socket, bytes: u8[]): boolean {
   return written(fd, bytes);
 }
 
 @noinline
-function choose_writer(n: i32): (i32, u8[]) => boolean {
+function choose_writer(n: i32): (Socket, u8[]) => boolean {
   if (n == 0) {
     return written;
   }
@@ -65,7 +65,7 @@ function choose_writer(n: i32): (i32, u8[]) => boolean {
 }
 
 @noinline
-function check(fd: i32, mode: string): boolean {
+function check(fd: Socket, mode: string): boolean {
   if (mode == "record" || mode == "method") {
     let h = Holder { bytes: [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8] };
     let bytes = if (mode == "method") { h.buffer() } else { h.bytes };
@@ -93,7 +93,7 @@ function check(fd: i32, mode: string): boolean {
     return written(fd, chain());
   }
   if (mode == "indirect-return") {
-    let make = choose(fd);
+    let make = choose(fd.fd);
     return written(fd, make());
   }
   if (mode == "cell") {
@@ -114,13 +114,13 @@ function check(fd: i32, mode: string): boolean {
     let run = () => written(fd, bytes);
     return run() && bytes[0] != 0u8;
   }
-  let run = choose_writer(fd);
+  let run = choose_writer(fd.fd);
   return run(fd, bytes) && bytes[0] != 0u8;
 }
 
 function main(): i32 {
-  let fd: i32 = tcp_listen(0);
-  if (fd < 0) {
+  let fd: Socket = tcp_listen(0);
+  if (fd.fd < 0) {
     return 1;
   }
   let modes = ["record", "method", "tuple", "variant", "array", "return", "chain", "indirect-return", "cell", "cell-set", "cell-argument", "closure", "indirect-argument"];

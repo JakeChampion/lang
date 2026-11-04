@@ -32,8 +32,8 @@ function rand_bytes(n: u64): u8[];
 function main(): i32 {
 	let b: u8[] = rand_bytes(4 as u64);
 	if (b.len() != 4) { return 2; }
-	let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
-	if (s < 0) { return 3; }
+	let s: Socket = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+	if (s.fd < 0) { return 3; }
 	let n: i32 = udp_sendto(s, [127u8, 0u8, 0u8, 1u8], ` + strconv.Itoa(udpPort) + `, "` + want + `");
 	tcp_close(s);
 	if (n > 0) { return 0; }

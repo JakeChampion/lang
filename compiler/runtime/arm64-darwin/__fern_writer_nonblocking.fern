@@ -1,0 +1,15 @@
+function __fern_writer_nonblocking(fd: i32, on: boolean): Result[void, IoError] {
+  let flags: i32 = __syscall3(92, fd as i64, 3, 0) as i32;
+  if (flags < 0) {
+    return Err(__fern_io_error(0 - flags, ""));
+  }
+  let want: i32 = flags | 4;
+  if (!on) {
+    want = flags & 0 - 1 - 4;
+  }
+  let rc: i32 = __syscall3(92, fd as i64, 4, want as i64) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

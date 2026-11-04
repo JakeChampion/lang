@@ -57,9 +57,14 @@ func TestWalkieLanTransport(t *testing.T) {
 	runWalkieTest(t, "lan_test.fern")
 }
 
-// The raw audio of the first build: 16-bit samples and the resampler.
+// The resampler between the rate of the device and the codec.
 func TestWalkiePcm(t *testing.T) {
 	runWalkieTest(t, "pcm_test.fern")
+}
+
+// The Opus voice codec: the round trip, the rate and the packet format.
+func TestWalkieVoice(t *testing.T) {
+	runWalkieTest(t, "voice_test.fern")
 }
 
 // The layout of the screen.

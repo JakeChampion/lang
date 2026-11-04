@@ -171,10 +171,10 @@ function main(): i32 {
     print(f"poll timer: {poll([t], 1000)}");
   }
   print(f"unix_connect missing<0: {unix_connect(d + "/nosock").fd < 0}");
-  let ls: i32 = unix_listen(d + "/sock", 4);
-  print(f"unix_listen ok: {ls >= 0}");
-  let cs: i32 = unix_connect(d + "/sock");
-  print(f"unix_connect ok: {cs >= 0}");
+  let ls: Socket = unix_listen(d + "/sock", 4);
+  print(f"unix_listen ok: {ls.fd >= 0}");
+  let cs: Socket = unix_connect(d + "/sock");
+  print(f"unix_connect ok: {cs.fd >= 0}");
   match (window_size(0)) {
     Ok(_) => { print("window_size: ok"); },
     Err(e) => { print("window_size: " + kind(e)); }

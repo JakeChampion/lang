@@ -5443,6 +5443,9 @@ function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "Writer.truncate") {
     return Lowered { found: true, r: emit(r, ir.op_writer_truncate()) };
   }
+  if (ins.str == "Writer.set_nonblocking") {
+    return Lowered { found: true, r: emit(r, ir.op_writer_nonblocking()) };
+  }
   return handle_metadata_site(r, ins);
 }
 
