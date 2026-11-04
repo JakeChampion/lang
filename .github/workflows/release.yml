@@ -16,6 +16,9 @@ name: Build & release
 #   - linux-arm64  : arm64-linux,  ubuntu-24.04-arm  (matches CI's arm64 lane)
 #   - darwin-arm64 : arm64-darwin, macos-15          (matches macos.yml's pin)
 #
+# The `apk` job builds the Android example apps (examples/android) for the
+# same release, signed with the release keys.
+#
 # Windows is intentionally absent — the README doesn't claim it as
 # a host platform, and the language's compilation targets
 # (arm64-linux ELF, arm64-darwin Mach-O, wasm32-wasi component) are
@@ -171,13 +174,85 @@ jobs:
             fern-*${{ matrix.name }}.tar.gz.sha256
           overwrite: true
 
+  # The Android example apps. Android installs an update only over an app
+  # signed with the same certificate, so every nightly signs with the keys
+  # in the repository secrets, and the job fails when one is missing:
+  #   - ANDROID_APK_KEY: the P-256 key in PEM form for `fern -apk`. `fern -apk`
+  #     writes a new one to the -apk-key file when that file does not exist.
+  #   - ANDROID_KEYSTORE: a keystore with one key, base64-encoded, for the
+  #     stopwatch's build.sh, and ANDROID_KEYSTORE_PASSWORD, its password.
+  # The certificate of `fern -apk` comes from the key alone, so one key gives
+  # the same APK, byte for byte, from the same source.
+  apk:
+    name: build-android-apks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build fern
+        run: make bin/fern
+
+      - name: Write the signing keys
+        env:
+          APK_KEY: ${{ secrets.ANDROID_APK_KEY }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for secret in ANDROID_APK_KEY:APK_KEY ANDROID_KEYSTORE:KEYSTORE_B64 ANDROID_KEYSTORE_PASSWORD:KEYSTORE_PASS; do
+            var="${secret##*:}"
+            if [ -z "${!var}" ]; then
+              echo "::error::the repository secret ${secret%%:*} is not set; the APKs cannot be signed with the release keys"
+              exit 1
+            fi
+          done
+          umask 077
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$APK_KEY" > "$RUNNER_TEMP/keys/apk.key.pem"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/keys/stopwatch.keystore"
+
+      - name: Build and sign the APKs
+        env:
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/keys/apk.key.pem"
+          KEYSTORE="$RUNNER_TEMP/keys/stopwatch.keystore" examples/android/stopwatch/build.sh
+          mkdir -p dist/apk
+          cp build/android-stopwatch/fern-stopwatch.apk dist/apk/
+          ./bin/fern -apk dist/apk/fern-native.apk -apk-key "$key" -apk-package dev.fern.native -apk-label "Fern Native" examples/android/native/app.fern
+          ./bin/fern -apk dist/apk/fern-walkie.apk -apk-key "$key" -apk-package dev.fern.walkie -apk-label "Fern Walkie" -apk-min-sdk 28 -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE examples/android/walkie/app.fern
+
+      # apksigner is the check Android itself applies at install. The
+      # certificate digests in the log let a user compare the signer of an
+      # installed app with this release.
+      - name: Verify the signatures and write the sidecars
+        run: |
+          set -euo pipefail
+          apksigner="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)/apksigner"
+          cd dist/apk
+          for apk in *.apk; do
+            "$apksigner" verify --print-certs "$apk"
+            shasum -a 256 "$apk" > "$apk.sha256"
+          done
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: fern-android-apks
+          path: |
+            dist/apk/*.apk
+            dist/apk/*.apk.sha256
+          if-no-files-found: error
+          overwrite: true
+
   release:
     # Only publish on the scheduled daily run; workflow_dispatch runs still
     # build + upload artifacts (handy for verifying changes to this workflow
     # without spamming the releases page). On `schedule`, github.sha is main's
     # HEAD, so the rolling `nightly` lands on the latest commit as intended.
     if: github.event_name == 'schedule'
-    needs: [build]
+    needs: [build, apk]
     runs-on: ubuntu-24.04
     permissions:
       contents: write      # the release and its assets
@@ -242,6 +317,18 @@ jobs:
             ./yes | head -2
             ```
 
+            ## Android apps
+
+            The example apps, built by the `fern` in this release, for
+            arm64 phones and x86-64 emulators. Each nightly is signed
+            with the same key, so it installs over the one before it.
+
+            | App                        | APK                  |
+            |----------------------------|----------------------|
+            | Walkie-talkie on the LAN   | `fern-walkie.apk`    |
+            | Stopwatch (Java views)     | `fern-stopwatch.apk` |
+            | Stopwatch (NativeActivity) | `fern-native.apk`    |
+
             Each `fern` archive ships a single self-contained binary:
             the self-hosted compiler with its standard library
             embedded.
@@ -249,10 +336,12 @@ jobs:
             notarized by Apple, so Gatekeeper runs them without a
             prompt.
             SHA-256 sums live alongside each archive
-            (`*.tar.gz.sha256`).
+            (`*.tar.gz.sha256`, `*.apk.sha256`).
           files: |
             artifacts/*.tar.gz
             artifacts/*.tar.gz.sha256
+            artifacts/*.apk
+            artifacts/*.apk.sha256
 
       - name: Publish the signed packslip
         # One signed file beside the archives (packslip.dev): each archive's

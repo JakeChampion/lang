@@ -11,6 +11,8 @@ writes its APK.
 sends raw 16-bit audio at 16 kHz, about 256 kbit/s, until the Opus encoder is
 ready. Wi-Fi Direct and the internet rooms come after it.
 
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-walkie.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
+
 Build and install the APK:
 
 ```sh
