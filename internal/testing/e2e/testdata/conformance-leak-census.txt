@@ -369,6 +369,7 @@ generic_fn_value_array_methods                       0
 generic_fnarg_typevar                                0
 generic_fold_accumulator_reclaim                     0
 generic_id                                           0
+generic_method_binds_enum_argument_for_free_generic 0
 generic_method_typeparams                            0
 generic_option_static_trait_helper                   0
 generic_pair                                         0

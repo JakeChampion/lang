@@ -9756,10 +9756,10 @@ function split_key(s: string, n: i32, structs: StructDecl[], enums: EnumDecl[]):
   if (util.contains(s, ";")) {
     return split_inst_key(s);
   }
-  if (n <= 1 && !util.str_has_prefix(s, "tup__")) {
+  let tokens: string[] = split_dunder(s);
+  if (n <= 1 && tokens.len() == 1) {
     return [s];
   }
-  let tokens: string[] = split_dunder(s);
   if (n > 1 && tokens.len() <= n) {
     return tokens;
   }
