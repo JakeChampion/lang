@@ -2237,13 +2237,11 @@ function send_array(own r: irtables.LowerState, elem: typeinfo.Type, f: ssasem.F
 }
 
 function send_tuple(own r: irtables.LowerState, t: typeinfo.Type, tup: typeinfo.TypeTuple, f: ssasem.Func): irtables.LowerState {
-  let i: i32 = 0;
-  while (i < tup.elements.len()) {
+  for i in 0..tup.elements.len() {
     let part: typeinfo.Type = tup.elements[i];
     r = emit(r, ir.op_load_local(0));
     r = emit(r, ir.op_tuple_get_w(i, load_width(part), ssasem.is_wide(part)));
     r = send_part(r, part);
-    i = i + 1;
   }
   r = emit(r, ir.op_tuple_make_k(tup.elements.len(), tuple_kinds(t)));
   return emit(r, ir.op_return());
@@ -2259,8 +2257,7 @@ function send_record(own r: irtables.LowerState, fields: semrecords.Field[], sha
   r = emit(r, ir.op_load_local(out));
   r = emit(r, ir.op_struct_set_shape(shape));
   r = emit(r, ir.op_drop());
-  let i: i32 = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     let part: typeinfo.Type = fields[i].ty;
     r = emit(r, ir.op_load_local(out));
     r = emit(r, ir.op_load_local(0));
@@ -2271,7 +2268,6 @@ function send_record(own r: irtables.LowerState, fields: semrecords.Field[], sha
     }
     r = send_part(r, part);
     r = field_store(r, fields, i);
-    i = i + 1;
   }
   return r;
 }
@@ -2286,8 +2282,7 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_opt_tag());
   r = emit(r, ir.op_store_local(tag));
-  let k: i32 = 0;
-  while (k < e.variants.len()) {
+  for k in 0..e.variants.len() {
     let fields: semrecords.Field[] = e.variants[k].fields;
     r = emit(r, ir.op_load_local(tag));
     r = emit(r, ir.op_const_i32(k));
@@ -2312,7 +2307,6 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
     }
     r = emit(r, ir.op_store_local(out));
     r = emit(r, ir.op_end());
-    k = k + 1;
   }
   r = emit(r, ir.op_load_local(out));
   return emit(r, ir.op_return());
