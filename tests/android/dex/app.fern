@@ -38,6 +38,9 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
     let seven: usize = jni.jvalues([7 as usize]);
     let got: i32 = jni.call_int_method_a(env, pinger, ping_method, seven);
     log.warn("dextest: ping " + got.to_string());
+    let field: usize = jni.get_static_field_id(env, ping_class, "fern", "J");
+    let stored: usize = jni.set_static_long_field(env, ping_class, field, 99 as usize);
+    log.warn("dextest: field " + (jni.get_static_long_field(env, ping_class, field) as i64).to_string());
     log.warn("dextest: string " + jni.string_of(env, jni.new_string(env, "Fern ü")));
     let integer: usize = jni.find_class(env, "java/lang/Integer");
     let digits: usize = jni.jvalues([jni.new_string(env, "42")]);

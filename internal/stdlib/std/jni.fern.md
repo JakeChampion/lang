@@ -438,6 +438,10 @@ pub function get_static_long_field(env: usize, clazz: usize, field: usize): usiz
   return call2(env, 151, clazz, field);
 }
 
+pub function set_static_long_field(env: usize, clazz: usize, field: usize, value: usize): usize {
+  return call3(env, 160, clazz, field, value);
+}
+
 pub function get_static_float_field(env: usize, clazz: usize, field: usize): f32 {
   return call2_f32(env, 152, clazz, field);
 }
