@@ -36,6 +36,9 @@ func TestSelfHostInterpHostedBuiltinsMatchOracle(t *testing.T) {
 					"fern-oracle -interp: exit %d\nstdout:\n%s\nstderr:\n%s",
 					sCode, sOut, sErr, oCode, oOut, oErr)
 			}
+			if strings.Contains(oErr, "error[E") {
+				t.Errorf("the program does not compile:\n%s", oErr)
+			}
 			if strings.Contains(sErr, "fern: interp:") {
 				t.Errorf("the self-host interpreter could not evaluate the program:\n%s", sErr)
 			}
