@@ -11,8 +11,8 @@ func wantE050(t *testing.T, name, src string) {
 	if err == nil {
 		t.Fatalf("%s: expected an E050 use-after-move error, got none", name)
 	}
-	if !strings.Contains(err.Error(), "E050") && !strings.Contains(err.Error(), "owned parameter") {
-		t.Errorf("%s: expected E050 / owned-parameter error, got: %v", name, err)
+	if !hasCode(err, "E050") {
+		t.Errorf("%s: expected an E050 error, got: %v", name, err)
 	}
 }
 
@@ -179,8 +179,8 @@ func wantE051(t *testing.T, name, src string) {
 	if err == nil {
 		t.Fatalf("%s: expected an E051 ownership error, got none", name)
 	}
-	if !strings.Contains(err.Error(), "E051") && !strings.Contains(err.Error(), "owned parameter must be an owned value") {
-		t.Errorf("%s: expected E051 / owned-value error, got: %v", name, err)
+	if !hasCode(err, "E051") {
+		t.Errorf("%s: expected an E051 error, got: %v", name, err)
 	}
 }
 
@@ -748,8 +748,10 @@ function f(): Result[i32, string] {
 }`)
 }
 
+// A handle-free payload is a fresh local, so a move inside a loop is not at
+// its last use.
 func TestOwnGuardRejectsATryPayloadBoundBeforeALoop(t *testing.T) {
-	wantE050(t, "try-payload-bound-before-loop", ownConsumer+`
+	wantE051(t, "try-payload-bound-before-loop", ownConsumer+`
 enum Next { Part(i32[]), Done }
 function step(n: i32): Result[Next, string] { return Ok(Part([n])); }
 function f(): Result[i32, string] {
@@ -913,6 +915,155 @@ function f(): i32 {
     let a: i32 = consume(xs);
     return a + consume(xs);
 }`)
+	wantE050(t, "fresh-handle-payload-closed-twice", `
+function f(path: string): i32 {
+    let Ok(r) = open_reader(path) else { return 0; };
+    r.close();
+    r.close();
+    return 0;
+}`)
+}
+
+// Issues #14089 and #14075: a payload bound from an owned scrutinee whose
+// type cannot hold a handle is a local like any other let. A copy keeps both
+// names, a store keeps the name readable, and a move must be its last use.
+func TestOwnGuardHandleFreePayloadIsALocal(t *testing.T) {
+	const prelude = `function make(): Result[u8[], string] { return Ok([1, 2]); }
+function keep(own xs: u8[]): i32 { return xs[0] as i32; }
+struct T { aux: string }
+function take(t: T, n: i32): i32 { return t.aux.len() + n; }
+function pick(xs: string[]): Option[string] { for x in xs { return Some(x); } return None; }
+`
+	wantOK(t, "let-else-copied-then-updated", prelude+`
+function f(): i32 {
+    let Ok(first) = make() else { return 1; };
+    let retained = first;
+    first = first.with(0, 77);
+    return (retained[0] + first[0]) as i32;
+}`)
+	wantOK(t, "if-let-copied-then-updated", prelude+`
+function f(): i32 {
+    if let Ok(first) = make() {
+        let retained = first;
+        first = first.with(0, 77);
+        return (retained[0] + first[0]) as i32;
+    }
+    return 1;
+}`)
+	wantOK(t, "stored-then-read", prelude+`
+function f(xs: string[]): i32 {
+    if let Some(u) = pick(xs) {
+        let t = T { aux: u };
+        return take(t, u.len());
+    }
+    return 0;
+}`)
+	wantOK(t, "copied-then-moved-at-its-last-use", prelude+`
+function f(): i32 {
+    let Ok(xs) = make() else { return 1; };
+    let a = xs;
+    let k: i32 = keep(xs);
+    return k + a.len();
+}`)
+	wantOK(t, "handle-payload-closed-after-a-lambda-captured-it", `
+function span(r: Reader, offset: i64, len: i64): Option[u8[]] { return None; }
+function ranges(f: (i64, i64) => Option[u8[]]): Option[u8[]] { return f(0 as i64, 1 as i64); }
+function f(path: string): Option[u8[]] {
+    match (open_reader(path)) {
+        Ok(r) => {
+            let got: Option[u8[]] = ranges((offset: i64, len: i64): Option[u8[]] => span(r, offset, len));
+            r.close();
+            return got;
+        },
+        Err(e) => { return None; }
+    }
+    return None;
+}`)
+}
+
+func TestOwnGuardCopiesFreshPatternPayload(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"let-else", `function f(): i32 {
+    let Ok(xs) = make(2) else { return 0; };
+    let retained = xs;
+    xs = xs.with(0, 77);
+    return retained[0] + xs[0];
+}`},
+		{"statement-arm", `function f(): i32 {
+    match (make(2)) {
+        Ok(xs) => { let retained = xs; xs = xs.with(0, 77); return retained[0] + xs[0]; },
+        Err(_) => { return 0; }
+    }
+    return 0;
+}`},
+		{"if-let", `function f(): i32 {
+    if let Ok(xs) = make(2) {
+        let retained = xs;
+        xs = xs.with(0, 77);
+        return retained[0] + xs[0];
+    }
+    return 0;
+}`},
+		{"value-arm", `function f(): i32 {
+    return match (make(2)) {
+        Ok(xs) => { let retained = xs; xs = xs.with(0, 77); retained[0] + xs[0] },
+        Err(_) => 0
+    };
+}`},
+		{"shadow-owned", `function f(own xs: i32[]): i32 {
+    let n = consume(xs);
+    if let Ok(xs) = make(2) {
+        let retained = xs;
+        xs = xs.with(0, 77);
+        n = n + retained[0] + xs[0];
+    }
+    return n;
+}`},
+		{"shadow-borrowed", `function f(xs: i32[]): i32 {
+    if let Ok(xs) = make(2) { return consume(xs); }
+    return 0;
+}`},
+		{"lambda-local", `function run(g: () => i32): i32 { return g(); }
+function f(): i32 {
+    return run((): i32 => {
+        let Ok(xs) = make(2) else { return 0; };
+        let retained = xs;
+        return retained[0] + xs[0];
+    });
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wantOK(t, "fresh-pattern-copy-"+tc.name, freshResultPrelude+tc.body)
+		})
+	}
+}
+
+func TestOwnGuardKeepsLinearPatternSources(t *testing.T) {
+	wantOK(t, "owned-handle-free-source-payload-is-a-local", freshResultPrelude+`
+function f(own r: Result[i32[], string]): i32 {
+    let Ok(xs) = r else { return 0; };
+    let retained = xs;
+    return retained[0] + xs[0];
+}`)
+	wantE050(t, "owned-handle-source-payload-stays-linear", `
+function f(own r: Result[Writer, string]): i32 {
+    let Ok(w) = r else { return 0; };
+    let retained = w;
+    return retained.fd + w.fd;
+}`)
+	wantE050(t, "handle-payload-stays-linear", `
+function opened(): Result[Writer, string] { return Ok(stdout()); }
+function f(): i32 {
+    let Ok(w) = opened() else { return 0; };
+    let retained = w;
+    return retained.fd + w.fd;
+}`)
+	wantE050(t, "outer-move-survives-a-pattern-shadow", freshResultPrelude+`
+function f(own xs: i32[]): i32 {
+    let n = consume(xs);
+    if let Ok(xs) = make(2) { let retained = xs; n = n + retained[0] + xs[0]; }
+    return n + xs[0];
+}`)
 }
 
 func TestOwnedUseAfterResultPayloadTaken(t *testing.T) {
@@ -1042,6 +1193,31 @@ function f(): i32 {
         return c.items.len();
     };
     return lam();
+}`)
+	// A payload declared inside a lambda follows the same last-use rule.
+	wantOK(t, "payload-at-last-use-in-lambda", ownConsumer+`
+enum Bag { Full(i32[]), Empty }
+function mk(n: i32): Bag { return Full([n]); }
+function run(f: () => i32): i32 { return f(); }
+function f(): i32 {
+    return run((): i32 => {
+        match (mk(1)) {
+            Full(xs) => { return consume(xs); },
+            Empty => { return 0; }
+        }
+    });
+}`)
+	wantE051(t, "payload-read-after-move-in-lambda", ownConsumer+`
+enum Bag { Full(i32[]), Empty }
+function mk(n: i32): Bag { return Full([n]); }
+function run(f: () => i32): i32 { return f(); }
+function f(): i32 {
+    return run((): i32 => {
+        match (mk(1)) {
+            Full(xs) => { return consume(xs) + xs.len(); },
+            Empty => { return 0; }
+        }
+    });
 }`)
 }
 

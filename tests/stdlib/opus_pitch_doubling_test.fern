@@ -1,0 +1,136 @@
+import "std/hash/crc32";
+import "std/opus/pitch";
+import "std/test";
+
+// Each case makes a frame from a random pattern that repeats with a random
+// period, plus noise. Half the periods are short. Half the cases start the
+// search at a multiple of the period, and half put the period of the last
+// frame near a period that the search examines. libopus 1.4, in its float
+// build, gave the CRC-32 of each trace, from a C program that makes the same
+// calls.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
+  let (g1, r) = rnd(g);
+  return (g1, lo + (hi - lo) * ((r % 65536) as f32) / 65536.0f32);
+}
+
+function bits(v: f32): string {
+  return (f32_bits(v) as u32).to_string();
+}
+
+struct Frame { g: Gen, x: f32[] }
+
+function frame(own g: Gen, period: i32, len: i32): Frame {
+  let (g1, noise) = frand(g, 0.0f32, 2.0f32);
+  g = g1;
+  let pat: f32[] = [];
+  for i in 0..period {
+    let (g2, v) = frand(g, -1000.0f32, 1000.0f32);
+    g = g2;
+    pat = pat.append(v);
+  }
+  let x: f32[] = [];
+  for i in 0..len {
+    let (g3, v) = frand(g, -100.0f32, 100.0f32);
+    g = g3;
+    x = x.append(pat[i % period] + noise * v);
+  }
+  return Frame { g: g, x: x };
+}
+
+function start_period(own g: Gen, period: i32): (Gen, i32) {
+  let (g1, r) = rnd(g);
+  let t0: i32 = 15 + r % 1009;
+  let (g2, aim) = rnd(g1);
+  if (aim % 2 == 0) {
+    return (g2, t0);
+  }
+  let (g3, m) = rnd(g2);
+  t0 = period * (1 + m % 3);
+  if (t0 > 1023) {
+    t0 = 1023;
+  }
+  if (t0 < 15) {
+    t0 = 15;
+  }
+  return (g3, t0);
+}
+
+// The period of the last frame: random, or within five samples of the
+// period that the search examines for a random `k`.
+function last_period(own g: Gen, t0: i32): (Gen, i32) {
+  let (g1, pv) = rnd(g);
+  let (g2, near) = rnd(g1);
+  if (near % 2 == 0) {
+    return (g2, 15 + pv % 1009);
+  }
+  let (g3, kr) = rnd(g2);
+  let (g4, dr) = rnd(g3);
+  let k: i32 = 2 + kr % 6;
+  let prev: i32 = 2 * ((2 * (t0 / 2) + k) / (2 * k)) + dr % 11 - 5;
+  if (prev < 15) {
+    return (g4, 15);
+  }
+  return (g4, prev);
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let crc: crc32.Crc32 = crc32.new();
+  for k in 0..cases {
+    let (g1, nr) = rnd(g);
+    let n: i32 = 120 << nr % 4;
+    let (g2, pr) = rnd(g1);
+    let period: i32 = 8 + pr % 1000;
+    let (g2a, short) = rnd(g2);
+    if (short % 2 == 1) {
+      period = 8 + period % 60;
+    }
+    let f: Frame = frame(g2a, period, 1024 + n >> 1);
+    let (g3, t0) = start_period(f.g, period);
+    let (g4, prev) = last_period(g3, t0);
+    let (g5, pg) = frand(g4, 0.0f32, 0.75f32);
+    g = g5;
+    let d: pitch.Doubling = pitch.remove_doubling(f.x, 1024, 15, n, t0, prev, pg);
+    let line: string = n.to_string() + " " + period.to_string() + " " + t0.to_string() + " " + prev.to_string() + " " + bits(pg) + " " + d.period.to_string() + " " + bits(d.gain);
+    crc = crc.update((line + "\n").as_bytes());
+  }
+  return crc.finish();
+}
+
+function test_short_trace(): test.TestOutcome {
+  return test.assert_eq(trace(5u32, 12), 1843637541u32);
+}
+
+function test_long_trace(): test.TestOutcome {
+  return test.assert_eq(trace(3u32, 3000), 1693409094u32);
+}
+
+// A pure tone of period 200 that the search found at 400 comes back at 200.
+function test_a_doubled_period_is_removed(): test.TestOutcome {
+  let x: f32[] = [];
+  for i in 0..1024 + 960 >> 1 {
+    let phase: f64 = 6.283185307179586f64 * ((i % 100) as f64) / 100.0f64;
+    x = x.append((1000.0f64 * phase.sin()) as f32);
+  }
+  let d: pitch.Doubling = pitch.remove_doubling(x, 1024, 15, 960, 400, 0, 0.0f32);
+  if (d.period < 199 || d.period > 201 || d.gain < 0.9f32) {
+    return test.fail("the period is " + d.period.to_string() + " with the gain " + d.gain.to_string());
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/pitch remove_doubling");
+  r = r.it("a short trace is the libopus trace", test_short_trace);
+  r = r.it("a long trace is the libopus trace", test_long_trace);
+  r = r.it("a doubled period is removed", test_a_doubled_period_is_removed);
+  return r.finish();
+}

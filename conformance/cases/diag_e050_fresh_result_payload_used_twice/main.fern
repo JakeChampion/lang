@@ -1,0 +1,12 @@
+// An owned payload that can hold a handle moves once. The second move is E050.
+function main(): i32 {
+    match (open_reader("conformance.txt")) {
+        Ok(r) => {
+            r.close();
+            r.close();
+            return 0;
+        },
+        Err(_) => { return 0; }
+    }
+    return 0;
+}

@@ -11,6 +11,8 @@ seven-segment digits.
 - `face.fern` lays out the digits. It has no Android code, and
   `face_test.fern` tests it on the host.
 
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-native.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
+
 Build and sign the APK:
 
 ```sh

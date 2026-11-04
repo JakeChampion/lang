@@ -42,6 +42,8 @@ change.
 
 ## Build
 
+The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-stopwatch.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
+
 ```sh
 make build
 examples/android/stopwatch/build.sh
