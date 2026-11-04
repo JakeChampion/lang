@@ -153,6 +153,15 @@ function consume(own item: Box): i32 { return item.data.len(); }
 		src  string
 		want []string
 	}{
+		{"call-payload-stored-then-read", "struct T { aux: string } function take(t: T, n: i32): i32 { return t.aux.len() + n; } function pick(xs: string[]): Option[string] { for x in xs { return Some(x); } return None; } function f(xs: string[]): i32 { if let Some(u) = pick(xs) { let t = T { aux: u }; return take(t, u.len()); } return 0; } function main(): i32 { return 0; }", nil},
+		{"call-payload-moved-at-its-last-use", "function make(n: i32): Result[i32[], string] { return Ok([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { match (make(1)) { Ok(xs) => { let kept = xs; let k: i32 = keep(xs); return k + kept[0]; }, Err(_) => { return 0; } } return 0; } function main(): i32 { return 0; }", nil},
+		{"call-payload-same-name-in-two-matches", "function make(n: i32): Result[i32[], string] { return Ok([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { let t: i32 = 0; match (make(1)) { Ok(xs) => { let a: i32 = keep(xs); t = t + a; }, Err(_) => {} } match (make(2)) { Ok(xs) => { let b: i32 = keep(xs); t = t + b; }, Err(_) => {} } return t; } function main(): i32 { return 0; }", nil},
+		{"outer-local-shadowed-in-another-arm", "function opt(n: i32): Option[i32[]] { return Some([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { let xs: i32[] = [1]; let t: i32 = 0; match (opt(2)) { Some(xs) => { t = xs[0]; }, None => { t = keep(xs); } } return t + xs.len() as i32; } function main(): i32 { return 0; }", []string{"E051"}},
+		{"lambda-local-moved-at-its-last-use", "function arr(n: i32): i32[] { return [n]; } function keep(own ys: i32[]): i32 { return ys[0]; } function run(f: () => i32): i32 { return f(); } function main(): i32 { return run((): i32 => { let xs = arr(1); let k: i32 = keep(xs); return k; }); }", nil},
+		{"lambda-capture-moved", "function arr(n: i32): i32[] { return [n]; } function keep(own ys: i32[]): i32 { return ys[0]; } function main(): i32 { let xs = arr(1); let g: () => i32 = (): i32 => { return keep(xs); }; return g() + g(); }", []string{"E051"}},
+		{"call-payload-moved-before-its-last-use", "function make(n: i32): Result[i32[], string] { return Ok([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { match (make(1)) { Ok(xs) => { let k: i32 = keep(xs); return k + xs[0]; }, Err(_) => { return 0; } } return 0; } function main(): i32 { return 0; }", []string{"E051"}},
+		{"let-else-call-payload-copied-then-updated", "function make(): Result[u8[], string] { return Ok([1, 2]); } function f(): u8 { let Ok(first) = make() else { return 0; }; let retained = first; first = first.with(0, 77); return retained[0] + first[0]; } function main(): i32 { return 0; }", nil},
+		{"call-handle-payload-copied-then-moved", "function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); } function take(own s: Socket): i32 { return tcp_close(s); } function f(l: Socket): i32 { match (accepted(l)) { Ok(s) => { let kept = s; return take(s); }, Err(e) => { return e; } } return 0; } function main(): i32 { return 0; }", []string{"E050"}},
 		{"e051-loop-move-shadowed-by-unused-value-match", loopPayloadPrefix + `
 function f(data: u8[]): i32 {
     let item = Box { data: data };
@@ -219,7 +228,7 @@ function f(data: u8[]): i32 {
     };
 }`, []string{"E051"}},
 		{"body-fresh-value-payload-remains-copyable", "struct Box { items: i32[] } function make(s: Socket): Result[Box, i32] { return Ok(Box { items: [7] }); } function f(s: Socket): i32 { let Ok(input) = make(s) else { return 1; }; let alias = input; return input.items[0] + alias.items[0]; } function main(): i32 { return 0; }", nil},
-		{"kept-alive-local-in-lambda-stays-invalid", `struct B { items: i32[] }
+		{"lambda-local-moved-at-last-use", `struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function main(): i32 {
   let lam = (): i32 => {
@@ -228,8 +237,8 @@ function main(): i32 {
     return c.items.len();
   };
   return lam();
-}`, []string{"E051"}},
-		{"lambda-pattern-shadowed-by-local-stays-invalid", `function make(): Result[i32[], string] { return Ok([1]); }
+}`, nil},
+		{"lambda-pattern-shadowed-by-local-moved-at-last-use", `function make(): Result[i32[], string] { return Ok([1]); }
 function take(own xs: i32[]): i32 { return xs.len(); }
 function main(): i32 {
   let lam = (): i32 => {
@@ -242,7 +251,7 @@ function main(): i32 {
     return xs.len();
   };
   return lam();
-}`, []string{"E051"}},
+}`, nil},
 		{"fresh-let-else-payload-copies", `function make(): Result[i32[], string] { return Ok([1, 2]); }
 function main(): i32 {
   let Ok(xs) = make() else { return 1; };
@@ -250,7 +259,7 @@ function main(): i32 {
   xs = xs.with(0, 77);
   return retained[0] + xs[0];
 }`, nil},
-		{"e051-lambda-let-else-payload-copies-before-transfer", `function make(): Result[i32[], string] { return Ok([1, 2]); }
+		{"lambda-let-else-payload-copies-before-last-use-transfer", `function make(): Result[i32[], string] { return Ok([1, 2]); }
 function take(own xs: i32[]): i32 { return xs.len(); }
 function run(f: () => i32): i32 { return f(); }
 function main(): i32 {
@@ -258,6 +267,18 @@ function main(): i32 {
     let Ok(xs) = make() else { return 0; };
     let retained = xs;
     return retained[0] + take(xs);
+  });
+}`, nil},
+		{"e051-lambda-payload-read-after-transfer", `enum Bag { Full(i32[]), Empty }
+function make(): Bag { return Full([1]); }
+function take(own xs: i32[]): i32 { return xs.len(); }
+function run(f: () => i32): i32 { return f(); }
+function main(): i32 {
+  return run((): i32 => {
+    match (make()) {
+      Full(xs) => { return take(xs) + xs.len(); },
+      Empty => { return 0; }
+    }
   });
 }`, []string{"E051"}},
 		{"fresh-payload-shadows-a-moved-own-name", `function make(): Result[i32[], string] { return Ok([1, 2]); }
@@ -341,7 +362,10 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"socket-from-body-fresh-scrutinee", "function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); }\nfunction take(own s: Socket): i32 { return tcp_close(s); }\nfunction main(): i32 { let l: Socket = tcp_listen(0); match (accepted(l)) { Ok(s) => { let n: i32 = take(s); }, Err(e) => {} } let Ok(t) = accepted(l) else { return tcp_close(l); }; let m: i32 = take(t); return tcp_close(l); }", nil},
 		{"socket-from-borrowing-scrutinee", "function passed(l: Socket): Result[Socket, i32] { return Ok(l); }\nfunction take(own s: Socket): i32 { return tcp_close(s); }\nfunction main(): i32 { let l: Socket = tcp_listen(0); match (passed(l)) { Ok(s) => { let n: i32 = take(s); }, Err(e) => {} } return 0; }", []string{"E051"}},
 		{"socket-literal", "function main(): i32 { let s: Socket = Socket { fd: 3 }; return tcp_close(s); }", []string{"E099"}},
-		{"socket-descriptor-transition", "function main(): i32 { let fd: i32 = tcp_listen(0); return tcp_close(fd); }", nil},
+		{"socket-from-match-expression-on-fresh-call", "function opened(): Result[Socket, i32] { let s: Socket = tcp_listen(0); if (s.fd < 0) { return Err(s.fd); } return Ok(s); }\nfunction main(): i32 { let s: Socket = match (opened()) { Ok(v) => v, Err(e) => { return e; } }; return tcp_close(s); }", nil},
+		{"socket-from-match-expression-closed-twice", "function opened(): Result[Socket, i32] { let s: Socket = tcp_listen(0); if (s.fd < 0) { return Err(s.fd); } return Ok(s); }\nfunction main(): i32 { let s: Socket = match (opened()) { Ok(v) => v, Err(e) => { return e; } }; let a: i32 = tcp_close(s); return tcp_close(s) + a; }", []string{"E051"}},
+		{"socket-from-match-expression-on-a-parameter", "function f(r: Result[Socket, i32]): i32 { let s: Socket = match (r) { Ok(v) => v, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-match-expression-arm-yields-a-parameter", "function opened(): Result[Socket, i32] { let s: Socket = tcp_listen(0); if (s.fd < 0) { return Err(s.fd); } return Ok(s); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => l, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
 		{"send-captures-cell", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(1); return spawn((): i32 => c.get()); }", []string{"E100"}},
 		{"send-captures-handle", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let w: Writer = stdout(); return spawn((): i32 => w.fd); }", []string{"E100"}},
 		{"send-captures-function-value", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let f: () => i32 = (): i32 => 1; return spawn((): i32 => f()); }", []string{"E100"}},
@@ -628,7 +652,7 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"e051-fresh-result-payload-into-an-own-method-param", "struct K { n: i32 }\nfunction (k: K) open(own buf: u8[]): i32 { return buf.len() + k.n; }\nfunction sealed(seq: u64): Result[u8[], string] { return Ok([seq as u8]); }\nfunction f(k: K): i32 {\n    let Ok(buf) = sealed(1 as u64) else { return 0; };\n    return k.open(buf);\n}\nfunction main(): i32 { return f(K { n: 1 }); }\n", nil},
 		{"handle-free-result-payload-through-a-borrowing-callee", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction relay(r: Result[i32[], string]): Result[i32[], string] { return r; }\nfunction f(r: Result[i32[], string]): i32 {\n    let Ok(xs) = relay(r) else { return 0; };\n    return keep(xs);\n}\nfunction main(): i32 { return f(Ok([1])); }\n", nil},
 		{"e051-result-handle-through-a-borrowing-callee", "function finish(own w: Writer): i32 { return 0; }\nfunction relay(r: Result[Writer, string]): Result[Writer, string] { return r; }\nfunction f(r: Result[Writer, string]): i32 {\n    let Ok(w) = relay(r) else { return 0; };\n    return finish(w);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
-		{"e051-fresh-result-payload-moved-twice", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let Ok(xs) = make(2) else { return 0; };\n    let a: i32 = keep(xs);\n    return a + keep(xs);\n}\nfunction main(): i32 { return f(); }\n", []string{"E051"}},
+		{"e051-fresh-result-payload-moved-before-its-last-use", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let Ok(xs) = make(2) else { return 0; };\n    let a: i32 = keep(xs);\n    return a + keep(xs);\n}\nfunction main(): i32 { return f(); }\n", []string{"E051"}},
 		{"e050-fresh-handle-payload-closed-twice", "function f(path: string): i32 {\n    let Ok(r) = open_reader(path) else { return 0; };\n    r.close();\n    r.close();\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"let-else-payload-copied-then-updated", "function make(): Result[u8[], string] { return Ok([1, 2]); }\nfunction main(): i32 {\n    let Ok(first) = make() else { return 1; };\n    let retained = first;\n    first = first.with(0, 77);\n    return (retained[0] + first[0]) as i32;\n}\n", nil},
 		{"if-let-payload-copied-then-updated", "function make(): Result[u8[], string] { return Ok([1, 2]); }\nfunction main(): i32 {\n    if let Ok(first) = make() {\n        let retained = first;\n        first = first.with(0, 77);\n        return (retained[0] + first[0]) as i32;\n    }\n    return 1;\n}\n", nil},
@@ -671,11 +695,9 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"e051-payload-binding-of-borrowed-scrutinee-field", "struct Cfi { rules: i32[] }\nenum Box { Full(Cfi), Empty }\nfunction grow(own xs: i32[]): i32[] { return xs.append(1); }\nfunction bump(b: Box): Box {\n    match (b) {\n        Full(c) => { return Full(Cfi { ...c, rules: grow(c.rules) }); },\n        Empty => { return Empty; }\n    }\n}\nfunction main(): i32 { let b: Box = Full(Cfi { rules: [] }); let u: Box = bump(b); return 0; }\n", []string{"E051"}},
 		{"e051-param-shadows-a-const", "const W: i32[] = [1, 2];\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(W: i32[]): i32 { return keep(W); }\nfunction main(): i32 { return f([3]); }\n", []string{"E051"}},
 		{"own-accepts-a-value-match-payload-of-a-fresh-scrutinee", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  return match (mk(1)) {\n    Full(xs) => keep(xs),\n    Empty => 0\n  };\n}\n", nil},
-		// A handle-free payload is a local, and a local declared inside a lambda
-		// cannot move (e051-last-use-in-lambda).
-		{"e051-lambda-match-payload-of-a-fresh-scrutinee", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction run(f: () => i32): i32 { return f(); }\nfunction main(): i32 {\n  return run((): i32 => {\n    match (mk(1)) {\n      Full(xs) => { return keep(xs); },\n      Empty => { return 0; }\n    }\n  });\n}\n", []string{"E051"}},
+		{"own-accepts-a-lambda-match-payload-of-a-fresh-scrutinee", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction run(f: () => i32): i32 { return f(); }\nfunction main(): i32 {\n  return run((): i32 => {\n    match (mk(1)) {\n      Full(xs) => { return keep(xs); },\n      Empty => { return 0; }\n    }\n  });\n}\n", nil},
 		{"own-accepts-a-value-match-payload-moved-before-a-return", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  let n: i32 = 0;\n  let r: i32 = match (mk(1)) {\n    Full(xs) => { n = keep(xs); return n; },\n    Empty => 0\n  };\n  return r;\n}\n", nil},
-		{"e051-value-match-payload-moved-twice", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  return match (mk(1)) {\n    Full(xs) => keep(xs) + keep(xs),\n    Empty => 0\n  };\n}\n", []string{"E051"}},
+		{"e051-value-match-payload-moved-before-its-last-use", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  return match (mk(1)) {\n    Full(xs) => keep(xs) + keep(xs),\n    Empty => 0\n  };\n}\n", []string{"E051"}},
 		// A local a value block declares ends with its statement, so a loop
 		// around the statement does not keep it alive.
 		{"value-block-local-moved-in-a-loop", "struct Box { data: u8[] }\nfunction consume(own b: Box): i32 { return b.data.len(); }\nfunction f(data: u8[]): i32 {\n  let result: i32 = 0;\n  for tag in [0, 1] {\n    let value: i32 = { let b = Box { data: data }; consume(b) };\n    result = result + value;\n  }\n  return result;\n}\nfunction main(): i32 { return f([1]); }\n", nil},

@@ -715,6 +715,25 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 		}
 		return true
 	})
+	// An element of an owned iterator moves at its last read in its own loop,
+	// whatever other declarations share its name.
+	ast.Walk(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || inLambda[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			aid, ok := a.(*ast.Ident)
+			if !ok || escaping[aid.Name] || lambdaCaptured[aid.Name] {
+				continue
+			}
+			v := bindingVar(body, c, aid.Name)
+			if v != nil && iterOwned[forEachElementOf(v)] && !loopRepeats(body, c, v) && lastInBinding(body, c, aid, order) {
+				moves[aid] = true
+			}
+		}
+		return true
+	})
 	unadmitted := map[string]bool{}
 	moveAdmitted := moveAdmission(info, body, isParam, ownParam, declCount, occurrences, order, admitted, unpack)
 	for _, dies := range out {
@@ -906,8 +925,41 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return true
 	case *ast.StructLit:
 		return init.Base == nil
+	case *ast.MatchExpr:
+		return freshMatchValue(info, init)
 	}
 	return false
+}
+
+// freshMatchValue reports a match on a fresh value whose each variant arm
+// yields a payload it binds, a fresh value, or leaves.
+func freshMatchValue(info *Info, m *ast.MatchExpr) bool {
+	if _, named := m.Tag.(*ast.Ident); named || m.StructMatch != "" || m.IsFloat || len(m.Arms) == 0 || !freshInit(info, m.Tag) {
+		return false
+	}
+	for _, arm := range m.Arms {
+		if arm.VariantName == "" && !arm.IsWildcard || len(arm.TupleElems) > 0 || !armYieldsFresh(info, arm) {
+			return false
+		}
+	}
+	return true
+}
+
+func armYieldsFresh(info *Info, arm *ast.MatchExprArm) bool {
+	value := arm.Body
+	if b, ok := value.(*ast.BlockExpr); ok {
+		if len(b.Stmts) > 0 && divergesStmt(info, b.Stmts[len(b.Stmts)-1]) {
+			return true
+		}
+		if b.Tail == nil {
+			return false
+		}
+		value = b.Tail
+	}
+	if id, ok := value.(*ast.Ident); ok && slices.Contains(arm.Binders(), id.Name) {
+		return true
+	}
+	return freshInit(info, value)
 }
 
 // moveAdmission names the locals that can move into an own parameter: each
@@ -1038,6 +1090,10 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 		src, ok := e.(*ast.Ident)
 		return ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src)
 	}
+	freshAtLastUse := func(e ast.Expr) bool {
+		src, ok := e.(*ast.Ident)
+		return ok && freshLocal[src.Name] && sole(src.Name) && order.IsLast(src)
+	}
 	out := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -1046,9 +1102,9 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 				out[x.Name] = true
 			}
 		case *ast.Destructure:
-			// The fields of an own parameter that the destructure takes at
-			// its last use are owned, as the parameter is.
-			if x.AtName != "" || !ownedAtLastUse(x.Init) {
+			// The fields that the destructure takes from an own parameter
+			// or a fresh local at its last use are owned, as the source is.
+			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) {
 				return true
 			}
 			for i, name := range x.Names {
@@ -1186,7 +1242,13 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (
 		return out, loose
 	}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if inner, ok := n.(*ast.FuncDecl); ok && inner != fn {
+		inner, ok := n.(*ast.FuncDecl)
+		// A lambda is decided as a function of its own, so a name it declares
+		// can move at its last use in the lambda's body.
+		if lm, isLambda := n.(*ast.Lambda); isLambda {
+			inner, ok = &ast.FuncDecl{Params: lm.Params, Body: lm.Body}, true
+		}
+		if ok && inner != fn {
 			innerOut, innerLoose := lastUseArgs(inner, info, handleFree)
 			for e := range innerOut {
 				out[e] = true
@@ -1276,6 +1338,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (
 		case *ast.Ident:
 			if (local[t.Name] || d.Bound[t.Name] || ownParam[t.Name]) && !d.Escaping[t.Name] {
 				out[e] = true
+				delete(loose, e)
 			}
 		case *ast.FieldAccess:
 			if id, ok := t.Target.(*ast.Ident); ok && (local[id.Name] || ownParam[id.Name] || d.Bound[id.Name]) {
@@ -1932,7 +1995,8 @@ func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name 
 
 // bindingLevel is the level of the innermost frame that binds name before the
 // statement that the frame holds: the block that the read binding belongs to.
-// It is -1 when no frame binds name, as for a parameter.
+// A match arm binds its names for its body. It is -1 when no frame binds
+// name, as for a parameter.
 func bindingLevel(frames []liveFrame, name string) int {
 	for l := len(frames) - 1; l >= 0; l-- {
 		f := frames[l]
@@ -1951,8 +2015,26 @@ func bindingLevel(frames []liveFrame, name string) int {
 				return l
 			}
 		}
+		if l > 0 && armBinds(frames[l-1], f, name) {
+			return l
+		}
 	}
 	return -1
+}
+
+// armBinds reports whether the arm whose body is f binds name, when f is the
+// body of an arm of the match that parent holds.
+func armBinds(parent, f liveFrame, name string) bool {
+	m, ok := parent.stmts[parent.idx].(*ast.Match)
+	if !ok {
+		return false
+	}
+	for _, arm := range m.Arms {
+		if arm.Body != nil && nodeHolds(arm.Body, f.stmts[f.idx]) {
+			return slices.Contains(arm.Binders(), name)
+		}
+	}
+	return false
 }
 
 // lastInBinding reports whether no later read of name belongs to the binding
@@ -1975,6 +2057,24 @@ func lastInBinding(body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder
 		})
 	}
 	return !later
+}
+
+// bindingVar is the let that a read of name at c belongs to, or nil when
+// another kind of declaration or a parameter binds it.
+func bindingVar(body *ast.Block, c ast.Node, name string) *ast.Var {
+	frames := enclosingFrames(body, c)
+	l := bindingLevel(frames, name)
+	if l < 0 {
+		return nil
+	}
+	f := frames[l]
+	for j := f.idx - 1; j >= 0; j-- {
+		if bindsName(f.stmts[j], name) {
+			v, _ := f.stmts[j].(*ast.Var)
+			return v
+		}
+	}
+	return nil
 }
 
 // bindsName reports whether the statement itself declares name, not a

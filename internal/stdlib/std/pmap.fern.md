@@ -99,7 +99,7 @@ pub function from[K: cmp.Hash + cmp.Eq, V](pairs: (K, V)[]): PMap[K, V] {
 ```fern
 <<5 function node_mix(x: i32): i32>>=
 function node_mix(x: i32): i32 {
-  let h: i32 = x;
+  let h = x;
   h = h ^ (h as u32 >> 16 as u32) as i32;
   h = h * (0 - 2048144789);
   h = h ^ (h as u32 >> 13 as u32) as i32;
@@ -135,27 +135,27 @@ function node_size[K, V](n: PMap[K, V]): i32 {
 
 function node_insert_at[K, V](xs: PMap[K, V][], i: i32, x: PMap[K, V]): PMap[K, V][] {
   let out: PMap[K, V][] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < i) {
     out = out.append(xs[j]);
-    j = j + 1;
+    j += 1;
   }
   out = out.append(x);
   while (j < xs.len()) {
     out = out.append(xs[j]);
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
 
 function node_remove_at[K, V](xs: PMap[K, V][], i: i32): PMap[K, V][] {
   let out: PMap[K, V][] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < xs.len()) {
     if (j != i) {
       out = out.append(xs[j]);
     }
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
@@ -167,10 +167,10 @@ function node_pair[K, V](a: PMap[K, V], ah: i32, b: PMap[K, V], bh: i32, shift: 
   if (shift >= 32) {
     return Coll(ah, [a, b]);
   }
-  let fa: i32 = node_frag(ah, shift);
-  let fb: i32 = node_frag(bh, shift);
+  let fa = node_frag(ah, shift);
+  let fb = node_frag(bh, shift);
   if (fa == fb) {
-    let inner: PMap[K, V] = node_pair(a, ah, b, bh, shift + 5);
+    let inner = node_pair(a, ah, b, bh, shift + 5);
     return Branch(1 << fa, 2, [inner]);
   }
   if (fa < fb) {
@@ -180,7 +180,7 @@ function node_pair[K, V](a: PMap[K, V], ah: i32, b: PMap[K, V], bh: i32, shift: 
 }
 
 function node_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: PMap[K, V][], k: K): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < leaves.len()) {
     match (leaves[i]) {
       Leaf(eh, ek, ev) => {
@@ -192,7 +192,7 @@ function node_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: PMap[K, V][], k: K): i
       Coll(xh, xs) => {},
       Branch(xb, xs, xk) => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return 0 - 1;
 }
@@ -211,43 +211,43 @@ function node_insert[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, shift: i32,
       if (lh == h && lk.eq(k)) {
         return Leaf(h, k, v);
       }
-      let fresh: PMap[K, V] = Leaf(h, k, v);
+      let fresh = Leaf(h, k, v);
       return node_pair(Leaf(lh, lk, lv), lh, fresh, h, shift);
     },
     Coll(ch, leaves) => {
       if (ch != h) {
-        let fresh: PMap[K, V] = Leaf(h, k, v);
+        let fresh = Leaf(h, k, v);
         return node_pair(Coll(ch, leaves), ch, fresh, h, shift);
       }
-      let i: i32 = node_coll_index(leaves, k);
+      let i = node_coll_index(leaves, k);
       if (i >= 0) {
         return Coll(ch, leaves.with(i, Leaf(h, k, v)));
       }
       return Coll(ch, leaves.append(Leaf(h, k, v)));
     },
     Branch(bm, s, kids) => {
-      let bit: i32 = 1 << node_frag(h, shift);
-      let idx: i32 = node_slot(bm, bit);
+      let bit = 1 << node_frag(h, shift);
+      let idx = node_slot(bm, bit);
       if ((bm & bit) == 0) {
-        let fresh: PMap[K, V] = Leaf(h, k, v);
-        let grown: PMap[K, V][] = node_insert_at(kids, idx, fresh);
+        let fresh = Leaf(h, k, v);
+        let grown = node_insert_at(kids, idx, fresh);
         return Branch(bm | bit, s + 1, grown);
       }
       let e: PMap[K, V] = Empty;
-      let child: PMap[K, V] = kids[idx];
-      let rest: PMap[K, V][] = kids.with(idx, e);
-      let old: i32 = node_size(child);
+      let child = kids[idx];
+      let rest = kids.with(idx, e);
+      let old = node_size(child);
       child = node_insert(child, h, shift + 5, k, v);
-      let added: i32 = node_size(child) - old;
+      let added = node_size(child) - old;
       return Branch(bm, s + added, rest.with(idx, child));
     }
   }
 }
 
 function node_find[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, k: K): PMap[K, V] {
-  let cur: PMap[K, V] = n;
-  let shift: i32 = 0;
-  let descending: boolean = true;
+  let cur = n;
+  let shift = 0;
+  let descending = true;
   while (descending) {
     match (cur) {
       Empty => {
@@ -260,19 +260,19 @@ function node_find[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, k: K): PMap[K
         descending = false;
       },
       Coll(ch, leaves) => {
-        let i: i32 = node_coll_index(leaves, k);
+        let i = node_coll_index(leaves, k);
         if (i >= 0) {
           return leaves[i];
         }
         descending = false;
       },
       Branch(bm, s, kids) => {
-        let bit: i32 = 1 << node_frag(h, shift);
+        let bit = 1 << node_frag(h, shift);
         if ((bm & bit) == 0) {
           descending = false;
         } else {
           cur = kids[node_slot(bm, bit)];
-          shift = shift + 5;
+          shift += 5;
         }
       }
     }
@@ -299,14 +299,14 @@ function node_is_branch[K, V](n: PMap[K, V]): boolean {
 }
 
 function node_remove_branch[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], bm: i32, s: i32, kids: PMap[K, V][], h: i32, shift: i32, k: K): PMap[K, V] {
-  let bit: i32 = 1 << node_frag(h, shift);
+  let bit = 1 << node_frag(h, shift);
   if ((bm & bit) == 0) {
     return n;
   }
-  let idx: i32 = node_slot(bm, bit);
-  let old: i32 = node_size(kids[idx]);
-  let child: PMap[K, V] = node_remove(kids[idx], h, shift + 5, k);
-  let now: i32 = node_size(child);
+  let idx = node_slot(bm, bit);
+  let old = node_size(kids[idx]);
+  let child = node_remove(kids[idx], h, shift + 5, k);
+  let now = node_size(child);
   if (now == old) {
     return n;
   }
@@ -319,7 +319,7 @@ function node_remove_branch[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], bm: i32, s: 
   if (kids.len() == 1) {
     return child;
   }
-  let rest: PMap[K, V][] = node_remove_at(kids, idx);
+  let rest = node_remove_at(kids, idx);
   if (rest.len() == 1 && !node_is_branch(rest[0])) {
     return rest[0];
   }
@@ -347,7 +347,7 @@ function node_remove[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, shift: i32,
       if (ch != h) {
         return n;
       }
-      let i: i32 = node_coll_index(leaves, k);
+      let i = node_coll_index(leaves, k);
       if (i < 0) {
         return n;
       }
@@ -463,20 +463,20 @@ function node_fold[K, V, A](n: PMap[K, V], init: A, f: (A, K, V) => A): A {
       return f(init, k, v);
     },
     Coll(h, leaves) => {
-      let a: A = init;
-      let i: i32 = 0;
+      let a = init;
+      let i = 0;
       while (i < leaves.len()) {
         a = node_fold(leaves[i], a, f);
-        i = i + 1;
+        i += 1;
       }
       return a;
     },
     Branch(bm, s, kids) => {
-      let a: A = init;
-      let i: i32 = 0;
+      let a = init;
+      let i = 0;
       while (i < kids.len()) {
         a = node_fold(kids[i], a, f);
-        i = i + 1;
+        i += 1;
       }
       return a;
     }
@@ -492,17 +492,17 @@ function node_for_each[K, V](n: PMap[K, V], f: (K, V) => void): void {
       f(k, v);
     },
     Coll(h, leaves) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < leaves.len()) {
         node_for_each(leaves[i], f);
-        i = i + 1;
+        i += 1;
       }
     },
     Branch(bm, s, kids) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < kids.len()) {
         node_for_each(kids[i], f);
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -519,19 +519,19 @@ function node_map_values[K, V, W](n: PMap[K, V], f: (V) => W): PMap[K, W] {
     },
     Coll(h, leaves) => {
       let out: PMap[K, W][] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i < leaves.len()) {
         out = out.append(node_map_values(leaves[i], f));
-        i = i + 1;
+        i += 1;
       }
       return Coll(h, out);
     },
     Branch(bm, s, kids) => {
       let out: PMap[K, W][] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i < kids.len()) {
         out = out.append(node_map_values(kids[i], f));
-        i = i + 1;
+        i += 1;
       }
       return Branch(bm, s, out);
     }
@@ -542,7 +542,7 @@ function node_prefix_ok(lh: i32, h: i32, shift: i32): boolean {
   if (shift == 0) {
     return true;
   }
-  let keep: u32 = (32 - shift) as u32;
+  let keep = (32 - shift) as u32;
   return (lh as u32 << keep) as i32 == (h as u32 << keep) as i32;
 }
 
@@ -550,7 +550,7 @@ function node_valid_coll[K, V](ch: i32, leaves: PMap[K, V][]): boolean {
   if (leaves.len() < 2) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < leaves.len()) {
     match (leaves[i]) {
       Leaf(lh, lk, lv) => {
@@ -568,7 +568,7 @@ function node_valid_coll[K, V](ch: i32, leaves: PMap[K, V][]): boolean {
         return false;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -582,10 +582,10 @@ function node_child_hash[K, V](n: PMap[K, V]): i32 {
       return ch;
     },
     Branch(bm, s, kids) => {
-      return 0 - 1;
+      return -1;
     },
     Empty => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -602,23 +602,23 @@ function node_valid_branch[K, V](bm: i32, s: i32, kids: PMap[K, V][], h: i32, sh
   if (kids.len() == 1 && !node_is_branch(kids[0])) {
     return false;
   }
-  let total: i32 = 0;
-  let i: i32 = 0;
-  let frag: i32 = 0;
+  let total = 0;
+  let i = 0;
+  let frag = 0;
   while (frag < 32) {
     if ((bm & 1 << frag) != 0) {
-      let child: PMap[K, V] = kids[i];
-      let ch: i32 = node_child_hash(child);
-      if (ch != 0 - 1 && node_frag(ch, shift) != frag) {
+      let child = kids[i];
+      let ch = node_child_hash(child);
+      if (ch != -1 && node_frag(ch, shift) != frag) {
         return false;
       }
       if (!node_valid(child, h | frag << shift, shift + 5)) {
         return false;
       }
-      total = total + node_size(child);
-      i = i + 1;
+      total += node_size(child);
+      i += 1;
     }
-    frag = frag + 1;
+    frag += 1;
   }
   return total == s;
 }
@@ -713,7 +713,7 @@ pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) contains(k: K): boolean {
 }
 
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) update(k: K, init: V, f: (V) => V): PMap[K, V] {
-  let h: i32 = node_mix(k.hash());
+  let h = node_mix(k.hash());
   match (node_find(m, h, k)) {
     Leaf(lh, lk, lv) => {
       return node_insert(m, h, 0, k, f(lv));
@@ -756,14 +756,14 @@ pub function (m: PMap[K, V]) map_values[W](f: (V) => W): PMap[K, W] {
 
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) filter(pred: (K, V) => boolean): PMap[K, V] {
   let out: PMap[K, V] = new();
-  let ks: K[] = m.keys();
-  let vs: V[] = m.values();
-  let i: i32 = 0;
+  let ks = m.keys();
+  let vs = m.values();
+  let i = 0;
   while (i < ks.len()) {
     if (pred(ks[i], vs[i])) {
       out = out.insert(ks[i], vs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -775,62 +775,62 @@ pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) filter(pred: (K, V) => boolean):
 <<11 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) merge(other: PMap[K, V]): PMap[K, V]>>=
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) merge(other: PMap[K, V]): PMap[K, V] {
   if (m.len() >= other.len()) {
-    let out: PMap[K, V] = m;
-    let ks: K[] = other.keys();
-    let vs: V[] = other.values();
-    let i: i32 = 0;
+    let out = m;
+    let ks = other.keys();
+    let vs = other.values();
+    let i = 0;
     while (i < ks.len()) {
       out = out.insert(ks[i], vs[i]);
-      i = i + 1;
+      i += 1;
     }
     return out;
   }
-  let out: PMap[K, V] = other;
-  let ks: K[] = m.keys();
-  let vs: V[] = m.values();
-  let i: i32 = 0;
+  let out = other;
+  let ks = m.keys();
+  let vs = m.values();
+  let i = 0;
   while (i < ks.len()) {
     if (!out.contains(ks[i])) {
       out = out.insert(ks[i], vs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (m: PMap[K, V]) entries(): (K, V)[] {
   let out: (K, V)[] = [];
-  let ks: K[] = m.keys();
-  let vs: V[] = m.values();
-  let i: i32 = 0;
+  let ks = m.keys();
+  let vs = m.values();
+  let i = 0;
   while (i < ks.len()) {
     out = out.append((ks[i], vs[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) intersection(other: PMap[K, V]): PMap[K, V] {
   let out: PMap[K, V] = new();
-  let ks: K[] = m.keys();
-  let vs: V[] = m.values();
-  let i: i32 = 0;
+  let ks = m.keys();
+  let vs = m.values();
+  let i = 0;
   while (i < ks.len()) {
     if (other.contains(ks[i])) {
       out = out.insert(ks[i], vs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) difference(other: PMap[K, V]): PMap[K, V] {
-  let out: PMap[K, V] = m;
-  let ks: K[] = other.keys();
-  let i: i32 = 0;
+  let out = m;
+  let ks = other.keys();
+  let i = 0;
   while (i < ks.len()) {
     out = out.remove(ks[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -844,9 +844,9 @@ impl[K: cmp.Hash + cmp.Eq, V: cmp.Eq] cmp.Eq for PMap[K, V] {
     if (self.len() != other.len()) {
       return false;
     }
-    let ks: K[] = self.keys();
-    let vs: V[] = self.values();
-    let i: i32 = 0;
+    let ks = self.keys();
+    let vs = self.values();
+    let i = 0;
     while (i < ks.len()) {
       match (other.get(ks[i])) {
         Some(v) => {
@@ -858,7 +858,7 @@ impl[K: cmp.Hash + cmp.Eq, V: cmp.Eq] cmp.Eq for PMap[K, V] {
           return false;
         }
       }
-      i = i + 1;
+      i += 1;
     }
     return true;
   }
@@ -873,16 +873,16 @@ impl[K: cmp.Hash, V: cmp.Hash] cmp.Hash for PMap[K, V] {
 
 impl[K: cmp.Display, V: cmp.Display] cmp.Display for PMap[K, V] {
   function to_string(self: PMap[K, V]): string {
-    let out: string = "{";
-    let ks: K[] = self.keys();
-    let vs: V[] = self.values();
-    let i: i32 = 0;
+    let out = "{";
+    let ks = self.keys();
+    let vs = self.values();
+    let i = 0;
     while (i < ks.len()) {
       if (i > 0) {
-        out = out + ", ";
+        out += ", ";
       }
       out = out + ks[i].to_string() + ": " + vs[i].to_string();
-      i = i + 1;
+      i += 1;
     }
     return out + "}";
   }

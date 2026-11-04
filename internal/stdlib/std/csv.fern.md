@@ -58,7 +58,7 @@ pub function (e: ParseError) message(): string {
 
 // to_string identifies the byte offset and the error condition.
 pub function (e: ParseError) to_string(): string {
-  let reason: string = "invalid CSV";
+  let reason = "invalid CSV";
   match (e.kind) {
     ParseErrorKind.UnexpectedQuote => {
       reason = "quote inside an unquoted field";
@@ -103,36 +103,36 @@ This allocation avoids repeated copies of a record that grows.
 <<join>>=
 // join escapes each field and separates the fields with commas.
 pub function join(arr: string[]): string {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n == 0) {
     return "";
   }
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let total = 0;
+  let i = 0;
   while (i < n) {
     if (i > 0) {
-      total = total + 1;
+      total += 1;
     }
-    total = total + escape(arr[i]).len();
-    i = i + 1;
+    total += escape(arr[i]).len();
+    i += 1;
   }
-  let buf: u8[] = __alloc_u8(total);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(total);
+  let pos = 0;
   i = 0;
   while (i < n) {
     if (i > 0) {
       buf = buf.with(pos, 44 as u8);
-      pos = pos + 1;
+      pos += 1;
     }
-    let f: string = escape(arr[i]);
-    let fl: i32 = f.len();
-    let j: i32 = 0;
+    let f = escape(arr[i]);
+    let fl = f.len();
+    let j = 0;
     while (j < fl) {
       buf = buf.with(pos, f[j] as u8);
-      pos = pos + 1;
-      j = j + 1;
+      pos += 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
@@ -147,7 +147,7 @@ Empty input represents one empty field.
 <<parse_line>>=
 // parse_line decodes one record, with one empty field for empty input.
 pub function parse_line(s: string): Result[string[], ParseError] {
-  let rows: string[][] = __parse(s, true)?;
+  let rows = __parse(s, true)?;
   return Ok(rows[0]);
 }
 ```
@@ -178,33 +178,33 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
   let rows: string[][] = [];
   let record: string[] = [];
   let field: u8[] = [];
-  let in_quotes: boolean = false;
-  let closed: boolean = false;
-  let seen: boolean = false;
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let in_quotes = false;
+  let closed = false;
+  let seen = false;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (in_quotes) {
       if (c == 34) {
         if (i + 1 < n && s[i + 1] == 34) {
           field = field.append(34 as u8);
-          i = i + 2;
+          i += 2;
         } else {
           in_quotes = false;
           closed = true;
-          i = i + 1;
+          i += 1;
         }
       } else {
         field = field.append(s[i] as u8);
-        i = i + 1;
+        i += 1;
       }
     } else if (c == 44) {
       record = record.append(string_from_bytes_unchecked(field));
       field = [];
       closed = false;
       seen = true;
-      i = i + 1;
+      i += 1;
     } else if (c == 10 || c == 13) {
       if (single) {
         return Err(ParseError { offset: i, kind: ParseErrorKind.UnexpectedRecordTerminator });
@@ -216,9 +216,9 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
       closed = false;
       seen = false;
       if (c == 13 && i + 1 < n && s[i + 1] == 10) {
-        i = i + 2;
+        i += 2;
       } else {
-        i = i + 1;
+        i += 1;
       }
     } else if (closed) {
       return Err(ParseError { offset: i, kind: ParseErrorKind.UnexpectedByteAfterQuote(s[i] as u8) });
@@ -228,11 +228,11 @@ function __parse(s: string, single: boolean): Result[string[][], ParseError] {
       }
       in_quotes = true;
       seen = true;
-      i = i + 1;
+      i += 1;
     } else {
       field = field.append(s[i] as u8);
       seen = true;
-      i = i + 1;
+      i += 1;
     }
   }
   if (in_quotes) {
@@ -272,7 +272,7 @@ import "std/csv";
 import "std/string";
 function main(): i32 {
   let source: string[][] = [["name", "value"], ["a,b", "say \"hi\""]];
-  let encoded: string = csv.serialize(source);
+  let encoded = csv.serialize(source);
   let Ok(rows) = csv.parse(encoded) else { return 1; };
   if (rows.len() != 2 || rows[1][0] != "a,b" || rows[1][1] != "say \"hi\"") { return 2; }
   return 0;

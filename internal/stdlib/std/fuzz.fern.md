@@ -60,7 +60,7 @@ pub const DEFAULT_ITERATIONS: i32 = 200;
 ```fern
 <<3 function __fuzz_pick_seed(seeds: u8[][], iter: i32): u8[]>>=
 function __fuzz_pick_seed(seeds: u8[][], iter: i32): u8[] {
-  let n: i32 = seeds.len();
+  let n = seeds.len();
   if (n == 0) {
     let empty: u8[] = [];
     return empty;
@@ -70,49 +70,49 @@ function __fuzz_pick_seed(seeds: u8[][], iter: i32): u8[] {
 
 function __fuzz_bytes_slice(xs: u8[], lo: i32, hi: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = lo;
+  let i = lo;
   while (i < hi) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __fuzz_bytes_replace(xs: u8[], at: i32, b: u8): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (i == at) {
       out = out.append(b);
     } else {
       out = out.append(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __fuzz_bytes_drop(xs: u8[], at: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (i != at) {
       out = out.append(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __fuzz_bytes_insert(xs: u8[], at: i32, b: u8): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (i == at) {
       out = out.append(b);
     }
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   if (at >= xs.len()) {
     out = out.append(b);
@@ -121,7 +121,7 @@ function __fuzz_bytes_insert(xs: u8[], at: i32, b: u8): u8[] {
 }
 
 function __fuzz_mutate(seed: u8[], mode: i32, state: i64): (i64, u8[]) {
-  let n: i32 = seed.len();
+  let n = seed.len();
   if (n == 0 && mode != 2) {
     return (state, seed);
   }
@@ -142,7 +142,7 @@ function __fuzz_mutate(seed: u8[], mode: i32, state: i64): (i64, u8[]) {
   if (mode == 3) {
     let p3 = rand.rng_below(state, n);
     let bit = rand.rng_below(p3.0, 8);
-    let flipped: i32 = seed[p3.1] as i32 ^ 1 << bit.1;
+    let flipped = seed[p3.1] as i32 ^ 1 << bit.1;
     return (bit.0, __fuzz_bytes_replace(seed, p3.1, flipped as u8));
   }
   if (mode == 4) {
@@ -170,36 +170,36 @@ function __fuzz_mutator_count(): i32 {
 ```fern
 <<4 function __fuzz_escape(bs: u8[]): string>>=
 function __fuzz_escape(bs: u8[]): string {
-  let n: i32 = bs.len();
-  let cap: i32 = 200;
-  let trimmed: boolean = false;
+  let n = bs.len();
+  let cap = 200;
+  let trimmed = false;
   if (n > cap) {
     n = cap;
     trimmed = true;
   }
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < n) {
-    let b: i32 = bs[i] as i32;
+    let b = bs[i] as i32;
     if (b == 92) {
-      out = out + "\\\\";
+      out += "\\\\";
     } else if (b == 34) {
-      out = out + "\\\"";
+      out += "\\\"";
     } else if (b == 10) {
-      out = out + "\\n";
+      out += "\\n";
     } else if (b == 13) {
-      out = out + "\\r";
+      out += "\\r";
     } else if (b == 9) {
-      out = out + "\\t";
+      out += "\\t";
     } else if (b >= 32 && b < 127) {
-      out = out + (b as u8).to_ascii_string();
+      out += (b as u8).to_ascii_string();
     } else {
       out = out + "\\x" + b.to_hex().pad_start(2, '0');
     }
-    i = i + 1;
+    i += 1;
   }
   if (trimmed) {
-    out = out + " ...";
+    out += " ...";
   }
   return out;
 }
@@ -220,7 +220,7 @@ pub function run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, target: (
   if (seeds.len() == 0) {
     return test.fail("run: at least one seed required");
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < seeds.len()) {
     match (target(seeds[i])) {
       Fail(msg) => {
@@ -229,18 +229,18 @@ pub function run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, target: (
       },
       Pass => {}
     }
-    i = i + 1;
+    i += 1;
   }
-  let st: i64 = rand.rng_seed(rng_seed);
-  let iter: i32 = 0;
+  let st = rand.rng_seed(rng_seed);
+  let iter = 0;
   while (iter < iterations) {
-    let seed: u8[] = __fuzz_pick_seed(seeds, iter);
+    let seed = __fuzz_pick_seed(seeds, iter);
     let mpick = rand.rng_below(st, __fuzz_mutator_count());
     st = mpick.0;
-    let mode: i32 = mpick.1;
+    let mode = mpick.1;
     let mutated = __fuzz_mutate(seed, mode, st);
     st = mutated.0;
-    let input: u8[] = mutated.1;
+    let input = mutated.1;
     match (target(input)) {
       Fail(msg) => {
         return test.fail("iter " + iter.to_string()
@@ -250,7 +250,7 @@ pub function run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, target: (
       },
       Pass => {}
     }
-    iter = iter + 1;
+    iter += 1;
   }
   return test.pass();
 }
@@ -269,13 +269,13 @@ function __fuzz_shrink_budget(): i32 {
 }
 
 function __fuzz_shrink_once(seed: u8[], target: (u8[]) => test.TestOutcome, budget: i32): (u8[], i32) {
-  let n: i32 = seed.len();
-  let best: u8[] = seed;
-  let best_len: i32 = n;
-  let i: i32 = 0;
+  let n = seed.len();
+  let best = seed;
+  let best_len = n;
+  let i = 0;
   while (i < n && budget > 0) {
-    let candidate: u8[] = __fuzz_bytes_drop(seed, i);
-    budget = budget - 1;
+    let candidate = __fuzz_bytes_drop(seed, i);
+    budget -= 1;
     match (target(candidate)) {
       Fail(_) => {
         if (candidate.len() < best_len) {
@@ -285,20 +285,20 @@ function __fuzz_shrink_once(seed: u8[], target: (u8[]) => test.TestOutcome, budg
       },
       Pass => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return (best, budget);
 }
 
 function __fuzz_shrink_halve(seed: u8[], target: (u8[]) => test.TestOutcome, budget: i32): (u8[], i32) {
-  let n: i32 = seed.len();
+  let n = seed.len();
   if (n < 2 || budget <= 0) {
     return (seed, budget);
   }
-  let mid: i32 = n / 2;
-  let left: u8[] = __fuzz_bytes_slice(seed, 0, mid);
-  let right: u8[] = __fuzz_bytes_slice(seed, mid, n);
-  budget = budget - 1;
+  let mid = n / 2;
+  let left = __fuzz_bytes_slice(seed, 0, mid);
+  let right = __fuzz_bytes_slice(seed, mid, n);
+  budget -= 1;
   match (target(left)) {
     Fail(_) => {
       return __fuzz_shrink_halve(left, target, budget);
@@ -308,7 +308,7 @@ function __fuzz_shrink_halve(seed: u8[], target: (u8[]) => test.TestOutcome, bud
   if (budget <= 0) {
     return (seed, budget);
   }
-  budget = budget - 1;
+  budget -= 1;
   match (target(right)) {
     Fail(_) => {
       return __fuzz_shrink_halve(right, target, budget);
@@ -319,12 +319,12 @@ function __fuzz_shrink_halve(seed: u8[], target: (u8[]) => test.TestOutcome, bud
 }
 
 function __fuzz_shrink(seed: u8[], target: (u8[]) => test.TestOutcome): u8[] {
-  let budget: i32 = __fuzz_shrink_budget();
-  let current: u8[] = seed;
+  let budget = __fuzz_shrink_budget();
+  let current = seed;
   let (h, b) = __fuzz_shrink_halve(current, target, budget);
   current = h;
   budget = b;
-  let stable: boolean = false;
+  let stable = false;
   while (!stable && budget > 0) {
     let (s, b2) = __fuzz_shrink_once(current, target, budget);
     if (s.len() < current.len()) {
@@ -349,33 +349,33 @@ pub function run_shrink(seeds: u8[][], iterations: i32, target: (u8[]) => test.T
   if (seeds.len() == 0) {
     return test.fail("run_shrink: at least one seed required");
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < seeds.len()) {
     match (target(seeds[i])) {
       Fail(msg) => {
-        let min: u8[] = __fuzz_shrink(seeds[i], target);
+        let min = __fuzz_shrink(seeds[i], target);
         return test.fail(__fuzz_format_failure(
           "seed[" + i.to_string() + "]", seeds[i], min, msg,
         ));
       },
       Pass => {}
     }
-    i = i + 1;
+    i += 1;
   }
   let rng_seed: i64 = rand.between(0 - 2000000000, 2000000000) as i64;
-  let st: i64 = rand.rng_seed(rng_seed);
-  let iter: i32 = 0;
+  let st = rand.rng_seed(rng_seed);
+  let iter = 0;
   while (iter < iterations) {
-    let seed: u8[] = __fuzz_pick_seed(seeds, iter);
+    let seed = __fuzz_pick_seed(seeds, iter);
     let mpick = rand.rng_below(st, __fuzz_mutator_count());
     st = mpick.0;
-    let mode: i32 = mpick.1;
+    let mode = mpick.1;
     let mutated = __fuzz_mutate(seed, mode, st);
     st = mutated.0;
-    let input: u8[] = mutated.1;
+    let input = mutated.1;
     match (target(input)) {
       Fail(msg) => {
-        let min: u8[] = __fuzz_shrink(input, target);
+        let min = __fuzz_shrink(input, target);
         return test.fail(__fuzz_format_failure(
           "iter " + iter.to_string() + " mode " + mode.to_string()
             + " rng_seed " + rng_seed.to_string(),
@@ -384,7 +384,7 @@ pub function run_shrink(seeds: u8[][], iterations: i32, target: (u8[]) => test.T
       },
       Pass => {}
     }
-    iter = iter + 1;
+    iter += 1;
   }
   return test.pass();
 }
@@ -421,13 +421,13 @@ pub function corpus_from_dir(path: string): Result[u8[][], IoError] {
       return Err(e);
     },
     Ok(names) => {
-      let sorted: string[] = cmp.sort(names);
+      let sorted = cmp.sort(names);
       let seeds: u8[][] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i < sorted.len()) {
-        let name: string = sorted[i];
+        let name = sorted[i];
         if (name.len() > 0 && name[0] != 46 && name[0] != 95) {
-          let full: string = path + "/" + name;
+          let full = path + "/" + name;
           match (stat(full)) {
             Ok(s) => {
               if (s.is_file) {
@@ -442,7 +442,7 @@ pub function corpus_from_dir(path: string): Result[u8[][], IoError] {
             Err(_) => {}
           }
         }
-        i = i + 1;
+        i += 1;
       }
       return Ok(seeds);
     }
@@ -456,11 +456,11 @@ pub function corpus_from_dir_or(path: string, fallback: u8[][]): u8[][] {
       if (loaded.len() == 0) {
         return fallback;
       }
-      let out: u8[][] = fallback;
-      let i: i32 = 0;
+      let out = fallback;
+      let i = 0;
       while (i < loaded.len()) {
         out = out.append(loaded[i]);
-        i = i + 1;
+        i += 1;
       }
       return out;
     },

@@ -1,0 +1,12 @@
+return circle 1, circle 3, square six, circle 7
+let circle 10, square twelve, circle 14
+arg circle 16, square eighteen
+assign square twenty, flip square 10
+tuple circle 22, square twenty-six, circle 30
+struct square twenty-four, circle 28
+return square two, square four, circle 7, square eight
+let square eleven, circle 13, square fifteen
+arg square seventeen, circle 19
+assign circle 21, flip circle 6
+tuple square twenty-three, circle 27, square thirty-one
+struct circle 25, square twenty-nine

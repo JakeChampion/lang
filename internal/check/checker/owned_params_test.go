@@ -296,6 +296,17 @@ function f(own h: Holder): i32 {
     let Holder { box, n } = h;
     return box.open() + n;
 }`},
+		// The fields that a destructure takes from a fresh local at its
+		// last use are owned too (#14144).
+		{"destructured-fresh-local-at-last-use", `
+struct Holder { box: Box, n: i32 }
+function mk(): Holder { return Holder { box: Wrap([1]), n: 2 }; }
+function (own b: Box) open(): i32 { return 0; }
+function f(): i32 {
+    let h: Holder = mk();
+    let Holder { box, n } = h;
+    return box.open() + n;
+}`},
 		{"destructured-field-given-a-fresh-local", `
 struct Holder { box: Box, n: i32 }
 function step(own b: Box): (Box, i32) { return (b, 1); }
@@ -906,9 +917,9 @@ function f(r: Result[i32[], string]): i32 {
 }`)
 }
 
-// A handle-free payload is a fresh local: its first move is not at its last
-// use. A payload that can hold a handle is an owned name that moves once.
-func TestOwnGuardRejectsAFreshResultPayloadMovedTwice(t *testing.T) {
+// A payload that can hold no handle is a fresh local, so it moves only at its
+// last use, as a let local does.
+func TestOwnGuardRejectsAFreshResultPayloadMovedBeforeItsLastUse(t *testing.T) {
 	wantE051(t, "fresh-result-payload-moved-twice", freshResultPrelude+`
 function f(): i32 {
     let Ok(xs) = make(2) else { return 0; };
@@ -1180,8 +1191,10 @@ function f(): i32 {
 }`)
 }
 
-func TestOwnGuardRejectsKeptAliveLocalInLambda(t *testing.T) {
-	wantE051(t, "kept-alive-local-in-lambda", ownConsumer+`
+// A lambda is decided as a function of its own, so its local moves at its
+// last use, as a local of a nested function does.
+func TestOwnGuardAllowsALambdaLocalAtItsLastUse(t *testing.T) {
+	wantOK(t, "lambda-local-at-its-last-use", ownConsumer+`
 struct B { items: i32[] }
 function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
 function f(): i32 {
@@ -1192,9 +1205,8 @@ function f(): i32 {
     };
     return lam();
 }`)
-	// A handle-free payload is a local, so inside a lambda it cannot move
-	// either.
-	wantE051(t, "kept-alive-payload-in-lambda", ownConsumer+`
+	// A payload declared inside a lambda follows the same last-use rule.
+	wantOK(t, "payload-at-last-use-in-lambda", ownConsumer+`
 enum Bag { Full(i32[]), Empty }
 function mk(n: i32): Bag { return Full([n]); }
 function run(f: () => i32): i32 { return f(); }
@@ -1202,6 +1214,18 @@ function f(): i32 {
     return run((): i32 => {
         match (mk(1)) {
             Full(xs) => { return consume(xs); },
+            Empty => { return 0; }
+        }
+    });
+}`)
+	wantE051(t, "payload-read-after-move-in-lambda", ownConsumer+`
+enum Bag { Full(i32[]), Empty }
+function mk(n: i32): Bag { return Full([n]); }
+function run(f: () => i32): i32 { return f(); }
+function f(): i32 {
+    return run((): i32 => {
+        match (mk(1)) {
+            Full(xs) => { return consume(xs) + xs.len(); },
             Empty => { return 0; }
         }
     });
@@ -2241,6 +2265,14 @@ function f(): i32 {
     let n: i32 = sinkh(h);
     return n + t.1;
 }`)
+	wantE051(t, "destructured-local-read-again", ownHandleConsumer+`
+function mk(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(): i32 {
+    let p: HPair = mk();
+    let HPair { h, n } = p;
+    let r: i32 = sinkh(h);
+    return r + n + p.n;
+}`)
 	wantE051(t, "destructured-borrowed-param", ownHandleConsumer+`
 function f(p: HPair): i32 {
     let HPair { h, n } = p;
@@ -2651,6 +2683,75 @@ function f(l: Socket): i32 {
 }`)
 }
 
+func TestOwnGuardMatchExpressionOnAFreshCallOwnsItsValue(t *testing.T) {
+	const opener = `
+function opened(): Result[Socket, i32] {
+    let s: Socket = tcp_listen(0);
+    if (s.fd < 0) { return Err(s.fd); }
+    return Ok(s);
+}
+`
+	wantOK(t, "match-expression-on-a-fresh-call", opener+`
+function main(): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+	wantE051(t, "match-expression-closed-twice", opener+`
+function main(): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    let a: i32 = tcp_close(s);
+    return tcp_close(s) + a;
+}`)
+	wantE051(t, "match-expression-on-a-parameter", `
+function f(r: Result[Socket, i32]): i32 {
+    let s: Socket = match (r) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+	wantE051(t, "match-expression-arm-yields-a-parameter", opener+`
+function f(l: Socket): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => l,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+}
+
+func TestOwnGuardLoopsThatShareABinderOwnTheirElements(t *testing.T) {
+	wantOK(t, "two-loops-one-binder", `
+function main(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    let ys: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "two-loops-one-binder-one-borrowed", `
+function f(ys: Socket[]): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "two-loops-one-binder-closed-twice", `
+function main(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    let ys: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); tcp_close(s); }
+    return 0;
+}`)
+}
+
 func TestOwnGuardBodyFreshValuePayloadRemainsCopyable(t *testing.T) {
 	wantOK(t, "copyable-payload-of-body-fresh-call", `
 struct Box { items: i32[] }
@@ -2659,5 +2760,164 @@ function f(s: Socket): i32 {
     let Ok(input) = make(s) else { return 1; };
     let alias = input;
     return input.items[0] + alias.items[0];
+}`)
+}
+
+// A binding of a call result that can hold no handle is a fresh local, as a
+// let local is. A copy does not consume it, and it moves into an own
+// parameter at its last use.
+func TestOwnGuardCallPayloadIsAFreshLocal(t *testing.T) {
+	const prelude = `
+struct T { aux: string }
+function take(t: T, n: i32): i32 { return t.aux.len() + n; }
+function keep(own s: string): i32 { return s.len(); }
+function pick(xs: string[]): Option[string] {
+    for x in xs { return Some(x); }
+    return None;
+}
+`
+	for _, tc := range []struct{ name, body string }{
+		{"if-let-stored-then-read", `
+function f(xs: string[]): i32 {
+    if let Some(u) = pick(xs) {
+        let t = T { aux: u };
+        return take(t, u.len());
+    }
+    return 0;
+}`},
+		{"match-stored-then-read", `
+function f(xs: string[]): i32 {
+    match (pick(xs)) {
+        Some(u) => {
+            let t = T { aux: u };
+            return take(t, u.len());
+        },
+        None => { return 0; }
+    }
+    return 0;
+}`},
+		{"copied-then-moved-at-its-last-use", `
+function f(xs: string[]): i32 {
+    match (pick(xs)) {
+        Some(u) => {
+            let kept = u;
+            let k: i32 = keep(u);
+            return k + kept.len();
+        },
+        None => { return 0; }
+    }
+    return 0;
+}`},
+		// Each arm binds u afresh, so the u of the second match is not a
+		// later use of the u of the first.
+		{"same-name-in-two-matches", `
+function f(xs: string[]): i32 {
+    let t: i32 = 0;
+    match (pick(xs)) {
+        Some(u) => { let a: i32 = keep(u); t = t + a; },
+        None => {}
+    }
+    match (pick(xs)) {
+        Some(u) => { let b: i32 = keep(u); t = t + b; },
+        None => {}
+    }
+    return t;
+}`},
+	} {
+		wantOK(t, "call-payload-"+tc.name, prelude+tc.body)
+	}
+	wantE051(t, "call-payload-moved-before-its-last-use", prelude+`
+function f(xs: string[]): i32 {
+    if let Some(u) = pick(xs) {
+        let k: i32 = keep(u);
+        return k + u.len();
+    }
+    return 0;
+}`)
+	// Only the arm that binds u starts a new u. The other arm reads the outer
+	// local, which the statement after the match reads again.
+	wantE051(t, "outer-local-shadowed-in-another-arm", prelude+`
+function f(xs: string[]): i32 {
+    let u: string = "abc";
+    let t: i32 = 0;
+    match (pick(xs)) {
+        Some(u) => { t = u.len(); },
+        None => { t = keep(u); }
+    }
+    return t + u.len();
+}`)
+}
+
+// A let-else binding of a call result is a local like any other let: a copy
+// does not consume it.
+func TestOwnGuardLetElseBindingOfCallIsCopied(t *testing.T) {
+	const prelude = `
+function make(): Result[u8[], string] { return Ok([1, 2]); }
+function keep(own xs: u8[]): i32 { return xs.len() as i32; }
+`
+	wantOK(t, "let-else-copied-then-updated", prelude+`
+function f(): u8 {
+    let Ok(first) = make() else { return 0; };
+    let retained = first;
+    first = first.with(0, 77);
+    return retained[0] + first[0];
+}`)
+	wantOK(t, "let-else-copied-then-moved", prelude+`
+function f(): i32 {
+    let Ok(first) = make() else { return 0; };
+    let retained = first;
+    return keep(first) + retained[1] as i32;
+}`)
+}
+
+// A lambda is decided as a function of its own. A name it declares moves at
+// its last use in the lambda's body. A name it captures does not move.
+func TestOwnGuardLambdaLocalMovesAtItsLastUse(t *testing.T) {
+	const prelude = `
+function arr(n: i32): i32[] { return [n]; }
+function mk(n: i32): Option[i32[]] { return Some([n]); }
+function keep(own ys: i32[]): i32 { return ys[0]; }
+function run(f: () => i32): i32 { return f(); }
+`
+	wantOK(t, "lambda-let-local", prelude+`
+function main(): i32 {
+    return run((): i32 => {
+        let xs = arr(1);
+        let k: i32 = keep(xs);
+        return k;
+    });
+}`)
+	wantOK(t, "lambda-call-payload", prelude+`
+function main(): i32 {
+    return run((): i32 => {
+        match (mk(1)) {
+            Some(xs) => { let k: i32 = keep(xs); return k; },
+            None => { return 0; }
+        }
+    });
+}`)
+	wantE051(t, "lambda-capture", prelude+`
+function main(): i32 {
+    let xs = arr(1);
+    let g: () => i32 = (): i32 => { return keep(xs); };
+    return g() + g();
+}`)
+}
+
+// A binding of a fresh call that can hold a handle stays owned, so a copy
+// moves the handle.
+func TestOwnGuardCallPayloadThatHoldsAHandleMovesOnce(t *testing.T) {
+	wantE050Move(t, "handle-payload-copied-then-moved", `
+function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); }
+function take(own s: Socket): i32 { return tcp_close(s); }
+function f(l: Socket): i32 {
+    match (accepted(l)) {
+        Ok(s) => {
+            let kept = s;
+            return take(s);
+        },
+        Err(e) => { return e; }
+    }
+    return 0;
 }`)
 }

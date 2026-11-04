@@ -226,13 +226,13 @@ pub function of(e: IoError): i32 {
 }
 
 pub function from_host(n: i32): i32 {
-  let e: i32 = n;
-  if (e == 0 - 2147483647 - 1) {
+  let e = n;
+  if (e == -2147483647 - 1) {
     e = 2147483647;
   } else if (e < 0) {
-    e = 0 - e;
+    e = -e;
   }
-  let os: string = target_os();
+  let os = target_os();
   if (os == "darwin") {
     return __from_table(__darwin_errnos(), e);
   }
@@ -251,12 +251,12 @@ function __from_table(host: i32[], e: i32): i32 {
   if (e == 0) {
     return 0;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < host.len()) {
     if (host[i] == e) {
       return __carried_errnos()[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }

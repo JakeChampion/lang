@@ -240,7 +240,7 @@ pub enum Step {
 ```fern
 <<12 pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartError]>>=
 pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartError] {
-  let ct: string = "";
+  let ct = "";
   match (req.headers.get("content-type")) {
     Some(v) => {
       ct = v;
@@ -250,7 +250,7 @@ pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartErr
   if (__media_type(ct) != "multipart/form-data") {
     return Err(NotMultipart(ct));
   }
-  let boundary: string = __param(ct, "boundary");
+  let boundary = __param(ct, "boundary");
   if (boundary.len() == 0 || boundary.len() > 70) {
     return Err(NoBoundary);
   }
@@ -258,7 +258,7 @@ pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartErr
 }
 
 pub function (r: Reader) next(): Result[Step, MultipartError] {
-  let cur: Reader = r;
+  let cur = r;
   if (!cur.after_delim) {
     cur = __to_delim(cur)?;
   }
@@ -297,13 +297,13 @@ pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), Multipart
   if (!r.in_part || n <= 0) {
     return Ok((none, !r.in_part, r));
   }
-  let cur: Reader = r;
+  let cur = r;
   while (true) {
-    let at: i32 = __find(cur.carry, cur.delim, 0);
+    let at = __find(cur.carry, cur.delim, 0);
     if (at >= 0) {
       return __take(cur, n, at);
     }
-    let avail: i32 = cur.carry.len() - (cur.delim.len() - 1);
+    let avail = cur.carry.len() - (cur.delim.len() - 1);
     if (cur.eof) {
       return Err(MalformedMultipart("a part is not terminated"));
     }
@@ -321,16 +321,16 @@ pub function (r: Reader) read(n: i32): Result[(u8[], boolean, Reader), Multipart
 ```fern
 <<15 function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), MultipartError]>>=
 function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), MultipartError] {
-  let take: i32 = n;
+  let take = n;
   if (take > limit) {
     take = limit;
   }
   if (r.part_total + take > r.limits.part_bytes) {
     return Err(PartTooLarge(r.limits.part_bytes));
   }
-  let bytes: u8[] = array.slice(r.carry, 0, take);
-  let rest: u8[] = array.slice(r.carry, take, r.carry.len());
-  let complete: boolean = take == limit && __find(rest, r.delim, 0) == 0;
+  let bytes = array.slice(r.carry, 0, take);
+  let rest = array.slice(r.carry, take, r.carry.len());
+  let complete = take == limit && __find(rest, r.delim, 0) == 0;
   if (complete) {
     rest = array.slice(rest, r.delim.len(), rest.len());
     return Ok((bytes, true, Reader { ...r, carry: rest, part_total: r.part_total + take, in_part: false, after_delim: true }));
@@ -345,8 +345,8 @@ function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), 
 <<16 pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError]>>=
 pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError] {
   let out: u8[] = [];
-  let cur: Reader = r;
-  let done: boolean = !cur.in_part;
+  let cur = r;
+  let done = !cur.in_part;
   while (!done) {
     let piece: (u8[], boolean, Reader) = cur.read(65536)?;
     out = out.concat(piece.0);
@@ -358,7 +358,7 @@ pub function (r: Reader) content(): Result[(u8[], Reader), MultipartError] {
 
 pub function fields(req: HttpRequest, limits: Limits): Result[Map[string, string[]], MultipartError] {
   let m: Map[string, string[]] = map_new(8);
-  let cur: Reader = open(req, limits)?;
+  let cur = open(req, limits)?;
   while (true) {
     match (cur.next()?) {
       NextPart(part, r1) => {
@@ -403,16 +403,16 @@ function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[
 }
 
 function __to_delim(r: Reader): Result[Reader, MultipartError] {
-  let cur: Reader = r;
+  let cur = r;
   while (true) {
-    let at: i32 = __find(cur.carry, cur.delim, 0);
+    let at = __find(cur.carry, cur.delim, 0);
     if (at >= 0) {
       return Ok(Reader { ...cur, carry: array.slice(cur.carry, at + cur.delim.len(), cur.carry.len()), in_part: false, after_delim: true });
     }
     if (cur.eof) {
       return Err(MalformedMultipart("no boundary found"));
     }
-    let keep: i32 = cur.delim.len() - 1;
+    let keep = cur.delim.len() - 1;
     if (cur.carry.len() > keep) {
       cur = Reader { ...cur, carry: array.slice(cur.carry, cur.carry.len() - keep, cur.carry.len()) };
     }
@@ -422,29 +422,29 @@ function __to_delim(r: Reader): Result[Reader, MultipartError] {
 }
 
 function __boundary_line_end(r: Reader): Result[Reader, MultipartError] {
-  let cur: Reader = r;
-  let i: i32 = 0;
+  let cur = r;
+  let i = 0;
   while (true) {
     cur = __need(cur, i + 2)?;
     if (cur.carry.len() < i + 2) {
       return Err(MalformedMultipart("a boundary line is cut short"));
     }
-    let c: u8 = cur.carry[i];
+    let c = cur.carry[i];
     if (c == 13 as u8 && cur.carry[i + 1] == 10 as u8) {
       return Ok(Reader { ...cur, carry: array.slice(cur.carry, i + 2, cur.carry.len()) });
     }
     if (c != 32 as u8 && c != 9 as u8) {
       return Err(MalformedMultipart("a boundary line does not end in CRLF"));
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(cur);
 }
 
 function __part_head(r: Reader): Result[(Part, Reader), MultipartError] {
-  let cur: Reader = r;
-  let h: HeaderMap = headers.new();
-  let used: i32 = 0;
+  let cur = r;
+  let h = headers.new();
+  let used = 0;
   while (true) {
     let line: (string, Reader) = __line(cur, cur.limits.header_bytes - used)?;
     cur = line.1;
@@ -458,14 +458,14 @@ function __part_head(r: Reader): Result[(Part, Reader), MultipartError] {
 }
 
 function __line(r: Reader, room: i32): Result[(string, Reader), MultipartError] {
-  let cur: Reader = r;
+  let cur = r;
   while (true) {
-    let at: i32 = __find(cur.carry, [13 as u8, 10 as u8], 0);
+    let at = __find(cur.carry, [13 as u8, 10 as u8], 0);
     if (at >= 0) {
       if (at > room) {
         return Err(PartHeadersTooLarge(cur.limits.header_bytes));
       }
-      let text: string = string_from_bytes_unchecked(array.slice(cur.carry, 0, at));
+      let text = string_from_bytes_unchecked(array.slice(cur.carry, 0, at));
       return Ok((text, Reader { ...cur, carry: array.slice(cur.carry, at + 2, cur.carry.len()) }));
     }
     if (cur.carry.len() > room + 1) {
@@ -490,14 +490,14 @@ function __header(h: HeaderMap, line: string): Result[HeaderMap, MultipartError]
 }
 
 function __part(h: HeaderMap): Part {
-  let disposition: string = "";
+  let disposition = "";
   match (h.get("content-disposition")) {
     Some(v) => {
       disposition = v;
     },
     None => {}
   }
-  let ct: string = "";
+  let ct = "";
   match (h.get("content-type")) {
     Some(v) => {
       ct = v;
@@ -508,7 +508,7 @@ function __part(h: HeaderMap): Part {
 }
 
 function __media_type(ct: string): string {
-  let kind: string = ct;
+  let kind = ct;
   if let Some(semi) = ct.index_of(";") {
     kind = ct.slice_snap(0, semi);
   }
@@ -521,11 +521,11 @@ function __media_type(ct: string): string {
 ```fern
 <<18 function __param(value: string, name: string): string>>=
 function __param(value: string, name: string): string {
-  let bs: u8[] = value.bytes();
-  let i: i32 = __param_end(bs, 0) + 1;
+  let bs = value.bytes();
+  let i = __param_end(bs, 0) + 1;
   while (i < bs.len()) {
-    let end: i32 = __param_end(bs, i);
-    let p: string = string_from_bytes_unchecked(array.slice(bs, i, end)).trim();
+    let end = __param_end(bs, i);
+    let p = string_from_bytes_unchecked(array.slice(bs, i, end)).trim();
     if let Some(eq) = p.index_of("=") {
       if (eq > 0 && p.slice_snap(0, eq).trim().to_lower() == name) {
         return __unquote(p.slice_snap(eq + 1, p.len()).trim());
@@ -537,18 +537,18 @@ function __param(value: string, name: string): string {
 }
 
 function __param_end(bs: u8[], from: i32): i32 {
-  let i: i32 = from;
-  let quoted: boolean = false;
+  let i = from;
+  let quoted = false;
   while (i < bs.len()) {
-    let b: u8 = bs[i];
+    let b = bs[i];
     if (b == 34 as u8) {
       quoted = !quoted;
     } else if (quoted && b == 92 as u8) {
-      i = i + 1;
+      i += 1;
     } else if (!quoted && b == 59 as u8) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return bs.len();
 }
@@ -557,25 +557,25 @@ function __unquote(v: string): string {
   if (v.len() < 2 || !v.starts_with("\"") || !v.ends_with("\"")) {
     return v;
   }
-  let inner: string = v.slice_snap(1, v.len() - 1);
+  let inner = v.slice_snap(1, v.len() - 1);
   if (!inner.contains("\\")) {
     return inner;
   }
   let out: u8[] = [];
-  let bs: u8[] = inner.bytes();
-  let i: i32 = 0;
+  let bs = inner.bytes();
+  let i = 0;
   while (i < bs.len()) {
     if (bs[i] == 92 as u8 && i + 1 < bs.len()) {
-      i = i + 1;
+      i += 1;
     }
     out = out.append(bs[i]);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
 
 function __need(r: Reader, n: i32): Result[Reader, MultipartError] {
-  let cur: Reader = r;
+  let cur = r;
   while (cur.carry.len() < n && !cur.eof) {
     cur = __pull(cur)?;
   }
@@ -597,18 +597,18 @@ function __pull(r: Reader): Result[Reader, MultipartError] {
 }
 
 function __find(hay: u8[], needle: u8[], from: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i + needle.len() <= hay.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < needle.len() && hay[i + j] == needle[j]) {
-      j = j + 1;
+      j += 1;
     }
     if (j == needle.len()) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 ```
 
@@ -632,12 +632,12 @@ pub function builder_with(boundary: string): Builder {
 }
 
 pub function (b: Builder) field(name: string, value: string): Builder {
-  let head: string = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"\r\n\r\n";
+  let head = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"\r\n\r\n";
   return Builder { ...b, body: b.body.concat(head.bytes()).concat(value.bytes()).concat([13 as u8, 10 as u8]) };
 }
 
 pub function (b: Builder) file(name: string, filename: string, content_type: string, content: u8[]): Builder {
-  let head: string = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"; filename=\"" + __escape(filename) + "\"\r\nContent-Type: " + content_type + "\r\n\r\n";
+  let head = "--" + b.boundary + "\r\nContent-Disposition: form-data; name=\"" + __escape(name) + "\"; filename=\"" + __escape(filename) + "\"\r\nContent-Type: " + content_type + "\r\n\r\n";
   return Builder { ...b, body: b.body.concat(head.bytes()).concat(content).concat([13 as u8, 10 as u8]) };
 }
 

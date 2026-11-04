@@ -428,3 +428,4 @@ tcp_addr_into=486
 buf_push_base64=487
 buf_push_base32=488
 buf_decode_base32=489
+writer_nonblocking=490

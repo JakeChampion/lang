@@ -85,8 +85,8 @@ Before a meta-block, `__reserve` gives the output room for all of its bytes. `po
 ```fern
 <<Decompress a stream>>=
 pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
-  let d: __D = __window(__start(), input);
-  let window: i32 = d.v;
+  let d = __window(__start(), input);
+  let window = d.v;
   while (!d.failed && !d.last) {
     d = __mb_header(d, input);
     if (!d.failed && __past(d.pos, d.cnt, input.len())) {
@@ -110,8 +110,8 @@ struct __D { pos: i32, buf: u64, cnt: i32, v: i32, failed: boolean, what: string
 
 function __start(): __D {
   let none: u8[] = [];
-  let c: __Cat = __Cat { n: 1, types: 0, lens: 0, left: 0 };
-  let m: __Mb = __Mb { lit: c, cmd: c, dist: c, btab: [], postfix: 0, direct: 0, modes: [], fixed: [], lmap: [], dmap: [], ltab: [], ctab: [], coff: [], dtab: [], dcodes: [] };
+  let c = __Cat { n: 1, types: 0, lens: 0, left: 0 };
+  let m = __Mb { lit: c, cmd: c, dist: c, btab: [], postfix: 0, direct: 0, modes: [], fixed: [], lmap: [], dmap: [], ltab: [], ctab: [], coff: [], dtab: [], dcodes: [] };
   return __D { pos: 0, buf: 0u64, cnt: 0, v: 0, failed: false, what: "", last: false, raw: false, lens: [], syms: [], tab: [], offs: [], cat: c, m: m, out: none, cap: 0, r0: 4, r1: 11, r2: 15, r3: 16 };
 }
 
@@ -139,7 +139,7 @@ function __mb_body(own d: __D, input: [u8], window: i32, max_out: i32): __D {
   if (d.failed || d.v == 0) {
     return d;
   }
-  let end: i32 = d.out.len() + d.v;
+  let end = d.out.len() + d.v;
   d = __reserve(d, end, max_out);
   if (d.raw) {
     return __raw(d, input);
@@ -148,21 +148,21 @@ function __mb_body(own d: __D, input: [u8], window: i32, max_out: i32): __D {
   if (d.failed) {
     return d;
   }
-  let m: __Mb = d.m;
+  let m = d.m;
   return __commands(d, input, m, end, window);
 }
 
 function __raw(own d: __D, input: [u8]): __D {
-  let len: i32 = d.v;
+  let len = d.v;
   d = __align(d, input);
   if (d.failed) {
     return d;
   }
-  let at: i32 = d.pos;
+  let at = d.pos;
   if (at + len > input.len()) {
     return __fail(__D { ...d, pos: at + len }, "truncated");
   }
-  let out: u8[] = d.out;
+  let out = d.out;
   d = __D { ...d, out: [] };
   out = __joined(out, __bytes_range(input, at, at + len));
   return __D { ...d, out: out, pos: at + len };
@@ -177,20 +177,20 @@ function __reserve(own d: __D, n: i32, limit: i32): __D {
     if (n + 16 <= d.cap) {
       return d;
     }
-    let want: i32 = cmp.max(n, cmp.min(d.cap * 2, limit)) + 16;
-    let room: u8[] = __alloc_u8(want);
+    let want = cmp.max(n, cmp.min(d.cap * 2, limit)) + 16;
+    let room = __alloc_u8(want);
     __arr_set_len(room, 0);
-    let old: u8[] = d.out;
+    let old = d.out;
     d = __D { ...d, out: [] };
     return __D { ...d, out: __joined(room, old), cap: want };
   }
 }
 
 function __joined(own out: u8[], more: u8[]): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < more.len()) {
     out = out.append(more[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -214,7 +214,7 @@ function __refill(data: [u8], pos: i32, buf: u64, cnt: i32, fast: i32): __Fill {
   if (pos >= 0 && pos <= fast) {
     return __Fill { pos: pos + (63 - cnt >> 3), buf: buf | __le64(data, pos) << cnt as u64, cnt: cnt | 56 };
   }
-  let t: __Fill = __tail(data, pos, buf, cnt);
+  let t = __tail(data, pos, buf, cnt);
   return __Fill { pos: t.pos, buf: t.buf, cnt: t.cnt };
 }
 
@@ -228,13 +228,13 @@ function __ensure(data: [u8], pos: i32, buf: u64, cnt: i32, fast: i32, k: i32): 
 }
 
 function __tail(data: [u8], pos: i32, buf: u64, cnt: i32): __Fill {
-  let n: i32 = data.len();
+  let n = data.len();
   while (cnt < 56) {
     if (pos < n) {
       buf = buf | data[pos] as u64 << cnt as u64;
     }
-    pos = pos + 1;
-    cnt = cnt + 8;
+    pos += 1;
+    cnt += 8;
   }
   return __Fill { pos: pos, buf: buf, cnt: cnt };
 }
@@ -249,28 +249,28 @@ function __need(own d: __D, data: [u8]): __D {
   if (d.cnt >= 32) {
     return d;
   }
-  let f: __Fill = __refill(data, d.pos, d.buf, d.cnt, data.len() - 8);
+  let f = __refill(data, d.pos, d.buf, d.cnt, data.len() - 8);
   return __D { ...d, pos: f.pos, buf: f.buf, cnt: f.cnt };
 }
 
 // Reads `k` bits, at most 32, into `v`.
 function __get(own d: __D, data: [u8], k: i32): __D {
   d = __need(d, data);
-  let v: i32 = (d.buf & (1u64 << k as u64) - 1u64) as i32;
+  let v = (d.buf & (1u64 << k as u64) - 1u64) as i32;
   return __D { ...d, buf: d.buf >> k as u64, cnt: d.cnt - k, v: v };
 }
 
 // Reads one symbol of the code at `at` in `tab` into `v`.
 function __sym(own d: __D, data: [u8], tab: i32[], at: i32): __D {
   d = __need(d, data);
-  let e: i32 = __entry(tab, at, d.buf);
+  let e = __entry(tab, at, d.buf);
   return __D { ...d, buf: d.buf >> (e & 15) as u64, cnt: d.cnt - (e & 15), v: e >> 16 };
 }
 
 // Drops the bits up to the next byte boundary, which must be zero. The
 // buffer starts at a byte boundary, so those bits are `cnt & 7`.
 function __align(own d: __D, data: [u8]): __D {
-  let pad: i32 = d.cnt & 7;
+  let pad = d.cnt & 7;
   d = __get(d, data, pad);
   if (d.v != 0) {
     return __fail(d, "padding");
@@ -287,7 +287,7 @@ function __align(own d: __D, data: [u8]): __D {
 <<Read meta-block headers>>=
 function __window(own d: __D, data: [u8]): __D {
   d = __get(d, data, 1);
-  let bits: i32 = 16;
+  let bits = 16;
   if (d.v == 1) {
     d = __get(d, data, 3);
     bits = 17 + d.v;
@@ -307,7 +307,7 @@ function __window(own d: __D, data: [u8]): __D {
 
 function __mb_header(own d: __D, data: [u8]): __D {
   d = __get(d, data, 1);
-  let last: boolean = d.v == 1;
+  let last = d.v == 1;
   if (last) {
     d = __get(d, data, 1);
     if (d.v == 1) {
@@ -320,11 +320,11 @@ function __mb_header(own d: __D, data: [u8]): __D {
     return __metadata(d, data, last);
   }
   d = __get(d, data, nibbles * 4);
-  let len: i32 = d.v + 1;
+  let len = d.v + 1;
   if (nibbles > 4 && len - 1 >> (nibbles - 1) * 4 == 0) {
     return __fail(d, "meta-block length");
   }
-  let raw: boolean = false;
+  let raw = false;
   if (!last) {
     d = __get(d, data, 1);
     raw = d.v == 1;
@@ -338,8 +338,8 @@ function __metadata(own d: __D, data: [u8], last: boolean): __D {
     return __fail(d, "metadata block");
   }
   d = __get(d, data, 2);
-  let bytes: i32 = d.v;
-  let skip: i32 = 0;
+  let bytes = d.v;
+  let skip = 0;
   if (bytes > 0) {
     d = __get(d, data, bytes * 8);
     skip = d.v + 1;
@@ -357,7 +357,7 @@ function __varlen(own d: __D, data: [u8]): __D {
     return d;
   }
   d = __get(d, data, 3);
-  let n: i32 = d.v;
+  let n = d.v;
   if (n == 0) {
     return __D { ...d, v: 1 };
   }
@@ -380,19 +380,19 @@ A code with one symbol uses no bits. The callers check that all other codes are 
 // lists the symbols that have a code, in increasing order. The root table
 // has `1 << root` entries, and only a root of 8 bits has links.
 function __table(lens: i32[], syms: i32[], own tab: i32[], root: i32): i32[] {
-  let at: i32 = tab.len();
-  let count: i32[] = __alloc_i32(16);
-  let longest: i32 = 0;
+  let at = tab.len();
+  let count = __alloc_i32(16);
+  let longest = 0;
   for s in syms {
-    let l: i32 = lens[s];
+    let l = lens[s];
     count = count.with(l, count[l] + 1);
     longest = cmp.max(longest, l);
   }
   if (syms.len() <= 1) {
     return tab.concat(__doubled([__only(syms) << 16], 1 << root));
   }
-  let sorted: i32[] = __sorted(lens, syms, count);
-  let fill: i32 = cmp.min(longest, root);
+  let sorted = __sorted(lens, syms, count);
+  let fill = cmp.min(longest, root);
   tab = tab.concat(__doubled(__root(__alloc_i32(1 << fill), count, sorted, fill), 1 << root));
   if (fill < 8) {
     return tab;
@@ -419,15 +419,15 @@ function __only(syms: i32[]): i32 {
 
 // The symbols with a code, ordered by code length and then by symbol.
 function __sorted(lens: i32[], syms: i32[], count: i32[]): i32[] {
-  let next: i32[] = __alloc_i32(16);
-  let len: i32 = 1;
+  let next = __alloc_i32(16);
+  let len = 1;
   while (len < 15) {
     next = next.with(len + 1, next[len] + count[len]);
-    len = len + 1;
+    len += 1;
   }
-  let sorted: i32[] = __alloc_i32(syms.len());
+  let sorted = __alloc_i32(syms.len());
   for s in syms {
-    let l: i32 = lens[s];
+    let l = lens[s];
     sorted = sorted.with(next[l], s);
     next = next.with(l, next[l] + 1);
   }
@@ -437,35 +437,35 @@ function __sorted(lens: i32[], syms: i32[], count: i32[]): i32[] {
 // The symbols that have a code length, in increasing order.
 function __used(lens: i32[]): i32[] {
   let syms: i32[] = [];
-  let s: i32 = 0;
+  let s = 0;
   while (s < lens.len()) {
     if (lens[s] > 0) {
       syms = syms.append(s);
     }
-    s = s + 1;
+    s += 1;
   }
   return syms;
 }
 
 function __root(own tab: i32[], count: i32[], sorted: i32[], root: i32): i32[] {
-  let code: i32 = 0;
-  let k: i32 = 0;
-  let len: i32 = 1;
+  let code = 0;
+  let k = 0;
+  let len = 1;
   while (len <= root) {
-    let i: i32 = 0;
+    let i = 0;
     while (i < count[len]) {
-      let entry: i32 = sorted[k] << 16 | len;
-      let j: i32 = encoder.reverse(code, len);
+      let entry = sorted[k] << 16 | len;
+      let j = encoder.reverse(code, len);
       while (j < 1 << root) {
         tab = tab.with(j, entry);
-        j = j + (1 << len);
+        j += 1 << len;
       }
-      code = code + 1;
-      k = k + 1;
-      i = i + 1;
+      code += 1;
+      k += 1;
+      i += 1;
     }
     code = code << 1;
-    len = len + 1;
+    len += 1;
   }
   return tab;
 }
@@ -473,21 +473,21 @@ function __root(own tab: i32[], count: i32[], sorted: i32[], root: i32): i32[] {
 // Adds the second-level tables. Codes with the same first eight bits are
 // next to each other in canonical order, so they share one table.
 function __second(own tab: i32[], at: i32, count: i32[], sorted: i32[]): i32[] {
-  let left: i32[] = count;
-  let code: i32 = 0;
-  let k: i32 = 0;
-  let len: i32 = 1;
+  let left = count;
+  let code = 0;
+  let k = 0;
+  let len = 1;
   while (len <= 8) {
     code = code + count[len] << 1;
-    k = k + count[len];
-    len = len + 1;
+    k += count[len];
+    len += 1;
   }
-  let low: i32 = 0 - 1;
-  let sub: i32 = 0;
-  let bits: i32 = 0;
+  let low = -1;
+  let sub = 0;
+  let bits = 0;
   while (len <= 15) {
     while (left[len] > 0) {
-      let rev: i32 = encoder.reverse(code, len);
+      let rev = encoder.reverse(code, len);
       if ((rev & 255) != low) {
         low = rev & 255;
         bits = __sub_bits(left, len);
@@ -495,18 +495,18 @@ function __second(own tab: i32[], at: i32, count: i32[], sorted: i32[]): i32[] {
         tab = tab.concat(__alloc_i32(1 << bits));
         tab = tab.with(at + low, sub - at << 16 | 8 + bits);
       }
-      let entry: i32 = sorted[k] << 16 | len - 8;
-      let j: i32 = rev >> 8;
+      let entry = sorted[k] << 16 | len - 8;
+      let j = rev >> 8;
       while (j < 1 << bits) {
         tab = tab.with(sub + j, entry);
-        j = j + (1 << len - 8);
+        j += 1 << len - 8;
       }
       left = left.with(len, left[len] - 1);
-      code = code + 1;
-      k = k + 1;
+      code += 1;
+      k += 1;
     }
     code = code << 1;
-    len = len + 1;
+    len += 1;
   }
   return tab;
 }
@@ -514,13 +514,13 @@ function __second(own tab: i32[], at: i32, count: i32[], sorted: i32[]): i32[] {
 // The bit count of the second-level table that starts with a code of
 // length `len`. `left` counts the codes that are not yet in a table.
 function __sub_bits(left: i32[], len: i32): i32 {
-  let room: i32 = 1 << len - 8;
+  let room = 1 << len - 8;
   while (len < 15) {
-    room = room - left[len];
+    room -= left[len];
     if (room <= 0) {
       return len - 8;
     }
-    len = len + 1;
+    len += 1;
     room = room << 1;
   }
   return len - 8;
@@ -530,7 +530,7 @@ function __sub_bits(left: i32[], len: i32): i32 {
 // length, also for a code with a second-level entry.
 @inline
 function __entry(tab: i32[], at: i32, buf: u64): i32 {
-  let e: i32 = tab[at + (buf & 255u64) as i32];
+  let e = tab[at + (buf & 255u64) as i32];
   if ((e & 15) <= 8) {
     return e;
   }
@@ -547,7 +547,7 @@ function __entry(tab: i32[], at: i32, buf: u64): i32 {
 <<Read prefix codes>>=
 function __read_lens(own d: __D, data: [u8], size: i32): __D {
   d = __get(d, data, 2);
-  let hskip: i32 = d.v;
+  let hskip = d.v;
   if (hskip == 1) {
     return __simple(d, data, size);
   }
@@ -556,8 +556,8 @@ function __read_lens(own d: __D, data: [u8], size: i32): __D {
 
 function __simple(own d: __D, data: [u8], size: i32): __D {
   d = __get(d, data, 2);
-  let n: i32 = d.v + 1;
-  let width: i32 = 32 - __clz32((size - 1) as u32);
+  let n = d.v + 1;
+  let width = 32 - __clz32((size - 1) as u32);
   let syms: i32[] = [];
   while (syms.len() < n) {
     d = __get(d, data, width);
@@ -573,11 +573,11 @@ function __simple(own d: __D, data: [u8], size: i32): __D {
       shape = [1, 2, 3, 3];
     }
   }
-  let lens: i32[] = __alloc_i32(size);
-  let k: i32 = 0;
+  let lens = __alloc_i32(size);
+  let k = 0;
   while (k < n) {
     lens = lens.with(syms[k], shape[k]);
-    k = k + 1;
+    k += 1;
   }
   return __D { ...d, lens: lens, syms: __used(lens) };
 }
@@ -592,21 +592,21 @@ function __has(xs: i32[], x: i32): boolean {
 }
 
 function __complex(own d: __D, data: [u8], hskip: i32, size: i32): __D {
-  let lens: i32[] = __alloc_i32(18);
-  let space: i32 = 32;
-  let used: i32 = 0;
-  let i: i32 = hskip;
+  let lens = __alloc_i32(18);
+  let space = 32;
+  let used = 0;
+  let i = hskip;
   while (i < 18 && space > 0) {
     d = __need(d, data);
-    let v: i32 = CL_FIXED[(d.buf & 15u64) as i32];
+    let v = CL_FIXED[(d.buf & 15u64) as i32];
     d = __get(d, data, v >> 16);
-    let len: i32 = v & 0xFFFF;
+    let len = v & 0xFFFF;
     lens = lens.with(CL_ORDER[i], len);
     if (len != 0) {
-      space = space - (32 >> len);
-      used = used + 1;
+      space -= 32 >> len;
+      used += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (space != 0 && used != 1) {
     return __fail(d, "code length code");
@@ -617,48 +617,48 @@ function __complex(own d: __D, data: [u8], hskip: i32, size: i32): __D {
 // Reads the code lengths of `size` symbols with the code-length code `clc`.
 // That code has no code longer than five bits.
 function __lengths(own d: __D, data: [u8], clc: i32[], size: i32): __D {
-  let lens: i32[] = __alloc_i32(size);
+  let lens = __alloc_i32(size);
   let syms: i32[] = [];
-  let k: i32 = 0;
-  let prev: i32 = 8;
-  let repeat: i32 = 0;
-  let rlen: i32 = 0;
-  let space: i32 = 32768;
+  let k = 0;
+  let prev = 8;
+  let repeat = 0;
+  let rlen = 0;
+  let space = 32768;
   while (k < size && space > 0) {
     d = __need(d, data);
-    let e: i32 = clc[(d.buf & 31u64) as i32];
+    let e = clc[(d.buf & 31u64) as i32];
     d = __D { ...d, buf: d.buf >> (e & 15) as u64, cnt: d.cnt - (e & 15) };
-    let c: i32 = e >> 16;
+    let c = e >> 16;
     if (c < 16) {
       if (c != 0) {
         lens = lens.with(k, c);
         syms = syms.append(k);
         prev = c;
-        space = space - (32768 >> c);
+        space -= 32768 >> c;
       }
-      k = k + 1;
+      k += 1;
       repeat = 0;
     } else {
-      let extra: i32 = c - 14;
-      let len: i32 = __repeat_value(c, prev);
+      let extra = c - 14;
+      let len = __repeat_value(c, prev);
       if (rlen != len) {
         repeat = 0;
       }
-      let old: i32 = repeat;
+      let old = repeat;
       if (repeat > 0) {
         repeat = repeat - 2 << extra;
       }
       d = __get(d, data, extra);
       repeat = repeat + d.v + 3;
-      let more: i32 = repeat - old;
+      let more = repeat - old;
       if (k + more > size) {
         return __fail(d, "code lengths");
       }
       lens = __set_run(lens, k, more, len);
       syms = __run_syms(syms, k, more, len);
-      k = k + more;
+      k += more;
       if (len != 0) {
-        space = space - (more << 15 - len);
+        space -= more << 15 - len;
       }
       rlen = len;
     }
@@ -682,10 +682,10 @@ function __run_syms(own syms: i32[], at: i32, n: i32, value: i32): i32[] {
   if (value == 0) {
     return syms;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     syms = syms.append(at + i);
-    i = i + 1;
+    i += 1;
   }
   return syms;
 }
@@ -694,10 +694,10 @@ function __set_run(own lens: i32[], at: i32, n: i32, value: i32): i32[] {
   if (value == 0) {
     return lens;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     lens = lens.with(at + i, value);
-    i = i + 1;
+    i += 1;
   }
   return lens;
 }
@@ -718,42 +718,42 @@ struct __Mb { lit: __Cat, cmd: __Cat, dist: __Cat, btab: i32[], postfix: i32, di
 function __mb_codes(own d: __D, data: [u8]): __D {
   d = __D { ...d, tab: [] };
   d = __cat(d, data);
-  let lit: __Cat = d.cat;
+  let lit = d.cat;
   d = __cat(d, data);
-  let cmd: __Cat = d.cat;
+  let cmd = d.cat;
   d = __cat(d, data);
-  let dist: __Cat = d.cat;
-  let btab: i32[] = d.tab;
+  let dist = d.cat;
+  let btab = d.tab;
   d = __get(d, data, 2);
-  let postfix: i32 = d.v;
+  let postfix = d.v;
   d = __get(d, data, 4);
-  let direct: i32 = d.v << postfix;
+  let direct = d.v << postfix;
   let modes: i32[] = [];
   while (modes.len() < lit.n) {
     d = __get(d, data, 2);
     modes = modes.append(d.v << 9);
   }
   d = __cmap(d, data, 64 * lit.n);
-  let lmap: i32[] = d.lens;
-  let ltrees: i32 = d.v;
+  let lmap = d.lens;
+  let ltrees = d.v;
   d = __cmap(d, data, 4 * dist.n);
-  let dmap: i32[] = d.lens;
-  let dtrees: i32 = d.v;
+  let dmap = d.lens;
+  let dtrees = d.v;
   d = __group(d, data, ltrees, 256);
-  let ltab: i32[] = d.tab;
-  let loff: i32[] = d.offs;
+  let ltab = d.tab;
+  let loff = d.offs;
   d = __group(d, data, cmd.n, 704);
-  let ctab: i32[] = d.tab;
-  let coff: i32[] = d.offs;
-  let dsize: i32 = 16 + direct + (48 << postfix);
+  let ctab = d.tab;
+  let coff = d.offs;
+  let dsize = 16 + direct + (48 << postfix);
   d = __group(d, data, dtrees, dsize);
-  let dtab: i32[] = d.tab;
+  let dtab = d.tab;
   if (d.failed) {
     return d;
   }
   lmap = __mapped(lmap, loff);
   dmap = __mapped(dmap, d.offs);
-  let m: __Mb = __Mb { lit: lit, cmd: cmd, dist: dist, btab: btab, postfix: postfix, direct: direct, modes: modes, fixed: __fixed_trees(lmap, lit.n), lmap: lmap, dmap: dmap, ltab: ltab, ctab: ctab, coff: coff, dtab: dtab, dcodes: __dist_codes(direct, postfix, dsize) };
+  let m = __Mb { lit: lit, cmd: cmd, dist: dist, btab: btab, postfix: postfix, direct: direct, modes: modes, fixed: __fixed_trees(lmap, lit.n), lmap: lmap, dmap: dmap, ltab: ltab, ctab: ctab, coff: coff, dtab: dtab, dcodes: __dist_codes(direct, postfix, dsize) };
   return __D { ...d, lens: [], tab: [], offs: [], m: m };
 }
 
@@ -761,23 +761,23 @@ function __mb_codes(own d: __D, data: [u8]): __D {
 // switches added to `d.tab`.
 function __cat(own d: __D, data: [u8]): __D {
   d = __varlen(d, data);
-  let n: i32 = d.v + 1;
+  let n = d.v + 1;
   if (d.failed || n == 1) {
     return __D { ...d, cat: __Cat { n: 1, types: 0, lens: 0, left: 1 << 28 } };
   }
-  let tab: i32[] = d.tab;
+  let tab = d.tab;
   d = __D { ...d, tab: [] };
   d = __read_lens(d, data, n + 2);
-  let types: i32 = tab.len();
+  let types = tab.len();
   tab = __built(tab, d);
   d = __read_lens(d, data, 26);
-  let lens: i32 = tab.len();
+  let lens = tab.len();
   tab = __built(tab, d);
   if (d.failed) {
     return __D { ...d, cat: __Cat { n: 1, types: 0, lens: 0, left: 1 << 28 } };
   }
   d = __sym(d, data, tab, lens);
-  let s: i32 = d.v;
+  let s = d.v;
   d = __get(d, data, BL_EXTRA[s]);
   return __D { ...d, tab: tab, cat: __Cat { n: n, types: types, lens: lens, left: BL_OFFSET[s] + d.v } };
 }
@@ -807,12 +807,12 @@ function __group(own d: __D, data: [u8], n: i32, size: i32): __D {
 // codes into `v`. Each entry is less than that number.
 function __cmap(own d: __D, data: [u8], size: i32): __D {
   d = __varlen(d, data);
-  let trees: i32 = d.v + 1;
+  let trees = d.v + 1;
   if (trees == 1) {
     return __D { ...d, lens: __alloc_i32(size), v: 1 };
   }
   d = __get(d, data, 1);
-  let rle: i32 = 0;
+  let rle = 0;
   if (d.v == 1) {
     d = __get(d, data, 4);
     rle = d.v + 1;
@@ -821,15 +821,15 @@ function __cmap(own d: __D, data: [u8], size: i32): __D {
   if (d.failed) {
     return d;
   }
-  let code: i32[] = __table(d.lens, d.syms, [], 8);
-  let map: i32[] = __alloc_i32(size);
-  let k: i32 = 0;
+  let code = __table(d.lens, d.syms, [], 8);
+  let map = __alloc_i32(size);
+  let k = 0;
   while (k < size) {
     d = __sym(d, data, code, 0);
-    let s: i32 = d.v;
+    let s = d.v;
     if (s == 0 || s > rle) {
       map = map.with(k, cmp.max(s - rle, 0));
-      k = k + 1;
+      k += 1;
     } else {
       d = __get(d, data, s);
       k = k + (1 << s) + d.v;
@@ -848,51 +848,51 @@ function __cmap(own d: __D, data: [u8], size: i32): __D {
 // For each literal block type, the code of all its contexts, or -1 when
 // the contexts use more than one code.
 function __fixed_trees(lmap: i32[], n: i32): i32[] {
-  let out: i32[] = __alloc_i32(n);
-  let t: i32 = 0;
+  let out = __alloc_i32(n);
+  let t = 0;
   while (t < n) {
-    let code: i32 = lmap[t << 6];
-    let i: i32 = 1;
+    let code = lmap[t << 6];
+    let i = 1;
     while (i < 64 && lmap[(t << 6) + i] == code) {
-      i = i + 1;
+      i += 1;
     }
     if (i < 64) {
-      code = 0 - 1;
+      code = -1;
     }
     out = out.with(t, code);
-    t = t + 1;
+    t += 1;
   }
   return out;
 }
 
 function __mapped(own map: i32[], offs: i32[]): i32[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < map.len()) {
     map = map.with(i, offs[map[i]]);
-    i = i + 1;
+    i += 1;
   }
   return map;
 }
 
 function __inverse_mtf(own v: i32[]): i32[] {
-  let mtf: i32[] = __alloc_i32(256);
-  let i: i32 = 0;
+  let mtf = __alloc_i32(256);
+  let i = 0;
   while (i < 256) {
     mtf = mtf.with(i, i);
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < v.len()) {
-    let idx: i32 = v[i];
-    let value: i32 = mtf[idx];
+    let idx = v[i];
+    let value = mtf[idx];
     v = v.with(i, value);
-    let k: i32 = idx;
+    let k = idx;
     while (k > 0) {
       mtf = mtf.with(k, mtf[k - 1]);
-      k = k - 1;
+      k -= 1;
     }
     mtf = mtf.with(0, value);
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -910,69 +910,69 @@ A command symbol selects the base and the extra bit count of its insert length a
 struct __Sw { buf: u64, cnt: i32, cur: i32, prev: i32, left: i32 }
 
 function __commands(own d: __D, data: [u8], m: __Mb, end: i32, window: i32): __D {
-  let out: u8[] = d.out;
-  let pos: i32 = d.pos;
-  let buf: u64 = d.buf;
-  let cnt: i32 = d.cnt;
-  let r0: i32 = d.r0;
-  let r1: i32 = d.r1;
-  let r2: i32 = d.r2;
-  let r3: i32 = d.r3;
+  let out = d.out;
+  let pos = d.pos;
+  let buf = d.buf;
+  let cnt = d.cnt;
+  let r0 = d.r0;
+  let r1 = d.r1;
+  let r2 = d.r2;
+  let r3 = d.r3;
   d = __D { ...d, out: [] };
-  let n: i32 = data.len();
-  let fast: i32 = n - 8;
-  let ltab: i32[] = m.ltab;
-  let lmap: i32[] = m.lmap;
-  let ctab: i32[] = m.ctab;
-  let dtab: i32[] = m.dtab;
-  let dmap: i32[] = m.dmap;
-  let dcodes: i64[] = m.dcodes;
-  let postfix: i32 = m.postfix;
-  let lt: i32 = 0;
-  let lp: i32 = 1;
-  let ll: i32 = m.lit.left;
-  let lbase: i32 = 0;
-  let lmode: i32 = m.modes[0];
-  let lfix: i32 = m.fixed[0];
-  let ct: i32 = 0;
-  let cp: i32 = 1;
-  let cl: i32 = m.cmd.left;
-  let dt: i32 = 0;
-  let dp: i32 = 1;
-  let dl: i32 = m.dist.left;
-  let p1: i32 = __back(out, 1);
-  let p2: i32 = __back(out, 2);
-  let bad: i32 = 0;
+  let n = data.len();
+  let fast = n - 8;
+  let ltab = m.ltab;
+  let lmap = m.lmap;
+  let ctab = m.ctab;
+  let dtab = m.dtab;
+  let dmap = m.dmap;
+  let dcodes = m.dcodes;
+  let postfix = m.postfix;
+  let lt = 0;
+  let lp = 1;
+  let ll = m.lit.left;
+  let lbase = 0;
+  let lmode = m.modes[0];
+  let lfix = m.fixed[0];
+  let ct = 0;
+  let cp = 1;
+  let cl = m.cmd.left;
+  let dt = 0;
+  let dp = 1;
+  let dl = m.dist.left;
+  let p1 = __back(out, 1);
+  let p2 = __back(out, 2);
+  let bad = 0;
   while (__more(out.len(), end, pos, cnt, n)) {
-    let f: __Fill = __refill(data, pos, buf, cnt, fast);
-    let cs: __Sw = __next_block(f.buf, f.cnt, m.btab, m.cmd, ct, cp, cl);
+    let f = __refill(data, pos, buf, cnt, fast);
+    let cs = __next_block(f.buf, f.cnt, m.btab, m.cmd, ct, cp, cl);
     ct = cs.cur;
     cp = cs.prev;
     cl = cs.left;
     f = __ensure(data, f.pos, cs.buf, cs.cnt, fast, 39);
-    let e: i32 = __entry(ctab, m.coff[ct], f.buf);
+    let e = __entry(ctab, m.coff[ct], f.buf);
     buf = f.buf >> (e & 15) as u64;
     cnt = f.cnt - (e & 15);
-    let sym: i32 = e >> 16;
-    let c: i64 = COMMAND[sym];
-    let ix: i32 = (c >> 24 & 255i64) as i32;
-    let insert: i32 = (c & 16777215i64) as i32 + (buf & (1u64 << ix as u64) - 1u64) as i32;
+    let sym = e >> 16;
+    let c = COMMAND[sym];
+    let ix = (c >> 24 & 255i64) as i32;
+    let insert = (c & 16777215i64) as i32 + (buf & (1u64 << ix as u64) - 1u64) as i32;
     f = __ensure(data, f.pos, buf >> ix as u64, cnt - ix, fast, 24);
     pos = f.pos;
-    let cx: i32 = (c >> 56) as i32;
-    let copy: i32 = (c >> 32 & 16777215i64) as i32 + (f.buf & (1u64 << cx as u64) - 1u64) as i32;
+    let cx = (c >> 56) as i32;
+    let copy = (c >> 32 & 16777215i64) as i32 + (f.buf & (1u64 << cx as u64) - 1u64) as i32;
     buf = f.buf >> cx as u64;
     cnt = f.cnt - cx;
     if (out.len() + insert > end) {
       bad = 1;
       break;
     }
-    let k: i32 = insert;
+    let k = insert;
     while (k > 0) {
       f = __ensure(data, pos, buf, cnt, fast, 15);
       if (ll == 0) {
         f = __refill(data, f.pos, f.buf, f.cnt, fast);
-        let ls: __Sw = __switch(f.buf, f.cnt, m.btab, m.lit, lt, lp);
+        let ls = __switch(f.buf, f.cnt, m.btab, m.lit, lt, lp);
         f = __ensure(data, f.pos, ls.buf, ls.cnt, fast, 15);
         lp = ls.prev;
         lt = ls.cur;
@@ -981,43 +981,43 @@ function __commands(own d: __D, data: [u8], m: __Mb, end: i32, window: i32): __D
         lmode = m.modes[lt];
         lfix = m.fixed[lt];
       }
-      ll = ll - 1;
-      let le: i32 = __entry(ltab, __literal_code(lfix, lmap, lbase, lmode, p1, p2), f.buf);
+      ll -= 1;
+      let le = __entry(ltab, __literal_code(lfix, lmap, lbase, lmode, p1, p2), f.buf);
       pos = f.pos;
       buf = f.buf >> (le & 15) as u64;
       cnt = f.cnt - (le & 15);
       p2 = p1;
       p1 = le >> 16;
       out = out.append(p1 as u8);
-      k = k - 1;
+      k -= 1;
     }
     if (out.len() >= end) {
       break;
     }
-    let code: i32 = 0;
-    let dist: i32 = r0;
+    let code = 0;
+    let dist = r0;
     if (sym >= 128) {
       f = __refill(data, pos, buf, cnt, fast);
-      let ds: __Sw = __next_block(f.buf, f.cnt, m.btab, m.dist, dt, dp, dl);
+      let ds = __next_block(f.buf, f.cnt, m.btab, m.dist, dt, dp, dl);
       dt = ds.cur;
       dp = ds.prev;
       dl = ds.left;
       f = __ensure(data, f.pos, ds.buf, ds.cnt, fast, 39);
-      let de: i32 = __entry(dtab, dmap[(dt << 2) + __dist_context(copy)], f.buf);
+      let de = __entry(dtab, dmap[(dt << 2) + __dist_context(copy)], f.buf);
       pos = f.pos;
       buf = f.buf >> (de & 15) as u64;
       cnt = f.cnt - (de & 15);
       code = de >> 16;
-      let nb: i32 = __extra_bits(code, dcodes);
+      let nb = __extra_bits(code, dcodes);
       dist = __distance(code, dcodes, (buf & (1u64 << nb as u64) - 1u64) as i32 << postfix, r0, r1, r2, r3);
       buf = buf >> nb as u64;
-      cnt = cnt - nb;
+      cnt -= nb;
       if (dist <= 0) {
         bad = 2;
         break;
       }
     }
-    let max: i32 = __min(out.len(), window);
+    let max = __min(out.len(), window);
     if (dist > max) {
       bad = __word_check(dist - max - 1, copy, end - out.len());
       if (bad != 0) {
@@ -1085,16 +1085,16 @@ function __next_block(buf: u64, cnt: i32, btab: i32[], c: __Cat, cur: i32, prev:
   if (left > 0) {
     return __Sw { buf: buf, cnt: cnt, cur: cur, prev: prev, left: left - 1 };
   }
-  let s: __Sw = __switch(buf, cnt, btab, c, cur, prev);
+  let s = __switch(buf, cnt, btab, c, cur, prev);
   return __Sw { buf: s.buf, cnt: s.cnt, cur: s.cur, prev: s.prev, left: s.left - 1 };
 }
 
 // Decodes a block switch: the new block type and the length of its block.
 // The two symbols and the extra bits take at most 54 bits of `buf`.
 function __switch(buf: u64, cnt: i32, btab: i32[], c: __Cat, cur: i32, prev: i32): __Sw {
-  let e: i32 = __entry(btab, c.types, buf);
-  let b: u64 = buf >> (e & 15) as u64;
-  let k: i32 = cnt - (e & 15);
+  let e = __entry(btab, c.types, buf);
+  let b = buf >> (e & 15) as u64;
+  let k = cnt - (e & 15);
   let t: i32 = (e >> 16) - 2;
   if (e >> 16 == 0) {
     t = prev;
@@ -1102,13 +1102,13 @@ function __switch(buf: u64, cnt: i32, btab: i32[], c: __Cat, cur: i32, prev: i32
     t = cur + 1;
   }
   if (t >= c.n) {
-    t = t - c.n;
+    t -= c.n;
   }
-  let l: i32 = __entry(btab, c.lens, b);
+  let l = __entry(btab, c.lens, b);
   b = b >> (l & 15) as u64;
-  k = k - (l & 15);
-  let x: i32 = BL_EXTRA[l >> 16];
-  let left: i32 = BL_OFFSET[l >> 16] + (b & (1u64 << x as u64) - 1u64) as i32;
+  k -= l & 15;
+  let x = BL_EXTRA[l >> 16];
+  let left = BL_OFFSET[l >> 16] + (b & (1u64 << x as u64) - 1u64) as i32;
   return __Sw { buf: b >> x as u64, cnt: k - x, cur: t, prev: cur, left: left };
 }
 
@@ -1135,8 +1135,8 @@ function __distance(code: i32, dcodes: i64[], extra: i32, r0: i32, r1: i32, r2: 
   if (code >= 16) {
     return (dcodes[code] >> 5) as i32 + extra;
   }
-  let last: i32 = r0;
-  let idx: i32 = DIST_RING[code];
+  let last = r0;
+  let idx = DIST_RING[code];
   if (idx == 1) {
     last = r1;
   } else if (idx == 2) {
@@ -1150,19 +1150,19 @@ function __distance(code: i32, dcodes: i64[], extra: i32, r0: i32, r1: i32, r2: 
 // For each distance code from 16: the distance with zero extra bits from
 // bit 5, and the number of extra bits in bits 0 to 4.
 function __dist_codes(direct: i32, postfix: i32, size: i32): i64[] {
-  let t: i64[] = __alloc_i64(size);
-  let code: i32 = 16;
+  let t = __alloc_i64(size);
+  let code = 16;
   while (code < size) {
-    let x: i32 = code - direct - 16;
-    let base: i32 = code - 15;
-    let nb: i32 = 0;
+    let x = code - direct - 16;
+    let base = code - 15;
+    let nb = 0;
     if (x >= 0) {
-      let h: i32 = x >> postfix;
+      let h = x >> postfix;
       nb = 1 + (h >> 1);
       base = ((2 + (h & 1) << nb) - 4 << postfix) + (x & (1 << postfix) - 1) + direct + 1;
     }
     t = t.with(code, base as i64 << 5 | nb as i64);
-    code = code + 1;
+    code += 1;
   }
   return t;
 }
@@ -1175,10 +1175,10 @@ function __back(out: u8[], k: i32): i32 {
 }
 
 function __copy(own out: u8[], len: i32, dist: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < len) {
     out = out.append(out[out.len() - dist]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1196,11 +1196,11 @@ function __word_check(id: i32, len: i32, room: i32): i32 {
   if (len < 4 || len > 24) {
     return 3;
   }
-  let tr: i32 = id >> DICT_BITS[len];
+  let tr = id >> DICT_BITS[len];
   if (tr >= 121) {
     return 4;
   }
-  let kind: i32 = TRANSFORM_KIND[tr];
+  let kind = TRANSFORM_KIND[tr];
   if (AFFIX_AT[2 * tr + 2] - AFFIX_AT[2 * tr] + len - __head_cut(kind, len) - __tail_cut(kind, len) > room) {
     return 1;
   }
@@ -1226,20 +1226,20 @@ function __tail_cut(kind: i32, len: i32): i32 {
 }
 
 function __word(own out: u8[], id: i32, len: i32): u8[] {
-  let bits: i32 = DICT_BITS[len];
-  let tr: i32 = id >> bits;
-  let at: i32 = DICT_OFFSET[len] + (id & (1 << bits) - 1) * len;
+  let bits = DICT_BITS[len];
+  let tr = id >> bits;
+  let at = DICT_OFFSET[len] + (id & (1 << bits) - 1) * len;
   out = __affix(out, 2 * tr);
-  let kind: i32 = TRANSFORM_KIND[tr];
-  let from: i32 = at + __head_cut(kind, len);
-  let to: i32 = at + len - __tail_cut(kind, len);
-  let start: i32 = out.len();
-  let words: u8[] = dictionary.WORDS;
-  let n: i32 = to - from;
-  let i: i32 = 0;
+  let kind = TRANSFORM_KIND[tr];
+  let from = at + __head_cut(kind, len);
+  let to = at + len - __tail_cut(kind, len);
+  let start = out.len();
+  let words = dictionary.WORDS;
+  let n = to - from;
+  let i = 0;
   while (i < n) {
     out = out.append(words[from + i]);
-    i = i + 1;
+    i += 1;
   }
   if (kind == 10 || kind == 11) {
     out = __upper(out, start, kind == 10);
@@ -1248,23 +1248,23 @@ function __word(own out: u8[], id: i32, len: i32): u8[] {
 }
 
 function __affix(own out: u8[], k: i32): u8[] {
-  let affix: u8[] = AFFIX;
-  let from: i32 = AFFIX_AT[k];
-  let n: i32 = AFFIX_AT[k + 1] - from;
-  let i: i32 = 0;
+  let affix = AFFIX;
+  let from = AFFIX_AT[k];
+  let n = AFFIX_AT[k + 1] - from;
+  let i = 0;
   while (i < n) {
     out = out.append(affix[from + i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 // Changes the letters from `at` to upper case, or only the first when `first` is true.
 function __upper(own w: u8[], at: i32, first: boolean): u8[] {
-  let i: i32 = at;
+  let i = at;
   while (i < w.len()) {
-    let b: i32 = w[i] as i32;
-    let step: i32 = 3;
+    let b = w[i] as i32;
+    let step = 3;
     if (b < 0xC0) {
       step = 1;
       if (b >= 97 && b <= 122) {
@@ -1278,7 +1278,7 @@ function __upper(own w: u8[], at: i32, first: boolean): u8[] {
     } else if (i + 2 < w.len()) {
       w = w.with(i + 2, w[i + 2] ^ 5 as u8);
     }
-    i = i + step;
+    i += step;
     if (first) {
       i = w.len();
     }

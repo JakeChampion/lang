@@ -1344,7 +1344,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: sock,
 	}
 	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
-		Params: []ast.Type{sock},
+		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["poll"] = &ast.FuncType{
@@ -2082,6 +2082,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	registerStructMethod("Writer", "truncate",
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, voidIoResult)
+	registerStructMethod("Writer", "set_nonblocking", []ast.Type{ast.BoolType{}}, voidIoResult)
 	registerStructMethod("Reader", "fsync", nil, voidIoResult)
 	registerStructMethod("Writer", "fsync", nil, voidIoResult)
 	registerStructMethod("Reader", "fdatasync", nil, voidIoResult)
@@ -2484,9 +2485,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			}
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
-			if fn.Receiver.Own {
-				c.consumingTypes[typeName] = true
-			}
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
@@ -2497,6 +2495,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				c.consumingTypes[fn.MethodRecv] = true
 			}
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
+		}
+		// A method's receiver is its first parameter once hoisted, as a second
+		// check of the same program sees it.
+		if fn.MethodRecv != "" && strings.HasPrefix(fn.Name, "__method_") && len(fn.Params) > 0 && fn.Params[0].Own {
+			c.consumingTypes[fn.MethodRecv] = true
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup && (!isScalarBuiltinMethod(fn.Name) || declaredFunctions[fn.Name]) {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
@@ -8111,30 +8114,12 @@ func containerNoun(t ast.Type) string {
 	return "enum"
 }
 
-// For one release a Socket and its i32 descriptor convert both ways, so the
-// published stage0 compiles the standard library before and after it moves
-// to Socket (docs/BOOTSTRAP.md). The next step deletes this rule.
-func socketDescriptorTransition(dst, src ast.Type) bool {
-	isSocket := func(t ast.Type) bool {
-		st, ok := t.(ast.StructType)
-		return ok && st.Name == "Socket"
-	}
-	isI32 := func(t ast.Type) bool {
-		n, ok := t.(ast.NumberType)
-		return ok && ast.Equal(n, ast.NumberType{})
-	}
-	return isSocket(dst) && isI32(src) || isSocket(src) && isI32(dst)
-}
-
 func (c *checker) assignable(dst, src ast.Type) bool {
 	return c.assignableWith(dst, src, true)
 }
 
 func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	if ast.Equal(dst, src) {
-		return true
-	}
-	if socketDescriptorTransition(dst, src) {
 		return true
 	}
 	if dynBox && losslessNumericWiden(src, dst) {
@@ -10593,10 +10578,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return false
 	}
-	bindArm := func(bindings []string, types []ast.Type, scrutOwned, taken bool, armMoved movedSet) *ownedBindingScope {
+	// A call result is a temporary. Its handle-free bindings are fresh locals.
+	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, tag ast.Expr, armMoved movedSet) *ownedBindingScope {
+		taken := takesTag(tag)
+		_, temporary := tag.(*ast.Call)
 		scope := shadowOwnedBindings(bindings, owned, borrowedParam, armMoved, deferMoved)
 		for i, bname := range bindings {
-			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) {
+			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) || temporary && c.holdsNoHandle(types[i]) {
 				continue
 			}
 			// A copyable payload is a local value. A payload that can hold
@@ -10636,7 +10624,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if len(arm.Binders()) == 0 {
 				restoreTag(armMoved, whole, m.Tag)
 			}
-			scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(m.Tag), armMoved)
+			scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, m.Tag, armMoved)
 			recordExprUses(arm.Guard, armMoved)
 			if arm.Guard != nil {
 				joinGuardInto(baseline, armMoved, scope)
@@ -11001,7 +10989,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if len(arm.Binders()) == 0 {
 					restoreTag(armMoved, whole, x.Tag)
 				}
-				scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(x.Tag), armMoved)
+				scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, x.Tag, armMoved)
 				recordExprUses(arm.Guard, armMoved)
 				if arm.Guard != nil {
 					joinGuardInto(baseline, armMoved, scope)
@@ -11089,6 +11077,12 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 }
 
 func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
+	return c.checkBlockExprAt(n, parent, nil)
+}
+
+// checkBlockExprAt checks a block whose value is expected to be of the union
+// type want; a nil want expects nothing of it.
+func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Type) ast.Type {
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -11103,7 +11097,27 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
 		return nil
 	}
+	if want != nil {
+		return c.checkArmAt(&n.Tail, s, want)
+	}
 	return c.checkExpr(n.Tail, s)
+}
+
+// checkArmAt checks a branch of a value `if` or `match` where want is
+// expected. A branch that yields a member of the union want names is wrapped
+// into its variant, so that the branches agree on the union.
+func (c *checker) checkArmAt(holder *ast.Expr, s *scope, want ast.Type) ast.Type {
+	if _, isUnion := want.(ast.EnumType); !isUnion {
+		return c.checkExprAt(*holder, s, want)
+	}
+	if b, isBlock := (*holder).(*ast.BlockExpr); isBlock {
+		saved := c.expectedType
+		c.expectedType = want
+		t := c.checkBlockExprAt(b, s, want)
+		c.expectedType = saved
+		return t
+	}
+	return c.maybeWrapForUnion(want, holder, c.checkExprAt(*holder, s, want), s)
 }
 
 func (c *checker) stmtsDiverge(stmts []ast.Stmt) bool {
@@ -12912,7 +12926,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			} else if gt := c.checkExpr(arm.Guard, armScope); gt != nil && !ast.Equal(gt, ast.BoolType{}) {
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
-			unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 			continue
 		}
 		if arm.IsWildcard {
@@ -12929,7 +12943,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 			continue
 		}
 		if arm.Literal == nil {
@@ -12974,7 +12988,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 	}
 	if !sawWildcard && !closesBool(tagT, closing) {
 		c.errfCode(n.P, "E030", "%s", literalMatchNotExhaustive(tagT))
@@ -13032,7 +13046,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, s, want), arm.P)
 			continue
 		}
 		if arm.TupleElems == nil {
@@ -13066,7 +13080,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		if irrefutable {
 			sawIrrefutable = true
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 	}
 	if !sawIrrefutable && !c.payloadsExhaustive(tupleArms) {
 		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
@@ -13131,7 +13145,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, s, want), arm.P)
 			continue
 		}
 		if !arm.NamedFields {
@@ -13204,7 +13218,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		if irrefutable {
 			sawIrrefutable = true
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 	}
 	if !sawIrrefutable && !c.payloadsExhaustive(structArms) {
 		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
@@ -13281,7 +13295,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.Body.Pos())
+			unify(c.checkArmAt(&arm.Body, s, want), arm.Body.Pos())
 			continue
 		}
 		if arm.TupleElems != nil {
@@ -13303,7 +13317,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
 					c.variantHintName(ed, arm.VariantName), c.enumHintName(ed.Name), c.unknownVariantHint(arm.VariantName, ed))
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.Body.Pos())
+			unify(c.checkArmAt(&arm.Body, s, want), arm.Body.Pos())
 			continue
 		}
 		arm.EnumName = ed.Name
@@ -13333,7 +13347,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.Body.Pos())
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.Body.Pos())
 	}
 	if !sawWildcard {
 		for name, group := range refutableByVariant {
@@ -15505,8 +15519,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
 			c.errfCode(n.Cond.Pos(), "E008", "if-expression condition must be boolean, got %s", ct)
 		}
-		tt := c.checkExprAt(n.Then, s, want)
-		et := c.checkExprAt(n.Else, s, want)
+		tt := c.checkArmAt(&n.Then, s, want)
+		et := c.checkArmAt(&n.Else, s, want)
 		result := unifyIfArms(tt, et)
 		if result == nil {
 			result = scalarNumericJoin(tt, et)

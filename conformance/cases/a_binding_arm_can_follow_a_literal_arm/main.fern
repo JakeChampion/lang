@@ -1,0 +1,29 @@
+function f(k: i32): i32 {
+  return match (k) { 0 => 10, n when n > 100 => n, _ => 14 };
+}
+
+function g(k: i32): i32 {
+  return match (k) { 0 | 1 => 10, n when n > 100 => n + 1, 5 => 50, m => m * 2 };
+}
+
+function h(s: string): string {
+  return match (s) { "" => "empty", t when t.len() > 3 => t + "!", "ab" => "AB", _ => "other" };
+}
+
+function r(k: i32): i32 {
+  return match (k) { 0..10 => 1, n when n % 2 == 0 => n / 2, _ => 3 };
+}
+
+function q(k: i32): i32 {
+  let v = match (k + 1) { 1 => 100, n when n > 50 => n - 50, w => w };
+  return v;
+}
+
+function main(): i32 {
+  print(f(0).to_string() + " " + f(200).to_string() + " " + f(5).to_string());
+  print(g(1).to_string() + " " + g(101).to_string() + " " + g(5).to_string() + " " + g(7).to_string());
+  print(h("") + " " + h("abcd") + " " + h("ab") + " " + h("x"));
+  print(r(3).to_string() + " " + r(20).to_string() + " " + r(21).to_string());
+  print(q(0).to_string() + " " + q(60).to_string() + " " + q(4).to_string());
+  return 0;
+}

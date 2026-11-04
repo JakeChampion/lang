@@ -99,7 +99,7 @@ pub struct Zoned { timestamp: time.Timestamp, zone: Zone }
 ```fern
 <<3 pub function utc_rule(): Rule>>=
 pub function utc_rule(): Rule {
-  let none: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
+  let none = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
   return Rule { valid: false, has_dst: false, std_off: 0, dst_off: 0, std_name: "", dst_name: "", start: none, end: none };
 }
 
@@ -130,7 +130,7 @@ pub function zone_from_tz(spec: string): Zone {
   if (target_os() == "darwin") {
     return darwin_zone_from_tz(spec);
   }
-  let name: string = spec;
+  let name = spec;
   if (name.len() == 0) {
     name = "Universal";
   }
@@ -146,7 +146,7 @@ pub function zone_from_tz(spec: string): Zone {
     },
     None => {}
   }
-  let r: Rule = parse_posix(name);
+  let r = parse_posix(name);
   if (!r.valid) {
     return fixed_zone(0, "");
   }
@@ -184,7 +184,7 @@ function zone_path(name: string): string {
   if (name[0] as i32 == 47) {
     return name;
   }
-  let dir: string = "/usr/share/zoneinfo";
+  let dir = "/usr/share/zoneinfo";
   match (env("TZDIR")) {
     Some(d) => {
       if (d.len() > 0) {
@@ -226,12 +226,12 @@ pub struct Entry { off: i32, abbrev: string, dst: boolean }
 ```fern
 <<7 pub function (z: Zone) entry_at(t: time.Timestamp): Entry>>=
 pub function (z: Zone) entry_at(t: time.Timestamp): Entry {
-  let sec: i64 = t.sec;
-  let i: i32 = z.index_at(sec);
-  if (i == 0 - 1) {
+  let sec = t.sec;
+  let i = z.index_at(sec);
+  if (i == -1) {
     return Entry { off: z.first, abbrev: z.first_abbr, dst: z.first_dst };
   }
-  if (i == 0 - 2) {
+  if (i == -2) {
     if (rule_dst(z.rule, sec)) {
       return Entry { off: z.rule.dst_off, abbrev: z.rule.dst_name, dst: true };
     }
@@ -254,8 +254,8 @@ pub function (zt: Zoned) to_datetime(): DateTime {
 }
 
 pub function (zt: Zoned) format_rfc3339(): string {
-  let off: i32 = zt.zone.offset_at(zt.timestamp);
-  let local: string = zt.local().format_rfc3339();
+  let off = zt.zone.offset_at(zt.timestamp);
+  let local = zt.local().format_rfc3339();
   if (off == 0) {
     return local;
   }
@@ -269,10 +269,10 @@ function (zt: Zoned) local(): time.Timestamp {
 
 // `+hh:mm` or `-hh:mm`.
 function offset_text(off: i32): string {
-  let mag: i32 = off;
-  let sign: string = "+";
+  let mag = off;
+  let sign = "+";
   if (off < 0) {
-    mag = 0 - off;
+    mag = -off;
     sign = "-";
   }
   return sign + two_digits(mag / 3600) + ":" + two_digits(mag / 60 % 60);
@@ -300,23 +300,23 @@ pub function zoned_parse_rfc3339(s: string): Result[Zoned, time.TimeParseError] 
 ```fern
 <<8 function (z: Zone) index_at(sec: i64): i32>>=
 function (z: Zone) index_at(sec: i64): i32 {
-  let n: i32 = z.times.len();
+  let n = z.times.len();
   if (n == 0) {
     if (z.rule.valid) {
-      return 0 - 2;
+      return -2;
     }
-    return 0 - 1;
+    return -1;
   }
   if (sec < z.times[0]) {
-    return 0 - 1;
+    return -1;
   }
   if (z.rule.valid && sec >= z.times[n - 1]) {
-    return 0 - 2;
+    return -2;
   }
-  let lo: i32 = 0;
-  let hi: i32 = n - 1;
+  let lo = 0;
+  let hi = n - 1;
   while (lo < hi) {
-    let mid: i32 = lo + (hi - lo + 1) / 2;
+    let mid = lo + (hi - lo + 1) / 2;
     if (z.times[mid] <= sec) {
       lo = mid;
     } else {
@@ -363,7 +363,7 @@ pub function iana_zone(name: string): Result[Zone, ZoneError] {
   if (name.len() == 0 || has_table_separator(name)) {
     return Err(UnknownZone(name));
   }
-  let names: string = iana_names();
+  let names = iana_names();
   let Some(at) = names.index_of(";" + name + "=") else {
     return Err(UnknownZone(name));
   };
@@ -377,24 +377,24 @@ pub function iana_zone(name: string): Result[Zone, ZoneError] {
 ```fern
 <<10 function has_table_separator(name: string): boolean>>=
 function has_table_separator(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < name.len()) {
-    let c: i32 = name[i] as i32;
+    let c = name[i] as i32;
     if (c == 59 || c == 61) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function decode_record(s: string, at: i32): Zone {
-  let p: i32 = at;
+  let p = at;
   while (s[p] as i32 != 124) {
-    p = p + 1;
+    p += 1;
   }
-  let rule: Rule = parse_posix(slice_unchecked(s, at, p) + "");
-  let ty: TypeTable = decode_types(s, p + 1);
+  let rule = parse_posix(slice_unchecked(s, at, p) + "");
+  let ty = decode_types(s, p + 1);
   let times: i64[] = [];
   let offs: i32[] = [];
   let abbrs: string[] = [];
@@ -408,7 +408,7 @@ function decode_record(s: string, at: i32): Zone {
     } else {
       t = t + v.0 / (2 as i64);
     }
-    let k: i32 = table_digit(s[v.1] as i32);
+    let k = table_digit(s[v.1] as i32);
     times = times.append(t);
     offs = offs.append(ty.offs[k]);
     abbrs = abbrs.append(ty.abbrs[k]);
@@ -434,16 +434,16 @@ function decode_types(s: string, from: i32): TypeTable {
   let offs: i32[] = [];
   let abbrs: string[] = [];
   let dsts: boolean[] = [];
-  let p: i32 = from;
+  let p = from;
   while (s[p] as i32 != 124) {
-    let a: i32 = p;
+    let a = p;
     while (s[p] as i32 != 58) {
-      p = p + 1;
+      p += 1;
     }
     abbrs = abbrs.append(slice_unchecked(s, a, p) + "");
-    let neg: boolean = s[p + 1] as i32 == 45;
+    let neg = s[p + 1] as i32 == 45;
     if (neg) {
-      p = p + 1;
+      p += 1;
     }
     let v: (i32, i32) = table_uint(s, p + 1);
     if (neg) {
@@ -454,18 +454,18 @@ function decode_types(s: string, from: i32): TypeTable {
     dsts = dsts.append(s[v.1 + 1] as i32 == 49);
     p = v.1 + 2;
     if (s[p] as i32 == 44) {
-      p = p + 1;
+      p += 1;
     }
   }
   return TypeTable { offs: offs, abbrs: abbrs, dsts: dsts, next: p + 1 };
 }
 
 function table_uint(s: string, p: i32): (i32, i32) {
-  let i: i32 = p;
-  let v: i32 = 0;
+  let i = p;
+  let v = 0;
   while (is_digit(s[i] as i32)) {
     v = v * 10 + (s[i] as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   return (v, i);
 }
@@ -473,13 +473,13 @@ function table_uint(s: string, p: i32): (i32, i32) {
 function table_varint(s: string, p: i32): (i64, i32) {
   let v: i64 = 0;
   let shift: i64 = 1;
-  let i: i32 = p;
-  let d: i32 = 32;
+  let i = p;
+  let d = 32;
   while (d >= 32) {
     d = table_digit(s[i] as i32);
     v = v + (d % 32) as i64 * shift;
-    shift = shift * (32 as i64);
-    i = i + 1;
+    shift *= 32 as i64;
+    i += 1;
   }
   return (v, i);
 }
@@ -502,16 +502,16 @@ function table_digit(c: i32): i32 {
 
 function be32(bs: [u8], o: i32): i64 {
   let v: i64 = 0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < 4) {
     v = v * (256 as i64) + bs[o + i] as i64;
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function be32s(bs: [u8], o: i32): i64 {
-  let v: i64 = be32(bs, o);
+  let v = be32(bs, o);
   if (v > 2147483647 as i64) {
     return v - 4294967296 as i64;
   }
@@ -520,10 +520,10 @@ function be32s(bs: [u8], o: i32): i64 {
 
 function be64s(bs: [u8], o: i32): i64 {
   let v: i64 = 0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8) {
     v = v * (256 as i64) + bs[o + i] as i64;
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -541,14 +541,14 @@ struct Counts { isut: i32, isstd: i32, leap: i32, time: i32, type_: i32, chars: 
 ```fern
 <<14 function read_counts(bs: [u8], off: i32): Counts>>=
 function read_counts(bs: [u8], off: i32): Counts {
-  let bad: Counts = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
+  let bad = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
   if (off < 0 || off + 44 > bs.len()) {
     return bad;
   }
   if (bs[off] as i32 != 84 || bs[off + 1] as i32 != 90 || bs[off + 2] as i32 != 105 || bs[off + 3] as i32 != 102) {
     return bad;
   }
-  let c: Counts = Counts { isut: clamp(be32(bs, off + 20)), isstd: clamp(be32(bs, off + 24)), leap: clamp(be32(bs, off + 28)), time: clamp(be32(bs, off + 32)), type_: clamp(be32(bs, off + 36)), chars: clamp(be32(bs, off + 40)) };
+  let c = Counts { isut: clamp(be32(bs, off + 20)), isstd: clamp(be32(bs, off + 24)), leap: clamp(be32(bs, off + 28)), time: clamp(be32(bs, off + 32)), type_: clamp(be32(bs, off + 36)), chars: clamp(be32(bs, off + 40)) };
   if (c.isut < 0 || c.isstd < 0 || c.leap < 0 || c.time < 0 || c.type_ < 0 || c.chars < 0) {
     return bad;
   }
@@ -557,7 +557,7 @@ function read_counts(bs: [u8], off: i32): Counts {
 
 function clamp(v: i64): i32 {
   if (v > 1073741823 as i64) {
-    return 0 - 1;
+    return -1;
   }
   return v as i32;
 }
@@ -586,25 +586,25 @@ function read_zone_file(path: string): Option[Zone] {
 ```fern
 <<15 pub function parse_tzif(bs: [u8]): Result[Zone, ZoneError]>>=
 pub function parse_tzif(bs: [u8]): Result[Zone, ZoneError] {
-  let h1: Counts = read_counts(bs, 0);
+  let h1 = read_counts(bs, 0);
   if (h1.isut < 0 || h1.type_ < 1) {
     return Err(TzifHeader);
   }
-  let version: i32 = bs[4] as i32;
-  let off: i32 = 44;
-  let width: i32 = 4;
-  let c: Counts = h1;
-  let footer: string = "";
+  let version = bs[4] as i32;
+  let off = 44;
+  let width = 4;
+  let c = h1;
+  let footer = "";
   if (version != 0) {
-    let first_block: i64 = off as i64 + block_bytes(h1, 4);
+    let first_block = off as i64 + block_bytes(h1, 4);
     if (first_block <= bs.len() as i64) {
-      let second: i32 = first_block as i32;
-      let h2: Counts = read_counts(bs, second);
+      let second = first_block as i32;
+      let h2 = read_counts(bs, second);
       if (h2.isut >= 0 && h2.type_ >= 1) {
         c = h2;
         off = second + 44;
         width = 8;
-        let end: i64 = off as i64 + block_bytes(h2, 8);
+        let end = off as i64 + block_bytes(h2, 8);
         if (end <= bs.len() as i64) {
           match (read_footer(bs, end as i32)) {
             Some(text) => {
@@ -630,13 +630,13 @@ pub function parse_tzif(bs: [u8]): Result[Zone, ZoneError] {
 ```fern
 <<16 function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: string): Option[Zone]>>=
 function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: string): Option[Zone] {
-  let idx_off: i32 = off + c.time * width;
-  let type_off: i32 = idx_off + c.time;
-  let chars_off: i32 = type_off + c.type_ * 6;
+  let idx_off = off + c.time * width;
+  let type_off = idx_off + c.time;
+  let chars_off = type_off + c.type_ * 6;
   let offs: i32[] = [];
   let isdst: boolean[] = [];
   let names: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.type_) {
     offs = offs.append(be32s(bs, type_off + i * 6) as i32);
     isdst = isdst.append(bs[type_off + i * 6 + 4] as i32 != 0);
@@ -648,7 +648,7 @@ function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: stri
         return None;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   let times: i64[] = [];
   let tofs: i32[] = [];
@@ -662,7 +662,7 @@ function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: stri
     } else {
       t = be32s(bs, off + i * 4);
     }
-    let k: i32 = bs[idx_off + i] as i32;
+    let k = bs[idx_off + i] as i32;
     if (k >= c.type_) {
       k = 0;
     }
@@ -670,10 +670,10 @@ function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: stri
     tofs = tofs.append(offs[k]);
     tabb = tabb.append(names[k]);
     tdst = tdst.append(isdst[k]);
-    i = i + 1;
+    i += 1;
   }
-  let first: i32 = offs[0];
-  let first_name: string = names[0];
+  let first = offs[0];
+  let first_name = names[0];
   i = 0;
   while (i < c.type_) {
     if (!isdst[i]) {
@@ -681,7 +681,7 @@ function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: stri
       first_name = names[i];
       i = c.type_;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
   return Some(Zone { times: times, offs: tofs, abbrs: tabb, dsts: tdst, first: first, first_abbr: first_name, first_dst: false, rule: parse_posix(footer) });
@@ -692,11 +692,11 @@ function designation(bs: [u8], base: i32, len: i32, at: i32): Option[string] {
     return Some("");
   }
   let out: u8[] = [];
-  let i: i32 = base + at;
-  let end: i32 = base + len;
+  let i = base + at;
+  let end = base + len;
   while (i < end && i < bs.len() && bs[i] as i32 != 0) {
     out = out.append(bs[i]);
-    i = i + 1;
+    i += 1;
   }
   return utf8.from_bytes(out).ok();
 }
@@ -705,11 +705,11 @@ function read_footer(bs: [u8], start: i32): Option[string] {
   if (start >= bs.len() || bs[start] as i32 != 10) {
     return Some("");
   }
-  let i: i32 = start + 1;
+  let i = start + 1;
   let out: u8[] = [];
   while (i < bs.len() && bs[i] as i32 != 10) {
     out = out.append(bs[i]);
-    i = i + 1;
+    i += 1;
   }
   return utf8.from_bytes(out).ok();
 }
@@ -720,14 +720,14 @@ function read_footer(bs: [u8], start: i32): Option[string] {
 ```fern
 <<17 pub function parse_posix(s: string): Rule>>=
 pub function parse_posix(s: string): Rule {
-  let r: Rule = utc_rule();
+  let r = utc_rule();
   let std_name: (string, i32) = take_name(s, 0);
   if (std_name.1 <= 0) {
     return r;
   }
-  let p: i32 = std_name.1;
+  let p = std_name.1;
   let std: (boolean, i32, i32) = parse_offset(s, p);
-  let std_off: i32 = 0;
+  let std_off = 0;
   if (std.0) {
     std_off = 0 - std.1;
     p = std.2;
@@ -747,7 +747,7 @@ pub function parse_posix(s: string): Rule {
     r = Rule { ...r, dst_off: 0 - d.1 };
     p = d.2;
   }
-  let fallback: Rule = Rule { ...r, start: us_dst_start(), end: us_dst_end() };
+  let fallback = Rule { ...r, start: us_dst_start(), end: us_dst_end() };
   if (p >= s.len() || s[p] as i32 != 44) {
     return fallback;
   }
@@ -780,18 +780,18 @@ function take_name(s: string, p: i32): (string, i32) {
     return ("", p);
   }
   if (s[p] as i32 == 60) {
-    let i: i32 = p + 1;
+    let i = p + 1;
     while (i < s.len() && s[i] as i32 != 62) {
-      i = i + 1;
+      i += 1;
     }
     if (i >= s.len() || i - p - 1 < 3) {
       return ("", p);
     }
     return (slice_unchecked(s, p + 1, i) + "", i + 1);
   }
-  let j: i32 = p;
+  let j = p;
   while (j < s.len() && is_alpha(s[j] as i32)) {
-    j = j + 1;
+    j += 1;
   }
   if (j - p < 3) {
     return ("", p);
@@ -808,35 +808,35 @@ function is_digit(c: i32): boolean {
 }
 
 function parse_offset(s: string, p: i32): (boolean, i32, i32) {
-  let i: i32 = p;
-  let neg: boolean = false;
+  let i = p;
+  let neg = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
   if (i >= s.len() || !is_digit(s[i] as i32)) {
     return (false, 0, p);
   }
-  let h: i32 = 0;
-  let n: i32 = 0;
+  let h = 0;
+  let n = 0;
   while (i < s.len() && is_digit(s[i] as i32) && n < 3) {
     h = h * 10 + (s[i] as i32 - 48);
-    i = i + 1;
-    n = n + 1;
+    i += 1;
+    n += 1;
   }
   if (h > 24) {
     h = 24;
   }
-  let total: i32 = h * 3600;
-  let k: i32 = 0;
+  let total = h * 3600;
+  let k = 0;
   while (k < 2 && i < s.len() && s[i] as i32 == 58) {
-    i = i + 1;
-    let v: i32 = 0;
-    let d: i32 = 0;
+    i += 1;
+    let v = 0;
+    let d = 0;
     while (i < s.len() && is_digit(s[i] as i32) && d < 2) {
       v = v * 10 + (s[i] as i32 - 48);
-      i = i + 1;
-      d = d + 1;
+      i += 1;
+      d += 1;
     }
     if (d == 0) {
       return (false, 0, p);
@@ -847,12 +847,12 @@ function parse_offset(s: string, p: i32): (boolean, i32, i32) {
     if (k == 0) {
       total = total + v * 60;
     } else {
-      total = total + v;
+      total += v;
     }
-    k = k + 1;
+    k += 1;
   }
   if (neg) {
-    total = 0 - total;
+    total = -total;
   }
   return (true, total, i);
 }
@@ -863,9 +863,9 @@ function parse_offset(s: string, p: i32): (boolean, i32, i32) {
 ```fern
 <<19 function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32)>>=
 function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
-  let bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
-  let i: i32 = p;
-  let out: DateRule = bad;
+  let bad = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
+  let i = p;
+  let out = bad;
   if (i < s.len() && s[i] as i32 == 77) {
     let m: (boolean, i32, i32) = parse_uint(s, i + 1);
     if (!m.0 || m.2 >= s.len() || s[m.2] as i32 != 46) {
@@ -911,21 +911,21 @@ function parse_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
 }
 
 function parse_rule_time(s: string, p: i32): (boolean, i32, i32) {
-  let i: i32 = p;
-  let sign: i32 = 1;
+  let i = p;
+  let sign = 1;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     if (s[i] as i32 == 45) {
       sign = -1;
     }
-    i = i + 1;
+    i += 1;
   }
   let h: (boolean, i32, i32) = parse_uint(s, i);
   if (!h.0 || h.1 > 167) {
     return (false, 0, p);
   }
-  let total: i32 = h.1 * 3600;
+  let total = h.1 * 3600;
   i = h.2;
-  let unit: i32 = 60;
+  let unit = 60;
   while (unit > 0 && i < s.len() && s[i] as i32 == 58) {
     let v: (boolean, i32, i32) = parse_uint(s, i + 1);
     if (!v.0 || v.1 > 59) {
@@ -933,17 +933,17 @@ function parse_rule_time(s: string, p: i32): (boolean, i32, i32) {
     }
     total = total + v.1 * unit;
     i = v.2;
-    unit = unit / 60;
+    unit /= 60;
   }
   return (true, sign * total, i);
 }
 
 function parse_uint(s: string, p: i32): (boolean, i32, i32) {
-  let i: i32 = p;
-  let v: i32 = 0;
+  let i = p;
+  let v = 0;
   while (i < s.len() && is_digit(s[i] as i32)) {
     v = v * 10 + (s[i] as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   if (i == p) {
     return (false, 0, p);
@@ -955,10 +955,10 @@ function rule_dst(r: Rule, sec: i64): boolean {
   if (!r.has_dst) {
     return false;
   }
-  let year: i32 = year_of(sec);
-  let start: i64 = rule_instant(r.start, year) - r.std_off as i64;
-  let end: i64 = rule_instant(r.end, year) - r.dst_off as i64;
-  let on: boolean = false;
+  let year = year_of(sec);
+  let start = rule_instant(r.start, year) - r.std_off as i64;
+  let end = rule_instant(r.end, year) - r.dst_off as i64;
+  let on = false;
   if (start <= end) {
     on = sec >= start && sec < end;
   } else {
@@ -968,17 +968,17 @@ function rule_dst(r: Rule, sec: i64): boolean {
 }
 
 function rule_instant(d: DateRule, year: i32): i64 {
-  let base: i32 = 0;
+  let base = 0;
   if (year > 1970) {
     base = epoch_day(year, 1, 1);
   }
-  let doy: i32 = 1;
+  let doy = 1;
   if (d.kind == 0) {
     doy = month_week_day(year, d.mon, d.week, d.day);
   } else if (d.kind == 1) {
     doy = d.n;
     if (doy >= 60 && time.is_leap_year(year)) {
-      doy = doy + 1;
+      doy += 1;
     }
   } else {
     doy = d.n + 1;
@@ -987,12 +987,12 @@ function rule_instant(d: DateRule, year: i32): i64 {
 }
 
 function month_week_day(year: i32, mon: i32, week: i32, day: i32): i32 {
-  let first: i64 = time.days_from_civil(year as i64, mon, 1);
-  let wd: i32 = (first + 4).rem_euclid(7) as i32;
+  let first = time.days_from_civil(year as i64, mon, 1);
+  let wd = (first + 4).rem_euclid(7) as i32;
   let dom: i32 = 1 + (day - wd + 7) % 7 + (week - 1) * 7;
-  let last: i32 = time.days_in_month(year, mon);
+  let last = time.days_in_month(year, mon);
   while (dom > last) {
-    dom = dom - 7;
+    dom -= 7;
   }
   return (first + (dom - 1) as i64 - time.days_from_civil(year as i64, 1, 1)) as i32 + 1;
 }
@@ -1028,7 +1028,7 @@ function darwin_zone_from_tz(spec: string): Zone {
   if (spec[0] as i32 == 58) {
     return utc_zone();
   }
-  let r: Rule = darwin_parse_posix(spec);
+  let r = darwin_parse_posix(spec);
   if (!r.valid) {
     return utc_zone();
   }
@@ -1036,7 +1036,7 @@ function darwin_zone_from_tz(spec: string): Zone {
 }
 
 function darwin_zone_path(spec: string): string {
-  let name: string = spec;
+  let name = spec;
   if (name[0] as i32 == 58) {
     name = slice_unchecked(name, 1, name.len()) + "";
   }
@@ -1054,10 +1054,10 @@ function darwin_rule_zone(r: Rule): Zone {
   let offs: i32[] = [];
   let abbrs: string[] = [];
   let dsts: boolean[] = [];
-  let year: i32 = 1970;
+  let year = 1970;
   while (year < 1970 + 600) {
-    let start: i64 = rule_instant(r.start, year) - r.std_off as i64;
-    let end: i64 = rule_instant(r.end, year) - r.dst_off as i64;
+    let start = rule_instant(r.start, year) - r.std_off as i64;
+    let end = rule_instant(r.end, year) - r.dst_off as i64;
     if (start > end) {
       times = times.append(end).append(start);
       offs = offs.append(r.std_off).append(r.dst_off);
@@ -1069,13 +1069,13 @@ function darwin_rule_zone(r: Rule): Zone {
       abbrs = abbrs.append(r.dst_name).append(r.std_name);
       dsts = dsts.append(true).append(false);
     }
-    year = year + 1;
+    year += 1;
   }
   return Zone { times: times, offs: offs, abbrs: abbrs, dsts: dsts, first: r.std_off, first_abbr: r.std_name, first_dst: false, rule: utc_rule() };
 }
 
 function darwin_parse_posix(s: string): Rule {
-  let bad: Rule = utc_rule();
+  let bad = utc_rule();
   let std_name: (string, i32) = darwin_name(s, 0);
   if (std_name.1 >= s.len()) {
     return bad;
@@ -1084,8 +1084,8 @@ function darwin_parse_posix(s: string): Rule {
   if (!std.0) {
     return bad;
   }
-  let std_off: i32 = 0 - std.1;
-  let r: Rule = Rule { ...bad, valid: true, std_off: std_off, dst_off: std_off, std_name: std_name.0, dst_name: std_name.0 };
+  let std_off = 0 - std.1;
+  let r = Rule { ...bad, valid: true, std_off: std_off, dst_off: std_off, std_name: std_name.0, dst_name: std_name.0 };
   if (std.2 >= s.len()) {
     return r;
   }
@@ -1097,8 +1097,8 @@ function darwin_parse_dst(s: string, from: i32, std: Rule): Rule {
   if (!name.0) {
     return utc_rule();
   }
-  let p: i32 = name.2;
-  let r: Rule = Rule { ...std, has_dst: true, dst_off: std.std_off + 3600, dst_name: name.1 };
+  let p = name.2;
+  let r = Rule { ...std, has_dst: true, dst_off: std.std_off + 3600, dst_name: name.1 };
   if (p < s.len() && !is_rule_comma(s[p] as i32)) {
     let d: (boolean, i32, i32) = darwin_offset(s, p);
     if (!d.0) {
@@ -1154,17 +1154,17 @@ function darwin_name(s: string, p: i32): (string, i32) {
   if (q.0) {
     return (q.1, q.2);
   }
-  let j: i32 = p;
+  let j = p;
   while (j < s.len() && !ends_name(s[j] as i32)) {
-    j = j + 1;
+    j += 1;
   }
   return (slice_unchecked(s, p, j) + "", j);
 }
 
 function darwin_close(s: string, p: i32): i32 {
-  let k: i32 = p;
+  let k = p;
   while (k < s.len() && s[k] as i32 != 62) {
-    k = k + 1;
+    k += 1;
   }
   return k;
 }
@@ -1177,7 +1177,7 @@ function darwin_quoted(s: string, p: i32): (boolean, string, i32) {
   if (p >= s.len() || s[p] as i32 != 60) {
     return (false, "", p);
   }
-  let k: i32 = darwin_close(s, p + 1);
+  let k = darwin_close(s, p + 1);
   if (k >= s.len()) {
     return (false, "", p);
   }
@@ -1185,11 +1185,11 @@ function darwin_quoted(s: string, p: i32): (boolean, string, i32) {
 }
 
 function darwin_offset(s: string, p: i32): (boolean, i32, i32) {
-  let i: i32 = p;
-  let neg: boolean = false;
+  let i = p;
+  let neg = false;
   if (i < s.len() && (s[i] as i32 == 43 || s[i] as i32 == 45)) {
     neg = s[i] as i32 == 45;
-    i = i + 1;
+    i += 1;
   }
   let t: (boolean, i32, i32) = darwin_secs(s, i);
   if (!t.0 || !neg) {
@@ -1203,8 +1203,8 @@ function darwin_secs(s: string, p: i32): (boolean, i32, i32) {
   if (!h.0) {
     return h;
   }
-  let total: i32 = h.1 * 3600;
-  let i: i32 = h.2;
+  let total = h.1 * 3600;
+  let i = h.2;
   if (i < s.len() && s[i] as i32 == 58) {
     let m: (boolean, i32, i32) = darwin_num(s, i + 1, 0, 59);
     if (!m.0) {
@@ -1217,7 +1217,7 @@ function darwin_secs(s: string, p: i32): (boolean, i32, i32) {
       if (!sec.0) {
         return sec;
       }
-      total = total + sec.1;
+      total += sec.1;
       i = sec.2;
     }
   }
@@ -1228,14 +1228,14 @@ function darwin_num(s: string, p: i32, min: i32, max: i32): (boolean, i32, i32) 
   if (p >= s.len() || !is_digit(s[p] as i32)) {
     return (false, 0, p);
   }
-  let v: i32 = 0;
-  let i: i32 = p;
+  let v = 0;
+  let i = p;
   while (i < s.len() && is_digit(s[i] as i32)) {
     v = v * 10 + (s[i] as i32 - 48);
     if (v > max) {
       return (false, 0, p);
     }
-    i = i + 1;
+    i += 1;
   }
   if (v < min) {
     return (false, 0, p);
@@ -1244,7 +1244,7 @@ function darwin_num(s: string, p: i32, min: i32, max: i32): (boolean, i32, i32) 
 }
 
 function darwin_month_rule(s: string, p: i32): (boolean, DateRule, i32) {
-  let bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
+  let bad = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
   let m: (boolean, i32, i32) = darwin_num(s, p, 1, 12);
   if (!m.0 || m.2 >= s.len() || s[m.2] as i32 != 46) {
     return (false, bad, p);

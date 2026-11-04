@@ -82,12 +82,12 @@ pub function no_params(): Params {
 }
 
 pub function (p: Params) get(name: string): Option[string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < p.names.len()) {
     if (p.names[i] == name) {
       return Some(p.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -105,7 +105,7 @@ pub function (p: Params) param(name: string): Result[string, http.HttpError] {
 }
 
 pub function (p: Params) int(name: string): Result[i32, http.HttpError] {
-  let v: string = p.param(name)?;
+  let v = p.param(name)?;
   match (i32.parse_i32_radix(v, 10)) {
     Ok(n) => {
       return Ok(n);
@@ -182,7 +182,7 @@ pub function (r: Router[P]) route(pattern: string, handler: (HttpRequest, Params
   }
   match (__parse(pattern)) {
     Ok(parsed) => {
-      let route: Route[P] = Route { method: parsed.0, pattern: pattern, segments: parsed.1, params: Params { names: __names(parsed.1), values: [] }, handler: handler };
+      let route = Route { method: parsed.0, pattern: pattern, segments: parsed.1, params: Params { names: __names(parsed.1), values: [] }, handler: handler };
       for other in r.routes {
         if (__conflicts(__relation(route.method, route.segments, other.method, other.segments))) {
           return Router { ...r, refused: Some(PatternConflict(pattern, other.pattern)) };
@@ -257,14 +257,14 @@ function __wrapped[P](r: Router[P], i: i32, req: HttpRequest, plat: P): Result[H
 }
 
 function __dispatch[P](r: Router[P], req: HttpRequest, plat: P): Result[HttpResponse, dyn http.ToResponse] {
-  let end: i32 = __path_end(req.path);
-  let picked: i32 = __pick(r, req.path, end, req.method);
+  let end = __path_end(req.path);
+  let picked = __pick(r, req.path, end, req.method);
   if (picked >= 0) {
-    let route: Route[P] = r.routes[picked];
+    let route = r.routes[picked];
     let h: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] = route.handler;
     return h(req, __bind(route, req.path, end), plat);
   }
-  let allowed: string[] = __allowed(r, req.path, end, req.method);
+  let allowed = __allowed(r, req.path, end, req.method);
   if (allowed.len() > 0) {
     return Ok(http.problem(405, "", "").with_header("allow", allowed.join(", ")));
   }
@@ -290,16 +290,16 @@ pub function (r: Router[P]) handler(): (HttpRequest, P) => HttpResponse {
 ```fern
 <<11 function __pick[P](r: Router[P], path: string, end: i32, method: string): i32>>=
 function __pick[P](r: Router[P], path: string, end: i32, method: string): i32 {
-  let best: i32 = -1;
-  let i: i32 = 0;
+  let best = -1;
+  let i = 0;
   while (i < r.routes.len()) {
-    let route: Route[P] = r.routes[i];
+    let route = r.routes[i];
     if (__method_allows(route.method, method) && __matches(route.segments, path, end)) {
       if (best < 0 || __relation(route.method, route.segments, r.routes[best].method, r.routes[best].segments) == REL_NARROWER) {
         best = i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return best;
 }
@@ -331,23 +331,23 @@ function __method_allows(route: string, method: string): boolean {
 }
 
 function __path_end(path: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < path.len()) {
     if (path[i] == b'?' || path[i] == b'#') {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return path.len();
 }
 
 function __next_slash(path: string, from: i32, end: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     if (path[i] == b'/') {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return end;
 }
@@ -356,19 +356,19 @@ function __range_is(path: string, a: i32, b: i32, s: string): boolean {
   if (b - a != s.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (path[a + i] != s[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function __matches(segs: Segment[], path: string, end: i32): boolean {
-  let pos: i32 = 0;
-  let i: i32 = 0;
+  let pos = 0;
+  let i = 0;
   while (i < segs.len()) {
     if (pos >= end || path[pos] != b'/') {
       return false;
@@ -378,21 +378,21 @@ function __matches(segs: Segment[], path: string, end: i32): boolean {
         return true;
       },
       PathLiteral(s) => {
-        let stop: i32 = __next_slash(path, pos + 1, end);
+        let stop = __next_slash(path, pos + 1, end);
         if (!__range_is(path, pos + 1, stop, s)) {
           return false;
         }
         pos = stop;
       },
       PathParam(_) => {
-        let stop: i32 = __next_slash(path, pos + 1, end);
+        let stop = __next_slash(path, pos + 1, end);
         if (stop == pos + 1) {
           return false;
         }
         pos = stop;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return pos == end;
 }
@@ -400,7 +400,7 @@ function __matches(segs: Segment[], path: string, end: i32): boolean {
 function __names(segs: Segment[]): string[] {
   let names: string[] = [];
   for seg in segs {
-    let n: string = __bound_name(seg);
+    let n = __bound_name(seg);
     if (n.len() > 0) {
       names = names.append(n);
     }
@@ -418,12 +418,12 @@ function __bind[P](route: Route[P], path: string, end: i32): Params {
     return route.params;
   }
   let values: string[] = [];
-  let pos: i32 = 0;
-  let i: i32 = 0;
+  let pos = 0;
+  let i = 0;
   while (i < route.segments.len()) {
     match (route.segments[i]) {
       PathParam(_) => {
-        let stop: i32 = __next_slash(path, pos + 1, end);
+        let stop = __next_slash(path, pos + 1, end);
         values = values.append(slice_unchecked(path, pos + 1, stop) + "");
         pos = stop;
       },
@@ -436,23 +436,23 @@ function __bind[P](route: Route[P], path: string, end: i32): Params {
         pos = __next_slash(path, pos + 1, end);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Params { ...route.params, values: values };
 }
 
 function __parse(pattern: string): Result[(string, Segment[]), RouteError] {
-  let method: string = "";
-  let path: string = pattern;
+  let method = "";
+  let path = pattern;
   if (!pattern.starts_with("/")) {
-    let parts: string[] = pattern.splitn(" ", 2);
+    let parts = pattern.splitn(" ", 2);
     if (parts.len() != 2 || !__is_method(parts[0]) || !parts[1].starts_with("/")) {
       return Err(BadPattern(pattern, "expected [METHOD ]/path"));
     }
     method = parts[0];
     path = parts[1];
   }
-  let segs: Segment[] = __segments(pattern, path)?;
+  let segs = __segments(pattern, path)?;
   return Ok((method, segs));
 }
 
@@ -469,13 +469,13 @@ function __is_method(s: string): boolean {
 }
 
 function __segments(pattern: string, path: string): Result[Segment[], RouteError] {
-  let raw: string[] = path.split("/");
+  let raw = path.split("/");
   let out: Segment[] = [];
   let names: string[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < raw.len()) {
-    let seg: Segment = __segment(pattern, raw[i], i == raw.len() - 1)?;
-    let name: string = __bound_name(seg);
+    let seg = __segment(pattern, raw[i], i == raw.len() - 1)?;
+    let name = __bound_name(seg);
     if (name != "") {
       if (__add_once(names, name).len() == names.len()) {
         return Err(BadPattern(pattern, "parameter " + name + " is bound twice"));
@@ -483,7 +483,7 @@ function __segments(pattern: string, path: string): Result[Segment[], RouteError
       names = names.append(name);
     }
     out = out.append(seg);
-    i = i + 1;
+    i += 1;
   }
   return Ok(out);
 }
@@ -537,7 +537,7 @@ function __wildcard(pattern: string, inner: string, last: boolean): Result[Segme
     if (!last) {
       return Err(BadPattern(pattern, "{name...} must be the last segment"));
     }
-    let name: string = inner.slice_snap(0, inner.len() - 3);
+    let name = inner.slice_snap(0, inner.len() - 3);
     if (!__is_name(name)) {
       return Err(BadPattern(pattern, "bad parameter name " + name));
     }
@@ -558,12 +558,12 @@ function __is_name(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   for b in s.bytes() {
     if (!__name_byte(b as i32, i == 0)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -636,10 +636,10 @@ function __method_relation(a: string, b: string): i32 {
 }
 
 function __path_relation(a: Segment[], b: Segment[]): i32 {
-  let acc: i32 = REL_SAME;
-  let i: i32 = 0;
+  let acc = REL_SAME;
+  let i = 0;
   while (i < a.len() && i < b.len()) {
-    let step: i32 = __segment_relation(a[i], b[i]);
+    let step = __segment_relation(a[i], b[i]);
     if (__is_rest(a[i]) || __is_rest(b[i])) {
       return __combine(acc, step);
     }
@@ -647,7 +647,7 @@ function __path_relation(a: Segment[], b: Segment[]): i32 {
     if (acc == REL_APART) {
       return REL_APART;
     }
-    i = i + 1;
+    i += 1;
   }
   if (i < a.len() || i < b.len()) {
     return REL_APART;

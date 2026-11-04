@@ -77,7 +77,7 @@ pub function response(req: HttpRequest, resp: HttpResponse, o: Options): HttpRes
   if (!__eligible(resp, o)) {
     return resp;
   }
-  let varied: HttpResponse = resp.with_vary("Accept-Encoding");
+  let varied = resp.with_vary("Accept-Encoding");
   match (req.headers.preferred_coding(__written(o.codings))) {
     Some(c) => {
       return __coded(varied, c, resp.body_bytes());
@@ -123,7 +123,7 @@ function __written(codings: string[]): string[] {
 ```fern
 <<6 pub function compressible(content_type: string): boolean>>=
 pub function compressible(content_type: string): boolean {
-  let t: string = __media_type(content_type);
+  let t = __media_type(content_type);
   if (t.starts_with("text/") || t.ends_with("+json") || t.ends_with("+xml")) {
     return true;
   }
@@ -190,7 +190,7 @@ function __coded(r: HttpResponse, coding: string, body: u8[]): HttpResponse {
       if (z.len() >= body.len()) {
         return r;
       }
-      let h: HeaderMap = r.headers.set("Content-Encoding", coding).remove("Accept-Ranges");
+      let h = r.headers.set("Content-Encoding", coding).remove("Accept-Ranges");
       return HttpResponse { ...r, body: BodyBytes(z), headers: __weak_etag(h) };
     },
     None => {

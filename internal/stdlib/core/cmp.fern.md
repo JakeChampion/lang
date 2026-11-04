@@ -128,7 +128,7 @@ impl Display for i32 {
 impl Display for i64 {
   function to_string(self: i64): string {
     if (self < 0) {
-      return int.__int_to_string_u64(0 - self, 1);
+      return int.__int_to_string_u64(-self, 1);
     }
     return int.__int_to_string_u64(self, 0);
   }
@@ -419,12 +419,12 @@ impl[T: Eq] Eq for T[] {
 
 impl[T: Ord] Ord for T[] {
   function cmp(self: T[], other: T[]): i32 {
-    let n: i32 = self.len();
+    let n = self.len();
     if (other.len() < n) {
       n = other.len();
     }
     for i in 0..n {
-      let c: i32 = self[i].cmp(other[i]);
+      let c = self[i].cmp(other[i]);
       if (c != 0) {
         return c;
       }
@@ -435,7 +435,7 @@ impl[T: Ord] Ord for T[] {
 
 impl[T: Hash] Hash for T[] {
   function hash(self: T[]): i32 {
-    let h: i32 = self.len();
+    let h = self.len();
     for x in self {
       h = h * 31 + x.hash();
     }
@@ -451,7 +451,7 @@ impl[A: Eq, B: Eq] Eq for (A, B) {
 
 impl[A: Ord, B: Ord] Ord for (A, B) {
   function cmp(self: (A, B), other: (A, B)): i32 {
-    let c: i32 = self.0.cmp(other.0);
+    let c = self.0.cmp(other.0);
     if (c != 0) {
       return c;
     }
@@ -473,7 +473,7 @@ impl[A: Eq, B: Eq, C: Eq] Eq for (A, B, C) {
 
 impl[A: Ord, B: Ord, C: Ord] Ord for (A, B, C) {
   function cmp(self: (A, B, C), other: (A, B, C)): i32 {
-    let c: i32 = self.0.cmp(other.0);
+    let c = self.0.cmp(other.0);
     if (c != 0) {
       return c;
     }
@@ -499,7 +499,7 @@ impl[A: Eq, B: Eq, C: Eq, D: Eq] Eq for (A, B, C, D) {
 
 impl[A: Ord, B: Ord, C: Ord, D: Ord] Ord for (A, B, C, D) {
   function cmp(self: (A, B, C, D), other: (A, B, C, D)): i32 {
-    let c: i32 = self.0.cmp(other.0);
+    let c = self.0.cmp(other.0);
     if (c != 0) {
       return c;
     }
@@ -592,7 +592,7 @@ impl Ord for u64 {
 impl Ord for usize {
   function cmp(self: usize, other: usize): i32 {
     if (self < other) {
-      return 0 - 1;
+      return -1;
     }
     if (self > other) {
       return 1;
@@ -608,7 +608,7 @@ impl Ord for usize {
 impl Ord for u8 {
   function cmp(self: u8, other: u8): i32 {
     if (self < other) {
-      return 0 - 1;
+      return -1;
     }
     if (self > other) {
       return 1;
@@ -623,10 +623,10 @@ impl Ord for u8 {
 
 impl Ord for char {
   function cmp(self: char, other: char): i32 {
-    let a: i32 = self as i32;
-    let b: i32 = other as i32;
+    let a = self as i32;
+    let b = other as i32;
     if (a < b) {
-      return 0 - 1;
+      return -1;
     }
     if (a > b) {
       return 1;
@@ -698,19 +698,19 @@ impl Ord for string {
 
   function cmp_prefix(self: string, offset: i32): u64 {
     let w: u64 = 0u64;
-    let i: i32 = offset;
+    let i = offset;
     while (i < offset + 8) {
       w = w << 8u64;
       if (i < self.len()) {
         w = w | self[i] as u64;
       }
-      i = i + 1;
+      i += 1;
     }
     return w;
   }
 
   function cmp_shared(self: string, other: string): i32 {
-    let n: i32 = self.len();
+    let n = self.len();
     if (other.len() < n) {
       n = other.len();
     }
@@ -723,11 +723,11 @@ impl Ord for string {
 ```fern
 <<6 function __hash_mix_i32(x: i32): i32>>=
 function __hash_mix_i32(x: i32): i32 {
-  let h: i32 = x ^ 61;
+  let h = x ^ 61;
   h = h ^ (h as u32 >> 16 as u32) as i32;
-  h = h + (h << 3);
+  h += h << 3;
   h = h ^ (h as u32 >> 4 as u32) as i32;
-  h = h * 668265261;
+  h *= 668265261;
   h = h ^ (h as u32 >> 15 as u32) as i32;
   return h;
 }
@@ -762,16 +762,16 @@ impl Hash for char {
 
 impl Hash for i64 {
   function hash(self: i64): i32 {
-    let lo: i32 = self as i32;
-    let hi: i32 = (self >> 32 as i64) as i32;
+    let lo = self as i32;
+    let hi = (self >> 32 as i64) as i32;
     return __hash_mix_i32(lo ^ hi);
   }
 }
 
 impl Hash for u64 {
   function hash(self: u64): i32 {
-    let lo: i32 = self as i32;
-    let hi: i32 = (self >> 32 as u64) as i32;
+    let lo = self as i32;
+    let hi = (self >> 32 as u64) as i32;
     return __hash_mix_i32(lo ^ hi);
   }
 }
@@ -785,7 +785,7 @@ impl Hash for f64 {
     if (self != self) {
       return __hash_mix_i32(0x7ff80000);
     }
-    let bits: i64 = f64_bits(self);
+    let bits = f64_bits(self);
     return __hash_mix_i32(bits as i32 ^ (bits >> 32 as i64) as i32);
   }
 }
@@ -805,9 +805,9 @@ impl Hash for f32 {
 // Folded through u64 so a 32-bit usize (wasm) never shifts by its own width.
 impl Hash for usize {
   function hash(self: usize): i32 {
-    let w: u64 = self as u64;
-    let lo: i32 = w as i32;
-    let hi: i32 = (w >> 32 as u64) as i32;
+    let w = self as u64;
+    let lo = w as i32;
+    let hi = (w >> 32 as u64) as i32;
     return __hash_mix_i32(lo ^ hi);
   }
 }
@@ -944,10 +944,10 @@ impl Debug for boolean {
 impl Debug for string {
   function to_debug(self: string): string {
     let out: u8[] = [];
-    let i: i32 = 0;
-    let n: i32 = self.len();
+    let i = 0;
+    let n = self.len();
     while (i < n) {
-      let b: i32 = self[i] as i32;
+      let b = self[i] as i32;
       if (b == 34) {
         out = out.append(92 as u8);
         out = out.append(34 as u8);
@@ -969,7 +969,7 @@ impl Debug for string {
           }
         }
       }
-      i = i + 1;
+      i += 1;
     }
     return "\"" + string_from_bytes_unchecked(out) + "\"";
   }
@@ -1007,13 +1007,13 @@ pub function max_of[T: Ord](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: T = xs[0];
-  let i: i32 = 1;
+  let best = xs[0];
+  let i = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(best) > 0) {
       best = xs[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -1022,13 +1022,13 @@ pub function min_of[T: Ord](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: T = xs[0];
-  let i: i32 = 1;
+  let best = xs[0];
+  let i = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(best) < 0) {
       best = xs[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -1056,7 +1056,7 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
     if (arr[i].cmp(arr[i - 1]) < 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -1070,26 +1070,26 @@ function __cmp_min_run(): i32 {
 }
 
 function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T[] {
-  let i: i32 = lo + 1;
+  let i = lo + 1;
   while (i < hi) {
-    let v: T = a[i];
-    let j: i32 = i - 1;
-    let moving: boolean = j >= lo;
+    let v = a[i];
+    let j = i - 1;
+    let moving = j >= lo;
     while (moving) {
-      let o: i32 = a[j].cmp(v);
+      let o = a[j].cmp(v);
       if (desc) {
         o = 0 - o;
       }
       if (o > 0) {
         a = a.with(j + 1, a[j]);
-        j = j - 1;
+        j -= 1;
         moving = j >= lo;
       } else {
         moving = false;
       }
     }
     a = a.with(j + 1, v);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
@@ -1099,16 +1099,16 @@ function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T
 ```fern
 <<11 function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[]>>=
 function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n < 2) {
     return arr;
   }
 
   let a: T[] = [];
-  let c: i32 = 0;
+  let c = 0;
   while (c < n) {
     a = a.append(arr[c]);
-    c = c + 1;
+    c += 1;
   }
 
   if (n <= 32) {
@@ -1117,22 +1117,22 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   }
 
   let bounds: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     bounds = bounds.append(i);
-    let e: i32 = i + 1;
+    let e = i + 1;
     if (e < n) {
-      let head: i32 = a[i].cmp(a[e]);
+      let head = a[i].cmp(a[e]);
       if (desc) {
         head = 0 - head;
       }
       if (head > 0) {
-        let falling: boolean = true;
+        let falling = true;
         while (falling) {
-          e = e + 1;
+          e += 1;
           falling = false;
           if (e < n) {
-            let od: i32 = a[e - 1].cmp(a[e]);
+            let od = a[e - 1].cmp(a[e]);
             if (desc) {
               od = 0 - od;
             }
@@ -1141,22 +1141,22 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
             }
           }
         }
-        let lo: i32 = i;
-        let hi: i32 = e - 1;
+        let lo = i;
+        let hi = e - 1;
         while (lo < hi) {
-          let t: T = a[lo];
+          let t = a[lo];
           a = a.with(lo, a[hi]);
           a = a.with(hi, t);
-          lo = lo + 1;
-          hi = hi - 1;
+          lo += 1;
+          hi -= 1;
         }
       } else {
-        let rising: boolean = true;
+        let rising = true;
         while (rising) {
-          e = e + 1;
+          e += 1;
           rising = false;
           if (e < n) {
-            let oa: i32 = a[e - 1].cmp(a[e]);
+            let oa = a[e - 1].cmp(a[e]);
             if (desc) {
               oa = 0 - oa;
             }
@@ -1168,7 +1168,7 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
       }
     }
     if (e - i < __cmp_min_run()) {
-      let ext: i32 = i + __cmp_min_run();
+      let ext = i + __cmp_min_run();
       if (ext > n) {
         ext = n;
       }
@@ -1184,45 +1184,45 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   while (bounds.len() > 2) {
     let out: T[] = [];
     let next: i32[] = [];
-    let r: i32 = 0;
+    let r = 0;
     while (r + 1 < bounds.len()) {
-      let mlo: i32 = bounds[r];
+      let mlo = bounds[r];
       next = next.append(mlo);
       if (r + 2 < bounds.len()) {
-        let mmid: i32 = bounds[r + 1];
-        let mhi: i32 = bounds[r + 2];
-        let p: i32 = mlo;
-        let q: i32 = mmid;
+        let mmid = bounds[r + 1];
+        let mhi = bounds[r + 2];
+        let p = mlo;
+        let q = mmid;
         while (p < mmid && q < mhi) {
-          let om: i32 = a[p].cmp(a[q]);
+          let om = a[p].cmp(a[q]);
           if (desc) {
             om = 0 - om;
           }
           if (om > 0) {
             out = out.append(a[q]);
-            q = q + 1;
+            q += 1;
           } else {
             out = out.append(a[p]);
-            p = p + 1;
+            p += 1;
           }
         }
         while (p < mmid) {
           out = out.append(a[p]);
-          p = p + 1;
+          p += 1;
         }
         while (q < mhi) {
           out = out.append(a[q]);
-          q = q + 1;
+          q += 1;
         }
-        r = r + 2;
+        r += 2;
       } else {
-        let mend: i32 = bounds[r + 1];
-        let mk: i32 = mlo;
+        let mend = bounds[r + 1];
+        let mk = mlo;
         while (mk < mend) {
           out = out.append(a[mk]);
-          mk = mk + 1;
+          mk += 1;
         }
-        r = r + 1;
+        r += 1;
       }
     }
     next = next.append(n);
@@ -1245,16 +1245,16 @@ pub function sort_desc[T: Ord](arr: T[]): T[] {
 }
 
 pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n < 2) {
     return arr;
   }
 
   let a: T[] = [];
-  let c: i32 = 0;
+  let c = 0;
   while (c < n) {
     a = a.append(arr[c]);
-    c = c + 1;
+    c += 1;
   }
 
   if (n <= 32) {
@@ -1263,15 +1263,15 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
   }
 
   let bounds: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     bounds = bounds.append(i);
-    let e: i32 = i + 1;
+    let e = i + 1;
     if (e < n) {
       if (order(a[i], a[e]) > 0) {
-        let falling: boolean = true;
+        let falling = true;
         while (falling) {
-          e = e + 1;
+          e += 1;
           falling = false;
           if (e < n) {
             if (order(a[e - 1], a[e]) > 0) {
@@ -1279,19 +1279,19 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
             }
           }
         }
-        let lo: i32 = i;
-        let hi: i32 = e - 1;
+        let lo = i;
+        let hi = e - 1;
         while (lo < hi) {
-          let t: T = a[lo];
+          let t = a[lo];
           a = a.with(lo, a[hi]);
           a = a.with(hi, t);
-          lo = lo + 1;
-          hi = hi - 1;
+          lo += 1;
+          hi -= 1;
         }
       } else {
-        let rising: boolean = true;
+        let rising = true;
         while (rising) {
-          e = e + 1;
+          e += 1;
           rising = false;
           if (e < n) {
             if (order(a[e - 1], a[e]) <= 0) {
@@ -1308,41 +1308,41 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
   while (bounds.len() > 2) {
     let out: T[] = [];
     let next: i32[] = [];
-    let r: i32 = 0;
+    let r = 0;
     while (r + 1 < bounds.len()) {
-      let mlo: i32 = bounds[r];
+      let mlo = bounds[r];
       next = next.append(mlo);
       if (r + 2 < bounds.len()) {
-        let mmid: i32 = bounds[r + 1];
-        let mhi: i32 = bounds[r + 2];
-        let p: i32 = mlo;
-        let q: i32 = mmid;
+        let mmid = bounds[r + 1];
+        let mhi = bounds[r + 2];
+        let p = mlo;
+        let q = mmid;
         while (p < mmid && q < mhi) {
           if (order(a[p], a[q]) > 0) {
             out = out.append(a[q]);
-            q = q + 1;
+            q += 1;
           } else {
             out = out.append(a[p]);
-            p = p + 1;
+            p += 1;
           }
         }
         while (p < mmid) {
           out = out.append(a[p]);
-          p = p + 1;
+          p += 1;
         }
         while (q < mhi) {
           out = out.append(a[q]);
-          q = q + 1;
+          q += 1;
         }
-        r = r + 2;
+        r += 2;
       } else {
-        let mend: i32 = bounds[r + 1];
-        let mk: i32 = mlo;
+        let mend = bounds[r + 1];
+        let mk = mlo;
         while (mk < mend) {
           out = out.append(a[mk]);
-          mk = mk + 1;
+          mk += 1;
         }
-        r = r + 1;
+        r += 1;
       }
     }
     next = next.append(n);
@@ -1357,22 +1357,22 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
 ```fern
 <<13 function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T)>>=
 function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T) => i32): T[] {
-  let i: i32 = lo + 1;
+  let i = lo + 1;
   while (i < hi) {
-    let v: T = a[i];
-    let j: i32 = i - 1;
-    let moving: boolean = j >= lo;
+    let v = a[i];
+    let j = i - 1;
+    let moving = j >= lo;
     while (moving) {
       if (order(a[j], v) > 0) {
         a = a.with(j + 1, a[j]);
-        j = j - 1;
+        j -= 1;
         moving = j >= lo;
       } else {
         moving = false;
       }
     }
     a = a.with(j + 1, v);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
@@ -1382,79 +1382,79 @@ function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T) => i3
 ```fern
 <<14 pub function is_sorted_by[T](arr: T[], order: (T, T)>>=
 pub function is_sorted_by[T](arr: T[], order: (T, T) => i32): boolean {
-  let i: i32 = 1;
-  let n: i32 = arr.len();
+  let i = 1;
+  let n = arr.len();
   while (i < n) {
     if (order(arr[i], arr[i - 1]) < 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function sort_by_key[T, K: Ord](arr: T[], key: (T) => K): T[] {
-  let srcv: T[] = arr;
+  let srcv = arr;
   let srck: K[] = [];
   for x in srcv {
     srck = srck.append(key(x));
   }
-  let n: i32 = srcv.len();
+  let n = srcv.len();
   if (n < 2) {
     return srcv;
   }
-  let width: i32 = 1;
+  let width = 1;
   while (width < n) {
     let dstv: T[] = [];
     let dstk: K[] = [];
-    let c: i32 = 0;
+    let c = 0;
     while (c < n) {
       dstv = dstv.append(srcv[c]);
       dstk = dstk.append(srck[c]);
-      c = c + 1;
+      c += 1;
     }
-    let lo: i32 = 0;
+    let lo = 0;
     while (lo < n) {
-      let mid: i32 = lo + width;
+      let mid = lo + width;
       if (mid > n) {
         mid = n;
       }
-      let hi: i32 = lo + width + width;
+      let hi = lo + width + width;
       if (hi > n) {
         hi = n;
       }
-      let i: i32 = lo;
-      let j: i32 = mid;
-      let k: i32 = lo;
+      let i = lo;
+      let j = mid;
+      let k = lo;
       while (i < mid && j < hi) {
         if (srck[j].cmp(srck[i]) < 0) {
           dstv = dstv.with(k, srcv[j]);
           dstk = dstk.with(k, srck[j]);
-          j = j + 1;
+          j += 1;
         } else {
           dstv = dstv.with(k, srcv[i]);
           dstk = dstk.with(k, srck[i]);
-          i = i + 1;
+          i += 1;
         }
-        k = k + 1;
+        k += 1;
       }
       while (i < mid) {
         dstv = dstv.with(k, srcv[i]);
         dstk = dstk.with(k, srck[i]);
-        i = i + 1;
-        k = k + 1;
+        i += 1;
+        k += 1;
       }
       while (j < hi) {
         dstv = dstv.with(k, srcv[j]);
         dstk = dstk.with(k, srck[j]);
-        j = j + 1;
-        k = k + 1;
+        j += 1;
+        k += 1;
       }
       lo = lo + width + width;
     }
     srcv = dstv;
     srck = dstk;
-    width = width + width;
+    width += width;
   }
   return srcv;
 }
@@ -1484,47 +1484,47 @@ function __cmp_ascending[T: Ord](a: T, b: T): i32 {
 }
 
 function __cmp_reverse_in_place[T](own a: T[]): T[] {
-  let i: i32 = 0;
-  let j: i32 = a.len() - 1;
+  let i = 0;
+  let j = a.len() - 1;
   while (i < j) {
-    let t: T = a[i];
+    let t = a[i];
     a = a.with(i, a[j]);
     a = a.with(j, t);
-    i = i + 1;
-    j = j - 1;
+    i += 1;
+    j -= 1;
   }
   return a;
 }
 
 function __cmp_heap_sort[T](own a: T[], order: (T, T) => i32): T[] {
-  let n: i32 = a.len();
-  let start: i32 = n / 2 - 1;
+  let n = a.len();
+  let start = n / 2 - 1;
   while (start >= 0) {
     a = __cmp_sift_down(a, start, n, order);
-    start = start - 1;
+    start -= 1;
   }
-  let end: i32 = n - 1;
+  let end = n - 1;
   while (end > 0) {
-    let t: T = a[0];
+    let t = a[0];
     a = a.with(0, a[end]);
     a = a.with(end, t);
     a = __cmp_sift_down(a, 0, end, order);
-    end = end - 1;
+    end -= 1;
   }
   return a;
 }
 
 function __cmp_sift_down[T](own a: T[], root: i32, n: i32, order: (T, T) => i32): T[] {
-  let r: i32 = root;
+  let r = root;
   while (2 * r + 1 < n) {
-    let child: i32 = 2 * r + 1;
+    let child = 2 * r + 1;
     if (child + 1 < n && order(a[child], a[child + 1]) < 0) {
-      child = child + 1;
+      child += 1;
     }
     if (order(a[r], a[child]) >= 0) {
       return a;
     }
-    let t: T = a[r];
+    let t = a[r];
     a = a.with(r, a[child]);
     a = a.with(child, t);
     r = child;
@@ -1551,7 +1551,7 @@ pub function index_of[T: Eq](xs: T[], target: T): Option[i32] {
     if (x.eq(target)) {
       return Some(i);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -1572,11 +1572,11 @@ pub function distinct[T: Eq](xs: T[]): T[] {
 <<time impls>>=
 impl Display for Duration {
   function to_string(self: Duration): string {
-    let ms: i64 = __duration_millis(self);
+    let ms = __duration_millis(self);
     if (ms == 0) {
       return "0s";
     }
-    let out: string = "";
+    let out = "";
     if (ms < 0) {
       out = "-";
       ms = 0 - ms;
@@ -1584,8 +1584,8 @@ impl Display for Duration {
     let units: i64[] = [3600000, 60000, 1000, 1];
     let names: string[] = ["h", "m", "s", "ms"];
     for i in 0..4 {
-      let n: i64 = ms / units[i];
-      ms = ms % units[i];
+      let n = ms / units[i];
+      ms %= units[i];
       if (n > 0) {
         out = out + n.to_string() + names[i];
       }

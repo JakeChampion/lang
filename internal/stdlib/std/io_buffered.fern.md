@@ -90,21 +90,21 @@ pub function bytes_writer_new(): BytesWriter {
 
 pub function (w: BytesWriter) write_string(s: string): BytesWriter {
   let bs: [u8] = s.as_bytes();
-  let data: u8[] = w.data;
-  let i: i32 = 0;
+  let data = w.data;
+  let i = 0;
   while (i < bs.len()) {
     data = data.append(bs[i]);
-    i = i + 1;
+    i += 1;
   }
   return BytesWriter { ...w, data: data };
 }
 
 pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
-  let data: u8[] = w.data;
-  let i: i32 = 0;
+  let data = w.data;
+  let i = 0;
   while (i < bs.len()) {
     data = data.append(bs[i]);
-    i = i + 1;
+    i += 1;
   }
   return BytesWriter { ...w, data: data };
 }
@@ -251,7 +251,7 @@ pub function (b: BufWriter) write_u64(n: u64): Result[BufWriter, IoError] {
 
 pub function (b: BufWriter) write_i64(n: i64): Result[BufWriter, IoError] {
   if (n < 0 as i64) {
-    let w: BufWriter = b.write_string("-")?;
+    let w = b.write_string("-")?;
     return w.write_u64(0 as u64 - n as u64);
   }
   return b.write_u64(n as u64);
@@ -279,8 +279,8 @@ pub function (b: BufWriter) flush(): Result[BufWriter, IoError] {
 }
 
 pub function (own b: BufWriter) close(): Result[void, IoError] {
-  let pending: i32 = buf_len(b.buf.h);
-  let flushed: Result[BufWriter, IoError] = b.flush();
+  let pending = buf_len(b.buf.h);
+  let flushed = b.flush();
   if let Err(e) = b.w.close() {
     return Err(e);
   }
@@ -380,17 +380,17 @@ function byte_line_end_of_input[T](s: ByteLineReader, last: T): Result[(T, ByteL
 ```fern
 <<10 function copy_line_bytes(chunk: u8[], lo: i32, hi: i32): u8[]>>=
 function copy_line_bytes(chunk: u8[], lo: i32, hi: i32): u8[] {
-  let out: u8[] = __alloc_u8(hi - lo);
-  let i: i32 = lo;
+  let out = __alloc_u8(hi - lo);
+  let i = lo;
   while (i < hi) {
     out = out.with(i - lo, chunk[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function byte_line_end(chunk: u8[], pos: i32, term: i32): i32 {
-  let end: i32 = __memchr_bytes(chunk, term, pos);
+  let end = __memchr_bytes(chunk, term, pos);
   if (end < 0) {
     return chunk.len();
   }
@@ -403,17 +403,17 @@ function byte_line_end(chunk: u8[], pos: i32, term: i32): i32 {
 ```fern
 <<11 pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteLineReader), IoError]>>=
 pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteLineReader), IoError] {
-  let s: ByteLineReader = lr;
-  let b: usize = 0 as usize;
+  let s = lr;
+  let b = 0 as usize;
   while (true) {
-    let end: i32 = byte_line_end(s.chunk, s.pos, s.term);
+    let end = byte_line_end(s.chunk, s.pos, s.term);
     if (end < s.chunk.len()) {
-      end = end + 1;
+      end += 1;
       if (b == 0 as usize) {
         return Ok((Some(copy_line_bytes(s.chunk, s.pos, end)), ByteLineReader { ...s, pos: end }));
       }
       buf_push_bytes_range(b, s.chunk, s.pos, end);
-      let line: u8[] = buf_take_bytes(b);
+      let line = buf_take_bytes(b);
       buf_free(b);
       return Ok((Some(line), ByteLineReader { ...s, pos: end }));
     }
@@ -429,7 +429,7 @@ pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteL
         let none: Option[u8[]] = None;
         return byte_line_end_of_input(s, none);
       }
-      let tail: u8[] = buf_take_bytes(b);
+      let tail = buf_take_bytes(b);
       buf_free(b);
       return Ok((Some(tail), s));
     }
@@ -449,10 +449,10 @@ pub function (lr: ByteLineReader) next_line_bytes(): Result[(Option[u8[]], ByteL
 }
 
 pub function (lr: ByteLineReader) skip_line(): Result[(boolean, ByteLineReader), IoError] {
-  let s: ByteLineReader = lr;
-  let partial: boolean = false;
+  let s = lr;
+  let partial = false;
   while (true) {
-    let end: i32 = byte_line_end(s.chunk, s.pos, s.term);
+    let end = byte_line_end(s.chunk, s.pos, s.term);
     if (end < s.chunk.len()) {
       return Ok((true, ByteLineReader { ...s, pos: end + 1 }));
     }
@@ -482,16 +482,16 @@ pub function (lr: ByteLineReader) skip_line(): Result[(boolean, ByteLineReader),
 }
 
 pub function (lr: ByteLineReader) next_chunk_bytes(): Result[(Option[u8[]], ByteLineReader), IoError] {
-  let s: ByteLineReader = lr;
+  let s = lr;
   if (s.pos < s.chunk.len()) {
-    let rest: u8[] = copy_line_bytes(s.chunk, s.pos, s.chunk.len());
+    let rest = copy_line_bytes(s.chunk, s.pos, s.chunk.len());
     return Ok((Some(rest), ByteLineReader { ...s, chunk: [], pos: 0 }));
   }
   if (s.eof) {
     let none: Option[u8[]] = None;
     return byte_line_end_of_input(s, none);
   }
-  let chunk: u8[] = s.r.read_chunk_bytes(s.chunk_size)?;
+  let chunk = s.r.read_chunk_bytes(s.chunk_size)?;
   if (chunk.len() == 0) {
     return Ok((None, ByteLineReader { ...s, eof: true }));
   }
@@ -586,21 +586,21 @@ function text_second_byte_valid(lead: i32, second: i32): boolean {
 }
 
 function text_chunk_end(bytes: u8[]): i32 {
-  let n: i32 = bytes.len();
+  let n = bytes.len();
   if (n == 0) {
     return 0;
   }
-  let start: i32 = n - 1;
+  let start = n - 1;
   while (start > 0 && n - start <= 3 && bytes[start] >= 128 as u8 && bytes[start] < 192 as u8) {
-    start = start - 1;
+    start -= 1;
   }
-  let lead: i32 = bytes[start] as i32;
-  let width: i32 = text_scalar_width(lead);
+  let lead = bytes[start] as i32;
+  let width = text_scalar_width(lead);
   if (width == 0 || n - start >= width) {
     return n;
   }
   if (n - start > 1) {
-    let second: i32 = bytes[start + 1] as i32;
+    let second = bytes[start + 1] as i32;
     if (!text_second_byte_valid(lead, second)) {
       return n;
     }
@@ -625,9 +625,9 @@ pub function (lr: LineReader) next_chunk(): Result[(Option[string], LineReader),
     }
   }
   while (true) {
-    let end: i32 = text_chunk_end(bytes);
+    let end = text_chunk_end(bytes);
     if (end > 0) {
-      let prefix: u8[] = bytes;
+      let prefix = bytes;
       if (end < bytes.len()) {
         prefix = copy_line_bytes(bytes, 0, end);
       }
@@ -650,7 +650,7 @@ pub function (lr: LineReader) next_chunk(): Result[(Option[string], LineReader),
         return Err(invalid_text(raw));
       },
       Some(chunk) => {
-        let b: usize = buf_new(bytes.len() + chunk.len());
+        let b = buf_new(bytes.len() + chunk.len());
         buf_push_bytes_range(b, bytes, 0, bytes.len());
         buf_push_bytes_range(b, chunk, 0, chunk.len());
         bytes = buf_take_bytes(b);

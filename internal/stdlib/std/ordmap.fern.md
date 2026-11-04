@@ -124,15 +124,15 @@ function words_at[K: cmp.Ord](ks: K[], pre: i32): u64[] {
 }
 
 function make_leaf[K: cmp.Ord, V](ks: K[], vs: V[]): Node[K, V] {
-  let pre: i32 = shared_of(ks);
+  let pre = shared_of(ks);
   return Leaf(pre, words_at(ks, pre), ks, vs);
 }
 
 function make_branch[K: cmp.Ord, V](ks: K[], kids: Node[K, V][], sizes: i32[]): Node[K, V] {
-  let pre: i32 = shared_of(ks);
-  let total: i32 = 0;
+  let pre = shared_of(ks);
+  let total = 0;
   for x in sizes {
-    total = total + x;
+    total += x;
   }
   return Branch(pre, words_at(ks, pre), ks, kids, sizes, total);
 }
@@ -178,7 +178,7 @@ function outside[K: cmp.Ord](pre: i32, ks: K[], k: K): i32 {
 }
 
 function ties_from(ws: u64[], w: u64): i32 {
-  let n: i32 = ws.len();
+  let n = ws.len();
   if (n == 0 || w <= ws[0]) {
     return 0;
   }
@@ -189,24 +189,24 @@ function ties_from(ws: u64[], w: u64): i32 {
 }
 
 function ties_to(ws: u64[], from: i32, w: u64): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < ws.len() && ws[i] == w) {
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
 
 // The first index whose key is not below k.
 function lower[K: cmp.Ord](pre: i32, ws: u64[], ks: K[], k: K): i32 {
-  let o: i32 = outside(pre, ks, k);
+  let o = outside(pre, ks, k);
   if (o >= 0) {
     return o;
   }
-  let w: u64 = k.cmp_prefix(pre);
-  let lo: i32 = ties_from(ws, w);
-  let hi: i32 = ties_to(ws, lo, w);
+  let w = k.cmp_prefix(pre);
+  let lo = ties_from(ws, w);
+  let hi = ties_to(ws, lo, w);
   while (lo < hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
+    let mid = lo + (hi - lo) / 2;
     if (ks[mid].cmp(k) < 0) {
       lo = mid + 1;
     } else {
@@ -218,15 +218,15 @@ function lower[K: cmp.Ord](pre: i32, ws: u64[], ks: K[], k: K): i32 {
 
 // The first index whose key is above k.
 function upper[K: cmp.Ord](pre: i32, ws: u64[], ks: K[], k: K): i32 {
-  let o: i32 = outside(pre, ks, k);
+  let o = outside(pre, ks, k);
   if (o >= 0) {
     return o;
   }
-  let w: u64 = k.cmp_prefix(pre);
-  let lo: i32 = ties_from(ws, w);
-  let hi: i32 = ties_to(ws, lo, w);
+  let w = k.cmp_prefix(pre);
+  let lo = ties_from(ws, w);
+  let hi = ties_to(ws, lo, w);
   while (lo < hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
+    let mid = lo + (hi - lo) / 2;
     if (ks[mid].cmp(k) <= 0) {
       lo = mid + 1;
     } else {
@@ -238,7 +238,7 @@ function upper[K: cmp.Ord](pre: i32, ws: u64[], ks: K[], k: K): i32 {
 
 // The index of k in a leaf, or -1.
 function leaf_index[K: cmp.Ord](pre: i32, ws: u64[], ks: K[], k: K): i32 {
-  let i: i32 = lower(pre, ws, ks, k);
+  let i = lower(pre, ws, ks, k);
   if (i < ks.len() && ks[i].cmp(k) == 0) {
     return i;
   }
@@ -247,7 +247,7 @@ function leaf_index[K: cmp.Ord](pre: i32, ws: u64[], ks: K[], k: K): i32 {
 
 // The leaf that holds k when the map has it, and the index of k in that leaf.
 function find_leaf[K: cmp.Ord, V](root: Node[K, V], k: K): (Node[K, V], i32) {
-  let cur: Node[K, V] = root;
+  let cur = root;
   while (true) {
     match (cur) {
       Leaf(pre, ws, ks, vs) => {
@@ -269,37 +269,37 @@ function find_leaf[K: cmp.Ord, V](root: Node[K, V], k: K): (Node[K, V], i32) {
 ```fern
 <<array helpers>>=
 function put_at[T](xs: T[], i: i32, x: T): T[] {
-  let n: i32 = xs.len();
+  let n = xs.len();
   if (n == i) {
     return xs.append(x);
   }
   xs = xs.append(xs[n - 1]);
-  let j: i32 = n - 1;
+  let j = n - 1;
   while (j > i) {
     xs = xs.with(j, xs[j - 1]);
-    j = j - 1;
+    j -= 1;
   }
   return xs.with(i, x);
 }
 
 function cut_at[T](xs: T[], i: i32): T[] {
   let out: T[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < xs.len()) {
     if (j != i) {
       out = out.append(xs[j]);
     }
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
 
 function span[T](xs: T[], from: i32, to: i32): T[] {
   let out: T[] = [];
-  let j: i32 = from;
+  let j = from;
   while (j < to) {
     out = out.append(xs[j]);
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
@@ -326,15 +326,15 @@ struct Halves[K, V] { left: Node[K, V], sep: K, right: Node[K, V] }
 function halves[K: cmp.Ord, V](n: Node[K, V]): Halves[K, V] {
   match (n) {
     Leaf(pre, ws, ks, vs) => {
-      let h: i32 = ks.len() / 2;
-      let w: i32 = ks.len();
+      let h = ks.len() / 2;
+      let w = ks.len();
       return Halves { left: make_leaf(span(ks, 0, h), span(vs, 0, h)), sep: ks[h], right: make_leaf(span(ks, h, w), span(vs, h, w)) };
     },
     Branch(pre, ws, ks, kids, sizes, total) => {
-      let h: i32 = kids.len() / 2;
-      let w: i32 = kids.len();
-      let left: Node[K, V] = make_branch(span(ks, 0, h - 1), span(kids, 0, h), span(sizes, 0, h));
-      let right: Node[K, V] = make_branch(span(ks, h, w - 1), span(kids, h, w), span(sizes, h, w));
+      let h = kids.len() / 2;
+      let w = kids.len();
+      let left = make_branch(span(ks, 0, h - 1), span(kids, 0, h), span(sizes, 0, h));
+      let right = make_branch(span(ks, h, w - 1), span(kids, h, w), span(sizes, h, w));
       return Halves { left: left, sep: ks[h - 1], right: right };
     }
   }
@@ -343,7 +343,7 @@ function halves[K: cmp.Ord, V](n: Node[K, V]): Halves[K, V] {
 // The shared count after key i of ks is new: lower when the key is at an end and shares fewer bytes.
 function refit[K: cmp.Ord](pre: i32, ks: K[], i: i32): i32 {
   if (pre > 0 && (i == 0 || i == ks.len() - 1)) {
-    let s: i32 = shared_of(ks);
+    let s = shared_of(ks);
     if (s < pre) {
       return s;
     }
@@ -361,7 +361,7 @@ function fitted_words[K: cmp.Ord](old: i32, pre: i32, ws: u64[], ks: K[], i: i32
 
 // A node too wide to keep needs no prefixes: halves makes them for each half.
 function leaf_insert[K: cmp.Ord, V](pre: i32, ws: u64[], ks: K[], vs: V[], k: K, v: V): Node[K, V] {
-  let i: i32 = lower(pre, ws, ks, k);
+  let i = lower(pre, ws, ks, k);
   if (i < ks.len() && ks[i].cmp(k) == 0) {
     return Leaf(pre, ws, ks.with(i, k), vs.with(i, v));
   }
@@ -370,17 +370,17 @@ function leaf_insert[K: cmp.Ord, V](pre: i32, ws: u64[], ks: K[], vs: V[], k: K,
   if (ks.len() > NODE_MAX) {
     return Leaf(pre, ws, ks, vs);
   }
-  let np: i32 = refit(pre, ks, i);
+  let np = refit(pre, ks, i);
   return Leaf(np, fitted_words(pre, np, ws, ks, i), ks, vs);
 }
 
 // Child i is now c. A child too wide to keep becomes two children with a separator between them.
 function branch_put[K: cmp.Ord, V](pre: i32, ws: u64[], ks: K[], kids: Node[K, V][], sizes: i32[], total: i32, i: i32, c: Node[K, V]): Node[K, V] {
-  let grow: i32 = node_size(c) - sizes[i];
+  let grow = node_size(c) - sizes[i];
   if (node_width(c) <= NODE_MAX) {
     return Branch(pre, ws, ks, kids.with(i, c), sizes.with(i, sizes[i] + grow), total + grow);
   }
-  let h: Halves[K, V] = halves(c);
+  let h = halves(c);
   sizes = sizes.with(i, node_size(h.left));
   sizes = put_at(sizes, i + 1, node_size(h.right));
   kids = kids.with(i, h.left);
@@ -389,7 +389,7 @@ function branch_put[K: cmp.Ord, V](pre: i32, ws: u64[], ks: K[], kids: Node[K, V
   if (kids.len() > NODE_MAX) {
     return Branch(pre, ws, ks, kids, sizes, total + grow);
   }
-  let np: i32 = refit(pre, ks, i);
+  let np = refit(pre, ks, i);
   return Branch(np, fitted_words(pre, np, ws, ks, i), ks, kids, sizes, total + grow);
 }
 
@@ -399,7 +399,7 @@ function node_insert[K: cmp.Ord, V](n: Node[K, V], k: K, v: V): Node[K, V] {
       return leaf_insert(pre, ws, ks, vs, k, v);
     },
     Branch(pre, ws, ks, kids, sizes, total) => {
-      let i: i32 = upper(pre, ws, ks, k);
+      let i = upper(pre, ws, ks, k);
       return branch_put(pre, ws, ks, kids, sizes, total, i, node_insert(kids[i], k, v));
     }
   }
@@ -410,7 +410,7 @@ function grown_root[K: cmp.Ord, V](n: Node[K, V]): Node[K, V] {
   if (node_width(n) <= NODE_MAX) {
     return n;
   }
-  let h: Halves[K, V] = halves(n);
+  let h = halves(n);
   return make_branch([h.sep], [h.left, h.right], [node_size(h.left), node_size(h.right)]);
 }
 ```
@@ -449,17 +449,17 @@ function merge_nodes[K: cmp.Ord, V](a: Node[K, V], sep: K, b: Node[K, V]): Node[
 // Children i and i + 1 merged into c.
 function branch_merged[K: cmp.Ord, V](ws: u64[], ks: K[], kids: Node[K, V][], sizes: i32[], i: i32, c: Node[K, V], pre: i32): Node[K, V] {
   if (node_width(c) <= NODE_MAX) {
-    let nk: Node[K, V][] = cut_at(kids, i + 1).with(i, c);
-    let ns: i32[] = cut_at(sizes, i + 1).with(i, node_size(c));
-    let total: i32 = 0;
+    let nk = cut_at(kids, i + 1).with(i, c);
+    let ns = cut_at(sizes, i + 1).with(i, node_size(c));
+    let total = 0;
     for x in ns {
-      total = total + x;
+      total += x;
     }
     return Branch(pre, cut_at(ws, i), cut_at(ks, i), nk, ns, total);
   }
-  let h: Halves[K, V] = halves(c);
-  let nk: Node[K, V][] = kids.with(i, h.left).with(i + 1, h.right);
-  let ns: i32[] = sizes.with(i, node_size(h.left)).with(i + 1, node_size(h.right));
+  let h = halves(c);
+  let nk = kids.with(i, h.left).with(i + 1, h.right);
+  let ns = sizes.with(i, node_size(h.left)).with(i + 1, node_size(h.right));
   return make_branch(ks.with(i, h.sep), nk, ns);
 }
 ```
@@ -473,16 +473,16 @@ A removal gives back the changed node, and a caller sees from its size whether t
 function node_remove[K: cmp.Ord, V](n: Node[K, V], k: K): Node[K, V] {
   match (n) {
     Leaf(pre, ws, ks, vs) => {
-      let i: i32 = leaf_index(pre, ws, ks, k);
+      let i = leaf_index(pre, ws, ks, k);
       if (i < 0) {
         return Leaf(pre, ws, ks, vs);
       }
       return Leaf(pre, cut_at(ws, i), cut_at(ks, i), cut_at(vs, i));
     },
     Branch(pre, ws, ks, kids, sizes, total) => {
-      let i: i32 = upper(pre, ws, ks, k);
-      let c: Node[K, V] = node_remove(kids[i], k);
-      let left: i32 = node_size(c);
+      let i = upper(pre, ws, ks, k);
+      let c = node_remove(kids[i], k);
+      let left = node_size(c);
       if (left == sizes[i]) {
         return Branch(pre, ws, ks, kids.with(i, c), sizes, total);
       }
@@ -531,15 +531,15 @@ function tree_of[K: cmp.Ord, V](n: Node[K, V], height: i32): Tree[K, V] {
 }
 
 function node_height[K, V](n: Node[K, V]): i32 {
-  let h: i32 = 0;
-  let cur: Node[K, V] = n;
+  let h = 0;
+  let cur = n;
   while (true) {
     match (cur) {
       Leaf(pre, ws, ks, vs) => {
         return h;
       },
       Branch(pre, ws, ks, kids, sizes, total) => {
-        h = h + 1;
+        h += 1;
         cur = kids[0];
       }
     }
@@ -549,7 +549,7 @@ function node_height[K, V](n: Node[K, V]): i32 {
 
 // The smallest key of a nonempty node.
 function first_key[K, V](n: Node[K, V]): K {
-  let cur: Node[K, V] = n;
+  let cur = n;
   while (true) {
     match (cur) {
       Leaf(pre, ws, ks, vs) => {
@@ -570,7 +570,7 @@ function join_right[K: cmp.Ord, V](l: Node[K, V], hl: i32, r: Node[K, V], hr: i3
       return l;
     },
     Branch(pre, ws, ks, kids, sizes, total) => {
-      let i: i32 = kids.len() - 1;
+      let i = kids.len() - 1;
       if (hl - 1 == hr) {
         return branch_put(pre, ws, ks, kids, sizes, total, i, merge_nodes(kids[i], first_key(r), r));
       }
@@ -626,15 +626,15 @@ function split_side[K: cmp.Ord, V](n: Node[K, V], height: i32, k: K, above: bool
   match (n) {
     Leaf(pre, ws, ks, vs) => {
       if (above) {
-        let i: i32 = upper(pre, ws, ks, k);
+        let i = upper(pre, ws, ks, k);
         return Tree { root: make_leaf(span(ks, i, ks.len()), span(vs, i, ks.len())), height: 0 };
       }
-      let j: i32 = lower(pre, ws, ks, k);
+      let j = lower(pre, ws, ks, k);
       return Tree { root: make_leaf(span(ks, 0, j), span(vs, 0, j)), height: 0 };
     },
     Branch(pre, ws, ks, kids, sizes, total) => {
-      let i: i32 = upper(pre, ws, ks, k);
-      let part: Tree[K, V] = split_side(kids[i], height - 1, k, above);
+      let i = upper(pre, ws, ks, k);
+      let part = split_side(kids[i], height - 1, k, above);
       if (above) {
         return join(part, children_tree(ks, kids, sizes, i + 1, kids.len(), height));
       }
@@ -652,25 +652,25 @@ function split_side[K: cmp.Ord, V](n: Node[K, V], height: i32, k: K, above: bool
 <<building from sorted entries>>=
 // The number of nodes for n items.
 function node_count(n: i32): i32 {
-  let fill: i32 = NODE_MAX * 3 / 4;
+  let fill = NODE_MAX * 3 / 4;
   return (n + fill - 1) / fill;
 }
 
 function build[K: cmp.Ord, V](ks: K[], vs: V[]): Node[K, V] {
-  let n: i32 = ks.len();
-  let parts: i32 = node_count(n);
+  let n = ks.len();
+  let parts = node_count(n);
   if (parts <= 1) {
     return make_leaf(ks, vs);
   }
   let level: Node[K, V][] = [];
   let firsts: K[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < parts) {
-    let from: i32 = n * p / parts;
-    let to: i32 = n * (p + 1) / parts;
+    let from = n * p / parts;
+    let to = n * (p + 1) / parts;
     level = level.append(make_leaf(span(ks, from, to), span(vs, from, to)));
     firsts = firsts.append(ks[from]);
-    p = p + 1;
+    p += 1;
   }
   return build_up(level, firsts);
 }
@@ -678,29 +678,29 @@ function build[K: cmp.Ord, V](ks: K[], vs: V[]): Node[K, V] {
 // Branches over one level of nodes, until one node is left.
 function build_up[K: cmp.Ord, V](level: Node[K, V][], firsts: K[]): Node[K, V] {
   while (level.len() > 1) {
-    let n: i32 = level.len();
-    let parts: i32 = node_count(n);
+    let n = level.len();
+    let parts = node_count(n);
     let up: Node[K, V][] = [];
     let ufirsts: K[] = [];
-    let p: i32 = 0;
+    let p = 0;
     while (p < parts) {
-      let from: i32 = n * p / parts;
-      let to: i32 = n * (p + 1) / parts;
+      let from = n * p / parts;
+      let to = n * (p + 1) / parts;
       let ks: K[] = [];
       let kids: Node[K, V][] = [];
       let sizes: i32[] = [];
-      let j: i32 = from;
+      let j = from;
       while (j < to) {
         if (j > from) {
           ks = ks.append(firsts[j]);
         }
         kids = kids.append(level[j]);
         sizes = sizes.append(node_size(level[j]));
-        j = j + 1;
+        j += 1;
       }
       up = up.append(make_branch(ks, kids, sizes));
       ufirsts = ufirsts.append(firsts[from]);
-      p = p + 1;
+      p += 1;
     }
     level = up;
     firsts = ufirsts;
@@ -720,16 +720,16 @@ function of_entries[K: cmp.Ord, V](ks: K[], vs: V[]): OrdMap[K, V] {
 function node_fold[K, V, A](n: Node[K, V], init: A, f: (A, K, V) => A): A {
   match (n) {
     Leaf(pre, ws, ks, vs) => {
-      let a: A = init;
-      let i: i32 = 0;
+      let a = init;
+      let i = 0;
       while (i < ks.len()) {
         a = f(a, ks[i], vs[i]);
-        i = i + 1;
+        i += 1;
       }
       return a;
     },
     Branch(pre, ws, ks, kids, sizes, total) => {
-      let a: A = init;
+      let a = init;
       for c in kids {
         a = node_fold(c, a, f);
       }
@@ -741,10 +741,10 @@ function node_fold[K, V, A](n: Node[K, V], init: A, f: (A, K, V) => A): A {
 function node_for_each[K, V](n: Node[K, V], f: (K, V) => void): void {
   match (n) {
     Leaf(pre, ws, ks, vs) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < ks.len()) {
         f(ks[i], vs[i]);
-        i = i + 1;
+        i += 1;
       }
     },
     Branch(pre, ws, ks, kids, sizes, total) => {
@@ -804,18 +804,18 @@ function node_map_values[K, V, W](n: Node[K, V], f: (V) => W): Node[K, W] {
 
 // The leaf that holds entry i, and the index of the entry in it.
 function node_at[K, V](n: Node[K, V], i: i32): (Node[K, V], i32) {
-  let cur: Node[K, V] = n;
-  let want: i32 = i;
+  let cur = n;
+  let want = i;
   while (true) {
     match (cur) {
       Leaf(pre, ws, ks, vs) => {
         return (cur, want);
       },
       Branch(pre, ws, ks, kids, sizes, total) => {
-        let j: i32 = 0;
+        let j = 0;
         while (want >= sizes[j]) {
-          want = want - sizes[j];
-          j = j + 1;
+          want -= sizes[j];
+          j += 1;
         }
         cur = kids[j];
       }
@@ -825,23 +825,23 @@ function node_at[K, V](n: Node[K, V], i: i32): (Node[K, V], i32) {
 }
 
 function node_rank[K: cmp.Ord, V](n: Node[K, V], k: K): i32 {
-  let cur: Node[K, V] = n;
-  let below: i32 = 0;
+  let cur = n;
+  let below = 0;
   while (true) {
     match (cur) {
       Leaf(pre, ws, ks, vs) => {
-        let i: i32 = leaf_index(pre, ws, ks, k);
+        let i = leaf_index(pre, ws, ks, k);
         if (i < 0) {
           return -1;
         }
         return below + i;
       },
       Branch(pre, ws, ks, kids, sizes, total) => {
-        let j: i32 = upper(pre, ws, ks, k);
-        let c: i32 = 0;
+        let j = upper(pre, ws, ks, k);
+        let c = 0;
         while (c < j) {
-          below = below + sizes[c];
-          c = c + 1;
+          below += sizes[c];
+          c += 1;
         }
         cur = kids[j];
       }
@@ -852,7 +852,7 @@ function node_rank[K: cmp.Ord, V](n: Node[K, V], k: K): i32 {
 
 // The leaf at the end of the tree: the last leaf when last is true, else the first.
 function edge_leaf[K, V](n: Node[K, V], last: boolean): Node[K, V] {
-  let cur: Node[K, V] = n;
+  let cur = n;
   while (true) {
     match (cur) {
       Leaf(pre, ws, ks, vs) => {
@@ -882,12 +882,12 @@ function prefixes_valid[K: cmp.Ord](pre: i32, ws: u64[], ks: K[]): boolean {
   if (ws.len() != ks.len() || pre < 0 || ks.len() > 0 && pre > ks[0].cmp_shared(ks[ks.len() - 1])) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < ks.len()) {
     if (ws[i] != ks[i].cmp_prefix(pre) || i > 0 && ks[i - 1].cmp(ks[i]) >= 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -897,7 +897,7 @@ function bounds_valid[K: cmp.Ord](ks: K[], lo: Option[K], hi: Option[K]): boolea
   if (ks.len() == 0) {
     return true;
   }
-  let above: boolean = true;
+  let above = true;
   match (lo) {
     Some(b) => {
       above = ks[0].cmp(b) >= 0;
@@ -916,12 +916,12 @@ function bounds_valid[K: cmp.Ord](ks: K[], lo: Option[K], hi: Option[K]): boolea
 
 // Each child is valid between the separators on either side of it, and the sizes add up to total.
 function children_valid[K: cmp.Ord, V](ks: K[], kids: Node[K, V][], sizes: i32[], total: i32, height: i32, lo: Option[K], hi: Option[K]): boolean {
-  let sum: i32 = 0;
-  let i: i32 = 0;
+  let sum = 0;
+  let i = 0;
   while (i < kids.len()) {
-    sum = sum + sizes[i];
-    let clo: Option[K] = lo;
-    let chi: Option[K] = hi;
+    sum += sizes[i];
+    let clo = lo;
+    let chi = hi;
     if (i > 0) {
       clo = Some(ks[i - 1]);
     }
@@ -931,7 +931,7 @@ function children_valid[K: cmp.Ord, V](ks: K[], kids: Node[K, V][], sizes: i32[]
     if (sizes[i] != node_size(kids[i]) || !node_valid(kids[i], height - 1, false, clo, chi)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return sum == total;
 }
@@ -941,7 +941,7 @@ function keys_valid[K: cmp.Ord](pre: i32, ws: u64[], ks: K[], lo: Option[K], hi:
 }
 
 function width_valid[K, V](n: Node[K, V], is_root: boolean): boolean {
-  let width: i32 = node_width(n);
+  let width = node_width(n);
   return width <= NODE_MAX && (is_root || width >= NODE_MIN);
 }
 
@@ -978,7 +978,7 @@ pub struct OrdIter[K, V] { path: Node[K, V][], at: i32[], leaf: Node[K, V], i: i
 
 // The iterator at the first entry under n, below the given path.
 function iter_down[K, V](path: Node[K, V][], at: i32[], n: Node[K, V]): OrdIter[K, V] {
-  let cur: Node[K, V] = n;
+  let cur = n;
   while (true) {
     match (cur) {
       Leaf(pre, ws, ks, vs) => {
@@ -997,11 +997,11 @@ function iter_down[K, V](path: Node[K, V][], at: i32[], n: Node[K, V]): OrdIter[
 // The iterator at the first entry of the leaf after the current one.
 function iter_next_leaf[K, V](path: Node[K, V][], at: i32[]): OrdIter[K, V] {
   while (path.len() > 0) {
-    let top: i32 = path.len() - 1;
+    let top = path.len() - 1;
     match (path[top]) {
       Leaf(pre, ws, ks, vs) => {},
       Branch(pre, ws, ks, kids, sizes, total) => {
-        let j: i32 = at[top] + 1;
+        let j = at[top] + 1;
         if (j < kids.len()) {
           at = at.with(top, j);
           return iter_down(path, at, kids[j]);
@@ -1104,7 +1104,7 @@ pub function (m: OrdMap[K: cmp.Ord, V]) contains(k: K): boolean {
 }
 
 pub function (m: OrdMap[K: cmp.Ord, V]) update(k: K, init: V, f: (V) => V): OrdMap[K, V] {
-  let v: V = m.get_or(k, init);
+  let v = m.get_or(k, init);
   return m.insert(k, f(v));
 }
 
@@ -1189,7 +1189,7 @@ pub function (m: OrdMap[K, V]) value_at(i: i32): Option[V] {
 }
 
 pub function (m: OrdMap[K: cmp.Ord, V]) index_of(k: K): Option[i32] {
-  let i: i32 = node_rank(m.root, k);
+  let i = node_rank(m.root, k);
   if (i < 0) {
     return None;
   }
@@ -1244,14 +1244,14 @@ function much_smaller(a: i32, b: i32): boolean {
 // The entries of both maps; a key in both takes its value from other.
 pub function (m: OrdMap[K: cmp.Ord, V]) merge(other: OrdMap[K, V]): OrdMap[K, V] {
   if (much_smaller(other.len(), m.len())) {
-    let out: OrdMap[K, V] = m;
+    let out = m;
     for e in other.iter() {
       out = out.insert(e.0, e.1);
     }
     return out;
   }
   if (much_smaller(m.len(), other.len())) {
-    let out: OrdMap[K, V] = other;
+    let out = other;
     for e in m.iter() {
       if (!out.contains(e.0)) {
         out = out.insert(e.0, e.1);
@@ -1266,10 +1266,10 @@ pub function (m: OrdMap[K: cmp.Ord, V]) merge(other: OrdMap[K, V]): OrdMap[K, V]
 function merged[K: cmp.Ord, V](a: K[], av: V[], b: K[], bv: V[]): OrdMap[K, V] {
   let ks: K[] = [];
   let vs: V[] = [];
-  let i: i32 = 0;
-  let j: i32 = 0;
+  let i = 0;
+  let j = 0;
   while (i < a.len() || j < b.len()) {
-    let c: i32 = 1;
+    let c = 1;
     if (j == b.len()) {
       c = -1;
     } else if (i < a.len()) {
@@ -1278,14 +1278,14 @@ function merged[K: cmp.Ord, V](a: K[], av: V[], b: K[], bv: V[]): OrdMap[K, V] {
     if (c < 0) {
       ks = ks.append(a[i]);
       vs = vs.append(av[i]);
-      i = i + 1;
+      i += 1;
     } else {
       ks = ks.append(b[j]);
       vs = vs.append(bv[j]);
       if (c == 0) {
-        i = i + 1;
+        i += 1;
       }
-      j = j + 1;
+      j += 1;
     }
   }
   return of_entries(ks, vs);
@@ -1318,22 +1318,22 @@ pub function (m: OrdMap[K: cmp.Ord, V]) intersection(other: OrdMap[K, V]): OrdMa
   if (much_smaller(m.len(), other.len())) {
     return m.filter((k: K, v: V): boolean => other.contains(k));
   }
-  let a: K[] = m.keys();
-  let av: V[] = m.values();
-  let b: K[] = other.keys();
-  let i: i32 = 0;
-  let j: i32 = 0;
+  let a = m.keys();
+  let av = m.values();
+  let b = other.keys();
+  let i = 0;
+  let j = 0;
   while (i < a.len() && j < b.len()) {
-    let c: i32 = a[i].cmp(b[j]);
+    let c = a[i].cmp(b[j]);
     if (c == 0) {
       ks = ks.append(a[i]);
       vs = vs.append(av[i]);
-      i = i + 1;
-      j = j + 1;
+      i += 1;
+      j += 1;
     } else if (c < 0) {
-      i = i + 1;
+      i += 1;
     } else {
-      j = j + 1;
+      j += 1;
     }
   }
   return of_entries(ks, vs);
@@ -1342,7 +1342,7 @@ pub function (m: OrdMap[K: cmp.Ord, V]) intersection(other: OrdMap[K, V]): OrdMa
 // The entries of m whose keys are not in other.
 pub function (m: OrdMap[K: cmp.Ord, V]) difference(other: OrdMap[K, V]): OrdMap[K, V] {
   if (much_smaller(other.len(), m.len())) {
-    let out: OrdMap[K, V] = m;
+    let out = m;
     for e in other.iter() {
       out = out.remove(e.0);
     }
@@ -1353,37 +1353,37 @@ pub function (m: OrdMap[K: cmp.Ord, V]) difference(other: OrdMap[K, V]): OrdMap[
   }
   let ks: K[] = [];
   let vs: V[] = [];
-  let a: K[] = m.keys();
-  let av: V[] = m.values();
-  let b: K[] = other.keys();
-  let i: i32 = 0;
-  let j: i32 = 0;
+  let a = m.keys();
+  let av = m.values();
+  let b = other.keys();
+  let i = 0;
+  let j = 0;
   while (i < a.len()) {
-    let c: i32 = -1;
+    let c = -1;
     if (j < b.len()) {
       c = a[i].cmp(b[j]);
     }
     if (c < 0) {
       ks = ks.append(a[i]);
       vs = vs.append(av[i]);
-      i = i + 1;
+      i += 1;
     } else if (c == 0) {
-      i = i + 1;
-      j = j + 1;
+      i += 1;
+      j += 1;
     } else {
-      j = j + 1;
+      j += 1;
     }
   }
   return of_entries(ks, vs);
 }
 
 pub function (m: OrdMap[K: cmp.Ord, V]) split_lt(k: K): OrdMap[K, V] {
-  let t: Tree[K, V] = split_side(m.root, node_height(m.root), k, false);
+  let t = split_side(m.root, node_height(m.root), k, false);
   return OrdMap { root: shrunk_root(t.root) };
 }
 
 pub function (m: OrdMap[K: cmp.Ord, V]) split_gt(k: K): OrdMap[K, V] {
-  let t: Tree[K, V] = split_side(m.root, node_height(m.root), k, true);
+  let t = split_side(m.root, node_height(m.root), k, true);
   return OrdMap { root: shrunk_root(t.root) };
 }
 
@@ -1396,16 +1396,16 @@ impl[K: cmp.Ord, V: cmp.Eq] cmp.Eq for OrdMap[K, V] {
     if (self.len() != other.len()) {
       return false;
     }
-    let ak: K[] = self.keys();
-    let bk: K[] = other.keys();
-    let av: V[] = self.values();
-    let bv: V[] = other.values();
-    let i: i32 = 0;
+    let ak = self.keys();
+    let bk = other.keys();
+    let av = self.values();
+    let bv = other.values();
+    let i = 0;
     while (i < ak.len()) {
       if (ak[i].cmp(bk[i]) != 0 || av[i] != bv[i]) {
         return false;
       }
-      i = i + 1;
+      i += 1;
     }
     return true;
   }
@@ -1414,20 +1414,20 @@ impl[K: cmp.Ord, V: cmp.Eq] cmp.Eq for OrdMap[K, V] {
 // Maps compare as their sorted (key, value) sequences, in lexicographic order.
 impl[K: cmp.Ord, V: cmp.Ord] cmp.Ord for OrdMap[K, V] {
   function cmp(self: OrdMap[K, V], other: OrdMap[K, V]): i32 {
-    let ak: K[] = self.keys();
-    let bk: K[] = other.keys();
-    let av: V[] = self.values();
-    let bv: V[] = other.values();
-    let i: i32 = 0;
+    let ak = self.keys();
+    let bk = other.keys();
+    let av = self.values();
+    let bv = other.values();
+    let i = 0;
     while (i < ak.len() && i < bk.len()) {
-      let c: i32 = ak[i].cmp(bk[i]);
+      let c = ak[i].cmp(bk[i]);
       if (c == 0) {
         c = av[i].cmp(bv[i]);
       }
       if (c != 0) {
         return c;
       }
-      i = i + 1;
+      i += 1;
     }
     return ak.len().cmp(bk.len());
   }
@@ -1441,16 +1441,16 @@ impl[K: cmp.Hash, V: cmp.Hash] cmp.Hash for OrdMap[K, V] {
 
 impl[K: cmp.Display, V: cmp.Display] cmp.Display for OrdMap[K, V] {
   function to_string(self: OrdMap[K, V]): string {
-    let out: string = "{";
-    let ks: K[] = self.keys();
-    let vs: V[] = self.values();
-    let i: i32 = 0;
+    let out = "{";
+    let ks = self.keys();
+    let vs = self.values();
+    let i = 0;
     while (i < ks.len()) {
       if (i > 0) {
-        out = out + ", ";
+        out += ", ";
       }
       out = out + ks[i].to_string() + ": " + vs[i].to_string();
-      i = i + 1;
+      i += 1;
     }
     return out + "}";
   }

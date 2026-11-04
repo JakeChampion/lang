@@ -1,0 +1,33 @@
+// A let-else binding of a call result is a local like any other let. A copy
+// of it does not consume it, and an update of the binding leaves the copy as
+// it was.
+function make(): Result[u8[], string] {
+  return Ok([1, 2]);
+}
+
+function keep(own xs: u8[]): i32 {
+  return xs.len() as i32;
+}
+
+function copied_then_updated(): string {
+  let Ok(first) = make() else {
+    return "none";
+  };
+  let retained = first;
+  first = first.with(0, 77);
+  return f"{retained[0]} {first[0]}";
+}
+
+function copied_then_moved(): i32 {
+  let Ok(first) = make() else {
+    return 0;
+  };
+  let retained = first;
+  return keep(first) + retained[1] as i32;
+}
+
+pub function main(): i32 {
+  print(copied_then_updated());
+  print(copied_then_moved().to_string());
+  return 0;
+}

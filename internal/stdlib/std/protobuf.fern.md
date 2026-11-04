@@ -60,18 +60,18 @@ pub struct Field { number: i32, wire: i32, word: i64, bytes: u8[] }
 <<3 pub function decode(bytes: [u8]): Result[Field[], DecodeError]>>=
 pub function decode(bytes: [u8]): Result[Field[], DecodeError] {
   let out: Field[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < bytes.len()) {
-    let tag_at: i32 = at;
+    let tag_at = at;
     match (__varint(bytes, at, 0)) {
       Ok(tag) => {
         at = tag.1;
-        let raw_number: u64 = tag.0 as u64 >> 3;
+        let raw_number = tag.0 as u64 >> 3;
         if (raw_number == 0 || raw_number > 536870911) {
           return Err(__error(InvalidFieldNumber(raw_number), tag_at, 0));
         }
-        let number: i32 = raw_number as i32;
-        let wire: i32 = (tag.0 & 7 as i64) as i32;
+        let number = raw_number as i32;
+        let wire = (tag.0 & 7 as i64) as i32;
         match (__value(bytes, at, number, wire, tag_at)) {
           Ok(got) => {
             out = out.append(got.0);
@@ -120,18 +120,18 @@ function __value(bytes: [u8], at: i32, number: i32, wire: i32, tag_at: i32): Res
 }
 
 function __fixed(bytes: [u8], at: i32, number: i32, wire: i32): Result[(Field, i32), DecodeError] {
-  let n: i32 = 8;
+  let n = 8;
   if (wire == FIXED32) {
     n = 4;
   }
   if (n > bytes.len() - at) {
     return Err(__error(FixedOutOfBounds(n, bytes.len() - at), at, number));
   }
-  let word: i64 = 0 as i64;
-  let i: i32 = n - 1;
+  let word = 0 as i64;
+  let i = n - 1;
   while (i >= 0) {
     word = word << 8 | bytes[at + i] as i64;
-    i = i - 1;
+    i -= 1;
   }
   let none: u8[] = [];
   return Ok((Field { number: number, wire: wire, word: word, bytes: none }, at + n));
@@ -140,17 +140,17 @@ function __fixed(bytes: [u8], at: i32, number: i32, wire: i32): Result[(Field, i
 function __delimited(bytes: [u8], at: i32, number: i32): Result[(Field, i32), DecodeError] {
   match (__varint(bytes, at, number)) {
     Ok(len) => {
-      let size: u64 = len.0 as u64;
-      let remaining: i32 = bytes.len() - len.1;
+      let size = len.0 as u64;
+      let remaining = bytes.len() - len.1;
       if (size > remaining as u64) {
         return Err(__error(LengthOutOfBounds(size, remaining), at, number));
       }
-      let n: i32 = size as i32;
+      let n = size as i32;
       let taken: u8[] = [];
-      let i: i32 = len.1;
+      let i = len.1;
       while (i < len.1 + n) {
         taken = taken.append(bytes[i]);
-        i = i + 1;
+        i += 1;
       }
       return Ok((Field { number: number, wire: BYTES, word: 0 as i64, bytes: taken }, len.1 + n));
     },
@@ -162,20 +162,20 @@ function __delimited(bytes: [u8], at: i32, number: i32): Result[(Field, i32), De
 }
 
 function __varint(bytes: [u8], at: i32, field: i32): Result[(i64, i32), DecodeError] {
-  let value: i64 = 0 as i64;
+  let value = 0 as i64;
   let shift: i32 = 0;
-  let i: i32 = at;
+  let i = at;
   while (i < bytes.len()) {
-    let b: i32 = bytes[i] as i32;
+    let b = bytes[i] as i32;
     if (shift == 63 && b > 1) {
       return Err(__error(VarintOverflow, i, field));
     }
     value = value | (b & 127) as i64 << shift;
-    i = i + 1;
+    i += 1;
     if (b < 128) {
       return Ok((value, i));
     }
-    shift = shift + 7;
+    shift += 7;
   }
   return Err(__error(UnexpectedEnd, i, field));
 }
@@ -220,7 +220,7 @@ pub function varint_field(number: i32, value: i64): u8[] {
 }
 
 pub function bytes_field(number: i32, value: [u8]): u8[] {
-  let out: u8[] = encode_varint(number as i64 << 3 | BYTES as i64).concat(encode_varint(value.len() as i64));
+  let out = encode_varint(number as i64 << 3 | BYTES as i64).concat(encode_varint(value.len() as i64));
   for byte in value {
     out = out.append(byte);
   }
@@ -233,12 +233,12 @@ pub function string_field(number: i32, value: string): u8[] {
 
 pub function encode_varint(value: i64): u8[] {
   let out: u8[] = [];
-  let v: i64 = value;
-  let left: i32 = 10;
+  let v = value;
+  let left = 10;
   while (left > 0) {
-    let low: i32 = (v & 127 as i64) as i32;
+    let low = (v & 127 as i64) as i32;
     v = v >> 7 & 144115188075855871 as i64;
-    left = left - 1;
+    left -= 1;
     if (v == 0 as i64 || left == 0) {
       out = out.append(low as u8);
       return out;
@@ -280,7 +280,7 @@ pub function (e: DecodeError) message(): string {
 }
 
 pub function (e: DecodeError) to_string(): string {
-  let prefix: string = "byte " + e.offset.to_string() + ": ";
+  let prefix = "byte " + e.offset.to_string() + ": ";
   if (e.field != 0) {
     prefix = prefix + "field " + e.field.to_string() + ": ";
   }

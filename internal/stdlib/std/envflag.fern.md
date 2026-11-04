@@ -82,16 +82,16 @@ function __folds_to(s: string, w: string): boolean {
   if (s.len() != w.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: u8 = s[i];
+    let c = s[i];
     if (c >= b'A' && c <= b'Z') {
-      c = c + 32u8;
+      c += 32u8;
     }
     if (c != w[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

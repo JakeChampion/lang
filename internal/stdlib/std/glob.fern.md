@@ -47,29 +47,29 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<2 function __glob_class(p: string, start: i32, ch: i32): (boolean, i32)>>=
 function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
-  let i: i32 = start + 1;
-  let negate: boolean = false;
+  let i = start + 1;
+  let negate = false;
   if (i < p.len() && (p[i] == 33 || p[i] == 94)) {
     negate = true;
-    i = i + 1;
+    i += 1;
   }
-  let matched: boolean = false;
-  let first: boolean = true;
+  let matched = false;
+  let first = true;
   while (i < p.len() && (p[i] != 93 || first)) {
     first = false;
     if (i + 2 < p.len() && p[i + 1] == 45 && p[i + 2] != 93) {
       if (ch >= p[i] as i32 && ch <= p[i + 2] as i32) {
         matched = true;
       }
-      i = i + 3;
+      i += 3;
     } else {
       if (ch == p[i] as i32) {
         matched = true;
       }
-      i = i + 1;
+      i += 1;
     }
   }
-  let next: i32 = i;
+  let next = i;
   if (i < p.len()) {
     next = i + 1;
   }
@@ -80,32 +80,32 @@ function __glob_class(p: string, start: i32, ch: i32): (boolean, i32) {
 }
 
 function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
-  let pi: i32 = i;
-  let tj: i32 = j;
+  let pi = i;
+  let tj = j;
   while (pi < p.len()) {
-    let pc: i32 = p[pi] as i32;
+    let pc = p[pi] as i32;
     if (pc == 42) {
       if (pi + 1 < p.len() && p[pi + 1] == 42) {
-        let ni: i32 = pi;
+        let ni = pi;
         while (ni < p.len() && p[ni] == 42) {
-          ni = ni + 1;
+          ni += 1;
         }
         if (ni < p.len() && p[ni] == 47) {
           if (__glob_match(p, ni + 1, t, tj)) {
             return true;
           }
         }
-        let k: i32 = tj;
+        let k = tj;
         while (k <= t.len()) {
           if (__glob_match(p, ni, t, k)) {
             return true;
           }
-          k = k + 1;
+          k += 1;
         }
         return false;
       }
-      let m: i32 = tj;
-      let cont: boolean = true;
+      let m = tj;
+      let cont = true;
       while (cont) {
         if (__glob_match(p, pi + 1, t, m)) {
           return true;
@@ -113,7 +113,7 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
         if (m >= t.len() || t[m] == 47) {
           cont = false;
         } else {
-          m = m + 1;
+          m += 1;
         }
       }
       return false;
@@ -121,8 +121,8 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
       if (tj >= t.len() || t[tj] == 47) {
         return false;
       }
-      pi = pi + 1;
-      tj = tj + 1;
+      pi += 1;
+      tj += 1;
     } else if (pc == 91) {
       if (tj >= t.len() || t[tj] == 47) {
         return false;
@@ -132,13 +132,13 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
         return false;
       }
       pi = res.1;
-      tj = tj + 1;
+      tj += 1;
     } else {
       if (tj >= t.len() || t[tj] as i32 != pc) {
         return false;
       }
-      pi = pi + 1;
-      tj = tj + 1;
+      pi += 1;
+      tj += 1;
     }
   }
   return tj == t.len();

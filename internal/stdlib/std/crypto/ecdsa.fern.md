@@ -147,22 +147,22 @@ struct Point { x: bigint.BigInt, y: bigint.BigInt, z: bigint.BigInt }
 ```fern
 <<7 function __hex_int(s: string): bigint.BigInt>>=
 function __hex_int(s: string): bigint.BigInt {
-  let v: bigint.BigInt = bigint.zero();
-  let i: i32 = 0;
+  let v = bigint.zero();
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
-    let d: i32 = c - 48;
+    let c = s[i] as i32;
+    let d = c - 48;
     if (c >= 97) {
       d = c - 87;
     }
     v = v.shl(4).add(bigint.from_u64(d as u64));
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function __bytes_int(bytes: [u8]): bigint.BigInt {
-  let value: bigint.BigInt = bigint.zero();
+  let value = bigint.zero();
   for byte in bytes {
     value = value.shl(8).add(bigint.from_u64(byte as u64));
   }
@@ -194,7 +194,7 @@ function __curve_data(c: Curve): CurveData {
 }
 
 function __params(c: Curve): Params {
-  let h: CurveData = __curve_data(c);
+  let h = __curve_data(c);
   return __curve(h.p, h.n, h.b, h.gx, h.gy, h.bytes);
 }
 
@@ -211,7 +211,7 @@ function __int(v: i32): bigint.BigInt {
 }
 
 function __mod(a: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
-  let r: bigint.BigInt = a.divmod(m).1;
+  let r = a.divmod(m).1;
   if (r.is_negative()) {
     return r.add(m);
   }
@@ -223,35 +223,35 @@ function __mul(a: bigint.BigInt, b: bigint.BigInt, m: bigint.BigInt): bigint.Big
 }
 
 function __inv(a: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
-  let e: bigint.BigInt = m.sub(__int(2));
-  let r: bigint.BigInt = __int(1);
-  let i: i32 = e.bit_length() - 1;
+  let e = m.sub(__int(2));
+  let r = __int(1);
+  let i = e.bit_length() - 1;
   while (i >= 0) {
     r = __mul(r, r, m);
     if (e.bit(i)) {
       r = __mul(r, a, m);
     }
-    i = i - 1;
+    i -= 1;
   }
   return r;
 }
 
 function __from_be(b: [u8], from: i32, len: i32): bigint.BigInt {
-  let v: bigint.BigInt = bigint.zero();
-  let i: i32 = 0;
+  let v = bigint.zero();
+  let i = 0;
   while (i < len) {
     v = v.shl(8).add(bigint.from_u64(b[from + i] as u64));
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function __on_curve(c: Params, x: bigint.BigInt, y: bigint.BigInt): boolean {
-  let p: bigint.BigInt = c.p;
+  let p = c.p;
   if (x.cmp(p) >= 0 || y.cmp(p) >= 0) {
     return false;
   }
-  let rhs: bigint.BigInt = __mod(__mul(__mul(x, x, p), x, p).sub(x.mul(__int(3))).add(c.b), p);
+  let rhs = __mod(__mul(__mul(x, x, p), x, p).sub(x.mul(__int(3))).add(c.b), p);
   return __mul(y, y, p).eq(rhs);
 }
 ```
@@ -261,12 +261,12 @@ function __on_curve(c: Params, x: bigint.BigInt, y: bigint.BigInt): boolean {
 ```fern
 <<10 pub function public_key(curve: Curve, point: [u8]): Result[PublicKey, EcdsaError]>>=
 pub function public_key(curve: Curve, point: [u8]): Result[PublicKey, EcdsaError] {
-  let c: Params = __params(curve);
+  let c = __params(curve);
   if (point.len() != 1 + 2 * c.bytes || point[0] != 4 as u8) {
     return Err(Encoding);
   }
-  let x: bigint.BigInt = __from_be(point, 1, c.bytes);
-  let y: bigint.BigInt = __from_be(point, 1 + c.bytes, c.bytes);
+  let x = __from_be(point, 1, c.bytes);
+  let y = __from_be(point, 1 + c.bytes, c.bytes);
   if (!__on_curve(c, x, y)) {
     return Err(NotOnCurve);
   }
@@ -282,13 +282,13 @@ function __double(p: bigint.BigInt, q: Point): Point {
   if (q.z.is_zero() || q.y.is_zero()) {
     return __infinity();
   }
-  let delta: bigint.BigInt = __mul(q.z, q.z, p);
-  let gamma: bigint.BigInt = __mul(q.y, q.y, p);
-  let beta: bigint.BigInt = __mul(q.x, gamma, p);
-  let alpha: bigint.BigInt = __mul(__mul(q.x.sub(delta), q.x.add(delta), p), __int(3), p);
-  let x3: bigint.BigInt = __mod(__mul(alpha, alpha, p).sub(beta.mul(__int(8))), p);
-  let z3: bigint.BigInt = __mod(__mul(q.y.add(q.z), q.y.add(q.z), p).sub(gamma).sub(delta), p);
-  let y3: bigint.BigInt = __mod(__mul(alpha, beta.mul(__int(4)).sub(x3), p).sub(__mul(gamma, gamma, p).mul(__int(8))), p);
+  let delta = __mul(q.z, q.z, p);
+  let gamma = __mul(q.y, q.y, p);
+  let beta = __mul(q.x, gamma, p);
+  let alpha = __mul(__mul(q.x.sub(delta), q.x.add(delta), p), __int(3), p);
+  let x3 = __mod(__mul(alpha, alpha, p).sub(beta.mul(__int(8))), p);
+  let z3 = __mod(__mul(q.y.add(q.z), q.y.add(q.z), p).sub(gamma).sub(delta), p);
+  let y3 = __mod(__mul(alpha, beta.mul(__int(4)).sub(x3), p).sub(__mul(gamma, gamma, p).mul(__int(8))), p);
   return Point { x: x3, y: y3, z: z3 };
 }
 
@@ -299,38 +299,38 @@ function __add(p: bigint.BigInt, a: Point, b: Point): Point {
   if (b.z.is_zero()) {
     return a;
   }
-  let z1z1: bigint.BigInt = __mul(a.z, a.z, p);
-  let z2z2: bigint.BigInt = __mul(b.z, b.z, p);
-  let u1: bigint.BigInt = __mul(a.x, z2z2, p);
-  let u2: bigint.BigInt = __mul(b.x, z1z1, p);
-  let s1: bigint.BigInt = __mul(__mul(a.y, b.z, p), z2z2, p);
-  let s2: bigint.BigInt = __mul(__mul(b.y, a.z, p), z1z1, p);
-  let h: bigint.BigInt = __mod(u2.sub(u1), p);
-  let r: bigint.BigInt = __mod(s2.sub(s1).mul(__int(2)), p);
+  let z1z1 = __mul(a.z, a.z, p);
+  let z2z2 = __mul(b.z, b.z, p);
+  let u1 = __mul(a.x, z2z2, p);
+  let u2 = __mul(b.x, z1z1, p);
+  let s1 = __mul(__mul(a.y, b.z, p), z2z2, p);
+  let s2 = __mul(__mul(b.y, a.z, p), z1z1, p);
+  let h = __mod(u2.sub(u1), p);
+  let r = __mod(s2.sub(s1).mul(__int(2)), p);
   if (h.is_zero()) {
     if (r.is_zero()) {
       return __double(p, a);
     }
     return __infinity();
   }
-  let i: bigint.BigInt = __mul(h.mul(__int(2)), h.mul(__int(2)), p);
-  let j: bigint.BigInt = __mul(h, i, p);
-  let v: bigint.BigInt = __mul(u1, i, p);
-  let x3: bigint.BigInt = __mod(__mul(r, r, p).sub(j).sub(v.mul(__int(2))), p);
-  let y3: bigint.BigInt = __mod(__mul(r, v.sub(x3), p).sub(__mul(s1, j, p).mul(__int(2))), p);
-  let z3: bigint.BigInt = __mul(__mod(__mul(a.z.add(b.z), a.z.add(b.z), p).sub(z1z1).sub(z2z2), p), h, p);
+  let i = __mul(h.mul(__int(2)), h.mul(__int(2)), p);
+  let j = __mul(h, i, p);
+  let v = __mul(u1, i, p);
+  let x3 = __mod(__mul(r, r, p).sub(j).sub(v.mul(__int(2))), p);
+  let y3 = __mod(__mul(r, v.sub(x3), p).sub(__mul(s1, j, p).mul(__int(2))), p);
+  let z3 = __mul(__mod(__mul(a.z.add(b.z), a.z.add(b.z), p).sub(z1z1).sub(z2z2), p), h, p);
   return Point { x: x3, y: y3, z: z3 };
 }
 
 function __combine(c: Params, u1: bigint.BigInt, u2: bigint.BigInt, q: Point): Point {
-  let p: bigint.BigInt = c.p;
-  let gq: Point = __add(p, c.g, q);
-  let r: Point = __infinity();
-  let i: i32 = 8 * c.bytes - 1;
+  let p = c.p;
+  let gq = __add(p, c.g, q);
+  let r = __infinity();
+  let i = 8 * c.bytes - 1;
   while (i >= 0) {
     r = __double(p, r);
-    let b1: boolean = u1.bit(i);
-    let b2: boolean = u2.bit(i);
+    let b1 = u1.bit(i);
+    let b2 = u2.bit(i);
     if (b1 && b2) {
       r = __add(p, r, gq);
     } else if (b1) {
@@ -338,7 +338,7 @@ function __combine(c: Params, u1: bigint.BigInt, u2: bigint.BigInt, q: Point): P
     } else if (b2) {
       r = __add(p, r, q);
     }
-    i = i - 1;
+    i -= 1;
   }
   return r;
 }
@@ -347,7 +347,7 @@ function __der_int(sig: [u8], at: i32, max: i32): Option[(bigint.BigInt, i32)] {
   if (at + 2 > sig.len() || sig[at] != 2 as u8) {
     return None;
   }
-  let len: i32 = sig[at + 1] as i32;
+  let len = sig[at + 1] as i32;
   if (len == 0 || len > max || at + 2 + len > sig.len()) {
     return None;
   }
@@ -361,26 +361,26 @@ function __der_int(sig: [u8], at: i32, max: i32): Option[(bigint.BigInt, i32)] {
 }
 
 function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: bigint.BigInt, s: bigint.BigInt): boolean {
-  let n: bigint.BigInt = c.n;
+  let n = c.n;
   if (r.is_zero() || s.is_zero() || r.cmp(n) >= 0 || s.cmp(n) >= 0) {
     return false;
   }
-  let d: u8[] = hash.digest(msg);
-  let take: i32 = d.len();
+  let d = hash.digest(msg);
+  let take = d.len();
   if (take > c.bytes) {
     take = c.bytes;
   }
-  let e: bigint.BigInt = __from_be(d, 0, take);
-  let w: bigint.BigInt = __inv(s, n);
-  let u1: bigint.BigInt = __mul(e, w, n);
-  let u2: bigint.BigInt = __mul(r, w, n);
-  let x: Point = __combine(c, u1, u2, Point { x: key.x, y: key.y, z: __int(1) });
+  let e = __from_be(d, 0, take);
+  let w = __inv(s, n);
+  let u1 = __mul(e, w, n);
+  let u2 = __mul(r, w, n);
+  let x = __combine(c, u1, u2, Point { x: key.x, y: key.y, z: __int(1) });
   if (x.z.is_zero()) {
     return false;
   }
-  let p: bigint.BigInt = c.p;
-  let zinv: bigint.BigInt = __inv(x.z, p);
-  let ax: bigint.BigInt = __mul(x.x, __mul(zinv, zinv, p), p);
+  let p = c.p;
+  let zinv = __inv(x.z, p);
+  let ax = __mul(x.x, __mul(zinv, zinv, p), p);
   return __mod(ax, n).eq(r);
 }
 ```
@@ -393,7 +393,7 @@ pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boo
   if (sig.len() < 8 || sig.len() > 129 || sig[0] != 48 as u8 || sig[1] as i32 != sig.len() - 2) {
     return false;
   }
-  let c: Params = __params(key.curve);
+  let c = __params(key.curve);
   match (__der_int(sig, 2, c.bytes + 1)) {
     Some(r) => {
       match (__der_int(sig, r.1, c.bytes + 1)) {
@@ -429,9 +429,9 @@ struct Signer { fp: mont.Modulus, fn: mont.Modulus, b: i64[], g: Proj, bytes: i3
 ```fern
 <<14 function __signer(c: Curve): Signer>>=
 function __signer(c: Curve): Signer {
-  let h: CurveData = __curve_data(c);
-  let fp: mont.Modulus = mont.modulus(h.p, h.bytes);
-  let g: Proj = Proj { x: mont.from_bytes(fp, h.gx), y: mont.from_bytes(fp, h.gy), z: fp.one };
+  let h = __curve_data(c);
+  let fp = mont.modulus(h.p, h.bytes);
+  let g = Proj { x: mont.from_bytes(fp, h.gx), y: mont.from_bytes(fp, h.gy), z: fp.one };
   return Signer { fp: fp, fn: mont.modulus(h.n, h.bytes), b: mont.from_bytes(fp, h.b), g: g, bytes: h.bytes };
 }
 ```
@@ -459,7 +459,7 @@ function __scalar_ok(curve: Curve, d: [u8]): boolean {
     },
     _ => {}
   }
-  let s: Signer = __signer(curve);
+  let s = __signer(curve);
   return d.len() == s.bytes && __revealed(mont.in_range(s.fn, d));
 }
 
@@ -483,7 +483,7 @@ pub function (k: PrivateKey) public_point(): u8[] {
     },
     _ => {}
   }
-  let s: Signer = __signer(k.curve);
+  let s = __signer(k.curve);
   let xy: (u8[], u8[]) = __affine(s, __base_mul(s, k.d));
   let out: u8[] = [4 as u8];
   for b in xy.0 {
@@ -508,8 +508,8 @@ pub function (key: PrivateKey) ecdh(peer: [u8]): Result[u8[], EcdsaError] {
     },
     _ => {}
   }
-  let s: Signer = __signer(key.curve);
-  let q: Proj = Proj { x: mont.from_bytes(s.fp, peer[1:1 + s.bytes]), y: mont.from_bytes(s.fp, peer[1 + s.bytes:1 + 2 * s.bytes]), z: s.fp.one };
+  let s = __signer(key.curve);
+  let q = Proj { x: mont.from_bytes(s.fp, peer[1:1 + s.bytes]), y: mont.from_bytes(s.fp, peer[1 + s.bytes:1 + 2 * s.bytes]), z: s.fp.one };
   return Ok(__affine(s, __scalar_mul(s, q, key.d)).0);
 }
 
@@ -520,20 +520,20 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
     },
     _ => {}
   }
-  let digest: u8[] = hash.digest(msg);
+  let digest = hash.digest(msg);
   match (key.curve) {
     P256 => {
-      let e: u8[] = p256.scalar_reduce(digest[0:32]);
+      let e = p256.scalar_reduce(digest[0:32]);
       return Ok(__sign_loop(hash, key.d, e, (k: u8[]): i64 => p256.in_scalar_range(k), (k: u8[]): (u8[], u8[]) => p256.sign_rs(key.d, e, k)));
     },
     _ => {}
   }
-  let s: Signer = __signer(key.curve);
-  let take: i32 = digest.len();
+  let s = __signer(key.curve);
+  let take = digest.len();
   if (take > s.bytes) {
     take = s.bytes;
   }
-  let e: i64[] = mont.from_bytes(s.fn, digest[0:take]);
+  let e = mont.from_bytes(s.fn, digest[0:take]);
   return Ok(__sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k)));
 }
 ```
@@ -543,11 +543,11 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
 ```fern
 <<18 function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[])>>=
 function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64, rs_of: (u8[]) => (u8[], u8[])): u8[] {
-  let drbg: Drbg = __drbg_new(hash, d, e);
+  let drbg = __drbg_new(hash, d, e);
   while (true) {
     let next: (Drbg, u8[]) = __drbg_next(drbg, d.len());
     drbg = next.0;
-    let k: u8[] = next.1;
+    let k = next.1;
     if (__revealed(in_range(k))) {
       let rs: (u8[], u8[]) = rs_of(k);
       __ct_public(rs.0);
@@ -562,10 +562,10 @@ function __sign_loop(hash: sha2.Hash, d: [u8], e: [u8], in_range: (u8[]) => i64,
 }
 
 function __sign_with(s: Signer, d: [u8], e: [i64], k: [u8]): (u8[], u8[]) {
-  let x: u8[] = __affine(s, __base_mul(s, k)).0;
-  let r: i64[] = mont.from_bytes(s.fn, x);
-  let kinv: i64[] = mont.inv(s.fn, mont.from_bytes(s.fn, k));
-  let sm: i64[] = mont.mul(s.fn, kinv, mont.add(s.fn, e, mont.mul(s.fn, r, mont.from_bytes(s.fn, d))));
+  let x = __affine(s, __base_mul(s, k)).0;
+  let r = mont.from_bytes(s.fn, x);
+  let kinv = mont.inv(s.fn, mont.from_bytes(s.fn, k));
+  let sm = mont.mul(s.fn, kinv, mont.add(s.fn, e, mont.mul(s.fn, r, mont.from_bytes(s.fn, d))));
   return (mont.to_bytes(s.fn, r), mont.to_bytes(s.fn, sm));
 }
 
@@ -585,17 +585,17 @@ function __all_zero(b: [u8]): boolean {
 }
 
 function __padd(s: Signer, p1: Proj, p2: Proj): Proj {
-  let m: mont.Modulus = s.fp;
-  let t0: i64[] = mont.mul(m, p1.x, p2.x);
-  let t1: i64[] = mont.mul(m, p1.y, p2.y);
-  let t2: i64[] = mont.mul(m, p1.z, p2.z);
-  let t3: i64[] = mont.mul(m, mont.add(m, p1.x, p1.y), mont.add(m, p2.x, p2.y));
+  let m = s.fp;
+  let t0 = mont.mul(m, p1.x, p2.x);
+  let t1 = mont.mul(m, p1.y, p2.y);
+  let t2 = mont.mul(m, p1.z, p2.z);
+  let t3 = mont.mul(m, mont.add(m, p1.x, p1.y), mont.add(m, p2.x, p2.y));
   t3 = mont.sub(m, t3, mont.add(m, t0, t1));
-  let t4: i64[] = mont.mul(m, mont.add(m, p1.y, p1.z), mont.add(m, p2.y, p2.z));
+  let t4 = mont.mul(m, mont.add(m, p1.y, p1.z), mont.add(m, p2.y, p2.z));
   t4 = mont.sub(m, t4, mont.add(m, t1, t2));
-  let x3: i64[] = mont.mul(m, mont.add(m, p1.x, p1.z), mont.add(m, p2.x, p2.z));
-  let y3: i64[] = mont.sub(m, x3, mont.add(m, t0, t2));
-  let z3: i64[] = mont.mul(m, s.b, t2);
+  let x3 = mont.mul(m, mont.add(m, p1.x, p1.z), mont.add(m, p2.x, p2.z));
+  let y3 = mont.sub(m, x3, mont.add(m, t0, t2));
+  let z3 = mont.mul(m, s.b, t2);
   x3 = mont.sub(m, y3, z3);
   x3 = mont.add(m, x3, mont.add(m, x3, x3));
   z3 = mont.sub(m, t1, x3);
@@ -619,12 +619,12 @@ function __base_mul(s: Signer, k: [u8]): Proj {
 
 function __scalar_mul(s: Signer, point: Proj, k: [u8]): Proj {
   let table: Proj[] = [__identity(s), point];
-  let i: i32 = 2;
+  let i = 2;
   while (i < 16) {
     table = table.append(__padd(s, table[i - 1], point));
-    i = i + 1;
+    i += 1;
   }
-  let r: Proj = __identity(s);
+  let r = __identity(s);
   for b in k {
     r = __add_digit(s, __times16(s, r), table, b as i64 >> 4 as i64);
     r = __add_digit(s, __times16(s, r), table, b as i64 & 15 as i64);
@@ -633,19 +633,19 @@ function __scalar_mul(s: Signer, point: Proj, k: [u8]): Proj {
 }
 
 function __times16(s: Signer, p: Proj): Proj {
-  let r: Proj = __padd(s, p, p);
+  let r = __padd(s, p, p);
   r = __padd(s, r, r);
   r = __padd(s, r, r);
   return __padd(s, r, r);
 }
 
 function __add_digit(s: Signer, r: Proj, table: Proj[], digit: i64): Proj {
-  let pick: Proj = table[0];
-  let j: i32 = 1;
+  let pick = table[0];
+  let j = 1;
   while (j < 16) {
-    let hit: i64 = mont.is_zero([digit ^ j as i64]);
+    let hit = mont.is_zero([digit ^ j as i64]);
     pick = Proj { x: mont.select(pick.x, table[j].x, hit), y: mont.select(pick.y, table[j].y, hit), z: mont.select(pick.z, table[j].z, hit) };
-    j = j + 1;
+    j += 1;
   }
   return __padd(s, r, pick);
 }
@@ -655,13 +655,13 @@ function __identity(s: Signer): Proj {
 }
 
 function __affine(s: Signer, p: Proj): (u8[], u8[]) {
-  let zinv: i64[] = mont.inv(s.fp, p.z);
+  let zinv = mont.inv(s.fp, p.z);
   return (mont.to_bytes(s.fp, mont.mul(s.fp, p.x, zinv)), mont.to_bytes(s.fp, mont.mul(s.fp, p.y, zinv)));
 }
 
 function __der(r: [u8], s: [u8]): u8[] {
-  let ri: u8[] = __der_integer(r);
-  let si: u8[] = __der_integer(s);
+  let ri = __der_integer(r);
+  let si = __der_integer(s);
   let out: u8[] = [48 as u8, (ri.len() + si.len()) as u8];
   for b in ri {
     out = out.append(b);
@@ -678,9 +678,9 @@ function __der(r: [u8], s: [u8]): u8[] {
 ```fern
 <<19 function __der_integer(v: [u8]): u8[]>>=
 function __der_integer(v: [u8]): u8[] {
-  let at: i32 = 0;
+  let at = 0;
   while (at < v.len() - 1 && v[at] == 0 as u8) {
-    at = at + 1;
+    at += 1;
   }
   let body: u8[] = [];
   if (v[at] as i32 >= 128) {
@@ -688,7 +688,7 @@ function __der_integer(v: [u8]): u8[] {
   }
   while (at < v.len()) {
     body = body.append(v[at]);
-    at = at + 1;
+    at += 1;
   }
   let out: u8[] = [2 as u8, body.len() as u8];
   for b in body {
@@ -722,7 +722,7 @@ function __mac(h: sha2.Hash, key: [u8], msg: [u8]): u8[] {
 }
 
 function __cat3(a: [u8], tag: i32, b: [u8], c: [u8]): u8[] {
-  let out: u8[] = __copy(a);
+  let out = __copy(a);
   if (tag >= 0) {
     out = out.append(tag as u8);
   }
@@ -736,14 +736,14 @@ function __cat3(a: [u8], tag: i32, b: [u8], c: [u8]): u8[] {
 }
 
 function __drbg_new(h: sha2.Hash, x: [u8], h1: [u8]): Drbg {
-  let size: i32 = h.size();
+  let size = h.size();
   let v: u8[] = [];
   let k: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < size) {
     v = v.append(1 as u8);
     k = k.append(0 as u8);
-    i = i + 1;
+    i += 1;
   }
   k = __mac(h, k, __cat3(v, 0, x, h1));
   v = __mac(h, k, v);
@@ -753,7 +753,7 @@ function __drbg_new(h: sha2.Hash, x: [u8], h1: [u8]): Drbg {
 }
 
 function __drbg_next(g: Drbg, bytes: i32): (Drbg, u8[]) {
-  let v: u8[] = g.v;
+  let v = g.v;
   let t: u8[] = [];
   while (t.len() < bytes) {
     v = __mac(g.hash, g.k, v);
@@ -767,7 +767,7 @@ function __drbg_next(g: Drbg, bytes: i32): (Drbg, u8[]) {
 }
 
 function __drbg_reseed(g: Drbg): Drbg {
-  let k: u8[] = __mac(g.hash, g.k, __cat3(g.v, 0, [], []));
+  let k = __mac(g.hash, g.k, __cat3(g.v, 0, [], []));
   return Drbg { ...g, k: k, v: __mac(g.hash, k, g.v) };
 }
 ```

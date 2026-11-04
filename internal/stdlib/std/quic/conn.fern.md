@@ -148,7 +148,7 @@ pub struct Config {
 ```fern
 <<4 pub function config(alpn: string[]): Config>>=
 pub function config(alpn: string[]): Config {
-  let p: params.Params = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
+  let p = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
   return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None };
 }
 
@@ -157,7 +157,7 @@ pub function (c: Config) client_side(server_name: string, roots: verify.Roots): 
 }
 
 pub function (c: Config) with_streams(bidi: i64, uni: i64, stream_window: i64, connection_window: i64): Config {
-  let p: params.Params = params.Params { ...c.params, initial_max_streams_bidi: bidi, initial_max_streams_uni: uni, initial_max_stream_data_bidi_local: stream_window, initial_max_stream_data_bidi_remote: stream_window, initial_max_stream_data_uni: stream_window, initial_max_data: connection_window };
+  let p = params.Params { ...c.params, initial_max_streams_bidi: bidi, initial_max_streams_uni: uni, initial_max_stream_data_bidi_local: stream_window, initial_max_stream_data_bidi_remote: stream_window, initial_max_stream_data_uni: stream_window, initial_max_data: connection_window };
   return Config { ...c, params: p };
 }
 
@@ -257,7 +257,7 @@ pub function client_entropy(c: Config): i32 {
 }
 
 pub function server_entropy(c: Config): i32 {
-  let sc: handshake.ServerConfig = __tls_server_config(c, [], [], []);
+  let sc = __tls_server_config(c, [], [], []);
   return c.cid_len + 16 + handshake.server_entropy(sc);
 }
 ```
@@ -267,17 +267,17 @@ pub function server_entropy(c: Config): i32 {
 ```fern
 <<8 function __tls_client_config(c: Config, scid: [u8], params_bytes: u8[]): handshake.ClientConfig>>=
 function __tls_client_config(c: Config, scid: [u8], params_bytes: u8[]): handshake.ClientConfig {
-  let ext: message.Extension = message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: params_bytes };
+  let ext = message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: params_bytes };
   return handshake.ClientConfig { ...handshake.client_config(c.server_name), alpn: c.alpn, shares: 2, quic: true, extensions: [ext] };
 }
 
 function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_bytes: u8[]): handshake.ServerConfig {
-  let ext: message.Extension = message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: params_bytes };
+  let ext = message.Extension { kind: message.EXT_QUIC_TRANSPORT_PARAMETERS, data: params_bytes };
   return handshake.ServerConfig { ...handshake.server_config(chain, schemes), alpn: c.alpn, quic: true, extensions: [ext] };
 }
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
-  let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
+  let r = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
   return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
 }
 ```
@@ -292,13 +292,13 @@ pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp
 }
 
 function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string] {
-  let scid: u8[] = __bytes_range(entropy, 0, c.cid_len);
-  let dcid: u8[] = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
-  let p: params.Params = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
-  let cc: handshake.ClientConfig = __tls_client_config(c, scid, params.encode(p, false));
+  let scid = __bytes_range(entropy, 0, c.cid_len);
+  let dcid = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
+  let p = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
+  let cc = __tls_client_config(c, scid, params.encode(p, false));
   match (handshake.client_start(cc, entropy[c.cid_len + 8:entropy.len()])) {
     Ok(step) => {
-      let conn: Conn = __base(c, false, scid, dcid, dcid, now).__initial_keys(dcid);
+      let conn = __base(c, false, scid, dcid, dcid, now).__initial_keys(dcid);
       conn = Conn { ...conn, tls: TlsClient(step.client), wall_offset: unix_ms * 1000000 - now };
       return Ok(conn.__tls_events(step.events, now));
     },
@@ -316,13 +316,13 @@ function __accept(c: Config, entropy: [u8], first: packet.Header, now: i64): Res
   let Some(id) = c.identity else {
     return Err("quic: a server needs an identity");
   };
-  let scid: u8[] = __bytes_range(entropy, 0, c.cid_len);
-  let reset: u8[] = __bytes_range(entropy, c.cid_len, c.cid_len + 16);
-  let p: params.Params = params.Params { ...c.params, original_destination_connection_id: Some(first.dcid), initial_source_connection_id: Some(scid), stateless_reset_token: Some(reset) };
-  let sc: handshake.ServerConfig = __tls_server_config(c, id.chain, [id.key.scheme()], params.encode(p, true));
+  let scid = __bytes_range(entropy, 0, c.cid_len);
+  let reset = __bytes_range(entropy, c.cid_len, c.cid_len + 16);
+  let p = params.Params { ...c.params, original_destination_connection_id: Some(first.dcid), initial_source_connection_id: Some(scid), stateless_reset_token: Some(reset) };
+  let sc = __tls_server_config(c, id.chain, [id.key.scheme()], params.encode(p, true));
   match (handshake.server_new(sc, entropy[c.cid_len + 16:entropy.len()])) {
     Ok(s) => {
-      let conn: Conn = __base(c, true, scid, first.scid, first.dcid, now).__initial_keys(first.dcid);
+      let conn = __base(c, true, scid, first.scid, first.dcid, now).__initial_keys(first.dcid);
       return Ok(Conn { ...conn, tls: TlsServer(s), reset_token: reset });
     },
     Err(e) => {
@@ -337,7 +337,7 @@ function __accept(c: Config, entropy: [u8], first: packet.Header, now: i64): Res
 ```fern
 <<10 function (c: Conn) __initial_keys(dcid: [u8]): Conn>>=
 function (c: Conn) __initial_keys(dcid: [u8]): Conn {
-  let s: Space = c.spaces[recovery.INITIAL];
+  let s = c.spaces[recovery.INITIAL];
   s = Space { ...s, send: Some(packet.initial_keys(dcid, !c.server)), recv: Some(packet.initial_keys(dcid, c.server)) };
   return Conn { ...c, spaces: c.spaces.with(recovery.INITIAL, s) };
 }
@@ -387,7 +387,7 @@ pub function (c: Conn) closed_with(): Option[Close] {
 
 // When the connection next needs a tick, if ever.
 pub function (c: Conn) deadline(): Option[Instant] {
-  let at: i64 = c.__deadline();
+  let at = c.__deadline();
   if (at == 0) {
     return None;
   }
@@ -448,11 +448,11 @@ pub function (c: Conn) open_stream(uni: boolean): Result[(Conn, i64), string] {
   if (c.state != ESTABLISHED) {
     return Err("quic: the connection is not established");
   }
-  let cur: Conn = Conn { ...c, streams: c.streams.open(uni) };
+  let cur = Conn { ...c, streams: c.streams.open(uni) };
   if (cur.streams.refused != "") {
     return Err("quic: " + cur.streams.refused);
   }
-  let id: i64 = cur.streams.last_opened;
+  let id = cur.streams.last_opened;
   return Ok((cur, id));
 }
 
@@ -469,12 +469,12 @@ pub function (c: Conn) write(id: i64, data: u8[], fin: boolean): Result[Conn, st
 }
 
 pub function (c: Conn) read(id: i64): Result[(Conn, u8[], boolean), string] {
-  let cur: Conn = c.read_into(id);
+  let cur = c.read_into(id);
   if (cur.refused() != "") {
     return Err("quic: " + cur.refused());
   }
-  let data: u8[] = cur.read_data();
-  let fin: boolean = cur.read_fin();
+  let data = cur.read_data();
+  let fin = cur.read_fin();
   return Ok((cur.read_taken(), data, fin));
 }
 
@@ -547,7 +547,7 @@ function (c: Conn) __close(code: i64, reason: string, app: boolean, now: i64): C
   if (c.state >= CLOSING) {
     return c;
   }
-  let why: Close = Close { code: code, frame_type: 0 as i64, reason: reason, app: app, remote: false };
+  let why = Close { code: code, frame_type: 0 as i64, reason: reason, app: app, remote: false };
   return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto_ns(recovery.APPLICATION), events: c.events.append(Closed(why)) };
 }
 ```
@@ -560,7 +560,7 @@ function (c: Conn) __fail(code: i64, frame_type: i64, reason: string, now: i64):
   if (c.state >= CLOSING) {
     return c;
   }
-  let why: Close = Close { code: code, frame_type: frame_type, reason: reason, app: false, remote: false };
+  let why = Close { code: code, frame_type: frame_type, reason: reason, app: false, remote: false };
   return Conn { ...c, state: CLOSING, close: Some(why), close_pending: true, close_until: now + 3 * c.recovery.pto_ns(recovery.APPLICATION), events: c.events.append(Closed(why)) };
 }
 
@@ -568,7 +568,7 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
   if (c.state >= DRAINING) {
     return c;
   }
-  let events: Event[] = c.events;
+  let events = c.events;
   if (c.state < CLOSING) {
     events = events.append(Closed(why));
   }
@@ -581,7 +581,7 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
 ```fern
 <<19 pub function (c: Conn) tick(now: Instant): Conn>>=
 pub function (c: Conn) tick(now: Instant): Conn {
-  let ns: i64 = time.instant_nanos(now);
+  let ns = time.instant_nanos(now);
   return c.__key_timers(ns).__tick(ns);
 }
 ```
@@ -601,17 +601,17 @@ function (c: Conn) __tick(now: i64): Conn {
     return c;
   }
   if (c.idle_until > 0 && now >= c.idle_until) {
-    let why: Close = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "idle timeout", app: false, remote: false };
+    let why = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "idle timeout", app: false, remote: false };
     return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) };
   }
-  let t: i64 = c.recovery.timer_ns();
+  let t = c.recovery.timer_ns();
   if (t == 0 || now < t) {
     return c;
   }
-  let cur: Conn = Conn { ...c, recovery: c.recovery.on_timeout(time.instant_from_nanos(now)) };
-  let lost: recovery.Sent[] = cur.recovery.lost;
-  let probe: i32 = cur.recovery.probe;
-  let after: Conn = Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__requeue(lost);
+  let cur = Conn { ...c, recovery: c.recovery.on_timeout(time.instant_from_nanos(now)) };
+  let lost = cur.recovery.lost;
+  let probe = cur.recovery.probe;
+  let after = Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__requeue(lost);
   if (probe >= 0) {
     after = Conn { ...after, probes: after.probes.append(probe) };
   }
@@ -649,8 +649,8 @@ function (c: Conn) __update_keys(now: i64): Result[Conn, string] {
 ```fern
 <<22 function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean)...>>=
 function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean): Conn {
-  let s: Space = c.spaces[recovery.APPLICATION];
-  let pto: i64 = c.recovery.pto_ns(recovery.APPLICATION);
+  let s = c.spaces[recovery.APPLICATION];
+  let pto = c.recovery.pto_ns(recovery.APPLICATION);
   let discard: i64 = 0;
   if (remote) {
     discard = now + 3 * pto;
@@ -659,7 +659,7 @@ function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64,
 }
 
 function (c: Conn) __key_timers(now: i64): Conn {
-  let cur: Conn = c;
+  let cur = c;
   if (cur.key_discard_at > 0 && now >= cur.key_discard_at) {
     cur = Conn { ...cur, key_previous_recv: None, key_discard_at: 0 as i64 };
   }
@@ -682,7 +682,7 @@ function (c: Conn) __receive_key(u: packet.Unprotected, current: packet.Keys, no
   }
   if let Some(old) = c.key_previous_recv {
     if ((c.key_discard_at == 0 || now < c.key_discard_at) && (c.key_awaiting_peer || u.pn < c.key_first_recv)) {
-      return (old, 0 - 1);
+      return (old, -1);
     }
   }
   if let Some(next) = c.key_next_recv {
@@ -723,7 +723,7 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
     if (pn <= c.key_previous_max) {
       return c.__fail(frames.KEY_UPDATE_ERROR, 0 as i64, "new keys used below an old-phase packet number", now);
     }
-    let discard: i64 = c.key_discard_at;
+    let discard = c.key_discard_at;
     if (c.key_awaiting_peer) {
       discard = now + 3 * c.recovery.pto_ns(recovery.APPLICATION);
     }
@@ -745,7 +745,7 @@ function (c: Conn) __receive(datagram: [u8], now: i64): Conn {
   if (c.state == CLOSED) {
     return c;
   }
-  let cur: Conn = Conn { ...c, received_bytes: c.received_bytes + datagram.len() as i64 };
+  let cur = Conn { ...c, received_bytes: c.received_bytes + datagram.len() as i64 };
   if (cur.state == CLOSING) {
     return Conn { ...cur, close_pending: true };
   }
@@ -759,8 +759,8 @@ function (c: Conn) __receive(datagram: [u8], now: i64): Conn {
 ```fern
 <<24 function (c: Conn) __datagram(datagram: [u8], now: i64): Conn>>=
 function (c: Conn) __datagram(datagram: [u8], now: i64): Conn {
-  let cur: Conn = c;
-  let at: i32 = 0;
+  let cur = c;
+  let at = 0;
   while (at < datagram.len() && cur.state < CLOSING) {
     match (packet.parse(datagram, at, cur.config.cid_len)) {
       Ok(h) => {
@@ -802,7 +802,7 @@ function (c: Conn) __version_negotiation(h: packet.Header, now: i64): Conn {
   if (c.server || c.peer_seen || h.versions.contains(packet.VERSION_1)) {
     return c;
   }
-  let why: Close = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "no version in common", app: false, remote: true };
+  let why = Close { code: frames.NO_ERROR, frame_type: 0 as i64, reason: "no version in common", app: false, remote: true };
   return Conn { ...c, state: CLOSED, close: Some(why), events: c.events.append(Closed(why)) };
 }
 
@@ -810,8 +810,8 @@ function (c: Conn) __retry(datagram: [u8], h: packet.Header, now: i64): Conn {
   if (c.server || c.peer_seen || c.retry_scid.is_some() || !packet.retry_valid(datagram[h.at:h.end], c.odcid)) {
     return c;
   }
-  let fresh: Conn = Conn { ...c, dcid: h.scid, retry_scid: Some(h.scid), token: h.token, recovery: c.recovery.discard(recovery.INITIAL) }.__initial_keys(h.scid);
-  let s: Space = fresh.spaces[recovery.INITIAL];
+  let fresh = Conn { ...c, dcid: h.scid, retry_scid: Some(h.scid), token: h.token, recovery: c.recovery.discard(recovery.INITIAL) }.__initial_keys(h.scid);
+  let s = fresh.spaces[recovery.INITIAL];
   return Conn { ...fresh, spaces: fresh.spaces.with(recovery.INITIAL, Space { ...s, crypto_sent: 0 as i64, crypto_lost: [] }) };
 }
 
@@ -823,7 +823,7 @@ function (c: Conn) __ours(h: packet.Header): boolean {
 }
 
 function (c: Conn) __protected(datagram: [u8], h: packet.Header, space: i32, kind: i32, now: i64): Conn {
-  let s: Space = c.spaces[space];
+  let s = c.spaces[space];
   if (s.discarded || !c.__ours(h)) {
     return c;
   }
@@ -853,7 +853,7 @@ function (c: Conn) __protected_application(datagram: [u8], h: packet.Header, key
       if (!o.reserved_ok) {
         return c.__opened(h, o, recovery.APPLICATION, frames.IN_ONE_RTT, now);
       }
-      let cur: Conn = c.__key_authenticated(o, generation, now);
+      let cur = c.__key_authenticated(o, generation, now);
       if (cur.state >= CLOSING) {
         return cur;
       }
@@ -879,11 +879,11 @@ function (c: Conn) __opening_failed(datagram: [u8], h: packet.Header, keys: pack
     },
     _ => {}
   }
-  let failed: i64 = c.failed_auth;
+  let failed = c.failed_auth;
   if (failed < limit) {
-    failed = failed + 1;
+    failed += 1;
   }
-  let cur: Conn = Conn { ...c, failed_auth: failed };
+  let cur = Conn { ...c, failed_auth: failed };
   if (failed >= limit) {
     return cur.__fail(frames.AEAD_LIMIT_REACHED, 0 as i64, "packet authentication limit reached", now);
   }
@@ -906,8 +906,8 @@ function (c: Conn) __retry_held(now: i64): Conn {
   if (c.held.len() == 0) {
     return c;
   }
-  let held: u8[][] = c.held;
-  let cur: Conn = Conn { ...c, held: [] };
+  let held = c.held;
+  let cur = Conn { ...c, held: [] };
   for p in held {
     if (cur.state < CLOSING) {
       cur = cur.__datagram(p, now);
@@ -926,7 +926,7 @@ function (c: Conn) __maybe_reset(datagram: [u8], h: packet.Header, now: i64): Co
   let Some(token) = p.stateless_reset_token else {
     return c;
   };
-  let n: i32 = datagram.len();
+  let n = datagram.len();
   if (c.server || n < 21 || !__same(datagram[n - 16:n], token)) {
     return c;
   }
@@ -940,7 +940,7 @@ function (c: Conn) __opened(h: packet.Header, o: packet.Opened, space: i32, kind
   if (__has(c.spaces[space].ranges, o.pn)) {
     return c;
   }
-  let cur: Conn = c.__peer_cid(h);
+  let cur = c.__peer_cid(h);
   if (cur.server && space == recovery.HANDSHAKE && !cur.spaces[recovery.INITIAL].discarded) {
     cur = Conn { ...cur, validated: true }.__discard(recovery.INITIAL);
   }
@@ -948,7 +948,7 @@ function (c: Conn) __opened(h: packet.Header, o: packet.Opened, space: i32, kind
     return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a packet with no frames", now);
   }
   cur = Conn { ...cur, reader: cur.reader.started(o.payload) }.__frames(o.payload, space, kind, now);
-  let eliciting: boolean = cur.reader.elicited;
+  let eliciting = cur.reader.elicited;
   cur = Conn { ...cur, reader: cur.reader.done() };
   if (cur.state < CLOSING) {
     cur = Conn { ...cur, idle_until: __idle(cur, now) }.__received(space, o.pn, eliciting, now);
@@ -971,7 +971,7 @@ function (c: Conn) __peer_cid(h: packet.Header): Conn {
 }
 
 function __idle(c: Conn, now: i64): i64 {
-  let ms: i64 = c.config.params.max_idle_timeout;
+  let ms = c.config.params.max_idle_timeout;
   if let Some(p) = c.peer_params {
     if (p.max_idle_timeout > 0 && (ms == 0 || p.max_idle_timeout < ms)) {
       ms = p.max_idle_timeout;
@@ -980,8 +980,8 @@ function __idle(c: Conn, now: i64): i64 {
   if (ms == 0) {
     return 0 as i64;
   }
-  let floor: i64 = 3 * c.recovery.pto_ns(recovery.APPLICATION);
-  let d: i64 = ms * 1000000;
+  let floor = 3 * c.recovery.pto_ns(recovery.APPLICATION);
+  let d = ms * 1000000;
   if (d < floor) {
     d = floor;
   }
@@ -993,8 +993,8 @@ function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64)
 }
 
 function (s: Space) __received(pn: i64, eliciting: boolean, now: i64): Space {
-  let largest: i64 = s.largest_recv;
-  let at: i64 = s.largest_recv_at;
+  let largest = s.largest_recv;
+  let at = s.largest_recv_at;
   if (pn > largest) {
     largest = pn;
     at = now;
@@ -1004,7 +1004,7 @@ function (s: Space) __received(pn: i64, eliciting: boolean, now: i64): Space {
 
 // __frames acts on each frame of the payload as the reader reads it.
 function (c: Conn) __frames(payload: u8[], space: i32, kind: i32, now: i64): Conn {
-  let cur: Conn = c;
+  let cur = c;
   while (cur.state < CLOSING && cur.reader.more()) {
     cur = Conn { ...cur, reader: cur.reader.next() };
     if let Some(e) = cur.reader.failed {
@@ -1083,13 +1083,13 @@ function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
     exponent = p.ack_delay_exponent;
   }
   let delay: i64 = (a.delay << exponent) * 1000;
-  let cur: Conn = Conn { ...c, recovery: c.recovery.on_ack(space, a, time.duration_nanos(delay), time.instant_from_nanos(now), c.spaces[space].next_pn - 1) };
-  let refused: i64 = cur.recovery.refused;
+  let cur = Conn { ...c, recovery: c.recovery.on_ack(space, a, time.duration_nanos(delay), time.instant_from_nanos(now), c.spaces[space].next_pn - 1) };
+  let refused = cur.recovery.refused;
   if (refused != 0) {
     return Conn { ...cur, recovery: cur.recovery.outcome_taken() }.__fail(refused, frames.ACK, "an ACK of a packet never sent", now);
   }
-  let acked: recovery.Sent[] = cur.recovery.acked;
-  let lost: recovery.Sent[] = cur.recovery.lost;
+  let acked = cur.recovery.acked;
+  let lost = cur.recovery.lost;
   cur = Conn { ...cur, recovery: cur.recovery.outcome_taken() };
   if (!cur.server && space == recovery.HANDSHAKE) {
     cur = Conn { ...cur, recovery: cur.recovery.validated() };
@@ -1098,7 +1098,7 @@ function (c: Conn) __ack(a: frames.Ack, space: i32, now: i64): Conn {
 }
 
 function (c: Conn) __delivered(acked: recovery.Sent[]): Conn {
-  let t: streams.Streams = c.streams;
+  let t = c.streams;
   for p in acked {
     for item in p.resend {
       t = t.acked(item);
@@ -1108,7 +1108,7 @@ function (c: Conn) __delivered(acked: recovery.Sent[]): Conn {
 }
 
 function (c: Conn) __requeue(lost: recovery.Sent[]): Conn {
-  let cur: Conn = c;
+  let cur = c;
   for p in lost {
     cur = cur.__resend(p.resend);
   }
@@ -1116,7 +1116,7 @@ function (c: Conn) __requeue(lost: recovery.Sent[]): Conn {
 }
 
 function (c: Conn) __resend(items: recovery.Resend[]): Conn {
-  let cur: Conn = c;
+  let cur = c;
   for item in items {
     match (item) {
       recovery.CryptoRange(offset, len) => {
@@ -1134,11 +1134,11 @@ function (c: Conn) __resend(items: recovery.Resend[]): Conn {
 }
 
 function (c: Conn) __crypto_lost(offset: i64, len: i32): Conn {
-  let space: i32 = __crypto_space(c, offset);
+  let space = __crypto_space(c, offset);
   if (space < 0) {
     return c;
   }
-  let s: Space = c.spaces[space];
+  let s = c.spaces[space];
   return Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_lost: s.crypto_lost.append(offset).append(len as i64) }) };
 }
 
@@ -1169,7 +1169,7 @@ function (c: Conn) __handshake_done(now: i64): Conn {
 ```fern
 <<27 function (c: Conn) __discard(space: i32): Conn>>=
 function (c: Conn) __discard(space: i32): Conn {
-  let s: Space = c.spaces[space];
+  let s = c.spaces[space];
   if (s.discarded) {
     return c;
   }
@@ -1177,12 +1177,12 @@ function (c: Conn) __discard(space: i32): Conn {
 }
 
 function (c: Conn) __crypto(space: i32, offset: i64, data: u8[], now: i64): Conn {
-  let s: Space = c.spaces[space];
+  let s = c.spaces[space];
   let (r, bytes) = s.crypto_in.add(offset, data).take();
   if (r.held_bytes > MAX_CRYPTO_HELD) {
     return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "too much CRYPTO data held out of order", now);
   }
-  let cur: Conn = Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_in: r }) };
+  let cur = Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_in: r }) };
   if (bytes.len() == 0) {
     return cur;
   }
@@ -1226,7 +1226,7 @@ function (c: Conn) __server_step(r: Result[handshake.ServerStep, handshake.Hands
 }
 
 function (c: Conn) __tls_events(events: handshake.Event[], now: i64): Conn {
-  let cur: Conn = c;
+  let cur = c;
   for e in events {
     if (cur.state >= CLOSING) {
       return cur;
@@ -1239,7 +1239,7 @@ function (c: Conn) __tls_events(events: handshake.Event[], now: i64): Conn {
 function (c: Conn) __tls_event(e: handshake.Event, now: i64): Conn {
   match (e) {
     handshake.Crypto(f) => {
-      let s: Space = c.spaces[f.level];
+      let s = c.spaces[f.level];
       return Conn { ...c, spaces: c.spaces.with(f.level, Space { ...s, crypto_out: s.crypto_out.concat(f.bytes) }) };
     },
     handshake.Secret(t) => {
@@ -1255,14 +1255,14 @@ function (c: Conn) __tls_event(e: handshake.Event, now: i64): Conn {
 }
 
 function (c: Conn) __secret(t: handshake.TrafficSecret): Conn {
-  let k: packet.Keys = packet.keys(__suite(c), t.secret);
-  let s: Space = c.spaces[t.level];
+  let k = packet.keys(__suite(c), t.secret);
+  let s = c.spaces[t.level];
   if (t.write) {
     s = Space { ...s, send: Some(k) };
   } else {
     s = Space { ...s, recv: Some(k) };
   }
-  let cur: Conn = Conn { ...c, spaces: c.spaces.with(t.level, s) };
+  let cur = Conn { ...c, spaces: c.spaces.with(t.level, s) };
   if (t.level == recovery.APPLICATION) {
     if (t.write) {
       cur = Conn { ...cur, key_next_send: Some(k.updated()) };
@@ -1354,7 +1354,7 @@ function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boole
 function (c: Conn) __connected(now: i64): Conn {
   match (c.__peer_transport_params()) {
     Ok(p) => {
-      let cur: Conn = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(time.duration_millis(p.max_ack_delay)), events: c.events.append(Event.Connected) };
+      let cur = Conn { ...c, state: ESTABLISHED, peer_params: Some(p), streams: c.streams.with_peer(p), recovery: c.recovery.with_max_ack_delay(time.duration_millis(p.max_ack_delay)), events: c.events.append(Event.Connected) };
       if (cur.server) {
         cur = Conn { ...cur, handshake_done_pending: true, recovery: cur.recovery.confirmed() }.__discard(recovery.HANDSHAKE);
       }
@@ -1384,7 +1384,7 @@ function (c: Conn) __peer_transport_params(): Result[params.Params, frames.Frame
   let Some(raw) = message.find(c.__peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS) else {
     return Err(__param_error("no transport parameters"));
   };
-  let p: params.Params = params.decode(raw, !c.server)?;
+  let p = params.decode(raw, !c.server)?;
   if (!__is(p.initial_source_connection_id, c.dcid)) {
     return Err(__param_error("initial_source_connection_id is not the connection ID the peer used"));
   }
@@ -1414,15 +1414,15 @@ pub function (c: Conn) transmit(now: Instant): Conn {
 }
 
 function (c: Conn) __transmit(now: i64): Conn {
-  let cur: Conn = c;
-  let guard: i32 = 0;
+  let cur = c;
+  let guard = 0;
   while (guard < 64) {
-    let before: i32 = cur.out.len();
+    let before = cur.out.len();
     cur = cur.__datagram_sent(now);
     if (cur.out.len() == before) {
       return cur;
     }
-    guard = guard + 1;
+    guard += 1;
   }
   return cur;
 }
@@ -1436,8 +1436,8 @@ function (c: Conn) __datagram_sent(now: i64): Conn {
   if (c.validated) {
     return c.__datagram_out(now);
   }
-  let before: Conn = c;
-  let next: Conn = c.__datagram_out(now);
+  let before = c;
+  let next = c.__datagram_out(now);
   if (next.sent_bytes > 3 * next.received_bytes) {
     return before;
   }
@@ -1489,12 +1489,12 @@ function (c: Conn) __aead_guard(now: i64): Conn {
   if (c.state >= CLOSING) {
     return c;
   }
-  let cur: Conn = c;
-  let space: i32 = 0;
+  let cur = c;
+  let space = 0;
   while (space < 3) {
-    let s: Space = cur.spaces[space];
+    let s = cur.spaces[space];
     if let Some(keys) = s.send {
-      let used: i64 = s.next_pn;
+      let used = s.next_pn;
       if (space == recovery.APPLICATION) {
         used = cur.key_sent;
       }
@@ -1510,7 +1510,7 @@ function (c: Conn) __aead_guard(now: i64): Conn {
         }
       }
     }
-    space = space + 1;
+    space += 1;
   }
   return cur;
 }
@@ -1522,12 +1522,12 @@ function (c: Conn) __datagram_guarded(now: i64): Conn {
   if (c.state == CLOSING) {
     return c.__close_datagram();
   }
-  let cur: Conn = c;
-  let planned: i32 = 0;
-  let room: i32 = c.config.max_datagram;
+  let cur = c;
+  let planned = 0;
+  let room = c.config.max_datagram;
   for space in 0..3 {
     cur = cur.__plan(space, room - 64, now);
-    let n: i32 = cur.plans[space].payload.len();
+    let n = cur.plans[space].payload.len();
     if (n > 0) {
       room = room - n - 64;
       planned = planned | 1 << space;
@@ -1540,15 +1540,15 @@ function (c: Conn) __datagram_guarded(now: i64): Conn {
 }
 
 function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
-  let s: Space = c.spaces[space];
+  let s = c.spaces[space];
   if (s.discarded || s.send.is_none() || room < 40) {
     return c;
   }
-  let cur: Conn = c;
+  let cur = c;
   if (s.ack_wanted) {
     cur = cur.__ack_planned(space, now);
   }
-  let window: boolean = cur.recovery.window() >= cur.config.max_datagram as i64 || cur.probes.contains(space);
+  let window = cur.recovery.window() >= cur.config.max_datagram as i64 || cur.probes.contains(space);
   if (!window) {
     return cur.__acked_out(space);
   }
@@ -1556,7 +1556,7 @@ function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
 }
 
 function (c: Conn) __planned(space: i32, f: frames.Frame, again: boolean): Conn {
-  let cur: Conn = c.__pushed(space, f);
+  let cur = c.__pushed(space, f);
   if (!again) {
     return cur;
   }
@@ -1576,21 +1576,21 @@ function (c: Conn) __pushed(space: i32, f: frames.Frame): Conn {
 }
 
 function (p: Plan) __put(f: frames.Frame, room: i32): Plan {
-  let q: Plan = p.__started(room);
-  let payload: u8[] = q.payload;
+  let q = p.__started(room);
+  let payload = q.payload;
   q = Plan { ...q, payload: [] };
   payload = frames.put(payload, f);
   return Plan { ...q, payload: payload };
 }
 
 function (c: Conn) __ack_planned(space: i32, now: i64): Conn {
-  let delay: i64 = __ack_delay(c.spaces[space], space, now);
+  let delay = __ack_delay(c.spaces[space], space, now);
   return Conn { ...c, plans: c.plans.with(space, c.plans[space].__ack_put(delay, c.spaces[space].ranges, c.config.max_datagram)) };
 }
 
 function (p: Plan) __ack_put(delay: i64, ranges: frames.AckRange[], room: i32): Plan {
-  let q: Plan = p.__started(room);
-  let payload: u8[] = q.payload;
+  let q = p.__started(room);
+  let payload = q.payload;
   q = Plan { ...q, payload: [] };
   payload = frames.put_ack(payload, delay, ranges);
   return Plan { ...q, payload: payload };
@@ -1602,7 +1602,7 @@ function (p: Plan) __started(room: i32): Plan {
     if (p.payload.len() > 0 || p.sized) {
       return p;
     }
-    let out: u8[] = __alloc_u8(room);
+    let out = __alloc_u8(room);
     __arr_set_len(out, 0);
     return Plan { ...p, payload: out, sized: true };
   }
@@ -1612,7 +1612,7 @@ function (c: Conn) __acked_out(space: i32): Conn {
   if (c.plans[space].payload.len() == 0) {
     return c;
   }
-  let unacked: boolean = c.key_unacked;
+  let unacked = c.key_unacked;
   if (space == recovery.APPLICATION && c.spaces[space].ack_wanted) {
     unacked = false;
   }
@@ -1635,24 +1635,24 @@ function (c: Conn) __crypto_out(space: i32, room: i32): Conn {
   if (c.spaces[space].crypto_lost.len() == 0 && c.spaces[space].crypto_out.len() as i64 == c.spaces[space].crypto_sent) {
     return c;
   }
-  let s: Space = c.spaces[space];
-  let cur: Conn = c;
-  let lost: i64[] = s.crypto_lost;
+  let s = c.spaces[space];
+  let cur = c;
+  let lost = s.crypto_lost;
   let kept: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < lost.len()) {
-    let n: i32 = __crypto_fit(cur.plans[space].payload.len(), lost[i], lost[i + 1] as i32, room);
+    let n = __crypto_fit(cur.plans[space].payload.len(), lost[i], lost[i + 1] as i32, room);
     cur = cur.__crypto_planned(space, lost[i], n);
-    let rest: i32 = lost[i + 1] as i32 - n;
+    let rest = lost[i + 1] as i32 - n;
     if (rest > 0) {
       kept = kept.append(lost[i] + (lost[i + 1] - rest as i64)).append(rest as i64);
     }
-    i = i + 2;
+    i += 2;
   }
-  let unsent: i32 = (s.crypto_out.len() as i64 - s.crypto_sent) as i32;
-  let sent: i64 = s.crypto_sent;
+  let unsent = (s.crypto_out.len() as i64 - s.crypto_sent) as i32;
+  let sent = s.crypto_sent;
   if (unsent > 0) {
-    let n: i32 = __crypto_fit(cur.plans[space].payload.len(), s.crypto_sent, unsent, room);
+    let n = __crypto_fit(cur.plans[space].payload.len(), s.crypto_sent, unsent, room);
     cur = cur.__crypto_planned(space, s.crypto_sent, n);
     sent = s.crypto_sent + n as i64;
   }
@@ -1660,7 +1660,7 @@ function (c: Conn) __crypto_out(space: i32, room: i32): Conn {
 }
 
 function __crypto_fit(used: i32, offset: i64, len: i32, room: i32): i32 {
-  let free: i32 = room - used - 1 - frames.varint_len(offset) - 2;
+  let free = room - used - 1 - frames.varint_len(offset) - 2;
   if (free <= 0) {
     return 0;
   }
@@ -1674,8 +1674,8 @@ function (c: Conn) __crypto_planned(space: i32, offset: i64, n: i32): Conn {
   if (n <= 0) {
     return c;
   }
-  let at: i32 = offset as i32;
-  let cur: Conn = c.__pushed(space, frames.Crypto(offset, __copy(c.spaces[space].crypto_out[at:at + n])));
+  let at = offset as i32;
+  let cur = c.__pushed(space, frames.Crypto(offset, __copy(c.spaces[space].crypto_out[at:at + n])));
   return Conn { ...cur, plans: cur.plans.with(space, cur.plans[space].__eliciting(recovery.CryptoRange(offset, n))) };
 }
 
@@ -1683,14 +1683,14 @@ function (c: Conn) __control_out(space: i32, room: i32): Conn {
   if (space != recovery.APPLICATION) {
     return c;
   }
-  let cur: Conn = c;
+  let cur = c;
   if (cur.handshake_done_pending) {
     cur = Conn { ...cur, handshake_done_pending: false }.__planned(space, frames.HandshakeDone, true);
   }
   if (cur.pending.len() == 0) {
     return cur;
   }
-  let pending: frames.Frame[] = cur.pending;
+  let pending = cur.pending;
   cur = Conn { ...cur, pending: [] };
   let kept: frames.Frame[] = [];
   for f in pending {
@@ -1707,9 +1707,9 @@ function (c: Conn) __streams_out(space: i32, room: i32): Conn {
   if (space != recovery.APPLICATION || c.state != ESTABLISHED) {
     return c;
   }
-  let before: i32 = c.plans[space].payload.len();
-  let payload: u8[] = c.plans[space].payload;
-  let cur: Conn = Conn { ...c, plans: c.plans.with(space, c.plans[space].__unfilled()) };
+  let before = c.plans[space].payload.len();
+  let payload = c.plans[space].payload;
+  let cur = Conn { ...c, plans: c.plans.with(space, c.plans[space].__unfilled()) };
   cur = Conn { ...cur, streams: cur.streams.fill(payload, room) };
   return Conn { ...cur, plans: cur.plans.with(space, cur.plans[space].__filled(cur.streams.filled, cur.streams.resend, before)), streams: cur.streams.fill_taken() };
 }
@@ -1729,14 +1729,14 @@ function (c: Conn) __probe_out(space: i32): Conn {
   if (!c.probes.contains(space)) {
     return c;
   }
-  let cur: Conn = Conn { ...c, probes: __without(c.probes, space) };
+  let cur = Conn { ...c, probes: __without(c.probes, space) };
   if (cur.plans[space].eliciting) {
     return cur;
   }
   for sent in cur.recovery.unacked(space) {
     for item in sent.resend {
       if let recovery.CryptoRange(offset, len) = item {
-        let n: i32 = __crypto_fit(cur.plans[space].payload.len(), offset, len, cur.config.max_datagram - 64);
+        let n = __crypto_fit(cur.plans[space].payload.len(), offset, len, cur.config.max_datagram - 64);
         if (n > 0) {
           return cur.__crypto_planned(space, offset, n);
         }
@@ -1754,14 +1754,14 @@ function (c: Conn) __probe_out(space: i32): Conn {
 <<34 function (c: Conn) __seal(planned: i32, now: i64): Conn>>=
 // __seal seals the plans of the spaces set in `planned` into one datagram.
 function (c: Conn) __seal(planned: i32, now: i64): Conn {
-  let pad: boolean = __planned_in(planned, recovery.INITIAL) && (!c.server || c.plans[recovery.INITIAL].eliciting);
-  let cur: Conn = c;
+  let pad = __planned_in(planned, recovery.INITIAL) && (!c.server || c.plans[recovery.INITIAL].eliciting);
+  let cur = c;
   let out: u8[] = [];
   for space in 0..3 {
     if (__planned_in(planned, space)) {
-      let plan: Plan = cur.plans[space];
-      let extra: i32 = 0;
-      let bytes: u8[] = cur.__sealed(plan, 0);
+      let plan = cur.plans[space];
+      let extra = 0;
+      let bytes = cur.__sealed(plan, 0);
       if (pad && planned >> space + 1 == 0 && out.len() + bytes.len() < packet.MIN_INITIAL_DATAGRAM) {
         extra = packet.MIN_INITIAL_DATAGRAM - out.len() - bytes.len();
         bytes = cur.__sealed(plan, extra);
@@ -1791,18 +1791,18 @@ function __planned_in(planned: i32, space: i32): boolean {
 }
 
 function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
-  let s: Space = c.spaces[p.space];
+  let s = c.spaces[p.space];
   let Some(keys) = s.send else {
     return [];
   };
-  let used: i64 = s.next_pn;
+  let used = s.next_pn;
   if (p.space == recovery.APPLICATION) {
     used = c.key_sent;
   }
   if (used >= __seal_limit(keys) || s.next_pn > frames.MAX_VARINT) {
     return [];
   }
-  let payload: u8[] = p.payload;
+  let payload = p.payload;
   if (extra > 0) {
     payload = frames.put(payload, frames.Padding(extra));
   }
@@ -1810,7 +1810,7 @@ function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
   if (p.space == recovery.APPLICATION) {
     return packet.seal_short(c.dcid, s.next_pn, n, c.key_phase, false, payload, keys);
   }
-  let kind: packet.Kind = packet.Initial;
+  let kind = packet.Initial;
   if (p.space == recovery.HANDSHAKE) {
     kind = packet.Handshake;
   }
@@ -1822,13 +1822,13 @@ function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
 }
 
 function (c: Conn) __recorded(p: Plan, now: i64, size: i32, padded: boolean): Conn {
-  let pn: i64 = c.spaces[p.space].next_pn;
-  let sent: recovery.Sent = recovery.Sent { pn: pn, at: time.instant_from_nanos(now), size: size, ack_eliciting: p.eliciting, in_flight: p.eliciting || padded, resend: p.resend };
-  let sent_count: i64 = c.key_sent;
+  let pn = c.spaces[p.space].next_pn;
+  let sent = recovery.Sent { pn: pn, at: time.instant_from_nanos(now), size: size, ack_eliciting: p.eliciting, in_flight: p.eliciting || padded, resend: p.resend };
+  let sent_count = c.key_sent;
   if (p.space == recovery.APPLICATION) {
-    sent_count = sent_count + 1;
+    sent_count += 1;
   }
-  let cur: Conn = Conn { ...c, key_sent: sent_count, recovery: c.recovery.on_sent(p.space, sent) };
+  let cur = Conn { ...c, key_sent: sent_count, recovery: c.recovery.on_sent(p.space, sent) };
   return Conn { ...cur, spaces: cur.spaces.with(p.space, Space { ...cur.spaces[p.space], next_pn: pn + 1 }) };
 }
 
@@ -1839,10 +1839,10 @@ function (c: Conn) __close_datagram(): Conn {
   let Some(why) = c.close else {
     return c;
   };
-  let cur: Conn = Conn { ...c, close_pending: false };
-  let planned: i32 = 0;
+  let cur = Conn { ...c, close_pending: false };
+  let planned = 0;
   for space in 0..3 {
-    let s: Space = c.spaces[space];
+    let s = c.spaces[space];
     if (!s.discarded && s.send.is_some()) {
       planned = planned | 1 << space;
       cur = Conn { ...cur, plans: cur.plans.with(space, Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [], sized: false }) };
@@ -1868,7 +1868,7 @@ function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
     return ranges.with(0, __raised(ranges[0], pn));
   }
   let out: frames.AckRange[] = [];
-  let placed: boolean = false;
+  let placed = false;
   for r in ranges {
     if (!placed && pn > r.high + 1) {
       out = __push_range(out, frames.AckRange { low: pn, high: pn });
@@ -1888,10 +1888,10 @@ function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
     return out;
   }
   let kept: frames.AckRange[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < MAX_ACK_RANGES) {
     kept = kept.append(out[i]);
-    i = i + 1;
+    i += 1;
   }
   return kept;
 }
@@ -1902,7 +1902,7 @@ function __raised(r: frames.AckRange, pn: i64): frames.AckRange {
 
 function __push_range(out: frames.AckRange[], r: frames.AckRange): frames.AckRange[] {
   if (out.len() > 0) {
-    let last: frames.AckRange = out[out.len() - 1];
+    let last = out[out.len() - 1];
     if (r.high + 1 >= last.low) {
       return out.with(out.len() - 1, frames.AckRange { low: __min(last.low, r.low), high: __max(last.high, r.high) });
     }
@@ -1920,15 +1920,15 @@ function __has(ranges: frames.AckRange[], pn: i64): boolean {
 }
 
 function __crypto_space(c: Conn, offset: i64): i32 {
-  let space: i32 = 0;
+  let space = 0;
   while (space < 3) {
-    let s: Space = c.spaces[space];
+    let s = c.spaces[space];
     if (!s.discarded && s.crypto_out.len() as i64 > offset && s.crypto_sent > offset) {
       return space;
     }
-    space = space + 1;
+    space += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __without(xs: i32[], x: i32): i32[] {
@@ -1981,11 +1981,11 @@ function __same(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let diff: i32 = 0;
-  let i: i32 = 0;
+  let diff = 0;
+  let i = 0;
   while (i < a.len()) {
     diff = diff | a[i] as i32 ^ b[i] as i32;
-    i = i + 1;
+    i += 1;
   }
   return diff == 0;
 }

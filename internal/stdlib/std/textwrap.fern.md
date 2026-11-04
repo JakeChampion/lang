@@ -45,26 +45,26 @@ import "std/array";
 ```fern
 <<3 function __tw_words(line: string): string[]>>=
 function __tw_words(line: string): string[] {
-  let raw: string[] = line.split(" ");
+  let raw = line.split(" ");
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < raw.len()) {
     if (raw[i].len() > 0) {
       out = out.append(raw[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __tw_wrap_line(words: string[], width: i32): string {
   let lines: string[] = [];
-  let cur: string = "";
-  let curw: i32 = 0;
-  let i: i32 = 0;
+  let cur = "";
+  let curw = 0;
+  let i = 0;
   while (i < words.len()) {
-    let w: string = words[i];
-    let ww: i32 = w.codepoint_count();
+    let w = words[i];
+    let ww = w.codepoint_count();
     if (curw == 0) {
       cur = w;
       curw = ww;
@@ -76,7 +76,7 @@ function __tw_wrap_line(words: string[], width: i32): string {
       cur = w;
       curw = ww;
     }
-    i = i + 1;
+    i += 1;
   }
   if (curw > 0) {
     lines = lines.append(cur);
@@ -93,12 +93,12 @@ pub function word_wrap(text: string, width: i32): string {
   if (width <= 0) {
     return text;
   }
-  let paras: string[] = text.split("\n");
+  let paras = text.split("\n");
   let out: string[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < paras.len()) {
     out = out.append(__tw_wrap_line(__tw_words(paras[p]), width));
-    p = p + 1;
+    p += 1;
   }
   return out.join("\n");
 }

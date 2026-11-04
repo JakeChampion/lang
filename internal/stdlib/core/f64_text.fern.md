@@ -103,24 +103,24 @@ function __float_int_part(n: f64): string {
   if (n < 1.0) {
     return "0";
   }
-  let digits: string = "0123456789";
+  let digits = "0123456789";
   // Two-pass exact-size buffer (#4379). Digits peel off least-significant
   // first, so the old `out = digits[d] + out` prepended each one — recopying
   // the whole growing string every step, O(digits²) (up to ~309 digits for
   // the largest f64 magnitudes). Instead: a counting pass sizes the result,
   // then a fill pass writes each digit straight into its final slot from the
   // right. Byte-for-byte identical output.
-  let count: i32 = 0;
-  let m: f64 = n;
+  let count = 0;
+  let m = n;
   while (m >= 1.0) {
     m = __floor_f64(m / 10.0);
-    count = count + 1;
+    count += 1;
   }
-  let buf: u8[] = __alloc_u8(count);
-  let pos: i32 = count - 1;
+  let buf = __alloc_u8(count);
+  let pos = count - 1;
   while (n >= 1.0) {
-    let q: f64 = __floor_f64(n / 10.0);
-    let d: i32 = (n - q * 10.0) as i32;
+    let q = __floor_f64(n / 10.0);
+    let d = (n - q * 10.0) as i32;
     if (d < 0) {
       d = 0;
     }
@@ -128,7 +128,7 @@ function __float_int_part(n: f64): string {
       d = 9;
     }
     buf = buf.with(pos, digits[d] as u8);
-    pos = pos - 1;
+    pos -= 1;
     n = q;
   }
   return string_from_bytes_unchecked(buf);
@@ -890,7 +890,7 @@ function _db_mul192_lo(x: u64, chi: u64, clo: u64): u64 {
 ```fern
 <<8 function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64>>=
 function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64 {
-  let hi: u64 = _db_mul_hi(x, chi);
+  let hi = _db_mul_hi(x, chi);
   if (_db_mul192_lo(x, chi, clo) < x * chi) {  // carry out of the low half
     hi = hi + 1 as u64;
   }
@@ -908,12 +908,12 @@ function _db_mul192_hi(x: u64, chi: u64, clo: u64): u64 {
 ```fern
 <<9 function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): i32>>=
 function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): i32 {
-  let hi: u64 = two_f * chi + _db_mul_hi(two_f, clo);
-  let lo: u64 = two_f * clo;
-  let back: u64 = (64 - beta) as u64;
-  let flags: i32 = (hi >> back & 1 as u64) as i32;
+  let hi = two_f * chi + _db_mul_hi(two_f, clo);
+  let lo = two_f * clo;
+  let back = (64 - beta) as u64;
+  let flags = (hi >> back & 1 as u64) as i32;
   if ((hi << beta as u64 | lo >> back) == 0 as u64) {
-    flags = flags + 2;
+    flags += 2;
   }
   return flags;
 }
@@ -929,8 +929,8 @@ function _db_parity64(two_f: u64, chi: u64, clo: u64, beta: i32): i32 {
 <<10 function _db_rtz(sig: u64, exp: i32): (i64, i32)>>=
 function _db_rtz(sig: u64, exp: i32): (i64, i32) {
   while (sig != 0 as u64 && sig % (10 as u64) == 0 as u64) {
-    sig = sig / (10 as u64);
-    exp = exp + 1;
+    sig /= 10 as u64;
+    exp += 1;
   }
   return (sig as i64, exp);
 }
@@ -946,13 +946,13 @@ function _db_rtz(sig: u64, exp: i32): (i64, i32) {
 ```fern
 <<11 function __db_shortest64(n: f64): (i64, i32)>>=
 function __db_shortest64(n: f64): (i64, i32) {
-  let bits: u64 = f64_bits(n) as u64;
-  let ebits: i32 = (bits >> 52 as u64 & 2047 as u64) as i32;
-  let two_fc: u64 = (bits & 4503599627370495 as u64) << 1 as u64;
+  let bits = f64_bits(n) as u64;
+  let ebits = (bits >> 52 as u64 & 2047 as u64) as i32;
+  let two_fc = (bits & 4503599627370495 as u64) << 1 as u64;
   // A closed interval means both endpoints round back to n, which is the
   // case exactly when the significand is even (round-half-to-even).
-  let closed: boolean = (bits & 1 as u64) == 0 as u64;
-  let be: i32 = 0 - 1074;
+  let closed = (bits & 1 as u64) == 0 as u64;
+  let be = -1074;
   if (ebits != 0) {
     be = ebits - 1075;
     // A power of two has a shorter interval on its left side.
@@ -962,24 +962,24 @@ function __db_shortest64(n: f64): (i64, i32) {
     two_fc = two_fc | 9007199254740992 as u64;  // implicit bit, << 1
   }
 
-  let mk: i32 = _db_log10_pow2(be) - 2;
-  let k: i32 = 0 - mk;
-  let beta: i32 = be + _db_log2_pow10(k);
+  let mk = _db_log10_pow2(be) - 2;
+  let k = -mk;
+  let beta = be + _db_log2_pow10(k);
   let at: i32 = (k + 292) * 2;
-  let chi: u64 = DB_CACHE64[at];
-  let clo: u64 = DB_CACHE64[at + 1];
+  let chi = DB_CACHE64[at];
+  let clo = DB_CACHE64[at + 1];
 
-  let deltai: u64 = chi >> (63 - beta) as u64;
-  let zx: u64 = (two_fc | 1 as u64) << beta as u64;
-  let zi: u64 = _db_mul192_hi(zx, chi, clo);
-  let z_int: boolean = _db_mul192_lo(zx, chi, clo) == 0 as u64;
+  let deltai = chi >> (63 - beta) as u64;
+  let zx = (two_fc | 1 as u64) << beta as u64;
+  let zi = _db_mul192_hi(zx, chi, clo);
+  let z_int = _db_mul192_lo(zx, chi, clo) == 0 as u64;
 
-  let sig: u64 = zi / (1000 as u64);
-  let r: u64 = zi - 1000 as u64 * sig;
+  let sig = zi / (1000 as u64);
+  let r = zi - 1000 as u64 * sig;
 
   // Step 2: try the larger divisor. Falling through to the return means the
   // shorter significand is in the interval; every other path drops to step 3.
-  let smaller: boolean = false;
+  let smaller = false;
   if (r < deltai) {
     if (r == 0 as u64 && z_int && !closed) {
       sig = sig - 1 as u64;
@@ -989,7 +989,7 @@ function __db_shortest64(n: f64): (i64, i32) {
   } else if (r > deltai) {
     smaller = true;
   } else {
-    let xp: i32 = _db_parity64(two_fc - 1 as u64, chi, clo, beta);
+    let xp = _db_parity64(two_fc - 1 as u64, chi, clo, beta);
     if (!((xp & 1) != 0 || (xp & 2) != 0 && closed)) {
       smaller = true;
     }
@@ -1000,15 +1000,15 @@ function __db_shortest64(n: f64): (i64, i32) {
 
   // Step 3: find the significand with the smaller divisor. r >= deltai here
   // (or r was reset to 1000), and deltai < 1000, so `dist` cannot underflow.
-  sig = sig * (10 as u64);
-  let dist: u64 = r - deltai / (2 as u64) + 50 as u64;
+  sig *= 10 as u64;
+  let dist = r - deltai / (2 as u64) + 50 as u64;
   // The reference computes ((dist ^ (small_divisor / 2)) & 1) != 0; here
   // small_divisor / 2 is 50, which is even, so this is just dist's parity.
-  let approx: boolean = (dist & 1 as u64) != 0 as u64;
-  let divisible: boolean = dist % (100 as u64) == 0 as u64;
+  let approx = (dist & 1 as u64) != 0 as u64;
+  let divisible = dist % (100 as u64) == 0 as u64;
   sig = sig + dist / (100 as u64);
   if (divisible) {
-    let yp: i32 = _db_parity64(two_fc, chi, clo, beta);
+    let yp = _db_parity64(two_fc, chi, clo, beta);
     if ((yp & 1) != 0 != approx) {
       sig = sig - 1 as u64;
     } else if (sig % (2 as u64) != 0 as u64 && (yp & 2) != 0) {
@@ -1029,26 +1029,26 @@ function __db_shortest64(n: f64): (i64, i32) {
 ```fern
 <<12 function __db_shorter64(be: i32): (i64, i32)>>=
 function __db_shorter64(be: i32): (i64, i32) {
-  let mk: i32 = _db_log10_pow2_m43(be);
-  let k: i32 = 0 - mk;
-  let beta: i32 = be + _db_log2_pow10(k);
-  let chi: u64 = DB_CACHE64[(k + 292) * 2];
+  let mk = _db_log10_pow2_m43(be);
+  let k = -mk;
+  let beta = be + _db_log2_pow10(k);
+  let chi = DB_CACHE64[(k + 292) * 2];
 
-  let sh: u64 = (11 - beta) as u64;
-  let xi: u64 = chi - (chi >> 54 as u64) >> sh;
-  let zi: u64 = chi + (chi >> 53 as u64) >> sh;
+  let sh = (11 - beta) as u64;
+  let xi = chi - (chi >> 54 as u64) >> sh;
+  let zi = chi + (chi >> 53 as u64) >> sh;
   if (!(be >= 2 && be <= 3)) {
     xi = xi + 1 as u64;
   }
 
-  let sig: u64 = zi / (10 as u64);
+  let sig = zi / (10 as u64);
   if (sig * (10 as u64) >= xi) {
     return _db_rtz(sig, mk + 1);
   }
 
   sig = ((chi >> (10 - beta) as u64) + 1 as u64) / (2 as u64);
   // be == -77 is the only binary exponent where the rounded-up y can tie.
-  if (sig % (2 as u64) != 0 as u64 && be == 0 - 77) {
+  if (sig % (2 as u64) != 0 as u64 && be == -77) {
     sig = sig - 1 as u64;
   } else if (sig < xi) {
     sig = sig + 1 as u64;
@@ -1065,11 +1065,11 @@ function __db_shorter64(be: i32): (i64, i32) {
 ```fern
 <<13 function __db_shortest32(n: f32): (i64, i32)>>=
 function __db_shortest32(n: f32): (i64, i32) {
-  let bits: u64 = (f32_bits(n) as i64) as u64;
-  let ebits: i32 = (bits >> 23 as u64 & 255 as u64) as i32;
-  let two_fc: u64 = (bits & 8388607 as u64) << 1 as u64;
-  let closed: boolean = (bits & 1 as u64) == 0 as u64;
-  let be: i32 = 0 - 149;
+  let bits = (f32_bits(n) as i64) as u64;
+  let ebits = (bits >> 23 as u64 & 255 as u64) as i32;
+  let two_fc = (bits & 8388607 as u64) << 1 as u64;
+  let closed = (bits & 1 as u64) == 0 as u64;
+  let be = -149;
   if (ebits != 0) {
     be = ebits - 150;
     if (two_fc == 0 as u64) {
@@ -1078,22 +1078,22 @@ function __db_shortest32(n: f32): (i64, i32) {
     two_fc = two_fc | 16777216 as u64;  // implicit bit, << 1
   }
 
-  let mk: i32 = _db_log10_pow2(be) - 1;
-  let k: i32 = 0 - mk;
-  let beta: i32 = be + _db_log2_pow10(k);
-  let c: u64 = DB_CACHE32[k + 31];
+  let mk = _db_log10_pow2(be) - 1;
+  let k = -mk;
+  let beta = be + _db_log2_pow10(k);
+  let c = DB_CACHE32[k + 31];
 
-  let deltai: u64 = c >> (63 - beta) as u64;
+  let deltai = c >> (63 - beta) as u64;
   // The binary32 product is 96-bit: widen the 32-bit operand into the high
   // half and keep the upper 64 bits.
-  let prod: u64 = _db_mul_hi((two_fc | 1 as u64) << beta as u64 << 32 as u64, c);
-  let zi: u64 = prod >> 32 as u64;
-  let z_int: boolean = (prod & 4294967295 as u64) == 0 as u64;
+  let prod = _db_mul_hi((two_fc | 1 as u64) << beta as u64 << 32 as u64, c);
+  let zi = prod >> 32 as u64;
+  let z_int = (prod & 4294967295 as u64) == 0 as u64;
 
-  let sig: u64 = zi / (100 as u64);
-  let r: u64 = zi - 100 as u64 * sig;
+  let sig = zi / (100 as u64);
+  let r = zi - 100 as u64 * sig;
 
-  let smaller: boolean = false;
+  let smaller = false;
   if (r < deltai) {
     if (r == 0 as u64 && z_int && !closed) {
       sig = sig - 1 as u64;
@@ -1103,7 +1103,7 @@ function __db_shortest32(n: f32): (i64, i32) {
   } else if (r > deltai) {
     smaller = true;
   } else {
-    let xp: i32 = _db_parity32(two_fc - 1 as u64, c, beta);
+    let xp = _db_parity32(two_fc - 1 as u64, c, beta);
     if (!((xp & 1) != 0 || (xp & 2) != 0 && closed)) {
       smaller = true;
     }
@@ -1112,15 +1112,15 @@ function __db_shortest32(n: f32): (i64, i32) {
     return _db_rtz(sig, mk + 2);
   }
 
-  sig = sig * (10 as u64);
-  let dist: u64 = r - deltai / (2 as u64) + 5 as u64;
+  sig *= 10 as u64;
+  let dist = r - deltai / (2 as u64) + 5 as u64;
   // Here small_divisor / 2 is 5, which is ODD, so ((dist ^ 5) & 1) != 0
   // inverts dist's parity.
-  let approx: boolean = (dist & 1 as u64) == 0 as u64;
-  let divisible: boolean = dist % (10 as u64) == 0 as u64;
+  let approx = (dist & 1 as u64) == 0 as u64;
+  let divisible = dist % (10 as u64) == 0 as u64;
   sig = sig + dist / (10 as u64);
   if (divisible) {
-    let yp: i32 = _db_parity32(two_fc, c, beta);
+    let yp = _db_parity32(two_fc, c, beta);
     if ((yp & 1) != 0 != approx) {
       sig = sig - 1 as u64;
     } else if (sig % (2 as u64) != 0 as u64 && (yp & 2) != 0) {
@@ -1139,10 +1139,10 @@ function __db_shortest32(n: f32): (i64, i32) {
 ```fern
 <<14 function _db_parity32(two_f: u64, c: u64, beta: i32): i32>>=
 function _db_parity32(two_f: u64, c: u64, beta: i32): i32 {
-  let r: u64 = two_f * c;
-  let flags: i32 = (r >> (64 - beta) as u64 & 1 as u64) as i32;
+  let r = two_f * c;
+  let flags = (r >> (64 - beta) as u64 & 1 as u64) as i32;
   if ((r >> (32 - beta) as u64 & 4294967295 as u64) == 0 as u64) {
-    flags = flags + 2;
+    flags += 2;
   }
   return flags;
 }
@@ -1153,25 +1153,25 @@ function _db_parity32(two_f: u64, c: u64, beta: i32): i32 {
 ```fern
 <<15 function __db_shorter32(be: i32): (i64, i32)>>=
 function __db_shorter32(be: i32): (i64, i32) {
-  let mk: i32 = _db_log10_pow2_m43(be);
-  let k: i32 = 0 - mk;
-  let beta: i32 = be + _db_log2_pow10(k);
-  let c: u64 = DB_CACHE32[k + 31];
+  let mk = _db_log10_pow2_m43(be);
+  let k = -mk;
+  let beta = be + _db_log2_pow10(k);
+  let c = DB_CACHE32[k + 31];
 
-  let sh: u64 = (40 - beta) as u64;
-  let xi: u64 = c - (c >> 25 as u64) >> sh;
-  let zi: u64 = c + (c >> 24 as u64) >> sh;
+  let sh = (40 - beta) as u64;
+  let xi = c - (c >> 25 as u64) >> sh;
+  let zi = c + (c >> 24 as u64) >> sh;
   if (!(be >= 2 && be <= 3)) {
     xi = xi + 1 as u64;
   }
 
-  let sig: u64 = zi / (10 as u64);
+  let sig = zi / (10 as u64);
   if (sig * (10 as u64) >= xi) {
     return _db_rtz(sig, mk + 1);
   }
 
   sig = ((c >> (39 - beta) as u64) + 1 as u64) / (2 as u64);
-  if (sig % (2 as u64) != 0 as u64 && be == 0 - 35) {
+  if (sig % (2 as u64) != 0 as u64 && be == -35) {
     sig = sig - 1 as u64;
   } else if (sig < xi) {
     sig = sig + 1 as u64;
@@ -1190,10 +1190,10 @@ function __db_shorter32(be: i32): (i64, i32) {
 ```fern
 <<16 function __float_fmt_sci(sig: string, msd: i32): string>>=
 function __float_fmt_sci(sig: string, msd: i32): string {
-  let nd: i32 = sig.len();
+  let nd = sig.len();
   if (msd < 0 - 4 || msd >= 21) {
     // scientific: d[.ddd]e±XX
-    let out: string = "" + slice_unchecked(sig, 0, 1);
+    let out = "" + slice_unchecked(sig, 0, 1);
     if (nd > 1) {
       out = out + "." + slice_unchecked(sig, 1, nd);
     }
@@ -1204,21 +1204,21 @@ function __float_fmt_sci(sig: string, msd: i32): string {
   }
   if (msd < 0) {
     // 0.000sig
-    let z: string = "";
-    let i: i32 = 0;
+    let z = "";
+    let i = 0;
     while (i < 0 - msd - 1) {
-      z = z + "0";
-      i = i + 1;
+      z += "0";
+      i += 1;
     }
     return "0." + z + sig;
   }
   if (msd + 1 >= nd) {
     // integer, pad trailing zeros
-    let z2: string = "";
-    let i2: i32 = 0;
+    let z2 = "";
+    let i2 = 0;
     while (i2 < msd + 1 - nd) {
-      z2 = z2 + "0";
-      i2 = i2 + 1;
+      z2 += "0";
+      i2 += 1;
     }
     return sig + z2;
   }
@@ -1236,7 +1236,7 @@ function __float_fmt_sci(sig: string, msd: i32): string {
 ```fern
 <<17 function __float_render(out: string, sig: i64, exp: i32): string>>=
 function __float_render(out: string, sig: i64, exp: i32): string {
-  let digits: string = int.__int_to_string_u64(sig, 0);
+  let digits = int.__int_to_string_u64(sig, 0);
   return out + __float_fmt_sci(digits, digits.len() - 1 + exp);
 }
 ```
@@ -1249,7 +1249,7 @@ pub(package) function __primitive_f64_to_string(n: f64): string {
   if (n != n) {
     return "NaN";
   }
-  let out: string = "";
+  let out = "";
   if (n < 0.0) {
     out = "-";
     n = 0.0 - n;
@@ -1278,7 +1278,7 @@ pub(package) function __primitive_f32_to_string(n: f32): string {
   if (n != n) {
     return "NaN";
   }
-  let out: string = "";
+  let out = "";
   if (n < 0.0) {
     out = "-";
     n = 0.0 - n;
@@ -1369,14 +1369,14 @@ pub(package) function pow10_log2(k: i32): i32 {
 ```fern
 <<25 function __db_trim(d: (i64, i32)): (i64, i32)>>=
 function __db_trim(d: (i64, i32)): (i64, i32) {
-  let sig: i64 = d.0;
+  let sig = d.0;
   if (sig % (10 as i64) != 0 as i64) {
     return d;
   }
-  let exp: i32 = d.1;
+  let exp = d.1;
   while (sig % (10 as i64) == 0 as i64) {
-    sig = sig / (10 as i64);
-    exp = exp + 1;
+    sig /= 10 as i64;
+    exp += 1;
   }
   return (sig, exp);
 }
@@ -1399,7 +1399,7 @@ pub(package) function fixed(n: f64, prec: i32): string {
   if (n != n) {
     return "NaN";
   }
-  let out: string = "";
+  let out = "";
   if (n < 0.0) {
     out = "-";
     n = 0.0 - n;
@@ -1409,22 +1409,22 @@ pub(package) function fixed(n: f64, prec: i32): string {
   }
   // mult = 10^prec.
   let mult: f64 = 1.0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < prec) {
-    mult = mult * 10.0;
-    i = i + 1;
+    mult *= 10.0;
+    i += 1;
   }
   // Scale, round half away from zero, and split into integer + fraction
   // halves — both integer-valued f64s now.
-  let scaled: f64 = __floor_f64(n * mult + 0.5);
-  let intf: f64 = __floor_f64(scaled / mult);
-  let fracf: f64 = scaled - intf * mult;
-  out = out + __float_int_part(intf);
+  let scaled = __floor_f64(n * mult + 0.5);
+  let intf = __floor_f64(scaled / mult);
+  let fracf = scaled - intf * mult;
+  out += __float_int_part(intf);
   if (prec == 0) {
     return out;
   }
   // Zero-pad the fractional digits out to `prec` places.
-  let fracStr: string = __float_int_part(fracf);
+  let fracStr = __float_int_part(fracf);
   while (fracStr.len() < prec) {
     fracStr = "0" + fracStr;
   }

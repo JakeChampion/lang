@@ -202,7 +202,7 @@ pub function (c: SetCookie) serialize(): Result[string, CookieError] {
   __pair_ok(c)?;
   __attributes_ok(c)?;
   __prefix_ok(c)?;
-  let out: string = c.name + "=" + c.value;
+  let out = c.name + "=" + c.value;
   if (c.path.len() > 0) {
     out = out + "; Path=" + c.path;
   }
@@ -224,19 +224,19 @@ pub function (c: SetCookie) serialize(): Result[string, CookieError] {
 ```fern
 <<11 function __flags(c: SetCookie): string>>=
 function __flags(c: SetCookie): string {
-  let out: string = "";
+  let out = "";
   if (c.secure) {
-    out = out + "; Secure";
+    out += "; Secure";
   }
   if (c.http_only) {
-    out = out + "; HttpOnly";
+    out += "; HttpOnly";
   }
-  let site: string = __same_site(c.same_site);
+  let site = __same_site(c.same_site);
   if (site.len() > 0) {
     out = out + "; SameSite=" + site;
   }
   if (c.partitioned) {
-    out = out + "; Partitioned";
+    out += "; Partitioned";
   }
   return out;
 }
@@ -304,12 +304,12 @@ function __prefix_ok(c: SetCookie): Result[boolean, CookieError] {
 }
 
 function __is_token(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (!__is_tchar(s[i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -322,16 +322,16 @@ function __is_tchar(b: i32): boolean {
 }
 
 function __is_cookie_value(v: string): boolean {
-  let s: string = v;
+  let s = v;
   if (s.len() >= 2 && s.starts_with("\"") && s.ends_with("\"")) {
     s = s.slice_snap(1, s.len() - 1);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (!__is_cookie_octet(s[i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -344,13 +344,13 @@ function __is_attribute_value(v: string): boolean {
   if (v.len() > ATTRIBUTE_CAP) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.len()) {
-    let b: i32 = v[i] as i32;
+    let b = v[i] as i32;
     if (b < 32 || b >= 127 || b == 59) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -361,14 +361,14 @@ function __is_attribute_value(v: string): boolean {
 ```fern
 <<12 pub function (r: HttpResponse) with_cookie(c: SetCookie): Result[HttpResponse, CookieError]>>=
 pub function (r: HttpResponse) with_cookie(c: SetCookie): Result[HttpResponse, CookieError] {
-  let v: string = c.serialize()?;
+  let v = c.serialize()?;
   return Ok(HttpResponse { ...r, headers: r.headers.append("Set-Cookie", v) });
 }
 
 pub function (r: HttpRequest) cookie(name: string): Option[string] {
   for h in r.headers.get_all("cookie") {
     for pair in h.split(";") {
-      let p: string = pair.trim();
+      let p = pair.trim();
       if let Some(eq) = p.index_of("=") {
         if (eq > 0 && p.slice_snap(0, eq) == name) {
           return Some(p.slice_snap(eq + 1, p.len()));
@@ -442,11 +442,11 @@ pub function jar_with(suffix: (string) => boolean, per_domain: i32, total: i32):
 }
 
 pub function (j: Jar) store(request_url: string, h: HeaderMap, now: time.Timestamp): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for v in h.get_all("set-cookie") {
     match (j.set(request_url, v, now)) {
       Ok(_) => {
-        n = n + 1;
+        n += 1;
       },
       Err(_) => {}
     }
@@ -455,9 +455,9 @@ pub function (j: Jar) store(request_url: string, h: HeaderMap, now: time.Timesta
 }
 
 pub function (j: Jar) set(request_url: string, set_cookie: string, now: time.Timestamp): Result[Cookie, Ignored] {
-  let u: Url = __url(request_url)?;
-  let parsed: __Parsed = __parse(set_cookie, now.unix_millis())?;
-  let c: Cookie = __place(j, u, parsed, now)?;
+  let u = __url(request_url)?;
+  let parsed = __parse(set_cookie, now.unix_millis())?;
+  let c = __place(j, u, parsed, now)?;
   if (u.scheme.to_lower() != "https") {
     if (c.secure) {
       return Err(InsecureOrigin);
@@ -472,7 +472,7 @@ pub function (j: Jar) set(request_url: string, set_cookie: string, now: time.Tim
 }
 
 pub function (j: Jar) header(request_url: string, now: time.Timestamp): Option[string] {
-  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let u = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.parse(request_url)) {
     Ok(p) => {
       u = p;
@@ -481,18 +481,18 @@ pub function (j: Jar) header(request_url: string, now: time.Timestamp): Option[s
       return None;
     }
   }
-  let host: string = u.host.to_lower();
-  let path: string = __request_path(u);
-  let secure: boolean = u.scheme.to_lower() == "https";
-  let all: Cookie[] = j.all(now);
+  let host = u.host.to_lower();
+  let path = __request_path(u);
+  let secure = u.scheme.to_lower() == "https";
+  let all = j.all(now);
   let picked: Cookie[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < all.len()) {
     if (__reaches(all[i], host, path, secure)) {
       picked = __ordered(picked, all[i]);
       all = all.with(i, Cookie { ...all[i], accessed: now });
     }
-    i = i + 1;
+    i += 1;
   }
   if (picked.len() == 0) {
     return None;
@@ -505,7 +505,7 @@ pub function (j: Jar) all(now: time.Timestamp): Cookie[] {
   let out: Cookie[] = [];
   for line in j.rows.get().split("\n") {
     if (line.len() > 0) {
-      let c: Cookie = __restored(line);
+      let c = __restored(line);
       if (__alive(c, now)) {
         out = out.append(c);
       }
@@ -561,10 +561,10 @@ function __parse(s: string, now: i64): Result[__Parsed, Ignored] {
   if (__has_ctl(s)) {
     return Err(NotACookie);
   }
-  let parts: string[] = s.split(";");
-  let pair: string = parts[0].trim();
-  let name: string = "";
-  let value: string = pair;
+  let parts = s.split(";");
+  let pair = parts[0].trim();
+  let name = "";
+  let value = pair;
   if let Some(eq) = pair.index_of("=") {
     name = pair.slice_snap(0, eq).trim();
     value = pair.slice_snap(eq + 1, pair.len()).trim();
@@ -572,30 +572,30 @@ function __parse(s: string, now: i64): Result[__Parsed, Ignored] {
   if (name.len() + value.len() == 0 || name.len() + value.len() > PAIR_CAP) {
     return Err(NotACookie);
   }
-  let p: __Parsed = __Parsed { name: name, value: value, domain: "", path: "", has_path: false, secure: false, http_only: false, partitioned: false, expires: 0 - 1 as i64, max_age_set: false };
-  let i: i32 = 1;
+  let p = __Parsed { name: name, value: value, domain: "", path: "", has_path: false, secure: false, http_only: false, partitioned: false, expires: 0 - 1 as i64, max_age_set: false };
+  let i = 1;
   while (i < parts.len()) {
     p = __attribute(p, parts[i], now);
-    i = i + 1;
+    i += 1;
   }
   return Ok(p);
 }
 
 function __has_ctl(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 32 && b != 9 || b == 127) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function __attribute(p: __Parsed, raw: string, now: i64): __Parsed {
-  let name: string = raw.trim();
-  let value: string = "";
+  let name = raw.trim();
+  let value = "";
   if let Some(eq) = raw.index_of("=") {
     name = raw.slice_snap(0, eq).trim();
     value = raw.slice_snap(eq + 1, raw.len()).trim();
@@ -603,7 +603,7 @@ function __attribute(p: __Parsed, raw: string, now: i64): __Parsed {
   if (value.len() > ATTRIBUTE_CAP) {
     return p;
   }
-  let key: string = name.to_lower();
+  let key = name.to_lower();
   if (key == "expires" || key == "max-age") {
     return __lifetime(p, key, value, now);
   }
@@ -630,11 +630,11 @@ function __flag(p: __Parsed, key: string): __Parsed {
 }
 
 function __lifetime(p: __Parsed, key: string, value: string, now: i64): __Parsed {
-  let cap: i64 = now + MAX_AGE_CAP.as_millis();
+  let cap = now + MAX_AGE_CAP.as_millis();
   if (key == "max-age") {
     match (__max_age(value)) {
       Some(n) => {
-        let at: i64 = now + n as i64 * (1000 as i64);
+        let at = now + n as i64 * (1000 as i64);
         if (n <= 0) {
           at = 0 as i64;
         }
@@ -668,7 +668,7 @@ function __max_age(v: string): Option[i32] {
   if (v.len() == 0) {
     return None;
   }
-  let digits: string = v;
+  let digits = v;
   if (v.starts_with("-")) {
     digits = v.slice_snap(1, v.len());
   }
@@ -717,15 +717,15 @@ function __parse_date(s: string): Option[time.Timestamp] {
   for token in __date_tokens(s) {
     found = __date_token(found, token);
   }
-  let year: i32 = __year_of(found[5]);
+  let year = __year_of(found[5]);
   if (!__date_in_range(found, year)) {
     return None;
   }
-  let d: Date = time.date_of(year, found[4], found[3]);
+  let d = time.date_of(year, found[4], found[3]);
   if (!d.is_valid()) {
     return None;
   }
-  let days: i32 = d.days_since(time.date_of(1970, 1, 1));
+  let days = d.days_since(time.date_of(1970, 1, 1));
   return Some(time.timestamp_from_unix(days as i64 * (86400 as i64) + (found[0] * 3600 + found[1] * 60 + found[2]) as i64));
 }
 ```
@@ -753,8 +753,8 @@ function __date_in_range(found: i32[], year: i32): boolean {
 
 function __date_tokens(s: string): string[] {
   let out: string[] = [];
-  let cur: string = "";
-  let i: i32 = 0;
+  let cur = "";
+  let i = 0;
   while (i < s.len()) {
     if (__is_date_delimiter(s[i] as i32)) {
       if (cur.len() > 0) {
@@ -762,9 +762,9 @@ function __date_tokens(s: string): string[] {
       }
       cur = "";
     } else {
-      cur = cur + s.slice_snap(i, i + 1);
+      cur += s.slice_snap(i, i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   if (cur.len() > 0) {
     out = out.append(cur);
@@ -789,7 +789,7 @@ function __date_token(found: i32[], token: string): i32[] {
 }
 
 function __date_number(found: i32[], token: string): i32[] {
-  let digits: i32 = __leading_digits(token);
+  let digits = __leading_digits(token);
   if (found[3] < 0 && digits >= 1 && digits <= 2) {
     return [found[0], found[1], found[2], __digits_value(token, digits), found[4], found[5]];
   }
@@ -803,13 +803,13 @@ function __date_number(found: i32[], token: string): i32[] {
 }
 
 function __time_of(token: string): Option[(i32, i32, i32)] {
-  let parts: string[] = token.split(":");
+  let parts = token.split(":");
   if (parts.len() < 3) {
     return None;
   }
-  let h: i32 = __two_digits(parts[0], true);
-  let m: i32 = __two_digits(parts[1], true);
-  let s: i32 = __two_digits(parts[2], false);
+  let h = __two_digits(parts[0], true);
+  let m = __two_digits(parts[1], true);
+  let s = __two_digits(parts[2], false);
   if (h < 0 || m < 0 || s < 0) {
     return None;
   }
@@ -817,27 +817,27 @@ function __time_of(token: string): Option[(i32, i32, i32)] {
 }
 
 function __two_digits(s: string, whole: boolean): i32 {
-  let n: i32 = __leading_digits(s);
+  let n = __leading_digits(s);
   if (n < 1 || n > 2 || whole && n != s.len()) {
-    return 0 - 1;
+    return -1;
   }
   return __digits_value(s, n);
 }
 
 function __leading_digits(token: string): i32 {
-  let n: i32 = 0;
+  let n = 0;
   while (n < token.len() && token[n] >= 48 && token[n] <= 57) {
-    n = n + 1;
+    n += 1;
   }
   return n;
 }
 
 function __digits_value(token: string, n: i32): i32 {
-  let v: i32 = 0;
-  let i: i32 = 0;
+  let v = 0;
+  let i = 0;
   while (i < n) {
     v = v * 10 + (token[i] as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -847,13 +847,13 @@ function __month_of(token: string): i32 {
     return 0;
   }
   let months: string[] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-  let head: string = token.slice_snap(0, 3).to_lower();
-  let i: i32 = 0;
+  let head = token.slice_snap(0, 3).to_lower();
+  let i = 0;
   while (i < 12) {
     if (months[i] == head) {
       return i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }
@@ -864,9 +864,9 @@ function __month_of(token: string): i32 {
 ```fern
 <<22 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored]>>=
 function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cookie, Ignored] {
-  let host: string = u.host.to_lower();
-  let domain: string = host;
-  let host_only: boolean = true;
+  let host = u.host.to_lower();
+  let domain = host;
+  let host_only = true;
   if (p.domain.len() > 0 && j.suffix(p.domain) && p.domain != host) {
     return Err(PublicSuffixDomain);
   }
@@ -877,7 +877,7 @@ function __place(j: Jar, u: Url, p: __Parsed, now: time.Timestamp): Result[Cooki
     domain = p.domain;
     host_only = false;
   }
-  let path: string = p.path;
+  let path = p.path;
   if (!p.has_path) {
     path = __default_path(u);
   }
@@ -902,7 +902,7 @@ function __secure_shadowed(all: Cookie[], c: Cookie): boolean {
 }
 
 function __prefixes_ok(c: Cookie, has_path: boolean): Result[boolean, Ignored] {
-  let name: string = c.name.to_lower();
+  let name = c.name.to_lower();
   if (name.starts_with("__secure-") && !c.secure) {
     return Err(PrefixBroken);
   }
@@ -917,7 +917,7 @@ function __prefixes_ok(c: Cookie, has_path: boolean): Result[boolean, Ignored] {
 
 function __replaced(all: Cookie[], c: Cookie): Cookie[] {
   let out: Cookie[] = [];
-  let fresh: Cookie = c;
+  let fresh = c;
   for old in all {
     if (old.name == c.name && old.domain == c.domain && old.path == c.path) {
       fresh = Cookie { ...c, created: old.created };
@@ -932,7 +932,7 @@ function __replaced(all: Cookie[], c: Cookie): Cookie[] {
 }
 
 function __evicted(all: Cookie[], j: Jar, domain: string): Cookie[] {
-  let out: Cookie[] = all;
+  let out = all;
   while (__count_of(out, domain) > j.per_domain) {
     out = __without_oldest(out, domain);
   }
@@ -943,23 +943,23 @@ function __evicted(all: Cookie[], j: Jar, domain: string): Cookie[] {
 }
 
 function __count_of(all: Cookie[], domain: string): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for c in all {
     if (c.domain == domain) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n;
 }
 
 function __without_oldest(all: Cookie[], domain: string): Cookie[] {
-  let pick: i32 = 0 - 1;
-  let i: i32 = 0;
+  let pick = -1;
+  let i = 0;
   while (i < all.len()) {
     if ((domain.len() == 0 || all[i].domain == domain) && (pick < 0 || all[i].accessed.cmp(all[pick].accessed) < 0)) {
       pick = i;
     }
-    i = i + 1;
+    i += 1;
   }
   if (pick < 0) {
     return all;
@@ -978,23 +978,23 @@ function __reaches(c: Cookie, host: string, path: string, secure: boolean): bool
 }
 
 function __ordered(picked: Cookie[], c: Cookie): Cookie[] {
-  let k: i32 = 0;
+  let k = 0;
   while (k < picked.len() && (picked[k].path.len() > c.path.len() || picked[k].path.len() == c.path.len() && picked[k].created.cmp(c.created) <= 0)) {
-    k = k + 1;
+    k += 1;
   }
   return array.slice(picked, 0, k).append(c).concat(array.slice(picked, k, picked.len()));
 }
 
 function __pairs(picked: Cookie[]): string {
-  let out: string = "";
+  let out = "";
   for c in picked {
     if (out.len() > 0) {
-      out = out + "; ";
+      out += "; ";
     }
     if (c.name.len() > 0) {
       out = out + c.name + "=";
     }
-    out = out + c.value;
+    out += c.value;
   }
   return out;
 }
@@ -1005,8 +1005,8 @@ function __pairs(picked: Cookie[]): string {
 ```fern
 <<23 pub function domain_matches(host: string, domain: string): boolean>>=
 pub function domain_matches(host: string, domain: string): boolean {
-  let h: string = host.to_lower();
-  let d: string = domain.to_lower();
+  let h = host.to_lower();
+  let d = domain.to_lower();
   if (h == d) {
     return true;
   }
@@ -1032,12 +1032,12 @@ function __is_ip(host: string): boolean {
   if (host.contains(":")) {
     return true;
   }
-  let labels: string[] = host.split(".");
+  let labels = host.split(".");
   return labels[labels.len() - 1].is_ascii_digits();
 }
 
 function __default_path(u: Url): string {
-  let p: string = u.path;
+  let p = u.path;
   if (!p.starts_with("/")) {
     return "/";
   }
@@ -1062,7 +1062,7 @@ function __sep(): string {
 }
 
 function __joined(all: Cookie[]): string {
-  let out: string = "";
+  let out = "";
   for c in all {
     out = out + __row(c) + "\n";
   }
@@ -1070,25 +1070,25 @@ function __joined(all: Cookie[]): string {
 }
 
 function __row(c: Cookie): string {
-  let flags: string = "";
+  let flags = "";
   if (c.host_only) {
-    flags = flags + "h";
+    flags += "h";
   }
   if (c.secure) {
-    flags = flags + "s";
+    flags += "s";
   }
   if (c.http_only) {
-    flags = flags + "o";
+    flags += "o";
   }
   if (c.partitioned) {
-    flags = flags + "p";
+    flags += "p";
   }
   let fields: string[] = [c.name, c.value, c.domain, c.path, flags, __i64_string(__expiry_ms(c.expires)), __i64_string(c.created.unix_millis()), __i64_string(c.accessed.unix_millis())];
   return fields.join(__sep());
 }
 
 function __restored(row: string): Cookie {
-  let f: string[] = row.split(__sep());
+  let f = row.split(__sep());
   return Cookie { name: f[0], value: f[1], domain: f[2], path: f[3], host_only: f[4].contains("h"), secure: f[4].contains("s"), http_only: f[4].contains("o"), partitioned: f[4].contains("p"), expires: __expiry(__i64_of(f[5])), created: time.timestamp_from_unix_millis(__i64_of(f[6])), accessed: time.timestamp_from_unix_millis(__i64_of(f[7])) };
 }
 
@@ -1098,10 +1098,10 @@ function __expiry_ms(expires: Option[time.Timestamp]): i64 {
       return e.unix_millis();
     },
     None => {
-      return 0 - 1;
+      return -1;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __i64_string(n: i64): string {
@@ -1119,15 +1119,15 @@ function __i64_digits(n: i64): string {
 }
 
 function __i64_of(s: string): i64 {
-  let v: i64 = 0 as i64;
-  let neg: boolean = s.starts_with("-");
-  let i: i32 = 0;
+  let v = 0 as i64;
+  let neg = s.starts_with("-");
+  let i = 0;
   if (neg) {
     i = 1;
   }
   while (i < s.len()) {
     v = v * (10 as i64) + (s[i] as i64 - 48 as i64);
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
     return 0 as i64 - v;

@@ -102,17 +102,17 @@ pub function put_core_type_section_one_func(buf: u8[], param_valtypes: u8[], res
   body = body.append(96u8);
   let np: i32 = param_valtypes.len();
   body = leb128.uleb_u32(body, np as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < np) {
     body = body.append(param_valtypes[i]);
-    i = i + 1;
+    i += 1;
   }
   let nr: i32 = result_valtypes.len();
   body = leb128.uleb_u32(body, nr as u32);
   i = 0;
   while (i < nr) {
     body = body.append(result_valtypes[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -169,12 +169,12 @@ pub function put_core_instance_section_from_func_exports(buf: u8[], export_names
   body = body.append(1u8);
   let n: i32 = export_names.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, export_names[i]);
     body = body.append(CORE_SORT_FUNC);
     body = leb128.uleb_u32(body, core_func_idxs[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -196,12 +196,12 @@ pub function put_core_instance_section_instantiate_with_instance_args(buf: u8[],
   body = leb128.uleb_u32(body, module_idx);
   let n: i32 = arg_names.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, arg_names[i]);
     body = body.append(CORE_SORT_INSTANCE);
     body = leb128.uleb_u32(body, instance_idxs[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -246,22 +246,22 @@ pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][],
   let body: u8[] = [];
   let n: i32 = result_valtype_per_func.len();
   body = leb128.uleb_u32(body, n as u32);
-  let t: i32 = 0;
+  let t = 0;
   while (t < n) {
     body = body.append(64u8);
     let p_names: string[] = param_names_per_func[t];
     let p_valtypes: u8[] = param_valtypes_per_func[t];
     let pn: i32 = p_names.len();
     body = leb128.uleb_u32(body, pn as u32);
-    let i: i32 = 0;
+    let i = 0;
     while (i < pn) {
       body = encode.put_name(body, p_names[i]);
       body = body.append(p_valtypes[i]);
-      i = i + 1;
+      i += 1;
     }
     body = body.append(0u8);
     body = body.append(result_valtype_per_func[t]);
-    t = t + 1;
+    t += 1;
   }
 
   let out: u8[] = buf;
@@ -294,11 +294,11 @@ pub function put_type_section_one_func_no_result(buf: u8[], param_names: string[
   body = body.append(64u8);
   let n: i32 = param_names.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, param_names[i]);
     body = body.append(param_valtypes[i]);
-    i = i + 1;
+    i += 1;
   }
   body = body.append(1u8);
   body = leb128.uleb_u32(body, 0u32);
@@ -352,10 +352,10 @@ pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
   body = body.append(111u8);
   let n: i32 = elem_valtypes.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(elem_valtypes[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -385,10 +385,10 @@ pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
   body = body.append(109u8);
   let n: i32 = labels.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, labels[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -408,10 +408,10 @@ pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
   body = body.append(110u8);
   let n: i32 = labels.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, labels[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -426,11 +426,11 @@ pub function put_type_section_one_record(buf: u8[], field_names: string[], field
   body = body.append(114u8);
   let n: i32 = field_names.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, field_names[i]);
     body = body.append(field_valtypes[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -445,7 +445,7 @@ pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_
   body = body.append(113u8);
   let n: i32 = case_names.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, case_names[i]);
     if (case_has_payload[i]) {
@@ -455,7 +455,7 @@ pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_
       body = body.append(0u8);
     }
     body = body.append(0u8);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -505,11 +505,11 @@ pub function put_type_section_one_instance_one_func_with_result_export(buf: u8[]
   body = body.append(64u8);
   let np: i32 = param_names.len();
   body = leb128.uleb_u32(body, np as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < np) {
     body = encode.put_name(body, param_names[i]);
     body = body.append(param_valtypes[i]);
-    i = i + 1;
+    i += 1;
   }
   body = body.append(0u8);
   body = body.append(result_valtype);
@@ -538,7 +538,7 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
   let n: i32 = export_names.len();
   body = leb128.uleb_u32(body, (n * 2) as u32);
 
-  let f: i32 = 0;
+  let f = 0;
   while (f < n) {
     body = body.append(1u8);
     body = body.append(64u8);
@@ -546,11 +546,11 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
     let p_valtypes: u8[] = param_valtypes_per_func[f];
     let np: i32 = p_names.len();
     body = leb128.uleb_u32(body, np as u32);
-    let i: i32 = 0;
+    let i = 0;
     while (i < np) {
       body = encode.put_name(body, p_names[i]);
       body = body.append(p_valtypes[i]);
-      i = i + 1;
+      i += 1;
     }
     body = body.append(1u8);
     body = leb128.uleb_u32(body, 0u32);
@@ -561,7 +561,7 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
     body = body.append(1u8);
     body = leb128.uleb_u32(body, f as u32);
 
-    f = f + 1;
+    f += 1;
   }
 
   let out: u8[] = buf;
@@ -593,11 +593,11 @@ pub function put_canon_section_resource_drops(buf: u8[], resource_typeidxs: u32[
   let body: u8[] = [];
   let n: i32 = resource_typeidxs.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(3u8);
     body = leb128.uleb_u32(body, resource_typeidxs[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -615,11 +615,11 @@ pub function put_canon_section_resource_news(buf: u8[], resource_typeidxs: u32[]
   let body: u8[] = [];
   let n: i32 = resource_typeidxs.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(2u8);
     body = leb128.uleb_u32(body, resource_typeidxs[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -637,11 +637,11 @@ pub function put_canon_section_resource_reps(buf: u8[], resource_typeidxs: u32[]
   let body: u8[] = [];
   let n: i32 = resource_typeidxs.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(4u8);
     body = leb128.uleb_u32(body, resource_typeidxs[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -671,14 +671,14 @@ pub function put_alias_section_core_exports(buf: u8[], core_sorts: u8[], core_in
   let body: u8[] = [];
   let n: i32 = core_sorts.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(0u8);
     body = body.append(core_sorts[i]);
     body = body.append(1u8);
     body = leb128.uleb_u32(body, core_instance_idxs[i]);
     body = encode.put_name(body, names[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -712,14 +712,14 @@ pub function put_canon_section_lifts_no_opts(buf: u8[], core_func_idxs: u32[], t
   let body: u8[] = [];
   let n: i32 = core_func_idxs.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(0u8);
     body = body.append(0u8);
     body = leb128.uleb_u32(body, core_func_idxs[i]);
     body = leb128.uleb_u32(body, 0u32);
     body = leb128.uleb_u32(body, typeidxs[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -833,13 +833,13 @@ pub function put_import_section_funcs(buf: u8[], names: string[], typeidxs: u32[
   let body: u8[] = [];
   let n: i32 = names.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(0u8);
     body = encode.put_name(body, names[i]);
     body = body.append(1u8);
     body = leb128.uleb_u32(body, typeidxs[i]);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -858,13 +858,13 @@ pub function put_canon_section_lowers_no_opts(buf: u8[], func_idxs: u32[]): u8[]
   let body: u8[] = [];
   let n: i32 = func_idxs.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(1u8);
     body = body.append(0u8);
     body = leb128.uleb_u32(body, func_idxs[i]);
     body = leb128.uleb_u32(body, 0u32);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -882,14 +882,14 @@ pub function put_export_section_funcs(buf: u8[], names: string[], func_idxs: u32
   let body: u8[] = [];
   let n: i32 = names.len();
   body = leb128.uleb_u32(body, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(0u8);
     body = encode.put_name(body, names[i]);
     body = body.append(1u8);
     body = leb128.uleb_u32(body, func_idxs[i]);
     body = body.append(0u8);
-    i = i + 1;
+    i += 1;
   }
 
   let out: u8[] = buf;
@@ -939,22 +939,22 @@ pub function build_wasi_multi_imported_component(core_bytes: u8[], interface_nam
   let comp: u8[] = put_component_header([]);
   let n: i32 = interface_names.len();
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     comp = put_type_section_one_instance_one_func_export(comp, func_names[i], wasi_param_names_per[i], wasi_param_valtypes_per[i]);
     comp = put_import_section_one_instance(comp, interface_names[i], i as u32);
     comp = put_alias_section_instance_export_func(comp, i as u32, func_names[i]);
     comp = put_canon_section_lower_no_opts(comp, i as u32);
     comp = put_core_instance_section_from_one_func_export(comp, func_names[i], i as u32);
-    i = i + 1;
+    i += 1;
   }
 
   comp = put_core_module_section(comp, core_bytes);
   let instance_idxs: u32[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < n) {
     instance_idxs = instance_idxs.append(j as u32);
-    j = j + 1;
+    j += 1;
   }
   comp = put_core_instance_section_instantiate_with_instance_args(comp, 0u32, core_import_modules, instance_idxs);
   return comp;

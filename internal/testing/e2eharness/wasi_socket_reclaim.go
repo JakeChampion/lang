@@ -13,21 +13,30 @@ import (
 	"time"
 )
 
+// StdinSocket names descriptor 0 as a Socket, for a probe of a call that fails on it.
+const StdinSocket = `function stdin_socket(): Socket {
+    unsafe { return __socket_from_fd(0); }
+}
+`
+
+// WasiSocketCloseProbe makes a socket with expr and closes it.
+func WasiSocketCloseProbe(expr string) string {
+	return StdinSocket + "function main(): i32 { let h: Socket = " + expr + "; if (h.fd < 0) { return h.fd; } return tcp_close(h); }"
+}
+
 func WasiSocketStorageProbe(expr string, closeSocket bool) string {
-	close := ""
+	hold := "let h: i32 = " + expr + ";\n        result = h;"
 	if closeSocket {
-		close = "if (h >= 0) { result = tcp_close(h); }"
+		hold = "let h: Socket = " + expr + ";\n        result = h.fd;\n        if (h.fd >= 0) { result = tcp_close(h); }"
 	}
-	return `function main(): i32 {
+	return StdinSocket + `function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
     let i: i32 = 0;
     let stable: i64 = 0;
     let result: i32 = 0;
     while (i < 32) {
         let allocations: i64 = __heap_alloc_count();
-        let h: i32 = ` + expr + `;
-        result = h;
-        ` + close + `
+        ` + hold + `
         let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
@@ -39,8 +48,8 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 }
 
 const UDPSendOnce = `function send_once(addr: u8[], port: i32, data: string): i32 {
-    let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
-    if (s < 0) { return s; }
+    let s: Socket = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+    if (s.fd < 0) { return s.fd; }
     let n: i32 = udp_sendto(s, addr, port, data);
     tcp_close(s);
     return n;
@@ -71,13 +80,13 @@ func WasiUDPStorageProbe(addr, data string) string {
 }
 
 func WasiStreamSendStorageProbe(data string) string {
-	return BytesOf + fmt.Sprintf(`function main(): i32 {
+	return BytesOf + StdinSocket + fmt.Sprintf(`function main(): i32 {
     let data: u8[] = bytes_of(%q);
     let i: i32 = 0;
     let stable: i64 = 0;
     let result: i32 = 0;
     while (i < 32) {
-        result = tcp_send_bytes(0, data);
+        result = tcp_send_bytes(stdin_socket(), data);
         if (result >= 0 && result < data.len()) { result = -1; }
         if (result >= 0) { result = 1; }
         let used: i64 = __heap_bump_bytes();
@@ -90,8 +99,8 @@ func WasiStreamSendStorageProbe(data string) string {
 }
 
 func WasiStreamRecvStorageProbe(max int) string {
-	return fmt.Sprintf(`function read(buf: u8[]): i32 {
-    let n: i32 = tcp_recv_into(0, buf);
+	return StdinSocket + fmt.Sprintf(`function read(buf: u8[]): i32 {
+    let n: i32 = tcp_recv_into(stdin_socket(), buf);
     let i: i32 = 0;
     while (i < n) {
         if (buf[i] != 120u8) { return -1002; }

@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: the case compares allocation counts, and internal/oracle/interp has
+  no allocator to count. There, __heap_alloc_count() always returns 0, so
+  the two counts are always equal and the case tests nothing. The case
+  alloc_count_sees_recycling has the same limit. See
+  docs/ALLOCATION-OBSERVABLE.md.

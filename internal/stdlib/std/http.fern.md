@@ -213,12 +213,12 @@ pub function status_text(code: i32): string {
     "Bad Request", "Unauthorized", "Payment Required", "Forbidden", "Not Found", "Method Not Allowed", "Not Acceptable", "Proxy Authentication Required", "Request Timeout", "Conflict", "Gone", "Length Required", "Precondition Failed", "Payload Too Large", "URI Too Long", "Unsupported Media Type", "Range Not Satisfiable", "Expectation Failed", "I'm a teapot", "Misdirected Request", "Unprocessable Entity", "Upgrade Required", "Precondition Required", "Too Many Requests", "Request Header Fields Too Large",
     "Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout", "HTTP Version Not Supported", "Network Authentication Required",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < codes.len()) {
     if (codes[i] == code) {
       return phrases[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -272,7 +272,7 @@ pub function internal_error(body: string): HttpResponse {
 }
 
 pub function redirect(location: string): HttpResponse {
-  let h: HeaderMap = headers.new();
+  let h = headers.new();
   h = h.set("Location", location);
   return HttpResponse { status: 302, body: BodyText(location), headers: h, trailers: headers.new(), background: None };
 }
@@ -291,7 +291,7 @@ pub function created(body: string): HttpResponse {
 ```fern
 <<4 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse>>=
 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse {
-  let h: HeaderMap = headers.new();
+  let h = headers.new();
   h = h.set("Content-Type", ct);
   return HttpResponse { status: status, body: BodyText(body), headers: h, trailers: headers.new(), background: None };
 }
@@ -373,11 +373,11 @@ pub function respond_error_with[S](pair: (S, Result[HttpResponse, dyn error.Erro
 }
 
 pub function problem(status: i32, title: string, detail: string): HttpResponse {
-  let t: string = title;
+  let t = title;
   if (t.len() == 0) {
     t = status_text(status);
   }
-  let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.escape(t) + "\",\"status\":" + status.to_string();
+  let body = "{\"type\":\"about:blank\",\"title\":\"" + json.escape(t) + "\",\"status\":" + status.to_string();
   if (detail.len() > 0) {
     body = body + ",\"detail\":\"" + json.escape(detail) + "\"";
   }
@@ -397,7 +397,7 @@ pub struct HttpError { status: i32, title: string, detail: string }
 ```fern
 <<9 pub function (e: HttpError) message(): string>>=
 pub function (e: HttpError) message(): string {
-  let title: string = e.title;
+  let title = e.title;
   if (title.len() == 0) {
     title = status_text(e.status);
   }
@@ -573,7 +573,7 @@ pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]
       return Err(UnsupportedMediaType(""));
     }
   }
-  let text: string = req.body_text()?;
+  let text = req.body_text()?;
   match (json.parse(text)) {
     Ok(v) => {
       match (T.from_json_value(v)) {
@@ -598,7 +598,7 @@ pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]
 ```fern
 <<17 function __media_type_is_json(ct: string): boolean>>=
 function __media_type_is_json(ct: string): boolean {
-  let mt: string = ct;
+  let mt = ct;
   if let Some(semi) = ct.index_of(";") {
     mt = slice_unchecked(ct, 0, semi) + "";
   }
@@ -615,22 +615,22 @@ function __media_type_is_json(ct: string): boolean {
 ```fern
 <<18 pub function path_segments(path: string): string[]>>=
 pub function path_segments(path: string): string[] {
-  let n: i32 = path.len();
+  let n = path.len();
   if let Some(q) = path.index_of("?") {
     n = q;
   }
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     while (i < n && path[i] == 47) {
-      i = i + 1;
+      i += 1;
     }
     if (i >= n) {
       return out;
     }
-    let start: i32 = i;
+    let start = i;
     while (i < n && path[i] != 47) {
-      i = i + 1;
+      i += 1;
     }
     out = out.append(slice_unchecked(path, start, i) + "");
   }
@@ -661,7 +661,7 @@ pub function user_agent_is_bot(ua: string): boolean {
 }
 
 pub function header_value(block: string, key: string): Option[string] {
-  let bs: u8[] = block.bytes();
+  let bs = block.bytes();
   match (__parse_header_bytes(bs, 0, bs.len(), limits().header_fields, headers.new())) {
     Ok(h) => {
       return h.get(key);
@@ -679,7 +679,7 @@ pub function header_value(block: string, key: string): Option[string] {
 ```fern
 <<19 function __find_crlf(buf: u8[], from: i32, end: i32): i32>>=
 function __find_crlf(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = __memchr_bytes(buf, 13, from);
+  let i = __memchr_bytes(buf, 13, from);
   while (i >= 0 && i + 1 < end) {
     if (buf[i + 1] == 10 as u8) {
       return i;
@@ -690,7 +690,7 @@ function __find_crlf(buf: u8[], from: i32, end: i32): i32 {
 }
 
 function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
-  let i: i32 = __memchr_bytes(buf, b as i32, from);
+  let i = __memchr_bytes(buf, b as i32, from);
   if (i < end) {
     return i;
   }
@@ -698,7 +698,7 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
 }
 
 function __line_end(buf: u8[], from: i32, end: i32): i32 {
-  let cr: i32 = __memchr_bytes(buf, 13, from);
+  let cr = __memchr_bytes(buf, 13, from);
   if (cr < 0 || cr >= end) {
     return end;
   }
@@ -814,20 +814,20 @@ function __token_is(s: string, want: string): boolean {
 
 function __token_at(s: string, from: i32, end: i32, want: string): boolean {
   while (from < end && __is_ows(s[from])) {
-    from = from + 1;
+    from += 1;
   }
   while (end > from && __is_ows(s[end - 1])) {
-    end = end - 1;
+    end -= 1;
   }
   if (end - from != want.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < want.len()) {
     if (__ascii_lower(s[from + i]) != __ascii_lower(want[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -837,7 +837,7 @@ function __is_ows(b: u8): boolean {
 }
 
 function __ascii_lower(b: u8): i32 {
-  let v: i32 = b as i32;
+  let v = b as i32;
   if (v >= 65 && v <= 90) {
     return v + 32;
   }
@@ -846,10 +846,10 @@ function __ascii_lower(b: u8): i32 {
 
 function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32): Option[string] {
   while (from < end && __is_ows(buf[from])) {
-    from = from + 1;
+    from += 1;
   }
   while (end > from && __is_ows(buf[end - 1])) {
-    end = end - 1;
+    end -= 1;
   }
   if (at >= 0 && prev.values[at].len() == end - from && __bytes_are(buf, from, prev.values[at])) {
     return Some(prev.values[at]);
@@ -857,7 +857,7 @@ function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32)
   if (__scan_set_bytes(buf, from, FIELD_CTL) < end) {
     return None;
   }
-  let v: string = __bytes_string(buf, from, end);
+  let v = __bytes_string(buf, from, end);
   if (!utf8.is_valid(v)) {
     return None;
   }
@@ -865,36 +865,36 @@ function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32)
 }
 
 function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev: HeaderMap): Result[HeaderMap, i32] {
-  let h: HeaderMap = headers.new();
-  let same: boolean = true;
-  let count: i32 = 0;
-  let at: i32 = from;
+  let h = headers.new();
+  let same = true;
+  let count = 0;
+  let at = from;
   while (at < end) {
     let split: (i32, i32) = __field_line(buf, at, end);
-    let col: i32 = split.0;
-    let e: i32 = split.1;
+    let col = split.0;
+    let e = split.1;
     if (col < 0) {
       return Err(400);
     }
-    count = count + 1;
+    count += 1;
     if (count > fields) {
       return Err(431);
     }
-    let i: i32 = count - 1;
+    let i = count - 1;
     if (same && i >= prev.names.len()) {
       if (i > 0) {
         h = __leading_fields(prev, i);
       }
       same = false;
     }
-    let at_prev: i32 = 0 - 1;
+    let at_prev: i32 = -1;
     if (same) {
       at_prev = i;
     }
     match (__field_value(buf, col + 1, e, prev, at_prev)) {
       Some(v) => {
         if (same) {
-          let name: string = __shared_string(buf, at, col, prev.names[i]);
+          let name = __shared_string(buf, at, col, prev.names[i]);
           same = name == prev.names[i] && v == prev.values[i];
           if (!same) {
             h = __leading_fields(prev, i).append(name, v);
@@ -919,11 +919,11 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
 }
 
 function __field_line(buf: u8[], at: i32, end: i32): (i32, i32) {
-  let col: i32 = __token_end(buf, at, end);
+  let col = __token_end(buf, at, end);
   if (col == at || col >= end || buf[col] != 58 as u8) {
     return (-1, end);
   }
-  let e: i32 = __line_end(buf, col + 1, end);
+  let e = __line_end(buf, col + 1, end);
   if (e < 0) {
     return (-1, end);
   }
@@ -931,11 +931,11 @@ function __field_line(buf: u8[], at: i32, end: i32): (i32, i32) {
 }
 
 function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
-  let out: HeaderMap = headers.new();
-  let i: i32 = 0;
+  let out = headers.new();
+  let i = 0;
   while (i < n) {
     out = out.append(h.names[i], h.values[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -946,10 +946,10 @@ function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
 ```fern
 <<24 function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean>>=
 function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
-  let i: i32 = from;
+  let i = from;
   while (true) {
-    let cr: i32 = __memchr_bytes(buf, 13, i);
-    let lf: i32 = __memchr_bytes(buf, 10, i);
+    let cr = __memchr_bytes(buf, 13, i);
+    let lf = __memchr_bytes(buf, 10, i);
     if (cr < 0 || cr >= end) {
       return lf < 0 || lf >= end;
     }
@@ -965,21 +965,21 @@ function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
 }
 
 function __head_shape(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, boolean) {
-  let n: i32 = buf.len();
-  let line_limit: i32 = from + limits.request_line + 2;
-  let block_limit: i32 = from + limits.header_bytes + 4;
-  let end: i32 = n;
+  let n = buf.len();
+  let line_limit = from + limits.request_line + 2;
+  let block_limit = from + limits.header_bytes + 4;
+  let end = n;
   if (block_limit < end) {
     end = block_limit;
   }
-  let first_crlf: i32 = -1;
-  let headers_end: i32 = -1;
-  let bare: boolean = false;
-  let line: i32 = from;
-  let after_crlf: boolean = false;
-  let i: i32 = from;
-  let p: i32 = __scan_set_bytes(buf, i, CR_LF);
-  let kind: i32 = __line_break(buf, p, end);
+  let first_crlf = -1;
+  let headers_end = -1;
+  let bare = false;
+  let line = from;
+  let after_crlf = false;
+  let i = from;
+  let p = __scan_set_bytes(buf, i, CR_LF);
+  let kind = __line_break(buf, p, end);
   while (kind != 2) {
     if (kind == 1) {
       bare = true;
@@ -1031,13 +1031,13 @@ function __within(at: i32, last: i32, limit: i32): i32 {
 }
 
 function __line_end_past(buf: u8[], i: i32, end: i32, line_limit: i32): i32 {
-  let n: i32 = buf.len();
+  let n = buf.len();
   if (line_limit > end && end < n) {
-    let to: i32 = n;
+    let to = n;
     if (line_limit < to) {
       to = line_limit;
     }
-    let at: i32 = __find_crlf(buf, i, to);
+    let at = __find_crlf(buf, i, to);
     if (at >= 0) {
       return at;
     }
@@ -1055,7 +1055,7 @@ function __line_end_past(buf: u8[], i: i32, end: i32, line_limit: i32): i32 {
 <<25 pub function header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean>>=
 pub function header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean {
   from = __past_empty_line(buf, from);
-  let end: i32 = buf.len();
+  let end = buf.len();
   if (from + limits.header_bytes + 4 < end) {
     end = from + limits.header_bytes + 4;
   }
@@ -1068,7 +1068,7 @@ pub function header_block_complete(buf: u8[], from: i32, limits: HttpLimits): bo
 ```fern
 <<26 function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32>>=
 function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = __memchr_bytes(buf, 13, from);
+  let i = __memchr_bytes(buf, 13, from);
   while (i >= 0 && i + 3 < end) {
     if (buf[i + 1] == 10 as u8 && buf[i + 2] == 13 as u8 && buf[i + 3] == 10 as u8) {
       return i;
@@ -1079,25 +1079,25 @@ function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
 }
 
 function __field_at(h: HeaderMap, key: string, from: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < h.names.len()) {
     if (h.names[i].len() == key.len() && h.names[i].eq_ignore_ascii_case(key)) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function __fields_of(h: HeaderMap): (i32, i32, i32, i32, i32) {
-  let cl: i32 = -1;
-  let te: i32 = -1;
-  let host: i32 = -1;
-  let expect: i32 = -1;
-  let conn: i32 = -1;
-  let i: i32 = 0;
+  let cl = -1;
+  let te = -1;
+  let host = -1;
+  let expect = -1;
+  let conn = -1;
+  let i = 0;
   while (i < h.names.len()) {
-    let kind: i32 = __field_kind(h.names[i]);
+    let kind = __field_kind(h.names[i]);
     if (kind == 1) {
       cl = __once(cl, i);
     }
@@ -1113,7 +1113,7 @@ function __fields_of(h: HeaderMap): (i32, i32, i32, i32, i32) {
     if (kind == 5 && conn < 0) {
       conn = i;
     }
-    i = i + 1;
+    i += 1;
   }
   return (cl, te, host, expect, conn);
 }
@@ -1126,7 +1126,7 @@ function __once(at: i32, i: i32): i32 {
 }
 
 function __field_kind(name: string): i32 {
-  let n: i32 = name.len();
+  let n = name.len();
   if (n == 4) {
     return __kind_if(name, "host", 3);
   }
@@ -1159,23 +1159,23 @@ function __http_content_length(h: HeaderMap, at: i32): Option[i32] {
   if (at == -2) {
     return None;
   }
-  let value: string = h.values[at];
+  let value = h.values[at];
   if (value.len() == 0) {
     return None;
   }
-  let acc: i32 = 0;
-  let i: i32 = 0;
+  let acc = 0;
+  let i = 0;
   while (i < value.len()) {
-    let b: i32 = value[i] as i32;
+    let b = value[i] as i32;
     if (b < 48 || b > 57) {
       return None;
     }
-    let digit: i32 = b - 48;
+    let digit = b - 48;
     if (acc > 214748364 || acc == 214748364 && digit > 7) {
       return None;
     }
     acc = acc * 10 + digit;
-    i = i + 1;
+    i += 1;
   }
   return Some(acc);
 }
@@ -1207,16 +1207,16 @@ function __http_body_framing(h: HeaderMap, cl: i32, te: i32): Result[__BodyFrami
   if (cl != -1 || te == -2) {
     return Err(400);
   }
-  let codings: string[] = h.values[te].split(",");
+  let codings = h.values[te].split(",");
   if (!__token_is(codings[codings.len() - 1], "chunked")) {
     return Err(400);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < codings.len()) {
     if (__token_is(codings[i], "chunked")) {
       return Err(400);
     }
-    i = i + 1;
+    i += 1;
   }
   if (codings.len() > 1) {
     return Err(501);
@@ -1231,14 +1231,14 @@ function __host_ok(h: HeaderMap, at: i32, version: string): boolean {
   if (at == -2) {
     return false;
   }
-  let host: string = h.values[at];
-  let i: i32 = 0;
+  let host = h.values[at];
+  let i = 0;
   while (i < host.len()) {
-    let b: i32 = host[i] as i32;
+    let b = host[i] as i32;
     if (b < 33 || b > 126) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -1257,19 +1257,19 @@ function __hex_digit(b: u8): i32 {
 }
 
 function __chunked_walk(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i32[], HeaderMap) {
-  let n: i32 = buf.len();
-  let at: i32 = from;
-  let budget: i32 = limits.header_bytes;
-  let room: i32 = limits.body;
+  let n = buf.len();
+  let at = from;
+  let budget = limits.header_bytes;
+  let room = limits.body;
   let spans: i32[] = [];
-  let none: HeaderMap = headers.new();
+  let none = headers.new();
   while (true) {
     let line: (i32, i32, i32) = __chunk_size_line(buf, at, budget, room);
     if (line.0 != 2) {
       return (line.0, 0, spans, none);
     }
-    let data: i32 = line.1 + 2;
-    let size: i32 = line.2;
+    let data = line.1 + 2;
+    let size = line.2;
     budget = budget - (data - at) - 2;
     if (budget < 0) {
       return (431, 0, spans, none);
@@ -1277,7 +1277,7 @@ function __chunked_walk(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i3
     if (size == 0) {
       return __chunked_trailers(buf, data, budget + 2, spans, limits.header_fields);
     }
-    let crlf: i32 = __crlf_at(buf, data + size);
+    let crlf = __crlf_at(buf, data + size);
     if (crlf == 0) {
       return (400, 0, spans, none);
     }
@@ -1285,14 +1285,14 @@ function __chunked_walk(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i3
       return (1, 0, spans, none);
     }
     spans = spans.append(data).append(size);
-    room = room - size;
+    room -= size;
     at = data + size + 2;
   }
   return (400, 0, spans, none);
 }
 
 function __crlf_at(buf: u8[], at: i32): i32 {
-  let n: i32 = buf.len();
+  let n = buf.len();
   if (at < n && buf[at] != 13 as u8) {
     return 0;
   }
@@ -1311,13 +1311,13 @@ function __crlf_at(buf: u8[], at: i32): i32 {
 ```fern
 <<29 function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i32, i32)>>=
 function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i32, i32) {
-  let n: i32 = buf.len();
-  let limit: i32 = at + budget;
+  let n = buf.len();
+  let limit = at + budget;
   if (limit > n) {
     limit = n;
   }
-  let crlf: i32 = __find_crlf(buf, at, limit);
-  let scanned: i32 = limit;
+  let crlf = __find_crlf(buf, at, limit);
+  let scanned = limit;
   if (crlf >= 0) {
     scanned = crlf;
   }
@@ -1341,15 +1341,15 @@ function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i3
 }
 
 function __chunk_size(buf: u8[], at: i32, end: i32, room: i32): (i32, i32, i32) {
-  let size: i32 = 0;
-  let i: i32 = at;
+  let size = 0;
+  let i = at;
   while (i < end && __hex_digit(buf[i]) >= 0) {
-    let d: i32 = __hex_digit(buf[i]);
+    let d = __hex_digit(buf[i]);
     if (size * 16 + d > room) {
       return (413, 0, i);
     }
     size = size * 16 + d;
-    i = i + 1;
+    i += 1;
   }
   if (i == at) {
     return (400, 0, i);
@@ -1358,19 +1358,19 @@ function __chunk_size(buf: u8[], at: i32, end: i32, room: i32): (i32, i32, i32) 
 }
 
 function __chunk_exts_ok(buf: u8[], from: i32, end: i32): boolean {
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
-    let semi: i32 = __bws_end(buf, i, end);
+    let semi = __bws_end(buf, i, end);
     if (semi >= end || buf[semi] != 59 as u8) {
       return false;
     }
     i = __bws_end(buf, semi + 1, end);
-    let name_end: i32 = __token_end(buf, i, end);
+    let name_end = __token_end(buf, i, end);
     if (name_end == i) {
       return false;
     }
     i = name_end;
-    let eq: i32 = __bws_end(buf, name_end, end);
+    let eq = __bws_end(buf, name_end, end);
     if (eq < end && buf[eq] == 61 as u8) {
       i = __chunk_ext_val_end(buf, __bws_end(buf, eq + 1, end), end);
       if (i < 0) {
@@ -1382,15 +1382,15 @@ function __chunk_exts_ok(buf: u8[], from: i32, end: i32): boolean {
 }
 
 function __bws_end(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < end && __is_ows(buf[i])) {
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
 
 function __token_end(buf: u8[], from: i32, end: i32): i32 {
-  let i: i32 = __scan_set_bytes(buf, from, NOT_TCHAR);
+  let i = __scan_set_bytes(buf, from, NOT_TCHAR);
   if (i > end) {
     return end;
   }
@@ -1402,25 +1402,25 @@ function __chunk_ext_val_end(buf: u8[], from: i32, end: i32): i32 {
     return -1;
   }
   if (buf[from] != 34 as u8) {
-    let tok: i32 = __token_end(buf, from, end);
+    let tok = __token_end(buf, from, end);
     if (tok == from) {
       return -1;
     }
     return tok;
   }
-  let i: i32 = from + 1;
+  let i = from + 1;
   while (i < end) {
-    let b: u8 = buf[i];
+    let b = buf[i];
     if (b == 34 as u8) {
       return i + 1;
     }
     if (b == 92 as u8) {
-      i = i + 1;
+      i += 1;
     }
     if (i >= end || !__is_quoted_byte(buf[i])) {
       return -1;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -1435,14 +1435,14 @@ function __is_quoted_byte(b: u8): boolean {
 ```fern
 <<30 function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], fields: i32): (i32, i32, i32[], ...>>=
 function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], fields: i32): (i32, i32, i32[], HeaderMap) {
-  let n: i32 = buf.len();
-  let trailers: HeaderMap = headers.new();
-  let limit: i32 = at + budget;
+  let n = buf.len();
+  let trailers = headers.new();
+  let limit = at + budget;
   if (limit > n) {
     limit = n;
   }
-  let sep: i32 = __find_crlf_crlf(buf, at - 2, limit);
-  let scanned: i32 = limit;
+  let sep = __find_crlf_crlf(buf, at - 2, limit);
+  let scanned = limit;
   if (sep >= 0) {
     scanned = sep;
   }
@@ -1469,26 +1469,26 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], field
 }
 
 function __chunked_body(buf: u8[], spans: i32[]): u8[] {
-  let total: i32 = 0;
-  let k: i32 = 1;
+  let total = 0;
+  let k = 1;
   while (k < spans.len()) {
-    total = total + spans[k];
-    k = k + 2;
+    total += spans[k];
+    k += 2;
   }
-  let out: u8[] = __alloc_u8(total);
-  let o: i32 = 0;
+  let out = __alloc_u8(total);
+  let o = 0;
   k = 0;
   while (k + 1 < spans.len()) {
     out = __bytes_into(out, o, buf, spans[k], spans[k + 1]);
-    o = o + spans[k + 1];
-    k = k + 2;
+    o += spans[k + 1];
+    k += 2;
   }
   return out;
 }
 
 function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
-  let none: HeaderMap = headers.new();
+  let none = headers.new();
   match (framing) {
     Length(content_length) => {
       if (content_length > limits.body) {
@@ -1533,14 +1533,14 @@ pub function chunk_decoder(limits: HttpLimits): ChunkDecoder {
 }
 
 pub function (d: ChunkDecoder) feed(bytes: u8[]): ChunkStep {
-  let buf: u8[] = bytes;
+  let buf = bytes;
   if (d.held.len() > 0) {
     buf = d.held.concat(bytes);
   }
   let none: u8[] = [];
-  let cur: ChunkDecoder = ChunkDecoder { ...d, held: none };
+  let cur = ChunkDecoder { ...d, held: none };
   let out: u8[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (true) {
     let step: (i32, ChunkDecoder, i32, u8[]) = __chunk_step(cur, buf, at, out);
     cur = step.1;
@@ -1569,7 +1569,7 @@ function __chunk_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, Chu
     return __chunk_data_step(d, buf, at, out);
   }
   if (d.state == 2) {
-    let crlf: i32 = __crlf_at(buf, at);
+    let crlf = __crlf_at(buf, at);
     if (crlf == 0) {
       return (400, d, at, out);
     }
@@ -1588,12 +1588,12 @@ function __chunk_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, Chu
 }
 
 function __chunk_data_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[]) {
-  let take: i32 = d.left;
+  let take = d.left;
   if (take > buf.len() - at) {
     take = buf.len() - at;
   }
-  let passed: u8[] = out.concat(__bytes_range(buf, at, at + take));
-  let next: ChunkDecoder = ChunkDecoder { ...d, left: d.left - take };
+  let passed = out.concat(__bytes_range(buf, at, at + take));
+  let next = ChunkDecoder { ...d, left: d.left - take };
   if (next.left > 0) {
     return (1, next, at + take, passed);
   }
@@ -1605,9 +1605,9 @@ function __chunk_size_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32
   if (line.0 != 2) {
     return (line.0, d, at, out);
   }
-  let data: i32 = line.1 + 2;
-  let size: i32 = line.2;
-  let budget: i32 = d.budget - (data - at) - 2;
+  let data = line.1 + 2;
+  let size = line.2;
+  let budget = d.budget - (data - at) - 2;
   if (budget < 0) {
     return (431, d, at, out);
   }
@@ -1743,26 +1743,26 @@ function __same_fields(a: HeaderMap, b: HeaderMap): boolean {
   if (a.names.len() != b.names.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.names.len()) {
     if (a.names[i] != b.names[i] || a.values[i] != b.values[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32, i32, i32, string) {
-  let sp1: i32 = __token_end(buf, from, end);
+  let sp1 = __token_end(buf, from, end);
   if (sp1 == from || sp1 >= end || buf[sp1] != 32 as u8) {
     return (400, -1, -1, "");
   }
-  let sp2: i32 = __find_byte(buf, sp1 + 1, end, 32 as u8);
+  let sp2 = __find_byte(buf, sp1 + 1, end, 32 as u8);
   if (sp2 < 0 || sp2 == sp1 + 1) {
     return (400, -1, -1, "");
   }
-  let version_status: i32 = __version_status(buf, sp2 + 1, end);
+  let version_status = __version_status(buf, sp2 + 1, end);
   if (version_status != 0) {
     return (version_status, -1, -1, "");
   }
@@ -1783,7 +1783,7 @@ function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32
 ```fern
 <<37 pub function parse_request_framed(buf: u8[]): HttpFraming>>=
 pub function parse_request_framed(buf: u8[]): HttpFraming {
-  let lim: HttpLimits = limits();
+  let lim = limits();
   match (__request_head(buf, 0, lim, framed_none().request)) {
     Ok(head) => {
       let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, head.len, head.framing, head.version, lim);
@@ -1818,7 +1818,7 @@ pub function parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits,
       if (body.0 != 2) {
         return __unframed(body.0, head);
       }
-      let len: i32 = body.2 - from;
+      let len = body.2 - from;
       if (len == prev.len && head.keep_alive == prev.keep_alive && head.version == prev.version && __repeats(prev.request, head, body.1, body.3)) {
         return Complete(prev);
       }
@@ -1837,7 +1837,7 @@ pub function parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits,
 ```fern
 <<38 function __framed_new(head: __Head, body: u8[], trailers: HeaderMap, len: i32): HttpFramed>>=
 function __framed_new(head: __Head, body: u8[], trailers: HeaderMap, len: i32): HttpFramed {
-  let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(body), headers: head.headers, trailers: trailers };
+  let req = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(body), headers: head.headers, trailers: trailers };
   return HttpFramed { request: req, len: len, keep_alive: head.keep_alive, version: head.version };
 }
 
@@ -1865,7 +1865,7 @@ pub enum HttpHeading { Complete(HttpHead), Incomplete, Malformed(i32) }
 pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): HttpHeading {
   match (__request_head(buf, from, limits, prev)) {
     Ok(head) => {
-      let length: i32 = __declared(head.framing);
+      let length = __declared(head.framing);
       if (length > limits.body) {
         return Malformed(413);
       }
@@ -1873,8 +1873,8 @@ pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, p
         return Malformed(400);
       }
       let empty: u8[] = [];
-      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(empty), headers: head.headers, trailers: headers.new() };
-      let expects: boolean = head.version != "HTTP/1.0" && head.expectation == 1;
+      let req = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(empty), headers: head.headers, trailers: headers.new() };
+      let expects = head.version != "HTTP/1.0" && head.expectation == 1;
       return Complete(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
     },
     Err(status) => {
@@ -1900,15 +1900,15 @@ struct __Head { method: string, path: string, headers: HeaderMap, version: strin
 ```fern
 <<42 function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Result[__Head, i32]>>=
 function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Result[__Head, i32] {
-  let start: i32 = from;
+  let start = from;
   from = __past_empty_line(buf, from);
   if (from >= buf.len()) {
     return Err(1);
   }
   let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
-  let first_crlf: i32 = shape.0;
-  let headers_end: i32 = shape.1;
-  let bounded: i32 = __head_bounded(first_crlf, headers_end, shape.2);
+  let first_crlf = shape.0;
+  let headers_end = shape.1;
+  let bounded = __head_bounded(first_crlf, headers_end, shape.2);
   if (bounded != 0) {
     return Err(bounded);
   }
@@ -1919,18 +1919,18 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
       return Err(line.0);
     }
   }
-  let sp1: i32 = line.1;
-  let sp2: i32 = line.2;
-  let path: string = line.3;
+  let sp1 = line.1;
+  let sp2 = line.2;
+  let path = line.3;
   if (first_crlf < 0 || headers_end < 0) {
     return Err(1);
   }
-  let headers_len: i32 = headers_end + 4 - from;
-  let hdr_start: i32 = first_crlf + 2;
+  let headers_len = headers_end + 4 - from;
+  let hdr_start = first_crlf + 2;
   if (hdr_start > headers_end) {
     hdr_start = headers_end;
   }
-  let req_headers: HeaderMap = headers.new();
+  let req_headers = headers.new();
   match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, prev.headers)) {
     Ok(h) => {
       req_headers = h;
@@ -1939,14 +1939,14 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
       return Err(status);
     }
   }
-  let version: string = __version_of(buf, sp2 + 1);
+  let version = __version_of(buf, sp2 + 1);
   let fields: (i32, i32, i32, i32, i32) = __fields_of(req_headers);
-  let expectation: i32 = __expectation(req_headers, fields.3);
-  let refused: i32 = __header_rules(req_headers, fields.2, expectation, version);
+  let expectation = __expectation(req_headers, fields.3);
+  let refused = __header_rules(req_headers, fields.2, expectation, version);
   if (refused > 0) {
     return Err(refused);
   }
-  let framing: __BodyFraming = Length(0);
+  let framing = Length(0);
   match (__http_body_framing(req_headers, fields.0, fields.1)) {
     Ok(f) => {
       framing = f;
@@ -1977,10 +1977,10 @@ function __declared(f: __BodyFraming): i32 {
       return n;
     },
     Chunked => {
-      return 0 - 1;
+      return -1;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 ```
 
@@ -1989,16 +1989,16 @@ function __declared(f: __BodyFraming): i32 {
 ```fern
 <<43 pub function request_target(method: string, target: string): Result[string, i32]>>=
 pub function request_target(method: string, target: string): Result[string, i32] {
-  let buf: u8[] = target.bytes();
-  let end: i32 = target.len();
-  let path_from: i32 = __target_start(buf, 0, end, method == "OPTIONS");
+  let buf = target.bytes();
+  let end = target.len();
+  let path_from = __target_start(buf, 0, end, method == "OPTIONS");
   if (path_from == BAD_TARGET) {
     return Err(400);
   }
   if (path_from == ASTERISK_FORM) {
     return Ok("*");
   }
-  let path_end: i32 = __path_end(buf, path_from, end);
+  let path_end = __path_end(buf, path_from, end);
   if (path_end < 0) {
     return Err(400);
   }
@@ -2017,14 +2017,14 @@ pub function request_target(method: string, target: string): Result[string, i32]
 ```fern
 <<44 function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: string): Result[string, i32]>>=
 function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: string): Result[string, i32] {
-  let path_from: i32 = __target_start(buf, from, end, options);
+  let path_from = __target_start(buf, from, end, options);
   if (path_from == BAD_TARGET) {
     return Err(400);
   }
   if (path_from == ASTERISK_FORM) {
     return Ok("*");
   }
-  let path_end: i32 = __path_end(buf, path_from, end);
+  let path_end = __path_end(buf, path_from, end);
   if (path_end < 0) {
     return Err(400);
   }
@@ -2058,7 +2058,7 @@ function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
   if (end > from && buf[from] == 47 as u8) {
     return from;
   }
-  let path_from: i32 = __absolute_form_path(buf, from, end);
+  let path_from = __absolute_form_path(buf, from, end);
   if (path_from < 0) {
     return BAD_TARGET;
   }
@@ -2066,7 +2066,7 @@ function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
 }
 
 function __path_end(buf: u8[], from: i32, end: i32): i32 {
-  let q: i32 = __find_char(buf, from, end, 63 as u8);
+  let q = __find_char(buf, from, end, 63 as u8);
   if (q < 0) {
     return end;
   }
@@ -2077,7 +2077,7 @@ function __path_end(buf: u8[], from: i32, end: i32): i32 {
 }
 
 function __absolute_form_path(target: [u8], from: i32, end: i32): i32 {
-  let at: i32 = -1;
+  let at = -1;
   if (__prefix_ci(target, from, end, "http://")) {
     at = from + 7;
   }
@@ -2087,12 +2087,12 @@ function __absolute_form_path(target: [u8], from: i32, end: i32): i32 {
   if (at < 0) {
     return -1;
   }
-  let authority_end: i32 = at;
+  let authority_end = at;
   while (authority_end < end && target[authority_end] != 47 as u8 && target[authority_end] != 63 as u8) {
     if (!__is_pchar(target[authority_end])) {
       return -1;
     }
-    authority_end = authority_end + 1;
+    authority_end += 1;
   }
   if (authority_end == at) {
     return -1;
@@ -2104,29 +2104,29 @@ function __prefix_ci(s: [u8], from: i32, end: i32, want: string): boolean {
   if (end - from < want.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < want.len()) {
     if (__ascii_lower(s[from + i]) != want[i] as i32) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function __find_char(s: [u8], from: i32, end: i32, c: u8): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     if (s[i] == c) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function __is_pchar(b: u8): boolean {
-  let v: i32 = b as i32;
+  let v = b as i32;
   return __is_unreserved(v) || __is_sub_delim(v) || v == 58 || v == 64 || v == 37;
 }
 
@@ -2136,31 +2136,31 @@ function __is_unreserved(b: i32): boolean {
 }
 
 function __is_sub_delim(b: i32): boolean {
-  let delims: string = "!$&'()*+,;=";
-  let i: i32 = 0;
+  let delims = "!$&'()*+,;=";
+  let i = 0;
   while (i < delims.len()) {
     if (delims[i] as i32 == b) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function __query_ok(s: [u8], from: i32, end: i32): boolean {
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
-    let b: u8 = s[i];
+    let b = s[i];
     if (b == 37 as u8) {
       if (__pct_byte(s, i, end) < 0) {
         return false;
       }
-      i = i + 3;
+      i += 3;
     } else {
       if (!__is_pchar(b) && b != 47 as u8 && b != 63 as u8) {
         return false;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return true;
@@ -2170,8 +2170,8 @@ function __pct_byte(s: [u8], at: i32, end: i32): i32 {
   if (at + 2 >= end) {
     return -1;
   }
-  let hi: i32 = __hex_digit(s[at + 1]);
-  let lo: i32 = __hex_digit(s[at + 2]);
+  let hi = __hex_digit(s[at + 1]);
+  let lo = __hex_digit(s[at + 2]);
   if (hi < 0 || lo < 0) {
     return -1;
   }
@@ -2184,10 +2184,10 @@ function __pct_byte(s: [u8], at: i32, end: i32): i32 {
 ```fern
 <<47 function __plain_path(buf: u8[], from: i32, end: i32): boolean>>=
 function __plain_path(buf: u8[], from: i32, end: i32): boolean {
-  let seg: i32 = from + 1;
-  let i: i32 = from;
+  let seg = from + 1;
+  let i = from;
   while (i < end) {
-    let b: u8 = buf[i];
+    let b = buf[i];
     if (b == 47 as u8) {
       if (i > from && __dot_segment(buf, seg, i) > 0) {
         return false;
@@ -2196,13 +2196,13 @@ function __plain_path(buf: u8[], from: i32, end: i32): boolean {
     } else if (b == 37 as u8 || !__is_pchar(b)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return __dot_segment(buf, seg, end) == 0;
 }
 
 function __dot_segment(s: u8[], from: i32, end: i32): i32 {
-  let n: i32 = end - from;
+  let n = end - from;
   if (n < 1 || n > 2 || s[from] != 46 as u8 || s[end - 1] != 46 as u8) {
     return 0;
   }
@@ -2211,26 +2211,26 @@ function __dot_segment(s: u8[], from: i32, end: i32): i32 {
 
 function __decoded_path(buf: u8[], from: i32, path_end: i32, end: i32): Result[string, i32] {
   let out: u8[] = [];
-  let w: i32 = 0;
-  let trailing: boolean = false;
-  let escaped_high: boolean = false;
-  let at: i32 = from + 1;
+  let w = 0;
+  let trailing = false;
+  let escaped_high = false;
+  let at = from + 1;
   while (at <= path_end) {
-    let seg: i32 = w;
+    let seg = w;
     out = __put_byte(out, w, 47 as u8);
-    w = w + 1;
+    w += 1;
     while (at < path_end && buf[at] != 47 as u8) {
-      let b: i32 = __path_byte(buf, at, path_end);
+      let b = __path_byte(buf, at, path_end);
       if (b < 0) {
         return Err(400);
       }
       escaped_high = escaped_high || b >= 128;
       out = __put_byte(out, w, b as u8);
-      w = w + 1;
-      at = at + __path_byte_len(buf[at]);
+      w += 1;
+      at += __path_byte_len(buf[at]);
     }
     trailing = at == path_end;
-    let dots: i32 = __dot_segment(out, seg + 1, w);
+    let dots = __dot_segment(out, seg + 1, w);
     if (dots == 0) {
       trailing = false;
     } else {
@@ -2239,13 +2239,13 @@ function __decoded_path(buf: u8[], from: i32, path_end: i32, end: i32): Result[s
         return Err(400);
       }
     }
-    at = at + 1;
+    at += 1;
   }
   return __finished_path(out, w, trailing, escaped_high, buf, path_end, end);
 }
 
 function __path_byte(buf: u8[], at: i32, end: i32): i32 {
-  let b: i32 = buf[at] as i32;
+  let b = buf[at] as i32;
   if (b == 37) {
     b = __pct_byte(buf, at, end);
     if (b <= 0 || b == 47) {
@@ -2273,9 +2273,9 @@ function __dropped_to(out: u8[], seg: i32, dots: i32, escaped_high: boolean): i3
   if (seg == 0) {
     return -1;
   }
-  let prev: i32 = seg - 1;
+  let prev = seg - 1;
   while (out[prev] != 47 as u8) {
-    prev = prev - 1;
+    prev -= 1;
   }
   if (escaped_high && !utf8.is_valid(__bytes_string(out, prev, seg))) {
     return -1;
@@ -2286,15 +2286,15 @@ function __dropped_to(out: u8[], seg: i32, dots: i32, escaped_high: boolean): i3
 function __finished_path(out: u8[], w: i32, trailing: boolean, escaped_high: boolean, buf: u8[], from: i32, end: i32): Result[string, i32] {
   if (w == 0 || trailing) {
     out = __put_byte(out, w, 47 as u8);
-    w = w + 1;
+    w += 1;
   }
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     out = __put_byte(out, w, buf[i]);
-    w = w + 1;
-    i = i + 1;
+    w += 1;
+    i += 1;
   }
-  let path: string = __bytes_string(out, 0, w);
+  let path = __bytes_string(out, 0, w);
   if (escaped_high && !utf8.is_valid(path)) {
     return Err(400);
   }
@@ -2349,8 +2349,8 @@ function __bytes_are(buf: u8[], from: i32, want: string): boolean {
 }
 
 function __persists(version: string, h: HeaderMap, at: i32): boolean {
-  let close: boolean = false;
-  let keep: boolean = false;
+  let close = false;
+  let keep = false;
   while (at >= 0) {
     if (__lists_token(h.values[at], "close")) {
       close = true;
@@ -2384,7 +2384,7 @@ pub function parse_request(buf: string): Result[HttpRequest, RequestParseError] 
 ```fern
 <<50 function __http_reason(code: i32): string>>=
 function __http_reason(code: i32): string {
-  let text: string = status_text(code);
+  let text = status_text(code);
   if (text.len() == 0) {
     return "Status";
   }
@@ -2405,16 +2405,16 @@ pub function serialize_response_conn(resp: HttpResponse, keep_alive: boolean): s
 }
 
 pub function serialize_response_to(method: string, version: string, resp: HttpResponse, keep_alive: boolean): string {
-  let no_body: boolean = bodiless(resp.status);
-  let framing: string = "";
-  let body: string = "";
+  let no_body = bodiless(resp.status);
+  let framing = "";
+  let body = "";
   if (!no_body) {
     body = resp.body_text_lossy();
     framing = "Content-Length: " + body.len().to_string() + "\r\n";
   }
-  let b: usize = buf_new(256);
+  let b = buf_new(256);
   serialize_response_head_into(b, version, resp, keep_alive, framing);
-  let head: string = buf_take(b);
+  let head = buf_take(b);
   buf_free(b);
   if (no_body || method == "HEAD") {
     return head;
@@ -2431,7 +2431,7 @@ pub function serialize_response_conn_bytes(resp: HttpResponse, keep_alive: boole
 }
 
 pub function serialize_response_to_bytes(method: string, version: string, resp: HttpResponse, keep_alive: boolean): u8[] {
-  let cap: i32 = 256;
+  let cap = 256;
   match (resp.body) {
     BodyText(t) => {
       cap = t.len();
@@ -2442,9 +2442,9 @@ pub function serialize_response_to_bytes(method: string, version: string, resp: 
     _ => {}
   }
   if (cap <= 2147483647 - 256) {
-    cap = cap + 256;
+    cap += 256;
   }
-  let b: usize = buf_new(cap);
+  let b = buf_new(cap);
   serialize_response_into(b, method, version, resp, keep_alive, "");
   return __take_wire(b);
 }
@@ -2458,7 +2458,7 @@ pub function serialize_response_into(b: usize, method: string, version: string, 
     serialize_response_head_sized_into(b, version, resp, keep_alive, fields, resp.body_len());
     return;
   }
-  let text: string = "";
+  let text = "";
   let body: u8[] = [];
   match (resp.body) {
     BodyText(s) => {
@@ -2468,7 +2468,7 @@ pub function serialize_response_into(b: usize, method: string, version: string, 
       body = resp.body_bytes();
     }
   }
-  let len: i32 = text.len() + body.len();
+  let len = text.len() + body.len();
   serialize_response_head_sized_into(b, version, resp, keep_alive, fields, len);
   assert(len <= 2147483647 - buf_len(b));
   buf_push(b, text);
@@ -2480,11 +2480,11 @@ pub function bodiless(status: i32): boolean {
 }
 
 pub function serialize_fields(fields: HeaderMap): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < fields.names.len()) {
     out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -2513,16 +2513,16 @@ function __push_head(b: usize, resp: HttpResponse): void {
   buf_push(b, " ");
   buf_push(b, __http_reason(resp.status));
   buf_push(b, "\r\n");
-  let i: i32 = 0;
+  let i = 0;
   while (i < resp.headers.names.len()) {
-    let hname: string = resp.headers.names[i];
+    let hname = resp.headers.names[i];
     if (!hname.eq_ignore_ascii_case("content-length") && !hname.eq_ignore_ascii_case("connection") && !hname.eq_ignore_ascii_case("transfer-encoding")) {
       buf_push(b, hname);
       buf_push(b, ": ");
       buf_push(b, resp.headers.values[i]);
       buf_push(b, "\r\n");
     }
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -2557,7 +2557,7 @@ function __http10(version: string): boolean {
 }
 
 function __take_wire(b: usize): u8[] {
-  let wire: u8[] = buf_take_bytes(b);
+  let wire = buf_take_bytes(b);
   buf_free(b);
   return wire;
 }
@@ -2658,7 +2658,7 @@ function __body_utf8(bytes: u8[]): Result[string, BodyError] {
 ```fern
 <<56 function __whole_body(s: ByteStream): (u8[], ByteStream)>>=
 function __whole_body(s: ByteStream): (u8[], ByteStream) {
-  let from_start: ByteStream = ByteStream { ...s, pos: 0 };
+  let from_start = ByteStream { ...s, pos: 0 };
   return from_start.read_all();
 }
 ```
@@ -2697,15 +2697,15 @@ function __declared_length(h: HeaderMap): i32 {
           return n;
         },
         Err(_) => {
-          return 0 - 1;
+          return -1;
         }
       }
     },
     None => {
-      return 0 - 1;
+      return -1;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 ```
 
@@ -2760,7 +2760,7 @@ pub function (b: Body) bytes(): u8[] {
 function __chunks_joined(producer: ChunkProducer): u8[] {
   let next: (i32) => Option[u8[]] = producer.next;
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (true) {
     match (next(i)) {
       Some(chunk) => {
@@ -2770,7 +2770,7 @@ function __chunks_joined(producer: ChunkProducer): u8[] {
         return out;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -2872,11 +2872,11 @@ pub function file_ranges_ok(ranges: i64[], seams: u8[][]): boolean {
 }
 
 pub function file_ranges_len(ranges: i64[], seams: u8[][]): i64 {
-  let n: i64 = 0 as i64;
-  let i: i32 = 1;
+  let n = 0 as i64;
+  let i = 1;
   while (i < ranges.len()) {
-    n = n + ranges[i];
-    i = i + 2;
+    n += ranges[i];
+    i += 2;
   }
   for s in seams {
     n = n + s.len() as i64;
@@ -2888,8 +2888,8 @@ pub function file_ranges_bytes(ranges: i64[], seams: u8[][], read: (i64, i64) =>
   if (!file_ranges_ok(ranges, seams)) {
     return None;
   }
-  let out: u8[] = seams[0];
-  let i: i32 = 0;
+  let out = seams[0];
+  let i = 0;
   while (i < ranges.len()) {
     match (read(ranges[i], ranges[i + 1])) {
       Some(bs) => {
@@ -2899,7 +2899,7 @@ pub function file_ranges_bytes(ranges: i64[], seams: u8[][], read: (i64, i64) =>
         return None;
       }
     }
-    i = i + 2;
+    i += 2;
   }
   return Some(out);
 }
@@ -2918,7 +2918,7 @@ function __read_span(r: Reader, offset: i64, len: i64): Option[u8[]] {
   }
   let out: u8[] = [];
   while (out.len() as i64 < len) {
-    let want: i64 = len - out.len() as i64;
+    let want = len - out.len() as i64;
     if (want > 65536 as i64) {
       want = 65536 as i64;
     }
@@ -2979,7 +2979,7 @@ function __no_trailers(): HeaderMap {
 ```fern
 <<67 pub function chunks_idle(status: i32, next: (i32)>>=
 pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: Duration, filler: u8[]): HttpResponse {
-  let ms: i64 = idle.as_millis();
+  let ms = idle.as_millis();
   if (ms > 2147483647 as i64) {
     ms = 2147483647 as i64;
   }
@@ -3038,9 +3038,9 @@ pub function parse_response_framed(buf: u8[], method: string, eof: boolean, limi
 // A field of prev that a response repeats is shared, not copied.
 pub function parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits, prev: HeaderMap): HttpResponseFraming {
   let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
-  let first_crlf: i32 = shape.0;
-  let headers_end: i32 = shape.1;
-  let refused: i32 = __response_head_refused(buf, from, first_crlf, headers_end, shape.2);
+  let first_crlf = shape.0;
+  let headers_end = shape.1;
+  let refused = __response_head_refused(buf, from, first_crlf, headers_end, shape.2);
   if (refused != 0) {
     return Malformed(refused);
   }
@@ -3075,7 +3075,7 @@ function __status_line_refused(buf: u8[], from: i32, end: i32): i32 {
   if (end - from < 8) {
     return 400;
   }
-  let version: i32 = __version_status(buf, from, from + 8);
+  let version = __version_status(buf, from, from + 8);
   if (version != 0) {
     return version;
   }
@@ -3096,12 +3096,12 @@ function __three_digits(buf: u8[], at: i32): boolean {
 }
 
 function __reason_ok(buf: u8[], from: i32, end: i32): boolean {
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     if (buf[i] < 32 as u8 && buf[i] != 9 as u8) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -3111,11 +3111,11 @@ function __status_code(buf: u8[], from: i32): i32 {
 }
 
 function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, status: i32, method: string, eof: boolean, limits: HttpLimits, prev: HeaderMap): HttpResponseFraming {
-  let hdr_start: i32 = first_crlf + 2;
+  let hdr_start = first_crlf + 2;
   if (hdr_start > headers_end) {
     hdr_start = headers_end;
   }
-  let h: HeaderMap = prev;
+  let h = prev;
   match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, prev)) {
     Ok(parsed) => {
       h = parsed;
@@ -3124,8 +3124,8 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
       return Malformed(code);
     }
   }
-  let version: string = __version_of(buf, from);
-  let at: i32 = headers_end + 4;
+  let version = __version_of(buf, from);
+  let at = headers_end + 4;
   let fields: (i32, i32, i32, i32, i32) = __fields_of(h);
   let body: (i32, u8[], i32, HeaderMap) = __response_payload(buf, at, h, fields, status, method, eof, version, limits);
   if (body.0 == 1) {
@@ -3134,13 +3134,13 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
   if (body.0 != 2) {
     return Malformed(body.0);
   }
-  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body.1), headers: h, trailers: body.3, background: None };
+  let resp = HttpResponse { status: status, body: BodyBytes(body.1), headers: h, trailers: body.3, background: None };
   return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h, fields.4) });
 }
 
 function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32, i32, i32, i32), status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
-  let none: HeaderMap = headers.new();
+  let none = headers.new();
   if (method == "HEAD" || bodiless(status)) {
     return (2, empty, at, none);
   }
@@ -3170,7 +3170,7 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32,
 ```fern
 <<71 pub function hop_by_hop(name: string): boolean>>=
 pub function hop_by_hop(name: string): boolean {
-  let n: i32 = name.len();
+  let n = name.len();
   if (n == 10) {
     return name.eq_ignore_ascii_case("connection") || name.eq_ignore_ascii_case("keep-alive");
   }
@@ -3187,26 +3187,26 @@ pub function hop_by_hop(name: string): boolean {
 }
 
 pub function end_to_end(h: HeaderMap): HeaderMap {
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.names.len() && !hop_by_hop(h.names[i])) {
-    i = i + 1;
+    i += 1;
   }
   if (i == h.names.len()) {
     return h;
   }
-  let out: HeaderMap = headers.new();
+  let out = headers.new();
   i = 0;
   while (i < h.names.len()) {
     if (!hop_by_hop(h.names[i]) && !connection_names(h, h.names[i])) {
       out = out.append(h.names[i], h.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function connection_names(h: HeaderMap, name: string): boolean {
-  let at: i32 = __field_at(h, "connection", 0);
+  let at = __field_at(h, "connection", 0);
   while (at >= 0) {
     if (__lists_token(h.values[at], name)) {
       return true;
@@ -3222,12 +3222,12 @@ pub function connection_names(h: HeaderMap, name: string): boolean {
 ```fern
 <<72 function __lists_token(value: string, want: string): boolean>>=
 function __lists_token(value: string, want: string): boolean {
-  let from: i32 = 0;
-  let n: i32 = value.len();
+  let from = 0;
+  let n = value.len();
   while (from <= n) {
-    let end: i32 = from;
+    let end = from;
     while (end < n && value[end] != 44 as u8) {
-      end = end + 1;
+      end += 1;
     }
     if (__token_at(value, from, end, want)) {
       return true;
@@ -3280,7 +3280,7 @@ pub function target_ok(target: string): boolean {
     return false;
   }
   let bs: [u8] = target.as_bytes();
-  let q: i32 = __find_char(bs, 0, bs.len(), 63 as u8);
+  let q = __find_char(bs, 0, bs.len(), 63 as u8);
   if (q < 0) {
     return __query_ok(bs, 0, bs.len());
   }
@@ -3296,12 +3296,12 @@ pub function field_name_lower_ok(name: string): boolean {
 }
 
 pub function fields_ok(fields: HeaderMap): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < fields.names.len()) {
     if (!field_name_ok(fields.names[i]) || !field_value_ok(fields.values[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

@@ -280,6 +280,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"opus_celt", langSrcAbs(t, "tests/stdlib/opus_celt_test.fern"), ""},
 		{"opus_celt_encoder", langSrcAbs(t, "tests/stdlib/opus_celt_encoder_test.fern"), ""},
 		{"opus_celt_prefilter", langSrcAbs(t, "tests/stdlib/opus_celt_prefilter_test.fern"), ""},
+		{"opus_celt_frame", langSrcAbs(t, "tests/stdlib/opus_celt_frame_test.fern"), ""},
 		{"opus_packet", langSrcAbs(t, "tests/stdlib/opus_packet_test.fern"), ""},
 		{"opus_pitch", langSrcAbs(t, "tests/stdlib/opus_pitch_test.fern"), ""},
 		{"opus_pitch_doubling", langSrcAbs(t, "tests/stdlib/opus_pitch_doubling_test.fern"), ""},

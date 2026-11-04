@@ -307,10 +307,10 @@ function __u32(own out: u8[], v: u32): u8[] {
 }
 
 function __bytes(own out: u8[], b: [u8]): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -329,41 +329,41 @@ function __vec24(own out: u8[], b: [u8]): u8[] {
 
 function __u16s(v: i32[]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.len()) {
     out = __u16(out, v[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __ext_list(exts: Extension[]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < exts.len()) {
     out = __vec16(__u16(out, exts[i].kind), exts[i].data);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __client_hello_body(h: ClientHello): u8[] {
-  let out: u8[] = __bytes(__u16([], LEGACY_VERSION), h.random);
+  let out = __bytes(__u16([], LEGACY_VERSION), h.random);
   out = __vec16(__vec8(out, h.session_id), __u16s(h.cipher_suites));
   return __vec16(__vec8(out, [0 as u8]), __ext_list(h.extensions));
 }
 
 function __server_hello_body(h: ServerHello): u8[] {
-  let out: u8[] = __vec8(__bytes(__u16([], LEGACY_VERSION), h.random), h.session_id);
+  let out = __vec8(__bytes(__u16([], LEGACY_VERSION), h.random), h.session_id);
   return __vec16(__u8(__u16(out, h.cipher_suite), 0), __ext_list(h.extensions));
 }
 
 function __certificate_body(c: Certificate): u8[] {
   let list: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.entries.len()) {
     list = __vec16(__vec24(list, c.entries[i].data), __ext_list(c.entries[i].extensions));
-    i = i + 1;
+    i += 1;
   }
   return __vec24(__vec8([], c.context), list);
 }
@@ -414,7 +414,7 @@ function __body(m: Message): u8[] {
 ```fern
 <<11 pub function encode(m: Message): u8[]>>=
 pub function encode(m: Message): u8[] {
-  let body: u8[] = __body(m);
+  let body = __body(m);
   return __bytes(__u24(__u8([], m.kind()), body.len()), body);
 }
 ```
@@ -454,8 +454,8 @@ function __get32(b: [u8], at: i32): u32 {
 }
 
 function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
-  let from: i32 = __need(b, at, n, what)?;
-  let len: i32 = b[at] as i32;
+  let from = __need(b, at, n, what)?;
+  let len = b[at] as i32;
   if (n == 2) {
     len = __get16(b, at);
   }
@@ -465,12 +465,12 @@ function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Resu
   if (len < min || len > max) {
     return Err(__decode_error(what));
   }
-  let to: i32 = __need(b, from, len, what)?;
+  let to = __need(b, from, len, what)?;
   return Ok(Span { from: from, to: to });
 }
 
 function __whole(b: [u8], n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
-  let s: Span = __vec(b, 0, n, min, max, what)?;
+  let s = __vec(b, 0, n, min, max, what)?;
   if (s.to != b.len()) {
     return Err(__decode_error(what));
   }
@@ -478,11 +478,11 @@ function __whole(b: [u8], n: i32, min: i32, max: i32, what: string): Result[Span
 }
 
 function __copy(b: [u8], from: i32, to: i32): u8[] {
-  let out: u8[] = __alloc_u8(to - from);
-  let i: i32 = from;
+  let out = __alloc_u8(to - from);
+  let i = from;
   while (i < to) {
     out = out.with(i - from, b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -492,27 +492,27 @@ function __read_u16s(b: [u8], what: string): Result[i32[], MsgError] {
     return Err(__decode_error(what));
   }
   let out: i32[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < b.len()) {
     out = out.append(__get16(b, at));
-    at = at + 2;
+    at += 2;
   }
   return Ok(out);
 }
 
 function __read_exts(b: [u8]): Result[Extension[], MsgError] {
   let out: Extension[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < b.len()) {
     __need(b, at, 2, "extension")?;
-    let kind: i32 = __get16(b, at);
-    let s: Span = __vec(b, at + 2, 2, 0, 65535, "extension")?;
-    let i: i32 = 0;
+    let kind = __get16(b, at);
+    let s = __vec(b, at + 2, 2, 0, 65535, "extension")?;
+    let i = 0;
     while (i < out.len()) {
       if (out[i].kind == kind) {
         return Err(IllegalParameter("repeated extension " + kind.to_string()));
       }
-      i = i + 1;
+      i += 1;
     }
     out = out.append(Extension { kind: kind, data: __copy(b, s.from, s.to) });
     at = s.to;
@@ -522,7 +522,7 @@ function __read_exts(b: [u8]): Result[Extension[], MsgError] {
 
 function __hello_head(b: [u8], what: string): Result[Span, MsgError] {
   __need(b, 0, 34, what)?;
-  let v: i32 = __get16(b, 0);
+  let v = __get16(b, 0);
   if (v != LEGACY_VERSION) {
     return Err(ProtocolVersion(v));
   }
@@ -530,13 +530,13 @@ function __hello_head(b: [u8], what: string): Result[Span, MsgError] {
 }
 
 function __client_hello(b: [u8]): Result[Message, MsgError] {
-  let sid: Span = __hello_head(b, "ClientHello")?;
-  let suites: Span = __vec(b, sid.to, 2, 2, 65534, "cipher_suites")?;
-  let comp: Span = __vec(b, suites.to, 1, 1, 255, "legacy_compression_methods")?;
+  let sid = __hello_head(b, "ClientHello")?;
+  let suites = __vec(b, sid.to, 2, 2, 65534, "cipher_suites")?;
+  let comp = __vec(b, suites.to, 1, 1, 255, "legacy_compression_methods")?;
   if (comp.to - comp.from != 1 || b[comp.from] != 0) {
     return Err(IllegalParameter("legacy_compression_methods"));
   }
-  let ext: Span = __vec(b, comp.to, 2, 8, 65535, "ClientHello extensions")?;
+  let ext = __vec(b, comp.to, 2, 8, 65535, "ClientHello extensions")?;
   if (ext.to != b.len()) {
     return Err(__decode_error("ClientHello"));
   }
@@ -544,12 +544,12 @@ function __client_hello(b: [u8]): Result[Message, MsgError] {
 }
 
 function __server_hello(b: [u8]): Result[Message, MsgError] {
-  let sid: Span = __hello_head(b, "ServerHello")?;
+  let sid = __hello_head(b, "ServerHello")?;
   __need(b, sid.to, 3, "ServerHello")?;
   if (b[sid.to + 2] != 0) {
     return Err(IllegalParameter("legacy_compression_method"));
   }
-  let ext: Span = __vec(b, sid.to + 3, 2, 6, 65535, "ServerHello extensions")?;
+  let ext = __vec(b, sid.to + 3, 2, 6, 65535, "ServerHello extensions")?;
   if (ext.to != b.len()) {
     return Err(__decode_error("ServerHello"));
   }
@@ -563,9 +563,9 @@ function __server_hello(b: [u8]): Result[Message, MsgError] {
 <<14 function __new_session_ticket(b: [u8]): Result[Message, MsgError]>>=
 function __new_session_ticket(b: [u8]): Result[Message, MsgError] {
   __need(b, 0, 8, "NewSessionTicket")?;
-  let nonce: Span = __vec(b, 8, 1, 0, 255, "ticket_nonce")?;
-  let ticket: Span = __vec(b, nonce.to, 2, 1, 65535, "ticket")?;
-  let ext: Span = __vec(b, ticket.to, 2, 0, 65534, "NewSessionTicket extensions")?;
+  let nonce = __vec(b, 8, 1, 0, 255, "ticket_nonce")?;
+  let ticket = __vec(b, nonce.to, 2, 1, 65535, "ticket")?;
+  let ext = __vec(b, ticket.to, 2, 0, 65534, "NewSessionTicket extensions")?;
   if (ext.to != b.len()) {
     return Err(__decode_error("NewSessionTicket"));
   }
@@ -573,8 +573,8 @@ function __new_session_ticket(b: [u8]): Result[Message, MsgError] {
 }
 
 function __certificate_request(b: [u8]): Result[Message, MsgError] {
-  let ctx: Span = __vec(b, 0, 1, 0, 255, "certificate_request_context")?;
-  let ext: Span = __vec(b, ctx.to, 2, 2, 65535, "CertificateRequest extensions")?;
+  let ctx = __vec(b, 0, 1, 0, 255, "certificate_request_context")?;
+  let ext = __vec(b, ctx.to, 2, 2, 65535, "CertificateRequest extensions")?;
   if (ext.to != b.len()) {
     return Err(__decode_error("CertificateRequest"));
   }
@@ -582,17 +582,17 @@ function __certificate_request(b: [u8]): Result[Message, MsgError] {
 }
 
 function __certificate(b: [u8]): Result[Message, MsgError] {
-  let ctx: Span = __vec(b, 0, 1, 0, 255, "certificate_request_context")?;
-  let list: Span = __vec(b, ctx.to, 3, 0, 16777215, "certificate_list")?;
+  let ctx = __vec(b, 0, 1, 0, 255, "certificate_request_context")?;
+  let list = __vec(b, ctx.to, 3, 0, 16777215, "certificate_list")?;
   if (list.to != b.len()) {
     return Err(__decode_error("Certificate"));
   }
   let entries: CertificateEntry[] = [];
-  let at: i32 = list.from;
+  let at = list.from;
   while (at < list.to) {
     let l: [u8] = b[0:list.to];
-    let data: Span = __vec(l, at, 3, 1, 16777215, "cert_data")?;
-    let ext: Span = __vec(l, data.to, 2, 0, 65535, "CertificateEntry extensions")?;
+    let data = __vec(l, at, 3, 1, 16777215, "cert_data")?;
+    let ext = __vec(l, data.to, 2, 0, 65535, "CertificateEntry extensions")?;
     entries = entries.append(CertificateEntry { data: __copy(b, data.from, data.to), extensions: __read_exts(b[ext.from:ext.to])? });
     at = ext.to;
   }
@@ -601,7 +601,7 @@ function __certificate(b: [u8]): Result[Message, MsgError] {
 
 function __certificate_verify(b: [u8]): Result[Message, MsgError] {
   __need(b, 0, 2, "CertificateVerify")?;
-  let sig: Span = __vec(b, 2, 2, 0, 65535, "signature")?;
+  let sig = __vec(b, 2, 2, 0, 65535, "signature")?;
   if (sig.to != b.len()) {
     return Err(__decode_error("CertificateVerify"));
   }
@@ -649,7 +649,7 @@ pub function decode(r: Raw): Result[Message, MsgError] {
     return Ok(EndOfEarlyData);
   }
   if (r.kind == ENCRYPTED_EXTENSIONS) {
-    let ext: Span = __whole(b, 2, 0, 65535, "EncryptedExtensions")?;
+    let ext = __whole(b, 2, 0, 65535, "EncryptedExtensions")?;
     return Ok(EncryptedExtensions(__read_exts(b[ext.from:ext.to])?));
   }
   if (r.kind == CERTIFICATE_REQUEST) {
@@ -685,12 +685,12 @@ const KINDS: i32[] = [CLIENT_HELLO, SERVER_HELLO, NEW_SESSION_TICKET, END_OF_EAR
 ```fern
 <<18 function __known(kind: i32): boolean>>=
 function __known(kind: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < KINDS.len()) {
     if (KINDS[i] == kind) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -709,72 +709,72 @@ function __limit(kind: i32): i32 {
 <<19 pub function split(buf: [u8]): Result[Split, MsgError]>>=
 pub function split(buf: [u8]): Result[Split, MsgError] {
   let out: Raw[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at + 4 <= buf.len()) {
-    let n: i32 = __framed(buf, at)?;
+    let n = __framed(buf, at)?;
     if (n < 0) {
       break;
     }
     out = out.append(Raw { kind: buf[at] as i32, bytes: __copy(buf, at, at + n) });
-    at = at + n;
+    at += n;
   }
   return Ok(Split { messages: out, rest: __copy(buf, at, buf.len()) });
 }
 
 // The length of the first whole message in buf, 0 when there is none, with every whole header checked as split checks it.
 pub function head(buf: [u8]): Result[i32, MsgError] {
-  let first: i32 = 0;
-  let at: i32 = 0;
+  let first = 0;
+  let at = 0;
   while (at + 4 <= buf.len()) {
-    let n: i32 = __framed(buf, at)?;
+    let n = __framed(buf, at)?;
     if (n < 0) {
       break;
     }
     if (first == 0) {
       first = n;
     }
-    at = at + n;
+    at += n;
   }
   return Ok(first);
 }
 
 function __framed(buf: [u8], at: i32): Result[i32, MsgError] {
-  let kind: i32 = buf[at] as i32;
+  let kind = buf[at] as i32;
   if (!__known(kind)) {
     return Err(UnexpectedMessage(kind));
   }
-  let len: i32 = __get24(buf, at + 1);
+  let len = __get24(buf, at + 1);
   if (len > __limit(kind)) {
     return Err(TooLarge(kind, len));
   }
   if (at + 4 + len > buf.len()) {
-    return Ok(0 - 1);
+    return Ok(-1);
   }
   return Ok(4 + len);
 }
 
 pub function find(exts: Extension[], kind: i32): Option[u8[]] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < exts.len()) {
     if (exts[i].kind == kind) {
       return Some(exts[i].data);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 pub function ext_server_name(host: string): Extension {
-  let entry: u8[] = __vec16(__u8([], 0), host.bytes());
+  let entry = __vec16(__u8([], 0), host.bytes());
   return Extension { kind: EXT_SERVER_NAME, data: __vec16([], entry) };
 }
 
 pub function server_name(d: [u8]): Result[string, MsgError] {
-  let list: Span = __whole(d, 2, 1, 65535, "server_name")?;
-  let at: i32 = list.from;
+  let list = __whole(d, 2, 1, 65535, "server_name")?;
+  let at = list.from;
   while (at < list.to) {
     __need(d, at, 1, "server_name")?;
-    let name: Span = __vec(d, at + 1, 2, 1, 65535, "server_name")?;
+    let name = __vec(d, at + 1, 2, 1, 65535, "server_name")?;
     if (d[at] == 0) {
       match (utf8.from_bytes(__copy(d, name.from, name.to))) {
         Ok(s) => {
@@ -795,7 +795,7 @@ pub function ext_supported_versions(versions: i32[]): Extension {
 }
 
 pub function supported_versions(d: [u8]): Result[i32[], MsgError] {
-  let s: Span = __whole(d, 1, 2, 254, "supported_versions")?;
+  let s = __whole(d, 1, 2, 254, "supported_versions")?;
   return __read_u16s(d[s.from:s.to], "supported_versions");
 }
 
@@ -815,7 +815,7 @@ pub function ext_supported_groups(groups: i32[]): Extension {
 }
 
 pub function supported_groups(d: [u8]): Result[i32[], MsgError] {
-  let s: Span = __whole(d, 2, 2, 65535, "supported_groups")?;
+  let s = __whole(d, 2, 2, 65535, "supported_groups")?;
   return __read_u16s(d[s.from:s.to], "supported_groups");
 }
 
@@ -824,7 +824,7 @@ pub function ext_signature_algorithms(schemes: i32[]): Extension {
 }
 
 pub function signature_algorithms(d: [u8]): Result[i32[], MsgError] {
-  let s: Span = __whole(d, 2, 2, 65534, "signature_algorithms")?;
+  let s = __whole(d, 2, 2, 65534, "signature_algorithms")?;
   return __read_u16s(d[s.from:s.to], "signature_algorithms");
 }
 ```
@@ -851,28 +851,28 @@ function __entry(own out: u8[], e: KeyShareEntry): u8[] {
 <<22 pub function ext_key_shares(entries: KeyShareEntry[]): Extension>>=
 pub function ext_key_shares(entries: KeyShareEntry[]): Extension {
   let list: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < entries.len()) {
     list = __entry(list, entries[i]);
-    i = i + 1;
+    i += 1;
   }
   return Extension { kind: EXT_KEY_SHARE, data: __vec16([], list) };
 }
 
 pub function key_shares(d: [u8]): Result[KeyShareEntry[], MsgError] {
-  let list: Span = __whole(d, 2, 0, 65535, "key_share")?;
+  let list = __whole(d, 2, 0, 65535, "key_share")?;
   let out: KeyShareEntry[] = [];
-  let at: i32 = list.from;
+  let at = list.from;
   while (at < list.to) {
     __need(d, at, 2, "key_share")?;
-    let group: i32 = __get16(d, at);
-    let key: Span = __vec(d, at + 2, 2, 1, 65535, "key_share")?;
-    let i: i32 = 0;
+    let group = __get16(d, at);
+    let key = __vec(d, at + 2, 2, 1, 65535, "key_share")?;
+    let i = 0;
     while (i < out.len()) {
       if (out[i].group == group) {
         return Err(IllegalParameter("repeated key share " + group.to_string()));
       }
-      i = i + 1;
+      i += 1;
     }
     out = out.append(KeyShareEntry { group: group, key: __copy(d, key.from, key.to) });
     at = key.to;
@@ -886,7 +886,7 @@ pub function ext_key_share(e: KeyShareEntry): Extension {
 
 pub function key_share(d: [u8]): Result[KeyShareEntry, MsgError] {
   __need(d, 0, 2, "key_share")?;
-  let key: Span = __vec(d, 2, 2, 1, 65535, "key_share")?;
+  let key = __vec(d, 2, 2, 1, 65535, "key_share")?;
   if (key.to != d.len()) {
     return Err(__decode_error("key_share"));
   }
@@ -906,20 +906,20 @@ pub function retry_group(d: [u8]): Result[i32, MsgError] {
 
 pub function ext_alpn(protocols: string[]): Extension {
   let list: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < protocols.len()) {
     list = __vec8(list, protocols[i].bytes());
-    i = i + 1;
+    i += 1;
   }
   return Extension { kind: EXT_ALPN, data: __vec16([], list) };
 }
 
 pub function alpn(d: [u8]): Result[string[], MsgError] {
-  let list: Span = __whole(d, 2, 2, 65535, "application_layer_protocol_negotiation")?;
+  let list = __whole(d, 2, 2, 65535, "application_layer_protocol_negotiation")?;
   let out: string[] = [];
-  let at: i32 = list.from;
+  let at = list.from;
   while (at < list.to) {
-    let name: Span = __vec(d, at, 1, 1, 255, "application_layer_protocol_negotiation")?;
+    let name = __vec(d, at, 1, 1, 255, "application_layer_protocol_negotiation")?;
     match (utf8.from_bytes(__copy(d, name.from, name.to))) {
       Ok(s) => {
         out = out.append(s);
@@ -949,10 +949,10 @@ pub struct OfferedPsks { identities: PskIdentity[], binders: u8[][] }
 <<24 pub function ext_pre_shared_key(offer: OfferedPsks): Extension>>=
 pub function ext_pre_shared_key(offer: OfferedPsks): Extension {
   let ids: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < offer.identities.len()) {
     ids = __u32(__vec16(ids, offer.identities[i].identity), offer.identities[i].obfuscated_age);
-    i = i + 1;
+    i += 1;
   }
   return Extension { kind: EXT_PRE_SHARED_KEY, data: __vec16(__vec16([], ids), __binders(offer.binders)) };
 }
@@ -964,10 +964,10 @@ pub function ext_pre_shared_key(offer: OfferedPsks): Extension {
 <<25 function __binders(binders: u8[][]): u8[]>>=
 function __binders(binders: u8[][]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < binders.len()) {
     out = __vec8(out, binders[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -982,22 +982,22 @@ pub function binders_length(binders: u8[][]): i32 {
 }
 
 pub function pre_shared_key(d: [u8]): Result[OfferedPsks, MsgError] {
-  let ids: Span = __vec(d, 0, 2, 7, 65535, "pre_shared_key identities")?;
-  let binders: Span = __vec(d, ids.to, 2, 33, 65535, "pre_shared_key binders")?;
+  let ids = __vec(d, 0, 2, 7, 65535, "pre_shared_key identities")?;
+  let binders = __vec(d, ids.to, 2, 33, 65535, "pre_shared_key binders")?;
   if (binders.to != d.len()) {
     return Err(__decode_error("pre_shared_key"));
   }
-  let out: OfferedPsks = OfferedPsks { identities: [], binders: [] };
-  let at: i32 = ids.from;
+  let out = OfferedPsks { identities: [], binders: [] };
+  let at = ids.from;
   while (at < ids.to) {
-    let id: Span = __vec(d, at, 2, 1, 65535, "psk_identity")?;
+    let id = __vec(d, at, 2, 1, 65535, "psk_identity")?;
     __need(d, id.to, 4, "obfuscated_ticket_age")?;
     out = OfferedPsks { ...out, identities: out.identities.append(PskIdentity { identity: __copy(d, id.from, id.to), obfuscated_age: __get32(d, id.to) }) };
     at = id.to + 4;
   }
   at = binders.from;
   while (at < binders.to) {
-    let b: Span = __vec(d, at, 1, 32, 255, "psk_binder")?;
+    let b = __vec(d, at, 1, 32, 255, "psk_binder")?;
     out = OfferedPsks { ...out, binders: out.binders.append(__copy(d, b.from, b.to)) };
     at = b.to;
   }
@@ -1020,21 +1020,21 @@ pub function selected_psk(d: [u8]): Result[i32, MsgError] {
 
 pub function ext_psk_modes(modes: i32[]): Extension {
   let list: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < modes.len()) {
     list = __u8(list, modes[i]);
-    i = i + 1;
+    i += 1;
   }
   return Extension { kind: EXT_PSK_KEY_EXCHANGE_MODES, data: __vec8([], list) };
 }
 
 pub function psk_modes(d: [u8]): Result[i32[], MsgError] {
-  let s: Span = __whole(d, 1, 1, 255, "psk_key_exchange_modes")?;
+  let s = __whole(d, 1, 1, 255, "psk_key_exchange_modes")?;
   let out: i32[] = [];
-  let i: i32 = s.from;
+  let i = s.from;
   while (i < s.to) {
     out = out.append(d[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   return Ok(out);
 }

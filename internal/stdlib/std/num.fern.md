@@ -52,7 +52,7 @@ pub function product_with[T: ops.Mul](xs: T[], one: T): T {
 }
 
 pub function sum[T: ops.Add + ops.Zero](xs: T[]): T {
-  let acc: T = T.zero();
+  let acc = T.zero();
   for x in xs {
     acc = acc.add(x);
   }
@@ -60,7 +60,7 @@ pub function sum[T: ops.Add + ops.Zero](xs: T[]): T {
 }
 
 pub function product[T: ops.Mul + ops.One](xs: T[]): T {
-  let acc: T = T.one();
+  let acc = T.one();
   for x in xs {
     acc = acc.mul(x);
   }
@@ -69,7 +69,7 @@ pub function product[T: ops.Mul + ops.One](xs: T[]): T {
 
 pub function cumsum[T: ops.Add + ops.Zero](xs: T[]): T[] {
   let out: T[] = [];
-  let run: T = T.zero();
+  let run = T.zero();
   for x in xs {
     run = run.add(x);
     out = out.append(run);
@@ -79,7 +79,7 @@ pub function cumsum[T: ops.Add + ops.Zero](xs: T[]): T[] {
 
 pub function cumproduct[T: ops.Mul + ops.One](xs: T[]): T[] {
   let out: T[] = [];
-  let run: T = T.one();
+  let run = T.one();
   for x in xs {
     run = run.mul(x);
     out = out.append(run);
@@ -89,17 +89,17 @@ pub function cumproduct[T: ops.Mul + ops.One](xs: T[]): T[] {
 
 pub function adjacent_diff[T: ops.Sub](xs: T[]): T[] {
   let out: T[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < xs.len()) {
     out = out.append(xs[i].sub(xs[i - 1]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 // The element count as a T, built from One so no integer conversion is needed.
 function __count[T: ops.Add + ops.Zero + ops.One](xs: T[]): T {
-  let n: T = T.zero();
+  let n = T.zero();
   for x in xs {
     n = n.add(T.one());
   }
@@ -119,11 +119,11 @@ pub function variance[T: ops.Num + ops.Zero + ops.One](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let n: T = __count(xs);
-  let mean: T = sum(xs).div(n);
-  let acc: T = T.zero();
+  let n = __count(xs);
+  let mean = sum(xs).div(n);
+  let acc = T.zero();
   for x in xs {
-    let d: T = x.sub(mean);
+    let d = x.sub(mean);
     acc = acc.add(d.mul(d));
   }
   return Some(acc.div(n));
@@ -131,15 +131,15 @@ pub function variance[T: ops.Num + ops.Zero + ops.One](xs: T[]): Option[T] {
 
 // The dot product over the shorter of the two arrays.
 pub function dot[T: ops.Add + ops.Mul + ops.Zero](a: T[], b: T[]): T {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let acc: T = T.zero();
-  let i: i32 = 0;
+  let acc = T.zero();
+  let i = 0;
   while (i < n) {
     acc = acc.add(a[i].mul(b[i]));
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }

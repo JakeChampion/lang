@@ -105,11 +105,11 @@ function tell_of(nbits_total: i32, rng: u32): i32 {
 // A linear step from the top 16 bits of the range, then a correction where
 // the step is one eighth too low.
 function tell_frac_of(nbits_total: i32, rng: u32): i32 {
-  let l: i32 = ilog(rng);
-  let r: i32 = (rng >> (l - 16) as u32) as i32;
+  let l = ilog(rng);
+  let r = (rng >> (l - 16) as u32) as i32;
   let b: i32 = (r >> 12) - 8;
   if (r > FRAC_CORRECTION[b]) {
-    b = b + 1;
+    b += 1;
   }
   return (nbits_total << 3) - (l << 3) - b;
 }
@@ -149,7 +149,7 @@ function put(own e: Encoder, v: u32): Encoder {
   if (e.offs + e.end_offs >= e.storage) {
     return Encoder { ...e, error: true };
   }
-  let at: i32 = e.offs;
+  let at = e.offs;
   return Encoder { ...e, buf: e.buf.with(at, (v & SYM_MAX) as u8), offs: at + 1 };
 }
 
@@ -157,7 +157,7 @@ function put_at_end(own e: Encoder, v: u32): Encoder {
   if (e.offs + e.end_offs >= e.storage) {
     return Encoder { ...e, error: true };
   }
-  let n: i32 = e.end_offs + 1;
+  let n = e.end_offs + 1;
   return Encoder { ...e, buf: e.buf.with(e.storage - n, (v & SYM_MAX) as u8), end_offs: n };
 }
 
@@ -165,12 +165,12 @@ function carry_out(own e: Encoder, c: u32): Encoder {
   if (c == SYM_MAX) {
     return Encoder { ...e, ext: e.ext + 1 };
   }
-  let carry: u32 = c >> 8u32;
-  let rem: i32 = e.rem;
+  let carry = c >> 8u32;
+  let rem = e.rem;
   if (rem >= 0) {
     e = put(e, rem as u32 + carry);
   }
-  let sym: u32 = SYM_MAX + carry & SYM_MAX;
+  let sym = SYM_MAX + carry & SYM_MAX;
   for i in 0..e.ext {
     e = put(e, sym);
   }
@@ -179,7 +179,7 @@ function carry_out(own e: Encoder, c: u32): Encoder {
 
 function normalize(own e: Encoder): Encoder {
   while (e.rng <= CODE_BOT) {
-    let top: u32 = e.val >> CODE_SHIFT as u32;
+    let top = e.val >> CODE_SHIFT as u32;
     e = carry_out(e, top);
     e = Encoder { ...e, val: e.val << 8u32 & CODE_TOP - 1u32, rng: e.rng << 8u32, nbits_total: e.nbits_total + 8 };
   }
@@ -188,7 +188,7 @@ function normalize(own e: Encoder): Encoder {
 
 // Codes the symbol from `fl` up to `fh` out of a total of `ft`.
 pub function (own e: Encoder) encode(fl: i32, fh: i32, ft: i32): Encoder {
-  let r: u32 = e.rng / (ft as u32);
+  let r = e.rng / (ft as u32);
   if (fl > 0) {
     e = Encoder { ...e, val: e.val + (e.rng - r * ((ft - fl) as u32)), rng: r * ((fh - fl) as u32) };
   } else {
@@ -199,8 +199,8 @@ pub function (own e: Encoder) encode(fl: i32, fh: i32, ft: i32): Encoder {
 
 // Like `encode` with a total of 2 to the power `bits`.
 pub function (own e: Encoder) encode_bin(fl: i32, fh: i32, bits: i32): Encoder {
-  let r: u32 = e.rng >> bits as u32;
-  let ft: i32 = 1 << bits;
+  let r = e.rng >> bits as u32;
+  let ft = 1 << bits;
   if (fl > 0) {
     e = Encoder { ...e, val: e.val + (e.rng - r * ((ft - fl) as u32)), rng: r * ((fh - fl) as u32) };
   } else {
@@ -211,8 +211,8 @@ pub function (own e: Encoder) encode_bin(fl: i32, fh: i32, bits: i32): Encoder {
 
 // Codes a bit that is true with the probability 1 / 2 to the power `logp`.
 pub function (own e: Encoder) bit_logp(v: boolean, logp: i32): Encoder {
-  let s: u32 = e.rng >> logp as u32;
-  let r: u32 = e.rng - s;
+  let s = e.rng >> logp as u32;
+  let r = e.rng - s;
   if (v) {
     e = Encoder { ...e, val: e.val + r, rng: s };
   } else {
@@ -224,10 +224,10 @@ pub function (own e: Encoder) bit_logp(v: boolean, logp: i32): Encoder {
 // Codes the symbol `s` of an inverse cumulative table with a total of 2 to
 // the power `ftb`. The table falls to 0 at its last symbol.
 pub function (own e: Encoder) icdf(s: i32, table: [u8], ftb: i32): Encoder {
-  let r: u32 = e.rng >> ftb as u32;
-  let hi: u32 = table[s] as u32;
+  let r = e.rng >> ftb as u32;
+  let hi = table[s] as u32;
   if (s > 0) {
-    let lo: u32 = table[s - 1] as u32;
+    let lo = table[s - 1] as u32;
     e = Encoder { ...e, val: e.val + (e.rng - r * lo), rng: r * (lo - hi) };
   } else {
     e = Encoder { ...e, rng: e.rng - r * hi };
@@ -237,26 +237,26 @@ pub function (own e: Encoder) icdf(s: i32, table: [u8], ftb: i32): Encoder {
 
 // Codes `fl`, which is less than `ft`, with an equal probability for each value.
 pub function (own e: Encoder) uint(fl: u32, ft: u32): Encoder {
-  let top: u32 = ft - 1u32;
-  let ftb: i32 = ilog(top);
+  let top = ft - 1u32;
+  let ftb = ilog(top);
   if (ftb <= UINT_BITS) {
     return e.encode(fl as i32, fl as i32 + 1, top as i32 + 1);
   }
-  let low: i32 = ftb - UINT_BITS;
-  let f: i32 = (fl >> low as u32) as i32;
+  let low = ftb - UINT_BITS;
+  let f = (fl >> low as u32) as i32;
   e = e.encode(f, f + 1, (top >> low as u32) as i32 + 1);
   return e.bits(fl & (1u32 << low as u32) - 1u32, low);
 }
 
 // Writes the low `n` bits of `v` as raw bits.
 pub function (own e: Encoder) bits(v: u32, n: i32): Encoder {
-  let window: u32 = e.end_window;
-  let used: i32 = e.nend_bits;
+  let window = e.end_window;
+  let used = e.nend_bits;
   if (used + n > WINDOW_SIZE) {
     while (used >= 8) {
       e = put_at_end(e, window);
       window = window >> 8u32;
-      used = used - 8;
+      used -= 8;
     }
   }
   return Encoder { ...e, end_window: window | v << used as u32, nend_bits: used + n, nbits_total: e.nbits_total + n };
@@ -264,17 +264,17 @@ pub function (own e: Encoder) bits(v: u32, n: i32): Encoder {
 
 // Replaces the first `n` bits of the packet with `v`, after they were coded.
 pub function (own e: Encoder) patch_initial_bits(v: u32, n: i32): Encoder {
-  let shift: i32 = 8 - n;
-  let mask: u32 = (1u32 << n as u32) - 1u32 << shift as u32;
+  let shift = 8 - n;
+  let mask = (1u32 << n as u32) - 1u32 << shift as u32;
   if (e.offs > 0) {
-    let first: u32 = e.buf[0] as u32 & (mask ^ ALL) | v << shift as u32;
+    let first = e.buf[0] as u32 & (mask ^ ALL) | v << shift as u32;
     return Encoder { ...e, buf: e.buf.with(0, first as u8) };
   }
   if (e.rem >= 0) {
     return Encoder { ...e, rem: (e.rem as u32 & (mask ^ ALL) | v << shift as u32) as i32 };
   }
   if (e.rng <= CODE_TOP >> n as u32) {
-    let at: u32 = (CODE_SHIFT + shift) as u32;
+    let at = (CODE_SHIFT + shift) as u32;
     return Encoder { ...e, val: e.val & (mask << CODE_SHIFT as u32 ^ ALL) | v << at };
   }
   return Encoder { ...e, error: true };
@@ -282,7 +282,7 @@ pub function (own e: Encoder) patch_initial_bits(v: u32, n: i32): Encoder {
 
 // Makes the packet `size` bytes, which must hold what is coded so far.
 pub function (own e: Encoder) shrink(size: i32): Encoder {
-  let buf: u8[] = e.buf;
+  let buf = e.buf;
   for i in 0..e.end_offs {
     buf = buf.with(size - e.end_offs + i, buf[e.storage - e.end_offs + i]);
   }
@@ -294,38 +294,38 @@ pub function (own e: Encoder) shrink(size: i32): Encoder {
 pub function (own e: Encoder) done(): Encoder {
   let (e1, l) = flush_range(e);
   e = e1;
-  let window: u32 = e.end_window;
-  let used: i32 = e.nend_bits;
+  let window = e.end_window;
+  let used = e.nend_bits;
   while (used >= 8) {
     e = put_at_end(e, window);
     window = window >> 8u32;
-    used = used - 8;
+    used -= 8;
   }
   if (e.error) {
     return e;
   }
-  let buf: u8[] = e.buf;
+  let buf = e.buf;
   for i in e.offs..e.storage - e.end_offs {
     buf = buf.with(i, 0 as u8);
   }
-  return last_bits(Encoder { ...e, buf: buf }, window, used, 0 - l);
+  return last_bits(Encoder { ...e, buf: buf }, window, used, -l);
 }
 
 // Writes the fewest range bytes that decode as the coded symbols, and gives
 // the bits of the last byte that the range does not use, as a negative count.
 function flush_range(own e: Encoder): (Encoder, i32) {
-  let l: i32 = 32 - ilog(e.rng);
-  let msk: u32 = CODE_TOP - 1u32 >> l as u32;
-  let end: u32 = e.val + msk & (msk ^ ALL);
+  let l = 32 - ilog(e.rng);
+  let msk = CODE_TOP - 1u32 >> l as u32;
+  let end = e.val + msk & (msk ^ ALL);
   if ((end | msk) >= e.val + e.rng) {
-    l = l + 1;
+    l += 1;
     msk = msk >> 1u32;
     end = e.val + msk & (msk ^ ALL);
   }
   while (l > 0) {
     e = carry_out(e, end >> CODE_SHIFT as u32);
     end = end << 8u32 & CODE_TOP - 1u32;
-    l = l - 8;
+    l -= 8;
   }
   if (e.rem >= 0 || e.ext > 0) {
     e = carry_out(e, 0u32);
@@ -343,12 +343,12 @@ function last_bits(own e: Encoder, window0: u32, used: i32, room: i32): Encoder 
   if (e.end_offs >= e.storage) {
     return Encoder { ...e, error: true };
   }
-  let window: u32 = window0;
+  let window = window0;
   if (e.offs + e.end_offs >= e.storage && room < used) {
     window = window & (1u32 << room as u32) - 1u32;
     e = Encoder { ...e, error: true };
   }
-  let last: i32 = e.storage - e.end_offs - 1;
+  let last = e.storage - e.end_offs - 1;
   return Encoder { ...e, buf: e.buf.with(last, (e.buf[last] as u32 | window & SYM_MAX) as u8) };
 }
 ```
@@ -372,7 +372,7 @@ function read(d: Decoder): (i32, i32) {
 function renormalize(own d: Decoder): Decoder {
   while (d.rng <= CODE_BOT) {
     let (byte, offs) = read(d);
-    let sym: u32 = ((d.rem << 8 | byte) >> 8 - CODE_EXTRA) as u32;
+    let sym = ((d.rem << 8 | byte) >> 8 - CODE_EXTRA) as u32;
     d = Decoder { ...d, nbits_total: d.nbits_total + 8, rng: d.rng << 8u32, rem: byte, offs: offs, val: (d.val << 8u32) + (sym & SYM_MAX ^ SYM_MAX) & CODE_TOP - 1u32 };
   }
   return d;
@@ -384,7 +384,7 @@ pub function decoder(packet: [u8]): Decoder {
   for b in packet {
     buf = buf.append(b);
   }
-  let d: Decoder = Decoder { buf: buf, storage: packet.len(), offs: 0, end_offs: 0, end_window: 0u32, nend_bits: 0, nbits_total: 9, rng: 128u32, val: 0u32, ext: 0u32, rem: 0, error: false };
+  let d = Decoder { buf: buf, storage: packet.len(), offs: 0, end_offs: 0, end_window: 0u32, nend_bits: 0, nbits_total: 9, rng: 128u32, val: 0u32, ext: 0u32, rem: 0, error: false };
   let (first, offs) = read(d);
   d = Decoder { ...d, rem: first, offs: offs, val: (127 - (first >> 1)) as u32 };
   return renormalize(d);
@@ -401,9 +401,9 @@ pub function (d: Decoder) tell_frac(): i32 {
 // The cumulative frequency of the next symbol, out of a total of `ft`. The
 // caller finds the symbol and then calls `update` with the same `ft`.
 pub function (own d: Decoder) decode(ft: i32): (Decoder, i32) {
-  let ext: u32 = d.rng / (ft as u32);
-  let s: u32 = d.val / ext + 1u32;
-  let f: i32 = ft;
+  let ext = d.rng / (ft as u32);
+  let s = d.val / ext + 1u32;
+  let f = ft;
   if (s < ft as u32) {
     f = s as i32;
   }
@@ -412,10 +412,10 @@ pub function (own d: Decoder) decode(ft: i32): (Decoder, i32) {
 
 // Like `decode` with a total of 2 to the power `bits`.
 pub function (own d: Decoder) decode_bin(bits: i32): (Decoder, i32) {
-  let ext: u32 = d.rng >> bits as u32;
-  let s: u32 = d.val / ext + 1u32;
-  let ft: i32 = 1 << bits;
-  let f: i32 = ft;
+  let ext = d.rng >> bits as u32;
+  let s = d.val / ext + 1u32;
+  let ft = 1 << bits;
+  let f = ft;
   if (s < ft as u32) {
     f = s as i32;
   }
@@ -424,8 +424,8 @@ pub function (own d: Decoder) decode_bin(bits: i32): (Decoder, i32) {
 
 // Moves past the symbol from `fl` up to `fh` that `decode` found.
 pub function (own d: Decoder) update(fl: i32, fh: i32, ft: i32): Decoder {
-  let s: u32 = d.ext * ((ft - fh) as u32);
-  let rng: u32 = d.rng - s;
+  let s = d.ext * ((ft - fh) as u32);
+  let rng = d.rng - s;
   if (fl > 0) {
     rng = d.ext * ((fh - fl) as u32);
   }
@@ -434,7 +434,7 @@ pub function (own d: Decoder) update(fl: i32, fh: i32, ft: i32): Decoder {
 
 // Decodes a bit that is true with the probability 1 / 2 to the power `logp`.
 pub function (own d: Decoder) bit_logp(logp: i32): (Decoder, boolean) {
-  let s: u32 = d.rng >> logp as u32;
+  let s = d.rng >> logp as u32;
   if (d.val < s) {
     return (renormalize(Decoder { ...d, rng: s }), true);
   }
@@ -444,12 +444,12 @@ pub function (own d: Decoder) bit_logp(logp: i32): (Decoder, boolean) {
 // Decodes a symbol of an inverse cumulative table with a total of 2 to the
 // power `ftb`.
 pub function (own d: Decoder) icdf(table: [u8], ftb: i32): (Decoder, i32) {
-  let r: u32 = d.rng >> ftb as u32;
-  let t: u32 = d.rng;
-  let s: u32 = r * (table[0] as u32);
-  let k: i32 = 0;
+  let r = d.rng >> ftb as u32;
+  let t = d.rng;
+  let s = r * (table[0] as u32);
+  let k = 0;
   while (d.val < s) {
-    k = k + 1;
+    k += 1;
     t = s;
     s = r * (table[k] as u32);
   }
@@ -458,17 +458,17 @@ pub function (own d: Decoder) icdf(table: [u8], ftb: i32): (Decoder, i32) {
 
 // Decodes a value less than `ft` that has an equal probability for each value.
 pub function (own d: Decoder) uint(ft: u32): (Decoder, u32) {
-  let top: u32 = ft - 1u32;
-  let ftb: i32 = ilog(top);
+  let top = ft - 1u32;
+  let ftb = ilog(top);
   if (ftb <= UINT_BITS) {
     let (d1, s) = d.decode(ft as i32);
     return (d1.update(s, s + 1, ft as i32), s as u32);
   }
-  let low: i32 = ftb - UINT_BITS;
-  let f: i32 = (top >> low as u32) as i32 + 1;
+  let low = ftb - UINT_BITS;
+  let f = (top >> low as u32) as i32 + 1;
   let (d2, s) = d.decode(f);
   let (d3, rest) = d2.update(s, s + 1, f).raw(low);
-  let t: u32 = s as u32 << low as u32 | rest;
+  let t = s as u32 << low as u32 | rest;
   if (t <= top) {
     return (d3, t);
   }
@@ -477,21 +477,21 @@ pub function (own d: Decoder) uint(ft: u32): (Decoder, u32) {
 
 // Reads `n` raw bits from the end of the packet.
 pub function (own d: Decoder) raw(n: i32): (Decoder, u32) {
-  let window: u32 = d.end_window;
-  let available: i32 = d.nend_bits;
-  let end_offs: i32 = d.end_offs;
+  let window = d.end_window;
+  let available = d.nend_bits;
+  let end_offs = d.end_offs;
   if (available < n) {
     while (available <= WINDOW_SIZE - 8) {
       let byte: u32 = 0u32;
       if (end_offs < d.storage) {
-        end_offs = end_offs + 1;
+        end_offs += 1;
         byte = d.buf[d.storage - end_offs] as u32;
       }
       window = window | byte << available as u32;
-      available = available + 8;
+      available += 8;
     }
   }
-  let v: u32 = window & (1u32 << n as u32) - 1u32;
+  let v = window & (1u32 << n as u32) - 1u32;
   return (Decoder { ...d, end_offs: end_offs, end_window: window >> n as u32, nend_bits: available - n, nbits_total: d.nbits_total + n }, v);
 }
 ```

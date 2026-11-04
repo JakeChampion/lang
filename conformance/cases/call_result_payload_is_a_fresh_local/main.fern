@@ -1,0 +1,99 @@
+// A pattern binding of a call result that can hold no handle is a fresh
+// local, as a let local is. A copy into a struct or another local does not
+// consume it, and it moves into an own parameter at its last use.
+struct T { aux: string }
+
+function take(t: T, n: i32): i32 {
+  return t.aux.len() + n;
+}
+
+function keep(own s: string): i32 {
+  return s.len();
+}
+
+function pick(xs: string[]): Option[string] {
+  for x in xs {
+    return Some(x);
+  }
+  return None;
+}
+
+function by_if_let(xs: string[]): i32 {
+  if let Some(u) = pick(xs) {
+    let t = T { aux: u };
+    return take(t, u.len());
+  }
+  return 0;
+}
+
+function by_match(xs: string[]): i32 {
+  match (pick(xs)) {
+    Some(u) => {
+      let t = T { aux: u };
+      return take(t, u.len());
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function copied_then_moved(xs: string[]): i32 {
+  match (pick(xs)) {
+    Some(u) => {
+      let kept = u;
+      let k: i32 = keep(u);
+      return k + kept.len();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// Each arm binds u afresh, so each u moves at its own last use.
+function same_name_twice(xs: string[]): i32 {
+  let t: i32 = 0;
+  match (pick(xs)) {
+    Some(u) => {
+      let a: i32 = keep(u);
+      t = t + a;
+    },
+    None => {}
+  }
+  if let Some(u) = pick(xs) {
+    let b: i32 = keep(u);
+    t = t + b;
+  }
+  return t;
+}
+
+function run(f: () => i32): i32 {
+  return f();
+}
+
+// A lambda is decided as a function of its own, so a payload and a local
+// that it binds move at their last use in its body.
+function in_lambda(xs: string[]): i32 {
+  return run((): i32 => {
+    let s = "fg";
+    let k: i32 = keep(s);
+    match (pick(xs)) {
+      Some(u) => {
+        let n: i32 = keep(u);
+        return k + n;
+      },
+      None => {
+        return k;
+      }
+    }
+  });
+}
+
+function main(): i32 {
+  let xs: string[] = ["abc", "de"];
+  print(f"{by_if_let(xs)} {by_match(xs)} {copied_then_moved(xs)} {by_if_let([])} {same_name_twice(xs)} {in_lambda(xs)}");
+  return 0;
+}
