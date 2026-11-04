@@ -11,7 +11,7 @@ function main(): i32 {
   let c: Socket = tcp_connect_with(lo, tcp_local_port(ls), false);
   let s: Socket = tcp_accept(ls);
   let r: i32 = reactor_new();
-  print(f"watch: {reactor_ctl(r, 1, ls, 1)} {reactor_ctl(r, 1, c, 3)} {reactor_ctl(r, 1, s, 3)}");
+  print(f"watch: {reactor_ctl(r, 1, ls.fd, 1)} {reactor_ctl(r, 1, c.fd, 3)} {reactor_ctl(r, 1, s.fd, 3)}");
   print(f"send: {tcp_send_bytes(c, "ABC".bytes())}");
   print(f"close while watched: {tcp_close(s)} {tcp_close(c)}");
 
@@ -21,7 +21,7 @@ function main(): i32 {
   print(f"close the listener while watched: {tcp_close(ls)}");
   print(f"idle wait: {reactor_wait(r, events, 10)}");
 
-  print(f"watch the new pair: {reactor_ctl(r, 1, s2, 1)}");
+  print(f"watch the new pair: {reactor_ctl(r, 1, s2.fd, 1)}");
   print(f"send: {tcp_send_bytes(c2, "D".bytes())}");
   let got: i32 = reactor_wait(r, events, 1000);
   print(f"reactor_wait: {got} fd {events[0] == s2.fd} readable {(events[1] & 1) == 1}");

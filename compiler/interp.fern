@@ -3024,7 +3024,7 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
     return v_int(tcp_local_port(sock));
   }
   if (name == "tcp_pollable") {
-    return v_int(tcp_pollable(sock));
+    return v_int(tcp_pollable(sock.fd));
   }
   if (name == "tcp_socket_ctl") {
     return v_int(tcp_socket_ctl(sock, arg_i32(args, 1), arg_i32(args, 2)));
@@ -3361,29 +3361,9 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
     return void_result_value(w.truncate(arg_i64(args, 0)));
   }
   if (name == "set_nonblocking") {
-    return writer_nonblocking(w, arg_bool(args, 0));
+    return void_result_value(w.set_nonblocking(arg_bool(args, 0)));
   }
   return writer_fd_method(w, name, args);
-}
-
-// The pinned stage0 has no Writer.set_nonblocking, so this sets the same flag
-// through the socket control operation. A WASI build has no socket imports.
-function writer_nonblocking(w: Writer, on: boolean): Value {
-  if (target_os() == "wasi" || target_os() == "wasi-http") {
-    return io_err_value(Unsupported);
-  }
-  let arg: i32 = 0;
-  if (on) {
-    arg = 1;
-  }
-  let rc: i32 = 0;
-  unsafe {
-    rc = tcp_socket_ctl(__socket_from_fd(w.fd), 3, arg);
-  }
-  if (rc < 0) {
-    return io_err_value(Other("", "fcntl failed", 0 - rc));
-  }
-  return ok_value(v_tuple([]));
 }
 
 function writer_fd_method(w: Writer, name: string, args: Value[]): Value {

@@ -1254,7 +1254,7 @@ const fernUDPSend = `import "std/net";
 import "std/string";
 
 function send_datagram(ip: net.IpAddr, port: i32, data: string): boolean {
-    let sock: i32 = match (net.udp_socket(net.socket_addr(net.ipv4_unspecified(), 0))) {
+    let sock: Socket = match (net.udp_socket(net.socket_addr(net.ipv4_unspecified(), 0))) {
         Ok(s) => s,
         Err(_) => { return false; },
     };

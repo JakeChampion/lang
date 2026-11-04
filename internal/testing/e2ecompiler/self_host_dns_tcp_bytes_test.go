@@ -51,8 +51,7 @@ function probe(mode: i32): void {
     let interrupted: net.NetError = net.Interrupted;
     let connect = (addr: net.SocketAddr): Result[Socket, net.NetError] => {
         if (mode == 5) { return Err(net.ConnectionRefused); }
-        let made: Socket = 9;
-        return Ok(made);
+        unsafe { return Ok(__socket_from_fd(9)); }
     };
     let send = (sock: Socket, remaining: u8[]): i32 => {
         assert(sock.fd == 9 && closed == 0);

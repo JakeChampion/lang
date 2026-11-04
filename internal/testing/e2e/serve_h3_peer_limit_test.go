@@ -76,7 +76,7 @@ import "std/option";
 import "std/result";
 
 import "std/rand";
-function added(cs: h3q.Conn[], socks: i32[], cfg: conn.Config, ip: string): Result[(h3q.Conn[], i32[]), string] {
+function added(cs: h3q.Conn[], socks: Socket[], cfg: conn.Config, ip: string): Result[(h3q.Conn[], Socket[]), string] {
   let Ok(addr) = net.socket_addr_parse(ip + ":0") else {
     return Err("bad bind address");
   };
@@ -90,7 +90,7 @@ function added(cs: h3q.Conn[], socks: i32[], cfg: conn.Config, ip: string): Resu
   return Ok((cs.append(h3q.client(q, h3.config())), socks.append(sock)));
 }
 
-function driven(cs: h3q.Conn[], socks: i32[], peer: net.SocketAddr, buf: u8[], now: Instant): h3q.Conn[] {
+function driven(cs: h3q.Conn[], socks: Socket[], peer: net.SocketAddr, buf: u8[], now: Instant): h3q.Conn[] {
   let cur: h3q.Conn[] = cs;
   let i: i32 = 0;
   while (i < cur.len()) {
@@ -137,7 +137,7 @@ function main(): i32 {
     return 3;
   };
   let cs: h3q.Conn[] = first.0;
-  let socks: i32[] = first.1;
+  let socks: Socket[] = first.1;
   let buf: u8[] = __alloc_u8(65536);
   let started: Instant = clock.instant();
   let second_at: Instant = started;
@@ -159,7 +159,7 @@ function main(): i32 {
       print("first=true second=" + cs[1].ready().to_string());
       return 0;
     }
-    let woke: async.Wake = async.wait_any([socks[0], 1], Some(clock.instant().add(time.duration_millis(10))));
+    let woke: async.Wake = async.wait_any([socks[0].fd, 1], Some(clock.instant().add(time.duration_millis(10))));
   }
   eprint("first handshake did not complete");
   return 1;

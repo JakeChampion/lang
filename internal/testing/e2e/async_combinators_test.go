@@ -80,7 +80,7 @@ func TestAsyncCombinatorsRealFd(t *testing.T) {
 
 	gatherSrc := fmt.Sprintf(`import "std/async";
 
-function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
+function read_once(conn: Socket, wake: async.Wake): async.Future[i32] {
     if let Woke(i) = wake {
         let resp: u8[] = __alloc_u8(4096);
         if (tcp_recv_into(conn, resp) > 0) { return Ready(1); }
@@ -88,8 +88,8 @@ function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
     return Ready(0);
 }
 
-function read_future(conn: i32): async.Future[i32] {
-    let set: i32[] = [conn, 1];
+function read_future(conn: Socket): async.Future[i32] {
+    let set: i32[] = [conn.fd, 1];
     return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => read_once(conn, wake));
 }
 
@@ -108,7 +108,7 @@ function main(): i32 {
 
 	raceSrc := fmt.Sprintf(`import "std/async";
 
-function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
+function read_once(conn: Socket, wake: async.Wake): async.Future[i32] {
     if let Woke(i) = wake {
         let resp: u8[] = __alloc_u8(4096);
         if (tcp_recv_into(conn, resp) > 0) { return Ready(1); }
@@ -116,8 +116,8 @@ function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
     return Ready(0);
 }
 
-function read_future(conn: i32): async.Future[i32] {
-    let set: i32[] = [conn, 1];
+function read_future(conn: Socket): async.Future[i32] {
+    let set: i32[] = [conn.fd, 1];
     return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => read_once(conn, wake));
 }
 

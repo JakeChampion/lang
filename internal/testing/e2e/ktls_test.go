@@ -368,16 +368,13 @@ function serve(count: i32): i32 {
       return 2;
     }
   }
-  let l: i32 = 0;
-  match (net.listen_at(net.socket_addr(net.ipv4_loopback(), 0), net.listen_options())) {
-    Ok(fd) => {
-      l = fd;
-    },
+  let l: Socket = match (net.listen_at(net.socket_addr(net.ipv4_loopback(), 0), net.listen_options())) {
+    Ok(fd) => fd,
     Err(e) => {
       print("listen: " + e.message());
       return 3;
     }
-  }
+  };
   match (net.local_port(l)) {
     Ok(port) => {
       print("port " + port.to_string());

@@ -26,11 +26,11 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 	src := fmt.Sprintf(`function main(): i32 {
     let fd: Socket = tcp_listen(%d);
     if (fd.fd < 0) { return 91; }
-    let lfds: i32[] = [fd];
+    let lfds: i32[] = [fd.fd];
     if (poll(lfds, 10000) < 0) { return 95; }
     let c: Socket = tcp_accept(fd);
     if (c.fd < 0) { return 92; }
-    let cfds: i32[] = [c];
+    let cfds: i32[] = [c.fd];
     if (poll(cfds, 10000) < 0) { return 96; }
     let req: u8[] = __alloc_u8(4096);
     if (tcp_recv_into(c, req) <= 0) { return 93; }

@@ -112,8 +112,8 @@ function unsupported(r: Result[void, net.NetError]): boolean {
 
 // read_ready reads once into a fresh 16-byte buffer once sock is readable:
 // the bytes read, or -1 for an error.
-function read_ready(sock: i32): u8[] {
-    let set: i32[] = [sock, 1];
+function read_ready(sock: Socket): u8[] {
+    let set: i32[] = [sock.fd, 1];
     let woke: async.Wake = async.wait_any(set, Some(clock.instant().add(time.duration_millis(5000))));
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     match (net.read(sock, buf)) {
@@ -132,18 +132,14 @@ function read_ready(sock: i32): u8[] {
 
 function main(): i32 {
     let opts: net.ListenOptions = net.ListenOptions { ...net.listen_options(), backlog: 4, reuse_port: true };
-    let ln: i32 = 0;
-    match (net.listen_with(0, opts)) {
-        Ok(fd) => { ln = fd; },
-        Err(e) => { return fail(1); },
-    }
+    let Ok(ln) = net.listen_with(0, opts) else {
+        return fail(1);
+    };
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    let c: i32 = 0;
-    match (net.connect(net.socket_addr(net.ipv4_loopback(), port))) {
-        Ok(fd) => { c = fd; },
-        Err(e) => { return fail(3); },
-    }
+    let Ok(c) = net.connect(net.socket_addr(net.ipv4_loopback(), port)) else {
+        return fail(3);
+    };
     let a: Socket = tcp_accept(ln);
     if (a.fd < 0) { return fail(4); }
     if (!ok(net.set_keepalive(a, true))) { return fail(5); }

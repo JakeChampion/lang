@@ -52,7 +52,7 @@ jobs:
       - name: Set up Go (pinned in mise.toml)
         uses: jdx/mise-action@v4
         with:
-          version: 2026.9.1
+          version: 2026.11.0
           github_token: ${{ github.token }}
           install_args: go
 

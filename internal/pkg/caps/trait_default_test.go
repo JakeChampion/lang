@@ -21,7 +21,7 @@ var traitDefaultCases = []traitDefaultCase{
 	{"env", "env", `env("HOME");`, "", nil},
 	{"env", "hostname", `hostname();`, "", nil},
 	{"fs", "read_file", `read_file("/etc/hostname");`, "", nil},
-	{"net", "tcp_close", `tcp_close(1);`, "", nil},
+	{"net", "tcp_pollable", `tcp_pollable(1);`, "", nil},
 	{"random", "random_i32", `rand.next_i32();`, "import \"std/rand\";\n", []string{"rand__next_i32"}},
 	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`, "", nil},
 	{"time", "now_unix_ms", `now_unix_ms();`, "", nil},
