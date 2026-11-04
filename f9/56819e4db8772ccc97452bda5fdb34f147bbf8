@@ -519,3 +519,15 @@ grpc/unimplemented_service	1
 h2spec/passed	146
 h2spec/failed	0
 h2spec/skipped	0
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	133.2
+tls/client/openssl.handshakes_per_s	54.5
+tls/client/go.bulk_mbytes_per_s	104.9
+tls/client/go.handshakes_per_s	54.1
+tls/client/rustls.handshakes_per_s	55.2
+tls/client/bssl.handshakes_per_s	55.2
+tls/server/go.bulk_mbytes_per_s	119.8
+tls/server/curl.bulk_mbytes_per_s	151.5
+tls/server/handshakes_per_s	538.5
+tls/server/resumed_handshakes_per_s	542.5
