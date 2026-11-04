@@ -650,7 +650,7 @@ wasmtime-version-sensitive.** v46 changed the component-model-async ABI (async
 functype tag `0x43`; non-reentrant component instances → the async-import
 composer emits a sibling-nested structure). Under an older wasmtime (e.g. a
 system v37/v39) they fail with `invalid leading byte (0x43)` or `cannot enter
-component instance`. Use the pinned v46.
+component instance`. Use the pinned version.
 
 ## On macOS: what runs natively, and what needs a container
 

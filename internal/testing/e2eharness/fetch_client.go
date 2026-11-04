@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+// Port closes a connection that opens with a TLS record. Port2 answers it with
+// a plain HTTP 400, as a plain HTTP server does.
 type FetchUpstream struct {
 	Port  int
 	Port2 int
@@ -28,7 +30,7 @@ type FetchUpstream struct {
 func StartFetchUpstream(t *testing.T) *FetchUpstream {
 	t.Helper()
 	up := &FetchUpstream{hits: map[string]int{}, release: make(chan struct{})}
-	listen := func() int {
+	listen := func(answersTLS bool) int {
 		ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 		if err != nil {
 			t.Fatalf("listen: %v", err)
@@ -40,13 +42,13 @@ func StartFetchUpstream(t *testing.T) *FetchUpstream {
 				if err != nil {
 					return
 				}
-				go up.serve(c)
+				go up.serve(c, answersTLS)
 			}
 		}()
 		return ln.Addr().(*net.TCPAddr).Port
 	}
-	up.Port = listen()
-	up.Port2 = listen()
+	up.Port = listen(false)
+	up.Port2 = listen(true)
 	return up
 }
 
@@ -57,10 +59,13 @@ func (up *FetchUpstream) hit(target string) (odd bool) {
 	return up.hits[target]%2 == 1
 }
 
-func (up *FetchUpstream) serve(c net.Conn) {
+func (up *FetchUpstream) serve(c net.Conn, answersTLS bool) {
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(10 * time.Second))
-	head, body, ok := readRequest(c)
+	head, body, ok, tls := readRequest(c)
+	if tls && answersTLS {
+		_, _ = c.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+	}
 	if !ok {
 		return
 	}
@@ -200,6 +205,10 @@ func (up *FetchUpstream) serve(c net.Conn) {
 	default:
 		resp = []byte("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
 	}
+	// RFC 9110 9.3.2: a HEAD response has no content.
+	if method == "HEAD" {
+		resp = resp[:bytes.Index(resp, []byte("\r\n\r\n"))+4]
+	}
 	_, _ = c.Write(resp)
 }
 
@@ -256,7 +265,7 @@ func serveKept(c net.Conn, target string) {
 		if _, err := c.Write([]byte(resp)); err != nil {
 			return
 		}
-		head, _, ok := readRequest(c)
+		head, _, ok, _ := readRequest(c)
 		if !ok {
 			return
 		}
@@ -295,17 +304,17 @@ func SetFetchProxy(t *testing.T, up *FetchUpstream) {
 	t.Setenv("http_proxy", "http://u@127.0.0.1:"+strconv.Itoa(up.Port))
 }
 
-func readRequest(c net.Conn) (head, body string, ok bool) {
+func readRequest(c net.Conn) (head, body string, ok, tls bool) {
 	var buf []byte
 	tmp := make([]byte, 4096)
 	for !bytes.Contains(buf, []byte("\r\n\r\n")) {
 		n, err := c.Read(tmp)
 		buf = append(buf, tmp[:n]...)
 		if err != nil {
-			return "", "", false
+			return "", "", false, false
 		}
 		if buf[0] == 0x16 {
-			return "", "", false
+			return "", "", false, true
 		}
 	}
 	sep := bytes.Index(buf, []byte("\r\n\r\n"))
@@ -316,13 +325,13 @@ func readRequest(c net.Conn) (head, body string, ok bool) {
 		n, err := c.Read(tmp)
 		rest = append(rest, tmp[:n]...)
 		if err != nil && err != io.EOF {
-			return "", "", false
+			return "", "", false, false
 		}
 		if err == io.EOF {
 			break
 		}
 	}
-	return head, string(rest[:min(want, len(rest))]), true
+	return head, string(rest[:min(want, len(rest))]), true, false
 }
 
 func headerValue(head, name string) string {
@@ -487,7 +496,7 @@ function main(): i32 {
 `, port, closedPort)
 }
 
-func FetchHostedSource(port, closedPort int) string {
+func FetchHostedSource(port, port2, closedPort int) string {
 	return fmt.Sprintf(`import "std/fetch";
 import "std/http";
 import "std/platform";
@@ -580,7 +589,8 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     out = out + line("refused", plat.http(fetch.get("http://127.0.0.1:%d/")));
     out = out + line("badurl", plat.http(fetch.get("not a url")));
     out = out + line("noscheme", plat.http(fetch.get("ftp://127.0.0.1/")));
-    out = out + line("tls", plat.http(fetch.get("https://127.0.0.1:%d/plain")));
+    out = out + line("tls", plat.http(fetch.get("https://127.0.0.1:%[3]d/plain")));
+    out = out + line("tlsclosed", plat.http(fetch.get("https://127.0.0.1:%[1]d/plain")));
     out = out + line("crlfurl", plat.http(fetch.get(base() + "/a\r\nX-Injected: 1\r\n\r\n")));
     out = out + line("crlfvalue", plat.http(fetch.get(base() + "/plain").with_header("X-A", "1\r\nX-Injected: 1")));
     out = out + line("badname", plat.http(fetch.get(base() + "/plain").with_header("X A", "1")));
@@ -601,7 +611,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     out = out + line("resetpost", plat.http(fetch.request("POST", base() + "/reset-post").with_text("once")));
     return http.ok(out);
 }
-`, port, closedPort, port)
+`, port, closedPort, port2)
 }
 
 const FetchHostedWant = `plain: 200 [hello] headers: content-length=5 x-up=1 trailers:
@@ -639,6 +649,7 @@ refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
 noscheme: error invalid URL: scheme ftp is not http
 tls: error host: TLS-protocol-error
+tlsclosed: error i/o: Connection reset by peer
 crlfurl: error invalid URL: a path or query that cannot be written on a request line
 crlfvalue: error invalid request: a header value has a byte that cannot be written
 badname: error invalid request: a header name is not a token
