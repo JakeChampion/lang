@@ -1,3 +1,5 @@
+# 2026-11-04: PR #14136, perf-aarch64 job 126444330446 on 086a210e. #14094 returns a join of constants from its arms:
+# aarch64/deflate_encode.ir falls 1.22% to 43566583. It is a reduction, and no limit rises.
 # 2026-11-04: PR #14135, perf-x86_64 job 126373947305 on 4629c363. A fused compare takes no register: sort_ints.ir
 # falls 1.04% and sort_strings.ir 2.06%. Both rows are reductions, and no limit rises.
 # 2026-11-04: #14094, a local x86_64 perf-bench run. A join of constants that only returns goes back into its arms:
@@ -504,7 +506,7 @@ aarch64/closure_call.ir	46002179
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
 aarch64/deflate_decode.ir	35961899
 aarch64/deflate_decode.text	13560
-aarch64/deflate_encode.ir	44105319
+aarch64/deflate_encode.ir	43566583
 aarch64/deflate_encode.text	7829
 aarch64/enum_match.text	1112
 aarch64/enum_match.ir	24975095
