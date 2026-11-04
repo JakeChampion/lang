@@ -116,11 +116,47 @@ function test_other_packet_gives_nothing(): test.TestOutcome {
   }
 }
 
+// The number of frames that the receiver plays for each sequence number in
+// `seqs`, each with a packet of the same frame of speech.
+function playout(seqs: [i64]): string {
+  let (_, p) = voice.encode(voice.encoder(), speech(voice.FRAME, 0));
+  let r: voice.Receiver = voice.receiver();
+  let out: string = "";
+  for seq in seqs {
+    let (r1, frames) = voice.receive(r, seq, p);
+    r = r1;
+    let ok: boolean = true;
+    for f in frames {
+      ok = ok && f.len() == voice.FRAME;
+    }
+    out = out + frames.len().to_string();
+    if (!ok) {
+      out = out + "!";
+    }
+    out = out + " ";
+  }
+  return out;
+}
+
+// A lost frame is concealed before the next one, and a frame that comes
+// after a later one is too late.
+function test_lost_frame_is_concealed(): test.TestOutcome {
+  return test.assert_eq(playout([0i64, 1i64, 3i64, 2i64, 4i64]), "1 1 2 0 1 ");
+}
+
+// The receiver conceals at most five frames, and the first frame plays at
+// once whatever its number.
+function test_long_loss_conceals_five_frames(): test.TestOutcome {
+  return test.assert_eq(playout([7i64, 18i64, 19i64]), "1 6 1 ");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie voice");
   r = r.it("the round trip keeps the voice", test_round_trip_keeps_the_voice);
   r = r.it("the rate is near the target", test_rate_is_near_the_target);
   r = r.it("a packet is one wideband CELT frame", test_packet_is_one_wideband_celt_frame);
   r = r.it("a packet of another codec gives nothing", test_other_packet_gives_nothing);
+  r = r.it("a lost frame is concealed", test_lost_frame_is_concealed);
+  r = r.it("a long loss conceals five frames", test_long_loss_conceals_five_frames);
   return r.finish();
 }

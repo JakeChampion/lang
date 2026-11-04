@@ -511,6 +511,31 @@ function pick(name: string): Case {
         let b = block(0, [], [call(0, "mixed", []), inst(59, 1, [], 1, "call_word"), inst(59, 2, [], 0, "call_word"), call(3, "__fern_rc_dec", [2]), const_int(4, 0)], ret(4));
         return Case { f: func(0, 5, [b]), modes: [], returns_unit: false };
     }
+    if (name == "exit-ends-the-path") {
+        // An inlined body that exits leaves a zero result that the dead
+        // code after the exit takes apart.
+        let b0 = block(0, [], [param(0), const_int(1, 1)], brif(1, 1, 2));
+        let b1 = block(1, [0], [const_int(2, 3), inst(50, 3, [2], 0, "exit"), const_int(4, 0), counted_load(5, 4, 8), call(6, "__fern_rc_dec", [5])], br(3));
+        let b2 = block(2, [0], [call(7, "__fern_rc_dec", [0])], br(3));
+        let b3 = block(3, [1, 2], [const_int(8, 0)], ret(8));
+        return Case { f: func(1, 9, [b0, b1, b2, b3]), modes: [counted], returns_unit: false };
+    }
+    if (name == "unit-held-into-an-exit") {
+        let b0 = block(0, [], [param(0), const_int(1, 1)], brif(1, 1, 2));
+        let b1 = block(1, [0], [const_int(2, 3)], br(3));
+        let b3 = block(3, [1], [inst(50, 3, [2], 0, "exit"), const_int(4, 0)], ret(4));
+        let b2 = block(2, [0], [call(5, "__fern_rc_dec", [0]), const_int(6, 0)], ret(6));
+        return Case { f: func(1, 7, [b0, b1, b3, b2]), modes: [counted], returns_unit: false };
+    }
+    if (name == "borrow-released-before-an-exit") {
+        let insts: ssa.SInst[] = [param(0), call(1, "__fern_rc_dec", [0]), const_int(2, 1), inst(50, 3, [2], 0, "exit"), const_int(4, 0)];
+        return Case { f: one_block(1, 5, insts, ret(4)), modes: [borrow], returns_unit: false };
+    }
+    if (name == "leak-in-an-endless-loop") {
+        let b0 = block(0, [], [], br(1));
+        let b1 = block(1, [0, 1], [fresh_box(0)], br(1));
+        return Case { f: func(0, 1, [b0, b1]), modes: [], returns_unit: false };
+    }
     eprint("rccertify_cases: no case named " + name);
     exit(2);
     return Case { f: one_block(0, 0, [], ret(0 - 1)), modes: [], returns_unit: false };
@@ -603,6 +628,10 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"reuse-past-a-join-null-first", nil, 1, ""},
 		{"null-tested-against-an-outside-null", nil, 1, ""},
 		{"leak-in-a-loop-body", []string{"leaked where it dies of v1"}, 0, ""},
+		{"exit-ends-the-path", nil, 0, ""},
+		{"unit-held-into-an-exit", nil, 0, ""},
+		{"borrow-released-before-an-exit", []string{"spent without a unit of v0"}, 0, ""},
+		{"leak-in-an-endless-loop", []string{"leaked where it dies of v0"}, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

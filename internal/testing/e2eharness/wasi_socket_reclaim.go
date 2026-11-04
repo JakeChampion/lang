@@ -24,11 +24,6 @@ func WasiSocketCloseProbe(expr string) string {
 	return StdinSocket + "function main(): i32 { let h: Socket = " + expr + "; if (h.fd < 0) { return h.fd; } return tcp_close(h); }"
 }
 
-// coreFuncImport matches a function import in `wasm-tools print` output. The
-// groups are the module, the name, the id and the type index. Since 1.263.0
-// the printer also writes the signature after the type index.
-var coreFuncImport = regexp.MustCompile(`\(import "([^"]+)" "([^"]+)" \(func ((?:\$[^\s()]+\s+)?\(;[0-9]+;\)) \(type ([0-9]+)\)(?: \((?:param|result)[^()]*\))*\)\)`)
-
 func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 	hold := "let h: i32 = " + expr + ";\n        result = h;"
 	if closeSocket {
@@ -162,7 +157,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		}
 		allocator = "(func $fh_alloc (param $n i32) (result i32) (call " + alloc[1] + " (i32.const 0) (i32.const 0) (i32.const 1) (local.get $n)))"
 	}
-	imports := coreFuncImport
+	imports := regexp.MustCompile(`\(import "([^"]+)" "([^"]+)" \(func ((?:\$[^\s()]+\s+)?\(;[0-9]+;\)) \(type ([0-9]+)\)(?:\s+\((?:param|result)[^()]*\))*\)\)`)
 	seen := 0
 	wat = imports.ReplaceAllStringFunc(wat, func(decl string) string {
 		m := imports.FindStringSubmatch(decl)
