@@ -14,7 +14,7 @@ function main(): i32 {
   let c: Socket = tcp_connect_with(lo, tcp_local_port(ls), false);
   let s: Socket = tcp_accept(ls);
   let r: i32 = reactor_new();
-  print(f"watch: {reactor_ctl(r, 1, s, 1)}");
+  print(f"watch: {reactor_ctl(r, 1, s.fd, 1)}");
   let buf: u8[] = __alloc_u8(4);
   for round in 0..2 {
     let events: i32[] = [0, 0, 0, 0];

@@ -17,7 +17,7 @@ import (
 )
 
 const tcpSendBytesProgram = `import "std/array";
-function send_all(fd: i32, data: u8[]): void {
+function send_all(fd: Socket, data: u8[]): void {
     let remaining: u8[] = data;
     while (remaining.len() > 0) {
         let n: i32 = tcp_send_bytes(fd, remaining);

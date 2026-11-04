@@ -1,8 +1,7 @@
 // The walkie-talkie app, LAN build. Two phones on the same Wi-Fi network find
 // each other by UDP broadcast, run the key exchange, and the users compare
 // the six-digit string. Then one holds the button to talk, and the other
-// hears. The voice is raw 16-bit audio at 16 kHz until the Opus encoder is
-// ready.
+// hears. The voice is Opus at 16 kHz, about 24 kbit/s.
 //
 // `node` holds the logic. This file does its input and output: the socket,
 // the microphone, the speaker, the touches and the screen.
@@ -16,6 +15,7 @@ import "./lan";
 import "./node";
 import "./pcm";
 import "./screen";
+import "./voice";
 
 const MIC: string = "android.permission.RECORD_AUDIO";
 
@@ -83,7 +83,7 @@ function fresh_node(notice: string): node.Node {
 }
 
 function app_main(ctx: usize): usize {
-  let spk: audio.Stream = audio.playback(pcm.WIRE_RATE);
+  let spk: audio.Stream = audio.playback(voice.RATE);
   let started: boolean = spk.start();
   let (sock, port) = open_socket();
   let notice: string = "";
@@ -96,7 +96,7 @@ function app_main(ctx: usize): usize {
   android.keep_screen_on(ctx, true);
   let n: node.Node = fresh_node(notice);
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(pcm.WIRE_RATE, pcm.WIRE_RATE), down: pcm.resampler(pcm.WIRE_RATE, spk.rate), pressed: false, drawn: "", asked: false };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), pressed: false, drawn: "", asked: false };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -245,12 +245,12 @@ function sync_mic(s: App, now: i64): App {
   }
   let mic: audio.Stream = s.mic;
   if (mic.ptr == 0 as usize) {
-    mic = audio.capture(pcm.WIRE_RATE);
+    mic = audio.capture(voice.RATE);
   }
   if (!mic.start()) {
     return App { ...s, mic: mic, node: node.mic_lost(s.node, "the microphone did not start", now) };
   }
-  return App { ...s, mic: mic, capturing: true, up: pcm.resampler(mic.rate, pcm.WIRE_RATE) };
+  return App { ...s, mic: mic, capturing: true, up: pcm.resampler(mic.rate, voice.RATE) };
 }
 
 // The microphone samples since the last step.

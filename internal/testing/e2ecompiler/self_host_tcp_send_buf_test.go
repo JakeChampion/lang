@@ -7,7 +7,7 @@ import (
 )
 
 const tcpSendBufProgram = `import "std/bench";
-function send_from(fd: i32, b: usize, from: i32): void {
+function send_from(fd: Socket, b: usize, from: i32): void {
     let at: i32 = from;
     while (at < buf_len(b)) {
         let n: i32 = tcp_send_buf(fd, b, at);

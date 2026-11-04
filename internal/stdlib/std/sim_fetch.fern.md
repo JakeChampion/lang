@@ -134,9 +134,9 @@ pub function (a: Answer) cut(n: i32): Answer {
   if (n >= a.bytes.len()) {
     return a;
   }
-  let h: usize = buf_new(n);
+  let h = buf_new(n);
   buf_push_bytes_range(h, a.bytes, 0, n);
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return Answer { ...a, bytes: bytes };
 }
@@ -146,16 +146,16 @@ pub function (a: Answer) held(): Answer {
 }
 
 pub function (a: Answer) kept(): Answer {
-  let at: i32 = __find_bytes(a.bytes, CLOSING.as_bytes());
-  let end: i32 = __find_bytes(a.bytes, "\r\n\r\n".as_bytes());
+  let at = __find_bytes(a.bytes, CLOSING.as_bytes());
+  let end = __find_bytes(a.bytes, "\r\n\r\n".as_bytes());
   if (at < 0 || end < 0 || at + CLOSING.len() != end + 4) {
     return a.held();
   }
-  let h: usize = buf_new(a.bytes.len() - CLOSING.len() + 4);
+  let h = buf_new(a.bytes.len() - CLOSING.len() + 4);
   buf_push_bytes_range(h, a.bytes, 0, at);
   buf_push(h, "\r\n\r\n");
   buf_push_bytes_range(h, a.bytes, at + CLOSING.len(), a.bytes.len());
-  let bytes: u8[] = buf_take_bytes(h);
+  let bytes = buf_take_bytes(h);
   buf_free(h);
   return Answer { ...a, bytes: bytes, close: false };
 }
@@ -209,7 +209,7 @@ pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answ
 }
 
 pub function (n: Net) serve(addr: string, port: i32, handler: (HttpRequest) => HttpResponse): Net {
-  let listening: Net = n.listen(addr, port, time.DURATION_ZERO);
+  let listening = n.listen(addr, port, time.DURATION_ZERO);
   return Net { ...listening, servers: listening.servers.append(Server { addr: __canon(addr), port: port, handler: handler }) };
 }
 
@@ -223,10 +223,10 @@ pub function (n: Net) connects(): i32 {
 }
 
 pub function (n: Net) open(): i32 {
-  let count: i32 = 0;
+  let count = 0;
   for row in __rows(n.conns.get()) {
     if (row[7] == "1") {
-      count = count + 1;
+      count += 1;
     }
   }
   return count;
@@ -237,7 +237,7 @@ pub function (n: Net) sent_count(): i32 {
 }
 
 pub function (n: Net) sent(i: i32): u8[] {
-  let all: string[] = __sent_all(n);
+  let all = __sent_all(n);
   if (i < 0 || i >= all.len()) {
     let none: u8[] = [];
     return none;
@@ -255,7 +255,7 @@ impl fetch.Transport for Net {
     return time.instant_from_nanos(self.drv.clock_ns.get());
   }
   function wall(self: Net): time.Timestamp {
-    let d: Duration = time.duration_nanos(self.drv.clock_ns.get());
+    let d = time.duration_nanos(self.drv.clock_ns.get());
     return time.Timestamp { sec: d.sec, nsec: d.nsec };
   }
   function random_bytes(self: Net, n: i32): u8[] {
@@ -266,7 +266,7 @@ impl fetch.Transport for Net {
     return out;
   }
   function lookup(self: Net, host: string, checked: boolean): Result[fetch.Lookup, dns.DnsError] {
-    let found: net.IpAddr[] = __addrs_of(self, host);
+    let found = __addrs_of(self, host);
     if (found.len() == 0) {
       return Err(dns.NoSuchName);
     }
@@ -277,21 +277,21 @@ impl fetch.Transport for Net {
     return Ok(fetch.Lookup { dial: found, named: found, judged: found });
   }
   function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError] {
-    let timeout_ms: i64 = timeout.as_millis();
-    let fallback_ms: i64 = dns.dial_options().fallback.as_millis();
+    let timeout_ms = timeout.as_millis();
+    let fallback_ms = dns.dial_options().fallback.as_millis();
     let start_ms: i64 = 0;
     let best_ms: i64 = 0 - 1;
-    let best: string = "";
+    let best = "";
     for a in addrs {
-      let key: string = a.to_string();
-      let delay: i64 = __connect_ms(self, key, port);
+      let key = a.to_string();
+      let delay = __connect_ms(self, key, port);
       if (delay >= 0) {
-        let done_ms: i64 = start_ms + delay;
+        let done_ms = start_ms + delay;
         if (best_ms < 0 || done_ms < best_ms) {
           best_ms = done_ms;
           best = key;
         }
-        start_ms = start_ms + fallback_ms;
+        start_ms += fallback_ms;
       }
     }
     if (timeout_ms <= 0) {
@@ -309,25 +309,25 @@ impl fetch.Transport for Net {
     if (!self.drv.advance_to(time.instant_from_nanos(self.drv.clock_ns.get()).add(time.duration_millis(best_ms)))) {
       return Err(net.Interrupted);
     }
-    let id: i32 = self.next.get();
+    let id = self.next.get();
     self.next.set(id + 1);
     self.conns.set(self.conns.get() + __row(id, best, port, 0 - 1, 0, 0, 0, 1));
     return Ok(id);
   }
   function write(self: Net, conn: i32, bytes: u8[]): i32 {
-    let row: string[] = __conn(self, conn);
+    let row = __conn(self, conn);
     if (row.len() == 0 || row[7] != "1") {
-      return 0 - 9;
+      return -9;
     }
-    let encoded: string = hex.encode(bytes);
+    let encoded = hex.encode(bytes);
     self.sent.set(self.sent.get() + encoded.len().to_string() + ":" + encoded);
     if (__busy(self, row)) {
       return bytes.len();
     }
-    let port: i32 = __field(row, 2);
-    let target: string = __target(bytes);
-    let route: i32 = 0 - 2;
-    let answer: i32 = __flaked(self, row[1], port, target);
+    let port = __field(row, 2);
+    let target = __target(bytes);
+    let route: i32 = -2;
+    let answer = __flaked(self, row[1], port, target);
     if (answer >= 0) {
       route = __routed(self, row[1], port, target);
       if (route >= 0) {
@@ -336,20 +336,20 @@ impl fetch.Transport for Net {
         route = __served(self, row[1], port, bytes);
       }
     }
-    let first_ms: i64 = __answer(self, route, answer).delay.as_millis();
+    let first_ms = __answer(self, route, answer).delay.as_millis();
     __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
     return bytes.len();
   }
   function read(self: Net, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
-    let row: string[] = __conn(self, conn);
-    let now: i64 = self.drv.clock_ns.get();
-    let deadline: i64 = now + wait.as_nanos();
-    let route: i32 = __field(row, 3);
+    let row = __conn(self, conn);
+    let now = self.drv.clock_ns.get();
+    let deadline = now + wait.as_nanos();
+    let route = __field(row, 3);
     if (row.len() == 0 || route == 0 - 1) {
       return Ok(__elapsed(self, deadline));
     }
-    let a: Answer = __answer(self, route, __field(row, 4));
-    let offset: i32 = __field(row, 5);
+    let a = __answer(self, route, __field(row, 4));
+    let offset = __field(row, 5);
     if (offset >= a.bytes.len()) {
       if (a.close) {
         let none: u8[] = [];
@@ -357,14 +357,14 @@ impl fetch.Transport for Net {
       }
       return Ok(__elapsed(self, deadline));
     }
-    let ready: i64 = __field64(row, 6);
+    let ready = __field64(row, 6);
     if (ready > deadline) {
       return Ok(__elapsed(self, deadline));
     }
     if (!self.drv.advance_to(time.instant_from_nanos(ready))) {
       return Ok(net.Abandoned);
     }
-    let size: i32 = a.bytes.len() - offset;
+    let size = a.bytes.len() - offset;
     if (a.chunk > 0 && a.chunk < size) {
       size = a.chunk;
     }
@@ -372,16 +372,16 @@ impl fetch.Transport for Net {
       size = max;
     }
     let out: u8[] = [];
-    let k: i32 = 0;
+    let k = 0;
     while (k < size) {
       out = out.append(a.bytes[offset + k]);
-      k = k + 1;
+      k += 1;
     }
     __set_conn(self, conn, __row(conn, row[1], __field(row, 2), route, __field(row, 4), offset + size, self.drv.clock_ns.get() + a.every.as_nanos(), 1));
     return Ok(net.Chunk(out));
   }
   function close(self: Net, conn: i32): i32 {
-    let row: string[] = __conn(self, conn);
+    let row = __conn(self, conn);
     if (row.len() > 0) {
       __set_conn(self, conn, __row(conn, row[1], __field(row, 2), __field(row, 3), __field(row, 4), __field(row, 5), __field64(row, 6), 0));
     }
@@ -402,17 +402,17 @@ impl fetch.Transport for Net {
 <<9 pub function taped(req: fetch.Request, resp: HttpResponse): string>>=
 pub function taped(req: fetch.Request, resp: HttpResponse): string {
   let pairs: json.JsonValue[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < resp.headers.names.len()) {
-    let name: string = resp.headers.names[i].to_lower();
+    let name = resp.headers.names[i].to_lower();
     if (!__wire_only(name)) {
       pairs = pairs.append(json.JArray([json.JString(name), json.JString(resp.headers.values[i])]));
     }
-    i = i + 1;
+    i += 1;
   }
   let keys: string[] = ["method", "url", "status", "headers"];
   let values: json.JsonValue[] = [json.JString(req.method), json.JString(req.url), json.JNumber(resp.status.to_string()), json.JArray(pairs)];
-  let body: u8[] = resp.body_bytes();
+  let body = resp.body_bytes();
   match (utf8.from_bytes(body)) {
     Ok(text) => {
       keys = keys.append("body");
@@ -453,10 +453,10 @@ pub function send_taped[T: fetch.Transport](tr: T, tape: Cell[string], req: fetc
 }
 
 pub function (n: Net) replay(cassette: string): Result[Net, string] {
-  let out: Net = n;
-  let line_no: i32 = 0;
+  let out = n;
+  let line_no = 0;
   for line in cassette.split("\n") {
-    line_no = line_no + 1;
+    line_no += 1;
     if (line.len() > 0) {
       match (__exchange(line)) {
         Some(e) => {
@@ -503,19 +503,19 @@ function __exchange(line: string): Option[__Exchange] {
 }
 
 function __exchange_of(o: json.JsonObject): Option[__Exchange] {
-  let method: string = __string_member(o, "method");
-  let status: i32 = __int(__string_member(o, "status"));
+  let method = __string_member(o, "method");
+  let status = __int(__string_member(o, "status"));
   let Ok(u) = url.parse(__string_member(o, "url")) else {
     return None;
   };
   if (method.len() == 0 || status <= 0 || u.host.len() == 0) {
     return None;
   }
-  let port: i32 = u.port;
+  let port = u.port;
   if (port == 0 || u.scheme == "https") {
     port = 80;
   }
-  let target: string = u.path;
+  let target = u.path;
   if (target.len() == 0) {
     target = "/";
   }
@@ -525,7 +525,7 @@ function __exchange_of(o: json.JsonObject): Option[__Exchange] {
   let Some(body) = __body_member(o) else {
     return None;
   };
-  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body), headers: __headers_member(o), trailers: headers.new(), background: None };
+  let resp = HttpResponse { status: status, body: BodyBytes(body), headers: __headers_member(o), trailers: headers.new(), background: None };
   return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
 }
 
@@ -552,7 +552,7 @@ function __string_member(o: json.JsonObject, key: string): string {
 }
 
 function __headers_member(o: json.JsonObject): HeaderMap {
-  let out: HeaderMap = headers.new();
+  let out = headers.new();
   match (o.get("headers")) {
     Some(v) => {
       match (v) {
@@ -608,37 +608,37 @@ function __body_member(o: json.JsonObject): Option[u8[]] {
 ```fern
 <<14 function __replayed(n: Net, e: __Exchange): Net>>=
 function __replayed(n: Net, e: __Exchange): Net {
-  let out: Net = n;
-  let addr: string = __replay_addr(out, e.host);
+  let out = n;
+  let addr = __replay_addr(out, e.host);
   if (__addrs_of(out, e.host).len() == 0) {
     out = out.host(e.host, [addr]);
   }
   if (__connect_ms(out, addr, e.port) < 0) {
     out = out.listen(addr, e.port, time.DURATION_ZERO);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < out.routes.len()) {
-    let r: Route = out.routes[i];
+    let r = out.routes[i];
     if (r.addr == addr && r.port == e.port && r.path == e.target) {
       return Net { ...out, routes: out.routes.with(i, Route { ...r, answers: r.answers.append(e.answer) }) };
     }
-    i = i + 1;
+    i += 1;
   }
   return out.route(addr, e.port, e.target, [e.answer]);
 }
 
 function __replay_addr(n: Net, host: string): string {
-  let known: net.IpAddr[] = __addrs_of(n, host);
+  let known = __addrs_of(n, host);
   if (known.len() > 0) {
     return known[0].to_string();
   }
-  let last: i32 = 34;
+  let last = 34;
   while (last < 255) {
-    let candidate: string = "93.184.216." + last.to_string();
+    let candidate = "93.184.216." + last.to_string();
     if (!__addr_named(n, candidate)) {
       return candidate;
     }
-    last = last + 1;
+    last += 1;
   }
   return "93.184.216.255";
 }
@@ -655,11 +655,11 @@ function __addr_named(n: Net, addr: string): boolean {
 }
 
 function __busy(n: Net, row: string[]): boolean {
-  let route: i32 = __field(row, 3);
-  if (route == 0 - 1) {
+  let route = __field(row, 3);
+  if (route == -1) {
     return false;
   }
-  let a: Answer = __answer(n, route, __field(row, 4));
+  let a = __answer(n, route, __field(row, 4));
   return a.close || __field(row, 5) < a.bytes.len();
 }
 
@@ -715,18 +715,18 @@ function __elapsed(n: Net, to_ns: i64): net.Recv {
 }
 
 function __find_bytes(data: [u8], needle: [u8]): i32 {
-  let at: i32 = 0;
+  let at = 0;
   while (at <= data.len() - needle.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < needle.len() && data[at + j] == needle[j]) {
-      j = j + 1;
+      j += 1;
     }
     if (j == needle.len()) {
       return at;
     }
-    at = at + 1;
+    at += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 ```
 
@@ -735,27 +735,27 @@ function __find_bytes(data: [u8], needle: [u8]): i32 {
 ```fern
 <<15 function __target(data: u8[]): string>>=
 function __target(data: u8[]): string {
-  let end: i32 = __find_bytes(data, "\r\n".as_bytes());
+  let end = __find_bytes(data, "\r\n".as_bytes());
   if (end < 0) {
     end = data.len();
   }
-  let start: i32 = 0;
+  let start = 0;
   while (start < end && data[start] != 32 as u8) {
-    start = start + 1;
+    start += 1;
   }
   if (start == end) {
     return "";
   }
-  start = start + 1;
-  let stop: i32 = start;
+  start += 1;
+  let stop = start;
   while (stop < end && data[stop] != 32 as u8) {
-    stop = stop + 1;
+    stop += 1;
   }
-  let bytes: u8[] = __alloc_u8(stop - start);
-  let i: i32 = 0;
+  let bytes = __alloc_u8(stop - start);
+  let i = 0;
   while (start + i < stop) {
     bytes = bytes.with(i, data[start + i]);
-    i = i + 1;
+    i += 1;
   }
   match (utf8.from_bytes(bytes)) {
     Ok(target) => {
@@ -768,48 +768,48 @@ function __target(data: u8[]): string {
 }
 
 function __routed(n: Net, addr: string, port: i32, target: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n.routes.len()) {
-    let r: Route = n.routes[i];
+    let r = n.routes[i];
     if (r.addr == addr && r.port == port && (r.path == target || r.path == "*")) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 2;
+  return -2;
 }
 
 // Answer index 0, or `-1 - k` when flake `k` matches and the seeded draw selects it.
 function __flaked(n: Net, addr: string, port: i32, target: string): i32 {
-  let k: i32 = 0;
+  let k = 0;
   while (k < n.flakes.len()) {
-    let f: Flake = n.flakes[k];
+    let f = n.flakes[k];
     if (f.addr == addr && f.port == port && (f.path == target || f.path == "*")) {
       if ((n.drv.random_i32() & 2147483647) % 100 < f.percent) {
-        return 0 - 1 - k;
+        return -1 - k;
       }
     }
-    k = k + 1;
+    k += 1;
   }
   return 0;
 }
 
 function __took(n: Net, route: i32): i32 {
-  let counts: string[] = n.hits.get().split(",");
-  let out: string = "";
-  let before: i32 = 0;
-  let i: i32 = 0;
+  let counts = n.hits.get().split(",");
+  let out = "";
+  let before = 0;
+  let i = 0;
   while (i < n.routes.len()) {
-    let c: i32 = 0;
+    let c = 0;
     if (i < counts.len()) {
       c = __int(counts[i]);
     }
     if (i == route) {
       before = c;
-      c = c + 1;
+      c += 1;
     }
     out = out + c.to_string() + ",";
-    i = i + 1;
+    i += 1;
   }
   n.hits.set(out);
   return before;
@@ -818,21 +818,21 @@ function __took(n: Net, route: i32): i32 {
 function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
   for s in n.servers {
     if (s.addr == addr && s.port == port) {
-      let k: i32 = __journal_all(n.made.get()).len();
-      let entry: string = __response_entry(s, bytes);
+      let k = __journal_all(n.made.get()).len();
+      let entry = __response_entry(s, bytes);
       n.made.set(n.made.get() + entry.len().to_string() + ":" + entry);
-      return 0 - 3 - k;
+      return -3 - k;
     }
   }
-  return 0 - 2;
+  return -2;
 }
 
 function __response_entry(s: Server, bytes: u8[]): string {
   match (http.parse_request_framed(bytes)) {
     http.Complete(f) => {
       let h: (HttpRequest) => HttpResponse = s.handler;
-      let resp: HttpResponse = h(f.request);
-      let flag: string = "c";
+      let resp = h(f.request);
+      let flag = "c";
       if (f.keep_alive) {
         flag = "k";
       }
@@ -858,16 +858,16 @@ function __refused_entry(): string {
 // A negative `i` is the fault of flake `-1 - i`.
 function __answer(n: Net, route: i32, i: i32): Answer {
   if (i < 0) {
-    return n.flakes[0 - 1 - i].fault;
+    return n.flakes[-1 - i].fault;
   }
-  if (route <= 0 - 3) {
-    let entry: string = __journal_all(n.made.get())[0 - 3 - route];
+  if (route <= -3) {
+    let entry = __journal_all(n.made.get())[-3 - route];
     return Answer { bytes: __journal_bytes(slice_unchecked(entry, 1, entry.len()).to_owned()), delay: time.DURATION_ZERO, every: time.DURATION_ZERO, chunk: 0, close: entry[0] == b'c' };
   }
   if (route < 0) {
     return reply(404, "");
   }
-  let answers: Answer[] = n.routes[route].answers;
+  let answers = n.routes[route].answers;
   if (answers.len() == 0) {
     return reply(404, "");
   }
@@ -907,12 +907,12 @@ function __conn(n: Net, id: i32): string[] {
 ```fern
 <<16 function __set_conn(n: Net, id: i32, row: string): i32>>=
 function __set_conn(n: Net, id: i32, row: string): i32 {
-  let out: string = "";
+  let out = "";
   for r in __rows(n.conns.get()) {
     if (__field(r, 0) == id) {
-      out = out + row;
+      out += row;
     } else {
-      out = out + __row(__field(r, 0), r[1], __field(r, 2), __field(r, 3), __field(r, 4), __field(r, 5), __field64(r, 6), __field(r, 7));
+      out += __row(__field(r, 0), r[1], __field(r, 2), __field(r, 3), __field(r, 4), __field(r, 5), __field64(r, 6), __field(r, 7));
     }
   }
   n.conns.set(out);
@@ -957,18 +957,18 @@ function __sent_all(n: Net): string[] {
 }
 
 function __journal_all(log: string): string[] {
-  let bs: u8[] = log.bytes();
+  let bs = log.bytes();
   let out: string[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < bs.len()) {
-    let len: i32 = 0;
+    let len = 0;
     while (at < bs.len() && bs[at] != 58 as u8) {
       len = len * 10 + (bs[at] as i32 - 48);
-      at = at + 1;
+      at += 1;
     }
-    at = at + 1;
+    at += 1;
     out = out.append(slice_unchecked(log, at, at + len).to_owned());
-    at = at + len;
+    at += len;
   }
   return out;
 }

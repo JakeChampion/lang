@@ -1344,7 +1344,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: sock,
 	}
 	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
-		Params: []ast.Type{sock},
+		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["poll"] = &ast.FuncType{
@@ -8114,30 +8114,12 @@ func containerNoun(t ast.Type) string {
 	return "enum"
 }
 
-// For one release a Socket and its i32 descriptor convert both ways, so the
-// published stage0 compiles the standard library before and after it moves
-// to Socket (docs/BOOTSTRAP.md). The next step deletes this rule.
-func socketDescriptorTransition(dst, src ast.Type) bool {
-	isSocket := func(t ast.Type) bool {
-		st, ok := t.(ast.StructType)
-		return ok && st.Name == "Socket"
-	}
-	isI32 := func(t ast.Type) bool {
-		n, ok := t.(ast.NumberType)
-		return ok && ast.Equal(n, ast.NumberType{})
-	}
-	return isSocket(dst) && isI32(src) || isSocket(src) && isI32(dst)
-}
-
 func (c *checker) assignable(dst, src ast.Type) bool {
 	return c.assignableWith(dst, src, true)
 }
 
 func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	if ast.Equal(dst, src) {
-		return true
-	}
-	if socketDescriptorTransition(dst, src) {
 		return true
 	}
 	if dynBox && losslessNumericWiden(src, dst) {

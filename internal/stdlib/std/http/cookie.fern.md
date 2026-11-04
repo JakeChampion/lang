@@ -953,7 +953,7 @@ function __count_of(all: Cookie[], domain: string): i32 {
 }
 
 function __without_oldest(all: Cookie[], domain: string): Cookie[] {
-  let pick: i32 = -1;
+  let pick = -1;
   let i = 0;
   while (i < all.len()) {
     if ((domain.len() == 0 || all[i].domain == domain) && (pick < 0 || all[i].accessed.cmp(all[pick].accessed) < 0)) {

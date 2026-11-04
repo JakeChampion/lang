@@ -38,7 +38,7 @@ func tcpClientIRProgram(port int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     if (c.fd < 0) { return 100; }
-    if (tcp_pollable(c) != c.fd) { tcp_close(c); return 102; }
+    if (tcp_pollable(c.fd) != c.fd) { tcp_close(c); return 102; }
     if (tcp_send_bytes(c, [112u8, 105u8, 110u8, 103u8]) < 0) { tcp_close(c); return 101; }
     let resp: u8[] = __alloc_u8(64);
     let n: i32 = tcp_recv_into(c, resp);

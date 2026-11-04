@@ -2694,6 +2694,123 @@ function f(l: Socket): i32 {
 }`)
 }
 
+func TestOwnGuardMatchExpressionOnAFreshCallOwnsItsValue(t *testing.T) {
+	const opener = `
+function opened(): Result[Socket, i32] {
+    let s: Socket = tcp_listen(0);
+    if (s.fd < 0) { return Err(s.fd); }
+    return Ok(s);
+}
+`
+	wantOK(t, "match-expression-on-a-fresh-call", opener+`
+function main(): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+	wantE051(t, "match-expression-closed-twice", opener+`
+function main(): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    let a: i32 = tcp_close(s);
+    return tcp_close(s) + a;
+}`)
+	wantE051(t, "match-expression-on-a-parameter", `
+function f(r: Result[Socket, i32]): i32 {
+    let s: Socket = match (r) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+	wantE051(t, "match-expression-arm-yields-a-parameter", opener+`
+function f(l: Socket): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => l,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+}
+
+func TestOwnGuardMatchExpressionPayloadKeepsItsOrigin(t *testing.T) {
+	const opener = `
+function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }
+function passed(s: Socket): Socket { return s; }
+`
+	for _, tc := range []struct {
+		name string
+		arm  string
+		ok   bool
+	}{
+		{"borrowed-assignment", "v = l; v", false},
+		{"borrowed-call-assignment", "v = passed(l); v", false},
+		{"conditional-borrowed-assignment", "if (l.fd >= 0) { v = l; } v", false},
+		{"borrowed-shadow", "let v: Socket = l; v", false},
+		{"fresh-assignment", "v = tcp_listen(0); v", true},
+		{"fresh-shadow", "let v: Socket = tcp_listen(0); v", true},
+		{"nested-borrowed-shadow", "if (l.fd >= 0) { let v: Socket = l; print(v.fd.to_string()); } v", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := opener + `
+function f(l: Socket): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => { ` + tc.arm + ` },
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`
+			if tc.ok {
+				wantOK(t, tc.name, source)
+			} else {
+				wantE051(t, tc.name, source)
+			}
+		})
+	}
+}
+
+func TestOwnGuardLoopsThatShareABinderOwnTheirElements(t *testing.T) {
+	wantE051(t, "owned-loop-element-replaced-by-a-borrow", `
+function f(l: Socket): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { s = l; tcp_close(s); }
+    return 0;
+}`)
+	wantOK(t, "owned-loop-element-replaced-by-a-fresh-socket", `
+function main(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { s = tcp_listen(0); tcp_close(s); }
+    return 0;
+}`)
+	wantOK(t, "two-loops-one-binder", `
+function main(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    let ys: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "two-loops-one-binder-one-borrowed", `
+function f(ys: Socket[]): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "two-loops-one-binder-closed-twice", `
+function main(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    let ys: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); tcp_close(s); }
+    return 0;
+}`)
+}
+
 func TestOwnGuardBodyFreshValuePayloadRemainsCopyable(t *testing.T) {
 	wantOK(t, "copyable-payload-of-body-fresh-call", `
 struct Box { items: i32[] }

@@ -169,7 +169,7 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 }`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
 	if receive {
 		src = fmt.Sprintf(`// read waits for bytes on c, reads them into buf and checks each is an x.
-function read(c: i32, buf: u8[]): i32 {
+function read(c: Socket, buf: u8[]): i32 {
     let n: i32 = tcp_recv_into(c, buf);
     let i: i32 = 0;
     while (i < n) {

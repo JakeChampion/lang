@@ -27,8 +27,7 @@ function watcher(port: i32): i32 {
 }
 
 function parent_exit(drv: async.RealDriver): i32 {
-    let ln: i32 = 0;
-    match (net.listen_with(0, net.listen_options())) { Ok(fd) => { ln = fd; }, Err(e) => { return 1; } }
+    let ln: Socket = match (net.listen_with(0, net.listen_options())) { Ok(fd) => fd, Err(e) => { return 1; } };
     let port: i32 = tcp_local_port(ln);
     let child: i32 = proc_fork();
     if (child == 0) {
@@ -37,11 +36,11 @@ function parent_exit(drv: async.RealDriver): i32 {
         exit(0);
     }
     if (child < 0 || proc_waitpid(child) != 0) { return 2; }
-    if (drv.watch(ln, 1) != 0) { return 3; }
+    if (drv.watch(ln.fd, 1) != 0) { return 3; }
     let got: i32[] = drv.wait(2, Some(time.duration_millis(15000)));
-    if (got.len() < 2 || got[0] != ln) { return 4; }
+    if (got.len() < 2 || got[0] != ln.fd) { return 4; }
     match (net.accept(ln)) { Ok(fd) => { tcp_close(fd); }, Err(e) => { return 5; } }
-    drv.unwatch(ln);
+    drv.unwatch(ln.fd);
     tcp_close(ln);
     return 0;
 }

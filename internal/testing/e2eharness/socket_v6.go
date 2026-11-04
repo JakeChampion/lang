@@ -4,10 +4,10 @@ func SocketV6Probe() string {
 	return `import "std/time";
 import "std/net";
 
-// recv reads once from fd within five seconds: the bytes, none at the end
+// recv reads once from sock within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
-function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
+function recv(sock: Socket, max: i32): u8[] {
+    match (net.read_watched(sock, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }
@@ -56,7 +56,7 @@ function main(): i32 {
     let lo6: u8[] = zeros(15).append(1u8);
     let peer: u8[] = [];
     let ln: Socket = tcp_listen_with(lo6, 0, 4, false);
-    if (no_v6(ln)) {
+    if (no_v6(ln.fd)) {
         print("nov6");
         return 43;
     }
@@ -139,10 +139,10 @@ func NetV6Probe() string {
 import "std/net";
 import "std/errno";
 
-// recv reads once from fd within five seconds: the bytes, none at the end
+// recv reads once from sock within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
-function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
+function recv(sock: Socket, max: i32): u8[] {
+    match (net.read_watched(sock, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }
@@ -175,27 +175,21 @@ function no_v6(e: net.NetError): boolean {
 }
 
 function main(): i32 {
-    let ln: i32 = 0;
-    match (net.listen_at(lo6(0), net.listen_options())) {
-        Ok(fd) => { ln = fd; },
-        Err(e) => {
-            if (no_v6(e)) {
-                print("nov6");
-                return 43;
-            }
-            return fail(1);
-        },
+    let opened = net.listen_at(lo6(0), net.listen_options());
+    if let Err(e) = opened {
+        if (no_v6(e)) {
+            print("nov6");
+            return 43;
+        }
+        return fail(1);
     }
+    let Ok(ln) = opened else { return fail(1); };
     let port: i32 = 0;
     match (net.local_port(ln)) {
         Ok(p) => { port = p; },
         Err(e) => { return fail(2); },
     }
-    let c: i32 = 0;
-    match (net.connect(lo6(port))) {
-        Ok(fd) => { c = fd; },
-        Err(e) => { return fail(3); },
-    }
+    let Ok(c) = net.connect(lo6(port)) else { return fail(3); };
     let a: Socket = tcp_accept(ln);
     if (a.fd < 0) { return fail(4); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(5); }
@@ -204,21 +198,13 @@ function main(): i32 {
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
-    let s: i32 = 0;
-    match (net.udp_socket(lo6(0))) {
-        Ok(fd) => { s = fd; },
-        Err(e) => { return fail(7); },
-    }
+    let Ok(s) = net.udp_socket(lo6(0)) else { return fail(7); };
     let ps: i32 = 0;
     match (net.local_port(s)) {
         Ok(p) => { ps = p; },
         Err(e) => { return fail(8); },
     }
-    let t: i32 = 0;
-    match (net.udp_socket(lo6(0))) {
-        Ok(fd) => { t = fd; },
-        Err(e) => { return fail(9); },
-    }
+    let Ok(t) = net.udp_socket(lo6(0)) else { return fail(9); };
     let pt: i32 = 0;
     match (net.local_port(t)) {
         Ok(p) => { pt = p; },
@@ -256,16 +242,8 @@ function main(): i32 {
     // The same :: listener through std/net: peer_addr hands the IPv4
     // peer back as the V4 it is, and peer_key keys it as one.
     if (target_os() != "wasi") {
-        let dl: i32 = 0;
-        match (net.listen_at(net.socket_addr(net.ipv6_unspecified(), 0), net.listen_options())) {
-            Ok(fd) => { dl = fd; },
-            Err(e) => { return fail(30); },
-        }
-        let dc: i32 = 0;
-        match (net.connect(net.socket_addr(net.ipv4_loopback(), tcp_local_port(dl)))) {
-            Ok(fd) => { dc = fd; },
-            Err(e) => { return fail(31); },
-        }
+        let Ok(dl) = net.listen_at(net.socket_addr(net.ipv6_unspecified(), 0), net.listen_options()) else { return fail(30); };
+        let Ok(dc) = net.connect(net.socket_addr(net.ipv4_loopback(), tcp_local_port(dl))) else { return fail(31); };
         let da: Socket = tcp_accept(dl);
         if (da.fd < 0) { return fail(32); }
         match (net.peer_addr(da)) {

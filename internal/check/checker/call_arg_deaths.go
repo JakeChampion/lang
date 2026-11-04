@@ -377,8 +377,17 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 		}
 		return true
 	})
+	borrowedAssigns := map[*ast.Var]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
-		if v, ok := n.(*ast.Var); ok && iterOwned[forEachElementOf(v)] && declCount[v.Name] == 1 {
+		if a, ok := n.(*ast.Assign); ok && !freshInit(info, a.Value) {
+			if target, ok := a.Target.(*ast.Ident); ok {
+				borrowedAssigns[bindingVar(body, a, target.Name)] = true
+			}
+		}
+		return true
+	})
+	ast.Walk(body, func(n ast.Node) bool {
+		if v, ok := n.(*ast.Var); ok && iterOwned[forEachElementOf(v)] && declCount[v.Name] == 1 && !borrowedAssigns[v] {
 			freshInitLocal[v.Name] = true
 		}
 		return true
@@ -715,6 +724,25 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 		}
 		return true
 	})
+	// An element of an owned iterator moves at its last read in its own loop,
+	// whatever other declarations share its name.
+	ast.Walk(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || inLambda[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			aid, ok := a.(*ast.Ident)
+			if !ok || escaping[aid.Name] || lambdaCaptured[aid.Name] {
+				continue
+			}
+			v := bindingVar(body, c, aid.Name)
+			if v != nil && iterOwned[forEachElementOf(v)] && !borrowedAssigns[v] && !loopRepeats(body, c, v) && lastInBinding(body, c, aid, order) {
+				moves[aid] = true
+			}
+		}
+		return true
+	})
 	unadmitted := map[string]bool{}
 	moveAdmitted := moveAdmission(info, body, isParam, ownParam, declCount, occurrences, order, admitted, unpack)
 	for _, dies := range out {
@@ -906,8 +934,74 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return true
 	case *ast.StructLit:
 		return init.Base == nil
+	case *ast.MatchExpr:
+		return freshMatchValue(info, init)
 	}
 	return false
+}
+
+// freshMatchValue reports a match on a fresh value whose each variant arm
+// yields a payload it binds, a fresh value, or leaves.
+func freshMatchValue(info *Info, m *ast.MatchExpr) bool {
+	if _, named := m.Tag.(*ast.Ident); named || m.StructMatch != "" || m.IsFloat || len(m.Arms) == 0 || !freshInit(info, m.Tag) {
+		return false
+	}
+	for _, arm := range m.Arms {
+		if arm.VariantName == "" && !arm.IsWildcard || len(arm.TupleElems) > 0 || !armYieldsFresh(info, arm) {
+			return false
+		}
+	}
+	return true
+}
+
+func armYieldsFresh(info *Info, arm *ast.MatchExprArm) bool {
+	value := arm.Body
+	var block *ast.BlockExpr
+	if b, ok := value.(*ast.BlockExpr); ok {
+		if len(b.Stmts) > 0 && divergesStmt(info, b.Stmts[len(b.Stmts)-1]) {
+			return true
+		}
+		if b.Tail == nil {
+			return false
+		}
+		value = b.Tail
+		block = b
+	}
+	if id, ok := value.(*ast.Ident); ok && slices.Contains(arm.Binders(), id.Name) {
+		return freshArmPayload(info, block, id)
+	}
+	return freshInit(info, value)
+}
+
+// freshArmPayload checks the binding that the arm returns. A nested shadow
+// does not change that binding.
+func freshArmPayload(info *Info, block *ast.BlockExpr, id *ast.Ident) bool {
+	if block == nil {
+		return true
+	}
+	body := &ast.Block{Stmts: append(slices.Clone(block.Stmts), &ast.ExprStmt{Expr: id})}
+	for i := len(block.Stmts) - 1; i >= 0; i-- {
+		if bindsName(block.Stmts[i], id.Name) {
+			if _, ok := block.Stmts[i].(*ast.Var); !ok {
+				return false
+			}
+			break
+		}
+	}
+	bound := bindingVar(body, id, id.Name)
+	if bound != nil && !freshInit(info, bound.Init) {
+		return false
+	}
+	fresh := true
+	ast.Walk(body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == bound && !freshInit(info, a.Value) {
+				fresh = false
+			}
+		}
+		return fresh
+	})
+	return fresh
 }
 
 // moveAdmission names the locals that can move into an own parameter: each
@@ -1286,6 +1380,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (
 		case *ast.Ident:
 			if (local[t.Name] || d.Bound[t.Name] || ownParam[t.Name]) && !d.Escaping[t.Name] {
 				out[e] = true
+				delete(loose, e)
 			}
 		case *ast.FieldAccess:
 			if id, ok := t.Target.(*ast.Ident); ok && (local[id.Name] || ownParam[id.Name] || d.Bound[id.Name]) {
@@ -2004,6 +2099,24 @@ func lastInBinding(body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder
 		})
 	}
 	return !later
+}
+
+// bindingVar is the let that a read of name at c belongs to, or nil when
+// another kind of declaration or a parameter binds it.
+func bindingVar(body *ast.Block, c ast.Node, name string) *ast.Var {
+	frames := enclosingFrames(body, c)
+	l := bindingLevel(frames, name)
+	if l < 0 {
+		return nil
+	}
+	f := frames[l]
+	for j := f.idx - 1; j >= 0; j-- {
+		if bindsName(f.stmts[j], name) {
+			v, _ := f.stmts[j].(*ast.Var)
+			return v
+		}
+	}
+	return nil
 }
 
 // bindsName reports whether the statement itself declares name, not a
