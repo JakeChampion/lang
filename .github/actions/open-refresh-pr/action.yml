@@ -57,12 +57,21 @@ runs:
         git checkout -B "$BRANCH"
         git add -A
         printf '%s\n\n%s\n' "$TITLE" "$COMMIT_BODY" | git commit -q -F -
+        # actions/checkout stores GITHUB_TOKEN as an http.extraheader, and git
+        # sends that header in place of the token in the URL. The empty value
+        # clears it, so each push uses the token it names.
+        push() {
+          git -c http.https://github.com/.extraheader= push --force \
+            "https://x-access-token:$1@github.com/$GITHUB_REPOSITORY" "$BRANCH"
+        }
         GH_TOKEN=""
-        if [ -n "$AUTO_REBASE_TOKEN" ] && git push --force "https://x-access-token:$AUTO_REBASE_TOKEN@github.com/$GITHUB_REPOSITORY" "$BRANCH"; then
+        if [ -n "$AUTO_REBASE_TOKEN" ] &&
+           GH_TOKEN="$AUTO_REBASE_TOKEN" gh api "repos/$GITHUB_REPOSITORY" --silent &&
+           push "$AUTO_REBASE_TOKEN"; then
           GH_TOKEN="$AUTO_REBASE_TOKEN"
         else
-          echo "AUTO_REBASE_TOKEN is missing or refused; pushing with GITHUB_TOKEN, which starts no checks"
-          git push --force "https://x-access-token:$DEFAULT_TOKEN@github.com/$GITHUB_REPOSITORY" "$BRANCH"
+          echo "::warning::AUTO_REBASE_TOKEN is missing or refused; pushing with GITHUB_TOKEN, which starts no checks"
+          push "$DEFAULT_TOKEN"
           GH_TOKEN="$DEFAULT_TOKEN"
         fi
         export GH_TOKEN
