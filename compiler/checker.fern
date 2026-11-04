@@ -19289,35 +19289,39 @@ function lu_arm_payload_fresh(fx: LuFn, body: ast.Stmt[], name: string): boolean
 
 // Stop at a new declaration: assignments after it belong to that binding.
 function lu_payload_assigns_fresh(fx: LuFn, body: ast.Stmt[], name: string, start: i32): boolean {
+  return lu_payload_scan_fresh(fx, body, name, start, body);
+}
+
+function lu_payload_scan_fresh(fx: LuFn, body: ast.Stmt[], name: string, start: i32, root: ast.Stmt[]): boolean {
   for i in start..body.len() {
     if (lu_stmt_declares(body[i], name)) {
       return true;
     }
-    if (!lu_payload_stmt_fresh(fx, body[i], name)) {
+    if (!lu_payload_stmt_fresh(fx, body[i], name, root)) {
       return false;
     }
   }
   return true;
 }
 
-function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string): boolean {
+function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string, root: ast.Stmt[]): boolean {
   match (st) {
     ast.StmtIf(f) => {
-      return lu_payload_expr_fresh(fx, f.cond, name) && lu_payload_assigns_fresh(fx, f.then_body, name, 0) && lu_payload_assigns_fresh(fx, f.else_body, name, 0);
+      return lu_payload_expr_fresh(fx, f.cond, name, root) && lu_payload_scan_fresh(fx, f.then_body, name, 0, root) && lu_payload_scan_fresh(fx, f.else_body, name, 0, root);
     },
     ast.StmtWhile(w) => {
-      return lu_payload_expr_fresh(fx, w.cond, name) && lu_payload_assigns_fresh(fx, w.body, name, 0);
+      return lu_payload_expr_fresh(fx, w.cond, name, root) && lu_payload_scan_fresh(fx, w.body, name, 0, root);
     },
     ast.StmtFor(f) => {
-      return lu_payload_expr_fresh(fx, f.iter, name) && (f.var_name == name || lu_payload_assigns_fresh(fx, f.body, name, 0));
+      return lu_payload_expr_fresh(fx, f.iter, name, root) && (f.var_name == name || lu_payload_scan_fresh(fx, f.body, name, 0, root));
     },
     ast.StmtMatch(m) => {
-      if (!lu_payload_expr_fresh(fx, m.scrutinee, name)) {
+      if (!lu_payload_expr_fresh(fx, m.scrutinee, name, root)) {
         return false;
       }
       for arm in m.arms {
         if (!util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
-          if (arm.has_guard && !lu_payload_expr_fresh(fx, arm.guard, name) || !lu_payload_assigns_fresh(fx, arm.body, name, 0)) {
+          if (arm.has_guard && !lu_payload_expr_fresh(fx, arm.guard, name, root) || !lu_payload_scan_fresh(fx, arm.body, name, 0, root)) {
             return false;
           }
         }
@@ -19326,24 +19330,74 @@ function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string): boolean {
     },
     _ => {
       let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
-      return lu_payload_facts_fresh(fx, facts, name);
+      return lu_payload_facts_fresh(fx, facts, name, root);
     }
   }
   return false;
 }
 
-function lu_payload_expr_fresh(fx: LuFn, e: ast.Expr, name: string): boolean {
+function lu_payload_expr_fresh(fx: LuFn, e: ast.Expr, name: string, root: ast.Stmt[]): boolean {
   let facts: LuFacts = astwalk.fold_expr_nodes(e, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
-  return lu_payload_facts_fresh(fx, facts, name);
+  return lu_payload_facts_fresh(fx, facts, name, root);
 }
 
-function lu_payload_facts_fresh(fx: LuFn, facts: LuFacts, name: string): boolean {
+function lu_payload_facts_fresh(fx: LuFn, facts: LuFacts, name: string, root: ast.Stmt[]): boolean {
   for a in facts.assigns {
-    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_payload_value(fx, a.init)) {
+    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_payload_value(fx, a.init) && !lu_fresh_local_replacement(fx, a.init, root)) {
       return false;
     }
   }
   return true;
+}
+
+struct LuReplacement { value: ast.Expr, name: string, repeats: boolean }
+
+function lu_replacement_keep(e: ast.Expr, own state: LuReplacement): LuReplacement {
+  return state;
+}
+
+function lu_replacement_loop(st: ast.Stmt, own state: LuReplacement): LuReplacement {
+  if (!state.repeats && lu_is_loop_stmt(st) && lu_loop_holds_call(st, state.value)) {
+    let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+    for v in facts.vars {
+      if (v.name == state.name) {
+        return state;
+      }
+    }
+    return LuReplacement { ...state, repeats: true };
+  }
+  return state;
+}
+
+// The local is fresh, unmodified and declared in this lexical body.
+// An inner loop must also declare it afresh on each round.
+function lu_fresh_local_replacement(fx: LuFn, e: ast.Expr, body: ast.Stmt[]): boolean {
+  let ast.ExprIdent(id) = e else {
+    return false;
+  };
+  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != 1 || !lu_fresh_init(fx, id.name) || !lu_is_last(fx, id)
+    || util.has_str(fx.facts.captured, id.name) || util.has_str(fx.facts.escaping, id.name)) {
+    return false;
+  }
+  for a in fx.facts.assigns {
+    if (a.name == id.name) {
+      return false;
+    }
+  }
+  let facts: LuFacts = lu_empty_facts();
+  for st in body {
+    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  }
+  for v in facts.vars {
+    if (v.name == id.name) {
+      let state: LuReplacement = LuReplacement { value: e, name: id.name, repeats: false };
+      for st in body {
+        state = astwalk.fold_stmt_nodes(st, state, lu_replacement_loop, lu_replacement_keep, astwalk.descend_all);
+      }
+      return !state.repeats;
+    }
+  }
+  return false;
 }
 
 // A payload from a fresh call can replace an owned value at its last read.

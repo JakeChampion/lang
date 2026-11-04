@@ -379,7 +379,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 	})
 	borrowedAssigns := map[*ast.Var]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
-		if a, ok := n.(*ast.Assign); ok && !freshInit(info, a.Value) {
+		if a, ok := n.(*ast.Assign); ok && !freshInit(info, a.Value) && !freshLocalReplacement(info, body, a, a.Value, order) {
 			if target, ok := a.Target.(*ast.Ident); ok {
 				borrowedAssigns[bindingVar(body, a, target.Name)] = true
 			}
@@ -995,13 +995,35 @@ func freshArmPayload(info *Info, block *ast.BlockExpr, id *ast.Ident) bool {
 	fresh := true
 	ast.Walk(body, func(n ast.Node) bool {
 		if a, ok := n.(*ast.Assign); ok {
-			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == bound && !freshInit(info, a.Value) {
+			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == bound && !freshInit(info, a.Value) && !freshLocalReplacement(info, body, a, a.Value, IdentOrderOf(body)) {
 				fresh = false
 			}
 		}
 		return fresh
 	})
 	return fresh
+}
+
+// A replacement can take an unmodified fresh local at its last read.
+func freshLocalReplacement(info *Info, body *ast.Block, holder ast.Node, value ast.Expr, order IdentOrder) bool {
+	id, ok := value.(*ast.Ident)
+	if !ok || DeferOrLambdaNames(body)[id.Name] {
+		return false
+	}
+	source := bindingVar(body, holder, id.Name)
+	if source == nil || !freshInit(info, source.Init) || loopRepeats(body, holder, source) || !lastInBinding(body, holder, id, order) {
+		return false
+	}
+	unmodified := true
+	ast.Walk(body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == source {
+				unmodified = false
+			}
+		}
+		return unmodified
+	})
+	return unmodified
 }
 
 // moveAdmission names the locals that can move into an own parameter: each

@@ -2774,6 +2774,24 @@ function f(l: Socket): i32 {
 }
 
 func TestOwnGuardLoopsThatShareABinderOwnTheirElements(t *testing.T) {
+	wantOK(t, "owned-loop-element-replaced-by-a-fresh-local", `
+function f(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { let replacement: Socket = tcp_listen(0); s = replacement; tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "owned-loop-element-replaced-by-a-borrowed-local", `
+function f(l: Socket): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { let replacement: Socket = l; s = replacement; tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "owned-loop-element-replaced-by-a-reassigned-local", `
+function f(l: Socket): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { let replacement: Socket = tcp_listen(0); replacement = l; s = replacement; tcp_close(s); }
+    return 0;
+}`)
 	wantE051(t, "owned-loop-element-replaced-by-a-borrow", `
 function f(l: Socket): i32 {
     let xs: Socket[] = [tcp_listen(0)];
