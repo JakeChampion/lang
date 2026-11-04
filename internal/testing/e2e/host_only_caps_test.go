@@ -18,7 +18,7 @@ func TestRingAndKTLSTargetCapabilities(t *testing.T) {
 		androidAllowed           bool
 	}{
 		{"ring_new", "uring", `function main(): i32 { if (ring_new(8) < 0 as i64) { return 1; } return 0; }`, false},
-		{"tcp_ktls", "ktls", `function main(): i32 { let b: u8[] = []; return tcp_ktls(3, 1, 0, b); }`, true},
+		{"tcp_ktls", "ktls", `function main(): i32 { let b: u8[] = []; unsafe { return tcp_ktls(__socket_from_fd(3), 1, 0, b); } }`, true},
 	} {
 		prog, err := parser.Parse(c.src)
 		if err != nil {
@@ -119,9 +119,12 @@ func TestLinuxOnlyWrappersBuildEverywhere(t *testing.T) {
 	src := filepath.Join(dir, "prog.fern")
 	prog := `import "std/async";
 import "std/tls/ktls";
+function three(): Socket {
+    unsafe { return __socket_from_fd(3); }
+}
 function main(): i32 {
     let d: async.RealDriver = async.real_driver_io_uring();
-    match (ktls.read_now(3)) {
+    match (ktls.read_now(three())) {
         ktls.ReadFailed(_) => {},
         _ => { return 2; }
     }

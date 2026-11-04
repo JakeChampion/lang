@@ -5,10 +5,10 @@ func UnixSocketProbe() string {
 import "std/string";
 import "std/net";
 
-// recv reads once from fd within five seconds: the bytes, none at the end
+// recv reads once from sock within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
-function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
+function recv(sock: Socket, max: i32): u8[] {
+    match (net.read_watched(sock, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }
@@ -64,10 +64,10 @@ import "std/net";
 import "std/errno";
 import "std/string";
 
-// recv reads once from fd within five seconds: the bytes, none at the end
+// recv reads once from sock within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
-function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
+function recv(sock: Socket, max: i32): u8[] {
+    match (net.read_watched(sock, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }
@@ -89,21 +89,9 @@ function errno_of[T](r: Result[T, net.NetError]): i32 {
 
 function main(): i32 {
     let path: string = "/tmp/fern-net-unix-" + ((now_unix_ms() % (1000000 as i64)) as i32).to_string();
-    let ln: i32 = 0;
-    match (net.listen_unix(path, 4)) {
-        Ok(fd) => { ln = fd; },
-        Err(e) => { return fail(1); },
-    }
-    let c: i32 = 0;
-    match (net.connect_unix(path)) {
-        Ok(fd) => { c = fd; },
-        Err(e) => { return fail(2); },
-    }
-    let a: i32 = 0;
-    match (net.accept(ln)) {
-        Ok(fd) => { a = fd; },
-        Err(e) => { return fail(3); },
-    }
+    let Ok(ln) = net.listen_unix(path, 4) else { return fail(1); };
+    let Ok(c) = net.connect_unix(path) else { return fail(2); };
+    let Ok(a) = net.accept(ln) else { return fail(3); };
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(4); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(5); }

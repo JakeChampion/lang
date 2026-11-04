@@ -28,7 +28,7 @@ function main(): i32 {
   print(f"view of a view: {tail[0]} {tail[1]} len {tail.len()}");
 
   let r: i32 = reactor_new();
-  print(f"watch: {reactor_ctl(r, 1, s, 1)}");
+  print(f"watch: {reactor_ctl(r, 1, s.fd, 1)}");
   let events: i32[] = [0, 0, 0, 0];
   let pair: [i32] = events[0:2];
   let whole: [i32] = events[:];
