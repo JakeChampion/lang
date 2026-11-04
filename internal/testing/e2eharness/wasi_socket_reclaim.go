@@ -157,7 +157,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		}
 		allocator = "(func $fh_alloc (param $n i32) (result i32) (call " + alloc[1] + " (i32.const 0) (i32.const 0) (i32.const 1) (local.get $n)))"
 	}
-	imports := regexp.MustCompile(`\(import "([^"]+)" "([^"]+)" \(func ((?:\$[^\s()]+\s+)?\(;[0-9]+;\)) \(type ([0-9]+)\)\)\)`)
+	imports := regexp.MustCompile(`\(import "([^"]+)" "([^"]+)" \(func ((?:\$[^\s()]+\s+)?\(;[0-9]+;\)) \(type ([0-9]+)\)(?: \((?:param|result) [^()]*\))*\)\)`)
 	seen := 0
 	wat = imports.ReplaceAllStringFunc(wat, func(decl string) string {
 		m := imports.FindStringSubmatch(decl)
