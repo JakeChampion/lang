@@ -30,10 +30,15 @@ paid a call and a frame of five saved registers for two loads and one
 - A small branch is a body of at most `max_shared_insts` instructions with
   two callers, no loop, and a scalar result. It joins the shared set,
   and each call to it is spliced, whatever the caller does with the result.
-- A body called once stays out of a shared host when the splice grows the
-  host past the host's own limit. The check runs in each round with the
+- A body called once stays out of a small branch when the splice grows the
+  branch past `max_shared_insts`. The check runs in each round with the
   sizes of that round, because a callee grows as its own callees splice into
   it. The body stays out for the rest of the rounds.
+
+The rule leaves a shared host that returns a box alone. Such a host is
+spliced so that its callers take the box apart. The rule once applied to those
+hosts too. It kept a callee out of one in the wasm serve loop, and the loop
+then allocated twice for each request (`TestSelfHostServeAllocsPerRequestWasm`).
 
 A body with a loop is not a small branch. The sort itself has two callers
 and returns no box. Spliced as a small branch, it kept `before` out of it.

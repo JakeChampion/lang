@@ -660,23 +660,18 @@ function small_branch_body(f: ssasem.Func): boolean {
   return scalar(f.result) && spliceable(f, max_shared_insts()) && !loops(f.graph);
 }
 
-function shared_limit(f: ssasem.Func): i32 {
-  if (returns_boxes(f)) {
-    return max_reuse_shared_insts();
-  }
-  return max_shared_insts();
-}
-
-// A body called once stays out of a shared host that it would grow past the
-// host's own limit, so that the host can still be spliced into its callers.
+// A body called once stays out of a small branch that it would grow past the
+// branch's limit, so that the branch can still be spliced into its callers.
+// A host that returns a box is spliced so that its callers take the box
+// apart, and a callee kept out of it stops that.
 function kept_out(funcs: ssasem.Func[], callees: i32[][], calls: i32[], shared: boolean[], own once: boolean[]): boolean[] {
   for h in 0..funcs.len() {
-    if (!shared[h]) {
+    if (!shared[h] || !small_branch_body(funcs[h])) {
       continue;
     }
     let host: i32 = count_insts(funcs[h].graph);
     for g in callees[h] {
-      if (g >= 0 && g != h && once[g] && !shared[g] && calls[g] == 1 && host + count_insts(funcs[g].graph) > shared_limit(funcs[h])) {
+      if (g >= 0 && g != h && once[g] && !shared[g] && calls[g] == 1 && host + count_insts(funcs[g].graph) > max_shared_insts()) {
         once = once.with(g, false);
       }
     }
