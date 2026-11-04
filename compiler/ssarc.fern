@@ -2156,6 +2156,11 @@ function send_refused(t: typeinfo.Type, f: ssasem.Func): string {
   if (ssasem.is_view(t) || array_view(t)) {
     return "a view cannot cross a worker boundary";
   }
+  return send_refused_shape(t, f);
+}
+
+// A record or an enum crosses only with a layout the function knows.
+function send_refused_shape(t: typeinfo.Type, f: ssasem.Func): string {
   if let typeinfo.TypeStruct(_) = t {
     if (semtypes.is_env(t) || semrecords.find(f.records, t) < 0) {
       return "a closure environment cannot cross a worker boundary";

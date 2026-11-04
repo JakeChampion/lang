@@ -695,18 +695,6 @@ function worker_result(name: string): typeinfo.Type {
   return t_void();
 }
 
-// `__send_copy` has its argument's type, `__send_adopt` the type of its
-// binding, and `__send_root` is an address.
-function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
-  if (name == "__send_copy") {
-    return check_expr(c.args[0], s);
-  }
-  if (name == "__send_adopt") {
-    return t_unknown("__send_adopt takes the declared type of its binding");
-  }
-  return t_usize();
-}
-
 function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__task_enter") {
     return t_void();
@@ -5253,6 +5241,18 @@ pub function receiver_key(t: typeinfo.Type): string {
     }
   }
   return "";
+}
+
+// `__send_copy` has its argument's type, `__send_adopt` the type of its
+// binding, and `__send_root` is an address.
+function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (name == "__send_copy") {
+    return check_expr(c.args[0], s);
+  }
+  if (name == "__send_adopt") {
+    return t_unknown("__send_adopt takes the declared type of its binding");
+  }
+  return t_usize();
 }
 
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
@@ -21187,18 +21187,22 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
 // A `send` parameter is a worker boundary: its argument is copied into
 // another heap, so the argument's type, and a closure argument's captures
 // and result, must be send-safe (E100).
+// Which arguments of a call cross a worker boundary, with their names.
+function send_call_flags(name: string, ctx: OwnCtx): (boolean[], string[]) {
+  if (name == "__send_copy") {
+    return ([true], ["value"]);
+  }
+  let names: string[] = match (ctx.scope.lookup_sig(name)) { Some(sig) => sig.param_names, None => [] };
+  return (ow_send_flags(ctx.ofuncs, name), names);
+}
+
 function send_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
   let out: util.Diag[] = [];
   if let ast.ExprIdent(id) = c.callee {
     if (id.builtin || util.has_str(ctx.bound, id.name)) {
       return out;
     }
-    let flags: boolean[] = ow_send_flags(ctx.ofuncs, id.name);
-    let names: string[] = match (ctx.scope.lookup_sig(id.name)) { Some(sig) => sig.param_names, None => [] };
-    if (id.name == "__send_copy") {
-      flags = [true];
-      names = ["value"];
-    }
+    let (flags, names) = send_call_flags(id.name, ctx);
     let i: i32 = 0;
     while (i < c.args.len() && i < flags.len()) {
       if (flags[i]) {

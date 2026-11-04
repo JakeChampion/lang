@@ -3638,7 +3638,10 @@ function send_builtin(name: string, c: ast.ExprCall, s: State, expected: typeinf
   if (name == "__send_adopt") {
     return send_adopt(c, s, expected);
   }
-  return send_root(c, s);
+  if (name == "__send_root") {
+    return send_root(c, s);
+  }
+  return refused(s, "no lowering for " + name);
 }
 
 // `__send_copy(v)` is a call to the per-type copy helper. The helper borrows
