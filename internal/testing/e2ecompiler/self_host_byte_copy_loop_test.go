@@ -345,6 +345,69 @@ function main(): i32 {
 	}
 }
 
+// A for-each loop that appends each element increments its index in a step
+// block. The pass takes it like the indexed loop, and keeps a loop whose
+// body reads the element twice or has another effect.
+func TestSelfHostByteCopyElementLoop(t *testing.T) {
+	const program = `@noinline function cat(own a: u8[], src: u8[]): u8[] {
+  for b in src { a = a.append(b); } return a;
+}
+@noinline function copy(src: u8[]): u8[] {
+  let out: u8[] = []; for b in src { out = out.append(b); } return out;
+}
+@noinline function twice(own a: u8[], src: u8[]): u8[] {
+  for b in src { a = a.append(b); a = a.append(b); } return a;
+}
+@noinline function noisy(own a: u8[], src: u8[]): u8[] {
+  for b in src { a = a.append(b); eprint("."); } return a;
+}
+@noinline function data(n: i32): u8[] {
+  let a = __alloc_u8(n); let i = 0;
+  while (i < n) { a = a.with(i, (i + 1) as u8); i = i + 1; } return a;
+}
+function main(): i32 {
+  let src = data(200); let two = data(2);
+  let before = __heap_alloc_count();
+  let a = cat(two, src);
+  if (__heap_alloc_count() - before != 1i64 || a.len() != 202 || a[2] != 1u8 || a[201] != 200u8) { return 1; }
+  let before2 = __heap_alloc_count();
+  let c = copy(src);
+  if (__heap_alloc_count() - before2 != 1i64 || c.len() != 200 || c[0] != 1u8 || c[199] != 200u8) { return 2; }
+  let t = twice(data(1), data(3));
+  if (t.len() != 7 || t[1] != 1u8 || t[2] != 1u8 || t[6] != 3u8) { return 3; }
+  let n = noisy(data(1), data(3));
+  if (n.len() != 4 || n[3] != 3u8) { return 4; }
+  let empty: u8[] = [];
+  let before3 = __heap_alloc_count();
+  if (cat(data(2), empty).len() != 2 || copy(empty).len() != 0 || __heap_alloc_count() - before3 != 1i64) { return 5; }
+  return 0;
+}`
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("element copy: exit %d\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			if !strings.HasPrefix(stderr, ".\n.\n.\n") {
+				t.Fatalf("effectful element loop lost writes: %s", stderr)
+			}
+			src := filepath.Join(t.TempDir(), "elems.fern")
+			if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assembly, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(assembly), "__fern_bytes_append_range") {
+				t.Fatal("element append kept its byte loop")
+			}
+		})
+	}
+}
+
 func TestSelfHostByteCopyConstantInputs(t *testing.T) {
 	const program = `@noinline function copied(own a: u8[], src: u8[], n: i32): u8[] {
   let i = 0; while (i < n) { a = a.with(i, src[i]); i = i + 1; } return a;
