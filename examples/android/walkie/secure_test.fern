@@ -41,6 +41,18 @@ function channels(a: secure.Handshake, b: secure.Handshake): (secure.Channel, se
   return (secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "" }), secure.channel(secure.Keys { send_ctl: cell_new([]), recv_ctl: cell_new([]), send_voice: cell_new([]), recv_voice: cell_new([]), sas: "x" }));
 }
 
+// The text and the sequence number of an opened voice frame.
+function voiced(o: Option[(i64, u8[])]): string {
+  match (o) {
+    Some((seq, b)) => {
+      return "ok:" + string_from_bytes_unchecked(b) + "@" + seq.to_string();
+    },
+    None => {
+      return "refused";
+    }
+  }
+}
+
 function opened(o: Option[u8[]]): string {
   match (o) {
     Some(b) => {
@@ -117,9 +129,9 @@ function test_voice_window(): test.TestOutcome {
   for i in order {
     let (next, got) = secure.open_voice(b, frames[i]);
     b = next;
-    out = out + opened(got) + " ";
+    out = out + voiced(got) + " ";
   }
-  return test.assert_eq(out, "ok:v5 ok:v3 ok:v4 refused ok:v90 ok:v30 refused ok:v89 refused ");
+  return test.assert_eq(out, "ok:v5@5 ok:v3@3 ok:v4@4 refused ok:v90@90 ok:v30@30 refused ok:v89@89 refused ");
 }
 
 function test_channels_are_separate(): test.TestOutcome {
@@ -128,7 +140,7 @@ function test_channels_are_separate(): test.TestOutcome {
   let (b1, as_voice) = secure.open_voice(b, ctl);
   let (a2, voice) = secure.seal_voice(a1, "audio".as_bytes());
   let (b2, as_ctl) = secure.open_control(b1, voice);
-  return test.assert_eq(opened(as_voice) + " " + opened(as_ctl), "refused refused");
+  return test.assert_eq(voiced(as_voice) + " " + opened(as_ctl), "refused refused");
 }
 
 // Acceptance test G: a third phone with its own handshake can neither read
@@ -140,7 +152,7 @@ function test_third_party_cannot_read_or_inject(): test.TestOutcome {
   let (y1, read) = secure.open_voice(y, voice);
   let (x1, forged) = secure.seal_voice(x, "inject".as_bytes());
   let (b1, injected) = secure.open_voice(b, forged);
-  return test.assert_eq(opened(read) + " " + opened(injected), "refused refused");
+  return test.assert_eq(voiced(read) + " " + voiced(injected), "refused refused");
 }
 
 function test_wrong_order_handshake_fails(): test.TestOutcome {
@@ -177,7 +189,7 @@ function test_receiver_aliases_cannot_replay_a_frame(): test.TestOutcome {
   let (b2, again) = secure.open_voice(old, voice);
   secure.close(a1);
   secure.close(b2);
-  return test.assert_eq(opened(first) + " " + opened(again), "ok:voice refused");
+  return test.assert_eq(voiced(first) + " " + voiced(again), "ok:voice@0 refused");
 }
 
 function test_close_invalidates_channel_aliases(): test.TestOutcome {
@@ -307,7 +319,7 @@ function test_sequence_boundaries_do_not_change_the_window(): test.TestOutcome {
   for seq in [0 - 1 as i64, 9223372036854775807i64] {
     let frame = voice_at(a, seq);
     let (_, got) = secure.open_voice(b, frame);
-    if (frame.len() >= 25 && opened(got) == "refused") {
+    if (frame.len() >= 25 && voiced(got) == "refused") {
       refused = refused + 1;
     }
   }
@@ -315,7 +327,7 @@ function test_sequence_boundaries_do_not_change_the_window(): test.TestOutcome {
   let (b1, got) = secure.open_voice(b, good);
   secure.close(a1);
   secure.close(b1);
-  return test.assert_eq(refused.to_string() + " " + opened(got), "2 ok:ok");
+  return test.assert_eq(refused.to_string() + " " + voiced(got), "2 ok:ok@0");
 }
 
 function test_initiator_must_commit_before_a_key_reply(): test.TestOutcome {
