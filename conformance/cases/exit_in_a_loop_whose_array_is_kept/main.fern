@@ -1,0 +1,34 @@
+// A loop appends the result of a call that always exits. The array that
+// the loop builds goes into a new record, and that code can never run.
+
+struct Conn { n: i32, b: u8[] }
+
+struct Quic { stopping: boolean, conns: Conn[], name: string }
+
+function (c: Conn) shutdown(): Conn {
+  exit(c.n);
+  return c;
+}
+
+function each_shutdown(cs: Conn[]): Conn[] {
+  let out: Conn[] = [];
+  for c in cs {
+    out = out.append(c.shutdown());
+  }
+  return out;
+}
+
+function goaway(own q: Quic): Quic {
+  if (q.stopping) {
+    return q;
+  }
+  return Quic { ...q, stopping: true, conns: each_shutdown(q.conns) };
+}
+
+function main(): i32 {
+  let q = Quic { stopping: false, conns: [Conn { n: 7, b: [1u8] }], name: "q" };
+  print("before");
+  let r = goaway(q);
+  print(r.name + " " + r.conns.len().to_string());
+  return 0;
+}
