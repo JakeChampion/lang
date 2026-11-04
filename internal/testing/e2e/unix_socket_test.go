@@ -78,7 +78,7 @@ func TestWASMUnixSocketRefused(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "u.fern")
 	src := `function main(): i32 {
-    return unix_listen("/tmp/x", 4);
+    return unix_listen("/tmp/x", 4).fd;
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {

@@ -1435,7 +1435,7 @@ function __ztokens(input: [u8], window: i32): __Matches {
   let pos = 0;
   while (pos < n) {
     let h = __hash_at(input, pos);
-    let cand: i32 = -1;
+    let cand = -1;
     if (h >= 0) {
       cand = head[h];
       prev = prev.with(pos & window - 1, cand);

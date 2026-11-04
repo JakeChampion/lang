@@ -24,13 +24,13 @@ func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
 }
 
 function main(): i32 {
-    let fd: i32 = tcp_listen(0);
-    if (fd < 0) { return 91; }
+    let fd: Socket = tcp_listen(0);
+    if (fd.fd < 0) { return 91; }
     let port: i32 = tcp_local_port(fd);
     if (port <= 0) { return 98; }
     print(port_str(port));
-    let c: i32 = tcp_accept(fd);
-    if (c < 0) { return 92; }
+    let c: Socket = tcp_accept(fd);
+    if (c.fd < 0) { return 92; }
     let none: u8[] = [];
     if (tcp_recv_into(c, none) != 0) { return 97; }
     let req: u8[] = __alloc_u8(4096);

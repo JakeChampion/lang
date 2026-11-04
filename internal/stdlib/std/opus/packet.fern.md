@@ -142,7 +142,7 @@ pub const FULLBAND: i32 = 1105;
 pub enum Mode { Silk, Hybrid, Celt }
 
 pub function mode(toc: u8): Mode {
-  let t: i32 = toc as i32;
+  let t = toc as i32;
   if ((t & 128) != 0) {
     return Celt;
   }
@@ -153,9 +153,9 @@ pub function mode(toc: u8): Mode {
 }
 
 pub function bandwidth(toc: u8): i32 {
-  let t: i32 = toc as i32;
+  let t = toc as i32;
   if ((t & 128) != 0) {
-    let bw: i32 = MEDIUMBAND + (t >> 5 & 3);
+    let bw = MEDIUMBAND + (t >> 5 & 3);
     if (bw == MEDIUMBAND) {
       return NARROWBAND;
     }
@@ -176,7 +176,7 @@ pub function stereo(toc: u8): boolean {
 
 // The samples in one frame at `rate` samples a second.
 pub function samples_per_frame(toc: u8, rate: i32): i32 {
-  let t: i32 = toc as i32;
+  let t = toc as i32;
   if ((t & 128) != 0) {
     return (rate << (t >> 3 & 3)) / 400;
   }
@@ -186,7 +186,7 @@ pub function samples_per_frame(toc: u8, rate: i32): i32 {
     }
     return rate / 100;
   }
-  let size: i32 = t >> 3 & 3;
+  let size = t >> 3 & 3;
   if (size == 3) {
     return rate * 60 / 1000;
   }
@@ -198,7 +198,7 @@ pub function frame_count(packet: [u8]): Result[i32, PacketError] {
   if (packet.len() < 1) {
     return Err(BadArg);
   }
-  let code: i32 = packet[0] as i32 & 3;
+  let code = packet[0] as i32 & 3;
   if (code == 0) {
     return Ok(1);
   }
@@ -216,7 +216,7 @@ pub function frame_count(packet: [u8]): Result[i32, PacketError] {
 pub function sample_count(packet: [u8], rate: i32): Result[i32, PacketError] {
   match (frame_count(packet)) {
     Ok(count) => {
-      let samples: i32 = count * samples_per_frame(packet[0], rate);
+      let samples = count * samples_per_frame(packet[0], rate);
       if (samples * 25 > rate * 3) {
         return Err(Invalid);
       }
@@ -244,14 +244,14 @@ struct Layout { at: i32, len: i32, sizes: i32[], last: i32, pad: i32 }
 
 function size_at(data: [u8], at: i32, len: i32): (i32, i32) {
   if (len < 1) {
-    return (0 - 1, 0 - 1);
+    return (-1, -1);
   }
-  let first: i32 = data[at] as i32;
+  let first = data[at] as i32;
   if (first < 252) {
     return (first, 1);
   }
   if (len < 2) {
-    return (0 - 1, 0 - 1);
+    return (-1, -1);
   }
   return (4 * (data[at + 1] as i32) + first, 2);
 }
@@ -267,7 +267,7 @@ function layout_two_same(len: i32): Result[Layout, PacketError] {
 // Code 2: two frames, and the size of the first.
 function layout_two(data: [u8], len: i32): Result[Layout, PacketError] {
   let (size, bytes) = size_at(data, 1, len);
-  let left: i32 = len - bytes;
+  let left = len - bytes;
   if (size < 0 || size > left) {
     return Err(Invalid);
   }
@@ -277,38 +277,38 @@ function layout_two(data: [u8], len: i32): Result[Layout, PacketError] {
 // The padding length at `at`: each byte of 255 adds 254 and one more byte.
 // It gives the position after the length, the bytes left, and the padding.
 function padding_at(data: [u8], own at: i32, own len: i32): Result[(i32, i32, i32), PacketError] {
-  let pad: i32 = 0;
-  let p: i32 = 255;
+  let pad = 0;
+  let p = 255;
   while (p == 255) {
     if (len <= 0) {
       return Err(Invalid);
     }
     p = data[at] as i32;
-    at = at + 1;
-    len = len - 1;
-    let tmp: i32 = p;
+    at += 1;
+    len -= 1;
+    let tmp = p;
     if (p == 255) {
       tmp = 254;
     }
-    len = len - tmp;
-    pad = pad + tmp;
+    len -= tmp;
+    pad += tmp;
   }
   return Ok((at, len, pad));
 }
 
 // The sizes of all frames but the last, when the sizes can differ.
 function sizes_at(data: [u8], own l: Layout, count: i32): Result[Layout, PacketError] {
-  let last: i32 = l.len;
-  let at: i32 = l.at;
-  let len: i32 = l.len;
+  let last = l.len;
+  let at = l.at;
+  let len = l.len;
   let sizes: i32[] = [];
   for i in 0..count - 1 {
     let (size, bytes) = size_at(data, at, len);
-    len = len - bytes;
+    len -= bytes;
     if (size < 0 || size > len) {
       return Err(Invalid);
     }
-    at = at + bytes;
+    at += bytes;
     last = last - bytes - size;
     sizes = sizes.append(size);
   }
@@ -323,12 +323,12 @@ function layout_many(data: [u8], len: i32, framesize: i32): Result[Layout, Packe
   if (len < 1) {
     return Err(Invalid);
   }
-  let ch: i32 = data[1] as i32;
-  let count: i32 = ch & 63;
+  let ch = data[1] as i32;
+  let count = ch & 63;
   if (count <= 0 || framesize * count > 5760) {
     return Err(Invalid);
   }
-  let l: Layout = Layout { at: 2, len: len - 1, sizes: [], last: 0, pad: 0 };
+  let l = Layout { at: 2, len: len - 1, sizes: [], last: 0, pad: 0 };
   if ((ch & 64) != 0) {
     match (padding_at(data, l.at, l.len)) {
       Ok((at, left, pad)) => {
@@ -350,7 +350,7 @@ function layout_many(data: [u8], len: i32, framesize: i32): Result[Layout, Packe
 
 // The sizes of `count` frames of one size in the bytes that are left.
 function same_sizes(own l: Layout, count: i32): Result[Layout, PacketError] {
-  let size: i32 = l.len / count;
+  let size = l.len / count;
   if (size * count != l.len) {
     return Err(Invalid);
   }
@@ -362,8 +362,8 @@ function same_sizes(own l: Layout, count: i32): Result[Layout, PacketError] {
 }
 
 function layout(data: [u8]): Result[Layout, PacketError] {
-  let len: i32 = data.len() - 1;
-  let code: i32 = data[0] as i32 & 3;
+  let len = data.len() - 1;
+  let code = data[0] as i32 & 3;
   if (code == 1) {
     return layout_two_same(len);
   }
@@ -386,7 +386,7 @@ pub function parse(data: [u8]): Result[Packet, PacketError] {
       if (l.last > 1275) {
         return Err(Invalid);
       }
-      let at: i32 = l.at;
+      let at = l.at;
       let frames: u8[][] = [];
       for size in l.sizes.append(l.last) {
         let frame: u8[] = [];
@@ -394,7 +394,7 @@ pub function parse(data: [u8]): Result[Packet, PacketError] {
           frame = frame.append(data[k]);
         }
         frames = frames.append(frame);
-        at = at + size;
+        at += size;
       }
       return Ok(Packet { toc: data[0], frames: frames, offset: l.at, padding: l.pad });
     },
@@ -441,14 +441,14 @@ function frames_valid(toc: u8, frames: [u8[]]): boolean {
 // The header of code 0, 1 or 2 for one or two frames, and the packet size.
 // For more frames, the header is empty and the size is 0.
 function short_header(base: i32, frames: [u8[]], max: i32): Result[(u8[], i32), PacketError] {
-  let len0: i32 = frames[0].len();
+  let len0 = frames[0].len();
   let out: u8[] = [];
-  let tot: i32 = 0;
+  let tot = 0;
   if (frames.len() == 1) {
     tot = len0 + 1;
     out = [base as u8];
   } else if (frames.len() == 2) {
-    let len1: i32 = frames[1].len();
+    let len1 = frames[1].len();
     if (len1 == len0) {
       tot = 2 * len0 + 1;
       out = [(base | 1) as u8];
@@ -474,11 +474,11 @@ function sizes_differ(frames: [u8[]]): boolean {
 
 // The size of the code 3 packet of `frames` with no padding.
 function long_size(frames: [u8[]], vbr: boolean): i32 {
-  let count: i32 = frames.len();
+  let count = frames.len();
   if (!vbr) {
     return count * frames[0].len() + 2;
   }
-  let tot: i32 = 2 + frames[count - 1].len();
+  let tot = 2 + frames[count - 1].len();
   for i in 0..count - 1 {
     tot = tot + 1 + big(frames[i].len()) + frames[i].len();
   }
@@ -498,17 +498,17 @@ function put_padding(own out: u8[], amount: i32): u8[] {
 // The header of code 3: the count byte, the padding length when `pad` is
 // set, and the frame sizes when they differ.
 function long_header(base: i32, frames: [u8[]], max: i32, pad: boolean): Result[u8[], PacketError] {
-  let count: i32 = frames.len();
-  let vbr: boolean = sizes_differ(frames);
-  let tot: i32 = long_size(frames, vbr);
+  let count = frames.len();
+  let vbr = sizes_differ(frames);
+  let tot = long_size(frames, vbr);
   if (tot > max) {
     return Err(BufferTooSmall);
   }
-  let flags: i32 = count;
+  let flags = count;
   if (vbr) {
     flags = count | 128;
   }
-  let amount: i32 = 0;
+  let amount = 0;
   if (pad) {
     amount = max - tot;
   }

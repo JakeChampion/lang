@@ -2683,6 +2683,75 @@ function f(l: Socket): i32 {
 }`)
 }
 
+func TestOwnGuardMatchExpressionOnAFreshCallOwnsItsValue(t *testing.T) {
+	const opener = `
+function opened(): Result[Socket, i32] {
+    let s: Socket = tcp_listen(0);
+    if (s.fd < 0) { return Err(s.fd); }
+    return Ok(s);
+}
+`
+	wantOK(t, "match-expression-on-a-fresh-call", opener+`
+function main(): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+	wantE051(t, "match-expression-closed-twice", opener+`
+function main(): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    let a: i32 = tcp_close(s);
+    return tcp_close(s) + a;
+}`)
+	wantE051(t, "match-expression-on-a-parameter", `
+function f(r: Result[Socket, i32]): i32 {
+    let s: Socket = match (r) {
+        Ok(v) => v,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+	wantE051(t, "match-expression-arm-yields-a-parameter", opener+`
+function f(l: Socket): i32 {
+    let s: Socket = match (opened()) {
+        Ok(v) => l,
+        Err(e) => { return e; },
+    };
+    return tcp_close(s);
+}`)
+}
+
+func TestOwnGuardLoopsThatShareABinderOwnTheirElements(t *testing.T) {
+	wantOK(t, "two-loops-one-binder", `
+function main(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    let ys: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "two-loops-one-binder-one-borrowed", `
+function f(ys: Socket[]): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); }
+    return 0;
+}`)
+	wantE051(t, "two-loops-one-binder-closed-twice", `
+function main(): i32 {
+    let xs: Socket[] = [tcp_listen(0)];
+    let ys: Socket[] = [tcp_listen(0)];
+    for s in xs { tcp_close(s); }
+    for s in ys { tcp_close(s); tcp_close(s); }
+    return 0;
+}`)
+}
+
 func TestOwnGuardBodyFreshValuePayloadRemainsCopyable(t *testing.T) {
 	wantOK(t, "copyable-payload-of-body-fresh-call", `
 struct Box { items: i32[] }

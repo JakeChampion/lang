@@ -648,7 +648,7 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
   if (pos < 0 || lit.len() < 1 << LIT_BITS || dtab.len() < 1 << DIST_BITS) {
     return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
   }
-  let e: i32 = -1;
+  let e = -1;
   while (pos <= fast_in && out.len() <= fast_out) {
     bitbuf = bitbuf | __le64(data, pos) << bitcnt as u64;
     pos += (bitcnt >> 3 ^ 7) & 7;
@@ -1786,8 +1786,8 @@ function __tokens(input: [u8], window: i32): i32[] {
   let skip = 0;
   let pos = 0;
   while (pos < n) {
-    let c3: i32 = -1;
-    let c4: i32 = -1;
+    let c3 = -1;
+    let c4 = -1;
     if (pos + 3 < n) {
       let w = __le32(input, pos);
       let h3 = ((w << 8) * 506832829u32 >> 17) as i32;

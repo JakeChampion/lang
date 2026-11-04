@@ -56,15 +56,15 @@ function clamp(v: i32, lo: i32, hi: i32): i32 {
 // Fills the rectangle at x and y, of width w and height h, with the pixel
 // word `color`. The part outside the frame is not drawn.
 pub function (f: Frame) fill(x: i32, y: i32, w: i32, h: i32, color: i32): void {
-  let x0: i32 = clamp(x, 0, f.width);
-  let y0: i32 = clamp(y, 0, f.height);
-  let x1: i32 = clamp(x + w, 0, f.width);
-  let y1: i32 = clamp(y + h, 0, f.height);
+  let x0 = clamp(x, 0, f.width);
+  let y0 = clamp(y, 0, f.height);
+  let x1 = clamp(x + w, 0, f.width);
+  let y1 = clamp(y + h, 0, f.height);
   if (x1 <= x0 || y1 <= y0) {
     return;
   }
   unsafe {
-    let first: usize = f.bits + ((y0 * f.stride + x0) * 4) as usize;
+    let first = f.bits + ((y0 * f.stride + x0) * 4) as usize;
     for i in 0..x1 - x0 {
       __store_i32(first + (i * 4) as usize, color);
     }
@@ -93,10 +93,10 @@ A byte from 128 to 191 continues a UTF-8 character, so it takes no cell. Each ot
 <<text>>=
 // The width in pixels of `s` at `scale`.
 pub function text_width(s: string, scale: i32): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for c in s.bytes() {
     if (c < 128 as u8 || c >= 192 as u8) {
-      n = n + 1;
+      n += 1;
     }
   }
   return n * font.CELL_W * scale;
@@ -109,8 +109,8 @@ pub function text_height(scale: i32): i32 {
 
 // One channel of `fg` over `bg`, with the coverage `a` from 0 to 15.
 function mix(fg: i32, bg: i32, shift: i32, a: i32): i32 {
-  let f: i32 = fg >> shift & 255;
-  let b: i32 = bg >> shift & 255;
+  let f = fg >> shift & 255;
+  let b = bg >> shift & 255;
   return (f * a + b * (15 - a)) / 15 << shift;
 }
 
@@ -118,18 +118,18 @@ function blend(fg: i32, bg: i32, a: i32): i32 {
   if (a >= 15) {
     return fg;
   }
-  return 0 - 16777216 | mix(fg, bg, 16, a) | mix(fg, bg, 8, a) | mix(fg, bg, 0, a);
+  return -16777216 | mix(fg, bg, 16, a) | mix(fg, bg, 8, a) | mix(fg, bg, 0, a);
 }
 
 // Blends `color` over the square of `scale` pixels at x and y.
 function dot(f: Frame, x: i32, y: i32, scale: i32, color: i32, a: i32): void {
   for dy in 0..scale {
     for dx in 0..scale {
-      let px: i32 = x + dx;
-      let py: i32 = y + dy;
+      let px = x + dx;
+      let py = y + dy;
       if (px >= 0 && py >= 0 && px < f.width && py < f.height) {
         unsafe {
-          let at: usize = f.bits + ((py * f.stride + px) * 4) as usize;
+          let at = f.bits + ((py * f.stride + px) * 4) as usize;
           __store_i32(at, blend(color, __load_i32(at), a));
         }
       }
@@ -140,7 +140,7 @@ function dot(f: Frame, x: i32, y: i32, scale: i32, color: i32, a: i32): void {
 function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
   for gy in 0..font.CELL_H {
     for gx in 0..font.CELL_W {
-      let a: i32 = font.coverage(c, gx, gy);
+      let a = font.coverage(c, gx, gy);
       if (a > 0) {
         dot(f, x + gx * scale, y + gy * scale, scale, color, a);
       }
@@ -151,7 +151,7 @@ function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
 // Draws `s` with the top-left corner of its first cell at x and y, in the
 // pixel word `color`, at `scale`.
 pub function (f: Frame) text(x: i32, y: i32, s: string, scale: i32, color: i32): void {
-  let at: i32 = x;
+  let at = x;
   for c in s.bytes() {
     if (c < 128 as u8 || c >= 192 as u8) {
       glyph(f, at, y, c as i32, scale, color);

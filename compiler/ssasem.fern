@@ -2794,8 +2794,9 @@ pub function lends_handle(from: typeinfo.Type, to: typeinfo.Type): boolean {
   return false;
 }
 
+// The second case is the cast __socket_from_fd lowers to.
 function casts_descriptor(from: typeinfo.Type, to: typeinfo.Type): boolean {
-  return semtypes.is_fd_handle(from) && is_i32(to) || semtypes.socket_descriptor_transition(from, to);
+  return semtypes.is_fd_handle(from) && is_i32(to) || is_i32(from) && semtypes.is_socket(to);
 }
 
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {

@@ -44,9 +44,9 @@ function main(): i32 {
     print(f"view: {view.len()} {view[3]} buf {buf.len()}");
 
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    let ls: i32 = tcp_listen_with(lo, 0, 16, false);
-    let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
-    let s: i32 = tcp_accept(ls);
+    let ls: Socket = tcp_listen_with(lo, 0, 16, false);
+    let c: Socket = tcp_connect_with(lo, tcp_local_port(ls), false);
+    let s: Socket = tcp_accept(ls);
     let a: u8[] = [1u8];
     let b: u8[] = a.append(2u8);
     let d: u8[] = b.append(3u8);
