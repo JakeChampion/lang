@@ -1,3 +1,5 @@
+# 2026-11-04: PR #14135, perf-x86_64 job 126373947305 on 4629c363. A fused compare takes no register: sort_ints.ir
+# falls 1.04% and sort_strings.ir 2.06%. Both rows are reductions, and no limit rises.
 # 2026-11-03: PR #14122, perf-aarch64 job 126271937197 on 747f6b7a. All 21 aarch64 findings are reductions:
 # .text shrinks 1.0% to 6.0% and .ir 1.1% to 3.3%. The higher-cost limits stay as they were.
 # 2026-11-03: PR #14122, a local scripts/perf-bench run on its head. Liveness decides which values cross a call,
@@ -240,9 +242,9 @@ x86_64/record_update.text	1296
 x86_64/sort_inplace.text	1497
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1964
-x86_64/sort_ints.ir	28152806
+x86_64/sort_ints.ir	27861128
 x86_64/sort_strings.text	3096
-x86_64/sort_strings.ir	103809647
+x86_64/sort_strings.ir	101675379
 x86_64/string_build.text	1883
 x86_64/string_build.ir	43427016
 x86_64/string_count_byte.text	1180
