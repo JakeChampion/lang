@@ -2484,14 +2484,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			}
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
-			if fn.Receiver.Own {
-				c.consumingTypes[typeName] = true
-			}
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
 		} else if fn.MethodRecv != "" {
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
+		}
+		// A method's receiver is its first parameter once hoisted, as a second
+		// check of the same program sees it.
+		if fn.MethodRecv != "" && strings.HasPrefix(fn.Name, "__method_") && len(fn.Params) > 0 && fn.Params[0].Own {
+			c.consumingTypes[fn.MethodRecv] = true
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup && (!isScalarBuiltinMethod(fn.Name) || declaredFunctions[fn.Name]) {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
@@ -10590,9 +10592,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return false
 	}
-	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, taken bool) (added, lent []string) {
+	// A call result is a temporary that the match takes, so a binding of it
+	// that can hold no handle is a fresh local, as a let local is.
+	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, tag ast.Expr) (added, lent []string) {
+		taken := takesTag(tag)
+		_, temporary := tag.(*ast.Call)
 		for i, bname := range bindings {
-			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) {
+			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) || temporary && c.holdsNoHandle(types[i]) {
 				continue
 			}
 			if scrutOwned {
@@ -10640,7 +10646,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if len(arm.Binders()) == 0 {
 				restoreTag(armMoved, whole, m.Tag)
 			}
-			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(m.Tag))
+			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, m.Tag)
 			recordExprUses(arm.Guard, armMoved)
 			if arm.Guard != nil {
 				joinGuardInto(baseline, armMoved, arm.Binders())
@@ -11005,7 +11011,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if len(arm.Binders()) == 0 {
 					restoreTag(armMoved, whole, x.Tag)
 				}
-				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(x.Tag))
+				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, x.Tag)
 				recordExprUses(arm.Guard, armMoved)
 				if arm.Guard != nil {
 					joinGuardInto(baseline, armMoved, arm.Binders())

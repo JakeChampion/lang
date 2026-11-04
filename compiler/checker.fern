@@ -20124,35 +20124,18 @@ function lu_jumps_live(noret: util.NameIndex, frames: LuFrame[], level: i32, jum
 }
 
 // The level of the innermost frame that binds `name` before the statement that
-// the frame holds: the block that the read binding belongs to. It is -1 when
-// no frame binds `name`, as for a parameter.
+// the frame holds: the block that the read binding belongs to. A match arm
+// binds its names for its body. It is -1 when no frame binds `name`, as for a
+// parameter.
 function lu_binding_level(frames: LuFrame[], name: string): i32 {
   let l: i32 = frames.len() - 1;
   while (l >= 0) {
-    let f: LuFrame = frames[l];
-    if let ast.StmtFor(fo) = f.head {
-      if (f.is_loop && fo.var_name == name) {
-        return l;
-      }
-    }
-    for j in 0..f.idx {
-      if (lu_binds(f.stmts[j], name)) {
-        return l;
-      }
+    if (lu_frame_binds(frames, l, name)) {
+      return l;
     }
     l = l - 1;
   }
   return 0 - 1;
-}
-
-// Whether the statement itself declares `name`, not a statement inside it.
-function lu_binds(st: ast.Stmt, name: string): boolean {
-  for v in lu_fact_stmt(st, lu_empty_facts()).vars {
-    if (v.name == name) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // Whether no later read of the name belongs to the binding that `id` reads:
@@ -20317,15 +20300,9 @@ function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
       return true;
     }
   }
-  if (l > 0) {
-    let parent: LuFrame = frames[l - 1];
-    if let ast.StmtMatch(m) = parent.stmts[parent.idx] {
-      for arm in m.arms {
-        if (util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
-          return true;
-        }
-      }
-    }
+  // The head of an arm's frame is its match with that arm alone.
+  if let ast.StmtMatch(m) = f.head {
+    return util.has_str(astwalk.pattern_binders(m.arms[0].pattern, []), name);
   }
   return false;
 }
@@ -20359,6 +20336,14 @@ function lu_iter_owned(fx: LuFn, iter: ast.Expr): boolean {
     return false;
   }
   return lu_fresh_expr(iter) && !lu_init_borrows(fx, iter);
+}
+
+// A match takes a fresh call as it takes a local at its last use.
+function lu_fresh_call(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprCall(_) = e {
+    return lu_fresh_value(fx, e);
+  }
+  return false;
 }
 
 // A match scrutinee or a for-each iterator that is a local, or a field path
@@ -20771,10 +20756,11 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
           let bound: string[] = util.append_all(sc.binders, names);
           // A match that takes its scrutinee binds each payload as a fresh local.
           let fresh: string[] = sc.fresh;
-          if (taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee)) {
+          if (taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee) || lu_fresh_call(fx, m.scrutinee)) {
             fresh = util.append_all(fresh, names);
           }
-          acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(arm.body), binders: bound, fresh: fresh }, outer, has_outer, fx, acc);
+          let head: LuFrame = LuFrame { ...lu_plain_frame(arm.body), head: ast.StmtMatch { ...m, arms: [arm] } };
+          acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: head, binders: bound, fresh: fresh }, outer, has_outer, fx, acc);
         }
       },
       ast.StmtDefer(d) => {
@@ -20810,7 +20796,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
-    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_nested_fn, lu_outside_nested_fn);
+    nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_lambda, lu_outside_lambda);
   }
   let fx: LuFn = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []) };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
@@ -20826,18 +20812,18 @@ function lu_skip_stmt(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[]
   return acc;
 }
 
-function lu_nested_fn(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+// A lambda is decided as a function of its own, so a name it declares can
+// move at its last use in the lambda's body.
+function lu_lambda(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
   if let ast.ExprLambda(lm) = e {
-    if (lm.origin == ast.ORIGIN_NESTED_FN) {
-      return acc.append(lm);
-    }
+    return acc.append(lm);
   }
   return acc;
 }
 
-function lu_outside_nested_fn(e: ast.Expr): boolean {
-  if let ast.ExprLambda(lm) = e {
-    return lm.origin != ast.ORIGIN_NESTED_FN;
+function lu_outside_lambda(e: ast.Expr): boolean {
+  if let ast.ExprLambda(_) = e {
+    return false;
   }
   return true;
 }
@@ -21638,14 +21624,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let taken: boolean = ow_takes_scrutinee(m.scrutinee, ctx);
       for arm in m.arms {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
-        actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
-        if (taken) {
-          // Each binding is a fresh local, neither owned nor lent.
-        } else if (scrut_owned) {
-          actx = ow_arm_payload_ctx(actx, arm.pattern, whole);
-        } else {
-          actx = ow_arm_lent_ctx(actx, arm.pattern);
-        }
+        actx = ow_arm_ctx(OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern, whole, m.scrutinee, taken, scrut_owned);
         let start: MovedEntry[] = rs.moved;
         if (astwalk.pattern_binders(arm.pattern, []).len() == 0) {
           start = ow_restore_tag(rs.moved, moved, m.scrutinee);
@@ -21777,6 +21756,37 @@ function ow_arm_lent_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     return OwnCtx { ...ctx, borrowed: borrowed };
   }
   return ctx;
+}
+
+// A taken scrutinee gives fresh locals, neither owned nor lent. An owned one
+// gives owned bindings and any other gives lent ones. A call result is a
+// temporary that the match takes, so a binding of it that can hold no handle
+// is a fresh local, as a let local is.
+function ow_arm_ctx(actx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type, scrut: ast.Expr, taken: boolean, scrut_owned: boolean): OwnCtx {
+  if (taken) {
+    return actx;
+  }
+  let bound: OwnCtx = actx;
+  if (scrut_owned) {
+    bound = ow_arm_payload_ctx(actx, pat, whole);
+  } else {
+    bound = ow_arm_lent_ctx(actx, pat);
+  }
+  if let ast.ExprCall(_) = scrut {
+    return OwnCtx { ...bound, owned: ow_handle_binders(bound.owned, actx.owned, bound), borrowed: ow_handle_binders(bound.borrowed, actx.borrowed, bound) };
+  }
+  return bound;
+}
+
+// The names in names that were in before, or that can hold a handle.
+function ow_handle_binders(names: string[], before: string[], ctx: OwnCtx): string[] {
+  let out: string[] = [];
+  for n in names {
+    if (util.has_str(before, n) || !ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(n)), ctx.decls)) {
+      out = out.append(n);
+    }
+  }
+  return out;
 }
 
 function ow_unmove(after: MovedEntry[], before: MovedEntry[], name: string): MovedEntry[] {

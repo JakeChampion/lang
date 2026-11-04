@@ -1,4 +1,5 @@
-// An owned payload moves once. The second move is E050.
+// A payload of a call result that can hold no handle is a fresh local. It
+// moves into an own parameter only at its last use, as a let local does.
 function make(n: i32): Result[i32[], string] { return Ok([n]); }
 function keep(own ys: i32[]): i32 { return ys[0]; }
 

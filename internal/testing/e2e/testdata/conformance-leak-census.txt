@@ -159,6 +159,7 @@ bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
 call_result_arg_temp                                 0
+call_result_payload_is_a_fresh_local                 0
 call_type_args_user_type                             0
 captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
