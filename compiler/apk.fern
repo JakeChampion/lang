@@ -8,12 +8,34 @@ import "std/crypto/ecdsa";
 import "std/crypto/sha2";
 import "std/hash/crc32";
 import "std/rand";
+import "./util";
 
 // `activity` is the Java class of the activity, and `dex` holds the classes
 // of the app, or is empty.
 // `permissions` are the full names of the permissions the app uses, and
 // `min_sdk` is the lowest API level it runs on.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32 }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[] }
+
+// A service of the app: its Java class, and its foreground service types as
+// the flags of android:foregroundServiceType, or 0.
+pub struct Service { name: string, types: i32 }
+
+// The flags of android:foregroundServiceType that `permissions` allow: each
+// FOREGROUND_SERVICE_<TYPE> permission gives the flag of its type.
+pub function foreground_types(permissions: string[]): i32 {
+  let names: string[] = ["DATA_SYNC", "MEDIA_PLAYBACK", "PHONE_CALL", "LOCATION", "CONNECTED_DEVICE", "MEDIA_PROJECTION", "CAMERA", "MICROPHONE", "HEALTH", "REMOTE_MESSAGING", "SYSTEM_EXEMPTED"];
+  let types: i32 = 0;
+  for p in permissions {
+    let k: i32 = util.index_of_str(names, p.replace("android.permission.FOREGROUND_SERVICE_", ""));
+    if (p.starts_with("android.permission.FOREGROUND_SERVICE_") && k >= 0) {
+      types = types | 1 << k;
+    }
+  }
+  if (util.has_str(permissions, "android.permission.FOREGROUND_SERVICE_SPECIAL_USE")) {
+    types = types | 1073741824;
+  }
+  return types;
+}
 
 pub struct Lib { abi: string, image: u8[] }
 
@@ -65,9 +87,10 @@ function prefixed(b: [u8]): u8[] {
 // gives those IDs. The rest of the pool follows `pool_strings`.
 
 // android:theme, label, name, hasCode, exported, configChanges, value,
-// minSdkVersion, versionCode, versionName and targetSdkVersion.
+// minSdkVersion, versionCode, versionName, targetSdkVersion and
+// foregroundServiceType.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376];
+  return [16842752, 16842753, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844185];
 }
 
 const S_THEME: i32 = 0;
@@ -92,28 +115,44 @@ const S_VERSION_NAME: i32 = 9;
 
 const S_TARGET_SDK: i32 = 10;
 
-const S_PREFIX: i32 = 11;
+const S_FOREGROUND_TYPE: i32 = 11;
 
-const S_URI: i32 = 12;
+const S_PREFIX: i32 = 12;
 
-const S_PACKAGE: i32 = 13;
+const S_URI: i32 = 13;
+
+const S_PACKAGE: i32 = 14;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion",
+    "theme", "label", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
-    "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category",
+    "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
     "android.intent.action.MAIN", "android.intent.category.LAUNCHER", "uses-permission",
   ];
   for p in app.permissions {
     out = out.append(p);
   }
+  for sv in app.services {
+    out = out.append(sv.name);
+  }
   return out;
 }
 
-// The pool index of the first permission name, after "uses-permission".
-const S_USES_PERMISSION: i32 = 30;
+// The pool index of `v`. Two equal strings share their first index.
+function at(pool: string[], v: string): i32 {
+  return util.index_of_str(pool, v);
+}
+
+function service_element(out: u8[], line: i32, pool: string[], sv: Service): u8[] {
+  let attrs: Attr[] = [attr_str(S_NAME, at(pool, sv.name)), attr_int(S_EXPORTED, 18, 0)];
+  if (sv.types != 0) {
+    attrs = attrs.append(attr_int(S_FOREGROUND_TYPE, 17, sv.types));
+  }
+  let tag: i32 = at(pool, "service");
+  return end(start(out, line, tag, attrs), line, tag);
+}
 
 // The UTF-16 code units of `s`.
 function utf16(s: string): i32[] {
@@ -219,22 +258,31 @@ function end(out: u8[], line: i32, name: i32): u8[] {
 pub function manifest(app: App): u8[] {
   let s: string[] = pool_strings(app);
   let body: u8[] = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
-  body = start(body, 1, 14, [attr_int(S_VERSION_CODE, 16, app.version_code), attr_str(S_VERSION_NAME, 24), Attr { android: false, name: S_PACKAGE, kind: 3, data: 22 }]);
-  body = end(start(body, 2, 15, [attr_int(S_MIN_SDK, 16, app.min_sdk), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, 15);
-  for k in 0..app.permissions.len() {
-    body = end(start(body, 2, S_USES_PERMISSION, [attr_str(S_NAME, S_USES_PERMISSION + 1 + k)]), 2, S_USES_PERMISSION);
+  let manifest_tag: i32 = at(s, "manifest");
+  body = start(body, 1, manifest_tag, [attr_int(S_VERSION_CODE, 16, app.version_code), attr_str(S_VERSION_NAME, at(s, app.version_name)), Attr { android: false, name: S_PACKAGE, kind: 3, data: at(s, app.package) }]);
+  let sdk_tag: i32 = at(s, "uses-sdk");
+  body = end(start(body, 2, sdk_tag, [attr_int(S_MIN_SDK, 16, app.min_sdk), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, sdk_tag);
+  let uses: i32 = at(s, "uses-permission");
+  for p in app.permissions {
+    body = end(start(body, 2, uses, [attr_str(S_NAME, at(s, p))]), 2, uses);
   }
   let has_code: i32 = 0;
   if (app.dex.len() > 0) {
     has_code = 0 - 1;
   }
-  body = start(body, 3, 16, [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, 23), attr_int(S_HAS_CODE, 18, has_code)]);
-  body = start(body, 4, 17, [attr_str(S_LABEL, 23), attr_str(S_NAME, 25), attr_int(S_EXPORTED, 18, 0 - 1), attr_int(S_CONFIG_CHANGES, 17, 1184)]);
-  body = end(start(body, 5, 18, [attr_str(S_NAME, 26), attr_str(S_VALUE, 27)]), 5, 18);
-  body = start(body, 6, 19, []);
-  body = end(start(body, 7, 20, [attr_str(S_NAME, 28)]), 7, 20);
-  body = end(start(body, 8, 21, [attr_str(S_NAME, 29)]), 8, 21);
-  body = end(end(end(end(body, 9, 19), 10, 17), 11, 16), 12, 14);
+  let application: i32 = at(s, "application");
+  let activity: i32 = at(s, "activity");
+  body = start(body, 3, application, [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, at(s, app.label)), attr_int(S_HAS_CODE, 18, has_code)]);
+  body = start(body, 4, activity, [attr_str(S_LABEL, at(s, app.label)), attr_str(S_NAME, at(s, app.activity)), attr_int(S_EXPORTED, 18, 0 - 1), attr_int(S_CONFIG_CHANGES, 17, 1184)]);
+  body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));
+  body = start(body, 6, at(s, "intent-filter"), []);
+  body = end(start(body, 7, at(s, "action"), [attr_str(S_NAME, at(s, "android.intent.action.MAIN"))]), 7, at(s, "action"));
+  body = end(start(body, 8, at(s, "category"), [attr_str(S_NAME, at(s, "android.intent.category.LAUNCHER"))]), 8, at(s, "category"));
+  body = end(end(body, 9, at(s, "intent-filter")), 10, activity);
+  for sv in app.services {
+    body = service_element(body, 11, s, sv);
+  }
+  body = end(end(body, 11, application), 12, manifest_tag);
   body = put32(put32(node(body, 257, 24, 12), S_PREFIX), S_URI);
   let rest: u8[] = cat(cat(string_pool(s), resource_map()), body);
   return cat(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);

@@ -2324,7 +2324,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-apk", "OUT", "build FILE for arm64-android and x86-64-android, and write a signed NativeActivity APK to OUT"),
       cli_flag("-apk-package", "NAME", "with -apk: the Android package name (default dev.fern.LIB, where FILE is LIB.fern)"),
       cli_flag("-apk-label", "TEXT", "with -apk: the name of the app on the launcher (default LIB)"),
-      cli_flag("-apk-permission", "NAMES", "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission"),
+      cli_flag("-apk-permission", "NAMES", "with -apk: the comma-separated permissions the app uses, such as RECORD_AUDIO; a name with no dot is in android.permission; each FOREGROUND_SERVICE_TYPE permission, such as FOREGROUND_SERVICE_MICROPHONE, gives that foreground service type to each @jni class that extends android.app.Service"),
       cli_flag("-apk-min-sdk", "LEVEL", "with -apk: the lowest Android API level the app runs on (default 24)"),
       cli_flag("-apk-key", "FILE", "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
@@ -6245,13 +6245,20 @@ function apk_permissions(list: string): string[] {
 }
 
 // The app of the APK. A @jni class that extends NativeActivity is the
-// activity, and NativeActivity itself is the activity otherwise.
+// activity, and NativeActivity itself is the activity otherwise. Each @jni
+// class that extends Service is a service, with the foreground service
+// types that the permissions allow.
 function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   let activity: string = dex.subclass_of(classes, "android.app.NativeActivity");
   if (activity.len() == 0) {
     activity = "android.app.NativeActivity";
   }
-  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: apk_permissions(o.permissions), min_sdk: apk.MIN_SDK };
+  let permissions: string[] = apk_permissions(o.permissions);
+  let services: apk.Service[] = [];
+  for name in dex.subclasses_of(classes, "android.app.Service") {
+    services = services.append(apk.Service { name: name, types: apk.foreground_types(permissions) });
+  }
+  let app: apk.App = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
