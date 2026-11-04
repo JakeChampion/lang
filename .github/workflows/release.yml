@@ -182,7 +182,9 @@ jobs:
   #   - ANDROID_KEYSTORE: a keystore with one key, base64-encoded, for the
   #     stopwatch's build.sh, and ANDROID_KEYSTORE_PASSWORD, its password.
   # The certificate of `fern -apk` comes from the key alone, so one key gives
-  # the same APK, byte for byte, from the same source.
+  # the same APK, byte for byte, from the same source. A failure of this job
+  # does not stop the release of the compiler: the release then has no APKs,
+  # and its notes say so.
   apk:
     name: build-android-apks
     runs-on: ubuntu-24.04
@@ -251,7 +253,7 @@ jobs:
     # build + upload artifacts (handy for verifying changes to this workflow
     # without spamming the releases page). On `schedule`, github.sha is main's
     # HEAD, so the rolling `nightly` lands on the latest commit as intended.
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' && !cancelled() && needs.build.result == 'success'
     needs: [build, apk]
     runs-on: ubuntu-24.04
     permissions:
@@ -318,6 +320,8 @@ jobs:
             ```
 
             ## Android apps
+
+            ${{ needs.apk.result != 'success' && '**This build has no APKs, because the APK job failed. The log of the run gives the reason.**' || '' }}
 
             The example apps, built by the `fern` in this release, for
             arm64 phones and x86-64 emulators. Each nightly is signed
