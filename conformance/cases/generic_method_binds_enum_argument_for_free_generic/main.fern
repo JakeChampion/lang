@@ -1,0 +1,33 @@
+// A method of a generic struct calls a free generic function with the
+// receiver's type argument. The argument is an Option, a tuple and a plain
+// struct in turn, and the free function's result keeps each spelling.
+
+import "std/i32";
+
+struct Holder[T] { v: Option[T], n: i32 }
+
+struct Pair { a: i32, b: string }
+
+function (own h: Holder[T]) take(): T {
+    match (h.v) {
+        Some(x) => { return x; },
+        None => {}
+    }
+    return take_slow(h);
+}
+
+function take_slow[T](own h: Holder[T]): T {
+    exit(3);
+}
+
+function main(): i32 {
+    let h: Holder[Option[string]] = Holder { v: Some(Some("hi")), n: 1 };
+    match (h.take()) { Some(s) => { print(s); }, None => { print("none"); } }
+    let g: Holder[(i32, string)] = Holder { v: Some((7, "tup")), n: 1 };
+    let t: (i32, string) = g.take();
+    print(t.0.to_string() + " " + t.1);
+    let p: Holder[Pair] = Holder { v: Some(Pair { a: 3, b: "pair" }), n: 1 };
+    let q: Pair = p.take();
+    print(q.a.to_string() + " " + q.b);
+    return 0;
+}

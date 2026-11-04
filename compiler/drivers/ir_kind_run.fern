@@ -41,7 +41,7 @@ function main(): i32 {
     "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount",
     "map_hash_seed", "raw_addr", "raw_arr_box", "memchr", "memchr_bytes", "rmemchr_bytes", "count_runs_bytes", "scan_set_bytes", "mismatch_bytes", "count_byte_bytes", "crc32_cksum_array", "sum_bytes_array", "bsd_sum_bytes",
     "write_file_exec", "ascii_run", "scan_set", "count_runs", "bsd_sum", "str_hash", "syscall5", "syscall6", "heap_mark",
-    "heap_release_to", "create_dir_all", "isatty", "read_file_bytes",
+    "heap_release_to", "heap_adopt", "worker_region", "worker_exit", "worker_reap", "send_adopt", "worker_unmap", "create_dir_all", "isatty", "read_file_bytes",
     "rmemchr", "count_byte", "lstat", "access", "geteuid", "getegid",
     "hostname", "fd_stat", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "writer_nonblocking", "mismatch",
     "getuid", "getgid", "getgroups", "environ", "uname_field",

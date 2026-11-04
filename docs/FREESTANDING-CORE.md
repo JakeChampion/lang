@@ -78,11 +78,11 @@ costs a silent failure on the first target that lacks it.
 | `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait` | a readiness set the host keeps between waits: epoll, kqueue, or on wasm a table of wasi:io pollables |
 | `uring` | `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | an io_uring: Linux's submission and completion rings. Granted by `hosted-linux` alone; std/async reaches it under a `target_os()` branch |
 | `ktls` | `tcp_ktls` | the kernel's TLS record layer under a socket: Linux's `tls` ULP. Granted by `hosted-linux` alone; std/tls/ktls reaches it under a `target_os()` branch |
-| `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `process_alive`, `signal_send`, `set_process_group` | processes |
+| `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `__worker_region`, `__worker_exit`, `__worker_reap`, `__worker_unmap`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
-| `arena` | `__heap_mark`, `__heap_release_to` | native-only cursor rewind |
+| `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption |
 | `syscall` | `__syscall3` … `__syscall6` | a kernel to trap into |
 | `rawmem` | `__raw_alloc`, `__raw_string`, `__raw_arr_box`, `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__raw_cover`, `__raw_task_state`, `__raw_vdso`, `__raw_vg_request` | the native runtime's allocator block layout and static slots, which the register backends' runtime helpers are written on; wasm serves those helpers with hand-written WAT |
 

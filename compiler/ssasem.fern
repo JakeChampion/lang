@@ -2434,6 +2434,45 @@ pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Cont
   return Contract { name: name, params: params, modes: modes, result: substitute(c.result, b) };
 }
 
+// The per-type deep copy helper that `__send_copy` calls: it builds a fresh
+// tree of boxes with the same contents, so a value can cross a worker
+// boundary. The lowering emits one per type that a function sends.
+pub function send_helper_name(t: typeinfo.Type): string {
+  return "__sem_send_" + type_key(t);
+}
+
+pub function is_send_helper(name: string): boolean {
+  return util.str_has_prefix(name, "__sem_send_");
+}
+
+// The per-type helper that `__send_adopt` calls: it returns the address it
+// is given as a value of the type, which the caller then owns.
+pub function adopt_helper_name(t: typeinfo.Type): string {
+  return "__sem_adopt_" + type_key(t);
+}
+
+pub function is_adopt_helper(name: string): boolean {
+  return util.str_has_prefix(name, "__sem_adopt_");
+}
+
+// The per-type helper that `__send_root` calls: it takes its value and
+// returns its word, so the address can be handed to another process.
+pub function release_helper_name(t: typeinfo.Type): string {
+  return "__sem_release_" + type_key(t);
+}
+
+pub function is_release_helper(name: string): boolean {
+  return util.str_has_prefix(name, "__sem_release_");
+}
+
+pub function root_helper_name(t: typeinfo.Type): string {
+  return "__sem_root_" + type_key(t);
+}
+
+pub function is_root_helper(name: string): boolean {
+  return util.str_has_prefix(name, "__sem_root_");
+}
+
 pub function type_key(t: typeinfo.Type): string {
   if let typeinfo.TypeUnion(u) = t {
     return key_args(u.name, u.args);

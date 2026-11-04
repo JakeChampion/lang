@@ -1139,6 +1139,102 @@ pub function op_heap_release_to(): Op {
   return op0(230);
 }
 
+// heap_adopt(start, end) makes [start, end) the heap: the cursor moves to
+// start, the end to end, and both free lists are cleared, so every later
+// allocation lies inside the region. A forked worker adopts its result
+// region with it. A range outside the heap also moves the heap's base, and
+// under leak check it fixes the bounds of the process's census, so a free
+// outside them is not counted. A range inside the heap keeps both. Pushes 0.
+pub function op_heap_adopt(): Op {
+  return op0(491);
+}
+
+// A worker region is a shared anonymous mapping that a fork inherits at the
+// same address. Its first word is the root the child hands back, the next
+// four hold the leak-check counters (the parent's snapshot at
+// worker_region, the child's deltas once worker_exit has run), and the
+// sixth is the region's size. Under the sanitizer the reap opens the region
+// as a window the quarantine skips, and the unmap closes it.
+// worker_region(size) pushes the address or a negative errno.
+// worker_exit(region, root) stores the root and ends the child at once.
+// worker_reap(region) adds the child's deltas to the counters and pushes
+// the root.
+pub function op_worker_region(): Op {
+  return op0(492);
+}
+
+pub function op_worker_exit(): Op {
+  return op0(493);
+}
+
+pub function op_worker_reap(): Op {
+  return op0(494);
+}
+
+// worker_unmap(region, size, reaped) removes the mapping and returns errno.
+// A reaped region carries child deltas. Its live boxes leave the census
+// only after the kernel removes the mapping. An unused region carries none.
+pub function op_worker_unmap(): Op {
+  return op0(496);
+}
+
+// send_adopt marks the word under it as a box this process now owns. It
+// emits nothing: the word is a root another process handed over through a
+// worker region, and the mark is what the certifier counts.
+pub function op_send_adopt(): Op {
+  return counted(op0(495));
+}
+
+// The worker ops, 491 to 496, by name and by id.
+function kind_id_worker(name: string): i32 {
+  if (name == "heap_adopt") {
+    return 491;
+  }
+  if (name == "worker_region") {
+    return 492;
+  }
+  if (name == "worker_exit") {
+    return 493;
+  }
+  if (name == "worker_reap") {
+    return 494;
+  }
+  if (name == "send_adopt") {
+    return 495;
+  }
+  if (name == "worker_unmap") {
+    return 496;
+  }
+  return 0;
+}
+
+function kind_name_worker(id: i32): string {
+  if (id == 491) {
+    return "heap_adopt";
+  }
+  if (id == 492) {
+    return "worker_region";
+  }
+  if (id == 493) {
+    return "worker_exit";
+  }
+  if (id == 494) {
+    return "worker_reap";
+  }
+  if (id == 495) {
+    return "send_adopt";
+  }
+  return "worker_unmap";
+}
+
+function worker_pops1(t: i32): boolean {
+  return t == 492 || t == 494 || t == 495;
+}
+
+function worker_pops2(t: i32): boolean {
+  return t == 491 || t == 493;
+}
+
 pub function op_clz(width: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: K_CLZ, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
@@ -2136,6 +2232,10 @@ pub function kind_id(name: string): i32 {
   let lane: i32 = kind_id_lane(name);
   if (lane > 0) {
     return lane;
+  }
+  let worker: i32 = kind_id_worker(name);
+  if (worker > 0) {
+    return worker;
   }
   if (n >= 8 && n <= 13 && (name[0] == b'd' || name[0] == b'o')) {
     let dir: i32 = kind_id_dir(name);
@@ -4103,7 +4203,19 @@ function kind_name_3(id: i32): string {
   return "invalid";
 }
 
+// The names past 160, in two halves so each stays readable.
 function kind_name_4(id: i32): string {
+  if (id >= 491 && id <= 496) {
+    return kind_name_worker(id);
+  }
+  let a: string = kind_name_4a(id);
+  if (a != "invalid") {
+    return a;
+  }
+  return kind_name_4b(id);
+}
+
+function kind_name_4a(id: i32): string {
   if (id == 161) {
     return "wasm_pollable_drop";
   }
@@ -4371,6 +4483,10 @@ function kind_name_4(id: i32): string {
   if (id == 226) {
     return "write_file_exec";
   }
+  return "invalid";
+}
+
+function kind_name_4b(id: i32): string {
   if (id == 227) {
     return "ascii_run";
   }
@@ -4951,7 +5067,7 @@ function pops1_mem(t: i32): boolean {
 }
 
 function pops1_io(t: i32): boolean {
-  return t == 154 || t == 158 || t == 159 || t == 160
+  return t == 154 || t == 158 || t == 159 || t == 160 || worker_pops1(t)
     || t == 384
     || t == 434
     || t == 163 || t == 164 || t == 165 || t == 166
@@ -5000,7 +5116,7 @@ function pops2_kernel(t: i32): boolean {
 function pops2_mem(t: i32): boolean {
   return t == 359 || t == 482 || t == 72 || t == 73 || t == 199
     || t == 78
-    || t == 83 || t == 85 || t == 86 || t == 223
+    || t == 83 || t == 85 || t == 86 || t == 223 || worker_pops2(t)
     || t == 88
     || t == 92 || t == 93 || t == 94 || t == 95 || t == 302 || t == 303
     || t == 98 || t == 99 || t == 100 || t == 101
@@ -5032,7 +5148,7 @@ function pops2_io(t: i32): boolean {
 }
 
 function pops3(t: i32): boolean {
-  return t == 379 || t == 361 || t == 360 || t == 358 || t == 74 || t == 75
+  return t == 496 || t == 379 || t == 361 || t == 360 || t == 358 || t == 74 || t == 75
     || t == 82 || t == 84
     || t == 89 || t == 96 || t == 102 || t == 111
     || t == 177 || t == 225 || t == 234
@@ -7227,7 +7343,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 80 || tag == 315) {
     return true;
   }
-  if (tag == 229 || tag == 230) {
+  if (tag == 229 || tag == 230 || tag == 491) {
     return true;
   }
   if (tag == 216 || tag == 217) {

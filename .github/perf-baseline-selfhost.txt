@@ -1,6 +1,8 @@
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
 # #14134 into the branch. Five wasm32-wasi .emit rows rise 1.08% to 1.77%.
 # Retain the preceding limits. The measured regressions must remain visible.
+# 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
+# the http_hello and pvec_with emits 1.04% to 1.22%. Only reductions are banked, and no limit rises.
 # 2026-11-04: #14094, a local scripts/perf-bench-selfhost run. A join of constants that only returns goes back into
 # its arms: http_hello.emit -1.2% to -2.0%, and wasm sort_ints, sort_strings and string_find_byte -1.5% to -1.6%.
 # 2026-11-03: PR #14122, a local scripts/perf-bench-selfhost run on its head. Liveness decides which values cross a call,
@@ -306,7 +308,7 @@ selfhost/x86-64-linux/map_probe_chain.emit	8482
 selfhost/x86-64-linux/map_string.emit	9267
 selfhost/x86-64-linux/ordmap_insert.emit	5377
 selfhost/x86-64-linux/pmap_insert.emit	2906
-selfhost/x86-64-linux/pvec_with.emit	2951
+selfhost/x86-64-linux/pvec_with.emit	2915
 selfhost/x86-64-linux/record_update.emit	1296
 selfhost/x86-64-linux/sort_inplace.emit	1497
 selfhost/x86-64-linux/sort_ints.emit	1964

@@ -1,6 +1,8 @@
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
 # #14134 into the branch. Six arm64 hardened rows rise 1.15% to 1.41%. Four http_hello rows fall 1.27% to 1.50%.
 # Retain the preceding limits for higher-cost rows and keep all measured reductions.
+# 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
+# three x86-64 http_hello profile rows 1.01% to 1.27%. Only reductions are banked, and no limit rises.
 # 2026-11-03: PR #14122, a local scripts/profile-costs run on its head. Most moved rows shrink 1% to 2%.
 # Preserve the original limits for higher-cost rows. Retain only the measured reductions.
 # 2026-11-02: the security stack (SEC-023, SEC-032, SEC-016, SEC-024), from a local profile-costs run on main 4f3571f1.
@@ -199,7 +201,7 @@ profile/x86-64-linux/http_hello.minimal.emit	12454
 profile/x86-64-linux/http_hello.minimal.ir	23588401
 profile/x86-64-linux/http_hello.safe.bytes	64000
 profile/x86-64-linux/http_hello.safe.emit	15078
-profile/x86-64-linux/http_hello.safe.ir	22076408
+profile/x86-64-linux/http_hello.safe.ir	21796408
 profile/x86-64-linux/int_loop.diagnostic.bytes	5056
 profile/x86-64-linux/int_loop.diagnostic.emit	472
 profile/x86-64-linux/int_loop.diagnostic.ir	12000209

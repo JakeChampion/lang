@@ -1,0 +1,16 @@
+// A NativeActivity app with a @jni class that extends Service, for the
+// check that fern -apk declares the service in the manifest, with the
+// foreground service types that the permissions allow.
+@jni("dev.fern.servicetest.Talk extends android.app.Service", "android.os.IBinder onBind(android.content.Intent)")
+pub function on_bind(env: usize, thiz: usize, intent: usize): usize {
+  return 0 as usize;
+}
+
+// START_NOT_STICKY: the system does not start the service again after it
+// stops the process.
+@jni("dev.fern.servicetest.Talk", "int onStartCommand(android.content.Intent, int, int)")
+pub function on_start_command(env: usize, thiz: usize, intent: usize, flags: i32, id: i32): i32 {
+  return 2;
+}
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {}

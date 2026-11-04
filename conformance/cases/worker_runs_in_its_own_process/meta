@@ -1,0 +1,6 @@
+waiver: harness-limit
+reason: the interpreters, wasm and Darwin run a worker inline, so the
+  worker's allocations land in the engine's one heap. The case measures
+  that growth. Only a native Linux program forks a worker into a process
+  with a heap of its own, and that is the behaviour the case pins.
+  docs/WORKERS.md names the engines that keep the inline degrade.

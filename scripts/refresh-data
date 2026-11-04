@@ -69,6 +69,13 @@ same_but_date() {
 toolchain() {
   echo "== toolchain"
   mise upgrade --bump
+  # A held tool keeps its committed version until its issue closes.
+  # wasmtime: #14180.
+  local tool held
+  for tool in wasmtime; do
+    held="$(git show HEAD:mise.toml | sed -nE "s/^$tool = \"([^\"]+)\"$/\1/p")"
+    sed -i -E "s|^($tool = \")[^\"]+|\1$held|" mise.toml
+  done
   # The adapter is an http: tool mise cannot look up; it ships from the
   # wasmtime release and must stay at its version, as must the wasm e2e
   # suite's own pin, which TestWasmtimePinMatchesCI holds to mise.toml.

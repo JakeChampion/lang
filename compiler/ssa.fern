@@ -3789,25 +3789,31 @@ pub function select_arm_limit(): i32 {
   return 3;
 }
 
-pub function select_branches(f: SFunc): SFunc {
-  let g: SFunc = f;
+// Selection is a function after select_branches. The block with id from[k]
+// was folded into the block with id to[k], in that order.
+pub struct Selection { f: SFunc, from: i32[], to: i32[] }
+
+pub function select_branches(f: SFunc): Selection {
+  let out: Selection = Selection { f: f, from: [], to: [] };
   let rounds: i32 = 0;
   while (rounds < 8) {
-    let r: Threading = select_round(g);
+    let r: SelectRound = select_round(out.f);
     if (!r.changed) {
-      return g;
+      return out;
     }
-    g = r.f;
+    out = Selection { f: r.s.f, from: util.append_all(out.from, r.s.from), to: util.append_all(out.to, r.s.to) };
     rounds = rounds + 1;
   }
-  return g;
+  return out;
 }
 
-function select_round(f: SFunc): Threading {
+struct SelectRound { s: Selection, changed: boolean }
+
+function select_round(f: SFunc): SelectRound {
   let at: i32[] = block_positions(f);
   let fl: boolean[] = float_values(f, [], false);
   let none: boolean[] = __alloc_bool(f.blocks.len());
-  let r: Flattening = Flattening { blocks: f.blocks, busy: none, gone: none, nvals: f.nvals, changed: false };
+  let r: Flattening = Flattening { blocks: f.blocks, busy: none, gone: none, nvals: f.nvals, changed: false, joins: [] };
   let p: i32 = 0;
   while (p < f.blocks.len()) {
     let d: Diamond = diamond_at(f, at, fl, p);
@@ -3817,20 +3823,63 @@ function select_round(f: SFunc): Threading {
     p = p + 1;
   }
   if (!r.changed) {
-    return Threading { f: f, changed: false };
+    return SelectRound { s: Selection { f: f, from: [], to: [] }, changed: false };
   }
+  let m: Merging = merge_joins(r, at);
   let kept: SBlock[] = [];
   let i: i32 = 0;
-  while (i < r.blocks.len()) {
-    if (!r.gone[i]) {
-      kept = kept.append(r.blocks[i]);
+  while (i < m.blocks.len()) {
+    if (!m.gone[i]) {
+      kept = kept.append(m.blocks[i]);
     }
     i = i + 1;
   }
-  return Threading { f: SFunc { ...f, nvals: r.nvals, blocks: kept }, changed: true };
+  return SelectRound { s: Selection { f: SFunc { ...f, nvals: r.nvals, blocks: kept }, from: m.from, to: m.to }, changed: true };
 }
 
-struct Flattening { blocks: SBlock[], busy: boolean[], gone: boolean[], nvals: i32, changed: boolean }
+// joins holds a head position, then its join position, for each flattened diamond.
+struct Flattening { blocks: SBlock[], busy: boolean[], gone: boolean[], nvals: i32, changed: boolean, joins: i32[] }
+
+struct Merging { blocks: SBlock[], gone: boolean[], from: i32[], to: i32[] }
+
+// merge_joins folds each flattened join into its head, which now ends in a
+// jump to it. The diamonds of one round share no block, so no head is folded.
+function merge_joins(r: Flattening, at: i32[]): Merging {
+  let m: Merging = Merging { blocks: r.blocks, gone: r.gone, from: [], to: [] };
+  let k: i32 = 0;
+  while (k + 1 < r.joins.len()) {
+    m = merge_join(m, r.joins[k], r.joins[k + 1], at);
+    k = k + 2;
+  }
+  return m;
+}
+
+function merge_join(m: Merging, h: i32, j: i32, at: i32[]): Merging {
+  let hb: SBlock = m.blocks[h];
+  let jb: SBlock = m.blocks[j];
+  if (hb.term.kind_tag != 2 || hb.term.target != jb.id || jb.preds.len() != 1 || jb.preds[0] != hb.id || has_phi(jb)) {
+    return m;
+  }
+  let succ: i32[] = [distinct_successor_position(at, jb.term, 0), distinct_successor_position(at, jb.term, 1)];
+  if (succ[0] == h || succ[1] == h) {
+    return m;
+  }
+  let blocks: SBlock[] = m.blocks.with(h, SBlock { ...hb, insts: util.append_all(hb.insts, jb.insts), term: jb.term });
+  for s in succ {
+    if (s >= 0) {
+      blocks = blocks.with(s, SBlock { ...blocks[s], preds: renamed_pred(blocks[s].preds, jb.id, hb.id) });
+    }
+  }
+  return Merging { blocks: blocks, gone: m.gone.with(j, true), from: m.from.append(jb.id), to: m.to.append(hb.id) };
+}
+
+function renamed_pred(preds: i32[], from: i32, to: i32): i32[] {
+  let out: i32[] = [];
+  for p in preds {
+    out = out.append(if (p == from) { to } else { p });
+  }
+  return out;
+}
 
 function flatten_diamond(f: SFunc, d: Diamond, r: Flattening): Flattening {
   let head: SBlock = f.blocks[d.head];
@@ -3840,7 +3889,7 @@ function flatten_diamond(f: SFunc, d: Diamond, r: Flattening): Flattening {
     let j: SBlock = f.blocks[d.join];
     let picks: SInst[] = join_selects(j, head.term.cond, arm_source(f, head, d.t), arm_source(f, head, d.f));
     let blocks: SBlock[] = r.blocks.with(d.head, SBlock { ...head, insts: util.append_all(insts, picks), term: t_br(j.id) });
-    return Flattening { ...r, blocks: blocks.with(d.join, SBlock { ...j, insts: without_phis(j.insts), preds: [head.id] }), busy: r.busy.with(d.join, true) };
+    return Flattening { ...r, blocks: blocks.with(d.join, SBlock { ...j, insts: without_phis(j.insts), preds: [head.id] }), busy: r.busy.with(d.join, true), joins: r.joins.append(d.head).append(d.join) };
   }
   let vt: i32 = f.blocks[d.t].term.value;
   let vf: i32 = f.blocks[d.f].term.value;

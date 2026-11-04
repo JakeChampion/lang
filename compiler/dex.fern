@@ -583,8 +583,19 @@ function type_name(b: [u8], idx: i32): string {
 // The Java name of the first class in DEX file `b` whose superclass is
 // `superclass`, a Java name, or "" when there is none.
 pub function subclass_of(b: [u8], superclass: string): string {
-  if (b.len() < 112) {
+  let all: string[] = subclasses_of(b, superclass);
+  if (all.len() == 0) {
     return "";
+  }
+  return all[0];
+}
+
+// The Java names of the classes in DEX file `b` whose superclass is
+// `superclass`, in the order of their class definitions.
+pub function subclasses_of(b: [u8], superclass: string): string[] {
+  let out: string[] = [];
+  if (b.len() < 112) {
+    return out;
   }
   let want: string = descriptor(superclass);
   let defs: i32 = get32(b, 100);
@@ -592,8 +603,8 @@ pub function subclass_of(b: [u8], superclass: string): string {
     let at: i32 = defs + 32 * k;
     if (type_name(b, get32(b, at + 8)) == want) {
       let d: string = type_name(b, get32(b, at));
-      return slice_unchecked(d, 1, d.len() - 1).replace("/", ".");
+      out = out.append(slice_unchecked(d, 1, d.len() - 1).replace("/", "."));
     }
   }
-  return "";
+  return out;
 }

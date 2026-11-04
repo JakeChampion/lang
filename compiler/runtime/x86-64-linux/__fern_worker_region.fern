@@ -1,0 +1,3 @@
+function __fern_worker_region(size: i64): i64 {
+  return __syscall6(9, 0, size, 3, 16417, 0 - 1, 0);
+}

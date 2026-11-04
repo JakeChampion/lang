@@ -3107,36 +3107,9 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
   let else_body: ast.Stmt[] = [];
   let i: i32 = arms.len() - 1;
   while (i >= 0) {
-    let a: ast.LitArm = arms[i];
-    if (a.is_wild) {
-      if (a.has_guard) {
-        else_body = [s_if(a.guard, a.body, else_body)];
-      } else {
-        else_body = a.body;
-      }
-    } else {
-      let abody: ast.Stmt[] = a.body;
-      let aguard: ast.Expr = a.guard;
-      if (a.at_binding.len() > 0) {
-        abody = prepend_stmt(s_var_at(a.at_binding, "", scrut, a.line, a.col), a.body);
-        if let ast.ExprIdent(sid) = scrut {
-          aguard = astwalk.subst_ident_expr(a.guard, a.at_binding, sid.name);
-        }
-      }
-      let cond: ast.Expr = ast.ExprBinary { op: "==", left: scrut, right: a.lit, line: a.line, col: a.col, ty: "" };
-      if (a.has_range) {
-        let hi_op: string = "<";
-        if (a.range_inclusive) {
-          hi_op = "<=";
-        }
-        cond = e_binary("&&", e_binary(">=", scrut, a.lit), e_binary(hi_op, scrut, a.range_hi));
-      }
-      if (a.has_guard) {
-        cond = e_binary("&&", cond, aguard);
-      }
-      else_body = [s_if(cond, abody, else_body)];
-    }
-    i = i - 1;
+    let first: i32 = alternation_start(arms, i);
+    else_body = literal_arm_chain(arms, first, i, scrut, else_body);
+    i = first - 1;
   }
   if (else_body.len() == 0) {
     return s_unknown_at("empty literal match", mkline, mkcol);
@@ -3146,6 +3119,69 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
     return s_if_match([s_var_at(lm, "", written, mkline, mkcol), else_body[0]], sugar);
   }
   return with_match_sugar(else_body[0], sugar);
+}
+
+// alternation_start is the index of the first alternative in the written arm
+// that holds arms[last]. A wildcard, which close_bool_arms can make from the
+// last alternative, stays an arm of its own.
+function alternation_start(arms: ast.LitArm[], last: i32): i32 {
+  let first: i32 = last;
+  while (first > 0 && arms[first].alt_cont && !arms[first].is_wild) {
+    first = first - 1;
+  }
+  return first;
+}
+
+// literal_arm_chain puts one `if` for the alternatives arms[first..=last] in
+// front of else_body. All the alternatives share one copy of the body.
+function literal_arm_chain(arms: ast.LitArm[], first: i32, last: i32, scrut: ast.Expr, else_body: ast.Stmt[]): ast.Stmt[] {
+  let a: ast.LitArm = arms[last];
+  if (a.is_wild) {
+    if (a.has_guard) {
+      return [s_if(a.guard, a.body, else_body)];
+    }
+    return a.body;
+  }
+  let abody: ast.Stmt[] = a.body;
+  let aguard: ast.Expr = a.guard;
+  let at: string = shared_at_binding(arms, first, last);
+  if (at.len() > 0) {
+    abody = prepend_stmt(s_var_at(at, "", scrut, a.line, a.col), a.body);
+    if let ast.ExprIdent(sid) = scrut {
+      aguard = astwalk.subst_ident_expr(a.guard, at, sid.name);
+    }
+  }
+  let cond: ast.Expr = literal_arm_test(arms[first], scrut);
+  for k in first + 1..last + 1 {
+    cond = e_binary("||", cond, literal_arm_test(arms[k], scrut));
+  }
+  if (a.has_guard) {
+    cond = e_binary("&&", cond, aguard);
+  }
+  return [s_if(cond, abody, else_body)];
+}
+
+// The name that every alternative in arms[first..=last] binds with `@`, or ""
+// when some alternative binds none.
+function shared_at_binding(arms: ast.LitArm[], first: i32, last: i32): string {
+  let at: string = arms[first].at_binding;
+  for k in first + 1..last + 1 {
+    if (arms[k].at_binding != at) {
+      return "";
+    }
+  }
+  return at;
+}
+
+function literal_arm_test(a: ast.LitArm, scrut: ast.Expr): ast.Expr {
+  if (!a.has_range) {
+    return ast.ExprBinary { op: "==", left: scrut, right: a.lit, line: a.line, col: a.col, ty: "" };
+  }
+  let hi_op: string = "<";
+  if (a.range_inclusive) {
+    hi_op = "<=";
+  }
+  return e_binary("&&", e_binary(">=", scrut, a.lit), e_binary(hi_op, scrut, a.range_hi));
 }
 
 function with_match_sugar(st: ast.Stmt, sugar: ast.MatchSugar): ast.Stmt {
@@ -4216,8 +4252,10 @@ function parse_literal_match_expr(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol:
       patterns = patterns.append(lpattern);
     } else {
       let lai: i32 = 0;
+      let alt_at: string = lat;
       while (lai < lalt_lits.len()) {
-        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
+        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: alt_at });
+        alt_at = "";
         patterns = patterns.append(literal_pattern(lit_arms[lit_arms.len() - 1]));
         lai = lai + 1;
       }
@@ -5550,8 +5588,10 @@ function parse_literal_match_stmt(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol:
       patterns = patterns.append(lpattern);
     } else {
       let lai: i32 = 0;
+      let alt_at: string = lat;
       while (lai < lalt_lits.len()) {
-        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
+        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: alt_at });
+        alt_at = "";
         patterns = patterns.append(literal_pattern(lit_arms[lit_arms.len() - 1]));
         lai = lai + 1;
       }
@@ -8701,7 +8741,7 @@ pub function builtin_function_names(): string[] {
     "map_new", "__map_new_i32", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked",
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_decode_base32", "buf_len",
     "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_clear", "buf_free",
-    "cell_new",
+    "cell_new", "__send_copy", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
     "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_send_bytes", "tcp_close", "__tcp_close_unchecked", "__fd_close", "__socket_from_fd",
     "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into",
@@ -9756,10 +9796,10 @@ function split_key(s: string, n: i32, structs: StructDecl[], enums: EnumDecl[]):
   if (util.contains(s, ";")) {
     return split_inst_key(s);
   }
-  if (n <= 1 && !util.str_has_prefix(s, "tup__")) {
+  let tokens: string[] = split_dunder(s);
+  if (n <= 1 && tokens.len() == 1) {
     return [s];
   }
-  let tokens: string[] = split_dunder(s);
   if (n > 1 && tokens.len() <= n) {
     return tokens;
   }
@@ -17108,6 +17148,11 @@ pub function is_value_block(c: ast.ExprCall): boolean {
     }
   }
   return false;
+}
+
+// The three send builtins take one argument and type it from the site.
+pub function is_send_builtin(name: string): boolean {
+  return name == "__send_copy" || name == "__send_adopt" || name == "__send_root" || name == "__send_release";
 }
 
 pub function mkclo_body(name: string): string {

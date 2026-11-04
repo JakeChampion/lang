@@ -1,0 +1,25 @@
+// Two hundred workers in turn, each joined before the next is spawned.
+// On Linux every spawn maps a region and every join returns it to the
+// kernel, so the loop neither keeps regions nor leaks the results.
+
+import "std/worker";
+import "std/i32";
+
+struct Row { n: i32, label: string }
+
+function main(): i32 {
+    let total: i32 = 0;
+    let last: string = "";
+    let i: i32 = 0;
+    while (i < 200) {
+        let k: i32 = i;
+        let w = worker.spawn((): Row => Row { n: k * 2, label: "row " + k.to_string() });
+        let r: Row = w.join();
+        total = total + r.n;
+        last = r.label;
+        i = i + 1;
+    }
+    print(total.to_string());
+    print(last);
+    return 0;
+}

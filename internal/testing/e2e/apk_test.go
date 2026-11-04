@@ -331,6 +331,69 @@ func TestApkJniClasses(t *testing.T) {
 	}
 }
 
+// A @jni class that extends Service is a service in the manifest. It is not
+// exported, and its foreground service types are those of the
+// FOREGROUND_SERVICE_<TYPE> permissions: MICROPHONE and CONNECTED_DEVICE
+// give 0x80 | 0x10.
+func TestApkService(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "servicetest.apk")
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-apk", out, "-apk-package", "dev.fern.servicetest",
+		"-apk-permission", "RECORD_AUDIO,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,FOREGROUND_SERVICE_CONNECTED_DEVICE",
+		e2eharness.RepoPath("tests/android/service", "app.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.ChildEnv()
+	if o, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fern -apk: %v\n%s", err, o)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	classes := readZipEntry(t, zr, "classes.dex")
+	checkDex(t, classes)
+	for _, s := range []string{"Ldev/fern/servicetest/Talk;", "Landroid/app/Service;", "onStartCommand", "onBind"} {
+		if !bytes.Contains(classes, []byte(s)) {
+			t.Errorf("classes.dex has no string %q", s)
+		}
+	}
+	man := readZipEntry(t, zr, "AndroidManifest.xml")
+	for _, s := range []string{"service", "dev.fern.servicetest.Talk", "foregroundServiceType", "android.app.NativeActivity"} {
+		if !bytes.Contains(man, utf16le(s)) {
+			t.Errorf("the manifest has no string %q", s)
+		}
+	}
+	verifyApkV2(t, raw)
+	aapt, err := exec.LookPath("aapt")
+	if err != nil {
+		t.Skip("aapt is not on PATH, so the manifest tree is not checked")
+	}
+	o, err := exec.Command(aapt, "dump", "xmltree", out, "AndroidManifest.xml").CombinedOutput()
+	if err != nil {
+		t.Fatalf("aapt dump xmltree: %v\n%s", err, o)
+	}
+	tree := string(o)
+	service := strings.Index(tree, "E: service")
+	if service < 0 {
+		t.Fatalf("the manifest has no service element:\n%s", tree)
+	}
+	for _, want := range []string{
+		`A: android:name(0x01010003)="dev.fern.servicetest.Talk"`,
+		"A: android:exported(0x01010010)=(type 0x12)0x0",
+		"A: android:foregroundServiceType(0x01010599)=(type 0x11)0x90",
+	} {
+		if !strings.Contains(tree[service:], want) {
+			t.Errorf("the service element has no %s:\n%s", want, tree[service:])
+		}
+	}
+	if strings.Index(tree, "E: activity") > service {
+		t.Errorf("the service comes before the activity:\n%s", tree)
+	}
+}
+
 // checkDex checks the header of a DEX file: the magic, the size, the
 // SHA-1 signature and the Adler-32 checksum.
 func checkDex(t *testing.T, b []byte) {
