@@ -182,9 +182,16 @@ function test_long_trace(): test.TestOutcome {
   return test.assert_eq(trace(41u32, 900), 3524475380u32);
 }
 
+// In this trace, one spreading decision has the average of 80, so the
+// limit of the aggressive spreading changes the decision.
+function test_spread_limit_trace(): test.TestOutcome {
+  return test.assert_eq(trace(5u32, 900), 3040322468u32);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("std/opus band analysis");
   r = r.it("a short trace is the libopus trace", test_short_trace);
   r = r.it("a long trace is the libopus trace", test_long_trace);
+  r = r.it("a trace at the spreading limit is the libopus trace", test_spread_limit_trace);
   return r.finish();
 }
