@@ -583,8 +583,10 @@ function child_spent_between(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   return child_spent_between_for(rd, bi, v, depth, false);
 }
 
-// With donors, a descendant the update block reads again does not count: a
-// field lent to a call before the update is taken afresh there, not kept.
+// With donors, only a direct field of the record counts, and not one the
+// update block reads again: a field lent to a call before the update is
+// taken afresh there, not kept. A deeper descendant, such as an element of
+// a field that a call borrows, says nothing about the record's box.
 function child_spent_between_for(rd: Reads, bi: i32, v: i32, depth: i32, donors: boolean): boolean {
   if (depth > 8) {
     return false;
@@ -597,7 +599,7 @@ function child_spent_between_for(rd: Reads, bi: i32, v: i32, depth: i32, donors:
         }
       }
     }
-    if (child_spent_between_for(rd, bi, c, depth + 1, donors)) {
+    if (!donors && child_spent_between_for(rd, bi, c, depth + 1, donors)) {
       return true;
     }
   }
