@@ -31,12 +31,12 @@ func TestSelfHostWrittenLiteralIsHeapX86_64(t *testing.T) {
 		{"caller-first-chain", forward + relay + watch + "function main(): i32 { let r: i32 = reactor_new(); let e: i32[] = [0, 0, 0, 0]; return forward(r, e) + e[0]; }", box, true, false},
 		{"leaf-first-chain", watch + relay + forward + "function main(): i32 { let r: i32 = reactor_new(); let e: i32[] = [0, 0, 0, 0]; return forward(r, e) + e[0]; }", box, true, false},
 		{"ring-wait", "function main(): i32 { let e: i32[] = [0, 0, 0, 0]; let n = ring_wait(0 - 1 as i64, e, 0); return e[0]; }", box, true, false},
-		{"udp-data", "function main(): i32 { let e: u8[] = [0u8, 0u8, 0u8, 0u8]; let n = udp_recvfrom(0 - 1, e, __alloc_u8(19)); return e[0] as i32; }", copy, true, true},
-		{"udp-sender", "function main(): i32 { let e: u8[] = [0u8, 0u8, 0u8, 0u8]; let n = udp_recvfrom(0 - 1, __alloc_u8(4), e); return e[0] as i32; }", copy, true, true},
+		{"udp-data", "function main(): i32 { let e: u8[] = [0u8, 0u8, 0u8, 0u8]; let n = 0; unsafe { let s: Socket = __socket_from_fd(0 - 1); n = udp_recvfrom(s, e, __alloc_u8(19)); } return e[0] as i32; }", copy, true, true},
+		{"udp-sender", "function main(): i32 { let e: u8[] = [0u8, 0u8, 0u8, 0u8]; let n = 0; unsafe { let s: Socket = __socket_from_fd(0 - 1); n = udp_recvfrom(s, __alloc_u8(4), e); } return e[0] as i32; }", copy, true, true},
 		{"read-only-callee", peek + "function main(): i32 { let e: i32[] = [0, 0, 0, 0]; return peek(e); }", box, false, true},
-		{"tcp_recv_into", "function main(): i32 { let b: u8[] = [0u8, 0u8]; let r: i32 = tcp_recv_into(0 - 1, b); return (b[0] as i32) & 0; }", copy, true, true},
-		{"tcp_addr_into", "function main(): i32 { let b: u8[] = [0u8, 0u8, 0u8, 0u8]; let r: i32 = tcp_addr_into(0 - 1, false, b); return (b[0] as i32) & 0; }", copy, true, true},
-		{"udp_recvfrom", "function main(): i32 { let b: u8[] = [0u8, 0u8]; let f: u8[] = [1u8, 1u8]; let r: i32 = udp_recvfrom(0 - 1, b, f); return ((b[0] as i32) + (f[0] as i32)) & 0; }", copy, true, true},
+		{"tcp_recv_into", "function main(): i32 { let b: u8[] = [0u8, 0u8]; let r = 0; unsafe { let s: Socket = __socket_from_fd(0 - 1); r = tcp_recv_into(s, b); } return (b[0] as i32) & 0; }", copy, true, true},
+		{"tcp_addr_into", "function main(): i32 { let b: u8[] = [0u8, 0u8, 0u8, 0u8]; let r = 0; unsafe { let s: Socket = __socket_from_fd(0 - 1); r = tcp_addr_into(s, false, b); } return (b[0] as i32) & 0; }", copy, true, true},
+		{"udp_recvfrom", "function main(): i32 { let b: u8[] = [0u8, 0u8]; let f: u8[] = [1u8, 1u8]; let r = 0; unsafe { let s: Socket = __socket_from_fd(0 - 1); r = udp_recvfrom(s, b, f); } return ((b[0] as i32) + (f[0] as i32)) & 0; }", copy, true, true},
 		{"read-only-bytes", peekBytes + "function main(): i32 { let b: u8[] = [0u8, 0u8]; return peek(b); }", copy, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
