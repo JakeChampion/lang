@@ -3152,10 +3152,8 @@ function literal_arm_chain(arms: ast.LitArm[], first: i32, last: i32, scrut: ast
     }
   }
   let cond: ast.Expr = literal_arm_test(arms[first], scrut);
-  let k: i32 = first + 1;
-  while (k <= last) {
+  for k in first + 1..last + 1 {
     cond = e_binary("||", cond, literal_arm_test(arms[k], scrut));
-    k = k + 1;
   }
   if (a.has_guard) {
     cond = e_binary("&&", cond, aguard);

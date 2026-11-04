@@ -17037,7 +17037,7 @@ function literal_match_diags(chain: ast.StmtIf, scope: Scope): util.Diag[] {
 function literal_chain_diags(chain: ast.StmtIf, arms: ast.LitArm[], at: i32, scope: Scope): util.Diag[] {
   let next: i32 = at + 1;
   while (next < arms.len() && arms[next].alt_cont) {
-    next = next + 1;
+    next += 1;
   }
   let out: util.Diag[] = literal_arm_diags(chain.cond, arms, at, next - 1, scope);
   out = util.append_diags(out, stmts_call_diags(chain.then_body, scope));

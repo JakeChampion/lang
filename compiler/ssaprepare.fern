@@ -94,12 +94,10 @@ pub function finish_formed(lowered: irtables.Lowered, selected: physicalbody.Sel
 pub function with_selects(b: Body): Body {
   let picked: ssa.Selection = ssa.select_branches(b.formed.f);
   let terms: sourcepos.SourcePos[] = b.source.terms;
-  let k: i32 = 0;
-  while (k < picked.from.len()) {
+  for k in 0..picked.from.len() {
     if (picked.from[k] < terms.len() && picked.to[k] < terms.len()) {
       terms = terms.with(picked.to[k], terms[picked.from[k]]);
     }
-    k = k + 1;
   }
   return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.fuse_and_not(ssa.fuse_carries(picked.f)) }, source: SourceLines { ...b.source, terms: terms } };
 }
