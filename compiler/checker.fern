@@ -19219,7 +19219,55 @@ function lu_fresh_init(fx: LuFn, name: string): boolean {
 }
 
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
-  return lu_fresh_expr(e) && !lu_init_borrows(fx, e);
+  return lu_fresh_expr(e) && !lu_init_borrows(fx, e) || lu_fresh_match_value(fx, e);
+}
+
+// A match expression on a fresh value whose each arm yields a payload it
+// binds, a fresh value, or leaves.
+function lu_fresh_match_value(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprCall(c) = e else {
+    return false;
+  };
+  let ast.ExprLambda(lm) = c.callee else {
+    return false;
+  };
+  if (!parser.is_value_block(c) || lm.origin != parser.ORIGIN_MATCH_EXPR || lm.body.len() != 1) {
+    return false;
+  }
+  let ast.StmtMatch(m) = lm.body[0] else {
+    return false;
+  };
+  if let ast.ExprIdent(_) = m.scrutinee {
+    return false;
+  }
+  if (m.arms.len() == 0 || !lu_fresh_value(fx, m.scrutinee)) {
+    return false;
+  }
+  for arm in m.arms {
+    if (!lu_arm_yields_fresh(fx, arm)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function lu_arm_yields_fresh(fx: LuFn, arm: ast.MatchArm): boolean {
+  let n: i32 = arm.body.len();
+  if (n == 0) {
+    return false;
+  }
+  let ast.StmtReturn(r) = arm.body[n - 1] else {
+    return false;
+  };
+  if (n > 1 && parser.branch_stmts_diverge([arm.body[n - 2]])) {
+    return true;
+  }
+  if let ast.ExprIdent(id) = r.value {
+    if (util.has_str(astwalk.pattern_binders(arm.pattern, []), id.name)) {
+      return true;
+    }
+  }
+  return lu_fresh_value(fx, r.value);
 }
 
 // A name of a local whose each declaration is fresh.
