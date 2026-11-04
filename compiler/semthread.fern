@@ -465,8 +465,10 @@ struct Forwarded { g: ssa.SFunc, changed: i32 }
 // jumps to the join, and each phi reads on the new edge what it read on the
 // old one. A predecessor that branches keeps the block, so that no edge
 // carries both a condition and a phi. A block that holds only phis goes the
-// same way when only the join's phis read them. Each read then becomes the
-// operand of the phi on that edge.
+// same way when only the join's phis read them and the join branches on one
+// of its phis. Each read then becomes the operand of the phi on that edge.
+// Without that branch, a chain of two-way joins would become one wide join
+// that copies on every edge.
 function forward_empty_joins(g0: ssa.SFunc): Forwarded {
   let g: ssa.SFunc = g0;
   let changed: i32 = 0;
@@ -519,6 +521,9 @@ function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32): boolean {
   if (!has_phi(xb) || util.index_of_i32(xb.preds, y.id) < 0 || !phis_read_on_edge(y, xb, uses)) {
     return false;
   }
+  if (y.insts.len() > 0 && !reaches_phi_branch(g, at, at[x])) {
+    return false;
+  }
   for q in y.preds {
     if (q == y.id || q < 0 || q >= at.len() || at[q] < 0) {
       return false;
@@ -529,6 +534,15 @@ function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32): boolean {
     }
   }
   return true;
+}
+
+// x branches on one of its phis, itself or through a chain of empty blocks.
+function reaches_phi_branch(g: ssa.SFunc, at: i32[], xi: i32): boolean {
+  let xb: ssa.SBlock = g.blocks[xi];
+  if (xb.term.kind_tag == 3) {
+    return xb.term.t != xb.term.f && phi_of(xb, xb.term.cond).kind_tag == 8;
+  }
+  return chained_branch(g, at, xi) >= 0;
 }
 
 // Every instruction of y is a phi that only the phis of x read, on the edge
