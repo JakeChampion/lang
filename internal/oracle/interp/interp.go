@@ -6815,6 +6815,30 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 	return v, err
 }
 
+// evalConstIndex reads one element of a const array that constfold
+// substituted at this use, so the rest of the literal is never built.
+func (i *Interp) evalConstIndex(x *ast.Index, lit *ast.ArrayLit, env *env) (Value, error) {
+	idxV, err := i.evalExpr(x.Idx, env)
+	if err != nil {
+		return nil, err
+	}
+	idx, ok := idxV.(Number)
+	if !ok {
+		return nil, fmt.Errorf("index must be number, got %T", idxV)
+	}
+	if idx < 0 || idx >= Number(len(lit.Elems)) {
+		return nil, indexAbort(CauseArrOOB, indexText(idx, x.IdxUnsigned), len(lit.Elems))
+	}
+	return i.evalExpr(lit.Elems[idx], env)
+}
+
+func indexText(idx Number, unsigned bool) string {
+	if unsigned {
+		return strconv.FormatUint(uint64(idx), 10)
+	}
+	return strconv.FormatInt(int64(idx), 10)
+}
+
 func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 	switch x := e.(type) {
 	case *ast.NumberLit:
@@ -6985,6 +7009,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return m, nil
 	case *ast.Index:
+		if lit, ok := x.Array.(*ast.ArrayLit); ok && lit.Const {
+			return i.evalConstIndex(x, lit, env)
+		}
 		arrV, err := i.evalExpr(x.Array, env)
 		if err != nil {
 			return nil, err
@@ -6999,13 +7026,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("index must be number, got %T", idxV)
 		}
-		idxText := strconv.FormatInt(int64(idx), 10)
-		if x.IdxUnsigned {
-			idxText = strconv.FormatUint(uint64(idx), 10)
-		}
 		if s, ok := arrV.(String); ok {
 			if idx < 0 || idx >= Number(len(string(s))) {
-				return nil, indexAbort(CauseStrOOB, idxText, len(string(s)))
+				return nil, indexAbort(CauseStrOOB, indexText(idx, x.IdxUnsigned), len(string(s)))
 			}
 			return Number(int64(string(s)[idx])), nil
 		}
@@ -7014,7 +7037,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			return nil, fmt.Errorf("indexing non-array %T", arrV)
 		}
 		if idx < 0 || idx >= Number(len(arr.Elems())) {
-			return nil, indexAbort(CauseArrOOB, idxText, len(arr.Elems()))
+			return nil, indexAbort(CauseArrOOB, indexText(idx, x.IdxUnsigned), len(arr.Elems()))
 		}
 		return arr.Elems()[idx], nil
 	case *ast.SliceExpr:
