@@ -1549,7 +1549,7 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 	case *ast.Match:
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
-			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
+			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.NamedFields, arm.P)
 			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
 			r.withScope(arm.Binders(), func() {
 				if arm.Guard != nil {
@@ -1728,7 +1728,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	case *ast.MatchExpr:
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
-			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
+			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.NamedFields, arm.P)
 			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
 			r.withScope(arm.Binders(), func() {
 				if arm.Guard != nil {
@@ -1765,7 +1765,10 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 	}
 }
 
-func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos ast.Position) {
+// rewriteVariantPattern qualifies the name of a pattern. A pattern with
+// braces can name a struct, so a struct of the module wins there; without
+// braces it names a variant, even when a struct has the same name.
+func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, braces bool, pos ast.Position) {
 	if *armModule != "" {
 		if indexByte(*armModule, '.') >= 0 {
 			*armModule = r.rewriteStructNameAt(*armModule, pos)
@@ -1781,10 +1784,11 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 			return
 		}
 		*armModule = mod.path
-		if _, isVariant := mod.publicVariants[*armName]; isVariant && !mod.publicStructs[*armName] {
+		structNamed := braces && mod.publicStructs[*armName]
+		if _, isVariant := mod.publicVariants[*armName]; isVariant && !structNamed {
 			return
 		}
-		if en, scoped := mod.packageVariants[*armName]; scoped && !mod.publicStructs[*armName] {
+		if en, scoped := mod.packageVariants[*armName]; scoped && !structNamed {
 			if en == "" {
 				r.refuse(pos, "%s.%s is a variant of more than one package enum; name the enum in the pattern", mod.name, *armName)
 			} else {
@@ -1792,7 +1796,7 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 			}
 			return
 		}
-		if en, private := mod.allVariants[*armName]; private && !mod.publicStructs[*armName] {
+		if en, private := mod.allVariants[*armName]; private && !structNamed {
 			r.refuse(pos, "%s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)", mod.name, *armName, en, en)
 			return
 		}
@@ -1817,7 +1821,7 @@ func (r *rewriter) rewritePatElems(payloads []*ast.TuplePatElem, elems []ast.Tup
 
 func (r *rewriter) rewritePatElem(el *ast.TuplePatElem, pos ast.Position) {
 	if el.VariantName != "" {
-		r.rewriteVariantPattern(&el.VariantModule, &el.VariantName, pos)
+		r.rewriteVariantPattern(&el.VariantModule, &el.VariantName, len(el.VariantFieldNames) > 0, pos)
 	}
 	r.rewritePatElems(el.VariantPayloads, el.Nested, pos)
 }
