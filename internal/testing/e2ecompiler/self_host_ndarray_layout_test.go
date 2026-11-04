@@ -91,8 +91,10 @@ function main(): i32 {
   // Its only visible caller is packed. An external caller is unrestricted.
   if (!check(exported_scale(a), xs, false)) { return 13; }
   if (!check(mixed_recursive_scale(xs), xs, true)) { return 14; }
-  // The no-base arm is not executed. Analyzing it must still terminate and
-  // cannot treat its initially unseen return as a packed-layout proof.
+  // The no-base arm is not executed. semreach proves that no_base never
+  // returns and prunes the arm, so maybe_cycle returns the packed grid. With
+  // semreach off, the layout analysis sees the cycle: it must terminate and
+  // cannot treat the unseen return as a packed-layout proof.
   if (!check(unseeded_scale(xs, args().len()), xs, false)) { return 15; }
   return 0;
 }
@@ -119,16 +121,28 @@ func TestSelfHostNdarrayLayoutPropagation(t *testing.T) {
 		{"indirect_scale", false},
 		{"exported_scale", false},
 		{"mixed_recursive_scale", false},
-		{"unseeded_scale", false},
+		{"unseeded_scale", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body := emittedBody(t, string(asm), "__fn_"+tc.name)
-			mapped := reachesCall(body, "__fn___smm_ndarray__NdArray_map__")
-			vector := strings.Contains(body, "vbroadcastsd")
-			if mapped == tc.kernel || vector != tc.kernel {
-				t.Fatalf("kernel=%t, map call=%t, vector splat=%t\n%s", tc.kernel, mapped, vector, body)
-			}
+			checkNdarrayKernel(t, string(asm), tc.name, tc.kernel)
 		})
+	}
+	// Without semreach the no-base arm stays, and the layout analysis meets a
+	// cycle whose return it has not seen.
+	t.Run("unseeded_scale/no-semreach", func(t *testing.T) {
+		t.Setenv("FERN_NO_SEM_REACH", "1")
+		asm, _ := compileSourceModload(t, runner, driver, ndarrayLayoutSrc)
+		checkNdarrayKernel(t, string(asm), "unseeded_scale", false)
+	})
+}
+
+func checkNdarrayKernel(t *testing.T, asm, name string, kernel bool) {
+	t.Helper()
+	body := emittedBody(t, asm, "__fn_"+name)
+	mapped := reachesCall(body, "__fn___smm_ndarray__NdArray_map__")
+	vector := strings.Contains(body, "vbroadcastsd")
+	if mapped == kernel || vector != kernel {
+		t.Fatalf("kernel=%t, map call=%t, vector splat=%t\n%s", kernel, mapped, vector, body)
 	}
 }
 
