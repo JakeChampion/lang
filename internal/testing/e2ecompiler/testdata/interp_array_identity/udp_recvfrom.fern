@@ -4,7 +4,7 @@ import "core/cmp";
 
 struct Datagram { data: u8[], from: u8[] }
 
-function recv_into(fd: i32, d: Datagram): i32 {
+function recv_into(fd: Socket, d: Datagram): i32 {
   return udp_recvfrom(fd, d.data, d.from);
 }
 
