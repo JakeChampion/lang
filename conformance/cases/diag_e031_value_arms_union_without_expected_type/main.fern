@@ -1,0 +1,13 @@
+// The arms are different members of a union, but nothing names the union
+// they must widen to, so the arms disagree.
+
+struct Circle { r: i32 }
+struct Square { s: i32 }
+type Shape = Circle | Square;
+
+function main(): i32 {
+  let k: i32 = 0;
+  let m = match (k) { 0 => Circle { r: 1 }, _ => Square { s: 2 } };
+  let i = if (k == 0) { Circle { r: 3 } } else { Square { s: 4 } };
+  return 0;
+}

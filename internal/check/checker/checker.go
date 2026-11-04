@@ -11077,6 +11077,12 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 }
 
 func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
+	return c.checkBlockExprAt(n, parent, nil)
+}
+
+// checkBlockExprAt checks a block whose value is expected to be of the union
+// type want; a nil want expects nothing of it.
+func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Type) ast.Type {
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -11091,7 +11097,27 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
 		return nil
 	}
+	if want != nil {
+		return c.checkArmAt(&n.Tail, s, want)
+	}
 	return c.checkExpr(n.Tail, s)
+}
+
+// checkArmAt checks a branch of a value `if` or `match` where want is
+// expected. A branch that yields a member of the union want names is wrapped
+// into its variant, so that the branches agree on the union.
+func (c *checker) checkArmAt(holder *ast.Expr, s *scope, want ast.Type) ast.Type {
+	if _, isUnion := want.(ast.EnumType); !isUnion {
+		return c.checkExprAt(*holder, s, want)
+	}
+	if b, isBlock := (*holder).(*ast.BlockExpr); isBlock {
+		saved := c.expectedType
+		c.expectedType = want
+		t := c.checkBlockExprAt(b, s, want)
+		c.expectedType = saved
+		return t
+	}
+	return c.maybeWrapForUnion(want, holder, c.checkExprAt(*holder, s, want), s)
 }
 
 func (c *checker) stmtsDiverge(stmts []ast.Stmt) bool {
@@ -12900,7 +12926,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			} else if gt := c.checkExpr(arm.Guard, armScope); gt != nil && !ast.Equal(gt, ast.BoolType{}) {
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
-			unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 			continue
 		}
 		if arm.IsWildcard {
@@ -12917,7 +12943,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 			continue
 		}
 		if arm.Literal == nil {
@@ -12962,7 +12988,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 	}
 	if !sawWildcard && !closesBool(tagT, closing) {
 		c.errfCode(n.P, "E030", "%s", literalMatchNotExhaustive(tagT))
@@ -13020,7 +13046,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, s, want), arm.P)
 			continue
 		}
 		if arm.TupleElems == nil {
@@ -13054,7 +13080,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		if irrefutable {
 			sawIrrefutable = true
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 	}
 	if !sawIrrefutable && !c.payloadsExhaustive(tupleArms) {
 		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
@@ -13119,7 +13145,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.P)
+			unify(c.checkArmAt(&arm.Body, s, want), arm.P)
 			continue
 		}
 		if !arm.NamedFields {
@@ -13192,7 +13218,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		if irrefutable {
 			sawIrrefutable = true
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.P)
 	}
 	if !sawIrrefutable && !c.payloadsExhaustive(structArms) {
 		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
@@ -13269,7 +13295,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.Body.Pos())
+			unify(c.checkArmAt(&arm.Body, s, want), arm.Body.Pos())
 			continue
 		}
 		if arm.TupleElems != nil {
@@ -13291,7 +13317,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
 					c.variantHintName(ed, arm.VariantName), c.enumHintName(ed.Name), c.unknownVariantHint(arm.VariantName, ed))
 			}
-			unify(c.checkExprAt(arm.Body, s, want), arm.Body.Pos())
+			unify(c.checkArmAt(&arm.Body, s, want), arm.Body.Pos())
 			continue
 		}
 		arm.EnumName = ed.Name
@@ -13321,7 +13347,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		unify(c.checkExprAt(arm.Body, armScope, want), arm.Body.Pos())
+		unify(c.checkArmAt(&arm.Body, armScope, want), arm.Body.Pos())
 	}
 	if !sawWildcard {
 		for name, group := range refutableByVariant {
@@ -15490,8 +15516,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
 			c.errfCode(n.Cond.Pos(), "E008", "if-expression condition must be boolean, got %s", ct)
 		}
-		tt := c.checkExprAt(n.Then, s, want)
-		et := c.checkExprAt(n.Else, s, want)
+		tt := c.checkArmAt(&n.Then, s, want)
+		et := c.checkArmAt(&n.Else, s, want)
 		result := unifyIfArms(tt, et)
 		if result == nil {
 			result = scalarNumericJoin(tt, et)
