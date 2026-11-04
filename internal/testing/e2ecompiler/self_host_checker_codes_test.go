@@ -141,6 +141,14 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 	return checkerBin, runner, progDir
 }
 
+const destructureReassignPrelude = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct HPair { h: Handle, n: i32 }
+function sinkh(own h: Handle): i32 { return h.close(); }
+function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function keep(p: HPair): HPair { return p; }
+`
+
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 	const loopPayloadPrefix = `struct Box { data: u8[] }
@@ -153,6 +161,10 @@ function consume(own item: Box): i32 { return item.data.len(); }
 		src  string
 		want []string
 	}{
+		{"destructure-after-borrowed-assignment", destructureReassignPrelude + "function f(q: HPair): i32 { let p: HPair = mkp(); p = q; let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"destructure-after-borrowed-call-assignment", destructureReassignPrelude + "function f(q: HPair): i32 { let p: HPair = mkp(); p = keep(q); let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"destructure-after-fresh-call-assignment", destructureReassignPrelude + "function f(): i32 { let p: HPair = mkp(); p = mkp(); let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"destructure-after-fresh-local-assignment", destructureReassignPrelude + "function f(): i32 { let p: HPair = mkp(); let q: HPair = mkp(); p = q; let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"call-payload-stored-then-read", "struct T { aux: string } function take(t: T, n: i32): i32 { return t.aux.len() + n; } function pick(xs: string[]): Option[string] { for x in xs { return Some(x); } return None; } function f(xs: string[]): i32 { if let Some(u) = pick(xs) { let t = T { aux: u }; return take(t, u.len()); } return 0; } function main(): i32 { return 0; }", nil},
 		{"call-payload-moved-at-its-last-use", "function make(n: i32): Result[i32[], string] { return Ok([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { match (make(1)) { Ok(xs) => { let kept = xs; let k: i32 = keep(xs); return k + kept[0]; }, Err(_) => { return 0; } } return 0; } function main(): i32 { return 0; }", nil},
 		{"call-payload-same-name-in-two-matches", "function make(n: i32): Result[i32[], string] { return Ok([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { let t: i32 = 0; match (make(1)) { Ok(xs) => { let a: i32 = keep(xs); t = t + a; }, Err(_) => {} } match (make(2)) { Ok(xs) => { let b: i32 = keep(xs); t = t + b; }, Err(_) => {} } return t; } function main(): i32 { return 0; }", nil},
@@ -366,6 +378,18 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"socket-from-match-expression-closed-twice", "function opened(): Result[Socket, i32] { let s: Socket = tcp_listen(0); if (s.fd < 0) { return Err(s.fd); } return Ok(s); }\nfunction main(): i32 { let s: Socket = match (opened()) { Ok(v) => v, Err(e) => { return e; } }; let a: i32 = tcp_close(s); return tcp_close(s) + a; }", []string{"E051"}},
 		{"socket-from-match-expression-on-a-parameter", "function f(r: Result[Socket, i32]): i32 { let s: Socket = match (r) { Ok(v) => v, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
 		{"socket-match-expression-arm-yields-a-parameter", "function opened(): Result[Socket, i32] { let s: Socket = tcp_listen(0); if (s.fd < 0) { return Err(s.fd); } return Ok(s); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => l, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-loop-element-borrowed-assignment", "function f(l: Socket): i32 { let xs: Socket[] = [tcp_listen(0)]; for s in xs { s = l; tcp_close(s); } return 0; }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-loop-element-fresh-assignment", "function main(): i32 { let xs: Socket[] = [tcp_listen(0)]; for s in xs { s = tcp_listen(0); tcp_close(s); } return 0; }", nil},
+		{"socket-loop-element-fresh-local-assignment", "function main(): i32 { let xs: Socket[] = [tcp_listen(0)]; for s in xs { let replacement: Socket = tcp_listen(0); s = replacement; tcp_close(s); } return 0; }", nil},
+		{"socket-loop-element-borrowed-local-assignment", "function f(l: Socket): i32 { let xs: Socket[] = [tcp_listen(0)]; for s in xs { let replacement: Socket = l; s = replacement; tcp_close(s); } return 0; }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-loop-element-reassigned-local-assignment", "function f(l: Socket): i32 { let xs: Socket[] = [tcp_listen(0)]; for s in xs { let replacement: Socket = tcp_listen(0); replacement = l; s = replacement; tcp_close(s); } return 0; }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-match-payload-borrowed-assignment", "function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => { v = l; v }, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-match-payload-borrowed-call-assignment", "function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }\nfunction passed(s: Socket): Socket { return s; }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => { v = passed(l); v }, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-match-payload-conditional-borrowed-assignment", "function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => { if (l.fd >= 0) { v = l; } v }, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-match-payload-borrowed-shadow", "function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => { let v: Socket = l; v }, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", []string{"E051"}},
+		{"socket-match-payload-fresh-assignment", "function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => { v = tcp_listen(0); v }, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", nil},
+		{"socket-match-payload-fresh-shadow", "function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => { let v: Socket = tcp_listen(0); v }, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", nil},
+		{"socket-match-payload-nested-borrowed-shadow", "function opened(): Result[Socket, i32] { return Ok(tcp_listen(0)); }\nfunction f(l: Socket): i32 { let s: Socket = match (opened()) { Ok(v) => { if (l.fd >= 0) { let v: Socket = l; print(v.fd.to_string()); } v }, Err(e) => { return e; } }; return tcp_close(s); }\nfunction main(): i32 { return 0; }", nil},
 		{"send-captures-cell", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(1); return spawn((): i32 => c.get()); }", []string{"E100"}},
 		{"send-captures-handle", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let w: Writer = stdout(); return spawn((): i32 => w.fd); }", []string{"E100"}},
 		{"send-captures-function-value", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let f: () => i32 = (): i32 => 1; return spawn((): i32 => f()); }", []string{"E100"}},
@@ -3149,6 +3173,7 @@ function main(): i32 { return 0; }`},
 		{"e051-last-use-destructure-redeclared", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(c: boolean): i32 { let (x, k) = pw(1); if (c) { let x: W = mkw(2); return x.n; } let r: i32 = eat(x); return r + k; }\n"},
 		{"e051-last-use-struct-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let Pair { a, b } = mkp(1); let r: i32 = eat(a); return r + b.n; }\n"},
 		{"e051-last-use-struct-destructure-param", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(p: Pair): i32 { let Pair { a, b } = p; let r: i32 = eat(a); return r + b.n; }\n"},
+		{"e051-last-use-struct-destructure-reassigned-from-a-borrow", lastUsePrelude + "function f(q: Pair, c: boolean): i32 { let p: Pair = mkp(1); if (c) { p = q; } let Pair { a, b } = p; let r: i32 = eat(a); return r + b.n; }\n"},
 		{"e051-last-use-method-chain", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); let v: W = w.bump(1); let u: W = v.bump(2); return eat(u); }\n"},
 		{"e051-last-use-field-arg-local", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); return keep(w.d, 1); }\n"},
 		{"e051-last-use-if-expr", lastUsePrelude + "function f(c: boolean): i32 { let a: i32[] = mk(1); let r: i32 = if (c) { keep(a, 1) } else { 0 }; return r; }\n"},

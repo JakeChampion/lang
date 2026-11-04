@@ -19350,10 +19350,167 @@ function lu_arm_yields_fresh(fx: LuFn, arm: ast.MatchArm): boolean {
   }
   if let ast.ExprIdent(id) = r.value {
     if (util.has_str(astwalk.pattern_binders(arm.pattern, []), id.name)) {
-      return true;
+      return lu_arm_payload_fresh(fx, arm.body, id.name);
     }
   }
   return lu_fresh_value(fx, r.value);
+}
+
+// Use the final declaration in this block. A declaration in a nested block
+// does not replace the payload that this block returns.
+function lu_arm_payload_fresh(fx: LuFn, body: ast.Stmt[], name: string): boolean {
+  let start: i32 = 0;
+  let fresh: boolean = true;
+  for i in 0..body.len() {
+    if (lu_stmt_declares(body[i], name)) {
+      let ast.StmtVar(v) = body[i] else {
+        return false;
+      };
+      fresh = v.name == name && lu_fresh_value(fx, v.init);
+      start = i + 1;
+    }
+  }
+  return fresh && lu_payload_assigns_fresh(fx, body, name, start);
+}
+
+// Stop at a new declaration: assignments after it belong to that binding.
+function lu_payload_assigns_fresh(fx: LuFn, body: ast.Stmt[], name: string, start: i32): boolean {
+  return lu_payload_scan_fresh(fx, body, name, start, body);
+}
+
+function lu_payload_scan_fresh(fx: LuFn, body: ast.Stmt[], name: string, start: i32, root: ast.Stmt[]): boolean {
+  for i in start..body.len() {
+    if (lu_stmt_declares(body[i], name)) {
+      return true;
+    }
+    if (!lu_payload_stmt_fresh(fx, body[i], name, root)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string, root: ast.Stmt[]): boolean {
+  match (st) {
+    ast.StmtIf(f) => {
+      return lu_payload_expr_fresh(fx, f.cond, name, root) && lu_payload_scan_fresh(fx, f.then_body, name, 0, root) && lu_payload_scan_fresh(fx, f.else_body, name, 0, root);
+    },
+    ast.StmtWhile(w) => {
+      return lu_payload_expr_fresh(fx, w.cond, name, root) && lu_payload_scan_fresh(fx, w.body, name, 0, root);
+    },
+    ast.StmtFor(f) => {
+      return lu_payload_expr_fresh(fx, f.iter, name, root) && (f.var_name == name || lu_payload_scan_fresh(fx, f.body, name, 0, root));
+    },
+    ast.StmtMatch(m) => {
+      if (!lu_payload_expr_fresh(fx, m.scrutinee, name, root)) {
+        return false;
+      }
+      for arm in m.arms {
+        if (!util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
+          if (arm.has_guard && !lu_payload_expr_fresh(fx, arm.guard, name, root) || !lu_payload_scan_fresh(fx, arm.body, name, 0, root)) {
+            return false;
+          }
+        }
+      }
+      return true;
+    },
+    _ => {
+      let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+      return lu_payload_facts_fresh(fx, facts, name, root);
+    }
+  }
+  return false;
+}
+
+function lu_payload_expr_fresh(fx: LuFn, e: ast.Expr, name: string, root: ast.Stmt[]): boolean {
+  let facts: LuFacts = astwalk.fold_expr_nodes(e, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  return lu_payload_facts_fresh(fx, facts, name, root);
+}
+
+function lu_payload_facts_fresh(fx: LuFn, facts: LuFacts, name: string, root: ast.Stmt[]): boolean {
+  for a in facts.assigns {
+    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_payload_value(fx, a.init) && !lu_fresh_local_replacement(fx, a.init, root)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct LuReplacement { value: ast.Expr, name: string, repeats: boolean }
+
+function lu_replacement_keep(e: ast.Expr, own state: LuReplacement): LuReplacement {
+  return state;
+}
+
+function lu_replacement_loop(st: ast.Stmt, own state: LuReplacement): LuReplacement {
+  if (!state.repeats && lu_is_loop_stmt(st) && lu_loop_holds_call(st, state.value)) {
+    let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+    for v in facts.vars {
+      if (v.name == state.name) {
+        return state;
+      }
+    }
+    return LuReplacement { ...state, repeats: true };
+  }
+  return state;
+}
+
+// The local is fresh, unmodified and declared in this lexical body.
+// An inner loop must also declare it afresh on each round.
+function lu_fresh_local_replacement(fx: LuFn, e: ast.Expr, body: ast.Stmt[]): boolean {
+  let ast.ExprIdent(id) = e else {
+    return false;
+  };
+  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != 1 || !lu_fresh_init(fx, id.name) || !lu_is_last(fx, id)
+    || util.has_str(fx.facts.captured, id.name) || util.has_str(fx.facts.escaping, id.name)) {
+    return false;
+  }
+  for a in fx.facts.assigns {
+    if (a.name == id.name) {
+      return false;
+    }
+  }
+  let facts: LuFacts = lu_empty_facts();
+  for st in body {
+    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  }
+  for v in facts.vars {
+    if (v.name == id.name) {
+      let state: LuReplacement = LuReplacement { value: e, name: id.name, repeats: false };
+      for st in body {
+        state = astwalk.fold_stmt_nodes(st, state, lu_replacement_loop, lu_replacement_keep, astwalk.descend_all);
+      }
+      return !state.repeats;
+    }
+  }
+  return false;
+}
+
+// A payload from a fresh call can replace an owned value at its last read.
+// Any assignment or other declaration of its name prevents this proof.
+function lu_fresh_payload_value(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprIdent(id) = e else {
+    return false;
+  };
+  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != 0 || !lu_is_last(fx, id)
+    || util.has_str(fx.facts.captured, id.name) || util.has_str(fx.facts.escaping, id.name)) {
+    return false;
+  }
+  for a in fx.facts.assigns {
+    if (a.name == id.name) {
+      return false;
+    }
+  }
+  let found: boolean = false;
+  for m in fx.facts.matched {
+    if (m.name == id.name) {
+      if (!lu_fresh_value(fx, m.init)) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
 }
 
 // A name of a local whose each declaration is fresh.
@@ -19364,24 +19521,30 @@ function lu_fresh_local(fx: LuFn, e: ast.Expr): boolean {
   return false;
 }
 
-// An own parameter, or a fresh local declared once outside a loop.
+// An own parameter, or a fresh local declared once outside a loop and given
+// only fresh values after that.
 function lu_unpack_source_owned(fx: LuFn, name: string): boolean {
   if (lu_own_param(fx, name)) {
     return lu_decl_count(fx, name) == 0;
   }
-  return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name);
+  return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name) && lu_only_fresh_assigns(fx, name);
+}
+
+// Each value assigned to the name after its declaration is fresh.
+function lu_only_fresh_assigns(fx: LuFn, name: string): boolean {
+  for a in fx.facts.assigns {
+    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // A local declared once, outside a loop, from an own parameter at its last
 // use, and given only fresh values after that.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
-  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name)) {
+  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name) || !lu_only_fresh_assigns(fx, name)) {
     return false;
-  }
-  for a in fx.facts.assigns {
-    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
-      return false;
-    }
   }
   // The fields that a destructure takes from an own parameter or a fresh
   // local at its last use are owned, as the source is.
@@ -20500,7 +20663,7 @@ function lu_binding_life(site: LuSite, name: string): LuLife {
   return LuLife { name: "", scope: -1, loop_depth: -1, fresh: false };
 }
 
-function lu_bind_lifetimes(sc: LuScope, frames: LuFrame[], names: string[], loop_depth: i32, fresh_value: boolean): LuLife[] {
+function lu_bind_lifetimes(sc: LuScope, frames: LuFrame[], names: string[], loop_depth: i32, fresh_value: boolean, body: ast.Stmt[], fx: LuFn): LuLife[] {
   let level: i32 = frames.len() - 1;
   // A generated value block shares the frame of its enclosing statement.
   if (sc.framed) {
@@ -20508,7 +20671,7 @@ function lu_bind_lifetimes(sc: LuScope, frames: LuFrame[], names: string[], loop
   }
   let lives: LuLife[] = sc.bindings;
   for name in names {
-    lives = lives.append(LuLife { name: name, scope: level, loop_depth: loop_depth, fresh: fresh_value });
+    lives = lives.append(LuLife { name: name, scope: level, loop_depth: loop_depth, fresh: fresh_value && lu_payload_assigns_fresh(fx, body, name, 0) });
   }
   return lives;
 }
@@ -20926,7 +21089,7 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
         let taken: string[] = lu_move_site(fx, fo.iter, site, []);
         acc = util.append_all(acc, taken);
         let bound: string[] = sc.binders.append(fo.var_name);
-        let fresh: LuLife[] = lu_bind_lifetimes(sc, site.frames, [fo.var_name], sc.loop_depth + 1, taken.len() > 0 || lu_iter_owned(fx, fo.iter));
+        let fresh: LuLife[] = lu_bind_lifetimes(sc, site.frames, [fo.var_name], sc.loop_depth + 1, taken.len() > 0 || lu_iter_owned(fx, fo.iter), fo.body, fx);
         acc = lu_stmts(fo.body, LuScope { ...sc, frames: site.frames, head: lu_loop_frame(fo.body, stmts[i], fo.label), binders: bound, bindings: fresh, loop_depth: sc.loop_depth + 1, in_loop: true }, outer, has_outer, fx, acc);
       },
       ast.StmtMatch(m) => {
@@ -20941,7 +21104,7 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
           let bound: string[] = util.append_all(sc.binders, names);
           // A match that takes its scrutinee, a fresh value or an own
           // parameter, binds each payload as a fresh local.
-          let fresh: LuLife[] = lu_bind_lifetimes(sc, site.frames, names, sc.loop_depth, taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee) || lu_scrutinee_owned(fx, m.scrutinee));
+          let fresh: LuLife[] = lu_bind_lifetimes(sc, site.frames, names, sc.loop_depth, taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee) || lu_scrutinee_owned(fx, m.scrutinee), arm.body, fx);
           let head: LuFrame = LuFrame { ...lu_plain_frame(arm.body), head: ast.StmtMatch { ...m, arms: [arm] } };
           acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: head, binders: bound, bindings: fresh }, outer, has_outer, fx, acc);
         }

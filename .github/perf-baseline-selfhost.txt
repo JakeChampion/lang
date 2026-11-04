@@ -1,3 +1,6 @@
+# 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
+# #14134 into the branch. Five wasm32-wasi .emit rows rise 1.08% to 1.77%.
+# Retain the preceding limits. The measured regressions must remain visible.
 # 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
 # the http_hello and pvec_with emits 1.04% to 1.22%. Only reductions are banked, and no limit rises.
 # 2026-11-04: #14094, a local scripts/perf-bench-selfhost run. A join of constants that only returns goes back into
