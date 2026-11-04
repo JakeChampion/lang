@@ -642,6 +642,8 @@ own_inplace_sort                                     0
 own_loop_takes_and_rebinds_each_round                0
 own_param_alias_after_self_update                    0
 own_param_array_move                                 0
+own_field_move_in_one_branch                         0
+own_local_rebound_on_every_branch                    0
 own_param_assign_target                              0
 own_param_branch_transfer                            0
 own_param_destructured_receiver                      0
