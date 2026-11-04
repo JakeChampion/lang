@@ -296,6 +296,7 @@ exit_42                                              0
 exit_code                                            0
 exit_diverges                                        0
 exit_diverges_let_else_taken                         0
+exit_in_a_callee_whose_record_is_taken_apart         0
 exit_max                                             0
 f32_array_element                                    0
 f32_array_param                                      0

@@ -447,8 +447,9 @@ or with type arguments) rather than falling through.
 
 `rccertify.certify` reads the lowered ops back as SSA (`ssa_lift`) and
 nothing of the plan. A branch that compares two constants goes only to the
-side it takes (`irverifygate.decided`). Thus the certifier walks no edge that
-no run takes. It accounts per path the units the frame holds: an
+side it takes (`irverifygate.decided`). A call of `exit` ends its path, and
+a block whose every path ends at one releases nothing: no value dies on an
+edge into it. Thus the certifier walks no edge that no run takes. It accounts per path the units the frame holds: an
 allocation or owned call result is a fresh unit, a counted parameter a unit
 handed in, a load, a borrowed parameter or an address into a box nothing; a retain adds one; a
 release, a move into a callee or container and a return each spend one; at a

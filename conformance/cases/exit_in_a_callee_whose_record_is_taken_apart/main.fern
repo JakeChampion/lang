@@ -1,0 +1,27 @@
+// A body that always exits can be inlined into its caller. The code after
+// the inlined exit takes apart a record that never arrives, and that code
+// can never run, so the compile must not refuse it.
+
+struct Step { conn: i32, output: u8[], events: i32[] }
+
+function fail(code: i32): Step {
+  exit(code);
+  return Step { conn: 0, output: [], events: [] };
+}
+
+function kernel(code: i32, out: u8[]): i32 {
+  let fed = fail(code);
+  let more = out.len() + fed.output.len();
+  if (fed.conn == 3) {
+    return more + fed.events.len();
+  }
+  return more;
+}
+
+function main(): i32 {
+  let b: u8[] = [1u8, 2u8];
+  print("before");
+  print(kernel(b.len() + 5, b).to_string());
+  print(kernel(b.len() + 6, b).to_string());
+  return 0;
+}

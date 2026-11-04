@@ -2066,6 +2066,7 @@ function live_edges(w: Walk, own lv: Live): Live {
   let dies: Spans = Spans { slots: lv.slots, at: [], n: [] };
   let out_at: i32[] = [];
   let nout: i32 = 0;
+  let doomed: boolean[] = doomed_blocks(w);
   let bi: i32 = 0;
   while (bi < w.f.blocks.len()) {
     let e: i32 = 0;
@@ -2075,7 +2076,11 @@ function live_edges(w: Walk, own lv: Live): Live {
       if (sid >= 0) {
         si = w.at[sid];
       }
-      if (si >= 0) {
+      if (si >= 0 && doomed[si]) {
+        dies = push_span(dies, []);
+        out_at = out_at.append(nout);
+        nout = nout + lv.in_n[si];
+      } else if (si >= 0) {
         m = die_slots(lv, m, bi, si);
         dies = push_span(dies, m.list);
         out_at = out_at.append(nout);
@@ -2089,6 +2094,44 @@ function live_edges(w: Walk, own lv: Live): Live {
     bi = bi + 1;
   }
   return Live { ...lv, slots: dies.slots, die_at: dies.at, die_n: dies.n, out_at: out_at, nout: nout };
+}
+
+// The blocks whose every path ends at an unreachable terminator, such as a
+// call of exit. Nothing has to be released on the way, so no value dies
+// on an edge into one. A loop that never ends is not in the set.
+function doomed_blocks(w: Walk): boolean[] {
+  let n: i32 = w.f.blocks.len();
+  let doomed: boolean[] = __alloc_bool(n);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let bi: i32 = n - 1;
+    while (bi >= 0) {
+      if (!doomed[bi] && ends_doomed(w, doomed, w.f.blocks[bi].term)) {
+        doomed = doomed.with(bi, true);
+        changed = true;
+      }
+      bi = bi - 1;
+    }
+  }
+  return doomed;
+}
+
+function ends_doomed(w: Walk, doomed: boolean[], t: ssa.STerm): boolean {
+  if (t.kind_tag == 4) {
+    return true;
+  }
+  let any: boolean = false;
+  for e in 0..2 {
+    let sid: i32 = ssa.successor_id(t, e);
+    if (sid >= 0) {
+      if (w.at[sid] < 0 || !doomed[w.at[sid]]) {
+        return false;
+      }
+      any = true;
+    }
+  }
+  return any;
 }
 
 function debt_deps(w: Walk, takes: Takes, own deps: i32[][]): i32[][] {
@@ -2525,11 +2568,34 @@ function taken_at(t: Takes, block: i32, at: i32): i32[] {
 
 function exits(b: ssa.SBlock): boolean {
   for ins in b.insts {
-    if (ins.kind_tag == 50 && ins.str == "exit") {
+    if (is_exit(ins)) {
       return true;
     }
   }
   return false;
+}
+
+function is_exit(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 50 && ins.str == "exit";
+}
+
+// A block that calls exit leaves the process, so no path goes on from it.
+function ended_at_exit(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  let cut: boolean = false;
+  for b in f.blocks {
+    if (b.term.kind_tag != 4 && exits(b)) {
+      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { kind_tag: 4, cond: 0, target: 0, t: 0, f: 0, value: 0 } });
+      cut = true;
+    } else {
+      blocks = blocks.append(b);
+    }
+  }
+  if (!cut) {
+    return f;
+  }
+  let g: ssa.SFunc = ssa.SFunc { ...f, blocks: blocks };
+  return ssa.SFunc { ...g, blocks: ssa.refreshed_preds(g) };
 }
 
 function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
@@ -2860,7 +2926,7 @@ function block_round(own p: Progress, w: Walk, lv: Live, bi: i32, takes: Takes):
   p = entry_row(p, w, lv, bi);
   p = apply_block(p, w, bi, takes);
   let changed: boolean = false;
-  if (exits(b)) {} else if (b.term.kind_tag == 1) {
+  if (b.term.kind_tag == 1) {
     p = apply_return(p, w, lv, bi);
   } else {
     let r: RoundResult = hand_edges(p, w, lv, bi);
@@ -2891,6 +2957,9 @@ function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress 
     let ins: ssa.SInst = b.insts[i];
     if (ins.kind_tag != 8 && ins.kind_tag != 6) {
       p = apply(p, w, ins, b.id, taken_at(takes, bi, i));
+    }
+    if (is_exit(ins)) {
+      return p;
     }
     i = i + 1;
   }
@@ -4019,10 +4088,11 @@ pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, si
   return Report { findings: findings, tracked: report.tracked, unproved: report.unproved, opaque: report.opaque, skipped: report.skipped };
 }
 
-function certify_graph(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
-  if (f.blocks.len() == 0) {
+function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
+  if (f0.blocks.len() == 0) {
     return skipped("no blocks");
   }
+  let f: ssa.SFunc = ended_at_exit(f0);
   let at: i32[] = ssadeps.position_of(f);
   if (f.entry < 0 || f.entry >= at.len() || at[f.entry] < 0) {
     return skipped("no entry block");
