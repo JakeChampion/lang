@@ -3107,36 +3107,9 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
   let else_body: ast.Stmt[] = [];
   let i: i32 = arms.len() - 1;
   while (i >= 0) {
-    let a: ast.LitArm = arms[i];
-    if (a.is_wild) {
-      if (a.has_guard) {
-        else_body = [s_if(a.guard, a.body, else_body)];
-      } else {
-        else_body = a.body;
-      }
-    } else {
-      let abody: ast.Stmt[] = a.body;
-      let aguard: ast.Expr = a.guard;
-      if (a.at_binding.len() > 0) {
-        abody = prepend_stmt(s_var_at(a.at_binding, "", scrut, a.line, a.col), a.body);
-        if let ast.ExprIdent(sid) = scrut {
-          aguard = astwalk.subst_ident_expr(a.guard, a.at_binding, sid.name);
-        }
-      }
-      let cond: ast.Expr = ast.ExprBinary { op: "==", left: scrut, right: a.lit, line: a.line, col: a.col, ty: "" };
-      if (a.has_range) {
-        let hi_op: string = "<";
-        if (a.range_inclusive) {
-          hi_op = "<=";
-        }
-        cond = e_binary("&&", e_binary(">=", scrut, a.lit), e_binary(hi_op, scrut, a.range_hi));
-      }
-      if (a.has_guard) {
-        cond = e_binary("&&", cond, aguard);
-      }
-      else_body = [s_if(cond, abody, else_body)];
-    }
-    i = i - 1;
+    let first: i32 = alternation_start(arms, i);
+    else_body = literal_arm_chain(arms, first, i, scrut, else_body);
+    i = first - 1;
   }
   if (else_body.len() == 0) {
     return s_unknown_at("empty literal match", mkline, mkcol);
@@ -3146,6 +3119,58 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
     return s_if_match([s_var_at(lm, "", written, mkline, mkcol), else_body[0]], sugar);
   }
   return with_match_sugar(else_body[0], sugar);
+}
+
+// alternation_start is the index of the first alternative in the written arm
+// that holds arms[last]. A wildcard, which close_bool_arms can make from the
+// last alternative, stays an arm of its own.
+function alternation_start(arms: ast.LitArm[], last: i32): i32 {
+  let first: i32 = last;
+  while (first > 0 && arms[first].alt_cont && !arms[first].is_wild) {
+    first = first - 1;
+  }
+  return first;
+}
+
+// literal_arm_chain puts one `if` for the alternatives arms[first..=last] in
+// front of else_body. All the alternatives share one copy of the body.
+function literal_arm_chain(arms: ast.LitArm[], first: i32, last: i32, scrut: ast.Expr, else_body: ast.Stmt[]): ast.Stmt[] {
+  let a: ast.LitArm = arms[last];
+  if (a.is_wild) {
+    if (a.has_guard) {
+      return [s_if(a.guard, a.body, else_body)];
+    }
+    return a.body;
+  }
+  let abody: ast.Stmt[] = a.body;
+  let aguard: ast.Expr = a.guard;
+  if (a.at_binding.len() > 0) {
+    abody = prepend_stmt(s_var_at(a.at_binding, "", scrut, a.line, a.col), a.body);
+    if let ast.ExprIdent(sid) = scrut {
+      aguard = astwalk.subst_ident_expr(a.guard, a.at_binding, sid.name);
+    }
+  }
+  let cond: ast.Expr = literal_arm_test(arms[first], scrut);
+  let k: i32 = first + 1;
+  while (k <= last) {
+    cond = e_binary("||", cond, literal_arm_test(arms[k], scrut));
+    k = k + 1;
+  }
+  if (a.has_guard) {
+    cond = e_binary("&&", cond, aguard);
+  }
+  return [s_if(cond, abody, else_body)];
+}
+
+function literal_arm_test(a: ast.LitArm, scrut: ast.Expr): ast.Expr {
+  if (!a.has_range) {
+    return ast.ExprBinary { op: "==", left: scrut, right: a.lit, line: a.line, col: a.col, ty: "" };
+  }
+  let hi_op: string = "<";
+  if (a.range_inclusive) {
+    hi_op = "<=";
+  }
+  return e_binary("&&", e_binary(">=", scrut, a.lit), e_binary(hi_op, scrut, a.range_hi));
 }
 
 function with_match_sugar(st: ast.Stmt, sugar: ast.MatchSugar): ast.Stmt {
