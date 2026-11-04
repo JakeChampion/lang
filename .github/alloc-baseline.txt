@@ -87,5 +87,8 @@
 # Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
 # ddc5b110 on the dev container); const_propagate's known table starts on one
 # placeholder op, 0.5% fewer.
+# Measured 2026-11-04 (PR #14170): CI recorded 38,587,649 on 6858ecfe.
+# Keep the prior limits while the compiler cost is repaired. A higher
+# measurement does not authorize a higher limit.
 x86_64/checker.allocs	36037176
 x86_64/checker.frees	36037176

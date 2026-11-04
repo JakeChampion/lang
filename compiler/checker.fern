@@ -11138,7 +11138,7 @@ function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], u
   if (!fold.ok && f.sugar.lits.len() > 0) {
     let at: i32 = 0;
     for arm in f.sugar.lits {
-      if (mx_branch_yields(arm.body)) {
+      if (!arm.alt_cont && mx_branch_yields(arm.body)) {
         if (at == fold.bad_index) {
           return mx_named_fold_diags(fold, arm.line, arm.col, kind);
         }
@@ -17021,9 +17021,12 @@ function literal_comparison_diags(cond: ast.Expr, arm: ast.LitArm, scope: Scope)
   return [];
 }
 
-function literal_arm_diags(cond: ast.Expr, arm: ast.LitArm, scope: Scope): util.Diag[] {
+// literal_arm_diags checks the condition of one chain link. The link tests the
+// alternatives of one written arm, from arms[at], joined with `||`.
+function literal_arm_diags(cond: ast.Expr, arms: ast.LitArm[], at: i32, last: i32, scope: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let pattern: ast.Expr = cond;
+  let arm: ast.LitArm = arms[last];
   if (arm.has_guard) {
     if (arm.is_wild) {
       return call_diags(cond, scope);
@@ -17033,6 +17036,29 @@ function literal_arm_diags(cond: ast.Expr, arm: ast.LitArm, scope: Scope): util.
       out = call_diags(both.right, scope);
     }
   }
+  let later: ast.Expr[] = [];
+  while (later.len() < last - at) {
+    if let ast.ExprBinary(either) = pattern {
+      if (either.op != "||") {
+        break;
+      }
+      later = later.append(either.right);
+      pattern = either.left;
+    } else {
+      break;
+    }
+  }
+  out = util.append_diags(out, literal_test_diags(pattern, arms[at], scope));
+  let k: i32 = later.len() - 1;
+  while (k >= 0) {
+    out = util.append_diags(out, literal_test_diags(later[k], arms[at + later.len() - k], scope));
+    k = k - 1;
+  }
+  return out;
+}
+
+function literal_test_diags(pattern: ast.Expr, arm: ast.LitArm, scope: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
   if (arm.has_range) {
     if let ast.ExprBinary(bounds) = pattern {
       out = util.append_diags(out, literal_comparison_diags(bounds.left, arm, scope));
@@ -17065,9 +17091,12 @@ function literal_match_diags(chain: ast.StmtIf, scope: Scope): util.Diag[] {
 }
 
 function literal_chain_diags(chain: ast.StmtIf, arms: ast.LitArm[], at: i32, scope: Scope): util.Diag[] {
-  let out: util.Diag[] = literal_arm_diags(chain.cond, arms[at], scope);
-  out = util.append_diags(out, stmts_call_diags(chain.then_body, scope));
   let next: i32 = at + 1;
+  while (next < arms.len() && arms[next].alt_cont) {
+    next += 1;
+  }
+  let out: util.Diag[] = literal_arm_diags(chain.cond, arms, at, next - 1, scope);
+  out = util.append_diags(out, stmts_call_diags(chain.then_body, scope));
   if (next < arms.len() && !(arms[next].is_wild && !arms[next].has_guard) && chain.else_body.len() == 1) {
     if let ast.StmtIf(tail) = chain.else_body[0] {
       return util.append_diags(out, literal_chain_diags(tail, arms, next, scope));
