@@ -22,7 +22,7 @@ func TestSelfHostDiagnosticsNameTheEntryFile(t *testing.T) {
 	})
 	for _, tc := range []struct{ name, target, src, want string }{
 		{"checker", "x86-64-linux", "function main(): i32 {\n    return nosuch(1);\n}\n", "/main.fern:2:12: error[E001]: "},
-		{"capability", "wasm32-wasi", "function main(): i32 {\n    return unix_listen(\"/tmp/x\", 4);\n}\n", "/main.fern:2:23: error[E066]: "},
+		{"capability", "wasm32-wasi", "function main(): i32 {\n    return unix_listen(\"/tmp/x\", 4).fd;\n}\n", "/main.fern:2:23: error[E066]: "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, diags, err := cli.tryEmit(t, tc.target, tc.src)
