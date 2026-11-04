@@ -110,28 +110,28 @@ pub function (e: RgbParseError) to_string(): string {
 }
 
 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError] {
-  let start: i32 = 0;
+  let start = 0;
   if (s.len() > 0 && s[0] == 35) {
     start = 1;
   }
-  let body: i32 = s.len() - start;
+  let body = s.len() - start;
   if (body == 6) {
-    let v: i32 = 0;
-    let i: i32 = 0;
+    let v = 0;
+    let i = 0;
     while (i < 6) {
-      let d: i32 = __hex_digit(s[start + i] as i32);
+      let d = __hex_digit(s[start + i] as i32);
       if (d < 0) {
         return Err(RgbParseError { text: s });
       }
       v = v << 4 | d;
-      i = i + 1;
+      i += 1;
     }
     return Ok(v);
   }
   if (body == 3) {
-    let r: i32 = __hex_digit(s[start] as i32);
-    let g: i32 = __hex_digit(s[start + 1] as i32);
-    let b: i32 = __hex_digit(s[start + 2] as i32);
+    let r = __hex_digit(s[start] as i32);
+    let g = __hex_digit(s[start + 1] as i32);
+    let b = __hex_digit(s[start + 2] as i32);
     if (r < 0 || g < 0 || b < 0) {
       return Err(RgbParseError { text: s });
     }
@@ -141,9 +141,9 @@ pub function parse_rgb_hex(s: string): Result[i32, RgbParseError] {
 }
 
 pub function rgb_luminance(rgb: i32): i32 {
-  let r: i32 = rgb >> 16 & 255;
-  let g: i32 = rgb >> 8 & 255;
-  let b: i32 = rgb & 255;
+  let r = rgb >> 16 & 255;
+  let g = rgb >> 8 & 255;
+  let b = rgb & 255;
   return (r * 299 + g * 587 + b * 114) / 1000;
 }
 

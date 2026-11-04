@@ -86,21 +86,21 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<2 function __zero_u8(n: i32): u8[]>>=
 function __zero_u8(n: i32): u8[] {
-  let a: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let a = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     a = a.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
 
 function __zero_u64(n: i32): u64[] {
   let a: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     a = a.append(0 as u64);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
@@ -126,19 +126,19 @@ function __get_le32(b: [u8], at: i32): u32 {
 }
 
 function __put_be64(own d: u8[], at: i32, v: u64): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8) {
     d = d.with(at + i, (v >> ((7 - i) * 8) as u64 & 255 as u64) as u8);
-    i = i + 1;
+    i += 1;
   }
   return d;
 }
 
 function __put_le64(own d: u8[], at: i32, v: u64): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8) {
     d = d.with(at + i, (v >> (i * 8) as u64 & 255 as u64) as u8);
-    i = i + 1;
+    i += 1;
   }
   return d;
 }
@@ -3299,15 +3299,15 @@ function __mac_block(hlen: i32): i32 {
 }
 
 function __pad_block(bs: i32, key: [u8], pad: i32): u8[] {
-  let out: u8[] = __alloc_u8(bs);
-  let i: i32 = 0;
+  let out = __alloc_u8(bs);
+  let i = 0;
   while (i < bs) {
-    let b: i32 = 0;
+    let b = 0;
     if (i < key.len()) {
       b = key[i] as i32;
     }
     out = out.with(i, (b ^ pad) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -3320,11 +3320,11 @@ function __mac_digest2(hlen: i32, a: [u8], b: [u8]): u8[] {
 }
 
 function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
-  let bs: i32 = __mac_block(hlen);
+  let bs = __mac_block(hlen);
   if (key.len() > bs) {
     return __hmac(hlen, __mac_digest(hlen, key), msg);
   }
-  let inner: u8[] = __mac_digest2(hlen, __pad_block(bs, key, 0x36), msg);
+  let inner = __mac_digest2(hlen, __pad_block(bs, key, 0x36), msg);
   return __mac_digest2(hlen, __pad_block(bs, key, 0x5c), inner);
 }
 ```
@@ -3342,17 +3342,17 @@ pub function hmac_sha384(key: [u8], msg: [u8]): u8[] {
 }
 
 pub function consteq(a: [u8], b: [u8]): boolean {
-  let la: i32 = a.len();
-  let lb: i32 = b.len();
-  let diff: i32 = la ^ lb;
-  let n: i32 = la;
+  let la = a.len();
+  let lb = b.len();
+  let diff = la ^ lb;
+  let n = la;
   if (lb < n) {
     n = lb;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     diff = diff | a[i] as i32 ^ b[i] as i32;
-    i = i + 1;
+    i += 1;
   }
   return diff == 0;
 }
@@ -3367,42 +3367,42 @@ pub function hmac_sha256_verify(key: [u8], msg: [u8], mac: [u8]): boolean {
 ```fern
 <<6 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]>>=
 function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[] {
-  let hLen: i32 = 32;
-  let dk: u8[] = __alloc_u8(dk_len);
-  let offset: i32 = 0;
-  let block_index: i32 = 1;
+  let hLen = 32;
+  let dk = __alloc_u8(dk_len);
+  let offset = 0;
+  let block_index = 1;
   while (offset < dk_len) {
-    let msg: u8[] = __alloc_u8(salt.len() + 4);
-    let s: i32 = 0;
+    let msg = __alloc_u8(salt.len() + 4);
+    let s = 0;
     while (s < salt.len()) {
       msg = msg.with(s, salt[s]);
-      s = s + 1;
+      s += 1;
     }
     msg = msg.with(salt.len(), (block_index >> 24 & 255) as u8);
     msg = msg.with(salt.len() + 1, (block_index >> 16 & 255) as u8);
     msg = msg.with(salt.len() + 2, (block_index >> 8 & 255) as u8);
     msg = msg.with(salt.len() + 3, (block_index & 255) as u8);
-    let u: u8[] = __hmac(32, pw, msg);
-    let t: u8[] = u;
-    let c: i32 = 1;
+    let u = __hmac(32, pw, msg);
+    let t = u;
+    let c = 1;
     while (c < iterations) {
       u = __hmac(32, pw, u);
-      let nt: u8[] = __alloc_u8(hLen);
-      let x: i32 = 0;
+      let nt = __alloc_u8(hLen);
+      let x = 0;
       while (x < hLen) {
         nt = nt.with(x, (t[x] as i32 ^ u[x] as i32) as u8);
-        x = x + 1;
+        x += 1;
       }
       t = nt;
-      c = c + 1;
+      c += 1;
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < hLen && offset + k < dk_len) {
       dk = dk.with(offset + k, t[k]);
-      k = k + 1;
+      k += 1;
     }
-    offset = offset + hLen;
-    block_index = block_index + 1;
+    offset += hLen;
+    block_index += 1;
   }
   return dk;
 }
@@ -3433,23 +3433,23 @@ function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[] {
 }
 
 function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
-  let okm: u8[] = __alloc_u8(length);
+  let okm = __alloc_u8(length);
   let t: u8[] = [];
-  let offset: i32 = 0;
-  let i: i32 = 1;
+  let offset = 0;
+  let i = 1;
   while (offset < length) {
-    let msg: u8[] = __alloc_u8(t.len() + info.len() + 1);
+    let msg = __alloc_u8(t.len() + info.len() + 1);
     msg = __bytes_into(msg, 0, t, 0, t.len());
     msg = __bytes_into(msg, t.len(), info, 0, info.len());
     msg = msg.with(t.len() + info.len(), (i & 255) as u8);
     t = __hmac(hlen, prk, msg);
-    let n: i32 = hlen;
+    let n = hlen;
     if (length - offset < n) {
       n = length - offset;
     }
     okm = __bytes_into(okm, offset, t, 0, n);
-    offset = offset + hlen;
-    i = i + 1;
+    offset += hlen;
+    i += 1;
   }
   return okm;
 }
@@ -3484,30 +3484,30 @@ pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
 }
 
 pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
-  let msg: u8[] = __alloc_u8(8);
-  let i: i32 = 0;
+  let msg = __alloc_u8(8);
+  let i = 0;
   while (i < 8) {
-    let shift: i64 = ((7 - i) * 8) as i64;
+    let shift = ((7 - i) * 8) as i64;
     msg = msg.with(i, (counter >> shift & 255 as i64) as u8);
-    i = i + 1;
+    i += 1;
   }
-  let hs: u8[] = __hmac(32, key, msg);
-  let offset: i32 = hs[hs.len() - 1] as i32 & 15;
+  let hs = __hmac(32, key, msg);
+  let offset = hs[hs.len() - 1] as i32 & 15;
   let bin: i32 = (hs[offset] as i32 & 127) << 24
     | hs[offset + 1] as i32 << 16
     | hs[offset + 2] as i32 << 8
     | hs[offset + 3] as i32;
-  let m: i32 = 1;
-  let d: i32 = 0;
+  let m = 1;
+  let d = 0;
   while (d < digits) {
-    m = m * 10;
-    d = d + 1;
+    m *= 10;
+    d += 1;
   }
   return bin % m;
 }
 
 pub function totp_sha256(key: [u8], unix_time: i64, period: i32, digits: i32): i32 {
-  let counter: i64 = unix_time / (period as i64);
+  let counter = unix_time / (period as i64);
   return hotp_sha256(key, counter, digits);
 }
 ```
@@ -3558,7 +3558,7 @@ function __sponge(rate: i32, out_len: i32): Sha3 {
 }
 
 function __sha3_with(bits: i32): Sha3 {
-  let bytes: i32 = bits / 8;
+  let bytes = bits / 8;
   return __sponge(200 - 2 * bytes, bytes);
 }
 ```
@@ -3589,70 +3589,70 @@ pub function sha3_512_new(): Sha3 {
 ```fern
 <<13 function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3>>=
 function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3 {
-  let a00: u64 = st.s00;
-  let a01: u64 = st.s01;
-  let a02: u64 = st.s02;
-  let a03: u64 = st.s03;
-  let a04: u64 = st.s04;
-  let a05: u64 = st.s05;
-  let a06: u64 = st.s06;
-  let a07: u64 = st.s07;
-  let a08: u64 = st.s08;
-  let a09: u64 = st.s09;
-  let a10: u64 = st.s10;
-  let a11: u64 = st.s11;
-  let a12: u64 = st.s12;
-  let a13: u64 = st.s13;
-  let a14: u64 = st.s14;
-  let a15: u64 = st.s15;
-  let a16: u64 = st.s16;
-  let a17: u64 = st.s17;
-  let a18: u64 = st.s18;
-  let a19: u64 = st.s19;
-  let a20: u64 = st.s20;
-  let a21: u64 = st.s21;
-  let a22: u64 = st.s22;
-  let a23: u64 = st.s23;
-  let a24: u64 = st.s24;
-  let c0: u64 = 0 as u64;
-  let c1: u64 = 0 as u64;
-  let c2: u64 = 0 as u64;
-  let c3: u64 = 0 as u64;
-  let c4: u64 = 0 as u64;
-  let d0: u64 = 0 as u64;
-  let d1: u64 = 0 as u64;
-  let d2: u64 = 0 as u64;
-  let d3: u64 = 0 as u64;
-  let d4: u64 = 0 as u64;
-  let b00: u64 = 0 as u64;
-  let b01: u64 = 0 as u64;
-  let b02: u64 = 0 as u64;
-  let b03: u64 = 0 as u64;
-  let b04: u64 = 0 as u64;
-  let b05: u64 = 0 as u64;
-  let b06: u64 = 0 as u64;
-  let b07: u64 = 0 as u64;
-  let b08: u64 = 0 as u64;
-  let b09: u64 = 0 as u64;
-  let b10: u64 = 0 as u64;
-  let b11: u64 = 0 as u64;
-  let b12: u64 = 0 as u64;
-  let b13: u64 = 0 as u64;
-  let b14: u64 = 0 as u64;
-  let b15: u64 = 0 as u64;
-  let b16: u64 = 0 as u64;
-  let b17: u64 = 0 as u64;
-  let b18: u64 = 0 as u64;
-  let b19: u64 = 0 as u64;
-  let b20: u64 = 0 as u64;
-  let b21: u64 = 0 as u64;
-  let b22: u64 = 0 as u64;
-  let b23: u64 = 0 as u64;
-  let b24: u64 = 0 as u64;
+  let a00 = st.s00;
+  let a01 = st.s01;
+  let a02 = st.s02;
+  let a03 = st.s03;
+  let a04 = st.s04;
+  let a05 = st.s05;
+  let a06 = st.s06;
+  let a07 = st.s07;
+  let a08 = st.s08;
+  let a09 = st.s09;
+  let a10 = st.s10;
+  let a11 = st.s11;
+  let a12 = st.s12;
+  let a13 = st.s13;
+  let a14 = st.s14;
+  let a15 = st.s15;
+  let a16 = st.s16;
+  let a17 = st.s17;
+  let a18 = st.s18;
+  let a19 = st.s19;
+  let a20 = st.s20;
+  let a21 = st.s21;
+  let a22 = st.s22;
+  let a23 = st.s23;
+  let a24 = st.s24;
+  let c0 = 0 as u64;
+  let c1 = 0 as u64;
+  let c2 = 0 as u64;
+  let c3 = 0 as u64;
+  let c4 = 0 as u64;
+  let d0 = 0 as u64;
+  let d1 = 0 as u64;
+  let d2 = 0 as u64;
+  let d3 = 0 as u64;
+  let d4 = 0 as u64;
+  let b00 = 0 as u64;
+  let b01 = 0 as u64;
+  let b02 = 0 as u64;
+  let b03 = 0 as u64;
+  let b04 = 0 as u64;
+  let b05 = 0 as u64;
+  let b06 = 0 as u64;
+  let b07 = 0 as u64;
+  let b08 = 0 as u64;
+  let b09 = 0 as u64;
+  let b10 = 0 as u64;
+  let b11 = 0 as u64;
+  let b12 = 0 as u64;
+  let b13 = 0 as u64;
+  let b14 = 0 as u64;
+  let b15 = 0 as u64;
+  let b16 = 0 as u64;
+  let b17 = 0 as u64;
+  let b18 = 0 as u64;
+  let b19 = 0 as u64;
+  let b20 = 0 as u64;
+  let b21 = 0 as u64;
+  let b22 = 0 as u64;
+  let b23 = 0 as u64;
+  let b24 = 0 as u64;
   let rc: u64[] = [0x0000000000000001 as u64, 0x0000000000008082 as u64, 0x800000000000808a as u64, 0x8000000080008000 as u64, 0x000000000000808b as u64, 0x0000000080000001 as u64, 0x8000000080008081 as u64, 0x8000000000008009 as u64, 0x000000000000008a as u64, 0x0000000000000088 as u64, 0x0000000080008009 as u64, 0x000000008000000a as u64, 0x000000008000808b as u64, 0x800000000000008b as u64, 0x8000000000008089 as u64, 0x8000000000008003 as u64, 0x8000000000008002 as u64, 0x8000000000000080 as u64, 0x000000000000800a as u64, 0x800000008000000a as u64, 0x8000000080008081 as u64, 0x8000000000008080 as u64, 0x0000000080000001 as u64, 0x8000000080008008 as u64];
-  let lanes: i32 = st.rate / 8;
-  let at: i32 = from;
-  let blk: i32 = 0;
+  let lanes = st.rate / 8;
+  let at = from;
+  let blk = 0;
   while (blk < nblocks) {
     a00 = a00 ^ __lane_in(bs, at, 0, lanes);
     a01 = a01 ^ __lane_in(bs, at, 1, lanes);
@@ -3675,7 +3675,7 @@ function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3 {
     a18 = a18 ^ __lane_in(bs, at, 18, lanes);
     a19 = a19 ^ __lane_in(bs, at, 19, lanes);
     a20 = a20 ^ __lane_in(bs, at, 20, lanes);
-    let r: i32 = 0;
+    let r = 0;
     while (r < 24) {
       c0 = a00 ^ a05 ^ a10 ^ a15 ^ a20;
       c1 = a01 ^ a06 ^ a11 ^ a16 ^ a21;
@@ -3763,10 +3763,10 @@ function __sha3_blocks(st: Sha3, bs: [u8], from: i32, nblocks: i32): Sha3 {
       a23 = b23 ^ (b24 ^ 0xffffffffffffffff as u64) & b20;
       a24 = b24 ^ (b20 ^ 0xffffffffffffffff as u64) & b21;
       a00 = a00 ^ rc[r];
-      r = r + 1;
+      r += 1;
     }
-    at = at + st.rate;
-    blk = blk + 1;
+    at += st.rate;
+    blk += 1;
   }
   return Sha3 { ...st, s00: a00, s01: a01, s02: a02, s03: a03, s04: a04, s05: a05, s06: a06, s07: a07, s08: a08, s09: a09, s10: a10, s11: a11, s12: a12, s13: a13, s14: a14, s15: a15, s16: a16, s17: a17, s18: a18, s19: a19, s20: a20, s21: a21, s22: a22, s23: a23, s24: a24 };
 }
@@ -3780,35 +3780,35 @@ function __lane_in(bs: [u8], at: i32, i: i32, lanes: i32): u64 {
   if (i >= lanes) {
     return 0 as u64;
   }
-  let o: i32 = at + i * 8;
+  let o = at + i * 8;
   return bs[o] as u64 | bs[o + 1] as u64 << 8 as u64 | bs[o + 2] as u64 << 16 as u64 | bs[o + 3] as u64 << 24 as u64 | bs[o + 4] as u64 << 32 as u64 | bs[o + 5] as u64 << 40 as u64 | bs[o + 6] as u64 << 48 as u64 | bs[o + 7] as u64 << 56 as u64;
 }
 
 function __sha3_absorb(own h: Sha3, bs: [u8]): Sha3 {
-  let n: i32 = bs.len();
-  let pos: i32 = 0;
-  let bl: i32 = h.buf_len;
+  let n = bs.len();
+  let pos = 0;
+  let bl = h.buf_len;
   if (bl > 0) {
-    let take: i32 = h.rate - bl;
+    let take = h.rate - bl;
     if (take > n) {
       take = n;
     }
     h = Sha3 { ...h, buf: __bytes_into(h.buf, bl, bs, 0, take) };
-    bl = bl + take;
+    bl += take;
     pos = take;
     if (bl == h.rate) {
       h = __sha3_blocks(h, h.buf, 0, 1);
       bl = 0;
     }
   }
-  let nb: i32 = (n - pos) / h.rate;
+  let nb = (n - pos) / h.rate;
   if (nb > 0) {
     h = __sha3_blocks(h, bs, pos, nb);
     pos = pos + nb * h.rate;
   }
   if (pos < n) {
     h = Sha3 { ...h, buf: __bytes_into(h.buf, bl, bs, pos, n - pos) };
-    bl = bl + (n - pos);
+    bl += n - pos;
   }
   return Sha3 { ...h, buf_len: bl };
 }
@@ -3829,7 +3829,7 @@ pub function (h: Sha3) update(chunk: [u8]): Sha3 {
 ```fern
 <<16 function __sha3_pad(h: Sha3, domain: u8): Sha3>>=
 function __sha3_pad(h: Sha3, domain: u8): Sha3 {
-  let pad: u8[] = __bytes_into(__zero_u8(h.rate), 0, h.buf, 0, h.buf_len);
+  let pad = __bytes_into(__zero_u8(h.rate), 0, h.buf, 0, h.buf_len);
   pad = pad.with(h.buf_len, domain);
   pad = pad.with(h.rate - 1, (pad[h.rate - 1] | 0x80) as u8);
   return __sha3_blocks(h, pad, 0, 1);
@@ -3874,10 +3874,10 @@ function __sha3_out(st: Sha3, own out: u8[], n: i32): u8[] {
 }
 
 function __put_lane(own out: u8[], at: i32, lane: u64, n: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8 && at + i < n) {
     out = out.with(at + i, (lane >> (i * 8) as u64 & 255 as u64) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -3934,26 +3934,26 @@ pub function (own x: Shake) update(chunk: [u8]): Shake {
 }
 
 pub function (x: Shake) reader(): ShakeReader {
-  let st: Sha3 = __sha3_pad(x.sponge, 0x1f as u8);
+  let st = __sha3_pad(x.sponge, 0x1f as u8);
   return ShakeReader { sponge: Sha3 { ...st, buf: __sha3_out(st, __alloc_u8(st.rate), st.rate), buf_len: 0 } };
 }
 
 pub function (r: ShakeReader) squeeze(n: i32): (u8[], ShakeReader) {
-  let st: Sha3 = r.sponge;
-  let out: u8[] = __alloc_u8(n);
-  let at: i32 = 0;
+  let st = r.sponge;
+  let out = __alloc_u8(n);
+  let at = 0;
   while (at < n) {
     if (st.buf_len == st.rate) {
       st = __sha3_blocks(st, __zero_u8(st.rate), 0, 1);
       st = Sha3 { ...st, buf: __sha3_out(st, __alloc_u8(st.rate), st.rate), buf_len: 0 };
     }
-    let take: i32 = st.rate - st.buf_len;
+    let take = st.rate - st.buf_len;
     if (take > n - at) {
       take = n - at;
     }
     out = __bytes_into(out, at, st.buf, st.buf_len, take);
     st = Sha3 { ...st, buf_len: st.buf_len + take };
-    at = at + take;
+    at += take;
   }
   return (out, ShakeReader { sponge: st });
 }
@@ -3974,11 +3974,11 @@ pub function shake256(data: [u8], out_len: i32): u8[] {
 ```fern
 <<22 pub function erase(own bytes: u8[]): void>>=
 pub function erase(own bytes: u8[]): void {
-  let n: i32 = bytes.len();
-  let i: i32 = 0;
+  let n = bytes.len();
+  let i = 0;
   while (i < n) {
     bytes = bytes.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
 }
 ```

@@ -63,25 +63,25 @@ function __cksum_tables(): u32[] {
   let t: u32[] = [];
   let i: u32 = 0;
   while (i < 256) {
-    let c: u32 = i << 24;
-    let k: i32 = 0;
+    let c = i << 24;
+    let k = 0;
     while (k < 8) {
       if ((c & 0x80000000) != 0) {
         c = c << 1 ^ 0x04c11db7;
       } else {
         c = c << 1;
       }
-      k = k + 1;
+      k += 1;
     }
     t = t.append(c);
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   let p: u32 = 0;
   while (j < 1792) {
     p = t[j];
     t = t.append(p << 8 ^ t[(p >> 24 & 255) as i32]);
-    j = j + 1;
+    j += 1;
   }
   return t;
 }
@@ -107,9 +107,9 @@ pub function (c: Cksum) byte_count(): u64 {
 }
 
 pub function (c: Cksum) finish(): u32 {
-  let t: u32[] = c.table;
-  let crc: u32 = c.crc;
-  let n: u64 = c.len;
+  let t = c.table;
+  let crc = c.crc;
+  let n = c.len;
   while (n != 0 as u64) {
     crc = crc << 8 ^ t[((crc >> 24 ^ (n & 255 as u64) as u32) & 255) as i32];
     n = n >> 8 as u64;

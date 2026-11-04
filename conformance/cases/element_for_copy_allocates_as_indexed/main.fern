@@ -1,0 +1,127 @@
+// A copy loop over the elements of an array allocates as many times as the
+// same loop over an index, for bytes, integers, strings and records.
+
+import "std/i32";
+import "std/i64";
+
+struct P { name: string, n: i32 }
+
+function bytes_for(xs: u8[]): u8[] {
+  let out: u8[] = [];
+  for x in xs {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function bytes_idx(xs: u8[]): u8[] {
+  let out: u8[] = [];
+  for i in 0..xs.len() {
+    out = out.append(xs[i]);
+  }
+  return out;
+}
+
+function ints_for(xs: i32[]): i32[] {
+  let out: i32[] = [];
+  for x in xs {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function ints_idx(xs: i32[]): i32[] {
+  let out: i32[] = [];
+  for i in 0..xs.len() {
+    out = out.append(xs[i]);
+  }
+  return out;
+}
+
+function strings_for(xs: string[]): string[] {
+  let out: string[] = [];
+  for x in xs {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function strings_idx(xs: string[]): string[] {
+  let out: string[] = [];
+  for i in 0..xs.len() {
+    out = out.append(xs[i]);
+  }
+  return out;
+}
+
+function records_for(xs: P[]): P[] {
+  let out: P[] = [];
+  for x in xs {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function records_idx(xs: P[]): P[] {
+  let out: P[] = [];
+  for i in 0..xs.len() {
+    out = out.append(xs[i]);
+  }
+  return out;
+}
+
+function verdict(name: string, by_element: i64, by_index: i64): void {
+  if (by_element == by_index) {
+    print(name + ": same allocations");
+  } else {
+    print(name + ": element loop " + by_element.to_string() + ", indexed loop " + by_index.to_string());
+  }
+}
+
+function byte_sum(xs: u8[]): i32 {
+  let t = 0;
+  for x in xs {
+    t = t + x as i32;
+  }
+  return t;
+}
+
+function main(): i32 {
+  let n = 300;
+  let bs: u8[] = [];
+  let is: i32[] = [];
+  let ss: string[] = [];
+  let ps: P[] = [];
+  for i in 0..n {
+    bs = bs.append((i % 251) as u8);
+    is = is.append(i * 3);
+    ss = ss.append("element-" + i.to_string());
+    ps = ps.append(P { name: "record-" + i.to_string(), n: i });
+  }
+  let a0 = __heap_alloc_count();
+  let b1 = bytes_for(bs);
+  let a1 = __heap_alloc_count();
+  let b2 = bytes_idx(bs);
+  let a2 = __heap_alloc_count();
+  let i1 = ints_for(is);
+  let a3 = __heap_alloc_count();
+  let i2 = ints_idx(is);
+  let a4 = __heap_alloc_count();
+  let s1 = strings_for(ss);
+  let a5 = __heap_alloc_count();
+  let s2 = strings_idx(ss);
+  let a6 = __heap_alloc_count();
+  let p1 = records_for(ps);
+  let a7 = __heap_alloc_count();
+  let p2 = records_idx(ps);
+  let a8 = __heap_alloc_count();
+  verdict("bytes", a1 - a0, a2 - a1);
+  verdict("ints", a3 - a2, a4 - a3);
+  verdict("strings", a5 - a4, a6 - a5);
+  verdict("records", a7 - a6, a8 - a7);
+  print(b1.len().to_string() + " " + byte_sum(b1).to_string() + " " + byte_sum(b2).to_string());
+  print(i1[n - 1].to_string() + " " + i2[n - 1].to_string());
+  print(s1[n - 1] + " " + s2[0]);
+  print(p1[n - 1].name + " " + p2[7].n.to_string());
+  return 0;
+}

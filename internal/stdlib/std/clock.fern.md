@@ -18,7 +18,7 @@ import "std/clock";
 import "std/time";
 
 function main(): i32 {
-  let start: Instant = clock.instant();
+  let start = clock.instant();
   if (clock.elapsed(start).is_negative()) { return 1; }
   if (clock.now().sec < 1700000000) { return 2; }
   return 0;
@@ -53,7 +53,7 @@ pub function now(): time.Timestamp {
 }
 
 pub function instant(): Instant {
-  let d: Duration = time.duration_nanos(monotonic_ns());
+  let d = time.duration_nanos(monotonic_ns());
   return Instant { sec: d.sec, nsec: d.nsec };
 }
 

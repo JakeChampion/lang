@@ -105,8 +105,8 @@ function shape_error(): void {
 }
 
 function check_shape(shape: i32[]): void {
-  let n: i32 = 1;
-  let k: i32 = 0;
+  let n = 1;
+  let k = 0;
   while (k < shape.len()) {
     if (shape[k] < 0) {
       shape_error();
@@ -114,35 +114,35 @@ function check_shape(shape: i32[]): void {
     if (shape[k] != 0 && n > 2147483647 / shape[k]) {
       shape_error();
     }
-    n = n * shape[k];
-    k = k + 1;
+    n *= shape[k];
+    k += 1;
   }
 }
 
 function count_of(shape: i32[]): i32 {
   check_shape(shape);
-  let n: i32 = 1;
-  let k: i32 = 0;
+  let n = 1;
+  let k = 0;
   while (k < shape.len()) {
-    n = n * shape[k];
-    k = k + 1;
+    n *= shape[k];
+    k += 1;
   }
   return n;
 }
 
 function row_major(shape: i32[]): i32[] {
   let out: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < shape.len()) {
     out = out.append(0);
-    k = k + 1;
+    k += 1;
   }
-  let s: i32 = 1;
+  let s = 1;
   k = shape.len() - 1;
   while (k >= 0) {
     out = out.with(k, s);
-    s = s * shape[k];
-    k = k - 1;
+    s *= shape[k];
+    k -= 1;
   }
   return out;
 }
@@ -176,13 +176,13 @@ pub function (a: NdArray[T]) len(): i32 {
 }
 
 pub function (a: NdArray[T]) is_row_major(): boolean {
-  let rm: i32[] = row_major(a.shape);
-  let k: i32 = 0;
+  let rm = row_major(a.shape);
+  let k = 0;
   while (k < a.shape.len()) {
     if (a.shape[k] != 1 && a.strides[k] != rm[k]) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return true;
 }
@@ -200,14 +200,14 @@ function addr[T](a: NdArray[T], idx: i32[]): i32 {
   if (idx.len() != a.shape.len()) {
     return -1;
   }
-  let at: i32 = a.offset;
-  let k: i32 = 0;
+  let at = a.offset;
+  let k = 0;
   while (k < idx.len()) {
     if (idx[k] < 0 || idx[k] >= a.shape[k]) {
       return -1;
     }
     at = at + idx[k] * a.strides[k];
-    k = k + 1;
+    k += 1;
   }
   return at;
 }
@@ -218,7 +218,7 @@ function addr[T](a: NdArray[T], idx: i32[]): i32 {
 ```fern
 <<6 pub function (a: NdArray[T]) get(idx: i32[]): Option[T]>>=
 pub function (a: NdArray[T]) get(idx: i32[]): Option[T] {
-  let at: i32 = addr(a, idx);
+  let at = addr(a, idx);
   if (at < 0) {
     return None;
   }
@@ -226,7 +226,7 @@ pub function (a: NdArray[T]) get(idx: i32[]): Option[T] {
 }
 
 pub function (a: NdArray[T]) get_unchecked(idx: i32[]): T {
-  let at: i32 = addr(a, idx);
+  let at = addr(a, idx);
   if (at < 0) {
     shape_error();
   }
@@ -251,10 +251,10 @@ function check_axis[T](a: NdArray[T], axis: i32): void {
 <<8 pub function (a: NdArray[T]) transpose(): NdArray[T]>>=
 pub function (a: NdArray[T]) transpose(): NdArray[T] {
   let axes: i32[] = [];
-  let k: i32 = a.shape.len() - 1;
+  let k = a.shape.len() - 1;
   while (k >= 0) {
     axes = axes.append(k);
-    k = k - 1;
+    k -= 1;
   }
   return a.permute(axes);
 }
@@ -266,10 +266,10 @@ pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
   let seen: boolean[] = [];
   let shape: i32[] = [];
   let strides: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < axes.len()) {
     seen = seen.append(false);
-    k = k + 1;
+    k += 1;
   }
   k = 0;
   while (k < axes.len()) {
@@ -280,16 +280,16 @@ pub function (a: NdArray[T]) permute(axes: i32[]): NdArray[T] {
     seen = seen.with(axes[k], true);
     shape = shape.append(a.shape[axes[k]]);
     strides = strides.append(a.strides[axes[k]]);
-    k = k + 1;
+    k += 1;
   }
   return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
 }
 
 pub function (a: NdArray[T]) reverse(axis: i32): NdArray[T] {
   check_axis(a, axis);
-  let n: i32 = a.shape[axis];
-  let s: i32 = a.strides[axis];
-  let offset: i32 = a.offset;
+  let n = a.shape[axis];
+  let s = a.strides[axis];
+  let offset = a.offset;
   if (n > 0) {
     offset = offset + (n - 1) * s;
   }
@@ -301,7 +301,7 @@ pub function (a: NdArray[T]) slice(axis: i32, lo: i32, hi: i32): NdArray[T] {
   if (lo < 0 || lo > hi || hi > a.shape[axis]) {
     shape_error();
   }
-  let offset: i32 = a.offset + lo * a.strides[axis];
+  let offset = a.offset + lo * a.strides[axis];
   return NdArray { data: a.data, shape: a.shape.with(axis, hi - lo), strides: a.strides, offset: offset };
 }
 
@@ -312,13 +312,13 @@ pub function (a: NdArray[T]) select(axis: i32, i: i32): NdArray[T] {
   }
   let shape: i32[] = [];
   let strides: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < a.shape.len()) {
     if (k != axis) {
       shape = shape.append(a.shape[k]);
       strides = strides.append(a.strides[k]);
     }
-    k = k + 1;
+    k += 1;
   }
   return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset + i * a.strides[axis] };
 }
@@ -353,21 +353,21 @@ pub function (a: NdArray[T]) to_flat(): T[] {
 ```fern
 <<9 function addr_of[T](a: NdArray[T], idx: i32[]): i32>>=
 function addr_of[T](a: NdArray[T], idx: i32[]): i32 {
-  let at: i32 = a.offset;
-  let k: i32 = 0;
+  let at = a.offset;
+  let k = 0;
   while (k < idx.len()) {
     at = at + idx[k] * a.strides[k];
-    k = k + 1;
+    k += 1;
   }
   return at;
 }
 
 function zeros(rank: i32): i32[] {
   let idx: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < rank) {
     idx = idx.append(0);
-    k = k + 1;
+    k += 1;
   }
   return idx;
 }
@@ -382,13 +382,13 @@ pub function (a: NdArray[T]) map[U](f: (T) => U): NdArray[U] {
     return from_flat(packed_map(a.data, f), a.shape);
   }
   let out: U[] = [];
-  let n: i32 = a.len();
-  let idx: i32[] = zeros(a.shape.len());
-  let i: i32 = 0;
+  let n = a.len();
+  let idx = zeros(a.shape.len());
+  let i = 0;
   while (i < n) {
     out = out.append(f(a.data[addr_of(a, idx)]));
     idx = bump(idx, a.shape);
-    i = i + 1;
+    i += 1;
   }
   return from_flat(out, a.shape);
 }
@@ -400,11 +400,11 @@ pub function (a: NdArray[T]) map[U](f: (T) => U): NdArray[U] {
 <<11 function packed_map[T, U](data: T[], f: (T)>>=
 function packed_map[T, U](data: T[], f: (T) => U): U[] {
   let out: U[] = [];
-  let n: i32 = data.len();
-  let i: i32 = 0;
+  let n = data.len();
+  let i = 0;
   while (i < n) {
     out = out.append(f(data[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -413,12 +413,12 @@ function same_shape(x: i32[], y: i32[]): boolean {
   if (x.len() != y.len()) {
     return false;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < x.len()) {
     if (x[k] != y[k]) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return true;
 }
@@ -431,15 +431,15 @@ function same_shape(x: i32[], y: i32[]): boolean {
 pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
   check_shape(x);
   check_shape(y);
-  let rank: i32 = x.len();
+  let rank = x.len();
   if (y.len() > rank) {
     rank = y.len();
   }
-  let out: i32[] = zeros(rank);
-  let k: i32 = 0;
+  let out = zeros(rank);
+  let k = 0;
   while (k < rank) {
-    let ex: i32 = 1;
-    let ey: i32 = 1;
+    let ex = 1;
+    let ey = 1;
     if (k >= rank - x.len()) {
       ex = x[k - (rank - x.len())];
     }
@@ -453,7 +453,7 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
     } else {
       shape_error();
     }
-    k = k + 1;
+    k += 1;
   }
   check_shape(out);
   return out;
@@ -461,27 +461,27 @@ pub function broadcast_shape(x: i32[], y: i32[]): i32[] {
 
 pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
   check_shape(shape);
-  let pad: i32 = shape.len() - a.shape.len();
+  let pad = shape.len() - a.shape.len();
   if (pad < 0) {
     shape_error();
   }
-  let strides: i32[] = zeros(shape.len());
-  let k: i32 = 0;
+  let strides = zeros(shape.len());
+  let k = 0;
   while (k < a.shape.len()) {
     if (a.shape[k] == shape[pad + k]) {
       strides = strides.with(pad + k, a.strides[k]);
     } else if (a.shape[k] != 1) {
       shape_error();
     }
-    k = k + 1;
+    k += 1;
   }
   return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
 }
 
 pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-  let shape: i32[] = broadcast_shape(a.shape, b.shape);
-  let x: NdArray[T] = a;
-  let y: NdArray[U] = b;
+  let shape = broadcast_shape(a.shape, b.shape);
+  let x = a;
+  let y = b;
   if (!same_shape(a.shape, shape)) {
     x = a.broadcast_to(shape);
   }
@@ -492,13 +492,13 @@ pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdAr
     return from_flat(packed_zip(x.data, y.data, f), shape);
   }
   let out: V[] = [];
-  let n: i32 = count_of(shape);
-  let idx: i32[] = zeros(shape.len());
-  let i: i32 = 0;
+  let n = count_of(shape);
+  let idx = zeros(shape.len());
+  let i = 0;
   while (i < n) {
     out = out.append(f(x.data[addr_of(x, idx)], y.data[addr_of(y, idx)]));
     idx = bump(idx, shape);
-    i = i + 1;
+    i += 1;
   }
   return from_flat(out, shape);
 }
@@ -510,11 +510,11 @@ pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdAr
 <<13 function packed_zip[T, U, V](x: T[], y: U[], f: (T, U)>>=
 function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
   let out: V[] = [];
-  let n: i32 = x.len();
-  let i: i32 = 0;
+  let n = x.len();
+  let i = 0;
   while (i < n) {
     out = out.append(f(x[i], y[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -525,15 +525,15 @@ function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
 ```fern
 <<14 pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U)>>=
 pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
-  let shape: i32[] = join(a.shape, b.shape);
+  let shape = join(a.shape, b.shape);
   check_shape(shape);
   if (a.is_packed() && b.is_packed()) {
     return packed_outer(a.data, b.data, shape, f);
   }
-  let ra: i32 = a.shape.len();
-  let rb: i32 = b.shape.len();
-  let x: NdArray[T] = NdArray { data: a.data, shape: join(a.shape, ones(rb)), strides: join(a.strides, zeros(rb)), offset: a.offset };
-  let y: NdArray[U] = NdArray { data: b.data, shape: join(ones(ra), b.shape), strides: join(zeros(ra), b.strides), offset: b.offset };
+  let ra = a.shape.len();
+  let rb = b.shape.len();
+  let x = NdArray { data: a.data, shape: join(a.shape, ones(rb)), strides: join(a.strides, zeros(rb)), offset: a.offset };
+  let y = NdArray { data: b.data, shape: join(ones(ra), b.shape), strides: join(zeros(ra), b.strides), offset: b.offset };
   return x.zip_with(y, f);
 }
 ```
@@ -547,49 +547,49 @@ function packed_outer[T, U, V](a: T[], b: U[], shape: i32[], f: (T, U) => V): Nd
   if (b.len() == 0) {
     return from_flat(out, shape);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < b.len()) {
       out = out.append(f(a[i], b[j]));
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return from_flat(out, shape);
 }
 
 function join(x: i32[], y: i32[]): i32[] {
   let out: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < x.len()) {
     out = out.append(x[k]);
-    k = k + 1;
+    k += 1;
   }
   k = 0;
   while (k < y.len()) {
     out = out.append(y[k]);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function ones(rank: i32): i32[] {
   let out: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < rank) {
     out = out.append(1);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, count: i32): i32 {
-  let at: i32 = a.offset;
-  let k: i32 = 0;
+  let at = a.offset;
+  let k = 0;
   while (k < count) {
     at = at + idx[idx_from + k] * a.strides[axis_from + k];
-    k = k + 1;
+    k += 1;
   }
   return at;
 }
@@ -600,34 +600,34 @@ function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, co
 ```fern
 <<16 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T)>>=
 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
-  let ra: i32 = a.shape.len();
-  let rb: i32 = b.shape.len();
-  let shape: i32[] = inner_shape(a.shape, b.shape);
-  let n: i32 = a.shape[ra - 1];
-  let sa: i32 = a.strides[ra - 1];
-  let sb: i32 = b.strides[0];
+  let ra = a.shape.len();
+  let rb = b.shape.len();
+  let shape = inner_shape(a.shape, b.shape);
+  let n = a.shape[ra - 1];
+  let sa = a.strides[ra - 1];
+  let sb = b.strides[0];
   let out: A[] = [];
-  let total: i32 = count_of(shape);
+  let total = count_of(shape);
   if (total == 0) {
     return from_flat(out, shape);
   }
   if (a.is_packed() && b.is_packed()) {
     return from_flat(packed_inner(a.data, b.data, extent_before(a.shape, ra - 1), n, extent_after(b.shape, 0), init, mul, add), shape);
   }
-  let idx: i32[] = zeros(shape.len());
-  let i: i32 = 0;
+  let idx = zeros(shape.len());
+  let i = 0;
   while (i < total) {
-    let pa: i32 = base_of(a, idx, 0, 0, ra - 1);
-    let pb: i32 = base_of(b, idx, ra - 1, 1, rb - 1);
-    let acc: A = init;
-    let k: i32 = 0;
+    let pa = base_of(a, idx, 0, 0, ra - 1);
+    let pb = base_of(b, idx, ra - 1, 1, rb - 1);
+    let acc = init;
+    let k = 0;
     while (k < n) {
       acc = add(acc, mul(a.data[pa + k * sa], b.data[pb + k * sb]));
-      k = k + 1;
+      k += 1;
     }
     out = out.append(acc);
     idx = bump(idx, shape);
-    i = i + 1;
+    i += 1;
   }
   return from_flat(out, shape);
 }
@@ -645,32 +645,32 @@ function inner_shape(a: i32[], b: i32[]): i32[] {
 }
 
 function inner_kernel(a: NdArray[f64], b: NdArray[f64], init: f64): NdArray[f64] {
-  let shape: i32[] = inner_shape(a.shape, b.shape);
-  let total: i32 = count_of(shape);
+  let shape = inner_shape(a.shape, b.shape);
+  let total = count_of(shape);
   if (total == 0) {
     return from_flat([], shape);
   }
-  let last: i32 = a.shape.len() - 1;
-  let data: f64[] = __inner_mul_add_f64(a.data, b.data, extent_before(a.shape, last), a.shape[last], extent_after(b.shape, 0), init);
+  let last = a.shape.len() - 1;
+  let data = __inner_mul_add_f64(a.data, b.data, extent_before(a.shape, last), a.shape[last], extent_after(b.shape, 0), init);
   return from_flat(data, shape);
 }
 
 function packed_inner[T, A](xs: T[], ys: T[], rows: i32, extent: i32, columns: i32, init: A, mul: (T, T) => A, add: (A, A) => A): A[] {
   let out: A[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < rows) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < columns) {
       let acc: A = init;
-      let k: i32 = 0;
+      let k = 0;
       while (k < extent) {
         acc = add(acc, mul(xs[i * extent + k], ys[k * columns + j]));
-        k = k + 1;
+        k += 1;
       }
       out = out.append(acc);
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -684,14 +684,14 @@ pub function (a: NdArray[T]) fold_all[A](init: A, f: (A, T) => A): A {
   if (a.is_packed()) {
     return packed_fold(a.data, init, f);
   }
-  let acc: A = init;
-  let n: i32 = a.len();
-  let idx: i32[] = zeros(a.shape.len());
-  let i: i32 = 0;
+  let acc = init;
+  let n = a.len();
+  let idx = zeros(a.shape.len());
+  let i = 0;
   while (i < n) {
     acc = f(acc, a.data[addr_of(a, idx)]);
     idx = bump(idx, a.shape);
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -703,114 +703,114 @@ pub function (a: NdArray[T]) fold_all[A](init: A, f: (A, T) => A): A {
 <<19 function packed_fold[T, A](data: T[], init: A, f: (A, T)>>=
 function packed_fold[T, A](data: T[], init: A, f: (A, T) => A): A {
   let acc: A = init;
-  let n: i32 = data.len();
-  let i: i32 = 0;
+  let n = data.len();
+  let i = 0;
   while (i < n) {
     acc = f(acc, data[i]);
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
 
 function drop_axis(shape: i32[], axis: i32): i32[] {
   let out: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < shape.len()) {
     if (k != axis) {
       out = out.append(shape[k]);
     }
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function lane_of(idx: i32[], axis: i32, lane_strides: i32[]): i32 {
-  let lane: i32 = 0;
-  let k: i32 = 0;
-  let j: i32 = 0;
+  let lane = 0;
+  let k = 0;
+  let j = 0;
   while (k < idx.len()) {
     if (k != axis) {
       lane = lane + idx[k] * lane_strides[j];
-      j = j + 1;
+      j += 1;
     }
-    k = k + 1;
+    k += 1;
   }
   return lane;
 }
 
 function lanes[A](count: i32, init: A): A[] {
   let accs: A[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
     accs = accs.append(init);
-    i = i + 1;
+    i += 1;
   }
   return accs;
 }
 
 function extent_after(shape: i32[], axis: i32): i32 {
-  let s: i32 = 1;
-  let k: i32 = axis + 1;
+  let s = 1;
+  let k = axis + 1;
   while (k < shape.len()) {
-    s = s * shape[k];
-    k = k + 1;
+    s *= shape[k];
+    k += 1;
   }
   return s;
 }
 
 function extent_before(shape: i32[], axis: i32): i32 {
-  let s: i32 = 1;
-  let k: i32 = 0;
+  let s = 1;
+  let k = 0;
   while (k < axis) {
-    s = s * shape[k];
-    k = k + 1;
+    s *= shape[k];
+    k += 1;
   }
   return s;
 }
 
 function packed_reduce[T, A](data: T[], outer: i32, extent: i32, inner: i32, init: A, f: (A, T) => A): A[] {
-  let accs: A[] = lanes(outer * inner, init);
-  let i: i32 = 0;
-  let h: i32 = 0;
+  let accs = lanes(outer * inner, init);
+  let i = 0;
+  let h = 0;
   while (h < outer) {
-    let base: i32 = h * inner;
-    let t: i32 = 0;
+    let base = h * inner;
+    let t = 0;
     while (t < extent) {
-      let l: i32 = 0;
+      let l = 0;
       while (l < inner) {
-        let lane: i32 = base + l;
+        let lane = base + l;
         accs = accs.with(lane, f(accs[lane], data[i]));
-        i = i + 1;
-        l = l + 1;
+        i += 1;
+        l += 1;
       }
-      t = t + 1;
+      t += 1;
     }
-    h = h + 1;
+    h += 1;
   }
   return accs;
 }
 
 function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init: A, f: (A, T) => A): A[] {
-  let accs: A[] = lanes(outer * inner, init);
+  let accs = lanes(outer * inner, init);
   let out: A[] = [];
-  let i: i32 = 0;
-  let h: i32 = 0;
+  let i = 0;
+  let h = 0;
   while (h < outer) {
-    let base: i32 = h * inner;
-    let t: i32 = 0;
+    let base = h * inner;
+    let t = 0;
     while (t < extent) {
-      let l: i32 = 0;
+      let l = 0;
       while (l < inner) {
-        let lane: i32 = base + l;
-        let acc: A = f(accs[lane], data[i]);
+        let lane = base + l;
+        let acc = f(accs[lane], data[i]);
         accs = accs.with(lane, acc);
         out = out.append(acc);
-        i = i + 1;
-        l = l + 1;
+        i += 1;
+        l += 1;
       }
-      t = t + 1;
+      t += 1;
     }
-    h = h + 1;
+    h += 1;
   }
   return out;
 }
@@ -822,8 +822,8 @@ function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init:
 <<20 pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T)>>=
 pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
-  let rshape: i32[] = drop_axis(a.shape, axis);
-  let lane_strides: i32[] = row_major(rshape);
+  let rshape = drop_axis(a.shape, axis);
+  let lane_strides = row_major(rshape);
   if (a.is_packed()) {
     return from_flat(
       packed_reduce(
@@ -833,23 +833,23 @@ pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A):
       rshape,
     );
   }
-  let accs: A[] = lanes(count_of(rshape), init);
-  let n: i32 = a.len();
-  let idx: i32[] = zeros(a.shape.len());
-  let i: i32 = 0;
+  let accs = lanes(count_of(rshape), init);
+  let n = a.len();
+  let idx = zeros(a.shape.len());
+  let i = 0;
   while (i < n) {
-    let lane: i32 = lane_of(idx, axis, lane_strides);
+    let lane = lane_of(idx, axis, lane_strides);
     accs = accs.with(lane, f(accs[lane], a.data[addr_of(a, idx)]));
     idx = bump(idx, a.shape);
-    i = i + 1;
+    i += 1;
   }
   return from_flat(accs, rshape);
 }
 
 pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
-  let rshape: i32[] = drop_axis(a.shape, axis);
-  let lane_strides: i32[] = row_major(rshape);
+  let rshape = drop_axis(a.shape, axis);
+  let lane_strides = row_major(rshape);
   if (a.is_packed()) {
     return from_flat(
       packed_scan(
@@ -859,18 +859,18 @@ pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): N
       a.shape,
     );
   }
-  let accs: A[] = lanes(count_of(rshape), init);
+  let accs = lanes(count_of(rshape), init);
   let out: A[] = [];
-  let n: i32 = a.len();
-  let idx: i32[] = zeros(a.shape.len());
-  let i: i32 = 0;
+  let n = a.len();
+  let idx = zeros(a.shape.len());
+  let i = 0;
   while (i < n) {
-    let lane: i32 = lane_of(idx, axis, lane_strides);
-    let acc: A = f(accs[lane], a.data[addr_of(a, idx)]);
+    let lane = lane_of(idx, axis, lane_strides);
+    let acc = f(accs[lane], a.data[addr_of(a, idx)]);
     accs = accs.with(lane, acc);
     out = out.append(acc);
     idx = bump(idx, a.shape);
-    i = i + 1;
+    i += 1;
   }
   return from_flat(out, a.shape);
 }
@@ -879,41 +879,41 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
   if (k < 0 || k > a.shape.len()) {
     shape_error();
   }
-  let fr: i32 = a.shape.len() - k;
+  let fr = a.shape.len() - k;
   let frame: i32[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < fr) {
     frame = frame.append(a.shape[j]);
-    j = j + 1;
+    j += 1;
   }
-  let cells: i32 = count_of(frame);
+  let cells = count_of(frame);
   let out: U[] = [];
   let cshape: i32[] = [];
-  let idx: i32[] = zeros(fr);
-  let packed: boolean = a.is_packed();
+  let idx = zeros(fr);
+  let packed = a.is_packed();
   let cshape_in: i32[] = [];
   let cstrides: i32[] = [];
-  let q: i32 = fr;
+  let q = fr;
   while (q < a.shape.len()) {
     cshape_in = cshape_in.append(a.shape[q]);
     cstrides = cstrides.append(a.strides[q]);
-    q = q + 1;
+    q += 1;
   }
-  let csize: i32 = count_of(cshape_in);
-  let i: i32 = 0;
+  let csize = count_of(cshape_in);
+  let i = 0;
   while (i < cells) {
-    let cell: NdArray[T] = a;
+    let cell = a;
     if (packed) {
       cell = NdArray { data: a.data, shape: cshape_in, strides: cstrides, offset: i * csize };
     } else {
-      let d: i32 = 0;
+      let d = 0;
       while (d < fr) {
         cell = cell.select(0, idx[d]);
-        d = d + 1;
+        d += 1;
       }
       idx = bump(idx, frame);
     }
-    let r: NdArray[U] = f(cell);
+    let r = f(cell);
     if (i == 0) {
       cshape = r.shape();
     } else {
@@ -921,13 +921,13 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
         shape_error();
       }
     }
-    let flat: U[] = r.to_flat();
-    let m: i32 = 0;
+    let flat = r.to_flat();
+    let m = 0;
     while (m < flat.len()) {
       out = out.append(flat[m]);
-      m = m + 1;
+      m += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return from_flat(out, join(frame, cshape));
 }
@@ -939,25 +939,25 @@ pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]):
 <<21 function copy_flat[T](a: NdArray[T]): T[]>>=
 function copy_flat[T](a: NdArray[T]): T[] {
   let out: T[] = [];
-  let n: i32 = a.len();
-  let idx: i32[] = zeros(a.shape.len());
-  let i: i32 = 0;
+  let n = a.len();
+  let idx = zeros(a.shape.len());
+  let i = 0;
   while (i < n) {
     out = out.append(a.data[addr_of(a, idx)]);
     idx = bump(idx, a.shape);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function bump(own idx: i32[], shape: i32[]): i32[] {
-  let k: i32 = shape.len() - 1;
+  let k = shape.len() - 1;
   while (k >= 0) {
     if (idx[k] + 1 < shape[k]) {
       return idx.with(k, idx[k] + 1);
     }
     idx = idx.with(k, 0);
-    k = k - 1;
+    k -= 1;
   }
   return idx;
 }
@@ -977,11 +977,11 @@ impl[T: cmp.Eq] cmp.Eq for NdArray[T] {
 
 impl[T: cmp.Hash] cmp.Hash for NdArray[T] {
   function hash(self: NdArray[T]): i32 {
-    let h: i32 = 17;
-    let k: i32 = 0;
+    let h = 17;
+    let k = 0;
     while (k < self.shape.len()) {
       h = h * 31 + self.shape[k];
-      k = k + 1;
+      k += 1;
     }
     return self.fold_all(h, (acc: i32, x: T) => acc * 31 + x.hash());
   }
@@ -998,20 +998,20 @@ function display_axis[T: cmp.Display](xs: T[], shape: i32[], axis: i32, at: i32)
   if (axis == shape.len()) {
     return xs[at].to_string();
   }
-  let step: i32 = 1;
-  let k: i32 = axis + 1;
+  let step = 1;
+  let k = axis + 1;
   while (k < shape.len()) {
-    step = step * shape[k];
-    k = k + 1;
+    step *= shape[k];
+    k += 1;
   }
-  let out: string = "[";
-  let i: i32 = 0;
+  let out = "[";
+  let i = 0;
   while (i < shape[axis]) {
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + display_axis(xs, shape, axis + 1, at + i * step);
-    i = i + 1;
+    out += display_axis(xs, shape, axis + 1, at + i * step);
+    i += 1;
   }
   return out + "]";
 }

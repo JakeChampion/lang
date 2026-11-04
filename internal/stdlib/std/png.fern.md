@@ -129,7 +129,7 @@ pub function encode_rgb8_with_options(width: i32, height: i32, pixels: [u8], opt
     return Err(InvalidBufferLength);
   }
   let rows: u8[] = __alloc_u8(bytes as i32);
-  let row: i32 = 0;
+  let row = 0;
   while (row < height) {
     let filter: i32 = filter_id(opts.filter);
     if (filter == 5) {
@@ -137,7 +137,7 @@ pub function encode_rgb8_with_options(width: i32, height: i32, pixels: [u8], opt
     }
     rows = rows.with(row * (stride as i32 + 1), filter as u8);
     rows = write_row(rows, row * (stride as i32 + 1) + 1, pixels, row * (stride as i32), stride as i32, filter);
-    row = row + 1;
+    row += 1;
   }
   let output: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
   let header: u8[] = binary.append_u32_be([], width as u32);
@@ -195,9 +195,9 @@ function absolute(value: i32): i32 {
 }
 
 function predictor(pixels: [u8], start: i32, at: i32, stride: i32, filter: i32): i32 {
-  let left: i32 = 0;
-  let up: i32 = 0;
-  let corner: i32 = 0;
+  let left = 0;
+  let up = 0;
+  let corner = 0;
   if (at >= 3) {
     left = pixels[start + at - 3] as i32;
   }
@@ -236,50 +236,50 @@ function write_row(own output: u8[], dest: i32, pixels: [u8], start: i32, stride
   if (filter == 0 || filter == 2 && start == 0) {
     return __bytes_into(output, dest, pixels, start, stride);
   }
-  let at: i32 = 0;
+  let at = 0;
   if (filter == 1) {
     output = __bytes_into(output, dest, pixels, start, 3);
     at = 3;
     while (at < stride) {
       output = output.with(dest + at, (pixels[start + at] as i32 - pixels[start + at - 3] as i32) as u8);
-      at = at + 1;
+      at += 1;
     }
     return output;
   }
   if (filter == 2) {
     while (at < stride) {
       output = output.with(dest + at, (pixels[start + at] as i32 - pixels[start + at - stride] as i32) as u8);
-      at = at + 1;
+      at += 1;
     }
     return output;
   }
   while (at < stride) {
     output = output.with(dest + at, (pixels[start + at] as i32 - predictor(pixels, start, at, stride, filter)) as u8);
-    at = at + 1;
+    at += 1;
   }
   return output;
 }
 
 function best_filter(pixels: [u8], start: i32, stride: i32): i32 {
-  let best: i32 = 0;
+  let best = 0;
   let score: i64 = 9223372036854775807;
-  let filter: i32 = 0;
+  let filter = 0;
   while (filter <= 4 && score > 0) {
     let sum: i64 = 0;
-    let at: i32 = 0;
+    let at = 0;
     while (at < stride && sum < score) {
       let difference: i32 = pixels[start + at] as i32 - predictor(pixels, start, at, stride, filter) & 255;
       if (difference >= 128) {
-        difference = difference - 256;
+        difference -= 256;
       }
       sum = sum + absolute(difference) as i64;
-      at = at + 1;
+      at += 1;
     }
     if (sum < score) {
       score = sum;
       best = filter;
     }
-    filter = filter + 1;
+    filter += 1;
   }
   return best;
 }

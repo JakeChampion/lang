@@ -180,7 +180,9 @@ function ownership(): test.TestOutcome {
   for byte in fixtures.rgba4() {
     input = input.append(byte);
   }
-  let graph = match (make_source(input)) { Ok(v) => v, Err(_) => { return test.fail("source"); } };
+  let Ok(graph) = make_source(input) else {
+    return test.fail("source");
+  };
   input = input.with(0, 0);
   let alias = graph;
   let limits = pipeline.default_limits();

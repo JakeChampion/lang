@@ -171,10 +171,10 @@ pub function (g: Gauge) get(): i64 {
 
 pub function histogram(name: string, help: string, bounds: f64[]): Histogram {
   let counts: Cell[i64][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i <= bounds.len()) {
     counts = counts.append(cell_new(0 as i64));
-    i = i + 1;
+    i += 1;
   }
   return Histogram { name: name, help: help, labels: "", bounds: bounds, counts: counts, sum: cell_new(0.0), count: cell_new(0 as i64) };
 }
@@ -188,11 +188,11 @@ pub function duration_buckets(): f64[] {
 }
 
 pub function (h: Histogram) observe(x: f64): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.bounds.len() && x > h.bounds[i]) {
-    i = i + 1;
+    i += 1;
   }
-  let c: Cell[i64] = h.counts[i];
+  let c = h.counts[i];
   c.set(c.get() + 1 as i64);
   h.sum.set(h.sum.get() + x);
   h.count.set(h.count.get() + 1 as i64);
@@ -211,14 +211,14 @@ pub function label(name: string, value: string): string {
 }
 
 pub function labels(parts: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < parts.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + parts[i];
-    i = i + 1;
+    out += parts[i];
+    i += 1;
   }
   return out;
 }
@@ -229,20 +229,20 @@ pub function labels(parts: string[]): string {
 ```fern
 <<5 function __escape(s: string, quotes: boolean): string>>=
 function __escape(s: string, quotes: boolean): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 92) {
-      out = out + "\\\\";
+      out += "\\\\";
     } else if (c == 10) {
-      out = out + "\\n";
+      out += "\\n";
     } else if (c == 34 && quotes) {
-      out = out + "\\\"";
+      out += "\\\"";
     } else {
-      out = out + s.slice_snap(i, i + 1);
+      out += s.slice_snap(i, i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -276,28 +276,28 @@ pub function (r: Registry) with_histogram(h: Histogram): Registry {
 }
 
 pub function (r: Registry) render(): string {
-  let out: string = "";
+  let out = "";
   let seen: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < r.counters.len()) {
-    let c: Counter = r.counters[i];
+    let c = r.counters[i];
     out = out + __head(c.name, c.help, "counter", seen) + __sample(c.name, c.labels, c.value.get().to_string());
     seen = seen.append(c.name);
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < r.gauges.len()) {
-    let g: Gauge = r.gauges[i];
+    let g = r.gauges[i];
     out = out + __head(g.name, g.help, "gauge", seen) + __sample(g.name, g.labels, g.value.get().to_string());
     seen = seen.append(g.name);
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < r.histograms.len()) {
-    let h: Histogram = r.histograms[i];
+    let h = r.histograms[i];
     out = out + __head(h.name, h.help, "histogram", seen) + h.render_samples();
     seen = seen.append(h.name);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -308,12 +308,12 @@ pub function (r: Registry) render(): string {
 ```fern
 <<8 function __head(name: string, help: string, kind: string, seen: string[]): string>>=
 function __head(name: string, help: string, kind: string, seen: string[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < seen.len()) {
     if (seen[i] == name) {
       return "";
     }
-    i = i + 1;
+    i += 1;
   }
   return "# HELP " + name + " " + __escape(help, false) + "\n# TYPE " + name + " " + kind + "\n";
 }
@@ -331,17 +331,17 @@ function __sample(name: string, labels: string, value: string): string {
 ```fern
 <<9 pub function (h: Histogram) render_samples(): string>>=
 pub function (h: Histogram) render_samples(): string {
-  let out: string = "";
-  let running: i64 = 0 as i64;
-  let i: i32 = 0;
+  let out = "";
+  let running = 0 as i64;
+  let i = 0;
   while (i <= h.bounds.len()) {
-    running = running + h.counts[i].get();
-    let le: string = "+Inf";
+    running += h.counts[i].get();
+    let le = "+Inf";
     if (i < h.bounds.len()) {
       le = h.bounds[i].to_string();
     }
-    out = out + __sample(h.name + "_bucket", labels([h.labels, label("le", le)]).drop(__comma(h.labels)), running.to_string());
-    i = i + 1;
+    out += __sample(h.name + "_bucket", labels([h.labels, label("le", le)]).drop(__comma(h.labels)), running.to_string());
+    i += 1;
   }
   return out + __sample(h.name + "_sum", h.labels, h.sum.get().to_string()) + __sample(h.name + "_count", h.labels, h.count.get().to_string());
 }
@@ -375,16 +375,16 @@ pub function server_metrics(): ServerMetrics {
 }
 
 pub function (m: ServerMetrics) request(method: string, status: i32, took: Duration): ServerMetrics {
-  let ns: i64 = took.as_nanos();
-  let k: i32 = 0;
+  let ns = took.as_nanos();
+  let k = 0;
   while (k < m.methods.len()) {
     if (m.statuses[k] == status && m.methods[k] == method) {
       m.durations[k].observe(__seconds(ns));
       return m;
     }
-    k = k + 1;
+    k += 1;
   }
-  let h: Histogram = histogram("http_server_request_duration_seconds", "Duration of HTTP server requests.", duration_buckets()).with_labels(labels([label("http_request_method", method), label("http_response_status_code", status.to_string())]));
+  let h = histogram("http_server_request_duration_seconds", "Duration of HTTP server requests.", duration_buckets()).with_labels(labels([label("http_request_method", method), label("http_response_status_code", status.to_string())]));
   h.observe(__seconds(ns));
   return ServerMetrics { ...m, methods: m.methods.append(method), statuses: m.statuses.append(status), durations: m.durations.append(h) };
 }
@@ -407,11 +407,11 @@ function __seconds(ns: i64): f64 {
 ```fern
 <<14 pub function (m: ServerMetrics) render(): string>>=
 pub function (m: ServerMetrics) render(): string {
-  let r: Registry = registry().with_counter(m.accepted).with_gauge(m.open);
-  let k: i32 = 0;
+  let r = registry().with_counter(m.accepted).with_gauge(m.open);
+  let k = 0;
   while (k < m.durations.len()) {
     r = r.with_histogram(m.durations[k]);
-    k = k + 1;
+    k += 1;
   }
   return r.render();
 }
@@ -430,7 +430,7 @@ pub const EOF: string = "# EOF\n";
 <<16 pub function frames(buf: string): (string[], string)>>=
 pub function frames(buf: string): (string[], string) {
   let out: string[] = [];
-  let rest: string = buf;
+  let rest = buf;
   while (true) {
     let Some(at) = rest.index_of(EOF) else {
       break;
@@ -454,16 +454,16 @@ struct __Merged { names: string[], heads: string[], keys: string[], ints: i64[],
 ```fern
 <<18 pub function merge(parts: string[]): string>>=
 pub function merge(parts: string[]): string {
-  let m: __Merged = __Merged { names: [], heads: [], keys: [], ints: [], floats: [], is_float: [] };
-  let i: i32 = 0;
+  let m = __Merged { names: [], heads: [], keys: [], ints: [], floats: [], is_float: [] };
+  let i = 0;
   while (i < parts.len()) {
-    let lines: string[] = parts[i].split("\n");
-    let j: i32 = 0;
+    let lines = parts[i].split("\n");
+    let j = 0;
     while (j < lines.len()) {
       m = __merge_line(m, lines[j]);
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return __merged_text(m);
 }
@@ -490,12 +490,12 @@ function __merge_line(m: __Merged, line: string): __Merged {
 }
 
 function __merge_head(m: __Merged, line: string): __Merged {
-  let words: string[] = line.split(" ");
+  let words = line.split(" ");
   if (words.len() < 3 || words[1] != "HELP" && words[1] != "TYPE") {
     return m;
   }
-  let name: string = words[2];
-  let at: i32 = __index_of_str(m.names, name);
+  let name = words[2];
+  let at = __index_of_str(m.names, name);
   if (at < 0) {
     return __Merged { ...m, names: m.names.append(name), heads: m.heads.append(line + "\n") };
   }
@@ -506,7 +506,7 @@ function __merge_head(m: __Merged, line: string): __Merged {
 }
 
 function __merge_sample(m: __Merged, key: string, value: string): __Merged {
-  let at: i32 = __index_of_str(m.keys, key);
+  let at = __index_of_str(m.keys, key);
   if (at < 0) {
     m = __Merged { ...m, keys: m.keys.append(key), ints: m.ints.append(0 as i64), floats: m.floats.append(0.0), is_float: m.is_float.append(false) };
     at = m.keys.len() - 1;
@@ -530,30 +530,30 @@ function __is_integer(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   if (s[0] as i32 == 45) {
     i = 1;
   }
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c < 48 || c > 57) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return i > 0;
 }
 
 function __int_of(s: string): i64 {
-  let n: i64 = 0 as i64;
-  let i: i32 = 0;
-  let neg: boolean = s[0] as i32 == 45;
+  let n = 0 as i64;
+  let i = 0;
+  let neg = s[0] as i32 == 45;
   if (neg) {
     i = 1;
   }
   while (i < s.len()) {
     n = n * (10 as i64) + (s[i] as i32 - 48) as i64;
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
     return 0 as i64 - n;
@@ -562,43 +562,43 @@ function __int_of(s: string): i64 {
 }
 
 function __index_of_str(xs: string[], x: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == x) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function __merged_text(m: __Merged): string {
-  let out: string = "";
+  let out = "";
   let placed: boolean[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < m.keys.len()) {
     placed = placed.append(false);
-    k = k + 1;
+    k += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.names.len()) {
-    out = out + m.heads[i];
+    out += m.heads[i];
     k = 0;
     while (k < m.keys.len()) {
       if (!placed[k] && __family_of(m.keys[k]) == m.names[i]) {
-        out = out + __merged_sample(m, k);
+        out += __merged_sample(m, k);
         placed = placed.with(k, true);
       }
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   k = 0;
   while (k < m.keys.len()) {
     if (!placed[k]) {
-      out = out + __merged_sample(m, k);
+      out += __merged_sample(m, k);
     }
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
@@ -616,7 +616,7 @@ function __merged_sample(m: __Merged, k: i32): string {
 }
 
 function __family_of(key: string): string {
-  let name: string = key;
+  let name = key;
   if let Some(brace) = key.index_of("{") {
     name = key.take(brace);
   }
@@ -679,7 +679,7 @@ function __index_of_fd(socks: Socket[], fd: i32): i32 {
     if (socks[i].fd == fd) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -712,7 +712,7 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
       return e.end_scrape(drv, at);
     }
   }
-  let head: string = e.heads[at] + string_from_bytes_unchecked(got);
+  let head = e.heads[at] + string_from_bytes_unchecked(got);
   if (got.len() > 0 && !head.contains("\r\n\r\n") && head.len() < 8192) {
     return Exporter { ...e, heads: e.heads.with(at, head) };
   }
@@ -768,7 +768,7 @@ function __shut(sock: Socket): void {
 }
 
 function __answer(head: string, answer: (string) => HttpResponse): u8[] {
-  let resp: HttpResponse = http.text(400, "");
+  let resp = http.text(400, "");
   match (__path_of(head)) {
     Some(path) => {
       resp = answer(path);
@@ -782,7 +782,7 @@ function __path_of(head: string): Option[string] {
   let Some(eol) = head.index_of("\r\n") else {
     return None;
   };
-  let words: string[] = head.take(eol).split(" ");
+  let words = head.take(eol).split(" ");
   if (words.len() != 3 || !words[2].starts_with("HTTP/") || !words[1].starts_with("/")) {
     return None;
   }
@@ -798,7 +798,7 @@ function __path_of(head: string): Option[string] {
 ```fern
 <<28 pub function (e: Exporter) close[D: async.Driver](drv: D): void>>=
 pub function (e: Exporter) close[D: async.Driver](drv: D): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < e.scrapes.len()) {
     drv.unwatch(e.scrapes[i].fd);
     __shut(e.scrapes[i]);
@@ -815,12 +815,12 @@ pub function (e: Exporter) close[D: async.Driver](drv: D): void {
 <<29 function __without[T](xs: T[], at: i32): T[]>>=
 function __without[T](xs: T[], at: i32): T[] {
   let out: T[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (i != at) {
       out = out.append(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

@@ -5165,19 +5165,13 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   if (!body_state.ok) {
     return body_state;
   }
-  body_state = State { ...body_state, scope: inner };
-  let latch: Arm = finish_arm(fo.body, body_state, step_id, count, scope);
-  s = latch.s;
+  s = stmts(fo.body, State { ...body_state, scope: inner });
   if (!s.ok) {
     return s;
   }
   let l: Loop = current_loop(s);
   s = State { ...s, loops: prefix_loops(s.loops, s.loops.len() - 1) };
-  let into: Exit[] = l.continues;
-  if (latch.live) {
-    into = into.append(Exit { block: latch.end, env: latch.env });
-  }
-  s = step_index(s, step_id, header, into, count);
+  s = step_index(leave(s, count, scope), step_id, header, l.continues, count);
   let preds: i32[] = [cond_end];
   let envs: i32[][] = [held];
   for e in l.breaks {
@@ -5188,17 +5182,26 @@ function iterate_array(fo: ast.StmtFor, s: State): State {
   return leave(s, before, outer);
 }
 
-function step_index(s: State, step_id: i32, header: i32, into: Exit[], count: i32): State {
-  if (into.len() == 0) {
+// The body's last block steps the index, as a while loop's latch does. Only a
+// `continue` that targets the loop needs the step block.
+function step_index(s: State, step_id: i32, header: i32, continues: Exit[], count: i32): State {
+  if (continues.len() > 0) {
+    let preds: i32[] = [];
+    let envs: i32[][] = [];
+    for e in continues {
+      preds = preds.append(e.block);
+      envs = envs.append(e.env);
+    }
+    if (s.live) {
+      preds = preds.append(s.cur.id);
+      envs = envs.append(prefix(s.vals, count));
+      s = terminate(s, t_br(step_id));
+    }
+    s = merge_env(open(s, step_id, preds), envs, count);
+  }
+  if (!s.live) {
     return s;
   }
-  let preds: i32[] = [];
-  let envs: i32[][] = [];
-  for e in into {
-    preds = preds.append(e.block);
-    envs = envs.append(e.env);
-  }
-  s = merge_env(open(s, step_id, preds), envs, count);
   let one: Value = define(s, 1, [], 1, "", t_i32());
   let step: Value = define(one.s, 9, [lookup(one.s, index_name()), one.id], 0, "+", t_i32());
   s = replace(step.s, index_name(), step.id);

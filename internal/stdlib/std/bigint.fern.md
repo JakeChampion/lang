@@ -85,18 +85,18 @@ function __bi_sh32(): u64 {
 }
 
 function __bi_trim(a: u64[]): u64[] {
-  let n: i32 = a.len();
+  let n = a.len();
   while (n > 1 && a[n - 1] == 0 as u64) {
-    n = n - 1;
+    n -= 1;
   }
   if (n == a.len()) {
     return a;
   }
   let out: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(a[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -106,7 +106,7 @@ function __bi_is_zero_mag(a: u64[]): boolean {
 }
 
 function __bi_make(neg: boolean, mag: u64[]): BigInt {
-  let m: u64[] = __bi_trim(mag);
+  let m = __bi_trim(mag);
   if (__bi_is_zero_mag(m)) {
     return BigInt { neg: false, mag: m };
   }
@@ -115,47 +115,47 @@ function __bi_make(neg: boolean, mag: u64[]): BigInt {
 
 function __bi_cmp_mag(a: u64[], b: u64[]): i32 {
   if (a.len() < b.len()) {
-    return 0 - 1;
+    return -1;
   }
   if (a.len() > b.len()) {
     return 1;
   }
-  let i: i32 = a.len() - 1;
+  let i = a.len() - 1;
   while (i >= 0) {
     if (a[i] < b[i]) {
-      return 0 - 1;
+      return -1;
     }
     if (a[i] > b[i]) {
       return 1;
     }
-    i = i - 1;
+    i -= 1;
   }
   return 0;
 }
 
 function __bi_add_mag(a: u64[], b: u64[]): u64[] {
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let la: i32 = a.len();
-  let lb: i32 = b.len();
-  let n: i32 = la;
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let la = a.len();
+  let lb = b.len();
+  let n = la;
   if (lb > n) {
     n = lb;
   }
   let out: u64[] = [];
-  let carry: u64 = 0 as u64;
-  let i: i32 = 0;
+  let carry = 0 as u64;
+  let i = 0;
   while (i < n) {
-    let s: u64 = carry;
+    let s = carry;
     if (i < la) {
-      s = s + a[i];
+      s += a[i];
     }
     if (i < lb) {
-      s = s + b[i];
+      s += b[i];
     }
     out = out.append(s & mask);
     carry = s >> sh;
-    i = i + 1;
+    i += 1;
   }
   if (carry > 0 as u64) {
     out = out.append(carry);
@@ -164,16 +164,16 @@ function __bi_add_mag(a: u64[], b: u64[]): u64[] {
 }
 
 function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
-  let base: u64 = __bi_base();
-  let la: i32 = a.len();
-  let lb: i32 = b.len();
+  let base = __bi_base();
+  let la = a.len();
+  let lb = b.len();
   let out: u64[] = [];
-  let borrow: u64 = 0 as u64;
-  let i: i32 = 0;
+  let borrow = 0 as u64;
+  let i = 0;
   while (i < la) {
-    let d: u64 = borrow;
+    let d = borrow;
     if (i < lb) {
-      d = d + b[i];
+      d += b[i];
     }
     if (a[i] >= d) {
       out = out.append(a[i] - d);
@@ -182,7 +182,7 @@ function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
       out = out.append(a[i] + base - d);
       borrow = 1 as u64;
     }
-    i = i + 1;
+    i += 1;
   }
   return __bi_trim(out);
 }
@@ -193,54 +193,54 @@ function __bi_sub_mag(a: u64[], b: u64[]): u64[] {
 ```fern
 <<4 function __bi_mul_mag(a: u64[], b: u64[]): u64[]>>=
 function __bi_mul_mag(a: u64[], b: u64[]): u64[] {
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let la: i32 = a.len();
-  let lb: i32 = b.len();
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let la = a.len();
+  let lb = b.len();
   if (__bi_is_zero_mag(a) || __bi_is_zero_mag(b)) {
     let z: u64[] = [];
     return z.append(0 as u64);
   }
   let out: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < la + lb) {
     out = out.append(0 as u64);
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < la) {
-    let carry: u64 = 0 as u64;
-    let ai: u64 = a[i];
-    let j: i32 = 0;
+    let carry = 0 as u64;
+    let ai = a[i];
+    let j = 0;
     while (j < lb) {
-      let cur: u64 = out[i + j] + ai * b[j] + carry;
+      let cur = out[i + j] + ai * b[j] + carry;
       out = out.with(i + j, cur & mask);
       carry = cur >> sh;
-      j = j + 1;
+      j += 1;
     }
-    let k: i32 = i + lb;
+    let k = i + lb;
     while (carry > 0 as u64) {
-      let c2: u64 = out[k] + carry;
+      let c2 = out[k] + carry;
       out = out.with(k, c2 & mask);
       carry = c2 >> sh;
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return __bi_trim(out);
 }
 
 function __bi_mul_small(a: u64[], k: u64): u64[] {
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let out: u64[] = a;
-  let carry: u64 = 0 as u64;
-  let i: i32 = 0;
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let out = a;
+  let carry = 0 as u64;
+  let i = 0;
   while (i < a.len()) {
-    let prod: u64 = a[i] * k + carry;
+    let prod = a[i] * k + carry;
     out = out.with(i, prod & mask);
     carry = prod >> sh;
-    i = i + 1;
+    i += 1;
   }
   if (carry > 0 as u64) {
     out = out.append(carry);
@@ -249,16 +249,16 @@ function __bi_mul_small(a: u64[], k: u64): u64[] {
 }
 
 function __bi_add_small(a: u64[], k: u64): u64[] {
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
   let out: u64[] = [];
-  let carry: u64 = k;
-  let i: i32 = 0;
+  let carry = k;
+  let i = 0;
   while (i < a.len()) {
-    let cur: u64 = a[i] + carry;
+    let cur = a[i] + carry;
     out = out.append(cur & mask);
     carry = cur >> sh;
-    i = i + 1;
+    i += 1;
   }
   while (carry > 0 as u64) {
     out = out.append(carry & mask);
@@ -268,22 +268,22 @@ function __bi_add_small(a: u64[], k: u64): u64[] {
 }
 
 function __bi_divmod_small(a: u64[], d: u64): (u64[], u64) {
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let n: i32 = a.len();
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let n = a.len();
   let q: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     q = q.append(0 as u64);
-    i = i + 1;
+    i += 1;
   }
-  let rem: u64 = 0 as u64;
+  let rem = 0 as u64;
   i = n - 1;
   while (i >= 0) {
-    let cur: u64 = rem << sh | a[i] & mask;
+    let cur = rem << sh | a[i] & mask;
     q = q.with(i, cur / d);
     rem = cur % d;
-    i = i - 1;
+    i -= 1;
   }
   return (__bi_trim(q), rem);
 }
@@ -299,10 +299,10 @@ pub function zero(): BigInt {
 }
 
 pub function from_i64(v: i64): BigInt {
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let neg: boolean = v < 0;
-  let u: u64 = v as u64;
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let neg = v < 0;
+  let u = v as u64;
   if (neg) {
     u = 0 as u64 - u;
   }
@@ -313,12 +313,12 @@ pub function from_i64(v: i64): BigInt {
 }
 
 pub function parse(s: string): Result[BigInt, number_parse.ParseNumberError] {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return Err(number_parse.EmptyInput);
   }
-  let i: i32 = 0;
-  let neg: boolean = false;
+  let i = 0;
+  let neg = false;
   if (s[0] == 45) {
     neg = true;
     i = 1;
@@ -333,18 +333,18 @@ pub function parse(s: string): Result[BigInt, number_parse.ParseNumberError] {
   let mag: u64[] = [];
   mag = mag.append(0 as u64);
   while (i < n) {
-    let chunk: u64 = 0 as u64;
-    let scale: u64 = 1 as u64;
-    let taken: i32 = 0;
+    let chunk = 0 as u64;
+    let scale = 1 as u64;
+    let taken = 0;
     while (i < n && taken < 9) {
-      let c: i32 = s[i] as i32;
+      let c = s[i] as i32;
       if (c < 48 || c > 57) {
         return Err(number_parse.InvalidDigit(i));
       }
       chunk = chunk * (10 as u64) + (c - 48) as u64;
-      scale = scale * (10 as u64);
-      taken = taken + 1;
-      i = i + 1;
+      scale *= 10 as u64;
+      taken += 1;
+      i += 1;
     }
     mag = __bi_mul_small(mag, scale);
     mag = __bi_add_small(mag, chunk);
@@ -364,11 +364,11 @@ pub function (a: BigInt) bit_length(): i32 {
   if (__bi_is_zero_mag(a.mag)) {
     return 0;
   }
-  let top: i32 = a.mag.len() - 1;
-  let v: u64 = a.mag[top];
-  let bits: i32 = 0;
+  let top = a.mag.len() - 1;
+  let v = a.mag[top];
+  let bits = 0;
   while (v > 0 as u64) {
-    bits = bits + 1;
+    bits += 1;
     v = v >> 1 as u64;
   }
   return top * 32 + bits;
@@ -376,14 +376,14 @@ pub function (a: BigInt) bit_length(): i32 {
 
 pub function (a: BigInt) cmp(b: BigInt): i32 {
   if (a.neg && !b.neg) {
-    return 0 - 1;
+    return -1;
   }
   if (!a.neg && b.neg) {
     return 1;
   }
-  let c: i32 = __bi_cmp_mag(a.mag, b.mag);
+  let c = __bi_cmp_mag(a.mag, b.mag);
   if (a.neg) {
-    return 0 - c;
+    return -c;
   }
   return c;
 }
@@ -393,14 +393,14 @@ pub function (a: BigInt) eq(b: BigInt): boolean {
 }
 
 pub function (a: BigInt) hash(): i32 {
-  let h: i32 = 17;
+  let h = 17;
   if (a.neg) {
     h = 31;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.mag.len()) {
     h = h * 31 + (a.mag[i] & __bi_mask()) as i32;
-    i = i + 1;
+    i += 1;
   }
   return h;
 }
@@ -417,7 +417,7 @@ pub function (a: BigInt) add(b: BigInt): BigInt {
   if (a.neg == b.neg) {
     return __bi_make(a.neg, __bi_add_mag(a.mag, b.mag));
   }
-  let c: i32 = __bi_cmp_mag(a.mag, b.mag);
+  let c = __bi_cmp_mag(a.mag, b.mag);
   if (c == 0) {
     return zero();
   }
@@ -437,7 +437,7 @@ pub function (a: BigInt) sub(b: BigInt): BigInt {
 }
 
 pub function (a: BigInt) mul(b: BigInt): BigInt {
-  let neg: boolean = a.neg != b.neg;
+  let neg = a.neg != b.neg;
   return __bi_make(neg, __bi_mul_mag(a.mag, b.mag));
 }
 
@@ -445,21 +445,21 @@ pub function (a: BigInt) mul_pow10(k: i32): BigInt {
   if (k <= 0) {
     return a;
   }
-  let mag: u64[] = a.mag;
-  let left: i32 = k;
+  let mag = a.mag;
+  let left = k;
   while (left > 0) {
-    let step: i32 = left;
+    let step = left;
     if (step > 9) {
       step = 9;
     }
-    let scale: u64 = 1 as u64;
-    let i: i32 = 0;
+    let scale = 1 as u64;
+    let i = 0;
     while (i < step) {
-      scale = scale * (10 as u64);
-      i = i + 1;
+      scale *= 10 as u64;
+      i += 1;
     }
     mag = __bi_mul_small(mag, scale);
-    left = left - step;
+    left -= step;
   }
   return __bi_make(a.neg, mag);
 }
@@ -468,21 +468,21 @@ pub function (a: BigInt) mul_pow5(k: i32): BigInt {
   if (k <= 0) {
     return a;
   }
-  let mag: u64[] = a.mag;
-  let left: i32 = k;
+  let mag = a.mag;
+  let left = k;
   while (left > 0) {
-    let step: i32 = left;
+    let step = left;
     if (step > 13) {
       step = 13;
     }
-    let scale: u64 = 1 as u64;
-    let i: i32 = 0;
+    let scale = 1 as u64;
+    let i = 0;
     while (i < step) {
-      scale = scale * (5 as u64);
-      i = i + 1;
+      scale *= 5 as u64;
+      i += 1;
     }
     mag = __bi_mul_small(mag, scale);
-    left = left - step;
+    left -= step;
   }
   return __bi_make(a.neg, mag);
 }
@@ -491,23 +491,23 @@ pub function (a: BigInt) shl(k: i32): BigInt {
   if (k <= 0 || __bi_is_zero_mag(a.mag)) {
     return a;
   }
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let limbShift: i32 = k / 32;
-  let bitShift: u64 = (k % 32) as u64;
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let limbShift = k / 32;
+  let bitShift = (k % 32) as u64;
   let out: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < limbShift) {
     out = out.append(0 as u64);
-    i = i + 1;
+    i += 1;
   }
-  let carry: u64 = 0 as u64;
+  let carry = 0 as u64;
   i = 0;
   while (i < a.mag.len()) {
-    let cur: u64 = a.mag[i] << bitShift | carry;
+    let cur = a.mag[i] << bitShift | carry;
     out = out.append(cur & mask);
     carry = cur >> sh;
-    i = i + 1;
+    i += 1;
   }
   if (carry > 0 as u64) {
     out = out.append(carry);
@@ -527,8 +527,8 @@ pub function (a: BigInt) low_u64(): u64 {
 }
 
 pub function (a: BigInt) word64(i: i32): u64 {
-  let lo: i32 = 2 * i;
-  let v: u64 = 0 as u64;
+  let lo = 2 * i;
+  let v = 0 as u64;
   if (lo < a.mag.len()) {
     v = a.mag[lo];
   }
@@ -539,18 +539,18 @@ pub function (a: BigInt) word64(i: i32): u64 {
 }
 
 pub function (a: BigInt) has_low_bits(k: i32): boolean {
-  let limbs: i32 = k / 32;
-  let i: i32 = 0;
+  let limbs = k / 32;
+  let i = 0;
   while (i < limbs && i < a.mag.len()) {
     if (a.mag[i] != 0 as u64) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (limbs >= a.mag.len() || k % 32 == 0) {
     return false;
   }
-  let mask: u64 = (1 as u64 << (k % 32) as u64) - 1 as u64;
+  let mask = (1 as u64 << (k % 32) as u64) - 1 as u64;
   return (a.mag[limbs] & mask) != 0 as u64;
 }
 
@@ -558,7 +558,7 @@ pub function (a: BigInt) bit(i: i32): boolean {
   if (i < 0) {
     return false;
   }
-  let limb: i32 = i / 32;
+  let limb = i / 32;
   if (limb >= a.mag.len()) {
     return false;
   }
@@ -574,35 +574,35 @@ pub function (a: BigInt) shr(k: i32): BigInt {
   if (k <= 0) {
     return a;
   }
-  let mask: u64 = __bi_mask();
-  let limbShift: i32 = k / 32;
-  let bitShift: u64 = (k % 32) as u64;
-  let n: i32 = a.mag.len() - limbShift;
+  let mask = __bi_mask();
+  let limbShift = k / 32;
+  let bitShift = (k % 32) as u64;
+  let n = a.mag.len() - limbShift;
   if (n <= 0) {
     return zero();
   }
   let out: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let cur: u64 = a.mag[i + limbShift] >> bitShift;
+    let cur = a.mag[i + limbShift] >> bitShift;
     if (bitShift > 0 as u64 && i + limbShift + 1 < a.mag.len()) {
       cur = cur | a.mag[i + limbShift + 1] << 32 as u64 - bitShift & mask;
     }
     out = out.append(cur);
-    i = i + 1;
+    i += 1;
   }
   return __bi_make(a.neg, out);
 }
 
 pub function (a: BigInt) pow(n: i32): BigInt {
-  let result: BigInt = from_i64(1 as i64);
-  let base: BigInt = a;
-  let e: i32 = n;
+  let result = from_i64(1 as i64);
+  let base = a;
+  let e = n;
   while (e > 0) {
     if (e % 2 == 1) {
       result = result.mul(base);
     }
-    e = e / 2;
+    e /= 2;
     if (e > 0) {
       base = base.mul(base);
     }
@@ -624,9 +624,9 @@ pub function (a: BigInt) divmod(b: BigInt): (BigInt, BigInt) {
 ```fern
 <<8 function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[])>>=
 function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
-  let mask: u64 = __bi_mask();
-  let base: u64 = __bi_base();
-  let sh: u64 = __bi_sh32();
+  let mask = __bi_mask();
+  let base = __bi_base();
+  let sh = __bi_sh32();
   if (__bi_cmp_mag(a, b) < 0) {
     let z: u64[] = [];
     return (z.append(0 as u64), a);
@@ -636,41 +636,41 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
     let r1: u64[] = [];
     return (dm.0, r1.append(dm.1));
   }
-  let s: i32 = 0;
-  let top: u64 = b[b.len() - 1];
+  let s = 0;
+  let top = b[b.len() - 1];
   while ((top & 2147483648 as u64) == 0 as u64) {
     top = top << 1 as u64;
-    s = s + 1;
+    s += 1;
   }
-  let v: u64[] = __bi_shl_limbs(b, s, false);
-  let u: u64[] = __bi_shl_limbs(a, s, true);
-  let n: i32 = v.len();
-  let m: i32 = u.len() - n;
+  let v = __bi_shl_limbs(b, s, false);
+  let u = __bi_shl_limbs(a, s, true);
+  let n = v.len();
+  let m = u.len() - n;
   let q: u64[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < m) {
     q = q.append(0 as u64);
-    k = k + 1;
+    k += 1;
   }
-  let j: i32 = m - 1;
+  let j = m - 1;
   while (j >= 0) {
-    let num: u64 = u[j + n] << sh | u[j + n - 1];
-    let qhat: u64 = num / v[n - 1];
-    let rhat: u64 = num % v[n - 1];
+    let num = u[j + n] << sh | u[j + n - 1];
+    let qhat = num / v[n - 1];
+    let rhat = num % v[n - 1];
     while (qhat >= base || qhat * v[n - 2] > (rhat << sh | u[j + n - 2])) {
       qhat = qhat - 1 as u64;
-      rhat = rhat + v[n - 1];
+      rhat += v[n - 1];
       if (rhat >= base) {
         break;
       }
     }
-    let carry: u64 = 0 as u64;
-    let borrow: u64 = 0 as u64;
-    let i: i32 = 0;
+    let carry = 0 as u64;
+    let borrow = 0 as u64;
+    let i = 0;
     while (i < n) {
-      let p: u64 = qhat * v[i] + carry;
+      let p = qhat * v[i] + carry;
       carry = p >> sh;
-      let sub: u64 = (p & mask) + borrow;
+      let sub = (p & mask) + borrow;
       if (u[i + j] >= sub) {
         u = u.with(i + j, u[i + j] - sub);
         borrow = 0 as u64;
@@ -678,47 +678,47 @@ function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[]) {
         u = u.with(i + j, u[i + j] + base - sub);
         borrow = 1 as u64;
       }
-      i = i + 1;
+      i += 1;
     }
-    let subTop: u64 = carry + borrow;
+    let subTop = carry + borrow;
     if (u[j + n] >= subTop) {
       u = u.with(j + n, u[j + n] - subTop);
       q = q.with(j, qhat);
     } else {
       q = q.with(j, qhat - 1 as u64);
-      let c2: u64 = 0 as u64;
+      let c2 = 0 as u64;
       i = 0;
       while (i < n) {
-        let sum: u64 = u[i + j] + v[i] + c2;
+        let sum = u[i + j] + v[i] + c2;
         u = u.with(i + j, sum & mask);
         c2 = sum >> sh;
-        i = i + 1;
+        i += 1;
       }
       u = u.with(j + n, u[j + n] + base - subTop + c2 & mask);
     }
-    j = j - 1;
+    j -= 1;
   }
   let rem: u64[] = [];
   k = 0;
   while (k < n) {
     rem = rem.append(u[k]);
-    k = k + 1;
+    k += 1;
   }
   return (__bi_trim(q), __bi_shr_limbs(__bi_trim(rem), s));
 }
 
 function __bi_shl_limbs(a: u64[], s: i32, extend: boolean): u64[] {
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let bs: u64 = s as u64;
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let bs = s as u64;
   let out: u64[] = [];
-  let carry: u64 = 0 as u64;
-  let i: i32 = 0;
+  let carry = 0 as u64;
+  let i = 0;
   while (i < a.len()) {
-    let cur: u64 = a[i] << bs | carry;
+    let cur = a[i] << bs | carry;
     out = out.append(cur & mask);
     carry = cur >> sh;
-    i = i + 1;
+    i += 1;
   }
   if (extend || carry > 0 as u64) {
     out = out.append(carry);
@@ -730,17 +730,17 @@ function __bi_shr_limbs(a: u64[], s: i32): u64[] {
   if (s == 0) {
     return a;
   }
-  let mask: u64 = __bi_mask();
-  let bs: u64 = s as u64;
+  let mask = __bi_mask();
+  let bs = s as u64;
   let out: u64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
-    let cur: u64 = a[i] >> bs;
+    let cur = a[i] >> bs;
     if (i + 1 < a.len()) {
       cur = cur | a[i + 1] << 32 as u64 - bs & mask;
     }
     out = out.append(cur);
-    i = i + 1;
+    i += 1;
   }
   return __bi_trim(out);
 }
@@ -754,58 +754,58 @@ pub function (a: BigInt) to_string(): string {
   if (__bi_is_zero_mag(a.mag)) {
     return "0";
   }
-  let mask: u64 = __bi_mask();
-  let sh: u64 = __bi_sh32();
-  let ten9: u64 = 1000000000 as u64;
-  let cur: u64[] = a.mag;
-  let n: i32 = cur.len();
+  let mask = __bi_mask();
+  let sh = __bi_sh32();
+  let ten9 = 1000000000 as u64;
+  let cur = a.mag;
+  let n = cur.len();
   let chunks: u64[] = [];
   while (n > 0) {
-    let rem: u64 = 0 as u64;
-    let i: i32 = n - 1;
+    let rem = 0 as u64;
+    let i = n - 1;
     while (i >= 0) {
-      let c: u64 = rem << sh | cur[i] & mask;
+      let c = rem << sh | cur[i] & mask;
       cur = cur.with(i, c / ten9);
       rem = c % ten9;
-      i = i - 1;
+      i -= 1;
     }
     chunks = chunks.append(rem);
     while (n > 0 && cur[n - 1] == 0 as u64) {
-      n = n - 1;
+      n -= 1;
     }
   }
-  let top: u64 = chunks[chunks.len() - 1];
-  let lead: i32 = 1;
-  let t: u64 = top / (10 as u64);
+  let top = chunks[chunks.len() - 1];
+  let lead = 1;
+  let t = top / (10 as u64);
   while (t > 0 as u64) {
-    lead = lead + 1;
-    t = t / (10 as u64);
+    lead += 1;
+    t /= 10 as u64;
   }
-  let start: i32 = 0;
+  let start = 0;
   if (a.neg) {
     start = 1;
   }
-  let total: i32 = start + lead + 9 * (chunks.len() - 1);
-  let out: u8[] = __alloc_u8(total);
+  let total = start + lead + 9 * (chunks.len() - 1);
+  let out = __alloc_u8(total);
   if (a.neg) {
     out = out.with(0, 45 as u8);
   }
-  let pos: i32 = total - 1;
-  let k: i32 = 0;
+  let pos = total - 1;
+  let k = 0;
   while (k < chunks.len()) {
-    let v: u64 = chunks[k];
-    let width: i32 = 9;
+    let v = chunks[k];
+    let width = 9;
     if (k == chunks.len() - 1) {
       width = lead;
     }
-    let d: i32 = 0;
+    let d = 0;
     while (d < width) {
       out = out.with(pos, (v % (10 as u64) + 48 as u64) as u8);
-      v = v / (10 as u64);
-      pos = pos - 1;
-      d = d + 1;
+      v /= 10 as u64;
+      pos -= 1;
+      d += 1;
     }
-    k = k + 1;
+    k += 1;
   }
   return string_from_bytes_unchecked(out);
 }

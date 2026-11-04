@@ -140,8 +140,8 @@ pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, r
 ```fern
 <<6 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError]>>=
 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError] {
-  let sc: handshake.ServerConfig = __handshake_config(config);
-  let n: i32 = handshake.server_entropy(sc);
+  let sc = __handshake_config(config);
+  let n = handshake.server_entropy(sc);
   if (entropy.len() != n + TICKET_ENTROPY) {
     return Err(tls.HandshakeFailed(handshake.Entropy(entropy.len(), n + TICKET_ENTROPY)));
   }
@@ -161,7 +161,7 @@ pub function entropy(config: Config): i32 {
 }
 
 function __handshake_config(config: Config): handshake.ServerConfig {
-  let asks: boolean = false;
+  let asks = false;
   match (config.client_roots) {
     Some(_) => {
       asks = true;
@@ -184,18 +184,18 @@ pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, t
 ```fern
 <<7 function __read(s: Session, buf: [u8], now: i64): Result[Step, tls.Failure]>>=
 function __read(s: Session, buf: [u8], now: i64): Result[Step, tls.Failure] {
-  let session: Session = s;
+  let session = s;
   let output: u8[] = [];
   let data: u8[] = [];
-  let closed: boolean = false;
-  let keys: handshake.KernelKeys = __no_keys();
-  let at: i32 = 0;
+  let closed = false;
+  let keys = __no_keys();
+  let at = 0;
   while (!closed && buf.len() - at >= 5) {
-    let end: i32 = at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
+    let end = at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
     if (end > buf.len()) {
       break;
     }
-    let next: Step = __record(session, buf[at:end], now)?;
+    let next = __record(session, buf[at:end], now)?;
     session = next.session;
     output = __then(output, next.output);
     data = __then(data, next.data);
@@ -235,23 +235,23 @@ function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure]
 ```fern
 <<8 pub function (s: Session) write(data: [u8]): Result[Step, tls.TlsError]>>=
 pub function (s: Session) write(data: [u8]): Result[Step, tls.TlsError] {
-  let step: handshake.ServerStep = __step(s.server.write(data))?;
+  let step = __step(s.server.write(data))?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });
 }
 
 // The response in buf, framed as handshake.Server.write_framed takes it, sealed where it was written.
 pub function (s: Session) write_framed(own buf: u8[]): Result[Step, tls.TlsError] {
-  let step: handshake.ServerStep = __step(s.server.write_framed(buf))?;
+  let step = __step(s.server.write_framed(buf))?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });
 }
 
 pub function (s: Session) close(): Result[Step, tls.TlsError] {
-  let step: handshake.ServerStep = __step(s.server.close())?;
+  let step = __step(s.server.close())?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: __no_keys() });
 }
 
 pub function (s: Session) update_keys(request: boolean): Result[Step, tls.TlsError] {
-  let step: handshake.ServerStep = __step(s.server.update_keys(request))?;
+  let step = __step(s.server.update_keys(request))?;
   return Ok(Step { session: Session { ...s, server: step.server }, output: step.output, data: [], closed: false, rekeyed: handshake.rekeyed(step.server.cipher_suite(), step.events) });
 }
 ```
@@ -334,20 +334,20 @@ function __failed(srv: handshake.Server, r: Result[handshake.ServerStep, handsha
 }
 
 function __signed(s: Session, first: handshake.ServerStep, now: i64): Result[Step, tls.Failure] {
-  let srv: handshake.Server = first.server;
-  let output: u8[] = first.output;
-  let data: u8[] = first.data;
-  let events: handshake.Event[] = first.events;
-  let closed: boolean = false;
-  let i: i32 = 0;
+  let srv = first.server;
+  let output = first.output;
+  let data = first.data;
+  let events = first.events;
+  let closed = false;
+  let i = 0;
   while (i < events.len()) {
-    let next: handshake.ServerStep = __answered(s, srv, events[i], now)?;
+    let next = __answered(s, srv, events[i], now)?;
     closed = closed || __peer_closed(events[i]);
     srv = next.server;
     output = __cat(output, next.output);
     data = __cat(data, next.data);
     events = __more(events, next.events);
-    i = i + 1;
+    i += 1;
   }
   return Ok(Step { session: Session { ...s, server: srv }, output: output, data: data, closed: closed, rekeyed: handshake.rekeyed(srv.cipher_suite(), events) });
 }
@@ -389,7 +389,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
           return __failed(srv, srv.verdict(true));
         },
         Err(err) => {
-          let alert: u8[] = srv.alert(__client_alert(err));
+          let alert = srv.alert(__client_alert(err));
           return Err(tls.Failure { error: err, alert: alert });
         }
       }
@@ -405,7 +405,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
 }
 
 function __client_trusted(config: Config, v: handshake.Verification, now: i64): Result[void, tls.TlsError] {
-  let roots: verify.Roots = verify.no_roots();
+  let roots = verify.no_roots();
   match (config.client_roots) {
     Some(r) => {
       roots = r;
@@ -476,7 +476,7 @@ const TICKET_ENTROPY: i32 = 16;
 <<14 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket>>=
 function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64): message.NewSessionTicket {
   let nonce: u8[] = [0 as u8];
-  let lifetime: i64 = config.ticket_lifetime.as_millis() / (1000 as i64);
+  let lifetime = config.ticket_lifetime.as_millis() / (1000 as i64);
   let body: u8[] = [TICKET_VERSION as u8];
   body = __u16(body, srv.cipher_suite().code());
   body = __i64(body, now);
@@ -488,7 +488,7 @@ function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64)
     },
     Err(_) => {}
   }
-  let ticket_nonce: u8[] = __copy(entropy[4:16]);
+  let ticket_nonce = __copy(entropy[4:16]);
   let sealed: u8[] = [];
   match (chacha20poly1305.key(config.ticket_key)) {
     Ok(k) => {
@@ -505,7 +505,7 @@ function __issue(config: Config, srv: handshake.Server, entropy: [u8], now: i64)
 }
 
 function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[handshake.Resumed] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < offer.identities.len()) {
     match (__open_ticket(config, offer, offer.identities[i].identity, now)) {
       Some(psk) => {
@@ -513,7 +513,7 @@ function __lookup(config: Config, offer: handshake.Offer, now: i64): Option[hand
       },
       None => {}
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -537,11 +537,11 @@ function __open_ticket(config: Config, offer: handshake.Offer, id: [u8], now: i6
 }
 
 function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[u8[]] {
-  let size: i32 = offer.suite.hash().size();
+  let size = offer.suite.hash().size();
   if (body.len() < 21 || body[0] as i32 != TICKET_VERSION) {
     return None;
   }
-  let name_len: i32 = body[19] as i32 << 8 | body[20] as i32;
+  let name_len = body[19] as i32 << 8 | body[20] as i32;
   if (body.len() != 21 + name_len + size) {
     return None;
   }
@@ -555,8 +555,8 @@ function __usable_ticket(body: u8[], offer: handshake.Offer, now: i64): Option[u
       return None;
     }
   }
-  let issued: i64 = __i64_at(body, 3);
-  let lifetime: i64 = __i64_at(body, 11);
+  let issued = __i64_at(body, 3);
+  let lifetime = __i64_at(body, 11);
   if (now < issued || now >= issued + lifetime * (1000 as i64)) {
     return None;
   }
@@ -571,20 +571,20 @@ function __u16(own out: u8[], v: i32): u8[] {
 }
 
 function __i64(own out: u8[], v: i64): u8[] {
-  let i: i32 = 7;
+  let i = 7;
   while (i >= 0) {
     out = out.append((v >> (8 * i) as i64 & 255 as i64) as u8);
-    i = i - 1;
+    i -= 1;
   }
   return out;
 }
 
 function __i64_at(b: [u8], at: i32): i64 {
-  let v: i64 = 0 as i64;
-  let i: i32 = 0;
+  let v = 0 as i64;
+  let i = 0;
   while (i < 8) {
     v = v << 8 as i64 | b[at + i] as i64;
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -616,12 +616,12 @@ function __same(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -670,7 +670,7 @@ struct Shook { session: Session, pending: u8[], ended: boolean }
 function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Shook, tls.TlsError] {
   let s: Session = start(config, random_bytes(entropy(config)))?.session;
   let pending: u8[] = [];
-  let ended: boolean = false;
+  let ended = false;
   while (!s.connected() && !ended) {
     let input: u8[] = [];
     match (__await(sock, deadline)?) {
@@ -738,7 +738,7 @@ pub function (c: Connection) update_keys(request: boolean): Result[Connection, t
   if (r < 0) {
     __shut(c);
     c.open.set(false);
-    return Err(tls.KeysRefused(0 - r));
+    return Err(tls.KeysRefused(-r));
   }
   return Ok(Connection { ...c, session: step.session });
 }
@@ -759,9 +759,9 @@ pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError
 ```fern
 <<20 function __read_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsError]>>=
 function __read_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
-  let s: Session = c.session;
+  let s = c.session;
   while (true) {
-    let left: i64 = deadline - monotonic_ns();
+    let left = deadline - monotonic_ns();
     if (left <= 0) {
       return Ok(__received(c, s, [], false));
     }
@@ -792,8 +792,8 @@ function __kernel_next(c: Connection, s: Session, read: ktls.Read): Result[Kerne
       if (t == 23) {
         return Ok(Kerneled { session: s, got: __received(c, s, content, false), done: true });
       }
-      let step: Step = __exchange(c, s, ktls.framed(t, content))?;
-      let ends: boolean = step.data.len() > 0 || step.closed;
+      let step = __exchange(c, s, ktls.framed(t, content))?;
+      let ends = step.data.len() > 0 || step.closed;
       return Ok(Kerneled { session: step.session, got: __received(c, step.session, step.data, step.closed), done: ends });
     },
     ktls.StreamEnded => {
@@ -813,7 +813,7 @@ function __kernel_next(c: Connection, s: Session, read: ktls.Read): Result[Kerne
 }
 
 function __kernel_failed(c: Connection, errno: i32): tls.TlsError {
-  let err: tls.TlsError = tls.NetFailed(net.error_from_host(errno));
+  let err = tls.NetFailed(net.error_from_host(errno));
   if (errno == 74) {
     ktls.alert(c.sock, 20);
     err = tls.HandshakeFailed(handshake.Record(record.BadRecordMac));
@@ -827,7 +827,7 @@ function __kernel_failed(c: Connection, errno: i32): tls.TlsError {
 }
 
 function __read_until(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
-  let s: Session = c.session;
+  let s = c.session;
   while (true) {
     let input: u8[] = [];
     match (__await(c.sock, deadline)?) {
@@ -841,7 +841,7 @@ function __read_until(c: Connection, deadline: i64): Result[Received, tls.TlsErr
     if (input.len() == 0) {
       return __stream_ended(c, s);
     }
-    let step: Step = __exchange(c, s, input)?;
+    let step = __exchange(c, s, input)?;
     s = step.session;
     if (step.data.len() > 0 || step.closed) {
       return Ok(__received(c, s, step.data, step.closed));
@@ -881,7 +881,7 @@ function __exchange_fd(sock: Socket, s: Session, input: [u8]): Result[Step, tls.
       __send_out(sock, s, step.output)?;
       let r: i32 = ktls.install(sock, step.rekeyed);
       if (r < 0) {
-        return Err(tls.KeysRefused(0 - r));
+        return Err(tls.KeysRefused(-r));
       }
       return Ok(step);
     },
@@ -899,7 +899,7 @@ function __send_out(sock: Socket, s: Session, out: [u8]): Result[void, tls.TlsEr
   }
   let r: i32 = ktls.send_records(sock, out);
   if (r < 0) {
-    return Err(tls.NetFailed(net.error_from_host(0 - r)));
+    return Err(tls.NetFailed(net.error_from_host(-r)));
   }
   return Ok(());
 }
@@ -918,7 +918,7 @@ pub function (c: Connection) close(): Result[void, tls.TlsError] {
   let r: i32 = __shut(c);
   notified?;
   if (r < 0) {
-    return Err(tls.NetFailed(net.error_from_host(0 - r)));
+    return Err(tls.NetFailed(net.error_from_host(-r)));
   }
   return Ok(());
 }
@@ -944,12 +944,12 @@ function __send_fd(sock: Socket, data: [u8]): Result[void, tls.TlsError] {
   while (at < data.len()) {
     let n: i32 = tcp_send_bytes(sock, __cat([], data[at:data.len()]));
     if (n < 0) {
-      return Err(tls.NetFailed(net.error_from_host(0 - n)));
+      return Err(tls.NetFailed(net.error_from_host(-n)));
     }
     if (n == 0) {
       return Err(tls.NetFailed(net.ConnectionReset));
     }
-    at = at + n;
+    at += n;
   }
   return Ok(());
 }

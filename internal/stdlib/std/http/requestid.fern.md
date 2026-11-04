@@ -56,7 +56,7 @@ pub const HEADER: string = "X-Request-Id";
 <<4 pub function stamped[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest)>>=
 pub function stamped[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   let id: string = incoming(req).unwrap_or_else((): string => fresh((): i32 => plat.random_i32()));
-  let resp: HttpResponse = http.respond(next(req.with_header(HEADER, id)));
+  let resp = http.respond(next(req.with_header(HEADER, id)));
   return Ok(resp.with_header(HEADER, id));
 }
 
@@ -73,11 +73,11 @@ pub function of(req: HttpRequest): string {
 }
 
 pub function incoming(req: HttpRequest): Option[string] {
-  let all: string[] = req.headers.get_all("x-request-id");
+  let all = req.headers.get_all("x-request-id");
   if (all.len() != 1) {
     return None;
   }
-  let id: string = all[0].trim();
+  let id = all[0].trim();
   if (id.len() == 0 || id.len() > 128) {
     return None;
   }
@@ -91,21 +91,21 @@ pub function incoming(req: HttpRequest): Option[string] {
 
 pub function fresh(random: () => i32): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 4) {
-    let r: i32 = random();
-    let k: i32 = 0;
+    let r = random();
+    let k = 0;
     while (k < 8) {
-      let shift: i32 = 28 - 4 * k;
-      let nibble: i32 = r >> shift & 15;
+      let shift = 28 - 4 * k;
+      let nibble = r >> shift & 15;
       if (nibble < 10) {
         out = out.append((48 + nibble) as u8);
       } else {
         out = out.append((87 + nibble) as u8);
       }
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }

@@ -66,7 +66,7 @@ pub function (c: Context) header(): string {
 }
 
 pub function (c: Context) inject(h: HeaderMap): HeaderMap {
-  let out: HeaderMap = h.set("traceparent", c.header());
+  let out = h.set("traceparent", c.header());
   if (c.state.len() == 0) {
     return out.remove("tracestate");
   }
@@ -94,7 +94,7 @@ pub function continue_from(h: HeaderMap, random: () => i32): Context {
 }
 
 pub function from_headers(h: HeaderMap): Option[Context] {
-  let parents: string[] = h.get_all("traceparent");
+  let parents = h.get_all("traceparent");
   if (parents.len() != 1) {
     return None;
   }
@@ -128,13 +128,13 @@ pub function parse(v: string): Result[Context, headers.HeaderValueError] {
 }
 
 function __parse(v: string): Option[Context] {
-  let s: string = v.trim();
+  let s = v.trim();
   if (!__parent_shape(s)) {
     return None;
   }
-  let trace_id: string = s.drop(3).take(32);
-  let span_id: string = s.drop(36).take(16);
-  let flags: string = s.drop(53).take(2);
+  let trace_id = s.drop(3).take(32);
+  let span_id = s.drop(36).take(16);
+  let flags = s.drop(53).take(2);
   if (!__id_ok(trace_id) || !__id_ok(span_id) || !__lower_hex(flags)) {
     return None;
   }
@@ -150,7 +150,7 @@ function __parent_shape(s: string): boolean {
   if (s.len() < 55 || s[2] != b'-' || s[35] != b'-' || s[52] != b'-') {
     return false;
   }
-  let version: string = s.take(2);
+  let version = s.take(2);
   if (!__lower_hex(version) || version == "ff") {
     return false;
   }
@@ -177,7 +177,7 @@ function __parse_state(v: string): Option[string] {
   let keys: string[] = [];
   let members: string[] = [];
   for raw in v.split(",") {
-    let m: string = raw.trim();
+    let m = raw.trim();
     if (m.len() == 0) {
       continue;
     }
@@ -187,7 +187,7 @@ function __parse_state(v: string): Option[string] {
     if (eq == 0 || !__state_key(m.take(eq)) || !__state_value(m.drop(eq + 1))) {
       return None;
     }
-    let key: string = m.take(eq);
+    let key = m.take(eq);
     for k in keys {
       if (k == key) {
         return None;
@@ -227,7 +227,7 @@ function __key_start(b: u8, digit: boolean): boolean {
 
 function __key_rest(s: string): boolean {
   for b in s.bytes() {
-    let ok: boolean = b >= b'a' && b <= b'z' || b >= b'0' && b <= b'9' || b == b'_' || b == b'-' || b == b'*' || b == b'/';
+    let ok = b >= b'a' && b <= b'z' || b >= b'0' && b <= b'9' || b == b'_' || b == b'-' || b == b'*' || b == b'/';
     if (!ok) {
       return false;
     }
@@ -269,9 +269,9 @@ function __lower_hex(s: string): boolean {
 }
 
 function __hex_value(s: string): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for b in s.bytes() {
-    let d: i32 = (b - b'0') as i32;
+    let d = (b - b'0') as i32;
     if (b >= b'a') {
       d = (b - b'a') as i32 + 10;
     }
@@ -281,11 +281,11 @@ function __hex_value(s: string): i32 {
 }
 
 function __id(random: () => i32, words: i32): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < words) {
-    out = out + __hex(random(), 8);
-    i = i + 1;
+    out += __hex(random(), 8);
+    i += 1;
   }
   if (!__id_ok(out)) {
     return out.take(out.len() - 1) + "1";
@@ -294,13 +294,13 @@ function __id(random: () => i32, words: i32): string {
 }
 
 function __hex(n: i32, digits: i32): string {
-  let alphabet: string = "0123456789abcdef";
-  let out: string = "";
-  let i: i32 = digits - 1;
+  let alphabet = "0123456789abcdef";
+  let out = "";
+  let i = digits - 1;
   while (i >= 0) {
-    let nib: i32 = n >> i * 4 & 15;
-    out = out + alphabet.drop(nib).take(1);
-    i = i - 1;
+    let nib = n >> i * 4 & 15;
+    out += alphabet.drop(nib).take(1);
+    i -= 1;
   }
   return out;
 }

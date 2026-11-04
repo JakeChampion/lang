@@ -165,8 +165,8 @@ const WRITE_CHUNK: i32 = 4096;
 ```fern
 <<6 pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platform.Host)>>=
 pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platform.Host) => HttpResponse): void {
-  let method: string = method_name(req_method(request));
-  let target: string = "/";
+  let method = method_name(req_method(request));
+  let target = "/";
   match (req_path(request)) {
     Some(p) => {
       target = p;
@@ -175,7 +175,7 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
       target = "/";
     }
   }
-  let path: string = "";
+  let path = "";
   match (http.request_target(method, target)) {
     Ok(p) => {
       path = p;
@@ -186,16 +186,16 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
       return;
     }
   }
-  let fields: i32 = req_headers(request);
+  let fields = req_headers(request);
   let (data, how) = read_body(request);
-  let headers: HeaderMap = headers_of(fields);
+  let headers = headers_of(fields);
   req_drop(request);
   if (how == READ_PAST_CAP) {
     send(response_out, http.text(413, ""));
     return;
   }
-  let req: HttpRequest = HttpRequest { method: method, path: path, body: stream.from_bytes(data), headers: headers, trailers: HeaderMap { names: [], values: [] } };
-  let resp: HttpResponse = handle(req, platform.host());
+  let req = HttpRequest { method: method, path: path, body: stream.from_bytes(data), headers: headers, trailers: HeaderMap { names: [], values: [] } };
+  let resp = handle(req, platform.host());
   send(response_out, resp);
   match (resp.background) {
     Some(work) => {
@@ -274,7 +274,7 @@ const READ_FAILED: i32 = 2;
 <<9 function drain(body: i32, cap: Option[i32]): (u8[], i32)>>=
 function drain(body: i32, cap: Option[i32]): (u8[], i32) {
   let data: u8[] = [];
-  let how: i32 = READ_WHOLE;
+  let how = READ_WHOLE;
   match (body_stream(body)) {
     Ok(stream) => {
       let (read, ended) = read_stream(stream, cap);
@@ -296,10 +296,10 @@ function read_stream(stream: i32, cap: Option[i32]): (u8[], i32) {
         if (past(data.len() + chunk.len(), cap)) {
           return (data, READ_PAST_CAP);
         }
-        let i: i32 = 0;
+        let i = 0;
         while (i < chunk.len()) {
           data = data.append(chunk[i]);
-          i = i + 1;
+          i += 1;
         }
       },
       Err(e) => {
@@ -338,16 +338,16 @@ function headers_of(fields: i32): HeaderMap {
 }
 
 function send(response_out: i32, resp: HttpResponse): void {
-  let fields: i32 = fields_new();
-  let i: i32 = 0;
+  let fields = fields_new();
+  let i = 0;
   while (i < resp.headers.names.len()) {
     match (fields_append(fields, resp.headers.names[i], resp.headers.values[i])) {
       Ok(v) => {},
       Err(e) => {}
     }
-    i = i + 1;
+    i += 1;
   }
-  let response: i32 = response_new(fields);
+  let response = response_new(fields);
   response_set_status(response, resp.status);
   match (response_body(response)) {
     Ok(body) => {
@@ -375,14 +375,14 @@ function write_body(body: i32, bytes: u8[]): void {
 }
 
 function write_all(stream: i32, body: u8[]): void {
-  let off: i32 = 0;
-  let n: i32 = body.len();
+  let off = 0;
+  let n = body.len();
   if (n == 0) {
     return;
   }
-  let chunk: usize = buf_new(WRITE_CHUNK);
+  let chunk = buf_new(WRITE_CHUNK);
   while (off < n) {
-    let end: i32 = n;
+    let end = n;
     if (n - off > WRITE_CHUNK) {
       end = off + WRITE_CHUNK;
     }
@@ -765,8 +765,8 @@ impl cmp.Display for OutgoingError {}
 ```fern
 <<19 pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, OutgoingError]>>=
 pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, OutgoingError] {
-  let req: i32 = build_request(o)?;
-  let body: i32 = 0;
+  let req = build_request(o)?;
+  let body = 0;
   match (request_body(req)) {
     Ok(b) => {
       body = b;
@@ -776,7 +776,7 @@ pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, Ou
       return Err(Lost);
     }
   }
-  let fut: i32 = 0;
+  let fut = 0;
   match (outgoing_handle(req, 1, options_of(limits))) {
     Ok(h) => {
       fut = h as i32;
@@ -787,7 +787,7 @@ pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, Ou
     }
   }
   write_body(body, o.body);
-  let resp: i32 = await_response(fut)?;
+  let resp = await_response(fut)?;
   return read_response(resp, limits.body_cap);
 }
 ```
@@ -797,8 +797,8 @@ pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, Ou
 ```fern
 <<20 function build_request(o: http.Outgoing): Result[i32, OutgoingError]>>=
 function build_request(o: http.Outgoing): Result[i32, OutgoingError] {
-  let fields: i32 = fields_new();
-  let i: i32 = 0;
+  let fields = fields_new();
+  let i = 0;
   while (i < o.headers.names.len()) {
     match (fields_append(fields, o.headers.names[i], o.headers.values[i])) {
       Ok(v) => {},
@@ -807,16 +807,16 @@ function build_request(o: http.Outgoing): Result[i32, OutgoingError] {
         return Err(Field(o.headers.names[i]));
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  let req: i32 = request_new(fields);
-  let method: i32 = method_index(o.method);
-  let other: string = "";
+  let req = request_new(fields);
+  let method = method_index(o.method);
+  let other = "";
   if (method == 9) {
     other = o.method;
   }
   request_set_method(req, method, other);
-  let scheme: i32 = 0;
+  let scheme = 0;
   if (o.scheme == "https") {
     scheme = 1;
   }
@@ -828,18 +828,18 @@ function build_request(o: http.Outgoing): Result[i32, OutgoingError] {
 
 function method_index(method: string): i32 {
   let names: string[] = ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == method) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return 9;
 }
 
 function options_of(limits: Limits): i32 {
-  let opts: i32 = options_new();
+  let opts = options_new();
   options_set_connect_timeout(opts, 1, limits.connect.as_nanos());
   options_set_first_byte_timeout(opts, 1, limits.inactivity.as_nanos());
   options_set_between_bytes_timeout(opts, 1, limits.inactivity.as_nanos());
@@ -847,10 +847,10 @@ function options_of(limits: Limits): i32 {
 }
 
 function await_response(fut: i32): Result[i32, OutgoingError] {
-  let ready: i32 = future_subscribe(fut);
+  let ready = future_subscribe(fut);
   pollable_block(ready);
   pollable_drop(ready);
-  let got: FutureGot = future_get(fut);
+  let got = future_get(fut);
   future_drop(fut);
   if ((got.w0 & 255) == 0 || (got.w2 & 255) != 0) {
     return Err(Lost);
@@ -862,10 +862,10 @@ function await_response(fut: i32): Result[i32, OutgoingError] {
 }
 
 function read_response(resp: i32, cap: i32): Result[HttpResponse, OutgoingError] {
-  let status: i32 = response_status(resp);
-  let headers: HeaderMap = headers_of(response_headers(resp));
+  let status = response_status(resp);
+  let headers = headers_of(response_headers(resp));
   let data: u8[] = [];
-  let how: i32 = READ_WHOLE;
+  let how = READ_WHOLE;
   match (response_consume(resp)) {
     Ok(body) => {
       let (read, ended) = drain(body, Some(cap));

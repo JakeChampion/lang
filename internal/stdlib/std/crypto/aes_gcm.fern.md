@@ -60,7 +60,7 @@ pub function key(bytes: [u8]): Result[Key, aead.AeadError] {
   if (bytes.len() != 16 && bytes.len() != 32) {
     return Err(aead.KeyLength(bytes.len()));
   }
-  let rk: u8[] = __aes_expand_key(bytes);
+  let rk = __aes_expand_key(bytes);
   return Ok(Key { rk: rk, h: __aes_ctr32(rk, ZERO_BLOCK, ZERO_BLOCK) });
 }
 ```
@@ -78,9 +78,9 @@ const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 <<6 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   unsafe {
-    let n: i32 = plaintext.len();
-    let a: i32 = aad.len();
-    let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, plaintext, 0, n), n + 16, aad, 0, a);
+    let n = plaintext.len();
+    let a = aad.len();
+    let buf = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, plaintext, 0, n), n + 16, aad, 0, a);
     buf = k.seal_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
     __arr_set_len(buf, n + 16);
     return Ok(buf);
@@ -95,9 +95,9 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
     if (sealed.len() < 16) {
       return Err(aead.Forged);
     }
-    let n: i32 = sealed.len() - 16;
-    let a: i32 = aad.len();
-    let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, sealed, 0, n + 16), n + 16, aad, 0, a);
+    let n = sealed.len() - 16;
+    let a = aad.len();
+    let buf = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, sealed, 0, n + 16), n + 16, aad, 0, a);
     buf = k.open_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
     __arr_set_len(buf, n);
     return Ok(buf);

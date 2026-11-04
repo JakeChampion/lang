@@ -1,0 +1,135 @@
+import "std/hash/crc32";
+import "std/opus/celt_encoder";
+import "std/test";
+
+// Each case makes a new encoder with a random channel count, rate mode,
+// bitrate, complexity, loss rate and frame size. Then it codes a few
+// frames of a random periodic pattern plus noise, with a random gain on
+// each frame and some silent frames. libopus 1.4, in its float build,
+// gave the CRC-32 of each trace, from a C program that codes the same
+// frames with opus_custom_encode_float.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
+  let (g1, r) = rnd(g);
+  return (g1, lo + (hi - lo) * ((r % 65536) as f32) / 65536.0f32);
+}
+
+function flag(b: boolean): string {
+  if (b) {
+    return "1";
+  }
+  return "0";
+}
+
+struct Signal { g: Gen, pat: f32[], period: i32, noise: f32 }
+
+function signal(own g: Gen, cc: i32): Signal {
+  let (g1, p0) = rnd(g);
+  let period: i32 = 8 + p0 % 1000;
+  g = g1;
+  let pat: f32[] = [];
+  for i in 0..cc * period {
+    let (g2, v) = frand(g, -1.0f32, 1.0f32);
+    g = g2;
+    pat = pat.append(v);
+  }
+  let (g3, noise) = frand(g, 0.0f32, 0.5f32);
+  return Signal { g: g3, pat: pat, period: period, noise: noise };
+}
+
+struct Setup { g: Gen, st: celt_encoder.Encoder, line: string, lm: i32, frames: i32, max_bytes: i32, sig: Signal }
+
+function setup(own g: Gen): Setup {
+  let (g1, cc0) = rnd(g);
+  let cc: i32 = 1 + cc0 % 2;
+  let (g2, mode0) = rnd(g1);
+  let mode: i32 = mode0 % 3;
+  let (g3, rate0) = rnd(g2);
+  let bitrate: i32 = 6000 + rate0 % 250000;
+  let (g4, cx0) = rnd(g3);
+  let complexity: i32 = cx0 % 11;
+  let (g5, lossy) = rnd(g4);
+  let loss: i32 = 0;
+  if (lossy % 4 == 0) {
+    let (g6, l) = rnd(g5);
+    g5 = g6;
+    loss = l % 20;
+  }
+  let st: celt_encoder.Encoder = celt_encoder.Encoder { ...celt_encoder.new_encoder(cc), bitrate: bitrate, vbr: mode != 0, constrained_vbr: mode == 2, complexity: complexity, loss_rate: loss };
+  let (g7, lm0) = rnd(g5);
+  let lm: i32 = lm0 % 4;
+  let Signal { g: gs, pat, period, noise } = signal(g7, cc);
+  let (g8, f0) = rnd(gs);
+  let (g9, mb0) = rnd(g8);
+  let frames: i32 = 1 + f0 % 6;
+  let max_bytes: i32 = 2 + mb0 % 1274;
+  let line: string = "c " + cc.to_string() + " " + mode.to_string() + " " + bitrate.to_string() + " " + complexity.to_string() + " " + loss.to_string() + " " + lm.to_string() + " " + frames.to_string() + " " + max_bytes.to_string();
+  return Setup { g: g9, st: st, line: line, lm: lm, frames: frames, max_bytes: max_bytes, sig: Signal { g: Gen { x: 0u32 }, pat: pat, period: period, noise: noise } };
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let crc: crc32.Crc32 = crc32.new();
+  for k in 0..cases {
+    let s: Setup = setup(g);
+    let cc: i32 = s.st.channels;
+    let n: i32 = 120 << s.lm;
+    let sig: Signal = s.sig;
+    g = s.g;
+    crc = crc.update((s.line + "\n").as_bytes());
+    let st: celt_encoder.Encoder = s.st;
+    let t: i32 = 0;
+    for f in 0..s.frames {
+      let (g1, z) = rnd(g);
+      g = g1;
+      let gain: f32 = 0.0f32;
+      if (z % 5 != 0) {
+        let (g2, v) = frand(g, 0.0f32, 1.0f32);
+        g = g2;
+        gain = v;
+      }
+      let pcm: f32[] = [];
+      for i in 0..n {
+        for c in 0..cc {
+          let (g3, v) = frand(g, -1.0f32, 1.0f32);
+          g = g3;
+          pcm = pcm.append(gain * (0.7f32 * sig.pat[c * sig.period + t % sig.period] + sig.noise * v));
+        }
+        t = t + 1;
+      }
+      let r: celt_encoder.Encoded = celt_encoder.encode(st, pcm, n, s.max_bytes);
+      st = r.st;
+      let len: i32 = r.packet.len();
+      let sum: u32 = 0u32;
+      if (r.error != 0) {
+        len = r.error;
+      } else {
+        sum = crc32.new().update(r.packet).finish();
+      }
+      crc = crc.update(("f " + len.to_string() + " " + sum.to_string() + " " + st.rng.to_string() + "\n").as_bytes());
+    }
+  }
+  return crc.finish();
+}
+
+function test_short_trace(): test.TestOutcome {
+  return test.assert_eq(trace(1u32, 6), 3891627298u32);
+}
+
+function test_long_trace(): test.TestOutcome {
+  return test.assert_eq(trace(7u32, 120), 4054495625u32);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/celt_encoder frames");
+  r = r.it("a short trace of frames is the libopus trace", test_short_trace);
+  r = r.it("a long trace of frames is the libopus trace", test_long_trace);
+  return r.finish();
+}

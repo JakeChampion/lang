@@ -114,9 +114,9 @@ function __initial_salt(): u8[] {
 ```fern
 <<5 pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys>>=
 pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys {
-  let h: keyschedule.Hash = suite.hash();
-  let n: i32 = suite.aead().key_len();
-  let hp: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic hp", [], n);
+  let h = suite.hash();
+  let n = suite.aead().key_len();
+  let hp = keyschedule.hkdf_expand_label(h, secret, "quic hp", [], n);
   let rk: u8[] = [];
   match (suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {},
@@ -124,7 +124,7 @@ pub function keys(suite: keyschedule.CipherSuite, secret: [u8]): Keys {
       rk = __aes_expand_key(hp);
     }
   }
-  let key: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
+  let key = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
   return Keys { suite: suite, secret: __copy(secret), key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), hp: hp, hp_round_keys: rk, hp_chacha: __chacha(suite, hp), gcm: __gcm(suite, key), chacha: __chacha(suite, key) };
 }
 ```
@@ -173,8 +173,8 @@ function __chacha(suite: keyschedule.CipherSuite, key: [u8]): Option[chacha20pol
 ```fern
 <<7 pub function initial_secret(dcid: [u8], client: boolean): u8[]>>=
 pub function initial_secret(dcid: [u8], client: boolean): u8[] {
-  let h: keyschedule.Hash = keyschedule.Sha256;
-  let base: u8[] = keyschedule.hkdf_extract(h, __initial_salt(), dcid);
+  let h = keyschedule.Sha256;
+  let base = keyschedule.hkdf_extract(h, __initial_salt(), dcid);
   if (client) {
     return keyschedule.hkdf_expand_label(h, base, "client in", [], 32);
   }
@@ -186,15 +186,15 @@ pub function initial_keys(dcid: [u8], client: boolean): Keys {
 }
 
 pub function (k: Keys) updated(): Keys {
-  let h: keyschedule.Hash = k.suite.hash();
-  let secret: u8[] = keyschedule.hkdf_expand_label(h, k.secret, "quic ku", [], h.size());
-  let n: i32 = k.suite.aead().key_len();
-  let key: u8[] = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
+  let h = k.suite.hash();
+  let secret = keyschedule.hkdf_expand_label(h, k.secret, "quic ku", [], h.size());
+  let n = k.suite.aead().key_len();
+  let key = keyschedule.hkdf_expand_label(h, secret, "quic key", [], n);
   return Keys { ...k, secret: secret, key: key, iv: keyschedule.hkdf_expand_label(h, secret, "quic iv", [], 12), gcm: __gcm(k.suite, key), chacha: __chacha(k.suite, key) };
 }
 
 pub function pn_len(pn: i64, largest_acked: i64): i32 {
-  let unacked: i64 = pn - largest_acked;
+  let unacked = pn - largest_acked;
   if (largest_acked < 0) {
     unacked = pn + 1;
   }
@@ -211,10 +211,10 @@ pub function pn_len(pn: i64, largest_acked: i64): i32 {
 }
 
 pub function decode_pn(largest: i64, truncated: i64, bits: i32): i64 {
-  let expected: i64 = largest + 1;
-  let win: i64 = 1 as i64 << bits as i64;
-  let hwin: i64 = win / 2;
-  let candidate: i64 = expected - (expected & win - 1) | truncated;
+  let expected = largest + 1;
+  let win = 1 as i64 << bits as i64;
+  let hwin = win / 2;
+  let candidate = expected - (expected & win - 1) | truncated;
   if (candidate <= expected - hwin && candidate < (1 as i64 << 62) - win) {
     return candidate + win;
   }
@@ -268,24 +268,24 @@ pub function parse(datagram: [u8], at: i32, short_dcid_len: i32): Result[Header,
   if (at >= datagram.len()) {
     return Err(PacketCutShort("first byte"));
   }
-  let b0: i32 = datagram[at] as i32;
+  let b0 = datagram[at] as i32;
   if ((b0 & 128) == 0) {
     return __short(datagram, b0, at, short_dcid_len);
   }
   if (at + 5 > datagram.len()) {
     return Err(PacketCutShort("version"));
   }
-  let version: i64 = __be32(datagram, at + 1);
-  let max: i32 = MAX_CID_LEN;
+  let version = __be32(datagram, at + 1);
+  let max = MAX_CID_LEN;
   if (version != VERSION_1) {
     max = 255;
   }
-  let dl: i32 = __cid_len(datagram, at + 5, max, "destination connection id")?;
-  let dcid_at: i32 = at + 6;
-  let sl: i32 = __cid_len(datagram, dcid_at + dl, max, "source connection id")?;
-  let scid_at: i32 = dcid_at + dl + 1;
-  let rest: i32 = scid_at + sl;
-  let h: Header = Header { kind: UnknownVersion, version: version, dcid: __slice(datagram, dcid_at, dcid_at + dl), scid: __slice(datagram, scid_at, scid_at + sl), token: [], tag: [], versions: [], at: at, pn_at: rest, end: datagram.len() };
+  let dl = __cid_len(datagram, at + 5, max, "destination connection id")?;
+  let dcid_at = at + 6;
+  let sl = __cid_len(datagram, dcid_at + dl, max, "source connection id")?;
+  let scid_at = dcid_at + dl + 1;
+  let rest = scid_at + sl;
+  let h = Header { kind: UnknownVersion, version: version, dcid: __slice(datagram, dcid_at, dcid_at + dl), scid: __slice(datagram, scid_at, scid_at + sl), token: [], tag: [], versions: [], at: at, pn_at: rest, end: datagram.len() };
   if (version == 0) {
     return __version_negotiation(h, datagram, rest);
   }
@@ -304,7 +304,7 @@ function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, 
   if (p >= datagram.len()) {
     return Err(PacketCutShort(what + " length"));
   }
-  let n: i32 = datagram[p] as i32;
+  let n = datagram[p] as i32;
   if (n > max) {
     return Err(PacketConnectionIdTooLong(what, n));
   }
@@ -325,15 +325,15 @@ function __short(datagram: [u8], b0: i32, at: i32, dcid_len: i32): Result[Header
 }
 
 function __version_negotiation(h: Header, datagram: [u8], at: i32): Result[Header, PacketError] {
-  let left: i32 = datagram.len() - at;
+  let left = datagram.len() - at;
   if (left == 0 || left % 4 != 0) {
     return Err(PacketVersionListLength(left));
   }
   let versions: i64[] = [];
-  let p: i32 = at;
+  let p = at;
   while (p < datagram.len()) {
     versions = versions.append(__be32(datagram, p));
-    p = p + 4;
+    p += 4;
   }
   return Ok(Header { ...h, kind: VersionNegotiation, versions: versions, pn_at: datagram.len() });
 }
@@ -342,18 +342,18 @@ function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, Pac
   if ((b0 & 64) == 0) {
     return Err(PacketFixedBitClear);
   }
-  let kind: i32 = b0 >> 4 & 3;
+  let kind = b0 >> 4 & 3;
   if (kind == 3) {
     return __retry_header(h, datagram, at);
   }
-  let k: Kind = Initial;
-  let p: i32 = at;
+  let k = Initial;
+  let p = at;
   if (kind == 0) {
-    let n: i64 = frames.varint_at(datagram, p);
+    let n = frames.varint_at(datagram, p);
     if (n < 0) {
       return Err(PacketCutShort("token length"));
     }
-    let token_at: i32 = frames.varint_end(datagram, p);
+    let token_at = frames.varint_end(datagram, p);
     if (n > (datagram.len() - token_at) as i64) {
       return Err(PacketCutShort("token"));
     }
@@ -364,11 +364,11 @@ function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, Pac
   } else {
     k = Handshake;
   }
-  let len: i64 = frames.varint_at(datagram, p);
+  let len = frames.varint_at(datagram, p);
   if (len < 0) {
     return Err(PacketCutShort("length"));
   }
-  let body: i32 = frames.varint_end(datagram, p);
+  let body = frames.varint_end(datagram, p);
   if (len > (datagram.len() - body) as i64) {
     return Err(PacketPastDatagram(len));
   }
@@ -376,7 +376,7 @@ function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, Pac
 }
 
 function __retry_header(h: Header, datagram: [u8], at: i32): Result[Header, PacketError] {
-  let rest: i32 = datagram.len() - at - TAG_LEN;
+  let rest = datagram.len() - at - TAG_LEN;
   if (rest < 1) {
     return Err(PacketRetryWithoutToken);
   }
@@ -391,7 +391,7 @@ function __retry_header(h: Header, datagram: [u8], at: i32): Result[Header, Pack
 pub function mask(k: Keys, sample: [u8]): u8[] {
   match (k.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
-      let counter: u32 = sample[0] as u32 | sample[1] as u32 << 8 | sample[2] as u32 << 16 | sample[3] as u32 << 24;
+      let counter = sample[0] as u32 | sample[1] as u32 << 8 | sample[2] as u32 << 16 | sample[3] as u32 << 24;
       let Some(hp) = k.hp_chacha else {
         return __copy(ZERO_MASK);
       };
@@ -458,7 +458,7 @@ function __seal(k: Keys, pn: i64, own packet: u8[], at: i32, n: i32): u8[] {
 // Opens buf[0:n] in place, the tag behind it and the header, the additional data, behind the tag.
 function __open(k: Keys, pn: i64, own buf: u8[], n: i32): Option[u8[]] {
   unsafe {
-    let aad_n: i32 = buf.len() - n - 16;
+    let aad_n = buf.len() - n - 16;
     match (k.suite.aead()) {
       keyschedule.ChaCha20Poly1305 => {
         let Some(c) = k.chacha else {
@@ -508,27 +508,27 @@ pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result
   if (h.pn_at + 4 + 16 > h.end) {
     return Err(PacketTooShortToSample);
   }
-  let m: u8[] = mask(k, datagram[h.pn_at + 4:h.pn_at + 20]);
+  let m = mask(k, datagram[h.pn_at + 4:h.pn_at + 20]);
   let long: boolean = (datagram[h.at] as i32 & 128) != 0;
-  let low: i32 = 31;
+  let low = 31;
   if (long) {
     low = 15;
   }
-  let b0: i32 = datagram[h.at] as i32 ^ m[0] as i32 & low;
+  let b0 = datagram[h.at] as i32 ^ m[0] as i32 & low;
   let n: i32 = (b0 & 3) + 1;
-  let header: u8[] = __slice(datagram, h.at, h.pn_at + n);
+  let header = __slice(datagram, h.at, h.pn_at + n);
   header = header.with(0, b0 as u8);
   let truncated: i64 = 0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let at: i32 = h.pn_at - h.at + i;
-    let b: u8 = (header[at] as i32 ^ m[1 + i] as i32) as u8;
+    let at = h.pn_at - h.at + i;
+    let b = (header[at] as i32 ^ m[1 + i] as i32) as u8;
     header = header.with(at, b);
     truncated = truncated << 8 | b as i64;
-    i = i + 1;
+    i += 1;
   }
-  let pn: i64 = decode_pn(largest, truncated, n * 8);
-  let reserved: i32 = 24;
+  let pn = decode_pn(largest, truncated, n * 8);
+  let reserved = 24;
   if (long) {
     reserved = 12;
   }
@@ -536,11 +536,11 @@ pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result
 }
 
 pub function open_unprotected(datagram: [u8], h: Header, u: Unprotected, k: Keys): Result[Opened, PacketError] {
-  let sealed: i32 = h.end - u.body_at;
+  let sealed = h.end - u.body_at;
   if (sealed < 16) {
     return Err(PacketUndecryptable);
   }
-  let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(sealed + u.header.len()), 0, datagram, u.body_at, sealed), sealed, u.header, 0, u.header.len());
+  let buf = __bytes_into(__bytes_into(__alloc_u8(sealed + u.header.len()), 0, datagram, u.body_at, sealed), sealed, u.header, 0, u.header.len());
   match (__open(k, u.pn, buf, sealed - 16)) {
     Some(payload) => {
       return Ok(Opened { pn: u.pn, payload: payload, key_phase: u.key_phase, spin: u.spin, reserved_ok: u.reserved_ok });
@@ -552,7 +552,7 @@ pub function open_unprotected(datagram: [u8], h: Header, u: Unprotected, k: Keys
 }
 
 pub function open(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Opened, PacketError] {
-  let u: Unprotected = unprotect(datagram, h, k, largest)?;
+  let u = unprotect(datagram, h, k, largest)?;
   return open_unprotected(datagram, h, u, k);
 }
 ```
@@ -569,8 +569,8 @@ pub struct Long { kind: Kind, dcid: u8[], scid: u8[], token: u8[], pn: i64, pn_l
 ```fern
 <<15 pub function seal_long(l: Long, payload: [u8], k: Keys): u8[]>>=
 pub function seal_long(l: Long, payload: [u8], k: Keys): u8[] {
-  let blen: i32 = __padded_len(payload.len(), l.pn_len);
-  let kind: i32 = 0;
+  let blen = __padded_len(payload.len(), l.pn_len);
+  let kind = 0;
   match (l.kind) {
     ZeroRtt => {
       kind = 1;
@@ -580,7 +580,7 @@ pub function seal_long(l: Long, payload: [u8], k: Keys): u8[] {
     },
     _ => {}
   }
-  let head: u8[] = __empty(32 + l.dcid.len() + l.scid.len() + l.token.len() + blen + TAG_LEN);
+  let head = __empty(32 + l.dcid.len() + l.scid.len() + l.token.len() + blen + TAG_LEN);
   head = head.append((192 | kind << 4 | l.pn_len - 1) as u8);
   head = __put_be32(head, VERSION_1);
   head = head.append(l.dcid.len() as u8).concat(l.dcid).append(l.scid.len() as u8).concat(l.scid);
@@ -588,22 +588,22 @@ pub function seal_long(l: Long, payload: [u8], k: Keys): u8[] {
     head = frames.put_varint(head, l.token.len() as i64).concat(l.token);
   }
   head = frames.put_varint(head, (l.pn_len + blen + 16) as i64);
-  let pn_at: i32 = head.len();
+  let pn_at = head.len();
   return __protect(__put_pn(head, l.pn, l.pn_len), pn_at, l.pn, l.pn_len, payload, blen, k, 15);
 }
 
 pub function seal_short(dcid: [u8], pn: i64, n: i32, key_phase: boolean, spin: boolean, payload: [u8], k: Keys): u8[] {
   unsafe {
-    let blen: i32 = __padded_len(payload.len(), n);
-    let b0: i32 = 64 | n - 1;
+    let blen = __padded_len(payload.len(), n);
+    let b0 = 64 | n - 1;
     if (key_phase) {
       b0 = b0 | 4;
     }
     if (spin) {
       b0 = b0 | 32;
     }
-    let pn_at: i32 = 1 + dcid.len();
-    let head: u8[] = __empty(pn_at + n + blen + TAG_LEN).append(b0 as u8);
+    let pn_at = 1 + dcid.len();
+    let head = __empty(pn_at + n + blen + TAG_LEN).append(b0 as u8);
     __arr_set_len(head, pn_at);
     head = __bytes_into(head, 1, dcid, 0, dcid.len());
     return __protect(__put_pn(head, pn, n), pn_at, pn, n, payload, blen, k, 31);
@@ -627,19 +627,19 @@ function __padded_len(len: i32, n: i32): i32 {
 // payload and the tag.
 function __protect(own packet: u8[], pn_at: i32, pn: i64, n: i32, payload: [u8], blen: i32, k: Keys, low: i32): u8[] {
   unsafe {
-    let at: i32 = packet.len();
+    let at = packet.len();
     __arr_set_len(packet, at + blen + TAG_LEN);
     packet = __bytes_into(packet, at, payload, 0, payload.len());
     for i in at + payload.len()..at + blen {
       packet = packet.with(i, 0 as u8);
     }
     packet = __seal(k, pn, packet, at, blen);
-    let m: u8[] = mask(k, packet[pn_at + 4:pn_at + 20]);
+    let m = mask(k, packet[pn_at + 4:pn_at + 20]);
     packet = packet.with(0, (packet[0] as i32 ^ m[0] as i32 & low) as u8);
-    let i: i32 = 0;
+    let i = 0;
     while (i < n) {
       packet = packet.with(pn_at + i, (packet[pn_at + i] as i32 ^ m[1 + i] as i32) as u8);
-      i = i + 1;
+      i += 1;
     }
     return packet;
   }
@@ -651,7 +651,7 @@ function __protect(own packet: u8[], pn_at: i32, pn: i64, n: i32, payload: [u8],
 ```fern
 <<17 pub function version_negotiation(h: Header): u8[]>>=
 pub function version_negotiation(h: Header): u8[] {
-  let out: u8[] = __empty(64).append(192 as u8);
+  let out = __empty(64).append(192 as u8);
   out = __put_be32(out, 0 as i64);
   out = out.append(h.scid.len() as u8).concat(h.scid).append(h.dcid.len() as u8).concat(h.dcid);
   return __put_be32(out, VERSION_1);
@@ -671,7 +671,7 @@ function __retry_nonce(): u8[] {
 }
 
 function __retry_tag(unprotected: [u8], odcid: [u8]): u8[] {
-  let pseudo: u8[] = __empty(64).append(odcid.len() as u8).concat(__copy(odcid)).concat(__copy(unprotected));
+  let pseudo = __empty(64).append(odcid.len() as u8).concat(__copy(odcid)).concat(__copy(unprotected));
   let Ok(k) = aes_gcm.key(__retry_key()) else {
     return [];
   };
@@ -691,7 +691,7 @@ function __retry_tag(unprotected: [u8], odcid: [u8]): u8[] {
 ```fern
 <<19 pub function retry(dcid: [u8], scid: [u8], odcid: [u8], token: [u8]): u8[]>>=
 pub function retry(dcid: [u8], scid: [u8], odcid: [u8], token: [u8]): u8[] {
-  let out: u8[] = __empty(64).append(255 as u8);
+  let out = __empty(64).append(255 as u8);
   out = __put_be32(out, VERSION_1);
   out = out.append(dcid.len() as u8).concat(__copy(dcid)).append(scid.len() as u8).concat(__copy(scid)).concat(__copy(token));
   return out.concat(__retry_tag(out, odcid));
@@ -701,13 +701,13 @@ pub function retry_valid(packet: [u8], odcid: [u8]): boolean {
   if (packet.len() < TAG_LEN + 7) {
     return false;
   }
-  let at: i32 = packet.len() - TAG_LEN;
-  let want: u8[] = __retry_tag(packet[0:at], odcid);
-  let diff: i32 = 0;
-  let i: i32 = 0;
+  let at = packet.len() - TAG_LEN;
+  let want = __retry_tag(packet[0:at], odcid);
+  let diff = 0;
+  let i = 0;
   while (i < TAG_LEN) {
     diff = diff | want[i] as i32 ^ packet[at + i] as i32;
-    i = i + 1;
+    i += 1;
   }
   return want.len() == TAG_LEN && diff == 0;
 }
@@ -726,9 +726,9 @@ function __put_be32(own out: u8[], v: i64): u8[] {
 }
 
 function __put_pn(own out: u8[], pn: i64, n: i32): u8[] {
-  let i: i32 = n;
+  let i = n;
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     out = out.append((pn >> (i * 8) as i64 & 255) as u8);
   }
   return out;
@@ -736,7 +736,7 @@ function __put_pn(own out: u8[], pn: i64, n: i32): u8[] {
 
 function __empty(room: i32): u8[] {
   unsafe {
-    let out: u8[] = __alloc_u8(room);
+    let out = __alloc_u8(room);
     __arr_set_len(out, 0);
     return out;
   }

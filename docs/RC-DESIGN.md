@@ -71,6 +71,12 @@ splits a join whose branch reads a phi of constants, which is the shape of a
 match on a two-word call result. Each predecessor jumps to the arm its
 constant picks, and a payload phi an arm reads becomes a value of that arm
 (`docs/rc-log/2026-11-01-g-a-branch-on-a-join-of-constants-goes-to-its-arm.md`).
+Before a split, the pass also leaves out a block that holds only phis, when
+only the phis of the next join read them. It keeps such a block on a back edge.
+After the splits, a join that returns a phi of constants is left out: each
+predecessor returns its own constant (#14094). A join that reaches the branch
+on its phi through empty blocks takes that branch. Thus a returned value match
+gives the same graph as a match that returns in each arm.
 `semsink.fern` re-reads,
 in a block where a projection's parent dies, the counted projections the
 block uses that a dominating block read (a record, tuple or payload field,

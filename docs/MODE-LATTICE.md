@@ -123,7 +123,13 @@ is a *consume*. Using a consumed binding is E050
 at loop entry is E050 (checker.go:7718); branch joins merge only
 non-diverging arms (checker.go:7683); matching an owned
 scrutinee moves its pointer payloads into arm bindings, owned
-for the arm's scope (checker.go:7778-7814); consuming
+for the arm's scope (checker.go:7778-7814). A call scrutinee is
+a temporary that the match takes, so a binding of it that can
+hold no handle is a fresh local, the same as a `let` local: a
+copy does not consume it, and it moves into an `own` parameter
+only at its last use (E051 before that). A binding of a fresh
+call that can hold a handle stays owned, so the handle moves
+once (E050). Consuming
 (`own self`) and `dyn`-trait methods move their receiver
 (checker.go:7315/7350). The call-site guard `guardCallArgs`
 (checker.go:7512) enforces E051: an argument in an `own`

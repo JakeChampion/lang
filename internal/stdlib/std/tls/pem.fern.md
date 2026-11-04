@@ -150,9 +150,9 @@ struct Open { label: string, body: string, open: boolean }
 <<9 pub function decode(text: string): Result[Block[], PemError]>>=
 pub function decode(text: string): Result[Block[], PemError] {
   let out: Block[] = [];
-  let cur: Open = Open { label: "", body: "", open: false };
+  let cur = Open { label: "", body: "", open: false };
   for raw in text.lines() {
-    let line: string = raw.trim();
+    let line = raw.trim();
     if (!cur.open) {
       if let Some(label) = __label(line, "BEGIN") {
         cur = Open { label: label, body: "", open: true };
@@ -213,12 +213,12 @@ pub function certificates(text: string): Result[u8[][], PemError] {
 }
 
 pub function encode(label: string, bytes: u8[]): string {
-  let body: string = base64.encode(bytes);
-  let out: string = "-----BEGIN " + label + "-----\n";
-  let at: i32 = 0;
+  let body = base64.encode(bytes);
+  let out = "-----BEGIN " + label + "-----\n";
+  let at = 0;
   while (at < body.len()) {
     out = out + body.drop(at).take(64) + "\n";
-    at = at + 64;
+    at += 64;
   }
   return out + "-----END " + label + "-----\n";
 }

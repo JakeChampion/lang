@@ -1,0 +1,4 @@
+match arms have incompatible types: Circle vs Square
+match arms have incompatible types: Square vs Circle
+match-expression arms differ: Square vs Circle
+match-expression arms differ: Circle vs Square

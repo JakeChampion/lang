@@ -73,7 +73,7 @@ pub(package) function sanitise(c: i32): i32 {
 ```fern
 <<3 pub(package) function put(buf_in: u8[], pos: i32, c: i32): u8[]>>=
 pub(package) function put(buf_in: u8[], pos: i32, c: i32): u8[] {
-  let buf: u8[] = buf_in;
+  let buf = buf_in;
   if (c < 128) {
     buf = buf.with(pos, c as u8);
   } else if (c < 2048) {
@@ -102,7 +102,7 @@ pub(package) function put(buf_in: u8[], pos: i32, c: i32): u8[] {
 ```fern
 <<4 pub(package) function from_codepoint(ch: char): string>>=
 pub(package) function from_codepoint(ch: char): string {
-  let c: i32 = ch as i32;
+  let c = ch as i32;
   if (c < 0 || c > 1114111 || c >= 55296 && c <= 57343) {  // U+FFFD
     c = 65533;
   }
@@ -124,21 +124,21 @@ pub(package) function from_codepoint(ch: char): string {
 
 // Encode scalars into one buffer whose size is known before writing.
 pub(package) function from_codepoints(cps: char[]): string {
-  let m: i32 = cps.len();
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let m = cps.len();
+  let total = 0;
+  let i = 0;
   while (i < m) {
-    total = total + encoded_len(sanitise(cps[i] as i32));
-    i = i + 1;
+    total += encoded_len(sanitise(cps[i] as i32));
+    i += 1;
   }
-  let buf: u8[] = __alloc_u8(total);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(total);
+  let pos = 0;
   i = 0;
   while (i < m) {
-    let c: i32 = sanitise(cps[i] as i32);
+    let c = sanitise(cps[i] as i32);
     buf = put(buf, pos, c);
-    pos = pos + encoded_len(c);
-    i = i + 1;
+    pos += encoded_len(c);
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
@@ -188,19 +188,19 @@ pub(package) function cont_hi(b0: i32): i32 {
 }
 
 pub(package) function step(s: string, i: i32, n: i32): i32 {
-  let b0: i32 = s[i] as i32;
-  let want: i32 = expect(b0);
+  let b0 = s[i] as i32;
+  let want = expect(b0);
   if (want <= 1) {
     return 1;
   }
   if (i + 1 >= n) {
     return 1;
   }
-  let c1: i32 = s[i + 1] as i32;
+  let c1 = s[i + 1] as i32;
   if (c1 < cont_lo(b0) || c1 > cont_hi(b0)) {
     return 1;
   }
-  let k: i32 = 2;
+  let k = 2;
   while (k < want) {
     if (i + k >= n) {
       return k;
@@ -208,15 +208,15 @@ pub(package) function step(s: string, i: i32, n: i32): i32 {
     if (!is_cont(s[i + k] as i32)) {
       return k;
     }
-    k = k + 1;
+    k += 1;
   }
   return want;
 }
 
 pub(package) function prev_unit(s: string, end: i32): i32 {
-  let start: i32 = end - 1;
+  let start = end - 1;
   while (start > 0 && end - start < 4 && is_cont(s[start] as i32)) {
-    start = start - 1;
+    start -= 1;
   }
   if (start + step(s, start, end) == end) {
     return start;
@@ -225,7 +225,7 @@ pub(package) function prev_unit(s: string, end: i32): i32 {
 }
 
 pub(package) function decode_at(s: string, i: i32, step: i32): i32 {
-  let b0: i32 = s[i] as i32;
+  let b0 = s[i] as i32;
   if (b0 < 128) {
     return b0;
   }

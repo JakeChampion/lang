@@ -99,13 +99,13 @@ pub function import_desc_table(reftype: u8, min: u32, max: i32): u8[] {
 pub function encode_import_section(buf: u8[], modules: string[], names: string[], kinds: u8[], desc_bodies: u8[][]): u8[] {
   let n: i32 = modules.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, modules[i]);
     body = encode.put_name(body, names[i]);
     body = body.append(kinds[i]);
     body = encode.put_bytes(body, desc_bodies[i]);
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_IMPORT, body);
 }
@@ -113,12 +113,12 @@ pub function encode_import_section(buf: u8[], modules: string[], names: string[]
 pub function encode_global_section(buf: u8[], valtypes: u8[], muts: u8[], init_exprs: u8[][]): u8[] {
   let n: i32 = valtypes.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = body.append(valtypes[i]);
     body = body.append(muts[i]);
     body = encode.put_bytes(body, init_exprs[i]);
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_GLOBAL, body);
 }

@@ -267,6 +267,126 @@ function test_tf_tie_takes_flag_one(): test.TestOutcome {
   return test.assert_eq(t.select.to_string() + " |" + ints(t.res, 0), "0 | 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1");
 }
 
+function bit(own g: Gen): (Gen, boolean) {
+  let (g1, v) = rnd(g);
+  return (g1, v % 2 == 1);
+}
+
+function dynalloc_case(own g: Gen, an: celt_encoder.Analysis): (Gen, string) {
+  let e: f32[] = [];
+  let e2: f32[] = [];
+  for i in 0..42 {
+    let (g1, a) = frand(g, -10.0f32, 20.0f32);
+    let (g2, b) = frand(g1, -10.0f32, 20.0f32);
+    g = g2;
+    e = e.append(a);
+    e2 = e2.append(b);
+  }
+  let (g3, zero) = bit(g);
+  g = g3;
+  let sur: f32[] = [];
+  for i in 0..21 {
+    if (zero) {
+      sur = sur.append(0.0f32);
+    } else {
+      let (g4, v) = frand(g, 0.0f32, 2.0f32);
+      g = g4;
+      sur = sur.append(v);
+    }
+  }
+  let (g5, start0) = rnd(g);
+  let (g6, end0) = rnd(g5);
+  let (g7, c0) = rnd(g6);
+  let (g8, depth0) = rnd(g7);
+  let (g9, tr) = bit(g8);
+  let (ga, vbr) = bit(g9);
+  let (gb, cvbr) = bit(ga);
+  let (gc, lm0) = rnd(gb);
+  let (gd, eff0) = rnd(gc);
+  let (ge, lfe0) = rnd(gd);
+  let start: i32 = start0 % 3;
+  let end: i32 = 13 + end0 % 9;
+  let c: i32 = 1 + c0 % 2;
+  let depth: i32 = 8 + depth0 % 17;
+  let lm: i32 = lm0 % 4;
+  let eff: i32 = 10 + eff0 % 190;
+  let lfe: boolean = lfe0 % 8 == 0;
+  let d: celt_encoder.Dynalloc = celt_encoder.dynalloc_analysis(e, e2, start, end, c, depth, tr, vbr, cvbr, lm, eff, lfe, sur, an);
+  let line: string = "d " + start.to_string() + " " + end.to_string() + " " + c.to_string() + " " + depth.to_string() + " " + flag(tr) + " " + flag(vbr) + " " + flag(cvbr) + " " + lm.to_string() + " " + eff.to_string() + " " + flag(lfe) + " " + (f32_bits(d.max_depth) as u32).to_string() + " " + d.tot_boost.to_string() + " |" + ints(d.offsets, 0) + " |";
+  for i in start..end {
+    line = line + " " + d.importance[i].to_string();
+  }
+  return (ge, line + " |" + ints(d.spread_weight, 0));
+}
+
+function vbr_case(own g: Gen, an: celt_encoder.Analysis): (Gen, string) {
+  let (g1, base0) = rnd(g);
+  let (g2, lm0) = rnd(g1);
+  let (g3, rate0) = rnd(g2);
+  let (g4, lcb_zero) = bit(g3);
+  g = g4;
+  let lcb: i32 = 0;
+  if (!lcb_zero) {
+    let (g5, l0) = rnd(g);
+    g = g5;
+    lcb = 13 + l0 % 9;
+  }
+  let (g6, c0) = rnd(g);
+  let (g7, in0) = rnd(g6);
+  let (g8, cvbr) = bit(g7);
+  let (g9, ss) = frand(g8, -1.0f32, 2.0f32);
+  let (ga, tb0) = rnd(g9);
+  let (gb, tfe) = frand(ga, 0.0f32, 1.0f32);
+  let (gc, pc) = bit(gb);
+  let (gd, md) = frand(gc, -10.0f32, 30.0f32);
+  let (ge, lfe0) = rnd(gd);
+  let (gf, hs0) = rnd(ge);
+  let (gg, sm) = frand(gf, -2.0f32, 2.0f32);
+  let (gh, tv) = frand(gg, -3.0f32, 3.0f32);
+  let r: celt_encoder.VbrRequest = celt_encoder.VbrRequest { base_target: 100 + base0 % 3900, lm: lm0 % 4, bitrate: 6000 + rate0 % 194000, last_coded_bands: lcb, channels: 1 + c0 % 2, intensity: in0 % 22, constrained_vbr: cvbr, stereo_saving: ss, tot_boost: tb0 % 800, tf_estimate: tfe, pitch_change: pc, max_depth: md, lfe: lfe0 % 8 == 0, has_surround_mask: hs0 % 4 == 0, surround_masking: sm, temporal_vbr: tv };
+  let t: i32 = celt_encoder.compute_vbr(r, an);
+  return (gh, "v " + r.base_target.to_string() + " " + r.lm.to_string() + " " + r.bitrate.to_string() + " " + lcb.to_string() + " " + r.channels.to_string() + " " + r.intensity.to_string() + " " + flag(cvbr) + " " + flag(r.has_surround_mask) + " " + t.to_string());
+}
+
+function trace3(seed: u32, cases: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let crc: crc32.Crc32 = crc32.new();
+  for k in 0..cases {
+    let (g1, what) = rnd(g);
+    let (g2, valid) = bit(g1);
+    let (g3, activity) = frand(g2, 0.0f32, 1.0f32);
+    let (g4, tonality) = frand(g3, 0.0f32, 1.0f32);
+    let leak: i32[] = [];
+    let g5: Gen = g4;
+    for i in 0..19 {
+      let (g6, v) = rnd(g5);
+      g5 = g6;
+      leak = leak.append(v % 256);
+    }
+    let an: celt_encoder.Analysis = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid, activity: activity, tonality: tonality, leak_boost: leak };
+    let line: string = "";
+    if (what % 2 == 0) {
+      let (g7, s) = dynalloc_case(g5, an);
+      g = g7;
+      line = s;
+    } else {
+      let (g7, s) = vbr_case(g5, an);
+      g = g7;
+      line = s;
+    }
+    crc = crc.update((line + "\n").as_bytes());
+  }
+  return crc.finish();
+}
+
+function test_short_rate_trace(): test.TestOutcome {
+  return test.assert_eq(trace3(9u32, 12), 1676720345u32);
+}
+
+function test_long_rate_trace(): test.TestOutcome {
+  return test.assert_eq(trace3(31u32, 3000), 2923708996u32);
+}
+
 function test_short_analysis_trace(): test.TestOutcome {
   return test.assert_eq(trace(3u32, 12), 4047543119u32);
 }
@@ -282,5 +402,7 @@ function main(): i32 {
   r = r.it("a short TF, trim and stereo trace is the libopus trace", test_short_band_trace);
   r = r.it("a long TF, trim and stereo trace is the libopus trace", test_long_band_trace);
   r = r.it("a TF tie takes flag 1", test_tf_tie_takes_flag_one);
+  r = r.it("a short dynalloc and VBR trace is the libopus trace", test_short_rate_trace);
+  r = r.it("a long dynalloc and VBR trace is the libopus trace", test_long_rate_trace);
   return r.finish();
 }

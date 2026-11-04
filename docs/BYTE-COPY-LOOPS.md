@@ -14,12 +14,18 @@ while (i < n) { a = a.with(at + i, src[from + i]); i = i + 1; }
 
 let i = 0;
 while (i < n) { a = a.append(a[a.len() - dist]); i = i + 1; }
+
+for b in src { a = a.append(b); }
 ```
 
 The third shape is the LZ77 back-reference copy. Its source is the receiver
 itself, so when `dist` is less than `n` the appended bytes repeat the last
 `dist` bytes. A read of `a[from + i]` with an invariant `from` is the same
 copy. Its distance is the receiver's length before the loop minus `from`.
+
+The fourth shape is the for-each loop over the source. Its lowering reads the
+element at a hidden index, and increments the index in a step block between
+the body and the header. The pass takes that step block as part of the body.
 
 The arrays must be owned `u8[]` values, the source and offsets invariant, and
 the body exactly the read, update and increment. Counts may be invariant
