@@ -5,7 +5,6 @@
 // microphone while `capture` is true. A host test runs two nodes on a
 // simulated network.
 import "std/net";
-import "std/opus/celt";
 import "std/opus/celt_encoder";
 import "./lan";
 import "./protocol";
@@ -28,7 +27,7 @@ pub struct Node {
   // Microphone samples at `voice.RATE` that do not fill a frame yet.
   pending: i32[],
   enc: celt_encoder.Encoder,
-  dec: Option[celt.Decoder],
+  rx: voice.Receiver,
   notice: string,
   heard_at: i64,
   // The outputs since the app last took them.
@@ -42,7 +41,7 @@ pub const SEED_BYTES: i32 = 48;
 // A node with ID `me`, which sends Opus voice frames.
 pub function new(me: i64, own seed: u8[], now: i64): Node {
   let (s1, _) = session.step(session.new(), session.Start(session.Offline), now);
-  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), dec: voice.decoder(), notice: "", heard_at: 0i64, out: [], heard: [], logs: [] };
+  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, out: [], heard: [], logs: [] };
 }
 
 // The node with its outputs taken.
@@ -167,8 +166,8 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
       let (c2, voice) = secure.open_voice(c, body);
       let t2: Node = Node { ...n, chan: Some(c2) };
       match (voice) {
-        Some(b) => {
-          return played(t2, b, now);
+        Some((seq, b)) => {
+          return played(t2, seq, b, now);
         },
         None => {}
       }
@@ -179,22 +178,19 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
   return n;
 }
 
-// The node with the samples of the voice packet `b` in `heard`. The log
-// says when the voice of the peer starts again.
-function played(n: Node, b: [u8], now: i64): Node {
+// The node with the frames of voice packet `b`, with sequence number `seq`,
+// in `heard`. The log says when the voice of the peer starts again.
+function played(n: Node, seq: i64, b: [u8], now: i64): Node {
   let t: Node = n;
   if (now - n.heard_at > 1000i64) {
     t = log(n, "hearing the peer");
   }
-  match (t.dec) {
-    Some(d) => {
-      let (d1, samples) = voice.decode(celt.Decoder { ...d }, b);
-      return Node { ...t, dec: Some(d1), heard: t.heard.append(samples), heard_at: now };
-    },
-    None => {
-      return Node { ...t, heard_at: now };
-    }
+  let (rx, frames) = voice.receive(voice.Receiver { ...t.rx }, seq, b);
+  let heard: i32[][] = t.heard;
+  for f in frames {
+    heard = heard.append(f);
   }
+  return Node { ...t, rx: rx, heard: heard, heard_at: now };
 }
 
 // One session event and its actions. The log gets each change of state,
