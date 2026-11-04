@@ -1186,12 +1186,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
 	c.info.FuncSigs["__worker_exit"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: false}},
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["__worker_reap"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
-		Result: ast.NumberType{Width: 64, Signed: false},
+		Result: ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"},
 	}
 	c.info.FuncSigs["__worker_unmap"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}, ast.BoolType{}},
