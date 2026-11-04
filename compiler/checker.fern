@@ -19511,14 +19511,16 @@ function lu_later_in(st: ast.Stmt, aid: ast.ExprIdent): boolean {
   return false;
 }
 
+// Whether the statement, a block in it, or a value block in it declares
+// `name`, as a local or as a match binder.
 function lu_declares(st: ast.Stmt, name: string): boolean {
-  let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.not_lambda);
+  let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, lu_into_value_block);
   for v in facts.vars {
     if (v.name == name) {
       return true;
     }
   }
-  return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, lu_no_binders, astwalk.not_lambda), name);
+  return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, lu_no_binders, lu_into_value_block), name);
 }
 
 function lu_arm_binders(st: ast.Stmt, own acc: string[]): string[] {
@@ -19999,10 +20001,14 @@ function lu_jumps_live(noret: util.NameIndex, frames: LuFrame[], level: i32, jum
 }
 
 // The level of the innermost frame that binds `name` before the statement that
-// the frame holds: the block that the read binding belongs to. It is -1 when
-// no frame binds `name`, as for a parameter.
+// the frame holds: the block that the read binding belongs to. A value block
+// in that statement counts as the statement, so a name it declares has the
+// innermost level. It is -1 when no frame binds `name`, as for a parameter.
 function lu_binding_level(frames: LuFrame[], name: string): i32 {
   let l: i32 = frames.len() - 1;
+  if (l >= 0 && lu_value_block_binds(frames[l].stmts[frames[l].idx], name)) {
+    return l;
+  }
   while (l >= 0) {
     let f: LuFrame = frames[l];
     if let ast.StmtFor(fo) = f.head {
@@ -20018,6 +20024,37 @@ function lu_binding_level(frames: LuFrame[], name: string): i32 {
     l = l - 1;
   }
   return 0 - 1;
+}
+
+// Whether a value block inside the statement declares `name`, as a local or
+// as a match binder.
+function lu_value_block_binds(st: ast.Stmt, name: string): boolean {
+  for lm in astwalk.fold_stmt_nodes(st, [], lu_skip_stmt, lu_value_block, lu_into_value_block) {
+    for body_st in lm.body {
+      if (lu_declares(body_st, name)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function lu_value_block(e: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  if let ast.ExprLambda(lm) = e {
+    if (lu_into_value_block(e)) {
+      return acc.append(lm);
+    }
+  }
+  return acc;
+}
+
+// A value block is a lambda the parser made from a block, a match or an
+// if expression. A closure or a nested function has its own locals.
+function lu_into_value_block(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return lm.origin.len() > 0 && lm.origin != ast.ORIGIN_NESTED_FN;
+  }
+  return true;
 }
 
 // Whether the statement itself declares `name`, not a statement inside it.
