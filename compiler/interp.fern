@@ -708,6 +708,34 @@ function v_tuple(elements: Value[]): Value {
   return VTuple { elements: elements };
 }
 
+// A builtin can fill an array through its shared store. A send copy needs
+// separate stores, including the arrays inside a record or enum payload.
+function send_copy_value(v: Value): Value {
+  match (v) {
+    VArr(a) => {
+      return v_arr_of(a.store.heap, send_copy_values(arr_els(a)), a.elem);
+    },
+    VTuple(t) => {
+      return VTuple { elements: send_copy_values(t.elements) };
+    },
+    VStruct(s) => {
+      return VStruct { ...s, field_values: send_copy_values(s.field_values) };
+    },
+    _ => {
+      return v;
+    }
+  }
+  return v;
+}
+
+function send_copy_values(values: Value[]): Value[] {
+  let out: Value[] = [];
+  for value in values {
+    out = out.append(send_copy_value(value));
+  }
+  return out;
+}
+
 function v_map(keys: Value[], values: Value[]): Value {
   return VMap { keys: keys, values: values };
 }
@@ -2623,7 +2651,7 @@ function call_host_contract(name: string, args: Value[]): Value {
     return v_void();
   }
   if (name == "__send_copy") {
-    return arg_at(args, 0);
+    return send_copy_value(arg_at(args, 0));
   }
   if (util.has_str(["proc_fork", "proc_exec", "proc_exec_as"], name)) {
     return v_int(0 - 38);

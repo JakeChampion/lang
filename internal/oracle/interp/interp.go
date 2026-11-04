@@ -1422,7 +1422,7 @@ func New() *Interp {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("__send_copy: expected 1 arg, got %d", len(args))
 		}
-		return args[0], nil
+		return sendCopyValue(args[0]), nil
 	}}
 	i.Builtins["__task_new"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(1), nil }}
 	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
