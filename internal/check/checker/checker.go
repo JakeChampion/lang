@@ -1189,6 +1189,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: false}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["__worker_unmap"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
 	c.info.FuncSigs["__worker_reap"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.NumberType{Width: 64, Signed: false},
@@ -2206,6 +2210,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: cellParam,
 	}
 	// __send_root(v) consumes a value and returns its address.
+	c.info.FuncSigs["__send_release"] = &ast.FuncType{
+		Params:   []ast.Type{cellParam},
+		ParamOwn: []bool{true},
+		Result:   ast.VoidType{},
+	}
 	c.info.FuncSigs["__send_root"] = &ast.FuncType{
 		Params:   []ast.Type{cellParam},
 		ParamOwn: []bool{true},
@@ -9179,7 +9188,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
-	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true, "__heap_adopt": true, "__send_adopt": true, "__send_root": true, "__worker_region": true, "__worker_exit": true, "__worker_reap": true,
+	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true, "__heap_adopt": true, "__send_adopt": true, "__send_root": true, "__send_release": true, "__worker_region": true, "__worker_exit": true, "__worker_reap": true, "__worker_unmap": true,
 	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
 	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
 	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
@@ -14373,6 +14382,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			c.checkExpr(n.Args[0], s)
 			return ast.NumberType{Width: 64, Signed: false}
+		}
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_release" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "__send_release expects 1 argument, got %d", len(n.Args))
+				return nil
+			}
+			c.checkExpr(n.Args[0], s)
+			return ast.VoidType{}
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_copy" {
 			if len(n.Args) != 1 {

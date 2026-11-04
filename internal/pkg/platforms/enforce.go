@@ -17,6 +17,7 @@ var gatedBuiltins = map[string]string{
 	"__worker_region":     "proc",
 	"__worker_exit":       "proc",
 	"__worker_reap":       "proc",
+	"__worker_unmap":      "proc",
 	"proc_exec":           "proc",
 	"proc_exec_as":        "proc",
 	"pipe":                "proc",
@@ -239,6 +240,7 @@ var coreBuiltins = map[string]bool{
 	"__send_copy":                 true,
 	"__send_adopt":                true,
 	"__send_root":                 true,
+	"__send_release":              true,
 	"string_from_bytes_unchecked": true,
 	"slice_unchecked":             true,
 

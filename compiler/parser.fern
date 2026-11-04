@@ -8701,7 +8701,7 @@ pub function builtin_function_names(): string[] {
     "map_new", "__map_new_i32", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked",
     "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_push_base64", "buf_push_base32", "buf_decode_base32", "buf_len",
     "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_clear", "buf_free",
-    "cell_new", "__send_copy", "__send_adopt", "__send_root", "__worker_region", "__worker_exit", "__worker_reap",
+    "cell_new", "__send_copy", "__send_adopt", "__send_root", "__send_release", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
     "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_send_bytes", "tcp_close", "__tcp_close_unchecked", "__fd_close", "__socket_from_fd",
     "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into",
@@ -17112,7 +17112,7 @@ pub function is_value_block(c: ast.ExprCall): boolean {
 
 // The three send builtins take one argument and type it from the site.
 pub function is_send_builtin(name: string): boolean {
-  return name == "__send_copy" || name == "__send_adopt" || name == "__send_root";
+  return name == "__send_copy" || name == "__send_adopt" || name == "__send_root" || name == "__send_release";
 }
 
 pub function mkclo_body(name: string): string {

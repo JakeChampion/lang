@@ -2457,6 +2457,14 @@ pub function is_adopt_helper(name: string): boolean {
 
 // The per-type helper that `__send_root` calls: it takes its value and
 // returns its word, so the address can be handed to another process.
+pub function release_helper_name(t: typeinfo.Type): string {
+  return "__sem_release_" + type_key(t);
+}
+
+pub function is_release_helper(name: string): boolean {
+  return util.str_has_prefix(name, "__sem_release_");
+}
+
 pub function root_helper_name(t: typeinfo.Type): string {
   return "__sem_root_" + type_key(t);
 }

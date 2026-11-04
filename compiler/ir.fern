@@ -1142,16 +1142,19 @@ pub function op_heap_release_to(): Op {
 // heap_adopt(start, end) makes [start, end) the heap: the cursor moves to
 // start, the end to end, and both free lists are cleared, so every later
 // allocation lies inside the region. A forked worker adopts its result
-// region with it. Under leak check the first adoption also fixes the bounds
-// of the process's census, so a free outside them is not counted. Pushes 0.
+// region with it. A range outside the heap also moves the heap's base, and
+// under leak check it fixes the bounds of the process's census, so a free
+// outside them is not counted. A range inside the heap keeps both. Pushes 0.
 pub function op_heap_adopt(): Op {
   return op0(491);
 }
 
 // A worker region is a shared anonymous mapping that a fork inherits at the
-// same address. Its first word is the root the child hands back, and the
-// next four hold the leak-check counters: the parent's snapshot at
-// worker_region, the child's deltas once worker_exit has run.
+// same address. Its first word is the root the child hands back, the next
+// four hold the leak-check counters (the parent's snapshot at
+// worker_region, the child's deltas once worker_exit has run), and the
+// sixth is the region's size. Under the sanitizer the reap opens the region
+// as a window the quarantine skips, and the unmap closes it.
 // worker_region(size) pushes the address or a negative errno.
 // worker_exit(region, root) stores the root and ends the child at once.
 // worker_reap(region) adds the child's deltas to the counters and pushes
@@ -1175,7 +1178,12 @@ pub function op_send_adopt(): Op {
   return counted(op0(495));
 }
 
-// The worker ops, 491 to 495, by name and by id.
+// worker_unmap(region, size) returns the region to the kernel. Pushes 0.
+pub function op_worker_unmap(): Op {
+  return op0(496);
+}
+
+// The worker ops, 491 to 496, by name and by id.
 function kind_id_worker(name: string): i32 {
   if (name == "heap_adopt") {
     return 491;
@@ -1191,6 +1199,9 @@ function kind_id_worker(name: string): i32 {
   }
   if (name == "send_adopt") {
     return 495;
+  }
+  if (name == "worker_unmap") {
+    return 496;
   }
   return 0;
 }
@@ -1208,7 +1219,10 @@ function kind_name_worker(id: i32): string {
   if (id == 494) {
     return "worker_reap";
   }
-  return "send_adopt";
+  if (id == 495) {
+    return "send_adopt";
+  }
+  return "worker_unmap";
 }
 
 function worker_pops1(t: i32): boolean {
@@ -1216,7 +1230,7 @@ function worker_pops1(t: i32): boolean {
 }
 
 function worker_pops2(t: i32): boolean {
-  return t == 491 || t == 493;
+  return t == 491 || t == 493 || t == 496;
 }
 
 pub function op_clz(width: i32): Op {
@@ -4189,7 +4203,7 @@ function kind_name_3(id: i32): string {
 
 // The names past 160, in two halves so each stays readable.
 function kind_name_4(id: i32): string {
-  if (id >= 491 && id <= 495) {
+  if (id >= 491 && id <= 496) {
     return kind_name_worker(id);
   }
   let a: string = kind_name_4a(id);

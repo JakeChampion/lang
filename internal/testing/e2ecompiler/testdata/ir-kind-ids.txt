@@ -434,3 +434,4 @@ worker_region=492
 worker_exit=493
 worker_reap=494
 send_adopt=495
+worker_unmap=496

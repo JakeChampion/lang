@@ -5269,7 +5269,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    bl __fn___fern_proc_waitpid_status\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 492) {
     s = s.need("worker_region");
-    s = s.write("    bl __fn___fern_worker_region\n    add sp, sp, #16\n");
+    s = s.write("    bl __fn___fern_worker_region\n    ldr x1, [sp], #16\n");
+    s = arm64_worker_region_size(s);
     s = arm64_worker_region_census(s);
     s = s.write("    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 493) {
@@ -5280,7 +5281,17 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == 494) {
     s = s.write("    ldr x0, [sp], #16\n");
     s = arm64_worker_reap_census(s);
+    if (s.rc_free_debug) {
+      s = s.write(quar_addr("x1", "__fern_forget_lo") + "    str x0, [x1]\n    ldr x2, [x0, #40]\n    add x2, x2, x0\n" + quar_addr("x1", "__fern_forget_hi") + "    str x2, [x1]\n");
+    }
     s = s.write("    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 496) {
+    s = s.need("worker_unmap");
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+    if (s.rc_free_debug) {
+      s = s.write(quar_addr("x2", "__fern_forget_lo") + "    str xzr, [x2]\n" + quar_addr("x2", "__fern_forget_hi") + "    str xzr, [x2]\n");
+    }
+    s = s.write("    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_worker_unmap\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 213) {
     s = s.need("heap");
     s = s.need("proc_exec");
@@ -6023,14 +6034,20 @@ function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
   s = s.need("heap");
   s = s.write("    ldr x1, [sp], #16\n");
   s = s.write("    ldr x0, [sp], #16\n");
+  let move: asmcore.LabelOut = asmcore.fresh_label(s);
+  let keep: asmcore.LabelOut = asmcore.fresh_label(move.state);
+  s = keep.state;
+  s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    ldr x3, [x2]\n    cmp x0, x3\n    b.lo " + move.name + "\n");
+  s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    ldr x3, [x2]\n    cmp x0, x3\n    b.lo " + keep.name + "\n");
+  s = s.write(move.name + ":\n");
+  s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    str x0, [x2]\n");
+  if (s.leak_check) {
+    s = s.write("    adrp x2, __fern_lc_adopt_lo\n    add x2, x2, :lo12:__fern_lc_adopt_lo\n    str x0, [x2]\n");
+    s = s.write("    adrp x2, __fern_lc_adopt_hi\n    add x2, x2, :lo12:__fern_lc_adopt_hi\n    str x1, [x2]\n");
+  }
+  s = s.write(keep.name + ":\n");
   s = s.write("    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    str x0, [x2]\n");
   s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    str x1, [x2]\n");
-  if (s.leak_check) {
-    let l: asmcore.LabelOut = asmcore.fresh_label(s);
-    s = l.state.write("    adrp x2, __fern_lc_adopt_lo\n    add x2, x2, :lo12:__fern_lc_adopt_lo\n    ldr x3, [x2]\n    cbnz x3, " + l.name + "\n");
-    s = s.write("    str x0, [x2]\n    adrp x2, __fern_lc_adopt_hi\n    add x2, x2, :lo12:__fern_lc_adopt_hi\n    str x1, [x2]\n");
-    s = s.write(l.name + ":\n");
-  }
   s = arm64_zero_words(s, "__fern_freelist", 65536);
   s = arm64_zero_words(s, "__fern_large_freelist", 2560);
   s = s.write("    str xzr, [sp, #-16]!\n");
@@ -6047,6 +6064,14 @@ function arm64_lc_counters(): string[] {
 function arm64_lc_counter_addr(s: asmcore.EmitState, k: i32): asmcore.EmitState {
   let sym: string = arm64_lc_counters()[k];
   return s.write("    adrp x1, " + sym + "\n    add x1, x1, :lo12:" + sym + "\n");
+}
+
+// Word 5 of a region's header is its size, which the reap reads back.
+// x0 holds the region and x1 the size.
+function arm64_worker_region_size(s: asmcore.EmitState): asmcore.EmitState {
+  let l: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = l.state.write("    cmp x0, #0\n    b.le " + l.name + "\n    str x1, [x0, #40]\n");
+  return s.write(l.name + ":\n");
 }
 
 function arm64_worker_region_census(s: asmcore.EmitState): asmcore.EmitState {
@@ -6896,7 +6921,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
-    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit",
+    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
@@ -7238,6 +7263,11 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_quar_push:\n");
   s = s.write("    cmp x1, #3\n");
   s = s.write("    b.lo .Lquar_ret\n");
+  // A block of a worker region the parent is forgetting does not enter the
+  // quarantine: the region goes back to the kernel at the join.
+  s = s.write(quar_addr("x9", "__fern_forget_lo") + "    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lquar_keep\n");
+  s = s.write(quar_addr("x9", "__fern_forget_hi") + "    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lquar_ret\n");
+  s = s.write(".Lquar_keep:\n");
   s = s.write(rt_frame(s));
   s = s.write("    mov x29, sp\n");
   s = s.write("    stp x0, x1, [sp, #-16]!\n");
@@ -8675,6 +8705,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    .align 3\n");
   if (s.rc_free_debug) {
     s = s.write("__fern_quar_head: .quad 0\n    .align 3\n__fern_quar_tail: .quad 0\n    .align 3\n__fern_quar_bytes: .quad 0\n    .align 3\n");
+    s = s.write("__fern_forget_lo: .quad 0\n    .align 3\n__fern_forget_hi: .quad 0\n    .align 3\n");
   }
   if (s.harden) {
     s = s.write("__fern_guard_count: .quad 0\n    .align 3\n");
@@ -10942,6 +10973,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("worker_exit")) {
     s = emit_runtime("__fern_worker_exit", s);
+  }
+  if (s.has_need("worker_unmap")) {
+    s = emit_runtime("__fern_worker_unmap", s);
   }
   if (s.has_need("timer_fd")) {
     s = emit_runtime("__fern_timer_fd", s);

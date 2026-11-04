@@ -1,0 +1,3 @@
+function __fern_worker_unmap(region: i64, size: i64): void {
+  __syscall3(73, region, size, 0);
+}

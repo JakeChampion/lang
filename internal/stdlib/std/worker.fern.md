@@ -5,12 +5,14 @@ This module runs a closure as a worker and joins its result.
 ## Model
 
 A worker owns its heap. A value crosses the worker boundary only by copy: the captures of the closure at `spawn`, and the result at `join`.
-Both checkers admit only a send-safe value at the boundary (E100). A send-safe value is a scalar, a string, or a struct, enum, array, tuple or map of send-safe values.
+
+Both checkers admit only a send-safe value at the boundary (E100). A send-safe value is a scalar, a string, or a struct, enum, array or tuple of send-safe values. A `Map` does not cross in this release.
 A `Cell`, a function value, a `dyn` value, a view, a handle and a `@must_consume` value are not send-safe.
 
 Fern values are immutable, so a copied tree and a shared tree cannot be told apart by any accepted program. The copy is unobservable.
 
-On Linux a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child and takes the region's boxes as its own.
+On Linux a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child, copies the result into its own heap, and returns the region to the kernel.
+
 Every other engine runs the worker inline at `spawn`, which is one of the schedules a process can produce. The design is `docs/MULTICORE-RESEARCH.md`, and the shipped surface is `docs/WORKERS.md`.
 
 ## Contracts
@@ -50,6 +52,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<5 pub function (own w: Worker[T]) join(): T>>
 
 <<6 function __join_process[T](own w: Worker[T]): T>>
+
+<<7 function __wait_worker(pid: i32): i32>>
+
+<<8 function __adopt_region[T](root: usize): Option[T]>>
 ```
 
 ### `module introduction`
@@ -91,14 +97,14 @@ pub function spawn[T](send body: () => T): Worker[T] {
 
 ### `4 function __spawn_process[T](own body: () => T): Worker[T]`
 
-The region is a shared anonymous mapping that the fork inherits at the same address. Its header holds the root address of the result and the leak-check counters, and the child's heap starts one line past it. A fork that the kernel refuses runs the body inline.
+The region is a shared anonymous mapping that the fork inherits at the same address. Its header holds the root address of the result, the leak-check counters and the region's size, and the child's heap starts one line past it. The region is the child's whole heap, four gigabytes of address space that the kernel backs page by page. A fork that the kernel refuses runs the body inline and returns the region.
 
 The child copies its result, because a box the body built can point at a box the parent owns. A copy built from the child's cursor lies inside the region. The copy is wrapped in `Some`, so a scalar result crosses as a box too. The body frees boxes of the parent's image into the child's free lists, and a copy must not land in one. So the lists are cleared again at the mark before the copy. The child exits through `__worker_exit`, so neither the leak census nor the parent's at-exit work runs twice.
 
 ```fern
 <<4 function __spawn_process[T](own body: () => T): Worker[T]>>=
 function __spawn_process[T](own body: () => T): Worker[T] {
-  let size: i64 = 1073741824i64;
+  let size: i64 = 4294967296i64;
   let region: i64 = 0i64;
   unsafe {
     region = __worker_region(size);
@@ -108,6 +114,9 @@ function __spawn_process[T](own body: () => T): Worker[T] {
   }
   let pid: i32 = proc_fork();
   if (pid < 0) {
+    unsafe {
+      __worker_unmap(region, size);
+    }
     return Worker { result: Some(body()), pid: 0, region: 0i64, size: 0i64 };
   }
   if (pid == 0) {
@@ -125,7 +134,7 @@ function __spawn_process[T](own body: () => T): Worker[T] {
 
 ### `5 pub function (own w: Worker[T]) join(): T`
 
-Waits for the worker and returns its result. The call consumes the worker. A worker that ran inline hands back its stored result. A process worker is waited for, and its root becomes a value of this process, which owns every box of the copy from then on.
+Waits for the worker and returns its result. The call consumes the worker. A worker that ran inline hands back its stored result. A process worker is waited for, and its result is copied into this process's heap.
 
 ```fern
 <<5 pub function (own w: Worker[T]) join(): T>>=
@@ -147,28 +156,65 @@ pub function (own w: Worker[T]) join(): T {
 
 ### `6 function __join_process[T](own w: Worker[T]): T`
 
-Waits for the process and adopts its result. Only a native Linux program reaches it, so the engines without `proc` never see its calls.
+Waits for the process and takes its result. Only a native Linux program reaches it, so the engines without `proc` never see its calls.
+
+The result in the region is adopted only to be copied. The copy lives in this process's heap, so no box of the region outlives the join and the region goes back to the kernel. The adopted boxes are released between a heap mark and its restore, with `__send_release` so the release lands where it is written. The restore drops their free-list entries, and the leak census pairs each of them. A `Map` is not send-safe, so the copy is complete.
 
 ```fern
 <<6 function __join_process[T](own w: Worker[T]): T>>=
 function __join_process[T](own w: Worker[T]): T {
-  let status: i32 = proc_waitpid(w.pid);
+  let status: i32 = __wait_worker(w.pid);
+  let mine: Option[T] = None;
   unsafe {
     let root: usize = __worker_reap(w.region);
     if (status != 0 || root == 0) {
       eprint("worker: the worker exited with status " + status.to_string() + " and no result");
       exit(134);
     }
-    let v: Option[T] = __send_adopt(root);
-    match (v) {
-      Some(x) => {
-        return x;
-      },
-      None => {
-        eprint("worker: the worker wrote no result");
-        exit(134);
-      }
+    let shared: Option[T] = __adopt_region(root);
+    mine = __send_copy(shared);
+    let mark: i64 = __heap_mark();
+    __send_release(shared);
+    __heap_release_to(mark);
+    __worker_unmap(w.region, w.size);
+  }
+  match (mine) {
+    Some(x) => {
+      return x;
+    },
+    None => {
+      eprint("worker: the worker wrote no result");
+      exit(134);
     }
+  }
+}
+```
+
+### `7 function __wait_worker(pid: i32): i32`
+
+A signal that lands while the parent waits makes `proc_waitpid` return `EINTR`, which is not the worker's exit. The wait starts again.
+
+```fern
+<<7 function __wait_worker(pid: i32): i32>>=
+function __wait_worker(pid: i32): i32 {
+  let status: i32 = proc_waitpid(pid);
+  while (status == 0 - 4) {
+    status = proc_waitpid(pid);
+  }
+  return status;
+}
+```
+
+### `8 function __adopt_region[T](root: usize): Option[T]`
+
+Takes the root as a value. The call is what makes the value an owner the caller can give away.
+
+```fern
+<<8 function __adopt_region[T](root: usize): Option[T]>>=
+function __adopt_region[T](root: usize): Option[T] {
+  unsafe {
+    let v: Option[T] = __send_adopt(root);
+    return v;
   }
 }
 ```
