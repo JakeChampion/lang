@@ -143,13 +143,157 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
+	const loopPayloadPrefix = `struct Box { data: u8[] }
+enum Choice { Wrapped(Box), Empty }
+function consume(own item: Box): i32 { return item.data.len(); }
+`
 
 	cases := []struct {
 		name string
 		src  string
 		want []string
 	}{
+		{"e051-loop-move-shadowed-by-unused-value-match", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    let item = Box { data: data };
+    let result = 0;
+    for tag in [0, 1] {
+        result = result + consume(item);
+        let unused = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => 0, Choice.Empty => 0 };
+    }
+    return result;
+}`, []string{"E051"}},
+		{"e051-loop-move-shadowed-by-unused-value-local", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    let item = Box { data: data };
+    let result = 0;
+    for tag in [0, 1] {
+        result = result + consume(item);
+        let unused = { let item = Box { data: data }; 0 };
+    }
+    return result;
+}`, []string{"E051"}},
+		{"fresh-value-payload-each-loop-round", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    let result = 0;
+    for tag in [0, 1] {
+        let value = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };
+        result = result + value;
+    }
+    return result;
+}`, nil},
+		{"fresh-value-payload-loop-in-value-block", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return {
+        let result = 0;
+        for tag in [0, 1] {
+            let value = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };
+            result = result + value;
+        }
+        result
+    };
+}`, nil},
+		{"e051-value-payload-repeats-in-inner-loop", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return match (Choice.Wrapped(Box { data: data })) {
+        Choice.Wrapped(item) => {
+            let result = 0;
+            for tag in [0, 1] { result = result + consume(item); }
+            result
+        },
+        Choice.Empty => 0
+    };
+}`, []string{"E051"}},
+		{"e051-value-payload-repeats-in-while-condition", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return match (Choice.Wrapped(Box { data: data })) {
+        Choice.Wrapped(item) => { while (consume(item) > 0) {} 0 },
+        Choice.Empty => 0
+    };
+}`, []string{"E051"}},
+		{"e051-value-payload-used-after-consume", loopPayloadPrefix + `
+function f(data: u8[]): i32 {
+    return match (Choice.Wrapped(Box { data: data })) {
+        Choice.Wrapped(item) => { let n = consume(item); n + consume(item) },
+        Choice.Empty => 0
+    };
+}`, []string{"E051"}},
 		{"body-fresh-value-payload-remains-copyable", "struct Box { items: i32[] } function make(s: Socket): Result[Box, i32] { return Ok(Box { items: [7] }); } function f(s: Socket): i32 { let Ok(input) = make(s) else { return 1; }; let alias = input; return input.items[0] + alias.items[0]; } function main(): i32 { return 0; }", nil},
+		{"kept-alive-local-in-lambda-stays-invalid", `struct B { items: i32[] }
+function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
+function main(): i32 {
+  let lam = (): i32 => {
+    let a = B { items: [] };
+    let c = grow(a, 1);
+    return c.items.len();
+  };
+  return lam();
+}`, []string{"E051"}},
+		{"lambda-pattern-shadowed-by-local-stays-invalid", `function make(): Result[i32[], string] { return Ok([1]); }
+function take(own xs: i32[]): i32 { return xs.len(); }
+function main(): i32 {
+  let lam = (): i32 => {
+    let Ok(xs) = make() else { return 0; };
+    if (xs.len() > 0) {
+      let xs = [2];
+      let n = take(xs);
+      return n;
+    }
+    return xs.len();
+  };
+  return lam();
+}`, []string{"E051"}},
+		{"fresh-let-else-payload-copies", `function make(): Result[i32[], string] { return Ok([1, 2]); }
+function main(): i32 {
+  let Ok(xs) = make() else { return 1; };
+  let retained = xs;
+  xs = xs.with(0, 77);
+  return retained[0] + xs[0];
+}`, nil},
+		{"e051-lambda-let-else-payload-copies-before-transfer", `function make(): Result[i32[], string] { return Ok([1, 2]); }
+function take(own xs: i32[]): i32 { return xs.len(); }
+function run(f: () => i32): i32 { return f(); }
+function main(): i32 {
+  return run((): i32 => {
+    let Ok(xs) = make() else { return 0; };
+    let retained = xs;
+    return retained[0] + take(xs);
+  });
+}`, []string{"E051"}},
+		{"fresh-payload-shadows-a-moved-own-name", `function make(): Result[i32[], string] { return Ok([1, 2]); }
+function take(own xs: i32[]): i32 { return xs.len(); }
+function f(own xs: i32[]): i32 {
+  let n = take(xs);
+  if let Ok(xs) = make() { let retained = xs; n = n + retained[0] + xs[0]; }
+  return n;
+}
+function main(): i32 { return f([1]); }`, nil},
+		{"owned-handle-free-source-payload-is-a-local", `function f(own r: Result[i32[], string]): i32 {
+  let Ok(xs) = r else { return 1; };
+  let retained = xs;
+  return retained[0] + xs[0];
+}
+function main(): i32 { return f(Ok([1])); }`, nil},
+		{"owned-handle-source-payload-stays-linear", `function f(own r: Result[Writer, string]): i32 {
+  let Ok(w) = r else { return 1; };
+  let retained = w;
+  return retained.fd + w.fd;
+}
+function main(): i32 { return f(Ok(stdout())); }`, []string{"E050"}},
+		{"fresh-handle-payload-stays-linear", `function make(): Result[Writer, string] { return Ok(stdout()); }
+function main(): i32 {
+  let Ok(w) = make() else { return 1; };
+  let retained = w;
+  return retained.fd + w.fd;
+}`, []string{"E050"}},
+		{"outer-move-survives-a-pattern-shadow", `function make(): Result[i32[], string] { return Ok([1, 2]); }
+function take(own xs: i32[]): i32 { return xs.len(); }
+function f(own xs: i32[]): i32 {
+  let n = take(xs);
+  if let Ok(xs) = make() { let retained = xs; n = n + retained[0] + xs[0]; }
+  return n + xs[0];
+}
+function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"closure-consumes-captured-owned-then-use", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: () => i32 = (): i32 => take(xs); let a: i32 = g(); return a + xs.len(); } function main(): i32 { return f([1]); }", []string{"E050"}},
 		{"closure-consumes-captured-owned-only", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: () => i32 = (): i32 => take(xs); return g(); } function main(): i32 { return f([1]); }", nil},
 		{"closure-parameter-shadows-outer-owned", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: (i32[]) => i32 = (xs: i32[]): i32 => xs.len(); let a: i32 = g([5]); return a + take(xs); } function main(): i32 { return f([1]); }", nil},
@@ -476,7 +620,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-handle-free-field-of-an-own-param-read-twice", "struct P { items: i32[], n: i32 }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(own p: P): i32 {\n    let xs: i32[] = p.items;\n    let k: i32 = keep(xs);\n    return k + p.items.len();\n}\nfunction main(): i32 { return f(P { items: [1], n: 2 }); }\n", nil},
 		{"e050-try-payload-bound-in-a-loop", "enum Next { Part(i32[]), Done }\nfunction step(n: i32): Result[Next, string] { return Ok(Part([n])); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): Result[i32, string] {\n    let n: i32 = 0;\n    while (n < 3) {\n        match (step(n)?) {\n            Part(r1) => {\n                n = n + keep(r1);\n            },\n            Done => {\n                return Ok(n);\n            }\n        }\n    }\n    return Ok(n);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e050-payload-bound-in-a-loop", "enum Next { Part(i32[]), Done }\nfunction step(n: i32): Next { return Part([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction main(): i32 {\n    let n: i32 = 0;\n    while (n < 3) {\n        match (step(n)) {\n            Part(r1) => {\n                n = n + keep(r1);\n            },\n            Done => {\n                return n;\n            }\n        }\n    }\n    return n;\n}\n", nil},
-		{"e050-try-payload-bound-before-a-loop", "enum Next { Part(i32[]), Done }\nfunction step(n: i32): Result[Next, string] { return Ok(Part([n])); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): Result[i32, string] {\n    match (step(1)?) {\n        Part(r1) => {\n            let n: i32 = 0;\n            while (n < 3) {\n                n = n + keep(r1);\n            }\n            return Ok(n);\n        },\n        Done => {\n            return Ok(0);\n        }\n    }\n    return Ok(0);\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"e051-try-payload-bound-before-a-loop", "enum Next { Part(i32[]), Done }\nfunction step(n: i32): Result[Next, string] { return Ok(Part([n])); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): Result[i32, string] {\n    match (step(1)?) {\n        Part(r1) => {\n            let n: i32 = 0;\n            while (n < 3) {\n                n = n + keep(r1);\n            }\n            return Ok(n);\n        },\n        Done => {\n            return Ok(0);\n        }\n    }\n    return Ok(0);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"e051-fresh-result-payload-by-match", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction keep_s(own s: string): i32 { return s.len(); }\nfunction f(): i32 {\n    match (make(1)) {\n        Ok(xs) => { return keep(xs); },\n        Err(e) => { return keep_s(e); }\n    }\n    return 0;\n}\nfunction main(): i32 { return f(); }\n", nil},
 		{"e051-fresh-result-payload-let-in-arm", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    match (make(1)) {\n        Ok(xs) => {\n            let k: i32 = keep(xs);\n            return k;\n        },\n        Err(_) => { return 0; }\n    }\n    return 0;\n}\nfunction main(): i32 { return f(); }\n", nil},
 		{"e051-fresh-result-payload-by-let-else", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let Ok(xs) = make(2) else { return 0; };\n    let k: i32 = keep(xs);\n    return k;\n}\nfunction main(): i32 { return f(); }\n", nil},
@@ -484,7 +628,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e051-fresh-result-payload-into-an-own-method-param", "struct K { n: i32 }\nfunction (k: K) open(own buf: u8[]): i32 { return buf.len() + k.n; }\nfunction sealed(seq: u64): Result[u8[], string] { return Ok([seq as u8]); }\nfunction f(k: K): i32 {\n    let Ok(buf) = sealed(1 as u64) else { return 0; };\n    return k.open(buf);\n}\nfunction main(): i32 { return f(K { n: 1 }); }\n", nil},
 		{"handle-free-result-payload-through-a-borrowing-callee", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction relay(r: Result[i32[], string]): Result[i32[], string] { return r; }\nfunction f(r: Result[i32[], string]): i32 {\n    let Ok(xs) = relay(r) else { return 0; };\n    return keep(xs);\n}\nfunction main(): i32 { return f(Ok([1])); }\n", nil},
 		{"e051-result-handle-through-a-borrowing-callee", "function finish(own w: Writer): i32 { return 0; }\nfunction relay(r: Result[Writer, string]): Result[Writer, string] { return r; }\nfunction f(r: Result[Writer, string]): i32 {\n    let Ok(w) = relay(r) else { return 0; };\n    return finish(w);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
-		{"e050-fresh-result-payload-moved-twice", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let Ok(xs) = make(2) else { return 0; };\n    let a: i32 = keep(xs);\n    return a + keep(xs);\n}\nfunction main(): i32 { return f(); }\n", []string{"E050"}},
+		{"e051-fresh-result-payload-moved-twice", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let Ok(xs) = make(2) else { return 0; };\n    let a: i32 = keep(xs);\n    return a + keep(xs);\n}\nfunction main(): i32 { return f(); }\n", []string{"E051"}},
+		{"e050-fresh-handle-payload-closed-twice", "function f(path: string): i32 {\n    let Ok(r) = open_reader(path) else { return 0; };\n    r.close();\n    r.close();\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"let-else-payload-copied-then-updated", "function make(): Result[u8[], string] { return Ok([1, 2]); }\nfunction main(): i32 {\n    let Ok(first) = make() else { return 1; };\n    let retained = first;\n    first = first.with(0, 77);\n    return (retained[0] + first[0]) as i32;\n}\n", nil},
+		{"if-let-payload-copied-then-updated", "function make(): Result[u8[], string] { return Ok([1, 2]); }\nfunction main(): i32 {\n    if let Ok(first) = make() {\n        let retained = first;\n        first = first.with(0, 77);\n        return (retained[0] + first[0]) as i32;\n    }\n    return 1;\n}\n", nil},
+		{"if-let-payload-stored-then-read", "struct T { aux: string }\nfunction take(t: T, n: i32): i32 { return t.aux.len() + n; }\nfunction pick(xs: string[]): Option[string] { for x in xs { return Some(x); } return None; }\nfunction f(xs: string[]): i32 {\n    if let Some(u) = pick(xs) {\n        let t = T { aux: u };\n        return take(t, u.len());\n    }\n    return 0;\n}\nfunction main(): i32 { return f([\"ab\"]); }\n", nil},
+		{"let-else-payload-copied-then-moved", "function make(): Result[u8[], string] { return Ok([1, 2]); }\nfunction keep(own xs: u8[]): i32 { return xs[0] as i32; }\nfunction f(): i32 {\n    let Ok(xs) = make() else { return 1; };\n    let a = xs;\n    let k: i32 = keep(xs);\n    return k + a.len();\n}\nfunction main(): i32 { return f(); }\n", nil},
+		{"handle-payload-closed-after-a-lambda-captured-it", "function span(r: Reader, offset: i64, len: i64): Option[u8[]] { return None; }\nfunction ranges(f: (i64, i64) => Option[u8[]]): Option[u8[]] { return f(0 as i64, 1 as i64); }\nfunction f(path: string): Option[u8[]] {\n    match (open_reader(path)) {\n        Ok(r) => {\n            let got: Option[u8[]] = ranges((offset: i64, len: i64): Option[u8[]] => span(r, offset, len));\n            r.close();\n            return got;\n        },\n        Err(e) => { return None; }\n    }\n    return None;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e050-own-result-matched-then-used", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(own r: Result[i32[], string]): i32 {\n    match (r) {\n        Ok(xs) => { return keep(xs); },\n        Err(_) => { return 0; }\n    }\n    let again: Result[i32[], string] = r;\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"e050-own-operand-is-borrowed", "function f(own s: string, t: string): string {\n    if (s != t) {\n        return \"a\" + s;\n    }\n    return \"\";\n}\nfunction g(own s: string): string {\n    let a: string = s + \"x\";\n    return a + s;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e050-string-payload-compared-then-used", "function rs(n: i64): Result[string, string] { return Ok(\"x\"); }\nfunction f(): string {\n    match (rs(1 as i64)) {\n        Ok(h) => {\n            if (h != \"y\") {\n                return \"a\" + h;\n            }\n        },\n        Err(_) => { return \"\"; }\n    }\n    return \"\";\n}\nfunction main(): i32 { return f().len(); }\n", nil},
@@ -521,9 +671,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e051-payload-binding-of-borrowed-scrutinee-field", "struct Cfi { rules: i32[] }\nenum Box { Full(Cfi), Empty }\nfunction grow(own xs: i32[]): i32[] { return xs.append(1); }\nfunction bump(b: Box): Box {\n    match (b) {\n        Full(c) => { return Full(Cfi { ...c, rules: grow(c.rules) }); },\n        Empty => { return Empty; }\n    }\n}\nfunction main(): i32 { let b: Box = Full(Cfi { rules: [] }); let u: Box = bump(b); return 0; }\n", []string{"E051"}},
 		{"e051-param-shadows-a-const", "const W: i32[] = [1, 2];\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(W: i32[]): i32 { return keep(W); }\nfunction main(): i32 { return f([3]); }\n", []string{"E051"}},
 		{"own-accepts-a-value-match-payload-of-a-fresh-scrutinee", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  return match (mk(1)) {\n    Full(xs) => keep(xs),\n    Empty => 0\n  };\n}\n", nil},
-		{"own-accepts-a-lambda-match-payload-of-a-fresh-scrutinee", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction run(f: () => i32): i32 { return f(); }\nfunction main(): i32 {\n  return run((): i32 => {\n    match (mk(1)) {\n      Full(xs) => { return keep(xs); },\n      Empty => { return 0; }\n    }\n  });\n}\n", nil},
+		// A handle-free payload is a local, and a local declared inside a lambda
+		// cannot move (e051-last-use-in-lambda).
+		{"e051-lambda-match-payload-of-a-fresh-scrutinee", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction run(f: () => i32): i32 { return f(); }\nfunction main(): i32 {\n  return run((): i32 => {\n    match (mk(1)) {\n      Full(xs) => { return keep(xs); },\n      Empty => { return 0; }\n    }\n  });\n}\n", []string{"E051"}},
 		{"own-accepts-a-value-match-payload-moved-before-a-return", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  let n: i32 = 0;\n  let r: i32 = match (mk(1)) {\n    Full(xs) => { n = keep(xs); return n; },\n    Empty => 0\n  };\n  return r;\n}\n", nil},
-		{"e050-value-match-payload-moved-twice", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  return match (mk(1)) {\n    Full(xs) => keep(xs) + keep(xs),\n    Empty => 0\n  };\n}\n", []string{"E050"}},
+		{"e051-value-match-payload-moved-twice", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction main(): i32 {\n  return match (mk(1)) {\n    Full(xs) => keep(xs) + keep(xs),\n    Empty => 0\n  };\n}\n", []string{"E051"}},
+		// A local a value block declares ends with its statement, so a loop
+		// around the statement does not keep it alive.
+		{"value-block-local-moved-in-a-loop", "struct Box { data: u8[] }\nfunction consume(own b: Box): i32 { return b.data.len(); }\nfunction f(data: u8[]): i32 {\n  let result: i32 = 0;\n  for tag in [0, 1] {\n    let value: i32 = { let b = Box { data: data }; consume(b) };\n    result = result + value;\n  }\n  return result;\n}\nfunction main(): i32 { return f([1]); }\n", nil},
+		{"value-match-payload-moved-in-a-loop", "struct Box { data: u8[] }\nenum Choice { Wrapped(Box), Empty }\nfunction consume(own b: Box): i32 { return b.data.len(); }\nfunction f(data: u8[]): i32 {\n  let result: i32 = 0;\n  for tag in [0, 1] {\n    let value: i32 = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };\n    result = result + value;\n  }\n  return result;\n}\nfunction main(): i32 { return f([1]); }\n", nil},
+		{"e051-value-block-local-read-after-the-loop-moved-it", "struct Box { data: u8[] }\nfunction consume(own b: Box): i32 { return b.data.len(); }\nfunction f(data: u8[]): i32 {\n  let b = Box { data: data };\n  let result: i32 = 0;\n  for tag in [0, 1] {\n    let value: i32 = { consume(b) };\n    result = result + value;\n  }\n  return result;\n}\nfunction main(): i32 { return f([1]); }\n", []string{"E051"}},
 		{"e051-value-match-payload-of-a-borrowed-scrutinee", "enum Bag { Full(i32[]), Empty }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction mk(n: i32): Bag { return Full([n]); }\nfunction f(b: Bag): i32 {\n  return match (b) {\n    Full(xs) => keep(xs),\n    Empty => 0\n  };\n}\nfunction main(): i32 { return f(mk(1)); }\n", []string{"E051"}},
 		{"e038-fn-param-bad-arg", "function mk(n: i32): i32 { return n + 1; }\nfunction apply(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return apply(3); }\n", []string{"E038"}},
 		{"e038-fn-param-named-fn-clean", "function mk(n: i32): i32 { return n + 1; }\nfunction apply(f: (i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return apply(mk); }\n", nil},

@@ -1,0 +1,97 @@
+@noinline
+function make(n: i32): Result[i32[], string] {
+  return Ok([n, n + 1]);
+}
+
+function good(before: [i32], after: [i32], n: i32): boolean {
+  return before[0] == n && after[0] == n + 7 && before[1] == after[1];
+}
+
+function let_else(n: i32): boolean {
+  let Ok(xs) = make(n) else {
+    return false;
+  };
+  let read = (): i32 => xs[0];
+  let retained = xs;
+  xs = xs.with(0, n + 7);
+  return good(retained, xs, n) && read() == n + 7;
+}
+
+function if_let(n: i32): boolean {
+  if let Ok(xs) = make(n) {
+    let retained = xs;
+    xs = xs.with(0, n + 7);
+    return good(retained, xs, n);
+  }
+  return false;
+}
+
+function statement(n: i32): boolean {
+  match (make(n)) {
+    Ok(xs) => {
+      let retained = xs;
+      xs = xs.with(0, n + 7);
+      return good(retained, xs, n);
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function value(n: i32): boolean {
+  return match (make(n)) {
+    Ok(xs) => { let retained = xs; xs = xs.with(0, n + 7); good(retained, xs, n) },
+    Err(_) => false,
+  };
+}
+
+@noinline
+function consume(own xs: i32[]): i32 {
+  return xs.len();
+}
+
+function shadow(own xs: i32[], n: i32): boolean {
+  let size = consume(xs);
+  if let Ok(xs) = make(n) {
+    let retained = xs;
+    xs = xs.with(0, n + 7);
+    return size == 2 && good(retained, xs, n);
+  }
+  return false;
+}
+
+function lambda_copy(n: i32): boolean {
+  let f = (): boolean => {
+    let Ok(xs) = make(n) else {
+      return false;
+    };
+    let retained = xs;
+    xs = xs.with(0, n + 7);
+    let first = xs[0];
+    let count = xs.len();
+    return count == 2 && retained[0] == n && first == n + 7;
+  };
+  return f();
+}
+
+function lambda_value(n: i32): boolean {
+  let f = (): i32 => match (make(n)) {
+    Ok(xs) => { let retained = xs; retained[0] + xs.len() },
+    Err(_) => 0,
+  };
+  return f() == n + 2;
+}
+
+function main(): i32 {
+  for n in 1..5 {
+    if (!let_else(n) || !if_let(n) || !statement(n) || !value(n) || !shadow([n, n], n) || !lambda_copy(n) || !lambda_value(n)) {
+      return 1;
+    }
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
