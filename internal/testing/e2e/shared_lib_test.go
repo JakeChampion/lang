@@ -1162,6 +1162,80 @@ int main(int c,char**v){
 	}
 }
 
+// The static calls take the class, the method and the jvalues at entries
+// 116, 131 and 143. jni.string_of reads the modified UTF-8 of a string, keeps
+// a multibyte character, gives "" for null, and releases the chars.
+func TestStdJNIStaticCallsAndStringOf(t *testing.T) {
+	gcc, err := exec.LookPath("gcc")
+	if err != nil {
+		t.Skip("gcc not on PATH")
+	}
+	if runtime.GOARCH != "amd64" {
+		t.Skip("host is not amd64")
+	}
+	src := `import "std/jni";
+function p_obj(env: usize, cls: usize, j: usize, k: usize, m: usize): i32 {
+    return jni.call_static_object_method_a(j, k, m, jni.jvalues([5 as usize, 6 as usize])) as i32;
+}
+function p_int(env: usize, cls: usize, j: usize, k: usize, m: usize): i32 {
+    return jni.call_static_int_method_a(j, k, m, jni.jvalues([30 as usize, 12 as usize]));
+}
+function p_void(env: usize, cls: usize, j: usize, k: usize, m: usize): i32 {
+    jni.call_static_void_method_a(j, k, m, jni.jvalues([9 as usize]));
+    return 0;
+}
+function p_str(env: usize, cls: usize, j: usize, s: usize, m: usize): i32 {
+    let text: string = jni.string_of(j, s);
+    if (text != "h\u{e9}llo" || jni.string_of(j, 0 as usize) != "") {
+        return 0 - text.len();
+    }
+    return text.len();
+}
+function main(): i32 { return 0; }`
+	so := selfHostSharedX86(t, src, "p_obj", "p_int", "p_void", "p_str")
+	dir := t.TempDir()
+	soPath := filepath.Join(dir, "libfern.so")
+	if err := os.WriteFile(soPath, so, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := `#include <dlfcn.h>
+#include <stdio.h>
+static long g_class, g_method, g_void, g_released;
+static long cso(void*e,long k,long m,long long* a){(void)e; g_class=k; g_method=m; return (long)(a[0]*a[1]); }
+static long csi(void*e,long k,long m,long long* a){(void)e;(void)k;(void)m; return (long)(a[0]+a[1]); }
+static long csv(void*e,long k,long m,long long* a){(void)e;(void)k;(void)m; g_void=(long)a[0]; return 0; }
+static const char text[] = "h\xc3\xa9llo";
+static long sul(void*e,long s){(void)e;(void)s; return 6; }
+static long suc(void*e,long s,long c){(void)e;(void)s;(void)c; return (long)text; }
+static long rsu(void*e,long s,long c){(void)e;(void)s; if(c==(long)text) g_released++; return 0; }
+int main(int c,char**v){
+  void*h=dlopen(v[1],RTLD_NOW);if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
+  void*t[256]={0}; t[116]=(void*)cso; t[131]=(void*)csi; t[143]=(void*)csv; t[168]=(void*)sul; t[169]=(void*)suc; t[170]=(void*)rsu;
+  void*tp=t; void*env=&tp; long L=(long)env;
+  if(((int(*)(long,long,long,long,long))dlsym(h,"p_obj"))(0,0,L,77,88) != 30 || g_class != 77 || g_method != 88) return 1;
+  if(((int(*)(long,long,long,long,long))dlsym(h,"p_int"))(0,0,L,1,2) != 42) return 2;
+  ((int(*)(long,long,long,long,long))dlsym(h,"p_void"))(0,0,L,1,2);
+  if(g_void != 9) return 3;
+  int n=((int(*)(long,long,long,long,long))dlsym(h,"p_str"))(0,0,L,1234,0);
+  if(n != 6) { fprintf(stderr,"string_of: %d\n",n); return 4; }
+  if(g_released != 1) return 5;
+  return 42;
+}`
+	cPath := filepath.Join(dir, "loader.c")
+	if err := os.WriteFile(cPath, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld := filepath.Join(dir, "loader")
+	if out, err := exec.Command(gcc, cPath, "-ldl", "-o", ld).CombinedOutput(); err != nil {
+		t.Fatalf("gcc loader: %v\n%s", err, out)
+	}
+	cmd := exec.Command(ld, soPath)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 42 {
+		t.Fatalf("static calls and string_of = %d, want 42 (out=%q)", code, out)
+	}
+}
+
 func TestStdJNIJvalueFloatArgs(t *testing.T) {
 	gcc, err := exec.LookPath("gcc")
 	if err != nil {
