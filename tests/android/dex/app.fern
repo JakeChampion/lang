@@ -38,6 +38,15 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
     let seven: usize = jni.jvalues([7 as usize]);
     let got: i32 = jni.call_int_method_a(env, pinger, ping_method, seven);
     log.warn("dextest: ping " + got.to_string());
+    log.warn("dextest: string " + jni.string_of(env, jni.new_string(env, "Fern ü")));
+    let integer: usize = jni.find_class(env, "java/lang/Integer");
+    let digits: usize = jni.jvalues([jni.new_string(env, "42")]);
+    let parsed: i32 = jni.call_static_int_method_a(env, integer, jni.get_static_method_id(env, integer, "parseInt", "(Ljava/lang/String;)I"), digits);
+    log.warn("dextest: parse " + parsed.to_string());
+    let string_class: usize = jni.find_class(env, "java/lang/String");
+    let value: usize = jni.call_static_object_method_a(env, string_class, jni.get_static_method_id(env, string_class, "valueOf", "(I)Ljava/lang/String;"), seven);
+    log.warn("dextest: value " + jni.string_of(env, value));
+    jni.free_buffer(digits);
     jni.free_buffer(no_args);
     jni.free_buffer(name);
     jni.free_buffer(seven);

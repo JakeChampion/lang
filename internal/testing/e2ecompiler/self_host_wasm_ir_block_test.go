@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostWasmIRBlock(t *testing.T) {
@@ -63,18 +65,7 @@ func TestSelfHostWasmIRBlock(t *testing.T) {
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 		t.Fatalf("write wat: %v", err)
 	}
-	corePath := filepath.Join(dir, "block.core.wasm")
-	if out, err := exec.Command(wasmtools, "parse", watPath, "-o", corePath).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools parse: %v\n%s", err, out)
-	}
-	compPath := filepath.Join(dir, "block.component.wasm")
-	if out, err := exec.Command(wasmtools, "component", "new", corePath,
-		"--adapt", "wasi_snapshot_preview1="+adapter, "-o", compPath).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools component new --adapt: %v\n%s", err, out)
-	}
-	if out, err := exec.Command(wasmtools, "validate", compPath).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
-	}
+	compPath := e2eharness.AdaptPreview1Component(t, watPath)
 
 	wit, _ := exec.Command(wasmtools, "component", "wit", compPath).Output()
 	for _, want := range []string{"wasi:io/poll@0.2", "wasi:clocks/monotonic-clock@0.2"} {

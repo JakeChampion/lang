@@ -1,8 +1,9 @@
 # Workers
 
 Status: [reference] shipped: `std/worker` with `spawn` and `join`, the `send`
-parameter mode, `E100`, and a process per worker on native Linux. Every
-other engine runs a worker inline. Real threads are not shipped.
+parameter mode, `E100`, a process per worker on native Linux, and the
+scheduler seam that `std/sim` implements. Every other engine runs a worker
+inline. Real threads are not shipped.
 
 ## The model
 
@@ -39,6 +40,8 @@ function main(): i32 {
 | `spawn[T](send body: () => T): Worker[T]` | Runs `body` as a worker. The captures of `body` and its result cross the boundary, so both are send-safe (`E100`). |
 | `(own w: Worker[T]) join(): T` | Returns the result and consumes the worker. A second `join` is `E051`. |
 | `@must_consume struct Worker[T]` | A program joins every worker it spawns (`E067`). No worker runs detached. |
+| `spawn_on[T](s: dyn Scheduler, send body: () => T): Worker[T]` | Runs `body` as a worker of scheduler `s`. `std/sim` is a scheduler. |
+| `trait Scheduler` | `admit(run)` starts a worker thunk and returns its index. `finish(index)` runs the workers until that one has its result. |
 
 The source is `internal/stdlib/std/worker.fern.md`.
 
@@ -88,9 +91,9 @@ cases are `conformance/cases/diag_e100` and
 
 ## Sequential degrade
 
-In this release `spawn` runs the body before it returns, and `join` returns
-the stored result. Every engine does the same: the interpreters, the native
-targets and wasm.
+On an engine without a process per worker, `spawn` runs the body before it
+returns, and `join` returns the stored result. The interpreters, wasm and
+Darwin do the same.
 
 The body runs at `spawn`, not at `join`, for one reason. A closure and the
 scope around it share the cell of a captured scalar (`CLOSURE-CAPTURE.md`).
@@ -194,11 +197,58 @@ box cannot reach the original. A `Map` does not cross in this release.
 
 The case is `conformance/cases/send_copy_deep`.
 
+## Step 3: the scheduler seam and the simulation
+
+`spawn_on(s, body)` runs a worker on a scheduler the program names. On an
+engine without a process per worker, `spawn` runs it on the `Inline`
+scheduler. The degrade and the simulation are one mechanism, as R2 of
+`MULTICORE-RESEARCH.md` asks.
+
+A scheduler holds workers of every result type, so a body reaches it as a
+thunk of one type: `() => usize`. The thunk wraps the result in `Some`,
+gives the box up with `__send_root` and returns its address. `join` runs
+the scheduler until the worker has its result. Then it takes the address
+back with `__send_adopt` as the declared type.
+
+These are the two builtins the process path already uses at its boundary.
+They are the only way a value crosses a scheduler.
+
+```fern
+pub trait Scheduler {
+  function admit(self: Self, run: () => usize): i32;
+  function finish(self: Self, index: i32): usize;
+}
+```
+
+`Inline` runs each thunk at `admit` and keeps the roots. `sim.Sim`
+implements the trait over `std/async` tasks:
+
+- `admit` starts the body as a task at once, as a process reads its
+  captures at the fork. A body that parks waits in a slot of the
+  simulation. The slot holds plain words: the task id, the root of the
+  thunk, and the wait. A `Cell` holds no closure (`E057`), so the thunk
+  crosses into the slot the way a result crosses a worker boundary. At
+  each spawn the seed then says whether a parked worker runs before the
+  spawner goes on.
+
+- `finish` resumes the parked workers in the order of their deadlines
+  until the joined worker is done. The seed breaks a tie. Each turn moves
+  the clock to the deadline. A worker that waits for an event the
+  simulation never gives stops the program with exit 134 at its join.
+
+A worker body captures only send-safe values, so it cannot hold the
+simulation. It parks with `async.wait_any` on a virtual `Instant`, and the
+spawner reads the clock. On the interpreter a task does not park, so a
+body runs to its end at `spawn` and the clock does not move.
+
+The `__send_root` and `__send_adopt` marks lower to IR ops that emit
+nothing on every backend. The certifier counts the move and the fresh
+unit. The interpreters keep a rooted value in a table and give it back at
+the adopt, so the scheduler runs under `-interp` too.
+
 ## What follows
 
-The `std/sim` leg comes next: a seeded scheduler that picks the next worker
-at each spawn and join, with the degrade and the simulation as one
-mechanism. Then the SEC-020 teardown of a worker's heap, issue 13522. Then
+The SEC-020 teardown of a worker's heap, issue 13522, is next. Then
 bounded mailboxes, when a pipeline workload asks for them. Threads come
 under the same API, when a workload shows the fork cost. wasm keeps the
 degrade until a thread primitive ships that wasmtime implements (R5).
@@ -225,6 +275,12 @@ degrade until a thread primitive ships that wasmtime implements (R5).
   turn, each joined, on every engine. On Linux each region goes back to the
   kernel at its join.
 - `tests/stdlib/worker_test.fern`: the module through `std/test`.
+
+- `conformance/cases/worker_runs_on_the_simulation`: three workers park on
+  the virtual clock, their results cross back in join order, and the joins
+  move the clock to the last deadline, on every engine.
+- `tests/stdlib/sim_worker_test.fern`: a seed replays its schedule, seeds
+  differ at the spawns, and the `Inline` scheduler runs a body at spawn.
 - `TestSendParameterRefusesWhatCannotCrossAWorkerBoundary` and
   `TestSendParameterAdmitsSendSafeValues`: the Go checker, one row per reason.
 - `TestSelfHostCheckerCodesX86_64`: the `send-` rows pin both checkers.

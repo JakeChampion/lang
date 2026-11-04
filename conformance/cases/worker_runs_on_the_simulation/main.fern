@@ -1,0 +1,38 @@
+// spec: WK-06
+// A simulation is a worker scheduler. A worker spawned on it parks on the
+// virtual clock, and its result crosses back through the scheduler. On an
+// engine where a task parks, the joins move the clock to the deadlines in
+// order. On the interpreter a body runs to its end at spawn, so the clock
+// does not move.
+
+import "std/async";
+import "std/sim";
+import "std/time";
+import "std/worker";
+
+function waiter(s: sim.Sim, ms: i64, tag: string): worker.Worker[string] {
+    let at: Instant = sim.at(time.duration_millis(ms));
+    return worker.spawn_on(s, (): string => {
+        let none: i32[] = [];
+        let woke: async.Wake = async.wait_any(none, Some(at));
+        return tag + "!";
+    });
+}
+
+function main(): i32 {
+    let s = sim.new(3);
+    let a = waiter(s, 30i64, "a");
+    let b = waiter(s, 10i64, "b");
+    let c = waiter(s, 20i64, "c");
+    let joined: string = b.join() + a.join() + c.join();
+    print(joined);
+    let clock: i64 = s.elapsed().as_millis();
+    if (async.parks()) {
+        print("clock " + clock.to_string());
+    } else {
+        print("clock " + (clock + 30i64).to_string());
+    }
+    let w = worker.spawn_on(worker.inline(), (): i32 => joined.len());
+    print(w.join().to_string());
+    return 0;
+}

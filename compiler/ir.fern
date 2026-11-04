@@ -1185,7 +1185,14 @@ pub function op_send_adopt(): Op {
   return counted(op0(495));
 }
 
-// The worker ops, 491 to 496, by name and by id.
+// send_root takes the box under it from its owner and leaves its address.
+// It emits nothing: the word is the box, and the move is what the certifier
+// counts.
+pub function op_send_root(): Op {
+  return op0(497);
+}
+
+// The worker ops, 491 to 497, by name and by id.
 function kind_id_worker(name: string): i32 {
   if (name == "heap_adopt") {
     return 491;
@@ -1204,6 +1211,9 @@ function kind_id_worker(name: string): i32 {
   }
   if (name == "worker_unmap") {
     return 496;
+  }
+  if (name == "send_root") {
+    return 497;
   }
   return 0;
 }
@@ -1224,11 +1234,14 @@ function kind_name_worker(id: i32): string {
   if (id == 495) {
     return "send_adopt";
   }
-  return "worker_unmap";
+  if (id == 496) {
+    return "worker_unmap";
+  }
+  return "send_root";
 }
 
 function worker_pops1(t: i32): boolean {
-  return t == 492 || t == 494 || t == 495;
+  return t == 492 || t == 494 || t == 495 || t == 497;
 }
 
 function worker_pops2(t: i32): boolean {
@@ -4205,7 +4218,7 @@ function kind_name_3(id: i32): string {
 
 // The names past 160, in two halves so each stays readable.
 function kind_name_4(id: i32): string {
-  if (id >= 491 && id <= 496) {
+  if (id >= 491 && id <= 497) {
     return kind_name_worker(id);
   }
   let a: string = kind_name_4a(id);

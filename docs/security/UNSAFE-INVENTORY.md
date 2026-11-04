@@ -60,8 +60,8 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__arr_push_shared_bytes()`, `__arr_push_shared_count()` | Read-only counters. No obligation. |
 | `__heap_mark()`, `__heap_release_to(m)` | Every value allocated after the mark must be dead before the release. |
 | `__heap_adopt(start, end)` | The region must be mapped and writable, nothing allocated before the call may be read again, and only a forked worker calls it. |
-| `__send_adopt(addr)` | `addr` must be the root of a tree that `__send_copy` built in a live worker region. No other value can own it. The parent must copy it before region removal. |
-| `__send_root(v)` | The caller gives up `v`. The caller must transfer the region, remove it after a copy, or exit. Nothing recursively releases the tree. |
+| `__send_adopt(addr)` | `addr` must be a root that `__send_root` gave up, in this heap or in a live worker region, and no other value may own it. The parent must copy a root of a region before the region removal. |
+| `__send_root(v)` | The caller gives up `v`. The root is adopted exactly once, by this process or by the one that takes the region, or the region is removed after a copy. Nothing else releases the tree. |
 | `__worker_region(size)`, `__worker_exit(region, root)`, `__worker_reap(region)` | The region is a shared mapping a fork inherits, and the caller owns it. The exit ends the process with no at-exit work, so only a forked worker calls it. The reap reads a root the parent must then adopt. |
 | `__worker_unmap(region, size, reaped)` | The caller owns the entire region and no remaining value can access it. If `reaped` is true, the child exited successfully and the parent imported its complete counters exactly once. Check the kernel status. |
 | `__send_release(v)` | The caller gives up `v`, and the release runs at the call. A caller that restores a heap mark must preserve all other live values. |

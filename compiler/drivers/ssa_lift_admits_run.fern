@@ -18,6 +18,8 @@ function main(): i32 {
         out = out + k + " pops=" + util.i32_to_string(ir.op_pops(o)) + " pushes=" + util.i32_to_string(ir.op_pushes(o)) + "\n";
       } else if (ir.op_pops(o) < 0) {
         out = out + "unmodelled " + k + "\n";
+      } else if (id >= 491 && id <= 497) {
+        out = out + "admitted " + k + " pops=" + util.i32_to_string(ir.op_pops(o)) + " pushes=" + util.i32_to_string(ir.op_pushes(o)) + "\n";
       }
     }
     id = id + 1;

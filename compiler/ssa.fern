@@ -1664,9 +1664,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
 
     let mh: i32 = mates.hint[v];
     if (mh >= 0 && sole[v] == mh && lo[mh] <= lo[v] && hi[mh] >= 0 && reg_of[mh] == 0 - 1) {
-      if (sites.start.len() == 0) {
-        sites = read_sites(f, at, blk_start);
-      }
+      sites = cached_read_sites(f, sites, at, blk_start);
       if (!live_at_def(sites, mh, v, def_blk, def_pos)) {
         oi = oi + 1;
         continue;
@@ -1678,9 +1676,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     }
     let ma: i32 = mates.alt[v];
     if (ma >= 0 && reg_of[ma] == 0 - 1 && lo[ma] <= lo[v] && hi[ma] >= 0) {
-      if (sites.start.len() == 0) {
-        sites = read_sites(f, at, blk_start);
-      }
+      sites = cached_read_sites(f, sites, at, blk_start);
       if (!live_at_def(sites, ma, v, def_blk, def_pos)) {
         oi = oi + 1;
         continue;
@@ -1752,18 +1748,13 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       }
       let share: boolean = act_hi[ha] == lo[v] && reads_mate[v];
       if (!share && (h == mates.hint[v] && mates.carried[v] || h == mates.alt[v])) {
-        if (sites.start.len() == 0) {
-          sites = read_sites(f, at, blk_start);
-        }
+        sites = cached_read_sites(f, sites, at, blk_start);
         share = chain_dead_at_def(sites, act_val[ha], v, shared_with, lo, hi, def_blk, def_pos);
       }
       if (!share) {
         continue;
       }
-      let top: i32 = act_hi[ha];
-      if (hi[v] > top) {
-        top = hi[v];
-      }
+      let top: i32 = later_interval_end(act_hi[ha], hi[v]);
       let holder: i32 = act_val[ha];
       act_val = drop_active_at(act_val, ha);
       act_hi = drop_active_at(act_hi, ha);
@@ -1784,18 +1775,13 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     // A save around a call restores its holder, so a lent interval holds none.
     if (!from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1)) {
-      if (sites.start.len() == 0) {
-        sites = read_sites(f, at, blk_start);
-      }
+      sites = cached_read_sites(f, sites, at, blk_start);
       if (phi_side.len() == 0) {
         phi_side = phi_values(f);
       }
       let lend: i32 = borrowable(sites, v, act_val, act_reg, Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: defining_args(f, v, def_blk, def_pos, blk_start), phi: phi_side }, fixed, shared_with, lo, hi, def_blk, def_pos);
       if (lend >= 0) {
-        let top: i32 = act_hi[lend];
-        if (hi[v] > top) {
-          top = hi[v];
-        }
+        let top: i32 = later_interval_end(act_hi[lend], hi[v]);
         let lent: i32 = act_reg[lend];
         let holder: i32 = act_val[lend];
         act_val = drop_active_at(act_val, lend);
@@ -2477,6 +2463,20 @@ function still_in(occ: i32[], hi: i32[], from: i32): i32[] {
 }
 
 struct ReadSites { start: i32[], blk: i32[], pos: i32[], succ_a: i32[], succ_b: i32[], phi_end: i32[] }
+
+function cached_read_sites(f: SFunc, own sites: ReadSites, at: i32[], blk_start: i32[]): ReadSites {
+  if (sites.start.len() == 0) {
+    return read_sites(f, at, blk_start);
+  }
+  return sites;
+}
+
+function later_interval_end(a: i32, b: i32): i32 {
+  if (b > a) {
+    return b;
+  }
+  return a;
+}
 
 function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   let count: i32[] = __alloc_i32(f.nvals + 1);

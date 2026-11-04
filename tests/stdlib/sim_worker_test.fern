@@ -1,0 +1,101 @@
+import "std/test";
+import "std/async";
+import "std/sim";
+import "std/time";
+import "std/worker";
+
+// A worker that parks until `ms` of virtual time and then returns `tag`.
+// Its captures are an instant and a string, which are send-safe.
+function waiter(s: sim.Sim, ms: i64, tag: string): worker.Worker[string] {
+  let at: Instant = sim.at(time.duration_millis(ms));
+  return worker.spawn_on(s, (): string => {
+    let none: i32[] = [];
+    let woke: async.Wake = async.wait_any(none, Some(at));
+    return tag;
+  });
+}
+
+function ms(s: sim.Sim): string {
+  return s.elapsed().as_millis().to_string();
+}
+
+// The clock the spawner sees after each spawn and each join, for a seed.
+function trace(seed: i64): string {
+  let s = sim.new(seed);
+  let a = waiter(s, 30i64, "a");
+  let out: string = ms(s);
+  let b = waiter(s, 10i64, "b");
+  out = out + " " + ms(s);
+  let c = waiter(s, 20i64, "c");
+  out = out + " " + ms(s);
+  out = out + " " + a.join() + ms(s);
+  out = out + " " + c.join() + ms(s);
+  out = out + " " + b.join() + ms(s);
+  return out;
+}
+
+function test_results_cross_and_the_clock_moves(): test.TestOutcome {
+  let s = sim.new(1);
+  let a = waiter(s, 10i64, "a");
+  let b = waiter(s, 20i64, "b");
+  let got: string = b.join() + a.join();
+  if (got != "ba") {
+    return test.fail("results: " + got);
+  }
+  if (!async.parks()) {
+    return test.assert_eq(ms(s), "0");
+  }
+  return test.assert_eq(ms(s), "20");
+}
+
+function test_a_seed_replays_its_schedule(): test.TestOutcome {
+  let first: string = trace(7);
+  if (first != trace(7)) {
+    return test.fail("seed 7 gave two traces: " + first + " and " + trace(7));
+  }
+  if (!async.parks()) {
+    return test.assert_eq(first, "0 0 0 a0 c0 b0");
+  }
+  // Every join resumes the workers in deadline order, so the clock is at
+  // 30 ms after the first join whatever the seed chose at the spawns.
+  return test.assert_true(first.ends_with("a30 c30 b30"));
+}
+
+function test_seeds_differ_at_the_spawns(): test.TestOutcome {
+  if (!async.parks()) {
+    return test.pass();
+  }
+  let seen: string[] = [];
+  for seed in 1..33 {
+    let t: string = trace(seed as i64);
+    let fresh: boolean = true;
+    for prior in seen {
+      if (prior == t) {
+        fresh = false;
+      }
+    }
+    if (fresh) {
+      seen = seen.append(t);
+    }
+  }
+  if (seen.len() < 2) {
+    return test.fail("32 seeds gave one schedule: " + seen[0]);
+  }
+  return test.pass();
+}
+
+function test_inline_scheduler_runs_at_spawn(): test.TestOutcome {
+  let n: i32 = 20;
+  let w = worker.spawn_on(worker.inline(), (): i32 => n + 1);
+  let v = worker.spawn_on(worker.inline(), (): string => "v" + n.to_string());
+  return test.assert_eq(w.join().to_string() + v.join(), "21v20");
+}
+
+function main(): i32 {
+  let r = test.new("std/sim workers");
+  r = r.it("results cross and the clock moves", test_results_cross_and_the_clock_moves);
+  r = r.it("a seed replays its schedule", test_a_seed_replays_its_schedule);
+  r = r.it("seeds differ at the spawns", test_seeds_differ_at_the_spawns);
+  r = r.it("the inline scheduler runs a body at spawn", test_inline_scheduler_runs_at_spawn);
+  return r.finish();
+}

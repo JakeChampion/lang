@@ -9,7 +9,7 @@ turns off the freezer of cached apps, so that the copy that is
 not in front keeps running as a second phone would. Then it:
 
 1. starts both copies, and requires the start line of each: one on port
-   47120 and one on 47121;
+   47120 and one on 47121, and that each one runs its foreground service;
 2. waits until both made their keys, then taps SAME in each copy;
 3. holds the talk button of the first copy, then of the second, and requires
    that each copy transmits and the other hears it;
@@ -45,6 +45,11 @@ def pid(package):
 
 def logcat():
     return adb(*LOGCAT)
+
+
+def foreground(package):
+    """The service of package is a foreground service."""
+    return "isForeground=true" in adb("shell", "dumpsys", "activity", "services", package, check=False)
 
 
 def lines_of(log, p):
@@ -158,6 +163,8 @@ def run(apk, second_apk, out):
     a, b = pid(FIRST), pid(SECOND)
     for p in (a, b):
         check_node(logcat(), p)
+    for package in (FIRST, SECOND):
+        wait_for(package + " runs its foreground service", lambda log: foreground(package))
     wait_for("both copies make keys", lambda log: has(log, a, "walkie: keys are ready") and has(log, b, "walkie: keys are ready"))
     w, h = screen_size()
     confirm(SECOND, b, w, h)
