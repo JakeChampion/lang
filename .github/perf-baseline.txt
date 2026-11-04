@@ -1,3 +1,5 @@
+# 2026-11-04: PR #14140, perf-aarch64 job 126444393370 on e95dda6d. A Fern runtime call takes its arguments in registers:
+# five aarch64 rows fall 1.04% to 3.22%. Every row is a reduction, and no limit rises.
 # 2026-11-04: PR #14135, perf-x86_64 job 126373947305 on 4629c363. A fused compare takes no register: sort_ints.ir
 # falls 1.04% and sort_strings.ir 2.06%. Both rows are reductions, and no limit rises.
 # 2026-11-03: PR #14122, perf-aarch64 job 126271937197 on 747f6b7a. All 21 aarch64 findings are reductions:
@@ -507,9 +509,9 @@ aarch64/deflate_encode.text	7829
 aarch64/enum_match.text	1112
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16242
+aarch64/http_hello.text	16073
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
-aarch64/http_hello.ir	23864615
+aarch64/http_hello.ir	23616615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
 # 2026-11-01 (#13981): Helper reachability restores the original map limits. The division integration passes all 117 static rows.
@@ -534,9 +536,9 @@ aarch64/sort_inplace.ir	43684079
 aarch64/sort_ints.text	2175
 aarch64/sort_ints.ir	30178876
 aarch64/sort_strings.text	3451
-aarch64/sort_strings.ir	104358797
+aarch64/sort_strings.ir	100996546
 aarch64/string_build.text	2241
-aarch64/string_build.ir	47221466
+aarch64/string_build.ir	46680569
 aarch64/string_count_byte.text	1445
 aarch64/string_count_byte.ir	295207223
 aarch64/string_find_byte.text	1843
@@ -548,7 +550,7 @@ aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1132
 aarch64/string_slice.ir	43620107
 aarch64/struct_drop.text	2549
-aarch64/struct_drop.ir	222380901
+aarch64/struct_drop.ir	218300904
 aarch64/tokenize.text	1388
 aarch64/tokenize.ir	38350109
 aarch64/utf8_ingest_unchecked.text	8158
