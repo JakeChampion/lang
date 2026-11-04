@@ -1,0 +1,173 @@
+import "std/hash/crc32";
+import "std/opus/celt_encoder";
+import "std/test";
+
+// Each case runs the prefilter on one or two channels of a random pattern
+// that repeats with a random period, plus noise, with a random state of the
+// last frame. libopus 1.4, in its float build, gave the CRC-32 of each
+// trace, from a C program that makes the same calls.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
+  let (g1, r) = rnd(g);
+  return (g1, lo + (hi - lo) * ((r % 65536) as f32) / 65536.0f32);
+}
+
+function bits(v: f32): string {
+  return (f32_bits(v) as u32).to_string();
+}
+
+function hash(xs: [f32]): u32 {
+  let h: u32 = 0u32;
+  for x in xs {
+    h = h * 31u32 + f32_bits(x) as u32;
+  }
+  return h;
+}
+
+function flag(b: boolean): string {
+  if (b) {
+    return "1";
+  }
+  return "0";
+}
+
+struct Channel { g: Gen, mem: f32[], input: f32[], in_mem: f32[] }
+
+// The history, the overlap and the frame, and the overlap of the last frame,
+// of one channel.
+function channel(own g: Gen, n: i32): Channel {
+  let (g1, pr) = rnd(g);
+  let period: i32 = 8 + pr % 1000;
+  let (g2, short) = rnd(g1);
+  if (short % 2 == 1) {
+    period = 8 + period % 60;
+  }
+  let (g3, noise) = frand(g2, 0.0f32, 2.0f32);
+  g = g3;
+  let pat: f32[] = [];
+  for i in 0..period {
+    let (g4, v) = frand(g, -1000.0f32, 1000.0f32);
+    g = g4;
+    pat = pat.append(v);
+  }
+  let mem: f32[] = [];
+  let frame: f32[] = [];
+  for i in 0..1024 + n {
+    let (g5, v) = frand(g, -100.0f32, 100.0f32);
+    g = g5;
+    let s: f32 = pat[i % period] + noise * v;
+    if (i < 1024) {
+      mem = mem.append(s);
+    } else {
+      frame = frame.append(s);
+    }
+  }
+  let input: f32[] = [];
+  for i in 0..120 {
+    let (g6, v) = frand(g, -1000.0f32, 1000.0f32);
+    g = g6;
+    input = input.append(v);
+  }
+  for s in frame {
+    input = input.append(s);
+  }
+  let in_mem: f32[] = [];
+  for i in 0..120 {
+    let (g7, v) = frand(g, -1000.0f32, 1000.0f32);
+    g = g7;
+    in_mem = in_mem.append(v);
+  }
+  return Channel { g: g, mem: mem, input: input, in_mem: in_mem };
+}
+
+function last_state(own g: Gen): (Gen, celt_encoder.PrefilterState) {
+  let (g1, period) = rnd(g);
+  let (g2, q0) = rnd(g1);
+  let q: i32 = q0 % 9;
+  let gain: f32 = 0.0f32;
+  if (q == 8) {
+    let (g3, v) = frand(g2, 0.0f32, 0.75f32);
+    g2 = g3;
+    gain = v;
+  } else if (q > 0) {
+    gain = 0.09375f32 * (q as f32);
+  }
+  let (g4, tapset) = rnd(g2);
+  let (g5, lossy) = rnd(g4);
+  let loss: i32 = 0;
+  if (lossy % 4 == 0) {
+    let (g6, l) = rnd(g5);
+    g5 = g6;
+    loss = l % 12;
+  }
+  return (g5, celt_encoder.PrefilterState { period: period % 1023, gain: gain, tapset: tapset % 3, loss_rate: loss });
+}
+
+function prefilter_case(own g: Gen): (Gen, string) {
+  let (g1, c0) = rnd(g);
+  let cc: i32 = 1 + c0 % 2;
+  let (g2, n0) = rnd(g1);
+  let n: i32 = 120 << n0 % 4;
+  g = g2;
+  let mem: f32[] = [];
+  let input: f32[] = [];
+  let in_mem: f32[] = [];
+  for c in 0..cc {
+    let ch: Channel = channel(g, n);
+    g = ch.g;
+    for v in ch.mem {
+      mem = mem.append(v);
+    }
+    for v in ch.input {
+      input = input.append(v);
+    }
+    for v in ch.in_mem {
+      in_mem = in_mem.append(v);
+    }
+  }
+  let (g3, st) = last_state(g);
+  let (g4, t0) = rnd(g3);
+  let (g5, e0) = rnd(g4);
+  let (g6, b0) = rnd(g5);
+  let (g7, valid) = rnd(g6);
+  let (g8, ratio) = frand(g7, 0.5f32, 1.0f32);
+  let f: celt_encoder.PrefilterFrame = celt_encoder.PrefilterFrame { channels: cc, n: n, tapset: t0 % 3, enabled: e0 % 4 != 0, available_bytes: 10 + b0 % 190 };
+  let an: celt_encoder.Analysis = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid % 2 == 1, max_pitch_ratio: ratio };
+  let r: celt_encoder.Prefilter = celt_encoder.run_prefilter(st, input, mem, in_mem, f, an);
+  let head: string = cc.to_string() + " " + n.to_string() + " " + r.last_period.to_string() + " " + st.tapset.to_string() + " " + bits(st.gain) + " " + st.loss_rate.to_string() + " " + f.tapset.to_string() + " " + flag(f.enabled) + " " + f.available_bytes.to_string();
+  let tail: string = flag(r.on) + " " + r.pitch.to_string() + " " + bits(r.gain) + " " + r.qgain.to_string() + " " + hash(r.input).to_string() + " " + hash(r.mem).to_string() + " " + hash(r.in_mem).to_string();
+  return (g8, head + " | " + tail);
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let crc: crc32.Crc32 = crc32.new();
+  for k in 0..cases {
+    let (g1, line) = prefilter_case(g);
+    g = g1;
+    crc = crc.update((line + "\n").as_bytes());
+  }
+  return crc.finish();
+}
+
+function test_short_trace(): test.TestOutcome {
+  return test.assert_eq(trace(3u32, 12), 1112760486u32);
+}
+
+function test_long_trace(): test.TestOutcome {
+  return test.assert_eq(trace(29u32, 600), 4267266800u32);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/celt_encoder prefilter");
+  r = r.it("a short trace is the libopus trace", test_short_trace);
+  r = r.it("a long trace is the libopus trace", test_long_trace);
+  return r.finish();
+}

@@ -16,6 +16,7 @@ The analysis functions come first. Each one makes one decision for the frame:
 - `stereo_analysis` decides if mid and side coding costs less than left and right coding.
 - `dynalloc_analysis` gives the extra bits of each band from a follower of the band energies. It also gives the importance of each band for the TF analysis and the spreading weight of each band.
 - `compute_vbr` gives the bit target of a VBR frame.
+- `run_prefilter` finds the pitch period and the gain of the frame, and applies the pitch prefilter.
 
 An `Analysis` holds the results of the tonality analysis of the Opus layer. When `valid` is false, the encoder does not use them.
 
@@ -23,6 +24,7 @@ An `Analysis` holds the results of the tonality analysis of the Opus layer. When
 
 - The arithmetic is in f32, in the same order as libopus. Where libopus does a step in f64, this module does the same step in f64.
 - The samples of `preemphasis` are interleaved, with `channels` samples for each instant, from -1.0 to 1.0.
+- The input of `run_prefilter` holds the overlap and then the frame of each channel. Its `mem` holds `celt.COMBFILTER_MAXPERIOD` samples of each channel, and its `in_mem` holds one overlap of each channel.
 
 ## Module assembly
 
@@ -41,6 +43,8 @@ An `Analysis` holds the results of the tonality analysis of the Opus layer. When
 <<dynalloc>>
 
 <<vbr>>
+
+<<prefilter>>
 ```
 
 ### `module introduction`
@@ -989,3 +993,163 @@ pub function compute_vbr(r: VbrRequest, analysis: Analysis): i32 {
 }
 ```
 
+### `prefilter`
+
+The prefilter is the inverse of the pitch postfilter of the decoder. It finds the pitch period of the frame at half the rate, and removes the doubled periods. It makes the gain smaller when the network loses packets.
+
+A frame uses the prefilter only when its gain passes a threshold. The threshold is higher when the period jumps or the packet is small. It is lower when the last frame had a strong prefilter. The gain is then quantised to one of eight steps of 3/32.
+
+The filter reads the history of the input in `mem`, and writes the filtered frame over the input. Thus it is an FIR filter: each output is the input minus the taps of the input one period before it. libopus filters the first `shortMdctSize - overlap` samples with only the old filter. That count is 0 in the mode of this port, so the port does not have that step.
+
+```fern
+<<prefilter>>=
+pub struct PrefilterState { period: i32, gain: f32, tapset: i32, loss_rate: i32 }
+
+// `last_period` is the period of the last frame, at least
+// `celt.COMBFILTER_MINPERIOD`. `input`, `mem` and `in_mem` replace the
+// arrays that `run_prefilter` takes.
+pub struct Prefilter { on: boolean, pitch: i32, gain: f32, qgain: i32, last_period: i32, input: f32[], mem: f32[], in_mem: f32[] }
+
+pub struct PrefilterFrame { channels: i32, n: i32, tapset: i32, enabled: boolean, available_bytes: i32 }
+
+const PF_STEP: f32 = 0.10000000149011612f32;
+
+const PF_FLOOR: f32 = 0.20000000298023224f32;
+
+const PF_STRONG: f32 = 0.4000000059604645f32;
+
+const PF_STRONGER: f32 = 0.550000011920929f32;
+
+const PF_SCALE: f32 = 0.699999988079071f32;
+
+const PF_QUANTUM: f32 = 0.09375f32;
+
+// The history and then the new frame of each channel.
+function prefilter_input(input: [f32], mem: [f32], cc: i32, n: i32): f32[] {
+  let pre: f32[] = [];
+  for c in 0..cc {
+    for i in 0..celt.COMBFILTER_MAXPERIOD {
+      pre = pre.append(mem[c * celt.COMBFILTER_MAXPERIOD + i]);
+    }
+    for i in 0..n {
+      pre = pre.append(input[c * (n + modes.OVERLAP) + modes.OVERLAP + i]);
+    }
+  }
+  return pre;
+}
+
+struct PitchGain { pitch: i32, gain: f32 }
+
+// The period and the gain that the search finds in `pre`.
+function prefilter_pitch(pre: [f32], st: PrefilterState, cc: i32, n: i32): PitchGain {
+  let len: i32 = celt.COMBFILTER_MAXPERIOD + n;
+  let lp: f32[] = pitch.pitch_downsample(pre, 0, pre, len, len, cc);
+  let found: i32 = pitch.pitch_search(lp, celt.COMBFILTER_MAXPERIOD >> 1, lp, n, celt.COMBFILTER_MAXPERIOD - 3 * celt.COMBFILTER_MINPERIOD);
+  let d: pitch.Doubling = pitch.remove_doubling(lp, celt.COMBFILTER_MAXPERIOD, celt.COMBFILTER_MINPERIOD, n, celt.COMBFILTER_MAXPERIOD - found, st.period, st.gain);
+  let p: i32 = d.period;
+  if (p > celt.COMBFILTER_MAXPERIOD - 2) {
+    p = celt.COMBFILTER_MAXPERIOD - 2;
+  }
+  let g: f32 = PF_SCALE * d.gain;
+  if (st.loss_rate > 2) {
+    g = 0.5f32 * g;
+  }
+  if (st.loss_rate > 4) {
+    g = 0.5f32 * g;
+  }
+  if (st.loss_rate > 8) {
+    g = 0.0f32;
+  }
+  return PitchGain { pitch: p, gain: g };
+}
+
+// The gain that the prefilter needs before the frame uses it.
+function prefilter_threshold(st: PrefilterState, p: i32, available_bytes: i32): f32 {
+  let th: f32 = PF_FLOOR;
+  if (abs_i(p - st.period) * 10 > p) {
+    th = th + PF_FLOOR;
+  }
+  if (available_bytes < 25) {
+    th = th + PF_STEP;
+  }
+  if (available_bytes < 35) {
+    th = th + PF_STEP;
+  }
+  if (st.gain > PF_STRONG) {
+    th = th - PF_STEP;
+  }
+  if (st.gain > PF_STRONGER) {
+    th = th - PF_STEP;
+  }
+  if (th > PF_FLOOR) {
+    return th;
+  }
+  return PF_FLOOR;
+}
+
+// The quantised gain: the last gain when it is near, then the nearest
+// of the eight steps.
+function quantised_gain(g: f32, last: f32): i32 {
+  let d: f32 = g - last;
+  if (d < 0.0f32) {
+    d = -d;
+  }
+  if (d < PF_STEP) {
+    g = last;
+  }
+  let q: i32 = ((0.5f32 + g * 32.0f32 / 3.0f32) as f64).floor() as i32 - 1;
+  if (q > 7) {
+    return 7;
+  }
+  if (q < 0) {
+    return 0;
+  }
+  return q;
+}
+
+// The prefilter of a frame of `f.n` samples a channel. `input` holds the
+// overlap and then the frame of each channel. `mem` holds the last
+// `celt.COMBFILTER_MAXPERIOD` input samples of each channel, and `in_mem`
+// the last overlap of each channel.
+pub function run_prefilter(st: PrefilterState, own input: f32[], mem: [f32], own in_mem: f32[], f: PrefilterFrame, an: Analysis): Prefilter {
+  let n: i32 = f.n;
+  let len: i32 = celt.COMBFILTER_MAXPERIOD + n;
+  let pre: f32[] = prefilter_input(input, mem, f.channels, n);
+  let pg: PitchGain = PitchGain { pitch: celt.COMBFILTER_MINPERIOD, gain: 0.0f32 };
+  if (f.enabled) {
+    pg = prefilter_pitch(pre, st, f.channels, n);
+  }
+  let gain: f32 = pg.gain;
+  if (an.valid) {
+    gain = gain * an.max_pitch_ratio;
+  }
+  let on: boolean = !(gain < prefilter_threshold(st, pg.pitch, f.available_bytes));
+  let qg: i32 = 0;
+  if (on) {
+    qg = quantised_gain(gain, st.gain);
+    gain = PF_QUANTUM * ((qg + 1) as f32);
+  } else {
+    gain = 0.0f32;
+  }
+  let last: i32 = st.period;
+  if (last < celt.COMBFILTER_MINPERIOD) {
+    last = celt.COMBFILTER_MINPERIOD;
+  }
+  let comb: celt.Comb = celt.Comb { t0: last, t1: pg.pitch, n: n, g0: -st.gain, g1: -gain, tapset0: st.tapset, tapset1: f.tapset };
+  let next: f32[] = [];
+  for c in 0..f.channels {
+    let at: i32 = c * (n + modes.OVERLAP);
+    for i in 0..modes.OVERLAP {
+      input = input.with(at + i, in_mem[c * modes.OVERLAP + i]);
+    }
+    input = celt.comb_fir(input, at + modes.OVERLAP, pre, c * len + celt.COMBFILTER_MAXPERIOD, comb);
+    for i in 0..modes.OVERLAP {
+      in_mem = in_mem.with(c * modes.OVERLAP + i, input[at + n + i]);
+    }
+    for i in 0..celt.COMBFILTER_MAXPERIOD {
+      next = next.append(pre[c * len + n + i]);
+    }
+  }
+  return Prefilter { on: on, pitch: pg.pitch, gain: gain, qgain: qg, last_period: last, input: input, mem: next, in_mem: in_mem };
+}
+```
