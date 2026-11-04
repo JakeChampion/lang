@@ -19232,6 +19232,14 @@ function lu_fresh_local(fx: LuFn, e: ast.Expr): boolean {
   return false;
 }
 
+// An own parameter, or a fresh local declared once outside a loop.
+function lu_unpack_source_owned(fx: LuFn, name: string): boolean {
+  if (lu_own_param(fx, name)) {
+    return lu_decl_count(fx, name) == 0;
+  }
+  return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name);
+}
+
 // A local declared once, outside a loop, from an own parameter at its last
 // use, and given only fresh values after that.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
@@ -19243,12 +19251,12 @@ function lu_owned_alias(fx: LuFn, name: string): boolean {
       return false;
     }
   }
-  // The fields of an own parameter that a destructure takes at its last use
-  // are owned, as the parameter is.
+  // The fields that a destructure takes from an own parameter or a fresh
+  // local at its last use are owned, as the source is.
   for u in fx.facts.unpacked {
     if (u.name == name) {
       if let ast.ExprIdent(src) = u.init {
-        return lu_own_param(fx, src.name) && lu_decl_count(fx, src.name) == 0 && lu_is_last(fx, src);
+        return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
       }
     }
   }

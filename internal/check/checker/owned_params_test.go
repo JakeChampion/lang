@@ -296,6 +296,17 @@ function f(own h: Holder): i32 {
     let Holder { box, n } = h;
     return box.open() + n;
 }`},
+		// The fields that a destructure takes from a fresh local at its
+		// last use are owned too (#14144).
+		{"destructured-fresh-local-at-last-use", `
+struct Holder { box: Box, n: i32 }
+function mk(): Holder { return Holder { box: Wrap([1]), n: 2 }; }
+function (own b: Box) open(): i32 { return 0; }
+function f(): i32 {
+    let h: Holder = mk();
+    let Holder { box, n } = h;
+    return box.open() + n;
+}`},
 		{"destructured-field-given-a-fresh-local", `
 struct Holder { box: Box, n: i32 }
 function step(own b: Box): (Box, i32) { return (b, 1); }
@@ -2253,6 +2264,14 @@ function f(): i32 {
     let t @ (h, k) = hstep();
     let n: i32 = sinkh(h);
     return n + t.1;
+}`)
+	wantE051(t, "destructured-local-read-again", ownHandleConsumer+`
+function mk(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(): i32 {
+    let p: HPair = mk();
+    let HPair { h, n } = p;
+    let r: i32 = sinkh(h);
+    return r + n + p.n;
 }`)
 	wantE051(t, "destructured-borrowed-param", ownHandleConsumer+`
 function f(p: HPair): i32 {

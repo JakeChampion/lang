@@ -217,7 +217,7 @@ The header of a frame holds the silence flag, the pitch postfilter, the transien
 
 ```fern
 <<header>>=
-const TAPSET_ICDF: u8[] = [2u8, 1u8, 0u8];
+pub const TAPSET_ICDF: u8[] = [2u8, 1u8, 0u8];
 
 pub const SPREAD_ICDF: u8[] = [25u8, 23u8, 2u8, 0u8];
 
@@ -346,7 +346,7 @@ function tf_decode(own d: range.Decoder, start: i32, end: i32, transient: boolea
 }
 
 // The largest allocation of each band, in 1/8 bits.
-function init_caps(lm: i32, channels: i32): i32[] {
+pub function init_caps(lm: i32, channels: i32): i32[] {
   let cap: i32[] = [];
   for i in 0..modes.BANDS {
     let n: i32 = modes.EBANDS[i + 1] - modes.EBANDS[i] << lm;

@@ -1,0 +1,54 @@
+// The fields that a destructure takes from a fresh local at its last use
+// are owned, so each one can move into an own parameter or receiver
+// (#14144).
+struct In { v: i32[] }
+struct W { a: In, n: i32 }
+enum E { A(In), B(i32) }
+struct V { e: E, n: i32 }
+
+@noinline function (own a: In) grow(): In { return In { v: a.v.append(1) }; }
+@noinline function (own e: E) size(): i32 {
+  match (e) {
+    A(x) => {
+      return x.v.len();
+    },
+    B(k) => {
+      return k;
+    }
+  }
+}
+@noinline function step(own a: In): (In, i32) { let n: i32 = a.v.len(); return (In { v: a.v.append(n) }, n); }
+@noinline function make(k: i32): W { return W { a: In { v: [k, k + 1] }, n: k }; }
+
+@noinline function from_local(k: i32): W {
+  let w: W = make(k);
+  let W { a: a, n: n } = w;
+  let a2: In = a.grow();
+  return W { a: a2, n: n + 1 };
+}
+
+@noinline function enum_field(): i32 {
+  let v: V = V { e: A(In { v: [7, 8, 9] }), n: 4 };
+  let V { e: e, n: n } = v;
+  return e.size() + n;
+}
+
+@noinline function reassigned(c: boolean): i32 {
+  let w: W = make(3);
+  let W { a: a, n: n } = w;
+  if (c) {
+    let (a1, k) = step(a);
+    a = a1;
+  }
+  return a.grow().v.len() + n;
+}
+
+function main(): i32 {
+  let w: W = from_local(1);
+  let r: i32 = w.a.v.len() + w.n;
+  r = r + enum_field() + reassigned(true) + reassigned(false);
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return r;
+}
