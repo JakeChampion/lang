@@ -53,6 +53,9 @@ short:
 - `sim.Sim` also implements `async.Driver`, the reactor that the
   `std/serve` loop watches descriptors with, and scripts readiness with
   `ready_at`.
+- `sim.Sim` implements `worker.Scheduler`, so `worker.spawn_on(d, body)`
+  runs a worker as a task on the virtual clock. The seed picks the
+  schedule at each spawn and join (`WORKERS.md`, step 3).
 
 ### What slice 1 was
 

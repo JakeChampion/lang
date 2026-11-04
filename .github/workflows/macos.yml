@@ -268,9 +268,9 @@ jobs:
       # surface is not conditional code we wrote but the same code meeting a
       # different kernel and a different libc.
       #
-      # Selected by SKIPPING, not by naming. `touch_test.go` and
-      # `ls_linux_fixture_test.go` are `//go:build linux`, so `TestTouch` does
-      # not EXIST on this runner: a `-run` list carrying its name would select
+      # Selected by SKIPPING, not by naming. `ls_linux_fixture_test.go` is
+      # `//go:build linux`, so `TestLsTreeTimesSurviveReads` does not EXIST on
+      # this runner: a `-run` list carrying its name would select
       # nothing for it, silently and with exit 0, and
       # `scripts/testname_gate.sh` cannot refuse that because the gate runs on
       # Linux, where the name is real.

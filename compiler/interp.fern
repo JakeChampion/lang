@@ -2297,7 +2297,7 @@ function call_host(heap: interpheap.Heap, name: string, args: Value[]): Value {
     return v_err(name + " takes machine addresses, and the interpreter has no address space");
   }
   let cap: string = platforms.gated_capability(name);
-  let contract: Value = call_host_contract(name, args);
+  let contract: Value = call_host_contract(heap, name, args);
   if (!is_err(contract)) {
     return contract;
   }
@@ -2644,14 +2644,28 @@ function f64_primitive(name: string, x: f64): f64 {
 }
 
 // The worker builtins in an engine that runs every worker inline: the copy
-// has its own stores, no region exists, and the rest never run.
+// has its own stores, a rooted value waits as a pinned heap node, no region
+// exists, and the rest never run.
 function is_worker_contract(name: string): boolean {
   return util.has_str(["__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap"], name);
 }
 
-function worker_contract(name: string, args: Value[]): Value {
+function worker_contract(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "__send_copy") {
     return send_copy_value(arg_at(args, 0));
+  }
+  if (name == "__send_root") {
+    let encoded = encoded_value(arg_at(args, 0));
+    if (!encoded.ok) {
+      return v_err("__send_root: the interpreter cannot hand over a function value");
+    }
+    return v_usize((interpheap.pin(interpheap.allocate(heap, encoded.text, [], encoded.edges)) + 1) as i64);
+  }
+  if (name == "__send_adopt") {
+    let Some(root) = interpheap.unpin(heap, (arg_i64(args, 0) - 1) as i32) else {
+      return v_err("__send_adopt: the handle names no root this process holds");
+    };
+    return managed_cell_value(root);
   }
   if (name == "__worker_unmap") {
     return v_int(0 - 38);
@@ -2665,7 +2679,7 @@ function worker_contract(name: string, args: Value[]): Value {
   return v_err(name + ": the interpreter runs every worker inline");
 }
 
-function call_host_contract(name: string, args: Value[]): Value {
+function call_host_contract(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "__heap_mark") {
     return v_int64(0);
   }
@@ -2673,7 +2687,7 @@ function call_host_contract(name: string, args: Value[]): Value {
     return v_void();
   }
   if (is_worker_contract(name)) {
-    return worker_contract(name, args);
+    return worker_contract(heap, name, args);
   }
   if (util.has_str(["proc_fork", "proc_exec", "proc_exec_as"], name)) {
     return v_int(0 - 38);
