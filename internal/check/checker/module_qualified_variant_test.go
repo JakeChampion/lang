@@ -140,3 +140,56 @@ func TestModuleQualifiedVariant(t *testing.T) {
 		}
 	})
 }
+
+func TestVariantPatternSharesStructName(t *testing.T) {
+	const lib = `pub struct Group { n: i32 }
+pub struct Quiet { n: i32 }
+pub enum Event { Group(Group), Quiet }
+pub function event(): Event { return Event.Group(Group { n: 7 }); }
+`
+	for _, tc := range []struct{ name, body string }{
+		{"statement", `match (e) { events.Group(g) => { return g.n; }, events.Quiet => { return 0; } } return 0;`},
+		{"value", `return match (e) { events.Group(g) => g.n, events.Quiet => 0 };`},
+		{"nested-payload", `match (Some(e)) { Some(events.Group(g)) => { return g.n; }, _ => { return 0; } } return 0;`},
+		{"nested-tuple", `match ((e, 1)) { (events.Group(g), 1) => { return g.n; }, _ => { return 0; } } return 0;`},
+		{"if-let", `if let events.Group(g) = e { return g.n; } return 0;`},
+		{"struct-statement", `match (events.Group { n: 7 }) { events.Group { n } => { return n; } } return 0;`},
+		{"struct-value", `return match (events.Group { n: 7 }) { events.Group { n } => n };`},
+		{"nested-struct", `match (Some(events.Group { n: 7 })) { Some(events.Group { n }) => { return n; }, _ => { return 0; } } return 0;`},
+		{"nested-struct-rest", `match (Some(events.Group { n: 7 })) { Some(events.Group { .. }) => { return 1; }, _ => { return 0; } } return 0;`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := loadCheckFiles(t, map[string]string{
+				"events.fern": lib,
+				"main.fern": "import \"./events\";\nfunction f(e: events.Event): i32 { " + tc.body + " }\n" +
+					"function main(): i32 { return f(events.event()); }\n",
+			}, "main.fern")
+			if err != nil {
+				t.Fatalf("pattern shape must distinguish a variant from a struct:\n%v", err)
+			}
+		})
+	}
+
+	t.Run("inside-imported-module", func(t *testing.T) {
+		err := loadCheckFiles(t, map[string]string{
+			"events.fern": lib + `pub function local(e: Event): i32 {
+  return match (e) { Group(g) => g.n, Quiet => 0 };
+}
+`,
+			"main.fern": "import \"./events\";\nfunction main(): i32 { return events.local(events.event()); }\n",
+		}, "main.fern")
+		if err != nil {
+			t.Fatalf("a module's own variant must keep its variant name:\n%v", err)
+		}
+	})
+
+	t.Run("private-variant", func(t *testing.T) {
+		err := loadCheckFiles(t, map[string]string{
+			"events.fern": "pub struct Group { n: i32 }\nenum Hidden { Group(Group) }\n",
+			"main.fern":   "import \"./events\";\nfunction main(): i32 { match (Some(1)) { Some(events.Group(g)) => { return 1; }, _ => { return 0; } } }\n",
+		}, "main.fern")
+		if err == nil || !strings.Contains(err.Error(), "variant of enum Hidden, which is not exported") {
+			t.Fatalf("a public struct must not hide the private-variant diagnostic:\n%v", err)
+		}
+	})
+}

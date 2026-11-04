@@ -15,3 +15,17 @@ pub enum Choice { Named { n: i32 }, Empty }
 pub function choice(): Choice {
   return Named(11);
 }
+
+pub struct Group { n: i32 }
+
+pub struct Quiet { n: i32 }
+
+pub enum Event { Group(Group), Quiet }
+
+pub function event(): Event {
+  return Event.Group(Group { n: 7 });
+}
+
+pub function event_value(e: Event): i32 {
+  return match (e) { Group(g) => g.n, Quiet => 0 };
+}

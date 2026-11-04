@@ -1803,7 +1803,7 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, bra
 		*armName = prefix + *armName
 		return
 	}
-	if r.ownStructs[*armName] {
+	if braces && r.ownStructs[*armName] {
 		*armName = r.selfPrefix + *armName
 	}
 }
@@ -1821,7 +1821,7 @@ func (r *rewriter) rewritePatElems(payloads []*ast.TuplePatElem, elems []ast.Tup
 
 func (r *rewriter) rewritePatElem(el *ast.TuplePatElem, pos ast.Position) {
 	if el.VariantName != "" {
-		r.rewriteVariantPattern(&el.VariantModule, &el.VariantName, len(el.VariantFieldNames) > 0, pos)
+		r.rewriteVariantPattern(&el.VariantModule, &el.VariantName, el.VariantFieldNames != nil, pos)
 	}
 	r.rewritePatElems(el.VariantPayloads, el.Nested, pos)
 }
