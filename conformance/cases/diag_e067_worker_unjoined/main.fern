@@ -1,0 +1,10 @@
+// spec: WK-03
+// A Worker is @must_consume: a program joins every worker it spawns, so no
+// worker runs detached.
+
+import "std/worker";
+
+function main(): i32 {
+    let w = worker.spawn((): i32 => 1);
+    return 0;
+}

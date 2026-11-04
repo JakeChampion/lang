@@ -1716,3 +1716,13 @@ func TestFormatGenericSupertraits(t *testing.T) {
 		t.Fatalf("format changed on second pass:\n%s\n%s", got, again)
 	}
 }
+
+func TestFormatSendParamRoundTrip(t *testing.T) {
+	got := formatSrc(t, `function spawn(send body: () => i32): i32 { return body(); }`)
+	if !strings.Contains(got, "function spawn(send body: () => i32): i32") {
+		t.Errorf("expected `send` parameter preserved; got:\n%s", got)
+	}
+	if again := formatSrc(t, got); got != again {
+		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}

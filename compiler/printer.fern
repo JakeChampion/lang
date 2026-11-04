@@ -193,7 +193,9 @@ function print_params_with(params: ast.ParamDecl[], pats: string[], defaults: bo
     if (pi > 0) {
       out = out + ", ";
     }
-    if (params[pi].own) {
+    if (params[pi].send) {
+      out = out + "send ";
+    } else if (params[pi].own) {
       out = out + "own ";
     }
     if (pi < pats.len() && pats[pi].len() > 0) {
@@ -3026,7 +3028,9 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
     if (i > 0) {
       out = out + ", ";
     }
-    if (fd.params[i].own) {
+    if (fd.params[i].send) {
+      out = out + "send ";
+    } else if (fd.params[i].own) {
       out = out + "own ";
     }
     if (i < dpats.len() && dpats[i].len() > 0) {

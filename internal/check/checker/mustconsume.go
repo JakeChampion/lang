@@ -180,6 +180,9 @@ func (c *checker) mcStmtConsumesImpl(s ast.Stmt, name, typeName string, report b
 		if c.mcIsBinding(x.Tag, name) {
 			return true
 		}
+		return c.mcExprConsumes(x.Tag, name, typeName, report)
+	case *ast.If:
+		return c.mcExprConsumes(x.Cond, name, typeName, report)
 	}
 	return false
 }

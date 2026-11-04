@@ -1873,6 +1873,9 @@ type Param struct {
 	NamePos Position
 	Type    Type
 	Own     bool
+	// Send marks an own parameter as a worker boundary: the argument's type,
+	// and a closure argument's captures, must be send-safe (E100).
+	Send    bool
 	Default Expr
 	Pattern *Destructure
 }

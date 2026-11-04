@@ -1,0 +1,25 @@
+// spec: MC-03
+// A consuming call is a consuming use wherever it is written. Inside the
+// scrutinee of a match, the obligation moves to the callee before the arms
+// run.
+
+import "std/i32";
+
+@must_consume
+struct Ticket { id: i32 }
+
+function redeem(own t: Ticket): Option[i32] {
+    if (t.id > 0) {
+        return Some(t.id);
+    }
+    return None;
+}
+
+function main(): i32 {
+    let t: Ticket = Ticket { id: 7 };
+    match (redeem(t)) {
+        Some(n) => { print(n.to_string()); },
+        None => { print("none"); }
+    }
+    return 0;
+}

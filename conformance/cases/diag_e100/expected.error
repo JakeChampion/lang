@@ -1,0 +1,1 @@
+closure passed to `send` parameter "body" captures "shared" of type Cell[i32], which cannot cross a worker boundary: a Cell is shared by aliasing

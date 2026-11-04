@@ -172,6 +172,7 @@ language does not have. It is deleted.
 | `E097` | a builtin reserved for the standard library | `diag_e097` |
 | `E098` | a builtin named as a value | `diag_e098` |
 | `E099` | a built-in handle built from a literal | `diag_e099` |
+| `E100` | a value that cannot cross a worker boundary passed to a `send` parameter | `diag_e100` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
