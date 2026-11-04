@@ -10,15 +10,17 @@ pub struct Rewritten { func: ssasem.Func, changed: boolean }
 struct Index { defs: ssa.SInst[], homes: i32[], blocks: i32[] }
 
 // A back loop appends a[a.len() - from] to a itself, or a[from + i] when it
-// is rebased, with -1 for a zero from.
-struct Loop { ok: boolean, head: i32, body: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
+// is rebased, with -1 for a zero from. A for-each loop increments its index
+// in a step block between the body and the header; step is -1 when the body
+// branches to the header itself.
+struct Loop { ok: boolean, head: i32, body: i32, step: i32, exit: i32, outer: i32, array: ssa.SInst, counter: ssa.SInst, update: ssa.SInst, count: i32, chain: i32[], src: i32, from: i32, at: i32, back: boolean, rebased: boolean }
 
 function none(): ssa.SInst {
   return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
 
 function no_loop(): Loop {
-  return Loop { ok: false, head: 0, body: 0, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
+  return Loop { ok: false, head: 0, body: 0, step: 0 - 1, exit: 0, outer: 0, array: none(), counter: none(), update: none(), count: 0, chain: [], src: 0, from: 0, at: 0, back: false, rebased: false };
 }
 
 function bytes(t: typeinfo.Type): boolean {
@@ -66,11 +68,17 @@ function literal(ix: Index, v: i32, n: i32): boolean {
   return d.kind_tag == 1 && d.imm == n;
 }
 
-function invariant(ix: Index, v: i32, h: i32, b: i32): boolean {
-  return v >= 0 && ix.homes[v] != h && ix.homes[v] != b;
+// A value defined outside the loop. A parameter has no home.
+function invariant(ix: Index, v: i32, l: Loop): boolean {
+  return v >= 0 && !inside(ix, v, l);
 }
 
-function offset(ix: Index, v: i32, counter: i32, h: i32, b: i32): i32 {
+function inside(ix: Index, v: i32, l: Loop): boolean {
+  let home = ix.homes[v];
+  return home == l.head || home == l.body || l.step >= 0 && home == l.step;
+}
+
+function offset(ix: Index, v: i32, counter: i32, l: Loop): i32 {
   if (v == counter) {
     return 0 - 1;
   }
@@ -78,10 +86,10 @@ function offset(ix: Index, v: i32, counter: i32, h: i32, b: i32): i32 {
   if (!addition(d)) {
     return 0 - 2;
   }
-  if (d.args[0] == counter && invariant(ix, d.args[1], h, b)) {
+  if (d.args[0] == counter && invariant(ix, d.args[1], l)) {
     return d.args[1];
   }
-  if (d.args[1] == counter && invariant(ix, d.args[0], h, b)) {
+  if (d.args[1] == counter && invariant(ix, d.args[0], l)) {
     return d.args[0];
   }
   return 0 - 2;
@@ -92,8 +100,21 @@ function addition(ins: ssa.SInst): boolean {
 }
 
 function loop_edges(h: ssa.SBlock, body: ssa.SBlock, exit: ssa.SBlock): boolean {
-  return body.term.kind_tag == 2 && body.term.target == h.id && body.preds.len() == 1 && body.preds[0] == h.id
+  return body.term.kind_tag == 2 && body.preds.len() == 1 && body.preds[0] == h.id
     && exit.preds.len() == 1 && exit.preds[0] == h.id;
+}
+
+// The block that branches back to the header: the body, or a step block
+// that only the body enters, as a for-each loop lowers.
+function latch(f: ssasem.Func, ix: Index, h: ssa.SBlock, body: ssa.SBlock): i32 {
+  if (body.term.target == h.id) {
+    return body.id;
+  }
+  let step = f.graph.blocks[ix.blocks[body.term.target]];
+  if (step.term.kind_tag == 2 && step.term.target == h.id && step.preds.len() == 1 && step.preds[0] == body.id) {
+    return step.id;
+  }
+  return 0 - 1;
 }
 
 function header_phis(f: ssasem.Func, h: ssa.SBlock, chain: i32[]): Loop {
@@ -124,16 +145,16 @@ struct Chain { ok: boolean, values: i32[] }
 // The header values a count is computed from, when they read only invariant
 // values without other effects. The header runs at least once, so computing
 // them once before the copy aborts in the same cases.
-function count_chain(ix: Index, v: i32, h: i32, b: i32, own c: Chain, steps: i32): Chain {
-  if (!c.ok || invariant(ix, v, h, b) || util.index_of_i32(c.values, v) >= 0) {
+function count_chain(ix: Index, v: i32, l: Loop, own c: Chain, steps: i32): Chain {
+  if (!c.ok || invariant(ix, v, l) || util.index_of_i32(c.values, v) >= 0) {
     return c;
   }
   let d = ix.defs[v];
-  if (ix.homes[v] != h || steps == 0 || !chain_op(d)) {
+  if (ix.homes[v] != l.head || steps == 0 || !chain_op(d)) {
     return Chain { ok: false, values: [] };
   }
   for a in d.args {
-    c = count_chain(ix, a, h, b, c, steps - 1);
+    c = count_chain(ix, a, l, c, steps - 1);
   }
   if (!c.ok) {
     return c;
@@ -165,16 +186,21 @@ function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
   if (!loop_edges(h, body, exit)) {
     return no;
   }
-  let back = util.index_of_i32(h.preds, body.id);
+  let back = util.index_of_i32(h.preds, latch(f, ix, h, body));
   if (back < 0) {
     return no;
+  }
+  let step = 0 - 1;
+  if (h.preds[back] != body.id) {
+    step = h.preds[back];
   }
   let outer = 1 - back;
   let cmp = ix.defs[h.term.cond];
   if (!loop_compare(cmp)) {
     return no;
   }
-  let chain = count_chain(ix, cmp.args[1], h.id, body.id, Chain { ok: true, values: [] }, 8);
+  let shape = Loop { ...no, head: h.id, body: body.id, step: step, exit: exit.id, outer: outer };
+  let chain = count_chain(ix, cmp.args[1], shape, Chain { ok: true, values: [] }, 8);
   if (!chain.ok) {
     return no;
   }
@@ -187,7 +213,7 @@ function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
   if (cmp.args[0] != counter.result) {
     return no;
   }
-  return Loop { ...no, ok: true, head: h.id, body: body.id, exit: exit.id, outer: outer, array: array, counter: counter, count: cmp.args[1], chain: chain.values };
+  return Loop { ...shape, ok: true, array: array, counter: counter, count: cmp.args[1], chain: chain.values };
 }
 
 function copy_update(ins: ssa.SInst, receiver: i32): boolean {
@@ -199,13 +225,21 @@ function source_read(f: ssasem.Func, ix: Index, update: ssa.SInst, l: Loop): ssa
   if (read.kind_tag != ssasem.array_get() || read.imm == ssasem.check_only() || read.args.len() != 2) {
     return none();
   }
-  if (!invariant(ix, read.args[0], l.head, l.body) || !bytes(f.values[read.args[0]])) {
+  if (!invariant(ix, read.args[0], l) || !bytes(f.values[read.args[0]])) {
     return none();
   }
   return read;
 }
 
-function pure_body(b: ssa.SBlock, allowed: i32[]): boolean {
+// The body and the step block compute only the allowed values.
+function pure_body(f: ssasem.Func, ix: Index, l: Loop, allowed: i32[]): boolean {
+  if (l.step >= 0 && !pure_block(f.graph.blocks[ix.blocks[l.step]], allowed)) {
+    return false;
+  }
+  return pure_block(f.graph.blocks[ix.blocks[l.body]], allowed);
+}
+
+function pure_block(b: ssa.SBlock, allowed: i32[]): boolean {
   for ins in b.insts {
     if (ins.kind_tag != 35 && util.index_of_i32(allowed, ins.result) < 0) {
       return false;
@@ -219,7 +253,7 @@ function write_offset(ix: Index, update: ssa.SInst, write: boolean, l: Loop): i3
   if (!write) {
     return 0 - 1;
   }
-  return offset(ix, update.args[1], l.counter.result, l.head, l.body);
+  return offset(ix, update.args[1], l.counter.result, l);
 }
 
 function copy_values(update: ssa.SInst, read: ssa.SInst, inc: ssa.SInst, write: boolean): i32[] {
@@ -241,7 +275,7 @@ struct Tail { len: i32, distance: i32 }
 function tail_distance(ix: Index, l: Loop, index: i32): Tail {
   let no = Tail { len: 0 - 1, distance: 0 - 1 };
   let at = ix.defs[index];
-  if (at.kind_tag != 9 || at.str != "-" || at.args.len() != 2 || !invariant(ix, at.args[1], l.head, l.body)) {
+  if (at.kind_tag != 9 || at.str != "-" || at.args.len() != 2 || !invariant(ix, at.args[1], l)) {
     return no;
   }
   let len = ix.defs[at.args[0]];
@@ -269,7 +303,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
   if (read.result < 0) {
     return no;
   }
-  let from = offset(ix, read.args[1], l.counter.result, l.head, l.body);
+  let from = offset(ix, read.args[1], l.counter.result, l);
   let at = write_offset(ix, update, write, l);
   if (from < 0 - 1 || at < 0 - 1) {
     return no;
@@ -278,7 +312,7 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
   if (!increment(ix, inc, l.counter.result)) {
     return no;
   }
-  if (!pure_body(f.graph.blocks[ix.blocks[l.body]], copy_values(update, read, inc, write))) {
+  if (!pure_body(f, ix, l, copy_values(update, read, inc, write))) {
     return no;
   }
   let out = Loop { ...l, update: update, src: read.args[0], from: from, at: at };
@@ -299,7 +333,7 @@ function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop 
     return no;
   }
   let allowed = [update.result, read.result, read.args[1], inc.result, inc.args[1]];
-  let from = offset(ix, read.args[1], l.counter.result, l.head, l.body);
+  let from = offset(ix, read.args[1], l.counter.result, l);
   let rebased = from >= 0 - 1;
   if (!rebased) {
     let tail = tail_distance(ix, l, read.args[1]);
@@ -309,7 +343,7 @@ function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop 
     from = tail.distance;
     allowed = allowed.append(tail.len);
   }
-  if (!pure_body(f.graph.blocks[ix.blocks[l.body]], allowed)) {
+  if (!pure_body(f, ix, l, allowed)) {
     return no;
   }
   let out = Loop { ...l, update: update, src: 0 - 1, from: from, at: 0 - 1, back: true, rebased: rebased };
@@ -323,19 +357,20 @@ function increment(ix: Index, ins: ssa.SInst, counter: i32): boolean {
   return ins.kind_tag == 9 && ins.str == "+" && ins.args.len() == 2 && ins.args[0] == counter && literal(ix, ins.args[1], 1);
 }
 
+// No block outside the loop reads a value the body or the step block defines.
 function closed_body(f: ssasem.Func, ix: Index, l: Loop): boolean {
   for b in f.graph.blocks {
-    if (b.id != l.head && b.id != l.body && body_escapes(b, ix, l.body)) {
+    if (b.id != l.head && b.id != l.body && b.id != l.step && body_escapes(b, ix, l)) {
       return false;
     }
   }
   return true;
 }
 
-function body_escapes(b: ssa.SBlock, ix: Index, body: i32): boolean {
+function body_escapes(b: ssa.SBlock, ix: Index, l: Loop): boolean {
   for ins in b.insts {
     for v in ins.args {
-      if (ix.homes[v] == body) {
+      if (in_loop_body(ix, v, l)) {
         return true;
       }
     }
@@ -344,7 +379,14 @@ function body_escapes(b: ssa.SBlock, ix: Index, body: i32): boolean {
   if (b.term.kind_tag == 3) {
     v = b.term.cond;
   }
-  return (b.term.kind_tag == 1 || b.term.kind_tag == 3) && v >= 0 && ix.homes[v] == body;
+  return (b.term.kind_tag == 1 || b.term.kind_tag == 3) && in_loop_body(ix, v, l);
+}
+
+function in_loop_body(ix: Index, v: i32, l: Loop): boolean {
+  if (v < 0) {
+    return false;
+  }
+  return ix.homes[v] == l.body || l.step >= 0 && ix.homes[v] == l.step;
 }
 
 // A function in a module that defines a helper's name keeps its loops, since
@@ -457,6 +499,9 @@ function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.
   let blocks: ssa.SBlock[] = [];
   for old in f.graph.blocks {
     let b = old;
+    if (b.id == l.step) {
+      continue;
+    }
     if (b.id == l.head) {
       b = replaced_header(b, l, call, zero, distance);
     } else if (b.id == l.body) {
