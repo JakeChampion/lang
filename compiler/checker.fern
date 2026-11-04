@@ -19232,24 +19232,30 @@ function lu_fresh_local(fx: LuFn, e: ast.Expr): boolean {
   return false;
 }
 
-// An own parameter, or a fresh local declared once outside a loop.
+// An own parameter, or a fresh local declared once outside a loop and given
+// only fresh values after that.
 function lu_unpack_source_owned(fx: LuFn, name: string): boolean {
   if (lu_own_param(fx, name)) {
     return lu_decl_count(fx, name) == 0;
   }
-  return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name);
+  return lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_fresh_init(fx, name) && lu_only_fresh_assigns(fx, name);
+}
+
+// Each value assigned to the name after its declaration is fresh.
+function lu_only_fresh_assigns(fx: LuFn, name: string): boolean {
+  for a in fx.facts.assigns {
+    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // A local declared once, outside a loop, from an own parameter at its last
 // use, and given only fresh values after that.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
-  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name)) {
+  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name) || !lu_only_fresh_assigns(fx, name)) {
     return false;
-  }
-  for a in fx.facts.assigns {
-    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
-      return false;
-    }
   }
   // The fields that a destructure takes from an own parameter or a fresh
   // local at its last use are owned, as the source is.

@@ -2279,6 +2279,17 @@ function f(p: HPair): i32 {
     let r: i32 = sinkh(h);
     return r + n;
 }`)
+	wantE051(t, "destructured-local-reassigned-from-a-borrow", ownHandleConsumer+`
+function mk(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(q: HPair, c: boolean): i32 {
+    let p: HPair = mk();
+    if (c) {
+        p = q;
+    }
+    let HPair { h, n } = p;
+    let r: i32 = sinkh(h);
+    return r + n;
+}`)
 }
 
 func TestOwnGuardAllowsHandleFreeLocalReadFromBorrowed(t *testing.T) {
