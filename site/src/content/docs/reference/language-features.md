@@ -318,9 +318,13 @@ fallback like the `Temp(_)` above.
 
 A `match` also dispatches on literals: integers, characters, bytes,
 strings, and ranges of signed integers (`1..=9 =>`). Several patterns can
-share an arm with `|`. A number or string scrutinee always needs a final
-`_` arm, since no list of literals covers every number or string. A
-`boolean` is the exception: unguarded `true` and `false` arms cover it.
+share an arm with `|`. A bare name in arm position binds the value for
+the arm's guard and body: `n when n > 100 => n`. A number or string
+scrutinee always needs a final `_` or unguarded binding arm, since no list
+of literals covers every number or string. A `boolean` is the exception:
+unguarded `true` and `false` arms cover it. A guarded `_` or binding arm
+can fail, so it may come before other arms. An unguarded one matches every
+value, so it must be last.
 
 ```fern
 function classify(n: i32): string {
@@ -328,6 +332,7 @@ function classify(n: i32): string {
         0 => "zero",
         1..=9 => "digit",
         -100..=-1 => "small negative",
+        n when n > 1000 => "large",
         _ => "other",
     };
 }

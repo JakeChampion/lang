@@ -2967,15 +2967,25 @@ function lift_inline_closures(fd: parser.FuncDecl, gfns: string[], structs: irta
 function body_var_decl_names(stmts: ast.Stmt[]): string[] {
   let out: string[] = [];
   for stmt in stmts {
-    out = astwalk.fold_stmt_spine(stmt, out, var_decl_name_into);
+    out = astwalk.fold_stmt_nodes(stmt, out, var_decl_name_into, keep_decl_names, irtables.capture_frame_descend);
   }
   return out;
+}
+
+function keep_decl_names(e: ast.Expr, own names: string[]): string[] {
+  return names;
 }
 
 function var_decl_name_into(st: ast.Stmt, own acc: string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
       return acc.append(v.name);
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        acc = util.append_all(acc, astwalk.scalar_pattern_binders(arm.pattern));
+      }
+      return acc;
     },
     _ => {
       return acc;
@@ -3625,7 +3635,7 @@ function box_wide_captures(fd: parser.FuncDecl, gfns: string[], structs: irtable
 }
 
 function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): parser.FuncDecl {
-  let otargets: string[] = irtables.body_assign_targets(fd.body);
+  let otargets: string[] = irtables.capture_assign_targets(fd.body);
   let dvars: string[] = body_var_decl_names(fd.body);
   let acc: BoxScan = box_scan_stmts(fd.body, fd, structs, mfuncs, otargets, dvars, captureflow.root(otargets, fd.body), BoxScan { names: [], types: [] });
   let boxed: string[] = acc.names;
@@ -3665,54 +3675,30 @@ function is_param_name(params: ast.ParamDecl[], name: string): boolean {
   return false;
 }
 
+struct CaptureSite { name: string, key: string }
+
 function first_var_site(stmts: ast.Stmt[], name: string): string {
-  for stmt in stmts {
-    match (stmt) {
-      ast.StmtVar(v) => {
-        if (v.name == name) {
-          return irtables.reclaim_site_key_of(v.name, v.line, v.col);
-        }
-      },
-      ast.StmtIf(f) => {
-        let t: string = first_var_site(f.then_body, name);
-        if (t.len() > 0) {
-          return t;
-        }
-        let e2: string = first_var_site(f.else_body, name);
-        if (e2.len() > 0) {
-          return e2;
-        }
-      },
-      ast.StmtWhile(w) => {
-        let t: string = first_var_site(w.body, name);
-        if (t.len() > 0) {
-          return t;
-        }
-      },
-      ast.StmtFor(fo) => {
-        let t: string = first_var_site(fo.body, name);
-        if (t.len() > 0) {
-          return t;
-        }
-      },
-      ast.StmtMatch(m) => {
-        for arm in m.arms {
-          let t: string = first_var_site(arm.body, name);
-          if (t.len() > 0) {
-            return t;
-          }
-        }
-      },
-      ast.StmtDefer(d) => {
-        let t: string = first_var_site([d.action], name);
-        if (t.len() > 0) {
-          return t;
-        }
-      },
-      _ => {}
+  let site: CaptureSite = CaptureSite { name: name, key: "" };
+  for st in stmts {
+    site = astwalk.fold_stmt_nodes(st, site, declared, keep_decl_site, irtables.capture_frame_descend);
+  }
+  return site.key;
+}
+
+function declared(st: ast.Stmt, own site: CaptureSite): CaptureSite {
+  if (site.key.len() > 0) {
+    return site;
+  }
+  if let ast.StmtVar(v) = st {
+    if (v.name == site.name) {
+      return CaptureSite { ...site, key: irtables.reclaim_site_key_of(v.name, v.line, v.col) };
     }
   }
-  return "";
+  return site;
+}
+
+function keep_decl_site(e: ast.Expr, own site: CaptureSite): CaptureSite {
+  return site;
 }
 
 struct BoxScan { names: string[], types: string[] }
@@ -3774,7 +3760,11 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
         btypes = af.types;
       },
       ast.StmtMatch(m) => {
+        nested = box_nested_lambdas(m.scrutinee, nested);
         for arm in m.arms {
+          if (arm.has_guard) {
+            nested = box_nested_lambdas(arm.guard, nested);
+          }
           let am: BoxScan = box_scan_stmts(arm.body, fd, structs, mfuncs, otargets, dvars, captureflow.following(writes, i, false), BoxScan { names: boxed, types: btypes });
           boxed = am.names;
           btypes = am.types;
@@ -3922,6 +3912,9 @@ function box_nested_lambdas_stmts(stmts: ast.Stmt[], acc: ast.ExprLambda[]): ast
       ast.StmtMatch(m) => {
         out = box_nested_lambdas(m.scrutinee, out);
         for arm in m.arms {
+          if (arm.has_guard) {
+            out = box_nested_lambdas(arm.guard, out);
+          }
           out = box_nested_lambdas_stmts(arm.body, out);
         }
       },

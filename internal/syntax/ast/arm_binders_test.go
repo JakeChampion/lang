@@ -7,9 +7,10 @@ import (
 )
 
 var armBinderFields = map[string]bool{
-	"Bindings":  true,
-	"AtBinding": true,
-	"Payloads":  true,
+	"Bindings":      true,
+	"AtBinding":     true,
+	"ScalarBinding": true,
+	"Payloads":      true,
 
 	"TupleElems":    true,
 	"VariantName":   false,
@@ -54,9 +55,10 @@ func TestArmBindersCoverEveryNameField(t *testing.T) {
 
 func armWithEveryBinderPosition() *MatchExprArm {
 	return &MatchExprArm{
-		Bindings:     []string{"payload", ""},
-		BindingTypes: []Type{StringType{}, BoolType{}},
-		AtBinding:    "whole",
+		Bindings:      []string{"payload", ""},
+		BindingTypes:  []Type{StringType{}, BoolType{}},
+		AtBinding:     "whole",
+		ScalarBinding: "scalar",
 		Payloads: []*TuplePatElem{
 			nil,
 			{VariantBindings: []string{"sub"}, VariantBindingTypes: []Type{NumberType{Width: 64, Signed: true}}},
@@ -78,7 +80,7 @@ func armWithEveryBinderPosition() *MatchExprArm {
 func TestBindersReachEveryPosition(t *testing.T) {
 	got := armWithEveryBinderPosition().Binders()
 	sort.Strings(got)
-	want := []string{"deep", "deep_sub", "elem", "elem_at", "elem_variant", "payload", "sub", "whole"}
+	want := []string{"deep", "deep_sub", "elem", "elem_at", "elem_variant", "payload", "scalar", "sub", "whole"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Binders() = %v, want %v", got, want)
 	}
@@ -94,6 +96,9 @@ func TestBinderTypeAnswersForEveryBinder(t *testing.T) {
 	}
 	if got := arm.BinderType("whole", scrutinee); !reflect.DeepEqual(got, scrutinee) {
 		t.Errorf("BinderType of the @ binder = %v, want the scrutinee type %v", got, scrutinee)
+	}
+	if got := arm.BinderType("scalar", scrutinee); !reflect.DeepEqual(got, scrutinee) {
+		t.Errorf("BinderType of the scalar binder = %v, want %v", got, scrutinee)
 	}
 	if got := arm.BinderType("payload", scrutinee); !reflect.DeepEqual(got, Type(StringType{})) {
 		t.Errorf("BinderType(payload) = %v, want string", got)
