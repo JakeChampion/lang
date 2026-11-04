@@ -22,7 +22,7 @@ function main(): i32 {
   buf_push(h, "!!buf");
   print(f"send_buf: {tcp_send_buf(c, h, 2)}");
   buf_free(h);
-  print(f"poll ready: {poll([s], 1000)}");
+  print(f"poll ready: {poll([s.fd], 1000)}");
   let got: string = "";
   let b: u8[] = __alloc_u8(64);
   while (got.len() < 14) {
@@ -53,7 +53,9 @@ function main(): i32 {
   print(f"udp_bind_with ok: {u2.fd >= 0}");
   print(f"udp_connect: {udp_connect(u2, lo, up)}");
   print(f"udp close: {tcp_close(u)} {tcp_close(u2)}");
-  print(f"tcp_ktls: {tcp_ktls(0, 0, 0, []) < 0}");
+  unsafe {
+    print(f"tcp_ktls: {tcp_ktls(__socket_from_fd(0), 0, 0, []) < 0}");
+  }
   let r: i32 = reactor_new();
   print(f"reactor ok: {r >= 0}");
   print(f"reactor_ctl: {reactor_ctl(r, 3, 0, 0)}");
