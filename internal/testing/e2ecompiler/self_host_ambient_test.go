@@ -103,6 +103,20 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			want: []string{"5:1 handle eprint log"},
 		},
 		{
+			name: "an array method named like a method on another type",
+			src: `import "std/http";
+import "std/platform";
+import "std/array";
+struct Sock { fd: i32 }
+function (s: Sock) join(sep: string): i32 { eprint("joining"); return s.fd; }
+function names(): string[] { return ["a", "b"]; }
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    let text: string = names().join(",");
+    let parts: string[] = ["c"];
+    let more: string = parts.join(";");` + tail,
+			want: nil,
+		},
+		{
 			name: "a local named like a method",
 			src: `import "std/http";
 import "std/platform";

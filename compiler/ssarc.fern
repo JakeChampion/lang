@@ -2063,31 +2063,18 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   return Fresh { ...out, seen: grown };
 }
 
-// The copy and root helpers the function's send contracts name.
+// The copy and release helpers the function's send contracts name. A root
+// or adopt contract lowers to its op and needs no helper.
 function send_rows(own out: Fresh, f: ssasem.Func, done: util.NameIndex): Fresh {
   for c in f.calls {
     if (ssasem.is_send_helper(c.name) && c.params.len() == 1) {
       out = Fresh { ...out, rows: send_helpers(out.rows, c.params[0], f, done) };
-    }
-    if (ssasem.is_root_helper(c.name) && !done.has(c.name) && !util.has_str(row_names_of(out.rows), c.name)) {
-      out = Fresh { ...out, rows: out.rows.append(root_helper(c.name)) };
     }
     if (ssasem.is_release_helper(c.name) && c.params.len() == 1 && !done.has(c.name) && !util.has_str(row_names_of(out.rows), c.name)) {
       out = Fresh { ...out, rows: out.rows.append(release_helper(c.params[0], f)) };
     }
   }
   return out;
-}
-
-// A root helper returns the word it is given. Its counted parameter is what
-// keeps the tree alive for the process that adopts it.
-function root_helper(name: string): irtables.LowerState {
-  let r: irtables.LowerState = irtables.LowerState {
-    ...empty(""), ok: true,
-    n_params: 1, n_locals: 1, name: name,
-  };
-  r = emit(r, ir.op_load_local(0));
-  return emit(r, ir.op_return());
 }
 
 // One copy helper per reference type a sent value holds, named by the type.
@@ -5665,7 +5652,7 @@ function host_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered 
 }
 
 function is_worker_site(name: string): boolean {
-  return name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap" || name == "__worker_unmap" || ssasem.is_adopt_helper(name);
+  return name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap" || name == "__worker_unmap" || ssasem.is_adopt_helper(name) || ssasem.is_root_helper(name);
 }
 
 function worker_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
@@ -5680,6 +5667,9 @@ function worker_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "__worker_unmap") {
     return Lowered { found: true, r: emit(r, ir.op_worker_unmap()) };
+  }
+  if (ssasem.is_root_helper(ins.str)) {
+    return Lowered { found: true, r: emit(r, ir.op_send_root()) };
   }
   return Lowered { found: true, r: emit(r, ir.op_send_adopt()) };
 }
