@@ -619,28 +619,46 @@ function no_edges(g: ssa.SFunc): boolean[][] {
   return edges;
 }
 
+// The value of `ins`, joined into its lattice cell.
+function valued(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): Walk {
+  if (ins.result < 0 || ins.result >= f.graph.nvals) {
+    return wk;
+  }
+  let next: i64 = join(wk.vals[ins.result], eval(ctx, w, f, wk, pos, ins));
+  if (next == wk.vals[ins.result]) {
+    return wk;
+  }
+  return Walk { ...wk, vals: wk.vals.with(ins.result, next), changed: true };
+}
+
+// Where the block ends at call `ins`: 0 before it, when an argument holds no
+// value, 1 after it, when the callee cannot return, and -1 when it goes on.
+function call_cut(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): (Walk, i32) {
+  let r: i32 = none_held(ctx, w, f, wk, ins);
+  if (r >= 0 && util.index_of_i32(wk.waits, r) < 0) {
+    wk = Walk { ...wk, waits: wk.waits.append(r) };
+  }
+  if (r != 0 - 1) {
+    return (wk, 0);
+  }
+  if (call_value(ctx, w, ins) == top()) {
+    return (wk, 1);
+  }
+  return (wk, 0 - 1);
+}
+
 function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, pos: i32): Walk {
   let g: ssa.SFunc = f.graph;
   let b: ssa.SBlock = g.blocks[pos];
   for n in 0..b.insts.len() {
     let ins: ssa.SInst = b.insts[n];
-    if (ins.result >= 0 && ins.result < g.nvals) {
-      let next: i64 = join(wk.vals[ins.result], eval(ctx, w, f, wk, pos, ins));
-      if (next != wk.vals[ins.result]) {
-        wk = Walk { ...wk, vals: wk.vals.with(ins.result, next), changed: true };
-      }
-    }
+    wk = valued(ctx, w, f, wk, pos, ins);
     if (ins.kind_tag == ssasem.call()) {
-      let r: i32 = none_held(ctx, w, f, wk, ins);
-      if (r >= 0 && util.index_of_i32(wk.waits, r) < 0) {
-        wk = Walk { ...wk, waits: wk.waits.append(r) };
+      let (next, off) = call_cut(ctx, w, f, wk, ins);
+      wk = next;
+      if (off >= 0) {
+        return cut_at(wk, pos, n + off);
       }
-      if (r != 0 - 1) {
-        return cut_at(wk, pos, n);
-      }
-    }
-    if (ins.kind_tag == ssasem.call() && call_value(ctx, w, ins) == top()) {
-      return cut_at(wk, pos, n + 1);
     }
   }
   if (wk.cut[pos] >= 0) {
@@ -907,27 +925,43 @@ function truth(b: boolean): i64 {
 
 function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
   let f: ssasem.Func = ctx.funcs[i];
+  w = waited(w, i, wk);
+  for pos in 0..f.graph.blocks.len() {
+    if (wk.exec[pos]) {
+      w = absorb_block(ctx, w, f, i, wk, pos);
+    }
+  }
+  return map_keys_reached(ctx, w, f);
+}
+
+// Function `i` waits for each result its walk found held by nothing.
+function waited(w: World, i: i32, wk: Walk): World {
   for r in wk.waits {
     if (util.index_of_i32(w.waiters[r], i) < 0) {
       w = World { ...w, waiters: w.waiters.with(r, w.waiters[r].append(i)) };
     }
   }
-  let pos: i32 = 0;
-  while (pos < f.graph.blocks.len()) {
-    if (wk.exec[pos]) {
-      let b: ssa.SBlock = f.graph.blocks[pos];
-      for n in 0..b.insts.len() {
-        if (wk.cut[pos] >= 0 && n >= wk.cut[pos]) {
-          break;
-        }
-        w = absorb_inst(ctx, w, f, wk, b.insts[n]);
-      }
-      if (wk.cut[pos] < 0 && b.term.kind_tag == 1) {
-        w = returned(ctx, w, i, wk, b.term.value);
-      }
-    }
-    pos = pos + 1;
+  return w;
+}
+
+// The instructions of block `pos` before its cut, and its return.
+function absorb_block(ctx: Ctx, w: World, f: ssasem.Func, i: i32, wk: Walk, pos: i32): World {
+  let b: ssa.SBlock = f.graph.blocks[pos];
+  let n: i32 = b.insts.len();
+  if (wk.cut[pos] >= 0 && wk.cut[pos] < n) {
+    n = wk.cut[pos];
   }
+  for k in 0..n {
+    w = absorb_inst(ctx, w, f, wk, b.insts[k]);
+  }
+  if (wk.cut[pos] < 0 && b.term.kind_tag == 1) {
+    w = returned(ctx, w, i, wk, b.term.value);
+  }
+  return w;
+}
+
+// The hash and eq functions of each map key type of `f`.
+function map_keys_reached(ctx: Ctx, w: World, f: ssasem.Func): World {
   for t in f.values {
     if let typeinfo.TypeMap(m) = t {
       w = reached_name(ctx, reached_name(ctx, w, ssasem.keyed_map_key_fn(m.key, "hash")), ssasem.keyed_map_key_fn(m.key, "eq"));
@@ -1007,34 +1041,46 @@ function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: 
 
 struct Rewritten { f: ssasem.Func, changed: boolean }
 
-function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
-  let g: ssa.SFunc = f.graph;
+function fresh_block_id(g: ssa.SFunc): i32 {
   let dead: i32 = 0;
   for b in g.blocks {
     if (b.id >= dead) {
       dead = b.id + 1;
     }
   }
+  return dead;
+}
+
+// Block `pos` cut after a call that cannot continue, or with a branch the
+// walk decided, and whether it changed.
+function block_rewrite(b: ssa.SBlock, wk: Walk, pos: i32, dead: i32): (ssa.SBlock, boolean) {
+  let cut: i32 = 0 - 1;
+  if (wk.exec[pos]) {
+    cut = wk.cut[pos];
+  }
+  if (cut >= 0 && (cut < b.insts.len() || b.term.kind_tag != 4)) {
+    return (ssa.SBlock { ...b, insts: b.insts.truncate(cut), term: unreachable() }, true);
+  }
+  if (wk.exec[pos] && b.term.kind_tag == 3) {
+    let t: ssa.STerm = decided(b.term, wk.vals[b.term.cond], dead);
+    if (t.kind_tag != 3 || t.t != b.term.t || t.f != b.term.f) {
+      return (ssa.SBlock { ...b, term: t }, true);
+    }
+  }
+  return (b, false);
+}
+
+function rewritten(f: ssasem.Func, wk: Walk): Rewritten {
+  let g: ssa.SFunc = f.graph;
+  let dead: i32 = fresh_block_id(g);
   let blocks: ssa.SBlock[] = g.blocks;
   let changed: boolean = false;
-  let pos: i32 = 0;
-  while (pos < g.blocks.len()) {
-    let b: ssa.SBlock = g.blocks[pos];
-    let cut: i32 = 0 - 1;
-    if (wk.exec[pos]) {
-      cut = wk.cut[pos];
-    }
-    if (cut >= 0 && (cut < b.insts.len() || b.term.kind_tag != 4)) {
-      blocks = blocks.with(pos, ssa.SBlock { ...b, insts: b.insts.truncate(cut), term: unreachable() });
+  for pos in 0..g.blocks.len() {
+    let (b, moved) = block_rewrite(g.blocks[pos], wk, pos, dead);
+    if (moved) {
+      blocks = blocks.with(pos, b);
       changed = true;
-    } else if (wk.exec[pos] && b.term.kind_tag == 3) {
-      let t: ssa.STerm = decided(b.term, wk.vals[b.term.cond], dead);
-      if (t.kind_tag != 3 || t.t != b.term.t || t.f != b.term.f) {
-        blocks = blocks.with(pos, ssa.SBlock { ...b, term: t });
-        changed = true;
-      }
     }
-    pos = pos + 1;
   }
   if (!changed) {
     return Rewritten { f: f, changed: false };

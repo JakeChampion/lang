@@ -2069,14 +2069,19 @@ function send_rows(own out: Fresh, f: ssasem.Func, done: util.NameIndex): Fresh 
     if (ssasem.is_send_helper(c.name) && c.params.len() == 1) {
       out = Fresh { ...out, rows: send_helpers(out.rows, c.params[0], f, done) };
     }
-    if (ssasem.is_root_helper(c.name) && !done.has(c.name) && !util.has_str(row_names_of(out.rows), c.name)) {
+    if (ssasem.is_root_helper(c.name) && row_missing(out, done, c.name)) {
       out = Fresh { ...out, rows: out.rows.append(root_helper(c.name)) };
     }
-    if (ssasem.is_release_helper(c.name) && c.params.len() == 1 && !done.has(c.name) && !util.has_str(row_names_of(out.rows), c.name)) {
+    if (ssasem.is_release_helper(c.name) && c.params.len() == 1 && row_missing(out, done, c.name)) {
       out = Fresh { ...out, rows: out.rows.append(release_helper(c.params[0], f)) };
     }
   }
   return out;
+}
+
+// No helper `name` is made yet, here or before.
+function row_missing(out: Fresh, done: util.NameIndex, name: string): boolean {
+  return !done.has(name) && !util.has_str(row_names_of(out.rows), name);
 }
 
 // A root helper returns the word it is given. Its counted parameter is what
