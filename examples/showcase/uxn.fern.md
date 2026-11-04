@@ -308,18 +308,11 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
     pc = pc + 1 & 65535;
     steps += 1;
     let op = instruction & 31;
-    let size = 1;
-    if ((instruction & 32) != 0) {
-      size = 2;
-    }
+    let size = if ((instruction & 32) != 0) { 2 } else { 1 };
     let ret = (instruction & 64) != 0;
     let keep = (instruction & 128) != 0;
-    let base = WST;
-    let ptr = wp;
-    if (ret) {
-      base = RST;
-      ptr = rp;
-    }
+    let base = if (ret) { RST } else { WST };
+    let ptr = if (ret) { rp } else { wp };
     let sp = ptr;
     let a = 0;
     let b = 0;
@@ -385,147 +378,150 @@ pub function run(state: u8[], budget: i32, entry: i32): u8[] {
       } else {
         wp = sp;
       }
-      if (op == 1) {
-        result = a + 1;
-        pushes = 1;
-      }
-      if (op == 3) {
-        result = a;
-        pushes = 1;
-      }
-      if (op == 4) {
-        s = push(s, base, sp, a, size);
-        sp = sp + size & 255;
-        result = b;
-        pushes = 1;
-      }
-      if (op == 5) {
-        s = push(s, base, sp, b, size);
-        sp = sp + size & 255;
-        s = push(s, base, sp, a, size);
-        sp = sp + size & 255;
-        result = c;
-        pushes = 1;
-      }
-      if (op == 6) {
-        s = push(s, base, sp, a, size);
-        sp = sp + size & 255;
-        result = a;
-        pushes = 1;
-      }
-      if (op == 7) {
-        s = push(s, base, sp, b, size);
-        sp = sp + size & 255;
-        s = push(s, base, sp, a, size);
-        sp = sp + size & 255;
-        result = b;
-        pushes = 1;
-      }
-      if (op >= 8 && op <= 11) {
-        if (op == 8 && b == a || op == 9 && b != a || op == 10 && b > a || op == 11 && b < a) {
-          result = 1;
-        }
-        pushes = 1;
-        outsize = 1;
-      }
-      if (op == 12 || op == 13 || op == 14) {
-        if (op == 14) {
-          let other = if (ret) { WST } else { RST };
-          let otherptr = if (ret) { wp } else { rp };
-          s = push(s, other, otherptr, pc, 2);
-          if (ret) {
-            wp = wp + 2 & 255;
-          } else {
-            rp = rp + 2 & 255;
-          }
-        }
-        if (op != 13 || b != 0) {
-          if (size == 2) {
-            pc = a;
-          } else {
-            pc = pc + signed(a) & 65535;
-          }
-        }
-      }
-      if (op == 15) {
-        let other = if (ret) { WST } else { RST };
-        let otherptr = if (ret) { wp } else { rp };
-        s = push(s, other, otherptr, a, size);
-        if (ret) {
-          wp = wp + size & 255;
-        } else {
-          rp = rp + size & 255;
-        }
-      }
-      if (op >= 0x10 && op <= 0x17) {
-        let address = if (op == 0x12 || op == 0x13) { pc + signed(a) & 65535 } else { a };
-        let mask = if (op == 0x10 || op == 0x11 || op == 0x16 || op == 0x17) { 255 } else { 65535 };
-        let offset = if (op == 0x16 || op == 0x17) { DEV } else { 0 };
-        if (op == 0x16) {
-          s = s.with(DEV + 4, wp as u8).with(DEV + 5, rp as u8);
-          if (address == 0x22) {
-            s = putword(s, DEV + 0x22, word(s, META + 16));
-          }
-          if (address == 0x24) {
-            s = putword(s, DEV + 0x24, word(s, META + 18));
-          }
-        }
-        if ((op & 1) == 0) {
-          result = s[offset + address] as i32;
-          if (size == 2) {
-            result = result << 8 | s[offset + (address + 1 & mask)] as i32;
+      match (op) {
+        1 => {
+          result = a + 1;
+          pushes = 1;
+        },
+        3 => {
+          result = a;
+          pushes = 1;
+        },
+        4 => {
+          s = push(s, base, sp, a, size);
+          sp = sp + size & 255;
+          result = b;
+          pushes = 1;
+        },
+        5 => {
+          s = push(s, base, sp, b, size);
+          sp = sp + size & 255;
+          s = push(s, base, sp, a, size);
+          sp = sp + size & 255;
+          result = c;
+          pushes = 1;
+        },
+        6 => {
+          s = push(s, base, sp, a, size);
+          sp = sp + size & 255;
+          result = a;
+          pushes = 1;
+        },
+        7 => {
+          s = push(s, base, sp, b, size);
+          sp = sp + size & 255;
+          s = push(s, base, sp, a, size);
+          sp = sp + size & 255;
+          result = b;
+          pushes = 1;
+        },
+        8 | 9 | 10 | 11 => {
+          if (op == 8 && b == a || op == 9 && b != a || op == 10 && b > a || op == 11 && b < a) {
+            result = 1;
           }
           pushes = 1;
-        } else {
-          if (size == 2) {
-            s = s.with(offset + address, (b >> 8) as u8);
-            address = address + 1 & mask;
-          }
-          s = s.with(offset + address, b as u8);
-          if (op == 0x17) {
-            // Stack ports see the post-pop indexes; a write can replace them.
-            s = s.with(DEV + 4, wp as u8).with(DEV + 5, rp as u8);
-            if (size == 2) {
-              s = s.with(DEV + a, (b >> 8) as u8);
+          outsize = 1;
+        },
+        12 | 13 | 14 => {
+          if (op == 14) {
+            let other = if (ret) { WST } else { RST };
+            let otherptr = if (ret) { wp } else { rp };
+            s = push(s, other, otherptr, pc, 2);
+            if (ret) {
+              wp = wp + 2 & 255;
+            } else {
+              rp = rp + 2 & 255;
             }
-            s = s.with(DEV + address, b as u8);
-            s = output(s, address);
           }
-        }
-      }
-      if (op == 0x18) {
-        result = b + a;
-        pushes = 1;
-      }
-      if (op == 0x19) {
-        result = b - a;
-        pushes = 1;
-      }
-      if (op == 0x1a) {
-        result = b * a;
-        pushes = 1;
-      }
-      if (op == 0x1b) {
-        if (a != 0) {
-          result = b / a;
-        }
-        pushes = 1;
-      }
-      if (op == 0x1c) {
-        result = b & a;
-        pushes = 1;
-      }
-      if (op == 0x1d) {
-        result = b | a;
-        pushes = 1;
-      }
-      if (op == 0x1e) {
-        result = b ^ a;
-        pushes = 1;
-      }
-      if (op == 0x1f) {
-        result = b >> (a & 15) << (a >> 4);
-        pushes = 1;
+          if (op != 13 || b != 0) {
+            if (size == 2) {
+              pc = a;
+            } else {
+              pc = pc + signed(a) & 65535;
+            }
+          }
+        },
+        15 => {
+          let other = if (ret) { WST } else { RST };
+          let otherptr = if (ret) { wp } else { rp };
+          s = push(s, other, otherptr, a, size);
+          if (ret) {
+            wp = wp + size & 255;
+          } else {
+            rp = rp + size & 255;
+          }
+        },
+        0x10 | 0x11 | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 | 0x17 => {
+          let address = if (op == 0x12 || op == 0x13) { pc + signed(a) & 65535 } else { a };
+          let mask = if (op == 0x10 || op == 0x11 || op == 0x16 || op == 0x17) { 255 } else { 65535 };
+          let offset = if (op == 0x16 || op == 0x17) { DEV } else { 0 };
+          if (op == 0x16) {
+            s = s.with(DEV + 4, wp as u8).with(DEV + 5, rp as u8);
+            if (address == 0x22) {
+              s = putword(s, DEV + 0x22, word(s, META + 16));
+            }
+            if (address == 0x24) {
+              s = putword(s, DEV + 0x24, word(s, META + 18));
+            }
+          }
+          if ((op & 1) == 0) {
+            result = s[offset + address] as i32;
+            if (size == 2) {
+              result = result << 8 | s[offset + (address + 1 & mask)] as i32;
+            }
+            pushes = 1;
+          } else {
+            if (size == 2) {
+              s = s.with(offset + address, (b >> 8) as u8);
+              address = address + 1 & mask;
+            }
+            s = s.with(offset + address, b as u8);
+            if (op == 0x17) {
+              // Stack ports see the post-pop indexes; a write can replace them.
+              s = s.with(DEV + 4, wp as u8).with(DEV + 5, rp as u8);
+              if (size == 2) {
+                s = s.with(DEV + a, (b >> 8) as u8);
+              }
+              s = s.with(DEV + address, b as u8);
+              s = output(s, address);
+            }
+          }
+        },
+        0x18 => {
+          result = b + a;
+          pushes = 1;
+        },
+        0x19 => {
+          result = b - a;
+          pushes = 1;
+        },
+        0x1a => {
+          result = b * a;
+          pushes = 1;
+        },
+        0x1b => {
+          if (a != 0) {
+            result = b / a;
+          }
+          pushes = 1;
+        },
+        0x1c => {
+          result = b & a;
+          pushes = 1;
+        },
+        0x1d => {
+          result = b | a;
+          pushes = 1;
+        },
+        0x1e => {
+          result = b ^ a;
+          pushes = 1;
+        },
+        0x1f => {
+          result = b >> (a & 15) << (a >> 4);
+          pushes = 1;
+        },
+        _ => {}
       }
       if (pushes != 0) {
         s = push(s, base, sp, result, outsize);
