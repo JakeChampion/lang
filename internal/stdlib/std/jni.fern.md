@@ -30,6 +30,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module calls JNI methods from Fern.
+import "std/utf8";
 ```
 
 ### `2 pub function method_ptr(env: usize, index: i32): usize`
@@ -556,5 +557,35 @@ pub function call_double_method_a(env: usize, obj: usize, method: usize, args: u
 
 pub function call_void_method_a(env: usize, obj: usize, method: usize, args: usize): usize {
   return call3(env, 63, obj, method, args);
+}
+
+pub function call_static_object_method_a(env: usize, clazz: usize, method: usize, args: usize): usize {
+  return call3(env, 116, clazz, method, args);
+}
+
+pub function call_static_int_method_a(env: usize, clazz: usize, method: usize, args: usize): i32 {
+  return call3(env, 131, clazz, method, args) as i32;
+}
+
+pub function call_static_void_method_a(env: usize, clazz: usize, method: usize, args: usize): usize {
+  return call3(env, 143, clazz, method, args);
+}
+
+// The text of the Java string `jstr`, or "" for null. JNI gives modified
+// UTF-8, and a byte that is not UTF-8 becomes U+FFFD.
+pub function string_of(env: usize, jstr: usize): string {
+  if (jstr == 0 as usize) {
+    return "";
+  }
+  let n: i32 = get_string_utf_length(env, jstr);
+  let chars: usize = get_string_utf_chars(env, jstr, 0 as usize);
+  let bytes: u8[] = [];
+  unsafe {
+    for i in 0..n {
+      bytes = bytes.append(__load_u8(chars + i as usize) as u8);
+    }
+  }
+  let released: usize = release_string_utf_chars(env, jstr, chars);
+  return utf8.from_bytes_lossy(bytes);
 }
 ```

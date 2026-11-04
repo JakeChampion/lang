@@ -4,8 +4,10 @@
 Usage: emulator_check.py APK OUT_DIR
 
 The app loads its own Ping class, constructs one and calls its native
-method, which returns 7 * 6. The check requires the two lines of the app in
-logcat, and no crash. OUT_DIR gets logcat.
+method, which returns 7 * 6. Then it reads a Java string back with
+jni.string_of, and calls a static method that returns an int and one that
+returns a string. The check requires the five lines of the app in logcat,
+and no crash. OUT_DIR gets logcat.
 """
 
 import re
@@ -14,7 +16,7 @@ import sys
 import time
 
 PACKAGE = "dev.fern.dextest"
-WANT = ("dextest: activity class bound", "dextest: ping 42")
+WANT = ("dextest: activity class bound", "dextest: ping 42", "dextest: string Fern ü", "dextest: parse 42", "dextest: value 7")
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|ClassNotFoundException|VerifyError|AbstractMethodError|fern: ")
 
 
