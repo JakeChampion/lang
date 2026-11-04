@@ -122,9 +122,11 @@ version = "50.0.1"
 backend = "http:wasi-adapter"
 
 [tools."http:wasi-adapter"."platforms.linux-arm64"]
+checksum = "blake3:3c75ac64a56f1e24722efdc67ab349f83179f9e4eab3c099c131ba2a817410c7"
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasi_snapshot_preview1.command.wasm"
 
 [tools."http:wasi-adapter"."platforms.linux-arm64-musl"]
+checksum = "blake3:3c75ac64a56f1e24722efdc67ab349f83179f9e4eab3c099c131ba2a817410c7"
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasi_snapshot_preview1.command.wasm"
 
 [tools."http:wasi-adapter"."platforms.linux-x64"]
@@ -132,15 +134,19 @@ checksum = "blake3:3c75ac64a56f1e24722efdc67ab349f83179f9e4eab3c099c131ba2a81741
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasi_snapshot_preview1.command.wasm"
 
 [tools."http:wasi-adapter"."platforms.linux-x64-musl"]
+checksum = "blake3:3c75ac64a56f1e24722efdc67ab349f83179f9e4eab3c099c131ba2a817410c7"
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasi_snapshot_preview1.command.wasm"
 
 [tools."http:wasi-adapter"."platforms.macos-arm64"]
+checksum = "blake3:3c75ac64a56f1e24722efdc67ab349f83179f9e4eab3c099c131ba2a817410c7"
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasi_snapshot_preview1.command.wasm"
 
 [tools."http:wasi-adapter"."platforms.macos-x64"]
+checksum = "blake3:3c75ac64a56f1e24722efdc67ab349f83179f9e4eab3c099c131ba2a817410c7"
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasi_snapshot_preview1.command.wasm"
 
 [tools."http:wasi-adapter"."platforms.windows-x64"]
+checksum = "blake3:3c75ac64a56f1e24722efdc67ab349f83179f9e4eab3c099c131ba2a817410c7"
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v50.0.1/wasi_snapshot_preview1.command.wasm"
 
 [[tools."http:z3"]]
@@ -151,9 +157,11 @@ backend = "http:z3"
 strip_components = "1"
 
 [tools."http:z3"."platforms.linux-arm64"]
+checksum = "blake3:30e48b940e98832025f6db4f762e97246569f916f30bda01983ead1b6eecad21"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-glibc-2.34.zip"
 
 [tools."http:z3"."platforms.linux-arm64-musl"]
+checksum = "blake3:30e48b940e98832025f6db4f762e97246569f916f30bda01983ead1b6eecad21"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-glibc-2.34.zip"
 
 [tools."http:z3"."platforms.linux-x64"]
@@ -161,9 +169,11 @@ checksum = "blake3:397b0e66464934ba351209d7123dee5730609a088c1354890c87a0de71e4c
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-x64-glibc-2.39.zip"
 
 [tools."http:z3"."platforms.linux-x64-musl"]
+checksum = "blake3:397b0e66464934ba351209d7123dee5730609a088c1354890c87a0de71e4c9e3"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-x64-glibc-2.39.zip"
 
 [tools."http:z3"."platforms.macos-arm64"]
+checksum = "blake3:3abc6ed66cfe39e07bc47afc68e10bce451db0a278caced74020ca5637a9e2c3"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-osx-13.7.6.zip"
 
 [[tools.oha]]
