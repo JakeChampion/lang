@@ -129,3 +129,54 @@ func TestSelfHostSSARuntimeRegisterCalls(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfHostSSARuntimeClockEntries(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "clock.fern")
+	const program = `function main(): i32 {
+    let start = monotonic_ns();
+    let end = monotonic_ns();
+    if (end < start) { return 1; }
+    return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		target, call string
+		register     bool
+	}{
+		{"arm64-darwin", "bl", false},
+		{"arm64-linux", "bl", true},
+		{"x86-64-linux", "call", true},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			out := filepath.Join(dir, tc.target+".s")
+			if combined, err := exec.Command(h.cli, "-target", tc.target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+				t.Fatalf("emitting: %v\n%s", err, combined)
+			}
+			asm, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := "__fn___fern_monotonic_ns"
+			if tc.register {
+				entry += ".r"
+			}
+			text := string(asm)
+			if !strings.Contains(text, tc.call+" "+entry+"\n") || !strings.Contains(text, entry+":\n") {
+				t.Fatalf("clock call does not reach an emitted entry: %s", entry)
+			}
+			if !tc.register {
+				if strings.Contains(text, "__fn___fern_monotonic_ns.r") {
+					t.Fatal("Darwin clock refers to an absent register entry")
+				}
+				if !strings.Contains(text, "mrs x9, cntvct_el0") {
+					t.Fatal("Darwin clock lost its native counter")
+				}
+			}
+		})
+	}
+}

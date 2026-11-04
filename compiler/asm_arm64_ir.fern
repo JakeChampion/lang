@@ -3515,8 +3515,12 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
 }
 
 // A runtime function compiled from Fern has a `.r` entry that takes its
-// arguments in registers. One written in assembly has none.
+// arguments in registers. Darwin replaces the bundled monotonic clock with
+// an assembly body that has only the stack entry.
 function ssa_register_runtime(ins: ssa.SInst, reg_of: i32[], target: string, s: asmcore.EmitState): boolean {
+  if (s.runtime_target == "arm64-darwin" && target == "__fern_monotonic_ns") {
+    return false;
+  }
   if (ins.args.len() > ssa_nargs()) {
     return false;
   }
