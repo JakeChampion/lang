@@ -103,7 +103,9 @@ function ownership(): test.TestOutcome {
   let backing: u8[] = [9, 10, 20, 30, 8];
   let window = backing[1:4];
   let chroma = filled(3, 128);
-  let first = match (ycbcr.convert_row(window, chroma, chroma, 9, never)) { Ok(v) => v, Err(_) => { return test.fail("borrowed window"); } };
+  let Ok(first) = ycbcr.convert_row(window, chroma, chroma, 9, never) else {
+    return test.fail("borrowed window");
+  };
   backing = backing.with(1, 99);
   chroma = chroma.with(0, 0);
   if (window[0] != 10 || first[0] != 10 || backing[1] != 99) {

@@ -2584,6 +2584,28 @@ function f(xs: string[]): i32 {
 }`)
 }
 
+// A let-else binding of a call result is a local like any other let: a copy
+// does not consume it.
+func TestOwnGuardLetElseBindingOfCallIsCopied(t *testing.T) {
+	const prelude = `
+function make(): Result[u8[], string] { return Ok([1, 2]); }
+function keep(own xs: u8[]): i32 { return xs.len() as i32; }
+`
+	wantOK(t, "let-else-copied-then-updated", prelude+`
+function f(): u8 {
+    let Ok(first) = make() else { return 0; };
+    let retained = first;
+    first = first.with(0, 77);
+    return retained[0] + first[0];
+}`)
+	wantOK(t, "let-else-copied-then-moved", prelude+`
+function f(): i32 {
+    let Ok(first) = make() else { return 0; };
+    let retained = first;
+    return keep(first) + retained[1] as i32;
+}`)
+}
+
 // A lambda is decided as a function of its own. A name it declares moves at
 // its last use in the lambda's body. A name it captures does not move.
 func TestOwnGuardLambdaLocalMovesAtItsLastUse(t *testing.T) {

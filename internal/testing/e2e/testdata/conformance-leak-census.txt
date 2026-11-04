@@ -495,6 +495,7 @@ lanes_spill_pressure                                 0
 lanes_through_calls                                  0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0
+let_else_binding_of_call_result_is_copied            0
 let_else_chained                                     0
 let_else_destructure_forms_untouched                 0
 let_else_else_breaks                                 0
