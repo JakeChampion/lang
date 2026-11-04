@@ -681,6 +681,7 @@ func New() *Interp {
 	i.Builtins["__method_Reader_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
+	i.Builtins["__method_Writer_set_nonblocking"] = &Builtin{Fn: builtinWriterSetNonblocking}
 	i.Builtins["__method_Reader_dup_onto"] = &Builtin{Fn: builtinDupOnto}
 	i.Builtins["__method_Writer_dup_onto"] = &Builtin{Fn: builtinDupOnto}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}

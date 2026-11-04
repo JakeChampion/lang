@@ -7145,6 +7145,7 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type)
   out = out.append(ssasem.Contract { name: "Reader.set_extproc", params: [reader, t_bool()], modes: [v, v], result: done });
   out = out.append(ssasem.Contract { name: "Reader.termios_set", params: [reader, t_i32(), termios], modes: [v, v, ssaunits.borrow_mode()], result: done });
   out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
+  out = out.append(ssasem.Contract { name: "Writer.set_nonblocking", params: [writer, t_bool()], modes: [v, v], result: done });
   return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: done });
 }
 

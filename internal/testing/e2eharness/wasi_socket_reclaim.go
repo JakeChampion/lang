@@ -39,8 +39,8 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 }
 
 const UDPSendOnce = `function send_once(addr: u8[], port: i32, data: string): i32 {
-    let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
-    if (s < 0) { return s; }
+    let s: Socket = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+    if (s.fd < 0) { return s; }
     let n: i32 = udp_sendto(s, addr, port, data);
     tcp_close(s);
     return n;

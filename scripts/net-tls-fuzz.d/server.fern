@@ -22,8 +22,8 @@ function identity_of(cert_path: string, key_path: string): Result[identity.Ident
   return match (identity.from_pem(cert, key)) { Ok(id) => Ok(id), Err(e) => Err(e.message()) };
 }
 
-function serve_one(fd: i32, cfg: server.Config, echo: boolean): string {
-  return match (server.accept(fd, cfg, time.duration_seconds(5))) { Ok(c) => answer(c, echo, 0), Err(e) => "accept: " + e.message() };
+function serve_one(own sock: Socket, cfg: server.Config, echo: boolean): string {
+  return match (server.accept(sock, cfg, time.duration_seconds(5))) { Ok(c) => answer(c, echo, 0), Err(e) => "accept: " + e.message() };
 }
 
 function answer(c: server.Connection, echo: boolean, answered: i32): string {
@@ -80,8 +80,8 @@ function main(): i32 {
   let echo = setting("MODE", "http") == "echo";
   loop {
     match (net.accept(l)) {
-      Ok(fd) => {
-        print(serve_one(fd, cfg, echo));
+      Ok(sock) => {
+        print(serve_one(sock, cfg, echo));
       },
       Err(e) => {
         print("accept " + e.message());

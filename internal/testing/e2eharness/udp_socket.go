@@ -31,12 +31,12 @@ function eafnosupport(): i32 {
 function main(): i32 {
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
     let peer: u8[] = [];
-    let a: i32 = udp_bind(lo, 0);
-    if (a < 0) { return fail(1); }
+    let a: Socket = udp_bind(lo, 0);
+    if (a.fd < 0) { return fail(1); }
     let pa: i32 = tcp_local_port(a);
     if (pa <= 0) { return fail(2); }
-    let b: i32 = udp_bind(lo, 0);
-    if (b < 0) { return fail(3); }
+    let b: Socket = udp_bind(lo, 0);
+    if (b.fd < 0) { return fail(3); }
     let pb: i32 = tcp_local_port(b);
     if (pb <= 0 || pb == pa) { return fail(4); }
     if (udp_sendto(a, lo, pb, "ping") != 4) { return fail(5); }
@@ -118,14 +118,14 @@ function arrival(a: i32, b: i32, n: i32, from: u8[]): i32 {
 
 function main(): i32 {
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    let a: i32 = udp_bind_with(lo, 0, true);
-    if (a < 0) { return fail(1); }
+    let a: Socket = udp_bind_with(lo, 0, true);
+    if (a.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(a);
     if (port <= 0) { return fail(2); }
     if (udp_bind(lo, port).fd >= 0) { return fail(3); }
     if (udp_bind_with(lo, port, false).fd >= 0) { return fail(4); }
-    let s: i32 = udp_bind(lo, 0);
-    if (s < 0) { return fail(5); }
+    let s: Socket = udp_bind(lo, 0);
+    if (s.fd < 0) { return fail(5); }
     let from: u8[] = zeros(19);
     if (target_os() == "wasi") {
         if (udp_bind_with(lo, port, true).fd >= 0) { return fail(6); }
@@ -137,8 +137,8 @@ function main(): i32 {
         print("ok");
         return 42;
     }
-    let b: i32 = udp_bind_with(lo, port, true);
-    if (b < 0) { return fail(6); }
+    let b: Socket = udp_bind_with(lo, port, true);
+    if (b.fd < 0) { return fail(6); }
     if (tcp_local_port(b) != port) { return fail(11); }
     if (tcp_socket_ctl(a, 3, 1) != 0 || tcp_socket_ctl(b, 3, 1) != 0) { return fail(12); }
     if (udp_sendto(s, lo, port, "ping") != 4) { return fail(7); }
@@ -315,15 +315,15 @@ function settle(c: i32): i32 {
 
 function main(): i32 {
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    let ln: i32 = tcp_listen_with(lo, 0, 4, false);
-    if (ln < 0) { return fail(1); }
+    let ln: Socket = tcp_listen_with(lo, 0, 4, false);
+    if (ln.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    let c: i32 = tcp_connect_with(lo, port, true);
-    if (c < 0) { return fail(3); }
+    let c: Socket = tcp_connect_with(lo, port, true);
+    if (c.fd < 0) { return fail(3); }
     if (settle(c) != 0) { return fail(4); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(5); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(5); }
     if (tcp_socket_ctl(c, 5, 0) != 0) { return fail(6); }
     // Blocking again for the exchange: loopback delivery is not synchronous
     // on every kernel, so a non-blocking read of the reply could find
@@ -338,12 +338,12 @@ function main(): i32 {
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
-    let c2: i32 = tcp_connect_with(lo, port, true);
-    if (c2 >= 0) {
+    let c2: Socket = tcp_connect_with(lo, port, true);
+    if (c2.fd >= 0) {
         let r: i32 = settle(c2);
         tcp_close(c2);
         if (r != 0 - econnrefused()) { return fail(12); }
-    } else if (c2 != 0 - econnrefused()) {
+    } else if (c2.fd != 0 - econnrefused()) {
         return fail(13);
     }
     print("ok");
@@ -412,8 +412,8 @@ function main(): i32 {
         Err(e) => { return fail(3); },
     }
     if (settle(c) != 0) { return fail(4); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(5); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(5); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(6); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(7); }

@@ -19,53 +19,53 @@ function main(): i32 {
   let d: async.RealDriver = async.real_driver_io_uring();
   print("ring " + d.io_uring().to_string());
   let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-  let ln: i32 = tcp_listen_with(any, 0, 64, false);
+  let ln: Socket = tcp_listen_with(any, 0, 64, false);
   let port: i32 = tcp_local_port(ln);
   d.watch(ln, 5);
-  let c0: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+  let c0: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
   let ex: i32[] = pairs(d, 2000);
-  print("exclusive listener " + (ex.len() == 2 && ex[0] == ln && ex[1] == 1).to_string());
+  print("exclusive listener " + (ex.len() == 2 && ex[0] == ln.fd && ex[1] == 1).to_string());
   print("exclusive again " + d.watch(ln, 5).to_string());
   tcp_close(tcp_accept(ln));
   tcp_close(c0);
   d.watch(ln, 1);
-  let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+  let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
   let got: i32[] = pairs(d, 2000);
-  print("listener " + (got.len() == 2 && got[0] == ln && got[1] == 1).to_string());
-  let a: i32 = tcp_accept(ln);
+  print("listener " + (got.len() == 2 && got[0] == ln.fd && got[1] == 1).to_string());
+  let a: Socket = tcp_accept(ln);
   d.watch(a, 1);
   tcp_send_bytes(c, [104u8, 101u8, 108u8, 108u8, 111u8]);
   let first: i32[] = pairs(d, 2000);
-  print("readable " + (first.len() == 2 && first[0] == a && (first[1] & 1) == 1).to_string());
+  print("readable " + (first.len() == 2 && first[0] == a.fd && (first[1] & 1) == 1).to_string());
   let again: i32[] = pairs(d, 100);
-  print("unread reported again " + (again.len() == 2 && again[0] == a).to_string());
+  print("unread reported again " + (again.len() == 2 && again[0] == a.fd).to_string());
   let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
   let n: i32 = tcp_recv_into(a, buf);
   print("read " + n.to_string() + " then " + pairs(d, 100).len().to_string());
   d.watch(a, 3);
   let w: i32[] = pairs(d, 2000);
-  print("writable " + (w.len() == 2 && w[0] == a && (w[1] & 2) == 2).to_string());
+  print("writable " + (w.len() == 2 && w[0] == a.fd && (w[1] & 2) == 2).to_string());
   d.unwatch(a);
   tcp_send_bytes(c, [109u8, 111u8, 114u8, 101u8]);
   print("unwatched " + pairs(d, 100).len().to_string());
   d.watch(a, 1);
   let back: i32[] = pairs(d, 2000);
-  print("watched anew " + (back.len() == 2 && back[0] == a).to_string());
+  print("watched anew " + (back.len() == 2 && back[0] == a.fd).to_string());
   tcp_recv_into(a, buf);
   print("drained " + pairs(d, 100).len().to_string());
   tcp_socket_ctl(c, 4, 1);
   let half: i32[] = pairs(d, 2000);
-  print("half-closed readable, not hung up " + (half.len() == 2 && half[0] == a && half[1] == 1).to_string());
+  print("half-closed readable, not hung up " + (half.len() == 2 && half[0] == a.fd && half[1] == 1).to_string());
   print("end of stream " + tcp_recv_into(a, buf).to_string());
   d.unwatch(a);
   let cs: i32[] = [];
   let accs: i32[] = [];
   let i: i32 = 0;
   while (i < 40) {
-    let ci: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    let ai: i32 = tcp_accept(ln);
+    let ci: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    let ai: Socket = tcp_accept(ln);
     let tries: i32 = 0;
-    while (ai < 0 && tries < 200) {
+    while (ai.fd < 0 && tries < 200) {
       sleep_ms(5 as i64);
       ai = tcp_accept(ln);
       tries = tries + 1;
@@ -83,7 +83,7 @@ function main(): i32 {
     let j: i32 = 0;
     while (j * 2 < evs.len()) {
       let fd: i32 = evs[j * 2];
-      if (fd != ln && !seen.contains(fd)) {
+      if (fd != ln.fd && !seen.contains(fd)) {
         seen = seen.append(fd);
         tcp_recv_into(fd, buf);
       }
@@ -208,12 +208,12 @@ function main(): i32 {
   let d: async.RealDriver = async.real_driver_io_uring();
   print("ring " + d.io_uring().to_string());
   let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-  let ln: i32 = tcp_listen_with(any, 0, 64, false);
+  let ln: Socket = tcp_listen_with(any, 0, 64, false);
   let port: i32 = tcp_local_port(ln);
-  let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-  let a: i32 = tcp_accept(ln);
+  let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+  let a: Socket = tcp_accept(ln);
   let tries: i32 = 0;
-  while (a < 0 && tries < 200) {
+  while (a.fd < 0 && tries < 200) {
     sleep_ms(5 as i64);
     a = tcp_accept(ln);
     tries = tries + 1;
@@ -223,12 +223,12 @@ function main(): i32 {
   let buf: u8[] = __alloc_u8(4096);
   tcp_send_bytes(c, [104u8, 101u8, 108u8, 108u8, 111u8]);
   let first: i32[] = pairs(d, 2000);
-  print("readable " + (first.len() == 2 && first[0] == a && (first[1] & 1) == 1).to_string());
+  print("readable " + (first.len() == 2 && first[0] == a.fd && (first[1] & 1) == 1).to_string());
   print("read " + text(buf, d.recv_into(a, buf)) + " then " + pairs(d, 100).len().to_string());
   tcp_send_bytes(c, [97u8, 98u8, 99u8]);
   pairs(d, 2000);
   let again: i32[] = pairs(d, 100);
-  print("unread reported again " + (again.len() == 2 && again[0] == a).to_string());
+  print("unread reported again " + (again.len() == 2 && again[0] == a.fd).to_string());
   let small: u8[] = [0u8, 0u8];
   print("pieces " + text(small, d.recv_into(a, small)) + " " + text(small, d.recv_into(a, small)) + " " + d.recv_into(a, small).to_string());
   tcp_send_bytes(c, [111u8, 110u8, 101u8]);
@@ -242,10 +242,10 @@ function main(): i32 {
   let accs: i32[] = [];
   let i: i32 = 0;
   while (i < 40) {
-    let ci: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    let ai: i32 = tcp_accept(ln);
+    let ci: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    let ai: Socket = tcp_accept(ln);
     let t: i32 = 0;
-    while (ai < 0 && t < 200) {
+    while (ai.fd < 0 && t < 200) {
       sleep_ms(5 as i64);
       ai = tcp_accept(ln);
       t = t + 1;
@@ -420,11 +420,11 @@ function main(): i32 {
   let d: async.RealDriver = async.real_driver_io_uring();
   print("ring " + d.io_uring().to_string());
   let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-  let ln: i32 = tcp_listen_with(any, 0, 64, false);
-  let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
-  let a: i32 = tcp_accept(ln);
+  let ln: Socket = tcp_listen_with(any, 0, 64, false);
+  let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
+  let a: Socket = tcp_accept(ln);
   let tries: i32 = 0;
-  while (a < 0 && tries < 200) {
+  while (a.fd < 0 && tries < 200) {
     sleep_ms(5 as i64);
     a = tcp_accept(ln);
     tries = tries + 1;

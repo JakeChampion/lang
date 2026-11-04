@@ -1387,6 +1387,10 @@ pub function op_writer_truncate(): Op {
   return op0(281);
 }
 
+pub function op_writer_nonblocking(): Op {
+  return op0(490);
+}
+
 pub function op_reader_close(): Op {
   return op0(179);
 }
@@ -3628,6 +3632,9 @@ function kind_id_len18(name: string): i32 {
   if (c == b'm' && name == "mismatch_bytes_str") {
     return 446;
   }
+  if (c == b'w' && name == "writer_nonblocking") {
+    return 490;
+  }
   return 0;
 }
 
@@ -4547,6 +4554,9 @@ function kind_name_4(id: i32): string {
   if (id == 281) {
     return "writer_truncate";
   }
+  if (id == 490) {
+    return "writer_nonblocking";
+  }
   if (id == 366) {
     return "fd_drop_cache";
   }
@@ -5009,7 +5019,7 @@ function pops2_io(t: i32): boolean {
     || t == 362 || t == 363 || t == 374 || t == 375
     || t == 273
     || t == 304 || t == 305
-    || t == 281
+    || t == 281 || t == 490
     || t == 285
     || t == 284
     || t == 311
@@ -7190,7 +7200,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag >= 420 && tag <= 428) {
     return true;
   }
-  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 407 || tag == 366) {
+  if (util.index_of_i32([241, 242, 281, 490, 307, 330, 407, 366], tag) >= 0) {
     return true;
   }
   if (tag == 177) {

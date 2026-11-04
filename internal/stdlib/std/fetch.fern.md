@@ -1064,6 +1064,11 @@ pub function (sh: Shared) flush(): (i32[], i32[]) {
   return (now_waiting, drained);
 }
 
+// close drops a connection the caller ended, by its descriptor number, and closes its socket.
+pub function (sh: Shared) close(fd: i32): i32 {
+  return __drop_sock(sh.socks, fd);
+}
+
 pub function (sh: Shared) sockets(): i32[] {
   let out: i32[] = [];
   for d in sh.rows.get() {
