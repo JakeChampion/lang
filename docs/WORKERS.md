@@ -181,6 +181,25 @@ What this costs and what it buys is listed below.
 - The thread design of `MULTICORE-RESEARCH.md` stays open. Its API is this
   API, and `__send_copy` and the region adoption carry over to it.
 
+The table gives the measured cost of a spawn and a join. The host was
+x86-64 Linux 6.18 with a Xeon at 2.1 GHz, on 2026-11-04. The body of the
+worker returns a number. The program built the parent heap first, then
+spawned and joined 1,000 workers in a loop. Each row is the time of the
+loop over the count.
+
+The cost grows with the live heap of the parent, because the fork copies its
+page tables. A thread pays neither cost.
+
+| live parent heap | one spawn and join |
+|---|--:|
+| under 1 MiB | 0.7 ms |
+| 64 MiB | 2.7 ms |
+| 256 MiB | 6.4 ms |
+| 1 GiB | 20 ms |
+
+A workload shows the fork cost when its bodies run for less than these
+times. A parent with a heap of hundreds of MiB shows it too.
+
 ### `__send_copy`
 
 `__send_copy(v)` is a builtin that returns a fresh deep copy of a send-safe
