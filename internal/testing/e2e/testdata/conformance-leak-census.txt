@@ -325,6 +325,7 @@ foreach_pattern_binding                              0
 format_placeholders                                  0
 format_specs                                         0
 fresh_array_through_a_pass_through_callee            0
+fresh_local_destructured_fields                      0
 fresh_local_return                                   0
 fresh_result_payload_is_owned                        0
 from_empty_bytes                                     0

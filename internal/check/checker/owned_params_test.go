@@ -2249,6 +2249,51 @@ function f(p: HPair): i32 {
 }`)
 }
 
+// The fields that a destructure takes from a fresh local at its last use are
+// owned, as the fields of an own parameter are (#14144).
+func TestOwnGuardDestructuresAFreshLocalAtItsLastUse(t *testing.T) {
+	wantOK(t, "destructured-fresh-local", ownHandleConsumer+`
+function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(): i32 {
+    let p: HPair = mkp();
+    let HPair { h, n } = p;
+    return sinkh(h) + n;
+}`)
+	wantOK(t, "destructured-fresh-local-reassigned-fresh", ownHandleConsumer+`
+function mkp(k: i32): HPair { return HPair { h: Handle { fd: k }, n: 2 }; }
+function f(c: boolean): i32 {
+    let p: HPair = mkp(1);
+    if (c) {
+        p = mkp(2);
+    }
+    let HPair { h, n } = p;
+    return sinkh(h) + n;
+}`)
+	wantE051(t, "destructured-local-read-after", ownHandleConsumer+`
+function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(): i32 {
+    let p: HPair = mkp();
+    let HPair { h, n } = p;
+    return sinkh(h) + n + p.n;
+}`)
+	wantE051(t, "destructured-local-from-a-borrowed-param", ownHandleConsumer+`
+function f(q: HPair): i32 {
+    let p: HPair = q;
+    let HPair { h, n } = p;
+    return sinkh(h) + n;
+}`)
+	wantE051(t, "destructured-local-reassigned-borrowed", ownHandleConsumer+`
+function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(q: HPair, c: boolean): i32 {
+    let p: HPair = mkp();
+    if (c) {
+        p = q;
+    }
+    let HPair { h, n } = p;
+    return sinkh(h) + n;
+}`)
+}
+
 func TestOwnGuardAllowsHandleFreeLocalReadFromBorrowed(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"assign", `

@@ -19159,22 +19159,19 @@ function lu_fresh_local(fx: LuFn, e: ast.Expr): boolean {
 }
 
 // A local declared once, outside a loop, from an own parameter at its last
-// use, and given only fresh values after that.
+// use, and given only fresh values after that. Also a field that a
+// destructure takes from such a parameter, or from a fresh local, at its
+// last use.
 function lu_owned_alias(fx: LuFn, name: string): boolean {
-  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name)) {
+  if (lu_decl_count(fx, name) != 1 || util.has_str(fx.looped, name) || !lu_only_fresh_assigns(fx, name)) {
     return false;
   }
-  for a in fx.facts.assigns {
-    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
-      return false;
-    }
-  }
-  // The fields of an own parameter that a destructure takes at its last use
-  // are owned, as the parameter is.
+  // The fields that a destructure takes from an own parameter or a fresh
+  // local at its last use are owned, as the source is.
   for u in fx.facts.unpacked {
     if (u.name == name) {
       if let ast.ExprIdent(src) = u.init {
-        return lu_own_param(fx, src.name) && lu_decl_count(fx, src.name) == 0 && lu_is_last(fx, src);
+        return lu_is_last(fx, src) && (lu_own_param(fx, src.name) || lu_sole_fresh_local(fx, src.name));
       }
     }
   }
@@ -19185,6 +19182,22 @@ function lu_owned_alias(fx: LuFn, name: string): boolean {
     return lu_own_param(fx, src.name) && lu_is_last(fx, src);
   }
   return false;
+}
+
+// Each value assigned to the name after its declaration is fresh.
+function lu_only_fresh_assigns(fx: LuFn, name: string): boolean {
+  for a in fx.facts.assigns {
+    if (a.name == name && !lu_fresh_value(fx, a.init) && !lu_fresh_local(fx, a.init)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A local declared once, outside a loop, from a fresh value, and given only
+// fresh values after that.
+function lu_sole_fresh_local(fx: LuFn, name: string): boolean {
+  return lu_fresh_init(fx, name) && lu_decl_count(fx, name) == 1 && !util.has_str(fx.looped, name) && lu_only_fresh_assigns(fx, name);
 }
 
 // The names a let declares inside a loop body.

@@ -1017,7 +1017,9 @@ func loopedDecls(body *ast.Block) map[string]bool {
 }
 
 // ownedAliases names the locals declared once, outside a loop, from an own
-// parameter at its last use, and given only fresh values after that.
+// parameter at its last use, and given only fresh values after that. It also
+// names the fields that a destructure takes from such a parameter, or from a
+// fresh local, at its last use.
 func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool) map[string]bool {
 	looped := loopedDecls(body)
 	stale := map[string]bool{}
@@ -1038,6 +1040,10 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 		src, ok := e.(*ast.Ident)
 		return ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src)
 	}
+	freshAtLastUse := func(e ast.Expr) bool {
+		src, ok := e.(*ast.Ident)
+		return ok && freshLocal[src.Name] && sole(src.Name) && order.IsLast(src)
+	}
 	out := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -1046,9 +1052,9 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 				out[x.Name] = true
 			}
 		case *ast.Destructure:
-			// The fields of an own parameter that the destructure takes at
-			// its last use are owned, as the parameter is.
-			if x.AtName != "" || !ownedAtLastUse(x.Init) {
+			// The fields that the destructure takes from an own parameter or
+			// a fresh local at its last use are owned, as the source is.
+			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) {
 				return true
 			}
 			for i, name := range x.Names {

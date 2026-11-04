@@ -1,0 +1,63 @@
+// The fields that a destructure takes from a fresh local at its last use are
+// owned, so each one can move into an own parameter or receiver (#14144).
+struct Res { v: i32[], n: i32 }
+struct P { r: Res, k: i32 }
+enum E { A(Res), B(i32) }
+struct V { e: E, k: i32 }
+
+@noinline function (own r: Res) grow(): Res { return Res { v: r.v.append(r.n), n: r.n + 1 }; }
+@noinline function (own e: E) size(): i32 {
+  match (e) {
+    A(x) => {
+      return x.v.len();
+    },
+    B(k) => {
+      return k;
+    }
+  }
+}
+@noinline function take(own r: Res): i32 { return r.v.len() + r.n; }
+@noinline function mkp(n: i32): P { return P { r: Res { v: [n, n], n: n }, k: n + 1 }; }
+@noinline function mkv(a: boolean): V {
+  if (a) {
+    return V { e: A(Res { v: [7, 8, 9], n: 0 }), k: 4 };
+  }
+  return V { e: B(5), k: 1 };
+}
+
+@noinline function into_param(n: i32): i32 {
+  let p: P = mkp(n);
+  let P { r: r, k: k } = p;
+  return take(r) + k;
+}
+
+@noinline function into_receiver(n: i32): i32 {
+  let p: P = mkp(n);
+  let P { r: r, k: k } = p;
+  return r.grow().v.len() + k;
+}
+
+@noinline function enum_field(a: boolean): i32 {
+  let v: V = mkv(a);
+  let V { e: e, k: k } = v;
+  return e.size() + k;
+}
+
+@noinline function reassigned_fresh(c: boolean): i32 {
+  let p: P = mkp(1);
+  if (c) {
+    p = mkp(3);
+  }
+  let P { r: r, k: k } = p;
+  return take(r) + k;
+}
+
+function main(): i32 {
+  let t: i32 = into_param(1) + into_receiver(2);
+  t = t + enum_field(true) + enum_field(false);
+  t = t + reassigned_fresh(true) + reassigned_fresh(false);
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return t;
+}
