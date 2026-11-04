@@ -1,0 +1,17 @@
+// `n @ 4 | 5` is `(n @ 4) | 5`: only the first alternative binds n, so the
+// arm body cannot read it.
+
+function f(x: i32): i32 {
+  match (x) {
+    n @ 4 | 5 => {
+      return n;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  return f(5);
+}

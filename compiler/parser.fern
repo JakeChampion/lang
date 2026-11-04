@@ -3144,10 +3144,11 @@ function literal_arm_chain(arms: ast.LitArm[], first: i32, last: i32, scrut: ast
   }
   let abody: ast.Stmt[] = a.body;
   let aguard: ast.Expr = a.guard;
-  if (a.at_binding.len() > 0) {
-    abody = prepend_stmt(s_var_at(a.at_binding, "", scrut, a.line, a.col), a.body);
+  let at: string = shared_at_binding(arms, first, last);
+  if (at.len() > 0) {
+    abody = prepend_stmt(s_var_at(at, "", scrut, a.line, a.col), a.body);
     if let ast.ExprIdent(sid) = scrut {
-      aguard = astwalk.subst_ident_expr(a.guard, a.at_binding, sid.name);
+      aguard = astwalk.subst_ident_expr(a.guard, at, sid.name);
     }
   }
   let cond: ast.Expr = literal_arm_test(arms[first], scrut);
@@ -3160,6 +3161,18 @@ function literal_arm_chain(arms: ast.LitArm[], first: i32, last: i32, scrut: ast
     cond = e_binary("&&", cond, aguard);
   }
   return [s_if(cond, abody, else_body)];
+}
+
+// The name that every alternative in arms[first..=last] binds with `@`, or ""
+// when some alternative binds none.
+function shared_at_binding(arms: ast.LitArm[], first: i32, last: i32): string {
+  let at: string = arms[first].at_binding;
+  for k in first + 1..last + 1 {
+    if (arms[k].at_binding != at) {
+      return "";
+    }
+  }
+  return at;
 }
 
 function literal_arm_test(a: ast.LitArm, scrut: ast.Expr): ast.Expr {
@@ -4241,8 +4254,10 @@ function parse_literal_match_expr(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol:
       patterns = patterns.append(lpattern);
     } else {
       let lai: i32 = 0;
+      let alt_at: string = lat;
       while (lai < lalt_lits.len()) {
-        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
+        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbody, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: alt_at });
+        alt_at = "";
         patterns = patterns.append(literal_pattern(lit_arms[lit_arms.len() - 1]));
         lai = lai + 1;
       }
@@ -5575,8 +5590,10 @@ function parse_literal_match_stmt(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol:
       patterns = patterns.append(lpattern);
     } else {
       let lai: i32 = 0;
+      let alt_at: string = lat;
       while (lai < lalt_lits.len()) {
-        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: lat });
+        lit_arms = lit_arms.append(ast.LitArm { is_wild: false, lit: lalt_lits[lai], guard: lguard, has_guard: lhas_guard, body: lbb_body, line: laline, col: lacol, range_hi: lalt_his[lai], has_range: lalt_hrs[lai], range_inclusive: lalt_incs[lai], alt_cont: lai > 0, at_binding: alt_at });
+        alt_at = "";
         patterns = patterns.append(literal_pattern(lit_arms[lit_arms.len() - 1]));
         lai = lai + 1;
       }

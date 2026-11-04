@@ -1,0 +1,31 @@
+// An at-binding names the scrutinee in its own alternative. An arm whose
+// other alternatives bind nothing can still match them, if its body does
+// not read the name.
+
+function single(x: i32): i32 {
+  match (x) {
+    n @ 4 when n > 0 => {
+      return n * 10;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function either(x: i32): i32 {
+  match (x) {
+    n @ 4 | 5 => {
+      return 1;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  print(single(4).to_string() + " " + single(5).to_string());
+  print(either(4).to_string() + " " + either(5).to_string() + " " + either(6).to_string());
+  return 0;
+}
