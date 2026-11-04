@@ -669,6 +669,44 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   return intrinsic_result_task(name, argc);
 }
 
+// The four builtins behind a process worker: the region, the adoption of
+// it as the heap, the exit that stores the root, and the reap that reads it.
+function is_worker_builtin(name: string): boolean {
+  return name == "__heap_adopt" || name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap";
+}
+
+function worker_params(name: string): typeinfo.Type[] {
+  if (name == "__heap_adopt") {
+    return [t_i64(), t_i64()];
+  }
+  if (name == "__worker_exit") {
+    return [t_i64(), t_usize()];
+  }
+  return [t_i64()];
+}
+
+function worker_result(name: string): typeinfo.Type {
+  if (name == "__worker_region") {
+    return t_i64();
+  }
+  if (name == "__worker_reap") {
+    return t_usize();
+  }
+  return t_void();
+}
+
+// `__send_copy` has its argument's type, `__send_adopt` the type of its
+// binding, and `__send_root` is an address.
+function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (name == "__send_copy") {
+    return check_expr(c.args[0], s);
+  }
+  if (name == "__send_adopt") {
+    return t_unknown("__send_adopt takes the declared type of its binding");
+  }
+  return t_usize();
+}
+
 function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__task_enter") {
     return t_void();
@@ -702,6 +740,9 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   }
   if (argc == 1 && name == "__heap_release_to") {
     return t_void();
+  }
+  if (is_worker_builtin(name) && argc == worker_params(name).len()) {
+    return worker_result(name);
   }
   if (argc == 0 && name == "__rc_underflow_count") {
     return t_i32();
@@ -954,6 +995,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (name == "__heap_release_to") {
     return ([t_i64()], true);
+  }
+  if (is_worker_builtin(name)) {
+    return (worker_params(name), true);
   }
   if (name == "__rc_underflow_count" || name == "__arr_push_shared_count" || name == "__arr_push_shared_bytes") {
     return ([], true);
@@ -5345,8 +5389,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (!is_method && name == "cell_new") {
     return t_struct("Cell");
   }
-  if (!is_method && name == "__send_copy" && c.args.len() == 1) {
-    return check_expr(c.args[0], s);
+  if (!is_method && parser.is_send_builtin(name) && c.args.len() == 1) {
+    return send_builtin_type(name, c, s);
   }
   if (!is_method && (name == "print" || name == "eprint") && c.args.len() == 1) {
     return t_void();
@@ -10310,7 +10354,7 @@ pub function unsafe_intrinsics(): string[] {
     "__memcpy", "__memset", "__str_bytes", "__account_entry",
     "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
     "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
-    "__arr_set_len", "__heap_mark", "__heap_release_to",
+    "__arr_set_len", "__heap_mark", "__heap_release_to", "__heap_adopt", "__send_adopt", "__send_root", "__worker_region", "__worker_exit", "__worker_reap",
     "__c_call0", "__c_call0_f32", "__c_call0_f64",
     "__c_call1", "__c_call1_f32", "__c_call1_f64",
     "__c_call2", "__c_call2_f32", "__c_call2_f64",
@@ -18048,7 +18092,7 @@ function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
-    "__send_copy",
+    "__send_copy", "__send_adopt", "__send_root", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap",
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
@@ -21160,8 +21204,15 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
 
 // The reason a value of type t cannot be copied into another worker's heap,
 // or "" when every part of it can. A type already in seen is on the path
-// above and holds nothing its parent did not refuse.
+// above and holds nothing its parent did not refuse. A type parameter
+// crosses only inside the standard library, where a generic body copies a
+// value its caller's `send` argument already admitted.
 function send_unsafe_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[]): string {
+  if (ctx.scope.fn_stdlib) {
+    if let typeinfo.TypeErased(_) = t {
+      return "";
+    }
+  }
   if (is_str_view(t) || is_arr_view(t)) {
     return "a view borrows another value's storage";
   }

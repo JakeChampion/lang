@@ -14,6 +14,9 @@ var gatedBuiltins = map[string]string{
 	"proc_waitpid":        "proc",
 	"proc_waitpid_nohang": "proc",
 	"proc_waitpid_status": "proc",
+	"__worker_region":     "proc",
+	"__worker_exit":       "proc",
+	"__worker_reap":       "proc",
 	"proc_exec":           "proc",
 	"proc_exec_as":        "proc",
 	"pipe":                "proc",
@@ -32,6 +35,7 @@ var gatedBuiltins = map[string]string{
 
 	"__heap_mark":       "arena",
 	"__heap_release_to": "arena",
+	"__heap_adopt":      "arena",
 
 	"stdin": "stdin",
 
@@ -233,6 +237,8 @@ var coreBuiltins = map[string]bool{
 	"map_new":                     true,
 	"cell_new":                    true,
 	"__send_copy":                 true,
+	"__send_adopt":                true,
+	"__send_root":                 true,
 	"string_from_bytes_unchecked": true,
 	"slice_unchecked":             true,
 

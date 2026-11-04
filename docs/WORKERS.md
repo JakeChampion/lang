@@ -1,8 +1,8 @@
 # Workers
 
 Status: [reference] shipped: `std/worker` with `spawn` and `join`, the `send`
-parameter mode, and `E100`. Real threads are not shipped. Every engine runs
-a worker inline.
+parameter mode, `E100`, and a process per worker on native Linux. Every
+other engine runs a worker inline. Real threads are not shipped.
 
 ## The model
 
@@ -105,7 +105,7 @@ release, and it stops on a thread too. There is no channel in this release.
 
 ## Step 2: a process per worker
 
-The second step gives the native targets real parallelism. A worker is a
+The second step gives native Linux real parallelism. A worker is a
 process, not a thread. `RC-DESIGN.md` section 2.1 already holds the
 one-context-per-heap guarantee at the `proc_fork` and `subprocess`
 boundaries with separate processes, and a worker takes the same row.
@@ -127,6 +127,33 @@ is a copy-on-write image of the parent's, so a box the body builds can point
 at a box the parent owns. `__send_copy` builds a fresh tree. Every box of
 that tree is inside the region, because the child's cursor is there and its
 free lists are empty.
+
+The module decides at `spawn`. A native Linux program forks. The
+interpreters map no region, and wasm and Darwin keep the inline order of
+step 1.
+
+A fork or a mapping that the kernel refuses runs the body inline too, so the
+result is the same on every path.
+
+The leak census crosses with the result. The region's header holds the four
+leak-check counters: `__worker_region` writes the parent's snapshot, the
+child writes its deltas at exit, and `__worker_reap` adds them to the
+parent's counters. The child counts a free only inside the region, because
+a box of the parent's image that the child frees is the parent's to count.
+So a box the child allocated and the parent freed is paired, and a leak in
+the body is reported at the parent's exit.
+
+The builtins behind the step are `unsafe`, and only `std/worker` calls
+them.
+
+| Builtin | Role |
+|---|---|
+| `__worker_region(size)` | Maps a shared anonymous region that the fork inherits at the same address. The interpreters return zero. |
+| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. |
+| `__send_root(v)` | Gives up `v` and returns the address of its root box. |
+| `__send_adopt(addr)` | Takes the box at `addr` as a value of the declared type. |
+| `__worker_exit(region, root)` | Stores the root in the region and ends the child at once, with no at-exit work. |
+| `__worker_reap(region)` | Returns the root the child stored. |
 
 What this costs and what it buys is listed below.
 
@@ -178,6 +205,11 @@ degrade until a thread primitive ships that wasmtime implements (R5).
   makes thirteen allocations, nine boxes and four freed temporaries, and a
   sanitized run frees them all, on both native targets and wasm.
 
+- `conformance/cases/worker_runs_in_its_own_process`: a worker that
+  allocates sixty-four megabytes does not grow the parent's arena, on
+  x86-64 and arm64 Linux.
+- `TestSelfHostHeapAdoptIR`: after `__heap_adopt` the heap mark lies inside
+  the adopted region, on both native targets.
 - `tests/stdlib/worker_test.fern`: the module through `std/test`.
 - `TestSendParameterRefusesWhatCannotCrossAWorkerBoundary` and
   `TestSendParameterAdmitsSendSafeValues`: the Go checker, one row per reason.

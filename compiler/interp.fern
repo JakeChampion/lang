@@ -2615,6 +2615,25 @@ function f64_primitive(name: string, x: f64): f64 {
   return __abs_f64(x);
 }
 
+// The worker builtins in an engine that runs every worker inline: the copy
+// is the value itself, no region exists, and the rest never run.
+function is_worker_contract(name: string): boolean {
+  return util.has_str(["__send_copy", "__send_adopt", "__send_root", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap"], name);
+}
+
+function worker_contract(name: string, args: Value[]): Value {
+  if (name == "__send_copy") {
+    return arg_at(args, 0);
+  }
+  if (name == "__heap_adopt") {
+    return v_void();
+  }
+  if (name == "__worker_region") {
+    return v_int64(0);
+  }
+  return v_err(name + ": the interpreter runs every worker inline");
+}
+
 function call_host_contract(name: string, args: Value[]): Value {
   if (name == "__heap_mark") {
     return v_int64(0);
@@ -2622,8 +2641,8 @@ function call_host_contract(name: string, args: Value[]): Value {
   if (name == "__heap_release_to") {
     return v_void();
   }
-  if (name == "__send_copy") {
-    return arg_at(args, 0);
+  if (is_worker_contract(name)) {
+    return worker_contract(name, args);
   }
   if (util.has_str(["proc_fork", "proc_exec", "proc_exec_as"], name)) {
     return v_int(0 - 38);

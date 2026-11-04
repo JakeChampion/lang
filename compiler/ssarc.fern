@@ -2059,12 +2059,32 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   for t in routed_keyed_maps(sc.maps, f) {
     out = Fresh { ...out, rows: append_keyed_closures(out.rows, t, done, contracts) };
   }
+  out = send_rows(out, f, done);
+  return Fresh { ...out, seen: grown };
+}
+
+// The copy and root helpers the function's send contracts name.
+function send_rows(own out: Fresh, f: ssasem.Func, done: util.NameIndex): Fresh {
   for c in f.calls {
     if (ssasem.is_send_helper(c.name) && c.params.len() == 1) {
       out = Fresh { ...out, rows: send_helpers(out.rows, c.params[0], f, done) };
     }
+    if (ssasem.is_root_helper(c.name) && !done.has(c.name) && !util.has_str(row_names_of(out.rows), c.name)) {
+      out = Fresh { ...out, rows: out.rows.append(root_helper(c.name)) };
+    }
   }
-  return Fresh { ...out, seen: grown };
+  return out;
+}
+
+// A root helper returns the word it is given. Its counted parameter is what
+// keeps the tree alive for the process that adopts it.
+function root_helper(name: string): irtables.LowerState {
+  let r: irtables.LowerState = irtables.LowerState {
+    ...empty(""), ok: true,
+    n_params: 1, n_locals: 1, name: name,
+  };
+  r = emit(r, ir.op_load_local(0));
+  return emit(r, ir.op_return());
 }
 
 // One copy helper per reference type a sent value holds, named by the type.
@@ -2237,13 +2257,11 @@ function send_array(own r: irtables.LowerState, elem: typeinfo.Type, f: ssasem.F
 }
 
 function send_tuple(own r: irtables.LowerState, t: typeinfo.Type, tup: typeinfo.TypeTuple, f: ssasem.Func): irtables.LowerState {
-  let i: i32 = 0;
-  while (i < tup.elements.len()) {
+  for i in 0..tup.elements.len() {
     let part: typeinfo.Type = tup.elements[i];
     r = emit(r, ir.op_load_local(0));
     r = emit(r, ir.op_tuple_get_w(i, load_width(part), ssasem.is_wide(part)));
     r = send_part(r, part);
-    i = i + 1;
   }
   r = emit(r, ir.op_tuple_make_k(tup.elements.len(), tuple_kinds(t)));
   return emit(r, ir.op_return());
@@ -2259,8 +2277,7 @@ function send_record(own r: irtables.LowerState, fields: semrecords.Field[], sha
   r = emit(r, ir.op_load_local(out));
   r = emit(r, ir.op_struct_set_shape(shape));
   r = emit(r, ir.op_drop());
-  let i: i32 = 0;
-  while (i < fields.len()) {
+  for i in 0..fields.len() {
     let part: typeinfo.Type = fields[i].ty;
     r = emit(r, ir.op_load_local(out));
     r = emit(r, ir.op_load_local(0));
@@ -2271,7 +2288,6 @@ function send_record(own r: irtables.LowerState, fields: semrecords.Field[], sha
     }
     r = send_part(r, part);
     r = field_store(r, fields, i);
-    i = i + 1;
   }
   return r;
 }
@@ -2286,8 +2302,7 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_opt_tag());
   r = emit(r, ir.op_store_local(tag));
-  let k: i32 = 0;
-  while (k < e.variants.len()) {
+  for k in 0..e.variants.len() {
     let fields: semrecords.Field[] = e.variants[k].fields;
     r = emit(r, ir.op_load_local(tag));
     r = emit(r, ir.op_const_i32(k));
@@ -2312,7 +2327,6 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
     }
     r = emit(r, ir.op_store_local(out));
     r = emit(r, ir.op_end());
-    k = k + 1;
   }
   r = emit(r, ir.op_load_local(out));
   return emit(r, ir.op_return());
@@ -2377,8 +2391,7 @@ function merged_helpers(cache: irtables.LowerResult[], helpers: Result[irtables.
     helper_names = helper_names.append(irtables.helper_name(helper));
   }
   let names = util.name_index(helper_names);
-  let k: i32 = 0;
-  while (k < helpers.len()) {
+  for k in 0..helpers.len() {
     let helper = helpers[k];
     let name = irtables.helper_name(helper);
     if (names.find(name) == k && !cached.has(name)) {
@@ -2392,7 +2405,6 @@ function merged_helpers(cache: irtables.LowerResult[], helpers: Result[irtables.
         selected = selected.append(k);
       }
     }
-    k = k + 1;
   }
   return MergedHelpers { bodies: out, cache_len: cache.len(), helper_indices: selected };
 }
@@ -5628,6 +5640,23 @@ function host_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered 
   return os_query_site(r, ins);
 }
 
+function is_worker_site(name: string): boolean {
+  return name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap" || ssasem.is_adopt_helper(name);
+}
+
+function worker_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
+  if (ins.str == "__worker_region") {
+    return Lowered { found: true, r: emit(r, ir.op_worker_region()) };
+  }
+  if (ins.str == "__worker_exit") {
+    return Lowered { found: true, r: emit(r, ir.op_worker_exit()) };
+  }
+  if (ins.str == "__worker_reap") {
+    return Lowered { found: true, r: emit(r, ir.op_worker_reap()) };
+  }
+  return Lowered { found: true, r: emit(r, ir.op_send_adopt()) };
+}
+
 function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "getcwd") {
     return Lowered { found: true, r: emit(r, ir.op_getcwd()) };
@@ -5685,6 +5714,9 @@ function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "proc_waitpid_status") {
     return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_status()) };
+  }
+  if (is_worker_site(ins.str)) {
+    return worker_site(r, ins);
   }
   if (ins.str == "tcp_listen") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_listen()) };
@@ -6250,6 +6282,9 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "__heap_release_to") {
     return Lowered { found: true, r: emit(r, ir.op_heap_release_to()) };
+  }
+  if (ins.str == "__heap_adopt") {
+    return Lowered { found: true, r: emit(r, ir.op_heap_adopt()) };
   }
   if (ins.str == "__memcpy") {
     return Lowered { found: true, r: emit(r, ir.op_memcpy()) };

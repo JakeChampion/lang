@@ -1181,6 +1181,22 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["__worker_region"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["__worker_exit"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: false}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["__worker_reap"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.NumberType{Width: 64, Signed: false},
+	}
+	c.info.FuncSigs["__heap_adopt"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
 	i32T := ast.NumberType{}
 	for name, sig := range map[string]*ast.FuncType{
 		"__task_new":           {Params: []ast.Type{}, Result: i32T},
@@ -2181,6 +2197,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__send_copy"] = &ast.FuncType{
 		Params: []ast.Type{cellParam},
 		Result: cellParam,
+	}
+	// __send_adopt(addr) takes the box at addr as a value of the binding's
+	// declared type; checkCall types it from the expected type.
+	c.info.FuncSigs["__send_adopt"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: false}},
+		Result: cellParam,
+	}
+	// __send_root(v) consumes a value and returns its address.
+	c.info.FuncSigs["__send_root"] = &ast.FuncType{
+		Params:   []ast.Type{cellParam},
+		ParamOwn: []bool{true},
+		Result:   ast.NumberType{Width: 64, Signed: false},
 	}
 	c.info.Methods["Cell.get"] = "__method_Cell_get"
 	c.info.FuncSigs["__method_Cell_get"] = &ast.FuncType{
@@ -9168,7 +9196,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
-	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true,
+	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true, "__heap_adopt": true, "__send_adopt": true, "__send_root": true, "__worker_region": true, "__worker_exit": true, "__worker_reap": true,
 	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
 	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
 	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
@@ -14342,6 +14370,26 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
 			c.needCoreMap(n.P)
+		}
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_adopt" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "__send_adopt expects 1 argument, got %d", len(n.Args))
+				return nil
+			}
+			c.checkExpr(n.Args[0], s)
+			if callExpected == nil {
+				c.errfCode(n.P, "E003", "__send_adopt takes the declared type of its binding: write `let v: T = __send_adopt(addr)`")
+				return nil
+			}
+			return callExpected
+		}
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_root" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "__send_root expects 1 argument, got %d", len(n.Args))
+				return nil
+			}
+			c.checkExpr(n.Args[0], s)
+			return ast.NumberType{Width: 64, Signed: false}
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_copy" {
 			if len(n.Args) != 1 {

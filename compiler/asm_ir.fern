@@ -812,6 +812,10 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .align 8\n");
   s = s.write("__fern_lc_exited: .quad 0\n");
   s = s.write("    .align 8\n");
+  s = s.write("__fern_lc_adopt_lo: .quad 0\n");
+  s = s.write("    .align 8\n");
+  s = s.write("__fern_lc_adopt_hi: .quad 0\n");
+  s = s.write("    .align 8\n");
   s = s.write("__fern_hev_site: .quad 0\n");
   if (rc_trace_deep_on()) {
     s = s.write("__fern_hev_caller2: .quad 0\n");
@@ -869,6 +873,14 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    shlq $3, %r13\n");
   s = s.write("    movq $102, %rbx\n");
   if (s.leak_check) {
+    s = s.write("    movq __fern_lc_adopt_lo(%rip), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    je .Lhev_f_count\n");
+    s = s.write("    cmpq %rax, %r12\n");
+    s = s.write("    jb .Lhev_emit\n");
+    s = s.write("    cmpq __fern_lc_adopt_hi(%rip), %r12\n");
+    s = s.write("    jae .Lhev_emit\n");
+    s = s.write(".Lhev_f_count:\n");
     s = s.write("    movq __fern_lc_free_count(%rip), %rax\n");
     s = s.write("    addq $1, %rax\n");
     s = s.write("    movq %rax, __fern_lc_free_count(%rip)\n");
@@ -10436,7 +10448,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 112) {
+  if (o.kind_tag == 112 || o.kind_tag == 494) {
     return s;
   }
 
@@ -10479,6 +10491,20 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == 211) {
     s = s.write("    call __fn___fern_proc_fork\n    pushq %rax\n");
     s = s.need("proc_fork");
+  } else if (o.kind_tag == 491) {
+    s = s.write("    call __fn___fern_worker_region\n    addq $8, %rsp\n");
+    s = worker_region_census(s);
+    s = s.write("    pushq %rax\n");
+    s = s.need("worker_region");
+  } else if (o.kind_tag == 492) {
+    s = s.write("    popq %rdx\n    popq %rax\n    movq %rdx, (%rax)\n");
+    s = worker_exit_census(s);
+    s = s.write("    call __fn___fern_worker_exit\n    pushq %rax\n");
+    s = s.need("worker_exit");
+  } else if (o.kind_tag == 493) {
+    s = s.write("    popq %rax\n");
+    s = worker_reap_census(s);
+    s = s.write("    pushq (%rax)\n");
   } else if (o.kind_tag == 212) {
     s = s.write("    call __fn___fern_proc_waitpid\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("proc_waitpid");
@@ -10719,6 +10745,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = emit_ir_op_heap_mark(o, s);
   } else if (o.kind_tag == 230) {
     s = emit_ir_op_heap_release_to(o, s);
+  } else if (o.kind_tag == 490) {
+    s = emit_ir_op_heap_adopt(o, s);
   } else if (o.kind_tag == 260) {
     s = s.write("    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_create_dir\n    addq $16, %rsp\n    pushq %rax\n");
@@ -11001,6 +11029,75 @@ function emit_ir_op_heap_mark(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   s = s.need("heap");
 
   return s;
+}
+
+// The cursor and the end move into [start, end), and both free lists are
+// zeroed so no block outside the region is handed out again.
+function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  s = s.need("heap");
+  s = s.write("    popq %rdx\n");
+  s = s.write("    popq %rax\n");
+  s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
+  s = s.write("    movq %rdx, __fern_heap_end(%rip)\n");
+  if (s.leak_check) {
+    let l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    cmpq $0, __fern_lc_adopt_lo(%rip)\n    jne " + l.name + "\n");
+    s = s.write("    movq %rax, __fern_lc_adopt_lo(%rip)\n    movq %rdx, __fern_lc_adopt_hi(%rip)\n");
+    s = s.write(l.name + ":\n");
+  }
+  s = s.write("    pushq %rcx\n    pushq %rdi\n");
+  s = s.write("    xorl %eax, %eax\n");
+  s = s.write("    leaq __fern_freelist(%rip), %rdi\n");
+  s = s.write("    movl $65536, %ecx\n    rep stosq\n");
+  s = s.write("    leaq __fern_large_freelist(%rip), %rdi\n");
+  s = s.write("    movl $2560, %ecx\n    rep stosq\n");
+  s = s.write("    popq %rdi\n    popq %rcx\n");
+  s = s.write("    pushq %rax\n");
+  return s;
+}
+
+// The leak-check counters a worker region carries, at words 1 to 4 of its
+// header. rax holds the region. The snapshot runs only when the mapping
+// succeeded.
+function lc_counters(): string[] {
+  return ["__fern_lc_alloc_count", "__fern_lc_alloc_bytes", "__fern_lc_free_count", "__fern_lc_free_bytes"];
+}
+
+function worker_region_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check) {
+    return s;
+  }
+  let l: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = l.state.write("    testq %rax, %rax\n    jle " + l.name + "\n    pushq %rcx\n");
+  for k in 0..4 {
+    let off: string = util.i32_to_string(8 + 8 * k);
+    s = s.write("    movq " + lc_counters()[k] + "(%rip), %rcx\n    movq %rcx, " + off + "(%rax)\n");
+  }
+  return s.write("    popq %rcx\n" + l.name + ":\n");
+}
+
+function worker_exit_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check) {
+    return s;
+  }
+  s = s.write("    pushq %rcx\n");
+  for k in 0..4 {
+    let off: string = util.i32_to_string(8 + 8 * k);
+    s = s.write("    movq " + lc_counters()[k] + "(%rip), %rcx\n    subq " + off + "(%rax), %rcx\n    movq %rcx, " + off + "(%rax)\n");
+  }
+  return s.write("    popq %rcx\n");
+}
+
+function worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check) {
+    return s;
+  }
+  s = s.write("    pushq %rcx\n");
+  for k in 0..4 {
+    let off: string = util.i32_to_string(8 + 8 * k);
+    s = s.write("    movq " + off + "(%rax), %rcx\n    addq %rcx, " + lc_counters()[k] + "(%rip)\n");
+  }
+  return s.write("    popq %rcx\n");
 }
 
 function emit_ir_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
@@ -11957,6 +12054,14 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_proc_waitpid_status", s);
   }
+  if (s.has_need("worker_region")) {
+    s = s.write("    .text\n");
+    s = emit_runtime("__fern_worker_region", s);
+  }
+  if (s.has_need("worker_exit")) {
+    s = s.write("    .text\n");
+    s = emit_runtime("__fern_worker_exit", s);
+  }
   if (s.has_need("proc_exec")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_proc_exec", s);
@@ -11973,7 +12078,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
-    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps",
+    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",

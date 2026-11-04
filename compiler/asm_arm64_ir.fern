@@ -5214,7 +5214,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == 112) {
+  if (o.kind_tag == 112 || o.kind_tag == 494) {
     return s;
   }
 
@@ -5267,6 +5267,20 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == 397) {
     s = s.need("proc_waitpid_status");
     s = s.write("    bl __fn___fern_proc_waitpid_status\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 491) {
+    s = s.need("worker_region");
+    s = s.write("    bl __fn___fern_worker_region\n    add sp, sp, #16\n");
+    s = arm64_worker_region_census(s);
+    s = s.write("    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 492) {
+    s = s.need("worker_exit");
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [x0]\n");
+    s = arm64_worker_exit_census(s);
+    s = s.write("    bl __fn___fern_worker_exit\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 493) {
+    s = s.write("    ldr x0, [sp], #16\n");
+    s = arm64_worker_reap_census(s);
+    s = s.write("    ldr x0, [x0]\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 213) {
     s = s.need("heap");
     s = s.need("proc_exec");
@@ -5290,6 +5304,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 230) {
     s = emit_arm64_op_heap_release_to(o, s);
+  } else if (o.kind_tag == 490) {
+    s = emit_arm64_op_heap_adopt(o, s);
   } else if (o.kind_tag == 183) {
     s = s.need("now_ns");
     s = s.write("    bl __fn___fern_now_ns\n    str x0, [sp, #-16]!\n");
@@ -5979,6 +5995,87 @@ function emit_arm64_op_heap_alloc_count(o: ir.Op, s: asmcore.EmitState): asmcore
   s = s.write("    adrp x0, __fern_alloc_count\n    add x0, x0, :lo12:__fern_alloc_count\n    ldr x0, [x0]\n");
   s = s.write("    str x0, [sp, #-16]!\n");
 
+  return s;
+}
+
+function arm64_zero_words(s: asmcore.EmitState, dst: string, n: i32): asmcore.EmitState {
+  let lo: asmcore.LabelOut = asmcore.fresh_label(s);
+  let lbl: string = lo.name;
+  s = lo.state;
+  s = s.write("    adrp x10, " + dst + "\n    add x10, x10, :lo12:" + dst + "\n");
+  s = s.write("    mov x11, #" + util.i32_to_string(n) + "\n");
+  s = s.write(lbl + ":\n");
+  s = s.write("    str xzr, [x10], #8\n");
+  s = s.write("    sub x11, x11, #1\n");
+  s = s.write("    cbnz x11, " + lbl + "\n");
+  return s;
+}
+
+// The cursor and the end move into [start, end), and both free lists are
+// zeroed so no block outside the region is handed out again.
+function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  s = s.need("heap");
+  s = s.write("    ldr x1, [sp], #16\n");
+  s = s.write("    ldr x0, [sp], #16\n");
+  s = s.write("    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    str x0, [x2]\n");
+  s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    str x1, [x2]\n");
+  if (s.leak_check) {
+    let l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    adrp x2, __fern_lc_adopt_lo\n    add x2, x2, :lo12:__fern_lc_adopt_lo\n    ldr x3, [x2]\n    cbnz x3, " + l.name + "\n");
+    s = s.write("    str x0, [x2]\n    adrp x2, __fern_lc_adopt_hi\n    add x2, x2, :lo12:__fern_lc_adopt_hi\n    str x1, [x2]\n");
+    s = s.write(l.name + ":\n");
+  }
+  s = arm64_zero_words(s, "__fern_freelist", 65536);
+  s = arm64_zero_words(s, "__fern_large_freelist", 2560);
+  s = s.write("    str xzr, [sp, #-16]!\n");
+  return s;
+}
+
+// The leak-check counters a worker region carries, at words 1 to 4 of its
+// header. x0 holds the region. The snapshot runs only when the mapping
+// succeeded.
+function arm64_lc_counters(): string[] {
+  return ["__fern_lc_alloc_count", "__fern_lc_alloc_bytes", "__fern_lc_free_count", "__fern_lc_free_bytes"];
+}
+
+function arm64_lc_counter_addr(s: asmcore.EmitState, k: i32): asmcore.EmitState {
+  let sym: string = arm64_lc_counters()[k];
+  return s.write("    adrp x1, " + sym + "\n    add x1, x1, :lo12:" + sym + "\n");
+}
+
+function arm64_worker_region_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check) {
+    return s;
+  }
+  let l: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = l.state.write("    cmp x0, #0\n    b.le " + l.name + "\n");
+  for k in 0..4 {
+    s = arm64_lc_counter_addr(s, k);
+    s = s.write("    ldr x2, [x1]\n    str x2, [x0, #" + util.i32_to_string(8 + 8 * k) + "]\n");
+  }
+  return s.write(l.name + ":\n");
+}
+
+function arm64_worker_exit_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check) {
+    return s;
+  }
+  for k in 0..4 {
+    let off: string = util.i32_to_string(8 + 8 * k);
+    s = arm64_lc_counter_addr(s, k);
+    s = s.write("    ldr x2, [x1]\n    ldr x3, [x0, #" + off + "]\n    sub x2, x2, x3\n    str x2, [x0, #" + off + "]\n");
+  }
+  return s;
+}
+
+function arm64_worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.leak_check) {
+    return s;
+  }
+  for k in 0..4 {
+    s = arm64_lc_counter_addr(s, k);
+    s = s.write("    ldr x2, [x1]\n    ldr x3, [x0, #" + util.i32_to_string(8 + 8 * k) + "]\n    add x2, x2, x3\n    str x2, [x1]\n");
+  }
   return s;
 }
 
@@ -6793,7 +6890,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
-    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps",
+    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
@@ -6910,6 +7007,8 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_lc_free_count: .quad 0\n");
   s = s.write("__fern_lc_free_bytes: .quad 0\n");
   s = s.write("__fern_lc_exited: .quad 0\n");
+  s = s.write("__fern_lc_adopt_lo: .quad 0\n");
+  s = s.write("__fern_lc_adopt_hi: .quad 0\n");
   s = s.write("    .section .rodata\n");
   s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
   s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
@@ -7477,7 +7576,7 @@ function apo_wrapped(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    bhs .Lapo_large\n");
   s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));
   s = s.write("    sub x2, x19, #16\n");
-  s = lc_bump_free_words(s, "x1", "x3", "x9");
+  s = lc_bump_free_words(s, "x1", "x3", "x9", "x2");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "x2", "x1", "x3", "x9");
   } else {
@@ -7578,7 +7677,7 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldur x1, [x19, #-16]\n    add x1, x1, #3\n    mov x9, #0x10000\n    cmp x1, x9\n    bhs .Lapou_large\n");
   s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));
   s = s.write("    sub x2, x19, #16\n");
-  s = lc_bump_free_words(s, "x1", "x3", "x9");
+  s = lc_bump_free_words(s, "x1", "x3", "x9", "x2");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "x2", "x1", "x3", "x9");
   } else {
@@ -7588,7 +7687,7 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lapou_large:\n");
   s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));
   if (s.rc_free_debug) {
-    s = lc_bump_free_words(s, "x1", "x3", "x9");
+    s = lc_bump_free_words(s, "x1", "x3", "x9", "x19");
     s = s.write("    sub x2, x19, #16\n");
     s = quar_push(s, "x2", "x1", 8);
     s = s.write("    b .Lapou_ret\n");
@@ -7794,10 +7893,33 @@ function lc_grow_bytes(s: asmcore.EmitState, old: string, grown: string, t: RegT
   return s;
 }
 
-function lc_bump_free_add(s: asmcore.EmitState, addend: string, t1: string, t2: string): asmcore.EmitState {
+// A free counts only inside the census bounds, once heap_adopt has set
+// them: a worker's child frees boxes of the parent's image, and those are
+// the parent's to count. `box` holds the block.
+function lc_bump_free_add(s: asmcore.EmitState, addend: string, t1: string, t2: string, box: string): asmcore.EmitState {
   if (!s.leak_check) {
     return s;
   }
+  let skip: asmcore.LabelOut = asmcore.fresh_label(s);
+  let count: asmcore.LabelOut = asmcore.fresh_label(skip.state);
+  s = count.state;
+  s = s.write("    adrp " + t1 + ", __fern_lc_adopt_lo\n");
+  s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_adopt_lo\n");
+  s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
+  s = s.write("    cbz " + t2 + ", " + count.name + "\n");
+  s = s.write("    cmp " + box + ", " + t2 + "\n");
+  s = s.write("    b.lo " + skip.name + "\n");
+  s = s.write("    adrp " + t1 + ", __fern_lc_adopt_hi\n");
+  s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_adopt_hi\n");
+  s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
+  s = s.write("    cmp " + box + ", " + t2 + "\n");
+  s = s.write("    b.hs " + skip.name + "\n");
+  s = s.write(count.name + ":\n");
+  s = lc_bump_free_counted(s, addend, t1, t2);
+  return s.write(skip.name + ":\n");
+}
+
+function lc_bump_free_counted(s: asmcore.EmitState, addend: string, t1: string, t2: string): asmcore.EmitState {
   s = s.write("    adrp " + t1 + ", __fern_lc_free_count\n");
   s = s.write("    add " + t1 + ", " + t1 + ", :lo12:__fern_lc_free_count\n");
   s = s.write("    ldr " + t2 + ", [" + t1 + "]\n");
@@ -7811,8 +7933,8 @@ function lc_bump_free_add(s: asmcore.EmitState, addend: string, t1: string, t2: 
   return s;
 }
 
-function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2: string): asmcore.EmitState {
-  return lc_bump_free_add(s, words + ", lsl #3", t1, t2);
+function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2: string, box: string): asmcore.EmitState {
+  return lc_bump_free_add(s, words + ", lsl #3", t1, t2, box);
 }
 
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string): asmcore.EmitState {
@@ -7856,7 +7978,7 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp " + words + ", x9\n");
   s = s.write("    b.hs ." + lbl + "_large\n");
-  s = lc_bump_free_words(s, words, "x3", "x10");
+  s = lc_bump_free_words(s, words, "x3", "x10", ptr);
   if (!s.rc_free_debug && raw) {
     s = freelist_push_classed(capw_class(s, words), ptr, words, "x3", "x10", "__fern_double_free_abort");
   } else if (!s.rc_free_debug) {
@@ -7867,7 +7989,7 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
   s = s.write("    b ." + lbl + "_done\n");
   s = s.write("." + lbl + "_large:\n");
   if (s.rc_free_debug) {
-    s = lc_bump_free_words(s, words, "x3", "x10");
+    s = lc_bump_free_words(s, words, "x3", "x10", ptr);
     s = quar_push(s, ptr, words, 16);
   } else {
     s = s.write("    mov x1, " + ptr + "\n");
@@ -9587,7 +9709,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    lsl x3, x3, #34\n");
   s = s.write("    cmp x2, x3\n");
   s = s.write("    b.hi .Llpush_ret\n");
-  s = lc_bump_free_add(s, "x2", "x3", "x4");
+  s = lc_bump_free_add(s, "x2", "x3", "x4", "x1");
   if (s.rc_free_debug) {
     s = s.write("    ret\n");
     s = s.write("__fern_large_push_now:\n");
@@ -9644,7 +9766,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    sub x2, x0, #16\n");
   s = s.write("    cmp x1, #256\n");
   s = s.write("    b.hi .Larrdec_big\n");
-  s = lc_bump_free_words(s, "x1", "x3", "x9");
+  s = lc_bump_free_words(s, "x1", "x3", "x9", "x2");
   if (!s.rc_free_debug) {
     s = s.write(".Larrdec_push:\n");
     s = freelist_push_classed(s, "x2", "x1", "x3", "x9", "");
@@ -9671,7 +9793,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x9, #0x10000\n");
   s = s.write("    cmp x1, x9\n");
   s = s.write("    bhs .Larrdec_large\n");
-  s = lc_bump_free_words(s, "x1", "x3", "x9");
+  s = lc_bump_free_words(s, "x1", "x3", "x9", "x2");
   if (!s.rc_free_debug) {
     s = s.write(rt_save_lr(s, "x1"));
     s = s.write("    bl __fern_capw\n");
@@ -9683,7 +9805,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Larrdec_large:\n");
   if (s.rc_free_debug) {
-    s = lc_bump_free_words(s, "x1", "x3", "x9");
+    s = lc_bump_free_words(s, "x1", "x3", "x9", "x2");
     s = quar_push(s, "x2", "x1", 8);
     s = s.write("    ret\n");
   } else {
@@ -9732,7 +9854,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    lsr x2, x2, #3\n");
   s = s.write("    cmp x2, x9\n");
   s = s.write("    bhs .Lstrfree_box\n");
-  s = lc_bump_free_words(s, "x2", "x3", "x10");
+  s = lc_bump_free_words(s, "x2", "x3", "x10", "x1");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "x1", "x2", "x3", "x10");
   } else {
@@ -9741,7 +9863,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lstrfree_box:\n");
   s = s.write(quarantine_rc("[x0, #-8]", "w10", s.rc_free_debug));
   s = s.write("    sub x1, x0, #8\n");
-  s = lc_bump_free_add(s, "#24", "x3", "x10");
+  s = lc_bump_free_add(s, "#24", "x3", "x10", "x1");
   if (!s.rc_free_debug) {
     s = freelist_push_slot(s, "x1", "x3", "x3, #24", "x10", "");
   } else {
@@ -9763,7 +9885,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lstrfree_block:\n");
   s = s.write("    cmp x2, #256\n");
   s = s.write("    b.hi .Lstrfree_fused_big\n");
-  s = lc_bump_free_words(s, "x2", "x3", "x10");
+  s = lc_bump_free_words(s, "x2", "x3", "x10", "x1");
   if (!s.rc_free_debug) {
     s = s.write(".Lstrfree_fused_push:\n");
     s = freelist_push_classed(s, "x1", "x2", "x3", "x10", "");
@@ -9774,7 +9896,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lstrfree_fused_big:\n");
   s = s.write("    cmp x2, x9\n");
   s = s.write("    bhs .Lstrfree_fused_large\n");
-  s = lc_bump_free_words(s, "x2", "x3", "x10");
+  s = lc_bump_free_words(s, "x2", "x3", "x10", "x1");
   if (!s.rc_free_debug) {
     s = s.write(rt_save_lr(s, "x2"));
     s = s.write("    bl __fern_capw\n");
@@ -9785,7 +9907,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Lstrfree_fused_large:\n");
   if (s.rc_free_debug) {
-    s = lc_bump_free_words(s, "x2", "x3", "x10");
+    s = lc_bump_free_words(s, "x2", "x3", "x10", "x1");
     s = s.write(".Lstrfree_quar:\n");
     s = s.write(rt_save_lr(s, ""));
     s = s.write("    mov x11, x2\n");
@@ -9838,7 +9960,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmp x1, x12\n");
   s = s.write("    bhs .Lstrvfree_ret\n");
   s = s.write(quarantine_rc("[x0, #-8]", "w10", s.rc_free_debug));
-  s = lc_bump_free_add(s, "#24", "x3", "x10");
+  s = lc_bump_free_add(s, "#24", "x3", "x10", "x1");
   if (!s.rc_free_debug) {
     s = freelist_push_slot(s, "x1", "x3", "x3, #24", "x10", "");
   } else {
@@ -10434,7 +10556,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write(".Lapo_large:\n");
     s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));
     if (s.rc_free_debug) {
-      s = lc_bump_free_words(s, "x1", "x3", "x9");
+      s = lc_bump_free_words(s, "x1", "x3", "x9", "x19");
       s = s.write("    sub x2, x19, #16\n");
       s = quar_push(s, "x2", "x1", 8);
     } else {
@@ -10805,6 +10927,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("proc_waitpid_status")) {
     s = emit_runtime("__fern_proc_waitpid_status", s);
+  }
+  if (s.has_need("worker_region")) {
+    s = emit_runtime("__fern_worker_region", s);
+  }
+  if (s.has_need("worker_exit")) {
+    s = emit_runtime("__fern_worker_exit", s);
   }
   if (s.has_need("timer_fd")) {
     s = emit_runtime("__fern_timer_fd", s);

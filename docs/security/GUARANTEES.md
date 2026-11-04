@@ -29,6 +29,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Every compile verifies its IR unless `FERN_IR_VERIFY=0` | `TestSelfHostIRVerifyGateRefuses`, `TestVerifyGateRunsOnNativeCompile` | x86 |
 | A value crosses a worker boundary only when it is send-safe: a `send` parameter refuses a `Cell`, a function value, a `dyn` value, a view, a handle and a `@must_consume` value, and a worker is joined exactly once | `conformance/cases/diag_e100`, `conformance/cases/diag_e100_closure_value`, `conformance/cases/diag_e067_worker_unjoined`, `TestSendParameterRefusesWhatCannotCrossAWorkerBoundary` | both checkers |
 | A value crosses a worker boundary as a fresh deep copy: `__send_copy` allocates one box per box of its argument, the copy has the same contents, and a sanitized run frees every box | `conformance/cases/send_copy_deep`, `TestSelfHostSendCopyAllocatesFreshBoxes` | x86, arm64, wasm |
+| On native Linux a worker runs in a process of its own, with a heap of its own: its allocations do not reach the parent's arena, and its result comes back through the shared region | `conformance/cases/worker_runs_in_its_own_process`, `TestSelfHostHeapAdoptIR` | x86, arm64 |
 
 ## Memory
 

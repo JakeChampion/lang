@@ -47,6 +47,11 @@ func (c *checker) sendUnsafeReason(t ast.Type, seen map[string]bool) string {
 	case ast.HandleType:
 		return "a resource handle is not copied"
 	case ast.ParamType:
+		// Inside the standard library a generic body copies a value its
+		// caller's `send` argument already admitted.
+		if c.inStdlibContext() {
+			return ""
+		}
 		return "type parameter " + v.Name + " is not known to be send-safe"
 	case ast.SelfType:
 		return "type parameter Self is not known to be send-safe"
