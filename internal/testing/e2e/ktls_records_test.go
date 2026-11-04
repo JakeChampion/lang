@@ -74,7 +74,7 @@ function only_record(raw: u8[]): record.Record {
 // at c and the kernel opens it at a, each from sequence number 5, so
 // the kernel's key structure (record.Protection.kernel_info) is shown to
 // carry the key, the IV, the salt and the sequence number.
-function suite(name: string, s: keyschedule.CipherSuite, ln: i32): string {
+function suite(name: string, s: keyschedule.CipherSuite, ln: Socket): string {
   let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
   let a: Socket = tcp_accept(ln);
   if (c.fd < 0 || a.fd < 0) {

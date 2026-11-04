@@ -228,7 +228,7 @@ function request(path: string): HttpRequest {
   return HttpRequest { method: "GET", path: path, body: ByteStream { data: [], pos: 0, source: None }, headers: headers.new().append("host", "tls.example"), trailers: headers.new() };
 }
 
-struct Cli { c: h3q.Conn, sock: i32, peer: net.SocketAddr, buf: u8[] }
+struct Cli { c: h3q.Conn, sock: Socket, peer: net.SocketAddr, buf: u8[] }
 
 function pump(k: Cli, ms: i32): Cli {
   let c2: h3q.Conn = k.c.transmit(now());
@@ -238,7 +238,7 @@ function pump(k: Cli, ms: i32): Cli {
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(k.sock, d, k.peer);
   }
-  let woke: async.Wake = async.wait_any([k.sock, 1], Some(clock.instant().add(time.duration_millis(ms))));
+  let woke: async.Wake = async.wait_any([k.sock.fd, 1], Some(clock.instant().add(time.duration_millis(ms))));
   let going: boolean = true;
   while (going) {
     match (net.recv_from(k.sock, k.buf)) {

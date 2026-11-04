@@ -142,7 +142,7 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
     write("listening\n");
     let c: Socket = tcp_accept(l);
     if (c.fd < 0) { write("accept-failed\n"); return 1; }
-    let p: i32 = tcp_pollable(c);
+    let p: i32 = tcp_pollable(c.fd);
     let ps: i32[] = [p];
     let i: i32 = wasm_poll(ps);
     write("polled="); print_int(i);

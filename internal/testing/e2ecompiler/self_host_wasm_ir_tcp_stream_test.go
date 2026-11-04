@@ -119,7 +119,7 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 	})
 }
 
-const wasmRecvHelper = `function recv(c: i32, max: i32): string {
+const wasmRecvHelper = `function recv(c: Socket, max: i32): string {
     let buf: u8[] = __alloc_u8(max);
     let n: i32 = tcp_recv_into(c, buf);
     let out: u8[] = [];

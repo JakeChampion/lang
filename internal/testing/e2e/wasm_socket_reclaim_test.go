@@ -17,8 +17,8 @@ func TestWasmTcpLifecycleCensus(t *testing.T) {
 func TestWasmSocketSetupReclaimsOnError(t *testing.T) {
 	fern := e2eharness.BuildLangBinForInterp(t)
 	for _, tc := range []struct{ name, prelude, expr string }{
-		{"listen", "", "tcp_listen(0)"},
-		{"connect", "", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
+		{"listen", "", "tcp_listen(0).fd"},
+		{"connect", "", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false).fd"},
 		{"udp", e2eharness.UDPSendOnce, "send_once([127u8, 0u8, 0u8, 1u8], 1, \"x\")"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,12 +40,12 @@ func TestWasmSocketCloseZeroHandles(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
-		{"accept", "tcp_accept(0)"},
+		{"accept", "tcp_accept(stdin_socket())"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			src, wasm := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wasm")
-			body := "function main(): i32 { let h: i32 = " + tc.expr + "; if (h < 0) { return h; } return tcp_close(h); }"
+			body := e2eharness.WasiSocketCloseProbe(tc.expr)
 			if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -62,8 +62,8 @@ func TestWasmSocketGuestStorage(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with(any, 1, false)"},
-		{"accept", "tcp_accept(0)"},
-		{"port", "tcp_local_port(0)"},
+		{"accept", "tcp_accept(stdin_socket())"},
+		{"port", "tcp_local_port(stdin_socket())"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

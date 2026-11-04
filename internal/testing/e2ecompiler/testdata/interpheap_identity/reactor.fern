@@ -10,7 +10,7 @@ function main(): i32 {
     let receiver: Socket = tcp_accept(listener);
     assert(receiver.fd >= 0);
     let reactor: i32 = reactor_new();
-    assert(reactor >= 0 && reactor_ctl(reactor, 1, receiver, 1) == 0);
+    assert(reactor >= 0 && reactor_ctl(reactor, 1, receiver.fd, 1) == 0);
     assert(tcp_send_bytes(sender, [65u8]) == 1);
     let events: i32[] = __alloc_i32(4);
     let slot: Cell[i32[]] = cell_new(events);

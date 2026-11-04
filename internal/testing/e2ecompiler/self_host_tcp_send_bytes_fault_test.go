@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostTCPSendBytesFaults(t *testing.T) {
@@ -27,10 +29,10 @@ func TestSelfHostTCPSendBytesFaults(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/bytes%d", compiler.name, size), func(t *testing.T) {
 				dir := t.TempDir()
 				src, bin := filepath.Join(dir, "fault.fern"), filepath.Join(dir, "fault.wasm")
-				program := fmt.Sprintf(`function main(): i32 {
+				program := fmt.Sprintf(e2eharness.StdinSocket+`function main(): i32 {
     let data: u8[] = [];
     for i in 0..%d { data = data.append((i %% 251) as u8); }
-    let n: i32 = tcp_send_bytes(0, data);
+    let n: i32 = tcp_send_bytes(stdin_socket(), data);
     if (data.len() != %d) { return -100; }
     for i in 0..data.len() { if (data[i] != (i %% 251) as u8) { return -101; } }
     return n;

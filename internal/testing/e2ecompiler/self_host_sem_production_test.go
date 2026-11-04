@@ -2953,7 +2953,7 @@ function sockets(): i32 {
             let a: Socket = tcp_accept(listener);
             if (a.fd >= 0) {
                 if (tcp_send_bytes(c, [112u8, 105u8, 110u8, 103u8]) == 4) { n = n + 1; }
-                if (tcp_pollable(c) == c.fd) { n = n + 1; }
+                if (tcp_pollable(c.fd) == c.fd) { n = n + 1; }
                 let got: u8[] = __alloc_u8(16);
                 if (tcp_recv_into(a, got) == 4 && got[0] as i32 == 112) { n = n + 1; }
                 if (tcp_close(a) >= 0) { n = n + 1; }

@@ -78,13 +78,16 @@ func TestTcpLocalPortRoundTrip(t *testing.T) {
 func TestTcpLocalPortInterp(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
-	src := `function main(): i32 {
+	src := `function unopened(): Socket {
+    unsafe { return __socket_from_fd(4242); }
+}
+function main(): i32 {
     let l: Socket = tcp_listen(0);
     if (l.fd < 0) { return 90; }
     let port: i32 = tcp_local_port(l);
     if (port <= 0) { return 91; }
     if (port > 65535) { return 92; }
-    if (tcp_local_port(4242) >= 0) { return 93; }
+    if (tcp_local_port(unopened()) >= 0) { return 93; }
     tcp_close(l);
     return 42;
 }`
@@ -110,8 +113,11 @@ func TestTcpLocalPortErrno(t *testing.T) {
 	qemu := x86QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
-	src := `function main(): i32 {
-    let p: i32 = tcp_local_port(0);
+	src := `function stdin_socket(): Socket {
+    unsafe { return __socket_from_fd(0); }
+}
+function main(): i32 {
+    let p: i32 = tcp_local_port(stdin_socket());
     if (p >= 0) { return 90; }
     return 42;
 }`
