@@ -821,7 +821,6 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_hev_caller2: .quad 0\n");
   }
   s = s.write("    .section .rodata\n");
-  s = s.write(".Lhev_sp:\n    .ascii \" \"\n");
   s = s.write(".Lhev_nl:\n    .ascii \"\\n\"\n");
   if (rc_trace_on()) {
     s = s.write(".Lhev_pre:\n    .ascii \"rctrace \"\n");
@@ -890,15 +889,15 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Lhev_emit:\n");
   if (rc_trace_on()) {
-    s = s.write("    leaq .Lhev_pre(%rip), %rsi\n");
-    s = s.write("    movq $8, %rdx\n");
-    s = s.write("    call .Lhev_w\n");
-    s = s.write("    subq $16, %rsp\n");
-    s = s.write("    movq %rbx, (%rsp)\n");
-    s = s.write("    movq %rsp, %rsi\n");
-    s = s.write("    movq $1, %rdx\n");
-    s = s.write("    call .Lhev_w\n");
-    s = s.write("    addq $16, %rsp\n");
+    // The line is built in a stack buffer and written once: a forked worker
+    // shares stderr with its parent, and a line of several writes tears.
+    s = s.write("    subq $128, %rsp\n");
+    s = s.write("    movq %rsp, %rdi\n");
+    s = s.write("    movq .Lhev_pre(%rip), %rax\n");
+    s = s.write("    movq %rax, (%rdi)\n");
+    s = s.write("    addq $8, %rdi\n");
+    s = s.write("    movb %bl, (%rdi)\n");
+    s = s.write("    addq $1, %rdi\n");
     s = s.write("    movq $0, %rbx\n");
     s = s.write("    testq %rbp, %rbp\n");
     s = s.write("    je .Lhev_nocaller\n");
@@ -930,9 +929,13 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    movq __fern_hev_caller2(%rip), %rbx\n");
       s = hev_field(s, "%rbx");
     }
-    s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
-    s = s.write("    movq $1, %rdx\n");
+    s = s.write("    movb $10, (%rdi)\n");
+    s = s.write("    addq $1, %rdi\n");
+    s = s.write("    movq %rsp, %rsi\n");
+    s = s.write("    movq %rdi, %rdx\n");
+    s = s.write("    subq %rsi, %rdx\n");
     s = s.write("    call .Lhev_w\n");
+    s = s.write("    addq $128, %rsp\n");
   }
   s = hev_restore(s);
   s = s.write("    ret\n");
@@ -943,10 +946,8 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   if (rc_trace_on()) {
     s = s.write(".Lhev_hex:\n");
-    s = s.write("    subq $32, %rsp\n");
-    s = s.write("    movq %rsp, %rsi\n");
-    s = s.write("    addq $16, %rsi\n");
-    s = s.write("    movq %rdi, %rax\n");
+    s = s.write("    addq $16, %rdi\n");
+    s = s.write("    movq %rdi, %rsi\n");
     s = s.write("    movq $16, %rcx\n");
     s = s.write(".Lhev_hexloop:\n");
     s = s.write("    movq %rax, %rdx\n");
@@ -962,10 +963,6 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    subq $1, %rcx\n");
     s = s.write("    testq %rcx, %rcx\n");
     s = s.write("    jne .Lhev_hexloop\n");
-    s = s.write("    movq %rsp, %rsi\n");
-    s = s.write("    movq $16, %rdx\n");
-    s = s.write("    call .Lhev_w\n");
-    s = s.write("    addq $32, %rsp\n");
     s = s.write("    ret\n");
   }
   if (s.leak_check) {
@@ -1192,11 +1189,11 @@ function hev_shim_site(s: asmcore.EmitState, tag: string): asmcore.EmitState {
   return s;
 }
 
+// Appends a space and the sixteen hex digits of reg at the cursor in %rdi.
 function hev_field(s: asmcore.EmitState, reg: string): asmcore.EmitState {
-  s = s.write("    leaq .Lhev_sp(%rip), %rsi\n");
-  s = s.write("    movq $1, %rdx\n");
-  s = s.write("    call .Lhev_w\n");
-  s = s.write("    movq " + reg + ", %rdi\n");
+  s = s.write("    movb $32, (%rdi)\n");
+  s = s.write("    addq $1, %rdi\n");
+  s = s.write("    movq " + reg + ", %rax\n");
   s = s.write("    call .Lhev_hex\n");
   return s;
 }
