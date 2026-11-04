@@ -2206,7 +2206,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// __send_adopt(addr) takes the box at addr as a value of the binding's
 	// declared type; checkCall types it from the expected type.
 	c.info.FuncSigs["__send_adopt"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{Width: 64, Signed: false}},
+		Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}},
 		Result: cellParam,
 	}
 	// __send_root(v) consumes a value and returns its address.
@@ -2218,7 +2218,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__send_root"] = &ast.FuncType{
 		Params:   []ast.Type{cellParam},
 		ParamOwn: []bool{true},
-		Result:   ast.NumberType{Width: 64, Signed: false},
+		Result:   ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"},
 	}
 	c.info.Methods["Cell.get"] = "__method_Cell_get"
 	c.info.FuncSigs["__method_Cell_get"] = &ast.FuncType{
@@ -14381,7 +14381,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			c.checkExpr(n.Args[0], s)
-			return ast.NumberType{Width: 64, Signed: false}
+			return ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_release" {
 			if len(n.Args) != 1 {

@@ -515,6 +515,7 @@ type Interp struct {
 	Env             map[string]string
 	Exiter          func(code int)
 	openFiles       map[int64]*os.File
+	sendRoots       []Value
 	nextFd          int64
 	closedStd       map[int64]bool
 	deferStack      [][]deferEntry
@@ -1428,11 +1429,26 @@ func New() *Interp {
 			return nil, fmt.Errorf("%s: the interpreter runs every worker inline", name)
 		}}
 	}
-	i.Builtins["__send_adopt"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) {
-		return nil, fmt.Errorf("__send_adopt: the interpreter has no region to adopt")
+	// A rooted value waits in a table, and its handle is the address the
+	// native runtime would give.
+	i.Builtins["__send_root"] = &Builtin{Fn: func(in *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("__send_root: expected 1 arg, got %d", len(args))
+		}
+		in.sendRoots = append(in.sendRoots, args[0])
+		return Number(len(in.sendRoots)), nil
 	}}
-	i.Builtins["__send_root"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) {
-		return nil, fmt.Errorf("__send_root: the interpreter has no region to hand over")
+	i.Builtins["__send_adopt"] = &Builtin{Fn: func(in *Interp, args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("__send_adopt: expected 1 arg, got %d", len(args))
+		}
+		h, ok := args[0].(Number)
+		if !ok || h <= 0 || int(h) > len(in.sendRoots) || in.sendRoots[h-1] == nil {
+			return nil, fmt.Errorf("__send_adopt: %v is not a root this process holds", args[0])
+		}
+		v := in.sendRoots[h-1]
+		in.sendRoots[h-1] = nil
+		return v, nil
 	}}
 	i.Builtins["__send_copy"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 1 {

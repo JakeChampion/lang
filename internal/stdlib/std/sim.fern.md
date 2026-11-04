@@ -7,9 +7,12 @@ This module runs futures with a deterministic virtual clock.
 A simulation owns a virtual clock, a seeded random state, and scripted readiness. Futures can progress against that state without wall-clock delays.
 The virtual clock starts at the instant `sim.at(DURATION_ZERO)`. Every time a test gives the simulation is an `Instant` on that clock.
 
+A simulation is a `worker.Scheduler`. A worker spawned on it with `worker.spawn_on` runs as a task, and its turns come from the seed. At each spawn the seed says whether a parked worker runs before the spawner goes on. A join runs the parked workers in the order of their deadlines until the joined worker is done.
+
 ## Contracts
 
 Tests control readiness and time advancement. Seed sweeps repeat a property over deterministic states so a test can reproduce a failed seed.
+A worker that parks on the simulation moves its clock when it is resumed. A worker that waits for an event the simulation never gives stops the program with exit 134 at its join.
 
 ## Executable example
 
@@ -49,6 +52,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32>>
 
 <<10 pub function future_at[T](at: Instant, v: T): async.Future[T]>>
+
+<<11 impl worker.Scheduler for Sim>>
 ```
 
 ### `module introduction`
@@ -66,13 +71,19 @@ import "std/i32";
 import "std/async";
 import "std/rand";
 import "std/time";
+import "std/worker";
 ```
 
 ### `3 pub struct Sim`
 
 ```fern
 <<3 pub struct Sim>>=
-pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64], watched: Cell[string], readiness: Cell[string] }
+pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64], watched: Cell[string], readiness: Cell[string], workers: Cell[WorkerSlot[]] }
+
+// A worker of the simulation: its task, the root of its thunk while it is
+// parked, its wait, and the root of its result once it is done. A worker
+// that is running has no root yet.
+pub struct WorkerSlot { id: i32, root: i64, set: i32[], until: Option[Instant], done: boolean }
 ```
 
 ### `4 pub function new(seed: i64): Sim`
@@ -80,7 +91,8 @@ pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64], watched: Cell[string], rea
 ```fern
 <<4 pub function new(seed: i64): Sim>>=
 pub function new(seed: i64): Sim {
-  return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(rand.rng_seed(seed)), watched: cell_new(""), readiness: cell_new("") };
+  let none: WorkerSlot[] = [];
+  return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(rand.rng_seed(seed)), watched: cell_new(""), readiness: cell_new(""), workers: cell_new(none) };
 }
 
 // The virtual instant `offset` after the simulation starts.
@@ -426,5 +438,121 @@ pub function future_chain[T](at: Instant, step: Duration, resuspends: i32, v: T)
 function __pend[T](at: Instant, next: async.Future[T]): async.Future[T] {
   let none: i32[] = [];
   return Pending(async.Wait { set: none, until: Some(at) }, (wake: async.Wake): async.Future[T] => next);
+}
+```
+
+### `11 impl worker.Scheduler for Sim`
+
+A worker's body starts at `spawn`, as a process reads its captures at the
+fork. A body that parks waits in its slot, and the thunk of its task is
+rooted, so the slot holds plain words. A turn adopts the thunk back, moves
+the clock to the wait's deadline and resumes the task.
+
+```fern
+<<11 impl worker.Scheduler for Sim>>=
+impl worker.Scheduler for Sim {
+  function admit(self: Sim, run: () => usize): i32 {
+    let t: async.Task[usize] = async.task_new(run);
+    let index: i32 = __slot_add(self, WorkerSlot { id: t.id, root: 0i64, set: [], until: None, done: false });
+    __slot_set(self, index, __turned(t, async.task_start(t)));
+    __worker_turns(self, 0 - 1);
+    return index;
+  }
+  function finish(self: Sim, index: i32): usize {
+    __worker_turns(self, index);
+    return self.workers.get()[index].root as usize;
+  }
+}
+
+function __slot_add(s: Sim, slot: WorkerSlot): i32 {
+  let slots: WorkerSlot[] = s.workers.get();
+  s.workers.set(slots.append(slot));
+  return slots.len();
+}
+
+function __slot_set(s: Sim, index: i32, slot: WorkerSlot): void {
+  s.workers.set(s.workers.get().with(index, slot));
+}
+
+// The slot of a task after a turn: the root of its result when it is done,
+// or its wait and the root of its thunk while it is parked.
+function __turned(t: async.Task[usize], st: async.TaskStatus[usize]): WorkerSlot {
+  match (st) {
+    Done(root) => {
+      return WorkerSlot { id: t.id, root: root as i64, set: [], until: None, done: true };
+    },
+    Suspended(w) => {
+      unsafe {
+        let root: usize = __send_root(t.entry);
+        return WorkerSlot { id: t.id, root: root as i64, set: w.set, until: w.until, done: false };
+      }
+    }
+  }
+}
+
+function __adopt_thunk(root: usize): () => usize {
+  unsafe {
+    let f: () => usize = __send_adopt(root);
+    return f;
+  }
+}
+
+// Seeded turns of the parked workers. With `until` at a worker, the turns go
+// on until that worker is done. Otherwise each turn is the seed's call, and
+// the spawner goes on when the seed says so.
+function __worker_turns(s: Sim, until: i32): void {
+  while (true) {
+    if (until >= 0) {
+      if (s.workers.get()[until].done) {
+        return;
+      }
+    } else if (__roll(s, 2) == 0) {
+      return;
+    }
+    let next: i32 = __next_slot(s);
+    if (next < 0) {
+      if (until < 0) {
+        return;
+      }
+      eprint("sim: worker " + until.to_string() + " waits for an event the simulation never gives");
+      exit(134);
+    }
+    __resume_slot(s, next);
+  }
+}
+
+// The parked worker whose wait is due soonest. The seed breaks a tie.
+function __next_slot(s: Sim): i32 {
+  let now_ns: i64 = s.clock_ns.get();
+  let best: i64 = 0 - 1;
+  let ties: i32[] = [];
+  let slots: WorkerSlot[] = s.workers.get();
+  for i in 0..slots.len() {
+    if (!slots[i].done && slots[i].root != 0i64) {
+      let due: i64 = __wait_due(async.Wait { set: slots[i].set, until: slots[i].until }, now_ns, None);
+      if (due >= 0) {
+        if (ties.len() == 0 || due < best) {
+          best = due;
+          ties = [i];
+        } else if (due == best) {
+          ties = ties.append(i);
+        }
+      }
+    }
+  }
+  if (ties.len() == 0) {
+    return 0 - 1;
+  }
+  if (ties.len() == 1) {
+    return ties[0];
+  }
+  return ties[__roll(s, ties.len())];
+}
+
+function __resume_slot(s: Sim, index: i32): void {
+  let slot: WorkerSlot = s.workers.get()[index];
+  let t: async.Task[usize] = async.Task { id: slot.id, entry: __adopt_thunk(slot.root as usize) };
+  s.clock_ns.set(__wait_due(async.Wait { set: slot.set, until: slot.until }, s.clock_ns.get(), None));
+  __slot_set(s, index, __turned(t, async.task_resume(t, async.Wake.TimedOut)));
 }
 ```
