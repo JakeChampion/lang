@@ -84,7 +84,7 @@ function other(): Different { return Different.Good(7); }
 		{"primitive", `function f(v: Outer): Outcome { return match (v) { Outer.Wrapped(Inner.Data(s)) => 7, _ => 8 }; }`, "E002"},
 		{"nominal", `function f(v: Outer): Outcome { return match (v) { Outer.Wrapped(Inner.Data(s)) => other(), _ => other() }; }`, "E002"},
 		{"annotated local", `function f(v: Outer): Outcome { let out: Outcome = match (v) { Outer.Wrapped(Inner.Data(s)) => other(), _ => other() }; return out; }`, "E003"},
-		{"mixed arms", `function f(v: Outer): Outcome { return match (v) { Outer.Wrapped(Inner.Data(s)) => good(), _ => true }; }`, "E003"},
+		{"mixed arms", `function f(v: Outer): Outcome { return match (v) { Outer.Wrapped(Inner.Data(s)) => good(), _ => true }; }`, "E031"},
 		{"generic payload", `function f(v: Outer): Box[string] { return match (v) { Outer.Wrapped(Inner.Data(s)) => Boxed(7), _ => Boxed(8) }; }`, "E002"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
