@@ -29,3 +29,15 @@ pub function event(): Event {
 pub function event_value(e: Event): i32 {
   return match (e) { Group(g) => g.n, Quiet => 0 };
 }
+
+pub struct OtherGroup { n: i32 }
+
+pub type EventUnion = Group | OtherGroup;
+
+pub function union_event(): EventUnion {
+  return Group { n: 7 };
+}
+
+pub function union_event_value(e: EventUnion): i32 {
+  return match (e) { Group(g) => g.n, OtherGroup(q) => q.n };
+}

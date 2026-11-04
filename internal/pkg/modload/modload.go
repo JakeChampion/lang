@@ -1123,6 +1123,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		ownFuncs:      ownFuncs,
 		ownStructs:    ownStructs,
 		ownEnums:      ownEnums,
+		ownVariants:   m.allVariants,
 		ownConsts:     ownConsts,
 		ownTraits:     ownTraits,
 		imports:       m.imports,
@@ -1249,6 +1250,7 @@ type rewriter struct {
 	ownFuncs      map[string]bool
 	ownStructs    map[string]bool
 	ownEnums      map[string]bool
+	ownVariants   map[string]string
 	ownConsts     map[string]bool
 	ownTraits     map[string]bool
 	imports       map[string]*module
@@ -1803,7 +1805,10 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, bra
 		*armName = prefix + *armName
 		return
 	}
-	if braces && r.ownStructs[*armName] {
+	// A declared enum variant keeps its own name. A union member instead
+	// uses the qualified name of its struct, also in a parenthesized pattern.
+	_, enumVariant := r.ownVariants[*armName]
+	if r.ownStructs[*armName] && (braces || !enumVariant) {
 		*armName = r.selfPrefix + *armName
 	}
 }

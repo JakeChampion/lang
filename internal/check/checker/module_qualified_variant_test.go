@@ -192,4 +192,46 @@ pub function event(): Event { return Event.Group(Group { n: 7 }); }
 			t.Fatalf("a public struct must not hide the private-variant diagnostic:\n%v", err)
 		}
 	})
+
+	t.Run("union-member-inside-imported-module", func(t *testing.T) {
+		err := loadCheckFiles(t, map[string]string{
+			"events.fern": `pub struct Joined { n: i32 }
+pub struct Left { n: i32 }
+pub type Event = Joined | Left;
+pub function value(e: Event): i32 {
+  return match (e) { Joined(g) => g.n, Left(g) => g.n };
+}
+pub function nested(e: Event): i32 {
+  match (Some(e)) { Some(Joined(g)) => { return g.n; }, _ => { return 0; } }
+  return 0;
+}
+pub function event(): Event { return Joined { n: 7 }; }
+`,
+			"main.fern": "import \"./events\";\nfunction main(): i32 { return events.value(events.event()) + events.nested(events.event()); }\n",
+		}, "main.fern")
+		if err != nil {
+			t.Fatalf("union member patterns must retain their qualified struct names:\n%v", err)
+		}
+	})
+
+	t.Run("enum-and-union-share-a-struct", func(t *testing.T) {
+		err := loadCheckFiles(t, map[string]string{
+			"events.fern": lib + `pub type Union = Group | Quiet;
+pub function union_value(e: Union): i32 {
+  return match (e) { Group(g) => g.n, Quiet(q) => q.n };
+}
+pub function union_event(): Union { return Group { n: 7 }; }
+`,
+			"main.fern": `import "./events";
+function value(e: events.Union): i32 {
+  match (Some(e)) { Some(events.Group(g)) => { return g.n; }, _ => { return 0; } }
+  return 0;
+}
+function main(): i32 { return events.union_value(events.union_event()) + value(events.union_event()); }
+`,
+		}, "main.fern")
+		if err != nil {
+			t.Fatalf("the scrutinee must distinguish declared variants from union members:\n%v", err)
+		}
+	})
 }

@@ -41,6 +41,11 @@ function main(): i32 {
   if (event_n != 7 || shapes.event_value(event) != 7) {
     return 18;
   }
+  let union_event: shapes.EventUnion = shapes.union_event();
+  let union_n: i32 = match (union_event) { shapes.Group(g) => g.n, shapes.OtherGroup(q) => q.n };
+  if (union_n != 7 || shapes.union_event_value(union_event) != 7) {
+    return 25;
+  }
   match (Some(event)) {
     Some(shapes.Group(g)) => {
       if (g.n != 7) {
