@@ -23,6 +23,15 @@ const MIC: string = "android.permission.RECORD_AUDIO";
 // while the window is not on the screen.
 const SERVICE: string = "dev.fern.walkie.Talk";
 
+// The receiver of the Wi-Fi Direct broadcasts.
+const RECEIVER: string = "dev.fern.walkie.Direct";
+
+// Wi-Fi Direct discovery needs NEARBY_WIFI_DEVICES from API level 33, and
+// the fine location before that.
+const NEARBY: string = "android.permission.NEARBY_WIFI_DEVICES";
+
+const LOCATION: string = "android.permission.ACCESS_FINE_LOCATION";
+
 struct App {
   ctx: usize,
   window: usize,
@@ -37,6 +46,14 @@ struct App {
   drawn: string,
   asked: boolean,
   serving: boolean,
+  p2p: Option[android.P2p],
+  peers: android.P2pPeer[],
+  group_broadcast: Option[net.IpAddr],
+}
+
+@jni("dev.fern.walkie.Direct extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
+pub function direct_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
+  android.p2p_received(env, thiz, intent);
 }
 
 @jni("dev.fern.walkie.Talk extends android.app.Service", "android.os.IBinder onBind(android.content.Intent)")
@@ -112,7 +129,7 @@ function app_main(ctx: usize): usize {
   android.keep_screen_on(ctx, true);
   let n: node.Node = fresh_node(notice);
   log.warn("walkie: node " + n.link.me.to_string() + ", port " + port.to_string() + ", socket " + fd.to_string() + ", speaker rate " + spk.rate.to_string());
-  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), pressed: false, drawn: "", asked: false, serving: false };
+  let first: App = App { ctx: ctx, window: 0 as usize, sock: sock, node: n, mic: audio.Stream { ptr: 0 as usize, rate: 0 }, spk: spk, capturing: false, up: pcm.resampler(voice.RATE, voice.RATE), down: pcm.resampler(voice.RATE, spk.rate), pressed: false, drawn: "", asked: false, serving: false, p2p: None, peers: [], group_broadcast: None };
   let last: App = android.run(ctx, first, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 10);
   shut(last);
   return 0 as usize;
@@ -164,24 +181,122 @@ function event(own s: App, e: android.Event): App {
       return destroyed(s);
     },
     _ => {
+      return direct_event(s, e);
+    }
+  }
+}
+
+// The Wi-Fi Direct events.
+function direct_event(own s: App, e: android.Event): App {
+  match (e) {
+    android.P2pEnabled(on) => {
+      log.info("walkie: Wi-Fi Direct " + on.to_string());
+      return discover(s);
+    },
+    android.P2pPeers(list) => {
+      return App { ...s, peers: list, drawn: "" };
+    },
+    android.P2pGroup(g) => {
+      return grouped(s, g);
+    },
+    _ => {
       return s;
     }
   }
+}
+
+function discover(own s: App): App {
+  if let Some(p) = s.p2p {
+    let started: boolean = android.p2p_discover(s.ctx, p);
+    log.info("walkie: looking for Wi-Fi Direct peers " + started.to_string());
+  }
+  return s;
+}
+
+// The broadcast address of the group's subnet, a.b.c.255 for the owner
+// a.b.c.d. The beacons go there as well, so that the two phones find each
+// other on the group.
+function subnet_broadcast(owner: string): Option[net.IpAddr] {
+  match (net.ip_parse(owner)) {
+    Ok(net.V4(b)) => {
+      if (b.len() == 4) {
+        return Some(net.V4([b[0], b[1], b[2], 255u8]));
+      }
+      return None;
+    },
+    _ => {
+      return None;
+    }
+  }
+}
+
+function grouped(own s: App, g: android.P2pGroup): App {
+  if (!g.formed) {
+    log.info("walkie: no Wi-Fi Direct group");
+    return App { ...s, group_broadcast: None, drawn: "" };
+  }
+  log.info("walkie: Wi-Fi Direct group, owner " + g.owner_address + ", this phone owns it " + g.owner.to_string());
+  return App { ...s, group_broadcast: subnet_broadcast(g.owner_address), node: node.noticed(s.node, ""), drawn: "" };
+}
+
+function nearby_permission(ctx: usize): string {
+  if (android.sdk_version(ctx) >= 33) {
+    return NEARBY;
+  }
+  return LOCATION;
+}
+
+// Starts Wi-Fi Direct once the app may look for nearby devices.
+function start_direct(own s: App): App {
+  if (s.p2p.is_some() || !android.has_permission(s.ctx, nearby_permission(s.ctx))) {
+    return s;
+  }
+  match (android.p2p_start(s.ctx, RECEIVER)) {
+    Some(p) => {
+      return discover(App { ...s, p2p: Some(p) });
+    },
+    None => {
+      log.info("walkie: this phone has no Wi-Fi Direct");
+      return s;
+    }
+  }
+}
+
+// The peer whose row is at (x, y), or -1.
+function peer_at(s: App, w: i32, h: i32, x: f32, y: f32): i32 {
+  for k in 0..s.peers.len() {
+    if (k < screen.PEER_ROWS && screen.contains(screen.peer_row(w, h, k), x, y)) {
+      return k;
+    }
+  }
+  return 0 - 1;
+}
+
+// Invites peer `k`. Android asks the other user to accept.
+function invite(own s: App, k: i32): App {
+  let Some(p) = s.p2p else {
+    return s;
+  };
+  let peer: android.P2pPeer = s.peers[k];
+  let sent: boolean = android.p2p_connect(s.ctx, p, peer.address);
+  log.info("walkie: invited " + peer.name + " " + sent.to_string());
+  return App { ...s, node: node.noticed(s.node, "invited " + peer.name + ": accept on the other phone"), drawn: "" };
 }
 
 // Asks for the microphone once the activity is in front. With the
 // microphone, it starts the foreground service.
 function resumed(own s: App): App {
   let mic: boolean = android.has_permission(s.ctx, MIC);
-  if (!s.asked && !mic) {
-    android.request_permissions(s.ctx, [MIC]);
+  let nearby: string = nearby_permission(s.ctx);
+  if (!s.asked && (!mic || !android.has_permission(s.ctx, nearby))) {
+    android.request_permissions(s.ctx, [MIC, nearby]);
   }
   let serving: boolean = s.serving;
   if (mic && !serving) {
     serving = android.start_service(s.ctx, SERVICE);
     log.info("walkie: foreground service " + serving.to_string());
   }
-  return App { ...s, asked: true, serving: serving, drawn: "" };
+  return start_direct(App { ...s, asked: true, serving: serving, drawn: "" });
 }
 
 // The back key leaves the session.
@@ -197,7 +312,10 @@ function destroyed(own s: App): App {
   if (s.serving) {
     android.stop_service(s.ctx, SERVICE);
   }
-  return App { ...s, serving: false };
+  if let Some(p) = s.p2p {
+    android.p2p_stop(s.ctx, p);
+  }
+  return App { ...s, serving: false, p2p: None };
 }
 
 // Leaves the session and closes the app.
@@ -220,20 +338,38 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   if (w == 0) {
     return s;
   }
-  let now: i64 = now_ms();
   let down: boolean = action == 0;
   match (s.node.link.phase) {
     lan.Verifying => {
-      if (down && screen.contains(screen.same_button(w, h), x, y)) {
-        return App { ...s, node: node.confirm(s.node, now) };
+      return verify_touch(s, w, h, x, y, down);
+    },
+    lan.Searching => {
+      let k: i32 = peer_at(s, w, h, x, y);
+      if (down && k >= 0) {
+        return invite(s, k);
       }
-      if (down && screen.contains(screen.differ_button(w, h), x, y)) {
-        return App { ...s, node: node.reject(s.node, now) };
-      }
-      return s;
     },
     _ => {}
   }
+  return talk_touch(s, w, h, action, x, y);
+}
+
+// SAME or DIFFERENT, while the users compare the strings.
+function verify_touch(own s: App, w: i32, h: i32, x: f32, y: f32, down: boolean): App {
+  let now: i64 = now_ms();
+  if (down && screen.contains(screen.same_button(w, h), x, y)) {
+    return App { ...s, node: node.confirm(s.node, now) };
+  }
+  if (down && screen.contains(screen.differ_button(w, h), x, y)) {
+    return App { ...s, node: node.reject(s.node, now) };
+  }
+  return s;
+}
+
+// The talk button: hold to talk, or tap to search again after the end.
+function talk_touch(own s: App, w: i32, h: i32, action: i32, x: f32, y: f32): App {
+  let now: i64 = now_ms();
+  let down: boolean = action == 0;
   if (down && screen.contains(screen.talk_button(w, h), x, y)) {
     if (node.ended(s.node)) {
       return restart(s);
@@ -319,9 +455,7 @@ function flush(s: App): App {
   if let Some(sock) = s.sock {
     for d in n.out {
       if (d.broadcast) {
-        for port in [lan.PORT, lan.SECOND_PORT] {
-          let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, net.socket_addr(net.V4([255u8, 255u8, 255u8, 255u8]), port));
-        }
+        beacon(sock, d.data, s.group_broadcast);
       } else {
         let sent: Result[i32, net.NetError] = net.send_to(sock, d.data, n.peer_addr);
       }
@@ -337,6 +471,36 @@ function flush(s: App): App {
     log.info("walkie: " + l);
   }
   return App { ...s, down: down, node: node.drained(n) };
+}
+
+// A beacon goes to the broadcast address on each walkie port, and to the
+// subnet of the Wi-Fi Direct group when there is one.
+function beacon(sock: Socket, data: u8[], group: Option[net.IpAddr]): void {
+  let to: net.IpAddr[] = [net.V4([255u8, 255u8, 255u8, 255u8])];
+  if let Some(g) = group {
+    to = to.append(g);
+  }
+  for ip in to {
+    for port in [lan.PORT, lan.SECOND_PORT] {
+      let sent: Result[i32, net.NetError] = net.send_to(sock, data, net.socket_addr(ip, port));
+    }
+  }
+}
+
+// The Wi-Fi Direct peers, one row each, while the phone looks for a peer.
+function draw_peers(f: android.Frame, s: App, sc: i32): void {
+  let white: i32 = android.rgb(230, 230, 230);
+  for k in 0..s.peers.len() {
+    if (k < screen.PEER_ROWS) {
+      let row: screen.Rect = screen.peer_row(f.width, f.height, k);
+      let label: string = s.peers[k].name;
+      if (s.peers[k].status == 1) {
+        label = label + " (invited)";
+      }
+      f.fill(row.x, row.y, row.w, row.h, android.rgb(60, 60, 110));
+      f.text(row.x + row.w / 30, row.y + row.h / 2 - draw.text_height(sc) / 2, label, sc, white);
+    }
+  }
 }
 
 function button_color(label: string): i32 {
@@ -367,11 +531,20 @@ function fit_scale(text: string, w: i32, cap: i32): i32 {
   return sc;
 }
 
+// The peers as they show, so that a change draws the screen again.
+function peer_key(s: App): string {
+  let out: string = "";
+  for p in s.peers {
+    out = out + p.name + p.status.to_string() + ";";
+  }
+  return out;
+}
+
 function draw(s: App): App {
   let n: node.Node = s.node;
   let label: string = node.button(n, now_ms());
   let status: string = node.status(n);
-  let key: string = status + "|" + n.notice + "|" + label + "|" + n.link.sas;
+  let key: string = status + "|" + n.notice + "|" + label + "|" + n.link.sas + "|" + peer_key(s);
   if (s.window == 0 as usize || key == s.drawn) {
     return s;
   }
@@ -409,6 +582,9 @@ function draw(s: App): App {
       f.fill(differ.x, differ.y, differ.w, differ.h, android.rgb(170, 50, 50));
       f.text(screen.center_x(same, draw.text_width("SAME", sc)), same.y + same.h / 2 - draw.text_height(sc) / 2, "SAME", sc, white);
       f.text(screen.center_x(differ, draw.text_width("DIFFERENT", sc)), differ.y + differ.h / 2 - draw.text_height(sc) / 2, "DIFFERENT", sc, white);
+    },
+    lan.Searching => {
+      draw_peers(f, s, sc);
     },
     _ => {}
   }

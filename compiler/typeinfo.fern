@@ -252,11 +252,10 @@ pub function lane_builtin_width(name: string): i32 {
   if (name.len() <= 8) {
     return 0;
   }
-  let head: string = slice_unchecked(name, 0, 8) + "";
-  if (head == "__f64x2_") {
+  if (__mismatch(name, 0, "__f64x2_", 0, 8) == 8) {
     return 64;
   }
-  if (head == "__f32x4_") {
+  if (__mismatch(name, 0, "__f32x4_", 0, 8) == 8) {
     return 32;
   }
   return 0;

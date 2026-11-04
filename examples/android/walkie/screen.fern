@@ -76,6 +76,14 @@ pub function differ_button(w: i32, h: i32): Rect {
   return Rect { x: w * 11 / 20, y: h * 3 / 10, w: w * 7 / 20, h: h / 8 };
 }
 
+// The number of Wi-Fi Direct peers that the screen lists.
+pub const PEER_ROWS: i32 = 3;
+
+// The row of peer `k` in the list, above the talk button.
+pub function peer_row(w: i32, h: i32, k: i32): Rect {
+  return Rect { x: w / 10, y: h * 3 / 10 + k * (h / 15), w: w * 8 / 10, h: h / 18 };
+}
+
 // The x of `text_w` pixels of text in the middle of `r`.
 pub function center_x(r: Rect, text_w: i32): i32 {
   return r.x + (r.w - text_w) / 2;

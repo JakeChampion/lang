@@ -14,17 +14,50 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
+// The probe parses every case in one interpreter run, because loading the
+// parser closure costs far more than one parse. Each case's output ends
+// with parseErrPosSep.
 const parseErrPosProbe = `import "./lexer";
 import "./parser";
 import "./asmcore";
 import "./util";
 function main(): i32 {
-    let src: string = %s;
-    let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    print(util.format_diags(asmcore.parse_unknown_errors_module(mod)));
+    let srcs: string[] = [%s];
+    for src in srcs {
+        let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+        print(util.format_diags(asmcore.parse_unknown_errors_module(mod)));
+        print("` + parseErrPosSep + `");
+    }
     return 0;
 }
 `
+
+const parseErrPosSep = "@@parse-probe-case@@"
+
+// selfHostParseOutputs returns, for each source, what the self-host parser
+// prints for it: its diagnostics and a newline.
+func selfHostParseOutputs(t *testing.T, fernBin, stage string, srcs []string) []string {
+	t.Helper()
+	lits := make([]string, len(srcs))
+	for i, src := range srcs {
+		lits[i] = fernStringLit(src)
+	}
+	probe := filepath.Join(stage, "main.fern")
+	if err := os.WriteFile(probe, []byte(fmt.Sprintf(parseErrPosProbe, strings.Join(lits, ", "))), 0o644); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+	var out, errb bytes.Buffer
+	cmd := exec.Command(fernBin, "-interp", probe)
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("probe failed: %v\nstdout: %s\nstderr: %s", err, out.String(), errb.String())
+	}
+	parts := strings.Split(out.String(), parseErrPosSep+"\n")
+	if len(parts) != len(srcs)+1 || parts[len(srcs)] != "" {
+		t.Fatalf("probe printed %d case outputs for %d cases\nstdout: %s", len(parts)-1, len(srcs), out.String())
+	}
+	return parts[:len(srcs)]
+}
 
 var (
 	selfHostDiagPos = regexp.MustCompile(`error\[(P\d+)\]: (?:in fn '[^']*': |at top level: )?(.*) \((\d+):(\d+)\)`)
@@ -127,21 +160,15 @@ func TestSelfHostParseErrorPositions(t *testing.T) {
 	fernBin := buildLangBinForInterp(t)
 	stage := stageParseProbeTree(t)
 
-	for _, tc := range parseErrPosCases {
+	srcs := make([]string, len(parseErrPosCases))
+	for i, tc := range parseErrPosCases {
+		srcs[i] = tc.src
+	}
+	outs := selfHostParseOutputs(t, fernBin, stage, srcs)
+	for i, tc := range parseErrPosCases {
 		t.Run(tc.name, func(t *testing.T) {
 			wantCode, wantLine, wantCol, wantMsg := nativeParsePos(t, fernBin, tc.src)
-
-			probe := filepath.Join(stage, "main.fern")
-			if err := os.WriteFile(probe, []byte(fmt.Sprintf(parseErrPosProbe, fernStringLit(tc.src))), 0o644); err != nil {
-				t.Fatalf("write probe: %v", err)
-			}
-			var out, errb bytes.Buffer
-			cmd := exec.Command(fernBin, "-interp", probe)
-			cmd.Stdout, cmd.Stderr = &out, &errb
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("probe failed: %v\nstdout: %s\nstderr: %s", err, out.String(), errb.String())
-			}
-			got := out.String()
+			got := outs[i]
 			m := earliestSelfHostDiag(got)
 			if m == nil {
 				t.Fatalf("self-host raised no positioned parse diagnostic for this program\ngot: %q", got)
@@ -293,19 +320,14 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			""},
 	}
 
-	for _, tc := range cases {
+	srcs := make([]string, len(cases))
+	for i, tc := range cases {
+		srcs[i] = tc.src
+	}
+	outs := selfHostParseOutputs(t, fernBin, stage, srcs)
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			probe := filepath.Join(stage, "main.fern")
-			if err := os.WriteFile(probe, []byte(fmt.Sprintf(parseErrPosProbe, fernStringLit(tc.src))), 0o644); err != nil {
-				t.Fatalf("write probe: %v", err)
-			}
-			var out, errb bytes.Buffer
-			cmd := exec.Command(fernBin, "-interp", probe)
-			cmd.Stdout, cmd.Stderr = &out, &errb
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("probe failed: %v\nstdout: %s\nstderr: %s", err, out.String(), errb.String())
-			}
-			got := strings.TrimRight(out.String(), "\n")
+			got := strings.TrimRight(outs[i], "\n")
 			if got != tc.want {
 				t.Errorf("diagnostic sequence:\n%s\nwant:\n%s\n"+
 					"    A change here means the pre-check's emission order, count, text or\n"+
@@ -415,21 +437,18 @@ func TestSelfHostStatementTerminators(t *testing.T) {
 		{"refused-expression-one-error", "function main(): i32 { let x: i32 = 1; return x +; }\n",
 			"error[P001]: in fn 'main': expected an expression, got \";\" (1:50)"},
 	}
-	for _, tc := range cases {
+	srcs := make([]string, len(cases))
+	for i, tc := range cases {
+		srcs[i] = tc.src
+	}
+	outs := selfHostParseOutputs(t, fernBin, stage, srcs)
+	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, goErr := parser.Parse(tc.src)
 			if (goErr != nil) != (tc.want != "") {
 				t.Fatalf("the Go parser's verdict (%v) disagrees with the row", goErr)
 			}
-			probe := filepath.Join(stage, "main.fern")
-			if err := os.WriteFile(probe, []byte(fmt.Sprintf(parseErrPosProbe, fernStringLit(tc.src))), 0o644); err != nil {
-				t.Fatalf("write probe: %v", err)
-			}
-			out, err := exec.Command(fernBin, "-interp", probe).Output()
-			if err != nil {
-				t.Fatalf("probe failed: %v\nstdout: %s", err, out)
-			}
-			if got := strings.TrimSpace(string(out)); got != tc.want {
+			if got := strings.TrimSpace(outs[i]); got != tc.want {
 				t.Errorf("got  %q\nwant %q", got, tc.want)
 			}
 		})

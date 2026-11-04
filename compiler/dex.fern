@@ -1,8 +1,9 @@
 // The DEX writer of fern -apk: Java classes whose methods are native
 // methods, for an app with no Java source. Each class gets a public
 // constructor with no arguments, which calls the constructor of its
-// superclass, and a static initializer, which calls System.loadLibrary. ART
-// then binds each native method to its Java_ export in that library.
+// superclass, a static initializer, which calls System.loadLibrary, and the
+// field `public static long fern` for the state of the library. ART then
+// binds each native method to its Java_ export in that library.
 //
 // The file is the DEX 035 format: the header, the sorted ID sections, then
 // the code, the type lists, the strings, the class data and the map.
@@ -137,7 +138,11 @@ function method_ids(classes: Class[]): MethodId[] {
   return out;
 }
 
-struct Tables { strings: string[], types: string[], protos: Proto[], methods: MethodId[] }
+struct Tables { strings: string[], types: string[], protos: Proto[], methods: MethodId[], fields: string[] }
+
+// Each class has the field `public static long fern`, where the native
+// library keeps the state that its Java callbacks need.
+const FIELD: string = "fern";
 
 // The sorted string, type, proto and method sections.
 function tables(classes: Class[], library: string): Tables {
@@ -161,13 +166,18 @@ function tables(classes: Class[], library: string): Tables {
       types = add_str(types, i);
     }
   }
-  let strings: string[] = add_str(types, library);
+  types = add_str(types, "J");
+  let strings: string[] = add_str(add_str(types, library), FIELD);
   for m in ids {
     strings = add_str(add_str(strings, m.name), shorty(m.proto.ret, m.proto.params));
   }
   strings = sort_strings(strings);
   types = sort_strings(types);
-  let t: Tables = Tables { strings: strings, types: types, protos: sort_protos(protos, types), methods: [] };
+  let fields: string[] = [];
+  for c in classes {
+    fields = fields.append(c.name);
+  }
+  let t: Tables = Tables { strings: strings, types: types, protos: sort_protos(protos, types), methods: [], fields: sort_strings(fields) };
   return Tables { ...t, methods: sort_methods(ids, t) };
 }
 
@@ -420,8 +430,9 @@ function lay_strings(l: Layout, t: Tables): Layout {
   return l;
 }
 
-// The class data of `c`: no fields, the two constructors and the static
-// natives as direct methods, and the instance natives as virtual methods.
+// The class data of `c`: the static field, the two constructors and the
+// static natives as direct methods, and the instance natives as virtual
+// methods.
 function class_data_of(out: u8[], t: Tables, c: Class, clinit: i32, init: i32): u8[] {
   let direct: Entry[] = [
     Entry { idx: method_idx(t, c.name, "<clinit>", v_proto()), flags: ACC_STATIC | ACC_CONSTRUCTOR, code: clinit },
@@ -436,7 +447,8 @@ function class_data_of(out: u8[], t: Tables, c: Class, clinit: i32, init: i32): 
       virtual = virtual.append(Entry { idx: idx, flags: ACC_PUBLIC | ACC_NATIVE, code: 0 });
     }
   }
-  out = uleb(uleb(uleb(uleb(out, 0), 0), direct.len()), virtual.len());
+  out = uleb(uleb(uleb(uleb(out, 1), 0), direct.len()), virtual.len());
+  out = uleb(uleb(out, util.index_of_str(t.fields, c.name)), ACC_PUBLIC | ACC_STATIC);
   return encode_methods(encode_methods(out, direct), virtual);
 }
 
@@ -450,12 +462,15 @@ function lay_class_data(l: Layout, t: Tables, classes: Class[]): Layout {
 }
 
 // The offsets of the string, type, proto, method and class sections.
+// The offsets of the string, type, proto, method and class sections, then
+// of the field section, which comes between the protos and the methods.
 function id_offsets(t: Tables): i32[] {
   let strings: i32 = HEADER;
   let types: i32 = strings + 4 * t.strings.len();
   let protos: i32 = types + 4 * t.types.len();
-  let methods: i32 = protos + 12 * t.protos.len();
-  return [strings, types, protos, methods, methods + 8 * t.methods.len()];
+  let fields: i32 = protos + 12 * t.protos.len();
+  let methods: i32 = fields + 8 * t.fields.len();
+  return [strings, types, protos, methods, methods + 8 * t.methods.len(), fields];
 }
 
 // The map list, at the end of the data, with each section that is not empty.
@@ -467,6 +482,7 @@ function lay_map(l: Layout, t: Tables, nc: i32): Layout {
     MapItem { kind: 1, count: ns, off: at[0] },
     MapItem { kind: 2, count: t.types.len(), off: at[1] },
     MapItem { kind: 3, count: t.protos.len(), off: at[2] },
+    MapItem { kind: 4, count: t.fields.len(), off: at[5] },
     MapItem { kind: 5, count: t.methods.len(), off: at[3] },
     MapItem { kind: 6, count: nc, off: at[4] },
     MapItem { kind: 8193, count: 2 * nc, off: l.at },
@@ -500,6 +516,9 @@ function ids(l: Layout, t: Tables, classes: Class[]): u8[] {
     let p: Proto = t.protos[k];
     out = put32(put32(put32(out, str_idx(t, shorty(p.ret, p.params))), type_idx(t.types, p.ret)), l.proto_params[k]);
   }
+  for c in t.fields {
+    out = put32(put16(put16(out, type_idx(t.types, c)), type_idx(t.types, "J")), str_idx(t, FIELD));
+  }
   for m in t.methods {
     out = put32(put16(put16(out, type_idx(t.types, m.class)), proto_idx(t, m.proto)), str_idx(t, m.name));
   }
@@ -522,7 +541,7 @@ function header(t: Tables, nc: i32, size: i32, data_off: i32, map_at: i32): u8[]
   head = put32(put32(put32(put32(head, size), HEADER), 305419896), 0);
   head = put32(put32(put32(put32(head, 0), map_at), t.strings.len()), at[0]);
   head = put32(put32(put32(put32(head, t.types.len()), at[1]), t.protos.len()), at[2]);
-  head = put32(put32(put32(put32(head, 0), 0), t.methods.len()), at[3]);
+  head = put32(put32(put32(put32(head, t.fields.len()), at[5]), t.methods.len()), at[3]);
   return put32(put32(put32(put32(head, nc), at[4]), size - data_off), data_off);
 }
 

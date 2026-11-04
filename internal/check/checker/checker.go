@@ -1186,12 +1186,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
 	c.info.FuncSigs["__worker_exit"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: false}},
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}},
 		Result: ast.VoidType{},
 	}
 	c.info.FuncSigs["__worker_reap"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
-		Result: ast.NumberType{Width: 64, Signed: false},
+		Result: ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"},
 	}
 	c.info.FuncSigs["__worker_unmap"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}, ast.BoolType{}},
@@ -12248,6 +12248,7 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 		return
 	}
 	badQualifier := c.checkVariantQualifier(pos, el.VariantModule, ed)
+	el.VariantName = unionPatternName(ed, el.VariantName)
 	var variant *ast.EnumVariant
 	for j := range ed.Variants {
 		if ed.Variants[j].Name == el.VariantName {
@@ -12494,6 +12495,7 @@ func (c *checker) checkMatchArms(n *ast.Match, s *scope) {
 			continue
 		}
 		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		arm.VariantName = unionPatternName(ed, arm.VariantName)
 		varIdx := -1
 		var variant *ast.EnumVariant
 		for j := range ed.Variants {
@@ -13346,6 +13348,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.
 			continue
 		}
 		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		arm.VariantName = unionPatternName(ed, arm.VariantName)
 		varIdx := -1
 		var variant *ast.EnumVariant
 		for j := range ed.Variants {
@@ -17957,6 +17960,28 @@ func isBareNumericLiteral(e ast.Expr) bool {
 		return x.Op == "-" && isBareNumericLiteral(x.Operand)
 	}
 	return false
+}
+
+// A union member uses its struct's qualified name. If the loader also saw
+// a declared enum variant with the same spelling, the scrutinee resolves it.
+func unionPatternName(ed *ast.EnumDecl, name string) string {
+	i := strings.Index(ed.Name, "__")
+	if i <= 0 || ed.SourceModule == "" {
+		return name
+	}
+	qualified := ed.Name[:i+2] + name
+	resolved := name
+	for _, v := range ed.Variants {
+		if v.Name == name {
+			return name
+		}
+		if v.Name == qualified && len(v.Payloads) == 1 {
+			if member, ok := v.Payloads[0].(ast.StructType); ok && member.Name == v.Name {
+				resolved = v.Name
+			}
+		}
+	}
+	return resolved
 }
 
 func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) bool {

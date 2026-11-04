@@ -36,6 +36,43 @@ function flag(bit: boolean): i32 {
 }
 
 function main(): i32 {
+  let event: shapes.Event = shapes.event();
+  let event_n: i32 = match (event) { shapes.Group(g) => g.n, shapes.Quiet => 0 };
+  if (event_n != 7 || shapes.event_value(event) != 7) {
+    return 18;
+  }
+  let union_event: shapes.EventUnion = shapes.union_event();
+  let union_n: i32 = match (union_event) { shapes.Group(g) => g.n, shapes.OtherGroup(q) => q.n };
+  if (union_n != 7 || shapes.union_event_value(union_event) != 7) {
+    return 25;
+  }
+  match (Some(event)) {
+    Some(shapes.Group(g)) => {
+      if (g.n != 7) {
+        return 19;
+      }
+    },
+    _ => {
+      return 20;
+    }
+  }
+  if let shapes.Group(g) = event {
+    if (g.n != 7) {
+      return 21;
+    }
+  } else {
+    return 22;
+  }
+  match (Some(shapes.Group { n: 9 })) {
+    Some(shapes.Group { n }) => {
+      if (n != 9) {
+        return 23;
+      }
+    },
+    _ => {
+      return 24;
+    }
+  }
   if (nested(Some(7)) != 7 || nested(None) != 0) {
     return 15;
   }
