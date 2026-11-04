@@ -5,11 +5,13 @@
 // microphone while `capture` is true. A host test runs two nodes on a
 // simulated network.
 import "std/net";
+import "std/opus/celt";
+import "std/opus/celt_encoder";
 import "./lan";
-import "./pcm";
 import "./protocol";
 import "./secure";
 import "./session";
+import "./voice";
 
 // A datagram to send: to the broadcast address on each walkie port, or to
 // the peer.
@@ -23,8 +25,10 @@ pub struct Node {
   // Random bytes for the key exchange: 32 for the key, then 16 for the nonce.
   seed: u8[],
   capture: boolean,
-  // Microphone samples at the wire rate that do not fill a frame yet.
+  // Microphone samples at `voice.RATE` that do not fill a frame yet.
   pending: i32[],
+  enc: celt_encoder.Encoder,
+  dec: Option[celt.Decoder],
   notice: string,
   heard_at: i64,
   // The outputs since the app last took them.
@@ -35,11 +39,10 @@ pub struct Node {
 
 pub const SEED_BYTES: i32 = 48;
 
-// A node with ID `me`, which sends PCM voice frames.
+// A node with ID `me`, which sends Opus voice frames.
 pub function new(me: i64, own seed: u8[], now: i64): Node {
-  let s0: session.Session = session.with_codec(session.new(), protocol.CODEC_PCM16);
-  let (s1, _) = session.step(s0, session.Start(session.Offline), now);
-  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], notice: "", heard_at: 0i64, out: [], heard: [], logs: [] };
+  let (s1, _) = session.step(session.new(), session.Start(session.Offline), now);
+  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), dec: voice.decoder(), notice: "", heard_at: 0i64, out: [], heard: [], logs: [] };
 }
 
 // The node with its outputs taken.
@@ -165,11 +168,7 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
       let t2: Node = Node { ...n, chan: Some(c2) };
       match (voice) {
         Some(b) => {
-          let t3: Node = t2;
-          if (now - t2.heard_at > 1000i64) {
-            t3 = log(t2, "hearing the peer");
-          }
-          return Node { ...t3, heard: t3.heard.append(pcm.unpack(b)), heard_at: now };
+          return played(t2, b, now);
         },
         None => {}
       }
@@ -178,6 +177,24 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
     None => {}
   }
   return n;
+}
+
+// The node with the samples of the voice packet `b` in `heard`. The log
+// says when the voice of the peer starts again.
+function played(n: Node, b: [u8], now: i64): Node {
+  let t: Node = n;
+  if (now - n.heard_at > 1000i64) {
+    t = log(n, "hearing the peer");
+  }
+  match (t.dec) {
+    Some(d) => {
+      let (d1, samples) = voice.decode(celt.Decoder { ...d }, b);
+      return Node { ...t, dec: Some(d1), heard: t.heard.append(samples), heard_at: now };
+    },
+    None => {
+      return Node { ...t, heard_at: now };
+    }
+  }
 }
 
 // One session event and its actions. The log gets each change of state,
@@ -240,7 +257,8 @@ pub function tick(n: Node, now: i64): Node {
   return act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now);
 }
 
-// Microphone samples at the wire rate. Each full frame goes to the peer.
+// Microphone samples at `voice.RATE`. Each full frame goes to the peer as
+// one Opus packet.
 pub function voice(n: Node, samples: [i32]): Node {
   if (!n.capture) {
     return n;
@@ -251,13 +269,17 @@ pub function voice(n: Node, samples: [i32]): Node {
   }
   let t: Node = n;
   let at: i32 = 0;
-  while (pending.len() - at >= pcm.FRAME) {
+  while (pending.len() - at >= voice.FRAME) {
     let head: i32[] = [];
-    for k in at..at + pcm.FRAME {
+    for k in at..at + voice.FRAME {
       head = head.append(pending[k]);
     }
-    t = send_frame(t, lan.VOICE, pcm.pack(head));
-    at = at + pcm.FRAME;
+    let (enc, packet) = voice.encode(celt_encoder.Encoder { ...t.enc }, head);
+    t = Node { ...t, enc: enc };
+    if (packet.len() > 0) {
+      t = send_frame(t, lan.VOICE, packet);
+    }
+    at = at + voice.FRAME;
   }
   let rest: i32[] = [];
   for k in at..pending.len() {

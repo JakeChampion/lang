@@ -9,16 +9,6 @@ function ramp(n: i32, step: i32): i32[] {
   return x;
 }
 
-// Bytes and samples round-trip, with clipping at the 16-bit range.
-function test_pack_round_trip(): test.TestOutcome {
-  let back: i32[] = pcm.unpack(pcm.pack([0, 1, -1, 32767, -32768, 40000, -40000]));
-  let s: string = "";
-  for v in back {
-    s = s + v.to_string() + " ";
-  }
-  return test.assert_eq(s, "0 1 -1 32767 -32768 32767 -32768 ");
-}
-
 // The same rate gives the same samples back, one sample late, across blocks.
 function test_same_rate_is_identity(): test.TestOutcome {
   let r: pcm.Resampler = pcm.resampler(16000, 16000);
@@ -45,7 +35,6 @@ function test_upsample_by_three(): test.TestOutcome {
 
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie pcm");
-  r = r.it("bytes and samples round-trip", test_pack_round_trip);
   r = r.it("the same rate is the identity", test_same_rate_is_identity);
   r = r.it("48 kHz to 16 kHz keeps one sample in three", test_downsample_by_three);
   r = r.it("16 kHz to 48 kHz interpolates", test_upsample_by_three);

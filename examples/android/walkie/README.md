@@ -8,8 +8,9 @@ writes its APK.
 ## The LAN build
 
 `app.fern` is a first build for two phones on the same Wi-Fi network. It
-sends raw 16-bit audio at 16 kHz, about 256 kbit/s, until the Opus encoder is
-ready. Wi-Fi Direct and the internet rooms come after it.
+sends Opus voice at 16 kHz, about 24 kbit/s. Wi-Fi Direct and the internet
+rooms come after it. A phone with an older build of the app refuses the
+session, because the older build sends raw audio.
 
 The [nightly release](https://github.com/JakeChampion/lang/releases/tag/nightly) has a signed `fern-walkie.apk` from `main`. Each nightly uses the same key, so it installs over the one before it.
 
@@ -82,10 +83,18 @@ runs two engines on a simulated link.
 ## `lan.fern`, `pcm.fern` and `screen.fern`
 
 The LAN transport: the datagram format, the beacons, and the key exchange
-with a resend of each message that has no answer. The raw audio: 16-bit
-samples and a linear resampler between the rate of the device and 16 kHz.
-The layout of the screen. `lan_test.fern`, `pcm_test.fern` and
-`screen_test.fern` test them.
+with a resend of each message that has no answer. A linear resampler between
+the rate of the device and 16 kHz. The layout of the screen. `lan_test.fern`,
+`pcm_test.fern` and `screen_test.fern` test them.
+
+## `voice.fern`
+
+The voice codec. Each 20 ms frame of 320 samples at 16 kHz is one Opus packet
+with one CELT frame. The encoder of `std/opus/celt_encoder` codes the bands
+up to 8 kHz with the constrained VBR at 24 kbit/s. The decoder of
+`std/opus/celt` gives the samples back. A packet of another codec gives no
+samples. `voice_test.fern` checks the round trip, the rate and the packet
+format.
 
 ## `secure.fern`
 
