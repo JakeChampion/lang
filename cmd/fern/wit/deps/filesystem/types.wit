@@ -59,6 +59,10 @@ interface types {
         ) -> result<descriptor-stat, error-code>;
         stat: func() -> result<descriptor-stat, error-code>;
         set-size: func(size: filesize) -> result<_, error-code>;
+        set-times: func(
+            data-access-timestamp: new-timestamp,
+            data-modification-timestamp: new-timestamp,
+        ) -> result<_, error-code>;
         sync: func() -> result<_, error-code>;
         sync-data: func() -> result<_, error-code>;
         set-times-at: func(
