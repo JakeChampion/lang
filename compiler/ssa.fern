@@ -455,6 +455,27 @@ pub function back_copy_call(ins: SInst): boolean {
   return ins.kind_tag == 11 && ins.result >= 0 && ins.str == "__fern_bytes_append_back";
 }
 
+// A call that the allocator counts: it returns, and its result is not the
+// block's own return value.
+pub function counted_call(blk: SBlock, k: i32): boolean {
+  let ins: SInst = blk.insts[k];
+  return inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k);
+}
+
+// For each position, whether a counted call there clobbers the caller
+// registers: a cold call saves what it needs itself.
+pub function hard_call_positions(f: SFunc, cold: i32[]): boolean[] {
+  let out: boolean[] = [];
+  for blk in f.blocks {
+    for k in 0..blk.insts.len() {
+      let pos: i32 = out.len();
+      out = out.append(counted_call(blk, k) && (cold.len() == 0 || cold[pos] == COLD_NONE));
+    }
+    out = out.append(false);
+  }
+  return out;
+}
+
 pub const COLD_NONE: i32 = 0;
 
 pub const COLD_SLOW: i32 = 1;
@@ -686,17 +707,20 @@ function cold_caller(saved_free: i32, cold_integer: boolean, pick: i32, cum: i32
   return saved_free == 0 && cold_integer && pick >= 0 && !spans_call(cum, lo, hi);
 }
 
-function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[]): boolean[] {
+// A value spans a call when it is live after one. `crossing` gives that from
+// block liveness. Without it, any call inside the value's interval counts.
+function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[], crossing: boolean[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.nvals);
+  let exact: boolean = crossing.len() == f.nvals;
   if (cold.len() == 0) {
     for v in 0..f.nvals {
-      out = out.with(v, spans_call(cum, lo[v], hi[v]));
+      out = out.with(v, if (exact) { crossing[v] } else { spans_call(cum, lo[v], hi[v]) });
     }
     return out;
   }
   let cost: i32[] = cold_call_cost(f, cold);
   for v in 0..f.nvals {
-    let h: boolean = spans_call(cum, lo[v], hi[v]);
+    let h: boolean = if (exact) { crossing[v] } else { spans_call(cum, lo[v], hi[v]) };
     if (!h && hi[v] > lo[v] + 1 && lo[v] + 1 < cost.len()) {
       let b: i32 = hi[v];
       if (b >= cost.len()) {
@@ -1356,10 +1380,28 @@ function count_false(fl: boolean[]): i32 {
 }
 
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32): Alloc {
-  return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none(), []);
+  return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none(), [], []);
 }
 
-pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[]): Alloc {
+// The call still runs when its result has no reader. Its result needs no
+// register or spill slot, and cannot prevent another value from taking one.
+function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
+  while (no_home.len() < f.nvals) {
+    no_home = no_home.append(false);
+  }
+  let uses = use_counts(f);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (inst_is_call(ins.kind_tag) && ins.result >= 0 && uses[ins.result] == 0) {
+        no_home = no_home.with(ins.result, true);
+      }
+    }
+  }
+  return no_home;
+}
+
+pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
+  no_home = unhomed_call_results(f, no_home);
   let cold_calls: boolean = cold.len() > 0;
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
@@ -1433,7 +1475,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         a = a + 1;
       }
       if (inst_is_call(ins.kind_tag) && !never_returns(ins)) {
-        if (!returns_call(blk, k)) {
+        if (counted_call(blk, k)) {
           all_calls = all_calls.append(pos);
           let kind: i32 = COLD_NONE;
           if (cold_calls) {
@@ -1529,7 +1571,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   }
   let mates: Mates = phi_mates(f, at, def_pos, hi, no_home);
   let weight: i32[] = spill_weights(f, at);
-  let hard: boolean[] = hard_spans(f, cum, cold, lo, hi, weight);
+  let hard: boolean[] = hard_spans(f, cum, cold, lo, hi, weight, crossing);
   let sole: i32[] = sole_readers(f);
 
   let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };

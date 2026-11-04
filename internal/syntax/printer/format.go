@@ -677,7 +677,9 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
-		if p.Own {
+		if p.Send {
+			f.b.WriteString("send ")
+		} else if p.Own {
 			f.b.WriteString("own ")
 		}
 		f.b.WriteString(writtenName(p.Name))
@@ -807,7 +809,9 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
-		if p.Own {
+		if p.Send {
+			f.b.WriteString("send ")
+		} else if p.Own {
 			f.b.WriteString("own ")
 		}
 		f.b.WriteString(writtenName(p.Name))
@@ -921,7 +925,9 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		if i > 0 {
 			f.b.WriteString(", ")
 		}
-		if p.Own {
+		if p.Send {
+			f.b.WriteString("send ")
+		} else if p.Own {
 			f.b.WriteString("own ")
 		}
 		if p.Pattern != nil {

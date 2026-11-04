@@ -1,0 +1,35 @@
+// spec: WK-02
+// A worker runs its closure once and join returns the result, on every
+// engine. The captures and the result are send-safe values, so the copy at
+// the boundary is unobservable: a struct, an array, a string and an Option
+// cross and come back with the same contents.
+
+import "std/worker";
+import "std/i32";
+
+struct Report { total: i32, name: string }
+
+function tally(own items: i32[], name: string): worker.Worker[Report] {
+    return worker.spawn((): Report => {
+        let total: i32 = 0;
+        for x in items {
+            total = total + x;
+        }
+        return Report { total: total, name: name };
+    });
+}
+
+function main(): i32 {
+    let base: i32 = 40;
+    let w1 = worker.spawn((): i32 => base + 2);
+    let w2 = tally([1, 2, 3], "three");
+    let w3 = worker.spawn((): Option[string] => Some("hello"));
+    print(w1.join().to_string());
+    let r: Report = w2.join();
+    print(r.name + "=" + r.total.to_string());
+    match (w3.join()) {
+        Some(s) => { print(s); },
+        None => { print("none"); }
+    }
+    return 0;
+}

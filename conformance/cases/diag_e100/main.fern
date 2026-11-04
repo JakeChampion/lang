@@ -1,0 +1,12 @@
+// spec: WK-01
+// A closure crosses the worker boundary at spawn, so every value it captures
+// is copied into the worker's heap. A Cell is shared by aliasing, so a copy
+// would split the state in two.
+
+import "std/worker";
+
+function main(): i32 {
+    let shared: Cell[i32] = cell_new(1);
+    let w = worker.spawn((): i32 => shared.get());
+    return w.join();
+}

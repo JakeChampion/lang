@@ -4622,7 +4622,7 @@ function main(): i32 {
   }
 }
 `},
-	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|01234!\n", reports: []string{"runtime __fern_arr_slice_u8: produced", "runtime __fern_str_concat: produced"}, src: `
+	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|01234!\n", reports: []string{"runtime __fern_string_from_bytes_u8: produced", "runtime __fern_str_concat: produced"}, src: `
 import "std/i32";
 
 function main(): i32 {

@@ -35,6 +35,20 @@ func TestMustConsumeCleanShapes(t *testing.T) {
     let t: Ticket = Ticket { id: 1 };
     return t;
 }`},
+		{"consumed_inside_match_tag", ticketDecl + `function f(): i32 {
+    let t: Ticket = Ticket { id: 1 };
+    match (sink(t).id) { 1 => { return 1; }, _ => { return 0; } }
+}`},
+		{"consumed_inside_if_condition", ticketDecl + `function f(): i32 {
+    let t: Ticket = Ticket { id: 1 };
+    if (sink(t).id > 0) { return 1; }
+    return 0;
+}`},
+		{"consumed_by_method_receiver", ticketDecl + `function (own t: Ticket) redeem(): i32 { return t.id; }
+function f(): i32 {
+    let t: Ticket = Ticket { id: 1 };
+    return t.redeem();
+}`},
 		{"transferred_to_local", ticketDecl + `function f(): Ticket {
     let t: Ticket = Ticket { id: 1 };
     let u: Ticket = t;

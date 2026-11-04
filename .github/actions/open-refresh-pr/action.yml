@@ -1,0 +1,76 @@
+name: Open or update a refresh pull request
+description: >
+  Commit every change in the working tree to BRANCH, force-push it, and open
+  a pull request from it against main, or update the one already open.
+  The pull request waits for a review and all current-head checks before a
+  merge. Nothing happens when the tree is clean.
+
+  The branch is pushed with auto-rebase-token where GitHub still accepts it,
+  for the reason auto-rebase-prs.yml gives: a push made with the default
+  GITHUB_TOKEN triggers no workflow run, so a pull request opened under it
+  gets no CI. Where the token is missing or refused (an expired token), the
+  push and the pull request fall back to default-token, the log says so, and
+  the first push by hand starts the checks. The calling job's checkout must
+  not use auto-rebase-token: a refused token there fails the job before
+  anything is refreshed.
+
+  The job needs `contents: write` and `pull-requests: write`.
+inputs:
+  branch:
+    description: The branch to push. Each later run replaces it.
+    required: true
+  title:
+    description: The commit subject and the pull request title.
+    required: true
+  commit-body:
+    description: The commit message body, after the title.
+    required: true
+  body-file:
+    description: A file that holds the pull request body.
+    required: true
+  auto-rebase-token:
+    description: secrets.AUTO_REBASE_TOKEN, or empty.
+    required: false
+    default: ""
+  default-token:
+    description: secrets.GITHUB_TOKEN.
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        BRANCH: ${{ inputs.branch }}
+        TITLE: ${{ inputs.title }}
+        COMMIT_BODY: ${{ inputs.commit-body }}
+        BODY_FILE: ${{ inputs.body-file }}
+        AUTO_REBASE_TOKEN: ${{ inputs.auto-rebase-token }}
+        DEFAULT_TOKEN: ${{ inputs.default-token }}
+      run: |
+        set -euo pipefail
+        if [ -z "$(git status --porcelain)" ]; then
+          echo "nothing changed; no pull request"
+          exit 0
+        fi
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git checkout -B "$BRANCH"
+        git add -A
+        printf '%s\n\n%s\n' "$TITLE" "$COMMIT_BODY" | git commit -q -F -
+        GH_TOKEN=""
+        if [ -n "$AUTO_REBASE_TOKEN" ] && git push --force "https://x-access-token:$AUTO_REBASE_TOKEN@github.com/$GITHUB_REPOSITORY" "$BRANCH"; then
+          GH_TOKEN="$AUTO_REBASE_TOKEN"
+        else
+          echo "AUTO_REBASE_TOKEN is missing or refused; pushing with GITHUB_TOKEN, which starts no checks"
+          git push --force "https://x-access-token:$DEFAULT_TOKEN@github.com/$GITHUB_REPOSITORY" "$BRANCH"
+          GH_TOKEN="$DEFAULT_TOKEN"
+        fi
+        export GH_TOKEN
+        number="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+        if [ -z "$number" ]; then
+          gh pr create --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --title "$TITLE" --body-file "$BODY_FILE"
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number')"
+        else
+          gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$BODY_FILE"
+        fi
+        echo "Pull request #$number waits for review and all current-head non-Netlify checks before merge"
