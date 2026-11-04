@@ -232,6 +232,7 @@ var coreBuiltins = map[string]bool{
 
 	"map_new":                     true,
 	"cell_new":                    true,
+	"__send_copy":                 true,
 	"string_from_bytes_unchecked": true,
 	"slice_unchecked":             true,
 

@@ -2622,6 +2622,9 @@ function call_host_contract(name: string, args: Value[]): Value {
   if (name == "__heap_release_to") {
     return v_void();
   }
+  if (name == "__send_copy") {
+    return arg_at(args, 0);
+  }
   if (util.has_str(["proc_fork", "proc_exec", "proc_exec_as"], name)) {
     return v_int(0 - 38);
   }

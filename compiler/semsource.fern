@@ -3599,6 +3599,9 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (name == "__socket_from_fd") {
     return socket_from_fd(c, s);
   }
+  if (name == "__send_copy" && c.args.len() == 1) {
+    return send_copy(c, s);
+  }
   if ((name == "map_new" || name == "__map_new_i32") && c.args.len() == 1) {
     return map_construction(e, c, s, expected);
   }
@@ -3626,6 +3629,24 @@ function socket_from_fd(c: ast.ExprCall, s: State): Value {
     return fd;
   }
   return define(fd.s, ssasem.cast(), [fd.id], 0, "", t_handle("Socket"));
+}
+
+// `__send_copy(v)` is a call to the per-type copy helper. The helper borrows
+// its argument and returns a fresh tree, so the planner treats the call as
+// any borrowing call with an owned result.
+function send_copy(c: ast.ExprCall, s: State): Value {
+  let want: typeinfo.Type = checked(c.args[0], s);
+  let v: Value = expr(c.args[0], s, want);
+  if (!v.s.ok) {
+    return v;
+  }
+  let t: typeinfo.Type = v.s.values[v.id];
+  let contract: ssasem.Contract = ssasem.Contract { name: ssasem.send_helper_name(t), params: [t], modes: [ssaunits.borrow_mode()], result: t };
+  let next: State = v.s;
+  if (ssasem.find_contract_in(next.calls, contract.name) < 0) {
+    next = State { ...next, calls: next.calls.append(contract) };
+  }
+  return define(next, ssasem.call(), [v.id], 0, contract.name, t);
 }
 
 // The builtin exit never returns, so the block it ends has no successor.

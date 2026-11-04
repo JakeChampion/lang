@@ -215,6 +215,7 @@ var Ungated = map[string]bool{
 	"wasm_pollable_drop":          true,
 	"map_new":                     true,
 	"cell_new":                    true,
+	"__send_copy":                 true,
 	"string_from_bytes_unchecked": true,
 	"slice_unchecked":             true,
 	"int_to_string":               true,

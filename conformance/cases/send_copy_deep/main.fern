@@ -1,0 +1,57 @@
+// spec: WK-04
+// __send_copy builds a fresh tree with the same contents: a record of a
+// string, an owned array of records, a tuple, and an enum in both layouts.
+// The copy prints what the original prints, on every engine.
+
+import "std/i32";
+
+struct Item { name: string, qty: i32, price: i64 }
+
+struct Order { id: i32, who: string, items: Item[], tags: (i32, string) }
+
+enum Status { Open, Filled(Order), Failed(string, i32) }
+
+function show(o: Order): string {
+    let out: string = o.id.to_string() + ":" + o.who + ":" + o.tags.0.to_string() + o.tags.1;
+    for it in o.items {
+        out = out + "|" + it.name + "x" + it.qty.to_string() + "@" + it.price.to_string();
+    }
+    return out;
+}
+
+function show_status(s: Status): string {
+    match (s) {
+        Open => { return "open"; },
+        Filled(o) => { return "filled " + show(o); },
+        Failed(why, code) => { return "failed " + why + " " + code.to_string(); }
+    }
+}
+
+function main(): i32 {
+    let o: Order = Order { id: 7, who: "ada", items: [Item { name: "bolt", qty: 3, price: 25i64 }, Item { name: "nut", qty: 9, price: 4i64 }], tags: (2, "rush") };
+    let c: Order = __send_copy(o);
+    print(show(o));
+    print(show(c));
+    let maybe: Option[string] = Some("hello");
+    let m: Option[string] = __send_copy(maybe);
+    match (m) {
+        Some(s) => { print(s); },
+        None => { print("none"); }
+    }
+    let none: Option[i64] = None;
+    let n: Option[i64] = __send_copy(none);
+    match (n) {
+        Some(_) => { print("some"); },
+        None => { print("none"); }
+    }
+    print(show_status(__send_copy(Filled(o))));
+    print(show_status(__send_copy(Failed("late", 3))));
+    print(show_status(__send_copy(Open)));
+    let xs: i64[] = [1i64, 2i64, 3i64];
+    let ys: i64[] = __send_copy(xs);
+    print(ys.len().to_string() + ":" + ys[2].to_string());
+    let words: string[] = ["a", "bb"];
+    let ws: string[] = __send_copy(words);
+    print(ws[0] + ws[1]);
+    return 0;
+}

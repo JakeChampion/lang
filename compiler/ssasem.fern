@@ -2434,6 +2434,17 @@ pub function instantiate_contract(c: Contract, b: Binding, vars: string[]): Cont
   return Contract { name: name, params: params, modes: modes, result: substitute(c.result, b) };
 }
 
+// The per-type deep copy helper that `__send_copy` calls: it builds a fresh
+// tree of boxes with the same contents, so a value can cross a worker
+// boundary. The lowering emits one per type that a function sends.
+pub function send_helper_name(t: typeinfo.Type): string {
+  return "__sem_send_" + type_key(t);
+}
+
+pub function is_send_helper(name: string): boolean {
+  return util.str_has_prefix(name, "__sem_send_");
+}
+
 pub function type_key(t: typeinfo.Type): string {
   if let typeinfo.TypeUnion(u) = t {
     return key_args(u.name, u.args);

@@ -5345,6 +5345,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (!is_method && name == "cell_new") {
     return t_struct("Cell");
   }
+  if (!is_method && name == "__send_copy" && c.args.len() == 1) {
+    return check_expr(c.args[0], s);
+  }
   if (!is_method && (name == "print" || name == "eprint") && c.args.len() == 1) {
     return t_void();
   }
@@ -18045,6 +18048,7 @@ function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
+    "__send_copy",
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
@@ -21101,6 +21105,10 @@ function send_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
     }
     let flags: boolean[] = ow_send_flags(ctx.ofuncs, id.name);
     let names: string[] = match (ctx.scope.lookup_sig(id.name)) { Some(sig) => sig.param_names, None => [] };
+    if (id.name == "__send_copy") {
+      flags = [true];
+      names = ["value"];
+    }
     let i: i32 = 0;
     while (i < c.args.len() && i < flags.len()) {
       if (flags[i]) {

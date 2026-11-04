@@ -2176,6 +2176,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{cellParam},
 		Result: ast.StructType{Name: "Cell"},
 	}
+	// __send_copy(v) is a fresh deep copy of a send-safe value, the copy a
+	// worker boundary makes; checkCall types it from its argument.
+	c.info.FuncSigs["__send_copy"] = &ast.FuncType{
+		Params: []ast.Type{cellParam},
+		Result: cellParam,
+	}
 	c.info.Methods["Cell.get"] = "__method_Cell_get"
 	c.info.FuncSigs["__method_Cell_get"] = &ast.FuncType{
 		Params: []ast.Type{cellT},
@@ -14336,6 +14342,15 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
 			c.needCoreMap(n.P)
+		}
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "__send_copy" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "__send_copy expects 1 argument, got %d", len(n.Args))
+				return nil
+			}
+			at := c.checkExpr(n.Args[0], s)
+			c.guardSendArg(n.Args[0], "value", at)
+			return at
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
 			if len(n.Args) != 1 {

@@ -41,6 +41,8 @@ function main(): i32 { return g(1); }`,
 			`returns Cell[i32], which cannot cross a worker boundary: a Cell is shared by aliasing`},
 		{"view_argument", `function main(): i32 { let xs: i32[] = [1, 2]; return post(xs[0:1]); }`,
 			`has type [i32], which cannot cross a worker boundary: a view borrows another value's storage`},
+		{"send_copy_of_cell", `function main(): i32 { let c: Cell[i32] = cell_new(1); let d: Cell[i32] = __send_copy(c); return d.get(); }`,
+			`argument to ` + "`send`" + ` parameter "value" has type Cell[i32], which cannot cross a worker boundary: a Cell is shared by aliasing`},
 	}
 	for _, tc := range cases {
 		err := checkSource(t, spawnDecl+tc.src)
@@ -61,6 +63,7 @@ func TestSendParameterAdmitsSendSafeValues(t *testing.T) {
 		{"tuple_and_map", `function main(): i32 { let p: (i32, string) = (1, "x"); let m: Map[string, i32] = map_new(4); return spawn((): i32 => p.0 + m.len()); }`},
 		{"generic_struct_of_scalars", `function main(): i32 { let p: Pair[i32] = Pair { a: 1, b: 2 }; return spawn((): i32 => p.a + p.b); }`},
 		{"no_captures", `function main(): i32 { return spawn((): i32 => 7); }`},
+		{"send_copy_of_record_and_option", `function main(): i32 { let b: Box = Box { n: 1 }; let c: Box = __send_copy(b); let o: Option[string] = __send_copy(Some("x")); return c.n + b.n; }`},
 	}
 	for _, tc := range cases {
 		if err := checkSource(t, spawnDecl+tc.src); err != nil {

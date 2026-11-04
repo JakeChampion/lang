@@ -2059,7 +2059,280 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   for t in routed_keyed_maps(sc.maps, f) {
     out = Fresh { ...out, rows: append_keyed_closures(out.rows, t, done, contracts) };
   }
+  for c in f.calls {
+    if (ssasem.is_send_helper(c.name) && c.params.len() == 1) {
+      out = Fresh { ...out, rows: send_helpers(out.rows, c.params[0], f, done) };
+    }
+  }
   return Fresh { ...out, seen: grown };
+}
+
+// One copy helper per reference type a sent value holds, named by the type.
+// A helper copies its own box and calls the helper of each reference part.
+function send_helpers(own rows: irtables.LowerState[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irtables.LowerState[] {
+  if (!ssasem.reference(t)) {
+    return rows;
+  }
+  let name: string = ssasem.send_helper_name(t);
+  if (done.has(name) || util.has_str(row_names_of(rows), name)) {
+    return rows;
+  }
+  rows = rows.append(send_helper(t, f));
+  for part in send_parts(t, f) {
+    rows = send_helpers(rows, part, f, done);
+  }
+  return rows;
+}
+
+function row_names_of(rows: irtables.LowerState[]): string[] {
+  let out: string[] = [];
+  for row in rows {
+    out = out.append(row.name);
+  }
+  return out;
+}
+
+// The reference types a value of type t holds directly.
+function send_parts(t: typeinfo.Type, f: ssasem.Func): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  if let typeinfo.TypeArray(a) = t {
+    return [a.elem];
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    return tup.elements;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    if (send_refused(t, f) == "") {
+      for field in record_fields(t, f) {
+        out = out.append(field.ty);
+      }
+    }
+    return out;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    for v in variants_of(t, f) {
+      for field in v.fields {
+        out = out.append(field.ty);
+      }
+    }
+  }
+  return out;
+}
+
+// Why a type has no copy helper, or "" when it has one.
+function send_refused(t: typeinfo.Type, f: ssasem.Func): string {
+  if (semtypes.is_cell(t)) {
+    return "a Cell cannot cross a worker boundary";
+  }
+  if (ssasem.is_map(t)) {
+    return "a Map cannot cross a worker boundary in this release";
+  }
+  if (ssasem.is_dyn(t)) {
+    return "a dyn value cannot cross a worker boundary";
+  }
+  if let typeinfo.TypeFunc(_) = t {
+    return "a function value cannot cross a worker boundary";
+  }
+  if (ssasem.is_view(t) || array_view(t)) {
+    return "a view cannot cross a worker boundary";
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    if (semtypes.is_env(t) || semrecords.find(f.records, t) < 0) {
+      return "a closure environment cannot cross a worker boundary";
+    }
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    if (semrecords.find_enum(f.enums, t) < 0) {
+      return "an enum without a layout cannot cross a worker boundary";
+    }
+  }
+  return "";
+}
+
+// The helper takes the source in local 0 and returns a fresh copy.
+function send_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let r: irtables.LowerState = irtables.LowerState {
+    ...empty(""), ok: true,
+    n_params: 1, n_locals: 1, name: ssasem.send_helper_name(t),
+  };
+  let why: string = send_refused(t, f);
+  if (why.len() > 0) {
+    return irtables.LowerState { ...r, ok: false, why: why };
+  }
+  if (ssasem.is_string(t)) {
+    return send_string(r, f);
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return send_array(r, a.elem, f);
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    return send_tuple(r, t, tup, f);
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    r = reserve(r, 2);
+    r = send_record(r, record_fields(t, f), record_name(t), 1, f);
+    r = emit(r, ir.op_load_local(1));
+    return emit(r, ir.op_return());
+  }
+  if (enum_layout(f, t) == semrecords.layout_option()) {
+    return send_option(r, t, f);
+  }
+  return send_variants(r, t, f);
+}
+
+// A string copies through a byte array, which the helper releases once the
+// fresh string holds its own bytes.
+function send_string(own r: irtables.LowerState, f: ssasem.Func): irtables.LowerState {
+  let bytes: i32 = 1;
+  r = reserve(r, bytes + 1);
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.counted(ir.packed(ir.op_str_bytes())));
+  r = emit(r, ir.op_store_local(bytes));
+  r = emit(r, ir.op_load_local(bytes));
+  r = emit(r, ir.packed(ir.op_str_from_bytes()));
+  let u8s: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false }, view: false };
+  r = release(r, bytes, u8s, f);
+  return emit(r, ir.op_return());
+}
+
+// A fresh copy of the part in local `slot`, left on the stack.
+function send_part(own r: irtables.LowerState, part: typeinfo.Type): irtables.LowerState {
+  if (ssasem.reference(part)) {
+    r = emit(r, ir.op_call_direct(ssasem.send_helper_name(part), 1));
+  }
+  return r;
+}
+
+function send_array(own r: irtables.LowerState, elem: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let out: i32 = 1;
+  let index: i32 = 2;
+  r = reserve(r, index + 1);
+  r = emit(r, arr_make_op(elem, 0));
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_bin("ge_s", 0, false));
+  r = emit(r, ir.op_brif(1));
+  r = emit(r, ir.op_load_local(out));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, arr_get_op(elem, true));
+  r = send_part(r, elem);
+  r = emit(r, arr_push_op(elem));
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_bin("add", 0, false));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_br(0));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(out));
+  return emit(r, ir.op_return());
+}
+
+function send_tuple(own r: irtables.LowerState, t: typeinfo.Type, tup: typeinfo.TypeTuple, f: ssasem.Func): irtables.LowerState {
+  let i: i32 = 0;
+  while (i < tup.elements.len()) {
+    let part: typeinfo.Type = tup.elements[i];
+    r = emit(r, ir.op_load_local(0));
+    r = emit(r, ir.op_tuple_get_w(i, load_width(part), ssasem.is_wide(part)));
+    r = send_part(r, part);
+    i = i + 1;
+  }
+  r = emit(r, ir.op_tuple_make_k(tup.elements.len(), tuple_kinds(t)));
+  return emit(r, ir.op_return());
+}
+
+// A fresh box with `shape` and a copy of each field of the box in local 0,
+// stored in local `out`.
+function send_record(own r: irtables.LowerState, fields: semrecords.Field[], shape: string, out: i32, f: ssasem.Func): irtables.LowerState {
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_const_i32(fields.len() + 1));
+  r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_load_local(out));
+  r = emit(r, ir.op_struct_set_shape(shape));
+  r = emit(r, ir.op_drop());
+  let i: i32 = 0;
+  while (i < fields.len()) {
+    let part: typeinfo.Type = fields[i].ty;
+    r = emit(r, ir.op_load_local(out));
+    r = emit(r, ir.op_load_local(0));
+    if (ssasem.is_wide(part)) {
+      r = emit(r, ir.op_struct_get_i64(i));
+    } else {
+      r = emit(r, ir.op_struct_get(i, load_width(part)));
+    }
+    r = send_part(r, part);
+    r = field_store(r, fields, i);
+    i = i + 1;
+  }
+  return r;
+}
+
+function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, t)];
+  let out: i32 = 1;
+  let tag: i32 = 2;
+  r = reserve(r, tag + 1);
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_opt_tag());
+  r = emit(r, ir.op_store_local(tag));
+  let k: i32 = 0;
+  while (k < e.variants.len()) {
+    let fields: semrecords.Field[] = e.variants[k].fields;
+    r = emit(r, ir.op_load_local(tag));
+    r = emit(r, ir.op_const_i32(k));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    if (fields.len() == 0) {
+      r = emit(r, ir.op_const_option(k));
+    } else {
+      let pay: typeinfo.Type = fields[0].ty;
+      r = emit(r, ir.op_load_local(0));
+      if (wide_payload(pay)) {
+        r = emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(pay)));
+      } else {
+        r = emit(r, ir.op_opt_payload());
+      }
+      r = send_part(r, pay);
+      if (wide_payload(pay)) {
+        r = emit(r, ir.op_opt_make_w(k, 64, !ssasem.is_float(pay)));
+      } else {
+        r = emit(r, ir.op_opt_make(k));
+      }
+    }
+    r = emit(r, ir.op_store_local(out));
+    r = emit(r, ir.op_end());
+    k = k + 1;
+  }
+  r = emit(r, ir.op_load_local(out));
+  return emit(r, ir.op_return());
+}
+
+function send_variants(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let out: i32 = 1;
+  r = reserve(r, out + 1);
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(out));
+  for v in variants_of(t, f) {
+    let shape: string = member_shape(f, t, v.name);
+    r = emit(r, ir.op_load_local(0));
+    r = emit(r, ir.op_variant_is(shape));
+    r = emit(r, ir.op_if(0));
+    r = send_record(r, v.fields, shape, out, f);
+    r = emit(r, ir.op_end());
+  }
+  r = emit(r, ir.op_load_local(out));
+  return emit(r, ir.op_return());
 }
 
 function append_helpers(own out: Fresh, t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): Fresh {
