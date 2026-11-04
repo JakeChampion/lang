@@ -3,6 +3,8 @@ import "std/worker";
 
 struct Report { total: i32, name: string }
 
+struct Bundle { names: string[], result: Option[(string, Report)] }
+
 function test_spawn_join_scalar(): test.TestOutcome {
   let n: i32 = 20;
   let w = worker.spawn((): i32 => n + 1);
@@ -47,11 +49,52 @@ function test_option_and_tuple_cross(): test.TestOutcome {
   }
 }
 
+function bundle(n: i32): Bundle {
+  return Bundle { names: ["worker-" + n.to_string(), "tail-" + n.to_string()], result: Some(("tuple-" + n.to_string(), Report { total: n, name: "report-" + n.to_string() })) };
+}
+
+function test_nested_results_survive_later_joins(): test.TestOutcome {
+  let first = worker.spawn((): Bundle => bundle(7));
+  let kept: Bundle = first.join();
+  for i in 0..32 {
+    let next = worker.spawn((): Bundle => bundle(i));
+    let value: Bundle = next.join();
+    if (value.names[0] != "worker-" + i.to_string()) {
+      return test.fail("later result");
+    }
+  }
+  if (kept.names[0] != "worker-7" || kept.names[1] != "tail-7") {
+    return test.fail("retained array");
+  }
+  match (kept.result) {
+    Some(pair) => {
+      if (pair.0 != "tuple-7" || pair.1.total != 7) {
+        return test.fail("retained tuple");
+      }
+      return test.assert_eq(pair.1.name, "report-7");
+    },
+    None => {
+      return test.fail("retained enum");
+    }
+  }
+}
+
+function test_nested_worker_result(): test.TestOutcome {
+  let outer = worker.spawn((): Bundle => {
+    let inner = worker.spawn((): Bundle => bundle(11));
+    return inner.join();
+  });
+  let value: Bundle = outer.join();
+  return test.assert_eq(value.names[0], "worker-11");
+}
+
 function main(): i32 {
   let r = test.new("std/worker");
   r = r.it("spawn and join a scalar", test_spawn_join_scalar);
   r = r.it("spawn and join a record", test_spawn_join_record);
   r = r.it("two workers join out of order", test_two_workers_join_out_of_order);
   r = r.it("an Option of a tuple crosses the boundary", test_option_and_tuple_cross);
+  r = r.it("nested results survive later joins", test_nested_results_survive_later_joins);
+  r = r.it("a nested worker returns a copied result", test_nested_worker_result);
   return r.finish();
 }

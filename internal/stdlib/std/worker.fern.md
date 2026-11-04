@@ -10,7 +10,7 @@ A `Cell`, a function value, a `dyn` value, a view, a handle and a `@must_consume
 
 Fern values are immutable, so a copied tree and a shared tree cannot be told apart by any accepted program. The copy is unobservable.
 
-On Linux a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child and takes the region's boxes as its own.
+On Linux a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child, copies the result into the parent heap, and removes the region.
 Every other engine runs the worker inline at `spawn`, which is one of the schedules a process can produce. The design is `docs/MULTICORE-RESEARCH.md`, and the shipped surface is `docs/WORKERS.md`.
 
 ## Contracts
@@ -50,6 +50,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<5 pub function (own w: Worker[T]) join(): T>>
 
 <<6 function __join_process[T](own w: Worker[T]): T>>
+
+<<7 function __unmap_region(region: i64, size: i64, reaped: boolean): void>>
 ```
 
 ### `module introduction`
@@ -108,6 +110,7 @@ function __spawn_process[T](own body: () => T): Worker[T] {
   }
   let pid: i32 = proc_fork();
   if (pid < 0) {
+    __unmap_region(region, size, false);
     return Worker { result: Some(body()), pid: 0, region: 0i64, size: 0i64 };
   }
   if (pid == 0) {
@@ -125,7 +128,7 @@ function __spawn_process[T](own body: () => T): Worker[T] {
 
 ### `5 pub function (own w: Worker[T]) join(): T`
 
-Waits for the worker and returns its result. The call consumes the worker. A worker that ran inline hands back its stored result. A process worker is waited for, and its root becomes a value of this process, which owns every box of the copy from then on.
+Waits for the worker and returns its result. The call consumes the worker. A worker that ran inline hands back its stored result. A process worker returns a copy in the parent heap after the parent removes the shared region.
 
 ```fern
 <<5 pub function (own w: Worker[T]) join(): T>>=
@@ -147,20 +150,32 @@ pub function (own w: Worker[T]) join(): T {
 
 ### `6 function __join_process[T](own w: Worker[T]): T`
 
-Waits for the process and adopts its result. Only a native Linux program reaches it, so the engines without `proc` never see its calls.
+Waits for the process and copies its result into the parent heap. The original tree leaves the worker region through bulk reclamation. It never enters the parent's free lists. Only a native Linux program reaches this function.
 
 ```fern
 <<6 function __join_process[T](own w: Worker[T]): T>>=
 function __join_process[T](own w: Worker[T]): T {
   let status: i32 = proc_waitpid(w.pid);
+  while (status == 0 - 4) {
+    status = proc_waitpid(w.pid);
+  }
+  if (status != 0) {
+    __unmap_region(w.region, w.size, false);
+    eprint("worker: the worker exited with status " + status.to_string() + " and no result");
+    exit(134);
+  }
   unsafe {
     let root: usize = __worker_reap(w.region);
-    if (status != 0 || root == 0) {
-      eprint("worker: the worker exited with status " + status.to_string() + " and no result");
+    if (root == 0) {
+      __unmap_region(w.region, w.size, false);
+      eprint("worker: the worker wrote no result");
       exit(134);
     }
     let v: Option[T] = __send_adopt(root);
-    match (v) {
+    let copied: Option[T] = __send_copy(v);
+    __send_root(v);
+    __unmap_region(w.region, w.size, true);
+    match (copied) {
       Some(x) => {
         return x;
       },
@@ -168,6 +183,23 @@ function __join_process[T](own w: Worker[T]): T {
         eprint("worker: the worker wrote no result");
         exit(134);
       }
+    }
+  }
+}
+```
+
+### `7 function __unmap_region(region: i64, size: i64, reaped: boolean): void`
+
+Removes the region before a fallback, failure, or completed join. A completed join imports the child counters first. Only a successful removal records the reclamation of the live child allocations.
+
+```fern
+<<7 function __unmap_region(region: i64, size: i64, reaped: boolean): void>>=
+function __unmap_region(region: i64, size: i64, reaped: boolean): void {
+  unsafe {
+    let rc: i32 = __worker_unmap(region, size, reaped);
+    if (rc != 0) {
+      eprint("worker: cannot remove the worker region: " + rc.to_string());
+      exit(134);
     }
   }
 }

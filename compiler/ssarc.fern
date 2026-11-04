@@ -5649,7 +5649,7 @@ function host_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered 
 }
 
 function is_worker_site(name: string): boolean {
-  return name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap" || ssasem.is_adopt_helper(name);
+  return name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap" || name == "__worker_unmap" || ssasem.is_adopt_helper(name);
 }
 
 function worker_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
@@ -5661,6 +5661,9 @@ function worker_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "__worker_reap") {
     return Lowered { found: true, r: emit(r, ir.op_worker_reap()) };
+  }
+  if (ins.str == "__worker_unmap") {
+    return Lowered { found: true, r: emit(r, ir.op_worker_unmap()) };
   }
   return Lowered { found: true, r: emit(r, ir.op_send_adopt()) };
 }

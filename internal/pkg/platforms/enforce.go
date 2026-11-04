@@ -17,6 +17,7 @@ var gatedBuiltins = map[string]string{
 	"__worker_region":     "proc",
 	"__worker_exit":       "proc",
 	"__worker_reap":       "proc",
+	"__worker_unmap":      "proc",
 	"proc_exec":           "proc",
 	"proc_exec_as":        "proc",
 	"pipe":                "proc",

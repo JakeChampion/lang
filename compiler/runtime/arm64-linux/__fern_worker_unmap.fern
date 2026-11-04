@@ -1,0 +1,3 @@
+function __fern_worker_unmap(region: i64, size: i64, reaped: boolean): i32 {
+  return __syscall3(215, region, size, 0) as i32;
+}

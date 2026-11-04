@@ -106,6 +106,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "__worker_region", capability: "subprocess" },
     BuiltinCap { builtin: "__worker_exit", capability: "subprocess" },
     BuiltinCap { builtin: "__worker_reap", capability: "subprocess" },
+    BuiltinCap { builtin: "__worker_unmap", capability: "subprocess" },
     BuiltinCap { builtin: "proc_exec", capability: "subprocess" },
     BuiltinCap { builtin: "proc_exec_as", capability: "subprocess" },
     BuiltinCap { builtin: "chdir", capability: "fs" },

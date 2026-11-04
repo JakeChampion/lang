@@ -117,10 +117,10 @@ body, copies the result into the region with `__send_copy`, writes the root
 address at the start of the region, and exits. The parent keeps the child's
 pid and the region.
 
-`join` waits for the child, reads the root, and takes the region's boxes as
-its own. The region is mapped at the same address in both processes, so
-every pointer inside the copy is valid in the parent. An immortal literal
-the copy names is in the parent's image at the same address too.
+`join` waits for the child, reads the root, and copies the result into the
+parent heap. It then removes the entire worker region with `munmap`.
+The returned result has no pointer into the removed region.
+Later joins and parent allocations cannot invalidate it.
 
 The copy at the end of the body is what makes this sound. The child's heap
 is a copy-on-write image of the parent's, so a box the body builds can point
@@ -132,16 +132,19 @@ The module decides at `spawn`. A native Linux program forks. The
 interpreters map no region, and wasm and Darwin keep the inline order of
 step 1.
 
-A fork or a mapping that the kernel refuses runs the body inline too, so the
-result is the same on every path.
+A fork or a mapping that the kernel refuses runs the body inline too.
+A refused fork releases its unused region before the inline fallback.
+A failed worker releases its region before the parent reports the failure.
 
 The leak census crosses with the result. The region's header holds the four
 leak-check counters: `__worker_region` writes the parent's snapshot, the
 child writes its deltas at exit, and `__worker_reap` adds them to the
 parent's counters. The child counts a free only inside the region, because
 a box of the parent's image that the child frees is the parent's to count.
-So a box the child allocated and the parent freed is paired, and a leak in
-the body is reported at the parent's exit.
+After a successful `munmap`, the parent records the reclamation of the
+remaining live child allocations. This bulk reclamation includes temporary
+objects that the child retained until exit. A failed `munmap` changes no
+free counter and stops the program. A refused fork imports no child counters.
 
 The builtins behind the step are `unsafe`, and only `std/worker` calls
 them.
@@ -154,16 +157,18 @@ them.
 | `__send_adopt(addr)` | Takes the box at `addr` as a value of the declared type. |
 | `__worker_exit(region, root)` | Stores the root in the region and ends the child at once, with no at-exit work. |
 | `__worker_reap(region)` | Returns the root the child stored. |
+| `__worker_unmap(region, size, reaped)` | Removes the region and returns the kernel status. A reaped region carries child counters that the parent already imported. |
 
 What this costs and what it buys is listed below.
 
 - A fork costs more than a thread. The named workloads are CPU-bound jobs
   that run for longer than that.
-- The allocator, the counts and every runtime helper stay as they are. No
-  thread-local cursor, no second free list and no atomic count exists.
+- Programs without workers retain their allocator behavior. Reference
+  counts remain non-atomic. No worker shares a parent free list.
 - The captures cross for free: the child reads them from its own image.
-  Only the result is copied, and the copy is the same per-type helper a
-  thread design needs at both boundaries.
+  The child copies the result into the shared region. The parent copies it
+  into its heap before it removes that region. Both copies use the same
+  per-type helper.
 - The thread design of `MULTICORE-RESEARCH.md` stays open. Its API is this
   API, and `__send_copy` and the region adoption carry over to it.
 

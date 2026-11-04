@@ -105,6 +105,7 @@ var BuiltinCaps = map[string]string{
 	"__worker_region":     "subprocess",
 	"__worker_exit":       "subprocess",
 	"__worker_reap":       "subprocess",
+	"__worker_unmap":      "subprocess",
 	"proc_exec":           "subprocess",
 	"proc_exec_as":        "subprocess",
 	"process_alive":       "subprocess",

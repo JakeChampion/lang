@@ -3685,8 +3685,8 @@ function send_adopt(c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
 }
 
 // `__send_root(v)` consumes a value and returns its word. The helper keeps
-// the value alive, so the caller cannot touch it again and a process that
-// adopts the region takes it whole.
+// the value alive, so the caller cannot touch it again. The caller must
+// transfer the region or reclaim it after a copy into another heap.
 function send_root(c: ast.ExprCall, s: State): Value {
   let want: typeinfo.Type = checked(c.args[0], s);
   let v: Value = expr(c.args[0], s, want);
@@ -7650,6 +7650,7 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__worker_region", params: [t_i64()], modes: [v], result: t_i64() },
     ssasem.Contract { name: "__worker_exit", params: [t_i64(), t_usize()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__worker_reap", params: [t_i64()], modes: [v], result: t_usize() },
+    ssasem.Contract { name: "__worker_unmap", params: [t_i64(), t_i64(), t_bool()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "__task_new", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "__task_free", params: [t_i32()], modes: [v], result: t_void() },
     ssasem.Contract { name: "__task_cur", params: [], modes: [], result: t_i32() },

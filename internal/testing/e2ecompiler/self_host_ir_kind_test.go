@@ -18,7 +18,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_ok=162\n" +
 		"bijection_failures=0\n" +
 		"retired=26\n" +
-		"ext_ok=274\n" +
+		"ext_ok=275\n" +
 		"ext_failures=0\n" +
 		"neg_ok=15\n" +
 		"neg_failures=0\n" +
@@ -67,7 +67,7 @@ func TestSelfHostIROpConstructorTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{\s*\.\.\.)?op0\((\d+)\)`)
+	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{\s*return (?:Op \{\s*\.\.\.|counted\()?op0\((\d+)\)`)
 	matches := ctor.FindAllStringSubmatch(string(src), -1)
 	if len(matches) < 200 {
 		t.Fatalf("found %d op0 constructors in ir.fern, want at least 200 — the pattern no longer matches", len(matches))

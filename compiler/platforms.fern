@@ -189,6 +189,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__worker_region", capability: "proc" },
     Gate { builtin: "__worker_exit", capability: "proc" },
     Gate { builtin: "__worker_reap", capability: "proc" },
+    Gate { builtin: "__worker_unmap", capability: "proc" },
     Gate { builtin: "proc_exec", capability: "proc" },
     Gate { builtin: "proc_exec_as", capability: "proc" },
     Gate { builtin: "pipe", capability: "proc" },

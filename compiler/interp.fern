@@ -2646,7 +2646,7 @@ function f64_primitive(name: string, x: f64): f64 {
 // The worker builtins in an engine that runs every worker inline: the copy
 // has its own stores, no region exists, and the rest never run.
 function is_worker_contract(name: string): boolean {
-  return util.has_str(["__send_copy", "__send_adopt", "__send_root", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap"], name);
+  return util.has_str(["__send_copy", "__send_adopt", "__send_root", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap"], name);
 }
 
 function worker_contract(name: string, args: Value[]): Value {

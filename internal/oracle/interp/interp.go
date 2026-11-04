@@ -1421,7 +1421,7 @@ func New() *Interp {
 	i.Builtins["__heap_release_to"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["__heap_adopt"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["__worker_region"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
-	for _, name := range []string{"__worker_exit", "__worker_reap"} {
+	for _, name := range []string{"__worker_exit", "__worker_reap", "__worker_unmap"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) {
 			return nil, fmt.Errorf("%s: the interpreter runs every worker inline", name)
 		}}

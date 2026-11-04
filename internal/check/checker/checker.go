@@ -1193,6 +1193,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.NumberType{Width: 64, Signed: false},
 	}
+	c.info.FuncSigs["__worker_unmap"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}, ast.BoolType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	c.info.FuncSigs["__heap_adopt"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
 		Result: ast.VoidType{},
@@ -9179,7 +9183,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
-	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true, "__heap_adopt": true, "__send_adopt": true, "__send_root": true, "__worker_region": true, "__worker_exit": true, "__worker_reap": true,
+	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true, "__heap_adopt": true, "__send_adopt": true, "__send_root": true, "__worker_region": true, "__worker_exit": true, "__worker_reap": true, "__worker_unmap": true,
 	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
 	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
 	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
