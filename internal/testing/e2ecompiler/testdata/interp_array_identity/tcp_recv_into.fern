@@ -4,20 +4,20 @@ import "core/cmp";
 
 struct Holder { b: u8[] }
 
-function recv_wrapped(fd: i32, buf: u8[]): i32 {
+function recv_wrapped(fd: Socket, buf: u8[]): i32 {
   return recv_inner(fd, buf);
 }
 
-function recv_inner(fd: i32, into: u8[]): i32 {
+function recv_inner(fd: Socket, into: u8[]): i32 {
   return tcp_recv_into(fd, into);
 }
 
-function recv_via_local(fd: i32, b: u8[]): i32 {
+function recv_via_local(fd: Socket, b: u8[]): i32 {
   let x: u8[] = b;
   return tcp_recv_into(fd, x);
 }
 
-function recv_twice(c: i32, s: i32, buf: u8[]): i32 {
+function recv_twice(c: Socket, s: Socket, buf: u8[]): i32 {
   let sent: i32 = tcp_send_bytes(c, "1".bytes());
   let a: i32 = tcp_recv_into(s, buf);
   sent = sent + tcp_send_bytes(c, "2".bytes());
