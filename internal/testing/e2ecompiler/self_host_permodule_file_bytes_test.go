@@ -40,10 +40,16 @@ pub function save(): i32 {
 `, nil)
 }
 
+// unopenedSocket names descriptor -1 as a Socket, for a send that must fail with EBADF.
+const unopenedSocket = `function unopened(): Socket {
+  unsafe { return __socket_from_fd(-1); }
+}
+`
+
 func TestSelfHostPerModuleTCPSendBytes(t *testing.T) {
-	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
+	checkSelfHostPerModuleByteSink(t, unopenedSocket+`pub function save(): i32 {
   let data: u8[] = [255 as u8, 0 as u8, 128 as u8];
-  if (tcp_send_bytes(-1, data) != -9) { return 1; }
+  if (tcp_send_bytes(unopened(), data) != -9) { return 1; }
   if (data.len() != 3 || data[0] != 255 || data[1] != 0 || data[2] != 128) { return 2; }
   return 0;
 }
@@ -51,9 +57,9 @@ func TestSelfHostPerModuleTCPSendBytes(t *testing.T) {
 }
 
 func TestSelfHostPerModuleUDPSendBytes(t *testing.T) {
-	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
+	checkSelfHostPerModuleByteSink(t, unopenedSocket+`pub function save(): i32 {
   let data: u8[] = [255u8, 0u8, 128u8];
-  if (udp_sendto_bytes(-1, [127u8, 0u8, 0u8, 1u8], 1, data) != -9) { return 2; }
+  if (udp_sendto_bytes(unopened(), [127u8, 0u8, 0u8, 1u8], 1, data) != -9) { return 2; }
   if (data.len() != 3 || data[0] != 255 || data[1] != 0 || data[2] != 128) { return 3; }
   return 0;
 }
