@@ -236,6 +236,23 @@ pub function retain(h: Heap, r: Ref): Option[Root] {
   return Some(Root { heap: h, reference: r });
 }
 
+// A pinned node stays live with no Root value, as a box the native runtime
+// hands over by address. The slot is the handle.
+pub function pin(root: Root): i32 {
+  change_count(root.heap.counts, root.reference, 1, false);
+  return root.reference.slot;
+}
+
+// The Root that takes the pin's count back. None when the slot holds no
+// live node.
+pub function unpin(h: Heap, slot: i32): Option[Root] {
+  let s = h.state.get();
+  if (slot < 0 || slot >= s.nodes.len() || !s.nodes[slot].active) {
+    return None;
+  }
+  return Some(Root { heap: h, reference: Ref { slot: slot, generation: s.nodes[slot].generation } });
+}
+
 pub function children(root: Root): Root[] {
   let h = root.heap;
   let payload = get(root);

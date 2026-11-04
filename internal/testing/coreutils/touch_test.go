@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package coreutils
 
@@ -222,8 +222,9 @@ func stampOf(t *testing.T, path string) (string, bool) {
 	if err := syscall.Lstat(path, &st); err != nil {
 		return err.Error(), false
 	}
-	return time.Unix(st.Atim.Sec, st.Atim.Nsec).UTC().Format("2006-01-02T15:04:05.000000000") + " " +
-		time.Unix(st.Mtim.Sec, st.Mtim.Nsec).UTC().Format("2006-01-02T15:04:05.000000000"), true
+	at, mt := statTimes(&st)
+	return at.UTC().Format("2006-01-02T15:04:05.000000000") + " " +
+		mt.UTC().Format("2006-01-02T15:04:05.000000000"), true
 }
 
 func TestTouchTimestamps(t *testing.T) {

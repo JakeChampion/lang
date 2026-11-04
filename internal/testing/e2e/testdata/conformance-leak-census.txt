@@ -1,6 +1,7 @@
 # 2026-10-31: Seven rows measured on PR #13966 at 0f678261 with RC trace.
 # The handler fan-out retains two task-pool blocks. The task deadline case
 # retains four blocks. The pool records and their backing storage survive task-id reuse.
+# 2026-11-04: the simulation worker case retains the same four task-pool blocks.
 # Which conformance fixtures leak, and by how much.
 #
 # One row per runnable fixture: its name, then the number of allocations
@@ -1273,6 +1274,7 @@ wide_array_append_grow                               0
 wide_shift_by_variable                               0
 wider_use_settles_a_nested_payload_literal           0
 worker_runs_in_its_own_process                       0
+worker_runs_on_the_simulation                        4
 worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0

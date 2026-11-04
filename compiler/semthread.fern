@@ -465,11 +465,11 @@ struct Forwarded { g: ssa.SFunc, changed: i32 }
 // jumps to the join, and each phi reads on the new edge what it read on the
 // old one. A predecessor that branches keeps the block, so that no edge
 // carries both a condition and a phi. A block that holds only phis goes the
-// same way when only the join's phis read them and the join returns or
-// branches on one of its phis. Each read then becomes the operand of the phi
-// on that edge.
-// Without that branch, a chain of two-way joins would become one wide join
-// that copies on every edge.
+// same way when only the join's phis read them. Native targets forward into
+// at most two phi destinations, or into a join that returns or branches on a
+// phi. Wider joins keep their chains so the allocator can coalesce them.
+// Wasm forwards them without that register constraint. Each read becomes
+// the phi's operand on that edge.
 function forward_empty_joins(g0: ssa.SFunc, stack_phi_joins: boolean): Forwarded {
   let g: ssa.SFunc = g0;
   let changed: i32 = 0;
@@ -522,9 +522,7 @@ function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_jo
   if (!has_phi(xb) || util.index_of_i32(xb.preds, y.id) < 0 || !phis_read_on_edge(y, xb, uses)) {
     return false;
   }
-  // Native registers benefit from a narrow join. Wasm's stack lowering
-  // instead pays for each intermediate block and its local transfers.
-  if (!stack_phi_joins && y.insts.len() > 0 && !ends_on_phi(g, at, at[x])) {
+  if (!join_cost_allows(g, at, yi, at[x], stack_phi_joins)) {
     return false;
   }
   for q in y.preds {
@@ -537,6 +535,22 @@ function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_jo
     }
   }
   return true;
+}
+
+// A pair of phis has at most two destinations. Wider native joins retain
+// their merge chain. Wasm instead pays for intermediate local transfers.
+function join_cost_allows(g: ssa.SFunc, at: i32[], yi: i32, xi: i32, stack_phi_joins: boolean): boolean {
+  return stack_phi_joins || g.blocks[yi].insts.len() == 0 || ends_on_phi(g, at, xi) || at_most_two_phis(g.blocks[xi]);
+}
+
+function at_most_two_phis(b: ssa.SBlock): boolean {
+  let count: i32 = 0;
+  for ins in b.insts {
+    if (ins.kind_tag == 8) {
+      count = count + 1;
+    }
+  }
+  return count <= 2;
 }
 
 // x returns one of its phis, or branches on one, itself or through a chain of

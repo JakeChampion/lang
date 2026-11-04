@@ -4570,6 +4570,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_fd_syncfs\n");
   } else if (o.kind_tag == 311) {
     parts = parts.append("    call $__fern_fd_dup_onto\n");
+  } else if (o.kind_tag == 495 || o.kind_tag == 497) {
+    parts = parts.append("");
   } else if (o.kind_tag == 490) {
     parts = parts.append("    call $__fern_writer_nonblocking\n");
   } else if (o.kind_tag == 307) {

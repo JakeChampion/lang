@@ -4522,7 +4522,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
     if let typeinfo.TypeFunc(ff) = from {
       return callable_assignable(ff, tf, unions);
     }
-    return false;
+    return is_unknown(from);
   }
   if (promotes_view(from, to) || lends_array_view(from, to)) {
     return false;
