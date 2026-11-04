@@ -121,7 +121,7 @@ pub function parse_hop(el: string): Result[Hop, headers.HeaderValueError] {
 }
 
 function __parse_hop(el: string): Option[Hop] {
-  let h: Hop = hop();
+  let h = hop();
   let seen: string[] = [];
   for pair in __pairs(el) {
     let Some(eq) = pair.index_of("=") else {
@@ -130,7 +130,7 @@ function __parse_hop(el: string): Option[Hop] {
     if (eq == 0) {
       return None;
     }
-    let name: string = pair.slice_snap(0, eq).trim().to_lower();
+    let name = pair.slice_snap(0, eq).trim().to_lower();
     if (__holds(seen, name)) {
       return None;
     }
@@ -187,26 +187,26 @@ function __with_param(h: Hop, name: string, v: string): Option[Hop] {
 
 function __pairs(el: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let quoted: boolean = false;
-  let i: i32 = 0;
+  let start = 0;
+  let quoted = false;
+  let i = 0;
   while (i < el.len()) {
-    let b: u8 = el[i];
+    let b = el[i];
     if (quoted && b == 92 as u8) {
-      i = i + 1;
+      i += 1;
     } else if (b == 34 as u8) {
       quoted = !quoted;
     } else if (b == 59 as u8 && !quoted) {
       out = __pair_member(out, el, start, i);
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return __pair_member(out, el, start, el.len());
 }
 
 function __pair_member(out: string[], el: string, from: i32, to: i32): string[] {
-  let m: string = el.slice_snap(from, to).trim();
+  let m = el.slice_snap(from, to).trim();
   if (m.len() == 0) {
     return out;
   }
@@ -295,8 +295,8 @@ function __node_parse(s: string): Option[NodeId] {
       }
     }
   }
-  let name: string = s;
-  let rest: string = "";
+  let name = s;
+  let rest = "";
   if let Some(colon) = s.index_of(":") {
     name = s.slice_snap(0, colon);
     rest = s.slice_snap(colon, s.len());
@@ -337,7 +337,7 @@ function __with_port(n: Node, rest: string): Option[NodeId] {
   if (rest.len() == 0) {
     return Some(NodeId { node: n, port: "" });
   }
-  let port: string = rest.slice_snap(1, rest.len());
+  let port = rest.slice_snap(1, rest.len());
   if (rest[0] != 58 as u8 || !(__port_digits(port) || __obfuscated(port))) {
     return None;
   }
@@ -451,10 +451,10 @@ pub function (c: Client) ip(): Option[net.IpAddr] {
 }
 
 pub function client(req: HttpRequest, plat: platform.Platform, t: Trust): Client {
-  let own: Client = Client { node: None, proto: None, host: req.headers.get("host") };
+  let own = Client { node: None, proto: None, host: req.headers.get("host") };
   match (plat.peer()) {
     Some(peer) => {
-      let direct: Client = Client { ...own, node: Some(NodeId { node: Ip(peer.ip), port: peer.port.to_string() }) };
+      let direct = Client { ...own, node: Some(NodeId { node: Ip(peer.ip), port: peer.port.to_string() }) };
       if (!t.trusts(peer.ip)) {
         return direct;
       }
@@ -491,12 +491,12 @@ function __or_none(hs: Option[Hop[]]): Hop[] {
 }
 
 function __walk(hs: Hop[], t: Trust, direct: Client): Client {
-  let i: i32 = hs.len() - 1;
+  let i = hs.len() - 1;
   while (i >= 0) {
     if (i == 0 || !__trusted_node(hs[i].from, t)) {
       return __client_of(hs[i], direct);
     }
-    i = i - 1;
+    i -= 1;
   }
   return direct;
 }
@@ -520,7 +520,7 @@ function __trusted_node(n: Option[NodeId], t: Trust): boolean {
 }
 
 function __client_of(h: Hop, direct: Client): Client {
-  let host: Option[string] = direct.host;
+  let host = direct.host;
   match (h.host) {
     Some(x) => {
       host = Some(x);
@@ -531,22 +531,22 @@ function __client_of(h: Hop, direct: Client): Client {
 }
 
 function __legacy_hops(h: HeaderMap): Option[Hop[]] {
-  let fors: string[] = h.get_list("x-forwarded-for");
-  let protos: string[] = h.get_list("x-forwarded-proto");
-  let hosts: string[] = h.get_list("x-forwarded-host");
+  let fors = h.get_list("x-forwarded-for");
+  let protos = h.get_list("x-forwarded-proto");
+  let hosts = h.get_list("x-forwarded-host");
   let out: Hop[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < fors.len()) {
     match (__legacy_node(fors[i])) {
       Some(n) => {
-        let back: i32 = fors.len() - 1 - i;
+        let back = fors.len() - 1 - i;
         out = out.append(Hop { from: Some(n), by: None, host: __paired(hosts, back), proto: __paired(protos, back) });
       },
       None => {
         return None;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(out);
 }
@@ -578,7 +578,7 @@ function __paired(xs: string[], back: i32): Option[string] {
 ```fern
 <<13 pub function (n: NodeId) to_string(): string>>=
 pub function (n: NodeId) to_string(): string {
-  let name: string = "unknown";
+  let name = "unknown";
   match (n.node) {
     Ip(ip) => {
       name = ip.to_string();
@@ -678,7 +678,7 @@ pub enum ProxyHeader { HeaderShort, HeaderBad, HeaderRead(Option[net.SocketAddr]
 ```fern
 <<17 pub function proxy_header(buf: u8[], from: i32): ProxyHeader>>=
 pub function proxy_header(buf: u8[], from: i32): ProxyHeader {
-  let v1: u8[] = "PROXY ".bytes();
+  let v1 = "PROXY ".bytes();
   let v2: u8[] = [13 as u8, 10 as u8, 13 as u8, 10 as u8, 0 as u8, 13 as u8, 10 as u8, 81 as u8, 85 as u8, 73 as u8, 84 as u8, 10 as u8];
   if (__prefix_of(buf, from, v2)) {
     return __proxy_v2(buf, from);
@@ -695,28 +695,28 @@ pub function proxy_header(buf: u8[], from: i32): ProxyHeader {
 ```fern
 <<18 function __prefix_of(buf: u8[], from: i32, sig: u8[]): boolean>>=
 function __prefix_of(buf: u8[], from: i32, sig: u8[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < sig.len() && from + i < buf.len()) {
     if (buf[from + i] != sig[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function __proxy_v1(buf: u8[], from: i32): ProxyHeader {
-  let end: i32 = from;
+  let end = from;
   while (end + 1 < buf.len() && !(buf[end] == 13 as u8 && buf[end + 1] == 10 as u8)) {
     if (end - from >= 105) {
       return HeaderBad;
     }
-    end = end + 1;
+    end += 1;
   }
   if (end + 1 >= buf.len()) {
     return HeaderShort;
   }
-  let fields: string[] = utf8.from_bytes_lossy(array.slice(buf, from, end)).split(" ");
+  let fields = utf8.from_bytes_lossy(array.slice(buf, from, end)).split(" ");
   return __v1_fields(fields, end + 2 - from);
 }
 
@@ -727,8 +727,8 @@ function __v1_fields(f: string[], len: i32): ProxyHeader {
   if (f.len() != 6 || f[1] != "TCP4" && f[1] != "TCP6") {
     return HeaderBad;
   }
-  let v4: boolean = f[1] == "TCP4";
-  let src: Option[net.SocketAddr] = __v1_addr(f[2], v4, f[4]);
+  let v4 = f[1] == "TCP4";
+  let src = __v1_addr(f[2], v4, f[4]);
   match (__v1_addr(f[3], v4, f[5])) {
     Some(_) => {
       match (src) {
@@ -744,7 +744,7 @@ function __v1_fields(f: string[], len: i32): ProxyHeader {
 }
 
 function __v1_addr(text: string, v4: boolean, port: string): Option[net.SocketAddr] {
-  let n: i32 = __v1_port(port);
+  let n = __v1_port(port);
   match (net.ip_parse(text)) {
     Ok(ip) => {
       if (ip.is_v4() != v4 || n < 0) {
@@ -760,14 +760,14 @@ function __v1_addr(text: string, v4: boolean, port: string): Option[net.SocketAd
 
 function __v1_port(s: string): i32 {
   if (!__port_digits(s) || s.len() > 1 && s[0] == b'0') {
-    return 0 - 1;
+    return -1;
   }
-  let n: i32 = 0;
+  let n = 0;
   for b in s.bytes() {
     n = n * 10 + (b - 48 as u8) as i32;
   }
   if (n > 65535) {
-    return 0 - 1;
+    return -1;
   }
   return n;
 }
@@ -776,7 +776,7 @@ function __proxy_v2(buf: u8[], from: i32): ProxyHeader {
   if (buf.len() - from < 16) {
     return HeaderShort;
   }
-  let ver_cmd: i32 = buf[from + 12] as i32;
+  let ver_cmd = buf[from + 12] as i32;
   if (ver_cmd >> 4 != 2 || (ver_cmd & 15) > 1) {
     return HeaderBad;
   }
@@ -784,7 +784,7 @@ function __proxy_v2(buf: u8[], from: i32): ProxyHeader {
   if (buf.len() - from < len) {
     return HeaderShort;
   }
-  let proto: i32 = buf[from + 13] as i32 & 15;
+  let proto = buf[from + 13] as i32 & 15;
   if (proto > 2) {
     return HeaderBad;
   }
@@ -795,7 +795,7 @@ function __proxy_v2(buf: u8[], from: i32): ProxyHeader {
 }
 
 function __v2_source(buf: u8[], from: i32, family: i32, len: i32): ProxyHeader {
-  let width: i32 = 0;
+  let width = 0;
   if (family == 1) {
     width = 4;
   } else if (family == 2) {
@@ -805,12 +805,12 @@ function __v2_source(buf: u8[], from: i32, family: i32, len: i32): ProxyHeader {
   } else {
     return HeaderBad;
   }
-  let at: i32 = from + 16;
+  let at = from + 16;
   if (len - 16 < 2 * width + 4) {
     return HeaderBad;
   }
-  let port: i32 = buf[at + 2 * width] as i32 << 8 | buf[at + 2 * width + 1] as i32;
-  let ip: net.IpAddr = net.ipv4(buf[at] as i32, buf[at + 1] as i32, buf[at + 2] as i32, buf[at + 3] as i32);
+  let port = buf[at + 2 * width] as i32 << 8 | buf[at + 2 * width + 1] as i32;
+  let ip = net.ipv4(buf[at] as i32, buf[at + 1] as i32, buf[at + 2] as i32, buf[at + 3] as i32);
   if (width == 16) {
     match (net.ipv6(array.slice(buf, at, at + 16))) {
       Some(v6) => {

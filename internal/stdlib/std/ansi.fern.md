@@ -61,7 +61,7 @@ function __esc(): string {
 ```fern
 <<3 pub function sgr(code: string, s: string): string>>=
 pub function sgr(code: string, s: string): string {
-  let e: string = __esc();
+  let e = __esc();
   return e + "[" + code + "m" + s + e + "[0m";
 }
 
@@ -207,21 +207,21 @@ pub function bg_rgb(r: i32, g: i32, b: i32, s: string): string {
 }
 
 pub function strip(s: string): string {
-  let n: i32 = s.len();
+  let n = s.len();
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (s[i] == 27 && i + 1 < n && s[i + 1] == 91) {
-      i = i + 2;
+      i += 2;
       while (i < n && s[i] != 109) {
-        i = i + 1;
+        i += 1;
       }
       if (i < n) {
-        i = i + 1;
+        i += 1;
       }
     } else {
       out = out.append(s[i] as u8);
-      i = i + 1;
+      i += 1;
     }
   }
   return string_from_bytes_unchecked(out);

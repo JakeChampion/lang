@@ -1,0 +1,1 @@
+main.fern:9:31: error[E051]: argument to owned parameter must be an owned value

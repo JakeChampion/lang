@@ -64,32 +64,32 @@ function __de_is_space(c: i32): boolean {
 
 function __de_slice(s: string, a: i32, b: i32): string {
   let out: u8[] = [];
-  let i: i32 = a;
+  let i = a;
   while (i < b) {
     out = out.append(s[i] as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
 
 function __de_trim(s: string): string {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && __de_is_space(s[a] as i32)) {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && __de_is_space(s[b - 1] as i32)) {
-    b = b - 1;
+    b -= 1;
   }
   return __de_slice(s, a, b);
 }
 
 function __de_unescape(s: string): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] == 92 && i + 1 < s.len()) {
-      let n: i32 = s[i + 1] as i32;
+      let n = s[i + 1] as i32;
       if (n == 110) {
         out = out.append(10 as u8);
       } else if (n == 116) {
@@ -106,10 +106,10 @@ function __de_unescape(s: string): string {
         out = out.append(92 as u8);
         out = out.append(n as u8);
       }
-      i = i + 2;
+      i += 2;
     } else {
       out = out.append(s[i] as u8);
-      i = i + 1;
+      i += 1;
     }
   }
   return string_from_bytes_unchecked(out);
@@ -122,11 +122,11 @@ function __de_unescape(s: string): string {
 <<4 pub function parse(s: string): Map[string, string]>>=
 pub function parse(s: string): Map[string, string] {
   let m: Map[string, string] = map_new(8);
-  let lines: string[] = s.split("\n");
-  let li: i32 = 0;
+  let lines = s.split("\n");
+  let li = 0;
   while (li < lines.len()) {
-    let line: string = __de_trim(lines[li]);
-    li = li + 1;
+    let line = __de_trim(lines[li]);
+    li += 1;
     if (line.len() == 0) {
       continue;
     }
@@ -139,12 +139,12 @@ pub function parse(s: string): Map[string, string] {
     let Some(eq) = line.index_of("=") else {
       continue;
     };
-    let key: string = __de_trim(__de_slice(line, 0, eq));
+    let key = __de_trim(__de_slice(line, 0, eq));
     if (key.len() == 0) {
       continue;
     }
-    let raw: string = __de_trim(__de_slice(line, eq + 1, line.len()));
-    let val: string = raw;
+    let raw = __de_trim(__de_slice(line, eq + 1, line.len()));
+    let val = raw;
     if (raw.len() >= 2 && raw[0] == 34 && raw[raw.len() - 1] == 34) {
       val = __de_unescape(__de_slice(raw, 1, raw.len() - 1));
     } else if (raw.len() >= 2 && raw[0] == 39 && raw[raw.len() - 1] == 39) {

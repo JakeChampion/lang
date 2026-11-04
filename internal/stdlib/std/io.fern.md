@@ -50,7 +50,7 @@ import "std/utf8" as utf8;
 ```fern
 <<3 function read_all_buffer(r: Reader): Result[usize, IoError]>>=
 function read_all_buffer(r: Reader): Result[usize, IoError] {
-  let b: usize = buf_new(4096);
+  let b = buf_new(4096);
   while (true) {
     match (r.read_chunk_bytes(4096)) {
       Ok(chunk) => {
@@ -79,7 +79,7 @@ pub function read_all_bytes(r: Reader): Result[u8[], IoError] {
       return Err(e);
     },
     Ok(b) => {
-      let bytes: u8[] = buf_take_bytes(b);
+      let bytes = buf_take_bytes(b);
       buf_free(b);
       return Ok(bytes);
     }
@@ -92,9 +92,9 @@ pub function read_all_bytes(r: Reader): Result[u8[], IoError] {
 ```fern
 <<5 function read_stdin_buffer(): Result[usize, IoError]>>=
 function read_stdin_buffer(): Result[usize, IoError] {
-  let r: Reader = stdin();
-  let result: Result[usize, IoError] = read_all_buffer(r);
-  let closed: Result[void, IoError] = r.close();
+  let r = stdin();
+  let result = read_all_buffer(r);
+  let closed = r.close();
   match (result) {
     Err(e) => {
       return Err(e);
@@ -124,7 +124,7 @@ pub function read_all_stdin_bytes(): Result[u8[], IoError] {
       return Err(e);
     },
     Ok(b) => {
-      let bytes: u8[] = buf_take_bytes(b);
+      let bytes = buf_take_bytes(b);
       buf_free(b);
       return Ok(bytes);
     }
@@ -139,8 +139,8 @@ pub function read_input_bytes(path: string): Result[u8[], IoError] {
 }
 
 pub function read_line(r: Reader): Result[Option[string], IoError] {
-  let b: usize = buf_new(128);
-  let more: boolean = true;
+  let b = buf_new(128);
+  let more = true;
   while (more) {
     match (r.read_chunk_bytes(1)) {
       Ok(byte) => {
@@ -161,7 +161,7 @@ pub function read_line(r: Reader): Result[Option[string], IoError] {
     buf_free(b);
     return Ok(None);
   }
-  let bytes: u8[] = buf_take_bytes(b);
+  let bytes = buf_take_bytes(b);
   buf_free(b);
   match (utf8.from_bytes(bytes)) {
     Ok(line) => {
@@ -179,7 +179,7 @@ pub function read_all_stdin(): Result[string, IoError] {
       return Err(e);
     },
     Ok(b) => {
-      let bytes: u8[] = buf_take_bytes(b);
+      let bytes = buf_take_bytes(b);
       buf_free(b);
       match (utf8.from_bytes(bytes)) {
         Ok(text) => {
@@ -210,16 +210,16 @@ A temporary file is created exclusively, with mode 0600, under a name that carri
 pub struct TempFile { path: string, file: Writer }
 
 pub function temp_file(prefix: string): Result[TempFile, IoError] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < prefix.len()) {
     if (prefix[i] == 47 as u8) {
       return Err(Other(prefix, "Invalid argument", 22));
     }
-    i = i + 1;
+    i += 1;
   }
-  let tries: i32 = 0;
+  let tries = 0;
   while (tries < 64) {
-    let path: string = temp_root() + "/" + prefix + "-" + __hex_name(random_bytes(8));
+    let path = temp_root() + "/" + prefix + "-" + __hex_name(random_bytes(8));
     match (open_exclusive(path)) {
       Ok(w) => {
         return Ok(TempFile { path: path, file: w });
@@ -233,7 +233,7 @@ pub function temp_file(prefix: string): Result[TempFile, IoError] {
         }
       }
     }
-    tries = tries + 1;
+    tries += 1;
   }
   return Err(AlreadyExists(prefix));
 }
@@ -244,9 +244,9 @@ pub function temp_file(prefix: string): Result[TempFile, IoError] {
 function temp_root(): string {
   match (env("TMPDIR")) {
     Some(v) => {
-      let n: i32 = v.len();
+      let n = v.len();
       if (n > 1 && v[n - 1] == 47 as u8) {
-        n = n - 1;
+        n -= 1;
       }
       if (n > 1 && v[0] == 47 as u8) {
         return slice_unchecked(v, 0, n) + "";
@@ -262,7 +262,7 @@ function temp_root(): string {
 function __hex_name(bytes: u8[]): string {
   let out: u8[] = [];
   for b in bytes {
-    let v: i32 = b as i32;
+    let v = b as i32;
     out = out.append(__hex_digit(v >> 4));
     out = out.append(__hex_digit(v & 15));
   }

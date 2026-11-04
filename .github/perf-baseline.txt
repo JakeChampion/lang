@@ -1,5 +1,9 @@
+# 2026-11-04: PR #14136, perf-aarch64 job 126444330446 on 086a210e. #14094 returns a join of constants from its arms:
+# aarch64/deflate_encode.ir falls 1.22% to 43566583. It is a reduction, and no limit rises.
 # 2026-11-04: PR #14135, perf-x86_64 job 126373947305 on 4629c363. A fused compare takes no register: sort_ints.ir
 # falls 1.04% and sort_strings.ir 2.06%. Both rows are reductions, and no limit rises.
+# 2026-11-04: #14094, a local x86_64 perf-bench run. A join of constants that only returns goes back into its arms:
+# x86_64/deflate_encode.ir -1.5%, x86_64/utf8_ingest_validated.ir -1.1%, http_hello.text -1.2% on x86_64 and -1.3% on aarch64.
 # 2026-11-03: PR #14122, perf-aarch64 job 126271937197 on 747f6b7a. All 21 aarch64 findings are reductions:
 # .text shrinks 1.0% to 6.0% and .ir 1.1% to 3.3%. The higher-cost limits stay as they were.
 # 2026-11-03: PR #14122, a local scripts/perf-bench run on its head. Liveness decides which values cross a call,
@@ -216,12 +220,12 @@ x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12766
-x86_64/deflate_encode.ir	42207169
+x86_64/deflate_encode.ir	41579468
 x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15308
+x86_64/http_hello.text	15117
 x86_64/http_hello.ir	22076408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
@@ -264,7 +268,7 @@ x86_64/tokenize.ir	37860093
 x86_64/utf8_ingest_unchecked.text	7713
 x86_64/utf8_ingest_unchecked.ir	2207993
 x86_64/utf8_ingest_validated.text	8297
-x86_64/utf8_ingest_validated.ir	5262594
+x86_64/utf8_ingest_validated.ir	5207391
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -502,12 +506,12 @@ aarch64/closure_call.ir	46002179
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
 aarch64/deflate_decode.ir	35961899
 aarch64/deflate_decode.text	13560
-aarch64/deflate_encode.ir	44105319
+aarch64/deflate_encode.ir	43566583
 aarch64/deflate_encode.text	7829
 aarch64/enum_match.text	1112
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16242
+aarch64/http_hello.text	16029
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23864615
 aarch64/int_loop.text	330

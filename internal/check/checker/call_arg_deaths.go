@@ -1186,7 +1186,13 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (
 		return out, loose
 	}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if inner, ok := n.(*ast.FuncDecl); ok && inner != fn {
+		inner, ok := n.(*ast.FuncDecl)
+		// A lambda is decided as a function of its own, so a name it declares
+		// can move at its last use in the lambda's body.
+		if lm, isLambda := n.(*ast.Lambda); isLambda {
+			inner, ok = &ast.FuncDecl{Params: lm.Params, Body: lm.Body}, true
+		}
+		if ok && inner != fn {
 			innerOut, innerLoose := lastUseArgs(inner, info, handleFree)
 			for e := range innerOut {
 				out[e] = true
@@ -1932,7 +1938,8 @@ func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name 
 
 // bindingLevel is the level of the innermost frame that binds name before the
 // statement that the frame holds: the block that the read binding belongs to.
-// It is -1 when no frame binds name, as for a parameter.
+// A match arm binds its names for its body. It is -1 when no frame binds
+// name, as for a parameter.
 func bindingLevel(frames []liveFrame, name string) int {
 	for l := len(frames) - 1; l >= 0; l-- {
 		f := frames[l]
@@ -1951,8 +1958,26 @@ func bindingLevel(frames []liveFrame, name string) int {
 				return l
 			}
 		}
+		if l > 0 && armBinds(frames[l-1], f, name) {
+			return l
+		}
 	}
 	return -1
+}
+
+// armBinds reports whether the arm whose body is f binds name, when f is the
+// body of an arm of the match that parent holds.
+func armBinds(parent, f liveFrame, name string) bool {
+	m, ok := parent.stmts[parent.idx].(*ast.Match)
+	if !ok {
+		return false
+	}
+	for _, arm := range m.Arms {
+		if arm.Body != nil && nodeHolds(arm.Body, f.stmts[f.idx]) {
+			return slices.Contains(arm.Binders(), name)
+		}
+	}
+	return false
 }
 
 // lastInBinding reports whether no later read of name belongs to the binding

@@ -163,12 +163,12 @@ pub function (c: Conn) close(now: Instant): Conn {
 ```fern
 <<5 function (c: Conn) __stepped(now: Instant): Conn>>=
 function (c: Conn) __stepped(now: Instant): Conn {
-  let evs: conn.Event[] = c.quic.events;
-  let notes: streams.Event[] = c.quic.stream_events();
+  let evs = c.quic.events;
+  let notes = c.quic.stream_events();
   if (evs.len() == 0 && notes.len() == 0) {
     return c.__applied(now);
   }
-  let cur: Conn = Conn { ...c, quic: c.quic.events_taken() };
+  let cur = Conn { ...c, quic: c.quic.events_taken() };
   for e in evs {
     cur = cur.__quic_event(e);
   }
@@ -230,12 +230,12 @@ function (c: Conn) __readable(id: i64): Conn {
     }
     return Conn { ...c, parked: c.parked.append(id) };
   }
-  let cur: Conn = Conn { ...c, quic: c.quic.read_into(id) };
+  let cur = Conn { ...c, quic: c.quic.read_into(id) };
   if (cur.quic.refused() != "") {
     return cur;
   }
-  let data: u8[] = cur.quic.read_data();
-  let fin: boolean = cur.quic.read_fin();
+  let data = cur.quic.read_data();
+  let fin = cur.quic.read_fin();
   return Conn { ...cur, quic: cur.quic.read_taken(), session: cur.session.on_stream(id, data, fin) }.__unparked();
 }
 
@@ -249,23 +249,23 @@ function (c: Conn) __unparked(): Conn {
 }
 
 function (c: Conn) __applied(now: Instant): Conn {
-  let cur: Conn = c;
+  let cur = c;
   while (true) {
-    let acts: h3.Action[] = cur.session.actions;
-    let evs: h3.Event[] = cur.session.events;
+    let acts = cur.session.actions;
+    let evs = cur.session.events;
     if (acts.len() == 0 && evs.len() == 0) {
       return cur;
     }
     cur = Conn { ...cur, session: cur.session.taken(), quic: __acts(cur.quic, acts, now) };
-    let k: i32 = 0;
+    let k = 0;
     while (k < evs.len()) {
-      let id: i64 = __ended_by(evs, k);
+      let id = __ended_by(evs, k);
       if (id >= 0) {
         cur = cur.__whole(id, evs[k]);
-        k = k + 2;
+        k += 2;
       } else {
         cur = cur.__session_event(evs[k]);
-        k = k + 1;
+        k += 1;
       }
     }
   }
@@ -304,7 +304,7 @@ function __headers_of(e: h3.Event): Option[i64] {
 }
 
 function __acts(q: conn.Conn, acts: h3.Action[], now: Instant): conn.Conn {
-  let cur: conn.Conn = q;
+  let cur = q;
   for a in acts {
     cur = __act(cur, a, now);
   }
@@ -360,7 +360,7 @@ function (c: Conn) __headers(id: i64, fields: qpack.Field[]): Conn {
   if (c.__rejects(id)) {
     return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
   }
-  let kept: Partial[] = __without(c.partials, id);
+  let kept = __without(c.partials, id);
   return Conn { ...c, partials: kept.append(Partial { id: id, fields: fields, body: [], trailers: [] }), next: c.__next_for(id) };
 }
 
@@ -371,8 +371,8 @@ function (c: Conn) __whole(id: i64, e: h3.Event): Conn {
     return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
   }
   let none: qpack.Field[] = [];
-  let next: i64 = c.__next_for(id);
-  let rest: Partial[] = c.partials;
+  let next = c.__next_for(id);
+  let rest = c.partials;
   if (__find(rest, id) >= 0) {
     rest = __without(rest, id);
   }
@@ -402,20 +402,20 @@ function (c: Conn) __next_for(id: i64): i64 {
 }
 
 function (c: Conn) __data(id: i64, data: u8[]): Conn {
-  let i: i32 = __find(c.partials, id);
+  let i = __find(c.partials, id);
   if (i < 0) {
     return c;
   }
-  let p: Partial = c.partials[i];
+  let p = c.partials[i];
   if ((p.body.len() + data.len()) as i64 > c.max_body) {
-    let s: h3.Session = c.session.abort(id, h3.H3_REQUEST_REJECTED);
+    let s = c.session.abort(id, h3.H3_REQUEST_REJECTED);
     return Conn { ...c, session: s, partials: __without(c.partials, id), events: c.events.append(StreamDropped(id, h3.H3_REQUEST_REJECTED)) };
   }
   return Conn { ...c, partials: c.partials.with(i, Partial { ...p, body: p.body.concat(data) }) };
 }
 
 function (c: Conn) __with_partial(id: i64, f: (Partial) => Partial): Conn {
-  let i: i32 = __find(c.partials, id);
+  let i = __find(c.partials, id);
   if (i < 0) {
     return c;
   }
@@ -423,12 +423,12 @@ function (c: Conn) __with_partial(id: i64, f: (Partial) => Partial): Conn {
 }
 
 function (c: Conn) __ended(id: i64): Conn {
-  let i: i32 = __find(c.partials, id);
+  let i = __find(c.partials, id);
   if (i < 0) {
     return c;
   }
-  let p: Partial = c.partials[i];
-  let rest: Partial[] = __without(c.partials, id);
+  let p = c.partials[i];
+  let rest = __without(c.partials, id);
   if (c.session.is_server()) {
     return Conn { ...c, partials: rest, events: c.events.append(Requested(id, __request(p.fields, p.body, p.trailers))) };
   }
@@ -436,10 +436,10 @@ function (c: Conn) __ended(id: i64): Conn {
 }
 
 function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpRequest {
-  let hs: HeaderMap = headers.new();
-  let authority: string = "";
-  let method: string = "";
-  let path: string = "";
+  let hs = headers.new();
+  let authority = "";
+  let method = "";
+  let path = "";
   for f in fields {
     if (f.name == ":method") {
       method = f.value;
@@ -458,8 +458,8 @@ function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): 
 }
 
 function __response(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpResponse {
-  let status: i32 = 0;
-  let hs: HeaderMap = headers.new();
+  let status = 0;
+  let hs = headers.new();
   for f in fields {
     if (f.name == ":status") {
       status = i32.parse_i32(f.value).unwrap_or(0);
@@ -471,7 +471,7 @@ function __response(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]):
 }
 
 function __map(fields: qpack.Field[]): HeaderMap {
-  let hs: HeaderMap = headers.new();
+  let hs = headers.new();
   for f in fields {
     hs = hs.append(f.name, f.value);
   }
@@ -482,16 +482,16 @@ function __map(fields: qpack.Field[]): HeaderMap {
 // date line and content-length when the response has none, without building
 // its field list.
 function __response_section(enc: qpack.Encoder, resp: HttpResponse, length: i64, date_line: [u8]): u8[] {
-  let names: string[] = resp.headers.names;
-  let room: i32 = date_line.len() + 32;
+  let names = resp.headers.names;
+  let room = date_line.len() + 32;
   for i in 0..names.len() {
     room = room + names[i].len() + resp.headers.values[i].len() + 4;
   }
-  let out: u8[] = enc.put_status(enc.section(room), resp.status);
-  let has_length: boolean = false;
-  let has_date: boolean = false;
+  let out = enc.put_status(enc.section(room), resp.status);
+  let has_length = false;
+  let has_date = false;
   for i in 0..names.len() {
-    let name: string = names[i].to_lower();
+    let name = names[i].to_lower();
     has_length = has_length || name == "content-length";
     has_date = has_date || name == "date";
     if (!__connection_specific(name)) {
@@ -518,23 +518,23 @@ function __connection_specific(name: string): boolean {
 <<7 function __request_fields(out: http.Outgoing): qpack.Field[]>>=
 function __request_fields(out: http.Outgoing): qpack.Field[] {
   let fs: qpack.Field[] = [qpack.field(":method", out.method), qpack.field(":scheme", out.scheme), qpack.field(":authority", out.authority), qpack.field(":path", out.target)];
-  let i: i32 = 0;
+  let i = 0;
   while (i < out.headers.names.len()) {
-    let name: string = out.headers.names[i].to_lower();
+    let name = out.headers.names[i].to_lower();
     if (name != "host" && !__connection_specific(name)) {
       fs = fs.append(qpack.field(name, out.headers.values[i]));
     }
-    i = i + 1;
+    i += 1;
   }
   return fs;
 }
 
 function __trailer_fields(t: HeaderMap): qpack.Field[] {
   let fs: qpack.Field[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < t.names.len()) {
     fs = fs.append(qpack.field(t.names[i].to_lower(), t.values[i]));
-    i = i + 1;
+    i += 1;
   }
   return fs;
 }
@@ -556,12 +556,12 @@ pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
 }
 
 function (c: Conn) __respond_with(id: i64, resp: HttpResponse, bytes: [u8]): Conn {
-  let n: i32 = bytes.len();
+  let n = bytes.len();
   if (http.bodiless(resp.status)) {
     n = 0;
   }
-  let whole: boolean = resp.trailers.names.len() == 0;
-  let sent: Conn = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, n as i64, c.date_line), bytes[0:n], whole) }.__applied(time.instant_from_nanos(0));
+  let whole = resp.trailers.names.len() == 0;
+  let sent = Conn { ...c, session: c.session.send_section(id, __response_section(c.session.enc, resp, n as i64, c.date_line), bytes[0:n], whole) }.__applied(time.instant_from_nanos(0));
   if (whole) {
     return sent;
   }
@@ -595,8 +595,8 @@ pub function (c: Conn) request(out: http.Outgoing): Result[(Conn, i64), string] 
     return Err("h3: the connection takes no requests");
   }
   let (q, id) = c.quic.open_stream(false)?;
-  let s: h3.Session = c.session.send_headers(id, __request_fields(out), out.body.len() == 0 && out.trailers.names.len() == 0);
-  let cur: Conn = Conn { ...c, quic: q, session: s };
+  let s = c.session.send_headers(id, __request_fields(out), out.body.len() == 0 && out.trailers.names.len() == 0);
+  let cur = Conn { ...c, quic: q, session: s };
   if (out.body.len() > 0 || out.trailers.names.len() > 0) {
     cur = cur.write(id, out.body).end(id, out.trailers);
   }
@@ -609,14 +609,14 @@ pub function (c: Conn) request(out: http.Outgoing): Result[(Conn, i64), string] 
 ```fern
 <<9 function __find(ps: Partial[], id: i64): i32>>=
 function __find(ps: Partial[], id: i64): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < ps.len()) {
     if (ps[i].id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __without_id(ids: i64[], id: i64): i64[] {

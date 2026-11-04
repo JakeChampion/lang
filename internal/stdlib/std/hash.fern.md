@@ -47,20 +47,20 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<2 pub function xxh64(bs: [u8], seed: u64): u64>>=
 pub function xxh64(bs: [u8], seed: u64): u64 {
-  let n: i32 = bs.len();
-  let at: i32 = 0;
-  let h: u64 = seed + 0x27D4EB2F165667C5;
+  let n = bs.len();
+  let at = 0;
+  let h = seed + 0x27D4EB2F165667C5;
   if (n >= 32) {
-    let v1: u64 = seed + 0x9E3779B185EBCA87 + 0xC2B2AE3D27D4EB4F;
-    let v2: u64 = seed + 0xC2B2AE3D27D4EB4F;
-    let v3: u64 = seed;
-    let v4: u64 = seed - 0x9E3779B185EBCA87;
+    let v1 = seed + 0x9E3779B185EBCA87 + 0xC2B2AE3D27D4EB4F;
+    let v2 = seed + 0xC2B2AE3D27D4EB4F;
+    let v3 = seed;
+    let v4 = seed - 0x9E3779B185EBCA87;
     while (at + 32 <= n) {
       v1 = __xxh_round(v1, __le64(bs, at));
       v2 = __xxh_round(v2, __le64(bs, at + 8));
       v3 = __xxh_round(v3, __le64(bs, at + 16));
       v4 = __xxh_round(v4, __le64(bs, at + 24));
-      at = at + 32;
+      at += 32;
     }
     h = __rotl64(v1, 1) + __rotl64(v2, 7) + __rotl64(v3, 12) + __rotl64(v4, 18);
     h = __xxh_merge(__xxh_merge(__xxh_merge(__xxh_merge(h, v1), v2), v3), v4);
@@ -74,19 +74,19 @@ pub function xxh64(bs: [u8], seed: u64): u64 {
 ```fern
 <<3 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>=
 function __xxh_tail(bs: [u8], at: i32, h: u64): u64 {
-  let n: i32 = bs.len();
+  let n = bs.len();
   while (at + 8 <= n) {
     h = __rotl64(h ^ __xxh_round(0, __le64(bs, at)), 27) * 0x9E3779B185EBCA87 + 0x85EBCA77C2B2AE63;
-    at = at + 8;
+    at += 8;
   }
   if (at + 4 <= n) {
-    let w: u64 = bs[at] as u64 | bs[at + 1] as u64 << 8 | bs[at + 2] as u64 << 16 | bs[at + 3] as u64 << 24;
+    let w = bs[at] as u64 | bs[at + 1] as u64 << 8 | bs[at + 2] as u64 << 16 | bs[at + 3] as u64 << 24;
     h = __rotl64(h ^ w * 0x9E3779B185EBCA87, 23) * 0xC2B2AE3D27D4EB4F + 0x165667B19E3779F9;
-    at = at + 4;
+    at += 4;
   }
   while (at < n) {
     h = __rotl64(h ^ bs[at] as u64 * 0x27D4EB2F165667C5, 11) * 0x9E3779B185EBCA87;
-    at = at + 1;
+    at += 1;
   }
   h = (h ^ h >> 33) * 0xC2B2AE3D27D4EB4F;
   h = (h ^ h >> 29) * 0x165667B19E3779F9;

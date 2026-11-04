@@ -1,0 +1,8 @@
+bytes: same allocations
+ints: same allocations
+strings: same allocations
+records: same allocations
+300 32551 32551
+897 897
+element-299 element-0
+record-299 7

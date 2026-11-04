@@ -51,16 +51,16 @@ import "std/time";
 ```fern
 <<3 pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest)>>=
 pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-  let started: Instant = plat.instant();
-  let resp: HttpResponse = http.respond(next(req));
+  let started = plat.instant();
+  let resp = http.respond(next(req));
   plat.log(record(req, resp, plat, plat.instant().since(started)));
   return Ok(resp);
 }
 
 pub function record[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took: Duration): string {
-  let now: time.Timestamp = plat.now();
-  let at: i64 = Duration { sec: now.sec, nsec: now.nsec }.as_nanos();
-  let out: string = "{\"timeUnixNano\":\"" + at.to_string() + "\"," + __severity(resp.status) + ",\"body\":" + __quoted(req.method + " " + req.path + " " + resp.status.to_string());
+  let now = plat.now();
+  let at = Duration { sec: now.sec, nsec: now.nsec }.as_nanos();
+  let out = "{\"timeUnixNano\":\"" + at.to_string() + "\"," + __severity(resp.status) + ",\"body\":" + __quoted(req.method + " " + req.path + " " + resp.status.to_string());
   match (plat.trace()) {
     Some(span) => {
       out = out + ",\"traceId\":\"" + span.trace_id + "\",\"spanId\":\"" + span.span_id + "\"";
@@ -83,7 +83,7 @@ function __severity(status: i32): string {
 }
 
 function __attributes[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took_ns: i64): string {
-  let out: string = "\"http.request.method\":" + __quoted(req.method) + ",\"url.path\":" + __quoted(req.path) + ",\"http.response.status_code\":" + resp.status.to_string() + ",\"http.server.request.duration\":" + __seconds(took_ns);
+  let out = "\"http.request.method\":" + __quoted(req.method) + ",\"url.path\":" + __quoted(req.path) + ",\"http.response.status_code\":" + resp.status.to_string() + ",\"http.server.request.duration\":" + __seconds(took_ns);
   match (plat.peer()) {
     Some(addr) => {
       out = out + ",\"client.address\":" + __quoted(addr.ip.to_string());
@@ -96,7 +96,7 @@ function __attributes[P: platform.Platform](req: HttpRequest, resp: HttpResponse
     },
     None => {}
   }
-  let size: i64 = __body_size(resp.body);
+  let size = __body_size(resp.body);
   if (size >= 0 as i64) {
     out = out + ",\"http.response.body.size\":" + size.to_string();
   }
@@ -118,12 +118,12 @@ function __body_size(body: Body): i64 {
       return 0 - 1 as i64;
     }
   }
-  return 0 - 1 as i64;
+  return -1i64;
 }
 
 function __seconds(ns: i64): string {
-  let us: i64 = ns / (1000 as i64);
-  let frac: string = (us % (1000000 as i64)).to_string();
+  let us = ns / (1000 as i64);
+  let frac = (us % (1000000 as i64)).to_string();
   while (frac.len() < 6) {
     frac = "0" + frac;
   }

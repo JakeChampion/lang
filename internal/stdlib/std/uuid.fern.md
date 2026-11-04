@@ -81,7 +81,7 @@ pub function (e: ParseError) message(): string {
 }
 
 pub function (e: ParseError) to_string(): string {
-  let reason: string = "expected 36 bytes";
+  let reason = "expected 36 bytes";
   match (e.kind) {
     ParseErrorKind.InvalidLength => {},
     ParseErrorKind.InvalidSeparator => {
@@ -100,7 +100,7 @@ pub function (e: ParseError) to_string(): string {
 ```fern
 <<4 function canonical(b: u8[]): string>>=
 function canonical(b: u8[]): string {
-  let h: string = hex.encode(b);
+  let h = hex.encode(b);
   return slice_unchecked(h, 0, 8) + "-" + slice_unchecked(h, 8, 12) + "-" + slice_unchecked(h, 12, 16)
     + "-" + slice_unchecked(h, 16, 20) + "-" + slice_unchecked(h, 20, 32);
 }
@@ -111,28 +111,28 @@ function canonical(b: u8[]): string {
 ```fern
 <<5 pub function v4(): string>>=
 pub function v4(): string {
-  let b: u8[] = random_bytes(16);
+  let b = random_bytes(16);
   b = b.with(6, b[6] & 15 | 64);
   b = b.with(8, b[8] & 63 | 128);
   return canonical(b);
 }
 
 pub function v7(): string {
-  let ms: i64 = now_unix_ms();
-  let r: u8[] = random_bytes(10);
+  let ms = now_unix_ms();
+  let r = random_bytes(10);
   let b: u8[] = [];
   let shift: i64 = 40;
   while (shift >= 0) {
     b = b.append((ms >> shift & 255) as u8);
-    shift = shift - 8;
+    shift -= 8;
   }
   b = b.append(r[0] & 15 | 112);
   b = b.append(r[1]);
   b = b.append(r[2] & 63 | 128);
-  let i: i32 = 3;
+  let i = 3;
   while (i < 10) {
     b = b.append(r[i]);
-    i = i + 1;
+    i += 1;
   }
   return canonical(b);
 }
@@ -197,7 +197,7 @@ pub function version(s: string): Result[i32, ParseError] {
   if let Some(problem) = __problem(s) {
     return Err(problem);
   }
-  let byte: i32 = s[14] as i32;
+  let byte = s[14] as i32;
   if (byte <= 57) {
     return Ok(byte - 48);
   }

@@ -214,7 +214,7 @@ pub function hkdf_extract(h: Hash, salt: [u8], ikm: [u8]): u8[] {
 
 pub function hkdf_expand_label(h: Hash, secret: [u8], label: string, context: [u8], length: i32): u8[] {
   let full: [u8] = label.as_bytes();
-  let info: u8[] = __alloc_u8(10 + full.len() + context.len());
+  let info = __alloc_u8(10 + full.len() + context.len());
   info = info.with(0, (length >> 8 & 255) as u8).with(1, (length & 255) as u8).with(2, (6 + full.len()) as u8);
   info = __put(info, 3, "tls13 ".as_bytes());
   info = __put(info, 9, full);
@@ -241,10 +241,10 @@ pub function derive_secret(h: Hash, secret: [u8], label: string, transcript_hash
 ```fern
 <<9 function __put(own dst: u8[], at: i32, src: [u8]): u8[]>>=
 function __put(own dst: u8[], at: i32, src: [u8]): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < src.len()) {
     dst = dst.with(at + i, src[i]);
-    i = i + 1;
+    i += 1;
   }
   return dst;
 }
@@ -255,11 +255,11 @@ function __next(h: Hash, secret: [u8], ikm: [u8]): u8[] {
 }
 
 function __zeros(n: i32): u8[] {
-  let z: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let z = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
     z = z.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return z;
 }
@@ -342,7 +342,7 @@ pub struct TrafficKeys { key: u8[], iv: u8[] }
 <<13 pub function traffic_keys(suite: CipherSuite, traffic_secret: [u8]): TrafficKeys>>=
 pub function traffic_keys(suite: CipherSuite, traffic_secret: [u8]): TrafficKeys {
   let none: u8[] = [];
-  let h: Hash = suite.hash();
+  let h = suite.hash();
   return TrafficKeys {
     key: hkdf_expand_label(h, traffic_secret, "key", none, suite.aead().key_len()),
     iv: hkdf_expand_label(h, traffic_secret, "iv", none, 12),
@@ -351,7 +351,7 @@ pub function traffic_keys(suite: CipherSuite, traffic_secret: [u8]): TrafficKeys
 
 pub function finished_verify_data(h: Hash, base_key: [u8], transcript_hash: [u8]): u8[] {
   let none: u8[] = [];
-  let finished_key: u8[] = hkdf_expand_label(h, base_key, "finished", none, h.size());
+  let finished_key = hkdf_expand_label(h, base_key, "finished", none, h.size());
   match (h) {
     Sha256 => {
       return crypto.hmac_sha256(finished_key, transcript_hash);

@@ -171,7 +171,9 @@ function isolation(): test.TestOutcome {
   };
   graph = match (pipeline.nearest(graph, 6, 6, limits)) { Ok(v) => v, Err(_) => { return test.fail("nearest"); } };
   let region = regions.Region { x: 0, y: 0, width: 2, height: 2 };
-  let tile = match (regions.render_tile(graph, region, limits, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("tile"); } };
+  let Ok(tile) = regions.render_tile(graph, region, limits, never_cancel) else {
+    return test.fail("tile");
+  };
   let kept = tile;
   let Ok(changed) = pixels.write_pixel(tile, 0, 0, color.rgb(255, 0, 0)) else {
     return test.fail("write");

@@ -46,55 +46,55 @@ import "std/array";
 <<3 function __tbl_pad(s: string, width: i32): string>>=
 function __tbl_pad(s: string, width: i32): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     out = out.append(s[i] as u8);
-    i = i + 1;
+    i += 1;
   }
-  let pad: i32 = width - s.codepoint_count();
-  let p: i32 = 0;
+  let pad = width - s.codepoint_count();
+  let p = 0;
   while (p < pad) {
     out = out.append(32 as u8);
-    p = p + 1;
+    p += 1;
   }
   return string_from_bytes_unchecked(out);
 }
 
 function __tbl_widths(rows: string[][]): i32[] {
-  let ncols: i32 = 0;
-  let r: i32 = 0;
+  let ncols = 0;
+  let r = 0;
   while (r < rows.len()) {
     if (rows[r].len() > ncols) {
       ncols = rows[r].len();
     }
-    r = r + 1;
+    r += 1;
   }
   let widths: i32[] = [];
-  let c: i32 = 0;
+  let c = 0;
   while (c < ncols) {
     widths = widths.append(0);
-    c = c + 1;
+    c += 1;
   }
   r = 0;
   while (r < rows.len()) {
     c = 0;
     while (c < rows[r].len()) {
-      let w: i32 = rows[r][c].codepoint_count();
+      let w = rows[r][c].codepoint_count();
       if (w > widths[c]) {
         widths = widths.with(c, w);
       }
-      c = c + 1;
+      c += 1;
     }
-    r = r + 1;
+    r += 1;
   }
   return widths;
 }
 
 function __tbl_row(row: string[], widths: i32[]): string {
   let cells: string[] = [];
-  let c: i32 = 0;
+  let c = 0;
   while (c < widths.len()) {
-    let cell: string = "";
+    let cell = "";
     if (c < row.len()) {
       cell = row[c];
     }
@@ -103,7 +103,7 @@ function __tbl_row(row: string[], widths: i32[]): string {
     } else {
       cells = cells.append(__tbl_pad(cell, widths[c]));
     }
-    c = c + 1;
+    c += 1;
   }
   return cells.join("  ");
 }
@@ -114,43 +114,43 @@ function __tbl_row(row: string[], widths: i32[]): string {
 ```fern
 <<4 pub function render(rows: string[][]): string>>=
 pub function render(rows: string[][]): string {
-  let widths: i32[] = __tbl_widths(rows);
+  let widths = __tbl_widths(rows);
   let lines: string[] = [];
-  let r: i32 = 0;
+  let r = 0;
   while (r < rows.len()) {
     lines = lines.append(__tbl_row(rows[r], widths));
-    r = r + 1;
+    r += 1;
   }
   return lines.join("\n");
 }
 
 pub function render_with_header(headers: string[], rows: string[][]): string {
   let all: string[][] = [headers];
-  let i: i32 = 0;
+  let i = 0;
   while (i < rows.len()) {
     all = all.append(rows[i]);
-    i = i + 1;
+    i += 1;
   }
-  let widths: i32[] = __tbl_widths(all);
+  let widths = __tbl_widths(all);
   let lines: string[] = [];
   lines = lines.append(__tbl_row(headers, widths));
   let rule: string[] = [];
-  let c: i32 = 0;
+  let c = 0;
   while (c < widths.len()) {
     let dashes: u8[] = [];
-    let d: i32 = 0;
+    let d = 0;
     while (d < widths[c]) {
       dashes = dashes.append(45 as u8);
-      d = d + 1;
+      d += 1;
     }
     rule = rule.append(string_from_bytes_unchecked(dashes));
-    c = c + 1;
+    c += 1;
   }
   lines = lines.append(__tbl_row(rule, widths));
-  let r: i32 = 0;
+  let r = 0;
   while (r < rows.len()) {
     lines = lines.append(__tbl_row(rows[r], widths));
-    r = r + 1;
+    r += 1;
   }
   return lines.join("\n");
 }

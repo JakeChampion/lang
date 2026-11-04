@@ -29,7 +29,7 @@ function region(plat: platform.Platform): string {
 }
 
 function main(): i32 {
-  let m: mock_platform.MockPlatform = mock_platform.new().with_env("REGION", "eu-west").with_http("GET", "http://up.test/", Err(fetch.Timeout(fetch.Connecting)));
+  let m = mock_platform.new().with_env("REGION", "eu-west").with_http("GET", "http://up.test/", Err(fetch.Timeout(fetch.Connecting)));
   if (region(m) != "eu-west") { return 1; }
   match (m.http(fetch.get("http://up.test/"))) {
     Ok(_) => { return 2; },
@@ -203,7 +203,7 @@ impl platform.Platform for MockPlatform {
   }
 
   function http(self: MockPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
-    let summary: string = req.method + " " + req.url;
+    let summary = req.method + " " + req.url;
     self.record("http", summary);
     match (self.answers.get(summary)) {
       Some(outcome) => {
@@ -329,7 +329,7 @@ pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse {
 ```fern
 <<8 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): H...>>=
 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): HttpResponse {
-  let content: string = "";
+  let content = "";
   match (m.files.get(path)) {
     Some(f) => {
       content = f.content;
@@ -357,10 +357,10 @@ function __canned_range(content: string, offset: i64, len: i64): Option[u8[]] {
 }
 
 function __file_stat(is_dir: boolean, size: i64, mtime: time.Timestamp): FileStat {
-  let z: i64 = 0 as i64;
-  let u: u32 = 0 as u32;
-  let sec: i64 = mtime.sec;
-  let nsec: i64 = mtime.nsec as i64;
+  let z = 0 as i64;
+  let u = 0 as u32;
+  let sec = mtime.sec;
+  let nsec = mtime.nsec as i64;
   return FileStat { is_file: !is_dir, is_dir: is_dir, size: size, mode: u, nlink: 1 as u32, uid: u, gid: u, dev: z, rdev: z, ino: z, blksize: z, blocks: z, atime: sec, atime_nsec: nsec, mtime: sec, mtime_nsec: nsec, ctime: sec, ctime_nsec: nsec, btime: sec, btime_nsec: nsec };
 }
 ```

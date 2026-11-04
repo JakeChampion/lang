@@ -196,8 +196,8 @@ function encode(req: Request, body: u8[]): u8[] {
   out = out.append((ck / 256) as u8);
   out = out.append(0 as u8);
   out = out.append(0 as u8);
-  for i in 0..plen {
-    out = out.append(body[i]);
+  for b in body {
+    out = out.append(b);
   }
   return out;
 }

@@ -190,24 +190,24 @@ pub function (lg: Logger) error_(): LogEntry {
 }
 
 pub function (e: LogEntry) str(key: string, val: string): LogEntry {
-  let t: string = e.text + " " + key + "=" + val;
-  let j: string = e.json + ",\"" + json.escape(key) + "\":\"" + json.escape(val) + "\"";
+  let t = e.text + " " + key + "=" + val;
+  let j = e.json + ",\"" + json.escape(key) + "\":\"" + json.escape(val) + "\"";
   return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j, sink: e.sink };
 }
 
 pub function (e: LogEntry) int(key: string, val: i32): LogEntry {
-  let t: string = e.text + " " + key + "=" + val.to_string();
-  let j: string = e.json + ",\"" + json.escape(key) + "\":" + val.to_string();
+  let t = e.text + " " + key + "=" + val.to_string();
+  let j = e.json + ",\"" + json.escape(key) + "\":" + val.to_string();
   return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j, sink: e.sink };
 }
 
 pub function (e: LogEntry) bool(key: string, val: boolean): LogEntry {
-  let vs: string = "false";
+  let vs = "false";
   if (val) {
     vs = "true";
   }
-  let t: string = e.text + " " + key + "=" + vs;
-  let j: string = e.json + ",\"" + json.escape(key) + "\":" + vs;
+  let t = e.text + " " + key + "=" + vs;
+  let j = e.json + ",\"" + json.escape(key) + "\":" + vs;
   return LogEntry { min_level: e.min_level, is_json: e.is_json, level: e.level, text: t, json: j, sink: e.sink };
 }
 

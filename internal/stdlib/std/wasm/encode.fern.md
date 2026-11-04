@@ -76,10 +76,10 @@ pub const SECTION_DATA: u8 = 11u8;
 pub function put_bytes(buf: u8[], src: u8[]): u8[] {
   let n: i32 = src.len();
   let out: u8[] = buf;
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(src[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -106,10 +106,10 @@ pub function put_module_header(buf: u8[]): u8[] {
 pub function put_name(buf: u8[], s: string): u8[] {
   let n: i32 = s.len();
   let out: u8[] = leb128.uleb_u32(buf, n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(s[i] as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
