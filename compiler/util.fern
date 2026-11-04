@@ -1464,6 +1464,9 @@ pub function trim(s: string): string {
   while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) {
     b = b - 1;
   }
+  if (a == 0 && b == s.len()) {
+    return s;
+  }
   return slice_unchecked(s, a, b) + "";
 }
 

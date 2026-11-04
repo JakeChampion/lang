@@ -10423,8 +10423,11 @@ function unsafe_sig_named(name: string, s: Scope): boolean {
 
 function qualified_sig_name(fa: ast.ExprFieldAccess, s: Scope): string {
   if let ast.ExprIdent(ns) = fa.obj {
+    if (s.is_bound(ns.name)) {
+      return "";
+    }
     let qname: string = ns.name + "." + fa.field;
-    if (!s.is_bound(ns.name) && s.has_sig(qname)) {
+    if (s.has_sig(qname)) {
       return qname;
     }
   }
