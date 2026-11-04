@@ -10361,7 +10361,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	selfMoveArgs := map[ast.Expr]bool{}
-	lastUse, looseUse := lastUseArgs(fn, c.info)
+	lastUse, looseUse := lastUseArgs(fn, c.info, c.holdsNoHandle)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] {
@@ -10570,13 +10570,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return false
 	}
+	// bindArm classes the bindings of an arm. On a borrowed scrutinee they
+	// are lent. On an owned scrutinee a payload that can hold a handle is an
+	// owned name that moves once, and a handle-free payload is a fresh
+	// local, like any other let. On a taken local every payload is a fresh
+	// local.
 	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, taken bool) (added, lent []string) {
 		for i, bname := range bindings {
 			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) {
 				continue
 			}
 			if scrutOwned {
-				if !owned[bname] {
+				if !owned[bname] && !c.holdsNoHandle(types[i]) {
 					owned[bname] = true
 					added = append(added, bname)
 				}

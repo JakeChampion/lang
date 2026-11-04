@@ -1,0 +1,52 @@
+// spec: RH-36
+// A payload a match takes from a fresh value is a fresh local when its type
+// cannot hold a handle, like any other let: a copy keeps both names, a store
+// keeps the name readable, and a move at its last use is admitted. The
+// let-else, if-let and match forms are the same.
+struct T { aux: string }
+
+function make(): Result[u8[], string] {
+  return Ok([1, 2]);
+}
+
+function take(t: T, n: i32): i32 {
+  return t.aux.len() + n;
+}
+
+function keep(own xs: u8[]): i32 {
+  return xs[0] as i32;
+}
+
+function pick(xs: string[]): Option[string] {
+  for x in xs {
+    return Some(x);
+  }
+  return None;
+}
+
+function copied(): i32 {
+  let Ok(first) = make() else { return 1; };
+  let retained = first;
+  first = first.with(0, 77);
+  return (retained[0] + first[0]) as i32;
+}
+
+function stored(xs: string[]): i32 {
+  if let Some(u) = pick(xs) {
+    let t = T { aux: u };
+    return take(t, u.len());
+  }
+  return 0;
+}
+
+function moved(): i32 {
+  let Ok(xs) = make() else { return 1; };
+  let a = xs;
+  let k: i32 = keep(xs);
+  return k + a.len();
+}
+
+function main(): i32 {
+  print(f"{copied()} {stored(["ab", "c"])} {moved()}");
+  return 0;
+}

@@ -20219,6 +20219,15 @@ function lu_scrutinee_is_param(fx: LuFn, e: ast.Expr): boolean {
 }
 
 // A for-each variable bound from an owned array is a fresh local each round.
+// A scrutinee the match takes without a move site: a fresh value, or an own
+// parameter declared nowhere else.
+function lu_scrutinee_owned(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprIdent(id) = e {
+    return lu_own_param(fx, id.name) && lu_decl_count(fx, id.name) == 0;
+  }
+  return lu_iter_owned(fx, e);
+}
+
 function lu_elem_fresh(fx: LuFn, site: LuSite, name: string): boolean {
   return util.has_str(site.fresh, name) && !util.has_str(fx.params, name) && lu_decl_count(fx, name) == 0;
 }
@@ -20640,9 +20649,10 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
           }
           let names: string[] = astwalk.pattern_binders(arm.pattern, []);
           let bound: string[] = util.append_all(sc.binders, names);
-          // A match that takes its scrutinee binds each payload as a fresh local.
+          // A match that takes its scrutinee, a fresh value or an own
+          // parameter, binds each payload as a fresh local.
           let fresh: string[] = sc.fresh;
-          if (taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee)) {
+          if (taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee) || lu_scrutinee_owned(fx, m.scrutinee)) {
             fresh = util.append_all(fresh, names);
           }
           acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(arm.body), binders: bound, fresh: fresh }, outer, has_outer, fx, acc);
@@ -21333,7 +21343,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         if (taken) {
           // Each binding is a fresh local, neither owned nor lent.
         } else if (scrut_owned) {
-          actx = ow_arm_payload_ctx(actx, arm.pattern, whole);
+          actx = ow_arm_handle_ctx(actx, arm.pattern, whole);
         } else {
           actx = ow_arm_lent_ctx(actx, arm.pattern);
         }
@@ -21492,6 +21502,20 @@ function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Typ
     }
   }
   return false;
+}
+
+// A payload taken from an owned scrutinee is an owned name that moves once
+// when its type can hold a handle. A handle-free payload is a fresh local,
+// like any other let: a copy of it keeps both names.
+function ow_arm_handle_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): OwnCtx {
+  let full: OwnCtx = ow_arm_payload_ctx(ctx, pat, whole);
+  let names: string[] = ctx.owned;
+  for n in full.owned {
+    if (!util.has_str(names, n) && !ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(n)), ctx.decls)) {
+      names = names.append(n);
+    }
+  }
+  return OwnCtx { ...ctx, owned: names };
 }
 
 function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): OwnCtx {

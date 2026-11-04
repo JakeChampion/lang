@@ -11,8 +11,8 @@ func wantE050(t *testing.T, name, src string) {
 	if err == nil {
 		t.Fatalf("%s: expected an E050 use-after-move error, got none", name)
 	}
-	if !strings.Contains(err.Error(), "E050") && !strings.Contains(err.Error(), "owned parameter") {
-		t.Errorf("%s: expected E050 / owned-parameter error, got: %v", name, err)
+	if !hasCode(err, "E050") {
+		t.Errorf("%s: expected an E050 error, got: %v", name, err)
 	}
 }
 
@@ -179,8 +179,8 @@ func wantE051(t *testing.T, name, src string) {
 	if err == nil {
 		t.Fatalf("%s: expected an E051 ownership error, got none", name)
 	}
-	if !strings.Contains(err.Error(), "E051") && !strings.Contains(err.Error(), "owned parameter must be an owned value") {
-		t.Errorf("%s: expected E051 / owned-value error, got: %v", name, err)
+	if !hasCode(err, "E051") {
+		t.Errorf("%s: expected an E051 error, got: %v", name, err)
 	}
 }
 
@@ -748,8 +748,10 @@ function f(): Result[i32, string] {
 }`)
 }
 
+// A handle-free payload is a fresh local, so a move inside a loop is not at
+// its last use.
 func TestOwnGuardRejectsATryPayloadBoundBeforeALoop(t *testing.T) {
-	wantE050(t, "try-payload-bound-before-loop", ownConsumer+`
+	wantE051(t, "try-payload-bound-before-loop", ownConsumer+`
 enum Next { Part(i32[]), Done }
 function step(n: i32): Result[Next, string] { return Ok(Part([n])); }
 function f(): Result[i32, string] {
@@ -904,12 +906,78 @@ function f(r: Result[i32[], string]): i32 {
 }`)
 }
 
+// A handle-free payload is a fresh local: its first move is not at its last
+// use. A payload that can hold a handle is an owned name that moves once.
 func TestOwnGuardRejectsAFreshResultPayloadMovedTwice(t *testing.T) {
-	wantE050(t, "fresh-result-payload-moved-twice", freshResultPrelude+`
+	wantE051(t, "fresh-result-payload-moved-twice", freshResultPrelude+`
 function f(): i32 {
     let Ok(xs) = make(2) else { return 0; };
     let a: i32 = consume(xs);
     return a + consume(xs);
+}`)
+	wantE050(t, "fresh-handle-payload-closed-twice", `
+function f(path: string): i32 {
+    let Ok(r) = open_reader(path) else { return 0; };
+    r.close();
+    r.close();
+    return 0;
+}`)
+}
+
+// Issues #14089 and #14075: a payload bound from an owned scrutinee whose
+// type cannot hold a handle is a local like any other let. A copy keeps both
+// names, a store keeps the name readable, and a move must be its last use.
+func TestOwnGuardHandleFreePayloadIsALocal(t *testing.T) {
+	const prelude = `function make(): Result[u8[], string] { return Ok([1, 2]); }
+function keep(own xs: u8[]): i32 { return xs[0] as i32; }
+struct T { aux: string }
+function take(t: T, n: i32): i32 { return t.aux.len() + n; }
+function pick(xs: string[]): Option[string] { for x in xs { return Some(x); } return None; }
+`
+	wantOK(t, "let-else-copied-then-updated", prelude+`
+function f(): i32 {
+    let Ok(first) = make() else { return 1; };
+    let retained = first;
+    first = first.with(0, 77);
+    return (retained[0] + first[0]) as i32;
+}`)
+	wantOK(t, "if-let-copied-then-updated", prelude+`
+function f(): i32 {
+    if let Ok(first) = make() {
+        let retained = first;
+        first = first.with(0, 77);
+        return (retained[0] + first[0]) as i32;
+    }
+    return 1;
+}`)
+	wantOK(t, "stored-then-read", prelude+`
+function f(xs: string[]): i32 {
+    if let Some(u) = pick(xs) {
+        let t = T { aux: u };
+        return take(t, u.len());
+    }
+    return 0;
+}`)
+	wantOK(t, "copied-then-moved-at-its-last-use", prelude+`
+function f(): i32 {
+    let Ok(xs) = make() else { return 1; };
+    let a = xs;
+    let k: i32 = keep(xs);
+    return k + a.len();
+}`)
+	wantOK(t, "handle-payload-closed-after-a-lambda-captured-it", `
+function span(r: Reader, offset: i64, len: i64): Option[u8[]] { return None; }
+function ranges(f: (i64, i64) => Option[u8[]]): Option[u8[]] { return f(0 as i64, 1 as i64); }
+function f(path: string): Option[u8[]] {
+    match (open_reader(path)) {
+        Ok(r) => {
+            let got: Option[u8[]] = ranges((offset: i64, len: i64): Option[u8[]] => span(r, offset, len));
+            r.close();
+            return got;
+        },
+        Err(e) => { return None; }
+    }
+    return None;
 }`)
 }
 

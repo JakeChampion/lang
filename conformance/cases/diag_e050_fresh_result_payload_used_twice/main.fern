@@ -1,12 +1,10 @@
-// An owned payload moves once. The second move is E050.
-function make(n: i32): Result[i32[], string] { return Ok([n]); }
-function keep(own ys: i32[]): i32 { return ys[0]; }
-
+// An owned payload that can hold a handle moves once. The second move is E050.
 function main(): i32 {
-    match (make(1)) {
-        Ok(xs) => {
-            let a: i32 = keep(xs);
-            return a + keep(xs);
+    match (open_reader("conformance.txt")) {
+        Ok(r) => {
+            r.close();
+            r.close();
+            return 0;
         },
         Err(_) => { return 0; }
     }
