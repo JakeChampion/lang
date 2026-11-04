@@ -99,7 +99,7 @@ function main(): i32 {
   if (listener.fd < 0) { return 90; }
   let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
   if (c.fd < 0) { return 91; }
-  let fds: i32[] = [0 - 1, listener];
+  let fds: i32[] = [0 - 1, listener.fd];
   if (poll(fds, 2000) != 1) { return 99; }
   return 42;
 }`, 42},
