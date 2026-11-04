@@ -9,8 +9,7 @@ name: Refresh bundled data
 # changed, opens a pull request on a branch of the source's name, updating
 # that pull request on later weeks until it merges. The pull request then runs the ordinary CI, where a change
 # upstream that breaks a test shows up as a red lane rather than landing
-# unseen; auto-merge is asked for, so one the repository allows to merge
-# itself lands once its checks pass.
+# unseen. Merge follows review and all current-head non-Netlify checks.
 #
 # .github/actions/open-refresh-pr pushes the branch and opens the pull
 # request; it says which token it uses and why.
