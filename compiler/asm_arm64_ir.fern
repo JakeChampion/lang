@@ -4088,7 +4088,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.low_word_pair(blk, ii - 1, fr.uses)) {
     return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
-  if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_select_fuse(ssa_fuse_view(fr), blk, ii + 1).fu.n > 0) {
+  if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_feeds_select(fr, blk, ii + 1)) {
     return s;
   }
   return ssa_inst(ins, reg_of, fr, lp, r, s);
@@ -4096,9 +4096,20 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
 
 struct SelectCond { fu: SsaFuse, first: boolean }
 
+// Whether the instruction at ii is a select that takes the flags of the compare
+// before it, so that the compare emits nothing of its own.
+function ssa_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
+  return ssa_is_select(blk, ii) && ssa_select_fuse(ssa_fuse_view(fr), blk, ii).fu.n > 0;
+}
+
+// A select past the first instruction, which the select fusion can read.
+function ssa_is_select(blk: ssa.SBlock, ii: i32): boolean {
+  return ii >= 1 && ii < blk.insts.len() && blk.insts[ii].kind_tag == 36;
+}
+
 function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
   let none: SelectCond = SelectCond { fu: ssa_no_fuse(), first: false };
-  if (ii < 1 || ii >= blk.insts.len() || blk.insts[ii].kind_tag != 36) {
+  if (!ssa_is_select(blk, ii)) {
     return none;
   }
   let c: i32 = blk.insts[ii].args[0];
@@ -4982,6 +4993,9 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // Whether the select at `ii` starts a run that reads the flags of the compare
 // just before it.
 function ssa_select_head(fv: FuseView, blk: ssa.SBlock, ii: i32): boolean {
+  if (!ssa_is_select(blk, ii)) {
+    return false;
+  }
   let sc: SelectCond = ssa_select_fuse(fv, blk, ii);
   return sc.fu.n > 0 && sc.first;
 }
