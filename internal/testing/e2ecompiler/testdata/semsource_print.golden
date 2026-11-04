@@ -120,8 +120,6 @@ func nested {
     v13 = tuple_new v12 v8
     ret v13
   b2:
-    br b3
-  b3:
     ret v7
 }
 
@@ -683,23 +681,17 @@ func if_expr_chain {
     brif v2 b1 b2
   b1:
     v3 = const_int 2
-    br b3
+    ret v3
   b2:
     v4 = const_int 0
     v5 = binary > v0 v4
     brif v5 b4 b5
   b4:
     v6 = const_int 1
-    br b6
+    ret v6
   b5:
     v7 = const_int 0
-    br b6
-  b6:
-    v8 = phi v6 v7
-    br b3
-  b3:
-    v9 = phi v3 v8
-    ret v9
+    ret v7
 }
 
 modes 1 result i32[]
@@ -753,13 +745,10 @@ func match_expr {
     brif v2 b1 b2
   b1:
     v3 = const_int 5
-    br b3
+    ret v3
   b2:
     v4 = const_int 0
-    br b3
-  b3:
-    v5 = phi v3 v4
-    ret v5
+    ret v4
 }
 
 modes 1 result i32
@@ -1933,8 +1922,6 @@ func wide_literal_tree {
     v11 = binary * v3 v10
     ret v11
   b2:
-    br b3
-  b3:
     ret v5
 }
 
@@ -2027,8 +2014,6 @@ func bail {
     v5 = call exit v0
     unreachable
   b2:
-    br b3
-  b3:
     ret v0
 }
 
@@ -3268,17 +3253,14 @@ func tm_line {
     v10 = const_bool 1
     v11 = const_int 10
     v12 = binary * v6 v11
-    br b10
+    br b3
   b5:
     br b8
   b8:
     v15 = const_bool 1
-    br b10
-  b10:
-    v16 = phi v5 v12
     br b3
   b3:
-    v18 = phi v16
+    v18 = phi v5 v12
     ret v18
 }
 
@@ -3369,8 +3351,6 @@ func last_of {
     v4 = variant_get 1 More v6
     br b5
   b3:
-    br b4
-  b4:
     ret v7
 }
 
@@ -3704,8 +3684,6 @@ func Option.or_val$i32 {
     v3 = variant_get 0 Some v0
     ret v3
   b3:
-    br b4
-  b4:
     ret v1
 }
 
