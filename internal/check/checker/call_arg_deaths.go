@@ -678,7 +678,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) && !fieldBaseDead(info, body, c, q, fa.Field, order, fieldOf) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -813,6 +813,27 @@ func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates ma
 		return false
 	}
 	return true
+}
+
+// fieldBaseDead reports that no path after the statement that holds c reads
+// q, and that the statement reads only other fields of q after q.field. A
+// later mention in a branch that the call does not reach is not a read.
+func fieldBaseDead(info *Info, body *ast.Block, c *ast.Call, q *ast.Ident, field string, order IdentOrder, fieldOf map[*ast.Ident]string) bool {
+	frames := enclosingFrames(body, c)
+	if len(frames) == 0 {
+		return false
+	}
+	inner := frames[len(frames)-1]
+	later := false
+	ast.Walk(inner.stmts[inner.idx], func(m ast.Node) bool {
+		if id, ok := m.(*ast.Ident); ok && id.Name == q.Name && order.Idx[id] > order.Idx[q] {
+			if f, isField := fieldOf[id]; !isField || f == field {
+				later = true
+			}
+		}
+		return !later
+	})
+	return !later && !liveFrom(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name))
 }
 
 // UpdateBases maps the base of each update literal `S { ...q, f: v }` to the
@@ -1648,14 +1669,15 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	if repeats {
 		return true
 	}
+	reach := settleReach{frames: frames, level: len(frames) - 1, scope: bindingLevel(frames, aid.Name)}
 	if m, ok := st.(*ast.Match); ok && st != c && nodeHolds(m.Tag, c) {
-		if live, settled := callTagSettles(info, m, aid, order); live || settled {
+		if live, settled := callTagSettles(info, m, aid, order, reach); live || settled {
 			return live
 		}
 		return liveFrom(info, frames, len(frames)-1, aid.Name, bindingLevel(frames, aid.Name))
 	}
 	if m, ok := c.(*ast.Match); ok && st == c {
-		live, settled := matchTagLive(info, m, aid.Name)
+		live, settled := matchTagLive(info, m, aid.Name, reach)
 		if live {
 			return true
 		}
@@ -1683,7 +1705,7 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 // that binds a payload gives the local a new value or leaves the statement
 // before its body ends, so the statements after the match do not read the
 // taken value.
-func matchTagLive(info *Info, m *ast.Match, name string) (live, settled bool) {
+func matchTagLive(info *Info, m *ast.Match, name string, reach settleReach) (live, settled bool) {
 	settled = true
 	for _, arm := range m.Arms {
 		if len(arm.Binders()) == 0 {
@@ -1696,7 +1718,7 @@ func matchTagLive(info *Info, m *ast.Match, name string) (live, settled bool) {
 			settled = false
 			continue
 		}
-		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name)
+		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name, reach)
 		if armLive {
 			return true, false
 		}
@@ -1711,7 +1733,7 @@ func matchTagLive(info *Info, m *ast.Match, name string) (live, settled bool) {
 // reports a later read in the tag, or a read in a guard or an arm before a
 // whole assignment. settled reports that every arm assigns the local whole
 // or leaves the statement, so no later statement reads the taken value.
-func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder) (live, settled bool) {
+func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder, reach settleReach) (live, settled bool) {
 	later := false
 	ast.Walk(m.Tag, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
@@ -1731,7 +1753,7 @@ func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder) 
 			settled = false
 			continue
 		}
-		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, aid.Name)
+		armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, aid.Name, reach)
 		if armLive {
 			return true, false
 		}
@@ -1742,11 +1764,20 @@ func callTagSettles(info *Info, m *ast.Match, aid *ast.Ident, order IdentOrder) 
 	return false, settled
 }
 
+// settleReach is where a statement list sits: a break or a continue in it
+// leaves to a loop of frames, seen from level, for a binding at scope.
+type settleReach struct {
+	frames []liveFrame
+	level  int
+	scope  int
+}
+
 // stmtsSettle walks a statement list that follows a take of name. live
-// reports a read of name before a whole assignment to it. settled reports
-// that every path through the list assigns name whole or leaves the list
-// early, so the statements after it do not read the taken value.
-func stmtsSettle(info *Info, stmts []ast.Stmt, name string) (live, settled bool) {
+// reports a read of name before a whole assignment to it, also after a break
+// or a continue. settled reports that every path through the list assigns
+// name whole or leaves the list early, so the statements after it do not
+// read the taken value.
+func stmtsSettle(info *Info, stmts []ast.Stmt, name string, reach settleReach) (live, settled bool) {
 	for _, st := range stmts {
 		if assignsWhole(st, name) {
 			return false, true
@@ -1765,7 +1796,7 @@ func stmtsSettle(info *Info, stmts []ast.Stmt, name string) (live, settled bool)
 					allSettled = false
 					continue
 				}
-				armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name)
+				armLive, armSettled := stmtsSettle(info, arm.Body.Stmts, name, reach)
 				if armLive {
 					return true, false
 				}
@@ -1775,6 +1806,12 @@ func stmtsSettle(info *Info, stmts []ast.Stmt, name string) (live, settled bool)
 			}
 			if allSettled && len(x.Arms) > 0 {
 				return false, true
+			}
+			continue
+		case *ast.Block:
+			bLive, bSettled := stmtsSettle(info, x.Stmts, name, reach)
+			if bLive || bSettled {
+				return bLive, bSettled
 			}
 			continue
 		case *ast.If:
@@ -1787,7 +1824,7 @@ func stmtsSettle(info *Info, stmts []ast.Stmt, name string) (live, settled bool)
 			}
 			allSettled := x.Else != nil
 			for _, b := range branches {
-				bLive, bSettled := stmtsSettle(info, b, name)
+				bLive, bSettled := stmtsSettle(info, b, name, reach)
 				if bLive {
 					return true, false
 				}
@@ -1801,6 +1838,9 @@ func stmtsSettle(info *Info, stmts []ast.Stmt, name string) (live, settled bool)
 			continue
 		}
 		if StmtReferencesName(st, name) {
+			return true, false
+		}
+		if jumpsLive(info, reach.frames, reach.level, jumpsOf(info, st), name, reach.scope) {
 			return true, false
 		}
 		if divergesStmt(info, st) || neverReturns(info, st) {
@@ -1819,35 +1859,15 @@ func blockStmts(st ast.Stmt) []ast.Stmt {
 
 func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int) bool {
 	f := frames[level]
+	reach := settleReach{frames: frames, level: level, scope: scope}
 	for j := f.idx + 1; j < len(f.stmts); j++ {
-		st := f.stmts[j]
-		if assignsWhole(st, name) {
-			// A new value replaces the local before any read of the old one.
-			return false
-		}
-		if StmtReferencesName(st, name) {
+		// A new value on every path replaces the local before any read of
+		// the old one.
+		live, settled := stmtsSettle(info, f.stmts[j:j+1], name, reach)
+		if live {
 			return true
 		}
-		jumps := jumpsOf(info, st)
-		for _, label := range jumps.continues {
-			l := loopFrameLevel(frames, level, label)
-			if l >= 0 && l <= scope {
-				continue
-			}
-			if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
-				return true
-			}
-		}
-		for _, label := range jumps.breaks {
-			l := loopFrameLevel(frames, level, label)
-			if l >= 0 && l <= scope {
-				continue
-			}
-			if l < 0 || liveFrom(info, frames, l-1, name, scope) {
-				return true
-			}
-		}
-		if divergesStmt(info, st) || neverReturns(info, st) {
+		if settled {
 			return false
 		}
 	}
@@ -1862,6 +1882,31 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int)
 		return false
 	}
 	return liveFrom(info, frames, level-1, name, scope)
+}
+
+// jumpsLive reports a continue or a break of a statement at level that
+// reaches a read of name. A jump to a loop at or inside the block of the
+// binding leaves the binding.
+func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name string, scope int) bool {
+	for _, label := range jumps.continues {
+		l := loopFrameLevel(frames, level, label)
+		if l >= 0 && l <= scope {
+			continue
+		}
+		if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
+			return true
+		}
+	}
+	for _, label := range jumps.breaks {
+		l := loopFrameLevel(frames, level, label)
+		if l >= 0 && l <= scope {
+			continue
+		}
+		if l < 0 || liveFrom(info, frames, l-1, name, scope) {
+			return true
+		}
+	}
+	return false
 }
 
 // bindingLevel is the level of the innermost frame that binds name before the
