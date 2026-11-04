@@ -331,15 +331,16 @@ pub function open_control(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
   return (c, None);
 }
 
-// A voice frame opens once inside the window, in any order.
-pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[u8[]]) {
+// A voice frame opens once inside the window, in any order. It gives its
+// sequence number with its plaintext, so a gap shows a lost frame.
+pub function open_voice(c: Channel, frame: [u8]): (Channel, Option[(i64, u8[])]) {
   let w = c.recv_voice.get();
   match (open_frame(w, VOICE, frame)) {
     Some((seq, plain)) => {
       match (accept(w, seq)) {
         Some(next) => {
           c.recv_voice.set(next);
-          return (c, Some(plain));
+          return (c, Some((seq, plain)));
         },
         None => {}
       }
