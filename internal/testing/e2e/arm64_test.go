@@ -8366,8 +8366,8 @@ func TestArm64EprintExit(t *testing.T) {
 
 func TestArm64TcpListen(t *testing.T) {
 	_, code := compileAndRunArm64(t, `function main(): i32 {
-    let fd: i32 = tcp_listen(0);
-    if (fd < 0) { return 1; }
+    let fd: Socket = tcp_listen(0);
+    if (fd.fd < 0) { return 1; }
     tcp_close(fd);
     return 42;
 }`)

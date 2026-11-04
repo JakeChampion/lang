@@ -5,12 +5,12 @@ struct Datagram { data: u8[], from: u8[] }
 function main(): i32 {
   unsafe {
     let address: u8[] = [127u8, 0u8, 0u8, 1u8];
-    let listener: i32 = tcp_listen_with(address, 0, 16, false);
-    assert(listener >= 0);
-    let sender: i32 = tcp_connect_with(address, tcp_local_port(listener), false);
-    assert(sender >= 0);
-    let receiver: i32 = tcp_accept(listener);
-    assert(receiver >= 0);
+    let listener: Socket = tcp_listen_with(address, 0, 16, false);
+    assert(listener.fd >= 0);
+    let sender: Socket = tcp_connect_with(address, tcp_local_port(listener), false);
+    assert(sender.fd >= 0);
+    let receiver: Socket = tcp_accept(listener);
+    assert(receiver.fd >= 0);
     let values: u8[] = __alloc_u8(4);
     let slot: Cell[u8[]] = cell_new(values);
     let captured: u8[] = values;
@@ -33,8 +33,8 @@ function main(): i32 {
     assert(read() == 68u8 && captured[0] == 68u8 && values[0] == 67u8);
     assert(tcp_close(sender) == 0 && tcp_close(receiver) == 0 && tcp_close(listener) == 0);
 
-    let udp: i32 = udp_bind(address, 0);
-    assert(udp >= 0);
+    let udp: Socket = udp_bind(address, 0);
+    assert(udp.fd >= 0);
     let data: u8[] = __alloc_u8(4);
     let from: u8[] = __alloc_u8(19);
     let datagram: Cell[Datagram] = cell_new(Datagram { data: data, from: from });

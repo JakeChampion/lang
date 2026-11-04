@@ -482,7 +482,7 @@ function __second(own tab: i32[], at: i32, count: i32[], sorted: i32[]): i32[] {
     k += count[len];
     len += 1;
   }
-  let low: i32 = -1;
+  let low = -1;
   let sub = 0;
   let bits = 0;
   while (len <= 15) {

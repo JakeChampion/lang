@@ -11,14 +11,14 @@ function fail(n: i32): i32 {
 
 function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 4, false);
-    if (ln < 0) { return fail(1); }
+    let ln: Socket = tcp_listen_with(any, 0, 4, false);
+    if (ln.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    if (c < 0) { return fail(3); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(4); }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (c.fd < 0) { return fail(3); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(4); }
     if (target_os() == "wasi") {
         if (tcp_socket_ctl(a, 6, 0) != 0 - 58) { return fail(5); }
     } else {

@@ -1,0 +1,107 @@
+// The voice codec of the walkie-talkie: Opus packets of one CELT frame,
+// mono, 20 ms at 16 kHz, with the bands up to 8 kHz. A frame takes about
+// 24 kbit/s with the constrained VBR.
+
+import "std/opus/celt";
+import "std/opus/celt_encoder";
+import "std/opus/packet";
+
+// The rate of the samples that the codec takes and gives.
+pub const RATE: i32 = 16000;
+
+// Samples in one voice frame: 20 ms at `RATE`.
+pub const FRAME: i32 = 320;
+
+pub const BITRATE: i32 = 24000;
+
+// The largest packet that `encode` makes. The VBR target is about 60 bytes.
+pub const MAX_PACKET: i32 = 200;
+
+// CELT only, wideband, 20 ms frames, mono, one frame in the packet.
+const TOC: u8 = 184u8;
+
+// The last coded band of a wideband stream.
+const END_BAND: i32 = 17;
+
+pub function encoder(): celt_encoder.Encoder {
+  return celt_encoder.Encoder { ...celt_encoder.new_encoder(1), upsample: 48000 / RATE, end: END_BAND, bitrate: BITRATE, vbr: true, constrained_vbr: true };
+}
+
+// A decoder for the frames of `encoder`. It is None only when std/opus
+// refuses the rate or the channel count.
+pub function decoder(): Option[celt.Decoder] {
+  match (celt.decoder(RATE, 1)) {
+    Ok(d) => {
+      return Some(d);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// The Opus packet of one frame of `FRAME` samples in the 16-bit range.
+// The packet is empty when the encoder fails.
+pub function encode(own e: celt_encoder.Encoder, samples: [i32]): (celt_encoder.Encoder, u8[]) {
+  let pcm: f32[] = [];
+  for v in samples {
+    pcm = pcm.append(v as f32 / 32768.0f32);
+  }
+  let celt_encoder.Encoded { st, packet: frame, error } = celt_encoder.encode(e, pcm, FRAME, MAX_PACKET - 1);
+  if (error != 0) {
+    return (st, []);
+  }
+  match (packet.write(TOC, [frame], MAX_PACKET, false)) {
+    Ok(p) => {
+      return (st, p);
+    },
+    Err(_) => {
+      return (st, []);
+    }
+  }
+}
+
+function frame_info(): celt.Frame {
+  return celt.Frame { frame_size: FRAME, stream_channels: 1, start: 0, end: END_BAND };
+}
+
+function to_samples(pcm: [f32]): i32[] {
+  let out: i32[] = [];
+  for x in pcm {
+    let v: f32 = x * 32768.0f32;
+    if (v > 32767.0f32) {
+      v = 32767.0f32;
+    } else if (v < -32768.0f32) {
+      v = -32768.0f32;
+    }
+    out = out.append(v as i32);
+  }
+  return out;
+}
+
+// The samples of one packet. A packet that is not a frame of this codec
+// gives no samples, and the decoder is not changed.
+pub function decode(own d: celt.Decoder, data: [u8]): (celt.Decoder, i32[]) {
+  if (data.len() == 0 || data[0] != TOC) {
+    return (d, []);
+  }
+  match (packet.parse(data)) {
+    Ok(p) => {
+      if (p.frames.len() != 1) {
+        return (d, []);
+      }
+      let (d1, r) = d.decode(p.frames[0], frame_info());
+      match (r) {
+        Ok(pcm) => {
+          return (d1, to_samples(pcm));
+        },
+        Err(_) => {
+          return (d1, []);
+        }
+      }
+    },
+    Err(_) => {
+      return (d, []);
+    }
+  }
+}

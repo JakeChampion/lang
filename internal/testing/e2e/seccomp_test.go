@@ -194,8 +194,8 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
     return 1;
 }`},
 		{"sockets", `function main(): i32 {
-    let fd: i32 = tcp_listen(0);
-    if (fd < 0) { return 1; }
+    let fd: Socket = tcp_listen(0);
+    if (fd.fd < 0) { return 1; }
     let port: i32 = tcp_local_port(fd);
     tcp_close(fd);
     if (port <= 0) { return 2; }

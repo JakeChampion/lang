@@ -355,7 +355,7 @@ pub function substring(s: string, start: i32, end: i32): string {
   }
   let i = 0;
   let cp_idx = 0;
-  let byte_start: i32 = -1;
+  let byte_start = -1;
   let byte_end = n;
   while (i < n) {
     if (cp_idx == lo) {

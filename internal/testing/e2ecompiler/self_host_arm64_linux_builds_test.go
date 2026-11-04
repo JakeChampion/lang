@@ -70,14 +70,14 @@ func TestSelfHostArm64LinuxBuilds(t *testing.T) {
     return 42;
 }`, 42, ""},
 		{"tcp_listen_close_no_alloc", `function main(): i32 {
-  let fd: i32 = tcp_listen(0);
-  if (fd < 0) { return 1; }
+  let fd: Socket = tcp_listen(0);
+  if (fd.fd < 0) { return 1; }
   if (tcp_close(fd) < 0) { return 2; }
   return 42;
 }`, 42, ""},
 		{"tcp_local_port_no_alloc", `function main(): i32 {
-  let fd: i32 = tcp_listen(0);
-  if (fd < 0) { return 1; }
+  let fd: Socket = tcp_listen(0);
+  if (fd.fd < 0) { return 1; }
   let port: i32 = tcp_local_port(fd);
   if (tcp_close(fd) < 0) { return 2; }
   if (port <= 0) { return 3; }

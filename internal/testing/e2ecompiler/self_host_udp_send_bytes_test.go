@@ -16,8 +16,8 @@ import (
 
 const udpSendBytesProgram = `function main(): i32 {
     let addr: u8[] = UDP_ADDRESS;
-    let fd: i32 = udp_bind(addr, 0);
-    assert(fd >= 0);
+    let fd: Socket = udp_bind(addr, 0);
+    assert(fd.fd >= 0);
     let data: u8[] = [];
     for i in 0..8193 { data = data.append((i % 256) as u8); }
     let retained: u8[] = data;

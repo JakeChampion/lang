@@ -94,7 +94,7 @@ func TestAnalyzeClosureDefinitionSiteAttribution(t *testing.T) {
 		"app/main.fern": `import "helper";
 function main(): i32 {
   return helper.run((host: i32): i32 => {
-    return tcp_close(host);
+    return tcp_pollable(host);
   });
 }`,
 		"helper/fern.toml": "[package]\nname = \"helper\"\n",
@@ -124,7 +124,7 @@ function main(): i32 {
 	if len(app.Uses) != 1 || app.Uses[0].Capability != "net" {
 		t.Fatalf("app should report net (closure defined there), got %+v", app.Uses)
 	}
-	wantChain := []string{"main", "tcp_close"}
+	wantChain := []string{"main", "tcp_pollable"}
 	if got := app.Uses[0].Chain; strings.Join(got, "|") != strings.Join(wantChain, "|") {
 		t.Fatalf("app chain: got %v, want %v", got, wantChain)
 	}
@@ -137,7 +137,7 @@ func TestAnalyzeUncalledDeclaredFunctionCounts(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"main.fern": `function main(): i32 { return 0; }
 function stray(): i32 {
-  return tcp_close(1);
+  return tcp_pollable(1);
 }`,
 	})
 	prog := loadChecked(t, filepath.Join(root, "main.fern"))
@@ -145,7 +145,7 @@ function stray(): i32 {
 	if len(rows) != 1 || len(rows[0].Uses) != 1 || rows[0].Uses[0].Capability != "net" {
 		t.Fatalf("stray() is declared, so net must be reported: %+v", rows)
 	}
-	wantChain := []string{"stray", "tcp_close"}
+	wantChain := []string{"stray", "tcp_pollable"}
 	if got := rows[0].Uses[0].Chain; strings.Join(got, "|") != strings.Join(wantChain, "|") {
 		t.Fatalf("chain: got %v, want %v", got, wantChain)
 	}
@@ -154,7 +154,7 @@ function stray(): i32 {
 func TestAnalyzeFunctionValueEdge(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"main.fern": `function probe(host: i32): i32 {
-  return tcp_close(host);
+  return tcp_pollable(host);
 }
 function apply(f: (i32) => i32): i32 {
   return f(1);
