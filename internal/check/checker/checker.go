@@ -2487,6 +2487,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
 		} else if fn.MethodRecv != "" {
+			// A method hoisted by an earlier check keeps its receiver as its
+			// first parameter.
+			if len(fn.Params) > 0 && fn.Params[0].Own {
+				c.consumingTypes[fn.MethodRecv] = true
+			}
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup && (!isScalarBuiltinMethod(fn.Name) || declaredFunctions[fn.Name]) {

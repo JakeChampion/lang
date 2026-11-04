@@ -1107,6 +1107,20 @@ function f(): i32 {
     };
     return lam();
 }`)
+	// A handle-free payload is a local, so inside a lambda it cannot move
+	// either.
+	wantE051(t, "kept-alive-payload-in-lambda", ownConsumer+`
+enum Bag { Full(i32[]), Empty }
+function mk(n: i32): Bag { return Full([n]); }
+function run(f: () => i32): i32 { return f(); }
+function f(): i32 {
+    return run((): i32 => {
+        match (mk(1)) {
+            Full(xs) => { return consume(xs); },
+            Empty => { return 0; }
+        }
+    });
+}`)
 }
 
 func TestOwnedUseAfterConsumeInLambda(t *testing.T) {
