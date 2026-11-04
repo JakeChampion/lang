@@ -93,8 +93,14 @@ The voice codec. Each 20 ms frame of 320 samples at 16 kHz is one Opus packet
 with one CELT frame. The encoder of `std/opus/celt_encoder` codes the bands
 up to 8 kHz with the constrained VBR at 24 kbit/s. The decoder of
 `std/opus/celt` gives the samples back. A packet of another codec gives no
-samples. `voice_test.fern` checks the round trip, the rate and the packet
-format.
+samples.
+
+The secure channel gives the sequence number of each voice frame. When
+frames are lost, the receiver plays the concealment of the decoder for each
+lost frame, up to five frames, before the next frame. A frame that arrives
+after a later frame comes too late, and the receiver does not play it.
+`voice_test.fern` checks the round trip, the rate, the packet format and the
+concealment.
 
 ## `secure.fern`
 

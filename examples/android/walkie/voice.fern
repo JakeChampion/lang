@@ -105,3 +105,62 @@ pub function decode(own d: celt.Decoder, data: [u8]): (celt.Decoder, i32[]) {
     }
   }
 }
+
+// The most lost frames in a row that the receiver conceals, 100 ms. After a
+// longer loss the voice starts again at the frame that arrives.
+pub const MAX_CONCEAL: i64 = 5i64;
+
+// The playout state of the voice from the peer: the decoder, and the
+// sequence number of the last frame that it played, or -1.
+pub struct Receiver { dec: Option[celt.Decoder], last: i64 }
+
+pub function receiver(): Receiver {
+  return Receiver { dec: decoder(), last: -1i64 };
+}
+
+// The frames to play for packet `data` with sequence number `seq`: the
+// concealment of each lost frame before it, up to `MAX_CONCEAL`, then its
+// own samples. A frame that is older than the last frame played comes too
+// late, and gives nothing.
+pub function receive(own r: Receiver, seq: i64, data: [u8]): (Receiver, i32[][]) {
+  let out: i32[][] = [];
+  let Receiver { dec, last } = r;
+  if (last >= 0i64 && seq <= last) {
+    return (Receiver { dec: dec, last: last }, out);
+  }
+  match (dec) {
+    Some(d) => {
+      if (last >= 0i64) {
+        let lost: i64 = seq - last - 1i64;
+        if (lost > MAX_CONCEAL) {
+          lost = MAX_CONCEAL;
+        }
+        for k in 0..lost as i32 {
+          let (d1, y) = conceal(d);
+          d = d1;
+          out = out.append(y);
+        }
+      }
+      let (d2, y) = decode(d, data);
+      if (y.len() > 0) {
+        out = out.append(y);
+      }
+      return (Receiver { dec: Some(d2), last: seq }, out);
+    },
+    None => {
+      return (Receiver { dec: None, last: seq }, out);
+    }
+  }
+}
+
+function conceal(own d: celt.Decoder): (celt.Decoder, i32[]) {
+  let (d1, r) = d.decode_lost(frame_info());
+  match (r) {
+    Ok(pcm) => {
+      return (d1, to_samples(pcm));
+    },
+    Err(_) => {
+      return (d1, []);
+    }
+  }
+}
