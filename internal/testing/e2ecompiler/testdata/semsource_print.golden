@@ -409,8 +409,6 @@ func for_pair {
     v9 = tuple_get 1 v7
     v10 = binary * v8 v9
     v11 = binary + v3 v10
-    br b3
-  b3:
     v12 = const_int 1
     v13 = binary + v4 v12
     br b1
@@ -552,10 +550,43 @@ func loop_sum {
   b2:
     v7 = array_get v0 v4
     v8 = binary + v3 v7
-    br b3
-  b3:
     v9 = const_int 1
     v10 = binary + v4 v9
+    br b1
+  b4:
+    ret v3
+}
+
+modes 2 result i32
+v0:i32[] v1:i32 v2:i32 v3:i32 v4:i32 v5:i32 v6:boolean v7:i32 v8:i32 v9:boolean v10:i32 v11:i32 v12:i32 v13:i32
+func loop_skip {
+  b0:
+    v0 = param 0
+    v1 = const_int 0
+    v2 = const_int 0
+    br b1
+  b1:
+    v3 = phi v1 v11
+    v4 = phi v2 v13
+    v5 = length v0
+    v6 = binary < v4 v5
+    brif v6 b2 b4
+  b2:
+    v7 = array_get v0 v4
+    v8 = const_int 0
+    v9 = binary < v7 v8
+    brif v9 b5 b6
+  b5:
+    br b3
+  b6:
+    br b7
+  b7:
+    v10 = binary + v3 v7
+    br b3
+  b3:
+    v11 = phi v3 v10
+    v12 = const_int 1
+    v13 = binary + v4 v12
     br b1
   b4:
     ret v3
@@ -782,8 +813,6 @@ func mapped {
     v8 = array_get v0 v5
     v9 = call_value v1 v8
     v10 = append v4 v9
-    br b3
-  b3:
     v11 = const_int 1
     v12 = binary + v5 v11
     br b1
@@ -1952,8 +1981,6 @@ func count_byte {
     br b7
   b7:
     v12 = phi v11 v4
-    br b3
-  b3:
     v13 = const_int 1
     v14 = binary + v5 v13
     br b1
@@ -2064,8 +2091,6 @@ func bump_each {
     v18 = record_get 1 v12
     v19 = length v18
     v20 = binary + v17 v19
-    br b3
-  b3:
     v21 = const_int 1
     v22 = binary + v4 v21
     br b1
@@ -2094,8 +2119,6 @@ func line_each {
     v10 = variant_new Line v9
     v11 = call measure v10
     v12 = binary + v3 v11
-    br b3
-  b3:
     v13 = const_int 1
     v14 = binary + v4 v13
     br b1
@@ -2812,8 +2835,6 @@ func flagged {
     v10 = array_get v0 v7
     v11 = const_bool 1
     v12 = map_insert v6 v10 v11
-    br b3
-  b3:
     v13 = const_int 1
     v14 = binary + v7 v13
     br b1
@@ -2839,8 +2860,6 @@ func flagged {
     br b11
   b11:
     v25 = phi v24 v17
-    br b7
-  b7:
     v26 = const_int 1
     v27 = binary + v18 v26
     br b5
@@ -3832,8 +3851,6 @@ func map_to$i32$string {
     v8 = array_get v0 v5
     v9 = call_value v1 v8
     v10 = append v4 v9
-    br b3
-  b3:
     v11 = const_int 1
     v12 = binary + v5 v11
     br b1

@@ -107,11 +107,20 @@ function array_length(xs: i32[]): i32 { return xs.len(); }
 // unit the plan retains at the call and hands back a copy, where the counted
 // receiver below moves its own.
 function borrowed_append(xs: i32[]): i32[] { return xs.append(1); }
-// The loop starts at zero and advances in a latch. Both fallthrough and
-// continue reach the latch before the next bound test.
+// The loop starts at zero and the body's last block advances it, as a while
+// loop's latch does. A continue gives the advance a block of its own, which
+// the body's end also reaches, before the next bound test.
 function loop_sum(xs: i32[]): i32 {
     let t: i32 = 0;
     for x in xs { t = t + x; }
+    return t;
+}
+function loop_skip(xs: i32[]): i32 {
+    let t: i32 = 0;
+    for x in xs {
+        if (x < 0) { continue; }
+        t = t + x;
+    }
     return t;
 }
 @noinline function owned_append(own xs: i32[]): i32[] { return xs.append(1); }

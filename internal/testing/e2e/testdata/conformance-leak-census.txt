@@ -274,6 +274,7 @@ dyn_downcast_of_a_scalar_is_none                     0
 dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
 dyn_two_word_dispatch                                0
+element_for_copy_allocates_as_indexed                0
 elementary_automaton                                 0
 empty_array                                          0
 enum_array_match                                     0
