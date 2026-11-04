@@ -1,0 +1,5 @@
+waiver: harness-limit
+reason: the wasm leg recovers main's return value from a result line appended
+  to stdout, and exit() terminates the process before main returns — so the
+  mechanism has nothing to read. exit() itself is not a wasm gap; the runner
+  simply cannot observe this case there.

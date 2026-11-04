@@ -107,7 +107,7 @@ func CheckWasiPollStorage(t *testing.T, modulePath string, timeoutMS int) {
 	if len(main) != 2 || len(alloc) != 2 {
 		t.Fatal("poll module lacks main or canonical allocator")
 	}
-	imports := coreFuncImport
+	imports := regexp.MustCompile(`\(import "([^"]+)" "([^"]+)" \(func ((?:\$[^\s()]+\s+)?\(;[0-9]+;\)) \(type ([0-9]+)\)(?:\s+\((?:param|result)[^()]*\))*\)\)`)
 	seen := 0
 	wat = imports.ReplaceAllStringFunc(wat, func(decl string) string {
 		m := imports.FindStringSubmatch(decl)
