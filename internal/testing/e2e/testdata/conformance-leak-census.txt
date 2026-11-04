@@ -1058,6 +1058,7 @@ result_match                                         0
 result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
 scalar_edge_cases                                    0
+scalar_match_bindings                                0
 scalar_sum_reassign                                  0
 semver_uuid_errors                                   0
 sentinel_roundtrip                                   0

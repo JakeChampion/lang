@@ -189,9 +189,17 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       let na: ast.MatchArm[] = [];
       for arm in m.arms {
         let ab: string[] = bound;
+        let cells: string[] = scalar_pattern_cells(arm.pattern, boxed);
+        let pattern: ast.Pattern = arm.pattern;
+        if let ast.PatVariant(pv) = pattern {
+          pattern = ast.PatVariant { ...pv, scalar_cells: cells };
+        }
+        if let ast.PatLiteral(literal) = pattern {
+          pattern = ast.PatLiteral { ...literal, scalar_cells: cells };
+        }
         let bxj: i32 = 0;
         while (bxj < boxed.len()) {
-          if (util.has_str(astwalk.pattern_binders(arm.pattern, []), boxed[bxj])) {
+          if (util.has_str(astwalk.pattern_binders(arm.pattern, []), boxed[bxj]) && !util.has_str(cells, boxed[bxj])) {
             ab = ab.append(boxed[bxj]);
           }
           bxj = bxj + 1;
@@ -200,7 +208,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
         if (arm.has_guard) {
           ng = box_rewrite_expr(arm.guard, boxed, btypes, bsites, ab);
         }
-        na = na.append(ast.MatchArm { ...arm, body: box_rewrite_stmts(arm.body, boxed, btypes, bsites, ab), guard: ng });
+        na = na.append(ast.MatchArm { ...arm, pattern: pattern, body: box_rewrite_stmts(arm.body, boxed, btypes, bsites, ab), guard: ng });
       }
       return ast.StmtMatch { ...m, scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes, bsites, bound), arms: na };
     },
@@ -212,6 +220,16 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
     }
   }
   return st;
+}
+
+function scalar_pattern_cells(pattern: ast.Pattern, boxed: string[]): string[] {
+  let cells: string[] = [];
+  for name in astwalk.scalar_pattern_binders(pattern) {
+    if (util.has_str(boxed, name)) {
+      cells = cells.append(name);
+    }
+  }
+  return cells;
 }
 
 pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt[] {

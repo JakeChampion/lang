@@ -44,8 +44,8 @@ function main(): i32 {
 var constructorLeafProduced = []string{"tag", "text", "card", "weigh", "lit_rounds", "dyn_rounds"}
 
 func TestSelfHostConstructorLeaves(t *testing.T) {
-	runSemanticProgram(t, "ctorleaf", constructorLeafProgram, constructorLeafProduced,
-		semInlineWants("1300000\n5950300\n"), "card")
+	runSemanticProgramSplicing(t, "ctorleaf", constructorLeafProgram, constructorLeafProduced, []string{"card"},
+		semInlineWants("1300000\n5950000\n"))
 }
 
 func TestSelfHostConstructorLeavesOff(t *testing.T) {

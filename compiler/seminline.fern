@@ -1754,9 +1754,7 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
         f = renamed(f, swap);
         swap = [];
         let r: i32 = f.graph.blocks[bi].insts[k].result;
-        let apart: boolean = small[at] && !whole_at(sempair.whole_values(f, ix, shared, false), r);
-        let projected: boolean = record_leaf(funcs[at]) && reads_parts_of(f, r);
-        if (!apart && !projected && !(returned_only(f, r) && takes_apart(f, r))) {
+        if (!shared_call_saves_box(f, funcs[at], r, small[at], ix, shared)) {
           at = 0 - 1;
         }
       }
@@ -1787,6 +1785,12 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
     bi = bi + 1;
   }
   return Rewrite { f: renamed(f, swap), changed: done > 0 };
+}
+
+function shared_call_saves_box(f: ssasem.Func, callee: ssasem.Func, r: i32, small: boolean, ix: util.NameIndex, shared: boolean[]): boolean {
+  let apart: boolean = small && !whole_at(sempair.whole_values(f, ix, shared, false), r);
+  let projected: boolean = record_leaf(callee) && reads_parts_of(f, r);
+  return apart || projected || returned_only(f, r) && takes_apart(f, r);
 }
 
 function returned_only(f: ssasem.Func, v: i32): boolean {

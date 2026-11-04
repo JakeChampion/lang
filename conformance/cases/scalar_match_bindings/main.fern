@@ -1,0 +1,207 @@
+function statement(tag: i32): i32 {
+  match (tag) {
+    0 => {
+      return 10;
+    },
+    n when n > 100 => {
+      return n;
+    },
+    rest => {
+      return rest + 14;
+    }
+  }
+}
+
+function value(tag: i32): i32 {
+  return match (tag) { n when n > 100 => n, 0 => 10, rest => rest + 14 };
+}
+
+function mutate_guard(): i32 {
+  let calls = 0;
+  let tag = 3;
+  let next = (): i32 => {
+    calls += 1;
+    return tag;
+  };
+  let result = match (next()) {
+    n when ((): boolean => {
+      n += 10;
+      tag = 9;
+      return false;
+    })() => n,
+    3 => 4,
+    rest => rest,
+  };
+  return calls * 100 + result + tag;
+}
+
+function snapshot(): i32 {
+  let tag = 3;
+  match (tag) {
+    n when ((): boolean => {
+    n += 10;
+    tag = 9;
+    return false;
+  })() => {
+      return n;
+    },
+    3 => {
+      return 4 + tag;
+    },
+    rest => {
+      return rest;
+    }
+  }
+}
+
+function true_guard(): i32 {
+  let tag = 3;
+  return match (tag) {
+    n when ((): boolean => {
+      n += 10;
+      tag = 9;
+      return true;
+    })() => n + tag,
+    rest => rest,
+  };
+}
+
+function range_guard(tag: i32): i32 {
+  let calls = 0;
+  return match (tag) {
+    n when ((): boolean => {
+      calls += 1;
+      return false;
+    })() => n,
+    0..5 when ((): boolean => {
+      calls += 2;
+      return false;
+    })() => 100,
+    rest => rest + calls * 10,
+  };
+}
+
+function boolean_binding(tag: boolean): i32 {
+  return match (tag) { value when false => if (value) { 9 } else { 8 }, true => 1, false => 2 };
+}
+
+function string_binding(tag: string): string {
+  return match (tag) { "" => "empty", text when text.len() > 3 => text + "!", rest => rest };
+}
+
+function widths(tag: u64, number: f64, letter: char): i32 {
+  let a = match (tag) { 0u64 => 0, number => number as i32 };
+  let b = match (number) { number when number > 1.5 => number as i32, rest => rest as i32 };
+  let c = match (letter) { 'a' => 1, letter => if (letter == 'b') { 2 } else { 3 } };
+  return a + b + c;
+}
+
+function literal_alias(): i32 {
+  let tag = 3;
+  return match (tag) {
+    value when false => value,
+    whole @ 3 when ((): boolean => {
+      whole += 2;
+      return true;
+    })() => whole,
+    rest => rest,
+  };
+}
+
+function escaped_binding(): i32 {
+  let tag = 3;
+  let next = match (tag) {
+    n => (): i32 => {
+      n += 1;
+      return n;
+    },
+  };
+  tag = 9;
+  return next() * 10 + next() + tag;
+}
+
+function reassigned_binding(): i32 {
+  let read = match (3) {
+    n => {
+      let saved = (): i32 => n;
+      n = 8;
+      saved
+    },
+  };
+  return read();
+}
+
+function reassigned_string(): string {
+  let read = match (12345.to_string()) {
+    text => {
+      let saved = (): string => text;
+      text = "changed";
+      saved
+    },
+  };
+  return read();
+}
+
+function boolean_value_fallback(tag: boolean): i32 {
+  return match (tag) { n when false => if (n) { 9 } else { 8 }, true => 1, false => 2, _ => 3 };
+}
+
+function boolean_statement_fallback(tag: boolean): i32 {
+  match (tag) {
+    n when false => {
+      return if (n) { 9 } else { 8 };
+    },
+    true => {
+      return 1;
+    },
+    false => {
+      return 2;
+    },
+    _ => {
+      return 3;
+    }
+  }
+}
+
+function main(): i32 {
+  if (statement(0) != 10 || statement(101) != 101 || statement(50) != 64) {
+    return 1;
+  }
+  if (value(0) != 10 || value(101) != 101 || value(50) != 64) {
+    return 2;
+  }
+  if (mutate_guard() != 113 || snapshot() != 13 || true_guard() != 22) {
+    return 3;
+  }
+  if (range_guard(3) != 33 || range_guard(8) != 18) {
+    return 4;
+  }
+  if (boolean_binding(true) != 1 || boolean_binding(false) != 2) {
+    return 5;
+  }
+  let n = 8;
+  let result = match (3) { n => n };
+  if (result + n != 11) {
+    return 6;
+  }
+  let text = 12345.to_string();
+  if (string_binding(text) != "12345!" || string_binding("hi") != "hi" || string_binding("") != "empty") {
+    return 7;
+  }
+  if (widths(5u64, 2.5, 'b') != 9) {
+    return 8;
+  }
+  if (literal_alias() != 5 || escaped_binding() != 54) {
+    return 9;
+  }
+  if (reassigned_binding() != 8 || reassigned_string() != "changed") {
+    return 10;
+  }
+  if (boolean_value_fallback(true) != 1 || boolean_value_fallback(false) != 2) {
+    return 11;
+  }
+  if (boolean_statement_fallback(true) != 1 || boolean_statement_fallback(false) != 2) {
+    return 12;
+  }
+  return 0;
+}
