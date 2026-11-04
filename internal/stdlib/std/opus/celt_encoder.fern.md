@@ -9,6 +9,7 @@ The CELT encoder works on frames of 2.5 to 20 ms at 48 kHz. These functions anal
 The analysis functions come first. Each one makes one decision for the frame:
 
 - `preemphasis` scales the samples to the CELT range and applies the pre-emphasis filter.
+- `compute_mdcts` gives the spectrum of each channel, in one long block or in interleaved short blocks.
 - `transient_analysis` decides if the frame has a transient, so that it takes short blocks.
 - `patch_transient_decision` finds a sudden energy increase that the transient analysis missed.
 - `tf_analysis` chooses the time-frequency resolution of each band, and `tf_encode` codes the choice.
@@ -33,6 +34,8 @@ An `Analysis` holds the results of the tonality analysis of the Opus layer. When
 <<module introduction>>
 
 <<preemphasis>>
+
+<<mdcts>>
 
 <<transients>>
 
@@ -81,6 +84,8 @@ An `Analysis` holds the results of the tonality analysis of the Opus layer. When
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import "std/f64";
 import "std/opus/celt";
+import "std/opus/energy";
+import "std/opus/mdct";
 import "std/opus/modes";
 import "std/opus/pitch";
 import "std/opus/range";
@@ -131,6 +136,62 @@ function max32(a: f32, b: f32): f32 {
     return a;
   }
   return b;
+}
+```
+
+### `mdcts`
+
+A frame of short blocks has `short_blocks` MDCTs of `modes.SHORT_MDCT_SIZE` bins for each channel. Their bins are interleaved: bin `j` of block `b` is at `b + j * short_blocks`. A mono frame of a stereo input takes the mean of the two spectra. When the input had a lower rate, the bins above that rate are 0 and the others are scaled up.
+
+```fern
+<<mdcts>>=
+// The spectrum of each of `cc` input channels, or of `c` coded channels
+// when `c` is less. `input` holds `b * n + modes.OVERLAP` samples for
+// each channel.
+pub function compute_mdcts(input: [f32], short_blocks: i32, c: i32, cc: i32, lm: i32, upsample: i32): f32[] {
+  let b: i32 = 1;
+  let n: i32 = modes.SHORT_MDCT_SIZE << lm;
+  let shift: i32 = modes.MAX_LM - lm;
+  if (short_blocks > 0) {
+    b = short_blocks;
+    n = modes.SHORT_MDCT_SIZE;
+    shift = modes.MAX_LM;
+  }
+  let out: f32[] = [];
+  for i in 0..cc * b * n {
+    out = out.append(0.0f32);
+  }
+  for ch in 0..cc {
+    for blk in 0..b {
+      out = mdct.forward(input, ch * (b * n + modes.OVERLAP) + blk * n, out, blk + ch * n * b, shift, b);
+    }
+  }
+  if (cc == 2 && c == 1) {
+    for i in 0..b * n {
+      out = out.with(i, 0.5f32 * out[i] + 0.5f32 * out[b * n + i]);
+    }
+  }
+  if (upsample != 1) {
+    return upsampled(out, c, b * n, upsample);
+  }
+  return out;
+}
+
+// Each of the `c` spectra of `len` bins, scaled by `upsample` below the
+// rate of the input and 0 above it.
+function upsampled(own out: f32[], c: i32, len: i32, upsample: i32): f32[] {
+  let bound: i32 = len / upsample;
+  for ch in 0..c {
+    for i in 0..len {
+      let at: i32 = ch * len + i;
+      if (i < bound) {
+        out = out.with(at, out[at] * (upsample as f32));
+      } else {
+        out = out.with(at, 0.0f32);
+      }
+    }
+  }
+  return out;
 }
 ```
 
@@ -558,10 +619,6 @@ pub function no_analysis(): Analysis {
 
 pub struct Trim { index: i32, stereo_saving: f32 }
 
-function celt_log2(x: f32): f32 {
-  return (1.442695040888963387 * (x as f64).log()) as f32;
-}
-
 // The correlation of the channels in band `i`.
 function band_corr(x: [f32], n0: i32, lm: i32, i: i32): f32 {
   let at: i32 = modes.EBANDS[i] << lm;
@@ -582,8 +639,8 @@ function stereo_trim(x: [f32], n0: i32, lm: i32, intensity: i32, stereo_saving: 
     min_xc = min16(min_xc, abs16(band_corr(x, n0, lm, i)));
   }
   min_xc = min16(1.0f32, abs16(min_xc));
-  let log_xc: f32 = celt_log2(1.001f32 - sum * sum);
-  let log_xc2: f32 = max16(0.5f32 * log_xc, celt_log2(1.001f32 - min_xc * min_xc));
+  let log_xc: f32 = energy.celt_log2(1.001f32 - sum * sum);
+  let log_xc2: f32 = max16(0.5f32 * log_xc, energy.celt_log2(1.001f32 - min_xc * min_xc));
   return (max16(-4.0f32, 0.75f32 * log_xc), min16(stereo_saving + 0.25f32, -(0.5f32 * log_xc2)));
 }
 

@@ -6,6 +6,8 @@ This module codes the energy of each CELT band (RFC 6716, section 4.3.2). It is 
 
 An energy is a base-2 logarithm of the band amplitude. The coder codes it in three steps:
 
+The encoder first makes the energy of each band from its amplitude, with `amp2log2`.
+
 1. The coarse step codes an integer for each band. The integer is the difference from a prediction, from the band before it and from the last frame. A Laplace distribution gives its probability.
 2. The fine step adds raw bits, as the bit allocation gives them.
 3. The final step uses the bits that are left, one bit for each band and channel.
@@ -31,6 +33,8 @@ An intra frame does not use the energies of the last frame. The encoder can code
 <<coarse>>
 
 <<fine>>
+
+<<amplitudes>>
 ```
 
 ### `module introduction`
@@ -513,5 +517,34 @@ pub function quant_energy_finalise(own e: range.Encoder, start: i32, end: i32, o
     }
   }
   return Fine { e: e, old: old, error: error };
+}
+```
+
+### `amplitudes`
+
+`celt_log2` is the exact base-2 logarithm of the float build. libopus can also use an approximation, but it does not by default. The log is in f64, then the result becomes f32, as in libopus. A band from `eff_end` to `end` has no signal, because the input had a lower sample rate. It gets the energy -14.
+
+```fern
+<<amplitudes>>=
+pub function celt_log2(x: f32): f32 {
+  return (1.442695040888963387 * (x as f64).log()) as f32;
+}
+
+// The energy of each band, from its amplitude in `band_e`, less the mean
+// energy of the band.
+pub function amp2log2(band_e: [f32], eff_end: i32, end: i32, channels: i32): f32[] {
+  let out: f32[] = [];
+  for c in 0..channels {
+    for i in 0..modes.BANDS {
+      if (i < eff_end) {
+        out = out.append(celt_log2(band_e[i + c * modes.BANDS]) - modes.E_MEANS[i]);
+      } else if (i < end) {
+        out = out.append(-14.0f32);
+      } else {
+        out = out.append(0.0f32);
+      }
+    }
+  }
+  return out;
 }
 ```

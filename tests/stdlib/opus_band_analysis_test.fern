@@ -1,0 +1,190 @@
+import "std/hash/crc32";
+import "std/opus/bands";
+import "std/opus/celt_encoder";
+import "std/opus/energy";
+import "std/opus/modes";
+import "std/test";
+
+// Each case runs the band analysis of the encoder on random values: the
+// MDCT, the band energies, the normalisation and the log energies of a
+// random frame, the spreading decision of random bands, or the hysteresis
+// decision of random thresholds. libopus 1.4, in its float build, gave the
+// CRC-32 of each trace, from a C program that makes the same calls.
+
+struct Gen { x: u32 }
+
+function rnd(own g: Gen): (Gen, i32) {
+  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  return (Gen { x: x }, (x >> 8u32) as i32);
+}
+
+function frand(own g: Gen, lo: f32, hi: f32): (Gen, f32) {
+  let (g1, r) = rnd(g);
+  return (g1, lo + (hi - lo) * ((r % 65536) as f32) / 65536.0f32);
+}
+
+function bits(v: f32): string {
+  return (f32_bits(v) as u32).to_string();
+}
+
+function hash(xs: [f32], at: i32, n: i32): u32 {
+  let h: u32 = 0u32;
+  for i in 0..n {
+    h = h * 31u32 + f32_bits(xs[at + i]) as u32;
+  }
+  return h;
+}
+
+const UPSAMPLE: i32[] = [1, 2, 3, 4, 6];
+
+struct Shape { g: Gen, cc: i32, c: i32, lm: i32, short_blocks: i32, upsample: i32, end: i32, eff_end: i32 }
+
+function frame_shape(own g: Gen): Shape {
+  let (g1, cc0) = rnd(g);
+  let cc: i32 = 1 + cc0 % 2;
+  let c: i32 = 1;
+  if (cc == 2) {
+    let (g2, c0) = rnd(g1);
+    g1 = g2;
+    c = 1 + c0 % 2;
+  }
+  let (g3, lm0) = rnd(g1);
+  let lm: i32 = lm0 % 4;
+  let sb: i32 = 0;
+  if (lm > 0) {
+    let (g4, s0) = rnd(g3);
+    g3 = g4;
+    if (s0 % 2 == 1) {
+      sb = 1 << lm;
+    }
+  }
+  let (g5, u0) = rnd(g3);
+  let (g6, e0) = rnd(g5);
+  let end: i32 = 13 + e0 % 9;
+  let eff_end: i32 = end;
+  let (g7, cut) = rnd(g6);
+  if (cut % 3 == 0) {
+    let (g8, f0) = rnd(g7);
+    g7 = g8;
+    eff_end = 1 + f0 % end;
+  }
+  return Shape { g: g7, cc: cc, c: c, lm: lm, short_blocks: sb, upsample: UPSAMPLE[u0 % 5], end: end, eff_end: eff_end };
+}
+
+function spectrum_case(own g: Gen): (Gen, string) {
+  let s: Shape = frame_shape(g);
+  let (g1, amp) = frand(s.g, 1.0f32, 30000.0f32);
+  g = g1;
+  let n: i32 = 120 << s.lm;
+  let input: f32[] = [];
+  for i in 0..s.cc * (n + 120) {
+    let (g2, v) = frand(g, -amp, amp);
+    g = g2;
+    input = input.append(v);
+  }
+  let freq: f32[] = celt_encoder.compute_mdcts(input, s.short_blocks, s.c, s.cc, s.lm, s.upsample);
+  let band_e: f32[] = bands.compute_band_energies(freq, s.eff_end, s.c, s.lm);
+  let x: f32[] = bands.normalise_bands(freq, band_e, s.eff_end, s.c, 1 << s.lm);
+  let log_e: f32[] = energy.amp2log2(band_e, s.eff_end, s.end, s.c);
+  let line: string = "m " + s.cc.to_string() + " " + s.c.to_string() + " " + s.lm.to_string() + " " + s.short_blocks.to_string() + " " + s.upsample.to_string() + " " + s.end.to_string() + " " + s.eff_end.to_string();
+  for c in 0..s.c {
+    line = line + " " + hash(freq, c * n, n).to_string() + " " + hash(band_e, c * 21, s.eff_end).to_string() + " " + hash(x, c * n, (1 << s.lm) * modes.EBANDS[s.eff_end]).to_string() + " " + hash(log_e, c * 21, s.end).to_string();
+  }
+  return (g, line);
+}
+
+function spread_case(own g: Gen): (Gen, string) {
+  let (g1, c0) = rnd(g);
+  let c: i32 = 1 + c0 % 2;
+  let (g2, lm0) = rnd(g1);
+  let lm: i32 = lm0 % 4;
+  let (g3, e0) = rnd(g2);
+  let end: i32 = 1 + e0 % 21;
+  g = g3;
+  let x: f32[] = [];
+  for i in 0..c * (120 << lm) {
+    let (g4, v) = frand(g, -1.0f32, 1.0f32);
+    let (g5, small) = rnd(g4);
+    g = g5;
+    if (small % 3 == 0) {
+      v = v * 0.05f32;
+    }
+    x = x.append(v);
+  }
+  let weights: i32[] = [];
+  for i in 0..21 {
+    let (g6, w) = rnd(g);
+    g = g6;
+    weights = weights.append(1 + w % 32);
+  }
+  let (ga, average) = rnd(g);
+  let (gb, hf) = rnd(ga);
+  let (gc, tapset) = rnd(gb);
+  let (gd, last) = rnd(gc);
+  let (ge, update) = rnd(gd);
+  let s: bands.Spread = bands.Spread { decision: last % 4, average: average % 512, hf_average: hf % 40, tapset: tapset % 3 };
+  let r: bands.Spread = bands.spreading_decision(x, s, update % 2 == 1, end, c, 1 << lm, weights);
+  return (ge, "s " + c.to_string() + " " + lm.to_string() + " " + end.to_string() + " " + s.decision.to_string() + " " + (update % 2).to_string() + " | " + r.decision.to_string() + " " + r.average.to_string() + " " + r.hf_average.to_string() + " " + r.tapset.to_string());
+}
+
+function hysteresis_case(own g: Gen): (Gen, string) {
+  let (g1, n0) = rnd(g);
+  let n: i32 = 1 + n0 % 8;
+  let (g2, t0) = frand(g1, 0.0f32, 10.0f32);
+  g = g2;
+  let t: f32 = t0;
+  let th: f32[] = [];
+  let hy: f32[] = [];
+  for i in 0..n {
+    let (g3, step) = frand(g, 0.1f32, 5.0f32);
+    let (g4, h) = frand(g3, 0.0f32, 1.0f32);
+    g = g4;
+    t = t + step;
+    th = th.append(t);
+    hy = hy.append(h);
+  }
+  let (g5, val) = frand(g, 0.0f32, t + 5.0f32);
+  let (g6, p0) = rnd(g5);
+  let prev: i32 = p0 % (n + 1);
+  let r: i32 = bands.hysteresis_decision(val, th, hy, n, prev);
+  return (g6, "h " + n.to_string() + " " + bits(val) + " " + prev.to_string() + " " + r.to_string());
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let g: Gen = Gen { x: seed };
+  let crc: crc32.Crc32 = crc32.new();
+  for k in 0..cases {
+    let (g1, what) = rnd(g);
+    let line: string = "";
+    if (what % 3 == 0) {
+      let (g2, s) = spectrum_case(g1);
+      g = g2;
+      line = s;
+    } else if (what % 3 == 1) {
+      let (g2, s) = spread_case(g1);
+      g = g2;
+      line = s;
+    } else {
+      let (g2, s) = hysteresis_case(g1);
+      g = g2;
+      line = s;
+    }
+    crc = crc.update((line + "\n").as_bytes());
+  }
+  return crc.finish();
+}
+
+function test_short_trace(): test.TestOutcome {
+  return test.assert_eq(trace(2u32, 12), 4182035906u32);
+}
+
+function test_long_trace(): test.TestOutcome {
+  return test.assert_eq(trace(41u32, 900), 3524475380u32);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus band analysis");
+  r = r.it("a short trace is the libopus trace", test_short_trace);
+  r = r.it("a long trace is the libopus trace", test_long_trace);
+  return r.finish();
+}
