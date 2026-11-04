@@ -123,32 +123,42 @@ function method_edge(fd: parser.FuncDecl, callee: parser.FuncDecl): boolean {
   if (callee.receiver_type.len() == 0 || callee.impl_trait.len() > 0) {
     return true;
   }
+  // Array and view methods can be rewritten as direct calls. Keep their
+  // existing reference edges when no method call remains in the body.
+  if (parser.array_method_element(callee.receiver_type).len() > 0) {
+    return true;
+  }
   let want: string = canonical_tag(util.base_type_name(callee.receiver_type));
   if (want.len() == 0 || util.has_str(callee.type_params, want) || util.has_str(callee.all_type_params, want)) {
     return true;
   }
-  let name: string = method_base_name(callee.name);
-  function visit(e: ast.Expr, own hit: boolean): boolean {
-    if (hit) {
-      return true;
-    }
-    let ast.ExprCall(c) = e else {
-      return false;
-    };
-    let ast.ExprFieldAccess(fa) = c.callee else {
-      return false;
-    };
-    if (fa.field != name) {
-      return false;
-    }
-    let tag: string = canonical_tag(util.base_type_name(receiver_tag(fa.obj)));
-    return tag.len() == 0 || tag == want;
-  }
-  let hit: boolean = false;
+  let edge: MethodEdge = MethodEdge { name: method_base_name(callee.name), receiver: want, hit: false };
   for st in fd.body {
-    hit = astwalk.fold_stmt(st, hit, visit);
+    edge = astwalk.fold_stmt(st, edge, method_edge_call);
   }
-  return hit;
+  return edge.hit;
+}
+
+struct MethodEdge { name: string, receiver: string, hit: boolean }
+
+function method_edge_call(e: ast.Expr, own edge: MethodEdge): MethodEdge {
+  if (edge.hit) {
+    return edge;
+  }
+  let ast.ExprCall(c) = e else {
+    return edge;
+  };
+  let ast.ExprFieldAccess(fa) = c.callee else {
+    return edge;
+  };
+  if (fa.field != edge.name) {
+    return edge;
+  }
+  if let ast.ExprArray(_) = fa.obj {
+    return edge;
+  }
+  let tag: string = canonical_tag(util.base_type_name(receiver_tag(fa.obj)));
+  return MethodEdge { ...edge, hit: tag.len() == 0 || tag == edge.receiver };
 }
 
 function receiver_tag(e: ast.Expr): string {
