@@ -377,8 +377,17 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 		}
 		return true
 	})
+	borrowedAssigns := map[*ast.Var]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
-		if v, ok := n.(*ast.Var); ok && iterOwned[forEachElementOf(v)] && declCount[v.Name] == 1 {
+		if a, ok := n.(*ast.Assign); ok && !freshInit(info, a.Value) && !freshLocalReplacement(info, body, a, a.Value, order) {
+			if target, ok := a.Target.(*ast.Ident); ok {
+				borrowedAssigns[bindingVar(body, a, target.Name)] = true
+			}
+		}
+		return true
+	})
+	ast.Walk(body, func(n ast.Node) bool {
+		if v, ok := n.(*ast.Var); ok && iterOwned[forEachElementOf(v)] && declCount[v.Name] == 1 && !borrowedAssigns[v] {
 			freshInitLocal[v.Name] = true
 		}
 		return true
@@ -728,7 +737,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool)
 				continue
 			}
 			v := bindingVar(body, c, aid.Name)
-			if v != nil && iterOwned[forEachElementOf(v)] && !loopRepeats(body, c, v) && lastInBinding(body, c, aid, order) {
+			if v != nil && iterOwned[forEachElementOf(v)] && !borrowedAssigns[v] && !loopRepeats(body, c, v) && lastInBinding(body, c, aid, order) {
 				moves[aid] = true
 			}
 		}
@@ -947,6 +956,7 @@ func freshMatchValue(info *Info, m *ast.MatchExpr) bool {
 
 func armYieldsFresh(info *Info, arm *ast.MatchExprArm) bool {
 	value := arm.Body
+	var block *ast.BlockExpr
 	if b, ok := value.(*ast.BlockExpr); ok {
 		if len(b.Stmts) > 0 && divergesStmt(info, b.Stmts[len(b.Stmts)-1]) {
 			return true
@@ -955,11 +965,65 @@ func armYieldsFresh(info *Info, arm *ast.MatchExprArm) bool {
 			return false
 		}
 		value = b.Tail
+		block = b
 	}
 	if id, ok := value.(*ast.Ident); ok && slices.Contains(arm.Binders(), id.Name) {
-		return true
+		return freshArmPayload(info, block, id)
 	}
 	return freshInit(info, value)
+}
+
+// freshArmPayload checks the binding that the arm returns. A nested shadow
+// does not change that binding.
+func freshArmPayload(info *Info, block *ast.BlockExpr, id *ast.Ident) bool {
+	if block == nil {
+		return true
+	}
+	body := &ast.Block{Stmts: append(slices.Clone(block.Stmts), &ast.ExprStmt{Expr: id})}
+	for i := len(block.Stmts) - 1; i >= 0; i-- {
+		if bindsName(block.Stmts[i], id.Name) {
+			if _, ok := block.Stmts[i].(*ast.Var); !ok {
+				return false
+			}
+			break
+		}
+	}
+	bound := bindingVar(body, id, id.Name)
+	if bound != nil && !freshInit(info, bound.Init) {
+		return false
+	}
+	fresh := true
+	ast.Walk(body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == bound && !freshInit(info, a.Value) && !freshLocalReplacement(info, body, a, a.Value, IdentOrderOf(body)) {
+				fresh = false
+			}
+		}
+		return fresh
+	})
+	return fresh
+}
+
+// A replacement can take an unmodified fresh local at its last read.
+func freshLocalReplacement(info *Info, body *ast.Block, holder ast.Node, value ast.Expr, order IdentOrder) bool {
+	id, ok := value.(*ast.Ident)
+	if !ok || DeferOrLambdaNames(body)[id.Name] {
+		return false
+	}
+	source := bindingVar(body, holder, id.Name)
+	if source == nil || !freshInit(info, source.Init) || loopRepeats(body, holder, source) || !lastInBinding(body, holder, id, order) {
+		return false
+	}
+	unmodified := true
+	ast.Walk(body, func(n ast.Node) bool {
+		if a, ok := n.(*ast.Assign); ok {
+			if target, ok := a.Target.(*ast.Ident); ok && target.Name == id.Name && bindingVar(body, a, id.Name) == source {
+				unmodified = false
+			}
+		}
+		return unmodified
+	})
+	return unmodified
 }
 
 // moveAdmission names the locals that can move into an own parameter: each

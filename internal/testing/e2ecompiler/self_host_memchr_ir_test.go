@@ -27,6 +27,7 @@ function main(): i32 {
         let k: i32 = 0;
         while (k < n) { base = base + "a"; k = k + 1; }
         if (__memchr(base, 122, 0) != ref(base, 122, 0)) { return 1; }
+        if (__memchr(base, 0, 0) != 0 - 1) { return 11; }
         let at: i32 = 0;
         while (at < n) {
             let s: string = slice_unchecked(base, 0, at) + "z" + slice_unchecked(base, at + 1, n);
@@ -34,6 +35,7 @@ function main(): i32 {
             if (__memchr(s, 122, at) != ref(s, 122, at)) { return 3; }
             if (__memchr(s, 122, at + 1) != ref(s, 122, at + 1)) { return 4; }
             if (__memchr(s, 97, at) != ref(s, 97, at)) { return 5; }
+            if (__memchr(s, 0, at) != 0 - 1) { return 11; }
             at = at + 1;
         }
         n = n + 1;

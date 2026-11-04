@@ -653,7 +653,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_hit32: string = mlo8.name;
     let mlo9: asmcore.LabelOut = asmcore.fresh_label(mlo8.state);
     let l_lane: string = mlo9.name;
-    s = mlo9.state;
+    let mlo10: asmcore.LabelOut = asmcore.fresh_label(mlo9.state);
+    let l_bytes: string = mlo10.name;
+    s = mlo10.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     if (o.kind_tag == 358) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
@@ -691,9 +693,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    add x5, x5, x4\n    sub x2, x5, x0\n    b " + l_done + "\n");
     s = s.write(l_tail + ":\n");
     s = s.write("    cmp x5, x6\n    b.ge " + l_none + "\n");
+    // Fewer than 16 bytes remain. One 16-byte load that stays in its page
+    // covers them; a first match at or past the end is no match.
+    s = s.write("    and x7, x5, #4095\n    cmp x7, #4080\n    b.hi " + l_bytes + "\n");
+    s = s.write("    ld1 {v0.16b}, [x5]\n    cmeq v0.16b, v0.16b, v1.16b\n");
+    s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n    cbz x7, " + l_none + "\n");
+    s = s.write("    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
+    s = s.write("    sub x8, x6, x5\n    cmp x4, x8\n    b.hs " + l_none + "\n");
+    s = s.write("    add x5, x5, x4\n    b " + l_hit + "\n");
+    s = s.write(l_bytes + ":\n");
+    s = s.write("    cmp x5, x6\n    b.ge " + l_none + "\n");
     s = s.write("    ldrb w4, [x5]\n");
     s = s.write("    cmp x4, x1\n    b.eq " + l_hit + "\n");
-    s = s.write("    add x5, x5, #1\n    b " + l_tail + "\n");
+    s = s.write("    add x5, x5, #1\n    b " + l_bytes + "\n");
     s = s.write(l_hit + ":\n    sub x2, x5, x0\n    b " + l_done + "\n");
     s = s.write(l_none + ":\n    mov x2, #-1\n");
     s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");

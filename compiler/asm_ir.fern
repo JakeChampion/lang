@@ -5035,7 +5035,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_hit32: string = mlo8.name;
     let mlo9: asmcore.LabelOut = asmcore.fresh_label(mlo8.state);
     let l_avx_done: string = mlo9.name;
-    s = mlo9.state;
+    let mlo10: asmcore.LabelOut = asmcore.fresh_label(mlo9.state);
+    let l_bytes: string = mlo10.name;
+    s = mlo10.state;
     s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
     if (o.kind_tag == 358) {
       s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
@@ -5074,9 +5076,19 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_hit + ":\n    bsfl %r9d, %r9d\n    addq %r9, %rdx\n    jmp " + l_done + "\n");
     s = s.write(l_tail + ":\n");
     s = s.write("    cmpq %r8, %rdx\n    jge " + l_none + "\n");
+    // Fewer than 16 bytes remain. One 16-byte load that stays in its page
+    // covers them; a first match at or past the end is no match.
+    s = s.write("    leaq (%rax,%rdx), %r9\n    movl %r9d, %r10d\n    andl $4095, %r10d\n");
+    s = s.write("    cmpl $4080, %r10d\n    ja " + l_bytes + "\n");
+    s = s.write("    movdqu (%r9), %xmm0\n    pcmpeqb %xmm1, %xmm0\n    pmovmskb %xmm0, %r9d\n");
+    s = s.write("    testl %r9d, %r9d\n    jz " + l_none + "\n    bsfl %r9d, %r9d\n");
+    s = s.write("    movq %r8, %r10\n    subq %rdx, %r10\n    cmpq %r10, %r9\n    jae " + l_none + "\n");
+    s = s.write("    addq %r9, %rdx\n    jmp " + l_done + "\n");
+    s = s.write(l_bytes + ":\n");
+    s = s.write("    cmpq %r8, %rdx\n    jge " + l_none + "\n");
     s = s.write("    movzbq (%rax,%rdx), %r9\n");
     s = s.write("    cmpq %rcx, %r9\n    je " + l_done + "\n");
-    s = s.write("    addq $1, %rdx\n    jmp " + l_tail + "\n");
+    s = s.write("    addq $1, %rdx\n    jmp " + l_bytes + "\n");
     s = s.write(l_none + ":\n    movq $-1, %rdx\n");
     s = s.write(l_done + ":\n    pushq %rdx\n");
     return s;

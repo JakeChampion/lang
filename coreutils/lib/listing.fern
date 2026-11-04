@@ -1167,6 +1167,9 @@ function quoted_name(c: Cfg, name: string): string {
 }
 
 function newline_qmark(s: string): string {
+  if (!s.contains("\n")) {
+    return s;
+  }
   let bs: u8[] = [];
   let i = 0;
   while (i < s.len()) {

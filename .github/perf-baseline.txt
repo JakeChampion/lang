@@ -1,3 +1,6 @@
+# 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
+# #14134 into the branch. x86_64/deflate_encode.ir rises 1.44% to 42176472.
+# Retain the preceding limit. The measured regression must remain visible.
 # 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. A Fern runtime call takes its arguments in registers:
 # seven x86_64 rows fall 1.01% to 3.31%. Only reductions are banked, and no limit rises.
 # 2026-11-04: PR #14140, perf-aarch64 job 126444393370 on e95dda6d. A Fern runtime call takes its arguments in registers:

@@ -18,7 +18,7 @@ Build and install the APK:
 
 ```sh
 fern -apk walkie.apk -apk-package dev.fern.walkie -apk-label "Fern Walkie" \
-     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE \
+     -apk-permission RECORD_AUDIO,INTERNET,ACCESS_WIFI_STATE,ACCESS_NETWORK_STATE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_MICROPHONE,POST_NOTIFICATIONS \
      -apk-min-sdk 28 examples/android/walkie/app.fern
 adb install walkie.apk
 ```
