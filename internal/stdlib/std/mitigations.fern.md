@@ -44,7 +44,7 @@ function main(): i32 {
     None => { return 2; }
   }
   if (mitigations.auxv_value(auxv, 16i64).is_some()) { return 3; }
-  let cpu: string = "processor\t: 0\nFeatures\t: fp asimd btix\n";
+  let cpu = "processor\t: 0\nFeatures\t: fp asimd btix\n";
   if (mitigations.feature_listed(cpu, "bti").to_string() != "no") { return 4; }
   if (mitigations.feature_listed(cpu, "asimd").to_string() != "yes") { return 5; }
   if (mitigations.feature_listed("", "bti").to_string() != "unknown") { return 6; }
@@ -118,7 +118,7 @@ pub enum State {
 }
 
 pub function (s: State) to_string(): string {
-  let out: string = "unknown";
+  let out = "unknown";
   match (s) {
     State.Yes => {
       out = "yes";
@@ -152,7 +152,7 @@ The kernel queries run only inside the Linux branch, so the other targets do not
 pub function report(): Support[] {
   let rows: Support[] = [];
   if (target_os() == "linux" || target_os() == "android") {
-    let cpuinfo: string = __text("/proc/cpuinfo");
+    let cpuinfo = __text("/proc/cpuinfo");
     if (target_arch() == "x86-64") {
       rows = __x86_rows(cpuinfo, __text("/proc/self/status"));
     }
@@ -169,9 +169,9 @@ pub function report(): Support[] {
 ```fern
 <<5 function __x86_rows(cpuinfo: string, status: string): Support[]>>=
 function __x86_rows(cpuinfo: string, status: string): Support[] {
-  let kernel: State = State.Unknown;
-  let shstk: State = State.Unknown;
-  let ibt: State = State.Unknown;
+  let kernel = State.Unknown;
+  let shstk = State.Unknown;
+  let ibt = State.Unknown;
   if (status.len() > 0) {
     kernel = State.No;
     shstk = State.No;
@@ -199,8 +199,8 @@ function __x86_rows(cpuinfo: string, status: string): Support[] {
 ```fern
 <<6 function __arm64_rows(cpuinfo: string, auxv: u8[], smaps: string, pac_keys: i64, tag_ctl: i64): Support[]>>=
 function __arm64_rows(cpuinfo: string, auxv: u8[], smaps: string, pac_keys: i64, tag_ctl: i64): Support[] {
-  let hwcap: Option[i64] = auxv_value(auxv, 16i64);
-  let hwcap2: Option[i64] = auxv_value(auxv, 26i64);
+  let hwcap = auxv_value(auxv, 16i64);
+  let hwcap2 = auxv_value(auxv, 26i64);
   let rows: Support[] = [];
   rows = rows.append(Support {
     name: "pac",
@@ -234,7 +234,7 @@ function __both(a: State, b: State): State {
 }
 
 function __bits(word: Option[i64], mask: i64): State {
-  let out: State = State.Unknown;
+  let out = State.Unknown;
   match (word) {
     Some(w) => {
       out = State.No;
@@ -266,26 +266,26 @@ The auxiliary vector is a sequence of little-endian key and value words that end
 ```fern
 <<7 pub function auxv_value(auxv: [u8], key: i64): Option[i64]>>=
 pub function auxv_value(auxv: [u8], key: i64): Option[i64] {
-  let i: i32 = 0;
+  let i = 0;
   while (i + 16 <= auxv.len()) {
-    let k: i64 = __word(auxv, i);
+    let k = __word(auxv, i);
     if (k == 0i64) {
       return None;
     }
     if (k == key) {
       return Some(__word(auxv, i + 8));
     }
-    i = i + 16;
+    i += 16;
   }
   return None;
 }
 
 function __word(bytes: [u8], at: i32): i64 {
   let v: i64 = 0i64;
-  let j: i32 = 7;
+  let j = 7;
   while (j >= 0) {
     v = v << 8 | bytes[at + j] as i64;
-    j = j - 1;
+    j -= 1;
   }
   return v;
 }
@@ -335,7 +335,7 @@ pub function thread_features(status: string): Option[string[]] {
 ```fern
 <<10 pub function mapping_flag(smaps: string, flag: string): State>>=
 pub function mapping_flag(smaps: string, flag: string): State {
-  let seen: boolean = false;
+  let seen = false;
   for line in smaps.split("\n") {
     if (line.starts_with("VmFlags:")) {
       seen = true;
@@ -357,7 +357,7 @@ pub function mapping_flag(smaps: string, flag: string): State {
 <<11 function __tokens(line: string): string[]>>=
 function __tokens(line: string): string[] {
   let out: string[] = [];
-  let parts: string[] = line.split(":");
+  let parts = line.split(":");
   if (parts.len() < 2) {
     return out;
   }
@@ -377,7 +377,7 @@ An unreadable file is an empty text, which every parser reports as `Unknown`.
 ```fern
 <<12 function __text(path: string): string>>=
 function __text(path: string): string {
-  let out: string = "";
+  let out = "";
   match (read_file(path)) {
     Ok(s) => {
       out = s;
@@ -413,18 +413,18 @@ The line ends at the first newline after the magic. The magic is built from byte
 ```fern
 <<14 pub function build_line(image: [u8]): Option[string]>>=
 pub function build_line(image: [u8]): Option[string] {
-  let magic: string = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
-  let i: i32 = 0;
+  let magic = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
+  let i = 0;
   while (i + magic.len() <= image.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < magic.len() && image[i + j] == magic[j]) {
-      j = j + 1;
+      j += 1;
     }
     if (j == magic.len()) {
-      let start: i32 = i + magic.len() - 7;
-      let end: i32 = start;
+      let start = i + magic.len() - 7;
+      let end = start;
       while (end < image.len() && end - start < 512 && image[end] != b'\n') {
-        end = end + 1;
+        end += 1;
       }
       if (end < image.len() && image[end] == b'\n') {
         match (utf8.from_bytes(image[start:end])) {
@@ -437,7 +437,7 @@ pub function build_line(image: [u8]): Option[string] {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -482,21 +482,21 @@ pub function parse_build(line: string): Result[Build, BuildLineError] {
 }
 
 function __parse_build(line: string): Option[Build] {
-  let b: Build = Build { target: "", profile: "", harden: false, pie: false, sanitize: false, backtrace: false, size: false, shared: false, heap_limit: 0i64, quarantine: 0i64 };
-  let seen: boolean = false;
+  let b = Build { target: "", profile: "", harden: false, pie: false, sanitize: false, backtrace: false, size: false, shared: false, heap_limit: 0i64, quarantine: 0i64 };
+  let seen = false;
   for field in line.trim().split(" ") {
-    let eq: i32 = __memchr(field, 61, 0);
+    let eq = __memchr(field, 61, 0);
     if (eq < 0) {
       eq = field.len();
     } else {
       seen = true;
     }
-    let key: string = slice_unchecked(field, 0, eq) + "";
-    let value: string = "";
+    let key = slice_unchecked(field, 0, eq) + "";
+    let value = "";
     if (eq < field.len()) {
       value = slice_unchecked(field, eq + 1, field.len()) + "";
     }
-    let on: boolean = value == "1";
+    let on = value == "1";
     if (key == "target") {
       b = Build { ...b, target: value };
     } else if (key == "profile") {
@@ -562,10 +562,10 @@ A software feature is `enabled` when it is compiled. A hardware feature takes `s
 ```fern
 <<18 function __status_rows(build: Option[Build], support: Support[]): Status[]>>=
 function __status_rows(build: Option[Build], support: Support[]): Status[] {
-  let harden: string = "unknown";
-  let pie: string = "unknown";
-  let sanitize: string = "unknown";
-  let compiled: string = "unknown";
+  let harden = "unknown";
+  let pie = "unknown";
+  let sanitize = "unknown";
+  let compiled = "unknown";
   match (build) {
     Some(b) => {
       harden = __flag(b.harden);
@@ -583,8 +583,8 @@ function __status_rows(build: Option[Build], support: Support[]): Status[] {
     Status { name: "sanitizer", compiled: sanitize, supported: "yes", requested: sanitize, enabled: sanitize, verified: "native (the sanitizer suites)" },
   ];
   for row in support {
-    let have: string = __both(row.cpu, row.kernel).to_string();
-    let process: string = row.process.to_string();
+    let have = __both(row.cpu, row.kernel).to_string();
+    let process = row.process.to_string();
     if (row.name == "shstk") {
       rows = rows.append(Status { name: "shadow-stack", compiled: harden, supported: have, requested: harden, enabled: process, verified: "unverified (no host with the feature yet)" });
     } else if (row.name == "ibt") {

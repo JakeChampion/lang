@@ -64,23 +64,23 @@ import "core/error";
 ```fern
 <<3 pub function format(fmt: string, args: string[]): string>>=
 pub function format(fmt: string, args: string[]): string {
-  let n: i32 = fmt.len();
+  let n = fmt.len();
   let out: u8[] = [];
-  let i: i32 = 0;
-  let argi: i32 = 0;
+  let i = 0;
+  let argi = 0;
   while (i < n) {
     if (i + 1 < n && fmt[i] == 123 && fmt[i + 1] == 123) {
       out = out.append(123 as u8);
-      i = i + 2;
+      i += 2;
     } else if (i + 1 < n && fmt[i] == 125 && fmt[i + 1] == 125) {
       out = out.append(125 as u8);
-      i = i + 2;
+      i += 2;
     } else if (fmt[i] == 123) {
-      let j: i32 = i + 1;
+      let j = i + 1;
       while (j < n && fmt[j] != 125) {
-        j = j + 1;
+        j += 1;
       }
-      let isPlaceholder: boolean = false;
+      let isPlaceholder = false;
       let spec: str = "";
       if (j < n) {
         spec = slice_unchecked(fmt, i + 1, j);
@@ -92,32 +92,32 @@ pub function format(fmt: string, args: string[]): string {
       }
       if (isPlaceholder) {
         if (argi < args.len()) {
-          let piece: string = __format_apply_spec(args[argi], spec);
-          let pl: i32 = piece.len();
-          let pk: i32 = 0;
+          let piece = __format_apply_spec(args[argi], spec);
+          let pl = piece.len();
+          let pk = 0;
           while (pk < pl) {
             out = out.append(piece[pk] as u8);
-            pk = pk + 1;
+            pk += 1;
           }
-          argi = argi + 1;
+          argi += 1;
         } else {
           out = out.append(123 as u8);
-          let sl: i32 = spec.len();
-          let sk: i32 = 0;
+          let sl = spec.len();
+          let sk = 0;
           while (sk < sl) {
             out = out.append(spec[sk] as u8);
-            sk = sk + 1;
+            sk += 1;
           }
           out = out.append(125 as u8);
         }
         i = j + 1;
       } else {
         out = out.append(fmt[i] as u8);
-        i = i + 1;
+        i += 1;
       }
     } else {
       out = out.append(fmt[i] as u8);
-      i = i + 1;
+      i += 1;
     }
   }
   return string_from_bytes_unchecked(out);
@@ -125,10 +125,10 @@ pub function format(fmt: string, args: string[]): string {
 
 pub function values[T: cmp.Display](fmt: string, args: T[]): string {
   let strs: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < args.len()) {
     strs = strs.append(args[i].to_string());
-    i = i + 1;
+    i += 1;
   }
   return format(fmt, strs);
 }
@@ -158,11 +158,11 @@ function __format_apply_spec(s: string, spec: string): string {
   if (spec.len() == 0) {
     return s;
   }
-  let m: i32 = spec.len();
-  let p: i32 = 1;
+  let m = spec.len();
+  let p = 1;
   let fill: str = " ";
-  let align: i32 = 1;
-  let fw: i32 = 1;
+  let align = 1;
+  let fw = 1;
   match (utf8.decode_at(spec, p)) {
     Some(pair) => {
       fw = pair.1;
@@ -175,32 +175,32 @@ function __format_apply_spec(s: string, spec: string): string {
     p = p + fw + 1;
   } else if (p < m && __is_align(spec[p] as i32)) {
     align = __align_code(spec[p] as i32);
-    p = p + 1;
+    p += 1;
   }
-  let plus: boolean = false;
+  let plus = false;
   if (p < m && spec[p] == 43) {
     plus = true;
-    p = p + 1;
+    p += 1;
   } else if (p < m && spec[p] == 45) {
-    p = p + 1;
+    p += 1;
   }
-  let zero: boolean = false;
+  let zero = false;
   if (p < m && spec[p] == 48) {
     zero = true;
-    p = p + 1;
+    p += 1;
   }
-  let width: i32 = 0;
+  let width = 0;
   while (p < m && spec[p] >= 48 && spec[p] <= 57) {
     width = __bounded_count(width, spec[p] as i32 - 48);
-    p = p + 1;
+    p += 1;
   }
-  let val: string = s;
+  let val = s;
   if (p < m && spec[p] == 46) {
-    p = p + 1;
-    let prec: i32 = 0;
+    p += 1;
+    let prec = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
       prec = __bounded_count(prec, spec[p] as i32 - 48);
-      p = p + 1;
+      p += 1;
     }
     if (__is_decimal_numeral(val)) {
       val = __round_to_places(val, prec);
@@ -211,11 +211,11 @@ function __format_apply_spec(s: string, spec: string): string {
   if (plus && val.len() > 0 && val[0] >= 48 && val[0] <= 57) {
     val = "+" + val;
   }
-  let vlen: i32 = val.len();
+  let vlen = val.len();
   if (vlen >= width) {
     return val;
   }
-  let pad: i32 = width - vlen;
+  let pad = width - vlen;
   if (zero) {
     if (val.len() > 0 && (val[0] == 45 || val[0] == 43)) {
       return slice_unchecked(val, 0, 1) + __repeat_char("0", pad) + slice_unchecked(val, 1, val.len());
@@ -226,22 +226,22 @@ function __format_apply_spec(s: string, spec: string): string {
     return __repeat_char(fill, pad) + val;
   }
   if (align == 3) {
-    let left: i32 = pad / 2;
+    let left = pad / 2;
     return __repeat_char(fill, left) + val + __repeat_char(fill, pad - left);
   }
   return val + __repeat_char(fill, pad);
 }
 
 function __is_decimal_numeral(s: string): boolean {
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let n = s.len();
+  let i = 0;
   if (i < n && (s[i] == 43 || s[i] == 45)) {
-    i = i + 1;
+    i += 1;
   }
-  let whole: i32 = 0;
+  let whole = 0;
   while (i < n && s[i] >= 48 && s[i] <= 57) {
-    i = i + 1;
-    whole = whole + 1;
+    i += 1;
+    whole += 1;
   }
   if (whole == 0) {
     return false;
@@ -252,11 +252,11 @@ function __is_decimal_numeral(s: string): boolean {
   if (s[i] != 46) {
     return false;
   }
-  i = i + 1;
-  let frac: i32 = 0;
+  i += 1;
+  let frac = 0;
   while (i < n && s[i] >= 48 && s[i] <= 57) {
-    i = i + 1;
-    frac = frac + 1;
+    i += 1;
+    frac += 1;
   }
   return i == n && frac > 0;
 }
@@ -267,45 +267,45 @@ function __is_decimal_numeral(s: string): boolean {
 ```fern
 <<5 function __round_to_places(s: string, places: i32): string>>=
 function __round_to_places(s: string, places: i32): string {
-  let n: i32 = s.len();
-  let i: i32 = 0;
-  let sign: string = "";
+  let n = s.len();
+  let i = 0;
+  let sign = "";
   if (s[0] == 43 || s[0] == 45) {
     if (s[0] == 45) {
       sign = "-";
     }
     i = 1;
   }
-  let dot: i32 = i;
+  let dot = i;
   while (dot < n && s[dot] != 46) {
-    dot = dot + 1;
+    dot += 1;
   }
-  let intLen: i32 = dot - i;
+  let intLen = dot - i;
   let digits: u8[] = [];
-  let k: i32 = i;
+  let k = i;
   while (k < dot) {
     digits = digits.append(s[k] as u8);
-    k = k + 1;
+    k += 1;
   }
-  let f: i32 = 0;
+  let f = 0;
   while (f < places) {
-    let src: i32 = dot + 1 + f;
+    let src = dot + 1 + f;
     if (src < n) {
       digits = digits.append(s[src] as u8);
     } else {
       digits = digits.append(48 as u8);
     }
-    f = f + 1;
+    f += 1;
   }
-  let next: i32 = dot + 1 + places;
+  let next = dot + 1 + places;
   if (next < n && s[next] >= 53) {
-    let c: i32 = digits.len() - 1;
-    let carry: boolean = true;
+    let c = digits.len() - 1;
+    let carry = true;
     while (carry && c >= 0) {
-      let d: i32 = digits[c] as i32 + 1;
+      let d = digits[c] as i32 + 1;
       if (d > 57) {
         digits = digits.with(c, 48 as u8);
-        c = c - 1;
+        c -= 1;
       } else {
         digits = digits.with(c, d as u8);
         carry = false;
@@ -313,27 +313,27 @@ function __round_to_places(s: string, places: i32): string {
     }
     if (carry) {
       let grown: u8[] = [49 as u8];
-      let g: i32 = 0;
+      let g = 0;
       while (g < digits.len()) {
         grown = grown.append(digits[g]);
-        g = g + 1;
+        g += 1;
       }
       digits = grown;
-      intLen = intLen + 1;
+      intLen += 1;
     }
   }
   let head: u8[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < intLen) {
     head = head.append(digits[j]);
-    j = j + 1;
+    j += 1;
   }
-  let out: string = sign + string_from_bytes_unchecked(head);
+  let out = sign + string_from_bytes_unchecked(head);
   if (places > 0) {
     let tail: u8[] = [];
     while (j < digits.len()) {
       tail = tail.append(digits[j]);
-      j = j + 1;
+      j += 1;
     }
     out = out + "." + string_from_bytes_unchecked(tail);
   }
@@ -360,7 +360,7 @@ function __bounded_count(acc: i32, digit: i32): i32 {
   if (acc >= 1000000) {
     return 1000000;
   }
-  let next: i32 = acc * 10 + digit;
+  let next = acc * 10 + digit;
   if (next > 1000000) {
     return 1000000;
   }
@@ -371,21 +371,21 @@ function __repeat_char(s: string, count: i32): string {
   if (count <= 0) {
     return "";
   }
-  let sl: i32 = s.len();
+  let sl = s.len();
   if (sl == 0) {
     return "";
   }
-  let buf: u8[] = __alloc_u8(sl * count);
-  let pos: i32 = 0;
-  let k: i32 = 0;
+  let buf = __alloc_u8(sl * count);
+  let pos = 0;
+  let k = 0;
   while (k < count) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < sl) {
       buf = buf.with(pos, s[j] as u8);
-      pos = pos + 1;
-      j = j + 1;
+      pos += 1;
+      j += 1;
     }
-    k = k + 1;
+    k += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
@@ -397,55 +397,55 @@ function __repeat_char(s: string, count: i32): string {
 <<6 pub function bytes(n: i64): string>>=
 pub function bytes(n: i64): string {
   let units: string[] = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let u: i32 = 0;
+  let u = 0;
   let scale: i64 = 1;
   while (u + 1 < units.len() && (n / scale >= 1024 || n / scale <= -1024)) {
-    scale = scale * 1024;
-    u = u + 1;
+    scale *= 1024;
+    u += 1;
   }
   return (n / scale).to_string() + " " + units[u];
 }
 
 // Hours, minutes, seconds, and milliseconds, such as `1h 1m 1s 1ms`.
 pub function duration(d: Duration): string {
-  let ms: i64 = d.as_millis();
+  let ms = d.as_millis();
   if (ms == 0) {
     return "0ms";
   }
-  let neg: boolean = ms < 0;
-  let mag: i64 = ms;
+  let neg = ms < 0;
+  let mag = ms;
   if (neg) {
-    mag = 0 - ms;
+    mag = -ms;
   }
-  let sign: string = "";
+  let sign = "";
   if (neg) {
     sign = "-";
   }
-  let h: i64 = mag / 3600000;
-  let rem: i64 = mag - h * 3600000;
-  let m: i64 = rem / 60000;
+  let h = mag / 3600000;
+  let rem = mag - h * 3600000;
+  let m = rem / 60000;
   rem = rem - m * 60000;
-  let s: i64 = rem / 1000;
-  let msPart: i64 = rem - s * 1000;
-  let out: string = "";
+  let s = rem / 1000;
+  let msPart = rem - s * 1000;
+  let out = "";
   if (h > 0) {
     out = out + h.to_string() + "h";
   }
   if (m > 0) {
     if (out.len() > 0) {
-      out = out + " ";
+      out += " ";
     }
     out = out + m.to_string() + "m";
   }
   if (s > 0) {
     if (out.len() > 0) {
-      out = out + " ";
+      out += " ";
     }
     out = out + s.to_string() + "s";
   }
   if (msPart > 0) {
     if (out.len() > 0) {
-      out = out + " ";
+      out += " ";
     }
     out = out + msPart.to_string() + "ms";
   }
@@ -469,20 +469,20 @@ pub function (e: DurationParseError) to_string(): string {
 }
 
 pub function parse_duration(s: string): Result[Duration, DurationParseError] {
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let n = s.len();
+  let i = 0;
   let total: i64 = 0;
-  let saw: boolean = false;
+  let saw = false;
   while (i < n) {
     if (s[i] == 32) {
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let start: i32 = i;
+    let start = i;
     let num: i64 = 0;
     while (i < n && s[i] >= 48 && s[i] <= 57) {
       num = num * (10 as i64) + (s[i] - 48) as i64;
-      i = i + 1;
+      i += 1;
     }
     if (i == start) {
       return Err(DurationParseError { text: s, offset: i });
@@ -490,19 +490,19 @@ pub function parse_duration(s: string): Result[Duration, DurationParseError] {
     let unit_ms: i64 = 0;
     if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {
       unit_ms = 1;
-      i = i + 2;
+      i += 2;
     } else if (i < n && s[i] == 115) {
       unit_ms = 1000;
-      i = i + 1;
+      i += 1;
     } else if (i < n && s[i] == 109) {
       unit_ms = 60000;
-      i = i + 1;
+      i += 1;
     } else if (i < n && s[i] == 104) {
       unit_ms = 3600000;
-      i = i + 1;
+      i += 1;
     } else if (i < n && s[i] == 100) {
       unit_ms = 86400000;
-      i = i + 1;
+      i += 1;
     } else {
       return Err(DurationParseError { text: s, offset: i });
     }

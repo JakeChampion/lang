@@ -121,7 +121,7 @@ impl platform.Platform for SimPlatform {
 
   function now(self: SimPlatform): time.Timestamp {
     self.mock.record("now", "");
-    let d: Duration = time.duration_nanos(self.drv.clock_ns.get());
+    let d = time.duration_nanos(self.drv.clock_ns.get());
     return time.Timestamp { sec: d.sec, nsec: d.nsec };
   }
 
@@ -152,14 +152,14 @@ impl platform.Platform for SimPlatform {
 
   function sleep(self: SimPlatform, d: Duration): void {
     self.mock.record("sleep", d.as_millis().to_string());
-    let moved: boolean = self.drv.advance_to(self.drv.now().add(d));
+    let moved = self.drv.advance_to(self.drv.now().add(d));
   }
 
   function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     self.mock.record("http", req.method + " " + req.url);
-    let drv: sim.Sim = self.drv;
-    let e: Map[string, string] = self.mock.envs;
-    let proxies: fetch.ProxyEnv = fetch.proxy_env_from(e.get("http_proxy"), e.get("https_proxy"), e.get("HTTPS_PROXY"), e.get("no_proxy"), e.get("NO_PROXY"), e.get("REQUEST_METHOD"));
+    let drv = self.drv;
+    let e = self.mock.envs;
+    let proxies = fetch.proxy_env_from(e.get("http_proxy"), e.get("https_proxy"), e.get("HTTPS_PROXY"), e.get("no_proxy"), e.get("NO_PROXY"), e.get("REQUEST_METHOD"));
     return fetch.send_on(self.net, platform.traced(req, self.trace, (): i32 => drv.random_i32()), fetch.Policy { ...fetch.public_policy_via(proxies), jar: self.jar, allow: self.allow });
   }
 

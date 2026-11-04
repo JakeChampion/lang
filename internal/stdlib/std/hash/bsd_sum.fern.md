@@ -17,7 +17,7 @@ import "std/hash/bsd_sum";
 import "std/string";
 
 function main(): i32 {
-  let s: bsd_sum.BsdSum = bsd_sum.new().update("abc".as_bytes());
+  let s = bsd_sum.new().update("abc".as_bytes());
   if (s.byte_count() != 3 as u64 || s.blocks() != 1 as u64) { return 1; }
   if (s.finish() != bsd_sum.of("abc".as_bytes())) { return 2; }
   return 0;

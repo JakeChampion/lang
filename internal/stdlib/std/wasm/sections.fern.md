@@ -61,10 +61,10 @@ pub function encode_custom_section(buf: u8[], name: string, payload: u8[]): u8[]
 pub function encode_type_section(buf: u8[], params_per_type: u8[][], results_per_type: u8[][]): u8[] {
   let n: i32 = params_per_type.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_func_type(body, params_per_type[i], results_per_type[i]);
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_TYPE, body);
 }
@@ -72,10 +72,10 @@ pub function encode_type_section(buf: u8[], params_per_type: u8[][], results_per
 pub function encode_function_section(buf: u8[], typeidxs: u32[]): u8[] {
   let n: i32 = typeidxs.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = leb128.uleb_u32(body, typeidxs[i]);
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_FUNCTION, body);
 }
@@ -110,12 +110,12 @@ pub function encode_memory_section(buf: u8[], min_pages: u32, max_pages: i32): u
 pub function encode_export_section(buf: u8[], names: string[], kinds: u8[], indices: u32[]): u8[] {
   let n: i32 = names.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_name(body, names[i]);
     body = body.append(kinds[i]);
     body = leb128.uleb_u32(body, indices[i]);
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_EXPORT, body);
 }
@@ -128,7 +128,7 @@ pub function encode_start_section(buf: u8[], funcidx: u32): u8[] {
 pub function encode_element_section(buf: u8[], offsets: i32[], funcidxs_per_seg: u32[][]): u8[] {
   let n: i32 = offsets.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = leb128.uleb_u32(body, 0u32);
     body = body.append(65u8);
@@ -136,12 +136,12 @@ pub function encode_element_section(buf: u8[], offsets: i32[], funcidxs_per_seg:
     body = body.append(11u8);
     let seg: u32[] = funcidxs_per_seg[i];
     body = leb128.uleb_u32(body, seg.len() as u32);
-    let j: i32 = 0;
+    let j = 0;
     while (j < seg.len()) {
       body = leb128.uleb_u32(body, seg[j]);
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_ELEMENT, body);
 }
@@ -149,10 +149,10 @@ pub function encode_element_section(buf: u8[], offsets: i32[], funcidxs_per_seg:
 pub function encode_code_section(buf: u8[], bodies: u8[][]): u8[] {
   let n: i32 = bodies.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = encode.put_bytes(body, bodies[i]);
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_CODE, body);
 }
@@ -165,7 +165,7 @@ pub function encode_code_section(buf: u8[], bodies: u8[][]): u8[] {
 pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]): u8[] {
   let n: i32 = offsets.len();
   let body: u8[] = leb128.uleb_u32([], n as u32);
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     body = leb128.uleb_u32(body, 0u32);
     body = body.append(65u8);
@@ -174,7 +174,7 @@ pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]):
     let seg: u8[] = init_bytes[i];
     body = leb128.uleb_u32(body, seg.len() as u32);
     body = encode.put_bytes(body, seg);
-    i = i + 1;
+    i += 1;
   }
   return encode.put_section(buf, encode.SECTION_DATA, body);
 }

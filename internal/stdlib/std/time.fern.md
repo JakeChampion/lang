@@ -24,10 +24,10 @@ import "core/cmp";
 import "std/time";
 
 function main(): i32 {
-  let budget: Duration = time.duration_seconds(2).add(time.duration_millis(500));
+  let budget = time.duration_seconds(2).add(time.duration_millis(500));
   if (budget.as_millis() != 2500 || budget.mul(2).as_seconds() != 5) { return 1; }
-  let start: Instant = Instant { sec: 100, nsec: 0 };
-  let deadline: Instant = start.add(budget);
+  let start = Instant { sec: 100, nsec: 0 };
+  let deadline = start.add(budget);
   if (deadline.since(start).cmp(budget) != 0) { return 2; }
   return 0;
 }
@@ -135,17 +135,17 @@ pub function timestamp_from_unix(sec: i64): Timestamp {
 
 // Saturates like `Duration.add`.
 pub function (t: Timestamp) add(d: Duration): Timestamp {
-  let r: Duration = Duration { sec: t.sec, nsec: t.nsec }.add(d);
+  let r = Duration { sec: t.sec, nsec: t.nsec }.add(d);
   return Timestamp { sec: r.sec, nsec: r.nsec };
 }
 
 pub function (t: Timestamp) sub(d: Duration): Timestamp {
-  let r: Duration = Duration { sec: t.sec, nsec: t.nsec }.sub(d);
+  let r = Duration { sec: t.sec, nsec: t.nsec }.sub(d);
   return Timestamp { sec: r.sec, nsec: r.nsec };
 }
 
 pub function timestamp_from_unix_millis(ms: i64): Timestamp {
-  let d: Duration = duration_millis(ms);
+  let d = duration_millis(ms);
   return Timestamp { sec: d.sec, nsec: d.nsec };
 }
 
@@ -318,13 +318,13 @@ pub function (a: Duration) add(b: Duration): Duration {
 
 pub function (a: Duration) sub(b: Duration): Duration {
   let Some(sec) = a.sec.checked_sub(b.sec) else {
-    return __duration_bound(0 - 1 - b.sec);
+    return __duration_bound(-1 - b.sec);
   };
   return __duration_carry(sec, a.nsec - b.nsec);
 }
 
 pub function (d: Duration) mul(n: i32): Duration {
-  let nanos: i64 = d.nsec as i64 * (n as i64);
+  let nanos = d.nsec as i64 * (n as i64);
   let Some(sec) = d.sec.checked_mul(n as i64) else {
     return __duration_bound(d.sec.signum() * (n as i64));
   };
@@ -339,16 +339,16 @@ pub function (d: Duration) div(n: i32): Duration {
   if (n == 0) {
     return DURATION_ZERO;
   }
-  let m: Duration = d;
+  let m = d;
   if (d.sec < 0) {
     m = __duration_neg(d);
   }
-  let k: i64 = n as i64;
+  let k = n as i64;
   if (k < 0) {
     k = 0 - k;
   }
-  let rem: i64 = m.sec % k;
-  let q: Duration = Duration { sec: m.sec / k, nsec: ((rem * 1000000000 + m.nsec as i64) / k) as i32 };
+  let rem = m.sec % k;
+  let q = Duration { sec: m.sec / k, nsec: ((rem * 1000000000 + m.nsec as i64) / k) as i32 };
   if (d.sec < 0 != n < 0) {
     return __duration_neg(q);
   }
@@ -395,12 +395,12 @@ function __duration_bound(sign: i64): Duration {
 ```fern
 <<monotonic instants>>=
 pub function (i: Instant) add(d: Duration): Instant {
-  let r: Duration = Duration { sec: i.sec, nsec: i.nsec }.add(d);
+  let r = Duration { sec: i.sec, nsec: i.nsec }.add(d);
   return Instant { sec: r.sec, nsec: r.nsec };
 }
 
 pub function (i: Instant) sub(d: Duration): Instant {
-  let r: Duration = Duration { sec: i.sec, nsec: i.nsec }.sub(d);
+  let r = Duration { sec: i.sec, nsec: i.nsec }.sub(d);
   return Instant { sec: r.sec, nsec: r.nsec };
 }
 
@@ -415,7 +415,7 @@ pub(package) function instant_nanos(i: Instant): i64 {
 }
 
 pub(package) function instant_from_nanos(ns: i64): Instant {
-  let d: Duration = duration_nanos(ns);
+  let d = duration_nanos(ns);
   return Instant { sec: d.sec, nsec: d.nsec };
 }
 
@@ -423,12 +423,12 @@ pub(package) function instant_from_nanos(ns: i64): Instant {
 // A partial millisecond rounds up, so a short positive timeout still waits.
 pub(package) function timeout_millis(t: Option[Duration]): i32 {
   let Some(d) = t else {
-    return 0 - 1;
+    return -1;
   };
   if (d.sec < 0 || d.is_zero()) {
     return 0;
   }
-  let ms: i64 = d.add(duration_nanos(999999)).as_millis();
+  let ms = d.add(duration_nanos(999999)).as_millis();
   if (ms > 2147483647) {
     return 2147483647;
   }
@@ -451,36 +451,36 @@ They use the proleptic Gregorian calendar and accept any `i64` year. A civil dat
 ```fern
 <<5 pub function days_from_civil(y: i64, m: i32, d: i32): i64>>=
 pub function days_from_civil(y: i64, m: i32, d: i32): i64 {
-  let yy: i64 = y;
+  let yy = y;
   if (m <= 2) {
-    yy = yy - 1;
+    yy -= 1;
   }
-  let era: i64 = yy.div_euclid(400);
-  let yoe: i64 = yy - era * 400;
-  let mp: i32 = m + 9;
+  let era = yy.div_euclid(400);
+  let yoe = yy - era * 400;
+  let mp = m + 9;
   if (m > 2) {
     mp = m - 3;
   }
-  let doy: i64 = ((153 * mp + 2) / 5) as i64 + d as i64 - 1;
-  let doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  let doy = ((153 * mp + 2) / 5) as i64 + d as i64 - 1;
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return era * 146097 + doe - 719468;
 }
 
 pub function civil_from_days(days: i64): (i64, i32, i32) {
-  let z: i64 = days + 719468;
-  let era: i64 = z.div_euclid(146097);
-  let doe: i64 = z - era * 146097;
+  let z = days + 719468;
+  let era = z.div_euclid(146097);
+  let doe = z - era * 146097;
   let yoe: i64 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-  let y: i64 = yoe + era * 400;
-  let doy: i64 = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  let y = yoe + era * 400;
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
   let mp: i64 = (5 * doy + 2) / 153;
-  let d: i32 = (doy - (153 * mp + 2) / 5 + 1) as i32;
-  let m: i32 = (mp + 3) as i32;
+  let d = (doy - (153 * mp + 2) / 5 + 1) as i32;
+  let m = (mp + 3) as i32;
   if (mp >= 10) {
     m = (mp - 9) as i32;
   }
   if (m <= 2) {
-    y = y + 1;
+    y += 1;
   }
   return (y, m, d);
 }
@@ -492,7 +492,7 @@ function __date_from_days(days: i64): Date {
 
 // The UTC civil date and clock time of `t`.
 pub function (t: Timestamp) to_datetime(): DateTime {
-  let sid: i32 = t.sec.rem_euclid(86400) as i32;
+  let sid = t.sec.rem_euclid(86400) as i32;
   return DateTime {
     date: __date_from_days(t.sec.div_euclid(86400)),
     time: Time { hour: sid / 3600, minute: sid / 60 % 60, second: sid % 60, nsec: t.nsec },
@@ -584,18 +584,18 @@ pub function (d: Date) weekday(): i32 {
 }
 
 pub function (d: Date) day_of_year(): i32 {
-  let m: i32 = d.month;
-  let mp: i32 = 0;
+  let m = d.month;
+  let mp = 0;
   if (m > 2) {
     mp = m - 3;
   } else {
     mp = m + 9;
   }
-  let doy: i32 = (153 * mp + 2) / 5 + d.day;
+  let doy = (153 * mp + 2) / 5 + d.day;
   if (m <= 2) {
     return doy - 306;
   }
-  let add_for_leap: i32 = 0;
+  let add_for_leap = 0;
   if (is_leap_year(d.year)) {
     add_for_leap = 1;
   }
@@ -631,15 +631,15 @@ function __parse_digits(s: string, start: i32, end: i32): i32 {
   if (start >= end) {
     return -1;
   }
-  let acc: i32 = 0;
-  let i: i32 = start;
+  let acc = 0;
+  let i = start;
   while (i < end) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 48 || b > 57) {
       return -1;
     }
     acc = acc * 10 + (b - 48);
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -689,9 +689,9 @@ function __iso_date(s: string): Option[Date] {
   if (s[4] != 45 || s[7] != 45) {
     return None;
   }
-  let y: i32 = __parse_digits(s, 0, 4);
-  let m: i32 = __parse_digits(s, 5, 7);
-  let d: i32 = __parse_digits(s, 8, 10);
+  let y = __parse_digits(s, 0, 4);
+  let m = __parse_digits(s, 5, 7);
+  let d = __parse_digits(s, 8, 10);
   if (y < 0 || m < 0 || d < 0) {
     return None;
   }
@@ -699,8 +699,8 @@ function __iso_date(s: string): Option[Date] {
 }
 
 pub function (t: Timestamp) format_rfc3339(): string {
-  let dt: DateTime = t.to_datetime();
-  let head: string = dt.date.format_iso() + "T" + __pad2(dt.time.hour) + ":" + __pad2(dt.time.minute) + ":" + __pad2(dt.time.second);
+  let dt = t.to_datetime();
+  let head = dt.date.format_iso() + "T" + __pad2(dt.time.hour) + ":" + __pad2(dt.time.minute) + ":" + __pad2(dt.time.second);
   if (t.nsec == 0) {
     return head + "Z";
   }
@@ -709,35 +709,35 @@ pub function (t: Timestamp) format_rfc3339(): string {
 
 // The nine fractional-second digits of `ns`.
 function __fraction(ns: i32): string {
-  let div: i32 = 100000000;
-  let frac: string = "";
+  let div = 100000000;
+  let frac = "";
   while (div >= 1) {
-    let digit: i32 = ns / div - ns / (div * 10) * 10;
+    let digit = ns / div - ns / (div * 10) * 10;
     if (digit == 0) {
-      frac = frac + "0";
+      frac += "0";
     } else if (digit == 1) {
-      frac = frac + "1";
+      frac += "1";
     } else if (digit == 2) {
-      frac = frac + "2";
+      frac += "2";
     } else if (digit == 3) {
-      frac = frac + "3";
+      frac += "3";
     } else if (digit == 4) {
-      frac = frac + "4";
+      frac += "4";
     } else if (digit == 5) {
-      frac = frac + "5";
+      frac += "5";
     } else if (digit == 6) {
-      frac = frac + "6";
+      frac += "6";
     } else if (digit == 7) {
-      frac = frac + "7";
+      frac += "7";
     } else if (digit == 8) {
-      frac = frac + "8";
+      frac += "8";
     } else {
-      frac = frac + "9";
+      frac += "9";
     }
     if (div == 1) {
       div = 0;
     } else {
-      div = div / 10;
+      div /= 10;
     }
   }
   return frac;
@@ -884,7 +884,7 @@ pub function month_name(m: i32): string {
 }
 
 pub function (d: Date) weekday_name(): string {
-  let n: i32 = d.weekday();
+  let n = d.weekday();
   if (n == 0) {
     return "Sunday";
   }
@@ -907,8 +907,8 @@ pub function (d: Date) weekday_name(): string {
 }
 
 pub function (t: Timestamp) format_http_date(): string {
-  let dt: DateTime = t.to_datetime();
-  let d: Date = dt.date;
+  let dt = t.to_datetime();
+  let d = dt.date;
   return __weekday_short(d.weekday()) + ", " + __pad2(d.day) + " "
     + __month_short(d.month) + " " + __pad4(d.year) + " "
     + __pad2(dt.time.hour) + ":" + __pad2(dt.time.minute) + ":" + __pad2(dt.time.second) + " GMT";
@@ -923,7 +923,7 @@ function __month_from_short(s: string, start: i32): i32 {
   if (start + 3 > s.len()) {
     return -1;
   }
-  let m: str = s.slice_snap(start, start + 3);
+  let m = s.slice_snap(start, start + 3);
   if (m == "Jan") {
     return 1;
   }
@@ -1015,7 +1015,7 @@ function __http_timestamp(year: i32, mo: i32, day: i32, h: i32, mn: i32, sc: i32
   if (year < 0 || mo < 1 || day < 1 || day > days_in_month(year, mo) || !__time_of_day_ok(h, mn, sc)) {
     return None;
   }
-  let sec: i64 = days_from_civil(year as i64, mo, day) * 86400 + (h * 3600 + mn * 60 + sc) as i64;
+  let sec = days_from_civil(year as i64, mo, day) * 86400 + (h * 3600 + mn * 60 + sc) as i64;
   return Some(Timestamp { sec: sec, nsec: 0 });
 }
 
@@ -1023,7 +1023,7 @@ function __asctime_date(s: string): Option[Timestamp] {
   if (s[3] != 32 || s[7] != 32 || s[10] != 32 || s[19] != 32 || s[13] != 58 || s[16] != 58) {
     return None;
   }
-  let day_from: i32 = 8;
+  let day_from = 8;
   if (s[8] == 32) {
     day_from = 9;
   }
@@ -1037,7 +1037,7 @@ function __rfc850_date(s: string, now: Timestamp): Option[Timestamp] {
   if (c < 6 || s.len() != c + 24 || !__rfc850_punctuation(s, c)) {
     return None;
   }
-  let yy: i32 = __parse_digits(s, c + 9, c + 11);
+  let yy = __parse_digits(s, c + 9, c + 11);
   if (yy < 0) {
     return None;
   }
@@ -1052,8 +1052,8 @@ function __rfc850_punctuation(s: string, c: i32): boolean {
 }
 
 function __rfc850_year(yy: i32, now: Timestamp): i32 {
-  let now_year: i32 = now.to_datetime().date.year;
-  let y: i32 = now_year - now_year % 100 + yy;
+  let now_year = now.to_datetime().date.year;
+  let y = now_year - now_year % 100 + yy;
   if (y > now_year + 50) {
     return y - 100;
   }
@@ -1099,7 +1099,7 @@ pub function timestamp_parse_rfc3339_offset(s: string): Result[(Timestamp, i32),
 }
 
 function __rfc3339(s: string): Option[(Timestamp, i32)] {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n < 20) {
     return None;
   }
@@ -1112,31 +1112,31 @@ function __rfc3339(s: string): Option[(Timestamp, i32)] {
   if (s[13] != 58 || s[16] != 58) {
     return None;
   }
-  let y: i32 = __parse_digits(s, 0, 4);
-  let mo: i32 = __parse_digits(s, 5, 7);
-  let d: i32 = __parse_digits(s, 8, 10);
-  let h: i32 = __parse_digits(s, 11, 13);
-  let mn: i32 = __parse_digits(s, 14, 16);
-  let sc: i32 = __parse_digits(s, 17, 19);
+  let y = __parse_digits(s, 0, 4);
+  let mo = __parse_digits(s, 5, 7);
+  let d = __parse_digits(s, 8, 10);
+  let h = __parse_digits(s, 11, 13);
+  let mn = __parse_digits(s, 14, 16);
+  let sc = __parse_digits(s, 17, 19);
   if (y < 0 || mo < 0 || d < 0 || h < 0 || mn < 0 || sc < 0) {
     return None;
   }
   if (!__rfc3339_fields_valid(y, mo, d, h, mn, sc)) {
     return None;
   }
-  let pos: i32 = 19;
-  let nsec: i32 = 0;
+  let pos = 19;
+  let nsec = 0;
   if (s[pos] == 46) {
-    let frac_start: i32 = pos + 1;
-    let frac_end: i32 = -1;
-    let i: i32 = frac_start;
+    let frac_start = pos + 1;
+    let frac_end = -1;
+    let i = frac_start;
     while (i < n) {
-      let b: i32 = s[i] as i32;
+      let b = s[i] as i32;
       if (b == 90 || b == 43 || b == 45) {
         frac_end = i;
         i = n;
       } else {
-        i = i + 1;
+        i += 1;
       }
     }
     if (frac_end < 0) {
@@ -1148,19 +1148,19 @@ function __rfc3339(s: string): Option[(Timestamp, i32)] {
     if (frac_end - frac_start > 9) {
       return None;
     }
-    let frac: i32 = __parse_digits(s, frac_start, frac_end);
+    let frac = __parse_digits(s, frac_start, frac_end);
     if (frac < 0) {
       return None;
     }
     let pad: i32 = 9 - (frac_end - frac_start);
     while (pad > 0) {
-      frac = frac * 10;
-      pad = pad - 1;
+      frac *= 10;
+      pad -= 1;
     }
     nsec = frac;
     pos = frac_end;
   }
-  let offset_seconds: i32 = 0;
+  let offset_seconds = 0;
   if (s[pos] == 90) {
     if (pos + 1 != n) {
       return None;
@@ -1172,8 +1172,8 @@ function __rfc3339(s: string): Option[(Timestamp, i32)] {
     if (s[pos + 3] != 58) {
       return None;
     }
-    let oh: i32 = __parse_digits(s, pos + 1, pos + 3);
-    let om: i32 = __parse_digits(s, pos + 4, pos + 6);
+    let oh = __parse_digits(s, pos + 1, pos + 3);
+    let om = __parse_digits(s, pos + 4, pos + 6);
     if (oh < 0 || om < 0) {
       return None;
     }
@@ -1187,7 +1187,7 @@ function __rfc3339(s: string): Option[(Timestamp, i32)] {
   } else {
     return None;
   }
-  let local_sec: i64 = days_from_civil(y as i64, mo, d) * 86400 + (h * 3600 + mn * 60 + sc) as i64;
+  let local_sec = days_from_civil(y as i64, mo, d) * 86400 + (h * 3600 + mn * 60 + sc) as i64;
   return Some((Timestamp { sec: local_sec - offset_seconds as i64, nsec: nsec }, offset_seconds));
 }
 
@@ -1232,16 +1232,16 @@ pub function span_years(n: i32): Span {
 }
 
 pub function (d: Date) add_span(s: Span): Date {
-  let serial_month: i64 = d.year as i64 * 12 + (d.month - 1 + s.years * 12 + s.months) as i64;
-  let new_year: i32 = serial_month.div_euclid(12) as i32;
-  let new_month: i32 = serial_month.rem_euclid(12) as i32 + 1;
-  let max_day: i32 = days_in_month(new_year, new_month);
-  let clamped_day: i32 = d.day;
+  let serial_month = d.year as i64 * 12 + (d.month - 1 + s.years * 12 + s.months) as i64;
+  let new_year = serial_month.div_euclid(12) as i32;
+  let new_month = serial_month.rem_euclid(12) as i32 + 1;
+  let max_day = days_in_month(new_year, new_month);
+  let clamped_day = d.day;
   if (clamped_day > max_day) {
     clamped_day = max_day;
   }
-  let anchor: Date = Date { year: new_year, month: new_month, day: clamped_day };
-  let total_days: i32 = s.weeks * 7 + s.days;
+  let anchor = Date { year: new_year, month: new_month, day: clamped_day };
+  let total_days = s.weeks * 7 + s.days;
   if (total_days == 0) {
     return anchor;
   }
@@ -1258,9 +1258,9 @@ pub function (d: Date) days_until(other: Date): Span {
 ```fern
 <<19 function __rel_unit(n: i64, unit: string): string>>=
 function __rel_unit(n: i64, unit: string): string {
-  let s: string = n.to_string() + " " + unit;
+  let s = n.to_string() + " " + unit;
   if (n != 1 as i64) {
-    s = s + "s";
+    s += "s";
   }
   return s;
 }
@@ -1269,23 +1269,23 @@ function __rel_phrase(secs: i64): string {
   if (secs < 60 as i64) {
     return __rel_unit(secs, "second");
   }
-  let mins: i64 = secs / (60 as i64);
+  let mins = secs / (60 as i64);
   if (mins < 60 as i64) {
     return __rel_unit(mins, "minute");
   }
-  let hours: i64 = mins / (60 as i64);
+  let hours = mins / (60 as i64);
   if (hours < 24 as i64) {
     return __rel_unit(hours, "hour");
   }
-  let days: i64 = hours / (24 as i64);
+  let days = hours / (24 as i64);
   if (days < 30 as i64) {
     return __rel_unit(days, "day");
   }
-  let months: i64 = days / (30 as i64);
+  let months = days / (30 as i64);
   if (months < 12 as i64) {
     return __rel_unit(months, "month");
   }
-  let years: i64 = days / (365 as i64);
+  let years = days / (365 as i64);
   return __rel_unit(years, "year");
 }
 ```
@@ -1295,15 +1295,15 @@ function __rel_phrase(secs: i64): string {
 ```fern
 <<20 pub function (t: Timestamp) relative_to(now: Timestamp): string>>=
 pub function (t: Timestamp) relative_to(now: Timestamp): string {
-  let raw: i64 = t.sec - now.sec;
-  let mag: i64 = raw;
+  let raw = t.sec - now.sec;
+  let mag = raw;
   if (mag < 0 as i64) {
     mag = 0 as i64 - mag;
   }
   if (mag < 5 as i64) {
     return "just now";
   }
-  let phrase: string = __rel_phrase(mag);
+  let phrase = __rel_phrase(mag);
   if (raw < 0 as i64) {
     return phrase + " ago";
   }

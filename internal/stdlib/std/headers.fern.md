@@ -91,35 +91,35 @@ pub function new(): HeaderMap {
 }
 
 pub function (h: HeaderMap) get(name: string): Option[string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.names.len()) {
     if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
       return Some(h.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 pub function (h: HeaderMap) has(name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.names.len()) {
     if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function (h: HeaderMap) get_all(name: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.names.len()) {
     if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
       out = out.append(h.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -136,20 +136,20 @@ pub function (h: HeaderMap) get_list(name: string): string[] {
 
 pub function split_list(value: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let quoted: boolean = false;
-  let i: i32 = 0;
+  let start = 0;
+  let quoted = false;
+  let i = 0;
   while (i < value.len()) {
-    let b: u8 = value[i];
+    let b = value[i];
     if (quoted && b == 92 as u8) {
-      i = i + 1;
+      i += 1;
     } else if (b == 34 as u8) {
       quoted = !quoted;
     } else if (b == 44 as u8 && !quoted) {
       out = __list_member(out, value, start, i);
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return __list_member(out, value, start, value.len());
 }
@@ -160,7 +160,7 @@ pub function split_list(value: string): string[] {
 ```fern
 <<4 function __list_member(out: string[], value: string, from: i32, to: i32): string[]>>=
 function __list_member(out: string[], value: string, from: i32, to: i32): string[] {
-  let m: string = value.slice_snap(from, to).trim();
+  let m = value.slice_snap(from, to).trim();
   if (m.len() == 0) {
     return out;
   }
@@ -176,29 +176,29 @@ pub function unquote(s: string): string {
   if (s.len() < 2 || s[0] != 34 as u8 || s[s.len() - 1] != 34 as u8) {
     return s;
   }
-  let end: i32 = s.len() - 1;
-  let out: string = "";
-  let from: i32 = 1;
-  let i: i32 = 1;
+  let end = s.len() - 1;
+  let out = "";
+  let from = 1;
+  let i = 1;
   while (i < end) {
     if (s[i] == 92 as u8 && i + 1 < end) {
-      out = out + s.slice_snap(from, i);
+      out += s.slice_snap(from, i);
       from = i + 1;
-      i = i + 2;
+      i += 2;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
   return out + s.slice_snap(from, end);
 }
 
 pub function (h: HeaderMap) preferred_coding(offers: string[]): Option[string] {
-  let members: string[] = h.get_list("Accept-Encoding");
-  let floor: i32 = __coding_weight(members, "identity");
+  let members = h.get_list("Accept-Encoding");
+  let floor = __coding_weight(members, "identity");
   let best: Option[string] = None;
-  let best_q: i32 = 0;
+  let best_q = 0;
   for o in offers {
-    let q: i32 = __coding_weight(members, o);
+    let q = __coding_weight(members, o);
     if (q > best_q && q >= floor) {
       best = Some(o);
       best_q = q;
@@ -213,9 +213,9 @@ pub function (h: HeaderMap) preferred_coding(offers: string[]): Option[string] {
 ```fern
 <<6 function __coding_weight(members: string[], coding: string): i32>>=
 function __coding_weight(members: string[], coding: string): i32 {
-  let star: i32 = -1;
+  let star = -1;
   for m in members {
-    let name: string = __member_token(m);
+    let name = __member_token(m);
     if (__same_coding(name, coding)) {
       return weight(m);
     }
@@ -246,14 +246,14 @@ function __same_coding(name: string, coding: string): boolean {
 ```fern
 <<7 pub function weight(member: string): i32>>=
 pub function weight(member: string): i32 {
-  let params: string[] = member.split(";");
-  let i: i32 = 1;
+  let params = member.split(";");
+  let i = 1;
   while (i < params.len()) {
-    let p: string = params[i].trim();
+    let p = params[i].trim();
     if (p.len() >= 2 && (p[0] == 113 as u8 || p[0] == 81 as u8) && p[1] == 61 as u8) {
       return __qvalue(p.slice_snap(2, p.len()));
     }
-    i = i + 1;
+    i += 1;
   }
   return 1000;
 }
@@ -270,7 +270,7 @@ function __qvalue(s: string): i32 {
   if (s.len() > 1 && s[1] != 46 as u8) {
     return 0;
   }
-  let q: i32 = (s[0] - 48 as u8) as i32 * 1000 + __thousandths(s);
+  let q = (s[0] - 48 as u8) as i32 * 1000 + __thousandths(s);
   if (q > 1000) {
     return 0;
   }
@@ -278,16 +278,16 @@ function __qvalue(s: string): i32 {
 }
 
 function __thousandths(s: string): i32 {
-  let q: i32 = 0;
-  let scale: i32 = 100;
-  let i: i32 = 2;
+  let q = 0;
+  let scale = 100;
+  let i = 2;
   while (i < s.len()) {
     if (s[i] < 48 as u8 || s[i] > 57 as u8) {
       return 1001;
     }
     q = q + (s[i] - 48 as u8) as i32 * scale;
-    scale = scale / 10;
-    i = i + 1;
+    scale /= 10;
+    i += 1;
   }
   return q;
 }
@@ -308,8 +308,8 @@ pub function (h: HeaderMap) append(name: string, value: string): HeaderMap {
 pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
   let new_names: string[] = [];
   let new_values: string[] = [];
-  let inserted: boolean = false;
-  let i: i32 = 0;
+  let inserted = false;
+  let i = 0;
   while (i < h.names.len()) {
     if (h.names[i].eq_ignore_ascii_case(name)) {
       if (!inserted) {
@@ -321,7 +321,7 @@ pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
       new_names = new_names.append(h.names[i]);
       new_values = new_values.append(h.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   if (!inserted) {
     new_names = new_names.append(name);
@@ -333,13 +333,13 @@ pub function (h: HeaderMap) set(name: string, value: string): HeaderMap {
 pub function (h: HeaderMap) remove(name: string): HeaderMap {
   let new_names: string[] = [];
   let new_values: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.names.len()) {
     if (!h.names[i].eq_ignore_ascii_case(name)) {
       new_names = new_names.append(h.names[i]);
       new_values = new_values.append(h.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return HeaderMap { ...h, names: new_names, values: new_values };
 }

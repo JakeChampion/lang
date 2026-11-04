@@ -270,9 +270,9 @@ const P256_R256: u8[] = [255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 67, 25, 5, 
 ```fern
 <<10 function __p256_key(entropy: [u8]): Result[ecdsa.PrivateKey, KeyShareError]>>=
 function __p256_key(entropy: [u8]): Result[ecdsa.PrivateKey, KeyShareError] {
-  let order: montgomery.Modulus = montgomery.modulus(P256_ORDER, 32);
-  let hi: i64[] = montgomery.mul(order, montgomery.from_bytes(order, entropy[0:8]), montgomery.from_bytes(order, P256_R256));
-  let d: i64[] = montgomery.add(order, hi, montgomery.from_bytes(order, entropy[8:40]));
+  let order = montgomery.modulus(P256_ORDER, 32);
+  let hi = montgomery.mul(order, montgomery.from_bytes(order, entropy[0:8]), montgomery.from_bytes(order, P256_R256));
+  let d = montgomery.add(order, hi, montgomery.from_bytes(order, entropy[8:40]));
   match (ecdsa.private_key(ecdsa.P256, montgomery.to_bytes(order, d))) {
     Ok(k) => {
       return Ok(k);
@@ -311,16 +311,16 @@ pub struct ServerShare { public: u8[], shared_secret: u8[] }
 ```fern
 <<12 function __cat(a: [u8], b: [u8]): u8[]>>=
 function __cat(a: [u8], b: [u8]): u8[] {
-  let out: u8[] = __alloc_u8(a.len() + b.len());
-  let i: i32 = 0;
+  let out = __alloc_u8(a.len() + b.len());
+  let i = 0;
   while (i < a.len()) {
     out = out.with(i, a[i]);
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < b.len()) {
     out = out.with(a.len() + j, b[j]);
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
@@ -400,13 +400,13 @@ pub function client_share(g: Group, entropy: [u8]): Result[ClientShare, KeyShare
 ```fern
 <<14 function __x25519_client(g: Group, entropy: [u8]): Result[ClientShare, KeyShareError]>>=
 function __x25519_client(g: Group, entropy: [u8]): Result[ClientShare, KeyShareError] {
-  let scalar: u8[] = __cat(entropy[0:32], []);
+  let scalar = __cat(entropy[0:32], []);
   return Ok(ClientShare { group: g, public: __public(scalar)?, scalar: scalar, decapsulation_key: [] });
 }
 
 function __x25519_hybrid_client(g: Group, entropy: [u8]): Result[ClientShare, KeyShareError] {
-  let scalar: u8[] = __cat(entropy[0:32], []);
-  let point: u8[] = __public(scalar)?;
+  let scalar = __cat(entropy[0:32], []);
+  let point = __public(scalar)?;
   match (mlkem768.keygen_derand(entropy[32:64], entropy[64:96])) {
     Ok(kp) => {
       return Ok(ClientShare { group: g, public: __cat(kp.encapsulation_key, point), scalar: scalar, decapsulation_key: kp.decapsulation_key });
@@ -419,12 +419,12 @@ function __x25519_hybrid_client(g: Group, entropy: [u8]): Result[ClientShare, Ke
 }
 
 function __p256_client(g: Group, entropy: [u8]): Result[ClientShare, KeyShareError] {
-  let k: ecdsa.PrivateKey = __p256_key(entropy)?;
+  let k = __p256_key(entropy)?;
   return Ok(ClientShare { group: g, public: k.public_point(), scalar: k.d, decapsulation_key: [] });
 }
 
 function __p256_hybrid_client(g: Group, entropy: [u8]): Result[ClientShare, KeyShareError] {
-  let k: ecdsa.PrivateKey = __p256_key(entropy[0:40])?;
+  let k = __p256_key(entropy[0:40])?;
   match (mlkem768.keygen_derand(entropy[40:72], entropy[72:104])) {
     Ok(kp) => {
       return Ok(ClientShare { group: g, public: __cat(k.public_point(), kp.encapsulation_key), scalar: k.d, decapsulation_key: kp.decapsulation_key });
@@ -471,16 +471,16 @@ pub function server_share(g: Group, client_public: [u8], entropy: [u8]): Result[
 ```fern
 <<16 function __x25519_server(client_public: [u8], entropy: [u8]): Result[ServerShare, KeyShareError]>>=
 function __x25519_server(client_public: [u8], entropy: [u8]): Result[ServerShare, KeyShareError] {
-  let scalar: u8[] = __cat(entropy[0:32], []);
+  let scalar = __cat(entropy[0:32], []);
   return Ok(ServerShare { public: __public(scalar)?, shared_secret: __agree(scalar, client_public)? });
 }
 
 function __x25519_hybrid_server(client_public: [u8], entropy: [u8]): Result[ServerShare, KeyShareError] {
-  let scalar: u8[] = __cat(entropy[0:32], []);
-  let point: u8[] = __public(scalar)?;
+  let scalar = __cat(entropy[0:32], []);
+  let point = __public(scalar)?;
   match (mlkem768.encaps_derand(client_public[0:1184], entropy[32:64])) {
     Ok(enc) => {
-      let ss: u8[] = __agree(scalar, client_public[1184:1216])?;
+      let ss = __agree(scalar, client_public[1184:1216])?;
       return Ok(ServerShare { public: __cat(enc.ciphertext, point), shared_secret: __cat(enc.shared_secret, ss) });
     },
     Err(e) => {
@@ -491,13 +491,13 @@ function __x25519_hybrid_server(client_public: [u8], entropy: [u8]): Result[Serv
 }
 
 function __p256_server(client_public: [u8], entropy: [u8]): Result[ServerShare, KeyShareError] {
-  let k: ecdsa.PrivateKey = __p256_key(entropy)?;
+  let k = __p256_key(entropy)?;
   return Ok(ServerShare { public: k.public_point(), shared_secret: __p256_agree(k, client_public)? });
 }
 
 function __p256_hybrid_server(client_public: [u8], entropy: [u8]): Result[ServerShare, KeyShareError] {
-  let k: ecdsa.PrivateKey = __p256_key(entropy[0:40])?;
-  let ss: u8[] = __p256_agree(k, client_public[0:65])?;
+  let k = __p256_key(entropy[0:40])?;
+  let ss = __p256_agree(k, client_public[0:65])?;
   match (mlkem768.encaps_derand(client_public[65:1249], entropy[40:72])) {
     Ok(enc) => {
       return Ok(ServerShare { public: __cat(k.public_point(), enc.ciphertext), shared_secret: __cat(ss, enc.shared_secret) });
@@ -553,7 +553,7 @@ function __x25519_hybrid_secret(c: ClientShare, server_public: [u8]): Result[u8[
 }
 
 function __p256_hybrid_secret(c: ClientShare, server_public: [u8]): Result[u8[], KeyShareError] {
-  let ss: u8[] = __p256_agree(__p256_scalar(c.scalar)?, server_public[0:65])?;
+  let ss = __p256_agree(__p256_scalar(c.scalar)?, server_public[0:65])?;
   match (mlkem768.decaps(c.decapsulation_key, server_public[65:1153])) {
     Ok(kem) => {
       return Ok(__cat(ss, kem));

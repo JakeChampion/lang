@@ -247,18 +247,18 @@ pub function private_key_from_pem(text: string): Result[PrivateKey, KeyError] {
 }
 
 pub function pkcs8(b: [u8]): Result[PrivateKey, KeyError] {
-  let parts: der.Element[] = __pkcs8_parts(b)?;
-  let alg: der.Element[] = __d(der.children(b, parts[1]))?;
+  let parts = __pkcs8_parts(b)?;
+  let alg = __d(der.children(b, parts[1]))?;
   if (alg.len() == 0) {
     return Err(BadKey("privateKeyAlgorithm"));
   }
-  let oid: string = __d(der.oid(b, alg[0]))?;
-  let key: u8[] = der.bytes(b, parts[2]);
+  let oid = __d(der.oid(b, alg[0]))?;
+  let key = der.bytes(b, parts[2]);
   if (oid == "1.2.840.10045.2.1") {
     return __pkcs8_ec(b, alg, key);
   }
   if (oid == "1.3.101.112") {
-    let inner: der.Element = __d(der.only(key, der.OCTET_STRING))?;
+    let inner = __d(der.only(key, der.OCTET_STRING))?;
     return __ed25519_seed(der.bytes(key, inner));
   }
   if (oid == "1.2.840.113549.1.1.1") {
@@ -280,12 +280,12 @@ function __pkcs8_ec(b: [u8], alg: der.Element[], key: u8[]): Result[PrivateKey, 
 }
 
 function __pkcs8_parts(b: [u8]): Result[der.Element[], KeyError] {
-  let seq: der.Element = __d(der.only(b, der.SEQUENCE))?;
-  let parts: der.Element[] = __d(der.children(b, seq))?;
+  let seq = __d(der.only(b, der.SEQUENCE))?;
+  let parts = __d(der.children(b, seq))?;
   if (parts.len() < 3 || parts[1].tag != der.SEQUENCE || parts[2].tag != der.OCTET_STRING) {
     return Err(BadKey("PrivateKeyInfo"));
   }
-  let version: i32 = __d(der.small(b, parts[0]))?;
+  let version = __d(der.small(b, parts[0]))?;
   if (version != 0 && version != 1) {
     return Err(BadKey("PrivateKeyInfo version"));
   }
@@ -307,15 +307,15 @@ pub function sec1(b: [u8]): Result[PrivateKey, KeyError] {
 ```fern
 <<13 function __ec_private_key(b: [u8], known: Option[ecdsa.Curve]): Result[PrivateKey, KeyError]>>=
 function __ec_private_key(b: [u8], known: Option[ecdsa.Curve]): Result[PrivateKey, KeyError] {
-  let seq: der.Element = __d(der.only(b, der.SEQUENCE))?;
-  let parts: der.Element[] = __d(der.children(b, seq))?;
+  let seq = __d(der.only(b, der.SEQUENCE))?;
+  let parts = __d(der.children(b, seq))?;
   if (parts.len() < 2 || parts[1].tag != der.OCTET_STRING) {
     return Err(BadKey("ECPrivateKey"));
   }
   if (__d(der.small(b, parts[0]))? != 1) {
     return Err(BadKey("ECPrivateKey version"));
   }
-  let curve: ecdsa.Curve = __ec_curve(b, parts, known)?;
+  let curve = __ec_curve(b, parts, known)?;
   match (ecdsa.private_key(curve, __padded(der.bytes(b, parts[1]), __scalar_size(curve)))) {
     Ok(k) => {
       return Ok(EcdsaKey(k));
@@ -336,7 +336,7 @@ function __padded(d: u8[], size: i32): u8[] {
 }
 
 function __ec_curve(b: [u8], parts: der.Element[], known: Option[ecdsa.Curve]): Result[ecdsa.Curve, KeyError] {
-  let named: Option[ecdsa.Curve] = __ec_params(b, parts)?;
+  let named = __ec_params(b, parts)?;
   match (known) {
     Some(k) => {
       match (named) {
@@ -364,16 +364,16 @@ function __ec_curve(b: [u8], parts: der.Element[], known: Option[ecdsa.Curve]): 
 }
 
 function __ec_params(b: [u8], parts: der.Element[]): Result[Option[ecdsa.Curve], KeyError] {
-  let i: i32 = 2;
+  let i = 2;
   while (i < parts.len()) {
     if (parts[i].tag == der.context(0, true)) {
-      let inner: der.Element[] = __d(der.children(b, parts[i]))?;
+      let inner = __d(der.children(b, parts[i]))?;
       if (inner.len() != 1) {
         return Err(BadKey("ECPrivateKey parameters"));
       }
       return Ok(Some(__curve(__d(der.oid(b, inner[0]))?)?));
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(None);
 }
@@ -413,7 +413,7 @@ pub function pair(chain: u8[][], key: PrivateKey): Result[Identity, KeyError] {
 }
 
 pub function from_pem(chain_text: string, key_text: string): Result[Identity, KeyError] {
-  let key: PrivateKey = private_key_from_pem(key_text)?;
+  let key = private_key_from_pem(key_text)?;
   match (pem.certificates(chain_text)) {
     Ok(chain) => {
       return pair(chain, key);
@@ -493,7 +493,7 @@ pub function (key: PrivateKey) sign(scheme: i32, content: [u8]): Result[u8[], Ke
   }
   match (key) {
     EcdsaKey(k) => {
-      let h: sha2.Hash = sha2.Sha256;
+      let h = sha2.Sha256;
       if (scheme == 0x0503) {
         h = sha2.Sha384;
       }
@@ -526,10 +526,10 @@ pub function (key: PrivateKey) sign(scheme: i32, content: [u8]): Result[u8[], Ke
 ```fern
 <<17 function __cat(own a: u8[], b: [u8]): u8[]>>=
 function __cat(own a: u8[], b: [u8]): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.len()) {
     a = a.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
@@ -538,12 +538,12 @@ function __same(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

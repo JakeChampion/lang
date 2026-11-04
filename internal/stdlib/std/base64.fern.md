@@ -104,17 +104,17 @@ function __b64_decode_char(c: i32, url: boolean): i32 {
 ```fern
 <<4 pub function encode(bs: [u8]): string>>=
 pub function encode(bs: [u8]): string {
-  let n: i32 = bs.len();
+  let n = bs.len();
   if (n == 0) {
     return "";
   }
   let out_len: i32 = (n + 2) / 3 * 4;
-  let buf: u8[] = __alloc_u8(out_len);
-  let i: i32 = 0;
-  let j: i32 = 0;
-  let b0: i32 = 0;
-  let b1: i32 = 0;
-  let b2: i32 = 0;
+  let buf = __alloc_u8(out_len);
+  let i = 0;
+  let j = 0;
+  let b0 = 0;
+  let b1 = 0;
+  let b2 = 0;
   while (i + 3 <= n) {
     b0 = bs[i] as i32;
     b1 = bs[i + 1] as i32;
@@ -123,10 +123,10 @@ pub function encode(bs: [u8]): string {
     buf = buf.with(j + 1, __b64_alphabet((b0 & 3) << 4 | b1 >> 4) as u8);
     buf = buf.with(j + 2, __b64_alphabet((b1 & 15) << 2 | b2 >> 6) as u8);
     buf = buf.with(j + 3, __b64_alphabet(b2 & 63) as u8);
-    i = i + 3;
-    j = j + 4;
+    i += 3;
+    j += 4;
   }
-  let rem: i32 = n - i;
+  let rem = n - i;
   if (rem == 1) {
     b0 = bs[i] as i32;
     buf = buf.with(j, __b64_alphabet(b0 >> 2) as u8);
@@ -151,9 +151,9 @@ pub function encode(bs: [u8]): string {
 <<5 function __b64_std_to_url(s: string): string>>=
 function __b64_std_to_url(s: string): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c == 43) {
       out = out.append(45 as u8);
     } else if (c == 47) {
@@ -161,7 +161,7 @@ function __b64_std_to_url(s: string): string {
     } else if (c == 61) {} else {
       out = out.append(s[i] as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -190,35 +190,35 @@ pub function decode_url(input: string): Result[u8[], codec.DecodeError] {
 <<7 function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeError]>>=
 function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeError] {
   let encoding: string = if (url) { "base64url" } else { "base64" };
-  let n: i32 = 0;
+  let n = 0;
   while (n < input.len() && input[n] != 61) {
     if (__b64_decode_char(input[n] as i32, url) < 0) {
       return Err(codec.error(encoding, n, codec.InvalidByte(input[n])));
     }
-    n = n + 1;
+    n += 1;
   }
   if let Some(problem) = codec.padding_error(input, n, 2, 4, encoding) {
     return Err(problem);
   }
-  let rem: i32 = n % 4;
+  let rem = n % 4;
   if (rem == 1) {
     return Err(codec.error(encoding, n, codec.InvalidLength));
   }
-  let trailing: i32 = rem * 6 % 8;
+  let trailing = rem * 6 % 8;
   if (trailing > 0 && (__b64_decode_char(input[n - 1] as i32, url) & (1 << trailing) - 1) != 0) {
     return Err(codec.error(encoding, n - 1, codec.NonZeroTrailingBits));
   }
-  let output: u8[] = __alloc_u8(n / 4 * 3 + rem * 6 / 8);
-  let at: i32 = 0;
-  let acc: i32 = 0;
-  let bits: i32 = 0;
+  let output = __alloc_u8(n / 4 * 3 + rem * 6 / 8);
+  let at = 0;
+  let acc = 0;
+  let bits = 0;
   for i in 0..n {
     acc = acc << 6 | __b64_decode_char(input[i] as i32, url);
-    bits = bits + 6;
+    bits += 6;
     if (bits >= 8) {
-      bits = bits - 8;
+      bits -= 8;
       output = output.with(at, (acc >> bits & 255) as u8);
-      at = at + 1;
+      at += 1;
     }
   }
   return Ok(output);

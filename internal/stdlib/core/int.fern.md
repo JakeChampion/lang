@@ -16,7 +16,7 @@ Typed numeric parsers belong to the scalar modules. This module contains shared 
 import "std/i32";
 
 function main(): i32 {
-  if ((0 - 42).to_string() != "-42" || (42).to_string_radix(16) != "2a") { return 1; }
+  if ((-42).to_string() != "-42" || (42).to_string_radix(16) != "2a") { return 1; }
   match (i32.parse_i32_radix("2a", 16)) { Ok(n) => { if (n != 42) { return 2; } }, Err(_) => { return 3; } }
   return 0;
 }
@@ -103,34 +103,34 @@ pub(package) function int_to_string(n: i32): string {
   if (n >= 0 && n < 100) {
     return SMALL_INTS[n];
   }
-  let neg: boolean = false;
+  let neg = false;
   if (n < 0) {
     neg = true;
-    n = 0 - n;
+    n = -n;
   }
-  let u: u32 = n as u32;
-  let ndig: i32 = __int_u32_digits(u);
-  let total: i32 = ndig;
+  let u = n as u32;
+  let ndig = __int_u32_digits(u);
+  let total = ndig;
   if (neg) {
-    total = total + 1;
+    total += 1;
   }
-  let buf: u8[] = __alloc_u8(total);
-  let tbl: string = __int_pair_table();
-  let w: i32 = total;
+  let buf = __alloc_u8(total);
+  let tbl = __int_pair_table();
+  let w = total;
   while (u >= 100 as u32) {
-    let r: i32 = (u % (100 as u32)) as i32;
-    u = u / (100 as u32);
-    w = w - 2;
+    let r = (u % (100 as u32)) as i32;
+    u /= 100 as u32;
+    w -= 2;
     buf = buf.with(w, tbl[r * 2] as u8);
     buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
   }
-  let last: i32 = u as i32;
+  let last = u as i32;
   if (u >= 10 as u32) {
-    w = w - 2;
+    w -= 2;
     buf = buf.with(w, tbl[last * 2] as u8);
     buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
   } else {
-    w = w - 1;
+    w -= 1;
     buf = buf.with(w, (last + 48) as u8);
   }
   if (neg) {
@@ -140,37 +140,37 @@ pub(package) function int_to_string(n: i32): string {
 }
 
 pub(package) function __int_to_string_u64(mag: i64, neg: i32): string {
-  let m: u64 = mag as u64;
-  let ndig: i32 = 1;
-  let probe: u64 = m;
+  let m = mag as u64;
+  let ndig = 1;
+  let probe = m;
   while (probe >= 100 as u64) {
-    ndig = ndig + 2;
-    probe = probe / (100 as u64);
+    ndig += 2;
+    probe /= 100 as u64;
   }
   if (probe >= 10 as u64) {
-    ndig = ndig + 1;
+    ndig += 1;
   }
-  let total: i32 = ndig;
+  let total = ndig;
   if (neg != 0) {
-    total = total + 1;
+    total += 1;
   }
-  let buf: u8[] = __alloc_u8(total);
-  let tbl: string = __int_pair_table();
-  let w: i32 = total;
+  let buf = __alloc_u8(total);
+  let tbl = __int_pair_table();
+  let w = total;
   while (m >= 100 as u64) {
-    let r: i32 = (m % (100 as u64)) as i32;
-    m = m / (100 as u64);
-    w = w - 2;
+    let r = (m % (100 as u64)) as i32;
+    m /= 100 as u64;
+    w -= 2;
     buf = buf.with(w, tbl[r * 2] as u8);
     buf = buf.with(w + 1, tbl[r * 2 + 1] as u8);
   }
-  let last: i32 = m as i32;
+  let last = m as i32;
   if (m >= 10 as u64) {
-    w = w - 2;
+    w -= 2;
     buf = buf.with(w, tbl[last * 2] as u8);
     buf = buf.with(w + 1, tbl[last * 2 + 1] as u8);
   } else {
-    w = w - 1;
+    w -= 1;
     buf = buf.with(w, (last + 48) as u8);
   }
   if (neg != 0) {
@@ -210,7 +210,7 @@ pub(package) function _format_integer(magnitude: u64, negative: boolean, base: i
     return "";
   }
   if (base == 10) {
-    let sign: i32 = 0;
+    let sign = 0;
     if (negative) {
       sign = 1;
     }
@@ -219,71 +219,71 @@ pub(package) function _format_integer(magnitude: u64, negative: boolean, base: i
   if (magnitude == 0 as u64) {
     return "0";
   }
-  let mag: u64 = magnitude;
-  let radix: u64 = base as u64;
-  let digits: u8[] = __alloc_u8(65);
-  let count: i32 = 0;
+  let mag = magnitude;
+  let radix = base as u64;
+  let digits = __alloc_u8(65);
+  let count = 0;
   while (mag > 0 as u64) {
     digits = digits.with(count, __radix_char((mag % radix) as i32) as u8);
-    count = count + 1;
-    mag = mag / radix;
+    count += 1;
+    mag /= radix;
   }
-  let sign_bytes: i32 = 0;
+  let sign_bytes = 0;
   if (negative) {
     sign_bytes = 1;
   }
-  let buf: u8[] = __alloc_u8(count + sign_bytes);
+  let buf = __alloc_u8(count + sign_bytes);
   if (negative) {
     buf = buf.with(0, 45 as u8);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
     buf = buf.with(i + sign_bytes, digits[count - 1 - i]);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
 
 pub(package) function _group_integer(text: string, separator: string): string {
-  let start: i32 = 0;
+  let start = 0;
   if (text.len() > 0 && text[0] == 45) {
     start = 1;
   }
-  let digits: i32 = text.len() - start;
+  let digits = text.len() - start;
   if (digits <= 3 || separator.len() == 0) {
     return text;
   }
   let groups: i32 = (digits - 1) / 3;
-  let total: i64 = text.len() as i64 + groups as i64 * (separator.len() as i64);
+  let total = text.len() as i64 + groups as i64 * (separator.len() as i64);
   if (total > 2147483647 as i64) {
     exit(1);
     return "";
   }
-  let buf: u8[] = __alloc_u8(total as i32);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(total as i32);
+  let pos = 0;
   if (start == 1) {
     buf = buf.with(0, 45 as u8);
     pos = 1;
   }
-  let i: i32 = start;
+  let i = start;
   while (i < text.len()) {
     if (i > start && (text.len() - i) % 3 == 0) {
-      let j: i32 = 0;
+      let j = 0;
       while (j < separator.len()) {
         buf = buf.with(pos, separator[j]);
-        pos = pos + 1;
-        j = j + 1;
+        pos += 1;
+        j += 1;
       }
     }
     buf = buf.with(pos, text[i]);
-    pos = pos + 1;
-    i = i + 1;
+    pos += 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
 
 pub(package) function _magnitude(n: i64): u64 {
-  let raw: u64 = n as u64;
+  let raw = n as u64;
   if (n < 0 as i64) {
     return 0 as u64 - raw;
   }
@@ -291,27 +291,27 @@ pub(package) function _magnitude(n: i64): u64 {
 }
 
 pub(package) function _pad_integer(text: string, width: i32): string {
-  let n: i32 = text.len();
+  let n = text.len();
   if (n >= width) {
     return text;
   }
-  let start: i32 = 0;
-  let buf: u8[] = __alloc_u8(width);
+  let start = 0;
+  let buf = __alloc_u8(width);
   if (n > 0 && text[0] == 45) {
     start = 1;
     buf = buf.with(0, 45 as u8);
   }
-  let gap: i32 = width - n;
-  let i: i32 = start;
+  let gap = width - n;
+  let i = start;
   while (i < start + gap) {
     buf = buf.with(i, 48 as u8);
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = start;
+  let j = start;
   while (j < n) {
     buf = buf.with(i, text[j]);
-    i = i + 1;
-    j = j + 1;
+    i += 1;
+    j += 1;
   }
   return string_from_bytes_unchecked(buf);
 }

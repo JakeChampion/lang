@@ -111,12 +111,12 @@ pub(package) function _integer(s: str, radix: i32, signed: boolean, positive_lim
   if (radix < 2 || radix > 36) {
     return (0 as u64, -3);
   }
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return (0 as u64, -1);
   }
-  let i: i32 = 0;
-  let negative: boolean = false;
+  let i = 0;
+  let negative = false;
   if (s[0] == 45) {
     if (!signed) {
       return (0 as u64, 0);
@@ -129,31 +129,31 @@ pub(package) function _integer(s: str, radix: i32, signed: boolean, positive_lim
   if (i == n) {
     return (0 as u64, i);
   }
-  let limit: u64 = positive_limit;
+  let limit = positive_limit;
   if (negative) {
     limit = negative_limit;
   }
   if (limit <= 4294967295 as u64) {
     return _small_integer_value(s, i, radix, limit, negative);
   }
-  let base: u64 = radix as u64;
-  let cutoff: u64 = limit / base;
-  let last_digit: u64 = limit % base;
-  let value: u64 = 0 as u64;
+  let base = radix as u64;
+  let cutoff = limit / base;
+  let last_digit = limit % base;
+  let value = 0 as u64;
   while (i < n) {
-    let digit: i32 = s[i] as i32 - 48;
+    let digit = s[i] as i32 - 48;
     if (radix != 10) {
       digit = int.__radix_digit(s[i] as i32);
     }
     if (digit < 0 || digit >= radix) {
       return (0 as u64, i);
     }
-    let d: u64 = digit as u64;
+    let d = digit as u64;
     if (value > cutoff || value == cutoff && d > last_digit) {
       return (0 as u64, -2);
     }
     value = value * base + d;
-    i = i + 1;
+    i += 1;
   }
   if (negative) {
     return (0 as u64 - value, SUCCESS);
@@ -163,10 +163,10 @@ pub(package) function _integer(s: str, radix: i32, signed: boolean, positive_lim
 
 // A 32-bit limit leaves room for the next radix multiply in a 64-bit value.
 function _small_integer_value(s: str, from: i32, radix: i32, limit: u64, negative: boolean): (u64, i32) {
-  let value: u64 = 0 as u64;
-  let i: i32 = from;
+  let value = 0 as u64;
+  let i = from;
   while (i < s.len()) {
-    let digit: i32 = s[i] as i32 - 48;
+    let digit = s[i] as i32 - 48;
     if (radix != 10) {
       digit = int.__radix_digit(s[i] as i32);
     }
@@ -177,7 +177,7 @@ function _small_integer_value(s: str, from: i32, radix: i32, limit: u64, negativ
     if (value > limit) {
       return (0 as u64, -2);
     }
-    i = i + 1;
+    i += 1;
   }
   if (negative) {
     return (0 as u64 - value, SUCCESS);
@@ -195,7 +195,7 @@ function _small_integer_value(s: str, from: i32, radix: i32, limit: u64, negativ
 struct DecimalParts { digits: string, exponent: i32, negative: boolean }
 
 function _signed64(value: f64, negative: boolean): f64 {
-  let bits: i64 = f64_bits(value);
+  let bits = f64_bits(value);
   if (negative) {
     bits = bits | 1 as i64 << 63;
   }
@@ -203,7 +203,7 @@ function _signed64(value: f64, negative: boolean): f64 {
 }
 
 function _signed32(bits_in: i32, negative: boolean): f32 {
-  let bits: i32 = bits_in;
+  let bits = bits_in;
   if (negative) {
     bits = bits | 1 << 31;
   }
@@ -214,16 +214,16 @@ function _word_is(s: str, from: i32, word: string): boolean {
   if (s.len() - from != word.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < word.len()) {
-    let c: i32 = s[from + i] as i32;
+    let c = s[from + i] as i32;
     if (c >= 65 && c <= 90) {
-      c = c + 32;
+      c += 32;
     }
     if (c != word[i] as i32) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -232,7 +232,7 @@ function _special_value(s: str, from: i32): i32 {
   if (from == s.len()) {
     return 0;
   }
-  let first: i32 = s[from] as i32 | 32;
+  let first = s[from] as i32 | 32;
   if (first == 110 && _word_is(s, from, "nan")) {
     return 1;
   }
@@ -245,7 +245,7 @@ function _special_value(s: str, from: i32): i32 {
 function _float_exact(s: str): (f64, i32) {
   match (_decimal_parts(s)) {
     Ok(parts) => {
-      let bits: i64 = _el_parse(parts.digits, parts.exponent);
+      let bits = _el_parse(parts.digits, parts.exponent);
       let value: f64 = 0.0;
       if (bits >= 0) {
         value = f64_from_bits(bits);
@@ -267,11 +267,11 @@ function _float_exact(s: str): (f64, i32) {
 // Interpret the next binary32 pattern after the maximum as the finite 2^128.
 // This supplies the exact overflow midpoint without an infinity operand.
 function _f32_boundary_value(bits: i32): f64 {
-  let exponent: i32 = bits >> 23;
-  let significand: i32 = bits & 8388607;
-  let power: i32 = -149;
+  let exponent = bits >> 23;
+  let significand = bits & 8388607;
+  let power = -149;
   if (exponent != 0) {
-    significand = significand + 8388608;
+    significand += 8388608;
     power = exponent - 150;
   }
   return significand as f64 * f64_from_bits((power + 1023) as i64 << 52);
@@ -282,23 +282,23 @@ pub(package) function _float32(s: str): (f32, i32) {
   if (code != SUCCESS) {
     return (0.0 as f32, code);
   }
-  let raw: i64 = f64_bits(value);
-  let negative: boolean = raw < 0 as i64;
-  let absolute_bits: i64 = raw & 9223372036854775807;
+  let raw = f64_bits(value);
+  let negative = raw < 0 as i64;
+  let absolute_bits = raw & 9223372036854775807;
   if (absolute_bits > 9218868437227405312) {
     return (_signed32(2143289344, negative), SUCCESS);
   }
   if (absolute_bits == 9218868437227405312) {
     return (_signed32(2139095040, negative), SUCCESS);
   }
-  let absolute: f64 = f64_from_bits(absolute_bits);
-  let candidate: i32 = f32_bits(absolute as f32);
-  let represented: f64 = _f32_boundary_value(candidate);
+  let absolute = f64_from_bits(absolute_bits);
+  let candidate = f32_bits(absolute as f32);
+  let represented = _f32_boundary_value(candidate);
   if (candidate < 2139095040 && absolute == represented) {
     return (_signed32(candidate, negative), SUCCESS);
   }
-  let lower: i32 = candidate;
-  let upper: i32 = candidate + 1;
+  let lower = candidate;
+  let upper = candidate + 1;
   if (candidate == 2139095040 || absolute < represented) {
     lower = candidate - 1;
     upper = candidate;
@@ -317,9 +317,9 @@ pub(package) function _float32(s: str): (f32, i32) {
 function _float32_midpoint(s: str, midpoint: f64, lower: i32, upper: i32, negative: boolean): (f32, i32) {
   match (_decimal_parts(s)) {
     Ok(parts) => {
-      let mid_bits: i64 = f64_bits(midpoint);
-      let relation: i32 = __cmp_big(__bn_of_digits(parts.digits), parts.exponent, __f64_sig(mid_bits), __f64_bexp(mid_bits));
-      let chosen: i32 = lower;
+      let mid_bits = f64_bits(midpoint);
+      let relation = __cmp_big(__bn_of_digits(parts.digits), parts.exponent, __f64_sig(mid_bits), __f64_bexp(mid_bits));
+      let chosen = lower;
       if (relation > 0 || relation == 0 && (lower & 1) != 0) {
         chosen = upper;
       }
@@ -358,19 +358,19 @@ function __bn_of_digits(s: string): bigint.BigInt {
 // compare  Ldig * 10^p  vs  V * 2^b  → -1 / 0 / 1 (cross-multiply, no
 // fractions). Ldig is a bignum; V fits an i64.
 function __cmp_big(Ldig: bigint.BigInt, p: i32, V: i64, b: i32): i32 {
-  let L: bigint.BigInt = Ldig;
-  let R: bigint.BigInt = bigint.from_i64(V);
+  let L = Ldig;
+  let R = bigint.from_i64(V);
   if (p > 0) {
     L = L.mul_pow10(p);
   }
   if (p < 0) {
-    R = R.mul_pow10(0 - p);
+    R = R.mul_pow10(-p);
   }
   if (b > 0) {
     R = R.shl(b);
   }
   if (b < 0) {
-    L = L.shl(0 - b);
+    L = L.shl(-b);
   }
   return L.cmp(R);
 }
@@ -378,8 +378,8 @@ function __cmp_big(Ldig: bigint.BigInt, p: i32, V: i64, b: i32): i32 {
 // IEEE-754 f64 = sig * 2^bexp, sig in [2^52, 2^53) for normals (or the
 // raw fraction for subnormals). These decode the fields of a bit pattern.
 function __f64_sig(bits: i64): i64 {
-  let e11: i64 = bits >> 52 & 2047;
-  let frac: i64 = bits & 4503599627370495;
+  let e11 = bits >> 52 & 2047;
+  let frac = bits & 4503599627370495;
   if (e11 == 0) {
     return frac;
   }
@@ -387,7 +387,7 @@ function __f64_sig(bits: i64): i64 {
 }
 
 function __f64_bexp(bits: i64): i32 {
-  let e11: i64 = bits >> 52 & 2047;
+  let e11 = bits >> 52 & 2047;
   if (e11 == 0) {
     return 0 - 1074;
   }
@@ -403,11 +403,11 @@ function __f64_bexp(bits: i64): i32 {
 // spacing changes at powers of two and the subnormal boundary are handled
 // automatically (IEEE bit patterns are monotone in magnitude).
 function __decimal_to_f64(dig: string, k: i32): f64 {
-  let dl: i32 = dig.len();
+  let dl = dig.len();
   if (dl == 0) {
     return 0.0;
   }
-  let mag: i32 = dl + k;  // ~ floor(log10(value)) + 1
+  let mag = dl + k;  // ~ floor(log10(value)) + 1
   if (mag > 310) {  // clearly overflows → +Inf
     return 1.0 / 0.0;
   }
@@ -417,49 +417,49 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
   // Seed: m0 = first <=15 digits (exact, < 2^53); Clinger's exact path
   // (single mul/div by an exact 10^e) when |e0| <= 22, else a drifting
   // estimate the refinement below corrects.
-  let take: i32 = dl;
+  let take = dl;
   if (take > 15) {
     take = 15;
   }
   let m0: i64 = 0;
-  let di: i32 = 0;
+  let di = 0;
   while (di < take) {
     m0 = m0 * 10 + (dig[di] as i64 - 48);
-    di = di + 1;
+    di += 1;
   }
-  let e0: i32 = k + (dl - take);
+  let e0 = k + (dl - take);
   let v: f64 = 0.0;
   if (e0 >= 0 && e0 <= 22) {
     let p: f64 = 1.0;
-    let t: i32 = 0;
+    let t = 0;
     while (t < e0) {
-      p = p * 10.0;
-      t = t + 1;
+      p *= 10.0;
+      t += 1;
     }
     v = m0 as f64 * p;
   } else if (e0 < 0 && e0 >= 0 - 22) {
     let p2: f64 = 1.0;
-    let t2: i32 = 0;
+    let t2 = 0;
     let ne: i32 = 0 - e0;
     while (t2 < ne) {
-      p2 = p2 * 10.0;
-      t2 = t2 + 1;
+      p2 *= 10.0;
+      t2 += 1;
     }
     v = m0 as f64 / p2;
   } else {
     v = m0 as f64;
-    let ee: i32 = e0;
+    let ee = e0;
     while (ee > 0) {
-      v = v * 10.0;
-      ee = ee - 1;
+      v *= 10.0;
+      ee -= 1;
     }
     while (ee < 0) {
-      v = v / 10.0;
-      ee = ee + 1;
+      v /= 10.0;
+      ee += 1;
     }
   }
   let INF: i64 = 9218868437227405312;  // 0x7FF0000000000000
-  let bits: i64 = f64_bits(v);
+  let bits = f64_bits(v);
   if (bits < 1) {  // estimate underflowed → smallest subnormal
     bits = 1;
   }
@@ -468,21 +468,21 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
   }
   // Ld = 2 * mantissa: the midpoint tests compare 2*value against the
   // (integer) sum of two adjacent f64s.
-  let Ld: bigint.BigInt = __bn_of_digits(dig).shl(1);
-  let guard: i32 = 0;
+  let Ld = __bn_of_digits(dig).shl(1);
+  let guard = 0;
   while (guard < 4000) {
-    guard = guard + 1;
-    let s: i64 = __f64_sig(bits);
-    let e: i32 = __f64_bexp(bits);
-    let up: i64 = bits + 1;
-    let su: i64 = __f64_sig(up);
-    let eu: i32 = __f64_bexp(up);
-    let emin: i32 = e;
+    guard += 1;
+    let s = __f64_sig(bits);
+    let e = __f64_bexp(bits);
+    let up = bits + 1;
+    let su = __f64_sig(up);
+    let eu = __f64_bexp(up);
+    let emin = e;
     if (eu < emin) {
       emin = eu;
     }
     let msum_up: i64 = (s << e - emin) + (su << eu - emin);
-    let cu: i32 = __cmp_big(Ld, k, msum_up, emin);  // sign of (2*value - (v + v_up))
+    let cu = __cmp_big(Ld, k, msum_up, emin);  // sign of (2*value - (v + v_up))
     if (cu > 0) {
       if (up >= INF) {  // rounds up past max finite → +Inf
         return f64_from_bits(INF);
@@ -491,15 +491,15 @@ function __decimal_to_f64(dig: string, k: i32): f64 {
     } else if (bits == 0) {
       return f64_from_bits(bits);
     } else {
-      let dn: i64 = bits - 1;
-      let sd: i64 = __f64_sig(dn);
-      let ed: i32 = __f64_bexp(dn);
-      let emin2: i32 = e;
+      let dn = bits - 1;
+      let sd = __f64_sig(dn);
+      let ed = __f64_bexp(dn);
+      let emin2 = e;
       if (ed < emin2) {
         emin2 = ed;
       }
       let msum_dn: i64 = (s << e - emin2) + (sd << ed - emin2);
-      let cd: i32 = __cmp_big(Ld, k, msum_dn, emin2);
+      let cd = __cmp_big(Ld, k, msum_dn, emin2);
       if (cd < 0) {
         bits = dn;
       } else {
@@ -1212,22 +1212,22 @@ function _el_compute(w: u64, q: i32): u64 {
   // The 128-bit product of the normalised significand with 5^q, taking the
   // low table word only when the leading bits are too close to call (the low
   // 9 bits all set).
-  let lz: i32 = __clz64(w);
-  let x: u64 = w << lz as u64;
+  let lz = __clz64(w);
+  let x = w << lz as u64;
   let at: i32 = (q + 342) * 2;
-  let hi: u64 = __mulhi_u64(x, EL_POW5[at]);
-  let lo: u64 = x * EL_POW5[at];
+  let hi = __mulhi_u64(x, EL_POW5[at]);
+  let lo = x * EL_POW5[at];
   if ((hi & 511 as u64) == 511 as u64) {
-    let carry: u64 = __mulhi_u64(x, EL_POW5[at + 1]);
-    lo = lo + carry;
+    let carry = __mulhi_u64(x, EL_POW5[at + 1]);
+    lo += carry;
     if (carry > lo) {
       hi = hi + 1 as u64;
     }
   }
-  let upperbit: i32 = (hi >> 63 as u64) as i32;
-  let shift: i32 = upperbit + 9;  // upperbit + 64 - 52 - 3
-  let mant: u64 = hi >> shift as u64;
-  let pow2: i32 = _el_log2_pow10(q) + upperbit - lz + 1023;
+  let upperbit = (hi >> 63 as u64) as i32;
+  let shift = upperbit + 9;  // upperbit + 64 - 52 - 3
+  let mant = hi >> shift as u64;
+  let pow2 = _el_log2_pow10(q) + upperbit - lz + 1023;
 
   if (pow2 <= 0) {
     // Subnormal, or below the smallest one.
@@ -1235,7 +1235,7 @@ function _el_compute(w: u64, q: i32): u64 {
       return 0 as u64;
     }
     mant = mant >> (1 - pow2) as u64;
-    mant = mant + (mant & 1 as u64);
+    mant += mant & 1 as u64;
     // A carry into bit 52 is the exponent field's 1: rounding up lifted the
     // value into the normal range.
     return mant >> 1 as u64;
@@ -1244,16 +1244,16 @@ function _el_compute(w: u64, q: i32): u64 {
   // A tie can only occur where 5^q fits in one 64-bit word; there `lo <= 1`
   // means the bits dropped by the shift were all zero, so the value sits
   // exactly on a midpoint and round-half-to-even applies.
-  if (lo <= 1 as u64 && q >= 0 - 4 && q <= 23 && (mant & 3 as u64) == 1 as u64) {
+  if (lo <= 1 as u64 && q >= -4 && q <= 23 && (mant & 3 as u64) == 1 as u64) {
     if (mant << shift as u64 == hi) {
-      mant = mant - (mant & 1 as u64);
+      mant -= mant & 1 as u64;
     }
   }
-  mant = mant + (mant & 1 as u64);
+  mant += mant & 1 as u64;
   mant = mant >> 1 as u64;
   if (mant >= 9007199254740992 as u64) {  // carried out of 53 bits
     mant = 4503599627370496 as u64;
-    pow2 = pow2 + 1;
+    pow2 += 1;
   }
   if (pow2 >= 2047) {  // overflowed to +Inf
     return 9218868437227405312 as u64;
@@ -1265,23 +1265,23 @@ function _el_compute(w: u64, q: i32): u64 {
 // leading and trailing zeros. Returns the bits when the answer is proven
 // exact, or -1 when the caller must use __decimal_to_f64.
 function _el_parse(dig: string, k: i32): i64 {
-  let nd: i32 = dig.len();
+  let nd = dig.len();
   if (nd == 0) {  // value is zero
     return 0;
   }
-  let take: i32 = nd;
+  let take = nd;
   if (take > 19) {
     take = 19;
   }
-  let w: u64 = 0 as u64;
-  let i: i32 = 0;
+  let w = 0 as u64;
+  let i = 0;
   while (i < take) {
     w = w * (10 as u64) + (dig[i] as i32 - 48) as u64;
-    i = i + 1;
+    i += 1;
   }
   // Dropped digits only shift the exponent; they never change `w`.
-  let q: i32 = k + (nd - take);
-  let r: u64 = _el_compute(w, q);
+  let q = k + (nd - take);
+  let r = _el_compute(w, q);
   // Truncated: the true significand lies in (w, w+1). If both ends give the
   // same double, every value between them does too.
   if (nd > take && _el_compute(w + 1 as u64, q) != r) {
@@ -1300,17 +1300,17 @@ function _el_parse(dig: string, k: i32): i64 {
 // and go straight to Eisel-Lemire, allocating nothing. A number with a
 // nonzero digit past the 19th takes `_float_exact`.
 pub(package) function _float64(s: str): (f64, i32) {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return (0.0, -1);
   }
-  let i: i32 = 0;
-  let neg: boolean = false;
+  let i = 0;
+  let neg = false;
   if (s[0] == 45 || s[0] == 43) {
     neg = s[0] == 45;
     i = 1;
   }
-  let special: i32 = _special_value(s, i);
+  let special = _special_value(s, i);
   if (special == 1) {
     return (_signed64(f64_from_bits(9221120237041090560), neg), SUCCESS);
   }
@@ -1319,51 +1319,51 @@ pub(package) function _float64(s: str): (f64, i32) {
   }
   // w holds the significant digits read so far, kept of them; a digit past
   // the 19th only moves the exponent (shift), unless it is nonzero (lost).
-  let w: u64 = 0 as u64;
-  let kept: i32 = 0;
-  let shift: i32 = 0;
-  let lost: boolean = false;
-  let digits: i32 = 0;
-  let fraclen: i32 = 0;
-  let b: i32 = 0;
-  let in_frac: boolean = false;
+  let w = 0 as u64;
+  let kept = 0;
+  let shift = 0;
+  let lost = false;
+  let digits = 0;
+  let fraclen = 0;
+  let b = 0;
+  let in_frac = false;
   while (i < n) {
     b = s[i] as i32;
     if (b == 46 && !in_frac) {  // '.'
       in_frac = true;
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (b < 48 || b > 57) {
       break;
     }
-    digits = digits + 1;
+    digits += 1;
     if (in_frac) {
-      fraclen = fraclen + 1;
+      fraclen += 1;
     }
     if (kept < 19) {
       if (kept > 0 || b != 48) {
         w = w * (10 as u64) + (b - 48) as u64;
-        kept = kept + 1;
+        kept += 1;
       }
     } else {
-      shift = shift + 1;
+      shift += 1;
       lost = lost || b != 48;
     }
-    i = i + 1;
+    i += 1;
   }
   if (digits == 0) {
     return (0.0, i);
   }
-  let eexp: i32 = 0;
+  let eexp = 0;
   if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
-    i = i + 1;
-    let exp_neg: boolean = false;
+    i += 1;
+    let exp_neg = false;
     if (i < n && (s[i] == 43 || s[i] == 45)) {
       exp_neg = s[i] == 45;
-      i = i + 1;
+      i += 1;
     }
-    let exp_start: i32 = i;
+    let exp_start = i;
     while (i < n) {
       b = s[i] as i32;
       if (b < 48 || b > 57) {
@@ -1372,7 +1372,7 @@ pub(package) function _float64(s: str): (f64, i32) {
       if (eexp < 1000000) {
         eexp = eexp * 10 + (b - 48);
       }
-      i = i + 1;
+      i += 1;
     }
     if (i == exp_start) {
       return (0.0, i);
@@ -1391,10 +1391,10 @@ pub(package) function _float64(s: str): (f64, i32) {
   if (kept > 0) {
     // Trailing zeros go to the exponent, giving Eisel-Lemire the same
     // (w, q) as the exact path's stripped digits.
-    let q: i32 = eexp - fraclen + shift;
+    let q = eexp - fraclen + shift;
     while (w % (10 as u64) == 0 as u64) {
-      w = w / (10 as u64);
-      q = q + 1;
+      w /= 10 as u64;
+      q += 1;
     }
     v = f64_from_bits(_el_compute(w, q) as i64);
   }
@@ -1407,13 +1407,13 @@ pub(package) function _float64(s: str): (f64, i32) {
 // Collect the full decimal significand for exact midpoint comparisons.
 
 function _decimal_parts(s: str): Result[DecimalParts, ParseNumberError] {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return Err(EmptyInput);
   }
 
-  let i: i32 = 0;
-  let neg: boolean = false;
+  let i = 0;
+  let neg = false;
   if (s[0] == 45 || s[0] == 43) {
     neg = s[0] == 45;
     i = 1;
@@ -1425,13 +1425,13 @@ function _decimal_parts(s: str): Result[DecimalParts, ParseNumberError] {
   // Collect every integer + fraction digit into one buffer; the base-10
   // exponent tracks the decimal point and the literal exponent.
   let db: u8[] = [];
-  let fraclen: i32 = 0;
-  let saw_int: boolean = false;
-  let saw_frac: boolean = false;
+  let fraclen = 0;
+  let saw_int = false;
+  let saw_frac = false;
   // Single `b` reused across the integer / fraction / exponent inner
   // loops — declaring the same name in multiple inner scopes triggers a
   // duplicate-local collision in the wasm emitter.
-  let b: i32 = 0;
+  let b = 0;
 
   while (i < n) {
     b = s[i] as i32;
@@ -1440,20 +1440,20 @@ function _decimal_parts(s: str): Result[DecimalParts, ParseNumberError] {
     }
     db = db.append(b as u8);
     saw_int = true;
-    i = i + 1;
+    i += 1;
   }
 
   if (i < n && s[i] == 46) {  // '.'
-    i = i + 1;
+    i += 1;
     while (i < n) {
       b = s[i] as i32;
       if (b < 48 || b > 57) {
         break;
       }
       db = db.append(b as u8);
-      fraclen = fraclen + 1;
+      fraclen += 1;
       saw_frac = true;
-      i = i + 1;
+      i += 1;
     }
   }
 
@@ -1461,18 +1461,18 @@ function _decimal_parts(s: str): Result[DecimalParts, ParseNumberError] {
     return Err(InvalidDigit(i));
   }
 
-  let eexp: i32 = 0;
+  let eexp = 0;
   if (i < n && (s[i] == 101 || s[i] == 69)) {  // 'e' / 'E'
-    i = i + 1;
-    let exp_neg: boolean = false;
+    i += 1;
+    let exp_neg = false;
     if (i < n && s[i] == 43) {  // '+'
-      i = i + 1;
+      i += 1;
     } else if (i < n && s[i] == 45) {  // '-'
       exp_neg = true;
-      i = i + 1;
+      i += 1;
     }
-    let exp: i32 = 0;
-    let saw_exp: boolean = false;
+    let exp = 0;
+    let saw_exp = false;
     while (i < n) {
       b = s[i] as i32;
       if (b < 48 || b > 57) {
@@ -1482,7 +1482,7 @@ function _decimal_parts(s: str): Result[DecimalParts, ParseNumberError] {
         exp = exp * 10 + (b - 48);
       }
       saw_exp = true;
-      i = i + 1;
+      i += 1;
     }
     if (!saw_exp) {
       return Err(InvalidDigit(i));
@@ -1501,23 +1501,23 @@ function _decimal_parts(s: str): Result[DecimalParts, ParseNumberError] {
   // value = (db as integer) * 10^(eexp - fraclen). Strip leading zeros
   // (no value change) and trailing zeros (each bumps the exponent) so
   // the bignum stays small and `dig` is canonical.
-  let m: i32 = db.len();
-  let lo: i32 = 0;
+  let m = db.len();
+  let lo = 0;
   while (lo < m && db[lo] == 48) {
-    lo = lo + 1;
+    lo += 1;
   }
-  let hi: i32 = m - 1;
+  let hi = m - 1;
   while (hi >= lo && db[hi] == 48) {
-    hi = hi - 1;
+    hi -= 1;
   }
-  let k: i32 = eexp - fraclen + (m - 1 - hi);
-  let dig: string = "";
+  let k = eexp - fraclen + (m - 1 - hi);
+  let dig = "";
   if (hi >= lo) {
     let out: u8[] = [];
-    let j: i32 = lo;
+    let j = lo;
     while (j <= hi) {
       out = out.append(db[j]);
-      j = j + 1;
+      j += 1;
     }
     dig = string_from_bytes_unchecked(out);
   }

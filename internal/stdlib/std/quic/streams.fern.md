@@ -101,15 +101,15 @@ pub function (r: Reassembly) delivered(): i64 {
 }
 
 pub function (r: Reassembly) add(offset: i64, data: [u8]): Reassembly {
-  let front: i64 = r.delivered();
-  let end: i64 = offset + data.len() as i64;
+  let front = r.delivered();
+  let end = offset + data.len() as i64;
   if (end <= front) {
     return r;
   }
   if (offset > front) {
     return __hold(r, offset, data);
   }
-  let skip: i32 = (front - offset) as i32;
+  let skip = (front - offset) as i32;
   if (skip == 0 && r.ready.len() == 0) {
     return __drain(Reassembly { ...r, ready: __bytes_owned(data) });
   }
@@ -130,16 +130,16 @@ function (r: Reassembly) __discard(): Reassembly {
 }
 
 function __hold(r: Reassembly, offset: i64, data: [u8]): Reassembly {
-  let end: i64 = offset + data.len() as i64;
-  let cur: i64 = offset;
+  let end = offset + data.len() as i64;
+  let cur = offset;
   let at: i64[] = [];
   let held: u8[][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < r.held.len()) {
-    let s: i64 = r.held_at[i];
-    let e: i64 = s + r.held[i].len() as i64;
+    let s = r.held_at[i];
+    let e = s + r.held[i].len() as i64;
     if (cur < end && s > cur) {
-      let piece: i64 = __min(end, s);
+      let piece = __min(end, s);
       at = at.append(cur);
       held = held.append(__slice_range(data, (cur - offset) as i32, (piece - offset) as i32));
       cur = piece;
@@ -149,7 +149,7 @@ function __hold(r: Reassembly, offset: i64, data: [u8]): Reassembly {
     }
     at = at.append(s);
     held = held.append(r.held[i]);
-    i = i + 1;
+    i += 1;
   }
   if (cur < end) {
     at = at.append(cur);
@@ -159,16 +159,16 @@ function __hold(r: Reassembly, offset: i64, data: [u8]): Reassembly {
 }
 
 function __drain(r: Reassembly): Reassembly {
-  let cur: Reassembly = r;
+  let cur = r;
   while (cur.held.len() > 0 && cur.held_at[0] <= cur.delivered()) {
-    let front: i64 = cur.delivered();
-    let seg: u8[] = cur.held[0];
-    let ready: u8[] = cur.ready;
-    let skip: i64 = front - cur.held_at[0];
+    let front = cur.delivered();
+    let seg = cur.held[0];
+    let ready = cur.ready;
+    let skip = front - cur.held_at[0];
     if (skip < seg.len() as i64) {
       ready = __append_range(ready, seg, skip as i32, seg.len());
     }
-    let held: u8[][] = __rest(cur.held);
+    let held = __rest(cur.held);
     cur = Reassembly { ...cur, ready: ready, held_at: __rest_i64(cur.held_at), held: held, held_bytes: __total(held) };
   }
   return cur;
@@ -259,18 +259,18 @@ pub struct Streams {
 ```fern
 <<7 pub function table(server: boolean, local: params.Params): Streams>>=
 pub function table(server: boolean, local: params.Params): Streams {
-  let none: params.Params = params.defaults();
+  let none = params.defaults();
   let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], closed: [0 as i64, 0 as i64, 0 as i64, 0 as i64], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0, index: [], base: 0 as i64 };
-  let bidi: i32 = s.__peer_type(false);
+  let bidi = s.__peer_type(false);
   return Streams { ...s, limits: s.limits.with(bidi, local.initial_max_streams_bidi).with(bidi + 2, local.initial_max_streams_uni) };
 }
 
 pub function (s: Streams) with_peer(p: params.Params): Streams {
-  let mine: i32 = s.__local_type(false);
-  let cur: Streams = Streams { ...s, peer: p, send_max: __max(s.send_max, p.initial_max_data), limits: s.limits.with(mine, __max(s.limits[mine], p.initial_max_streams_bidi)).with(mine + 2, __max(s.limits[mine + 2], p.initial_max_streams_uni)) };
+  let mine = s.__local_type(false);
+  let cur = Streams { ...s, peer: p, send_max: __max(s.send_max, p.initial_max_data), limits: s.limits.with(mine, __max(s.limits[mine], p.initial_max_streams_bidi)).with(mine + 2, __max(s.limits[mine + 2], p.initial_max_streams_uni)) };
   let list: Stream[] = [];
   for st in cur.list {
-    let next: Stream = st;
+    let next = st;
     if (st.has_send) {
       next = Stream { ...st, send_max: __max(st.send_max, cur.__send_window(st.id)) };
     }
@@ -285,12 +285,12 @@ pub function (s: Streams) with_peer(p: params.Params): Streams {
 ```fern
 <<8 function (s: Streams) __local_type(uni: boolean): i32>>=
 function (s: Streams) __local_type(uni: boolean): i32 {
-  let t: i32 = 0;
+  let t = 0;
   if (s.server) {
     t = 1;
   }
   if (uni) {
-    t = t + 2;
+    t += 2;
   }
   return t;
 }
@@ -328,51 +328,51 @@ function (s: Streams) __send_window(id: i64): i64 {
 }
 
 function (s: Streams) __new_stream(id: i64): Stream {
-  let window: i64 = s.__recv_window(id);
-  let local: boolean = s.__is_local(id);
+  let window = s.__recv_window(id);
+  let local = s.__is_local(id);
   return Stream { id: id, closed: false, has_send: local || !__is_uni(id), buf: [], base: 0 as i64, sent: 0 as i64, acked: [], lost: [], send_max: s.__send_window(id), fin: false, fin_sent: false, fin_acked: false, send_reset: 0 - 1 as i64, reset_state: NONE, blocked_at: 0 - 1 as i64, has_recv: !local || !__is_uni(id), data: reassembly(), highest: 0 as i64, final_size: 0 - 1 as i64, recv_max: window, window: window, max_dirty: false, recv_reset: 0 - 1 as i64, stop: 0 - 1 as i64, stop_state: NONE, fin_read: false };
 }
 
 function (s: Streams) __find(id: i64): i32 {
   if ((id & 2) != 0) {
-    let i: i32 = s.list.len() - 1;
+    let i = s.list.len() - 1;
     while (i >= 0) {
       if (s.list[i].id == id) {
         if (s.list[i].closed) {
-          return 0 - 1;
+          return -1;
         }
         return i;
       }
-      i = i - 1;
+      i -= 1;
     }
-    return 0 - 1;
+    return -1;
   }
-  let k: i64 = __bidi_key(id) - s.base;
+  let k = __bidi_key(id) - s.base;
   if (k < 0) {
     return s.__scan(id);
   }
   if (k >= s.index.len() as i64) {
-    return 0 - 1;
+    return -1;
   }
-  let i: i32 = s.index[k as i32] - 1;
+  let i = s.index[k as i32] - 1;
   if (i < 0 || s.list[i].closed) {
-    return 0 - 1;
+    return -1;
   }
   return i;
 }
 
 function (s: Streams) __scan(id: i64): i32 {
-  let i: i32 = s.list.len() - 1;
+  let i = s.list.len() - 1;
   while (i >= 0) {
     if (s.list[i].id == id) {
       if (s.list[i].closed) {
-        return 0 - 1;
+        return -1;
       }
       return i;
     }
-    i = i - 1;
+    i -= 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __bidi_key(id: i64): i64 {
@@ -383,27 +383,27 @@ function (s: Streams) __indexed(id: i64, pos: i32): Streams {
   if ((id & 2) != 0) {
     return s;
   }
-  let k: i64 = __bidi_key(id) - s.base;
+  let k = __bidi_key(id) - s.base;
   if (k < 0) {
     return s;
   }
   if (k >= s.index.len() as i64) {
-    let grown: Streams = Streams { ...s, index: __grown(s.index, k as i32 + 1) };
+    let grown = Streams { ...s, index: __grown(s.index, k as i32 + 1) };
     return Streams { ...grown, index: grown.index.with(k as i32, pos + 1) };
   }
   return Streams { ...s, index: s.index.with(k as i32, pos + 1) };
 }
 
 function __grown(index: i32[], n: i32): i32[] {
-  let size: i32 = n * 2;
+  let size = n * 2;
   if (size < 16) {
     size = 16;
   }
-  let out: i32[] = __alloc_i32(size);
-  let i: i32 = 0;
+  let out = __alloc_i32(size);
+  let i = 0;
   while (i < index.len()) {
     out = out.with(i, index[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -418,7 +418,7 @@ function (s: Streams) __put(i: i32, st: Stream): Streams {
 ```fern
 <<9 pub function (s: Streams) can_open(uni: boolean): boolean>>=
 pub function (s: Streams) can_open(uni: boolean): boolean {
-  let t: i32 = s.__local_type(uni);
+  let t = s.__local_type(uni);
   return s.opened[t] < s.limits[t];
 }
 ```
@@ -437,25 +437,25 @@ function (s: Streams) __refuse(why: string): Streams {
 ```fern
 <<11 pub function (s: Streams) open(uni: boolean): Streams>>=
 pub function (s: Streams) open(uni: boolean): Streams {
-  let t: i32 = s.__local_type(uni);
+  let t = s.__local_type(uni);
   if (s.opened[t] >= s.limits[t]) {
     return Streams { ...s, refused: "the peer's limit on streams is reached", last_opened: 0 - 1 as i64 };
   }
-  let id: i64 = s.opened[t] * 4 + t as i64;
-  let cur: Streams = Streams { ...s, list: s.list.append(s.__new_stream(id)), opened: s.opened.with(t, s.opened[t] + 1), refused: "", last_opened: id };
+  let id = s.opened[t] * 4 + t as i64;
+  let cur = Streams { ...s, list: s.list.append(s.__new_stream(id)), opened: s.opened.with(t, s.opened[t] + 1), refused: "", last_opened: id };
   return cur.__indexed(id, cur.list.len() - 1);
 }
 
 pub function (s: Streams) write(id: i64, data: u8[], fin: boolean): Streams {
-  let i: i32 = s.__find(id);
+  let i = s.__find(id);
   if (i < 0 || !s.list[i].has_send) {
     return s.__refuse("no stream to write to");
   }
-  let st: Stream = s.list[i];
+  let st = s.list[i];
   if (st.fin || st.send_reset >= 0) {
     return s.__refuse("the stream's sending half is closed");
   }
-  let buf: u8[] = data;
+  let buf = data;
   if (st.buf.len() > 0) {
     buf = st.buf.concat(data);
   }
@@ -463,17 +463,17 @@ pub function (s: Streams) write(id: i64, data: u8[], fin: boolean): Streams {
 }
 
 pub function (s: Streams) read(id: i64): Streams {
-  let i: i32 = s.__find(id);
+  let i = s.__find(id);
   if (i < 0 || !s.list[i].has_recv) {
     return s.__refuse("no stream to read from");
   }
-  let st: Stream = s.list[i];
+  let st = s.list[i];
   if (st.recv_reset >= 0) {
     return s.__refuse("the peer reset the stream");
   }
-  let bytes: u8[] = st.data.ready;
-  let fin: boolean = st.final_size >= 0 && st.data.delivered() == st.final_size;
-  let cur: Streams = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64, refused: "", read_data: bytes, read_fin: fin, list: s.list.with(i, s.list[i].__read_out(fin)) };
+  let bytes = st.data.ready;
+  let fin = st.final_size >= 0 && st.data.delivered() == st.final_size;
+  let cur = Streams { ...s, recv_taken: s.recv_taken + bytes.len() as i64, refused: "", read_data: bytes, read_fin: fin, list: s.list.with(i, s.list[i].__read_out(fin)) };
   return cur.__retire_done(i);
 }
 
@@ -486,7 +486,7 @@ function (r: Reassembly) __emptied(): Reassembly {
 }
 
 pub function (s: Streams) reset(id: i64, code: i64): Streams {
-  let i: i32 = s.__find(id);
+  let i = s.__find(id);
   if (i < 0 || !s.list[i].has_send) {
     return s.__refuse("no stream to reset");
   }
@@ -494,11 +494,11 @@ pub function (s: Streams) reset(id: i64, code: i64): Streams {
 }
 
 pub function (s: Streams) stop(id: i64, code: i64): Streams {
-  let i: i32 = s.__find(id);
+  let i = s.__find(id);
   if (i < 0 || !s.list[i].has_recv) {
     return s.__refuse("no stream to stop");
   }
-  let st: Stream = s.list[i];
+  let st = s.list[i];
   if (st.stop >= 0 || st.recv_reset >= 0 || st.fin_read) {
     return s.__refuse("");
   }
@@ -506,7 +506,7 @@ pub function (s: Streams) stop(id: i64, code: i64): Streams {
 }
 
 pub function (s: Streams) buffered(id: i64): i64 {
-  let i: i32 = s.__find(id);
+  let i = s.__find(id);
   if (i < 0) {
     return 0 as i64;
   }
@@ -546,7 +546,7 @@ pub function owns(f: frames.Frame): boolean {
 }
 
 pub function (s: Streams) on_frame(f: frames.Frame): Streams {
-  let cur: Streams = Streams { ...s, failed: None };
+  let cur = Streams { ...s, failed: None };
   match (f) {
     frames.StreamFrame(d) => {
       return cur.on_stream(d.stream, d.offset, d.data, d.fin);
@@ -585,7 +585,7 @@ function (s: Streams) __on_connection_frame(f: frames.Frame): Streams {
       return Streams { ...s, send_max: __max(s.send_max, v) };
     },
     frames.MaxStreams(bidi, v) => {
-      let t: i32 = s.__local_type(!bidi);
+      let t = s.__local_type(!bidi);
       return Streams { ...s, limits: s.limits.with(t, __max(s.limits[t], v)) };
     },
     _ => {
@@ -595,34 +595,34 @@ function (s: Streams) __on_connection_frame(f: frames.Frame): Streams {
 }
 
 function (s: Streams) __stream_for(id: i64, recv: boolean, kind: i64): (Streams, i32) {
-  let local: boolean = s.__is_local(id);
+  let local = s.__is_local(id);
   if (__is_uni(id) && local == recv) {
-    return (s.__fail(__error(frames.STREAM_STATE_ERROR, kind, "a frame for the half of a unidirectional stream that does not exist")), 0 - 1);
+    return (s.__fail(__error(frames.STREAM_STATE_ERROR, kind, "a frame for the half of a unidirectional stream that does not exist")), -1);
   }
-  let t: i32 = (id & 3) as i32;
-  let n: i64 = id / 4;
+  let t = (id & 3) as i32;
+  let n = id / 4;
   if (local && n >= s.opened[t]) {
-    return (s.__fail(__error(frames.STREAM_STATE_ERROR, kind, "a frame for a stream this side has not opened")), 0 - 1);
+    return (s.__fail(__error(frames.STREAM_STATE_ERROR, kind, "a frame for a stream this side has not opened")), -1);
   }
   if (!local && n >= s.limits[t]) {
-    return (s.__fail(__error(frames.STREAM_LIMIT_ERROR, kind, "a stream past the limit advertised")), 0 - 1);
+    return (s.__fail(__error(frames.STREAM_LIMIT_ERROR, kind, "a stream past the limit advertised")), -1);
   }
-  let cur: Streams = s;
+  let cur = s;
   if (!local && n >= s.opened[t]) {
     cur = s.__peer_opens(t, n);
   }
-  let i: i32 = cur.__find(id);
+  let i = cur.__find(id);
   return (cur, i);
 }
 
 function (s: Streams) __peer_opens(t: i32, n: i64): Streams {
-  let cur: Streams = s;
-  let k: i64 = s.opened[t];
+  let cur = s;
+  let k = s.opened[t];
   while (k <= n) {
-    let id: i64 = k * 4 + t as i64;
+    let id = k * 4 + t as i64;
     cur = Streams { ...cur, list: cur.list.append(cur.__new_stream(id)), events: cur.events.append(Opened(id)) };
     cur = cur.__indexed(id, cur.list.len() - 1);
-    k = k + 1;
+    k += 1;
   }
   return Streams { ...cur, opened: cur.opened.with(t, n + 1) };
 }
@@ -633,21 +633,21 @@ pub function (s: Streams) on_stream(id: i64, offset: i64, data: [u8], fin: boole
   if (i < 0) {
     return cur;
   }
-  let st: Stream = cur.list[i];
-  let end: i64 = offset + data.len() as i64;
+  let st = cur.list[i];
+  let end = offset + data.len() as i64;
   if let Some(e) = __final_error(st, end, fin, frames.STREAM) {
     return cur.__fail(e);
   }
   if let Some(e) = cur.__credit_error(st, end, frames.STREAM) {
     return cur.__fail(e);
   }
-  let more: i64 = __max(0 as i64, end - st.highest);
-  let next: Streams = Streams { ...cur, recv_highest: cur.recv_highest + more };
+  let more = __max(0 as i64, end - st.highest);
+  let next = Streams { ...cur, recv_highest: cur.recv_highest + more };
   if (st.recv_reset >= 0 || st.stop >= 0) {
     return Streams { ...next, list: next.list.with(i, next.list[i].__received(offset, data, fin, more, false)) };
   }
-  let before: i64 = st.data.delivered();
-  let fin_read: boolean = st.fin_read;
+  let before = st.data.delivered();
+  let fin_read = st.fin_read;
   next = Streams { ...next, list: next.list.with(i, next.list[i].__received(offset, data, fin, more, true)) };
   if (next.list[i].data.delivered() > before || fin && !fin_read && next.list[i].data.delivered() == next.list[i].final_size) {
     return Streams { ...next, events: next.events.append(Readable(id)) };
@@ -658,7 +658,7 @@ pub function (s: Streams) on_stream(id: i64, offset: i64, data: [u8], fin: boole
 // __received takes a STREAM frame's data into the reassembly when keep,
 // and otherwise only its final size and extent.
 function (st: Stream) __received(offset: i64, data: [u8], fin: boolean, more: i64, keep: boolean): Stream {
-  let final: i64 = st.final_size;
+  let final = st.final_size;
   if (fin) {
     final = offset + data.len() as i64;
   }
@@ -682,7 +682,7 @@ function (s: Streams) __credit_error(r: Stream, end: i64, kind: i64): Option[fra
   if (end > r.recv_max) {
     return Some(__error(frames.FLOW_CONTROL_ERROR, kind, "stream data past the stream's window"));
   }
-  let more: i64 = __max(0 as i64, end - r.highest);
+  let more = __max(0 as i64, end - r.highest);
   if (s.recv_highest + more > s.recv_max) {
     return Some(__error(frames.FLOW_CONTROL_ERROR, kind, "stream data past the connection's window"));
   }
@@ -694,7 +694,7 @@ function (s: Streams) __on_reset(rs: frames.ResetStream): Streams {
   if (i < 0) {
     return cur;
   }
-  let st: Stream = cur.list[i];
+  let st = cur.list[i];
   if (st.recv_reset >= 0) {
     return cur;
   }
@@ -704,9 +704,9 @@ function (s: Streams) __on_reset(rs: frames.ResetStream): Streams {
   if let Some(e) = cur.__credit_error(st, rs.final_size, frames.RESET_STREAM) {
     return cur.__fail(e);
   }
-  let more: i64 = __max(0 as i64, rs.final_size - st.highest);
-  let unread: i64 = rs.final_size - st.data.taken;
-  let next: Streams = Streams { ...cur, recv_highest: cur.recv_highest + more, recv_taken: cur.recv_taken + unread, events: cur.events.append(ResetByPeer(rs.stream, rs.code)) };
+  let more = __max(0 as i64, rs.final_size - st.highest);
+  let unread = rs.final_size - st.data.taken;
+  let next = Streams { ...cur, recv_highest: cur.recv_highest + more, recv_taken: cur.recv_taken + unread, events: cur.events.append(ResetByPeer(rs.stream, rs.code)) };
   return next.__put(i, Stream { ...st, final_size: rs.final_size, highest: st.highest + more, recv_reset: rs.code, data: reassembly() }).__retire_done(i);
 }
 ```
@@ -720,7 +720,7 @@ function (s: Streams) __on_stop(id: i64, code: i64): Streams {
   if (i < 0) {
     return cur;
   }
-  let st: Stream = cur.list[i];
+  let st = cur.list[i];
   if (st.send_reset >= 0) {
     return cur;
   }
@@ -732,7 +732,7 @@ function (s: Streams) __on_max_stream_data(id: i64, v: i64): Streams {
   if (i < 0) {
     return cur;
   }
-  let st: Stream = cur.list[i];
+  let st = cur.list[i];
   return cur.__put(i, Stream { ...st, send_max: __max(st.send_max, v) });
 }
 
@@ -759,7 +759,7 @@ pub function (s: Streams) fill_taken(): Streams {
 ```fern
 <<17 function (s: Streams) __add(room: i32, f: frames.Frame): Streams>>=
 function (s: Streams) __add(room: i32, f: frames.Frame): Streams {
-  let bytes: u8[] = frames.encode(f);
+  let bytes = frames.encode(f);
   if (s.filled.len() + bytes.len() > room) {
     return Streams { ...s, fit: false };
   }
@@ -767,10 +767,10 @@ function (s: Streams) __add(room: i32, f: frames.Frame): Streams {
 }
 
 function (s: Streams) __signals(room: i32): Streams {
-  let cur: Streams = s;
-  let i: i32 = 0;
+  let cur = s;
+  let i = 0;
   while (i < cur.list.len()) {
-    let st: Stream = cur.list[i];
+    let st = cur.list[i];
     if (st.reset_state == TO_SEND) {
       cur = cur.__add(room, frames.ResetStreamFrame(frames.ResetStream { stream: st.id, code: st.send_reset, final_size: st.sent }));
       if (cur.fit) {
@@ -784,74 +784,74 @@ function (s: Streams) __signals(room: i32): Streams {
         cur = cur.__put(i, Stream { ...st, stop_state: SENT });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
 
 function (s: Streams) __window_updates(room: i32): Streams {
-  let cur: Streams = s.__opened_windows();
+  let cur = s.__opened_windows();
   if (cur.recv_max_dirty) {
     cur = cur.__add(room, frames.MaxData(cur.recv_max));
     cur = Streams { ...cur, recv_max_dirty: !cur.fit };
   }
-  let t: i32 = 0;
+  let t = 0;
   while (t < 4) {
     if (cur.limits_dirty[t]) {
       cur = cur.__add(room, frames.MaxStreams((t & 2) == 0, cur.limits[t]));
       cur = Streams { ...cur, limits_dirty: cur.limits_dirty.with(t, !cur.fit) };
     }
-    t = t + 1;
+    t += 1;
   }
   return cur.__stream_windows(room);
 }
 
 function (s: Streams) __opened_windows(): Streams {
-  let cur: Streams = s;
-  let want: i64 = s.recv_taken + s.recv_window;
+  let cur = s;
+  let want = s.recv_taken + s.recv_window;
   if (want - s.recv_max >= s.recv_window / 2 && s.recv_window > 0) {
     cur = Streams { ...cur, recv_max: want, recv_max_dirty: true };
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < cur.list.len()) {
-    let st: Stream = cur.list[i];
-    let open: i64 = st.data.taken + st.window;
+    let st = cur.list[i];
+    let open = st.data.taken + st.window;
     if (st.has_recv && st.final_size < 0 && st.recv_reset < 0 && st.stop < 0 && st.window > 0 && open - st.recv_max >= st.window / 2) {
       cur = cur.__put(i, Stream { ...st, recv_max: open, max_dirty: true });
     }
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
 
 function (s: Streams) __stream_windows(room: i32): Streams {
-  let cur: Streams = s;
-  let i: i32 = 0;
+  let cur = s;
+  let i = 0;
   while (i < cur.list.len()) {
-    let st: Stream = cur.list[i];
+    let st = cur.list[i];
     if (st.max_dirty) {
       cur = cur.__add(room, frames.MaxStreamData(st.id, st.recv_max));
       if (cur.fit) {
         cur = cur.__put(i, Stream { ...st, max_dirty: false });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
 
 function (s: Streams) __data(room: i32): Streams {
-  let n: i32 = s.list.len();
+  let n = s.list.len();
   if (n == 0) {
     return s.__blocked(room);
   }
-  let cur: Streams = s;
-  let start: i32 = s.next % n;
-  let k: i32 = 0;
+  let cur = s;
+  let start = s.next % n;
+  let k = 0;
   while (k < n && cur.filled.len() + 8 < room) {
-    let i: i32 = (start + k) % n;
+    let i = (start + k) % n;
     cur = cur.__stream_data(i, room);
-    k = k + 1;
+    k += 1;
   }
   return Streams { ...cur, next: start + 1 }.__blocked(room);
 }
@@ -863,10 +863,10 @@ function (s: Streams) __stream_data(i: i32, room: i32): Streams {
   if (s.list[i].lost.len() == 0) {
     return s.__new_data(i, room);
   }
-  let st: Stream = s.list[i];
-  let out: u8[] = s.filled;
-  let resend: recovery.Resend[] = s.resend;
-  let taken: Streams = Streams { ...s, filled: [], resend: [] };
+  let st = s.list[i];
+  let out = s.filled;
+  let resend = s.resend;
+  let taken = Streams { ...s, filled: [], resend: [] };
   let (resent, o1, r1) = __resend_lost(st, out, room, resend);
   return Streams { ...taken, filled: o1, resend: r1 }.__put(i, resent).__new_data(i, room);
 }
@@ -878,20 +878,20 @@ function __sends(st: Stream): boolean {
 // __new_data adds the stream's next unsent bytes that the room and the
 // credit allow, and the send half moves on in its slot.
 function (s: Streams) __new_data(i: i32, room: i32): Streams {
-  let id: i64 = s.list[i].id;
-  let sent: i64 = s.list[i].sent;
-  let written: i64 = __written(s.list[i]);
-  let credit: i64 = __min(s.list[i].send_max, sent + s.send_max - s.send_sent);
-  let avail: i64 = __min(written, credit) - sent;
-  let fit: i64 = (room - s.filled.len() - frames.stream_overhead(id, sent, avail as i32)) as i64;
-  let n: i64 = __max(0 as i64, __min(avail, fit));
-  let fin: boolean = s.list[i].fin && !s.list[i].fin_sent && sent + n == written;
+  let id = s.list[i].id;
+  let sent = s.list[i].sent;
+  let written = __written(s.list[i]);
+  let credit = __min(s.list[i].send_max, sent + s.send_max - s.send_sent);
+  let avail = __min(written, credit) - sent;
+  let fit = (room - s.filled.len() - frames.stream_overhead(id, sent, avail as i32)) as i64;
+  let n = __max(0 as i64, __min(avail, fit));
+  let fin = s.list[i].fin && !s.list[i].fin_sent && sent + n == written;
   if (n == 0 && (!fin || fit < 0)) {
     return s;
   }
-  let at: i32 = (sent - s.list[i].base) as i32;
-  let out: u8[] = s.filled;
-  let cur: Streams = Streams { ...s, filled: [] };
+  let at = (sent - s.list[i].base) as i32;
+  let out = s.filled;
+  let cur = Streams { ...s, filled: [] };
   out = __append_range(frames.put_stream_head(out, id, sent, n as i32, fin), cur.list[i].buf, at, at + n as i32);
   return Streams { ...cur, filled: out, resend: cur.resend.append(recovery.StreamRange(id, sent, n as i32, fin)), send_sent: cur.send_sent + n, list: cur.list.with(i, cur.list[i].__sent(n, fin)) };
 }
@@ -914,22 +914,22 @@ function __sendable(st: Stream): boolean {
 ```fern
 <<18 function __resend_lost(st: Stream, out: u8[], room: i32, resend: recovery.Resend[]): (Stream, u8[], recovery...>>=
 function __resend_lost(snd: Stream, out: u8[], room: i32, resend: recovery.Resend[]): (Stream, u8[], recovery.Resend[]) {
-  let id: i64 = snd.id;
+  let id = snd.id;
   if (snd.lost.len() == 0) {
     return (snd, out, resend);
   }
-  let o: u8[] = out;
-  let rs: recovery.Resend[] = resend;
+  let o = out;
+  let rs = resend;
   let kept: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < snd.lost.len()) {
-    let from: i64 = __max(snd.lost[i], snd.base);
-    let end: i64 = snd.lost[i] + snd.lost[i + 1];
+    let from = __max(snd.lost[i], snd.base);
+    let end = snd.lost[i] + snd.lost[i + 1];
     if (end > from) {
-      let fit: i32 = room - o.len() - frames.stream_overhead(id, from, (end - from) as i32);
-      let n: i32 = __min(end - from, __max(0 as i64, fit as i64)) as i32;
+      let fit = room - o.len() - frames.stream_overhead(id, from, (end - from) as i32);
+      let n = __min(end - from, __max(0 as i64, fit as i64)) as i32;
       if (n > 0) {
-        let at: i32 = (from - snd.base) as i32;
+        let at = (from - snd.base) as i32;
         o = __append_range(frames.put_stream_head(o, id, from, n, false), snd.buf, at, at + n);
         rs = rs.append(recovery.StreamRange(id, from, n, false));
       }
@@ -937,7 +937,7 @@ function __resend_lost(snd: Stream, out: u8[], room: i32, resend: recovery.Resen
         kept = kept.append(from + n as i64).append(end - from - n as i64);
       }
     }
-    i = i + 2;
+    i += 2;
   }
   return (Stream { ...snd, lost: kept }, o, rs);
 }
@@ -951,17 +951,17 @@ function __held(st: Stream): boolean {
 }
 
 function (s: Streams) __stream_data_blocked(room: i32): Streams {
-  let cur: Streams = s;
-  let i: i32 = 0;
+  let cur = s;
+  let i = 0;
   while (i < cur.list.len()) {
-    let st: Stream = cur.list[i];
+    let st = cur.list[i];
     if (__held(st) && st.sent >= st.send_max && st.blocked_at != st.send_max) {
       cur = cur.__add(room, frames.StreamDataBlocked(st.id, st.send_max));
       if (cur.fit) {
         cur = cur.__put(i, Stream { ...st, blocked_at: st.send_max });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
@@ -970,7 +970,7 @@ function (s: Streams) __data_blocked(room: i32): Streams {
   if (s.send_sent < s.send_max || s.blocked_at == s.send_max || !s.list.any(__held)) {
     return s;
   }
-  let cur: Streams = s.__add(room, frames.DataBlocked(s.send_max));
+  let cur = s.__add(room, frames.DataBlocked(s.send_max));
   if (cur.fit) {
     return Streams { ...cur, blocked_at: cur.send_max };
   }
@@ -978,8 +978,8 @@ function (s: Streams) __data_blocked(room: i32): Streams {
 }
 
 function (s: Streams) __streams_blocked(room: i32): Streams {
-  let cur: Streams = s;
-  let t: i32 = 0;
+  let cur = s;
+  let t = 0;
   while (t < 4) {
     if (cur.open_blocked[t] >= 0 && cur.open_blocked[t] == cur.limits[t]) {
       cur = cur.__add(room, frames.StreamsBlocked((t & 2) == 0, cur.limits[t]));
@@ -987,7 +987,7 @@ function (s: Streams) __streams_blocked(room: i32): Streams {
         cur = Streams { ...cur, open_blocked: cur.open_blocked.with(t, 0 - 1 as i64) };
       }
     }
-    t = t + 1;
+    t += 1;
   }
   return cur;
 }
@@ -998,25 +998,25 @@ function (s: Streams) __streams_blocked(room: i32): Streams {
 ```fern
 <<19 pub function (s: Streams) blocked_open(uni: boolean): Streams>>=
 pub function (s: Streams) blocked_open(uni: boolean): Streams {
-  let t: i32 = s.__local_type(uni);
+  let t = s.__local_type(uni);
   return Streams { ...s, open_blocked: s.open_blocked.with(t, s.limits[t]) };
 }
 
 pub function (s: Streams) acked(item: recovery.Resend): Streams {
   match (item) {
     recovery.StreamRange(id, offset, len, fin) => {
-      let i: i32 = s.__find(id);
+      let i = s.__find(id);
       if (i < 0) {
         return s;
       }
       return Streams { ...s, list: s.list.with(i, s.list[i].__acked_send(offset, len, fin)) }.__retire_done(i);
     },
     recovery.Again(frames.ResetStreamFrame(r)) => {
-      let i: i32 = s.__find(r.stream);
+      let i = s.__find(r.stream);
       if (i < 0) {
         return s;
       }
-      let st: Stream = s.list[i];
+      let st = s.list[i];
       return s.__put(i, Stream { ...st, reset_state: ACKED }).__retire_done(i);
     },
     _ => {
@@ -1035,11 +1035,11 @@ function (snd: Stream) __acked_send(offset: i64, len: i32, fin: boolean): Stream
     return snd;
   }
   if (snd.acked.len() == 0 && offset <= snd.base) {
-    let top: i64 = __max(snd.base, offset + len as i64);
+    let top = __max(snd.base, offset + len as i64);
     return Stream { ...snd, base: top, buf: __dropped(snd.buf, (top - snd.base) as i32), fin_acked: snd.fin_acked || fin };
   }
-  let acked: i64[] = __merge(snd.acked, offset, offset + len as i64);
-  let base: i64 = snd.base;
+  let acked = __merge(snd.acked, offset, offset + len as i64);
+  let base = snd.base;
   while (acked.len() >= 2 && acked[0] <= base) {
     base = __max(base, acked[1]);
     acked = __rest_i64(__rest_i64(acked));
@@ -1059,13 +1059,13 @@ function __dropped(buf: u8[], n: i32): u8[] {
 
 function __merge(ranges: i64[], lo: i64, hi: i64): i64[] {
   let out: i64[] = [];
-  let a: i64 = lo;
-  let b: i64 = hi;
-  let placed: boolean = false;
-  let i: i32 = 0;
+  let a = lo;
+  let b = hi;
+  let placed = false;
+  let i = 0;
   while (i + 1 < ranges.len()) {
-    let l: i64 = ranges[i];
-    let h: i64 = ranges[i + 1];
+    let l = ranges[i];
+    let h = ranges[i + 1];
     if (h < a) {
       out = out.append(l).append(h);
     } else if (l > b) {
@@ -1078,7 +1078,7 @@ function __merge(ranges: i64[], lo: i64, hi: i64): i64[] {
       a = __min(a, l);
       b = __max(b, h);
     }
-    i = i + 2;
+    i += 2;
   }
   if (!placed) {
     out = out.append(a).append(b);
@@ -1094,11 +1094,11 @@ function __merge(ranges: i64[], lo: i64, hi: i64): i64[] {
 pub function (s: Streams) lost(item: recovery.Resend): Streams {
   match (item) {
     recovery.StreamRange(id, offset, len, fin) => {
-      let i: i32 = s.__find(id);
+      let i = s.__find(id);
       if (i < 0) {
         return s;
       }
-      let st: Stream = s.list[i];
+      let st = s.list[i];
       return s.__put(i, Stream { ...st, lost: st.lost.append(offset).append(len as i64), fin_sent: st.fin_sent && !fin });
     },
     recovery.Again(f) => {
@@ -1121,7 +1121,7 @@ function (s: Streams) __lost_frame(f: frames.Frame): Streams {
       return Streams { ...s, recv_max_dirty: true };
     },
     frames.MaxStreams(bidi, _) => {
-      let t: i32 = s.__peer_type(!bidi);
+      let t = s.__peer_type(!bidi);
       return Streams { ...s, limits_dirty: s.limits_dirty.with(t, true) };
     },
     _ => {
@@ -1139,11 +1139,11 @@ function (s: Streams) __lost_stream_frame(f: frames.Frame): Streams {
       return s.__restate(id, false);
     },
     frames.MaxStreamData(id, _) => {
-      let i: i32 = s.__find(id);
+      let i = s.__find(id);
       if (i < 0 || s.list[i].final_size >= 0) {
         return s;
       }
-      let st: Stream = s.list[i];
+      let st = s.list[i];
       return s.__put(i, Stream { ...st, max_dirty: true });
     },
     _ => {
@@ -1153,11 +1153,11 @@ function (s: Streams) __lost_stream_frame(f: frames.Frame): Streams {
 }
 
 function (s: Streams) __restate(id: i64, send: boolean): Streams {
-  let i: i32 = s.__find(id);
+  let i = s.__find(id);
   if (i < 0) {
     return s;
   }
-  let st: Stream = s.list[i];
+  let st = s.list[i];
   if (send && st.reset_state == SENT) {
     return s.__put(i, Stream { ...st, reset_state: TO_SEND });
   }
@@ -1179,15 +1179,15 @@ function (st: Stream) __closed(): Stream {
 }
 
 function (s: Streams) __retire_done(i: i32): Streams {
-  let st: Stream = s.list[i];
+  let st = s.list[i];
   if (st.closed || !__done(st)) {
     return s;
   }
-  let cur: Streams = Streams { ...s, retired: s.retired + 1 };
+  let cur = Streams { ...s, retired: s.retired + 1 };
   if (!cur.__is_local(st.id)) {
-    let t: i32 = (st.id & 3) as i32;
-    let initial: i64 = cur.__initial_streams(t);
-    let target: i64 = cur.closed[t] + 1 + initial;
+    let t = (st.id & 3) as i32;
+    let initial = cur.__initial_streams(t);
+    let target = cur.closed[t] + 1 + initial;
     cur = Streams { ...cur, closed: cur.closed.with(t, cur.closed[t] + 1) };
     // The peer may open its initial number of streams past those it has
     // closed; the limit is advertised once it moves by an eighth of that.
@@ -1203,14 +1203,14 @@ function (s: Streams) __retire_done(i: i32): Streams {
 }
 
 function (s: Streams) __sweep(): Streams {
-  let base: i64 = s.opened[0] * 2;
-  let top: i64 = base;
+  let base = s.opened[0] * 2;
+  let top = base;
   let list: Stream[] = [];
   for st in s.list {
     if (!st.closed) {
       list = list.append(st);
       if ((st.id & 2) == 0) {
-        let key: i64 = __bidi_key(st.id);
+        let key = __bidi_key(st.id);
         if (key < base) {
           base = key;
         }
@@ -1220,11 +1220,11 @@ function (s: Streams) __sweep(): Streams {
       }
     }
   }
-  let cur: Streams = Streams { ...s, list: list, index: __alloc_i32((top - base) as i32 + 16), base: base, retired: 0 };
-  let i: i32 = 0;
+  let cur = Streams { ...s, list: list, index: __alloc_i32((top - base) as i32 + 16), base: base, retired: 0 };
+  let i = 0;
   while (i < list.len()) {
     cur = cur.__indexed(list[i].id, i);
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
@@ -1257,10 +1257,10 @@ function __total(held: u8[][]): i64 {
 
 function __rest(xs: u8[][]): u8[][] {
   let out: u8[][] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < xs.len()) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1272,10 +1272,10 @@ function __rest(xs: u8[][]): u8[][] {
 <<23 function __rest_i64(xs: i64[]): i64[]>>=
 function __rest_i64(xs: i64[]): i64[] {
   let out: i64[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < xs.len()) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

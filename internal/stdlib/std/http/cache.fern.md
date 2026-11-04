@@ -125,15 +125,15 @@ pub function parse_etag(s: string): Result[ETag, headers.HeaderValueError] {
 }
 
 function __parse_etag(s: string): Option[ETag] {
-  let t: string = s.trim();
-  let is_weak: boolean = t.starts_with("W/");
+  let t = s.trim();
+  let is_weak = t.starts_with("W/");
   if (is_weak) {
     t = t.slice_snap(2, t.len());
   }
   if (t.len() < 2 || t[0] != 34 as u8 || t[t.len() - 1] != 34 as u8) {
     return None;
   }
-  let opaque: string = t.slice_snap(1, t.len() - 1);
+  let opaque = t.slice_snap(1, t.len() - 1);
   if (!__etagc_only(opaque)) {
     return None;
   }
@@ -146,13 +146,13 @@ function __parse_etag(s: string): Option[ETag] {
 ```fern
 <<5 function __etagc_only(s: string): boolean>>=
 function __etagc_only(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: u8 = s[i];
+    let b = s[i];
     if (b < 33 as u8 || b == 34 as u8 || b == 127 as u8) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -313,7 +313,7 @@ function __modified_by(h: HeaderMap, v: Validators, now: time.Timestamp): boolea
 }
 
 function __field_date(h: HeaderMap, name: string, now: time.Timestamp): Option[time.Timestamp] {
-  let values: string[] = h.get_all(name);
+  let values = h.get_all(name);
   if (values.len() != 1) {
     return None;
   }
@@ -326,14 +326,14 @@ function __field_date(h: HeaderMap, name: string, now: time.Timestamp): Option[t
 ```fern
 <<12 pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boolean>>=
 pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boolean {
-  let values: string[] = req.headers.get_all("if-range");
+  let values = req.headers.get_all("if-range");
   if (values.len() == 0) {
     return true;
   }
   if (values.len() > 1) {
     return false;
   }
-  let value: string = values[0].trim();
+  let value = values[0].trim();
   if (value.starts_with("\"")) {
     return __tag_matches(value, v, true);
   }
@@ -358,7 +358,7 @@ pub function respond(req: HttpRequest, v: Validators, now: time.Timestamp, resp:
   if (resp.status < 200 || resp.status > 299) {
     return resp;
   }
-  let current: HttpResponse = resp.with_validators(v, now);
+  let current = resp.with_validators(v, now);
   match (evaluate(req, v, now)) {
     Proceed => {
       return current;
@@ -373,7 +373,7 @@ pub function respond(req: HttpRequest, v: Validators, now: time.Timestamp, resp:
 }
 
 pub function (r: HttpResponse) with_validators(v: Validators, now: time.Timestamp): HttpResponse {
-  let out: HttpResponse = r;
+  let out = r;
   match (v.etag) {
     Some(e) => {
       out = out.with_header("ETag", e.to_string());
@@ -382,7 +382,7 @@ pub function (r: HttpResponse) with_validators(v: Validators, now: time.Timestam
   }
   match (v.last_modified) {
     Some(lm) => {
-      let sent: time.Timestamp = lm;
+      let sent = lm;
       if (lm.sec > now.sec) {
         sent = now;
       }
@@ -394,7 +394,7 @@ pub function (r: HttpResponse) with_validators(v: Validators, now: time.Timestam
 }
 
 pub function not_modified(resp: HttpResponse): HttpResponse {
-  let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.new(), trailers: headers.new(), background: None };
+  let out = HttpResponse { status: 304, body: BodyText(""), headers: headers.new(), trailers: headers.new(), background: None };
   for name in ["Cache-Control", "Content-Location", "ETag", "Expires", "Vary"] {
     out = __carry(out, resp, name);
   }
@@ -410,7 +410,7 @@ pub function not_modified(resp: HttpResponse): HttpResponse {
 ```fern
 <<13 function __carry(out: HttpResponse, from: HttpResponse, name: string): HttpResponse>>=
 function __carry(out: HttpResponse, from: HttpResponse, name: string): HttpResponse {
-  let r: HttpResponse = out;
+  let r = out;
   for v in from.headers.get_all(name) {
     r = r.with_appended_header(name, v);
   }
@@ -553,12 +553,12 @@ function __max_stale(out: string[], n: Option[Duration]): string[] {
 }
 
 function __join(parts: string[]): string {
-  let out: string = "";
+  let out = "";
   for p in parts {
     if (out.len() > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + p;
+    out += p;
   }
   return out;
 }
@@ -569,11 +569,11 @@ function __join(parts: string[]): string {
 ```fern
 <<18 pub function parse_cache_control(h: HeaderMap): CacheControl>>=
 pub function parse_cache_control(h: HeaderMap): CacheControl {
-  let c: CacheControl = cache_control();
+  let c = cache_control();
   for member in h.get_list("cache-control") {
-    let name: string = member.to_lower();
-    let value: string = "";
-    let has_value: boolean = false;
+    let name = member.to_lower();
+    let value = "";
+    let has_value = false;
     if let Some(eq) = member.index_of("=") {
       name = member.slice_snap(0, eq).trim().to_lower();
       value = headers.unquote(member.slice_snap(eq + 1, member.len()).trim());
@@ -655,16 +655,16 @@ function __delta_seconds(s: string): Option[i64] {
     return None;
   }
   let n: i64 = 0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: u8 = s[i];
+    let b = s[i];
     if (b < 48 as u8 || b > 57 as u8) {
       return None;
     }
     if (n < DELTA_MAX.sec) {
       n = n * (10 as i64) + (b - 48 as u8) as i64;
     }
-    i = i + 1;
+    i += 1;
   }
   if (n > DELTA_MAX.sec) {
     return Some(DELTA_MAX.sec);
@@ -724,7 +724,7 @@ function __flag_directive_more(c: CacheControl, name: string): CacheControl {
 ```fern
 <<20 pub function (r: HttpResponse) with_cache_control(c: CacheControl): HttpResponse>>=
 pub function (r: HttpResponse) with_cache_control(c: CacheControl): HttpResponse {
-  let v: string = c.to_string();
+  let v = c.to_string();
   if (v.len() == 0) {
     return r;
   }
@@ -732,7 +732,7 @@ pub function (r: HttpResponse) with_cache_control(c: CacheControl): HttpResponse
 }
 
 pub function (r: HttpResponse) with_vary(field: string): HttpResponse {
-  let present: string[] = r.headers.get_list("vary");
+  let present = r.headers.get_list("vary");
   if (field == "*") {
     return r.with_header("Vary", "*");
   }

@@ -424,15 +424,15 @@ pub struct Signing { scheme: i32, signed: u8[] }
 ```fern
 <<9 pub function certificate_verify_content(server: boolean, transcript_hash: [u8]): u8[]>>=
 pub function certificate_verify_content(server: boolean, transcript_hash: [u8]): u8[] {
-  let context: string = "TLS 1.3, client CertificateVerify";
+  let context = "TLS 1.3, client CertificateVerify";
   if (server) {
     context = "TLS 1.3, server CertificateVerify";
   }
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 64) {
     out = out.append(0x20 as u8);
-    i = i + 1;
+    i += 1;
   }
   out = __cat(out, context.bytes());
   out = out.append(0 as u8);
@@ -466,12 +466,12 @@ function __same(a: [u8], b: [u8]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -489,7 +489,7 @@ function __zeros(n: i32): u8[] {
 }
 
 function __binder(h: keyschedule.Hash, psk: [u8], before: [u8], truncated: [u8]): u8[] {
-  let th: u8[] = h.digest(__cat(__copy(before), truncated));
+  let th = h.digest(__cat(__copy(before), truncated));
   return keyschedule.finished_verify_data(h, keyschedule.early_secret(h, psk).binder_key(), th);
 }
 
@@ -532,7 +532,7 @@ struct Conn {
 ```fern
 <<12 function __conn(): Conn>>=
 function __conn(): Conn {
-  let none: record.Protection = record.Protection { suite: keyschedule.Aes128GcmSha256, key: [], iv: [], seq: 0 as u64, gcm: None, chacha: None };
+  let none = record.Protection { suite: keyschedule.Aes128GcmSha256, key: [], iv: [], seq: 0 as u64, gcm: None, chacha: None };
   return Conn { held: [], inbox: [], pending: [], transcript: [], suite: keyschedule.Aes128GcmSha256, read: none, write: none, reading: 0, writing: 0, read_secret: [], write_secret: [], quic: false, kernel: false, crypto: [], secrets: [] };
 }
 
@@ -545,7 +545,7 @@ function __hash(c: Conn): u8[] {
 }
 
 function __with_read(c: Conn, secret: u8[], level: i32): Conn {
-  let next: Conn = Conn { ...c, read: record.protection(c.suite, secret), reading: level, read_secret: secret };
+  let next = Conn { ...c, read: record.protection(c.suite, secret), reading: level, read_secret: secret };
   if (c.quic || c.kernel) {
     return Conn { ...next, secrets: next.secrets.append(TrafficSecret { level: level, write: false, secret: secret }) };
   }
@@ -553,7 +553,7 @@ function __with_read(c: Conn, secret: u8[], level: i32): Conn {
 }
 
 function __with_write(c: Conn, secret: u8[], level: i32): Conn {
-  let next: Conn = Conn { ...c, write: record.protection(c.suite, secret), writing: level, write_secret: secret };
+  let next = Conn { ...c, write: record.protection(c.suite, secret), writing: level, write_secret: secret };
   if (c.quic || c.kernel) {
     return Conn { ...next, secrets: next.secrets.append(TrafficSecret { level: level, write: true, secret: secret }) };
   }
@@ -564,7 +564,7 @@ function __flushed(c: Conn, out: Out): Flushed {
   if (!c.quic && !c.kernel) {
     return Flushed { conn: c, out: out };
   }
-  let events: Event[] = out.events;
+  let events = out.events;
   for t in c.secrets {
     events = events.append(Secret(t));
   }
@@ -629,10 +629,10 @@ function __write(c: Conn, t: record.ContentType, content: [u8]): Result[Wrote, H
     return Ok(Wrote { conn: c, bytes: record.frame(t, 0x0303, content) });
   }
   let out: u8[] = [];
-  let p: record.Protection = c.write;
-  let from: i32 = 0;
+  let p = c.write;
+  let from = 0;
   while (from < content.len() || from == 0) {
-    let to: i32 = content.len();
+    let to = content.len();
     if (to - from > 16384) {
       to = from + 16384;
     }
@@ -757,7 +757,7 @@ function __next(c: Conn): Result[Next, HandshakeError] {
       if (n == 0) {
         return Ok(Next { conn: c, raw: message.Raw { kind: 0, bytes: [] }, has: false });
       }
-      let raw: message.Raw = message.Raw { kind: c.pending[0] as i32, bytes: __copy(c.pending[0:n]) };
+      let raw = message.Raw { kind: c.pending[0] as i32, bytes: __copy(c.pending[0:n]) };
       return Ok(Next { conn: Conn { ...c, pending: __copy(c.pending[n:c.pending.len()]) }, raw: raw, has: true });
     },
     Err(e) => {
@@ -791,12 +791,12 @@ function __key_update(c: Conn, request: boolean, out: Out): Result[Absorbed, Han
     return Err(Illegal("KeyUpdate under QUIC"));
   }
   __at_key_change(c)?;
-  let h: keyschedule.Hash = c.suite.hash();
-  let conn: Conn = __with_read(c, keyschedule.next_traffic_secret(h, c.read_secret), 2);
+  let h = c.suite.hash();
+  let conn = __with_read(c, keyschedule.next_traffic_secret(h, c.read_secret), 2);
   if (!request) {
     return Ok(Absorbed { conn: conn, out: out });
   }
-  let w: Wrote = __update(conn, false)?;
+  let w = __update(conn, false)?;
   return Ok(Absorbed { conn: w.conn, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
@@ -804,8 +804,8 @@ function __update(c: Conn, request: boolean): Result[Wrote, HandshakeError] {
   if (c.quic) {
     return Err(Illegal("KeyUpdate under QUIC"));
   }
-  let w: Wrote = __write(c, record.Handshake, message.encode(message.KeyUpdate(request)))?;
-  let h: keyschedule.Hash = c.suite.hash();
+  let w = __write(c, record.Handshake, message.encode(message.KeyUpdate(request)))?;
+  let h = c.suite.hash();
   return Ok(Wrote { conn: __with_write(w.conn, keyschedule.next_traffic_secret(h, w.conn.write_secret), 2), bytes: w.bytes });
 }
 ```
@@ -841,10 +841,10 @@ struct Offloaded { conn: Conn, keys: KernelKeys }
 ```fern
 <<26 pub function rekeyed(suite: keyschedule.CipherSuite, events: Event[]): KernelKeys>>=
 pub function rekeyed(suite: keyschedule.CipherSuite, events: Event[]): KernelKeys {
-  let keys: KernelKeys = KernelKeys { transmit: [], receive: [] };
+  let keys = KernelKeys { transmit: [], receive: [] };
   for e in events {
     if let Secret(t) = e {
-      let info: u8[] = record.protection(suite, t.secret).kernel_info();
+      let info = record.protection(suite, t.secret).kernel_info();
       if (t.write) {
         keys = KernelKeys { ...keys, transmit: info };
       } else {
@@ -856,7 +856,7 @@ pub function rekeyed(suite: keyschedule.CipherSuite, events: Event[]): KernelKey
 }
 
 pub function (earlier: KernelKeys) then(later: KernelKeys): KernelKeys {
-  let keys: KernelKeys = earlier;
+  let keys = earlier;
   if (later.transmit.len() > 0) {
     keys = KernelKeys { ...keys, transmit: later.transmit };
   }
@@ -895,23 +895,23 @@ function __sealed_alert(p: record.Protection, plain: boolean, quic: boolean, e: 
 }
 
 function __has(v: i32[], x: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.len()) {
     if (v[i] == x) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function __has_string(v: string[], x: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.len()) {
     if (v[i] == x) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -994,26 +994,26 @@ pub struct ClientStep { client: Client, output: u8[], data: u8[], events: Event[
 ```fern
 <<31 function __client_step(c: Client, out: Out): ClientStep>>=
 function __client_step(c: Client, out: Out): ClientStep {
-  let f: Flushed = __flushed(c.conn, out);
+  let f = __flushed(c.conn, out);
   return ClientStep { client: Client { ...c, conn: f.conn }, output: f.out.output, data: f.out.data, events: f.out.events };
 }
 
 function __offers(config: ClientConfig): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < config.suites.len()) {
     out = out.append(config.suites[i].code());
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __group_codes(config: ClientConfig): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < config.groups.len()) {
     out = out.append(config.groups[i].code());
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1024,18 +1024,18 @@ function __group_codes(config: ClientConfig): i32[] {
 ```fern
 <<32 pub function client_entropy(config: ClientConfig): i32>>=
 pub function client_entropy(config: ClientConfig): i32 {
-  let n: i32 = __shares(config);
-  let sent: i32 = 0;
-  let spare: i32 = 0;
-  let i: i32 = 0;
+  let n = __shares(config);
+  let sent = 0;
+  let spare = 0;
+  let i = 0;
   while (i < config.groups.len()) {
-    let e: i32 = config.groups[i].client_entropy();
+    let e = config.groups[i].client_entropy();
     if (i < n) {
-      sent = sent + e;
+      sent += e;
     } else if (e > spare) {
       spare = e;
     }
-    i = i + 1;
+    i += 1;
   }
   return 32 + sent + spare;
 }
@@ -1077,11 +1077,11 @@ function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]
 
 function __made_shares(config: ClientConfig, entropy: [u8]): Result[(keyshare.ClientShare[], u8[]), HandshakeError] {
   let shares: keyshare.ClientShare[] = [];
-  let at: i32 = 32;
-  let i: i32 = 0;
+  let at = 32;
+  let i = 0;
   while (i < __shares(config)) {
-    let g: keyshare.Group = config.groups[i];
-    let end: i32 = at + g.client_entropy();
+    let g = config.groups[i];
+    let end = at + g.client_entropy();
     match (keyshare.client_share(g, entropy[at:end])) {
       Ok(share) => {
         shares = shares.append(share);
@@ -1091,7 +1091,7 @@ function __made_shares(config: ClientConfig, entropy: [u8]): Result[(keyshare.Cl
       }
     }
     at = end;
-    i = i + 1;
+    i += 1;
   }
   return Ok((shares, __copy(entropy[at:entropy.len()])));
 }
@@ -1109,14 +1109,14 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
     return Err(Entropy(entropy.len(), client_entropy(config)));
   }
   let (shares, spare) = __made_shares(config, entropy)?;
-  let hello: message.ClientHello = message.ClientHello { random: __copy(entropy[0:32]), session_id: [], cipher_suites: __offers(config), extensions: __hello_extensions(config, shares) };
+  let hello = message.ClientHello { random: __copy(entropy[0:32]), session_id: [], cipher_suites: __offers(config), extensions: __hello_extensions(config, shares) };
   let more: keyshare.ClientShare[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < shares.len()) {
     more = more.append(shares[i]);
-    i = i + 1;
+    i += 1;
   }
-  let step: ClientStep = __client_from_hello(__offering(hello, config.resume)?, shares[0], spare, config)?;
+  let step = __client_from_hello(__offering(hello, config.resume)?, shares[0], spare, config)?;
   return Ok(ClientStep { ...step, client: Client { ...step.client, more_shares: more } });
 }
 
@@ -1145,12 +1145,12 @@ function __offering(hello: message.ClientHello, resume: Option[Resumption]): Res
 }
 
 function __bound(hello: message.ClientHello, r: Resumption, before: [u8]): message.ClientHello {
-  let h: keyschedule.Hash = r.suite.hash();
-  let id: message.PskIdentity = message.PskIdentity { identity: r.identity, obfuscated_age: r.obfuscated_age };
+  let h = r.suite.hash();
+  let id = message.PskIdentity { identity: r.identity, obfuscated_age: r.obfuscated_age };
   let blank: u8[][] = [__zeros(h.size())];
-  let draft: message.ClientHello = message.ClientHello { ...hello, extensions: __without(hello.extensions, message.EXT_PRE_SHARED_KEY).append(message.ext_pre_shared_key(message.OfferedPsks { identities: [id], binders: blank })) };
-  let bytes: u8[] = message.encode(message.ClientHelloMsg(draft));
-  let binder: u8[] = __binder(h, r.psk, before, bytes[0:bytes.len() - message.binders_length(blank)]);
+  let draft = message.ClientHello { ...hello, extensions: __without(hello.extensions, message.EXT_PRE_SHARED_KEY).append(message.ext_pre_shared_key(message.OfferedPsks { identities: [id], binders: blank })) };
+  let bytes = message.encode(message.ClientHelloMsg(draft));
+  let binder = __binder(h, r.psk, before, bytes[0:bytes.len() - message.binders_length(blank)]);
   return message.ClientHello { ...draft, extensions: __without(draft.extensions, message.EXT_PRE_SHARED_KEY).append(message.ext_pre_shared_key(message.OfferedPsks { identities: [id], binders: [binder] })) };
 }
 
@@ -1171,10 +1171,10 @@ function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientS
       alpn = [];
     }
   }
-  let bytes: u8[] = message.encode(message.ClientHelloMsg(hello));
-  let w: Wrote = __plain_out(Conn { ...__conn_for(config.quic), transcript: bytes }, 0x0301, bytes);
-  let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c: Client = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [] };
+  let bytes = message.encode(message.ClientHelloMsg(hello));
+  let w = __plain_out(Conn { ...__conn_for(config.quic), transcript: bytes }, 0x0301, bytes);
+  let hs = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
+  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [] };
   return Ok(__client_step(c, Out { ...__out(), output: w.bytes }));
 }
 ```
@@ -1191,7 +1191,7 @@ struct ClientRun { client: Client, out: Out }
 ```fern
 <<37 function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError]>>=
 function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun, HandshakeError] {
-  let h: message.ServerHello = message.ServerHello { random: [], session_id: [], cipher_suite: 0, extensions: [] };
+  let h = message.ServerHello { random: [], session_id: [], cipher_suite: 0, extensions: [] };
   match (__decode(raw)?) {
     message.ServerHelloMsg(sh) => {
       h = sh;
@@ -1203,18 +1203,18 @@ function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun
   if (h.is_retry()) {
     return __hello_retry(c, raw, h, out);
   }
-  let suite: keyschedule.CipherSuite = __check_server_hello(c, h)?;
+  let suite = __check_server_hello(c, h)?;
   if (c.retry_suite != 0 && h.cipher_suite != c.retry_suite) {
     return Err(Illegal("cipher suite after a HelloRetryRequest"));
   }
-  let shared: u8[] = __agree(c, h)?;
-  let psk: u8[] = __selected_psk(c, h, suite)?;
-  let conn: Conn = Conn { ...c.conn, suite: suite, transcript: __join(c.conn.transcript, raw.bytes) };
+  let shared = __agree(c, h)?;
+  let psk = __selected_psk(c, h, suite)?;
+  let conn = Conn { ...c.conn, suite: suite, transcript: __join(c.conn.transcript, raw.bytes) };
   __at_key_change(conn)?;
-  let hs: keyschedule.HandshakeSecret = keyschedule.early_secret(suite.hash(), psk).handshake_secret(shared);
-  let th: u8[] = __hash(conn);
-  let client_hs: u8[] = hs.client_traffic(th);
-  let server_hs: u8[] = hs.server_traffic(th);
+  let hs = keyschedule.early_secret(suite.hash(), psk).handshake_secret(shared);
+  let th = __hash(conn);
+  let client_hs = hs.client_traffic(th);
+  let server_hs = hs.server_traffic(th);
   conn = __with_write(__with_read(conn, server_hs, 1), client_hs, 1);
   return Ok(ClientRun { client: Client { ...c, conn: conn, state: C_WAIT_ENCRYPTED_EXTENSIONS, hs: hs, client_hs: client_hs, server_hs: server_hs, resumed: psk.len() > 0 }, out: out });
 }
@@ -1275,11 +1275,11 @@ function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out:
   if (c.retry_suite != 0) {
     return Err(OutOfOrder(raw.kind));
   }
-  let suite: keyschedule.CipherSuite = __check_server_hello(c, h)?;
-  let share: keyshare.ClientShare = __retry_share(c, h)?;
-  let hello: message.ClientHello = message.ClientHello { ...c.hello, extensions: __without(__retry_extensions(c.hello.extensions, h.extensions, share), message.EXT_PRE_SHARED_KEY) };
-  let digest: u8[] = suite.hash().digest(c.conn.transcript);
-  let before: u8[] = __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), raw.bytes);
+  let suite = __check_server_hello(c, h)?;
+  let share = __retry_share(c, h)?;
+  let hello = message.ClientHello { ...c.hello, extensions: __without(__retry_extensions(c.hello.extensions, h.extensions, share), message.EXT_PRE_SHARED_KEY) };
+  let digest = suite.hash().digest(c.conn.transcript);
+  let before = __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), raw.bytes);
   let resume: Option[Resumption] = None;
   match (c.resume) {
     Some(r) => {
@@ -1290,16 +1290,16 @@ function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out:
     },
     None => {}
   }
-  let ch2: u8[] = message.encode(message.ClientHelloMsg(hello));
-  let transcript: u8[] = __cat(before, ch2);
+  let ch2 = message.encode(message.ClientHelloMsg(hello));
+  let transcript = __cat(before, ch2);
   __at_key_change(c.conn)?;
-  let w: Wrote = __plain_out(Conn { ...c.conn, transcript: transcript }, 0x0303, ch2);
-  let next: Client = Client { ...c, conn: w.conn, hello: hello, share: share, more_shares: [], spare: [], retry_suite: h.cipher_suite, resume: resume };
+  let w = __plain_out(Conn { ...c.conn, transcript: transcript }, 0x0303, ch2);
+  let next = Client { ...c, conn: w.conn, hello: hello, share: share, more_shares: [], spare: [], retry_suite: h.cipher_suite, resume: resume };
   return Ok(ClientRun { client: next, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
 function __retry_share(c: Client, h: message.ServerHello): Result[keyshare.ClientShare, HandshakeError] {
-  let code: i32 = __retry_group(c, h)?;
+  let code = __retry_group(c, h)?;
   match (keyshare.group(code)) {
     Some(g) => {
       if (c.spare.len() < g.client_entropy()) {
@@ -1327,7 +1327,7 @@ function __retry_share(c: Client, h: message.ServerHello): Result[keyshare.Clien
 ```fern
 <<38 function __retry_group(c: Client, h: message.ServerHello): Result[i32, HandshakeError]>>=
 function __retry_group(c: Client, h: message.ServerHello): Result[i32, HandshakeError] {
-  let offered: i32[] = __codes(message.supported_groups(__ext(c.hello.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
+  let offered = __codes(message.supported_groups(__ext(c.hello.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
   match (message.retry_group(__ext(h.extensions, message.EXT_KEY_SHARE, "key_share")?)) {
     Ok(code) => {
       if (__sends_share(c, code) || !__has(offered, code)) {
@@ -1372,20 +1372,20 @@ function __offered_suite(c: Client, code: i32): Result[keyschedule.CipherSuite, 
 }
 
 function __hello_extensions_only(c: Client, h: message.ServerHello): Result[boolean, HandshakeError] {
-  let psk: boolean = false;
+  let psk = false;
   match (c.resume) {
     Some(r) => {
       psk = !h.is_retry();
     },
     None => {}
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < h.extensions.len()) {
-    let k: i32 = h.extensions[i].kind;
+    let k = h.extensions[i].kind;
     if (k != message.EXT_SUPPORTED_VERSIONS && k != message.EXT_KEY_SHARE && (k != message.EXT_COOKIE || !h.is_retry()) && (k != message.EXT_PRE_SHARED_KEY || !psk)) {
       return Err(UnsupportedExtension(k));
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(true);
 }
@@ -1465,11 +1465,11 @@ function __offered_kinds(c: Client): i32[] {
 ```fern
 <<39 function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Client, HandshakeError]>>=
 function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Client, HandshakeError] {
-  let offered: i32[] = __offered_kinds(c);
-  let alpn: string = "";
-  let i: i32 = 0;
+  let offered = __offered_kinds(c);
+  let alpn = "";
+  let i = 0;
   while (i < exts.len()) {
-    let k: i32 = exts[i].kind;
+    let k = exts[i].kind;
     if (__hello_only(k)) {
       return Err(Illegal("extension in EncryptedExtensions"));
     }
@@ -1479,7 +1479,7 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
     if (k == message.EXT_ALPN) {
       alpn = __chosen_alpn(c, exts[i].data)?;
     }
-    i = i + 1;
+    i += 1;
   }
   if (c.conn.quic) {
     __quic_terms(exts, alpn)?;
@@ -1538,31 +1538,31 @@ function __offered_schemes(c: Client): i32[] {
 }
 
 function __server_finished(c: Client, raw: message.Raw, verify_data: u8[], out: Out): Result[ClientRun, HandshakeError] {
-  let h: keyschedule.Hash = c.conn.suite.hash();
+  let h = c.conn.suite.hash();
   if (!keyschedule.verify_finished(h, c.server_hs, __hash(c.conn), verify_data)) {
     return Err(DecryptError);
   }
-  let conn: Conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, raw.bytes) };
+  let conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, raw.bytes) };
   __at_key_change(conn)?;
-  let master: keyschedule.MasterSecret = c.hs.master_secret();
-  let th: u8[] = __hash(conn);
-  let keyed: Client = Client { ...c, server_ap: master.server_traffic(th), client_ap: master.client_traffic(th) };
+  let master = c.hs.master_secret();
+  let th = __hash(conn);
+  let keyed = Client { ...c, server_ap: master.server_traffic(th), client_ap: master.client_traffic(th) };
   if (!c.requested) {
     return __client_finish(keyed, conn, [], out);
   }
-  let scheme: i32 = __own_scheme(c);
+  let scheme = __own_scheme(c);
   let entries: message.CertificateEntry[] = [];
   if (scheme != 0) {
     for d in c.own_chain {
       entries = entries.append(message.CertificateEntry { data: d, extensions: [] });
     }
   }
-  let cert: u8[] = message.encode(message.CertificateMsg(message.Certificate { context: c.request_context, entries: entries }));
+  let cert = message.encode(message.CertificateMsg(message.Certificate { context: c.request_context, entries: entries }));
   conn = Conn { ...conn, transcript: __join(conn.transcript, cert) };
   if (entries.len() == 0) {
     return __client_finish(keyed, conn, cert, out);
   }
-  let ev: Event = SignNeeded(Signing { scheme: scheme, signed: certificate_verify_content(false, __hash(conn)) });
+  let ev = SignNeeded(Signing { scheme: scheme, signed: certificate_verify_content(false, __hash(conn)) });
   return Ok(ClientRun { client: Client { ...keyed, conn: conn, state: C_WAIT_SIGNATURE, own_scheme: scheme, flight: cert }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
@@ -1579,13 +1579,13 @@ function __own_scheme(c: Client): i32 {
 }
 
 function __client_finish(c: Client, conn: Conn, flight: u8[], out: Out): Result[ClientRun, HandshakeError] {
-  let h: keyschedule.Hash = conn.suite.hash();
-  let fin: u8[] = message.encode(message.Finished(keyschedule.finished_verify_data(h, c.client_hs, __hash(conn))));
-  let next: Conn = Conn { ...conn, transcript: __join(conn.transcript, fin) };
-  let res_master: u8[] = c.hs.master_secret().resumption(__hash(next));
-  let w: Wrote = __write(next, record.Handshake, __cat(__copy(flight), fin))?;
+  let h = conn.suite.hash();
+  let fin = message.encode(message.Finished(keyschedule.finished_verify_data(h, c.client_hs, __hash(conn))));
+  let next = Conn { ...conn, transcript: __join(conn.transcript, fin) };
+  let res_master = c.hs.master_secret().resumption(__hash(next));
+  let w = __write(next, record.Handshake, __cat(__copy(flight), fin))?;
   next = __with_read(__with_write(w.conn, c.client_ap, 2), c.server_ap, 2);
-  let done: Out = Out { ...out, output: __join(out.output, w.bytes), events: out.events.append(Connected) };
+  let done = Out { ...out, output: __join(out.output, w.bytes), events: out.events.append(Connected) };
   return Ok(ClientRun { client: Client { ...c, conn: next, state: C_CONNECTED, res_master: res_master, flight: [], client_ap: [], server_ap: [] }, out: done });
 }
 ```
@@ -1598,11 +1598,11 @@ function __client_message(c: Client, raw: message.Raw, out: Out): Result[ClientR
   if (c.state == C_WAIT_SERVER_HELLO) {
     return __server_hello(c, raw, out);
   }
-  let m: message.Message = __decode(raw)?;
+  let m = __decode(raw)?;
   if (c.state == C_CONNECTED) {
     return __client_after(c, raw.kind, m, out);
   }
-  let next: Client = Client { ...c, conn: Conn { ...c.conn, transcript: __join(c.conn.transcript, raw.bytes) } };
+  let next = Client { ...c, conn: Conn { ...c.conn, transcript: __join(c.conn.transcript, raw.bytes) } };
   if (c.state == C_WAIT_ENCRYPTED_EXTENSIONS) {
     return __on_encrypted_extensions(next, raw.kind, m, out);
   }
@@ -1641,7 +1641,7 @@ function __on_certificate(c: Client, kind: i32, m: message.Message, out: Out): R
   match (m) {
     message.CertificateRequestMsg(r) => {
       if (c.state == C_WAIT_CERTIFICATE_OR_REQUEST) {
-        let schemes: i32[] = __codes(message.signature_algorithms(__ext(r.extensions, message.EXT_SIGNATURE_ALGORITHMS, "signature_algorithms")?))?;
+        let schemes = __codes(message.signature_algorithms(__ext(r.extensions, message.EXT_SIGNATURE_ALGORITHMS, "signature_algorithms")?))?;
         return Ok(ClientRun { client: Client { ...c, requested: true, request_context: r.context, request_schemes: schemes, state: C_WAIT_CERTIFICATE }, out: out });
       }
     },
@@ -1663,10 +1663,10 @@ function __chain(cert: message.Certificate): Result[u8[][], HandshakeError] {
     return Err(Message(message.DecodeError("certificate_list")));
   }
   let chain: u8[][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cert.entries.len()) {
     chain = chain.append(cert.entries[i].data);
-    i = i + 1;
+    i += 1;
   }
   return Ok(chain);
 }
@@ -1677,8 +1677,8 @@ function __on_certificate_verify(c: Client, next: Client, kind: i32, m: message.
       if (!__has(__offered_schemes(c), v.scheme)) {
         return Err(Illegal("signature scheme"));
       }
-      let signed: u8[] = certificate_verify_content(true, __hash(c.conn));
-      let ev: Event = VerifyServer(Verification { chain: c.chain, scheme: v.scheme, signed: signed, signature: v.signature });
+      let signed = certificate_verify_content(true, __hash(c.conn));
+      let ev = VerifyServer(Verification { chain: c.chain, scheme: v.scheme, signed: signed, signature: v.signature });
       return Ok(ClientRun { client: Client { ...next, state: C_WAIT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
     },
     _ => {
@@ -1694,7 +1694,7 @@ function __client_after(c: Client, kind: i32, m: message.Message, out: Out): Res
       return Ok(ClientRun { client: c, out: Out { ...out, events: out.events.append(Ticket(t)) } });
     },
     message.KeyUpdate(request) => {
-      let a: Absorbed = __key_update(c.conn, request, out)?;
+      let a = __key_update(c.conn, request, out)?;
       return Ok(ClientRun { client: Client { ...c, conn: a.conn }, out: a.out });
     },
     _ => {
@@ -1709,13 +1709,13 @@ function __client_parked(state: i32): boolean {
 }
 
 function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] {
-  let client: Client = c;
+  let client = c;
   while (!__client_parked(client.state)) {
-    let n: Next = __next(client.conn)?;
+    let n = __next(client.conn)?;
     if (!n.has) {
       break;
     }
-    let r: ClientRun = __client_message(Client { ...client, conn: n.conn }, n.raw, out)?;
+    let r = __client_message(Client { ...client, conn: n.conn }, n.raw, out)?;
     client = r.client;
     out = r.out;
   }
@@ -1730,26 +1730,26 @@ function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] 
 // Runs the held records, then the whole records of wire, each fragment copied once and opened where it sits;
 // what the state leaves unread is held.
 function __client_run(c: Client, wire: [u8], out: Out): Result[ClientStep, HandshakeError] {
-  let whole: i32 = __whole(wire)?;
-  let records: record.Record[] = c.conn.held;
-  let r: ClientRun = __client_drain(c, out)?;
-  let i: i32 = 0;
-  let at: i32 = 0;
+  let whole = __whole(wire)?;
+  let records = c.conn.held;
+  let r = __client_drain(c, out)?;
+  let i = 0;
+  let at = 0;
   while (!__client_parked(r.client.state) && (i < records.len() || at < whole)) {
-    let rec: record.Record = __next_record(records, i, wire, at)?;
+    let rec = __next_record(records, i, wire, at)?;
     if (i < records.len()) {
-      i = i + 1;
+      i += 1;
     } else {
       at = record.record_end(wire, at);
     }
-    let a: Absorbed = __absorb(r.client.conn, rec, r.client.state < C_CONNECTED, r.client.state == C_CONNECTED, r.out)?;
-    let state: i32 = r.client.state;
+    let a = __absorb(r.client.conn, rec, r.client.state < C_CONNECTED, r.client.state == C_CONNECTED, r.out)?;
+    let state = r.client.state;
     if (a.out.closed) {
       state = C_CLOSED;
     }
     r = __client_drain(Client { ...r.client, conn: a.conn, state: state }, a.out)?;
   }
-  let h: Held = __held(r.client.conn.inbox, __rest(records, i), wire, at)?;
+  let h = __held(r.client.conn.inbox, __rest(records, i), wire, at)?;
   return Ok(__client_step(Client { ...r.client, conn: Conn { ...r.client.conn, held: h.held, inbox: h.inbox } }, r.out));
 }
 
@@ -1771,10 +1771,10 @@ function __next_record(records: record.Record[], i: i32, wire: [u8], at: i32): R
 
 function __rest(records: record.Record[], from: i32): record.Record[] {
   let out: record.Record[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < records.len()) {
     out = out.append(records[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1804,7 +1804,7 @@ function __held(inbox: u8[], rest: record.Record[], wire: [u8], at: i32): Result
   }
   match (record.deframe(wire[at:wire.len()])) {
     Ok(d) => {
-      let held: record.Record[] = rest;
+      let held = rest;
       for r in d.records {
         held = held.append(r);
       }
@@ -1871,9 +1871,9 @@ pub function (c: Client) signature(sig: [u8]): Result[ClientStep, HandshakeError
   if (c.state != C_WAIT_SIGNATURE) {
     return Err(Misuse("signature"));
   }
-  let cv: u8[] = message.encode(message.CertificateVerifyMsg(message.CertificateVerify { scheme: c.own_scheme, signature: __copy(sig) }));
-  let conn: Conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, cv) };
-  let r: ClientRun = __client_finish(c, conn, __cat(__copy(c.flight), cv), __out())?;
+  let cv = message.encode(message.CertificateVerifyMsg(message.CertificateVerify { scheme: c.own_scheme, signature: __copy(sig) }));
+  let conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, cv) };
+  let r = __client_finish(c, conn, __cat(__copy(c.flight), cv), __out())?;
   return __client_run(r.client, [], r.out);
 }
 
@@ -1881,12 +1881,12 @@ pub function (c: Client) write(data: [u8]): Result[ClientStep, HandshakeError] {
   if (c.state != C_CONNECTED) {
     return Err(Misuse("write"));
   }
-  let w: Wrote = __write(c.conn, record.ApplicationData, data)?;
+  let w = __write(c.conn, record.ApplicationData, data)?;
   return Ok(__client_step(Client { ...c, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
 pub function (c: Client) close(): Result[ClientStep, HandshakeError] {
-  let w: Wrote = __write(c.conn, record.Alert, [1 as u8, 0 as u8])?;
+  let w = __write(c.conn, record.Alert, [1 as u8, 0 as u8])?;
   return Ok(__client_step(Client { ...c, conn: w.conn, state: C_CLOSED }, Out { ...__out(), output: w.bytes }));
 }
 
@@ -1902,7 +1902,7 @@ pub function (c: Client) update_keys(request: boolean): Result[ClientStep, Hands
   if (c.state != C_CONNECTED) {
     return Err(Misuse("update_keys"));
   }
-  let w: Wrote = __update(c.conn, request)?;
+  let w = __update(c.conn, request)?;
   return Ok(__client_step(Client { ...c, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
@@ -1964,7 +1964,7 @@ pub function (c: Client) save(): Result[u8[], HandshakeError] {
   if (c.state != C_CONNECTED || c.conn.held.len() > 0) {
     return Err(Misuse("save"));
   }
-  let out: u8[] = __u32_to([1 as u8], c.conn.suite.code());
+  let out = __u32_to([1 as u8], c.conn.suite.code());
   out = __saved_direction(out, c.conn.read_secret, c.conn.read.seq);
   out = __saved_direction(out, c.conn.write_secret, c.conn.write.seq);
   out = __saved_field(out, c.conn.inbox);
@@ -1976,7 +1976,7 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
   if (saved.len() < 5 || saved[0] != 1 as u8) {
     return Err(Misuse("client_restore"));
   }
-  let suite: keyschedule.CipherSuite = keyschedule.Aes128GcmSha256;
+  let suite = keyschedule.Aes128GcmSha256;
   match (keyschedule.cipher_suite(__u32_at(saved, 1))) {
     Some(s) => {
       suite = s;
@@ -1985,15 +1985,15 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
       return Err(Misuse("client_restore"));
     }
   }
-  let f: u8[][] = __saved_fields(saved, 5)?;
-  let conn: Conn = Conn { ...__conn(), suite: suite, inbox: f[4], pending: f[5] };
+  let f = __saved_fields(saved, 5)?;
+  let conn = Conn { ...__conn(), suite: suite, inbox: f[4], pending: f[5] };
   conn = __with_read(conn, f[0], 2);
   conn = __with_write(conn, f[2], 2);
   conn = Conn { ...conn, read: record.Protection { ...conn.read, seq: __u64_of(f[1]) }, write: record.Protection { ...conn.write, seq: __u64_of(f[3]) } };
-  let none: message.ClientHello = message.ClientHello { random: [], session_id: [], cipher_suites: [], extensions: [] };
-  let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: suite.hash(), secret: [] };
-  let share: keyshare.ClientShare = keyshare.ClientShare { group: keyshare.X25519, public: [], scalar: [], decapsulation_key: [] };
-  let alpn: string = "";
+  let none = message.ClientHello { random: [], session_id: [], cipher_suites: [], extensions: [] };
+  let hs = keyschedule.HandshakeSecret { hash: suite.hash(), secret: [] };
+  let share = keyshare.ClientShare { group: keyshare.X25519, public: [], scalar: [], decapsulation_key: [] };
+  let alpn = "";
   match (utf8.from_bytes(f[6])) {
     Ok(p) => {
       alpn = p;
@@ -2024,16 +2024,16 @@ function __saved_field(own out: u8[], b: [u8]): u8[] {
 
 function __saved_direction(own out: u8[], secret: [u8], seq: u64): u8[] {
   let s: u8[] = [];
-  let i: i32 = 7;
+  let i = 7;
   while (i >= 0) {
     s = s.append((seq >> (8 * i) as u64 & 255 as u64) as u8);
-    i = i - 1;
+    i -= 1;
   }
   return __saved_field(__saved_field(out, secret), s);
 }
 
 function __u64_of(b: [u8]): u64 {
-  let v: u64 = 0 as u64;
+  let v = 0 as u64;
   for x in b {
     v = v << 8 as u64 | x as u64;
   }
@@ -2042,12 +2042,12 @@ function __u64_of(b: [u8]): u64 {
 
 function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] {
   let out: u8[][] = [];
-  let at: i32 = from;
+  let at = from;
   while (at < saved.len()) {
     if (saved.len() - at < 4) {
       return Err(Misuse("client_restore"));
     }
-    let n: i32 = __u32_at(saved, at);
+    let n = __u32_at(saved, at);
     if (n < 0 || n > saved.len() - at - 4) {
       return Err(Misuse("client_restore"));
     }
@@ -2107,7 +2107,7 @@ const S_WAIT_CLIENT_VERDICT: i32 = 8;
 ```fern
 <<49 pub function server_entropy(config: ServerConfig): i32>>=
 pub function server_entropy(config: ServerConfig): i32 {
-  let most: i32 = 0;
+  let most = 0;
   for g in config.groups {
     if (g.server_entropy() > most) {
       most = g.server_entropy();
@@ -2151,7 +2151,7 @@ pub struct ServerStep { server: Server, output: u8[], data: u8[], events: Event[
 ```fern
 <<51 function __server_step(s: Server, out: Out): ServerStep>>=
 function __server_step(s: Server, out: Out): ServerStep {
-  let f: Flushed = __flushed(s.conn, out);
+  let f = __flushed(s.conn, out);
   return ServerStep { server: Server { ...s, conn: f.conn }, output: f.out.output, data: f.out.data, events: f.out.events };
 }
 ```
@@ -2167,7 +2167,7 @@ pub function server_new(config: ServerConfig, entropy: [u8]): Result[Server, Han
   if (entropy.len() != server_entropy(config)) {
     return Err(Entropy(entropy.len(), server_entropy(config)));
   }
-  let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
+  let hs = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
   return Ok(Server { conn: __conn_for(config.quic), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [], finished_hash: [], client_chain: [], peer_extensions: [] });
 }
 ```
@@ -2232,25 +2232,25 @@ function __client_shares(h: message.ClientHello): Result[message.KeyShareEntry[]
 }
 
 function __choose_share(s: Server, h: message.ClientHello): Result[Choice, HandshakeError] {
-  let groups: i32[] = __codes(message.supported_groups(__ext(h.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
-  let shares: message.KeyShareEntry[] = __client_shares(h)?;
-  let i: i32 = 0;
+  let groups = __codes(message.supported_groups(__ext(h.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
+  let shares = __client_shares(h)?;
+  let i = 0;
   while (i < shares.len()) {
     if (!__has(groups, shares[i].group)) {
       return Err(Illegal("key share for a group not in supported_groups"));
     }
-    i = i + 1;
+    i += 1;
   }
-  let g: i32 = 0;
+  let g = 0;
   while (g < s.config.groups.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < shares.len()) {
       if (shares[j].group == s.config.groups[g].code()) {
         return Ok(Choice { group: s.config.groups[g], key: shares[j].key, retry: false });
       }
-      j = j + 1;
+      j += 1;
     }
-    g = g + 1;
+    g += 1;
   }
   return __retry_choice(s, groups);
 }
@@ -2272,12 +2272,12 @@ function __choose_alpn(s: Server, h: message.ClientHello): Result[string, Handsh
           if (s.config.alpn.len() == 0) {
             return Ok("");
           }
-          let i: i32 = 0;
+          let i = 0;
           while (i < s.config.alpn.len()) {
             if (__has_string(offered, s.config.alpn[i])) {
               return Ok(s.config.alpn[i]);
             }
-            i = i + 1;
+            i += 1;
           }
           return Err(NoApplicationProtocol);
         },
@@ -2339,12 +2339,12 @@ function __offers_tls13(h: message.ClientHello): Result[boolean, HandshakeError]
 }
 
 function __pick_suite(s: Server, h: message.ClientHello): Result[keyschedule.CipherSuite, HandshakeError] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.config.suites.len()) {
     if (__has(h.cipher_suites, s.config.suites[i].code())) {
       return Ok(s.config.suites[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return Err(HandshakeFailure("no cipher suite in common"));
 }
@@ -2355,13 +2355,13 @@ function __pick_suite(s: Server, h: message.ClientHello): Result[keyschedule.Cip
 ```fern
 <<57 function __pick_scheme(s: Server, h: message.ClientHello): Result[i32, HandshakeError]>>=
 function __pick_scheme(s: Server, h: message.ClientHello): Result[i32, HandshakeError] {
-  let schemes: i32[] = __codes(message.signature_algorithms(__ext(h.extensions, message.EXT_SIGNATURE_ALGORITHMS, "signature_algorithms")?))?;
-  let i: i32 = 0;
+  let schemes = __codes(message.signature_algorithms(__ext(h.extensions, message.EXT_SIGNATURE_ALGORITHMS, "signature_algorithms")?))?;
+  let i = 0;
   while (i < s.config.schemes.len()) {
     if (__has(schemes, s.config.schemes[i])) {
       return Ok(s.config.schemes[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return Err(HandshakeFailure("no signature scheme in common"));
 }
@@ -2390,15 +2390,15 @@ function __encrypted_extensions_msg(s: Server, alpn: string): u8[] {
 }
 
 function __server_flight(s: Server, alpn: string): u8[] {
-  let out: u8[] = __encrypted_extensions_msg(s, alpn);
+  let out = __encrypted_extensions_msg(s, alpn);
   if (s.config.request_client_certificate) {
     out = __cat(out, message.encode(message.CertificateRequestMsg(message.CertificateRequest { context: [], extensions: [message.ext_signature_algorithms(VERIFY_SCHEMES)] })));
   }
   let entries: message.CertificateEntry[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.config.chain.len()) {
     entries = entries.append(message.CertificateEntry { data: s.config.chain[i], extensions: [] });
-    i = i + 1;
+    i += 1;
   }
   return __cat(out, message.encode(message.CertificateMsg(message.Certificate { context: [], entries: entries })));
 }
@@ -2421,7 +2421,7 @@ function __negotiate(s: Server, h: message.ClientHello): Result[Negotiated, Hand
 }
 
 function __negotiated_terms(s: Server, h: message.ClientHello): Result[Negotiated, HandshakeError] {
-  let n: Negotiated = __negotiate(s, h)?;
+  let n = __negotiate(s, h)?;
   if (s.conn.quic) {
     __quic_terms(h.extensions, n.alpn)?;
   }
@@ -2429,9 +2429,9 @@ function __negotiated_terms(s: Server, h: message.ClientHello): Result[Negotiate
 }
 
 function __client_hello(first: Server, raw: message.Raw, out: Out): Result[ServerRun, HandshakeError] {
-  let h: message.ClientHello = __as_client_hello(raw)?;
-  let s: Server = Server { ...first, peer_extensions: h.extensions };
-  let n: Negotiated = __negotiated_terms(s, h)?;
+  let h = __as_client_hello(raw)?;
+  let s = Server { ...first, peer_extensions: h.extensions };
+  let n = __negotiated_terms(s, h)?;
   if (s.retry_group != 0) {
     __check_second_hello(s, n)?;
   } else if (n.choice.retry) {
@@ -2439,7 +2439,7 @@ function __client_hello(first: Server, raw: message.Raw, out: Out): Result[Serve
   }
   match (__offered_psks(h)?) {
     Some(offer) => {
-      let ev: Event = ResumeOffered(Offer { identities: offer.identities, suite: n.suite, server_name: n.name });
+      let ev = ResumeOffered(Offer { identities: offer.identities, suite: n.suite, server_name: n.name });
       return Ok(ServerRun { server: Server { ...s, state: S_WAIT_RESUME, parked: raw }, out: Out { ...out, events: out.events.append(ev) } });
     },
     None => {}
@@ -2453,7 +2453,7 @@ function __offered_psks(h: message.ClientHello): Result[Option[message.OfferedPs
       if (h.extensions[h.extensions.len() - 1].kind != message.EXT_PRE_SHARED_KEY) {
         return Err(Illegal("pre_shared_key is not the last extension"));
       }
-      let modes: i32[] = __codes(message.psk_modes(__ext(h.extensions, message.EXT_PSK_KEY_EXCHANGE_MODES, "psk_key_exchange_modes")?))?;
+      let modes = __codes(message.psk_modes(__ext(h.extensions, message.EXT_PSK_KEY_EXCHANGE_MODES, "psk_key_exchange_modes")?))?;
       if (!__has(modes, 1)) {
         return Err(HandshakeFailure("no psk_dhe_ke"));
       }
@@ -2474,48 +2474,48 @@ function __offered_psks(h: message.ClientHello): Result[Option[message.OfferedPs
 }
 
 function __serve_hello(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, psk: [u8], index: i32, out: Out): Result[ServerRun, HandshakeError] {
-  let suite: keyschedule.CipherSuite = n.suite;
-  let share: keyshare.ServerShare = __answer_share(s, n.choice)?;
+  let suite = n.suite;
+  let share = __answer_share(s, n.choice)?;
   let exts: message.Extension[] = [message.ext_key_share(message.KeyShareEntry { group: n.choice.group.code(), key: share.public }), message.ext_selected_version(message.TLS13)];
   if (psk.len() > 0) {
     exts = exts.append(message.ext_selected_psk(index));
   }
-  let sh: message.ServerHello = message.ServerHello { random: __copy(s.entropy[0:32]), session_id: h.session_id, cipher_suite: suite.code(), extensions: exts };
-  let sh_bytes: u8[] = message.encode(message.ServerHelloMsg(sh));
-  let conn: Conn = Conn { ...s.conn, suite: suite, transcript: __cat(__cat(__copy(s.conn.transcript), raw.bytes), sh_bytes) };
+  let sh = message.ServerHello { random: __copy(s.entropy[0:32]), session_id: h.session_id, cipher_suite: suite.code(), extensions: exts };
+  let sh_bytes = message.encode(message.ServerHelloMsg(sh));
+  let conn = Conn { ...s.conn, suite: suite, transcript: __cat(__cat(__copy(s.conn.transcript), raw.bytes), sh_bytes) };
   __at_key_change(conn)?;
-  let plain: Wrote = __plain_out(conn, 0x0303, sh_bytes);
+  let plain = __plain_out(conn, 0x0303, sh_bytes);
   conn = plain.conn;
-  let output: u8[] = __join(out.output, plain.bytes);
+  let output = __join(out.output, plain.bytes);
   if (s.retry_group == 0 && !conn.quic) {
     output = __compat_ccs(output, h);
   }
-  let hs: keyschedule.HandshakeSecret = keyschedule.early_secret(suite.hash(), psk).handshake_secret(share.shared_secret);
-  let th: u8[] = __hash(conn);
-  let client_hs: u8[] = hs.client_traffic(th);
-  let server_hs: u8[] = hs.server_traffic(th);
+  let hs = keyschedule.early_secret(suite.hash(), psk).handshake_secret(share.shared_secret);
+  let th = __hash(conn);
+  let client_hs = hs.client_traffic(th);
+  let server_hs = hs.server_traffic(th);
   conn = __with_write(__with_read(conn, client_hs, 1), server_hs, 1);
-  let next: Server = Server { ...s, conn: conn, scheme: n.scheme, hs: hs, client_hs: client_hs, server_hs: server_hs, server_name: n.name, alpn: n.alpn, resumed: psk.len() > 0 };
-  let sent: Out = Out { ...out, output: output };
+  let next = Server { ...s, conn: conn, scheme: n.scheme, hs: hs, client_hs: client_hs, server_hs: server_hs, server_name: n.name, alpn: n.alpn, resumed: psk.len() > 0 };
+  let sent = Out { ...out, output: output };
   if (psk.len() > 0) {
     return __send_finished(next, [], __encrypted_extensions_msg(next, n.alpn), sent);
   }
-  let flight: u8[] = __server_flight(s, n.alpn);
+  let flight = __server_flight(s, n.alpn);
   conn = Conn { ...conn, transcript: __join(conn.transcript, flight) };
-  let ev: Event = SignNeeded(Signing { scheme: n.scheme, signed: certificate_verify_content(true, __hash(conn)) });
+  let ev = SignNeeded(Signing { scheme: n.scheme, signed: certificate_verify_content(true, __hash(conn)) });
   return Ok(ServerRun { server: Server { ...next, conn: conn, state: S_WAIT_SIGNATURE, flight: flight }, out: Out { ...sent, events: sent.events.append(ev) } });
 }
 
 function __send_finished(s: Server, before: [u8], tail: [u8], out: Out): Result[ServerRun, HandshakeError] {
-  let h: keyschedule.Hash = s.conn.suite.hash();
-  let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, tail) };
-  let fin: u8[] = message.encode(message.Finished(keyschedule.finished_verify_data(h, s.server_hs, __hash(conn))));
+  let h = s.conn.suite.hash();
+  let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, tail) };
+  let fin = message.encode(message.Finished(keyschedule.finished_verify_data(h, s.server_hs, __hash(conn))));
   conn = Conn { ...conn, transcript: __join(conn.transcript, fin) };
-  let w: Wrote = __write(conn, record.Handshake, __cat(__cat(__copy(before), tail), fin))?;
-  let master: keyschedule.MasterSecret = s.hs.master_secret();
-  let finished_hash: u8[] = __hash(w.conn);
-  let next: Conn = __with_write(w.conn, master.server_traffic(finished_hash), 2);
-  let state: i32 = S_WAIT_FINISHED;
+  let w = __write(conn, record.Handshake, __cat(__cat(__copy(before), tail), fin))?;
+  let master = s.hs.master_secret();
+  let finished_hash = __hash(w.conn);
+  let next = __with_write(w.conn, master.server_traffic(finished_hash), 2);
+  let state = S_WAIT_FINISHED;
   if (s.config.request_client_certificate && !s.resumed) {
     state = S_WAIT_CLIENT_CERTIFICATE;
   }
@@ -2523,7 +2523,7 @@ function __send_finished(s: Server, before: [u8], tail: [u8], out: Out): Result[
 }
 
 function __check_binder(s: Server, raw: message.Raw, h: message.ClientHello, suite: keyschedule.CipherSuite, c: Resumed): Result[boolean, HandshakeError] {
-  let offer: message.OfferedPsks = message.OfferedPsks { identities: [], binders: [] };
+  let offer = message.OfferedPsks { identities: [], binders: [] };
   match (__offered_psks(h)?) {
     Some(o) => {
       offer = o;
@@ -2555,13 +2555,13 @@ function __compat_ccs(own output: u8[], h: message.ClientHello): u8[] {
 ```fern
 <<60 function __retry_request(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, out: Out): Res...>>=
 function __retry_request(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, out: Out): Result[ServerRun, HandshakeError] {
-  let hrr: message.ServerHello = message.ServerHello { random: message.retry_random(), session_id: h.session_id, cipher_suite: n.suite.code(), extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(n.choice.group.code())] };
-  let hrr_bytes: u8[] = message.encode(message.ServerHelloMsg(hrr));
-  let digest: u8[] = n.suite.hash().digest(raw.bytes);
-  let conn: Conn = Conn { ...s.conn, transcript: __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), hrr_bytes) };
+  let hrr = message.ServerHello { random: message.retry_random(), session_id: h.session_id, cipher_suite: n.suite.code(), extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(n.choice.group.code())] };
+  let hrr_bytes = message.encode(message.ServerHelloMsg(hrr));
+  let digest = n.suite.hash().digest(raw.bytes);
+  let conn = Conn { ...s.conn, transcript: __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), hrr_bytes) };
   __at_key_change(conn)?;
-  let plain: Wrote = __plain_out(conn, 0x0303, hrr_bytes);
-  let output: u8[] = __join(out.output, plain.bytes);
+  let plain = __plain_out(conn, 0x0303, hrr_bytes);
+  let output = __join(out.output, plain.bytes);
   if (!conn.quic) {
     output = __compat_ccs(output, h);
   }
@@ -2579,13 +2579,13 @@ function __check_second_hello(s: Server, n: Negotiated): Result[boolean, Handsha
 }
 
 function __client_finished(s: Server, raw: message.Raw, verify_data: u8[], out: Out): Result[ServerRun, HandshakeError] {
-  let h: keyschedule.Hash = s.conn.suite.hash();
+  let h = s.conn.suite.hash();
   if (!keyschedule.verify_finished(h, s.client_hs, __hash(s.conn), verify_data)) {
     return Err(DecryptError);
   }
-  let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
+  let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
   __at_key_change(conn)?;
-  let master: keyschedule.MasterSecret = s.hs.master_secret();
+  let master = s.hs.master_secret();
   conn = __with_read(conn, master.client_traffic(s.finished_hash), 2);
   return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_CONNECTED, res_master: master.resumption(__hash(conn)) }, out: Out { ...out, events: out.events.append(Connected) } });
 }
@@ -2594,9 +2594,9 @@ function __client_certificate(s: Server, raw: message.Raw, cert: message.Certifi
   if (cert.context.len() != 0) {
     return Err(Illegal("certificate_request_context"));
   }
-  let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
+  let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
   if (cert.entries.len() == 0) {
-    let ev: Event = VerifyClient(Verification { chain: [], scheme: 0, signed: [], signature: [] });
+    let ev = VerifyClient(Verification { chain: [], scheme: 0, signed: [], signature: [] });
     return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
   }
   let chain: u8[][] = [];
@@ -2610,9 +2610,9 @@ function __client_verify(s: Server, raw: message.Raw, v: message.CertificateVeri
   if (!__has(VERIFY_SCHEMES, v.scheme)) {
     return Err(Illegal("signature scheme"));
   }
-  let signed: u8[] = certificate_verify_content(false, __hash(s.conn));
-  let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
-  let ev: Event = VerifyClient(Verification { chain: s.client_chain, scheme: v.scheme, signed: signed, signature: v.signature });
+  let signed = certificate_verify_content(false, __hash(s.conn));
+  let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
+  let ev = VerifyClient(Verification { chain: s.client_chain, scheme: v.scheme, signed: signed, signature: v.signature });
   return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
@@ -2620,7 +2620,7 @@ function __server_message(s: Server, raw: message.Raw, out: Out): Result[ServerR
   if (s.state == S_WAIT_CLIENT_HELLO) {
     return __client_hello(s, raw, out);
   }
-  let m: message.Message = __decode(raw)?;
+  let m = __decode(raw)?;
   if (s.state == S_WAIT_CLIENT_CERTIFICATE || s.state == S_WAIT_CLIENT_VERIFY) {
     return __client_auth_message(s, raw, m, out);
   }
@@ -2632,7 +2632,7 @@ function __server_message(s: Server, raw: message.Raw, out: Out): Result[ServerR
     },
     message.KeyUpdate(request) => {
       if (s.state == S_CONNECTED) {
-        let a: Absorbed = __key_update(s.conn, request, out)?;
+        let a = __key_update(s.conn, request, out)?;
         return Ok(ServerRun { server: Server { ...s, conn: a.conn }, out: a.out });
       }
     },
@@ -2669,13 +2669,13 @@ function __client_flight_due(state: i32): boolean {
 }
 
 function __server_drain(s: Server, out: Out): Result[ServerRun, HandshakeError] {
-  let server: Server = s;
+  let server = s;
   while (!__server_parked(server.state)) {
-    let n: Next = __next(server.conn)?;
+    let n = __next(server.conn)?;
     if (!n.has) {
       break;
     }
-    let r: ServerRun = __server_message(Server { ...server, conn: n.conn }, n.raw, out)?;
+    let r = __server_message(Server { ...server, conn: n.conn }, n.raw, out)?;
     server = r.server;
     out = r.out;
   }
@@ -2688,27 +2688,27 @@ function __server_drain(s: Server, out: Out): Result[ServerRun, HandshakeError] 
 ```fern
 <<61 function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, HandshakeError]>>=
 function __server_run(s: Server, wire: [u8], out: Out): Result[ServerStep, HandshakeError] {
-  let whole: i32 = __whole(wire)?;
-  let records: record.Record[] = s.conn.held;
-  let r: ServerRun = __server_drain(s, out)?;
-  let i: i32 = 0;
-  let at: i32 = 0;
+  let whole = __whole(wire)?;
+  let records = s.conn.held;
+  let r = __server_drain(s, out)?;
+  let i = 0;
+  let at = 0;
   while (!__server_parked(r.server.state) && (i < records.len() || at < whole)) {
-    let rec: record.Record = __next_record(records, i, wire, at)?;
+    let rec = __next_record(records, i, wire, at)?;
     if (i < records.len()) {
-      i = i + 1;
+      i += 1;
     } else {
       at = record.record_end(wire, at);
     }
-    let ccs: boolean = __client_flight_due(r.server.state) || r.server.state == S_WAIT_CLIENT_HELLO && r.server.retry_group != 0;
-    let a: Absorbed = __absorb(r.server.conn, rec, ccs, r.server.state == S_CONNECTED, r.out)?;
-    let state: i32 = r.server.state;
+    let ccs = __client_flight_due(r.server.state) || r.server.state == S_WAIT_CLIENT_HELLO && r.server.retry_group != 0;
+    let a = __absorb(r.server.conn, rec, ccs, r.server.state == S_CONNECTED, r.out)?;
+    let state = r.server.state;
     if (a.out.closed) {
       state = S_CLOSED;
     }
     r = __server_drain(Server { ...r.server, conn: a.conn, state: state }, a.out)?;
   }
-  let h: Held = __held(r.server.conn.inbox, __rest(records, i), wire, at)?;
+  let h = __held(r.server.conn.inbox, __rest(records, i), wire, at)?;
   return Ok(__server_step(Server { ...r.server, conn: Conn { ...r.server.conn, held: h.held, inbox: h.inbox } }, r.out));
 }
 ```
@@ -2725,15 +2725,15 @@ pub struct Refusal { error: HandshakeError, alert: u8[] }
 
 // The alert is sealed under the write keys the read started with, kept apart so the read consumes the server alone.
 pub function (s: Server) read_alerting(input: [u8]): Result[ServerStep, Refusal] {
-  let keys: record.Protection = s.conn.write;
-  let plain: boolean = s.conn.writing == 0 || s.conn.kernel;
-  let quic: boolean = s.conn.quic;
+  let keys = s.conn.write;
+  let plain = s.conn.writing == 0 || s.conn.kernel;
+  let quic = s.conn.quic;
   match (__server_read(s, input)) {
     Ok(step) => {
       return Ok(step);
     },
     Err(e) => {
-      let alert: u8[] = __sealed_alert(keys, plain, quic, e);
+      let alert = __sealed_alert(keys, plain, quic, e);
       return Err(Refusal { error: e, alert: alert });
     }
   }
@@ -2774,8 +2774,8 @@ pub function (s: Server) signature(sig: [u8]): Result[ServerStep, HandshakeError
   if (s.state != S_WAIT_SIGNATURE) {
     return Err(Misuse("signature"));
   }
-  let cv: u8[] = message.encode(message.CertificateVerifyMsg(message.CertificateVerify { scheme: s.scheme, signature: __copy(sig) }));
-  let r: ServerRun = __send_finished(s, s.flight, cv, __out())?;
+  let cv = message.encode(message.CertificateVerifyMsg(message.CertificateVerify { scheme: s.scheme, signature: __copy(sig) }));
+  let r = __send_finished(s, s.flight, cv, __out())?;
   return __server_run(r.server, [], r.out);
 }
 
@@ -2783,18 +2783,18 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
   if (s.state != S_WAIT_RESUME) {
     return Err(Misuse("resume"));
   }
-  let raw: message.Raw = s.parked;
-  let h: message.ClientHello = __as_client_hello(raw)?;
-  let n: Negotiated = __negotiate(s, h)?;
-  let server: Server = Server { ...s, parked: message.Raw { kind: 0, bytes: [] } };
+  let raw = s.parked;
+  let h = __as_client_hello(raw)?;
+  let n = __negotiate(s, h)?;
+  let server = Server { ...s, parked: message.Raw { kind: 0, bytes: [] } };
   match (choice) {
     Some(c) => {
       __check_binder(s, raw, h, n.suite, c)?;
-      let r: ServerRun = __serve_hello(server, raw, h, n, c.psk, c.index, __out())?;
+      let r = __serve_hello(server, raw, h, n, c.psk, c.index, __out())?;
       return __server_run(r.server, [], r.out);
     },
     None => {
-      let r: ServerRun = __serve_hello(server, raw, h, n, [], 0, __out())?;
+      let r = __serve_hello(server, raw, h, n, [], 0, __out())?;
       return __server_run(r.server, [], r.out);
     }
   }
@@ -2819,7 +2819,7 @@ pub function (s: Server) ticket(t: message.NewSessionTicket): Result[ServerStep,
   if (s.state != S_CONNECTED) {
     return Err(Misuse("ticket"));
   }
-  let w: Wrote = __write(s.conn, record.Handshake, message.encode(message.NewSessionTicketMsg(t)))?;
+  let w = __write(s.conn, record.Handshake, message.encode(message.NewSessionTicketMsg(t)))?;
   return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
@@ -2844,12 +2844,12 @@ pub function (s: Server) write_framed(own buf: u8[]): Result[ServerStep, Handsha
   if (s.state != S_CONNECTED) {
     return Err(Misuse("write"));
   }
-  let w: Wrote = __write_framed(s.conn, buf)?;
+  let w = __write_framed(s.conn, buf)?;
   return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
 function __write_framed(c: Conn, own buf: u8[]): Result[Wrote, HandshakeError] {
-  let n: i32 = buf.len() - record.FRAMED_HEAD - record.FRAMED_TAIL;
+  let n = buf.len() - record.FRAMED_HEAD - record.FRAMED_TAIL;
   if (n < 0) {
     return Err(Record(record.EmptyFragment));
   }
@@ -2871,12 +2871,12 @@ pub function (s: Server) write(data: [u8]): Result[ServerStep, HandshakeError] {
   if (s.state != S_CONNECTED) {
     return Err(Misuse("write"));
   }
-  let w: Wrote = __write(s.conn, record.ApplicationData, data)?;
+  let w = __write(s.conn, record.ApplicationData, data)?;
   return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 
 pub function (s: Server) close(): Result[ServerStep, HandshakeError] {
-  let w: Wrote = __write(s.conn, record.Alert, [1 as u8, 0 as u8])?;
+  let w = __write(s.conn, record.Alert, [1 as u8, 0 as u8])?;
   return Ok(__server_step(Server { ...s, conn: w.conn, state: S_CLOSED }, Out { ...__out(), output: w.bytes }));
 }
 
@@ -2892,7 +2892,7 @@ pub function (s: Server) update_keys(request: boolean): Result[ServerStep, Hands
   if (s.state != S_CONNECTED) {
     return Err(Misuse("update_keys"));
   }
-  let w: Wrote = __update(s.conn, request)?;
+  let w = __update(s.conn, request)?;
   return Ok(__server_step(Server { ...s, conn: w.conn }, Out { ...__out(), output: w.bytes }));
 }
 

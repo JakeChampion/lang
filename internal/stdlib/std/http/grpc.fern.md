@@ -111,7 +111,7 @@ pub const UNAUTHENTICATED: i32 = 16;
 pub function is_grpc(req: HttpRequest): boolean {
   match (req.headers.get("content-type")) {
     Some(ct) => {
-      let lower: string = ct.to_lower();
+      let lower = ct.to_lower();
       if (lower == "application/grpc") {
         return true;
       }
@@ -127,19 +127,19 @@ pub function is_grpc(req: HttpRequest): boolean {
 pub function timeout(h: HeaderMap): Option[Duration] {
   match (h.get("grpc-timeout")) {
     Some(v) => {
-      let b: u8[] = v.bytes();
+      let b = v.bytes();
       if (b.len() < 2 || b.len() > 9) {
         return None;
       }
-      let n: i64 = 0 as i64;
-      let i: i32 = 0;
+      let n = 0 as i64;
+      let i = 0;
       while (i < b.len() - 1) {
-        let d: i32 = b[i] as i32;
+        let d = b[i] as i32;
         if (d < 48 || d > 57) {
           return None;
         }
         n = n * (10 as i64) + (d - 48) as i64;
-        i = i + 1;
+        i += 1;
       }
       return __unit(b[b.len() - 1] as i32, n);
     },
@@ -183,7 +183,7 @@ function __unit(unit: i32, n: i64): Option[Duration] {
 ```fern
 <<6 pub function frame(message: u8[]): u8[]>>=
 pub function frame(message: u8[]): u8[] {
-  let n: i32 = message.len();
+  let n = message.len();
   let head: u8[] = [0 as u8, (n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
   return head.concat(message);
 }
@@ -198,20 +198,20 @@ pub function next_message(buffered: u8[]): Result[Option[(u8[], u8[])], string] 
   if (buffered[1] as i32 >= 128) {
     return Err("message length past 2 GiB");
   }
-  let n: i32 = buffered[1] as i32 << 24 | buffered[2] as i32 << 16 | buffered[3] as i32 << 8 | buffered[4] as i32;
+  let n = buffered[1] as i32 << 24 | buffered[2] as i32 << 16 | buffered[3] as i32 << 8 | buffered[4] as i32;
   if (buffered.len() < 5 + n) {
     return Ok(None);
   }
   let message: u8[] = [];
-  let i: i32 = 5;
+  let i = 5;
   while (i < 5 + n) {
     message = message.append(buffered[i]);
-    i = i + 1;
+    i += 1;
   }
   let rest: u8[] = [];
   while (i < buffered.len()) {
     rest = rest.append(buffered[i]);
-    i = i + 1;
+    i += 1;
   }
   return Ok(Some((message, rest)));
 }
@@ -221,7 +221,7 @@ pub function headers(): HeaderMap {
 }
 
 pub function status(code: i32, message: string): HeaderMap {
-  let out: HeaderMap = headers.new().append("Grpc-Status", code.to_string());
+  let out = headers.new().append("Grpc-Status", code.to_string());
   if (message.len() == 0) {
     return out;
   }
@@ -234,20 +234,20 @@ pub function status(code: i32, message: string): HeaderMap {
 ```fern
 <<7 function __percent(message: string): string>>=
 function __percent(message: string): string {
-  let out: string = "";
+  let out = "";
   for b in message.bytes() {
-    let c: i32 = b as i32;
+    let c = b as i32;
     if (c == 37 || c < 32 || c > 126) {
       out = out + "%" + __hex_byte(c);
     } else {
-      out = out + string_from_bytes_unchecked([b]);
+      out += string_from_bytes_unchecked([b]);
     }
   }
   return out;
 }
 
 function __hex_byte(c: i32): string {
-  let digits: string = "0123456789ABCDEF";
+  let digits = "0123456789ABCDEF";
   return string_from_bytes_unchecked([digits[c >> 4 & 15], digits[c & 15]]);
 }
 ```

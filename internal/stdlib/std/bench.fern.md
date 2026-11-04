@@ -117,30 +117,30 @@ pub struct Report {
 ```fern
 <<6 pub function run(name: string, warmup: i32, iterations: i32, body: ()>>=
 pub function run(name: string, warmup: i32, iterations: i32, body: () => void): Report {
-  let w: i32 = 0;
+  let w = 0;
   while (w < warmup) {
     body();
-    w = w + 1;
+    w += 1;
   }
   let samples: i64[] = [];
-  let p: i32 = 0;
+  let p = 0;
   while (p < iterations) {
     samples = samples.append(0 as i64);
-    p = p + 1;
+    p += 1;
   }
-  let mark_allocs: i64 = alloc_count();
-  let mark_bytes: i64 = bump_bytes();
-  let started_ns: i64 = monotonic_ns();
-  let i: i32 = 0;
+  let mark_allocs = alloc_count();
+  let mark_bytes = bump_bytes();
+  let started_ns = monotonic_ns();
+  let i = 0;
   while (i < iterations) {
-    let t0: i64 = monotonic_ns();
+    let t0 = monotonic_ns();
     body();
     samples = samples.with(i, monotonic_ns() - t0);
-    i = i + 1;
+    i += 1;
   }
-  let wall: i64 = monotonic_ns() - started_ns;
-  let allocs: i64 = allocs_after(mark_allocs);
-  let fresh: i64 = fresh_bytes_after(mark_bytes);
+  let wall = monotonic_ns() - started_ns;
+  let allocs = allocs_after(mark_allocs);
+  let fresh = fresh_bytes_after(mark_bytes);
   return Report {
     name: name,
     iterations: iterations,
@@ -152,7 +152,7 @@ pub function run(name: string, warmup: i32, iterations: i32, body: () => void): 
 }
 
 pub function (r: Report) percentile_ns(per_mille: i32): i64 {
-  let n: i32 = r.samples_ns.len();
+  let n = r.samples_ns.len();
   if (n == 0) {
     return 0 as i64;
   }
@@ -191,15 +191,15 @@ pub function (r: Report) max_ns(): i64 {
 }
 
 pub function (r: Report) mean_ns(): i64 {
-  let n: i32 = r.samples_ns.len();
+  let n = r.samples_ns.len();
   if (n == 0) {
     return 0 as i64;
   }
-  let sum: i64 = 0 as i64;
-  let i: i32 = 0;
+  let sum = 0 as i64;
+  let i = 0;
   while (i < n) {
-    sum = sum + r.samples_ns[i];
-    i = i + 1;
+    sum += r.samples_ns[i];
+    i += 1;
   }
   return sum / (n as i64);
 }
@@ -290,10 +290,10 @@ pub function (r: Report) describe(): string {
 
 pub function run_repeated(name: string, warmup: i32, iterations: i32, runs: i32, body: () => void): Report[] {
   let out: Report[] = [];
-  let r: i32 = 0;
+  let r = 0;
   while (r < runs) {
     out = out.append(run(name, warmup, iterations, body));
-    r = r + 1;
+    r += 1;
   }
   return out;
 }
@@ -325,7 +325,7 @@ function median_of(xs: i64[]): i64 {
   if (xs.len() == 0) {
     return 0 as i64;
   }
-  let sorted: i64[] = cmp.sort(xs);
+  let sorted = cmp.sort(xs);
   return sorted[sorted.len() / 2];
 }
 ```
@@ -337,32 +337,32 @@ function median_of(xs: i64[]): i64 {
 pub function summarize(name: string, reports: Report[]): Summary {
   let throughputs: i64[] = [];
   let p50s: i64[] = [];
-  let worst_p99: i64 = 0 as i64;
-  let min_allocs: i64 = 0 as i64;
-  let max_allocs: i64 = 0 as i64;
-  let i: i32 = 0;
+  let worst_p99 = 0 as i64;
+  let min_allocs = 0 as i64;
+  let max_allocs = 0 as i64;
+  let i = 0;
   while (i < reports.len()) {
-    let ops: i64 = reports[i].ops_per_sec();
+    let ops = reports[i].ops_per_sec();
     throughputs = throughputs.append(ops);
     p50s = p50s.append(reports[i].p50_ns());
     if (reports[i].p99_ns() > worst_p99) {
       worst_p99 = reports[i].p99_ns();
     }
-    let a: i64 = reports[i].allocs;
+    let a = reports[i].allocs;
     if (i == 0 || a < min_allocs) {
       min_allocs = a;
     }
     if (i == 0 || a > max_allocs) {
       max_allocs = a;
     }
-    i = i + 1;
+    i += 1;
   }
-  let sorted_ops: i64[] = cmp.sort(throughputs);
-  let sorted_p50: i64[] = cmp.sort(p50s);
-  let n: i32 = sorted_ops.len();
-  let best_ops: i64 = 0 as i64;
-  let worst_ops: i64 = 0 as i64;
-  let best_p50: i64 = 0 as i64;
+  let sorted_ops = cmp.sort(throughputs);
+  let sorted_p50 = cmp.sort(p50s);
+  let n = sorted_ops.len();
+  let best_ops = 0 as i64;
+  let worst_ops = 0 as i64;
+  let best_p50 = 0 as i64;
   if (n > 0) {
     best_ops = sorted_ops[n - 1];
     worst_ops = sorted_ops[0];

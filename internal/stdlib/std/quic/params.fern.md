@@ -156,16 +156,16 @@ function __bad(reason: string): frames.FrameError {
 ```fern
 <<6 pub function decode(bytes: [u8], from_server: boolean): Result[Params, frames.FrameError]>>=
 pub function decode(bytes: [u8], from_server: boolean): Result[Params, frames.FrameError] {
-  let p: Params = defaults();
+  let p = defaults();
   let seen: i64[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < bytes.len()) {
     let (id, a) = __varint(bytes, at, "parameter id")?;
     let (len, b) = __varint(bytes, a, "parameter length")?;
     if (len > (bytes.len() - b) as i64) {
       return Err(__bad("parameter " + id.to_string() + " of " + len.to_string() + " bytes past the end"));
     }
-    let n: i32 = len as i32;
+    let n = len as i32;
     if (id <= RETRY_SOURCE_CONNECTION_ID) {
       if (seen.contains(id)) {
         return Err(__bad("parameter " + id.to_string() + " sent twice"));
@@ -184,7 +184,7 @@ pub function decode(bytes: [u8], from_server: boolean): Result[Params, frames.Fr
 ```fern
 <<7 function __varint(bytes: [u8], at: i32, what: string): Result[(i64, i32), frames.FrameError]>>=
 function __varint(bytes: [u8], at: i32, what: string): Result[(i64, i32), frames.FrameError] {
-  let v: i64 = frames.varint_at(bytes, at);
+  let v = frames.varint_at(bytes, at);
   if (v < 0) {
     return Err(__bad(what + " cut short"));
   }
@@ -192,7 +192,7 @@ function __varint(bytes: [u8], at: i32, what: string): Result[(i64, i32), frames
 }
 
 function __int(v: [u8], id: i64): Result[i64, frames.FrameError] {
-  let n: i64 = frames.varint_at(v, 0);
+  let n = frames.varint_at(v, 0);
   if (n >= 0 && frames.varint_end(v, 0) == v.len()) {
     return Ok(n);
   }
@@ -216,7 +216,7 @@ function __one(p: Params, id: i64, v: [u8], from_server: boolean): Result[Params
   if (id == STATELESS_RESET_TOKEN || id == PREFERRED_ADDRESS || id == DISABLE_ACTIVE_MIGRATION) {
     return __byte_param(p, id, v);
   }
-  let n: i64 = __int(v, id)?;
+  let n = __int(v, id)?;
   if (id >= INITIAL_MAX_DATA && id <= INITIAL_MAX_STREAMS_UNI) {
     return __flow(p, id, n);
   }
@@ -242,7 +242,7 @@ function __is_cid(id: i64): boolean {
 }
 
 function __cid_param(p: Params, id: i64, v: [u8]): Result[Params, frames.FrameError] {
-  let c: Option[u8[]] = __cid(v, id)?;
+  let c = __cid(v, id)?;
   if (id == ORIGINAL_DESTINATION_CONNECTION_ID) {
     return Ok(Params { ...p, original_destination_connection_id: c });
   }
@@ -322,7 +322,7 @@ function __ranged(p: Params, ok: boolean, name: string, n: i64): Result[Params, 
 ```fern
 <<10 pub function encode(p: Params, server: boolean): u8[]>>=
 pub function encode(p: Params, server: boolean): u8[] {
-  let d: Params = defaults();
+  let d = defaults();
   let out: u8[] = [];
   if (server) {
     out = __put_bytes(out, ORIGINAL_DESTINATION_CONNECTION_ID, p.original_destination_connection_id);

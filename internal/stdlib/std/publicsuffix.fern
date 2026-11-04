@@ -14,17 +14,17 @@ import "std/array";
 pub const COUNT: i32 = 6949;
 
 pub function public_suffix(host: string): string {
-  let labels: string[] = __labels(host);
-  let i: i32 = 0;
+  let labels = __labels(host);
+  let i = 0;
   while (i < labels.len()) {
-    let candidate: string = __join(labels, i);
+    let candidate = __join(labels, i);
     if (__rule("!" + candidate)) {
       return __join(labels, i + 1);
     }
     if (__rule(candidate) || i + 1 < labels.len() && __rule("*." + __join(labels, i + 1))) {
       return candidate;
     }
-    i = i + 1;
+    i += 1;
   }
   if (labels.len() == 0) {
     return "";
@@ -33,12 +33,12 @@ pub function public_suffix(host: string): string {
 }
 
 pub function registrable_domain(host: string): Option[string] {
-  let labels: string[] = __labels(host);
-  let suffix: string = public_suffix(host);
+  let labels = __labels(host);
+  let suffix = public_suffix(host);
   if (suffix.len() == 0) {
     return None;
   }
-  let n: i32 = suffix.split(".").len();
+  let n = suffix.split(".").len();
   if (n >= labels.len()) {
     return None;
   }
@@ -46,12 +46,12 @@ pub function registrable_domain(host: string): Option[string] {
 }
 
 pub function is_public_suffix(host: string): boolean {
-  let labels: string[] = __labels(host);
+  let labels = __labels(host);
   return labels.len() > 0 && public_suffix(host) == __join(labels, 0);
 }
 
 function __labels(host: string): string[] {
-  let h: string = host.to_lower();
+  let h = host.to_lower();
   if (h.ends_with(".")) {
     h = h.slice_snap(0, h.len() - 1);
   }
@@ -59,7 +59,7 @@ function __labels(host: string): string[] {
   if (h.len() == 0) {
     return none;
   }
-  let labels: string[] = h.split(".");
+  let labels = h.split(".");
   for l in labels {
     if (l.len() == 0) {
       return none;

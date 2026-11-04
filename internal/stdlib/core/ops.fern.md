@@ -30,7 +30,7 @@ function wrap[T: ops.Rem](a: T, m: T): T {
 }
 
 function main(): i32 {
-  let s: Mod7 = Mod7 { v: 5 } + Mod7 { v: 4 };
+  let s = Mod7 { v: 5 } + Mod7 { v: 4 };
   if (s.v != 2) { return 1; }
   if ((Mod7 { v: 6 } % Mod7 { v: 4 }).v != 2) { return 2; }
   if (wrap(17, 5) != 2 || (12 & 10) != 8) { return 3; }
@@ -171,7 +171,7 @@ impl Div for i32 {
 
 impl Neg for i32 {
   function neg(self: i32): i32 {
-    return 0 - self;
+    return -self;
   }
 }
 
@@ -256,7 +256,7 @@ impl Div for i64 {
 
 impl Neg for i64 {
   function neg(self: i64): i64 {
-    return 0 - self;
+    return -self;
   }
 }
 
@@ -838,10 +838,10 @@ function __abs_i64(x: i64): i64 {
 
 impl Gcd for i32 {
   function gcd(self: i32, other: i32): i32 {
-    let a: i32 = __abs_i32(self);
-    let b: i32 = __abs_i32(other);
+    let a = __abs_i32(self);
+    let b = __abs_i32(other);
     while (b != 0) {
-      let t: i32 = b;
+      let t = b;
       b = a % b;
       a = t;
     }
@@ -852,17 +852,17 @@ impl Gcd for i32 {
     if (self == 0 || other == 0) {
       return 0;
     }
-    let g: i32 = self.gcd(other);
+    let g = self.gcd(other);
     return __abs_i32(self / g) * __abs_i32(other);
   }
 }
 
 impl Gcd for i64 {
   function gcd(self: i64, other: i64): i64 {
-    let a: i64 = __abs_i64(self);
-    let b: i64 = __abs_i64(other);
+    let a = __abs_i64(self);
+    let b = __abs_i64(other);
     while (b != 0 as i64) {
-      let t: i64 = b;
+      let t = b;
       b = a % b;
       a = t;
     }
@@ -873,17 +873,17 @@ impl Gcd for i64 {
     if (self == 0 as i64 || other == 0 as i64) {
       return 0 as i64;
     }
-    let g: i64 = self.gcd(other);
+    let g = self.gcd(other);
     return __abs_i64(self / g) * __abs_i64(other);
   }
 }
 
 impl Gcd for u32 {
   function gcd(self: u32, other: u32): u32 {
-    let a: u32 = self;
-    let b: u32 = other;
+    let a = self;
+    let b = other;
     while (b != 0 as u32) {
-      let t: u32 = b;
+      let t = b;
       b = a % b;
       a = t;
     }
@@ -900,10 +900,10 @@ impl Gcd for u32 {
 
 impl Gcd for u64 {
   function gcd(self: u64, other: u64): u64 {
-    let a: u64 = self;
-    let b: u64 = other;
+    let a = self;
+    let b = other;
     while (b != 0 as u64) {
-      let t: u64 = b;
+      let t = b;
       b = a % b;
       a = t;
     }

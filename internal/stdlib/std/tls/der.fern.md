@@ -189,7 +189,7 @@ function __length(b: [u8], at: i32): Result[Length, DerError] {
   if (at >= b.len()) {
     return Err(Truncated);
   }
-  let first: i32 = b[at] as i32;
+  let first = b[at] as i32;
   if (first < 0x80) {
     return Ok(Length { len: first, from: at + 1 });
   }
@@ -206,11 +206,11 @@ function __long_length(b: [u8], at: i32, n: i32): Result[Length, DerError] {
   if (b[at] == 0 || n == 4 && b[at] >= 0x80) {
     return Err(BadLength);
   }
-  let len: i32 = 0;
-  let i: i32 = 0;
+  let len = 0;
+  let i = 0;
   while (i < n) {
     len = len << 8 | b[at + i] as i32;
-    i = i + 1;
+    i += 1;
   }
   if (len < 0x80) {
     return Err(BadLength);
@@ -227,11 +227,11 @@ pub function read(b: [u8], at: i32): Result[Element, DerError] {
   if (at >= b.len()) {
     return Err(Truncated);
   }
-  let tag: i32 = b[at] as i32;
+  let tag = b[at] as i32;
   if ((tag & 0x1f) == 0x1f) {
     return Err(HighTag);
   }
-  let l: Length = __length(b, at + 1)?;
+  let l = __length(b, at + 1)?;
   if (l.len > b.len() - l.from) {
     return Err(Truncated);
   }
@@ -239,7 +239,7 @@ pub function read(b: [u8], at: i32): Result[Element, DerError] {
 }
 
 pub function expect(b: [u8], at: i32, tag: i32): Result[Element, DerError] {
-  let e: Element = read(b, at)?;
+  let e = read(b, at)?;
   if (e.tag != tag) {
     return Err(UnexpectedTag(tag, e.tag));
   }
@@ -247,7 +247,7 @@ pub function expect(b: [u8], at: i32, tag: i32): Result[Element, DerError] {
 }
 
 pub function only(b: [u8], tag: i32): Result[Element, DerError] {
-  let e: Element = expect(b, 0, tag)?;
+  let e = expect(b, 0, tag)?;
   if (e.next != b.len()) {
     return Err(BadValue("trailing bytes"));
   }
@@ -257,9 +257,9 @@ pub function only(b: [u8], tag: i32): Result[Element, DerError] {
 pub function children(b: [u8], e: Element): Result[Element[], DerError] {
   let inner: [u8] = b[0:e.to];
   let out: Element[] = [];
-  let at: i32 = e.from;
+  let at = e.from;
   while (at < e.to) {
-    let c: Element = read(inner, at)?;
+    let c = read(inner, at)?;
     out = out.append(c);
     at = c.next;
   }
@@ -267,11 +267,11 @@ pub function children(b: [u8], e: Element): Result[Element[], DerError] {
 }
 
 pub function bytes(b: [u8], e: Element): u8[] {
-  let out: u8[] = __alloc_u8(e.to - e.from);
-  let i: i32 = e.from;
+  let out = __alloc_u8(e.to - e.from);
+  let i = e.from;
   while (i < e.to) {
     out = out.with(i - e.from, b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -284,7 +284,7 @@ pub function unsigned(b: [u8], e: Element): Result[u8[], DerError] {
   if (e.tag != INTEGER) {
     return Err(UnexpectedTag(INTEGER, e.tag));
   }
-  let n: i32 = e.to - e.from;
+  let n = e.to - e.from;
   if (n == 0 || b[e.from] >= 0x80) {
     return Err(BadValue("integer"));
   }
@@ -298,15 +298,15 @@ pub function unsigned(b: [u8], e: Element): Result[u8[], DerError] {
 }
 
 pub function small(b: [u8], e: Element): Result[i32, DerError] {
-  let v: u8[] = unsigned(b, e)?;
+  let v = unsigned(b, e)?;
   if (v.len() > 4 || v.len() == 4 && v[0] >= 0x80) {
     return Err(BadValue("integer"));
   }
-  let out: i32 = 0;
-  let i: i32 = 0;
+  let out = 0;
+  let i = 0;
   while (i < v.len()) {
     out = out << 8 | v[i] as i32;
-    i = i + 1;
+    i += 1;
   }
   return Ok(out);
 }
@@ -328,10 +328,10 @@ pub function oid(b: [u8], e: Element): Result[string, DerError] {
   if (e.to == e.from || b[e.to - 1] >= 0x80) {
     return Err(BadValue("object identifier"));
   }
-  let out: string = "";
+  let out = "";
   let arc: i64 = 0;
-  let start: boolean = true;
-  let i: i32 = e.from;
+  let start = true;
+  let i = e.from;
   while (i < e.to) {
     if (start && b[i] == 0x80) {
       return Err(BadValue("object identifier"));
@@ -345,7 +345,7 @@ pub function oid(b: [u8], e: Element): Result[string, DerError] {
       out = __arc(out, arc);
       arc = 0;
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(out);
 }
@@ -384,8 +384,8 @@ pub function bit_string(b: [u8], e: Element): Result[BitString, DerError] {
   if (e.to == e.from) {
     return Err(BadValue("bit string"));
   }
-  let unused: i32 = b[e.from] as i32;
-  let n: i32 = e.to - e.from - 1;
+  let unused = b[e.from] as i32;
+  let n = e.to - e.from - 1;
   if (unused > 7 || n == 0 && unused != 0) {
     return Err(BadValue("bit string"));
   }
@@ -396,19 +396,19 @@ pub function bit_string(b: [u8], e: Element): Result[BitString, DerError] {
 }
 
 pub function time(b: [u8], e: Element): Result[i64, DerError] {
-  let n: i32 = e.to - e.from;
-  let at: i32 = e.from;
-  let year: i32 = 0;
+  let n = e.to - e.from;
+  let at = e.from;
+  let year = 0;
   if (e.tag == UTC_TIME && n == 13) {
     year = __digits(b, at, 2)?;
-    year = year + 1900;
+    year += 1900;
     if (year < 1950) {
-      year = year + 100;
+      year += 100;
     }
-    at = at + 2;
+    at += 2;
   } else if (e.tag == GENERALIZED_TIME && n == 15) {
     year = __digits(b, at, 4)?;
-    at = at + 4;
+    at += 4;
   } else {
     return Err(BadValue("time"));
   }
@@ -424,25 +424,25 @@ pub function time(b: [u8], e: Element): Result[i64, DerError] {
 ```fern
 <<15 function __digits(b: [u8], at: i32, n: i32): Result[i32, DerError]>>=
 function __digits(b: [u8], at: i32, n: i32): Result[i32, DerError] {
-  let v: i32 = 0;
-  let i: i32 = 0;
+  let v = 0;
+  let i = 0;
   while (i < n) {
-    let d: i32 = b[at + i] as i32 - 48;
+    let d = b[at + i] as i32 - 48;
     if (d < 0 || d > 9) {
       return Err(BadValue("time"));
     }
     v = v * 10 + d;
-    i = i + 1;
+    i += 1;
   }
   return Ok(v);
 }
 
 function __seconds(year: i32, b: [u8], at: i32): Result[i64, DerError] {
   let f: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 5) {
     f = f.append(__digits(b, at + 2 * i, 2)?);
-    i = i + 1;
+    i += 1;
   }
   if (!__in_range(year, f[0], f[1], f[2], f[3], f[4])) {
     return Err(BadValue("time"));
@@ -470,15 +470,15 @@ function __month_days(y: i32, m: i32): i32 {
 }
 
 function __days(y: i32, m: i32, d: i32): i64 {
-  let yy: i64 = y as i64;
+  let yy = y as i64;
   if (m <= 2) {
-    yy = yy - 1;
+    yy -= 1;
   }
-  let era: i64 = yy / 400;
-  let yoe: i64 = yy - era * 400;
+  let era = yy / 400;
+  let yoe = yy - era * 400;
   let mp: i64 = (m as i64 + 9) % 12;
-  let doy: i64 = (153 * mp + 2) / 5 + d as i64 - 1;
-  let doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  let doy = (153 * mp + 2) / 5 + d as i64 - 1;
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return era * 146097 + doe - 719468;
 }
 ```
@@ -494,7 +494,7 @@ pub function text(b: [u8], e: Element): Result[string, DerError] {
   if (e.tag != UTF8_STRING && e.tag != PRINTABLE_STRING && e.tag != IA5_STRING && e.tag != TELETEX_STRING) {
     return Err(UnexpectedTag(UTF8_STRING, e.tag));
   }
-  let raw: u8[] = bytes(b, e);
+  let raw = bytes(b, e);
   if (e.tag != UTF8_STRING && !__ascii(raw)) {
     return Err(BadValue("string"));
   }
@@ -528,14 +528,14 @@ function __bmp(b: [u8], e: Element): Result[string, DerError] {
     return Err(BadValue("string"));
   }
   let out: u8[] = [];
-  let i: i32 = e.from;
+  let i = e.from;
   while (i < e.to) {
-    let c: i32 = b[i] as i32 << 8 | b[i + 1] as i32;
+    let c = b[i] as i32 << 8 | b[i + 1] as i32;
     if (c >= 0xd800 && c < 0xe000) {
       return Err(BadValue("string"));
     }
     out = __utf8(out, c);
-    i = i + 2;
+    i += 2;
   }
   return Ok(string_from_bytes_unchecked(out));
 }

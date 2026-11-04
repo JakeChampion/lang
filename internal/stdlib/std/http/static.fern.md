@@ -110,7 +110,7 @@ pub function dir(root: string): Dir {
 }
 
 pub function serve(req: HttpRequest, d: Dir, plat: platform.Platform): HttpResponse {
-  let path: string = http.url_path_only(req.path);
+  let path = http.url_path_only(req.path);
   return __serve(req, d, path.split("/"), path.ends_with("/"), plat);
 }
 
@@ -138,7 +138,7 @@ function __serve(req: HttpRequest, d: Dir, segs: string[], wants_dir: boolean, p
 }
 
 function __clean(segs: string[], dotfiles: boolean): Option[string] {
-  let out: string = "";
+  let out = "";
   for s in segs {
     if (s.len() == 0 || s == ".") {
       continue;
@@ -175,7 +175,7 @@ function __index(req: HttpRequest, d: Dir, path: string, plat: platform.Platform
   if (d.options.index.len() == 0) {
     return http.not_found();
   }
-  let index: string = path + "/" + d.options.index;
+  let index = path + "/" + d.options.index;
   match (plat.stat(index)) {
     Ok(st) => {
       if (st.is_dir) {
@@ -190,9 +190,9 @@ function __index(req: HttpRequest, d: Dir, path: string, plat: platform.Platform
 }
 
 function __add_slash(target: string): HttpResponse {
-  let path: string = http.url_path_only(target);
-  let query: string = target.slice_snap(path.len(), target.len());
-  let base: string = __last_segment(path);
+  let path = http.url_path_only(target);
+  let query = target.slice_snap(path.len(), target.len());
+  let base = __last_segment(path);
   return HttpResponse { ...http.redirect(url.encode(base) + "/" + query), status: 301 };
 }
 
@@ -233,10 +233,10 @@ struct Rep { path: string, st: FileStat, coding: string }
 ```fern
 <<9 function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: platform.Platform): HttpResponse>>=
 function __file(req: HttpRequest, d: Dir, path: string, st: FileStat, plat: platform.Platform): HttpResponse {
-  let rep: Rep = __representation(req, d.options.precompressed, Rep { path: path, st: st, coding: "" }, plat);
-  let now: time.Timestamp = plat.now();
-  let v: cache.Validators = cache.Validators { etag: Some(__etag(rep)), last_modified: Some(time.timestamp_from_unix(rep.st.mtime)) };
-  let full: HttpResponse = __headed(rep, d.options, content_type(path)).with_validators(v, now);
+  let rep = __representation(req, d.options.precompressed, Rep { path: path, st: st, coding: "" }, plat);
+  let now = plat.now();
+  let v = cache.Validators { etag: Some(__etag(rep)), last_modified: Some(time.timestamp_from_unix(rep.st.mtime)) };
+  let full = __headed(rep, d.options, content_type(path)).with_validators(v, now);
   match (cache.evaluate(req, v, now)) {
     Proceed => {
       return __ranged(req, full, rep, Ranging { v: v, now: now, max: d.options.max_ranges }, plat);
@@ -257,7 +257,7 @@ function __representation(req: HttpRequest, codings: string[], plain: Rep, plat:
   let found: Rep[] = [];
   let offers: string[] = [];
   for c in codings {
-    let sibling: string = plain.path + __suffix(c);
+    let sibling = plain.path + __suffix(c);
     match (plat.stat(sibling)) {
       Ok(st) => {
         if (st.is_file && __suffix(c).len() > 0) {
@@ -279,9 +279,9 @@ function __representation(req: HttpRequest, codings: string[], plain: Rep, plat:
 }
 
 function __position(xs: string[], x: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len() && xs[i] != x) {
-    i = i + 1;
+    i += 1;
   }
   return i;
 }
@@ -300,7 +300,7 @@ function __suffix(coding: string): string {
 }
 
 function __etag(rep: Rep): cache.ETag {
-  let tag: string = rep.st.mtime.to_string() + "." + rep.st.mtime_nsec.to_string() + "-" + rep.st.size.to_string();
+  let tag = rep.st.mtime.to_string() + "." + rep.st.mtime_nsec.to_string() + "-" + rep.st.size.to_string();
   if (rep.coding.len() > 0) {
     tag = tag + "-" + rep.coding;
   }
@@ -308,14 +308,14 @@ function __etag(rep: Rep): cache.ETag {
 }
 
 function __headed(rep: Rep, o: Options, ctype: string): HttpResponse {
-  let h: HeaderMap = headers.new().append("Content-Type", ctype).append("Accept-Ranges", "bytes");
+  let h = headers.new().append("Content-Type", ctype).append("Accept-Ranges", "bytes");
   if (rep.coding.len() > 0) {
     h = h.append("Content-Encoding", rep.coding);
   }
   if (o.precompressed.len() > 0) {
     h = h.append("Vary", "Accept-Encoding");
   }
-  let resp: HttpResponse = HttpResponse { status: 200, body: __file_body(rep.path, 0 as i64, rep.st.size), headers: h, trailers: headers.new(), background: None };
+  let resp = HttpResponse { status: 200, body: __file_body(rep.path, 0 as i64, rep.st.size), headers: h, trailers: headers.new(), background: None };
   match (o.cache_control) {
     Some(cc) => {
       return resp.with_cache_control(cc);
@@ -344,11 +344,11 @@ struct Ranging { v: cache.Validators, now: time.Timestamp, max: i32 }
 ```fern
 <<11 function __ranged(req: HttpRequest, full: HttpResponse, rep: Rep, g: Ranging, plat: platform.Platform): Htt...>>=
 function __ranged(req: HttpRequest, full: HttpResponse, rep: Rep, g: Ranging, plat: platform.Platform): HttpResponse {
-  let fields: string[] = req.headers.get_all("range");
+  let fields = req.headers.get_all("range");
   if (req.method != "GET" || fields.len() != 1 || !cache.if_range(req, g.v, g.now)) {
     return full;
   }
-  let size: i64 = rep.st.size;
+  let size = rep.st.size;
   match (byte_range(fields[0], size, g.max)) {
     Part(start, len) => {
       return HttpResponse { ...full, status: 206, body: __file_body(rep.path, start, len) }.with_header("Content-Range", __content_range(start, len, size));
@@ -370,7 +370,7 @@ function __content_range(start: i64, len: i64, size: i64): string {
 }
 
 function __byteranges(full: HttpResponse, rep: Rep, spans: i64[], boundary: string): HttpResponse {
-  let ctype: string = "application/octet-stream";
+  let ctype = "application/octet-stream";
   match (full.headers.get("content-type")) {
     Some(t) => {
       ctype = t;
@@ -378,23 +378,23 @@ function __byteranges(full: HttpResponse, rep: Rep, spans: i64[], boundary: stri
     None => {}
   }
   let seams: u8[][] = [];
-  let lead: string = "";
-  let i: i32 = 0;
+  let lead = "";
+  let i = 0;
   while (i + 1 < spans.len()) {
-    let head: string = lead + "--" + boundary + "\r\nContent-Type: " + ctype + "\r\nContent-Range: " + __content_range(spans[i], spans[i + 1], rep.st.size) + "\r\n\r\n";
+    let head = lead + "--" + boundary + "\r\nContent-Type: " + ctype + "\r\nContent-Range: " + __content_range(spans[i], spans[i + 1], rep.st.size) + "\r\n\r\n";
     seams = seams.append(head.bytes());
     lead = "\r\n";
-    i = i + 2;
+    i += 2;
   }
   seams = seams.append(("\r\n--" + boundary + "--\r\n").bytes());
-  let h: HeaderMap = full.headers.set("Content-Type", "multipart/byteranges; boundary=" + boundary);
+  let h = full.headers.set("Content-Type", "multipart/byteranges; boundary=" + boundary);
   return HttpResponse { ...full, status: 206, body: BodyFileRanges(rep.path, spans, seams), headers: h };
 }
 
 function __boundary(plat: platform.Platform): string {
   let bytes: u8[] = [];
   for k in [0, 1, 2, 3] {
-    let x: i32 = plat.random_i32();
+    let x = plat.random_i32();
     for shift in [0, 8, 16, 24] {
       bytes = bytes.append((x >> shift & 255) as u8);
     }
@@ -421,7 +421,7 @@ pub function byte_range(value: string, size: i64, max: i32): Range {
   if (!value.slice_snap(0, eq).trim().eq_ignore_ascii_case("bytes")) {
     return Whole;
   }
-  let specs: string[] = headers.split_list(value.slice_snap(eq + 1, value.len()));
+  let specs = headers.split_list(value.slice_snap(eq + 1, value.len()));
   if (specs.len() == 0) {
     return Whole;
   }
@@ -452,11 +452,11 @@ function __range_set(found: i64[], size: i64, max: i32): Range {
   if (found.len() == 2) {
     return Part(found[0], found[1]);
   }
-  let total: i64 = 0 as i64;
-  let i: i32 = 1;
+  let total = 0 as i64;
+  let i = 1;
   while (i < found.len()) {
-    total = total + found[i];
-    i = i + 2;
+    total += found[i];
+    i += 2;
   }
   if (found.len() / 2 > max || total > size) {
     return Whole;
@@ -468,12 +468,12 @@ function __range_spec(spec: string, size: i64): Range {
   let Some(dash) = spec.index_of("-") else {
     return Whole;
   };
-  let last_text: string = spec.slice_snap(dash + 1, spec.len());
+  let last_text = spec.slice_snap(dash + 1, spec.len());
   if (dash == 0) {
     return __suffix_range(__digits(last_text), size);
   }
-  let first: i64 = __digits(spec.slice_snap(0, dash));
-  let last: i64 = size - 1 as i64;
+  let first = __digits(spec.slice_snap(0, dash));
+  let last = size - 1 as i64;
   if (last_text.len() > 0) {
     last = __digits(last_text);
   }
@@ -507,7 +507,7 @@ function __digits(s: string): i64 {
     return 0 - 1 as i64;
   }
   let cap: i64 = 4611686018427387904;
-  let n: i64 = 0 as i64;
+  let n = 0 as i64;
   for b in s.bytes() {
     if (b < 48 as u8 || b > 57 as u8) {
       return 0 - 1 as i64;
@@ -525,14 +525,14 @@ function __digits(s: string): i64 {
 ```fern
 <<15 pub function content_type(path: string): string>>=
 pub function content_type(path: string): string {
-  let name: string = __last_segment(path);
+  let name = __last_segment(path);
   let Some(dot) = name.last_index_of(".") else {
     return "application/octet-stream";
   };
-  let ext: string = name.slice_snap(dot + 1, name.len()).to_lower();
+  let ext = name.slice_snap(dot + 1, name.len()).to_lower();
   let exts: string[] = ["html", "htm", "css", "js", "mjs", "json", "map", "txt", "md", "csv", "xml", "svg", "wasm", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "pdf", "woff", "woff2", "ttf", "otf", "mp4", "webm", "mp3", "ogg", "wav", "zip", "webmanifest"];
   let types: string[] = ["text/html; charset=utf-8", "text/html; charset=utf-8", "text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8", "application/json", "application/json", "text/plain; charset=utf-8", "text/markdown; charset=utf-8", "text/csv; charset=utf-8", "application/xml", "image/svg+xml", "application/wasm", "image/png", "image/jpeg", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/vnd.microsoft.icon", "application/pdf", "font/woff", "font/woff2", "font/ttf", "font/otf", "video/mp4", "video/webm", "audio/mpeg", "audio/ogg", "audio/wav", "application/zip", "application/manifest+json"];
-  let i: i32 = __position(exts, ext);
+  let i = __position(exts, ext);
   if (i < exts.len()) {
     return types[i];
   }

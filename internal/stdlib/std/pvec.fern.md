@@ -91,10 +91,10 @@ pub function new[T](): PVec[T] {
 
 pub function from_array[T](xs: T[]): PVec[T] {
   let v: PVec[T] = new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     v = v.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -115,12 +115,12 @@ function __pv_path[T](shift: i32, leaf: VNode[T]): VNode[T] {
   if (shift == 0) {
     return leaf;
   }
-  let inner: VNode[T] = __pv_path(shift - 5, leaf);
+  let inner = __pv_path(shift - 5, leaf);
   return Branch([inner]);
 }
 
 function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T]): VNode[T] {
-  let sub: i32 = len - 1 >> shift & 31;
+  let sub = len - 1 >> shift & 31;
   match (node) {
     Branch(kids) => {
       if (shift == 5) {
@@ -128,12 +128,12 @@ function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T])
       }
       if (sub < kids.len()) {
         let e: VNode[T] = Empty;
-        let child: VNode[T] = kids[sub];
-        let rest: VNode[T][] = kids.with(sub, e);
+        let child = kids[sub];
+        let rest = kids.with(sub, e);
         child = __pv_push_tail(child, shift - 5, len, leaf);
         return Branch(rest.with(sub, child));
       }
-      let path: VNode[T] = __pv_path(shift - 5, leaf);
+      let path = __pv_path(shift - 5, leaf);
       return Branch(kids.append(path));
     },
     Leaf(xs) => {
@@ -147,14 +147,14 @@ function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T])
 }
 
 function __pv_leaf_for[T](root: VNode[T], shift: i32, i: i32): T[] {
-  let cur: VNode[T] = root;
-  let level: i32 = shift;
-  let descending: boolean = true;
+  let cur = root;
+  let level = shift;
+  let descending = true;
   while (descending) {
     match (cur) {
       Branch(kids) => {
         cur = kids[i >> level & 31];
-        level = level - 5;
+        level -= 5;
       },
       Leaf(xs) => {
         return xs;
@@ -171,15 +171,15 @@ function __pv_leaf_for[T](root: VNode[T], shift: i32, i: i32): T[] {
 function __pv_with_in[T](node: VNode[T], shift: i32, i: i32, x: T): VNode[T] {
   match (node) {
     Branch(kids) => {
-      let sub: i32 = i >> shift & 31;
+      let sub = i >> shift & 31;
       let e: VNode[T] = Empty;
-      let child: VNode[T] = kids[sub];
-      let rest: VNode[T][] = kids.with(sub, e);
+      let child = kids[sub];
+      let rest = kids.with(sub, e);
       child = __pv_with_in(child, shift - 5, i, x);
       return Branch(rest.with(sub, child));
     },
     Leaf(xs) => {
-      let nx: T[] = xs.with(i & 31, x);
+      let nx = xs.with(i & 31, x);
       return Leaf(nx);
     },
     Empty => {
@@ -190,11 +190,11 @@ function __pv_with_in[T](node: VNode[T], shift: i32, i: i32, x: T): VNode[T] {
 }
 
 function __pv_pop_tail[T](node: VNode[T], shift: i32, len: i32): VNode[T] {
-  let sub: i32 = len - 2 >> shift & 31;
+  let sub = len - 2 >> shift & 31;
   match (node) {
     Branch(kids) => {
       if (shift > 5) {
-        let child: VNode[T] = __pv_pop_tail(kids[sub], shift - 5, len);
+        let child = __pv_pop_tail(kids[sub], shift - 5, len);
         match (child) {
           Empty => {
             if (sub == 0) {
@@ -227,10 +227,10 @@ function __pv_pop_tail[T](node: VNode[T], shift: i32, len: i32): VNode[T] {
 
 function __pv_drop_last[T](xs: VNode[T][]): VNode[T][] {
   let out: VNode[T][] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < xs.len()) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -280,20 +280,20 @@ function __pv_fold[T, A](node: VNode[T], init: A, f: (A, T) => A): A {
       return init;
     },
     Leaf(xs) => {
-      let a: A = init;
-      let i: i32 = 0;
+      let a = init;
+      let i = 0;
       while (i < xs.len()) {
         a = f(a, xs[i]);
-        i = i + 1;
+        i += 1;
       }
       return a;
     },
     Branch(kids) => {
-      let a: A = init;
-      let i: i32 = 0;
+      let a = init;
+      let i = 0;
       while (i < kids.len()) {
         a = __pv_fold(kids[i], a, f);
-        i = i + 1;
+        i += 1;
       }
       return a;
     }
@@ -306,17 +306,17 @@ function __pv_for_each[T](node: VNode[T], f: (T) => void): void {
       return;
     },
     Leaf(xs) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < xs.len()) {
         f(xs[i]);
-        i = i + 1;
+        i += 1;
       }
     },
     Branch(kids) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < kids.len()) {
         __pv_for_each(kids[i], f);
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -326,19 +326,19 @@ function __pv_valid_branch[T](kids: VNode[T][], shift: i32, count: i32): boolean
   if (shift == 0 || kids.len() == 0 || kids.len() > 32) {
     return false;
   }
-  let per: i32 = 1 << shift;
-  let left: i32 = count;
-  let i: i32 = 0;
+  let per = 1 << shift;
+  let left = count;
+  let i = 0;
   while (i < kids.len()) {
-    let take: i32 = per;
+    let take = per;
     if (left < per) {
       take = left;
     }
     if (take <= 0 || !__pv_valid(kids[i], shift - 5, take)) {
       return false;
     }
-    left = left - take;
-    i = i + 1;
+    left -= take;
+    i += 1;
   }
   return left == 0;
 }
@@ -377,7 +377,7 @@ pub function (v: PVec[T]) get(i: i32): Option[T] {
   if (i >= __pv_tail_off(v.len)) {
     return Some(v.tail[i - __pv_tail_off(v.len)]);
   }
-  let leaf: T[] = __pv_leaf_for(v.root, v.shift, i);
+  let leaf = __pv_leaf_for(v.root, v.shift, i);
   return Some(leaf[i & 31]);
 }
 
@@ -388,7 +388,7 @@ pub function (v: PVec[T]) get_or(i: i32, fallback: T): T {
   if (i >= __pv_tail_off(v.len)) {
     return v.tail[i - __pv_tail_off(v.len)];
   }
-  let leaf: T[] = __pv_leaf_for(v.root, v.shift, i);
+  let leaf = __pv_leaf_for(v.root, v.shift, i);
   return leaf[i & 31];
 }
 
@@ -407,10 +407,10 @@ pub function (v: PVec[T]) append(x: T): PVec[T] {
   if (v.len - __pv_tail_off(v.len) < 32) {
     return PVec { len: v.len + 1, shift: v.shift, root: v.root, tail: v.tail.append(x) };
   }
-  let leaf: VNode[T] = Leaf(v.tail);
+  let leaf = Leaf(v.tail);
   let fresh: T[] = [x];
   let e: VNode[T] = Empty;
-  let root: VNode[T] = v.root;
+  let root = v.root;
   v = PVec { ...v, root: e };
   match (root) {
     Empty => {
@@ -421,7 +421,7 @@ pub function (v: PVec[T]) append(x: T): PVec[T] {
     },
     Branch(kids) => {
       if (v.len >> 5 > 1 << v.shift) {
-        let path: VNode[T] = __pv_path(v.shift, leaf);
+        let path = __pv_path(v.shift, leaf);
         return PVec { len: v.len + 1, shift: v.shift + 5, root: Branch([root, path]), tail: fresh };
       }
       root = __pv_push_tail(root, v.shift, v.len, leaf);
@@ -434,14 +434,14 @@ pub function (v: PVec[T]) with(i: i32, x: T): PVec[T] {
   if (i < 0 || i >= v.len) {
     return v;
   }
-  let off: i32 = __pv_tail_off(v.len);
+  let off = __pv_tail_off(v.len);
   if (i >= off) {
-    let tail: T[] = v.tail;
+    let tail = v.tail;
     v = PVec { ...v, tail: [] };
     return PVec { ...v, tail: tail.with(i - off, x) };
   }
   let e: VNode[T] = Empty;
-  let root: VNode[T] = v.root;
+  let root = v.root;
   v = PVec { ...v, root: e };
   root = __pv_with_in(root, v.shift, i, x);
   return PVec { ...v, root: root };
@@ -496,21 +496,21 @@ function __pv_without_last[T](v: PVec[T]): PVec[T] {
   }
   if (v.len - __pv_tail_off(v.len) > 1) {
     let t: T[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i + 1 < v.tail.len()) {
       t = t.append(v.tail[i]);
-      i = i + 1;
+      i += 1;
     }
     return PVec { len: v.len - 1, shift: v.shift, root: v.root, tail: t };
   }
-  let newTail: T[] = __pv_leaf_for(v.root, v.shift, v.len - 2);
+  let newTail = __pv_leaf_for(v.root, v.shift, v.len - 2);
   match (v.root) {
     Leaf(xs) => {
       let e: VNode[T] = Empty;
       return PVec { len: v.len - 1, shift: 0, root: e, tail: newTail };
     },
     Branch(kids) => {
-      let root: VNode[T] = __pv_pop_tail(v.root, v.shift, v.len);
+      let root = __pv_pop_tail(v.root, v.shift, v.len);
       return __pv_shrink_root(v.len - 1, root, v.shift, newTail);
     },
     Empty => {
@@ -536,72 +536,72 @@ pub function (v: PVec[T]) to_array(): T[] {
 }
 
 pub function (v: PVec[T]) fold[A](init: A, f: (A, T) => A): A {
-  let a: A = __pv_fold(v.root, init, f);
-  let i: i32 = 0;
+  let a = __pv_fold(v.root, init, f);
+  let i = 0;
   while (i < v.tail.len()) {
     a = f(a, v.tail[i]);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
 
 pub function (v: PVec[T]) for_each(f: (T) => void): void {
   __pv_for_each(v.root, f);
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.tail.len()) {
     f(v.tail[i]);
-    i = i + 1;
+    i += 1;
   }
 }
 
 pub function (v: PVec[T]) map[U](f: (T) => U): PVec[U] {
   let out: PVec[U] = new();
-  let xs: T[] = v.to_array();
-  let i: i32 = 0;
+  let xs = v.to_array();
+  let i = 0;
   while (i < xs.len()) {
     out = out.append(f(xs[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (v: PVec[T]) filter(pred: (T) => boolean): PVec[T] {
   let out: PVec[T] = new();
-  let xs: T[] = v.to_array();
-  let i: i32 = 0;
+  let xs = v.to_array();
+  let i = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       out = out.append(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (v: PVec[T]) concat(other: PVec[T]): PVec[T] {
-  let out: PVec[T] = v;
-  let xs: T[] = other.to_array();
-  let i: i32 = 0;
+  let out = v;
+  let xs = other.to_array();
+  let i = 0;
   while (i < xs.len()) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (v: PVec[T]) slice(lo: i32, hi: i32): PVec[T] {
   let out: PVec[T] = new();
-  let i: i32 = lo;
+  let i = lo;
   if (i < 0) {
     i = 0;
   }
-  let end: i32 = hi;
+  let end = hi;
   if (end > v.len) {
     end = v.len;
   }
   while (i < end) {
     out = out.append(v.get_or(i, v.tail[0]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -631,7 +631,7 @@ function __pv_valid_root[T](root: VNode[T], shift: i32, off: i32): boolean {
 ```fern
 <<13 pub function (v: PVec[T]) is_valid(): boolean>>=
 pub function (v: PVec[T]) is_valid(): boolean {
-  let off: i32 = __pv_tail_off(v.len);
+  let off = __pv_tail_off(v.len);
   if (v.tail.len() != v.len - off) {
     return false;
   }
@@ -650,15 +650,15 @@ impl[T: cmp.Eq] cmp.Eq for PVec[T] {
 // Vectors compare element by element, in lexicographic order.
 impl[T: cmp.Ord] cmp.Ord for PVec[T] {
   function cmp(self: PVec[T], other: PVec[T]): i32 {
-    let xs: T[] = self.to_array();
-    let ys: T[] = other.to_array();
-    let i: i32 = 0;
+    let xs = self.to_array();
+    let ys = other.to_array();
+    let i = 0;
     while (i < xs.len() && i < ys.len()) {
-      let c: i32 = xs[i].cmp(ys[i]);
+      let c = xs[i].cmp(ys[i]);
       if (c != 0) {
         return c;
       }
-      i = i + 1;
+      i += 1;
     }
     return xs.len().cmp(ys.len());
   }
@@ -672,15 +672,15 @@ impl[T: cmp.Hash] cmp.Hash for PVec[T] {
 
 impl[T: cmp.Display] cmp.Display for PVec[T] {
   function to_string(self: PVec[T]): string {
-    let out: string = "[";
-    let xs: T[] = self.to_array();
-    let i: i32 = 0;
+    let out = "[";
+    let xs = self.to_array();
+    let i = 0;
     while (i < xs.len()) {
       if (i > 0) {
-        out = out + ", ";
+        out += ", ";
       }
-      out = out + xs[i].to_string();
-      i = i + 1;
+      out += xs[i].to_string();
+      i += 1;
     }
     return out + "]";
   }

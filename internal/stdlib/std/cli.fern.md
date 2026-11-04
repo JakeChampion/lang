@@ -115,40 +115,40 @@ pub function (s: CliSpec) command(sub: CliSpec): CliSpec {
 ```fern
 <<4 function __cli_find_long(s: CliSpec, name: string): Option[CliFlag]>>=
 function __cli_find_long(s: CliSpec, name: string): Option[CliFlag] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.flags.len()) {
     if (s.flags[i].long == name) {
       return Some(s.flags[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 function __cli_find_short_byte(s: CliSpec, b: i32): Option[CliFlag] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.flags.len()) {
     if (s.flags[i].short.len() == 1 && s.flags[i].short[0] as i32 == b) {
       return Some(s.flags[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 function __cli_find_command(s: CliSpec, name: string): Option[CliSpec] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.commands.len()) {
     if (s.commands[i].name == name) {
       return Some(s.commands[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 function __cli_short_name_at(cluster: string, j: i32): string {
-  let b: i32 = cluster[j] as i32;
+  let b = cluster[j] as i32;
   if (b < 128) {
     return string_from_bytes_unchecked([cluster[j]]);
   }
@@ -172,11 +172,11 @@ function __cli_step_err(opts: Map[string, string], i: i32, msg: string): CliStep
 }
 
 function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
-  let a: string = argv[i];
-  let body: str = slice_unchecked(a, 2, a.len());
-  let name: str = body;
-  let inline_val: string = "";
-  let inline: boolean = false;
+  let a = argv[i];
+  let body = slice_unchecked(a, 2, a.len());
+  let name = body;
+  let inline_val = "";
+  let inline = false;
   if let Some(eq) = body.index_of("=") {
     name = slice_unchecked(body, 0, eq);
     inline_val = slice_unchecked(body, eq + 1, body.len()) + "";
@@ -205,17 +205,17 @@ function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i3
 }
 
 function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
-  let a: string = argv[i];
-  let cluster: str = slice_unchecked(a, 1, a.len());
-  let j: i32 = 0;
+  let a = argv[i];
+  let cluster = slice_unchecked(a, 1, a.len());
+  let j = 0;
   while (j < cluster.len()) {
     match (__cli_find_short_byte(s, cluster[j] as i32)) {
       Some(f) => {
         if (!f.takes_value) {
           opts = opts.insert(f.long, "true");
-          j = j + 1;
+          j += 1;
         } else {
-          let glued: str = slice_unchecked(cluster, j + 1, cluster.len());
+          let glued = slice_unchecked(cluster, j + 1, cluster.len());
           if (glued.len() > 0) {
             return CliStep { opts: opts.insert(f.long, glued + ""), next: i + 1, error: "" };
           }
@@ -240,18 +240,18 @@ function __cli_cluster(s: CliSpec, opts: Map[string, string], argv: string[], i:
 <<5 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs>>=
 function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, string]): CliArgs {
   let positionals: string[] = [];
-  let i: i32 = start;
-  let no_more: boolean = false;
+  let i = start;
+  let no_more = false;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (no_more) {
       positionals = positionals.append(a);
-      i = i + 1;
+      i += 1;
     } else if (a == "--") {
       no_more = true;
-      i = i + 1;
+      i += 1;
     } else if (a.starts_with("--") || a.len() >= 2 && a[0] == 45) {
-      let st: CliStep = __cli_long(s, opts, argv, i);
+      let st = __cli_long(s, opts, argv, i);
       if (!a.starts_with("--")) {
         st = __cli_cluster(s, opts, argv, i);
       }
@@ -263,7 +263,7 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
     } else if (s.commands.len() > 0 && positionals.len() == 0) {
       match (__cli_find_command(s, a)) {
         Some(sub) => {
-          let r: CliArgs = __cli_parse(sub, argv, i + 1, opts);
+          let r = __cli_parse(sub, argv, i + 1, opts);
           if (r.error.len() > 0) {
             return r;
           }
@@ -275,7 +275,7 @@ function __cli_parse(s: CliSpec, argv: string[], start: i32, opts: Map[string, s
       }
     } else {
       positionals = positionals.append(a);
-      i = i + 1;
+      i += 1;
     }
   }
   return CliArgs { opts: opts, positionals: positionals, command: "", error: "" };
@@ -342,25 +342,25 @@ pub function (a: CliArgs) subcommand(): Option[string] {
 ```fern
 <<7 function __cli_usage_flags(flags: CliFlag[], indent: string): string>>=
 function __cli_usage_flags(flags: CliFlag[], indent: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < flags.len()) {
-    let f: CliFlag = flags[i];
-    let line: string = indent;
+    let f = flags[i];
+    let line = indent;
     if (f.short.len() > 0) {
       line = line + "-" + f.short + ", ";
     } else {
-      line = line + "    ";
+      line += "    ";
     }
     line = line + "--" + f.long;
     if (f.takes_value) {
-      line = line + " <value>";
+      line += " <value>";
     }
     out = out + line + "\n";
     if (f.help.len() > 0) {
       out = out + indent + "    " + f.help + "\n";
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -371,11 +371,11 @@ function __cli_usage_flags(flags: CliFlag[], indent: string): string {
 ```fern
 <<8 pub function (s: CliSpec) usage(): string>>=
 pub function (s: CliSpec) usage(): string {
-  let shape: string = " [options] [args]\n";
+  let shape = " [options] [args]\n";
   if (s.commands.len() > 0) {
     shape = " [options] <command> [args]\n";
   }
-  let out: string = "Usage: " + s.name + shape;
+  let out = "Usage: " + s.name + shape;
   if (s.about.len() > 0) {
     out = out + "\n" + s.about + "\n";
   }
@@ -383,15 +383,15 @@ pub function (s: CliSpec) usage(): string {
     out = out + "\nOptions:\n" + __cli_usage_flags(s.flags, "  ");
   }
   if (s.commands.len() > 0) {
-    out = out + "\nCommands:\n";
-    let i: i32 = 0;
+    out += "\nCommands:\n";
+    let i = 0;
     while (i < s.commands.len()) {
       out = out + "  " + s.commands[i].name;
       if (s.commands[i].about.len() > 0) {
         out = out + "\n      " + s.commands[i].about;
       }
-      out = out + "\n";
-      i = i + 1;
+      out += "\n";
+      i += 1;
     }
   }
   return out;
@@ -403,7 +403,7 @@ pub function (s: CliSpec) usage(): string {
 ```fern
 <<9 function __cli_roff(s: string): string>>=
 function __cli_roff(s: string): string {
-  let out: string = s.replace("\\", "\\\\");
+  let out = s.replace("\\", "\\\\");
   if (out.len() > 0 && (out[0] as i32 == 46 || out[0] as i32 == 39)) {
     out = "\\&" + out;
   }
@@ -411,24 +411,24 @@ function __cli_roff(s: string): string {
 }
 
 function __cli_man_flags(flags: CliFlag[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < flags.len()) {
-    let f: CliFlag = flags[i];
-    out = out + ".TP\n";
-    let tag: string = "";
+    let f = flags[i];
+    out += ".TP\n";
+    let tag = "";
     if (f.short.len() > 0) {
       tag = "\\fB\\-" + __cli_roff(f.short) + "\\fR, ";
     }
     tag = tag + "\\fB\\-\\-" + __cli_roff(f.long) + "\\fR";
     if (f.takes_value) {
-      tag = tag + " \\fI<value>\\fR";
+      tag += " \\fI<value>\\fR";
     }
     out = out + tag + "\n";
     if (f.help.len() > 0) {
       out = out + __cli_roff(f.help) + "\n";
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -439,13 +439,13 @@ function __cli_man_flags(flags: CliFlag[]): string {
 ```fern
 <<10 pub function (s: CliSpec) manpage(section: string): string>>=
 pub function (s: CliSpec) manpage(section: string): string {
-  let out: string = ".TH \"" + __cli_roff(s.name) + "\" \"" + __cli_roff(section) + "\"\n";
+  let out = ".TH \"" + __cli_roff(s.name) + "\" \"" + __cli_roff(section) + "\"\n";
   out = out + ".SH NAME\n" + __cli_roff(s.name);
   if (s.about.len() > 0) {
     out = out + " \\- " + __cli_roff(s.about);
   }
-  out = out + "\n";
-  let shape: string = " [options] [args]";
+  out += "\n";
+  let shape = " [options] [args]";
   if (s.commands.len() > 0) {
     shape = " [options] <command> [args]";
   }
@@ -457,15 +457,15 @@ pub function (s: CliSpec) manpage(section: string): string {
     out = out + ".SH OPTIONS\n" + __cli_man_flags(s.flags);
   }
   if (s.commands.len() > 0) {
-    out = out + ".SH COMMANDS\n";
-    let i: i32 = 0;
+    out += ".SH COMMANDS\n";
+    let i = 0;
     while (i < s.commands.len()) {
-      let c: CliSpec = s.commands[i];
+      let c = s.commands[i];
       out = out + ".TP\n\\fB" + __cli_roff(c.name) + "\\fR\n";
       if (c.about.len() > 0) {
         out = out + __cli_roff(c.about) + "\n";
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
@@ -489,19 +489,19 @@ function __cli_zsh_desc(s: string): string {
 }
 
 function __cli_words(s: CliSpec): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.flags.len()) {
     out = out + " --" + s.flags[i].long;
     if (s.flags[i].short.len() > 0) {
       out = out + " -" + s.flags[i].short;
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < s.commands.len()) {
     out = out + " " + s.commands[i].name;
-    i = i + 1;
+    i += 1;
   }
   if (out.len() == 0) {
     return "";
@@ -510,90 +510,90 @@ function __cli_words(s: CliSpec): string {
 }
 
 function __cli_completion_bash(s: CliSpec): string {
-  let fn: string = "_" + __cli_ident(s.name);
-  let out: string = fn + "() {\n";
+  let fn = "_" + __cli_ident(s.name);
+  let out = fn + "() {\n";
   out = out + "    local cur=\"${COMP_WORDS[COMP_CWORD]}\" words=" + __cli_sq(__cli_words(s)) + "\n";
   if (s.commands.len() > 0) {
-    out = out + "    local i\n";
-    out = out + "    for ((i = 1; i < COMP_CWORD; i++)); do\n";
-    out = out + "        case \"${COMP_WORDS[i]}\" in\n";
-    let i: i32 = 0;
+    out += "    local i\n";
+    out += "    for ((i = 1; i < COMP_CWORD; i++)); do\n";
+    out += "        case \"${COMP_WORDS[i]}\" in\n";
+    let i = 0;
     while (i < s.commands.len()) {
-      let c: CliSpec = s.commands[i];
+      let c = s.commands[i];
       out = out + "            " + c.name + ") words=" + __cli_sq(__cli_words(c)) + " ;;\n";
-      i = i + 1;
+      i += 1;
     }
-    out = out + "        esac\n";
-    out = out + "    done\n";
+    out += "        esac\n";
+    out += "    done\n";
   }
-  out = out + "    COMPREPLY=($(compgen -W \"$words\" -- \"$cur\"))\n";
-  out = out + "}\n";
+  out += "    COMPREPLY=($(compgen -W \"$words\" -- \"$cur\"))\n";
+  out += "}\n";
   out = out + "complete -o default -F " + fn + " " + s.name + "\n";
   return out;
 }
 
 function __cli_zsh_opts(s: CliSpec, indent: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.flags.len()) {
-    let f: CliFlag = s.flags[i];
-    let tail: string = "[" + __cli_zsh_desc(f.help) + "]";
+    let f = s.flags[i];
+    let tail = "[" + __cli_zsh_desc(f.help) + "]";
     if (f.takes_value) {
-      tail = tail + ":value:_files";
+      tail += ":value:_files";
     }
     if (f.short.len() > 0) {
       out = out + indent + "'(-" + f.short + " --" + f.long + ")'{-" + f.short + ",--" + f.long + "}'" + tail + "'\n";
     } else {
       out = out + indent + "'--" + f.long + tail + "'\n";
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __cli_completion_zsh(s: CliSpec): string {
-  let fn: string = "_" + __cli_ident(s.name);
-  let out: string = "#compdef " + s.name + "\n";
+  let fn = "_" + __cli_ident(s.name);
+  let out = "#compdef " + s.name + "\n";
   out = out + fn + "() {\n";
-  out = out + "    local -a opts cmds\n";
+  out += "    local -a opts cmds\n";
   out = out + "    opts=(\n" + __cli_zsh_opts(s, "        ") + "    )\n";
   if (s.commands.len() == 0) {
-    out = out + "    _arguments -s \"${opts[@]}\" '*::arg:_files'\n";
+    out += "    _arguments -s \"${opts[@]}\" '*::arg:_files'\n";
   } else {
-    out = out + "    local context state line\n";
-    out = out + "    _arguments -s -C \"${opts[@]}\" '1:command:->cmd' '*::arg:->args'\n";
-    out = out + "    case \"$state\" in\n";
-    out = out + "        cmd)\n            cmds=(\n";
-    let i: i32 = 0;
+    out += "    local context state line\n";
+    out += "    _arguments -s -C \"${opts[@]}\" '1:command:->cmd' '*::arg:->args'\n";
+    out += "    case \"$state\" in\n";
+    out += "        cmd)\n            cmds=(\n";
+    let i = 0;
     while (i < s.commands.len()) {
-      let c: CliSpec = s.commands[i];
+      let c = s.commands[i];
       out = out + "                '" + c.name + ":" + __cli_zsh_desc(c.about) + "'\n";
-      i = i + 1;
+      i += 1;
     }
-    out = out + "            )\n            _describe 'command' cmds ;;\n";
-    out = out + "        args)\n            case \"$line[1]\" in\n";
+    out += "            )\n            _describe 'command' cmds ;;\n";
+    out += "        args)\n            case \"$line[1]\" in\n";
     i = 0;
     while (i < s.commands.len()) {
-      let c: CliSpec = s.commands[i];
+      let c = s.commands[i];
       out = out + "                " + c.name + ")\n";
       out = out + "                    opts=(\n" + __cli_zsh_opts(c, "                        ") + "                    )\n";
-      out = out + "                    _arguments -s \"${opts[@]}\" '*::arg:_files' ;;\n";
-      i = i + 1;
+      out += "                    _arguments -s \"${opts[@]}\" '*::arg:_files' ;;\n";
+      i += 1;
     }
-    out = out + "            esac ;;\n";
-    out = out + "    esac\n";
+    out += "            esac ;;\n";
+    out += "    esac\n";
   }
-  out = out + "}\n";
+  out += "}\n";
   out = out + fn + " \"$@\"\n";
   return out;
 }
 
 function __cli_fish_flags(prog: string, s: CliSpec, cond: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.flags.len()) {
-    let f: CliFlag = s.flags[i];
-    let line: string = "complete -c " + prog + cond + " -l " + f.long;
+    let f = s.flags[i];
+    let line = "complete -c " + prog + cond + " -l " + f.long;
     if (f.short.len() > 0) {
       line = line + " -s " + f.short;
     }
@@ -601,10 +601,10 @@ function __cli_fish_flags(prog: string, s: CliSpec, cond: string): string {
       line = line + " -d " + __cli_sq(f.help);
     }
     if (f.takes_value) {
-      line = line + " -r";
+      line += " -r";
     }
     out = out + line + "\n";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -618,17 +618,17 @@ function __cli_completion_fish(s: CliSpec): string {
   if (s.commands.len() == 0) {
     return __cli_fish_flags(s.name, s, "");
   }
-  let out: string = __cli_fish_flags(s.name, s, " -n __fish_use_subcommand");
-  let i: i32 = 0;
+  let out = __cli_fish_flags(s.name, s, " -n __fish_use_subcommand");
+  let i = 0;
   while (i < s.commands.len()) {
-    let c: CliSpec = s.commands[i];
-    let line: string = "complete -c " + s.name + " -n __fish_use_subcommand -a " + c.name;
+    let c = s.commands[i];
+    let line = "complete -c " + s.name + " -n __fish_use_subcommand -a " + c.name;
     if (c.about.len() > 0) {
       line = line + " -d " + __cli_sq(c.about);
     }
     out = out + line + "\n";
-    out = out + __cli_fish_flags(s.name, c, " -n " + __cli_sq("__fish_seen_subcommand_from " + c.name));
-    i = i + 1;
+    out += __cli_fish_flags(s.name, c, " -n " + __cli_sq("__fish_seen_subcommand_from " + c.name));
+    i += 1;
   }
   return out;
 }
@@ -734,7 +734,7 @@ function __cli_kdl(s: string): string {
 }
 
 function __cli_kdl_flag(f: CliFlag): string {
-  let names: string = "";
+  let names = "";
   if (f.short.len() > 0) {
     names = "-" + f.short + " ";
   }
@@ -742,7 +742,7 @@ function __cli_kdl_flag(f: CliFlag): string {
   if (f.takes_value) {
     names = names + " <" + f.long + ">";
   }
-  let out: string = "flag " + __cli_kdl(names);
+  let out = "flag " + __cli_kdl(names);
   if (f.help.len() > 0) {
     out = out + " help=" + __cli_kdl(f.help);
   }
@@ -750,24 +750,24 @@ function __cli_kdl_flag(f: CliFlag): string {
 }
 
 function __cli_kdl_body(s: CliSpec, indent: string): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < s.flags.len()) {
     out = out + indent + __cli_kdl_flag(s.flags[i]) + "\n";
-    i = i + 1;
+    i += 1;
   }
   if (s.commands.len() == 0) {
     return out + indent + "arg \"[args]...\" var=#true\n";
   }
   i = 0;
   while (i < s.commands.len()) {
-    let c: CliSpec = s.commands[i];
+    let c = s.commands[i];
     out = out + indent + "cmd " + __cli_kdl(c.name);
     if (c.about.len() > 0) {
       out = out + " help=" + __cli_kdl(c.about);
     }
     out = out + " {\n" + __cli_kdl_body(c, indent + "  ") + indent + "}\n";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -778,7 +778,7 @@ function __cli_kdl_body(s: CliSpec, indent: string): string {
 ```fern
 <<17 pub function (s: CliSpec) usage_spec(): string>>=
 pub function (s: CliSpec) usage_spec(): string {
-  let out: string = "bin " + __cli_kdl(s.name) + "\n";
+  let out = "bin " + __cli_kdl(s.name) + "\n";
   if (s.about.len() > 0) {
     out = out + "about " + __cli_kdl(s.about) + "\n";
   }

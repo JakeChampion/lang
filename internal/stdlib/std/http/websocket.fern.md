@@ -236,14 +236,14 @@ function __accept(req: HttpRequest, opts: Options, h: Handlers, push: Option[(Co
   if (!__version_13(req)) {
     return Err(WrongVersion);
   }
-  let key: string = req.headers.get("sec-websocket-key").unwrap_or("").trim();
+  let key = req.headers.get("sec-websocket-key").unwrap_or("").trim();
   if (!__key_ok(key)) {
     return Err(KeyMissing);
   }
-  let protocol: string = __protocol(req, opts);
+  let protocol = __protocol(req, opts);
   let deflated: (i32, string) = __negotiated(req, opts);
-  let conn: Conn = __conn(req, protocol, deflated.0, opts);
-  let body: ByteStream = req.body;
+  let conn = __conn(req, protocol, deflated.0, opts);
+  let body = req.body;
   let resp: HttpResponse = http.chunks(101, (i: i32): Option[u8[]] => __run(i, conn, body, h));
   resp = resp.with_header("Upgrade", "websocket").with_header("Sec-WebSocket-Accept", accept_key(key));
   if (protocol.len() > 0) {
@@ -269,7 +269,7 @@ function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
   }
   for v in req.headers.get_all("sec-websocket-extensions") {
     for offer in v.split(",") {
-      let bits: i32 = __deflate_offer(offer);
+      let bits = __deflate_offer(offer);
       if (bits > 0) {
         return (bits, "permessage-deflate; server_no_context_takeover; server_max_window_bits=" + bits.to_string());
       }
@@ -279,16 +279,16 @@ function __negotiated(req: HttpRequest, opts: Options): (i32, string) {
 }
 
 function __deflate_offer(offer: string): i32 {
-  let parts: string[] = offer.split(";");
+  let parts = offer.split(";");
   if (parts.len() == 0 || parts[0].trim() != "permessage-deflate") {
     return 0;
   }
-  let bits: i32 = 15;
+  let bits = 15;
   let seen: string[] = [];
-  let i: i32 = 1;
+  let i = 1;
   while (i < parts.len()) {
-    let kv: string[] = parts[i].trim().split("=");
-    let name: string = kv[0].trim();
+    let kv = parts[i].trim().split("=");
+    let name = kv[0].trim();
     if (name.len() == 0 || __seen(seen, name)) {
       return 0;
     }
@@ -297,7 +297,7 @@ function __deflate_offer(offer: string): i32 {
     if (bits == 0) {
       return 0;
     }
-    i = i + 1;
+    i += 1;
   }
   return bits;
 }
@@ -330,7 +330,7 @@ function __deflate_param(name: string, kv: string[], bits: i32): i32 {
   if (kv.len() > 2) {
     return 0;
   }
-  let has_value: boolean = kv.len() == 2;
+  let has_value = kv.len() == 2;
   if (name == "server_no_context_takeover" || name == "client_no_context_takeover") {
     if (has_value) {
       return 0;
@@ -359,16 +359,16 @@ pub function accept_key(key: string): string {
 }
 
 pub function frame(fin: boolean, opcode: i32, payload: u8[], mask: u8[]): u8[] {
-  let b0: i32 = opcode;
+  let b0 = opcode;
   if (fin) {
     b0 = b0 | 128;
   }
   let out: u8[] = [b0 as u8];
-  let masked: i32 = 0;
+  let masked = 0;
   if (mask.len() == 4) {
     masked = 128;
   }
-  let n: i32 = payload.len();
+  let n = payload.len();
   if (n < 126) {
     out = out.append((masked | n) as u8);
   } else if (n < 65536) {
@@ -397,17 +397,17 @@ function __frame_out(c: Conn, opcode: i32, payload: u8[]): u8[] {
   if (c.window == 0 || opcode > 2 || payload.len() == 0) {
     return __frame(opcode, payload);
   }
-  let packed: u8[] = deflate.deflate_flushed(payload, c.window);
-  let f: u8[] = __frame(opcode, array.take(packed, packed.len() - 4));
+  let packed = deflate.deflate_flushed(payload, c.window);
+  let f = __frame(opcode, array.take(packed, packed.len() - 4));
   return f.with(0, (f[0] as i32 | 64) as u8);
 }
 
 function __masked(payload: u8[], mask: u8[]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < payload.len()) {
     out = out.append((payload[i] as i32 ^ mask[i & 3] as i32) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -451,7 +451,7 @@ function __key_ok(key: string): boolean {
 function __protocol(req: HttpRequest, opts: Options): string {
   for v in req.headers.get_all("sec-websocket-protocol") {
     for tok in v.split(",") {
-      let want: string = tok.trim();
+      let want = tok.trim();
       for have in opts.protocols {
         if (want == have) {
           return have;
@@ -464,7 +464,7 @@ function __protocol(req: HttpRequest, opts: Options): string {
 
 function __conn(req: HttpRequest, protocol: string, window: i32, opts: Options): Conn {
   let none: u8[] = [];
-  let write: (u8[]) => i32 = (b: u8[]): i32 => 0 - 95;
+  let write: (u8[]) => i32 = (b: u8[]): i32 => -95;
   match (req.body.source) {
     Some(src) => {
       write = src.send;
@@ -478,8 +478,8 @@ function __send(c: Conn, opcode: i32, payload: u8[]): SendResult {
   if (c.state.get() != 0) {
     return Dropped;
   }
-  let out: u8[] = c.out.get();
-  let f: u8[] = __frame_out(c, opcode, payload);
+  let out = c.out.get();
+  let f = __frame_out(c, opcode, payload);
   if (out.len() + f.len() > c.opts.max_backpressure) {
     return Dropped;
   }
@@ -499,7 +499,7 @@ pub function (c: Conn) flush(): SendResult {
   }
   c.writing.set(true);
   while (c.out.get().len() > 0) {
-    let bytes: u8[] = c.out.get();
+    let bytes = c.out.get();
     c.out.set([] as u8[]);
     let send: (u8[]) => i32 = c.write;
     if (send(bytes) < 0) {
@@ -554,9 +554,9 @@ function __run(i: i32, c: Conn, body: ByteStream, h: Handlers): Option[u8[]] {
   let open: (Conn) => void = h.open;
   open(c);
   let none: u8[] = [];
-  let r: __Reading = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, history: none, peer_closed: false, code: 1006, reason: "" };
-  let s: ByteStream = body;
-  let going: boolean = __flush(c, h);
+  let r = __Reading { opcode: 0, parts: buf_new(1024), compressed: false, need: 0, lo: 128, hi: 191, history: none, peer_closed: false, code: 1006, reason: "" };
+  let s = body;
+  let going = __flush(c, h);
   while (going) {
     let step: (__Reading, ByteStream, boolean) = __step(c, h, r, s);
     r = step.0;
@@ -595,7 +595,7 @@ function __step(c: Conn, h: Handlers, r: __Reading, s: ByteStream): (__Reading, 
   match (read.0) {
     FrameRead(f) => {
       let acted: (__Reading, boolean) = __on_frame(c, h, r, f);
-      let flushed: boolean = __flush(c, h);
+      let flushed = __flush(c, h);
       return (acted.0, s, acted.1 && flushed);
     },
     BytesEnded => {
@@ -603,7 +603,7 @@ function __step(c: Conn, h: Handlers, r: __Reading, s: ByteStream): (__Reading, 
     },
     Violation(code) => {
       c.close(code, "");
-      let flushed: boolean = __flush(c, h);
+      let flushed = __flush(c, h);
       return (r, s, false);
     }
   }
@@ -612,7 +612,7 @@ function __step(c: Conn, h: Handlers, r: __Reading, s: ByteStream): (__Reading, 
 
 function __on_frame(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean) {
   if (f.opcode == 9) {
-    let pong: u8[] = __frame(10, f.payload);
+    let pong = __frame(10, f.payload);
     c.out.set(c.out.get().concat(pong));
     return (r, true);
   }
@@ -631,9 +631,9 @@ function __on_close(c: Conn, r: __Reading, payload: u8[]): (__Reading, boolean) 
     c.close(parsed.2, "");
     return (r, false);
   }
-  let closed: __Reading = __Reading { ...r, peer_closed: true, code: parsed.0, reason: parsed.1 };
+  let closed = __Reading { ...r, peer_closed: true, code: parsed.0, reason: parsed.1 };
   if (c.state.get() == 0) {
-    let echo: i32 = parsed.0;
+    let echo = parsed.0;
     if (echo == 1005) {
       echo = 1000;
     }
@@ -649,7 +649,7 @@ function __parse_close(payload: u8[]): (i32, string, i32) {
   if (payload.len() == 1) {
     return (0, "", 1002);
   }
-  let code: i32 = payload[0] as i32 * 256 + payload[1] as i32;
+  let code = payload[0] as i32 * 256 + payload[1] as i32;
   if (!__close_code_ok(code)) {
     return (0, "", 1002);
   }
@@ -679,7 +679,7 @@ function __close_payload(code: i32, reason: string): u8[] {
   if (code == 1005) {
     return none;
   }
-  let cut: i32 = utf8.floor_char_boundary(reason, 123);
+  let cut = utf8.floor_char_boundary(reason, 123);
   return [(code >> 8) as u8, (code & 255) as u8].concat(array.take(reason.bytes(), cut));
 }
 ```
@@ -689,7 +689,7 @@ function __close_payload(code: i32, reason: string): u8[] {
 ```fern
 <<18 function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean)>>=
 function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, boolean) {
-  let opcode: i32 = __message_opcode(r, f);
+  let opcode = __message_opcode(r, f);
   if (opcode < 0) {
     return __violated(c, r, 1002);
   }
@@ -697,7 +697,7 @@ function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, 
     return __violated(c, r, 1009);
   }
   buf_push_bytes_range(r.parts, f.payload, 0, f.payload.len());
-  let next: __Reading = __Reading { ...r, opcode: opcode, compressed: r.compressed || f.rsv1 };
+  let next = __Reading { ...r, opcode: opcode, compressed: r.compressed || f.rsv1 };
   if (opcode == 1 && !next.compressed) {
     let checked: (__Reading, boolean) = __text_checked(next, f);
     next = checked.0;
@@ -712,8 +712,8 @@ function __on_data(c: Conn, h: Handlers, r: __Reading, f: __Frame): (__Reading, 
 }
 
 function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Reading, boolean) {
-  let data: u8[] = buf_take_bytes(r.parts);
-  let history: u8[] = r.history;
+  let data = buf_take_bytes(r.parts);
+  let history = r.history;
   if (r.compressed) {
     match (__inflated(c, history, data)) {
       Ok(out) => {
@@ -735,7 +735,7 @@ function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Rea
 }
 
 function __inflated(c: Conn, history: u8[], parts: u8[]): Result[u8[], i32] {
-  let closed: u8[] = parts.concat([0 as u8, 0 as u8, 255 as u8, 255 as u8, 1 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8]);
+  let closed = parts.concat([0 as u8, 0 as u8, 255 as u8, 255 as u8, 1 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8]);
   match (deflate.inflate_after(history, closed, c.opts.max_message)) {
     Ok(got) => {
       return Ok(got.out);
@@ -757,12 +757,12 @@ function __inflated(c: Conn, history: u8[], parts: u8[]): Result[u8[], i32] {
 function __message_opcode(r: __Reading, f: __Frame): i32 {
   if (f.opcode == 0) {
     if (r.opcode == 0) {
-      return 0 - 1;
+      return -1;
     }
     return r.opcode;
   }
   if (r.opcode != 0) {
-    return 0 - 1;
+    return -1;
   }
   return f.opcode;
 }
@@ -793,16 +793,16 @@ function __violated(c: Conn, r: __Reading, code: i32): (__Reading, boolean) {
 }
 
 function __utf8_feed(r: __Reading, bytes: u8[]): (__Reading, boolean) {
-  let need: i32 = r.need;
-  let lo: i32 = r.lo;
-  let hi: i32 = r.hi;
+  let need = r.need;
+  let lo = r.lo;
+  let hi = r.hi;
   for b in bytes {
-    let v: i32 = b as i32;
+    let v = b as i32;
     if (need > 0) {
       if (v < lo || v > hi) {
         return (r, false);
       }
-      need = need - 1;
+      need -= 1;
       lo = 128;
       hi = 191;
     } else {
@@ -836,7 +836,7 @@ function __utf8_lead(v: i32): (i32, i32, i32) {
   if (v >= 240 && v <= 244) {
     return (3, __utf8_lo(v, 240, 144), __utf8_hi(v, 244, 143));
   }
-  return (0 - 1, 0, 0);
+  return (-1, 0, 0);
 }
 
 function __utf8_lo(v: i32, lead: i32, raised: i32): i32 {
@@ -859,9 +859,9 @@ function __read_frame(s: ByteStream, max: i32, compressing: boolean): (__Read, B
   if (head.0.len() < 2) {
     return (BytesEnded, s);
   }
-  let b0: i32 = head.0[0] as i32;
-  let b1: i32 = head.0[1] as i32;
-  let opcode: i32 = b0 & 15;
+  let b0 = head.0[0] as i32;
+  let b1 = head.0[1] as i32;
+  let opcode = b0 & 15;
   let fin: boolean = (b0 & 128) != 0;
   if (!__head_ok(b0, b1, compressing)) {
     return (Violation(1002), s);
@@ -886,7 +886,7 @@ function __read_frame(s: ByteStream, max: i32, compressing: boolean): (__Read, B
 }
 
 function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {
-  let opcode: i32 = b0 & 15;
+  let opcode = b0 & 15;
   if ((b0 & 48) != 0 || (b1 & 128) == 0) {
     return false;
   }
@@ -900,22 +900,22 @@ function __read_length(s: ByteStream, len7: i32, max: i32): (i32, ByteStream, i3
   if (len7 < 126) {
     return (len7, s, 0);
   }
-  let width: i32 = 2;
+  let width = 2;
   if (len7 == 127) {
     width = 8;
   }
   let ext: (u8[], ByteStream) = s.read_n(width);
   if (ext.0.len() < width) {
-    return (0 - 1, ext.1, 0);
+    return (-1, ext.1, 0);
   }
   if (width == 8 && (ext.0[0] as i32 & 128) != 0) {
     return (0, ext.1, 1002);
   }
-  let n: i64 = 0 as i64;
+  let n = 0 as i64;
   for b in ext.0 {
     n = n * 256 + b as i64;
   }
-  let floor: i64 = 126 as i64;
+  let floor = 126 as i64;
   if (width == 8) {
     floor = 65536 as i64;
   }

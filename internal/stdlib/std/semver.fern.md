@@ -80,7 +80,7 @@ pub function (e: ParseError) message(): string {
 }
 
 pub function (e: ParseError) to_string(): string {
-  let reason: string = "expected major.minor.patch";
+  let reason = "expected major.minor.patch";
   match (e.kind) {
     ParseErrorKind.ExpectedCore => {},
     ParseErrorKind.ExpectedNumber => {
@@ -133,12 +133,12 @@ function __sv_all_digits(s: string): boolean {
   if (s.len() == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] < 48 || s[i] > 57) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -166,19 +166,19 @@ function __sv_num(s: string, offset: i32): Result[i32, ParseError] {
 }
 
 function __sv_identifiers(s: string, offset: i32, prerelease: boolean): Result[boolean, ParseError] {
-  let start: i32 = 0;
+  let start = 0;
   for i in 0..s.len() + 1 {
     if (i == s.len() || s[i] == 46) {
       if (i == start) {
         return Err(__sv_error(offset + i, ParseErrorKind.EmptyIdentifier));
       }
-      let identifier: string = __sv_slice(s, start, i);
+      let identifier = __sv_slice(s, start, i);
       if (prerelease && identifier.len() > 1 && identifier[0] == 48 && __sv_all_digits(identifier)) {
         return Err(__sv_error(offset + start, ParseErrorKind.LeadingZero));
       }
       start = i + 1;
     } else {
-      let byte: u8 = s[i];
+      let byte = s[i];
       if (!(byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122 || byte == 45)) {
         return Err(__sv_error(offset + i, ParseErrorKind.InvalidByte(byte)));
       }
@@ -189,31 +189,31 @@ function __sv_identifiers(s: string, offset: i32, prerelease: boolean): Result[b
 
 function __sv_slice(s: string, start: i32, end: i32): string {
   let b: u8[] = [];
-  let i: i32 = start;
+  let i = start;
   while (i < end) {
     b = b.append(s[i] as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(b);
 }
 
 function __sv_str_cmp(a: string, b: string): i32 {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (a[i] < b[i]) {
-      return 0 - 1;
+      return -1;
     }
     if (a[i] > b[i]) {
       return 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (a.len() < b.len()) {
-    return 0 - 1;
+    return -1;
   }
   if (a.len() > b.len()) {
     return 1;
@@ -222,19 +222,19 @@ function __sv_str_cmp(a: string, b: string): i32 {
 }
 
 function __sv_significant_digits(s: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && s[i] == 48) {
-    i = i + 1;
+    i += 1;
   }
   return __sv_slice(s, i, s.len());
 }
 
 function __sv_cmp_numeric(x: string, y: string): i32 {
-  let xs: string = __sv_significant_digits(x);
-  let ys: string = __sv_significant_digits(y);
+  let xs = __sv_significant_digits(x);
+  let ys = __sv_significant_digits(y);
   if (xs.len() != ys.len()) {
     if (xs.len() < ys.len()) {
-      return 0 - 1;
+      return -1;
     }
     return 1;
   }
@@ -242,13 +242,13 @@ function __sv_cmp_numeric(x: string, y: string): i32 {
 }
 
 function __sv_cmp_ident(x: string, y: string): i32 {
-  let xn: boolean = __sv_all_digits(x);
-  let yn: boolean = __sv_all_digits(y);
+  let xn = __sv_all_digits(x);
+  let yn = __sv_all_digits(y);
   if (xn && yn) {
     return __sv_cmp_numeric(x, y);
   }
   if (xn && !yn) {
-    return 0 - 1;
+    return -1;
   }
   if (!xn && yn) {
     return 1;
@@ -264,27 +264,27 @@ function __sv_cmp_ident(x: string, y: string): i32 {
 // parse checks the complete SemVer syntax. Error offsets count bytes.
 // Numeric core components must fit i32. Numeric prerelease identifiers have no size limit.
 pub function parse(s: string): Result[SemVer, ParseError] {
-  let core_pre: string = s;
-  let build: string = "";
+  let core_pre = s;
+  let build = "";
   if let Some(plus) = s.index_of("+") {
     core_pre = __sv_slice(s, 0, plus);
     build = __sv_slice(s, plus + 1, s.len());
-    let valid: boolean = __sv_identifiers(build, plus + 1, false)?;
+    let valid = __sv_identifiers(build, plus + 1, false)?;
   }
-  let core: string = core_pre;
-  let pre: string = "";
+  let core = core_pre;
+  let pre = "";
   if let Some(dash) = core_pre.index_of("-") {
     core = __sv_slice(core_pre, 0, dash);
     pre = __sv_slice(core_pre, dash + 1, core_pre.len());
-    let valid: boolean = __sv_identifiers(pre, dash + 1, true)?;
+    let valid = __sv_identifiers(pre, dash + 1, true)?;
   }
-  let parts: string[] = core.split(".");
+  let parts = core.split(".");
   if (parts.len() != 3) {
     return Err(__sv_error(core.len(), ParseErrorKind.ExpectedCore));
   }
-  let major: i32 = __sv_num(parts[0], 0)?;
-  let minor: i32 = __sv_num(parts[1], parts[0].len() + 1)?;
-  let patch: i32 = __sv_num(parts[2], parts[0].len() + parts[1].len() + 2)?;
+  let major = __sv_num(parts[0], 0)?;
+  let minor = __sv_num(parts[1], parts[0].len() + 1)?;
+  let patch = __sv_num(parts[2], parts[0].len() + parts[1].len() + 2)?;
   return Ok(SemVer { major: major, minor: minor, patch: patch, prerelease: pre, build: build });
 }
 
@@ -292,24 +292,24 @@ impl cmp.Ord for SemVer {
   function cmp(self: SemVer, other: SemVer): i32 {
     if (self.major != other.major) {
       if (self.major < other.major) {
-        return 0 - 1;
+        return -1;
       }
       return 1;
     }
     if (self.minor != other.minor) {
       if (self.minor < other.minor) {
-        return 0 - 1;
+        return -1;
       }
       return 1;
     }
     if (self.patch != other.patch) {
       if (self.patch < other.patch) {
-        return 0 - 1;
+        return -1;
       }
       return 1;
     }
-    let ap: boolean = self.prerelease.len() > 0;
-    let bp: boolean = other.prerelease.len() > 0;
+    let ap = self.prerelease.len() > 0;
+    let bp = other.prerelease.len() > 0;
     if (!ap && !bp) {
       return 0;
     }
@@ -317,24 +317,24 @@ impl cmp.Ord for SemVer {
       return 1;
     }
     if (ap && !bp) {
-      return 0 - 1;
+      return -1;
     }
-    let ai: string[] = self.prerelease.split(".");
-    let bi: string[] = other.prerelease.split(".");
-    let n: i32 = ai.len();
+    let ai = self.prerelease.split(".");
+    let bi = other.prerelease.split(".");
+    let n = ai.len();
     if (bi.len() < n) {
       n = bi.len();
     }
-    let i: i32 = 0;
+    let i = 0;
     while (i < n) {
-      let c: i32 = __sv_cmp_ident(ai[i], bi[i]);
+      let c = __sv_cmp_ident(ai[i], bi[i]);
       if (c != 0) {
         return c;
       }
-      i = i + 1;
+      i += 1;
     }
     if (ai.len() < bi.len()) {
-      return 0 - 1;
+      return -1;
     }
     if (ai.len() > bi.len()) {
       return 1;
@@ -352,7 +352,7 @@ impl cmp.Eq for SemVer {
 // Build metadata does not take part, because it does not take part in equality.
 impl cmp.Hash for SemVer {
   function hash(self: SemVer): i32 {
-    let h: i32 = 17;
+    let h = 17;
     h = h * 31 + self.major;
     h = h * 31 + self.minor;
     h = h * 31 + self.patch;
@@ -363,7 +363,7 @@ impl cmp.Hash for SemVer {
 impl cmp.Display for SemVer {}
 
 pub function (v: SemVer) to_string(): string {
-  let out: string = v.major.to_string() + "." + v.minor.to_string() + "." + v.patch.to_string();
+  let out = v.major.to_string() + "." + v.minor.to_string() + "." + v.patch.to_string();
   if (v.prerelease.len() > 0) {
     out = out + "-" + v.prerelease;
   }

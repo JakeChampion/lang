@@ -77,7 +77,7 @@ pub function (s: ByteStream) fault(): Option[StreamFault] {
 ```fern
 <<3 function __fill(s: ByteStream): ByteStream>>=
 function __fill(s: ByteStream): ByteStream {
-  let out: ByteStream = s;
+  let out = s;
   while (out.pos >= out.data.len()) {
     match (out.source) {
       Some(src) => {
@@ -108,7 +108,7 @@ pub function (s: ByteStream) len(): i32 {
 }
 
 pub function (s: ByteStream) remaining(): i32 {
-  let total: i32 = s.data.len();
+  let total = s.data.len();
   if (s.pos >= total) {
     return 0;
   }
@@ -121,15 +121,15 @@ pub function (s: ByteStream) is_empty(): boolean {
 
 pub function (s: ByteStream) read_all(): (u8[], ByteStream) {
   let out: u8[] = [];
-  let cur: ByteStream = __fill(s);
+  let cur = __fill(s);
   while (cur.pos < cur.data.len()) {
     if (cur.pos == 0) {
       out = out.concat(cur.data);
     } else {
-      let i: i32 = cur.pos;
+      let i = cur.pos;
       while (i < cur.data.len()) {
         out = out.append(cur.data[i]);
-        i = i + 1;
+        i += 1;
       }
     }
     cur = __fill(ByteStream { ...cur, pos: cur.data.len() });
@@ -143,11 +143,11 @@ pub function (s: ByteStream) read_all_string(): (Result[string, utf8.Utf8Error],
 }
 
 pub function (s: ByteStream) read_byte(): (Option[u8], ByteStream) {
-  let cur: ByteStream = __fill(s);
+  let cur = __fill(s);
   if (cur.pos >= cur.data.len()) {
     return (None, cur);
   }
-  let b: u8 = cur.data[cur.pos];
+  let b = cur.data[cur.pos];
   return (Some(b), ByteStream { ...cur, pos: cur.pos + 1 });
 }
 
@@ -156,16 +156,16 @@ pub function (s: ByteStream) read_n(n: i32): (u8[], ByteStream) {
   if (n <= 0) {
     return (out, s);
   }
-  let cur: ByteStream = __fill(s);
+  let cur = __fill(s);
   while (out.len() < n && cur.pos < cur.data.len()) {
-    let pos: i32 = cur.pos;
-    let end: i32 = pos + (n - out.len());
+    let pos = cur.pos;
+    let end = pos + (n - out.len());
     if (end > cur.data.len()) {
       end = cur.data.len();
     }
     while (pos < end) {
       out = out.append(cur.data[pos]);
-      pos = pos + 1;
+      pos += 1;
     }
     cur = ByteStream { ...cur, pos: pos };
     if (out.len() < n) {
@@ -177,26 +177,26 @@ pub function (s: ByteStream) read_n(n: i32): (u8[], ByteStream) {
 
 pub function (s: ByteStream) read_some(): (u8[], ByteStream) {
   let out: u8[] = [];
-  let cur: ByteStream = __fill(s);
-  let pos: i32 = cur.pos;
+  let cur = __fill(s);
+  let pos = cur.pos;
   while (pos < cur.data.len()) {
     out = out.append(cur.data[pos]);
-    pos = pos + 1;
+    pos += 1;
   }
   return (out, ByteStream { ...cur, pos: pos });
 }
 
 pub function (s: ByteStream) read_line(): (Result[Option[string], utf8.Utf8Error], ByteStream) {
-  let cur: ByteStream = __fill(s);
+  let cur = __fill(s);
   if (cur.pos >= cur.data.len()) {
     return (Ok(None), cur);
   }
   let line_bytes: u8[] = [];
   while (true) {
-    let pos: i32 = cur.pos;
+    let pos = cur.pos;
     while (pos < cur.data.len()) {
-      let b: i32 = cur.data[pos] as i32;
-      pos = pos + 1;
+      let b = cur.data[pos] as i32;
+      pos += 1;
       if (b == 10) {
         return (__line_text(line_bytes), ByteStream { ...cur, pos: pos });
       }
@@ -211,7 +211,7 @@ pub function (s: ByteStream) read_line(): (Result[Option[string], utf8.Utf8Error
 }
 
 function __line_text(line: u8[]): Result[Option[string], utf8.Utf8Error] {
-  let text: string = utf8.from_bytes(__without_cr(line))?;
+  let text = utf8.from_bytes(__without_cr(line))?;
   return Ok(Some(text));
 }
 ```
@@ -221,15 +221,15 @@ function __line_text(line: u8[]): Result[Option[string], utf8.Utf8Error] {
 ```fern
 <<5 function __without_cr(line: u8[]): u8[]>>=
 function __without_cr(line: u8[]): u8[] {
-  let n: i32 = line.len();
+  let n = line.len();
   if (n == 0 || line[n - 1] as i32 != 13) {
     return line;
   }
   let stripped: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n - 1) {
     stripped = stripped.append(line[i]);
-    i = i + 1;
+    i += 1;
   }
   return stripped;
 }

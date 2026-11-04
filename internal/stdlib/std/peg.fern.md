@@ -143,9 +143,9 @@ struct PegState { tn: string[], ts: i32[], te: i32[], furthest: i32 }
 <<8 function __peg_fail(st: PegState, pos: i32): (i32, PegState)>>=
 function __peg_fail(st: PegState, pos: i32): (i32, PegState) {
   if (pos > st.furthest) {
-    return (0 - 1, PegState { ...st, furthest: pos });
+    return (-1, PegState { ...st, furthest: pos });
   }
-  return (0 - 1, st);
+  return (-1, st);
 }
 
 function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
@@ -163,16 +163,16 @@ function __peg_merge_furthest(keep: PegState, from: PegState): PegState {
 function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState, depth: i32, seen_n: string[], seen_p: i32[]): (i32, PegState) {
   match (p) {
     PLit(s) => {
-      let n: i32 = s.len();
+      let n = s.len();
       if (pos + n > input.len()) {
         return __peg_fail(st, pos);
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < n) {
         if (input[pos + i] != s[i]) {
           return __peg_fail(st, pos);
         }
-        i = i + 1;
+        i += 1;
       }
       return (pos + n, st);
     },
@@ -186,7 +186,7 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (pos >= input.len()) {
         return __peg_fail(st, pos);
       }
-      let c: i32 = input[pos] as i32;
+      let c = input[pos] as i32;
       if (c < lo || c > hi) {
         return __peg_fail(st, pos);
       }
@@ -196,13 +196,13 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (pos >= input.len()) {
         return __peg_fail(st, pos);
       }
-      let c: i32 = input[pos] as i32;
-      let i: i32 = 0;
+      let c = input[pos] as i32;
+      let i = 0;
       while (i < cs.len()) {
         if (cs[i] as i32 == c) {
           return (pos + 1, st);
         }
-        i = i + 1;
+        i += 1;
       }
       return __peg_fail(st, pos);
     },
@@ -210,20 +210,20 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (pos >= input.len()) {
         return __peg_fail(st, pos);
       }
-      let c: i32 = input[pos] as i32;
-      let i: i32 = 0;
+      let c = input[pos] as i32;
+      let i = 0;
       while (i < cs.len()) {
         if (cs[i] as i32 == c) {
           return __peg_fail(st, pos);
         }
-        i = i + 1;
+        i += 1;
       }
       return (pos + 1, st);
     },
     PSeq(ps) => {
-      let cur: i32 = pos;
-      let s2: PegState = st;
-      let i: i32 = 0;
+      let cur = pos;
+      let s2 = st;
+      let i = 0;
       while (i < ps.len()) {
         let (r, s3) = __peg_run(g, ps[i], input, cur, s2, depth, seen_n, seen_p);
         if (r < 0) {
@@ -231,26 +231,26 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
         }
         cur = r;
         s2 = s3;
-        i = i + 1;
+        i += 1;
       }
       return (cur, s2);
     },
     PChoice(ps) => {
-      let s2: PegState = st;
-      let i: i32 = 0;
+      let s2 = st;
+      let i = 0;
       while (i < ps.len()) {
         let (r, s3) = __peg_run(g, ps[i], input, pos, s2, depth, seen_n, seen_p);
         if (r >= 0) {
           return (r, s3);
         }
         s2 = __peg_merge_furthest(s2, s3);
-        i = i + 1;
+        i += 1;
       }
       return __peg_fail(s2, pos);
     },
     PStar(sub) => {
-      let cur: i32 = pos;
-      let s2: PegState = st;
+      let cur = pos;
+      let s2 = st;
       while (true) {
         let (r, s3) = __peg_run(g, sub, input, cur, s2, depth, seen_n, seen_p);
         if (r < 0) {
@@ -296,12 +296,12 @@ function __peg_run(g: Grammar, p: Pattern, input: string, pos: i32, st: PegState
       if (depth >= 2048) {
         return __peg_fail(st, pos);
       }
-      let si: i32 = 0;
+      let si = 0;
       while (si < seen_n.len()) {
         if (seen_p[si] == pos && seen_n[si] == name) {
           return __peg_fail(st, pos);
         }
-        si = si + 1;
+        si += 1;
       }
       match (g.rules.get(name)) {
         Some(rp) => {
@@ -419,21 +419,21 @@ function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, Peg
   if (r < 0) {
     return Err(PegError { furthest: st.furthest });
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < st.tn.len()) {
     if (st.ts[i] != st.te[i] && (!utf8.is_char_boundary(input, st.ts[i]) || !utf8.is_char_boundary(input, st.te[i]))) {
-      let furthest: i32 = st.furthest;
+      let furthest = st.furthest;
       if (r > furthest) {
         furthest = r;
       }
       return Err(PegError { furthest: furthest });
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < st.tn.len()) {
     caps = caps.insert(st.tn[i], slice_unchecked(input, st.ts[i], st.te[i]) + "");
-    i = i + 1;
+    i += 1;
   }
   return Ok(PegMatch { pos: r, caps: caps });
 }
@@ -447,7 +447,7 @@ pub function parse(g: Grammar, input: string): Result[PegMatch, PegError] {
   let tn: string[] = [];
   let ts: i32[] = [];
   let te: i32[] = [];
-  let st: PegState = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
+  let st = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
   let (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0, [], []);
   return __peg_result(r, s2, input);
 }
@@ -455,7 +455,7 @@ pub function parse(g: Grammar, input: string): Result[PegMatch, PegError] {
 pub function parse_pattern(p: Pattern, input: string): Result[PegMatch, PegError] {
   let rules: Map[string, Pattern] = map_new(2);
   rules = rules.insert("__start", p);
-  let g: Grammar = Grammar { rules: rules, start: "__start" };
+  let g = Grammar { rules: rules, start: "__start" };
   return parse(g, input);
 }
 

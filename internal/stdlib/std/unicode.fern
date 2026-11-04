@@ -100,13 +100,13 @@ function _fld(t: string, i: i32): i32 {
 }
 
 function _case_apply(cp: i32, want_upper: boolean): i32 {
-  let t: string = _case_table();
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 20 - 1;
+  let t = _case_table();
+  let lo = 0;
+  let hi = t.len() / 20 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 20;
-    let rlo: i32 = _fld(t, base);
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 20;
+    let rlo = _fld(t, base);
     if (cp < rlo) {
       hi = mid - 1;
     } else if (cp > _fld(t, base + 4)) {
@@ -118,7 +118,7 @@ function _case_apply(cp: i32, want_upper: boolean): i32 {
         }
         return cp + _fld(t, base + 16) - 8388608;
       }
-      let odd: i32 = cp - rlo & 1;
+      let odd = cp - rlo & 1;
       if (want_upper) {
         return cp - odd;
       }
@@ -149,35 +149,35 @@ function _lower_cp(cp: i32): i32 {
 }
 
 function _is_ascii(s: string): boolean {
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
     if (s[i] >= 128) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function _ascii_fold(s: string, from: i32, to: i32): string {
-  let n: i32 = s.len();
-  let first: i32 = 0;
+  let n = s.len();
+  let first = 0;
   while (first < n && (s[first] as i32 < from || s[first] as i32 >= from + 26)) {
-    first = first + 1;
+    first += 1;
   }
   if (first == n) {
     return s;
   }
-  let buf: u8[] = __alloc_u8(n);
-  let i: i32 = 0;
+  let buf = __alloc_u8(n);
+  let i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b >= from && b < from + 26) {
-      b = b + (to - from);
+      b += to - from;
     }
     buf = buf.with(i, b as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
@@ -187,27 +187,27 @@ function _ascii_fold(s: string, from: i32, to: i32): string {
 // Binary search over 16-character records; a trailing 0 field means the
 // expansion is shorter than 3 code points.
 function _full_case_append(out: char[], cp: i32, want_upper: boolean): char[] {
-  let t: string = _full_lower_table();
+  let t = _full_lower_table();
   if (want_upper) {
     t = _full_upper_table();
   }
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 16 - 1;
+  let lo = 0;
+  let hi = t.len() / 16 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 16;
-    let from: i32 = _fld(t, base);
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 16;
+    let from = _fld(t, base);
     if (cp < from) {
       hi = mid - 1;
     } else if (cp > from) {
       lo = mid + 1;
     } else {
       out = out.append(_fld(t, base + 4) as char);
-      let c2: i32 = _fld(t, base + 8);
+      let c2 = _fld(t, base + 8);
       if (c2 != 0) {
         out = out.append(c2 as char);
       }
-      let c3: i32 = _fld(t, base + 12);
+      let c3 = _fld(t, base + 12);
       if (c3 != 0) {
         out = out.append(c3 as char);
       }
@@ -218,11 +218,11 @@ function _full_case_append(out: char[], cp: i32, want_upper: boolean): char[] {
 }
 
 function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
-  let before: boolean = false;
-  let k: i32 = at;
+  let before = false;
+  let k = at;
   while (k > 0) {
-    let st: i32 = utf8.floor_char_boundary(s, k - 1);
-    let cp: i32 = 65533;
+    let st = utf8.floor_char_boundary(s, k - 1);
+    let cp = 65533;
     match (utf8.decode_at(s, st)) {
       Some(pr) => {
         cp = pr.0;
@@ -239,11 +239,11 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
   if (!before) {
     return false;
   }
-  let n: i32 = s.len();
-  let i: i32 = at + sigma_len;
+  let n = s.len();
+  let i = at + sigma_len;
   while (i < n) {
-    let cp2: i32 = 65533;
-    let w: i32 = 1;
+    let cp2 = 65533;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pr2) => {
         cp2 = pr2.0;
@@ -252,7 +252,7 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
       None => {}
     }
     if (_in_ranges(_caseignorable_ranges(), cp2)) {
-      i = i + w;
+      i += w;
     } else {
       return !_in_ranges(_cased_ranges(), cp2);
     }
@@ -276,17 +276,17 @@ function _final_sigma(s: string, at: i32, sigma_len: i32): boolean {
 // Do not merge these back together.
 function _map_upper(s: string): string {
   let out: char[] = [];
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         out = _full_case_append(out, pair.0, true);
-        i = i + pair.1;
+        i += pair.1;
       },
       None => {
         out = out.append(65533 as char);
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -295,8 +295,8 @@ function _map_upper(s: string): string {
 
 function _map_lower(s: string): string {
   let out: char[] = [];
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
@@ -305,11 +305,11 @@ function _map_lower(s: string): string {
         } else {
           out = _full_case_append(out, pair.0, false);
         }
-        i = i + pair.1;
+        i += pair.1;
       },
       None => {
         out = out.append(65533 as char);
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -342,24 +342,24 @@ pub function (s: string) to_lower(): string {
 // does. Only the differing code points are tabulated; the rest fall
 // through to the simple lowercase mapping.
 function _fold_append(out: char[], cp: i32): char[] {
-  let t: string = _fold_table();
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 16 - 1;
+  let t = _fold_table();
+  let lo = 0;
+  let hi = t.len() / 16 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 16;
-    let from: i32 = _fld(t, base);
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 16;
+    let from = _fld(t, base);
     if (cp < from) {
       hi = mid - 1;
     } else if (cp > from) {
       lo = mid + 1;
     } else {
       out = out.append(_fld(t, base + 4) as char);
-      let c2: i32 = _fld(t, base + 8);
+      let c2 = _fld(t, base + 8);
       if (c2 != 0) {
         out = out.append(c2 as char);
       }
-      let c3: i32 = _fld(t, base + 12);
+      let c3 = _fld(t, base + 12);
       if (c3 != 0) {
         out = out.append(c3 as char);
       }
@@ -378,17 +378,17 @@ pub function (s: string) case_fold(): string {
     return _ascii_fold(s, 65, 97);
   }
   let out: char[] = [];
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         out = _fold_append(out, pair.0);
-        i = i + pair.1;
+        i += pair.1;
       },
       None => {
         out = out.append(65533 as char);
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -402,24 +402,24 @@ pub function (s: string) case_fold(): string {
 // walked in lockstep.
 pub function (a: string) eq_ignore_case(b: string): boolean {
   if (_is_ascii(a) && _is_ascii(b)) {
-    let na: i32 = a.len();
+    let na = a.len();
     if (na != b.len()) {
       return false;
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < na) {
-      let ca: i32 = a[k] as i32;
-      let cb: i32 = b[k] as i32;
+      let ca = a[k] as i32;
+      let cb = b[k] as i32;
       if (ca >= 65 && ca <= 90) {
-        ca = ca + 32;
+        ca += 32;
       }
       if (cb >= 65 && cb <= 90) {
-        cb = cb + 32;
+        cb += 32;
       }
       if (ca != cb) {
         return false;
       }
-      k = k + 1;
+      k += 1;
     }
     return true;
   }
@@ -441,33 +441,33 @@ function _swap_case_cp(cp: i32): i32 {
 // under simple mapping.
 pub function (s: string) swap_case(): string {
   if (_is_ascii(s)) {
-    let n: i32 = s.len();
-    let buf: u8[] = __alloc_u8(n);
-    let k: i32 = 0;
+    let n = s.len();
+    let buf = __alloc_u8(n);
+    let k = 0;
     while (k < n) {
-      let b: i32 = s[k] as i32;
+      let b = s[k] as i32;
       if (b >= 65 && b <= 90) {
-        b = b + 32;
+        b += 32;
       } else if (b >= 97 && b <= 122) {
-        b = b - 32;
+        b -= 32;
       }
       buf = buf.with(k, b as u8);
-      k = k + 1;
+      k += 1;
     }
     return string_from_bytes_unchecked(buf);
   }
   let out: char[] = [];
-  let len: i32 = s.len();
-  let i: i32 = 0;
+  let len = s.len();
+  let i = 0;
   while (i < len) {
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         out = out.append(_swap_case_cp(pair.0) as char);
-        i = i + pair.1;
+        i += pair.1;
       },
       None => {
         out = out.append(65533 as char);
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -478,13 +478,13 @@ pub function (s: string) swap_case(): string {
 // exactly as they are. Not Python's str.capitalize, which also
 // lowercases the tail; preserving the tail is the less lossy default.
 pub function (s: string) capitalize(): string {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return "";
   }
   match (utf8.decode_at(s, 0)) {
     Some(pair) => {
-      let up: i32 = _upper_cp(pair.0);
+      let up = _upper_cp(pair.0);
       if (up == pair.0) {
         return s;
       }
@@ -504,25 +504,25 @@ pub function (s: string) capitalize(): string {
 // This is a word-BREAK notion, not UAX #29 segmentation (#5633).
 pub function (s: string) title_case(): string {
   let out: char[] = [];
-  let n: i32 = s.len();
-  let i: i32 = 0;
-  let at_start: boolean = true;
+  let n = s.len();
+  let i = 0;
+  let at_start = true;
   while (i < n) {
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
-        let cp: i32 = pair.0;
-        let mapped: i32 = cp;
+        let cp = pair.0;
+        let mapped = cp;
         if (at_start) {
           mapped = _upper_cp(cp);
         }
         out = out.append(mapped as char);
         at_start = _is_whitespace_cp(cp);
-        i = i + pair.1;
+        i += pair.1;
       },
       None => {
         out = out.append(65533 as char);
         at_start = false;
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -530,11 +530,11 @@ pub function (s: string) title_case(): string {
 }
 
 function _in_ranges(t: string, cp: i32): boolean {
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 8 - 1;
+  let lo = 0;
+  let hi = t.len() / 8 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 8;
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 8;
     if (cp < _fld(t, base)) {
       hi = mid - 1;
     } else if (cp > _fld(t, base + 4)) {
@@ -619,14 +619,14 @@ pub function (c: char) is_lower(): boolean {
 }
 
 function _all_cp(s: string, kind: i32): boolean {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let cp: i32 = 65533;
-    let w: i32 = 1;
+    let cp = 65533;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pr) => {
         cp = pr.0;
@@ -647,7 +647,7 @@ function _all_cp(s: string, kind: i32): boolean {
         return false;
       }
     }
-    i = i + w;
+    i += w;
   }
   return true;
 }
@@ -672,16 +672,16 @@ pub function (s: string) is_digits(): boolean {
 }
 
 function _ccc_of(cp: char): i32 {
-  let n: i32 = cp as i32;
+  let n = cp as i32;
   if (n < 768) {
     return 0;
   }
-  let t: string = _ccc_ranges();
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 12 - 1;
+  let t = _ccc_ranges();
+  let lo = 0;
+  let hi = t.len() / 12 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 12;
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 12;
     if (n < _fld(t, base)) {
       hi = mid - 1;
     } else if (n > _fld(t, base + 4)) {
@@ -694,37 +694,37 @@ function _ccc_of(cp: char): i32 {
 }
 
 function _decomp_append(out: char[], cp: char): char[] {
-  let n: i32 = cp as i32;
+  let n = cp as i32;
   if (n >= 44032 && n < 55204) {
-    let si: i32 = n - 44032;
+    let si = n - 44032;
     out = out.append((4352 + si / 588) as char);
     out = out.append((4449 + si % 588 / 28) as char);
-    let tj: i32 = si % 28;
+    let tj = si % 28;
     if (tj != 0) {
       out = out.append((4519 + tj) as char);
     }
     return out;
   }
-  let t: string = _decomp_table();
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 20 - 1;
+  let t = _decomp_table();
+  let lo = 0;
+  let hi = t.len() / 20 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 20;
-    let from: i32 = _fld(t, base);
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 20;
+    let from = _fld(t, base);
     if (n < from) {
       hi = mid - 1;
     } else if (n > from) {
       lo = mid + 1;
     } else {
-      let k: i32 = 1;
+      let k = 1;
       while (k <= 4) {
-        let c: i32 = _fld(t, base + k * 4);
+        let c = _fld(t, base + k * 4);
         if (c == 0) {
           return out;
         }
         out = out.append(c as char);
-        k = k + 1;
+        k += 1;
       }
       return out;
     }
@@ -733,30 +733,30 @@ function _decomp_append(out: char[], cp: char): char[] {
 }
 
 function _canon_order(cps: char[]): char[] {
-  let n: i32 = cps.len();
-  let i: i32 = 1;
+  let n = cps.len();
+  let i = 1;
   while (i < n) {
-    let c: i32 = _ccc_of(cps[i]);
+    let c = _ccc_of(cps[i]);
     if (c != 0) {
-      let j: i32 = i;
+      let j = i;
       while (j > 0) {
         if (_ccc_of(cps[j - 1]) <= c) {
           break;
         }
-        let tmp: char = cps[j - 1];
+        let tmp = cps[j - 1];
         cps = cps.with(j - 1, cps[j]);
         cps = cps.with(j, tmp);
-        j = j - 1;
+        j -= 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return cps;
 }
 
 function _compose_pair(a: char, b: char): i32 {
-  let x: i32 = a as i32;
-  let y: i32 = b as i32;
+  let x = a as i32;
+  let y = b as i32;
   if (x >= 4352 && x < 4371 && y >= 4449 && y < 4470) {
     return 44032 + ((x - 4352) * 21 + (y - 4449)) * 28;
   }
@@ -766,14 +766,14 @@ function _compose_pair(a: char, b: char): i32 {
     }
     return 0;
   }
-  let t: string = _compose_table();
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 12 - 1;
+  let t = _compose_table();
+  let lo = 0;
+  let hi = t.len() / 12 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 12;
-    let ka: i32 = _fld(t, base);
-    let kb: i32 = _fld(t, base + 4);
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 12;
+    let ka = _fld(t, base);
+    let kb = _fld(t, base + 4);
     if (x < ka || x == ka && y < kb) {
       hi = mid - 1;
     } else if (x > ka || x == ka && y > kb) {
@@ -786,35 +786,35 @@ function _compose_pair(a: char, b: char): i32 {
 }
 
 function _nfd_cps(s: string): char[] {
-  let cps: char[] = s.chars();
+  let cps = s.chars();
   let out: char[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cps.len()) {
     out = _decomp_append(out, cps[i]);
-    i = i + 1;
+    i += 1;
   }
   return _canon_order(out);
 }
 
 function _compose(cps: char[]): char[] {
-  let n: i32 = cps.len();
+  let n = cps.len();
   if (n == 0) {
     return cps;
   }
   let out: char[] = [];
   out = out.append(cps[0]);
-  let starter: i32 = -1;
+  let starter = -1;
   if (_ccc_of(cps[0]) == 0) {
     starter = 0;
   }
-  let prev_cc: i32 = -1;
-  let i: i32 = 1;
+  let prev_cc = -1;
+  let i = 1;
   while (i < n) {
-    let cp: char = cps[i];
-    let cc: i32 = _ccc_of(cp);
-    let joined: boolean = false;
+    let cp = cps[i];
+    let cc = _ccc_of(cp);
+    let joined = false;
     if (starter >= 0 && (prev_cc == -1 || prev_cc < cc)) {
-      let comp: i32 = _compose_pair(out[starter], cp);
+      let comp = _compose_pair(out[starter], cp);
       if (comp != 0) {
         out = out.with(starter, comp as char);
         joined = true;
@@ -829,7 +829,7 @@ function _compose(cps: char[]): char[] {
       }
       out = out.append(cp);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -852,20 +852,20 @@ pub function is_nfd(s: string): boolean {
   if (_is_ascii(s)) {
     return true;
   }
-  let cps: char[] = s.chars();
-  let prev_cc: i32 = 0;
-  let i: i32 = 0;
+  let cps = s.chars();
+  let prev_cc = 0;
+  let i = 0;
   while (i < cps.len()) {
-    let cp: char = cps[i];
+    let cp = cps[i];
     if (_in_ranges(_nfd_no_ranges(), cp as i32)) {
       return false;
     }
-    let cc: i32 = _ccc_of(cp);
+    let cc = _ccc_of(cp);
     if (cc != 0 && prev_cc > cc) {
       return false;
     }
     prev_cc = cc;
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -874,13 +874,13 @@ pub function is_nfc(s: string): boolean {
   if (_is_ascii(s)) {
     return true;
   }
-  let cps: char[] = s.chars();
-  let prev_cc: i32 = 0;
-  let i: i32 = 0;
+  let cps = s.chars();
+  let prev_cc = 0;
+  let i = 0;
   while (i < cps.len()) {
-    let cp: char = cps[i];
-    let n: i32 = cp as i32;
-    let cc: i32 = _ccc_of(cp);
+    let cp = cps[i];
+    let n = cp as i32;
+    let cc = _ccc_of(cp);
     if (cc != 0 && prev_cc > cc) {
       return false;
     }
@@ -891,7 +891,7 @@ pub function is_nfc(s: string): boolean {
       return nfc(s) == s;
     }
     prev_cc = cc;
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -904,13 +904,13 @@ pub function eq_canonical(a: string, b: string): boolean {
 }
 
 function _gcb_of(cp: char): i32 {
-  let n: i32 = cp as i32;
-  let t: string = _gcb_ranges();
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 12 - 1;
+  let n = cp as i32;
+  let t = _gcb_ranges();
+  let lo = 0;
+  let hi = t.len() / 12 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 12;
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 12;
     if (n < _fld(t, base)) {
       hi = mid - 1;
     } else if (n > _fld(t, base + 4)) {
@@ -978,18 +978,18 @@ function _pict_next(pict: i32, cls: i32, cur_pict: boolean): i32 {
 
 pub function graphemes(s: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let n: i32 = s.len();
+  let start = 0;
+  let n = s.len();
   if (n == 0) {
     return out;
   }
-  let i: i32 = 0;
-  let prev: i32 = 0 - 1;
-  let ri: i32 = 0;
-  let pict: i32 = 0;
+  let i = 0;
+  let prev: i32 = -1;
+  let ri = 0;
+  let pict = 0;
   while (i < n) {
-    let cp: char = 0 as char;
-    let w: i32 = 1;
+    let cp = 0 as char;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         cp = pair.0 as char;
@@ -1000,8 +1000,8 @@ pub function graphemes(s: string): string[] {
         w = 1;
       }
     }
-    let cls: i32 = _gcb_of(cp);
-    let cur_pict: boolean = _is_extpict(cp);
+    let cls = _gcb_of(cp);
+    let cur_pict = _is_extpict(cp);
     if (prev >= 0) {
       if (_gcb_break(prev, cls, ri, pict, cur_pict)) {
         out = out.append(slice_unchecked(s, start, i) + "");
@@ -1009,30 +1009,30 @@ pub function graphemes(s: string): string[] {
       }
     }
     if (cls == 6) {
-      ri = ri + 1;
+      ri += 1;
     } else {
       ri = 0;
     }
     pict = _pict_next(pict, cls, cur_pict);
     prev = cls;
-    i = i + w;
+    i += w;
   }
   return out.append(slice_unchecked(s, start, n) + "");
 }
 
 pub function grapheme_count(s: string): i32 {
-  let out: i32 = 1;
-  let n: i32 = s.len();
+  let out = 1;
+  let n = s.len();
   if (n == 0) {
     return 0;
   }
-  let i: i32 = 0;
-  let prev: i32 = 0 - 1;
-  let ri: i32 = 0;
-  let pict: i32 = 0;
+  let i = 0;
+  let prev: i32 = -1;
+  let ri = 0;
+  let pict = 0;
   while (i < n) {
-    let cp: char = 0 as char;
-    let w: i32 = 1;
+    let cp = 0 as char;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         cp = pair.0 as char;
@@ -1043,38 +1043,38 @@ pub function grapheme_count(s: string): i32 {
         w = 1;
       }
     }
-    let cls: i32 = _gcb_of(cp);
-    let cur_pict: boolean = _is_extpict(cp);
+    let cls = _gcb_of(cp);
+    let cur_pict = _is_extpict(cp);
     if (prev >= 0) {
       if (_gcb_break(prev, cls, ri, pict, cur_pict)) {
-        out = out + 1;
+        out += 1;
       }
     }
     if (cls == 6) {
-      ri = ri + 1;
+      ri += 1;
     } else {
       ri = 0;
     }
     pict = _pict_next(pict, cls, cur_pict);
     prev = cls;
-    i = i + w;
+    i += w;
   }
   return out;
 }
 
 function _grapheme_ends(s: string): i32[] {
   let out: i32[] = [];
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return out;
   }
-  let i: i32 = 0;
-  let prev: i32 = 0 - 1;
-  let ri: i32 = 0;
-  let pict: i32 = 0;
+  let i = 0;
+  let prev: i32 = -1;
+  let ri = 0;
+  let pict = 0;
   while (i < n) {
-    let cp: char = 0 as char;
-    let w: i32 = 1;
+    let cp = 0 as char;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         cp = pair.0 as char;
@@ -1085,55 +1085,55 @@ function _grapheme_ends(s: string): i32[] {
         w = 1;
       }
     }
-    let cls: i32 = _gcb_of(cp);
-    let cur_pict: boolean = _is_extpict(cp);
+    let cls = _gcb_of(cp);
+    let cur_pict = _is_extpict(cp);
     if (prev >= 0) {
       if (_gcb_break(prev, cls, ri, pict, cur_pict)) {
         out = out.append(i);
       }
     }
     if (cls == 6) {
-      ri = ri + 1;
+      ri += 1;
     } else {
       ri = 0;
     }
     pict = _pict_next(pict, cls, cur_pict);
     prev = cls;
-    i = i + w;
+    i += w;
   }
   return out.append(n);
 }
 
 pub function reverse_graphemes(s: string): string {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return "";
   }
-  let ends: i32[] = _grapheme_ends(s);
-  let bytes: u8[] = s.bytes();
-  let h: usize = buf_new(n);
-  let i: i32 = ends.len() - 1;
+  let ends = _grapheme_ends(s);
+  let bytes = s.bytes();
+  let h = buf_new(n);
+  let i = ends.len() - 1;
   while (i >= 0) {
-    let start: i32 = 0;
+    let start = 0;
     if (i > 0) {
       start = ends[i - 1];
     }
     buf_push_bytes_range(h, bytes, start, ends[i]);
-    i = i - 1;
+    i -= 1;
   }
-  let result: string = string_from_bytes_unchecked(buf_take_bytes(h));
+  let result = string_from_bytes_unchecked(buf_take_bytes(h));
   buf_free(h);
   return result;
 }
 
 function _wb_of(cp: char): i32 {
-  let t: string = _wb_ranges();
-  let n: i32 = cp as i32;
-  let lo: i32 = 0;
-  let hi: i32 = t.len() / 12 - 1;
+  let t = _wb_ranges();
+  let n = cp as i32;
+  let lo = 0;
+  let hi = t.len() / 12 - 1;
   while (lo <= hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let base: i32 = mid * 12;
+    let mid = lo + (hi - lo) / 2;
+    let base = mid * 12;
     if (n < _fld(t, base)) {
       hi = mid - 1;
     } else if (n > _fld(t, base + 4)) {
@@ -1154,11 +1154,11 @@ function _wb_needs_next(cls: i32): boolean {
 }
 
 function _wb_next(s: string, i: i32): i32 {
-  let n: i32 = s.len();
-  let j: i32 = i;
+  let n = s.len();
+  let j = i;
   while (j < n) {
-    let cp: char = 0 as char;
-    let w: i32 = 1;
+    let cp = 0 as char;
+    let w = 1;
     match (utf8.decode_at(s, j)) {
       Some(pair) => {
         cp = pair.0 as char;
@@ -1169,13 +1169,13 @@ function _wb_next(s: string, i: i32): i32 {
         w = 1;
       }
     }
-    let cls: i32 = _wb_of(cp);
+    let cls = _wb_of(cp);
     if (!_wb_ignorable(cls)) {
       return cls;
     }
-    j = j + w;
+    j += w;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri: i32, cur_pict: boolean): boolean {
@@ -1198,14 +1198,14 @@ function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri
     return false;
   }
 
-  let ah_prev: boolean = prev == 10 || prev == 9;
-  let ah_prev2: boolean = prev2 == 10 || prev2 == 9;
-  let ah_cur: boolean = cur == 10 || cur == 9;
-  let ah_next: boolean = next == 10 || next == 9;
-  let mid_letter_q: boolean = cur == 14 || cur == 13 || cur == 11;
-  let prev_mid_letter_q: boolean = prev == 14 || prev == 13 || prev == 11;
-  let mid_num_q: boolean = cur == 15 || cur == 13 || cur == 11;
-  let prev_mid_num_q: boolean = prev == 15 || prev == 13 || prev == 11;
+  let ah_prev = prev == 10 || prev == 9;
+  let ah_prev2 = prev2 == 10 || prev2 == 9;
+  let ah_cur = cur == 10 || cur == 9;
+  let ah_next = next == 10 || next == 9;
+  let mid_letter_q = cur == 14 || cur == 13 || cur == 11;
+  let prev_mid_letter_q = prev == 14 || prev == 13 || prev == 11;
+  let mid_num_q = cur == 15 || cur == 13 || cur == 11;
+  let prev_mid_num_q = prev == 15 || prev == 13 || prev == 11;
 
   if (ah_prev && ah_cur) {
     return false;
@@ -1256,10 +1256,10 @@ function _wb_break(prev2: i32, prev: i32, raw_prev: i32, cur: i32, next: i32, ri
 }
 
 function _wb_is_word(s: string, a: i32, b: i32): boolean {
-  let i: i32 = a;
+  let i = a;
   while (i < b) {
-    let cp: char = 0 as char;
-    let w: i32 = 1;
+    let cp = 0 as char;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         cp = pair.0 as char;
@@ -1270,30 +1270,30 @@ function _wb_is_word(s: string, a: i32, b: i32): boolean {
         w = 1;
       }
     }
-    let n: i32 = cp as i32;
+    let n = cp as i32;
     if (_is_letter_cp(n) || _is_digit_cp(n)) {
       return true;
     }
-    i = i + w;
+    i += w;
   }
   return false;
 }
 
 pub function word_segments(s: string): string[] {
   let out: string[] = [];
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return out;
   }
-  let start: i32 = 0;
-  let i: i32 = 0;
-  let prev2: i32 = 0 - 1;
-  let prev: i32 = 0 - 1;
-  let raw_prev: i32 = 0 - 1;
-  let ri: i32 = 0;
+  let start = 0;
+  let i = 0;
+  let prev2: i32 = -1;
+  let prev: i32 = -1;
+  let raw_prev: i32 = -1;
+  let ri = 0;
   while (i < n) {
-    let cp: char = 0 as char;
-    let w: i32 = 1;
+    let cp = 0 as char;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         cp = pair.0 as char;
@@ -1304,9 +1304,9 @@ pub function word_segments(s: string): string[] {
         w = 1;
       }
     }
-    let cls: i32 = _wb_of(cp);
+    let cls = _wb_of(cp);
     if (i > 0) {
-      let nxt: i32 = 0 - 1;
+      let nxt: i32 = -1;
       if (_wb_needs_next(cls)) {
         nxt = _wb_next(s, i + w);
       }
@@ -1320,47 +1320,47 @@ pub function word_segments(s: string): string[] {
       prev2 = prev;
       prev = cls;
       if (cls == 6) {
-        ri = ri + 1;
+        ri += 1;
       } else {
         ri = 0;
       }
     }
-    i = i + w;
+    i += w;
   }
   return out.append(slice_unchecked(s, start, n) + "");
 }
 
 pub function words(s: string): string[] {
-  let segs: string[] = word_segments(s);
+  let segs = word_segments(s);
   let out: string[] = [];
-  let i: i32 = 0;
-  let off: i32 = 0;
+  let i = 0;
+  let off = 0;
   while (i < segs.len()) {
-    let w: i32 = segs[i].len();
+    let w = segs[i].len();
     if (_wb_is_word(s, off, off + w)) {
       out = out.append(segs[i]);
     }
-    off = off + w;
-    i = i + 1;
+    off += w;
+    i += 1;
   }
   return out;
 }
 
 pub function word_count(s: string): i32 {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return 0;
   }
-  let count: i32 = 0;
-  let start: i32 = 0;
-  let i: i32 = 0;
-  let prev2: i32 = 0 - 1;
-  let prev: i32 = 0 - 1;
-  let raw_prev: i32 = 0 - 1;
-  let ri: i32 = 0;
+  let count = 0;
+  let start = 0;
+  let i = 0;
+  let prev2: i32 = -1;
+  let prev: i32 = -1;
+  let raw_prev: i32 = -1;
+  let ri = 0;
   while (i < n) {
-    let cp: char = 0 as char;
-    let w: i32 = 1;
+    let cp = 0 as char;
+    let w = 1;
     match (utf8.decode_at(s, i)) {
       Some(pair) => {
         cp = pair.0 as char;
@@ -1371,15 +1371,15 @@ pub function word_count(s: string): i32 {
         w = 1;
       }
     }
-    let cls: i32 = _wb_of(cp);
+    let cls = _wb_of(cp);
     if (i > 0) {
-      let nxt: i32 = 0 - 1;
+      let nxt: i32 = -1;
       if (_wb_needs_next(cls)) {
         nxt = _wb_next(s, i + w);
       }
       if (_wb_break(prev2, prev, raw_prev, cls, nxt, ri, _is_extpict(cp))) {
         if (_wb_is_word(s, start, i)) {
-          count = count + 1;
+          count += 1;
         }
         start = i;
       }
@@ -1389,15 +1389,15 @@ pub function word_count(s: string): i32 {
       prev2 = prev;
       prev = cls;
       if (cls == 6) {
-        ri = ri + 1;
+        ri += 1;
       } else {
         ri = 0;
       }
     }
-    i = i + w;
+    i += w;
   }
   if (_wb_is_word(s, start, n)) {
-    count = count + 1;
+    count += 1;
   }
   return count;
 }

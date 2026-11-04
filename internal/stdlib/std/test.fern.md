@@ -157,27 +157,27 @@ pub function new(suite: string): TestRunner {
 }
 
 pub function new_filtered(suite: string, filter: string): TestRunner {
-  let r: TestRunner = new(suite);
+  let r = new(suite);
   return TestRunner { ...r, filter: filter };
 }
 
 pub function parse_filter_from_args(argv: string[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < argv.len()) {
-    let a: string = argv[i];
+    let a = argv[i];
     if (a == "--filter" && i + 1 < argv.len()) {
       return argv[i + 1];
     }
     if (a.starts_with("--filter=")) {
       return slice_unchecked(a, 9, a.len()).to_owned();
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 pub function new_fail_fast(suite: string): TestRunner {
-  let r: TestRunner = new(suite);
+  let r = new(suite);
   return r.with_fail_fast();
 }
 
@@ -186,18 +186,18 @@ pub function (r: TestRunner) with_fail_fast(): TestRunner {
 }
 
 pub function parse_fail_fast_from_args(argv: string[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < argv.len()) {
     if (argv[i] == "--fail-fast") {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function new_quiet(suite: string): TestRunner {
-  let r: TestRunner = new(suite);
+  let r = new(suite);
   return r.with_quiet();
 }
 
@@ -206,30 +206,30 @@ pub function (r: TestRunner) with_quiet(): TestRunner {
 }
 
 pub function parse_quiet_from_args(argv: string[]): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < argv.len()) {
     if (argv[i] == "--quiet") {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function new_verbose(suite: string): TestRunner {
-  let r: TestRunner = new(suite);
+  let r = new(suite);
   return TestRunner { ...r, verbose: true };
 }
 
 pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunner {
-  let display: string = r.prefix + name;
+  let display = r.prefix + name;
   if (r.filter.len() > 0 && !display.contains(r.filter)) {
     return r.skip(name, "filtered out (--filter=" + r.filter + ")");
   }
   if (r.fail_fast && r.failed > 0) {
     return r.skip(name, "fail-fast: prior case failed");
   }
-  let idx: i32 = r.emitted.get() + 1;
+  let idx = r.emitted.get() + 1;
   r.emitted.set(idx);
   match (body()) {
     Pass => {
@@ -244,20 +244,20 @@ pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunn
       print("  ---");
       print("  message: " + msg);
       print("  ---");
-      let fs: string[] = r.failures.append(display + ": " + msg);
+      let fs = r.failures.append(display + ": " + msg);
       return TestRunner { ...r, failed: r.failed + 1, failures: fs };
     }
   }
 }
 
 pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
-  let idx: i32 = r.emitted.get() + 1;
+  let idx = r.emitted.get() + 1;
   r.emitted.set(idx);
-  let display: string = r.prefix + name;
+  let display = r.prefix + name;
   if (!r.quiet) {
     print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
   }
-  let sr: string[] = r.skip_reasons.append(display + ": " + reason);
+  let sr = r.skip_reasons.append(display + ": " + reason);
   return TestRunner { ...r, skipped: r.skipped + 1, skip_reasons: sr };
 }
 
@@ -292,11 +292,11 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
 ```fern
 <<6 function __append_all(dst: string[], src: string[]): string[]>>=
 function __append_all(dst: string[], src: string[]): string[] {
-  let out: string[] = dst;
-  let i: i32 = 0;
+  let out = dst;
+  let i = 0;
   while (i < src.len()) {
     out = out.append(src[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -307,9 +307,9 @@ function __append_all(dst: string[], src: string[]): string[] {
 ```fern
 <<7 pub function (r: TestRunner) merge(child: TestRunner): TestRunner>>=
 pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
-  let fs: string[] = __append_all(r.failures, child.failures);
-  let sr: string[] = __append_all(r.skip_reasons, child.skip_reasons);
-  let cl: string[] = __append_all(r.cleanup_paths, child.cleanup_paths);
+  let fs = __append_all(r.failures, child.failures);
+  let sr = __append_all(r.skip_reasons, child.skip_reasons);
+  let cl = __append_all(r.cleanup_paths, child.cleanup_paths);
   return TestRunner {
     ...r,
     passed: r.passed + child.passed,
@@ -322,7 +322,7 @@ pub function (r: TestRunner) merge(child: TestRunner): TestRunner {
 }
 
 pub function (r: TestRunner) defer_cleanup(path: string): TestRunner {
-  let cl: string[] = r.cleanup_paths.append(path);
+  let cl = r.cleanup_paths.append(path);
   return TestRunner { ...r, cleanup_paths: cl };
 }
 
@@ -347,16 +347,16 @@ pub function (r: TestRunner) log_kv_i64(key: string, value: i64): TestRunner {
 }
 
 pub function (r: TestRunner) finish(): i32 {
-  let accounted: i32 = r.passed + r.failed + r.skipped;
-  let total: i32 = r.emitted.get();
+  let accounted = r.passed + r.failed + r.skipped;
+  let total = r.emitted.get();
   if (accounted > total) {
     total = accounted;
   }
-  let failed: i32 = r.failed;
+  let failed = r.failed;
   if (r.emitted_failed.get() > failed) {
     failed = r.emitted_failed.get();
   }
-  let dropped: i32 = total - accounted;
+  let dropped = total - accounted;
   print("1.." + total.to_string());
   print("# tests " + total.to_string());
   print("# pass " + (total - failed - r.skipped).to_string());
@@ -369,16 +369,16 @@ pub function (r: TestRunner) finish(): i32 {
   }
   if (r.skipped > 0) {
     print("# skipped:");
-    let j: i32 = 0;
+    let j = 0;
     while (j < r.skip_reasons.len()) {
       print("#   " + r.skip_reasons[j]);
-      j = j + 1;
+      j += 1;
     }
   }
-  let k: i32 = 0;
-  let cleanup_errored: boolean = false;
+  let k = 0;
+  let cleanup_errored = false;
   while (k < r.cleanup_paths.len()) {
-    let p: string = r.cleanup_paths[k];
+    let p = r.cleanup_paths[k];
     match (remove_dir_all(p)) {
       Ok(_) => {},
       Err(_) => {
@@ -386,14 +386,14 @@ pub function (r: TestRunner) finish(): i32 {
         cleanup_errored = true;
       }
     }
-    k = k + 1;
+    k += 1;
   }
   if (failed > 0) {
     print("# failures:");
-    let i: i32 = 0;
+    let i = 0;
     while (i < r.failures.len()) {
       print("#   " + r.failures[i]);
-      i = i + 1;
+      i += 1;
     }
     return 1;
   }
@@ -504,7 +504,7 @@ pub function assert_eq_f64_near(actual: f64, expected: f64, epsilon: f64): TestO
   if (actual == expected) {
     return Pass;
   }
-  let diff: f64 = actual - expected;
+  let diff = actual - expected;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
@@ -530,11 +530,11 @@ pub function assert_eq_f64_rel(actual: f64, expected: f64, rel_tol: f64): TestOu
   if (actual == expected) {
     return Pass;
   }
-  let diff: f64 = actual - expected;
+  let diff = actual - expected;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
-  let denom: f64 = expected;
+  let denom = expected;
   if (denom < 0.0) {
     denom = 0.0 - denom;
   }
@@ -546,7 +546,7 @@ pub function assert_eq_f64_rel(actual: f64, expected: f64, rel_tol: f64): TestOu
       + " - 0| = " + diff.to_string()
       + " > rel_tol " + rel_tol.to_string());
   }
-  let ratio: f64 = diff / denom;
+  let ratio = diff / denom;
   if (ratio <= rel_tol) {
     return Pass;
   }
@@ -674,7 +674,7 @@ pub function assert_non_empty_string(s: string): TestOutcome {
 }
 
 pub function assert_string_count(haystack: string, needle: string, n: i32): TestOutcome {
-  let got: i32 = haystack.count(needle);
+  let got = haystack.count(needle);
   if (got == n) {
     return Pass;
   }
@@ -684,37 +684,37 @@ pub function assert_string_count(haystack: string, needle: string, n: i32): Test
 }
 
 pub function assert_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome {
-  let i: i32 = 1;
+  let i = 1;
   while (i < arr.len()) {
     if (arr[i - 1].cmp(arr[i]) > 0) {
       return Fail("assert_sorted_asc: inversion at index " + i.to_string()
         + ": " + arr[i - 1].to_string() + " > " + arr[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_sorted_desc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome {
-  let i: i32 = 1;
+  let i = 1;
   while (i < arr.len()) {
     if (arr[i - 1].cmp(arr[i]) < 0) {
       return Fail("assert_sorted_desc: inversion at index " + i.to_string()
         + ": " + arr[i - 1].to_string() + " < " + arr[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_strictly_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): TestOutcome {
-  let i: i32 = 1;
+  let i = 1;
   while (i < arr.len()) {
     if (arr[i - 1].cmp(arr[i]) >= 0) {
       return Fail("assert_strictly_sorted_asc: not strict at index " + i.to_string()
         + ": " + arr[i - 1].to_string() + " >= " + arr[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -725,83 +725,83 @@ pub function assert_strictly_sorted_asc[T: cmp.Ord + cmp.Display](arr: T[]): Tes
 ```fern
 <<11 pub function assert_unique[T: cmp.Eq + cmp.Display](arr: T[]): TestOutcome>>=
 pub function assert_unique[T: cmp.Eq + cmp.Display](arr: T[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < arr.len()) {
-    let j: i32 = i + 1;
+    let j = i + 1;
     while (j < arr.len()) {
       if (arr[i].eq(arr[j])) {
         return Fail("assert_unique: duplicate value " + arr[i].to_string());
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_subset[T: cmp.Eq + cmp.Display](superset: T[], subset: T[]): TestOutcome {
   let used: boolean[] = [];
-  let sn: i32 = superset.len();
-  let i: i32 = 0;
+  let sn = superset.len();
+  let i = 0;
   while (i < sn) {
     used = used.append(false);
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < subset.len()) {
-    let want: T = subset[j];
-    let matched: boolean = false;
-    let k: i32 = 0;
+    let want = subset[j];
+    let matched = false;
+    let k = 0;
     while (k < sn && !matched) {
       if (!used[k] && superset[k].eq(want)) {
         used = used.with(k, true);
         matched = true;
       }
-      k = k + 1;
+      k += 1;
     }
     if (!matched) {
       return Fail("assert_subset: " + want.to_string() + " not in superset (with required multiplicity)");
     }
-    j = j + 1;
+    j += 1;
   }
   return Pass;
 }
 
 pub function assert_set_eq[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]): TestOutcome {
-  let an: i32 = actual.len();
-  let en: i32 = expected.len();
+  let an = actual.len();
+  let en = expected.len();
   if (an != en) {
     return Fail("assert_set_eq: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
   let used: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < en) {
     used = used.append(false);
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < an) {
-    let want: T = actual[j];
-    let matched: boolean = false;
-    let k: i32 = 0;
+    let want = actual[j];
+    let matched = false;
+    let k = 0;
     while (k < en && !matched) {
       if (!used[k] && expected[k].eq(want)) {
         used = used.with(k, true);
         matched = true;
       }
-      k = k + 1;
+      k += 1;
     }
     if (!matched) {
       return Fail("assert_set_eq: multiset differs - extra " + want.to_string());
     }
-    j = j + 1;
+    j += 1;
   }
   return Pass;
 }
 
 pub function assert_len_i32(arr: i32[], n: i32): TestOutcome {
-  let got: i32 = arr.len();
+  let got = arr.len();
   if (got == n) {
     return Pass;
   }
@@ -810,7 +810,7 @@ pub function assert_len_i32(arr: i32[], n: i32): TestOutcome {
 }
 
 pub function assert_len_string(arr: string[], n: i32): TestOutcome {
-  let got: i32 = arr.len();
+  let got = arr.len();
   if (got == n) {
     return Pass;
   }
@@ -819,26 +819,26 @@ pub function assert_len_string(arr: string[], n: i32): TestOutcome {
 }
 
 pub function assert_eq_array[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]): TestOutcome {
-  let an: i32 = actual.len();
-  let en: i32 = expected.len();
+  let an = actual.len();
+  let en = expected.len();
   if (an != en) {
     return Fail("assert_eq_array: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < an) {
     if (!actual[i].eq(expected[i])) {
       return Fail("assert_eq_array: at index " + i.to_string()
         + " expected " + expected[i].to_string()
         + ", got " + actual[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_at[T: cmp.Eq + cmp.Display](arr: T[], idx: i32, expected: T): TestOutcome {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (idx < 0 || idx >= n) {
     return Fail("assert_at: index " + idx.to_string()
       + " out of bounds (length " + n.to_string() + ")");
@@ -857,12 +857,12 @@ pub function assert_at[T: cmp.Eq + cmp.Display](arr: T[], idx: i32, expected: T)
 ```fern
 <<12 pub function assert_array_contains[T: cmp.Eq + cmp.Display](arr: T[], needle: T): TestOutcome>>=
 pub function assert_array_contains[T: cmp.Eq + cmp.Display](arr: T[], needle: T): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < arr.len()) {
     if (arr[i].eq(needle)) {
       return Pass;
     }
-    i = i + 1;
+    i += 1;
   }
   return Fail("assert_array_contains: "
     + needle.to_string() + " not found in array of length "
@@ -870,25 +870,25 @@ pub function assert_array_contains[T: cmp.Eq + cmp.Display](arr: T[], needle: T)
 }
 
 pub function assert_array_not_contains[T: cmp.Eq + cmp.Display](arr: T[], needle: T): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < arr.len()) {
     if (arr[i].eq(needle)) {
       return Fail("assert_array_not_contains: "
         + needle.to_string()
         + " unexpectedly present at index " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): TestOutcome {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (idx < 0 || idx >= n) {
     return Fail("assert_at_f64: index " + idx.to_string()
       + " out of bounds (length " + n.to_string() + ")");
   }
-  let a: f64 = arr[idx];
+  let a = arr[idx];
   if (a != a) {
     return Fail("assert_at_f64: at index " + idx.to_string()
       + " actual is NaN");
@@ -900,7 +900,7 @@ pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): T
   if (a == expected) {
     return Pass;
   }
-  let diff: f64 = a - expected;
+  let diff = a - expected;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
@@ -914,12 +914,12 @@ pub function assert_at_f64(arr: f64[], idx: i32, expected: f64, epsilon: f64): T
 }
 
 pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): TestOutcome {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (idx < 0 || idx >= n) {
     return Fail("assert_at_f32: index " + idx.to_string()
       + " out of bounds (length " + n.to_string() + ")");
   }
-  let a: f32 = arr[idx];
+  let a = arr[idx];
   if (a != a) {
     return Fail("assert_at_f32: at index " + idx.to_string()
       + " actual is NaN");
@@ -931,7 +931,7 @@ pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): T
   if (a == expected) {
     return Pass;
   }
-  let diff: f64 = a as f64 - expected as f64;
+  let diff = a as f64 - expected as f64;
   if (diff < 0.0) {
     diff = 0.0 - diff;
   }
@@ -944,22 +944,22 @@ pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): T
 }
 
 pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f64): TestOutcome {
-  let an: i32 = actual.len();
-  let en: i32 = expected.len();
+  let an = actual.len();
+  let en = expected.len();
   if (an != en) {
     return Fail("assert_eq_f64_array_near: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < an) {
-    let a: f64 = actual[i];
-    let e: f64 = expected[i];
+    let a = actual[i];
+    let e = expected[i];
     if (a != a || e != e) {
       return Fail("assert_eq_f64_array_near: NaN at index "
         + i.to_string());
     }
     if (a != e) {
-      let diff: f64 = a - e;
+      let diff = a - e;
       if (diff < 0.0) {
         diff = 0.0 - diff;
       }
@@ -970,7 +970,7 @@ pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f
           + " > epsilon " + epsilon.to_string());
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -981,22 +981,22 @@ pub function assert_eq_f64_array_near(actual: f64[], expected: f64[], epsilon: f
 ```fern
 <<13 pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f32): TestOutcome>>=
 pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f32): TestOutcome {
-  let an: i32 = actual.len();
-  let en: i32 = expected.len();
+  let an = actual.len();
+  let en = expected.len();
   if (an != en) {
     return Fail("assert_eq_f32_array_near: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < an) {
-    let a: f32 = actual[i];
-    let e: f32 = expected[i];
+    let a = actual[i];
+    let e = expected[i];
     if (a != a || e != e) {
       return Fail("assert_eq_f32_array_near: NaN at index "
         + i.to_string());
     }
     if (a != e) {
-      let diff: f64 = a as f64 - e as f64;
+      let diff = a as f64 - e as f64;
       if (diff < 0.0) {
         diff = 0.0 - diff;
       }
@@ -1007,7 +1007,7 @@ pub function assert_eq_f32_array_near(actual: f32[], expected: f32[], epsilon: f
           + epsilon.to_string());
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -1016,7 +1016,7 @@ pub function assert_exit(actual: ProcessResult, expected: i32): TestOutcome {
   if (actual.exit_code == expected) {
     return Pass;
   }
-  let tail: string = "";
+  let tail = "";
   if (actual.stdout.len() > 0) {
     tail = tail + "\n  stdout: " + actual.stdout;
   }
@@ -1091,7 +1091,7 @@ pub function assert_stderr_lines(actual: ProcessResult, expected_lines: string[]
 }
 
 pub function assert_stdout_line_count(actual: ProcessResult, n: i32): TestOutcome {
-  let got: i32 = actual.stdout.lines().len();
+  let got = actual.stdout.lines().len();
   if (got == n) {
     return Pass;
   }
@@ -1100,7 +1100,7 @@ pub function assert_stdout_line_count(actual: ProcessResult, n: i32): TestOutcom
 }
 
 pub function assert_stderr_line_count(actual: ProcessResult, n: i32): TestOutcome {
-  let got: i32 = actual.stderr.lines().len();
+  let got = actual.stderr.lines().len();
   if (got == n) {
     return Pass;
   }
@@ -1114,13 +1114,13 @@ pub function assert_stderr_line_count(actual: ProcessResult, n: i32): TestOutcom
 ```fern
 <<14 pub function assert_contains_all(haystack: string, needles: string[]): TestOutcome>>=
 pub function assert_contains_all(haystack: string, needles: string[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < needles.len()) {
     if (!haystack.contains(needles[i])) {
       return Fail("assert_contains_all: missing \"" + needles[i]
         + "\" in:\n  " + haystack);
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -1129,29 +1129,29 @@ pub function assert_contains_any(haystack: string, needles: string[]): TestOutco
   if (needles.len() == 0) {
     return Fail("assert_contains_any: empty needles list");
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < needles.len()) {
     if (haystack.contains(needles[i])) {
       return Pass;
     }
-    i = i + 1;
+    i += 1;
   }
   return Fail("assert_contains_any: none of " + i.to_string()
     + " needles matched in:\n  " + haystack);
 }
 
 pub function assert_contains_in_order(haystack: string, needles: string[]): TestOutcome {
-  let cursor: i32 = 0;
-  let i: i32 = 0;
+  let cursor = 0;
+  let i = 0;
   while (i < needles.len()) {
-    let rest: str = slice_unchecked(haystack, cursor, haystack.len());
+    let rest = slice_unchecked(haystack, cursor, haystack.len());
     let Some(idx) = rest.index_of(needles[i]) else {
       return Fail("assert_contains_in_order: \"" + needles[i]
         + "\" not found after byte " + cursor.to_string()
         + " in:\n  " + haystack);
     };
     cursor = cursor + idx + needles[i].len();
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -1162,18 +1162,18 @@ pub function assert_contains_in_order(haystack: string, needles: string[]): Test
 ```fern
 <<15 function __diff_lines(a: string, b: string): i32>>=
 function __diff_lines(a: string, b: string): i32 {
-  let a_lines: string[] = a.lines();
-  let b_lines: string[] = b.lines();
-  let n: i32 = a_lines.len();
+  let a_lines = a.lines();
+  let b_lines = b.lines();
+  let n = a_lines.len();
   if (b_lines.len() < n) {
     n = b_lines.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (a_lines[i] != b_lines[i]) {
       return i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (a_lines.len() != b_lines.len()) {
     return n + 1;
@@ -1190,12 +1190,12 @@ pub function assert_eq_string_diff(actual: string, expected: string): TestOutcom
   if (actual == expected) {
     return Pass;
   }
-  let line_no: i32 = __diff_lines(expected, actual);
-  let a_lines: string[] = actual.lines();
-  let e_lines: string[] = expected.lines();
-  let actual_line: string = "<past end>";
-  let expected_line: string = "<past end>";
-  let ix: i32 = line_no - 1;
+  let line_no = __diff_lines(expected, actual);
+  let a_lines = actual.lines();
+  let e_lines = expected.lines();
+  let actual_line = "<past end>";
+  let expected_line = "<past end>";
+  let ix = line_no - 1;
   if (ix >= 0 && ix < a_lines.len()) {
     actual_line = a_lines[ix];
   }
@@ -1208,21 +1208,21 @@ pub function assert_eq_string_diff(actual: string, expected: string): TestOutcom
 }
 
 pub function assert_lines_eq(actual: string, expected_lines: string[]): TestOutcome {
-  let a_lines: string[] = actual.lines();
-  let an: i32 = a_lines.len();
-  let en: i32 = expected_lines.len();
+  let a_lines = actual.lines();
+  let an = a_lines.len();
+  let en = expected_lines.len();
   if (an != en) {
     return Fail("assert_lines_eq: line count differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < an) {
     if (a_lines[i] != expected_lines[i]) {
       return Fail("assert_lines_eq: differ at line " + (i + 1).to_string()
         + "\n  expected: " + expected_lines[i]
         + "\n  actual:   " + a_lines[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -1299,7 +1299,7 @@ pub function assert_file_lines(path: string, expected_lines: string[]): TestOutc
 pub function assert_file_line_count(path: string, n: i32): TestOutcome {
   match (read_file(path)) {
     Ok(actual) => {
-      let got: i32 = actual.lines().len();
+      let got = actual.lines().len();
       if (got == n) {
         return Pass;
       }
@@ -1370,8 +1370,8 @@ pub function assert_file_size(path: string, expected: i64): TestOutcome {
 pub function assert_eq_dir_listing(dir: string, expected_names: string[]): TestOutcome {
   match (read_dir(dir)) {
     Ok(names) => {
-      let actual_sorted: string[] = cmp.sort(names);
-      let expected_sorted: string[] = cmp.sort(expected_names);
+      let actual_sorted = cmp.sort(names);
+      let expected_sorted = cmp.sort(expected_names);
       return assert_eq_array(actual_sorted, expected_sorted);
     },
     Err(_) => {
@@ -1407,7 +1407,7 @@ pub function assert_file_contains(path: string, needle: string): TestOutcome {
 pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) {
   match (temp_dir(prefix)) {
     Ok(dir) => {
-      let cleaned: TestRunner = r.defer_cleanup(dir);
+      let cleaned = r.defer_cleanup(dir);
       return (dir, cleaned);
     },
     Err(_) => {
@@ -1423,40 +1423,40 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
 ```fern
 <<19 function __bench_sort_us(samples: i64[]): i64[]>>=
 function __bench_sort_us(samples: i64[]): i64[] {
-  let n: i32 = samples.len();
+  let n = samples.len();
   let taken: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     taken = taken.append(false);
-    i = i + 1;
+    i += 1;
   }
   let out: i64[] = [];
   i = 0;
   while (i < n) {
     let best: i32 = 0 - 1;
-    let j: i32 = 0;
+    let j = 0;
     while (j < n) {
       if (!taken[j]) {
         if (best < 0 || samples[j] < samples[best]) {
           best = j;
         }
       }
-      j = j + 1;
+      j += 1;
     }
     out = out.append(samples[best]);
     taken = taken.append(true);
     let t2: boolean[] = [];
-    let k: i32 = 0;
+    let k = 0;
     while (k < n) {
       if (k == best) {
         t2 = t2.append(true);
       } else {
         t2 = t2.append(taken[k]);
       }
-      k = k + 1;
+      k += 1;
     }
     taken = t2;
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1471,25 +1471,25 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
     return r.it(name, () => fail("bench: iterations must be > 0"));
   }
   let samples: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < iterations) {
-    let start_ns: i64 = monotonic_ns();
+    let start_ns = monotonic_ns();
     fn();
-    let elapsed_ns: i64 = monotonic_ns() - start_ns;
+    let elapsed_ns = monotonic_ns() - start_ns;
     samples = samples.append(elapsed_ns / (1000 as i64));
-    i = i + 1;
+    i += 1;
   }
-  let sorted: i64[] = __bench_sort_us(samples);
-  let min_us: i64 = sorted[0];
-  let max_us: i64 = sorted[iterations - 1];
-  let median_us: i64 = sorted[iterations / 2];
-  let sum_us: i64 = 0 as i64;
-  let k: i32 = 0;
+  let sorted = __bench_sort_us(samples);
+  let min_us = sorted[0];
+  let max_us = sorted[iterations - 1];
+  let median_us = sorted[iterations / 2];
+  let sum_us = 0 as i64;
+  let k = 0;
   while (k < iterations) {
-    sum_us = sum_us + sorted[k];
-    k = k + 1;
+    sum_us += sorted[k];
+    k += 1;
   }
-  let mean_us: i64 = sum_us / (iterations as i64);
+  let mean_us = sum_us / (iterations as i64);
   print("# bench " + name + " (" + iterations.to_string() + " iters): "
     + "min=" + min_us.to_string() + "us "
     + "median=" + median_us.to_string() + "us "
@@ -1500,22 +1500,22 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
 
 // Fails when the median iteration takes longer than `budget`.
 pub function (r: TestRunner) bench_max(name: string, iterations: i32, fn: () => void, budget: Duration): TestRunner {
-  let max_us: i64 = budget.as_micros();
+  let max_us = budget.as_micros();
   if (iterations <= 0) {
     return r.it(name, () => fail("bench: iterations must be > 0"));
   }
   let samples: i64[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < iterations) {
-    let start_ns: i64 = monotonic_ns();
+    let start_ns = monotonic_ns();
     fn();
-    let elapsed_ns: i64 = monotonic_ns() - start_ns;
+    let elapsed_ns = monotonic_ns() - start_ns;
     samples = samples.append(elapsed_ns / (1000 as i64));
-    i = i + 1;
+    i += 1;
   }
-  let sorted: i64[] = __bench_sort_us(samples);
-  let median_us: i64 = sorted[iterations / 2];
-  let max_us_observed: i64 = sorted[iterations - 1];
+  let sorted = __bench_sort_us(samples);
+  let median_us = sorted[iterations / 2];
+  let max_us_observed = sorted[iterations - 1];
   print("# bench " + name + " (" + iterations.to_string() + " iters): "
     + "median=" + median_us.to_string() + "us "
     + "max=" + max_us_observed.to_string() + "us "
@@ -1529,7 +1529,7 @@ pub function (r: TestRunner) bench_max(name: string, iterations: i32, fn: () => 
 }
 
 pub function assert_elapsed_lt(start: Instant, limit: Duration): TestOutcome {
-  let elapsed: Duration = clock.elapsed(start);
+  let elapsed = clock.elapsed(start);
   if (elapsed.cmp(limit) < 0) {
     return Pass;
   }
@@ -1538,8 +1538,8 @@ pub function assert_elapsed_lt(start: Instant, limit: Duration): TestOutcome {
 }
 
 pub function assert_close_to_now(actual: time.Timestamp, max_skew: Duration): TestOutcome {
-  let skew: Duration = clock.now().since(actual);
-  let magnitude: Duration = skew;
+  let skew = clock.now().since(actual);
+  let magnitude = skew;
   if (skew.is_negative()) {
     magnitude = time.DURATION_ZERO.sub(skew);
   }
@@ -1603,12 +1603,12 @@ function __json_value_eq(a: json.JsonValue, b: json.JsonValue): boolean {
           if (av.len() != bv.len()) {
             return false;
           }
-          let i: i32 = 0;
+          let i = 0;
           while (i < av.len()) {
             if (!__json_value_eq(av[i], bv[i])) {
               return false;
             }
-            i = i + 1;
+            i += 1;
           }
           return true;
         },
@@ -1623,10 +1623,10 @@ function __json_value_eq(a: json.JsonValue, b: json.JsonValue): boolean {
           if (am.len() != bm.len()) {
             return false;
           }
-          let keys: string[] = am.keys();
-          let i: i32 = 0;
+          let keys = am.keys();
+          let i = 0;
           while (i < keys.len()) {
-            let k: string = keys[i];
+            let k = keys[i];
             match (am.get(k)) {
               None => {
                 return false;
@@ -1644,7 +1644,7 @@ function __json_value_eq(a: json.JsonValue, b: json.JsonValue): boolean {
                 }
               }
             }
-            i = i + 1;
+            i += 1;
           }
           return true;
         },
@@ -1735,7 +1735,7 @@ pub function assert_env_eq(name: string, expected: string): TestOutcome {
 }
 
 pub function assert_map_len[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m: Map[K, V], n: i32): TestOutcome {
-  let got: i32 = m.len();
+  let got = m.len();
   if (got == n) {
     return Pass;
   }
@@ -1772,16 +1772,16 @@ pub function assert_map_lacks[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](
 ```fern
 <<23 pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](actual: Map[K, V], expected: M...>>=
 pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](actual: Map[K, V], expected: Map[K, V]): TestOutcome {
-  let an: i32 = actual.len();
-  let en: i32 = expected.len();
+  let an = actual.len();
+  let en = expected.len();
   if (an != en) {
     return Fail("assert_eq_map: length differs - expected "
       + en.to_string() + ", got " + an.to_string());
   }
-  let ks: K[] = actual.keys();
-  let i: i32 = 0;
+  let ks = actual.keys();
+  let i = 0;
   while (i < ks.len()) {
-    let k: K = ks[i];
+    let k = ks[i];
     match (expected.get(k)) {
       None => {
         return Fail("assert_eq_map: key " + k.to_string()
@@ -1800,7 +1800,7 @@ pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](act
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -1826,10 +1826,10 @@ pub function assert_any[T](arr: T[], pred: (T) => boolean): TestOutcome {
 }
 
 pub function assert_count[T](arr: T[], pred: (T) => boolean, expected_count: i32): TestOutcome {
-  let hits: i32 = 0;
+  let hits = 0;
   for x in arr {
     if (pred(x)) {
-      hits = hits + 1;
+      hits += 1;
     }
   }
   if (hits == expected_count) {
@@ -1849,12 +1849,12 @@ pub function assert_one_of[T: cmp.Eq + cmp.Display](actual: T, allowed: T[]): Te
   if (cmp.contains(allowed, actual)) {
     return Pass;
   }
-  let rendered: string = "[";
+  let rendered = "[";
   for i in 0..allowed.len() {
     if (i > 0) {
-      rendered = rendered + ", ";
+      rendered += ", ";
     }
-    rendered = rendered + __quoted(allowed[i].to_string());
+    rendered += __quoted(allowed[i].to_string());
   }
   return Fail("assert_one_of: " + __quoted(actual.to_string())
     + " not in allowed set " + rendered + "]");
@@ -1937,7 +1937,7 @@ pub function assert_no_header(resp: HttpResponse, name: string): TestOutcome {
 }
 
 pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
-  let got: string = resp.body_text_lossy();
+  let got = resp.body_text_lossy();
   if (got == expected) {
     return Pass;
   }
@@ -1992,16 +1992,16 @@ pub function assert_is_err_string_array(res: Result[string[], IoError]): TestOut
 }
 
 pub function assert_array_intersects_i32(a: i32[], b: i32[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Pass;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return Fail("assert_array_intersects_i32: no shared element between arrays of length "
     + a.len().to_string() + " and " + b.len().to_string());
@@ -2013,61 +2013,61 @@ pub function assert_array_intersects_i32(a: i32[], b: i32[]): TestOutcome {
 ```fern
 <<26 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome>>=
 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Pass;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return Fail("assert_array_intersects_string: no shared element between arrays of length "
     + a.len().to_string() + " and " + b.len().to_string());
 }
 
 pub function assert_array_disjoint_i32(a: i32[], b: i32[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Fail("assert_array_disjoint_i32: shared element "
           + a[i].to_string());
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_array_disjoint_string(a: string[], b: string[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < b.len()) {
       if (a[i] == b[j]) {
         return Fail("assert_array_disjoint_string: shared element \""
           + a[i] + "\"");
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): TestOutcome {
-  let pn: i32 = prefix.len();
+  let pn = prefix.len();
   if (pn > arr.len()) {
     return Fail("assert_array_starts_with_i32: array length "
       + arr.len().to_string() + " < prefix length "
       + pn.to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < pn) {
     if (arr[i] != prefix[i]) {
       return Fail("assert_array_starts_with_i32: at index "
@@ -2075,40 +2075,40 @@ pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): TestOutcom
         + prefix[i].to_string() + ", got "
         + arr[i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_array_starts_with_string(arr: string[], prefix: string[]): TestOutcome {
-  let pn: i32 = prefix.len();
+  let pn = prefix.len();
   if (pn > arr.len()) {
     return Fail("assert_array_starts_with_string: array length "
       + arr.len().to_string() + " < prefix length "
       + pn.to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < pn) {
     if (arr[i] != prefix[i]) {
       return Fail("assert_array_starts_with_string: at index "
         + i.to_string() + " expected \""
         + prefix[i] + "\", got \"" + arr[i] + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): TestOutcome {
-  let sn: i32 = suffix.len();
-  let an: i32 = arr.len();
+  let sn = suffix.len();
+  let an = arr.len();
   if (sn > an) {
     return Fail("assert_array_ends_with_i32: array length "
       + an.to_string() + " < suffix length "
       + sn.to_string());
   }
-  let off: i32 = an - sn;
-  let i: i32 = 0;
+  let off = an - sn;
+  let i = 0;
   while (i < sn) {
     if (arr[off + i] != suffix[i]) {
       return Fail("assert_array_ends_with_i32: at index "
@@ -2116,28 +2116,28 @@ pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): TestOutcome 
         + suffix[i].to_string() + ", got "
         + arr[off + i].to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_array_ends_with_string(arr: string[], suffix: string[]): TestOutcome {
-  let sn: i32 = suffix.len();
-  let an: i32 = arr.len();
+  let sn = suffix.len();
+  let an = arr.len();
   if (sn > an) {
     return Fail("assert_array_ends_with_string: array length "
       + an.to_string() + " < suffix length "
       + sn.to_string());
   }
-  let off: i32 = an - sn;
-  let i: i32 = 0;
+  let off = an - sn;
+  let i = 0;
   while (i < sn) {
     if (arr[off + i] != suffix[i]) {
       return Fail("assert_array_ends_with_string: at index "
         + (off + i).to_string() + " expected \""
         + suffix[i] + "\", got \"" + arr[off + i] + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
@@ -2148,30 +2148,30 @@ pub function assert_array_ends_with_string(arr: string[], suffix: string[]): Tes
 ```fern
 <<27 function __match_subseq_i32(arr: i32[], needle: i32[]): boolean>>=
 function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
-  let nn: i32 = needle.len();
+  let nn = needle.len();
   if (nn == 0) {
     return true;
   }
-  let an: i32 = arr.len();
+  let an = arr.len();
   if (nn > an) {
     return false;
   }
-  let start: i32 = 0;
+  let start = 0;
   while (start <= an - nn) {
-    let matched: boolean = true;
-    let i: i32 = 0;
+    let matched = true;
+    let i = 0;
     while (i < nn) {
       if (arr[start + i] != needle[i]) {
         matched = false;
         i = nn;
       } else {
-        i = i + 1;
+        i += 1;
       }
     }
     if (matched) {
       return true;
     }
-    start = start + 1;
+    start += 1;
   }
   return false;
 }
@@ -2197,30 +2197,30 @@ pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): TestOu
 ```fern
 <<29 function __match_subseq_string(arr: string[], needle: string[]): boolean>>=
 function __match_subseq_string(arr: string[], needle: string[]): boolean {
-  let nn: i32 = needle.len();
+  let nn = needle.len();
   if (nn == 0) {
     return true;
   }
-  let an: i32 = arr.len();
+  let an = arr.len();
   if (nn > an) {
     return false;
   }
-  let start: i32 = 0;
+  let start = 0;
   while (start <= an - nn) {
-    let matched: boolean = true;
-    let i: i32 = 0;
+    let matched = true;
+    let i = 0;
     while (i < nn) {
       if (arr[start + i] != needle[i]) {
         matched = false;
         i = nn;
       } else {
-        i = i + 1;
+        i += 1;
       }
     }
     if (matched) {
       return true;
     }
-    start = start + 1;
+    start += 1;
   }
   return false;
 }
@@ -2241,51 +2241,51 @@ pub function assert_array_contains_subseq_string(arr: string[], needle: string[]
 }
 
 pub function assert_all_starts_with(arr: string[], prefix: string): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < arr.len()) {
     if (!arr[i].starts_with(prefix)) {
       return Fail("assert_all_starts_with: at index "
         + i.to_string() + " value \"" + arr[i]
         + "\" does not start with \"" + prefix + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_all_ends_with(arr: string[], suffix: string): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < arr.len()) {
     if (!arr[i].ends_with(suffix)) {
       return Fail("assert_all_ends_with: at index "
         + i.to_string() + " value \"" + arr[i]
         + "\" does not end with \"" + suffix + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_all_contain(arr: string[], needle: string): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < arr.len()) {
     if (!arr[i].contains(needle)) {
       return Fail("assert_all_contain: at index "
         + i.to_string() + " value \"" + arr[i]
         + "\" does not contain \"" + needle + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
   return Pass;
 }
 
 pub function assert_starts_with_any(s: string, prefixes: string[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < prefixes.len()) {
     if (s.starts_with(prefixes[i])) {
       return Pass;
     }
-    i = i + 1;
+    i += 1;
   }
   return Fail("assert_starts_with_any: \"" + s
     + "\" matches none of " + prefixes.len().to_string()
@@ -2293,12 +2293,12 @@ pub function assert_starts_with_any(s: string, prefixes: string[]): TestOutcome 
 }
 
 pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
-  let i: i32 = 0;
+  let i = 0;
   while (i < suffixes.len()) {
     if (s.ends_with(suffixes[i])) {
       return Pass;
     }
-    i = i + 1;
+    i += 1;
   }
   return Fail("assert_ends_with_any: \"" + s
     + "\" matches none of " + suffixes.len().to_string()
@@ -2306,8 +2306,8 @@ pub function assert_ends_with_any(s: string, suffixes: string[]): TestOutcome {
 }
 
 pub function assert_json_eq(actual: string, expected: string): TestOutcome {
-  let av: Result[json.JsonValue, json.JsonError] = json.parse(actual);
-  let ev: Result[json.JsonValue, json.JsonError] = json.parse(expected);
+  let av = json.parse(actual);
+  let ev = json.parse(expected);
   match (av) {
     Err(_) => {
       return Fail("assert_json_eq: actual is not valid JSON: " + actual);
@@ -2415,7 +2415,7 @@ pub function assert_json_array_len(json_text: string, n: i32): TestOutcome {
     Ok(v) => {
       match (v) {
         JArray(arr) => {
-          let got: i32 = arr.len();
+          let got = arr.len();
           if (got == n) {
             return Pass;
           }
@@ -2456,7 +2456,7 @@ pub function assert_json_object_size(json_text: string, n: i32): TestOutcome {
     Ok(v) => {
       match (v) {
         JObject(m) => {
-          let got: i32 = m.len();
+          let got = m.len();
           if (got == n) {
             return Pass;
           }
@@ -2632,11 +2632,11 @@ pub function assert_json_eq_field_bool(json_text: string, key: string, expected:
               if (b == expected) {
                 return Pass;
               }
-              let ebs: string = "false";
+              let ebs = "false";
               if (expected) {
                 ebs = "true";
               }
-              let gbs: string = "false";
+              let gbs = "false";
               if (b) {
                 gbs = "true";
               }

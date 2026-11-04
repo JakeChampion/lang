@@ -49,16 +49,16 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<2 pub function join(parts: string[]): string>>=
 pub function join(parts: string[]): string {
-  let n: i32 = parts.len();
+  let n = parts.len();
   if (n == 0) {
     return "";
   }
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < n) {
-    let p: string = parts[i];
+    let p = parts[i];
     if (p.len() == 0) {
-      i = i + 1;
+      i += 1;
     } else {
       if (out.len() == 0) {
         out = p;
@@ -66,37 +66,37 @@ pub function join(parts: string[]): string {
         while (out.len() > 1 && out[out.len() - 1] == 47) {
           out = slice_unchecked(out, 0, out.len() - 1) + "";
         }
-        let start: i32 = 0;
+        let start = 0;
         while (start < p.len() && p[start] == 47) {
-          start = start + 1;
+          start += 1;
         }
-        let rest: str = slice_unchecked(p, start, p.len());
+        let rest = slice_unchecked(p, start, p.len());
         if (out[out.len() - 1] == 47) {
-          out = out + rest;
+          out += rest;
         } else {
           out = out + "/" + rest;
         }
       }
-      i = i + 1;
+      i += 1;
     }
   }
   return out;
 }
 
 pub function parent(p: string): string {
-  let n: i32 = p.len();
+  let n = p.len();
   if (n == 0) {
     return "";
   }
-  let i: i32 = n - 1;
+  let i = n - 1;
   if (n == 1 && p[0] == 47) {
     return "/";
   }
   while (i > 0 && p[i] == 47) {
-    i = i - 1;
+    i -= 1;
   }
   while (i >= 0 && p[i] != 47) {
-    i = i - 1;
+    i -= 1;
   }
   if (i < 0) {
     return "";
@@ -108,33 +108,33 @@ pub function parent(p: string): string {
 }
 
 pub function file_name(p: string): string {
-  let n: i32 = p.len();
+  let n = p.len();
   if (n == 0) {
     return "";
   }
-  let end: i32 = n;
+  let end = n;
   while (end > 0 && p[end - 1] == 47) {
-    end = end - 1;
+    end -= 1;
   }
   if (end == 0) {
     return "";
   }
-  let i: i32 = end - 1;
+  let i = end - 1;
   while (i >= 0 && p[i] != 47) {
-    i = i - 1;
+    i -= 1;
   }
   return slice_unchecked(p, i + 1, end) + "";
 }
 
 pub function extension(p: string): string {
-  let name: string = file_name(p);
-  let n: i32 = name.len();
+  let name = file_name(p);
+  let n = name.len();
   if (n == 0) {
     return "";
   }
-  let i: i32 = n - 1;
+  let i = n - 1;
   while (i > 0 && name[i] != 46) {
-    i = i - 1;
+    i -= 1;
   }
   if (i <= 0) {
     return "";
@@ -149,11 +149,11 @@ pub function extension(p: string): string {
 <<3 function seg_pop(xs: string[]): string[]>>=
 function seg_pop(xs: string[]): string[] {
   let out: string[] = [];
-  let last: i32 = xs.len() - 1;
-  let i: i32 = 0;
+  let last = xs.len() - 1;
+  let i = 0;
   while (i < last) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -164,27 +164,27 @@ function seg_pop(xs: string[]): string[] {
 ```fern
 <<4 pub function clean(p: string): string>>=
 pub function clean(p: string): string {
-  let n: i32 = p.len();
+  let n = p.len();
   if (n == 0) {
     return ".";
   }
-  let rooted: boolean = p[0] == 47;
+  let rooted = p[0] == 47;
   let segs: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     while (i < n && p[i] == 47) {
-      i = i + 1;
+      i += 1;
     }
     if (i >= n) {
       i = n;
     } else {
-      let start: i32 = i;
+      let start = i;
       while (i < n && p[i] != 47) {
-        i = i + 1;
+        i += 1;
       }
-      let seg: str = slice_unchecked(p, start, i);
+      let seg = slice_unchecked(p, start, i);
       if (seg == ".") {} else if (seg == "..") {
-        let slen: i32 = segs.len();
+        let slen = segs.len();
         if (slen > 0 && segs[slen - 1] != "..") {
           segs = seg_pop(segs);
         } else if (!rooted) {
@@ -195,14 +195,14 @@ pub function clean(p: string): string {
       }
     }
   }
-  let joined: string = "";
-  let k: i32 = 0;
+  let joined = "";
+  let k = 0;
   while (k < segs.len()) {
     if (k > 0) {
-      joined = joined + "/";
+      joined += "/";
     }
-    joined = joined + segs[k];
-    k = k + 1;
+    joined += segs[k];
+    k += 1;
   }
   if (rooted) {
     return "/" + joined;
@@ -218,14 +218,14 @@ pub function is_absolute(p: string): boolean {
 }
 
 pub function stem(p: string): string {
-  let name: string = file_name(p);
-  let n: i32 = name.len();
+  let name = file_name(p);
+  let n = name.len();
   if (n == 0) {
     return "";
   }
-  let i: i32 = n - 1;
+  let i = n - 1;
   while (i > 0 && name[i] != 46) {
-    i = i - 1;
+    i -= 1;
   }
   if (i <= 0) {
     return name;
@@ -234,10 +234,10 @@ pub function stem(p: string): string {
 }
 
 pub function with_extension(p: string, ext: string): string {
-  let n: i32 = p.len();
-  let end: i32 = n;
+  let n = p.len();
+  let end = n;
   while (end > 0 && p[end - 1] == 47) {
-    end = end - 1;
+    end -= 1;
   }
   if (end == 0) {
     if (ext.len() == 0) {
@@ -245,20 +245,20 @@ pub function with_extension(p: string, ext: string): string {
     }
     return p + "." + ext;
   }
-  let fs: i32 = end - 1;
+  let fs = end - 1;
   while (fs >= 0 && p[fs] != 47) {
-    fs = fs - 1;
+    fs -= 1;
   }
-  fs = fs + 1;
-  let dot: i32 = end;
-  let j: i32 = end - 1;
+  fs += 1;
+  let dot = end;
+  let j = end - 1;
   while (j > fs && p[j] != 46) {
-    j = j - 1;
+    j -= 1;
   }
   if (j > fs && p[j] == 46) {
     dot = j;
   }
-  let base: string = slice_unchecked(p, 0, dot) + "";
+  let base = slice_unchecked(p, 0, dot) + "";
   if (ext.len() == 0) {
     return base;
   }

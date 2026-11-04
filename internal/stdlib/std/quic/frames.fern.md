@@ -196,7 +196,7 @@ pub function varint_len(v: i64): i32 {
 }
 
 pub function put_varint(own out: u8[], v: i64): u8[] {
-  let n: i32 = varint_len(v);
+  let n = varint_len(v);
   if (n == 1) {
     return out.append(v as u8);
   }
@@ -206,10 +206,10 @@ pub function put_varint(own out: u8[], v: i64): u8[] {
   if (n == 4) {
     return out.append((v >> 24 | 128) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
   }
-  let i: i32 = 7;
+  let i = 7;
   out = out.append((v >> 56 | 192) as u8);
   while (i > 1) {
-    i = i - 1;
+    i -= 1;
     out = out.append((v >> (i * 8) as i64 & 255) as u8);
   }
   return out.append((v & 255) as u8);
@@ -224,10 +224,10 @@ pub function put_varint_n(own out: u8[], v: i64, n: i32): u8[] {
   } else if (n == 8) {
     prefix = 192;
   }
-  let i: i32 = n;
+  let i = n;
   while (i > 0) {
-    i = i - 1;
-    let b: i64 = v >> (i * 8) as i64 & 255;
+    i -= 1;
+    let b = v >> (i * 8) as i64 & 255;
     if (i == n - 1) {
       b = b | prefix;
     }
@@ -240,16 +240,16 @@ pub function varint_at(buf: [u8], at: i32): i64 {
   if (at >= buf.len()) {
     return 0 - 1 as i64;
   }
-  let first: i32 = buf[at] as i32;
+  let first = buf[at] as i32;
   let n: i32 = 1 << (first >> 6);
   if (at + n > buf.len()) {
     return 0 - 1 as i64;
   }
-  let v: i64 = (first & 63) as i64;
-  let i: i32 = 1;
+  let v = (first & 63) as i64;
+  let i = 1;
   while (i < n) {
     v = v << 8 | buf[at + i] as i64;
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -444,7 +444,7 @@ function __int(own r: Reader, what: string): Reader {
   if (!r.ok) {
     return r;
   }
-  let v: i64 = varint_at(r.buf, r.at);
+  let v = varint_at(r.buf, r.at);
   if (v < 0) {
     return __fail(r, what + " cut short");
   }
@@ -456,7 +456,7 @@ function __take(own r: Reader, n: i64, what: string): Reader {
   if (!r.ok) {
     return r;
   }
-  let k: i32 = n as i32;
+  let k = n as i32;
   return Reader { ...r, at: r.at + k, bytes: __slice(r.buf, r.at, r.at + k) };
 }
 
@@ -480,7 +480,7 @@ function __done(own r: Reader, f: Frame): Reader {
 ```fern
 <<12 pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError]>>=
 pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError] {
-  let r: Reader = __frame(__reader(payload, at));
+  let r = __frame(__reader(payload, at));
   match (r.failed) {
     Some(e) => {
       return Err(e);
@@ -494,7 +494,7 @@ pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
   if (payload.len() == 0) {
     return Err(FrameError { code: PROTOCOL_VIOLATION, frame_type: 0, reason: "a packet with no frames" });
   }
-  let r: Reader = __reader(payload, 0);
+  let r = __reader(payload, 0);
   let fs: Frame[] = [];
   while (r.more()) {
     r = __frame(r);
@@ -517,7 +517,7 @@ pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
 ```fern
 <<13 function __frame(own r: Reader): Reader>>=
 function __frame(own r: Reader): Reader {
-  let start: i32 = r.at;
+  let start = r.at;
   r = __int(Reader { ...r, kind: 0 }, "frame type");
   if (!r.ok) {
     return r;
@@ -539,9 +539,9 @@ function __frame(own r: Reader): Reader {
 }
 
 function __padding(own r: Reader, start: i32): Reader {
-  let end: i32 = r.at;
+  let end = r.at;
   while (end < r.buf.len() && r.buf[end] == 0) {
-    end = end + 1;
+    end += 1;
   }
   return __done(Reader { ...r, at: end }, Padding(end - start));
 }
@@ -564,13 +564,13 @@ function __carrying(own r: Reader): Reader {
 
 function __ack(own r: Reader): Reader {
   r = __int(r, "largest acknowledged");
-  let largest: i64 = r.n;
+  let largest = r.n;
   r = __int(r, "ack delay");
-  let delay: i64 = r.n;
+  let delay = r.n;
   r = __int(r, "ack range count");
-  let count: i64 = r.n;
+  let count = r.n;
   r = __int(r, "first ack range");
-  let first: i64 = r.n;
+  let first = r.n;
   if (!r.ok) {
     return r;
   }
@@ -599,9 +599,9 @@ function __ecn(own r: Reader): Reader {
     return r;
   }
   r = __int(r, "ECT(0) count");
-  let e0: i64 = r.n;
+  let e0 = r.n;
   r = __int(r, "ECT(1) count");
-  let e1: i64 = r.n;
+  let e1 = r.n;
   r = __int(r, "ECN-CE count");
   if (!r.ok) {
     return r;
@@ -612,13 +612,13 @@ function __ecn(own r: Reader): Reader {
 function __ack_ranges(own r: Reader, count: i64): Reader {
   for _ in 0..count {
     r = __int(r, "ack gap");
-    let gap: i64 = r.n;
+    let gap = r.n;
     r = __int(r, "ack range length");
-    let len: i64 = r.n;
+    let len = r.n;
     if (!r.ok) {
       return r;
     }
-    let high: i64 = r.ack.ranges[r.ack.ranges.len() - 1].low - gap - 2;
+    let high = r.ack.ranges[r.ack.ranges.len() - 1].low - gap - 2;
     if (high < 0 || len > high) {
       return __fail(r, "ack range below packet 0");
     }
@@ -628,15 +628,15 @@ function __ack_ranges(own r: Reader, count: i64): Reader {
 }
 
 function __stream(own r: Reader): Reader {
-  let kind: i64 = r.kind;
+  let kind = r.kind;
   r = __int(r, "stream id");
-  let id: i64 = r.n;
+  let id = r.n;
   let offset: i64 = 0;
   if ((kind & 4) != 0) {
     r = __int(r, "stream offset");
     offset = r.n;
   }
-  let len: i64 = (r.buf.len() - r.at) as i64;
+  let len = (r.buf.len() - r.at) as i64;
   if ((kind & 2) != 0) {
     r = __int(r, "stream length");
     len = r.n;
@@ -651,7 +651,7 @@ function __stream(own r: Reader): Reader {
   if (!r.ok) {
     return r;
   }
-  let to: i32 = r.at + len as i32;
+  let to = r.at + len as i32;
   return Reader { ...r, at: to, stream: id, offset: offset, from: r.at, to: to, fin: (kind & 1) != 0 };
 }
 ```
@@ -662,9 +662,9 @@ function __stream(own r: Reader): Reader {
 <<14 function __stream_control(own r: Reader): Reader>>=
 function __stream_control(own r: Reader): Reader {
   r = __int(r, "stream id");
-  let id: i64 = r.n;
+  let id = r.n;
   r = __int(r, "error code");
-  let code: i64 = r.n;
+  let code = r.n;
   if (r.kind == STOP_SENDING) {
     if (!r.ok) {
       return r;
@@ -675,16 +675,16 @@ function __stream_control(own r: Reader): Reader {
   if (!r.ok) {
     return r;
   }
-  let size: i64 = r.n;
+  let size = r.n;
   return __done(r, ResetStreamFrame(ResetStream { stream: id, code: code, final_size: size }));
 }
 
 function __handshake_data(own r: Reader): Reader {
   if (r.kind == CRYPTO) {
     r = __int(r, "crypto offset");
-    let offset: i64 = r.n;
+    let offset = r.n;
     r = __int(r, "crypto length");
-    let len: i64 = r.n;
+    let len = r.n;
     if (!r.ok) {
       return r;
     }
@@ -695,7 +695,7 @@ function __handshake_data(own r: Reader): Reader {
     if (!r.ok) {
       return r;
     }
-    let data: u8[] = r.bytes;
+    let data = r.bytes;
     return __done(r, Crypto(offset, data));
   }
   r = __int(r, "token length");
@@ -705,12 +705,12 @@ function __handshake_data(own r: Reader): Reader {
   if (r.n == 0) {
     return __fail(r, "an empty NEW_TOKEN");
   }
-  let n: i64 = r.n;
+  let n = r.n;
   r = __take(r, n, "token");
   if (!r.ok) {
     return r;
   }
-  let token: u8[] = r.bytes;
+  let token = r.bytes;
   return __done(r, NewToken(token));
 }
 
@@ -719,7 +719,7 @@ function __limits(own r: Reader): Reader {
   if (!r.ok) {
     return r;
   }
-  let v: i64 = r.n;
+  let v = r.n;
   if (r.kind == MAX_DATA) {
     return __done(r, MaxData(v));
   }
@@ -737,7 +737,7 @@ function __stream_limit(own r: Reader, id: i64): Reader {
   if (!r.ok) {
     return r;
   }
-  let w: i64 = r.n;
+  let w = r.n;
   if (r.kind == MAX_STREAM_DATA) {
     return __done(r, MaxStreamData(id, w));
   }
@@ -748,7 +748,7 @@ function __stream_count(own r: Reader, v: i64): Reader {
   if (v > 1152921504606846976) {
     return __fail(r, "a stream count over 2^60");
   }
-  let bidi: boolean = r.kind == MAX_STREAMS_BIDI || r.kind == STREAMS_BLOCKED_BIDI;
+  let bidi = r.kind == MAX_STREAMS_BIDI || r.kind == STREAMS_BLOCKED_BIDI;
   if (r.kind == MAX_STREAMS_BIDI || r.kind == MAX_STREAMS_UNI) {
     return __done(r, MaxStreams(bidi, v));
   }
@@ -764,7 +764,7 @@ function __rest(own r: Reader): Reader {
     if (!r.ok) {
       return r;
     }
-    let seq: i64 = r.n;
+    let seq = r.n;
     return __done(r, RetireConnectionId(seq));
   }
   if (r.kind == PATH_CHALLENGE || r.kind == PATH_RESPONSE) {
@@ -781,7 +781,7 @@ function __path(own r: Reader): Reader {
   if (!r.ok) {
     return r;
   }
-  let data: u8[] = r.bytes;
+  let data = r.bytes;
   if (r.kind == PATH_CHALLENGE) {
     return __done(r, PathChallenge(data));
   }
@@ -795,7 +795,7 @@ function __path(own r: Reader): Reader {
 <<15 function __close(own r: Reader): Reader>>=
 function __close(own r: Reader): Reader {
   r = __int(r, "error code");
-  let code: i64 = r.n;
+  let code = r.n;
   let frame_type: i64 = 0;
   if (r.kind == CONNECTION_CLOSE) {
     r = __int(r, "frame type");
@@ -805,21 +805,21 @@ function __close(own r: Reader): Reader {
   if (!r.ok) {
     return r;
   }
-  let len: i64 = r.n;
+  let len = r.n;
   r = __take(r, len, "reason phrase");
   if (!r.ok) {
     return r;
   }
-  let reason: string = utf8.from_bytes_lossy(r.bytes);
-  let app: boolean = r.kind == CONNECTION_CLOSE_APP;
+  let reason = utf8.from_bytes_lossy(r.bytes);
+  let app = r.kind == CONNECTION_CLOSE_APP;
   return __done(r, ConnectionCloseFrame(ConnectionClose { code: code, frame_type: frame_type, reason: reason, app: app }));
 }
 
 function __new_connection_id(own r: Reader): Reader {
   r = __int(r, "sequence number");
-  let seq: i64 = r.n;
+  let seq = r.n;
   r = __int(r, "retire prior to");
-  let prior: i64 = r.n;
+  let prior = r.n;
   if (!r.ok) {
     return r;
   }
@@ -829,17 +829,17 @@ function __new_connection_id(own r: Reader): Reader {
   if (r.at >= r.buf.len()) {
     return __fail(r, "connection id length cut short");
   }
-  let n: i64 = r.buf[r.at] as i64;
+  let n = r.buf[r.at] as i64;
   if (n < 1 || n > 20) {
     return __fail(r, "a connection id of " + n.to_string() + " bytes");
   }
   r = __take(Reader { ...r, at: r.at + 1 }, n, "connection id");
-  let id: u8[] = r.bytes;
+  let id = r.bytes;
   r = __take(r, 16 as i64, "stateless reset token");
   if (!r.ok) {
     return r;
   }
-  let token: u8[] = r.bytes;
+  let token = r.bytes;
   return __done(r, NewConnectionIdFrame(NewConnectionId { sequence: seq, retire_prior_to: prior, id: id, reset_token: token }));
 }
 ```
@@ -855,10 +855,10 @@ pub function encode(f: Frame): u8[] {
 pub function put(own out: u8[], f: Frame): u8[] {
   match (f) {
     Padding(n) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < n) {
         out = out.append(0 as u8);
-        i = i + 1;
+        i += 1;
       }
       return out;
     },
@@ -941,7 +941,7 @@ function __put_ids(own out: u8[], f: Frame): u8[] {
       return put_varint(out, PATH_RESPONSE).concat(data);
     },
     ConnectionCloseFrame(cc) => {
-      let reason: u8[] = cc.reason.bytes();
+      let reason = cc.reason.bytes();
       if (cc.app) {
         return put_varint(put_varint(put_varint(out, CONNECTION_CLOSE_APP), cc.code), reason.len() as i64).concat(reason);
       }
@@ -960,7 +960,7 @@ function __put_ids(own out: u8[], f: Frame): u8[] {
 ```fern
 <<18 pub function put_stream_head(own out: u8[], stream: i64, offset: i64, len: i32, fin: boolean): u8[]>>=
 pub function put_stream_head(own out: u8[], stream: i64, offset: i64, len: i32, fin: boolean): u8[] {
-  let kind: i64 = STREAM | 2;
+  let kind = STREAM | 2;
   if (offset > 0) {
     kind = kind | 4;
   }
@@ -975,9 +975,9 @@ pub function put_stream_head(own out: u8[], stream: i64, offset: i64, len: i32, 
 }
 
 pub function stream_overhead(stream: i64, offset: i64, len: i32): i32 {
-  let n: i32 = 1 + varint_len(stream) + varint_len(len as i64);
+  let n = 1 + varint_len(stream) + varint_len(len as i64);
   if (offset > 0) {
-    n = n + varint_len(offset);
+    n += varint_len(offset);
   }
   return n;
 }
@@ -988,7 +988,7 @@ pub function stream_overhead(stream: i64, offset: i64, len: i32): i32 {
 ```fern
 <<19 function __put_ack(own out: u8[], a: Ack): u8[]>>=
 function __put_ack(own out: u8[], a: Ack): u8[] {
-  let kind: i64 = ACK;
+  let kind = ACK;
   if (a.ecn.is_some()) {
     kind = ACK_ECN;
   }
@@ -1016,12 +1016,12 @@ pub function put_ack(own out: u8[], delay: i64, ranges: AckRange[]): u8[] {
 }
 
 function __put_ack_ranges(own out: u8[], kind: i64, delay: i64, ranges: AckRange[]): u8[] {
-  let top: AckRange = ranges[0];
+  let top = ranges[0];
   out = put_varint(put_varint(put_varint(put_varint(put_varint(out, kind), top.high), delay), (ranges.len() - 1) as i64), top.high - top.low);
-  let i: i32 = 1;
+  let i = 1;
   while (i < ranges.len()) {
     out = put_varint(put_varint(out, ranges[i - 1].low - ranges[i].high - 2), ranges[i].high - ranges[i].low);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1106,7 +1106,7 @@ function __pick(cond: boolean, a: i64, b: i64): i64 {
 
 function __alloc_empty(): u8[] {
   unsafe {
-    let out: u8[] = __alloc_u8(64);
+    let out = __alloc_u8(64);
     __arr_set_len(out, 0);
     return out;
   }
