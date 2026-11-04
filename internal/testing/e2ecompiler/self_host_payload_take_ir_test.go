@@ -346,6 +346,40 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 16},
+	{"socket-field-of-a-fresh-record-is-not-taken", `struct Q { sock: Socket, names: string[] }
+struct C { quic: Q, n: i32 }
+function adopt(fd: i32): Socket {
+    unsafe { return __socket_from_fd(fd); }
+}
+@noinline
+function sent(s: Socket, name: string): i32 {
+    return s.fd + name.len();
+}
+@noinline
+function flush(own c: C): C {
+    let built: C = C { ...c, quic: Q { ...c.quic, names: c.quic.names.append("x" + c.n.to_string()) } };
+    let k: i32 = sent(built.quic.sock, built.quic.names[0]);
+    return C { ...built, n: built.n + k };
+}
+@noinline
+function closed(q: Q): i32 {
+    if (q.sock.fd < 0) { return 0 - 100; }
+    return q.names.len();
+}
+@noinline
+function finish(own c: C): i32 {
+    let n: i32 = c.n;
+    return closed(c.quic) + n;
+}
+function main(): i32 {
+    let c: C = C { quic: Q { sock: adopt(0 - 2), names: [] }, n: 0 };
+    c = flush(c);
+    c = flush(c);
+    if (c.quic.sock.fd != 0 - 2 || c.n != 0 || c.quic.names.len() != 2) { return 1; }
+    if (finish(c) != 0 - 100) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 16},
 }
 
 func censusWithin(t *testing.T, name, stderr string, maxAllocs int64) {

@@ -1772,9 +1772,10 @@ function reads_view(f: ssasem.Func, ins: ssa.SInst, at: i32, lent: boolean, arra
   return k == ssasem.call() && lent;
 }
 
+// A handle spelled as a struct is a descriptor, not a counted box.
 function is_record(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(_) = t {
-    return true;
+    return !semtypes.is_handle(t);
   }
   return false;
 }

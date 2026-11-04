@@ -114,10 +114,10 @@ pub trait Driver {
   function watch_signal(self: Self, sig: i32): i32;
   function unwatch_signal(self: Self, sig: i32): i32;
   function watch_parent(self: Self): i32;
-  function recv_into(self: Self, fd: i32, buf: u8[]): i32 {
-    return tcp_recv_into(fd, buf);
+  function recv_into(self: Self, sock: Socket, buf: u8[]): i32 {
+    return tcp_recv_into(sock, buf);
   }
-  function send_zc(self: Self, fd: i32, data: u8[], from: i32): i32 {
+  function send_zc(self: Self, sock: Socket, data: u8[], from: i32): i32 {
     return 0 - 95;
   }
   function zc_result(self: Self, slot: i32): i32 {
@@ -407,17 +407,17 @@ impl Driver for RealDriver {
     }
     return __real_ctl(self, 6, 0, 0);
   }
-  function recv_into(self: RealDriver, fd: i32, buf: u8[]): i32 {
+  function recv_into(self: RealDriver, sock: Socket, buf: u8[]): i32 {
     let ring: i64 = self.ring.get();
     if (ring >= 0 as i64) {
-      return __ring_recv(ring, fd, buf);
+      return __ring_recv(ring, sock.fd, buf);
     }
-    return tcp_recv_into(fd, buf);
+    return tcp_recv_into(sock, buf);
   }
-  function send_zc(self: RealDriver, fd: i32, data: u8[], from: i32): i32 {
+  function send_zc(self: RealDriver, sock: Socket, data: u8[], from: i32): i32 {
     let ring: i64 = self.ring.get();
     if (ring >= 0 as i64) {
-      return __ring_send_zc(ring, fd, data, from);
+      return __ring_send_zc(ring, sock.fd, data, from);
     }
     return 0 - 95;
   }

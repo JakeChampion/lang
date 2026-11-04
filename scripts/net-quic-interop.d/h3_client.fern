@@ -47,7 +47,7 @@ function wait_until(deadline: Option[Instant]): Option[Instant] {
   return Some(now().add(left));
 }
 
-function pump(c: h3q.Conn, sock: i32, peer: net.SocketAddr): h3q.Conn {
+function pump(c: h3q.Conn, sock: Socket, peer: net.SocketAddr): h3q.Conn {
   let c2 = c.transmit(now());
   let out = c2.datagrams();
   c2 = c2.sent();
@@ -57,7 +57,7 @@ function pump(c: h3q.Conn, sock: i32, peer: net.SocketAddr): h3q.Conn {
   return c2;
 }
 
-function drain(c: h3q.Conn, sock: i32, buf: u8[]): h3q.Conn {
+function drain(c: h3q.Conn, sock: Socket, buf: u8[]): h3q.Conn {
   let cur = c;
   loop {
     let Ok(got) = net.recv_from(sock, buf) else {
@@ -122,7 +122,7 @@ function noted(evs: h3q.Event[], f: Fetches): Fetches {
   return next;
 }
 
-function opened(argv: string[]): Option[(h3q.Conn, i32)] {
+function opened(argv: string[]): Option[(h3q.Conn, Socket)] {
   let Ok(roots) = verify.roots_from_file(argv[3]) else {
     eprint("no roots");
     return None;
@@ -160,7 +160,7 @@ function main(): i32 {
   let started = now();
   while (!c.done() && now().since(started).cmp(time.duration_seconds(20)) < 0) {
     c = pump(c, sock, peer);
-    let _ = async.wait_any([sock, 1], wait_for(c));
+    let _ = async.wait_any([sock.fd, 1], wait_for(c));
     c = drain(c, sock, buf);
     if (passed(c.deadline())) {
       c = c.tick(now());

@@ -5,7 +5,7 @@ Android device or emulator.
 Usage: emulator_check.py APK SECOND_APK OUT_DIR
 
 SECOND_APK is the same app built with the package dev.fern.walkie2. The check
-turns off the freezer of cached apps and reboots, so that the copy that is
+turns off the freezer of cached apps, so that the copy that is
 not in front keeps running as a second phone would. Then it:
 
 1. starts both copies, and requires the start line of each: one on port
@@ -20,6 +20,7 @@ OUT_DIR gets logcat and a screenshot of each copy.
 """
 
 import re
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -27,14 +28,15 @@ import time
 FIRST = "dev.fern.walkie"
 SECOND = "dev.fern.walkie2"
 ACTIVITY = "/android.app.NativeActivity"
-START = re.compile(r"walkie: node \d+, port (4712[01]), socket (\d+), speaker rate ([1-9]\d*)")
+START = re.compile(r"walkie: node \d+, port (4712[01]), socket (-?\d+), speaker rate ([1-9]\d*)")
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 LOST = re.compile(r"walkie: (the peer stopped answering|the other phone did not confirm the code|the peer left|the connection was lost)")
 LOGCAT = ["logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:F", "*:F"]
+WAIT_SECONDS = 30
 
 
 def adb(*args, check=True):
-    return subprocess.run(["adb", *args], check=check, capture_output=True, text=True).stdout
+    return subprocess.run(["adb", *args], check=check, capture_output=True, text=True, timeout=WAIT_SECONDS).stdout
 
 
 def pid(package):
@@ -50,9 +52,9 @@ def lines_of(log, p):
     return [line for line in log.splitlines() if re.search(r"\(\s*" + re.escape(p) + r"\)", line)]
 
 
-def wait_for(what, test, seconds=30):
-    deadline = time.time() + seconds
-    while time.time() < deadline:
+def wait_for(what, test, seconds=WAIT_SECONDS):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
         log = logcat()
         if test(log):
             return log
@@ -64,30 +66,30 @@ class Failure(Exception):
     pass
 
 
-def boot_without_freezer():
-    if adb("shell", "settings", "get", "global", "cached_apps_freezer").strip() == "disabled":
-        return
+def disable_freezer():
+    # Android observes this setting live. Check its effective state before
+    # either copy starts, so the background copy remains active.
     adb("shell", "settings", "put", "global", "cached_apps_freezer", "disabled")
-    adb("reboot")
-    adb("wait-for-device")
-    deadline = time.time() + 180
-    while adb("shell", "getprop", "sys.boot_completed", check=False).strip() != "1":
-        if time.time() > deadline:
-            raise Failure("the emulator did not boot again")
-        time.sleep(2)
-    time.sleep(5)
-
-
-def launch(package):
-    """Starts the app as the launcher does. The same intent later brings its
-    task to the front. Another intent starts a second activity in the same
-    process, which cannot open a port."""
-    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-f", "0x10200000", "-n", package + ACTIVITY)
+    deadline = time.monotonic() + WAIT_SECONDS
+    while time.monotonic() < deadline:
+        state = adb("shell", "dumpsys", "activity", "settings")
+        if re.search(r"(?m)^\s*use_freezer=false\s*$", state):
+            return
+        time.sleep(0.5)
+    raise Failure("Android did not disable the cached-app freezer")
 
 
 def to_front(package):
-    launch(package)
+    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-f", "0x10200000", "--activity-single-top", "-n", package + ACTIVITY)
     time.sleep(1.5)
+
+
+def check_node(log, p):
+    starts = [START.search(line) for line in lines_of(log, p) if START.search(line)]
+    if len(starts) != 1:
+        raise Failure("expected one Walkie node in process " + p)
+    if int(starts[0].group(2)) < 0:
+        raise Failure("a copy did not open its UDP socket")
 
 
 def screen_size():
@@ -106,6 +108,7 @@ def last_state(log, p):
 
 def confirm(package, p, w, h):
     to_front(package)
+    check_node(logcat(), p)
     # The middle of screen.same_button.
     adb("shell", "input", "tap", str(w // 10 + w * 7 // 40), str(h * 3 // 10 + h // 16))
     wait_for(package + " confirms the code", lambda log: has(log, p, "walkie: the string is confirmed"), 10)
@@ -113,6 +116,7 @@ def confirm(package, p, w, h):
 
 def talk(package, talker, listener, w, h):
     to_front(package)
+    check_node(logcat(), talker)
     mark = len(lines_of(logcat(), listener))
     # A long press in the middle of screen.talk_button.
     adb("shell", "input", "swipe", str(w // 2), str(h * 7 // 10), str(w // 2), str(h * 7 // 10), "4000")
@@ -125,30 +129,35 @@ def talk(package, talker, listener, w, h):
 
 
 def save(out):
+    log = logcat()
     with open(f"{out}/logcat.txt", "w") as f:
-        f.write(logcat())
+        f.write(log)
+    return log
 
 
 def screenshot(path):
+    image = subprocess.run(["adb", "exec-out", "screencap", "-p"], check=True, capture_output=True, timeout=WAIT_SECONDS).stdout
+    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise Failure("the emulator did not return a PNG screenshot")
     with open(path, "wb") as f:
-        f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True).stdout)
+        f.write(image)
 
 
 def run(apk, second_apk, out):
-    boot_without_freezer()
+    print("walkie check: disable the cached-app freezer", flush=True)
+    disable_freezer()
     for a, package in [(apk, FIRST), (second_apk, SECOND)]:
+        print("walkie check: install " + package, flush=True)
         adb("install", "-r", "-g", a)
         adb("shell", "pm", "grant", package, "android.permission.RECORD_AUDIO")
     adb("logcat", "-c")
-    launch(FIRST)
+    to_front(FIRST)
     wait_for("the first copy starts", lambda log: pid(FIRST) != "" and any(START.search(line) and START.search(line).group(1) == "47120" for line in lines_of(log, pid(FIRST))))
-    launch(SECOND)
+    to_front(SECOND)
     wait_for("the second copy starts", lambda log: pid(SECOND) != "" and any(START.search(line) and START.search(line).group(1) == "47121" for line in lines_of(log, pid(SECOND))))
     a, b = pid(FIRST), pid(SECOND)
     for p in (a, b):
-        m = next(START.search(line) for line in lines_of(logcat(), p) if START.search(line))
-        if int(m.group(2)) < 0:
-            raise Failure("a copy did not open its UDP socket")
+        check_node(logcat(), p)
     wait_for("both copies make keys", lambda log: has(log, a, "walkie: keys are ready") and has(log, b, "walkie: keys are ready"))
     w, h = screen_size()
     confirm(SECOND, b, w, h)
@@ -163,8 +172,7 @@ def run(apk, second_apk, out):
     if pid(FIRST) != a or pid(SECOND) != b:
         raise Failure("a copy stopped running")
     for p in (a, b):
-        if sum(1 for line in lines_of(log, p) if START.search(line)) != 1:
-            raise Failure("a copy started a second activity")
+        check_node(log, p)
     lost = [line for line in log.splitlines() if LOST.search(line)]
     if lost:
         raise Failure("a copy lost its peer: " + "; ".join(lost))
@@ -174,17 +182,26 @@ def run(apk, second_apk, out):
 
 
 def main(apk, second_apk, out):
-    subprocess.run(["mkdir", "-p", out], check=True)
+    Path(out).mkdir(parents=True, exist_ok=True)
     failure = None
+    errors = (Failure, subprocess.CalledProcessError, subprocess.TimeoutExpired)
     try:
         run(apk, second_apk, out)
-    except (Failure, subprocess.CalledProcessError) as e:
+    except errors as e:
         failure = e
-    save(out)
-    print("\n".join(line for line in logcat().splitlines() if "walkie" in line or "DEBUG" in line), flush=True)
+    try:
+        log = save(out)
+        print("\n".join(line for line in log.splitlines() if "walkie" in line or "DEBUG" in line), flush=True)
+    except errors as e:
+        Path(out, "logcat.txt").write_text(str(e) + "\n")
+        failure = failure or e
     for package in (FIRST, SECOND):
-        adb("shell", "am", "force-stop", package, check=False)
+        try:
+            adb("shell", "am", "force-stop", package, check=False)
+        except errors as e:
+            failure = failure or e
     if failure is not None:
+        Path(out, "failure.txt").write_text(str(failure) + "\n")
         print(f"FAIL {failure}", flush=True)
         sys.exit(1)
     print("ok", flush=True)

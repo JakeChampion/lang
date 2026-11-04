@@ -1339,6 +1339,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	c.info.FuncSigs["__socket_from_fd"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: sock,
+	}
 	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
 		Params: []ast.Type{sock},
 		Result: ast.NumberType{},
@@ -9132,7 +9136,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
 	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
-	"__fd_close": true, "__tcp_close_unchecked": true,
+	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
 	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true,

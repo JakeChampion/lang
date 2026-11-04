@@ -372,6 +372,13 @@ function is_owned_array(t: typeinfo.Type): boolean {
   return false;
 }
 
+function one_arg_intrinsic_result(name: string): typeinfo.Type {
+  if (name == "__socket_from_fd") {
+    return t_socket();
+  }
+  return t_i32();
+}
+
 function t_socket(): typeinfo.Type {
   return t_struct("Socket");
 }
@@ -763,8 +770,8 @@ function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 5 && (name == "__mismatch" || name == "__mismatch_bytes" || name == "__mismatch_bytes_str")) {
     return t_i32();
   }
-  if (argc == 1 && util.has_str(["__sum_bytes", "__fd_close", "__tcp_close_unchecked"], name)) {
-    return t_i32();
+  if (argc == 1 && util.has_str(["__sum_bytes", "__fd_close", "__tcp_close_unchecked", "__socket_from_fd"], name)) {
+    return one_arg_intrinsic_result(name);
   }
   if (argc == 2 && (name == "__scale_f64" || name == "__outer_mul_f64")) {
     return t_array(t_float());
@@ -860,7 +867,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__mulhi_u64") {
     return ([t_u64(), t_u64()], true);
   }
-  if (util.has_str(["__alloc", "__fd_close"], name)) {
+  if (util.has_str(["__alloc", "__fd_close", "__socket_from_fd"], name)) {
     return ([t_i32()], true);
   }
   if (name == "__alloc_u8" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_bool") {
@@ -10287,7 +10294,7 @@ pub function unsafe_intrinsics(): string[] {
     "__task_park", "__task_park_until", "__task_wait", "__task_set_ready", "__task_set_cancelled",
     "__task_cancelled", "__task_timeout", "__task_until", "__task_cur",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
-    "__fd_close", "__tcp_close_unchecked",
+    "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   ];
 }
 
@@ -17951,7 +17958,7 @@ function registered_intrinsics(): string[] {
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
-    "__fd_close", "__tcp_close_unchecked",
+    "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
     "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
     "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
   ];
@@ -18724,7 +18731,7 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
-      return util.has_str(ctx.fresh_scrut, cid.name);
+      return util.has_str(ctx.fresh_scrut, cid.name) || util.has_str(ctx.fresh, cid.name) && !ow_expr_holds_no_handle(e, ctx);
     }
     return ow_qualified_ctor(c.callee, ctx) || ow_fresh_method_result(c, ctx);
   }
@@ -22143,7 +22150,7 @@ function ow_fresh_builtins(): string[] {
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
-    "tcp_accept", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
+    "__socket_from_fd", "tcp_accept", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "udp_bind", "udp_bind_with", "unix_connect", "unix_listen",
     "termios_get", "uname_field", "window_size",
     "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",

@@ -10,6 +10,7 @@ var BuiltinCaps = map[string]string{
 	"tcp_close":             "net",
 	"__tcp_close_unchecked": "net",
 	"__fd_close":            "net",
+	"__socket_from_fd":      "net",
 	"tcp_pollable":          "net",
 	"udp_bind":              "net",
 	"udp_bind_with":         "net",

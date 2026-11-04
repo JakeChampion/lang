@@ -149,6 +149,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		src  string
 		want []string
 	}{
+		{"body-fresh-value-payload-remains-copyable", "struct Box { items: i32[] } function make(s: Socket): Result[Box, i32] { return Ok(Box { items: [7] }); } function f(s: Socket): i32 { let Ok(input) = make(s) else { return 1; }; let alias = input; return input.items[0] + alias.items[0]; } function main(): i32 { return 0; }", nil},
 		{"closure-consumes-captured-owned-then-use", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: () => i32 = (): i32 => take(xs); let a: i32 = g(); return a + xs.len(); } function main(): i32 { return f([1]); }", []string{"E050"}},
 		{"closure-consumes-captured-owned-only", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: () => i32 = (): i32 => take(xs); return g(); } function main(): i32 { return f([1]); }", nil},
 		{"closure-parameter-shadows-outer-owned", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: (i32[]) => i32 = (xs: i32[]): i32 => xs.len(); let a: i32 = g([5]); return a + take(xs); } function main(): i32 { return f([1]); }", nil},
@@ -191,6 +192,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"fd-close-outside-unsafe", "function main(): i32 { return __fd_close(3); }", []string{"E095"}},
 		{"socket-close-unchecked-outside-unsafe", "function main(): i32 { let s: Socket = tcp_listen(0); let a: i32 = __tcp_close_unchecked(s); return tcp_close(s) + a; }", []string{"E095"}},
 		{"socket-close-unchecked-in-unsafe", "function main(): i32 { let s: Socket = tcp_listen(0); unsafe { let a: i32 = __tcp_close_unchecked(s); print(a.to_string()); } return tcp_close(s); }", nil},
+		{"socket-from-fd-outside-unsafe", "function main(): i32 { let s: Socket = __socket_from_fd(3); return s.fd; }", []string{"E095"}},
+		{"socket-from-fd-in-unsafe", "function main(): i32 { let n: i32 = 0; unsafe { let s: Socket = __socket_from_fd(3); n = s.fd; } return n; }", nil},
+		{"socket-from-body-fresh-scrutinee", "function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); }\nfunction take(own s: Socket): i32 { return tcp_close(s); }\nfunction main(): i32 { let l: Socket = tcp_listen(0); match (accepted(l)) { Ok(s) => { let n: i32 = take(s); }, Err(e) => {} } let Ok(t) = accepted(l) else { return tcp_close(l); }; let m: i32 = take(t); return tcp_close(l); }", nil},
+		{"socket-from-borrowing-scrutinee", "function passed(l: Socket): Result[Socket, i32] { return Ok(l); }\nfunction take(own s: Socket): i32 { return tcp_close(s); }\nfunction main(): i32 { let l: Socket = tcp_listen(0); match (passed(l)) { Ok(s) => { let n: i32 = take(s); }, Err(e) => {} } return 0; }", []string{"E051"}},
 		{"socket-literal", "function main(): i32 { let s: Socket = Socket { fd: 3 }; return tcp_close(s); }", []string{"E099"}},
 		{"socket-descriptor-transition", "function main(): i32 { let fd: i32 = tcp_listen(0); return tcp_close(fd); }", nil},
 		{"handle-from-its-opener", "function main(): i32 { let w: Writer = stdout(); return w.fd; }", nil},

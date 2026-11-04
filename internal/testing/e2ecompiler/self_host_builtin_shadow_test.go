@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -37,5 +38,34 @@ func TestSelfHostCheckEntryShadowOfBuiltin(t *testing.T) {
 				t.Fatalf("check = %v, codes %v, want %v with %q\n%s", err, got, want, tc.msg, out)
 			}
 		})
+	}
+}
+
+// A variant may take a built-in type's name. In a type, the name still means
+// the built-in, in the declaring module and in each importer, in both checkers.
+func TestSelfHostImportedVariantKeepsBuiltinType(t *testing.T) {
+	cli := newStrictCLI(t)
+	fern := buildFernCLIBin(t)
+	dir := t.TempDir()
+	files := map[string]string{
+		"lib.fern": "pub enum Fault { Quiet, Socket(i32) }\n" +
+			"pub function fault(n: i32): Fault { return Socket(n); }\n" +
+			"pub function code(f: Fault): i32 {\n  match (f) { Quiet => { return 0; }, Socket(n) => { return n; } }\n  return 0;\n}\n" +
+			"pub function fd_of(s: Socket): i32 { return s.fd; }\n",
+		"main.fern": "import \"./lib\";\n" +
+			"function width(s: Socket): i32 { return lib.fd_of(s); }\n" +
+			"function main(): i32 {\n  let s: Socket = udp_bind([127u8, 0u8, 0u8, 1u8], 0);\n  let n: i32 = width(s) + lib.code(lib.fault(2));\n  tcp_close(s);\n  return n - n;\n}\n",
+	}
+	for name, src := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entry := filepath.Join(dir, "main.fern")
+	if out, err := exec.Command(fern, "-check", entry).CombinedOutput(); err != nil {
+		t.Fatalf("Go checker: %v\n%s", err, out)
+	}
+	if out, err := runX86_64Bin(cli.runner, cli.bin, "-check", entry, cli.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host checker: %v\n%s", err, out)
 	}
 }

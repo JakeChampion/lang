@@ -390,8 +390,8 @@ impl fetch.Transport for Net {
   function idle(self: Net): fetch.Idle {
     return self.pool;
   }
-  function socket(self: Net, conn: i32): i32 {
-    return 0 - 1;
+  function socket(self: Net, conn: i32): Option[Socket] {
+    return None;
   }
 }
 ```

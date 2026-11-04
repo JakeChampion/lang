@@ -3722,6 +3722,7 @@ function builtin_i32_names(): string[] {
     "tcp_close",
     "__tcp_close_unchecked",
     "__fd_close",
+    "__socket_from_fd",
     "tcp_pollable",
     "sleep_ms",
     "sleep_ns",

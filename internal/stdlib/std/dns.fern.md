@@ -100,11 +100,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<42 function waiting(s: Slot): boolean>>
 
-<<43 function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError]>>
+<<43 function take_reply(sock: Socket, q: Message): Result[Option[Message], DnsError]>>
 
 <<44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]>>
 
-<<45 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError]>>
+<<45 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[Socket, DnsError]>>
 
 <<46 pub function ask(conf: ResolvConf, q: Message): Result[Message, DnsError]>>
 
@@ -154,17 +154,16 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<69 pub function dial_options(): DialOptions>>
 
-<<70 struct Attempt>>
 
-<<71 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError]>>
+<<71 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[Socket, net.NetError]>>
 
 <<72 function wait_window(race: Race, n: i32, now: i64, deadline: i64): i32>>
 
 <<73 struct Race>>
 
-<<74 function writable(attempts: Attempt[]): i32[]>>
+<<74 function writable(open: Option[Socket][]): i32[]>>
 
-<<75 pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsError]>>
+<<75 pub function dial(name: string, port: i32, opts: DialOptions): Result[Socket, DnsError]>>
 
 <<76 pub struct Nat64Prefix>>
 
@@ -229,7 +228,7 @@ pub enum DnsError {
   Refused,
   Malformed,
   NoNameserver,
-  Socket(net.NetError),
+  NetFailed(net.NetError),
 }
 
 impl cmp.Display for DnsError {}
@@ -262,7 +261,7 @@ pub function (e: DnsError) message(): string {
     NoNameserver => {
       return "No name server configured";
     },
-    Socket(ne) => {
+    NetFailed(ne) => {
       return ne.message();
     }
   }
@@ -1278,10 +1277,10 @@ pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout: Duration)
   let out: Result[Message, DnsError][] = [];
   i = 0;
   while (i < slots.len()) {
-    if (slots[i].sock >= 0) {
-      let closed: Result[void, net.NetError] = net.close(slots[i].sock);
-    }
-    out = out.append(slot_result(ns, slots[i], deadline));
+    let q: Message = slots[i].q;
+    let (s, rest) = slots.swap_at(i, Slot { q: q, sock: None, reply: None, err: NoReply });
+    slots = rest;
+    out = out.append(slot_result(ns, closed(s), deadline));
     i = i + 1;
   }
   return out;
@@ -1292,7 +1291,7 @@ pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout: Duration)
 
 ```fern
 <<41 struct Slot>>=
-struct Slot { q: Message, sock: i32, reply: Option[Message], err: DnsError }
+struct Slot { q: Message, sock: Option[Socket], reply: Option[Message], err: DnsError }
 ```
 
 ### `42 function waiting(s: Slot): boolean`
@@ -1300,7 +1299,7 @@ struct Slot { q: Message, sock: i32, reply: Option[Message], err: DnsError }
 ```fern
 <<42 function waiting(s: Slot): boolean>>=
 function waiting(s: Slot): boolean {
-  if (s.sock < 0) {
+  if (slot_fd(s) < 0) {
     return false;
   }
   match (s.reply) {
@@ -1321,18 +1320,18 @@ function opened_slot(ns: net.SocketAddr, q: Message): Slot {
       bytes = b;
     },
     Err(e) => {
-      return Slot { q: q, sock: 0 - 1, reply: None, err: e };
+      return Slot { q: q, sock: None, reply: None, err: e };
     }
   }
   match (send_udp(ns, bytes)) {
     Ok(sock) => {
-      return Slot { q: q, sock: sock, reply: None, err: NoReply };
+      return Slot { q: q, sock: Some(sock), reply: None, err: NoReply };
     },
     Err(e) => {
-      return Slot { q: q, sock: 0 - 1, reply: None, err: e };
+      return Slot { q: q, sock: None, reply: None, err: e };
     }
   }
-  return Slot { q: q, sock: 0 - 1, reply: None, err: NoReply };
+  return Slot { q: q, sock: None, reply: None, err: NoReply };
 }
 
 function slot_result(ns: net.SocketAddr, s: Slot, deadline: i64): Result[Message, DnsError] {
@@ -1350,26 +1349,44 @@ function slot_result(ns: net.SocketAddr, s: Slot, deadline: i64): Result[Message
   return Err(s.err);
 }
 
-function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[i32, DnsError] {
-  let sock: i32 = 0;
+function send_udp(ns: net.SocketAddr, bytes: u8[]): Result[Socket, DnsError] {
   match (net.udp_socket(local_for(ns))) {
-    Ok(s) => {
-      sock = s;
+    Ok(sock) => {
+      match (net.send_to(sock, bytes, ns)) {
+        Ok(_) => {
+          return Ok(sock);
+        },
+        Err(e) => {
+          let closed: Result[void, net.NetError] = net.close(sock);
+          return Err(NetFailed(e));
+        }
+      }
     },
     Err(e) => {
-      return Err(Socket(e));
+      return Err(NetFailed(e));
     }
   }
-  match (net.send_to(sock, bytes, ns)) {
-    Ok(_) => {
-      return Ok(sock);
+  return Err(NoReply);
+}
+
+function slot_fd(s: Slot): i32 {
+  match (s.sock) {
+    Some(sock) => {
+      return sock.fd;
     },
-    Err(e) => {
-      let closed: Result[void, net.NetError] = net.close(sock);
-      return Err(Socket(e));
-    }
+    None => {}
   }
-  return Ok(sock);
+  return 0 - 1;
+}
+
+function closed(own s: Slot): Slot {
+  match (s.sock) {
+    Some(sock) => {
+      let shut: Result[void, net.NetError] = net.close(sock);
+    },
+    None => {}
+  }
+  return Slot { q: s.q, sock: None, reply: s.reply, err: s.err };
 }
 
 function pending_slots(slots: Slot[]): i32[] {
@@ -1384,7 +1401,7 @@ function pending_slots(slots: Slot[]): i32[] {
   return out;
 }
 
-function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
+function await_udp_replies(own slots: Slot[], deadline: i64): Slot[] {
   let out: Slot[] = slots;
   let pending: i32[] = pending_slots(out);
   let left: i32 = (deadline - now_ms()) as i32;
@@ -1400,35 +1417,40 @@ function await_udp_replies(slots: Slot[], deadline: i64): Slot[] {
   return out;
 }
 
-function taken(slots: Slot[], k: i32): Slot[] {
-  match (take_reply(slots[k].sock, slots[k].q)) {
-    Ok(found) => {
-      match (found) {
-        Some(reply) => {
-          return slots.with(k, Slot { ...slots[k], reply: Some(reply) });
+function taken(own slots: Slot[], k: i32): Slot[] {
+  let q: Message = slots[k].q;
+  let (s, rest) = slots.swap_at(k, Slot { q: q, sock: None, reply: None, err: NoReply });
+  let reply: Option[Message] = s.reply;
+  let err: DnsError = s.err;
+  match (s.sock) {
+    Some(sock) => {
+      match (take_reply(sock, q)) {
+        Ok(found) => {
+          match (found) {
+            Some(got) => {
+              return rest.with(k, Slot { q: q, sock: Some(sock), reply: Some(got), err: err });
+            },
+            None => {
+              return rest.with(k, Slot { q: q, sock: Some(sock), reply: reply, err: err });
+            }
+          }
         },
-        None => {
-          return slots;
+        Err(e) => {
+          let shut: Result[void, net.NetError] = net.close(sock);
+          return rest.with(k, Slot { q: q, sock: None, reply: reply, err: e });
         }
       }
     },
-    Err(e) => {
-      return slots.with(k, Slot { ...slots[k], sock: closed_slot(slots[k].sock), err: e });
-    }
+    None => {}
   }
-  return slots;
-}
-
-function closed_slot(sock: i32): i32 {
-  let closed: Result[void, net.NetError] = net.close(sock);
-  return 0 - 1;
+  return rest.with(k, Slot { q: q, sock: None, reply: reply, err: err });
 }
 
 function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
   let set: i32[] = [];
   let i: i32 = 0;
   while (i < pending.len()) {
-    set = set.append(slots[pending[i]].sock);
+    set = set.append(slot_fd(slots[pending[i]]));
     set = set.append(1);
     i = i + 1;
   }
@@ -1439,11 +1461,11 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
 }
 ```
 
-### `43 function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError]`
+### `43 function take_reply(sock: Socket, q: Message): Result[Option[Message], DnsError]`
 
 ```fern
-<<43 function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError]>>=
-function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
+<<43 function take_reply(sock: Socket, q: Message): Result[Option[Message], DnsError]>>=
+function take_reply(sock: Socket, q: Message): Result[Option[Message], DnsError] {
   let buf: u8[] = zero_bytes(UDP_PAYLOAD);
   let n: i32 = 0;
   match (net.recv_from(sock, buf)) {
@@ -1456,7 +1478,7 @@ function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
           return Ok(None);
         },
         _ => {
-          return Err(Socket(e));
+          return Err(NetFailed(e));
         }
       }
     }
@@ -1484,7 +1506,7 @@ pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Re
   let bytes: u8[] = encode(q)?;
   let framed: u8[] = [];
   framed = put16(framed, bytes.len());
-  let sock: i32 = send_tcp(ns, framed.concat(bytes))?;
+  let sock: Socket = send_tcp(ns, framed.concat(bytes))?;
   let got: Result[u8[], DnsError] = read_framed(sock, now_ms() + timeout.as_millis());
   tcp_close(sock);
   let reply: Message = decode(got?)?;
@@ -1495,20 +1517,23 @@ pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Re
 }
 ```
 
-### `45 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError]`
+### `45 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[Socket, DnsError]`
 
 ```fern
-<<45 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError]>>=
-function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
-  let sock: i32 = 0;
+<<45 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[Socket, DnsError]>>=
+function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[Socket, DnsError] {
   match (net.connect(ns)) {
-    Ok(s) => {
-      sock = s;
+    Ok(sock) => {
+      return sent_all(sock, framed);
     },
     Err(e) => {
-      return Err(Socket(e));
+      return Err(NetFailed(e));
     }
   }
+  return Err(NoReply);
+}
+
+function sent_all(own sock: Socket, framed: u8[]): Result[Socket, DnsError] {
   let remaining: u8[] = framed;
   while (remaining.len() > 0) {
     let sent: i32 = tcp_send_bytes(sock, remaining);
@@ -1516,7 +1541,7 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
       let failure: net.NetError = net.error_from_host(sent);
       if (!failure.eq(net.Interrupted)) {
         tcp_close(sock);
-        return Err(Socket(failure));
+        return Err(NetFailed(failure));
       }
     } else {
       if (sent == 0) {
@@ -1532,12 +1557,12 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
   return Ok(sock);
 }
 
-function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
+function read_framed(sock: Socket, deadline: i64): Result[u8[], DnsError] {
   let buf: u8[] = [];
   let want: i32 = -1;
   while (want < 0 || buf.len() < want) {
     let left: i32 = (deadline - now_ms()) as i32;
-    if (left <= 0 || !readable_within(sock, left)) {
+    if (left <= 0 || !readable_within(sock.fd, left)) {
       return Err(NoReply);
     }
     buf = buf.concat(read_some(sock)?);
@@ -1548,7 +1573,7 @@ function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
   return Ok(buf.drop(2).take(want - 2));
 }
 
-function read_some(sock: i32): Result[u8[], DnsError] {
+function read_some(sock: Socket): Result[u8[], DnsError] {
   match (net.read_up_to(sock, 4096)) {
     Ok(got) => {
       if (got.len() == 0) {
@@ -1561,7 +1586,7 @@ function read_some(sock: i32): Result[u8[], DnsError] {
         let none: u8[] = [];
         return Ok(none);
       }
-      return Err(Socket(e));
+      return Err(NetFailed(e));
     }
   }
   return Err(Malformed);
@@ -2160,29 +2185,26 @@ pub function common_prefix_len(a: net.IpAddr, b: net.IpAddr): i32 {
 
 pub function source_for(dst: net.IpAddr): Option[net.IpAddr] {
   let probe: net.SocketAddr = net.socket_addr(dst, 9);
-  let sock: i32 = 0;
   match (net.udp_socket(local_for(probe))) {
-    Ok(s) => {
-      sock = s;
-    },
-    Err(_) => {
-      return None;
-    }
-  }
-  let found: Option[net.IpAddr] = None;
-  match (net.set_peer(sock, probe)) {
-    Ok(_) => {
-      match (net.local_addr(sock)) {
-        Ok(local) => {
-          found = Some(local.ip);
+    Ok(sock) => {
+      let found: Option[net.IpAddr] = None;
+      match (net.set_peer(sock, probe)) {
+        Ok(_) => {
+          match (net.local_addr(sock)) {
+            Ok(local) => {
+              found = Some(local.ip);
+            },
+            Err(_) => {}
+          }
         },
         Err(_) => {}
       }
+      let closed: Result[void, net.NetError] = net.close(sock);
+      return found;
     },
     Err(_) => {}
   }
-  let closed: Result[void, net.NetError] = net.close(sock);
-  return found;
+  return None;
 }
 
 pub function order_addresses(dsts: net.IpAddr[], srcs: Option[net.IpAddr][]): net.IpAddr[] {
@@ -2337,48 +2359,50 @@ pub function interleave_families(addrs: net.IpAddr[]): net.IpAddr[] {
 }
 ```
 
-### `70 struct Attempt`
+### `71 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[Socket, net.NetError]`
 
 ```fern
-<<70 struct Attempt>>=
-struct Attempt { sock: i32 }
-```
-
-### `71 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError]`
-
-```fern
-<<71 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError]>>=
-pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[i32, net.NetError] {
+<<71 pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[Socket, net.NetError]>>=
+pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Result[Socket, net.NetError] {
   let deadline: i64 = now_ms() + opts.timeout.as_millis();
   let race: Race = Race { open: [], next: 0, due: now_ms(), last: HostUnreachable };
   while (true) {
     let now: i64 = now_ms();
     if (now >= deadline) {
-      close_attempts(race.open);
-      return Err(TimedOut);
+      return abandoned(race, TimedOut);
     }
     if (race.next < addrs.len() && (race.open.len() == 0 || now >= race.due)) {
-      race = started(race, net.socket_addr(addrs[race.next], port), opts);
+      let addr: net.SocketAddr = net.socket_addr(addrs[race.next], port);
+      race = started(race, addr, opts);
       continue;
     }
     if (race.open.len() == 0) {
       return Err(race.last);
     }
     if let async.Wake.Cancelled = async.wait_any(writable(race.open), within(wait_window(race, addrs.len(), now, deadline))) {
-      close_attempts(race.open);
-      return Err(net.Interrupted);
+      return abandoned(race, net.Interrupted);
     }
-    match (settled(race)) {
-      Ok(sock) => {
-        let blocking: Result[void, net.NetError] = net.set_nonblocking(sock, false);
-        return Ok(sock);
+    let (won, rest) = settled(race);
+    race = rest;
+    match (won) {
+      Some(sock) => {
+        return finished(race, sock);
       },
-      Err(after) => {
-        race = after;
-      }
+      None => {}
     }
   }
   return Err(TimedOut);
+}
+
+function abandoned(own race: Race, e: net.NetError): Result[Socket, net.NetError] {
+  close_all(race.open);
+  return Err(e);
+}
+
+function finished(own race: Race, own sock: Socket): Result[Socket, net.NetError] {
+  close_all(race.open);
+  let blocking: Result[void, net.NetError] = net.set_nonblocking(sock, false);
+  return Ok(sock);
 }
 ```
 
@@ -2402,94 +2426,111 @@ function wait_window(race: Race, n: i32, now: i64, deadline: i64): i32 {
 
 ```fern
 <<73 struct Race>>=
-struct Race { open: Attempt[], next: i32, due: i64, last: net.NetError }
+struct Race { open: Option[Socket][], next: i32, due: i64, last: net.NetError }
 ```
 
-### `74 function writable(attempts: Attempt[]): i32[]`
+### `74 function writable(open: Option[Socket][]): i32[]`
 
 ```fern
-<<74 function writable(attempts: Attempt[]): i32[]>>=
-function writable(attempts: Attempt[]): i32[] {
+<<74 function writable(open: Option[Socket][]): i32[]>>=
+function writable(open: Option[Socket][]): i32[] {
   let set: i32[] = [];
   let i: i32 = 0;
-  while (i < attempts.len()) {
-    set = set.append(attempts[i].sock);
-    set = set.append(2);
+  while (i < open.len()) {
+    match (open[i]) {
+      Some(sock) => {
+        set = set.append(sock.fd);
+        set = set.append(2);
+      },
+      None => {}
+    }
     i = i + 1;
   }
   return set;
 }
 
-function started(race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
+function started(own race: Race, addr: net.SocketAddr, opts: DialOptions): Race {
   let next: i32 = race.next + 1;
   match (net.connect_start(addr)) {
     Ok(sock) => {
-      return Race { open: race.open.append(Attempt { sock: sock }), next: next, due: now_ms() + opts.fallback.as_millis(), last: race.last };
+      return Race { open: race.open.append(Some(sock)), next: next, due: now_ms() + opts.fallback.as_millis(), last: race.last };
     },
     Err(e) => {
-      return Race { ...race, next: next, due: now_ms(), last: e };
+      return Race { open: race.open, next: next, due: now_ms(), last: e };
     }
   }
-  return Race { ...race, next: next };
+  return Race { open: race.open, next: next, due: race.due, last: race.last };
 }
 
-function settled(race: Race): Result[i32, Race] {
-  let keep: Attempt[] = [];
-  let out: Race = race;
+function settled(own race: Race): (Option[Socket], Race) {
+  let open: Option[Socket][] = race.open;
+  let keep: Option[Socket][] = [];
+  let won: Option[Socket] = None;
+  let has_won: boolean = false;
+  let due: i64 = race.due;
+  let last: net.NetError = race.last;
   let i: i32 = 0;
-  while (i < race.open.len()) {
-    let a: Attempt = race.open[i];
-    match (net.connect_result(a.sock)) {
-      Ok(_) => {
-        close_attempts(keep);
-        close_attempts(after(race.open, i));
-        return Ok(a.sock);
-      },
-      Err(e) => {
-        if (e.eq(net.InProgress)) {
-          keep = keep.append(a);
+  while (i < open.len()) {
+    let (slot, rest) = open.swap_at(i, None);
+    open = rest;
+    match (slot) {
+      Some(sock) => {
+        if (has_won) {
+          keep = keep.append(Some(sock));
         } else {
-          close_attempts([a]);
-          out = Race { ...out, due: now_ms(), last: e };
+          match (net.connect_result(sock)) {
+            Ok(_) => {
+              won = Some(sock);
+              has_won = true;
+            },
+            Err(e) => {
+              if (e.eq(net.InProgress)) {
+                keep = keep.append(Some(sock));
+              } else {
+                let shut: Result[void, net.NetError] = net.close(sock);
+                due = now_ms();
+                last = e;
+              }
+            }
+          }
         }
-      }
+      },
+      None => {}
     }
     i = i + 1;
   }
-  return Err(Race { ...out, open: keep });
+  return (won, Race { open: keep, next: race.next, due: due, last: last });
 }
 
-function after(attempts: Attempt[], i: i32): Attempt[] {
-  let out: Attempt[] = [];
-  let k: i32 = i + 1;
-  while (k < attempts.len()) {
-    out = out.append(attempts[k]);
-    k = k + 1;
-  }
-  return out;
-}
-
-function close_attempts(attempts: Attempt[]): void {
+function close_all(own open: Option[Socket][]): void {
+  let left: Option[Socket][] = open;
   let i: i32 = 0;
-  while (i < attempts.len()) {
-    let closed: Result[void, net.NetError] = net.close(attempts[i].sock);
+  while (i < left.len()) {
+    let (slot, rest) = left.swap_at(i, None);
+    left = rest;
+    match (slot) {
+      Some(sock) => {
+        let shut: Result[void, net.NetError] = net.close(sock);
+      },
+      None => {}
+    }
     i = i + 1;
   }
 }
 ```
 
-### `75 pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsError]`
+### `75 pub function dial(name: string, port: i32, opts: DialOptions): Result[Socket, DnsError]`
 
 ```fern
-<<75 pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsError]>>=
-pub function dial(name: string, port: i32, opts: DialOptions): Result[i32, DnsError] {
+<<75 pub function dial(name: string, port: i32, opts: DialOptions): Result[Socket, DnsError]>>=
+pub function dial(name: string, port: i32, opts: DialOptions): Result[Socket, DnsError] {
   let addrs: net.IpAddr[] = resolve(name)?;
   match (connect_race(interleave_families(addrs), port, opts)) {
     Ok(sock) => {
       return Ok(sock);
     },
     Err(e) => {
-      return Err(Socket(e));
+      return Err(NetFailed(e));
     }
   }
   return Err(NoNameserver);
