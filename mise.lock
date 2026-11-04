@@ -157,11 +157,11 @@ backend = "http:z3"
 strip_components = "1"
 
 [tools."http:z3"."platforms.linux-arm64"]
-checksum = "sha256:78b383374905a20af7f38cb3e8e9e8e38c5cb3d23a8c2fbf8f54ff4b41a9c605"
+checksum = "blake3:30e48b940e98832025f6db4f762e97246569f916f30bda01983ead1b6eecad21"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-glibc-2.34.zip"
 
 [tools."http:z3"."platforms.linux-arm64-musl"]
-checksum = "sha256:78b383374905a20af7f38cb3e8e9e8e38c5cb3d23a8c2fbf8f54ff4b41a9c605"
+checksum = "blake3:30e48b940e98832025f6db4f762e97246569f916f30bda01983ead1b6eecad21"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-glibc-2.34.zip"
 
 [tools."http:z3"."platforms.linux-x64"]
@@ -169,11 +169,11 @@ checksum = "blake3:397b0e66464934ba351209d7123dee5730609a088c1354890c87a0de71e4c
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-x64-glibc-2.39.zip"
 
 [tools."http:z3"."platforms.linux-x64-musl"]
-checksum = "sha256:94549c5e31a75b9c543fe6eea8f32927054765c2e92e696d2d6dde0eedf348a1"
+checksum = "blake3:397b0e66464934ba351209d7123dee5730609a088c1354890c87a0de71e4c9e3"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-x64-glibc-2.39.zip"
 
 [tools."http:z3"."platforms.macos-arm64"]
-checksum = "sha256:941659417b5464a361c49089658509f3118a0c3e8d4f8a1dc999f8b5cd1f3c71"
+checksum = "blake3:3abc6ed66cfe39e07bc47afc68e10bce451db0a278caced74020ca5637a9e2c3"
 url = "https://github.com/Z3Prover/z3/releases/download/z3-4.15.3/z3-4.15.3-arm64-osx-13.7.6.zip"
 
 [[tools.oha]]
