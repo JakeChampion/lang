@@ -4856,6 +4856,7 @@ function builtin_sigs(): string[] {
     "__method_Writer_isatty(Writer): boolean",
     "__method_Writer_seek(Writer, i64, i32): Result[i64, IoError]",
     "__method_Writer_set_nonblocking(Writer, boolean): Result[void, IoError]",
+    "__method_Writer_set_times(Writer, i64, i64, i64, i64, i32): Result[void, IoError]",
     "__method_Writer_splice_forever(Writer, string): Result[void, IoError]",
     "__method_Writer_stat(Writer): Result[FileStat, IoError]",
     "__method_Writer_syncfs(Writer): Result[void, IoError]",

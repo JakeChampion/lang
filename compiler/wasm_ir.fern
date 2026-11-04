@@ -140,7 +140,7 @@ pub function need_ops(): string[] {
     "free", "args", "arr_reserve", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
-    "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "writer_splice_forever", "fd_flags", "writer_truncate", "writer_nonblocking", "read_dir", "read_dir_bytes",
+    "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "writer_splice_forever", "fd_flags", "writer_truncate", "writer_nonblocking", "writer_set_times", "read_dir", "read_dir_bytes",
     "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_file", "read_file_bytes",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "read_link_bytes", "set_file_times",
@@ -978,8 +978,11 @@ pub function module_allocates(cache: irtables.LowerResult[]): boolean {
 }
 
 pub function module_emits_op_cached(cache: irtables.LowerResult[], kind: string): boolean {
-  let ktag: i32 = ir.kind_id(kind);
+  let ktag: i32 = if (kind == "writer_set_times") { 269 } else { ir.kind_id(kind) };
   function is_kind(o: ir.Op): boolean {
+    if (ktag == 269) {
+      return o.kind_tag == ktag && o.i32_imm == (if (kind == "writer_set_times") { 1 } else { 0 });
+    }
     return o.kind_tag == ktag;
   }
   return any_op(cache, is_kind);
@@ -1764,6 +1767,7 @@ function fs_import_gates_p2(needs: string[]): GatedImport[] {
     GatedImport { on: need_any(needs, ["stat", "lstat"]), text: t + "stat-at\" (func $__fern_stat_at (param i32 i32 i32 i32 i32)))" },
     GatedImport { on: need(needs, "truncate") || files_need(needs, ["writer_truncate"]), text: t + "set-size\" (func $__fern_desc_set_size (param i32 i64 i32)))" },
     GatedImport { on: files_need(needs, ["fd_fsync"]), text: t + "sync\" (func $__fern_desc_sync (param i32 i32)))" },
+    GatedImport { on: files_need(needs, ["writer_set_times"]), text: t + "set-times\" (func $__fern_desc_set_times (param i32 i32 i64 i32 i32 i64 i32 i32)))" },
     GatedImport { on: files_need(needs, ["fd_fdatasync"]), text: t + "sync-data\" (func $__fern_desc_sync_data (param i32 i32)))" },
     GatedImport { on: files_need(needs, ["fd_drop_cache"]), text: t + "advise\" (func $__fern_desc_advise (param i32 i64 i64 i32 i32)))" },
     GatedImport { on: need(needs, "set_file_times"), text: t + "set-times-at\" (func $__fern_set_times_at (param i32 i32 i32 i32 i32 i64 i32 i32 i64 i32 i32)))" },
@@ -1827,14 +1831,14 @@ function need_preopen_p2(needs: string[]): boolean {
 
 function need_fd_table(needs: string[]): boolean {
   return need_open_file(needs) || need_fd_read(needs) || need_any(needs, [
-    "reader_close", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate",
+    "reader_close", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate", "writer_set_times",
   ]);
 }
 
 function component_fs_needs(): string[] {
   return [
     "open_file", "open_with", "reader_close", "read_chunk", "read_chunk_bytes",
-    "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate",
+    "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate", "writer_set_times",
     "stat", "lstat", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "create_dir", "create_dir_all", "remove_file",
     "remove_dir", "remove_dir_all", "rename", "read_link", "read_link_bytes", "create_symlink", "create_link",
     "truncate", "set_file_times", "temp_dir",
@@ -1880,6 +1884,9 @@ function fd_query_shims(needs: string[], files: boolean): string {
   }
   if (need(needs, "fd_fsync")) {
     o = o + desc_shim("fd_sync", "", files, "desc_sync", "", "8", "1");
+  }
+  if (need(needs, "writer_set_times")) {
+    o = o + desc_shim("fd_filestat_set_times", "(param $atim i64) (param $mtim i64) (param $fst i32)", files, "desc_set_times", " " + new_timestamp_p2("$atim", "1", "2") + " " + new_timestamp_p2("$mtim", "4", "8"), "8", "1");
   }
   if (need(needs, "fd_fdatasync")) {
     o = o + desc_shim("fd_datasync", "", files, "desc_sync_data", "", "8", "1");
@@ -4233,7 +4240,8 @@ function emit_host_op_wat(o: ir.Op): string {
     return "    call $__fern_truncate\n";
   }
   if (o.kind_tag == 269) {
-    return "    call $__fern_set_file_times\n";
+    let helper: string = if (o.i32_imm == 1) { "writer_set_times" } else { "set_file_times" };
+    return "    call $__fern_" + helper + "\n";
   }
   if (o.kind_tag == 264) {
     if (o.i32_imm != 0) {
@@ -5382,7 +5390,7 @@ function needs_file_data_error(needs: string[]): boolean {
 
 function needs_file_handle_error(needs: string[]): boolean {
   return need_open_file(needs) || need(needs, "reader_close") || need(needs, "fd_stat")
-    || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "fd_flags")
+    || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "writer_set_times") || need(needs, "fd_flags")
     || needs_fd_sync(needs);
 }
 
@@ -5505,6 +5513,10 @@ pub function truncate_import(): string {
 
 pub function set_file_times_import(): string {
   return "  (import \"wasi_snapshot_preview1\" \"path_filestat_set_times\" (func $__fern_path_filestat_set_times (param i32 i32 i32 i32 i64 i64 i32) (result i32)))\n";
+}
+
+pub function writer_set_times_import(): string {
+  return "  (import \"wasi_snapshot_preview1\" \"fd_filestat_set_times\" (func $__fern_fd_filestat_set_times (param i32 i64 i64 i32) (result i32)))\n";
 }
 
 pub function readdir_fd_import(): string {
@@ -6010,6 +6022,38 @@ pub function truncate_func(): string {
   o = o + "      (local.set $err (call $__fern_fd_filestat_set_size (local.get $fd) (local.get $length)))\n";
   o = o + "      (drop (call $__fern_fd_close (local.get $fd)))))\n";
   o = o + path_result_tail("$path");
+  return o;
+}
+
+pub function writer_set_times_func(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_writer_set_times (param $fd i32) (param $asec i64) (param $ansec i64) (param $msec i64) (param $mnsec i64) (param $flags i32) (result i32)\n";
+  o = o + "    (local $err i32) (local $res i32) (local $fst i32) (local $path i32)\n";
+  o = o + "    (local.set $err (i32.const 0))\n";
+  o = o + "    (if (i32.eqz (i32.and (local.get $flags) (i32.const 10))) (then\n";
+  o = o + "      (if (i64.lt_s (local.get $asec) (i64.const 0)) (then (local.set $err (i32.const 61))))))\n";
+  o = o + "    (if (i32.eqz (i32.and (local.get $flags) (i32.const 20))) (then\n";
+  o = o + "      (if (i64.lt_s (local.get $msec) (i64.const 0)) (then (local.set $err (i32.const 61))))))\n";
+  o = o + "    (if (i32.eqz (local.get $err)) (then\n";
+  o = o + "      (local.set $fst (i32.const 0))\n";
+  o = o + "      (if (i32.eqz (i32.and (local.get $flags) (i32.const 2))) (then\n";
+  o = o + "        (if (i32.and (local.get $flags) (i32.const 8)) (then (local.set $fst (i32.or (local.get $fst) (i32.const 2)))) (else (local.set $fst (i32.or (local.get $fst) (i32.const 1)))))))\n";
+  o = o + "      (if (i32.eqz (i32.and (local.get $flags) (i32.const 4))) (then\n";
+  o = o + "        (if (i32.and (local.get $flags) (i32.const 16)) (then (local.set $fst (i32.or (local.get $fst) (i32.const 8)))) (else (local.set $fst (i32.or (local.get $fst) (i32.const 4)))))))\n";
+  o = o + "      (local.set $err (call $__fern_fd_filestat_set_times (local.get $fd)";
+  o = o + " (i64.add (i64.mul (local.get $asec) (i64.const 1000000000)) (local.get $ansec))";
+  o = o + " (i64.add (i64.mul (local.get $msec) (i64.const 1000000000)) (local.get $mnsec))";
+  o = o + " (local.get $fst)))))\n";
+  o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+  o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
+  o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
+  o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+  o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
+  o = o + "      (return (local.get $res))))\n";
+  o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "    (local.get $res))\n";
   return o;
 }
 
@@ -9359,6 +9403,31 @@ function p1_fd_read(needs: string[]): boolean {
   return p1_file_io(needs) || need_fd_read(needs);
 }
 
+function preview1_metadata_imports(parts: string[], needs: string[]): string[] {
+  if (need(needs, "stat") || need(needs, "lstat")) {
+    parts = parts.append(stat_import());
+  }
+  if (need(needs, "fd_stat") || need(needs, "reader_seek")) {
+    parts = parts.append(fd_stat_import());
+  }
+  if (need(needs, "fd_fsync")) {
+    parts = parts.append(fd_sync_import());
+  }
+  if (need(needs, "fd_fdatasync")) {
+    parts = parts.append(fd_datasync_import());
+  }
+  if (need(needs, "fd_drop_cache")) {
+    parts = parts.append(fd_advise_import());
+  }
+  if (need(needs, "reader_seek")) {
+    parts = parts.append(fd_seek_import());
+  }
+  if (need(needs, "fd_flags") && !p1_fd_read(needs)) {
+    parts = parts.append(fd_fdstat_get_import());
+  }
+  return parts;
+}
+
 function preview1_imports(needs: string[], lc: boolean): string {
   let parts: string[] = [];
   if (lc) {
@@ -9399,27 +9468,7 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need(needs, "env") || need(needs, "environ")) {
     parts = parts.append(env_helpers());
   }
-  if (need(needs, "stat") || need(needs, "lstat")) {
-    parts = parts.append(stat_import());
-  }
-  if (need(needs, "fd_stat") || need(needs, "reader_seek")) {
-    parts = parts.append(fd_stat_import());
-  }
-  if (need(needs, "fd_fsync")) {
-    parts = parts.append(fd_sync_import());
-  }
-  if (need(needs, "fd_fdatasync")) {
-    parts = parts.append(fd_datasync_import());
-  }
-  if (need(needs, "fd_drop_cache")) {
-    parts = parts.append(fd_advise_import());
-  }
-  if (need(needs, "reader_seek")) {
-    parts = parts.append(fd_seek_import());
-  }
-  if (need(needs, "fd_flags") && !p1_fd_read(needs)) {
-    parts = parts.append(fd_fdstat_get_import());
-  }
+  parts = preview1_metadata_imports(parts, needs);
   if (need(needs, "remove_file") || need(needs, "remove_dir_all")) {
     parts = parts.append(remove_file_import());
   }
@@ -9446,6 +9495,9 @@ function preview1_imports(needs: string[], lc: boolean): string {
   }
   if (need(needs, "set_file_times")) {
     parts = parts.append(set_file_times_import());
+  }
+  if (need(needs, "writer_set_times")) {
+    parts = parts.append(writer_set_times_import());
   }
   if (need(needs, "truncate") || need(needs, "writer_truncate")) {
     parts = parts.append(truncate_import());
@@ -9757,6 +9809,9 @@ function path_fs_link_bodies(parts: string[], needs: string[], mode: i32): strin
   if (need(needs, "set_file_times")) {
     parts = parts.append(set_file_times_func());
   }
+  if (need(needs, "writer_set_times")) {
+    parts = parts.append(writer_set_times_func());
+  }
   if (need(needs, "truncate")) {
     parts = parts.append(truncate_body(mode));
   }
@@ -9876,7 +9931,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "free", "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
-    "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
+    "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate", "writer_set_times",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect_with", "tcp_send_bytes", "tcp_send_buf", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv, shadow), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));

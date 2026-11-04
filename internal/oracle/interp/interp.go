@@ -683,6 +683,7 @@ func New() *Interp {
 	i.Builtins["__method_Writer_syncfs"] = &Builtin{Fn: builtinSyncfs}
 	i.Builtins["__method_Writer_truncate"] = &Builtin{Fn: builtinWriterTruncate}
 	i.Builtins["__method_Writer_set_nonblocking"] = &Builtin{Fn: builtinWriterSetNonblocking}
+	i.Builtins["__method_Writer_set_times"] = &Builtin{Fn: builtinWriterSetTimes}
 	i.Builtins["__method_Reader_dup_onto"] = &Builtin{Fn: builtinDupOnto}
 	i.Builtins["__method_Writer_dup_onto"] = &Builtin{Fn: builtinDupOnto}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
@@ -4261,11 +4262,35 @@ func builtinSetFileTimes(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("set_file_times: expected string path, got %T", args[0])
 	}
+	times, flags, err := fileTimeArgs("set_file_times", args)
+	if err != nil {
+		return nil, err
+	}
+	err = setFileTimes(string(path), &times, flags&timesNoFollow != 0)
+	return ioResult(string(path), err), nil
+}
+
+func builtinWriterSetTimes(i *Interp, args []Value) (Value, error) {
+	if len(args) != 6 {
+		return nil, fmt.Errorf("Writer.set_times: expected 6 args, got %d", len(args))
+	}
+	fd, refusal, err := handleFd(i, args[0])
+	if err != nil || refusal != nil {
+		return refusal, err
+	}
+	times, _, err := fileTimeArgs("Writer.set_times", args)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult("", setFdTimes(fd, &times)), nil
+}
+
+func fileTimeArgs(name string, args []Value) ([2]syscall.Timespec, int64, error) {
 	var n [5]int64
 	for i := 1; i < 6; i++ {
 		v, ok := args[i].(Number)
 		if !ok {
-			return nil, fmt.Errorf("set_file_times: expected number arg %d, got %T", i, args[i])
+			return [2]syscall.Timespec{}, 0, fmt.Errorf("%s: expected number arg %d, got %T", name, i, args[i])
 		}
 		n[i-1] = int64(v)
 	}
@@ -4286,8 +4311,7 @@ func builtinSetFileTimes(_ *Interp, args []Value) (Value, error) {
 	if flags&timesOmitMtime != 0 {
 		times[1] = syscall.Timespec{Nsec: utimeOmit}
 	}
-	err := setFileTimes(string(path), &times, flags&timesNoFollow != 0)
-	return ioResult(string(path), err), nil
+	return times, flags, nil
 }
 
 func builtinUmask(_ *Interp, args []Value) (Value, error) {

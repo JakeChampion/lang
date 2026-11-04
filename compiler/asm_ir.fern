@@ -2067,7 +2067,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
-    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times",
+    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "writer_set_times",
     "read_link", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",
@@ -2083,7 +2083,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
-    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times",
+    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "writer_set_times",
     "read_link", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts", "sysctl",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
@@ -10919,11 +10919,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("truncate");
   } else if (o.kind_tag == 269) {
+    let helper: string = if (o.i32_imm == 1) { "writer_set_times" } else { "set_file_times" };
     s = s.write("    popq %r9\n    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n");
     s = s.write("    pushq %r9\n    pushq %r8\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
-    s = s.write("    call __fn___fern_set_file_times\n    addq $48, %rsp\n    pushq %rax\n");
+    s = s.write("    call __fn___fern_" + helper + "\n    addq $48, %rsp\n    pushq %rax\n");
     s = s.need("heap");
-    s = s.need("set_file_times");
+    s = s.need(helper);
   } else if (o.kind_tag == 265) {
     s = s.write("    call __fn___fern_umask\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("umask");
@@ -12214,7 +12215,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.any_need([
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
-    "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
+    "sleep_ns", "set_file_times", "writer_set_times", "statfs", "poll", "proc_waitpid",
     "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8",
@@ -12423,6 +12424,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("set_file_times")) {
       fs_roots = fs_roots + " " + "__fern_set_file_times";
+    }
+    if (s.has_need("writer_set_times")) {
+      fs_roots = fs_roots + " " + "__fern_writer_set_times";
     }
     if (s.has_need("read_link")) {
       fs_roots = fs_roots + " " + "__fern_read_link";
