@@ -1,0 +1,19 @@
+// spec: MC-04
+// A method call passes its receiver as the first argument, so the call is
+// a consuming use of a @must_consume receiver. A consuming receiver is the
+// declared sink, as an own parameter is.
+
+import "std/i32";
+
+@must_consume
+struct Ticket { id: i32 }
+
+function (own t: Ticket) redeem(): i32 {
+    return t.id;
+}
+
+function main(): i32 {
+    let t: Ticket = Ticket { id: 7 };
+    print(t.redeem().to_string());
+    return 0;
+}

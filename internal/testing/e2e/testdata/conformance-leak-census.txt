@@ -318,8 +318,8 @@ for_loop_continue_steps                              0
 for_over_collections                                 0
 for_over_iterator                                    0
 for_over_range_value                                 0
-for_underscore_nested                                0
 for_range_in_lambda_in_header                        0
+for_underscore_nested                                0
 foreach_binding_trailing_comma                       0
 foreach_pattern_binding                              0
 format_placeholders                                  0
@@ -569,6 +569,9 @@ module_scoped_variant                                0
 multi_file                                           0
 multi_hop_alias                                      0
 multiline_stdin                                      0
+must_consume_in_if_condition                         0
+must_consume_in_match_tag                            0
+must_consume_method_receiver                         0
 must_consume_own_sink                                0
 mutual_recursion                                     0
 named_args                                           0
@@ -1255,5 +1258,6 @@ while_sum                                            0
 wide_array_append_grow                               0
 wide_shift_by_variable                               0
 wider_use_settles_a_nested_payload_literal           0
+worker_spawn_join                                    0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0

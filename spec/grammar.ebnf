@@ -60,7 +60,7 @@ Bound       = QualName [ TypeArgs ] ;
 
 ParamList   = Param { ',' Param } [ ',' ] ;
 Param       = PatternParam | NamedParam ;
-NamedParam  = 'own' IDENT [ ':' Type ] [ '=' Expr ]
+NamedParam  = ( 'own' | 'send' ) IDENT [ ':' Type ] [ '=' Expr ]
             | IDENT [ ':' Type ] [ '=' Expr ]
             ;
 # BindPattern is the head of every IRREFUTABLE binding site — a destructuring

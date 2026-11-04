@@ -76,8 +76,11 @@ it claims:
    each checked, loops treated conservatively (a consuming use
    inside a loop body counts; the zero-iteration path is a
    violation unless consumed after the loop too).
-2. Field reads / method calls on the value are neutral (neither
-   consume nor violate).
+2. Field reads on the value are neutral (neither consume nor
+   violate). A method call passes its receiver as the first argument,
+   so it is a consuming use: the obligation moves to the method, which
+   is tracked like any callee (a consuming receiver is the declared
+   sink).
 3. Storing into an UNMARKED container is reported as a violation
    at the store site ("obligation laundered into unmarked type") —
    this keeps slice 1 sound without inter-type obligation flow.
