@@ -35,8 +35,9 @@ LOGCAT = ["logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:F"
 WAIT_SECONDS = 30
 
 
-def adb(*args, check=True):
-    return subprocess.run(["adb", *args], check=check, capture_output=True, text=True, timeout=WAIT_SECONDS).stdout
+def adb(*args, check=True, timeout=WAIT_SECONDS, include_stderr=False):
+    result = subprocess.run(["adb", *args], check=check, capture_output=True, text=True, timeout=timeout)
+    return result.stdout + (result.stderr if include_stderr else "")
 
 
 def pid(package):
@@ -148,6 +149,37 @@ def screenshot(path):
         f.write(image)
 
 
+def diagnostics(out):
+    """Save device state and native stacks before cleanup, within one deadline."""
+    deadline = time.monotonic() + WAIT_SECONDS
+    sections = []
+
+    def collect(*command):
+        remaining = deadline - time.monotonic()
+        sections.append("adb " + " ".join(command))
+        if remaining <= 0:
+            sections.append("diagnostic deadline reached\n")
+            return ""
+        try:
+            text = adb(*command, check=False, timeout=remaining, include_stderr=True)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as error:
+            text = str(error)
+        sections.append(text + "\n")
+        return text
+
+    collect("logcat", "-d", "-v", "threadtime")
+    collect("shell", "ip", "addr")
+    collect("shell", "cat", "/proc/net/udp")
+    collect("shell", "ps", "-A", "-T")
+    collect("shell", "dumpsys", "activity", "processes")
+    for package in (FIRST, SECOND):
+        process = collect("shell", "pidof", package).strip()
+        if process.isdecimal():
+            collect("shell", "debuggerd", "-b", process)
+        collect("shell", "dumpsys", "activity", "services", package)
+    Path(out, "diagnostics.txt").write_text("\n".join(sections))
+
+
 def run(apk, second_apk, out):
     print("walkie check: disable the cached-app freezer", flush=True)
     disable_freezer()
@@ -202,6 +234,11 @@ def main(apk, second_apk, out):
     except errors as e:
         Path(out, "logcat.txt").write_text(str(e) + "\n")
         failure = failure or e
+    if failure is not None:
+        try:
+            diagnostics(out)
+        except OSError as e:
+            Path(out, "diagnostics-error.txt").write_text(str(e) + "\n")
     for package in (FIRST, SECOND):
         try:
             adb("shell", "am", "force-stop", package, check=False)

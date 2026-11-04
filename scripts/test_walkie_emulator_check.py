@@ -123,8 +123,42 @@ class DiagnosticTest(unittest.TestCase):
             with self.assertRaises(SystemExit) as result:
                 walkie.main("first.apk", "second.apk", directory)
             self.assertEqual(result.exception.code, 1)
-            self.assertEqual(adb.call_count, 2)
+            cleanup = [call for call in adb.call_args_list if call.args[:3] == ("shell", "am", "force-stop")]
+            self.assertEqual(len(cleanup), 2)
             self.assertIn("timed out", Path(directory, "failure.txt").read_text())
+
+    def test_failure_saves_stacks_and_network_state_before_stopping_apps(self):
+        commands = []
+
+        def adb(*args, **kwargs):
+            commands.append((args, kwargs))
+            return "1234" if args[:2] == ("shell", "pidof") else "device state"
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            walkie, "run", side_effect=walkie.Failure("keys not ready")
+        ), mock.patch.object(walkie, "logcat", return_value="fern log"), mock.patch.object(
+            walkie, "adb", side_effect=adb
+        ), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as result:
+                walkie.main("first.apk", "second.apk", directory)
+            self.assertEqual(result.exception.code, 1)
+            text = Path(directory, "diagnostics.txt").read_text()
+            self.assertIn("debuggerd -b 1234", text)
+            self.assertIn("/proc/net/udp", text)
+            self.assertEqual(Path(directory, "failure.txt").read_text(), "keys not ready\n")
+        self.assertTrue(all(args[:3] == ("shell", "am", "force-stop") for args, _ in commands[-2:]))
+        for _, kwargs in commands[:-2]:
+            self.assertGreater(kwargs["timeout"], 0)
+            self.assertLessEqual(kwargs["timeout"], walkie.WAIT_SECONDS)
+
+    def test_diagnostic_commands_share_one_deadline(self):
+        times = iter([0])
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            walkie.time, "monotonic", side_effect=lambda: next(times, walkie.WAIT_SECONDS + 1)
+        ), mock.patch.object(walkie, "adb") as adb:
+            walkie.diagnostics(directory)
+            adb.assert_not_called()
+            self.assertIn("deadline reached", Path(directory, "diagnostics.txt").read_text())
 
 
 if __name__ == "__main__":
