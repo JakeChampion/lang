@@ -137,11 +137,11 @@ pub function (own w: Worker[T]) join(): T {
     },
     None => {}
   }
-  if (target_os() != "linux") {
-    eprint("worker: a worker without a result on this target");
-    exit(134);
+  if (target_os() == "linux") {
+    return __join_process(w);
   }
-  return __join_process(w);
+  eprint("worker: a worker without a result on this target");
+  exit(134);
 }
 ```
 
