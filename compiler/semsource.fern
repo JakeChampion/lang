@@ -8303,10 +8303,10 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
   return Inferred { all: out, table: inferred_table(table, rows, ix) };
 }
 
-pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32 }
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off() };
+  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -8376,7 +8376,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined: Spliced = inline_leaves(sp.all, names, mod, opts.size, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true));
+    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true), opts.stack_phi_joins);
   }
   decls = [];
   instances = [];
@@ -8975,7 +8975,7 @@ function unroll_loops(all: Produced[], names: string[]): Produced[] {
   return out;
 }
 
-function prune_dead_constructions(all: Produced[]): Produced[] {
+function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Produced[] {
   let out: Produced[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
@@ -8985,7 +8985,7 @@ function prune_dead_constructions(all: Produced[]): Produced[] {
       if (fc.folded > 0) {
         p = Produced { ...p, func: fc.f, analysis: None };
       }
-      let th: semthread.Threaded = semthread.thread(p.func);
+      let th: semthread.Threaded = semthread.thread(p.func, stack_phi_joins);
       if (th.changed > 0) {
         p = Produced { ...p, func: th.f, analysis: None };
       }

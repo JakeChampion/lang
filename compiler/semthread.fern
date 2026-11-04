@@ -7,7 +7,7 @@ import "./util";
 
 pub struct Threaded { f: ssasem.Func, changed: i32 }
 
-pub function thread(f: ssasem.Func): Threaded {
+pub function thread(f: ssasem.Func, stack_phi_joins: boolean): Threaded {
   let g: ssa.SFunc = f.graph;
   let changed: i32 = 0;
   if (decidable(g)) {
@@ -26,7 +26,7 @@ pub function thread(f: ssasem.Func): Threaded {
   if (changed > 0) {
     cur = ssasem.Func { ...f, graph: g };
   }
-  let j: Joined = split_constant_joins(cur);
+  let j: Joined = split_constant_joins(cur, stack_phi_joins);
   if (j.changed > 0) {
     cur = j.f;
     changed = changed + j.changed;
@@ -437,11 +437,11 @@ function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
 
 struct Joined { f: ssasem.Func, changed: i32 }
 
-function split_constant_joins(f0: ssasem.Func): Joined {
+function split_constant_joins(f0: ssasem.Func, stack_phi_joins: boolean): Joined {
   let f: ssasem.Func = f0;
   let changed: i32 = 0;
   for _ in 0..16 {
-    let fw: Forwarded = forward_empty_joins(f.graph);
+    let fw: Forwarded = forward_empty_joins(f.graph, stack_phi_joins);
     if (fw.changed > 0) {
       f = ssasem.Func { ...f, graph: fw.g };
       changed = changed + fw.changed;
@@ -470,12 +470,12 @@ struct Forwarded { g: ssa.SFunc, changed: i32 }
 // on that edge.
 // Without that branch, a chain of two-way joins would become one wide join
 // that copies on every edge.
-function forward_empty_joins(g0: ssa.SFunc): Forwarded {
+function forward_empty_joins(g0: ssa.SFunc, stack_phi_joins: boolean): Forwarded {
   let g: ssa.SFunc = g0;
   let changed: i32 = 0;
   for round in 0..64 {
     let at: i32[] = ssadeps.position_of(g);
-    let yi: i32 = first_forwardable(g, at, ssa.use_counts(g));
+    let yi: i32 = first_forwardable(g, at, ssa.use_counts(g), stack_phi_joins);
     if (yi < 0) {
       break;
     }
@@ -490,10 +490,10 @@ function forward_empty_joins(g0: ssa.SFunc): Forwarded {
 }
 
 // A block with phis is not forwarded into a loop header it is the latch of.
-function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[]): i32 {
+function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[], stack_phi_joins: boolean): i32 {
   let dom: ssadeps.Dom = ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] };
   for yi in 0..g.blocks.len() {
-    if (forwardable(g, at, uses, yi)) {
+    if (forwardable(g, at, uses, yi, stack_phi_joins)) {
       let y: ssa.SBlock = g.blocks[yi];
       if (y.insts.len() == 0) {
         return yi;
@@ -509,7 +509,7 @@ function first_forwardable(g: ssa.SFunc, at: i32[], uses: i32[]): i32 {
   return 0 - 1;
 }
 
-function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32): boolean {
+function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32, stack_phi_joins: boolean): boolean {
   let y: ssa.SBlock = g.blocks[yi];
   if (y.term.kind_tag != 2 || y.preds.len() == 0 || y.id == g.entry) {
     return false;
@@ -522,7 +522,9 @@ function forwardable(g: ssa.SFunc, at: i32[], uses: i32[], yi: i32): boolean {
   if (!has_phi(xb) || util.index_of_i32(xb.preds, y.id) < 0 || !phis_read_on_edge(y, xb, uses)) {
     return false;
   }
-  if (y.insts.len() > 0 && !ends_on_phi(g, at, at[x])) {
+  // Native registers benefit from a narrow join. Wasm's stack lowering
+  // instead pays for each intermediate block and its local transfers.
+  if (!stack_phi_joins && y.insts.len() > 0 && !ends_on_phi(g, at, at[x])) {
     return false;
   }
   for q in y.preds {
