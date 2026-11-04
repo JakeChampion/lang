@@ -146,19 +146,19 @@ pub function cstr(s: string): usize {
   unsafe {
     let n: i32 = s.len();
     let buf: usize = alloc_buffer(n + 4);
-    let i: i32 = 0;
+    let i = 0;
     while (i + 4 <= n) {
       let w: i32 = s[i] as i32 | s[i + 1] as i32 << 8 | s[i + 2] as i32 << 16 | s[i + 3] as i32 << 24;
       __store_i32(buf + i as usize, w);
-      i = i + 4;
+      i += 4;
     }
     let base: i32 = i;
-    let t: i32 = 0;
-    let sh: i32 = 0;
+    let t = 0;
+    let sh = 0;
     while (i < n) {
       t = t | s[i] as i32 << sh;
-      sh = sh + 8;
-      i = i + 1;
+      sh += 8;
+      i += 1;
     }
     __store_i32(buf + base as usize, t);
     return buf;
@@ -215,12 +215,12 @@ pub function new_string_utf(env: usize, bytes: usize): usize {
 // The code point at byte `i` of `s`, and the number of bytes it takes. A
 // byte that does not start a whole character is U+FFFD, and takes one byte.
 function next_char(s: string, i: i32): (i32, i32) {
-  let b: i32 = s[i] as i32;
+  let b = s[i] as i32;
   if (b < 128) {
     return (b, 1);
   }
-  let k: i32 = 1;
-  let c: i32 = 0;
+  let k = 1;
+  let c = 0;
   if (b >= 240 && b < 248) {
     k = 4;
     c = b & 7;
@@ -235,7 +235,7 @@ function next_char(s: string, i: i32): (i32, i32) {
     return (65533, 1);
   }
   for j in 1..k {
-    let t: i32 = s[i + j] as i32;
+    let t = s[i + j] as i32;
     if (t < 128 || t >= 192) {
       return (65533, 1);
     }
@@ -260,18 +260,18 @@ function put_unit(units: usize, n: i32, u: i32): void {
 pub function new_string(env: usize, s: string): usize {
   unsafe {
     let units: usize = alloc_buffer(2 * s.len() + 2);
-    let n: i32 = 0;
-    let i: i32 = 0;
+    let n = 0;
+    let i = 0;
     while (i < s.len()) {
       let (c, used) = next_char(s, i);
-      i = i + used;
+      i += used;
       if (c >= 65536) {
         put_unit(units, n, 55296 + (c - 65536 >> 10));
         put_unit(units, n + 1, 56320 + (c - 65536 & 1023));
-        n = n + 2;
+        n += 2;
       } else {
         put_unit(units, n, c);
-        n = n + 1;
+        n += 1;
       }
     }
     let jstr: usize = call2(env, NEW_STRING, units, n as usize);
@@ -303,7 +303,7 @@ pub function throw(env: usize, throwable: usize): i32 {
 
 pub function throw_new(env: usize, clazz: usize, message: string): i32 {
   let m: usize = cstr(message);
-  let r: i32 = call2(env, 14, clazz, m) as i32;
+  let r = call2(env, 14, clazz, m) as i32;
   free_buffer(m);
   return r;
 }
@@ -474,10 +474,10 @@ pub function jvalues(args: usize[]): usize {
   unsafe {
     let n: i32 = args.len();
     let buf: usize = alloc_buffer(n * 8);
-    let i: i32 = 0;
+    let i = 0;
     while (i < n) {
       __store_i64(buf + (i * 8) as usize, args[i] as i64);
-      i = i + 1;
+      i += 1;
     }
     return buf;
   }
@@ -487,10 +487,10 @@ pub function jvalues(args: usize[]): usize {
 pub function jvalue_alloc(n: i32): usize {
   unsafe {
     let buf: usize = alloc_buffer(n * 8);
-    let i: i32 = 0;
+    let i = 0;
     while (i < n) {
       __store_i64(buf + (i * 8) as usize, 0 as i64);
-      i = i + 1;
+      i += 1;
     }
     return buf;
   }

@@ -84,7 +84,7 @@ pub function v(n: i32, k: i32): u32 {
 
 function magnitude(x: i32): i32 {
   if (x < 0) {
-    return 0 - x;
+    return -x;
   }
   return x;
 }
@@ -105,19 +105,19 @@ The index counts the codewords before `y` in an order that starts from the last 
 <<encoding>>=
 // The index of the codeword `y`.
 pub function index(y: [i32]): u32 {
-  let n: i32 = y.len();
-  let j: i32 = n - 1;
+  let n = y.len();
+  let j = n - 1;
   let i: u32 = 0u32;
   if (y[j] < 0) {
     i = 1u32;
   }
-  let k: i32 = magnitude(y[j]);
+  let k = magnitude(y[j]);
   while (j > 0) {
-    j = j - 1;
-    i = i + u(n - j, k);
-    k = k + magnitude(y[j]);
+    j -= 1;
+    i += u(n - j, k);
+    k += magnitude(y[j]);
     if (y[j] < 0) {
-      i = i + u(n - j, k + 1);
+      i += u(n - j, k + 1);
     }
   }
   return i;
@@ -140,10 +140,10 @@ struct Step { index: u32, left: i32, negative: boolean }
 // The largest pulse count from `start` down whose count of codewords with
 // `dims` integers is not above `index`, and that count.
 function search(start: i32, dims: i32, index: u32): (i32, u32) {
-  let left: i32 = start;
-  let p: u32 = u(left, dims);
+  let left = start;
+  let p = u(left, dims);
   while (p > index) {
-    left = left - 1;
+    left -= 1;
     p = u(left, dims);
   }
   return (left, p);
@@ -152,28 +152,28 @@ function search(start: i32, dims: i32, index: u32): (i32, u32) {
 // The pulses left after the front integer of a codeword with `dims` integers,
 // the index within the rest, and the sign of the front integer.
 function front(dims: i32, k: i32, index: u32): Step {
-  let i: u32 = index;
-  let start: i32 = k - 1;
-  let negative: boolean = false;
+  let i = index;
+  let start = k - 1;
+  let negative = false;
   if (k >= dims) {
-    let p: u32 = u(dims, k + 1);
+    let p = u(dims, k + 1);
     negative = i >= p;
     if (negative) {
-      i = i - p;
+      i -= p;
     }
     start = k;
     if (u(dims, dims) > i) {
       start = dims - 1;
     }
   } else {
-    let p: u32 = u(k, dims);
-    let q: u32 = u(k + 1, dims);
+    let p = u(k, dims);
+    let q = u(k + 1, dims);
     if (p <= i && i < q) {
       return Step { index: i - p, left: k, negative: false };
     }
     negative = i >= q;
     if (negative) {
-      i = i - q;
+      i -= q;
     }
   }
   let (left, p) = search(start, dims, i);
@@ -184,29 +184,29 @@ function front(dims: i32, k: i32, index: u32): Step {
 // squares of its integers.
 pub function codeword(n: i32, k: i32, index: u32): (i32[], i32) {
   let y: i32[] = [];
-  let yy: i32 = 0;
-  let i: u32 = index;
-  let left: i32 = k;
+  let yy = 0;
+  let i = index;
+  let left = k;
   for dims in 0..n - 2 {
-    let st: Step = front(n - dims, left, i);
-    let val: i32 = signed(left - st.left, st.negative);
+    let st = front(n - dims, left, i);
+    let val = signed(left - st.left, st.negative);
     y = y.append(val);
     yy = yy + val * val;
     i = st.index;
     left = st.left;
   }
-  let p2: u32 = (2 * left + 1) as u32;
-  let negative2: boolean = i >= p2;
+  let p2 = (2 * left + 1) as u32;
+  let negative2 = i >= p2;
   if (negative2) {
-    i = i - p2;
+    i -= p2;
   }
-  let before2: i32 = left;
+  let before2 = left;
   left = (i + 1u32 >> 1u32) as i32;
   if (left > 0) {
     i = i - (2 * left - 1) as u32;
   }
-  let a: i32 = signed(before2 - left, negative2);
-  let b: i32 = signed(left, i != 0u32);
+  let a = signed(before2 - left, negative2);
+  let b = signed(left, i != 0u32);
   return (y.append(a).append(b), yy + a * a + b * b);
 }
 

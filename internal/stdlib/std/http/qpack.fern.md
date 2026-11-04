@@ -861,7 +861,7 @@ function __find_static(name: string, value: string): (i32, i32) {
   if (n + 1 >= STATIC_LEN_AT.len()) {
     return (-1, -1);
   }
-  let named: i32 = -1;
+  let named = -1;
   let g = STATIC_LEN_AT[n];
   let end = STATIC_LEN_AT[n + 1];
   while (g < end) {

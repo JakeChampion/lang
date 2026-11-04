@@ -887,7 +887,7 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
       }
       same = false;
     }
-    let at_prev: i32 = 0 - 1;
+    let at_prev: i32 = -1;
     if (same) {
       at_prev = i;
     }
