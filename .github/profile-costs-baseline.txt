@@ -1,3 +1,5 @@
+# 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
+# three x86-64 http_hello profile rows 1.01% to 1.27%. Only reductions are banked, and no limit rises.
 # 2026-11-03: PR #14122, a local scripts/profile-costs run on its head. Most moved rows shrink 1% to 2%.
 # Preserve the original limits for higher-cost rows. Retain only the measured reductions.
 # 2026-11-02: the security stack (SEC-023, SEC-032, SEC-016, SEC-024), from a local profile-costs run on main 4f3571f1.
@@ -189,14 +191,14 @@ profile/x86-64-linux/http_hello.diagnostic.bytes	113272
 profile/x86-64-linux/http_hello.diagnostic.emit	14755
 profile/x86-64-linux/http_hello.diagnostic.ir	40172343
 profile/x86-64-linux/http_hello.hardened.bytes	69136
-profile/x86-64-linux/http_hello.hardened.emit	15716
+profile/x86-64-linux/http_hello.hardened.emit	15558
 profile/x86-64-linux/http_hello.hardened.ir	28092942
 profile/x86-64-linux/http_hello.minimal.bytes	53408
 profile/x86-64-linux/http_hello.minimal.emit	12634
 profile/x86-64-linux/http_hello.minimal.ir	23588401
 profile/x86-64-linux/http_hello.safe.bytes	64000
-profile/x86-64-linux/http_hello.safe.emit	15308
-profile/x86-64-linux/http_hello.safe.ir	22076408
+profile/x86-64-linux/http_hello.safe.emit	15136
+profile/x86-64-linux/http_hello.safe.ir	21796408
 profile/x86-64-linux/int_loop.diagnostic.bytes	5056
 profile/x86-64-linux/int_loop.diagnostic.emit	472
 profile/x86-64-linux/int_loop.diagnostic.ir	12000209

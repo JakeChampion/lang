@@ -2810,7 +2810,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (ssasem.contract_variables(contract).len() > 0) {
     return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
   }
-  let kept: boolean = keeps(s, key);
+  let kept: boolean = keeps(s, contract);
   let lent: Value = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], kept);
   s = lent.s;
   recv = lent.id;
@@ -3043,8 +3043,11 @@ function lend(v: Value, param: typeinfo.Type, m: i32, kept: boolean): Value {
   return define(empty.s, 9, [v.id, empty.id], 0, "+", param);
 }
 
-function keeps(s: State, callee: string): boolean {
-  return s.handers.has(callee);
+function keeps(s: State, contract: ssasem.Contract): boolean {
+  // A scalar result cannot contain a borrowed string. Method names alone
+  // can mark an unrelated scalar reader as a function that returns a borrow.
+  let t: typeinfo.Type = contract.result;
+  return !ssasem.is_integer(t) && !ssasem.is_bool(t) && !ssasem.is_float(t) && s.handers.has(contract.name);
 }
 
 function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolean): Value {
@@ -3676,7 +3679,7 @@ function invoke_method(recv: i32, args: ast.Expr[], contract: ssasem.Contract, s
   if (!written.ok) {
     return refused(s, written.why);
   }
-  let kept: boolean = keeps(s, contract.name);
+  let kept: boolean = keeps(s, contract);
   let v: Value = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], kept);
   s = v.s;
   if (!s.ok) {
@@ -3705,7 +3708,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!semtypes.concrete(want, false)) {
       want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s));
     }
-    let kept: boolean = keeps(s, contract.name);
+    let kept: boolean = keeps(s, contract);
     let v: Value = lend(expr(args[i], s, want), want, contract.modes[at], kept);
     s = v.s;
     if (!s.ok) {
@@ -8300,10 +8303,10 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
   return Inferred { all: out, table: inferred_table(table, rows, ix) };
 }
 
-pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32 }
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32, stack_phi_joins: boolean }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off() };
+  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off(), stack_phi_joins: false };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -8373,7 +8376,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined: Spliced = inline_leaves(sp.all, names, mod, opts.size, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true));
+    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true), opts.stack_phi_joins);
   }
   decls = [];
   instances = [];
@@ -8972,7 +8975,7 @@ function unroll_loops(all: Produced[], names: string[]): Produced[] {
   return out;
 }
 
-function prune_dead_constructions(all: Produced[]): Produced[] {
+function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Produced[] {
   let out: Produced[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
@@ -8982,7 +8985,7 @@ function prune_dead_constructions(all: Produced[]): Produced[] {
       if (fc.folded > 0) {
         p = Produced { ...p, func: fc.f, analysis: None };
       }
-      let th: semthread.Threaded = semthread.thread(p.func);
+      let th: semthread.Threaded = semthread.thread(p.func, stack_phi_joins);
       if (th.changed > 0) {
         p = Produced { ...p, func: th.f, analysis: None };
       }
