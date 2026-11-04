@@ -2,7 +2,10 @@
 
 Status: [research] survey (2026-07). Tracking issue: #5366, filed from
 `PLT-LANDSCAPE-2026.md` §2.8 ("the one frontier with no Fern story at
-all"). Nothing in this doc is a build item. It exists so that stdlib
+all"). The owner adopted design (a) on 2026-10-29 (#13511), and the
+first step of R4 shipped on 2026-11-03: the `send` mode and `std/worker`
+with the sequential degrade, in `WORKERS.md`. Nothing else in this doc
+is a build item. It exists so that stdlib
 and platform decisions stop accreting against an *implicit*
 single-thread assumption: the doc names the intended parallelism
 shape, the constraints it must satisfy, and the guardrails that keep

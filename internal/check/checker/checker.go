@@ -2885,15 +2885,27 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.validateExports(prog)
 
 	c.ownFuncs = map[string][]bool{}
+	c.sendFuncs = map[string][]bool{}
+	c.sendParamNames = map[string][]string{}
 	for _, fn := range prog.Funcs {
 		hasOwn := false
+		hasSend := false
 		flags := make([]bool, len(fn.Params))
+		sends := make([]bool, len(fn.Params))
+		names := make([]string, len(fn.Params))
 		for i, p := range fn.Params {
 			flags[i] = p.Own
 			hasOwn = hasOwn || p.Own
+			sends[i] = p.Send
+			hasSend = hasSend || p.Send
+			names[i] = p.Name
 		}
 		if hasOwn {
 			c.ownFuncs[fn.Name] = flags
+		}
+		if hasSend {
+			c.sendFuncs[fn.Name] = sends
+			c.sendParamNames[fn.Name] = names
 		}
 	}
 	// The built-in close consumes its handle: a descriptor closed once is
@@ -5671,7 +5683,11 @@ type checker struct {
 	inferReturns *[]ast.Type
 	loopLabels   []string
 
-	ownFuncs       map[string][]bool
+	ownFuncs map[string][]bool
+	// sendFuncs holds, per function with a `send` parameter, which parameter
+	// slots are worker boundaries; sendParamNames holds their names.
+	sendFuncs      map[string][]bool
+	sendParamNames map[string][]string
 	resultBorrows  map[string]bool
 	resultAnalysed map[string]bool
 	// declaredMethods names the methods the program declares.
@@ -10377,7 +10393,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return true
 		}
 		switch x := e.(type) {
-		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit:
+		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.Lambda:
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
@@ -14868,6 +14884,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					at = c.postSettleType(n.Args[i], at)
 				}
 				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
+				if sends := c.sendFuncs[calleeName]; !calleeIsValue && i < len(sends) && sends[i] {
+					c.guardSendArg(n.Args[i], c.sendParamNames[calleeName][i], at)
+				}
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)
 				}

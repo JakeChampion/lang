@@ -65,11 +65,16 @@ instructions.
 <CoreutilsBench part="summary" />
 
 `scripts/coreutils-bench` measures each workload with hyperfine. It runs the
-same command for Fern, GNU coreutils 9.12 and uutils 0.0.24 in the C locale.
-All three run on one machine in one run. The self-hosted compiler builds the Fern binaries
-with `-O`. `chcon` and `runcon` use GNU 9.4, because the GNU 9.12 build has no
-SELinux support. The times are wall-clock time, so compare them only inside
-one run.
+same command for Fern, GNU coreutils and uutils in the C locale. All three run
+on one machine in one run. The self-hosted compiler builds the Fern binaries
+with `-O`. `chcon` and `runcon` use the GNU coreutils of the distribution,
+because the GNU build has no SELinux support. The times are wall-clock time,
+so compare them only inside one run.
+
+A [weekly workflow][workflow] runs the bench on a GitHub-hosted runner and adds
+a dated log to `docs/coreutils-log/`. This page shows the newest log. A shared
+runner is noisier than a quiet machine. Thus a ratio can change by some
+percent from one week to the next when the code does not change.
 [`docs/COREUTILS.md`][perf] explains where Fern loses to GNU and why.
 
 ### By utility
@@ -95,4 +100,5 @@ for it.
 [stdbuf]: https://github.com/JakeChampion/lang/issues/8378
 [divergences]: https://github.com/JakeChampion/lang/blob/main/docs/COREUTILS.md#known-divergences
 [gaps]: https://github.com/JakeChampion/lang/blob/main/docs/COREUTILS.md#open-gaps
+[workflow]: https://github.com/JakeChampion/lang/actions/workflows/coreutils-bench.yml
 [perf]: https://github.com/JakeChampion/lang/blob/main/docs/COREUTILS.md#performance

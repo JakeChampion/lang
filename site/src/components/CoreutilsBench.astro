@@ -9,7 +9,13 @@ interface Props {
 }
 
 const { part } = Astro.props;
-const bench = loadBench();
+const bench = loadBench(
+  import.meta.glob<string>("../../../docs/coreutils-log/*-bench.md", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }),
+);
 const s = bench.summary;
 const repo = "https://github.com/JakeChampion/lang/blob/main";
 
@@ -20,20 +26,25 @@ const tone = (r: number | null) =>
 const ms = (v: number | null) => (v === null ? "failed" : v.toFixed(2));
 const slug = (name: string) => `bench-${name === "[" ? "bracket" : name}`;
 const pct = (n: number, d: number) => `${Math.round((100 * n) / d)}%`;
+const uu = bench.hasUutils;
+const against = [
+  bench.gnuVersion && `GNU ${bench.gnuVersion}`,
+  bench.uutilsVersion && `uutils ${bench.uutilsVersion}`,
+].filter(Boolean).join(" · ");
 ---
 
 {part === "summary" && (
 <div class="fern-panel fern-spec not-content">
-  <span class="fern-label fern-spec__caption">{bench.date} · Linux x86-64</span>
+  <span class="fern-label fern-spec__caption">{bench.date} · Linux x86-64 · {against}</span>
   <dl class="fern-spec__list">
     <dt>Workloads</dt>
     <dd>{s.rows} over {s.utilities} utilities</dd>
     <dt>Faster than GNU</dt>
     <dd>{s.fasterThanGnu} of {s.comparedGnu} ({pct(s.fasterThanGnu, s.comparedGnu)})</dd>
-    <dt>Faster than uutils</dt>
-    <dd>{s.fasterThanUutils} of {s.comparedUutils} ({pct(s.fasterThanUutils, s.comparedUutils)})</dd>
+    {uu && <dt>Faster than uutils</dt>}
+    {uu && <dd>{s.fasterThanUutils} of {s.comparedUutils} ({pct(s.fasterThanUutils, s.comparedUutils)})</dd>}
     <dt>Median workload</dt>
-    <dd>{x(s.medianGnu)} GNU, {x(s.medianUutils)} uutils</dd>
+    <dd>{x(s.medianGnu)} GNU{uu && `, ${x(s.medianUutils)} uutils`}</dd>
     <dt>Beat GNU on every workload</dt>
     <dd>{s.everyRowBeatsGnu} of {s.utilities} utilities</dd>
   </dl>
@@ -57,7 +68,7 @@ const pct = (n: number, d: number) => `${Math.round((100 * n) / d)}%`;
           <th scope="col"><button type="button" data-sort="rows">Workloads</button></th>
           <th scope="col"><button type="button" data-sort="mg">GNU median</button></th>
           <th scope="col"><button type="button" data-sort="wg">GNU worst</button></th>
-          <th scope="col"><button type="button" data-sort="mu">uutils median</button></th>
+          {uu && <th scope="col"><button type="button" data-sort="mu">uutils median</button></th>}
           <th scope="col"><button type="button" data-sort="beats">Beats GNU on</button></th>
         </tr>
       </thead>
@@ -76,7 +87,7 @@ const pct = (n: number, d: number) => `${Math.round((100 * n) / d)}%`;
               <td>{u.rows.length}</td>
               <td class={tone(u.medianGnu)}>{x(u.medianGnu)}</td>
               <td class={tone(u.worstGnu)}>{x(u.worstGnu)}</td>
-              <td class={tone(u.medianUutils)}>{x(u.medianUutils)}</td>
+              {uu && <td class={tone(u.medianUutils)}>{x(u.medianUutils)}</td>}
               <td>{u.winsGnu} of {u.rows.length}</td>
             </tr>
           ))
@@ -106,9 +117,9 @@ const pct = (n: number, d: number) => `${Math.round((100 * n) / d)}%`;
                 <th scope="col">Workload</th>
                 <th scope="col">Fern ms</th>
                 <th scope="col">GNU ms</th>
-                <th scope="col">uutils ms</th>
+                {uu && <th scope="col">uutils ms</th>}
                 <th scope="col">vs GNU</th>
-                <th scope="col">vs uutils</th>
+                {uu && <th scope="col">vs uutils</th>}
               </tr>
             </thead>
             <tbody>
@@ -117,9 +128,9 @@ const pct = (n: number, d: number) => `${Math.round((100 * n) / d)}%`;
                   <th scope="row">{r.workload}</th>
                   <td>{ms(r.fern)}</td>
                   <td>{ms(r.gnu)}</td>
-                  <td>{ms(r.uutils)}</td>
+                  {uu && <td>{ms(r.uutils)}</td>}
                   <td class={tone(r.vsGnu)}>{x(r.vsGnu)}</td>
-                  <td class={tone(r.vsUutils)}>{x(r.vsUutils)}</td>
+                  {uu && <td class={tone(r.vsUutils)}>{x(r.vsUutils)}</td>}
                 </tr>
               ))}
             </tbody>

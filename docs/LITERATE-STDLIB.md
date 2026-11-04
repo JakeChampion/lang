@@ -2,11 +2,11 @@
 
 Status: [reference] shipped.
 
-The standard library has 159 source modules. Of these, 153 use literate Fern documents.
+The standard library has 160 source modules. Of these, 154 use literate Fern documents.
 These documents contain handwritten code, STE prose, and named chunks.
 Seven documents also contain generated regions. Each generated region stays inside one complete chunk with its boundary markers intact.
 
-The library has 72 executable examples across 69 documents.
+The library has 73 executable examples across 70 documents.
 The root chunk preserves the original declaration order. Module imports retain their public names.
 The compiler expands each source document in memory and maps diagnostics back to its document lines.
 
@@ -193,6 +193,7 @@ They are outside the public library inventory below.
 | `std/url` | [URL text and query values](../internal/stdlib/std/url.fern.md) |
 | `std/utf8` | [UTF-8 code points and bytes](../internal/stdlib/std/utf8.fern.md) |
 | `std/uuid` | [UUID values and text](../internal/stdlib/std/uuid.fern.md) |
+| `std/worker` | [Share-nothing workers](../internal/stdlib/std/worker.fern.md) |
 | `std/wasi_http` | [WASI HTTP host interfaces](../internal/stdlib/std/wasi_http.fern.md) |
 | `std/wasm/component` | [WebAssembly component binaries](../internal/stdlib/std/wasm/component.fern.md) |
 | `std/wasm/convert` | [WebAssembly conversion opcodes](../internal/stdlib/std/wasm/convert.fern.md) |

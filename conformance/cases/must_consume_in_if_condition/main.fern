@@ -1,0 +1,26 @@
+// spec: MC-05
+// A consuming call is a consuming use inside an if condition, and inside
+// the scrutinee of a match on a literal, which the self-host parser lowers
+// to an if chain.
+
+import "std/i32";
+
+@must_consume
+struct Ticket { id: i32 }
+
+function redeem(own t: Ticket): i32 {
+    return t.id;
+}
+
+function main(): i32 {
+    let a: Ticket = Ticket { id: 7 };
+    if (redeem(a) > 5) {
+        print("big");
+    }
+    let b: Ticket = Ticket { id: 2 };
+    match (redeem(b)) {
+        2 => { print("two"); },
+        _ => { print("other"); }
+    }
+    return 0;
+}

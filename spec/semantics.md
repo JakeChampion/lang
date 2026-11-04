@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**114 of 117** claims are pinned by a conformance case. The remaining
+**120 of 123** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -147,6 +147,12 @@ of them.
 | `ML-08` | `docs/MODE-LATTICE.md` | An `if` or `match` expression whose arms build fresh arrays can be lent as a view, and the chosen arm's storage lives until the view's last use | `view_of_branch_value` |
 | `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | `diag_e067` |
 | `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
+| `MC-03` | `docs/MUST-CONSUME.md` | A consuming call inside a `match` scrutinee is a consuming use | `must_consume_in_match_tag` |
+| `MC-04` | `docs/MUST-CONSUME.md` | A method call passes its receiver, so it is a consuming use of a `@must_consume` receiver | `must_consume_method_receiver` |
+| `MC-05` | `docs/MUST-CONSUME.md` | A consuming call inside an `if` condition, or in the scrutinee of a match on literals, is a consuming use | `must_consume_in_if_condition` |
+| `WK-01` | `docs/WORKERS.md` | A `send` parameter admits only a send-safe argument; a closure written at the call crosses with send-safe captures and result, and a function value does not (`E100`) | `diag_e100` |
+| `WK-02` | `docs/WORKERS.md` | `worker.spawn` runs its closure once and `join` returns the result, with the same contents on every engine | `worker_spawn_join` |
+| `WK-03` | `docs/WORKERS.md` | A `Worker` is `@must_consume`, so a spawned worker that is not joined is rejected (`E067`) | `diag_e067_worker_unjoined` |
 | `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
 | `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
 | `AL-03` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that allocates a closure environment per round reclaims it too | `alloc_flat_closure_env` |
