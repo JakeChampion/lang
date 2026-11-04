@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -110,6 +111,19 @@ func wasmReadResetProbe(t *testing.T) string {
 				done <- err
 				return
 			}
+			// The guest confirms that connect finished before the server closes.
+			// Otherwise a reset can be reported by connect instead of the read.
+			if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				conn.Close()
+				done <- err
+				return
+			}
+			var ready [1]byte
+			if _, err := io.ReadFull(conn, ready[:]); err != nil || ready[0] != 120 {
+				conn.Close()
+				done <- fmt.Errorf("read-reset marker: got %v, error %v", ready, err)
+				return
+			}
 			// A WASI stream drop can shut down the connection cleanly. Zero
 			// linger on the host socket makes the second close send a reset.
 			if i == 1 {
@@ -134,6 +148,10 @@ function main(): i32 {
     let wait = time.duration_seconds(5 as i64);
     for i in 0..2 {
         let Ok(sock) = net.connect(addr) else { print("connect failed"); return 1; };
+        match (net.write(sock, [120u8])) {
+            Ok(n) => { if (n != 1) { print("connect marker was not sent"); return 5; } },
+            Err(_) => { print("connect marker write failed"); return 5; }
+        }
         let received = net.read_deadline(sock, 16, wait);
         let closed = net.close(sock);
         match (received) {
