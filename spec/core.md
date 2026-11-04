@@ -508,6 +508,12 @@ is the number of slots it leaves.
 | `buf_push_base32` | 488 | 5 | 1 |
 | `buf_decode_base32` | 489 | 5 | 1 |
 | `writer_nonblocking` | 490 | 2 | 1 |
+| `heap_adopt` | 491 | 2 | 1 |
+| `worker_region` | 492 | 1 | 1 |
+| `worker_exit` | 493 | 2 | 1 |
+| `worker_reap` | 494 | 1 | 1 |
+| `send_adopt` | 495 | 1 | 1 |
+| `worker_unmap` | 496 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

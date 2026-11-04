@@ -47,6 +47,11 @@ func (c *checker) sendUnsafeReason(t ast.Type, seen map[string]bool) string {
 	case ast.HandleType:
 		return "a resource handle is not copied"
 	case ast.ParamType:
+		// Inside the standard library a generic body copies a value its
+		// caller's `send` argument already admitted.
+		if c.inStdlibContext() {
+			return ""
+		}
 		return "type parameter " + v.Name + " is not known to be send-safe"
 	case ast.SelfType:
 		return "type parameter Self is not known to be send-safe"
@@ -63,6 +68,9 @@ func (c *checker) sendUnsafeReason(t ast.Type, seen map[string]bool) string {
 func (c *checker) sendUnsafeStructReason(v ast.StructType, seen map[string]bool) string {
 	if v.Name == "Cell" {
 		return "a Cell is shared by aliasing"
+	}
+	if v.Name == "Map" {
+		return "a Map does not cross a worker boundary in this release"
 	}
 	if builtinHandle(v.Name) {
 		return "a built-in handle owns a descriptor"

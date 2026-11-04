@@ -1,0 +1,36 @@
+// spec: WK-05
+// On native Linux a worker is a process with its own heap. The body
+// allocates sixty-four megabytes and returns a small value. The parent's
+// own arena has not grown by that amount after the join, because the
+// worker allocated in the region of another process. An engine that runs
+// the worker inline would show the growth, so the case names the native
+// Linux targets only.
+
+import "std/worker";
+import "std/i64";
+
+struct Seen { bytes: i64, label: string }
+
+function fill(n: i32): i64 {
+    let big: u8[] = [];
+    let i: i32 = 0;
+    while (i < n) {
+        big = big.append(7u8);
+        i = i + 1;
+    }
+    return big.len() as i64;
+}
+
+function main(): i32 {
+    let before: i64 = __heap_bump_bytes();
+    let w = worker.spawn((): Seen => Seen { bytes: fill(67108864), label: "from the worker" });
+    let r: Seen = w.join();
+    let grown: i64 = __heap_bump_bytes() - before;
+    if (grown < 8388608i64) {
+        print("separate heap");
+    } else {
+        print("same heap");
+    }
+    print(r.bytes.to_string() + " " + r.label);
+    return 0;
+}

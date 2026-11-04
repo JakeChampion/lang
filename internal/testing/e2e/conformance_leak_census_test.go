@@ -185,17 +185,39 @@ func traceOneFixture(t *testing.T, runner []string, dir string) (int, string, er
 }
 
 func pairRcTrace(stderr string) (int, string, error) {
-	live := map[string]int{}
-	site := map[string]string{}
+	live := map[uint64]int{}
+	site := map[uint64]string{}
+	bytes := map[uint64]uint64{}
 	for _, line := range strings.Split(stderr, "\n") {
 		m := rcTraceLineRe.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
-		ptr := m[2]
+		ptr, err := strconv.ParseUint(m[2], 16, 64)
+		if err != nil {
+			return 0, "", err
+		}
+		if m[1] == "u" {
+			size, err := strconv.ParseUint(m[3], 16, 64)
+			if err != nil || size == 0 || size > ^uint64(0)-ptr {
+				return 0, "", fmt.Errorf("invalid region removal: %q", line)
+			}
+			for addr, count := range live {
+				if count > 0 && addr >= ptr && addr-ptr < size && bytes[addr] <= size-(addr-ptr) {
+					delete(live, addr)
+					delete(site, addr)
+					delete(bytes, addr)
+				}
+			}
+			continue
+		}
 		if m[1] == "a" {
 			if live[ptr] == 0 {
 				site[ptr] = m[4]
+				bytes[ptr], err = strconv.ParseUint(m[3], 16, 64)
+				if err != nil {
+					return 0, "", err
+				}
 			}
 			live[ptr]++
 		} else {

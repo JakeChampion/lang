@@ -94,7 +94,7 @@ var stdModuleReach = map[string]string{
 	"std/url":           "",
 	"std/utf8":          "",
 	"std/uuid":          "now,random",
-	"std/worker":        "",
+	"std/worker":        "arena,log,proc",
 	"std/wasi_http":     "config,env,fs,host,ktls,log,now,pollable,random,reactor,tcp,unix,uring",
 	"std/zstd":          "",
 }

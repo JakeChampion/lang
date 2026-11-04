@@ -1,8 +1,8 @@
 # Workers
 
 Status: [reference] shipped: `std/worker` with `spawn` and `join`, the `send`
-parameter mode, and `E100`. Real threads are not shipped. Every engine runs
-a worker inline.
+parameter mode, `E100`, and a process per worker on native Linux. Every
+other engine runs a worker inline. Real threads are not shipped.
 
 ## The model
 
@@ -68,11 +68,12 @@ A type is send-safe when every part of it is:
 |---|---|
 | a scalar, `boolean`, `string` | `Cell[T]`: a Cell is shared by aliasing |
 | an owned array `T[]` of send-safe elements | a function or closure type: a function value carries its environment |
-| a tuple or `Map[K, V]` of send-safe parts | `dyn Trait`: a dyn value hides its concrete type |
+| a tuple of send-safe parts | `dyn Trait`: a dyn value hides its concrete type |
 | a struct or enum whose fields and payloads are send-safe, with its type arguments applied | a view, `[T]` or `str`: a view borrows another value's storage |
 | `Option[T]` and `Result[T, E]` of send-safe arguments | `Reader`, `Writer`, `Dir`, `Socket`: a built-in handle owns a descriptor |
 | | a resource handle: it is not copied |
 | | a `@must_consume` type: a copy would double its obligation. `Worker[T]` is one, so a worker cannot be sent |
+| | `Map[K, V]`: a Map does not cross a worker boundary in this release |
 | | a type parameter: it is not known to be send-safe |
 
 The last row is the conservative choice of this release. A generic function
@@ -103,21 +104,104 @@ to completion before the spawner continues.
 A program whose worker waits for the spawner mid-flight stops in this
 release, and it stops on a thread too. There is no channel in this release.
 
+## Step 2: a process per worker
+
+The second step gives native Linux real parallelism. A worker is a
+process, not a thread. `RC-DESIGN.md` section 2.1 already holds the
+one-context-per-heap guarantee at the `proc_fork` and `subprocess`
+boundaries with separate processes, and a worker takes the same row.
+
+`spawn` maps a shared region and forks. The child adopts the region as its
+heap: the cursor and the end move into the region, and both free lists are
+cleared, so the child allocates only inside the region. The child runs the
+body, copies the result into the region with `__send_copy`, writes the root
+address at the start of the region, and exits. The parent keeps the child's
+pid and the region.
+
+`join` waits for the child, reads the root, and copies the result into the
+parent heap. It then removes the entire worker region with `munmap`.
+The returned result has no pointer into the removed region.
+Later joins and parent allocations cannot invalidate it.
+
+The region is the child's whole heap: four gigabytes of address space that
+the kernel backs page by page. A body that needs more aborts with the
+out-of-memory trap, and the parent reports the exit.
+
+The copy at the end of the body is what makes this sound. The child's heap
+is a copy-on-write image of the parent's, so a box the body builds can point
+at a box the parent owns. `__send_copy` builds a fresh tree. Every box of
+that tree is inside the region, because the child's cursor is there and its
+free lists are empty.
+
+The module decides at `spawn`. A native Linux program forks. The
+interpreters map no region, and wasm and Darwin keep the inline order of
+step 1.
+
+A fork or a mapping that the kernel refuses runs the body inline too.
+A refused fork releases its unused region before the inline fallback.
+A failed worker releases its region before the parent reports the failure.
+
+The leak census crosses with the result. The region's header holds its size
+and the four leak-check counters: `__worker_region` writes the parent's snapshot, the
+child writes its deltas at exit, and `__worker_reap` adds them to the
+parent's counters. The child counts a free only inside the region, because
+a box of the parent's image that the child frees is the parent's to count.
+After a successful `munmap`, the parent records the reclamation of the
+remaining live child allocations. This bulk reclamation includes temporary
+objects that the child retained until exit. A failed `munmap` changes no
+free counter and stops the program. A refused fork imports no child counters.
+
+The builtins behind the step are `unsafe`, and only `std/worker` calls
+them.
+
+| Builtin | Role |
+|---|---|
+| `__worker_region(size)` | Maps a shared anonymous region that the fork inherits at the same address. The interpreters return zero. |
+| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. A range outside the heap moves its base too. |
+| `__send_root(v)` | Gives up `v` and returns the address of its root box. |
+| `__send_release(v)` | Releases `v` where it is written, not at its last use. |
+| `__send_adopt(addr)` | Takes the box at `addr` as a value of the declared type. |
+| `__worker_exit(region, root)` | Stores the root in the region and ends the child at once, with no at-exit work. |
+| `__worker_reap(region)` | Returns the root the child stored. |
+| `__worker_unmap(region, size, reaped)` | Removes the region and returns the kernel status. A reaped region carries child counters that the parent already imported. |
+
+What this costs and what it buys is listed below.
+
+- A fork costs more than a thread. The named workloads are CPU-bound jobs
+  that run for longer than that.
+- Programs without workers retain their allocator behavior. Reference
+  counts remain non-atomic. No worker shares a parent free list.
+- The captures cross for free: the child reads them from its own image.
+  The child copies the result into the shared region. The parent copies it
+  into its heap before it removes that region. Both copies use the same
+  per-type helper.
+- The thread design of `MULTICORE-RESEARCH.md` stays open. Its API is this
+  API, and `__send_copy` and the region adoption carry over to it.
+
+### `__send_copy`
+
+`__send_copy(v)` is a builtin that returns a fresh deep copy of a send-safe
+value. The lowering emits one helper per reference type the value holds,
+named `__sem_send_` and the type's key, beside the release helpers.
+
+A string copies its bytes. An array copies each element. A record, a tuple and an
+enum variant allocate a fresh box and copy each field. An `Option` copies
+its payload.
+
+Both checkers refuse a value that is not send-safe with `E100`. The
+interpreters copy every array store, so a builtin that writes through a
+box cannot reach the original. A `Map` does not cross in this release.
+
+The case is `conformance/cases/send_copy_deep`.
+
 ## What follows
 
-The order is R4 of `MULTICORE-RESEARCH.md`:
-
-1. Real threads on x86-64 and arm64 Linux: `clone` and a futex, a heap
-   reservation per worker, and a thread-local cursor and free list. Darwin
-   goes through `pthread`. The API does not change.
-2. The `std/sim` leg: a seeded scheduler that picks the next worker at each
-   spawn and join. The degrade of this release and the simulation are one
-   mechanism.
-3. The SEC-020 teardown of a worker's heap ([#13522](https://github.com/JakeChampion/lang/issues/13522)).
-4. Bounded mailboxes, when a pipeline workload asks for them.
-
-wasm keeps the degrade until a thread primitive ships that wasmtime
-implements (R5).
+The `std/sim` leg comes next: a seeded scheduler that picks the next worker
+at each spawn and join, with the degrade and the simulation as one
+mechanism. Then the SEC-020 teardown of a worker's heap, issue 13522. Then
+bounded mailboxes, when a pipeline workload asks for them. Threads come
+under the same API, when a workload shows the fork cost. wasm keeps the
+degrade until a thread primitive ships that wasmtime implements (R5).
 
 ## Tests
 
@@ -126,6 +210,20 @@ implements (R5).
   engine.
 - `conformance/cases/diag_e100`, `conformance/cases/diag_e100_closure_value`,
   `conformance/cases/diag_e067_worker_unjoined`: the refusals.
+- `conformance/cases/send_copy_deep`: `__send_copy` of a record, an array,
+  a tuple, strings and both enum layouts prints what the original prints.
+- `TestSelfHostSendCopyAllocatesFreshBoxes`: the copy of a nine-box value
+  makes thirteen allocations, nine boxes and four freed temporaries, and a
+  sanitized run frees them all, on both native targets and wasm.
+
+- `conformance/cases/worker_runs_in_its_own_process`: a worker that
+  allocates sixty-four megabytes does not grow the parent's arena, on
+  x86-64 and arm64 Linux.
+- `TestSelfHostHeapAdoptIR`: after `__heap_adopt` the heap mark lies inside
+  the adopted region, on both native targets.
+- `conformance/cases/worker_spawn_in_a_loop`: two hundred workers in
+  turn, each joined, on every engine. On Linux each region goes back to the
+  kernel at its join.
 - `tests/stdlib/worker_test.fern`: the module through `std/test`.
 - `TestSendParameterRefusesWhatCannotCrossAWorkerBoundary` and
   `TestSendParameterAdmitsSendSafeValues`: the Go checker, one row per reason.

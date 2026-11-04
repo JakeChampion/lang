@@ -3602,6 +3602,9 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (name == "__socket_from_fd") {
     return socket_from_fd(c, s);
   }
+  if (parser.is_send_builtin(name) && c.args.len() == 1) {
+    return send_builtin(name, c, s, expected);
+  }
   if ((name == "map_new" || name == "__map_new_i32") && c.args.len() == 1) {
     return map_construction(e, c, s, expected);
   }
@@ -3629,6 +3632,91 @@ function socket_from_fd(c: ast.ExprCall, s: State): Value {
     return fd;
   }
   return define(fd.s, ssasem.cast(), [fd.id], 0, "", t_handle("Socket"));
+}
+
+function send_builtin(name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+  if (name == "__send_copy") {
+    return send_copy(c, s);
+  }
+  if (name == "__send_adopt") {
+    return send_adopt(c, s, expected);
+  }
+  if (name == "__send_root") {
+    return send_root(c, s);
+  }
+  if (name == "__send_release") {
+    return send_release(c, s);
+  }
+  return refused(s, "no lowering for " + name);
+}
+
+// `__send_release(v)` consumes a value and releases it where it is written.
+// The planner releases a value at its last use, and a join needs the
+// release of an adopted value after the heap mark it restores to.
+function send_release(c: ast.ExprCall, s: State): Value {
+  let want: typeinfo.Type = checked(c.args[0], s);
+  let v: Value = expr(c.args[0], s, want);
+  if (!v.s.ok) {
+    return v;
+  }
+  let t: typeinfo.Type = v.s.values[v.id];
+  if (!ssasem.reference(t)) {
+    return refused(s, "__send_release takes a counted value");
+  }
+  return per_type_call(v, ssasem.Contract { name: ssasem.release_helper_name(t), params: [t], modes: [ssaunits.counted_mode()], result: t_void() });
+}
+
+// `__send_copy(v)` is a call to the per-type copy helper. The helper borrows
+// its argument and returns a fresh tree, so the planner treats the call as
+// any borrowing call with an owned result.
+function send_copy(c: ast.ExprCall, s: State): Value {
+  let want: typeinfo.Type = checked(c.args[0], s);
+  let v: Value = expr(c.args[0], s, want);
+  if (!v.s.ok) {
+    return v;
+  }
+  let t: typeinfo.Type = v.s.values[v.id];
+  return per_type_call(v, ssasem.Contract { name: ssasem.send_helper_name(t), params: [t], modes: [ssaunits.borrow_mode()], result: t });
+}
+
+// A call to a helper the lowering generates per type. The contract is
+// registered once per function, and the result is owned as any call result.
+function per_type_call(v: Value, contract: ssasem.Contract): Value {
+  let next: State = v.s;
+  if (ssasem.find_contract_in(next.calls, contract.name) < 0) {
+    next = State { ...next, calls: next.calls.append(contract) };
+  }
+  return define(next, ssasem.call(), [v.id], 0, contract.name, contract.result);
+}
+
+// `__send_adopt(addr)` takes the box at `addr` as a value of the expected
+// type. It is a call under a per-type name, so the planner owns the result
+// as it owns any call result, and the lowering emits the send_adopt mark.
+function send_adopt(c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
+  if (!semtypes.concrete(expected, false)) {
+    return refused(s, "__send_adopt needs the declared type of its binding");
+  }
+  let v: Value = expr(c.args[0], s, t_usize());
+  if (!v.s.ok) {
+    return v;
+  }
+  return per_type_call(v, ssasem.Contract { name: ssasem.adopt_helper_name(expected), params: [t_usize()], modes: [ssaunits.value_mode()], result: expected });
+}
+
+// `__send_root(v)` consumes a value and returns its word. The helper keeps
+// the value alive, so the caller cannot touch it again. The caller must
+// transfer the region or reclaim it after a copy into another heap.
+function send_root(c: ast.ExprCall, s: State): Value {
+  let want: typeinfo.Type = checked(c.args[0], s);
+  let v: Value = expr(c.args[0], s, want);
+  if (!v.s.ok) {
+    return v;
+  }
+  let t: typeinfo.Type = v.s.values[v.id];
+  if (!ssasem.reference(t)) {
+    return refused(s, "__send_root takes a counted value");
+  }
+  return per_type_call(v, ssasem.Contract { name: ssasem.root_helper_name(t), params: [t], modes: [ssaunits.counted_mode()], result: t_usize() });
 }
 
 // The builtin exit never returns, so the block it ends has no successor.
@@ -7572,6 +7660,11 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__heap_alloc_count", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "__heap_mark", params: [], modes: [], result: t_i64() },
     ssasem.Contract { name: "__heap_release_to", params: [t_i64()], modes: [v], result: t_void() },
+    ssasem.Contract { name: "__heap_adopt", params: [t_i64(), t_i64()], modes: [v, v], result: t_void() },
+    ssasem.Contract { name: "__worker_region", params: [t_i64()], modes: [v], result: t_i64() },
+    ssasem.Contract { name: "__worker_exit", params: [t_i64(), t_usize()], modes: [v, v], result: t_void() },
+    ssasem.Contract { name: "__worker_reap", params: [t_i64()], modes: [v], result: t_usize() },
+    ssasem.Contract { name: "__worker_unmap", params: [t_i64(), t_i64(), t_bool()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "__task_new", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "__task_free", params: [t_i32()], modes: [v], result: t_void() },
     ssasem.Contract { name: "__task_cur", params: [], modes: [], result: t_i32() },

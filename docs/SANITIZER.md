@@ -210,6 +210,10 @@ a function large enough to have been inlined into — `ir.Inline` runs twice in
 every backend battery, and the site field names where code ENDED UP, not who
 wrote it. See `TEST-GATES.md` for the pairing recipe and its caveats.
 
+A native worker emits `rctrace u …` only after a successful region removal.
+Its first two fields give the region address and byte length. The census
+retires allocations inside that range and preserves every allocation outside it.
+
 An over-release or use-after-free names a frame directly, and that frame is
 almost always the answer: the function whose `dec` was wrong, or the holder
 whose reference outlived the count.
