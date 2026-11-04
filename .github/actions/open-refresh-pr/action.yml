@@ -2,8 +2,8 @@ name: Open or update a refresh pull request
 description: >
   Commit every change in the working tree to BRANCH, force-push it, and open
   a pull request from it against main, or update the one already open.
-  Auto-merge is asked for, so a pull request the repository allows to merge
-  itself lands once its checks pass. Nothing happens when the tree is clean.
+  The pull request waits for a review and all current-head checks before a
+  merge. Nothing happens when the tree is clean.
 
   The branch is pushed with auto-rebase-token where GitHub still accepts it,
   for the reason auto-rebase-prs.yml gives: a push made with the default
@@ -73,6 +73,4 @@ runs:
         else
           gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$BODY_FILE"
         fi
-        # Auto-merge needs the repository's permission; one that does not
-        # grant it leaves the pull request for a person to merge.
-        gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --auto --rebase || echo "auto-merge is not available; the pull request waits for a merge by hand"
+        echo "Pull request #$number waits for review and all current-head non-Netlify checks before merge"
