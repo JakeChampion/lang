@@ -1575,6 +1575,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   let sole: i32[] = sole_readers(f);
 
   let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ_a: [], succ_b: [], phi_end: [] };
+  let phi_side: boolean[] = [];
   let reg_of: i32[] = __alloc_i32(f.nvals);
   let shared_with: i32[] = __alloc_i32(f.nvals);
   i = 0;
@@ -1781,6 +1782,34 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     let pick: i32 = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
     let from_caller: boolean = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
+    // A save around a call restores its holder, so a lent interval holds none.
+    if (!from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1)) {
+      if (sites.start.len() == 0) {
+        sites = read_sites(f, at, blk_start);
+      }
+      if (phi_side.len() == 0) {
+        phi_side = phi_values(f);
+      }
+      let lend: i32 = borrowable(sites, v, act_val, act_reg, Lender { cbase: cbase, sat: sat, cabi: cabi, abi_ok: abi_ok, reads: defining_args(f, v, def_blk, def_pos, blk_start), phi: phi_side }, fixed, shared_with, lo, hi, def_blk, def_pos);
+      if (lend >= 0) {
+        let top: i32 = act_hi[lend];
+        if (hi[v] > top) {
+          top = hi[v];
+        }
+        let lent: i32 = act_reg[lend];
+        let holder: i32 = act_val[lend];
+        act_val = drop_active_at(act_val, lend);
+        act_hi = drop_active_at(act_hi, lend);
+        act_reg = drop_active_at(act_reg, lend);
+        reg_of = reg_of.with(v, lent);
+        shared_with = shared_with.with(v, holder);
+        act_val = act_val.append(v);
+        act_hi = act_hi.append(top);
+        act_reg = act_reg.append(lent);
+        oi = oi + 1;
+        continue;
+      }
+    }
     if (!from_caller && free_s.len() == 0) {
       let need_saved: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
       let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
@@ -2540,6 +2569,70 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
     pass = pass + 1;
   }
   return ReadSites { start: start, blk: blk, pos: pos, succ_a: succ_a, succ_b: succ_b, phi_end: phi_end };
+}
+
+// reads are the operands of v's definition: the emitter can write v before it
+// reads them, so none of them can hold the register v takes.
+// phi marks each phi and each value a phi reads: an edge copy writes outside
+// the intervals, so those values take no part in a lend.
+struct Lender { cbase: i32, sat: i32, cabi: i32, abi_ok: boolean, reads: i32[], phi: boolean[] }
+
+function phi_values(f: SFunc): boolean[] {
+  let out: boolean[] = __alloc_bool(f.nvals + 1);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 8) {
+        if (ins.result >= 0 && ins.result < f.nvals) {
+          out = out.with(ins.result, true);
+        }
+        for a in ins.args {
+          if (a >= 0 && a < f.nvals) {
+            out = out.with(a, true);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function defining_args(f: SFunc, v: i32, def_blk: i32[], def_pos: i32[], blk_start: i32[]): i32[] {
+  let b: i32 = def_blk[v];
+  if (b < 0) {
+    return [];
+  }
+  let k: i32 = def_pos[v] - blk_start[b];
+  if (k < 0 || k >= f.blocks[b].insts.len()) {
+    return [];
+  }
+  return f.blocks[b].insts[k].args;
+}
+
+// A caller-saved register whose values do not interfere with v: none is live
+// at v's definition, and v is live at none of theirs.
+function borrowable(sites: ReadSites, v: i32, act_val: i32[], act_reg: i32[], ln: Lender, fixed: ssafixed.Table, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): i32 {
+  if (ln.phi[v]) {
+    return 0 - 1;
+  }
+  for ai in 0..act_val.len() {
+    let hr: i32 = act_reg[ai];
+    let open: boolean = hr >= ln.cbase && hr < ln.sat && (hr != ln.cabi || ln.abi_ok) && ssafixed.allows(fixed, hr, lo[v], hi[v]);
+    if (open && chain_dead_at_def(sites, act_val[ai], v, shared_with, lo, hi, def_blk, def_pos) && dead_at_chain(sites, v, act_val[ai], shared_with, ln.reads, ln.phi, lo, hi, def_blk, def_pos)) {
+      return ai;
+    }
+  }
+  return 0 - 1;
+}
+
+function dead_at_chain(sites: ReadSites, v: i32, holder: i32, shared_with: i32[], reads: i32[], phi: boolean[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
+  let m: i32 = holder;
+  while (m >= 0) {
+    if (hi[m] >= lo[v] && (phi[m] || util.index_of_i32(reads, m) >= 0 || live_at_def(sites, v, m, def_blk, def_pos))) {
+      return false;
+    }
+    m = shared_with[m];
+  }
+  return true;
 }
 
 function chain_dead_at_def(sites: ReadSites, holder: i32, a: i32, shared_with: i32[], lo: i32[], hi: i32[], def_blk: i32[], def_pos: i32[]): boolean {
