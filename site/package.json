@@ -9,6 +9,7 @@
     "start": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
+    "test": "node --test \"test/*.test.mjs\"",
     "og": "node scripts/render-og.mjs",
     "fonts": "node scripts/fetch-fonts.mjs",
     "astro": "astro"

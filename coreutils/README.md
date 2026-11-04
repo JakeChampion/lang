@@ -80,8 +80,9 @@ The Fern column is `bin/fern-selfhost`'s build with `-O`, rebuilt first when
 it is older than the compiler's sources.
 
 The docs site's coreutils page (`site/src/content/docs/coreutils.mdx`) shows
-the newest `docs/coreutils-log/YYYY-MM-DD-bench.md`. To publish a new run,
-write its table to a new file with that name.
+the newest `docs/coreutils-log/YYYY-MM-DD-bench.md`. The coreutils-bench
+workflow (`.github/workflows/coreutils-bench.yml`) runs the whole catalogue
+every week and opens a pull request that adds that file.
 
 The Fern build runs one trial of a workload under `timeout` before hyperfine
 sees it, so a build that cannot carry the workload is reported in its cell

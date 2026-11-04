@@ -42,6 +42,7 @@ site/
 ├── public/og.png               Social card (generated)
 ├── public/playground/          Playground bundle (gitignored,
 │                                 copied in at build time)
+├── test/*.test.mjs             Unit tests (`npm test`) run by the Docs build lane
 └── test/playwright/            Browser tests run by the Docs build lane
 ```
 
