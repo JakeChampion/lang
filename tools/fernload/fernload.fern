@@ -48,6 +48,9 @@ const DRAIN_NS: i64 = 2000000000;
 
 struct Conn { fd: i32, state: i32, due_ns: i64, sent_ns: i64, buf: u8[] }
 
+// The driver, and each open socket at the index of its descriptor.
+struct Io { drv: async.RealDriver, socks: Cell[Option[Socket][]] }
+
 struct Plan { addr: net.SocketAddr, request: u8[], rate: i64, connections: i32, duration_ns: i64 }
 
 struct Tally { sent: i64, done: i64, errors: i64, corrected: i64[], raw: i64[], max_us: i64 }
@@ -112,10 +115,11 @@ function option_i64(parsed: cli.CliArgs, name: string, fallback: i64): Result[i6
 }
 
 function run(p: Plan): i32 {
-  let drv = async.real_driver();
+  let none: Option[Socket][] = [];
+  let io = Io { drv: async.real_driver(), socks: cell_new(none) };
   let conns: Conn[] = [];
   for _ in 0..p.connections {
-    conns = conns.append(open(drv, p));
+    conns = conns.append(open(io, p));
   }
   let t = Tally { sent: 0, done: 0, errors: 0, corrected: zeros(), raw: zeros(), max_us: 0 };
   let interval_ns = 1000000000 / p.rate;
@@ -129,7 +133,7 @@ function run(p: Plan): i32 {
       let Some(at) = idle(conns) else {
         break;
       };
-      conns = conns.with(at, send(conns[at], p, due, now));
+      conns = conns.with(at, send(io, conns[at], p, due, now));
       t = Tally { ...t, sent: t.sent + 1 };
       due = start + t.sent * interval_ns;
     }
@@ -142,11 +146,11 @@ function run(p: Plan): i32 {
       break;
     }
     let until = if (now >= end || idle(conns).is_none()) { end + DRAIN_NS } else { due };
-    let events = drv.wait(2 * conns.len(), Some(wait_until(now, until)));
+    let events = io.drv.wait(2 * conns.len(), Some(wait_until(now, until)));
     let k = 0;
     while (k + 1 < events.len()) {
       if let Some(at) = conn_of(conns, events[k]) {
-        let stepped = step(drv, p, conns[at], events[k + 1], t);
+        let stepped = step(io, p, conns[at], events[k + 1], t);
         conns = conns.with(at, stepped.0);
         t = stepped.1;
       }
@@ -154,8 +158,7 @@ function run(p: Plan): i32 {
     }
   }
   for c in conns {
-    drv.unwatch(c.fd);
-    net.close(c.fd);
+    shut(io, c.fd);
   }
   let behind = p.duration_ns / interval_ns - t.sent;
   if (behind < 0) {
@@ -179,21 +182,53 @@ function wait_until(now: i64, until: i64): Duration {
   return time.duration_nanos(ns);
 }
 
-function open(drv: async.RealDriver, p: Plan): Conn {
+function open(io: Io, p: Plan): Conn {
   let none: u8[] = [];
-  let Ok(fd) = net.connect_start(p.addr) else {
+  let Ok(sock) = net.connect_start(p.addr) else {
     return Conn { fd: -1, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
   };
-  drv.watch(fd, 2);
-  return Conn { fd: fd, state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
+  io.drv.watch(sock.fd, 2);
+  return Conn { fd: kept(io, sock), state: CONNECTING, due_ns: 0, sent_ns: 0, buf: none };
 }
 
-function reopen(drv: async.RealDriver, p: Plan, c: Conn): Conn {
-  if (c.fd >= 0) {
-    drv.unwatch(c.fd);
-    net.close(c.fd);
+function kept(io: Io, own sock: Socket): i32 {
+  let fd = sock.fd;
+  let socks = io.socks.get();
+  let none: Option[Socket][] = [];
+  io.socks.set(none);
+  while (socks.len() <= fd) {
+    socks = socks.append(None);
   }
-  return open(drv, p);
+  io.socks.set(socks.with(fd, Some(sock)));
+  return fd;
+}
+
+function sock_at(io: Io, fd: i32): Option[Socket] {
+  let socks = io.socks.get();
+  if (fd < 0 || fd >= socks.len()) {
+    return None;
+  }
+  return socks[fd];
+}
+
+function shut(io: Io, fd: i32): void {
+  let socks = io.socks.get();
+  if (fd < 0 || fd >= socks.len()) {
+    return;
+  }
+  let none: Option[Socket][] = [];
+  io.socks.set(none);
+  let (slot, rest) = socks.swap_at(fd, None);
+  io.socks.set(rest);
+  if let Some(sock) = slot {
+    io.drv.unwatch(fd);
+    let _ = net.close(sock);
+  }
+}
+
+function reopen(io: Io, p: Plan, c: Conn): Conn {
+  shut(io, c.fd);
+  return open(io, p);
 }
 
 function idle(conns: Conn[]): Option[i32] {
@@ -224,40 +259,45 @@ function conn_of(conns: Conn[], fd: i32): Option[i32] {
   return None;
 }
 
-function send(c: Conn, p: Plan, due: i64, now: i64): Conn {
-  let _ = net.write(c.fd, p.request);
+function send(io: Io, c: Conn, p: Plan, due: i64, now: i64): Conn {
+  if let Some(sock) = sock_at(io, c.fd) {
+    let _ = net.write(sock, p.request);
+  }
   let none: u8[] = [];
   return Conn { ...c, state: BUSY, due_ns: due, sent_ns: now, buf: none };
 }
 
-function step(drv: async.RealDriver, p: Plan, c: Conn, readiness: i32, t: Tally): (Conn, Tally) {
+function step(io: Io, p: Plan, c: Conn, readiness: i32, t: Tally): (Conn, Tally) {
   if (c.state == CONNECTING) {
-    return (connected(drv, p, c, t), t);
+    return (connected(io, p, c, t), t);
   }
-  return read(drv, p, c, t);
+  return read(io, p, c, t);
 }
 
-function connected(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): Conn {
-  match (net.connect_result(c.fd)) {
+function connected(io: Io, p: Plan, c: Conn, t: Tally): Conn {
+  let Some(sock) = sock_at(io, c.fd) else {
+    return reopen(io, p, c);
+  };
+  match (net.connect_result(sock)) {
     Ok(_) => {
-      drv.watch(c.fd, 1);
+      io.drv.watch(c.fd, 1);
       return Conn { ...c, state: IDLE };
     },
     Err(net.InProgress()) => {
       return c;
     },
     Err(_) => {
-      return reopen(drv, p, c);
+      return reopen(io, p, c);
     }
   }
 }
 
-function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) {
+function read(io: Io, p: Plan, c: Conn, t: Tally): (Conn, Tally) {
   let conn = c;
   let tally = t;
   loop {
     let scratch = __alloc_u8(16384);
-    let n = tcp_recv_into(conn.fd, scratch);
+    let n = recv_into(io, conn.fd, scratch);
     if (n == -eagain()) {
       return (conn, tally);
     }
@@ -265,24 +305,24 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
       if (conn.state == BUSY) {
         tally = Tally { ...tally, errors: tally.errors + 1 };
       }
-      return (reopen(drv, p, conn), tally);
+      return (reopen(io, p, conn), tally);
     }
     unsafe {
       __arr_set_len(scratch, n);
     }
     conn = Conn { ...conn, buf: conn.buf.concat(scratch) };
     if (conn.state != BUSY) {
-      return (reopen(drv, p, conn), tally);
+      return (reopen(io, p, conn), tally);
     }
     match (http.parse_response_framed(conn.buf, "GET", false, http.limits())) {
       http.Complete(f) => {
         let now = monotonic_ns();
         tally = recorded(tally, (now - conn.due_ns) / 1000, (now - conn.sent_ns) / 1000);
         if (!f.keep_alive) {
-          return (reopen(drv, p, conn), tally);
+          return (reopen(io, p, conn), tally);
         }
         if (f.len < conn.buf.len()) {
-          return (reopen(drv, p, conn), tally);
+          return (reopen(io, p, conn), tally);
         }
         let none: u8[] = [];
         conn = Conn { ...conn, state: IDLE, buf: none };
@@ -290,10 +330,18 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
       http.Incomplete => {},
       http.Malformed(status) => {
         tally = Tally { ...tally, errors: tally.errors + 1 };
-        return (reopen(drv, p, conn), tally);
+        return (reopen(io, p, conn), tally);
       }
     }
   }
+}
+
+// A descriptor with no open socket reads as a closed connection.
+function recv_into(io: Io, fd: i32, scratch: u8[]): i32 {
+  if let Some(sock) = sock_at(io, fd) {
+    return tcp_recv_into(sock, scratch);
+  }
+  return 0;
 }
 
 function eagain(): i32 {
