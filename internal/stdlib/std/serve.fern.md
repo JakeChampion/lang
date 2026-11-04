@@ -5913,7 +5913,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
 
 ```fern
 <<73 struct __Quic>>=
-struct __Quic { sock: Socket, port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][], origs: u8[][], peers: net.SocketAddr[], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
+struct __Quic { sock: Option[Socket], port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][], origs: u8[][], peers: net.SocketAddr[], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
 
 struct __H3Producer { serial: i32, stream: i64, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
 ```
@@ -5931,7 +5931,7 @@ function __h3_burst(): i32 {
 }
 
 function __quic_none(): __Quic {
-  return __Quic { sock: __adopt(0 - 1), port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
+  return __Quic { sock: None, port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
 }
 
 function __quic_socket(port: i32): Socket {
@@ -6001,30 +6001,36 @@ function __quic_open[D: async.Driver](drv: D, listener: Socket, opts: Config): _
     let closed: Result[void, net.NetError] = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: sock, port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), buf: __alloc_u8(65536), from: __alloc_u8(net.SENDER_BYTES) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), buf: __alloc_u8(65536), from: __alloc_u8(net.SENDER_BYTES) };
 }
 
 function __quic_on(c: __Conns): boolean {
-  return c.quic.sock.fd >= 0;
+  if let Some(_) = c.quic.sock {
+    return true;
+  }
+  return false;
 }
 
 function __quic_owns(c: __Conns, fd: i32): boolean {
-  return __quic_on(c) && fd == c.quic.sock.fd;
+  let Some(sock) = c.quic.sock else {
+    return false;
+  };
+  return fd == sock.fd;
 }
 
 function __quic_close[D: async.Driver](drv: D, q: __Quic): void {
-  if (q.sock.fd < 0) {
+  let Some(sock) = q.sock else {
     return;
-  }
+  };
   let now: Instant = clock.instant();
   let i: i32 = 0;
   while (i < q.conns.len()) {
     let closing: h3q.Conn = q.conns[i].close(now).transmit(now);
-    __h3_sent(q.sock, closing.datagrams(), q.peers[i]);
+    __h3_sent(sock, closing.datagrams(), q.peers[i]);
     i = i + 1;
   }
-  drv.unwatch(q.sock.fd);
-  __shut(q.sock);
+  drv.unwatch(sock.fd);
+  __shut(sock);
 }
 
 function __quic_timeout(q: __Quic, now: i64): i32 {
@@ -6088,7 +6094,10 @@ function __h3_event[D: async.Driver](drv: D, c: __Conns, fls: __Flights, opts: C
   let burst: __H3Burst = __H3Burst { reqs: [], touched: [] };
   let n: i32 = 0;
   while (n < __h3_burst()) {
-    let Ok(got) = net.recv_into(cur.quic.sock, cur.quic.buf, cur.quic.from) else {
+    let Some(sock) = cur.quic.sock else {
+      return (cur, fs, burst);
+    };
+    let Ok(got) = net.recv_into(sock, cur.quic.buf, cur.quic.from) else {
       return (cur, fs, burst);
     };
     let r: (__Conns, __Flights, __H3Burst) = __h3_datagram(drv, cur, fs, cur.quic.buf[0:got], cur.quic.from, burst, opts, stop, host_for);
@@ -6498,7 +6507,9 @@ function __h3_flush(own c: __Conns, serial: i32): __Conns {
     return c;
   }
   let built: __Conns = __Conns { ...c, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].transmit(clock.instant())) } };
-  __h3_sent(built.quic.sock, built.quic.conns[i].datagrams(), built.quic.peers[i]);
+  if let Some(sock) = built.quic.sock {
+    __h3_sent(sock, built.quic.conns[i].datagrams(), built.quic.peers[i]);
+  }
   return __Conns { ...built, quic: __Quic { ...built.quic, conns: built.quic.conns.with(i, built.quic.conns[i].sent()) } };
 }
 ```
