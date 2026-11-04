@@ -6069,6 +6069,7 @@ function arm64_zero_words(s: asmcore.EmitState, dst: string, n: i32): asmcore.Em
 // zeroed so no block outside the region is handed out again.
 function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("heap");
+  s = s.need("heap_adopt");
   s = s.write("    ldr x1, [sp], #16\n");
   s = s.write("    ldr x0, [sp], #16\n");
   let move: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -8013,10 +8014,14 @@ function lc_grow_bytes(s: asmcore.EmitState, old: string, grown: string, t: RegT
 
 // A free counts only inside the census bounds, once heap_adopt has set
 // them: a worker's child frees boxes of the parent's image, and those are
-// the parent's to count. `box` holds the block.
+// the parent's to count. `box` holds the block. A program with no
+// heap_adopt never sets the bounds, so it counts every free.
 function lc_bump_free_add(s: asmcore.EmitState, addend: string, t1: string, t2: string, box: string): asmcore.EmitState {
   if (!s.leak_check) {
     return s;
+  }
+  if (!s.has_need("heap_adopt")) {
+    return lc_bump_free_counted(s, addend, t1, t2);
   }
   let skip: asmcore.LabelOut = asmcore.fresh_label(s);
   let count: asmcore.LabelOut = asmcore.fresh_label(skip.state);

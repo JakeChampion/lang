@@ -11104,6 +11104,7 @@ function emit_ir_op_heap_mark(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
 // zeroed so no block outside the region is handed out again.
 function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("heap");
+  s = s.need("heap_adopt");
   s = s.write("    popq %rdx\n");
   s = s.write("    popq %rax\n");
   let move: asmcore.LabelOut = asmcore.fresh_label(s);
