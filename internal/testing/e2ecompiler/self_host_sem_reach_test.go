@@ -485,6 +485,17 @@ func TestSelfHostSemReachServeWithoutH2(t *testing.T) {
 	if !h2.MatchString(off) {
 		t.Errorf("FERN_NO_SEM_REACH=1: the server links no HTTP/2 either, so this test shows nothing")
 	}
+	enabled := strings.Replace(serveWithoutH2Prog, "...serve.config(),", "...serve.config().with_h2(),", 1)
+	if enabled == serveWithoutH2Prog {
+		t.Fatal("the enabled control did not change the server configuration")
+	}
+	if err := os.WriteFile(path, []byte(enabled), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	on := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1"))
+	if !h2.MatchString(on) {
+		t.Error("the server with HTTP/2 enabled links no HTTP/2 functions")
+	}
 }
 
 const serveWithoutH3Prog = `import "std/http";
