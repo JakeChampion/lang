@@ -28,12 +28,12 @@ function enametoolong(): i32 {
 
 function main(): i32 {
     let path: string = "/tmp/fern-unix-" + ((now_unix_ms() % (1000000 as i64)) as i32).to_string();
-    let ln: i32 = unix_listen(path, 4);
-    if (ln < 0) { return fail(1); }
-    let c: i32 = unix_connect(path);
-    if (c < 0) { return fail(2); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(3); }
+    let ln: Socket = unix_listen(path, 4);
+    if (ln.fd < 0) { return fail(1); }
+    let c: Socket = unix_connect(path);
+    if (c.fd < 0) { return fail(2); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(3); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(4); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(5); }

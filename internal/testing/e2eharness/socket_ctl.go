@@ -22,21 +22,21 @@ function lo4_at(rec: u8[], port: i32): boolean {
 
 function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 4, true);
-    if (ln < 0) { return fail(1); }
+    let ln: Socket = tcp_listen_with(any, 0, 4, true);
+    if (ln.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
     // Linux lets a second SO_REUSEPORT listener share the port; it is closed
     // again before the dial so the one accept below is on the first.
     if (target_os() == "linux") {
-        let ln2: i32 = tcp_listen_with(any, port, 4, true);
-        if (ln2 < 0) { return fail(3); }
+        let ln2: Socket = tcp_listen_with(any, port, 4, true);
+        if (ln2.fd < 0) { return fail(3); }
         tcp_close(ln2);
     }
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    if (c < 0) { return fail(4); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(5); }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (c.fd < 0) { return fail(4); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(5); }
     if (tcp_socket_ctl(a, 2, 1) != 0) { return fail(7); }
     if (target_os() == "wasi") {
         // wasi:sockets has no no-delay switch.
@@ -144,8 +144,8 @@ function main(): i32 {
         Ok(fd) => { c = fd; },
         Err(e) => { return fail(3); },
     }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(4); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(4); }
     if (!ok(net.set_keepalive(a, true))) { return fail(5); }
     if (target_os() == "wasi") {
         if (!unsupported(net.set_nodelay(a, true))) { return fail(6); }

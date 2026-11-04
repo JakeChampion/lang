@@ -2946,14 +2946,14 @@ function main(): i32 { return signals(); }
 	{name: "os-floor-sockets-and-ids", atLeast: 2, want: "9|", nativeOnly: true, src: `
 function sockets(): i32 {
     let n: i32 = 0;
-    let listener: i32 = tcp_listen(0);
-    if (listener >= 0) {
-        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(listener), false);
-        if (c >= 0) {
-            let a: i32 = tcp_accept(listener);
-            if (a >= 0) {
+    let listener: Socket = tcp_listen(0);
+    if (listener.fd >= 0) {
+        let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(listener), false);
+        if (c.fd >= 0) {
+            let a: Socket = tcp_accept(listener);
+            if (a.fd >= 0) {
                 if (tcp_send_bytes(c, [112u8, 105u8, 110u8, 103u8]) == 4) { n = n + 1; }
-                if (tcp_pollable(c) == c) { n = n + 1; }
+                if (tcp_pollable(c) == c.fd) { n = n + 1; }
                 let got: u8[] = __alloc_u8(16);
                 if (tcp_recv_into(a, got) == 4 && got[0] as i32 == 112) { n = n + 1; }
                 if (tcp_close(a) >= 0) { n = n + 1; }

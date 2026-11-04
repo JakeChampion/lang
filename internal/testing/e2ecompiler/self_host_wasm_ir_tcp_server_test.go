@@ -87,11 +87,11 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	t.Run("listen_accept_echo", func(t *testing.T) {
 		port := freePort(t)
 		src := fmt.Sprintf(wasmRecvHelper+`function main(): i32 {
-    let l: i32 = tcp_listen(%d);
-    if (l < 0) { write("listen-failed\n"); return 1; }
+    let l: Socket = tcp_listen(%d);
+    if (l.fd < 0) { write("listen-failed\n"); return 1; }
     write("listening\n");
-    let c: i32 = tcp_accept(l);
-    if (c < 0) { write("accept-failed\n"); return 1; }
+    let c: Socket = tcp_accept(l);
+    if (c.fd < 0) { write("accept-failed\n"); return 1; }
     let r: string = recv(c, 64);
     write("recv="); write(r);
     let n: i32 = tcp_send_bytes(c, [112u8, 111u8, 110u8, 103u8]);
@@ -114,8 +114,8 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 
 	t.Run("local_port_of_ephemeral_listener", func(t *testing.T) {
 		src := `function main(): i32 {
-    let l: i32 = tcp_listen(0);
-    if (l < 0) { write("listen-failed\n"); return 1; }
+    let l: Socket = tcp_listen(0);
+    if (l.fd < 0) { write("listen-failed\n"); return 1; }
     let port: i32 = tcp_local_port(l);
     tcp_close(l);
     if (port <= 0) { write("no-port\n"); return 1; }
@@ -137,11 +137,11 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	t.Run("pollable_feeds_wasm_poll", func(t *testing.T) {
 		port := freePort(t)
 		src := fmt.Sprintf(`function main(): i32 {
-    let l: i32 = tcp_listen(%d);
-    if (l < 0) { write("listen-failed\n"); return 1; }
+    let l: Socket = tcp_listen(%d);
+    if (l.fd < 0) { write("listen-failed\n"); return 1; }
     write("listening\n");
-    let c: i32 = tcp_accept(l);
-    if (c < 0) { write("accept-failed\n"); return 1; }
+    let c: Socket = tcp_accept(l);
+    if (c.fd < 0) { write("accept-failed\n"); return 1; }
     let p: i32 = tcp_pollable(c);
     let ps: i32[] = [p];
     let i: i32 = wasm_poll(ps);

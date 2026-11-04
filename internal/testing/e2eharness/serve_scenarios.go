@@ -1033,14 +1033,14 @@ function main(): i32 {
     return 0;
 }
 function free_port(): i32 {
-    let fd: i32 = tcp_listen(0);
+    let fd: Socket = tcp_listen(0);
     let port: i32 = tcp_local_port(fd);
     tcp_close(fd);
     return port;
 }
 function rebinds(port: i32): boolean {
-    let fd: i32 = tcp_listen(port);
-    if (fd < 0) {
+    let fd: Socket = tcp_listen(port);
+    if (fd.fd < 0) {
         return false;
     }
     tcp_close(fd);

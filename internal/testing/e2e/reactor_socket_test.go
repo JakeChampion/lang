@@ -24,12 +24,12 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 	probe.Close()
 
 	src := fmt.Sprintf(`function main(): i32 {
-    let fd: i32 = tcp_listen(%d);
-    if (fd < 0) { return 91; }
+    let fd: Socket = tcp_listen(%d);
+    if (fd.fd < 0) { return 91; }
     let lfds: i32[] = [fd];
     if (poll(lfds, 10000) < 0) { return 95; }
-    let c: i32 = tcp_accept(fd);
-    if (c < 0) { return 92; }
+    let c: Socket = tcp_accept(fd);
+    if (c.fd < 0) { return 92; }
     let cfds: i32[] = [c];
     if (poll(cfds, 10000) < 0) { return 96; }
     let req: u8[] = __alloc_u8(4096);

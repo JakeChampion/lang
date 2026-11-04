@@ -545,8 +545,8 @@ func TestInterpScalarMatchBindings(t *testing.T) {
 
 func TestInterpTcpSocketEcho(t *testing.T) {
 	src := `function main(): i32 {
-		let fd: i32 = tcp_listen(0);
-		if (fd < 0) { return 1; }
+		let fd: Socket = tcp_listen(0);
+		if (fd.fd < 0) { return 1; }
 		let c: i32 = tcp_close(fd);
 		if (c != 0) { return 2; }
 		return 0;

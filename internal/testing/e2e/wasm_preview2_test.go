@@ -824,8 +824,8 @@ func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "both.fern")
 	src := fernUDPSend + `function main(): i32 {
-    let s: i32 = tcp_listen(` + itoa(tcpPort) + `);
-    if (s < 0) { return 1; }
+    let s: Socket = tcp_listen(` + itoa(tcpPort) + `);
+    if (s.fd < 0) { return 1; }
     if (!send_datagram(net.ipv4_loopback(), ` + itoa(udpPort) + `, "tcp-and-udp")) {
         tcp_close(s);
         return 2;
@@ -973,11 +973,11 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 	}
 	srcPath := filepath.Join(dir, "srv.fern")
 	src := `function main(): i32 {
-    let s: i32 = tcp_listen(` + itoa(port) + `);
-    if (s < 0) { return 1; }
+    let s: Socket = tcp_listen(` + itoa(port) + `);
+    if (s.fd < 0) { return 1; }
     print("file server up");
-    let c: i32 = tcp_accept(s);
-    if (c < 0) { return 2; }
+    let c: Socket = tcp_accept(s);
+    if (c.fd < 0) { return 2; }
     match (read_file_bytes("index.html")) {
         Ok(content) => { tcp_send_bytes(c, content); },
         Err(e) => { tcp_send_bytes(c, [69u8, 82u8, 82u8]); }
@@ -1100,8 +1100,8 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 	run("wsrv", `function main(): i32 {
     print("write server");
     match (write_file("access.log", "GET / 200\n")) { Err(e) => { return 3; }, Ok(_) => {} }
-    let s: i32 = tcp_listen(`+p+`);
-    if (s < 0) { return 1; }
+    let s: Socket = tcp_listen(`+p+`);
+    if (s.fd < 0) { return 1; }
     tcp_close(s);
     return 0;
 }`, "access.log", "GET / 200\n")
@@ -1111,8 +1111,8 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
         Ok(w) => { w.write("entry\n"); w.close(); },
         Err(e) => { return 3; }
     }
-    let s: i32 = tcp_listen(`+p+`);
-    if (s < 0) { return 1; }
+    let s: Socket = tcp_listen(`+p+`);
+    if (s.fd < 0) { return 1; }
     tcp_close(s);
     return 0;
 }`, "a.log", "entry\n")
@@ -1141,8 +1141,8 @@ function main(): i32 {
         Ok(Some(line)) => { print(line); },
         _ => { print("no-input"); }
     }
-    let s: i32 = tcp_listen(` + itoa(port) + `);
-    if (s < 0) { return 1; }
+    let s: Socket = tcp_listen(` + itoa(port) + `);
+    if (s.fd < 0) { return 1; }
     tcp_close(s);
     return 0;
 }
@@ -1212,8 +1212,8 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
     print("starting");
     let t: i64 = now_ns();
     match (env("MODE")) { Some(_) => {}, None => {} }
-    let s: i32 = tcp_listen(`+itoa(tcpPort)+`);
-    if (s < 0) { return 1; }
+    let s: Socket = tcp_listen(`+itoa(tcpPort)+`);
+    if (s.fd < 0) { return 1; }
     tcp_close(s);
     if (t > 0) { return 0; }
     return 2;

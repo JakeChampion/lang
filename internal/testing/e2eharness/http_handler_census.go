@@ -533,8 +533,8 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
-	const entry = `    let listener: i32 = tcp_listen(0);
-    if (listener < 0) { return 90; }
+	const entry = `    let listener: Socket = tcp_listen(0);
+    if (listener.fd < 0) { return 90; }
     let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(port.to_string());

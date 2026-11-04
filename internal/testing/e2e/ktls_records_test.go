@@ -75,9 +75,9 @@ function only_record(raw: u8[]): record.Record {
 // the kernel's key structure (record.Protection.kernel_info) is shown to
 // carry the key, the IV, the salt and the sequence number.
 function suite(name: string, s: keyschedule.CipherSuite, ln: i32): string {
-  let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
-  let a: i32 = tcp_accept(ln);
-  if (c < 0 || a < 0) {
+  let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
+  let a: Socket = tcp_accept(ln);
+  if (c.fd < 0 || a.fd < 0) {
     return name + " connect";
   }
   let none: u8[] = [];
@@ -166,9 +166,9 @@ function suite(name: string, s: keyschedule.CipherSuite, ln: i32): string {
 
 function main(): i32 {
   let any: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8];
-  let ln: i32 = tcp_listen_with(any, 0, 4, false);
-  if (ln < 0) {
-    print("listen " + ln.to_string());
+  let ln: Socket = tcp_listen_with(any, 0, 4, false);
+  if (ln.fd < 0) {
+    print("listen " + ln.fd.to_string());
     return 1;
   }
   print(suite("aes128", keyschedule.Aes128GcmSha256, ln));

@@ -430,8 +430,8 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 
 	runCase("tcp_listen_close",
 		`function main(): i32 {
-  let fd: i32 = tcp_listen(39517);
-  if (fd < 0) { return 1; }
+  let fd: Socket = tcp_listen(39517);
+  if (fd.fd < 0) { return 1; }
   if (tcp_close(fd) < 0) { return 2; }
   return 7;
 }`,
@@ -439,8 +439,8 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 
 	runCase("udp_sendto",
 		`function main(): i32 {
-  let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
-  if (s < 0) { return 1; }
+  let s: Socket = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+  if (s.fd < 0) { return 1; }
   let n: i32 = udp_sendto(s, [127u8, 0u8, 0u8, 1u8], 39518, "abc");
   if (tcp_close(s) < 0) { return 2; }
   return n;

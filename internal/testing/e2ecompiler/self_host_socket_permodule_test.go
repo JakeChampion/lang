@@ -19,13 +19,13 @@ func TestSelfHostSocketRuntimePerModule(t *testing.T) {
 		"main.fern": "import \"./sockets\"; function main(): i32 { return sockets.run(); }",
 		"sockets.fern": `@noinline pub function run(): i32 {
   let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-  let ln: i32 = tcp_listen_with(lo, 0, 4, false);
-  if (ln < 0) { return 1; }
+  let ln: Socket = tcp_listen_with(lo, 0, 4, false);
+  if (ln.fd < 0) { return 1; }
   let port: i32 = tcp_local_port(ln);
-  let client: i32 = tcp_connect_with(lo, port, false);
-  if (client < 0) { tcp_close(ln); return 2; }
-  let accepted: i32 = tcp_accept(ln);
-  if (accepted < 0) { tcp_close(client); tcp_close(ln); return 3; }
+  let client: Socket = tcp_connect_with(lo, port, false);
+  if (client.fd < 0) { tcp_close(ln); return 2; }
+  let accepted: Socket = tcp_accept(ln);
+  if (accepted.fd < 0) { tcp_close(client); tcp_close(ln); return 3; }
   if (tcp_socket_ctl(client, 1, 1) != 0) { return 4; }
   if (tcp_send_bytes(accepted, [104u8, 105u8]) != 2) { return 5; }
   let got: u8[] = [0u8, 0u8];
@@ -34,9 +34,9 @@ func TestSelfHostSocketRuntimePerModule(t *testing.T) {
   let into: u8[] = [0u8];
   if (tcp_recv_into(client, into) != 1 || into[0] != 33u8) { return 8; }
   tcp_close(accepted); tcp_close(client); tcp_close(ln);
-  let a: i32 = udp_bind(lo, 0);
-  let b: i32 = udp_bind_with(lo, 0, false);
-  if (a < 0 || b < 0) { return 9; }
+  let a: Socket = udp_bind(lo, 0);
+  let b: Socket = udp_bind_with(lo, 0, false);
+  if (a.fd < 0 || b.fd < 0) { return 9; }
   let bp: i32 = tcp_local_port(b);
   if (udp_sendto(a, lo, bp, "udp") != 3) { return 10; }
   let from: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];

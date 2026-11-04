@@ -26,8 +26,8 @@ function send_all(fd: i32, data: u8[]): void {
     }
 }
 function main(): i32 {
-    let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], TCP_PORT, false);
-    assert(fd >= 0);
+    let fd: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], TCP_PORT, false);
+    assert(fd.fd >= 0);
     let data: u8[] = [];
     for i in 0..8193 { data = data.append((i % 256) as u8); }
     let retained: u8[] = data;

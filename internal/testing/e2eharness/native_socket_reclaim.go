@@ -28,21 +28,20 @@ func NativeSocketConnectError(t *testing.T) int {
 func NativeSocketFailureProbe(operation string, darwin, zero bool, connectErrno int) string {
 	prelude := ""
 	if zero {
-		prelude = "tcp_close(0);"
+		prelude = "unsafe { __fd_close(0); }"
 	}
 	if operation == "socket" {
 		return `function main(): i32 {
     ` + prelude + `
-    let sockets: i32[] = [];
-    let fd: i32 = tcp_listen(0);
-    while (fd >= 0) { sockets = sockets.append(fd); fd = tcp_listen(0); }
-    if (fd != -24 || sockets.len() == 0) { return 91; }
-    if (tcp_listen(0).fd != -24) { return 92; }
-    let i: i32 = 0;
-    while (i < sockets.len()) {
-        if (tcp_local_port(sockets[i]) <= 0) { return 93; }
-        if (tcp_close(sockets[i]) != 0) { return 94; }
-        i = i + 1;
+    let sockets: Socket[] = [];
+    let fd: Socket = tcp_listen(0);
+    while (fd.fd >= 0) { sockets = sockets.append(fd); fd = tcp_listen(0); }
+    if (fd.fd != -24 || sockets.len() == 0) { return 91; }
+    let refused: Socket = tcp_listen(0);
+    if (refused.fd != -24) { return 92; }
+    for s in sockets {
+        if (tcp_local_port(s) <= 0) { return 93; }
+        if (tcp_close(s) != 0) { return 94; }
     }
     return 0;
 }`
@@ -55,20 +54,21 @@ func NativeSocketFailureProbe(operation string, darwin, zero bool, connectErrno 
 		errno, expr = connectErrno, "tcp_connect_with([255u8, 255u8, 255u8, 255u8], 1, false)"
 	}
 	return fmt.Sprintf(`function main(): i32 {
-    let listener: i32 = tcp_listen(0);
-    if (listener < 0) { return 90; }
+    let listener: Socket = tcp_listen(0);
+    if (listener.fd < 0) { return 90; }
     let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     %s
     // The kernel must reuse this lowest available descriptor after failures.
-    let before: i32 = tcp_listen(0);
-    if (before < 0 || tcp_close(before) != 0) { return 92; }
+    let before: Socket = tcp_listen(0);
+    let lowest: i32 = before.fd;
+    if (lowest < 0 || tcp_close(before) != 0) { return 92; }
     let i: i32 = 0;
     while (i < 32) {
-        let failed: i32 = %s;
-        if (failed != -%d) { return 93; }
-        let after: i32 = tcp_listen(0);
-        if (after != before) { return 94; }
+        let failed: Socket = %s;
+        if (failed.fd != -%d) { return 93; }
+        let after: Socket = tcp_listen(0);
+        if (after.fd != lowest) { return 94; }
         if (tcp_close(after) != 0) { return 95; }
         i = i + 1;
     }
