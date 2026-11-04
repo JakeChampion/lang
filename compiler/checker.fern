@@ -11295,14 +11295,8 @@ function any_value_block(es: ast.Expr[]): boolean {
 function mx_iife_arms(c: ast.ExprCall, lm: ast.ExprLambda, want: typeinfo.Type, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): util.Diag[] {
   let out: util.Diag[] = [];
   let local: string = vb_local_name(lm.body);
-  if (lm.params.len() == 0 && parser.is_iflet_value_local(local)) {
-    let types: typeinfo.Type[] = [];
-    let exprs: ast.Expr[] = [];
-    for store in vb_value_stores(lm.body, local, s) {
-      types = types.append(store.t);
-      exprs = exprs.append(store.e);
-    }
-    out = mx_e031(mx_widen_to(types, want, unions), exprs, unions, enums, false, true, c.line, c.col);
+  if (lm.params.len() == 0 && parser.is_value_local_name(local)) {
+    out = mx_value_local_arms(lm.body, local, want, s, unions, enums);
   }
   if (lm.params.len() == 0 && lm.body.len() == 1) {
     let arms: ast.Expr[] = mx_body_result_exprs(lm.body);
@@ -11325,6 +11319,30 @@ function mx_iife_arms(c: ast.ExprCall, lm: ast.ExprLambda, want: typeinfo.Type, 
     }
   }
   return out;
+}
+
+// mx_value_local_arms checks that the values each arm stores into the value local agree.
+function mx_value_local_arms(body: ast.Stmt[], local: string, want: typeinfo.Type, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): util.Diag[] {
+  let types: typeinfo.Type[] = [];
+  let exprs: ast.Expr[] = [];
+  for store in vb_value_stores(body, local, s) {
+    types = types.append(store.t);
+    exprs = exprs.append(store.e);
+  }
+  let fold: MxFold = mx_fold_arms(mx_widen_to(types, want, unions), exprs, unions, enums, false, true);
+  if (fold.ok) {
+    return [];
+  }
+  let bad: ast.Expr = exprs[fold.bad_index];
+  return mx_named_fold_diags(fold, expr_line(bad), expr_col(bad), mx_value_local_kind(local));
+}
+
+// mx_value_local_kind gives the E031 wording the Go checker uses for the match form that owns local.
+function mx_value_local_kind(local: string): string {
+  if (local.starts_with("__tm") || local.starts_with("__sm")) {
+    return "match arms have incompatible types: ";
+  }
+  return "match-expression arms differ: ";
 }
 
 function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDecl[]): util.Diag[] {
@@ -17335,7 +17353,7 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
   } else if (cur.is_const_param(a.target)) {
     out = out.append(dg_at("E091", "cannot assign to const parameter " + a.target + ": it is the constant its instance is made for", a.target_line, a.target_col));
   } else {
-    out = assign_value_diags(a.value, cur.lookup(a.target), "variable \"" + a.target + "\"", !parser.is_iflet_value_local(a.target), a.line, a.col, cur, unions);
+    out = assign_value_diags(a.value, cur.lookup(a.target), "variable \"" + a.target + "\"", !parser.is_value_local_name(a.target), a.line, a.col, cur, unions);
   }
   return out;
 }
