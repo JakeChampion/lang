@@ -315,6 +315,11 @@ pub function leave(n: Node, now: i64): Node {
 }
 
 // The microphone failed or was not allowed: the floor goes back.
+// The node with the notice `text` under the status line.
+pub function noticed(n: Node, text: string): Node {
+  return Node { ...n, notice: text };
+}
+
 pub function mic_lost(n: Node, why: string, now: i64): Node {
   let t: Node = act(n, session.MicLost, now);
   return Node { ...t, notice: why };

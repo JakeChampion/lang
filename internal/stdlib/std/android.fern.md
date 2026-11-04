@@ -31,6 +31,8 @@ The context `ctx` that `start` gives to the loop thread is valid until `run` ret
 <<windows>>
 
 <<the foreground service>>
+
+<<Wi-Fi Direct>>
 ```
 
 ### `module introduction`
@@ -132,7 +134,7 @@ function c_pthread_detach(thread: usize): i32;
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. `ServiceStopped` comes when the user stops the foreground service from its notification.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. `ServiceStopped` comes when the user stops the foreground service from its notification. `P2pEnabled`, `P2pPeers` and `P2pGroup` come from Wi-Fi Direct.
 
 ```fern
 <<events>>=
@@ -153,6 +155,9 @@ pub enum Event {
   Key(i32, i32),
   Tick,
   ServiceStopped,
+  P2pEnabled(boolean),
+  P2pPeers(P2pPeer[]),
+  P2pGroup(P2pGroup),
 }
 
 const START: i32 = 1;
@@ -180,6 +185,12 @@ const INPUT_CREATED: i32 = 11;
 const INPUT_DESTROYED: i32 = 12;
 
 const SERVICE_STOPPED: i32 = 13;
+
+const P2P_STATE: i32 = 14;
+
+const P2P_PEERS: i32 = 15;
+
+const P2P_GROUP: i32 = 16;
 
 function lifecycle_event(kind: i32): Event {
   if (kind == START) {
@@ -220,6 +231,9 @@ function message_event(kind: i32, arg: usize): Event {
   }
   if (kind == SERVICE_STOPPED) {
     return ServiceStopped;
+  }
+  if (kind >= P2P_STATE) {
+    return p2p_event(kind, arg);
   }
   return lifecycle_event(kind);
 }
@@ -819,6 +833,261 @@ function notification_of(e: usize, service: usize, activity: usize, n: Notice): 
   let notification: usize = jni.call_object_method_a(e, builder, jni.get_method_id(e, builder_class, "build", "()Landroid/app/Notification;"), none);
   jni.free_buffer(none);
   return notification;
+}
+```
+
+### `Wi-Fi Direct`
+
+Wi-Fi Direct connects two phones with no access point: one phone becomes the group owner, and the other connects to it. `WifiP2pManager` reports the state, the peers and the group through broadcasts. The app declares a @jni class that extends `android.content.BroadcastReceiver`, with a native `onReceive` that calls `p2p_received`. `p2p_start` registers it, and stores the `ANativeActivity` in the static field `fern` of the class, so that `p2p_received` can send the events to the loop thread.
+
+Discovery needs `NEARBY_WIFI_DEVICES` from API level 33, and `ACCESS_FINE_LOCATION` before that. The commands report no result: the broadcasts that follow give the state. `connect` makes Android ask the user of the other phone to accept the invitation.
+
+A `P2pPeer` has the status of `WifiP2pDevice`: 0 connected, 1 invited, 2 failed, 3 available and 4 unavailable.
+
+```fern
+<<Wi-Fi Direct>>=
+pub struct P2pPeer { name: string, address: string, status: i32 }
+
+// A group is formed when the two phones are connected. The owner address
+// is the IP address of the group owner.
+pub struct P2pGroup { formed: boolean, owner: boolean, owner_address: string }
+
+// The global references of the manager, the channel and the receiver.
+pub struct P2p { manager: usize, channel: usize, receiver: usize }
+
+const P2P_ACTIONS: string[] = ["android.net.wifi.p2p.STATE_CHANGED", "android.net.wifi.p2p.PEERS_CHANGED", "android.net.wifi.p2p.CONNECTION_STATE_CHANGE"];
+
+const CHANNEL_SIG: string = "Landroid/net/wifi/p2p/WifiP2pManager$Channel;";
+
+const LISTENER_SIG: string = "Landroid/net/wifi/p2p/WifiP2pManager$ActionListener;";
+
+function call_object(e: usize, obj: usize, name: string, sig: string, values: usize[]): usize {
+  let args: usize = jni.jvalues(values);
+  let got: usize = jni.call_object_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), name, sig), args);
+  jni.free_buffer(args);
+  return got;
+}
+
+function call_void(e: usize, obj: usize, name: string, sig: string, values: usize[]): boolean {
+  let args: usize = jni.jvalues(values);
+  let done: usize = jni.call_void_method_a(e, obj, jni.get_method_id(e, jni.get_object_class(e, obj), name, sig), args);
+  jni.free_buffer(args);
+  if (jni.exception_occurred(e) != 0 as usize) {
+    jni.exception_clear(e);
+    return false;
+  }
+  return true;
+}
+
+function p2p_filter(e: usize): usize {
+  let class: usize = jni.find_class(e, "android/content/IntentFilter");
+  let none: usize = jni.jvalue_alloc(0);
+  let filter: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "()V"), none);
+  jni.free_buffer(none);
+  for action in P2P_ACTIONS {
+    let added: boolean = call_void(e, filter, "addAction", "(Ljava/lang/String;)V", [jni.new_string(e, action)]);
+  }
+  return filter;
+}
+
+// Starts Wi-Fi Direct and registers the receiver `class`, the Java name of
+// the app's @jni subclass of BroadcastReceiver. It is None when the device
+// has no Wi-Fi Direct. Call it on the loop thread.
+pub function p2p_start(ctx: usize, class: string): Option[P2p] {
+  let e: usize = env(ctx);
+  let obj: usize = activity_object(ctx);
+  let manager: usize = call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [jni.new_string(e, "wifip2p")]);
+  if (manager == 0 as usize) {
+    return None;
+  }
+  let looper: usize = call_object(e, obj, "getMainLooper", "()Landroid/os/Looper;", []);
+  let channel: usize = call_object(e, manager, "initialize", "(Landroid/content/Context;Landroid/os/Looper;Landroid/net/wifi/p2p/WifiP2pManager$ChannelListener;)" + CHANNEL_SIG, [obj, looper, 0 as usize]);
+  if (channel == 0 as usize) {
+    return None;
+  }
+  let receiver_class: usize = app_class(e, obj, class);
+  let activity: usize = 0 as usize;
+  unsafe {
+    activity = __load_ptr(ctx + 16 as usize);
+  }
+  let stored: usize = jni.set_static_long_field(e, receiver_class, jni.get_static_field_id(e, receiver_class, "fern", "J"), activity);
+  let none: usize = jni.jvalue_alloc(0);
+  let receiver: usize = jni.new_object_a(e, receiver_class, jni.get_method_id(e, receiver_class, "<init>", "()V"), none);
+  jni.free_buffer(none);
+  let intent: usize = call_object(e, obj, "registerReceiver", "(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;", [receiver, p2p_filter(e)]);
+  return Some(P2p { manager: jni.new_global_ref(e, manager), channel: jni.new_global_ref(e, channel), receiver: jni.new_global_ref(e, receiver) });
+}
+
+// Looks for peers. P2pPeers events follow. It is false when Android
+// refuses, for example without the permission.
+pub function p2p_discover(ctx: usize, p: P2p): boolean {
+  return call_void(env(ctx), p.manager, "discoverPeers", "(" + CHANNEL_SIG + LISTENER_SIG + ")V", [p.channel, 0 as usize]);
+}
+
+// Invites the peer with the MAC address `address`. A P2pGroup event
+// follows when the other user accepts.
+pub function p2p_connect(ctx: usize, p: P2p, address: string): boolean {
+  let e: usize = env(ctx);
+  let class: usize = jni.find_class(e, "android/net/wifi/p2p/WifiP2pConfig");
+  let none: usize = jni.jvalue_alloc(0);
+  let config: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "()V"), none);
+  jni.free_buffer(none);
+  let set: usize = jni.set_object_field(e, config, jni.get_field_id(e, class, "deviceAddress", "Ljava/lang/String;"), jni.new_string(e, address));
+  return call_void(e, p.manager, "connect", "(" + CHANNEL_SIG + "Landroid/net/wifi/p2p/WifiP2pConfig;" + LISTENER_SIG + ")V", [p.channel, config, 0 as usize]);
+}
+
+// Leaves the group and stops looking for peers.
+pub function p2p_leave(ctx: usize, p: P2p): void {
+  let e: usize = env(ctx);
+  let sig: string = "(" + CHANNEL_SIG + LISTENER_SIG + ")V";
+  let cancelled: boolean = call_void(e, p.manager, "cancelConnect", sig, [p.channel, 0 as usize]);
+  let removed: boolean = call_void(e, p.manager, "removeGroup", sig, [p.channel, 0 as usize]);
+  let stopped: boolean = call_void(e, p.manager, "stopPeerDiscovery", sig, [p.channel, 0 as usize]);
+}
+
+// Leaves the group and unregisters the receiver. Call it before Destroy.
+pub function p2p_stop(ctx: usize, p: P2p): void {
+  p2p_leave(ctx, p);
+  let e: usize = env(ctx);
+  let unregistered: boolean = call_void(e, activity_object(ctx), "unregisterReceiver", "(Landroid/content/BroadcastReceiver;)V", [p.receiver]);
+  jni.delete_global_ref(e, p.receiver);
+  jni.delete_global_ref(e, p.channel);
+  jni.delete_global_ref(e, p.manager);
+}
+
+// The onReceive of the app's receiver: `env`, `receiver` and `intent` are
+// its arguments. It sends the state, the peers or the group to the loop
+// thread.
+pub function p2p_received(e: usize, receiver: usize, intent: usize): void {
+  let class: usize = jni.get_object_class(e, receiver);
+  let activity: usize = jni.get_static_long_field(e, class, jni.get_static_field_id(e, class, "fern", "J"));
+  if (activity == 0 as usize || intent == 0 as usize) {
+    return;
+  }
+  let action: string = intent_action(e, intent);
+  if (action == P2P_ACTIONS[0]) {
+    let enabled: i32 = jni.call_int_method_a(e, intent, jni.get_method_id(e, jni.get_object_class(e, intent), "getIntExtra", "(Ljava/lang/String;I)I"), jni.jvalues([jni.new_string(e, "wifi_p2p_state"), 0 as usize]));
+    let on: usize = 0 as usize;
+    if (enabled == 2) {
+      on = 1 as usize;
+    }
+    send(activity, P2P_STATE, on);
+  } else if (action == P2P_ACTIONS[1]) {
+    send(activity, P2P_PEERS, text_buffer(peers_text(e, intent_extra(e, intent, "wifiP2pDeviceList"))));
+  } else if (action == P2P_ACTIONS[2]) {
+    send(activity, P2P_GROUP, text_buffer(group_text(e, intent_extra(e, intent, "wifiP2pInfo"))));
+  }
+}
+
+function intent_extra(e: usize, intent: usize, name: string): usize {
+  return call_object(e, intent, "getParcelableExtra", "(Ljava/lang/String;)Landroid/os/Parcelable;", [jni.new_string(e, name)]);
+}
+
+function string_field(e: usize, obj: usize, name: string): string {
+  return jni.string_of(e, jni.get_object_field(e, obj, jni.get_field_id(e, jni.get_object_class(e, obj), name, "Ljava/lang/String;")));
+}
+
+function int_field(e: usize, obj: usize, name: string): i32 {
+  return jni.get_int_field(e, obj, jni.get_field_id(e, jni.get_object_class(e, obj), name, "I"));
+}
+
+function flag_field(e: usize, obj: usize, name: string): string {
+  if ((jni.get_boolean_field(e, obj, jni.get_field_id(e, jni.get_object_class(e, obj), name, "Z")) & 255) != 0) {
+    return "1";
+  }
+  return "0";
+}
+
+// One line for each device of the WifiP2pDeviceList `list`: the status,
+// the address and the name, separated by tabs.
+function peers_text(e: usize, list: usize): string {
+  if (list == 0 as usize) {
+    return "";
+  }
+  let devices: usize = call_object(e, call_object(e, list, "getDeviceList", "()Ljava/util/Collection;", []), "toArray", "()[Ljava/lang/Object;", []);
+  let out: string = "";
+  for k in 0..jni.get_array_length(e, devices) {
+    let d: usize = jni.get_object_array_element(e, devices, k);
+    out = out + int_field(e, d, "status").to_string() + "\t" + string_field(e, d, "deviceAddress") + "\t" + string_field(e, d, "deviceName") + "\n";
+    let deleted: usize = jni.delete_local_ref(e, d);
+  }
+  return out;
+}
+
+// The WifiP2pInfo `info`: formed, owner and the owner address.
+function group_text(e: usize, info: usize): string {
+  if (info == 0 as usize) {
+    return "0\t0\t";
+  }
+  let address: usize = jni.get_object_field(e, info, jni.get_field_id(e, jni.get_object_class(e, info), "groupOwnerAddress", "Ljava/net/InetAddress;"));
+  let host: string = "";
+  if (address != 0 as usize) {
+    host = jni.string_of(e, call_object(e, address, "getHostAddress", "()Ljava/lang/String;", []));
+  }
+  return flag_field(e, info, "groupFormed") + "\t" + flag_field(e, info, "isGroupOwner") + "\t" + host;
+}
+
+// A heap copy of `text` for the loop thread: its length, then its bytes.
+function text_buffer(text: string): usize {
+  let b: u8[] = text.bytes();
+  unsafe {
+    let buf: usize = __alloc(4 + b.len());
+    __store_i32(buf, b.len());
+    for k in 0..b.len() {
+      __store_u8(buf + (4 + k) as usize, b[k] as i32);
+    }
+    return buf;
+  }
+}
+
+// The text of a buffer from text_buffer, which it frees.
+function taken_text(buf: usize): string {
+  let b: u8[] = [];
+  unsafe {
+    let n: i32 = __load_i32(buf);
+    for k in 0..n {
+      b = b.append(__load_u8(buf + (4 + k) as usize) as u8);
+    }
+    __free(buf, 4 + n);
+  }
+  return string_from_bytes_unchecked(b);
+}
+
+function digit_of(s: string): i32 {
+  if (s.len() == 1 && s[0] >= b'0' && s[0] <= b'9') {
+    return (s[0] - b'0') as i32;
+  }
+  return 4;
+}
+
+function peers_of(text: string): P2pPeer[] {
+  let out: P2pPeer[] = [];
+  for line in text.split("\n") {
+    let f: string[] = line.split("\t");
+    if (f.len() >= 3) {
+      out = out.append(P2pPeer { status: digit_of(f[0]), address: f[1], name: f[2] });
+    }
+  }
+  return out;
+}
+
+function group_of(text: string): P2pGroup {
+  let f: string[] = text.split("\t");
+  if (f.len() < 3) {
+    return P2pGroup { formed: false, owner: false, owner_address: "" };
+  }
+  return P2pGroup { formed: f[0] == "1", owner: f[1] == "1", owner_address: f[2] };
+}
+
+function p2p_event(kind: i32, arg: usize): Event {
+  if (kind == P2P_STATE) {
+    return P2pEnabled(arg != 0 as usize);
+  }
+  let text: string = taken_text(arg);
+  if (kind == P2P_PEERS) {
+    return P2pPeers(peers_of(text));
+  }
+  return P2pGroup(group_of(text));
 }
 ```
 

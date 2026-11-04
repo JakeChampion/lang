@@ -474,6 +474,10 @@ pub function get_array_length(env: usize, array: usize): i32 {
   return call1(env, 171, array) as i32;
 }
 
+pub function get_object_array_element(env: usize, array: usize, index: i32): usize {
+  return call2(env, 173, array, index as usize);
+}
+
 // A jvalue array of `args`. Free it with free_buffer.
 pub function jvalues(args: usize[]): usize {
   unsafe {
