@@ -9,7 +9,7 @@ import "./util";
 
 pub struct Sunk { f: ssasem.Func, reread: i32 }
 
-struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], strict: i32[][], kids: i32[][], grown: i32[][], updated: i32[][], first: i32[], types: typeinfo.Type[] }
+struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], strict: i32[][], kids: i32[][], grown: i32[][], updated: i32[][], first: i32[], field: i32[], types: typeinfo.Type[] }
 
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
@@ -146,7 +146,7 @@ function projection(kind: i32): boolean {
   return kind == ssasem.variant_get() || kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.array_get();
 }
 
-struct Tree { par: i32[], parent: boolean[], kids: i32[][], first: i32[] }
+struct Tree { par: i32[], parent: boolean[], kids: i32[][], first: i32[], field: i32[] }
 
 function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean): Reads {
   match (known) {
@@ -175,7 +175,7 @@ function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
   if (lent) {
     strict = spent_by(f, false, t.parent, deps, pos);
   }
-  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps, t.first), first: t.first, types: f.values };
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), updated: updated_by(g, deps, t.first), first: t.first, field: t.field, types: f.values };
 }
 
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
@@ -183,6 +183,7 @@ function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): 
   let parent: boolean[] = __alloc_bool(values.len());
   let kids: i32[][] = deps;
   let first: i32[] = semcse.identity(values.len());
+  let field: i32[] = util.minus_ones(values.len());
   for b in g.blocks {
     let seen: ssa.SInst[] = [];
     for ins in b.insts {
@@ -193,10 +194,11 @@ function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): 
         par = par.with(ins.result, ins.args[0]);
         parent = parent.with(ins.args[0], true).with(ins.result, true);
         kids = kids.with(p, kids[p].append(ins.result));
+        field = field.with(ins.result, ins.imm);
       }
     }
   }
-  return Tree { par: par, parent: parent, kids: kids, first: first };
+  return Tree { par: par, parent: parent, kids: kids, first: first, field: field };
 }
 
 function twin_of(seen: ssa.SInst[], ins: ssa.SInst, first: i32[], values: typeinfo.Type[]): i32 {
@@ -556,6 +558,16 @@ function child_grown_in(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   return false;
 }
 
+// The update block reads the field of x that c reads.
+function field_read_in(rd: Reads, bi: i32, x: i32, c: i32): boolean {
+  for k in rd.kids[rd.first[x]] {
+    if (rd.at[k] == bi && rd.field[k] == rd.field[c]) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function read_in(rd: Reads, bi: i32, x: i32): boolean {
   for c in rd.kids[x] {
     if (rd.at[c] == bi) {
@@ -571,12 +583,14 @@ function child_spent_between(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   return child_spent_between_for(rd, bi, v, depth, false);
 }
 
+// With donors, a descendant the update block reads again does not count: a
+// field lent to a call before the update is taken afresh there, not kept.
 function child_spent_between_for(rd: Reads, bi: i32, v: i32, depth: i32, donors: boolean): boolean {
   if (depth > 8) {
     return false;
   }
   for c in rd.kids[rd.first[v]] {
-    if ((!donors || ssasem.owned_shape(rd.types[c])) && !ssalive.live_in_has(rd.flow, bi, c)) {
+    if ((!donors || ssasem.owned_shape(rd.types[c]) && !field_read_in(rd, bi, v, c)) && !ssalive.live_in_has(rd.flow, bi, c)) {
       for s in rd.spent[c] {
         if (s != bi && ssadeps.dom_holds(rd.dom, s, rd.at[v])) {
           return true;
