@@ -1,5 +1,6 @@
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the ownership-checker changes of #14145
 # and this PR. checker.cliff_bytes rises 27.22% to 59063536 and checker.cliff_count 8.62% to 373320.
+# Retain the preceding limits. The measured regression must remain visible.
 # 2026-11-03: PR #14122, a local scripts/cliff-bench run on its head: 352,492 crossings and 56,769,184 bytes.
 # Main at 0a339915 measures 352,113 and 55,791,496. With the small-branch rule off, the head measures 352,073 and 55,790,160,
 # so the added 1.8% of bytes is the splice code's own copies for the added splices.
@@ -145,5 +146,5 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	59063536
-x86_64/checker.cliff_count	373320
+x86_64/checker.cliff_bytes	46426872
+x86_64/checker.cliff_count	343679

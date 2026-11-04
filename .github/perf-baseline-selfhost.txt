@@ -1,5 +1,6 @@
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
 # #14134 into the branch. Five wasm32-wasi .emit rows rise 1.08% to 1.77%.
+# Retain the preceding limits. The measured regressions must remain visible.
 # 2026-11-04: #14094, a local scripts/perf-bench-selfhost run. A join of constants that only returns goes back into
 # its arms: http_hello.emit -1.2% to -2.0%, and wasm sort_ints, sort_strings and string_find_byte -1.5% to -1.6%.
 # 2026-11-03: PR #14122, a local scripts/perf-bench-selfhost run on its head. Liveness decides which values cross a call,
@@ -259,7 +260,7 @@ selfhost/wasm32-wasi/byte_copy_append.emit	571
 selfhost/wasm32-wasi/byte_copy_with.emit	586
 selfhost/wasm32-wasi/call_overhead.emit	119
 selfhost/wasm32-wasi/closure_call.emit	504
-selfhost/wasm32-wasi/deflate_decode.emit	19925
+selfhost/wasm32-wasi/deflate_decode.emit	19608
 selfhost/wasm32-wasi/deflate_encode.emit	11578
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -268,16 +269,16 @@ selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
 selfhost/wasm32-wasi/map_string.emit	14123
-selfhost/wasm32-wasi/ordmap_insert.emit	6767
+selfhost/wasm32-wasi/ordmap_insert.emit	6680
 selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	510
 selfhost/wasm32-wasi/sort_inplace.emit	1013
-selfhost/wasm32-wasi/sort_ints.emit	2067
-selfhost/wasm32-wasi/sort_strings.emit	3359
+selfhost/wasm32-wasi/sort_ints.emit	2031
+selfhost/wasm32-wasi/sort_strings.emit	3323
 selfhost/wasm32-wasi/string_build.emit	1267
 selfhost/wasm32-wasi/string_count_byte.emit	544
-selfhost/wasm32-wasi/string_find_byte.emit	1723
+selfhost/wasm32-wasi/string_find_byte.emit	1695
 selfhost/wasm32-wasi/string_rfind_byte.emit	1744
 selfhost/wasm32-wasi/string_scan.emit	1405
 selfhost/wasm32-wasi/string_slice.emit	543

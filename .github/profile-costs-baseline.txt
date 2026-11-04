@@ -1,5 +1,6 @@
 # 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
 # #14134 into the branch. Six arm64 hardened rows rise 1.15% to 1.41%. Four http_hello rows fall 1.27% to 1.50%.
+# Retain the preceding limits for higher-cost rows and keep all measured reductions.
 # 2026-11-03: PR #14122, a local scripts/profile-costs run on its head. Most moved rows shrink 1% to 2%.
 # Preserve the original limits for higher-cost rows. Retain only the measured reductions.
 # 2026-11-02: the security stack (SEC-023, SEC-032, SEC-016, SEC-024), from a local profile-costs run on main 4f3571f1.
@@ -56,8 +57,8 @@
 # Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, valgrind 3.22.0. Rows are deterministic; the default tolerance applies.
 profile/arm64-linux/array_append.diagnostic.bytes	13536
 profile/arm64-linux/array_append.diagnostic.emit	1758
-profile/arm64-linux/array_append.hardened.bytes	7928
-profile/arm64-linux/array_append.hardened.emit	1732
+profile/arm64-linux/array_append.hardened.bytes	7832
+profile/arm64-linux/array_append.hardened.emit	1708
 profile/arm64-linux/array_append.minimal.bytes	5848
 profile/arm64-linux/array_append.minimal.emit	1265
 profile/arm64-linux/array_append.safe.bytes	6200
@@ -72,8 +73,8 @@ profile/arm64-linux/call_overhead.safe.bytes	2232
 profile/arm64-linux/call_overhead.safe.emit	390
 profile/arm64-linux/closure_call.diagnostic.bytes	13480
 profile/arm64-linux/closure_call.diagnostic.emit	1634
-profile/arm64-linux/closure_call.hardened.bytes	7064
-profile/arm64-linux/closure_call.hardened.emit	1514
+profile/arm64-linux/closure_call.hardened.bytes	6984
+profile/arm64-linux/closure_call.hardened.emit	1496
 profile/arm64-linux/closure_call.minimal.bytes	5096
 profile/arm64-linux/closure_call.minimal.emit	1069
 profile/arm64-linux/closure_call.safe.bytes	5416
@@ -88,8 +89,8 @@ profile/arm64-linux/deflate_decode.safe.bytes	58712
 profile/arm64-linux/deflate_decode.safe.emit	13560
 profile/arm64-linux/enum_match.diagnostic.bytes	12744
 profile/arm64-linux/enum_match.diagnostic.emit	1603
-profile/arm64-linux/enum_match.hardened.bytes	6872
-profile/arm64-linux/enum_match.hardened.emit	1460
+profile/arm64-linux/enum_match.hardened.bytes	6792
+profile/arm64-linux/enum_match.hardened.emit	1441
 profile/arm64-linux/enum_match.minimal.bytes	4968
 profile/arm64-linux/enum_match.minimal.emit	1034
 profile/arm64-linux/enum_match.safe.bytes	5272
