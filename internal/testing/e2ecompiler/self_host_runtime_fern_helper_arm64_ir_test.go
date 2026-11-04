@@ -19,6 +19,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 
 	prog := "import \"std/array\";\nimport \"std/rand\";\n" +
+		"function bad_socket(): Socket {\n    unsafe {\n        return __socket_from_fd(999);\n    }\n}\n" +
 		"function main(): i32 {\n" +
 		"    let b: u8[] = rand.bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
@@ -38,8 +39,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (rand.next_i32() == 0) { return 12; }\n" +
-		"    if (tcp_close(999) == 0) { return 13; }\n" +
-		"    if (tcp_accept(999).fd >= 0) { return 14; }\n" +
+		"    if (tcp_close(bad_socket()) == 0) { return 13; }\n" +
+		"    if (tcp_accept(bad_socket()).fd >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
 		"    let pfds: i32[] = [];\n" +
 		"    if (poll(pfds, 0) != 0 - 1) { return 15; }\n" +
@@ -47,11 +48,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (timer_fd(1) < 0) { return 17; }\n" +
 		"    if (tcp_listen(0).fd < 0) { return 18; }\n" +
 		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false).fd == 0) { return 19; }\n" +
-		"    if (tcp_recv_into(999, [0u8, 0u8, 0u8, 0u8]) >= 0) { return 20; }\n" +
+		"    if (tcp_recv_into(bad_socket(), [0u8, 0u8, 0u8, 0u8]) >= 0) { return 20; }\n" +
 		"    let av: string[] = [];\n" +
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    if (proc_fork() == 123456) { return 22; }\n" +
-		"    if (tcp_send_bytes(999, [120u8]) >= 0) { return 23; }\n" +
+		"    if (tcp_send_bytes(bad_socket(), [120u8]) >= 0) { return 23; }\n" +
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
@@ -158,7 +159,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "mmc_darwin_rb")
 
-	prog := "import \"std/rand\";\nfunction main(): i32 {\n" +
+	prog := "import \"std/rand\";\n" +
+		"function bad_socket(): Socket {\n    unsafe {\n        return __socket_from_fd(999);\n    }\n}\n" +
+		"function main(): i32 {\n" +
 		"    let b: u8[] = rand.bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin_d.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
@@ -176,11 +179,11 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (rand.next_i32() == 0) { return 12; }\n" +
-		"    if (tcp_close(999) == 0) { return 13; }\n" +
-		"    if (tcp_accept(999).fd >= 0) { return 14; }\n" +
+		"    if (tcp_close(bad_socket()) == 0) { return 13; }\n" +
+		"    if (tcp_accept(bad_socket()).fd >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
 		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false).fd == 0) { return 15; }\n" +
-		"    if (tcp_recv_into(999, [0u8, 0u8, 0u8, 0u8]) >= 0) { return 16; }\n" +
+		"    if (tcp_recv_into(bad_socket(), [0u8, 0u8, 0u8, 0u8]) >= 0) { return 16; }\n" +
 		"    if (proc_fork() == 123456) { return 17; }\n" +
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
