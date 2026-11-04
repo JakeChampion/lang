@@ -3367,8 +3367,11 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
 }
 
 // The pinned stage0 has no Writer.set_nonblocking, so this sets the same flag
-// through the socket control operation.
+// through the socket control operation. A WASI build has no socket imports.
 function writer_nonblocking(w: Writer, on: boolean): Value {
+  if (target_os() == "wasi" || target_os() == "wasi-http") {
+    return io_err_value(Unsupported);
+  }
   let arg: i32 = 0;
   if (on) {
     arg = 1;
