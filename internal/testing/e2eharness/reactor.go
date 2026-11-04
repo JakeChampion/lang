@@ -83,31 +83,31 @@ function main(): i32 {
     let events: i32[] = [0, 0, 0, 0];
     if (wait_until(r, events, 20) != 0) { return fail(4); }
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 4, false);
-    if (ln < 0) { return fail(5); }
+    let ln: Socket = tcp_listen_with(any, 0, 4, false);
+    if (ln.fd < 0) { return fail(5); }
     let port: i32 = tcp_local_port(ln);
-    if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(6); }
+    if (reactor_ctl(r, 1, ln.fd, 1) != 0) { return fail(6); }
     if (wait_until(r, events, 20) != 0) { return fail(7); }
     // Interest 4 is EPOLLEXCLUSIVE, which the kernel refuses on a
     // modification: asking it of a descriptor already in the set proves
     // the bit reached epoll_ctl rather than being masked off.
-    if (target_os() == "linux" && reactor_ctl(r, 1, ln, 5) != 0 - einval()) { return fail(31); }
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    if (c < 0) { return fail(8); }
-    if (expect_ready(r, ln, 1, 2000, 9) != 0) { return 9; }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(10); }
-    if (reactor_ctl(r, 1, a, 1) != 0) { return fail(11); }
-    if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(12); }
+    if (target_os() == "linux" && reactor_ctl(r, 1, ln.fd, 5) != 0 - einval()) { return fail(31); }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (c.fd < 0) { return fail(8); }
+    if (expect_ready(r, ln.fd, 1, 2000, 9) != 0) { return 9; }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(10); }
+    if (reactor_ctl(r, 1, a.fd, 1) != 0) { return fail(11); }
+    if (reactor_ctl(r, 2, ln.fd, 0) != 0) { return fail(12); }
     if (wait_until(r, events, 20) != 0) { return fail(13); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(14); }
-    if (expect_ready(r, a, 1, 2000, 15) != 0) { return 15; }
+    if (expect_ready(r, a.fd, 1, 2000, 15) != 0) { return 15; }
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(a, buf) != 2) { return fail(16); }
     if (buf[0] != 104u8 || buf[1] != 105u8) { return fail(17); }
-    if (reactor_ctl(r, 1, c, 2) != 0) { return fail(18); }
-    if (expect_ready(r, c, 2, 2000, 19) != 0) { return 19; }
-    if (reactor_ctl(r, 1, c, 1) != 0) { return fail(20); }
+    if (reactor_ctl(r, 1, c.fd, 2) != 0) { return fail(18); }
+    if (expect_ready(r, c.fd, 2, 2000, 19) != 0) { return 19; }
+    if (reactor_ctl(r, 1, c.fd, 1) != 0) { return fail(20); }
     if (tcp_socket_ctl(a, 3, 1) != 0) { return fail(21); }
     // Reading until -EAGAIN is what clears a readiness the host reported
     // spuriously, so the idle wait after it must be quiet. A serve loop
@@ -118,28 +118,28 @@ function main(): i32 {
     if (tcp_recv_into(a, buf) != 0 - eagain()) { return fail(22); }
     if (wait_until(r, events, 20) != 0) { return fail(23); }
     if (tcp_send_bytes(a, [121u8, 111u8]) != 2) { return fail(29); }
-    if (expect_ready(r, c, 1, 2000, 24) != 0) { return 24; }
+    if (expect_ready(r, c.fd, 1, 2000, 24) != 0) { return 24; }
     let got: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(c, got) != 2 || got[0] != 121u8) { return fail(25); }
     // Closing a watched socket unwatches it.
     tcp_close(c);
-    if (expect_ready(r, a, 1, 2000, 27) != 0) { return 27; }
+    if (expect_ready(r, a.fd, 1, 2000, 27) != 0) { return 27; }
     if (tcp_recv_into(a, buf) != 0) { return fail(28); }
     // a at its end and a second connection pending at the listener,
     // watched again: two descriptors ready before one wait, reported as
     // two pairs. The connection reaches the listener on the host's time
     // (Darwin's loopback is asynchronous), so the listener is waited for
     // alone, with a unwatched, before both are watched for the one wait.
-    if (reactor_ctl(r, 2, a, 0) != 0) { return fail(36); }
-    if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(32); }
-    let c2: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    if (c2 < 0) { return fail(33); }
-    if (expect_ready(r, ln, 1, 2000, 37) != 0) { return 37; }
-    if (reactor_ctl(r, 1, a, 1) != 0) { return fail(38); }
-    if (expect_both(r, ln, 1, a, 1, 2000, 34) != 0) { return 34; }
+    if (reactor_ctl(r, 2, a.fd, 0) != 0) { return fail(36); }
+    if (reactor_ctl(r, 1, ln.fd, 1) != 0) { return fail(32); }
+    let c2: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (c2.fd < 0) { return fail(33); }
+    if (expect_ready(r, ln.fd, 1, 2000, 37) != 0) { return 37; }
+    if (reactor_ctl(r, 1, a.fd, 1) != 0) { return fail(38); }
+    if (expect_both(r, ln.fd, 1, a.fd, 1, 2000, 34) != 0) { return 34; }
     tcp_close(c2);
-    if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(35); }
-    if (reactor_ctl(r, 2, a, 0) != 0) { return fail(29); }
+    if (reactor_ctl(r, 2, ln.fd, 0) != 0) { return fail(35); }
+    if (reactor_ctl(r, 2, a.fd, 0) != 0) { return fail(29); }
     tcp_close(a);
     tcp_close(ln);
     if (reactor_ctl(r, 3, 0, 0) != 0) { return fail(30); }

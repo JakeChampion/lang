@@ -186,7 +186,7 @@ function __substr_eq(s: string, offset: i32, needle: string, nLen: i32): boolean
 }
 
 function __str_maxsuf(x: string, m: i32, invert: boolean, origin: i32, step: i32): (i32, i32) {
-  let ms: i32 = -1;
+  let ms = -1;
   let j = 0;
   let k = 1;
   let p = 1;

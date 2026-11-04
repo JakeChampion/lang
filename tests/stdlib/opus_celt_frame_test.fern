@@ -46,7 +46,7 @@ function signal(own g: Gen, cc: i32): Signal {
 
 struct Setup { g: Gen, st: celt_encoder.Encoder, line: string, lm: i32, frames: i32, max_bytes: i32, sig: Signal }
 
-function setup(own g: Gen): Setup {
+function setup(own g: Gen, upsample: i32, end: i32): Setup {
   let (g1, cc0) = rnd(g);
   let cc: i32 = 1 + cc0 % 2;
   let (g2, mode0) = rnd(g1);
@@ -62,7 +62,7 @@ function setup(own g: Gen): Setup {
     g5 = g6;
     loss = l % 20;
   }
-  let st: celt_encoder.Encoder = celt_encoder.Encoder { ...celt_encoder.new_encoder(cc), bitrate: bitrate, vbr: mode != 0, constrained_vbr: mode == 2, complexity: complexity, loss_rate: loss };
+  let st: celt_encoder.Encoder = celt_encoder.Encoder { ...celt_encoder.new_encoder(cc), upsample: upsample, end: end, bitrate: bitrate, vbr: mode != 0, constrained_vbr: mode == 2, complexity: complexity, loss_rate: loss };
   let (g7, lm0) = rnd(g5);
   let lm: i32 = lm0 % 4;
   let Signal { g: gs, pat, period, noise } = signal(g7, cc);
@@ -74,13 +74,13 @@ function setup(own g: Gen): Setup {
   return Setup { g: g9, st: st, line: line, lm: lm, frames: frames, max_bytes: max_bytes, sig: Signal { g: Gen { x: 0u32 }, pat: pat, period: period, noise: noise } };
 }
 
-function trace(seed: u32, cases: i32): u32 {
+function trace(seed: u32, cases: i32, upsample: i32, end: i32): u32 {
   let g: Gen = Gen { x: seed };
   let crc: crc32.Crc32 = crc32.new();
   for k in 0..cases {
-    let s: Setup = setup(g);
+    let s: Setup = setup(g, upsample, end);
     let cc: i32 = s.st.channels;
-    let n: i32 = 120 << s.lm;
+    let n: i32 = (120 << s.lm) / upsample;
     let sig: Signal = s.sig;
     g = s.g;
     crc = crc.update((s.line + "\n").as_bytes());
@@ -120,16 +120,23 @@ function trace(seed: u32, cases: i32): u32 {
 }
 
 function test_short_trace(): test.TestOutcome {
-  return test.assert_eq(trace(1u32, 6), 3891627298u32);
+  return test.assert_eq(trace(1u32, 6, 1, 21), 3891627298u32);
 }
 
 function test_long_trace(): test.TestOutcome {
-  return test.assert_eq(trace(7u32, 120), 4054495625u32);
+  return test.assert_eq(trace(7u32, 120, 1, 21), 4054495625u32);
+}
+
+// The encoder of an Opus stream at 16 kHz takes every third sample of a
+// 48 kHz frame, and codes the bands to 8 kHz.
+function test_wideband_trace(): test.TestOutcome {
+  return test.assert_eq(trace(11u32, 120, 3, 17), 1170571747u32);
 }
 
 function main(): i32 {
   let r: test.TestRunner = test.new("std/opus/celt_encoder frames");
   r = r.it("a short trace of frames is the libopus trace", test_short_trace);
   r = r.it("a long trace of frames is the libopus trace", test_long_trace);
+  r = r.it("a trace of wideband frames at 16 kHz is the libopus trace", test_wideband_trace);
   return r.finish();
 }

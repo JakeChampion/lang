@@ -38,14 +38,19 @@ func TestAndroidAppRuntimeFallback(t *testing.T) {
 	}
 	src := filepath.Join(t.TempDir(), "fallback.fern")
 	body := `import "std/async";
+function invalid(): Socket {
+  unsafe { return __socket_from_fd(-1); }
+}
 function main(): i32 {
   let d: async.RealDriver = async.real_driver_io_uring();
   if (d.io_uring()) { return 1; }
   if (poll([-1], 0) != -1) { return 2; }
-  if (tcp_accept(-1).fd != -9) { return 3; }
+  if (tcp_accept(invalid()).fd != -9) { return 3; }
   let handle: i32 = d.handle();
   if (handle < 0) { return 4; }
-  if (tcp_close(handle) != 0) { return 5; }
+  let closed: i32 = -1;
+  unsafe { closed = __fd_close(handle); }
+  if (closed != 0) { return 5; }
   return 0;
 }
 `

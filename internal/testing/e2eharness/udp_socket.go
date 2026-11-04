@@ -31,12 +31,12 @@ function eafnosupport(): i32 {
 function main(): i32 {
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
     let peer: u8[] = [];
-    let a: i32 = udp_bind(lo, 0);
-    if (a < 0) { return fail(1); }
+    let a: Socket = udp_bind(lo, 0);
+    if (a.fd < 0) { return fail(1); }
     let pa: i32 = tcp_local_port(a);
     if (pa <= 0) { return fail(2); }
-    let b: i32 = udp_bind(lo, 0);
-    if (b < 0) { return fail(3); }
+    let b: Socket = udp_bind(lo, 0);
+    if (b.fd < 0) { return fail(3); }
     let pb: i32 = tcp_local_port(b);
     if (pb <= 0 || pb == pa) { return fail(4); }
     if (udp_sendto(a, lo, pb, "ping") != 4) { return fail(5); }
@@ -101,7 +101,7 @@ function port_of(from: u8[]): i32 {
 
 // arrival waits for a datagram of n bytes on non-blocking a or b and
 // answers 1 or 2 for the socket that took it, 0 if none did, 3 if both did.
-function arrival(a: i32, b: i32, n: i32, from: u8[]): i32 {
+function arrival(a: Socket, b: Socket, n: i32, from: u8[]): i32 {
     let buf: u8[] = zeros(16);
     let tries: i32 = 0;
     while (tries < 400) {
@@ -118,14 +118,14 @@ function arrival(a: i32, b: i32, n: i32, from: u8[]): i32 {
 
 function main(): i32 {
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    let a: i32 = udp_bind_with(lo, 0, true);
-    if (a < 0) { return fail(1); }
+    let a: Socket = udp_bind_with(lo, 0, true);
+    if (a.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(a);
     if (port <= 0) { return fail(2); }
     if (udp_bind(lo, port).fd >= 0) { return fail(3); }
     if (udp_bind_with(lo, port, false).fd >= 0) { return fail(4); }
-    let s: i32 = udp_bind(lo, 0);
-    if (s < 0) { return fail(5); }
+    let s: Socket = udp_bind(lo, 0);
+    if (s.fd < 0) { return fail(5); }
     let from: u8[] = zeros(19);
     if (target_os() == "wasi") {
         if (udp_bind_with(lo, port, true).fd >= 0) { return fail(6); }
@@ -137,8 +137,8 @@ function main(): i32 {
         print("ok");
         return 42;
     }
-    let b: i32 = udp_bind_with(lo, port, true);
-    if (b < 0) { return fail(6); }
+    let b: Socket = udp_bind_with(lo, port, true);
+    if (b.fd < 0) { return fail(6); }
     if (tcp_local_port(b) != port) { return fail(11); }
     if (tcp_socket_ctl(a, 3, 1) != 0 || tcp_socket_ctl(b, 3, 1) != 0) { return fail(12); }
     if (udp_sendto(s, lo, port, "ping") != 4) { return fail(7); }
@@ -178,14 +178,7 @@ function loopback(port: i32): net.SocketAddr {
     return net.socket_addr(net.ipv4_loopback(), port);
 }
 
-function open_socket(n: i32): i32 {
-    match (net.udp_socket(loopback(0))) {
-        Ok(fd) => { return fd; },
-        Err(e) => { return fail(n); },
-    }
-}
-
-function port_or(sock: i32, n: i32): i32 {
+function port_or(sock: Socket, n: i32): i32 {
     match (net.local_port(sock)) {
         Ok(p) => { return p; },
         Err(e) => { return fail(n); },
@@ -200,11 +193,15 @@ function sent(r: Result[i32, net.NetError]): i32 {
 }
 
 function main(): i32 {
-    let a: i32 = open_socket(1);
+    let Ok(a) = net.udp_socket(loopback(0)) else {
+        return fail(1);
+    };
     let pa: i32 = port_or(a, 2);
-    let b: i32 = open_socket(3);
+    let Ok(b) = net.udp_socket(loopback(0)) else {
+        return fail(3);
+    };
     let pb: i32 = port_or(b, 4);
-    if (a < 0 || pa <= 0 || b < 0 || pb <= 0) { return 5; }
+    if (pa <= 0 || pb <= 0) { return 5; }
     if (sent(net.send_to(a, [112u8, 105u8, 110u8, 103u8], loopback(pb))) != 4) { return fail(6); }
     let buf: u8[] = zeros(16);
     match (net.recv_from(b, buf)) {
@@ -273,10 +270,10 @@ func ConnectProbe() string {
 	return `import "std/time";
 import "std/net";
 
-// recv reads once from fd within five seconds: the bytes, none at the end
+// recv reads once from sock within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
-function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
+function recv(sock: Socket, max: i32): u8[] {
+    match (net.read_watched(sock, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }
@@ -302,7 +299,7 @@ function econnrefused(): i32 {
 }
 
 // The connect's result once it is no longer under way.
-function settle(c: i32): i32 {
+function settle(c: Socket): i32 {
     let tries: i32 = 0;
     while (tries < 5000) {
         let r: i32 = tcp_socket_ctl(c, 5, 0);
@@ -315,15 +312,15 @@ function settle(c: i32): i32 {
 
 function main(): i32 {
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    let ln: i32 = tcp_listen_with(lo, 0, 4, false);
-    if (ln < 0) { return fail(1); }
+    let ln: Socket = tcp_listen_with(lo, 0, 4, false);
+    if (ln.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    let c: i32 = tcp_connect_with(lo, port, true);
-    if (c < 0) { return fail(3); }
+    let c: Socket = tcp_connect_with(lo, port, true);
+    if (c.fd < 0) { return fail(3); }
     if (settle(c) != 0) { return fail(4); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(5); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(5); }
     if (tcp_socket_ctl(c, 5, 0) != 0) { return fail(6); }
     // Blocking again for the exchange: loopback delivery is not synchronous
     // on every kernel, so a non-blocking read of the reply could find
@@ -338,12 +335,12 @@ function main(): i32 {
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
-    let c2: i32 = tcp_connect_with(lo, port, true);
-    if (c2 >= 0) {
+    let c2: Socket = tcp_connect_with(lo, port, true);
+    if (c2.fd >= 0) {
         let r: i32 = settle(c2);
         tcp_close(c2);
         if (r != 0 - econnrefused()) { return fail(12); }
-    } else if (c2 != 0 - econnrefused()) {
+    } else if (c2.fd != 0 - econnrefused()) {
         return fail(13);
     }
     print("ok");
@@ -357,10 +354,10 @@ func NetConnectProbe() string {
 import "std/net";
 import "std/errno";
 
-// recv reads once from fd within five seconds: the bytes, none at the end
+// recv reads once from sock within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
-function recv(fd: i32, max: i32): u8[] {
-    match (net.read_watched(fd, max, time.duration_millis(5000), 1)) {
+function recv(sock: Socket, max: i32): u8[] {
+    match (net.read_watched(sock, max, time.duration_millis(5000), 1)) {
         Ok(net.Chunk(b)) => { return b; },
         _ => {}
     }
@@ -378,7 +375,7 @@ function loopback(port: i32): net.SocketAddr {
 }
 
 // The connect's result once it is no longer under way: 0, or its errno.
-function settle(c: i32): i32 {
+function settle(c: Socket): i32 {
     let tries: i32 = 0;
     while (tries < 5000) {
         match (net.connect_result(c)) {
@@ -396,24 +393,20 @@ function refused(code: i32): boolean {
 }
 
 function main(): i32 {
-    let ln: i32 = 0;
-    match (net.listen_with(0, net.listen_options())) {
-        Ok(fd) => { ln = fd; },
-        Err(e) => { return fail(1); },
-    }
+    let Ok(ln) = net.listen_with(0, net.listen_options()) else {
+        return fail(1);
+    };
     let port: i32 = 0;
     match (net.local_port(ln)) {
         Ok(p) => { port = p; },
         Err(e) => { return fail(2); },
     }
-    let c: i32 = 0;
-    match (net.connect_start(loopback(port))) {
-        Ok(fd) => { c = fd; },
-        Err(e) => { return fail(3); },
-    }
+    let Ok(c) = net.connect_start(loopback(port)) else {
+        return fail(3);
+    };
     if (settle(c) != 0) { return fail(4); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(5); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(5); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(6); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(7); }
@@ -421,9 +414,9 @@ function main(): i32 {
     tcp_close(c);
     tcp_close(ln);
     match (net.connect_start(loopback(port))) {
-        Ok(fd) => {
-            let r: i32 = settle(fd);
-            tcp_close(fd);
+        Ok(sock) => {
+            let r: i32 = settle(sock);
+            tcp_close(sock);
             if (!refused(r)) { return fail(8); }
         },
         Err(e) => { if (!e.eq(net.ConnectionRefused)) { return fail(9); } },

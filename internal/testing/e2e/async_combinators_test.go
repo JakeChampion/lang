@@ -80,7 +80,7 @@ func TestAsyncCombinatorsRealFd(t *testing.T) {
 
 	gatherSrc := fmt.Sprintf(`import "std/async";
 
-function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
+function read_once(conn: Socket, wake: async.Wake): async.Future[i32] {
     if let Woke(i) = wake {
         let resp: u8[] = __alloc_u8(4096);
         if (tcp_recv_into(conn, resp) > 0) { return Ready(1); }
@@ -88,16 +88,16 @@ function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
     return Ready(0);
 }
 
-function read_future(conn: i32): async.Future[i32] {
-    let set: i32[] = [conn, 1];
+function read_future(conn: Socket): async.Future[i32] {
+    let set: i32[] = [conn.fd, 1];
     return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => read_once(conn, wake));
 }
 
 function main(): i32 {
-    let c1: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    let c2: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    if (c1 < 0) { return 81; }
-    if (c2 < 0) { return 82; }
+    let c1: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    let c2: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    if (c1.fd < 0) { return 81; }
+    if (c2.fd < 0) { return 82; }
     if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
     if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
     let fs: async.Future[i32][] = [read_future(c1), read_future(c2)];
@@ -108,7 +108,7 @@ function main(): i32 {
 
 	raceSrc := fmt.Sprintf(`import "std/async";
 
-function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
+function read_once(conn: Socket, wake: async.Wake): async.Future[i32] {
     if let Woke(i) = wake {
         let resp: u8[] = __alloc_u8(4096);
         if (tcp_recv_into(conn, resp) > 0) { return Ready(1); }
@@ -116,16 +116,16 @@ function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
     return Ready(0);
 }
 
-function read_future(conn: i32): async.Future[i32] {
-    let set: i32[] = [conn, 1];
+function read_future(conn: Socket): async.Future[i32] {
+    let set: i32[] = [conn.fd, 1];
     return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => read_once(conn, wake));
 }
 
 function main(): i32 {
-    let c1: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    let c2: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-    if (c1 < 0) { return 81; }
-    if (c2 < 0) { return 82; }
+    let c1: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    let c2: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    if (c1.fd < 0) { return 81; }
+    if (c2.fd < 0) { return 82; }
     if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
     if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
     let fs: async.Future[i32][] = [read_future(c1), read_future(c2)];

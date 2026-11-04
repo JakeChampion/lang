@@ -95,11 +95,11 @@ function main(): i32 {
 		{"poll_kqueue_readiness", `
 function main(): i32 {
   let port: i32 = 18475;
-  let listener: i32 = tcp_listen(port);
-  if (listener < 0) { return 90; }
-  let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-  if (c < 0) { return 91; }
-  let fds: i32[] = [0 - 1, listener];
+  let listener: Socket = tcp_listen(port);
+  if (listener.fd < 0) { return 90; }
+  let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+  if (c.fd < 0) { return 91; }
+  let fds: i32[] = [0 - 1, listener.fd];
   if (poll(fds, 2000) != 1) { return 99; }
   return 42;
 }`, 42},

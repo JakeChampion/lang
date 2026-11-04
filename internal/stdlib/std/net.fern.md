@@ -176,10 +176,10 @@ pub enum NetError {
 <<4 function __zero_bytes(n: i32): u8[]>>=
 function __zero_bytes(n: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -218,7 +218,7 @@ pub function ipv4_loopback(): IpAddr {
 }
 
 pub function ipv6_loopback(): IpAddr {
-  let b: u8[] = __zero_bytes(15);
+  let b = __zero_bytes(15);
   return V6(b.append(1 as u8));
 }
 
@@ -258,12 +258,12 @@ pub function (a: IpAddr) is_v6(): boolean {
 ```fern
 <<6 function __all_zero(b: u8[], from: i32, to: i32): boolean>>=
 function __all_zero(b: u8[], from: i32, to: i32): boolean {
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     if (b[i] != 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -274,7 +274,7 @@ function __all_zero(b: u8[], from: i32, to: i32): boolean {
 ```fern
 <<7 pub function (a: IpAddr) is_unspecified(): boolean>>=
 pub function (a: IpAddr) is_unspecified(): boolean {
-  let b: u8[] = a.bytes();
+  let b = a.bytes();
   return __all_zero(b, 0, b.len());
 }
 
@@ -343,7 +343,7 @@ pub function (a: IpAddr) to_canonical(): IpAddr {
   if (!a.is_v4_mapped()) {
     return a;
   }
-  let b: u8[] = a.bytes();
+  let b = a.bytes();
   return ipv4(b[12] as i32, b[13] as i32, b[14] as i32, b[15] as i32);
 }
 
@@ -395,12 +395,12 @@ function __nat64_bits(bits: i32): boolean {
 
 function __nat64_bytes(b: u8[], bits: i32): u8[] {
   let out: u8[] = [];
-  let at: i32 = bits / 8;
+  let at = bits / 8;
   while (out.len() < 4) {
     if (at != 8) {
       out = out.append(b[at]);
     }
-    at = at + 1;
+    at += 1;
   }
   return out;
 }
@@ -411,21 +411,21 @@ function __local_nat64(b: u8[]): boolean {
 
 function __local_nat64_global(b: u8[]): boolean {
   let lengths: i32[] = [48, 56, 64, 96];
-  let i: i32 = 0;
+  let i = 0;
   while (i < lengths.len()) {
     if (__nat64_laid_out(b, lengths[i]) && __v4_special(__nat64_bytes(b, lengths[i]))) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function __nat64_laid_out(b: u8[], bits: i32): boolean {
-  let start: i32 = bits / 8;
-  let end: i32 = start + 4;
+  let start = bits / 8;
+  let end = start + 4;
   if (start <= 8) {
-    end = end + 1;
+    end += 1;
     if (b[8] != 0) {
       return false;
     }
@@ -481,7 +481,7 @@ function __carried_v4(b: u8[]): Option[u8[]] {
   if (__all_zero(b, 0, 10) && b[10] == 255 && b[11] == 255) {
     return Some([b[12], b[13], b[14], b[15]]);
   }
-  let head: i32 = b[0] as i32 << 24 | b[1] as i32 << 16 | b[2] as i32 << 8 | b[3] as i32;
+  let head = b[0] as i32 << 24 | b[1] as i32 << 16 | b[2] as i32 << 8 | b[3] as i32;
   if (head == 6619035 && __all_zero(b, 4, 12)) {
     return Some([b[12], b[13], b[14], b[15]]);
   }
@@ -499,7 +499,7 @@ function __carried_v4(b: u8[]): Option[u8[]] {
 pub function (a: IpAddr) packed_v4(): Option[i32] {
   match (a) {
     V4(b) => {
-      let p: i32 = b[0] as i32 | b[1] as i32 << 8 | b[2] as i32 << 16 | b[3] as i32 << 24;
+      let p = b[0] as i32 | b[1] as i32 << 8 | b[2] as i32 << 16 | b[3] as i32 << 24;
       return Some(p);
     },
     V6(b) => {
@@ -512,14 +512,14 @@ pub function (a: IpAddr) eq(other: IpAddr): boolean {
   if (a.is_v4() != other.is_v4()) {
     return false;
   }
-  let x: u8[] = a.bytes();
-  let y: u8[] = other.bytes();
-  let i: i32 = 0;
+  let x = a.bytes();
+  let y = other.bytes();
+  let i = 0;
   while (i < x.len()) {
     if (x[i] != y[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -544,29 +544,29 @@ function __v4_text(b: u8[]): string {
 
 function __v6_groups(b: u8[]): i32[] {
   let g: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8) {
     g = g.append(b[2 * i] as i32 << 8 | b[2 * i + 1] as i32);
-    i = i + 1;
+    i += 1;
   }
   return g;
 }
 
 function __v6_zero_run(g: i32[]): (i32, i32) {
-  let best_start: i32 = -1;
-  let best_len: i32 = 0;
-  let i: i32 = 0;
+  let best_start = -1;
+  let best_len = 0;
+  let i = 0;
   while (i < g.len()) {
-    let j: i32 = i;
+    let j = i;
     while (j < g.len() && g[j] == 0) {
-      j = j + 1;
+      j += 1;
     }
     if (j - i > best_len) {
       best_start = i;
       best_len = j - i;
     }
     if (j == i) {
-      i = i + 1;
+      i += 1;
     } else {
       i = j;
     }
@@ -578,20 +578,20 @@ function __v6_zero_run(g: i32[]): (i32, i32) {
 }
 
 function __v6_join(g: i32[], from: i32, to: i32): string {
-  let out: string = "";
-  let i: i32 = from;
+  let out = "";
+  let i = from;
   while (i < to) {
     if (i > from) {
-      out = out + ":";
+      out += ":";
     }
-    out = out + g[i].to_string_radix(16);
-    i = i + 1;
+    out += g[i].to_string_radix(16);
+    i += 1;
   }
   return out;
 }
 
 function __v6_text(b: u8[]): string {
-  let g: i32[] = __v6_groups(b);
+  let g = __v6_groups(b);
   if (__all_zero(b, 0, 10) && b[10] == 255 && b[11] == 255) {
     let tail: u8[] = [];
     tail = tail.append(b[12]);
@@ -665,15 +665,15 @@ pub function prefix_parse(s: string): Result[Prefix, AddrParseError] {
 }
 
 function __prefix(s: string): Option[Prefix] {
-  let slash: Option[i32] = s.index_of("/");
-  let text: string = s;
+  let slash = s.index_of("/");
+  let text = s;
   if let Some(at) = slash {
     text = s.slice_snap(0, at);
   }
   match (__ip(text)) {
     Some(ip) => {
-      let width: i32 = ip.bytes().len() * 8;
-      let bits: i32 = width;
+      let width = ip.bytes().len() * 8;
+      let bits = width;
       if let Some(at) = slash {
         bits = __prefix_bits(s.slice_snap(at + 1, s.len()), width);
       }
@@ -700,7 +700,7 @@ function __prefix_bits(s: string, width: i32): i32 {
   if (s.len() == 0 || s.len() > 3) {
     return 0 - 1;
   }
-  let n: i32 = 0;
+  let n = 0;
   for b in s.bytes() {
     if (b < 48 as u8 || b > 57 as u8) {
       return 0 - 1;
@@ -714,13 +714,13 @@ function __prefix_bits(s: string, width: i32): i32 {
 }
 
 function __host_bits_clear(b: u8[], bits: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.len()) {
-    let keep: i32 = bits - i * 8;
+    let keep = bits - i * 8;
     if (keep < 8 && (b[i] as i32 & __low_mask(keep)) != 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -738,19 +738,19 @@ function __low_mask(keep: i32): i32 {
 ```fern
 <<16 pub function (p: Prefix) contains(ip: IpAddr): boolean>>=
 pub function (p: Prefix) contains(ip: IpAddr): boolean {
-  let a: u8[] = p.ip.bytes();
-  let b: u8[] = __in_family(ip, a.len() == 4);
+  let a = p.ip.bytes();
+  let b = __in_family(ip, a.len() == 4);
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i * 8 < p.bits && i < a.len()) {
-    let keep: i32 = p.bits - i * 8;
-    let mask: i32 = 255 ^ __low_mask(keep);
+    let keep = p.bits - i * 8;
+    let mask = 255 ^ __low_mask(keep);
     if ((a[i] as i32 & mask) != (b[i] as i32 & mask)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -790,39 +790,39 @@ pub function (p: Prefix) to_string(): string {
 <<19 function __pieces(s: string, sep: i32): string[]>>=
 function __pieces(s: string, sep: i32): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] as i32 == sep) {
       out = out.append(slice_unchecked(s, start, i) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out.append(slice_unchecked(s, start, s.len()) + "");
 }
 
 function __has_byte(s: string, b: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] as i32 == b) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function __octet(s: string, from: i32, sep: i32): i32 {
-  let i: i32 = from;
-  let v: i32 = 0;
+  let i = from;
+  let v = 0;
   while (i < s.len() && s[i] as i32 != sep) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c < 48 || c > 57 || i - from == 3 || i > from && s[from] == 48) {
       return -1;
     }
     v = v * 10 + (c - 48);
-    i = i + 1;
+    i += 1;
   }
   if (i == from || v > 255) {
     return -1;
@@ -847,19 +847,19 @@ pub function ipv4_parse(s: string): Result[IpAddr, AddrParseError] {
 }
 
 function __ipv4_bits(s: string): i64 {
-  let a: i32 = __octet(s, 0, 46);
+  let a = __octet(s, 0, 46);
   if (a < 0 || a >> 8 >= s.len()) {
     return -1i64;
   }
-  let b: i32 = __octet(s, (a >> 8) + 1, 46);
+  let b = __octet(s, (a >> 8) + 1, 46);
   if (b < 0 || b >> 8 >= s.len()) {
     return -1i64;
   }
-  let c: i32 = __octet(s, (b >> 8) + 1, 46);
+  let c = __octet(s, (b >> 8) + 1, 46);
   if (c < 0 || c >> 8 >= s.len()) {
     return -1i64;
   }
-  let d: i32 = __octet(s, (c >> 8) + 1, 46);
+  let d = __octet(s, (c >> 8) + 1, 46);
   if (d < 0 || d >> 8 != s.len()) {
     return -1i64;
   }
@@ -867,7 +867,7 @@ function __ipv4_bits(s: string): i64 {
 }
 
 function __ipv4(s: string): Option[IpAddr] {
-  let bits: i64 = __ipv4_bits(s);
+  let bits = __ipv4_bits(s);
   if (bits < 0i64) {
     return None;
   }
@@ -876,20 +876,20 @@ function __ipv4(s: string): Option[IpAddr] {
 
 // Test a literal without constructing an IpAddr and its byte array.
 pub function is_global_ipv4(s: string): boolean {
-  let bits: i64 = __ipv4_bits(s);
+  let bits = __ipv4_bits(s);
   return bits >= 0i64 && !__v4_special_octets((bits >> 24) as i32, (bits >> 16 & 255i64) as i32, (bits >> 8 & 255i64) as i32);
 }
 
 pub function is_ipv4(s: string): boolean {
-  let at: i32 = 0;
-  let n: i32 = 0;
+  let at = 0;
+  let n = 0;
   while (n < 4) {
-    let o: i32 = __octet(s, at, 46);
+    let o = __octet(s, at, 46);
     if (o < 0) {
       return false;
     }
     at = (o >> 8) + 1;
-    n = n + 1;
+    n += 1;
   }
   return at == s.len() + 1;
 }
@@ -913,19 +913,19 @@ function __hex_digit(c: i32): i32 {
 }
 
 function __v6_group(s: string): i32 {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0 || n > 4) {
     return -1;
   }
-  let v: i32 = 0;
-  let i: i32 = 0;
+  let v = 0;
+  let i = 0;
   while (i < n) {
-    let d: i32 = __hex_digit(s[i] as i32);
+    let d = __hex_digit(s[i] as i32);
     if (d < 0) {
       return -1;
     }
     v = v << 4 | d;
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
@@ -935,14 +935,14 @@ function __v6_side(s: string, v4_tail: boolean): Option[i32[]] {
   if (s.len() == 0) {
     return Some(groups);
   }
-  let parts: string[] = __pieces(s, 58);
-  let i: i32 = 0;
+  let parts = __pieces(s, 58);
+  let i = 0;
   while (i < parts.len()) {
-    let last: boolean = i == parts.len() - 1;
+    let last = i == parts.len() - 1;
     if (last && v4_tail && __has_byte(parts[i], 46)) {
       match (__ipv4(parts[i])) {
         Some(v4) => {
-          let b: u8[] = v4.bytes();
+          let b = v4.bytes();
           groups = groups.append(b[0] as i32 << 8 | b[1] as i32);
           groups = groups.append(b[2] as i32 << 8 | b[3] as i32);
         },
@@ -951,55 +951,55 @@ function __v6_side(s: string, v4_tail: boolean): Option[i32[]] {
         }
       }
     } else {
-      let g: i32 = __v6_group(parts[i]);
+      let g = __v6_group(parts[i]);
       if (g < 0) {
         return None;
       }
       groups = groups.append(g);
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(groups);
 }
 
 function __find_double_colon(s: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < s.len()) {
     if (s[i] == 58 && s[i + 1] == 58) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function __v6_from_groups(left: i32[], right: i32[]): IpAddr {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < left.len()) {
     out = out.append((left[i] >> 8) as u8);
     out = out.append((left[i] & 255) as u8);
-    i = i + 1;
+    i += 1;
   }
-  let zeros: i32 = 8 - left.len() - right.len();
-  let z: i32 = 0;
+  let zeros = 8 - left.len() - right.len();
+  let z = 0;
   while (z < zeros) {
     out = out.append(0 as u8);
     out = out.append(0 as u8);
-    z = z + 1;
+    z += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < right.len()) {
     out = out.append((right[j] >> 8) as u8);
     out = out.append((right[j] & 255) as u8);
-    j = j + 1;
+    j += 1;
   }
   return V6(out);
 }
 
 function __v6_compressed(s: string, at: i32): Option[IpAddr] {
-  let left_text: string = slice_unchecked(s, 0, at) + "";
-  let right_text: string = slice_unchecked(s, at + 2, s.len()) + "";
+  let left_text = slice_unchecked(s, 0, at) + "";
+  let right_text = slice_unchecked(s, at + 2, s.len()) + "";
   if (__find_double_colon(right_text) >= 0) {
     return None;
   }
@@ -1047,7 +1047,7 @@ function __ipv6(s: string): Option[IpAddr] {
   if (s.len() == 0) {
     return None;
   }
-  let at: i32 = __find_double_colon(s);
+  let at = __find_double_colon(s);
   if (at >= 0) {
     return __v6_compressed(s, at);
   }
@@ -1094,7 +1094,7 @@ pub enum AddrKind {
 }
 
 pub function (e: AddrParseError) message(): string {
-  let what: string = "an IP address";
+  let what = "an IP address";
   match (e.kind) {
     Ipv4Addr => {
       what = "an IPv4 address";
@@ -1127,19 +1127,19 @@ impl cmp.Display for AddrParseError {}
 ```fern
 <<23 function __port(s: string): i32>>=
 function __port(s: string): i32 {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0 || n > 5) {
     return -1;
   }
-  let v: i32 = 0;
-  let i: i32 = 0;
+  let v = 0;
+  let i = 0;
   while (i < n) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c < 48 || c > 57) {
       return -1;
     }
     v = v * 10 + (c - 48);
-    i = i + 1;
+    i += 1;
   }
   if (v > 65535) {
     return -1;
@@ -1148,19 +1148,19 @@ function __port(s: string): i32 {
 }
 
 function __socket_addr_bracketed(s: string): Option[SocketAddr] {
-  let close: i32 = -1;
-  let i: i32 = 1;
+  let close = -1;
+  let i = 1;
   while (i < s.len()) {
     if (s[i] == 93) {
       close = i;
       i = s.len();
     }
-    i = i + 1;
+    i += 1;
   }
   if (close < 0 || close + 1 >= s.len() || s[close + 1] != 58) {
     return None;
   }
-  let port: i32 = __port(slice_unchecked(s, close + 2, s.len()) + "");
+  let port = __port(slice_unchecked(s, close + 2, s.len()) + "");
   if (port < 0) {
     return None;
   }
@@ -1194,18 +1194,18 @@ function __socket_addr(s: string): Option[SocketAddr] {
   if (s.len() > 0 && s[0] == 91) {
     return __socket_addr_bracketed(s);
   }
-  let colon: i32 = -1;
-  let i: i32 = 0;
+  let colon = -1;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] == 58) {
       colon = i;
     }
-    i = i + 1;
+    i += 1;
   }
   if (colon < 0) {
     return None;
   }
-  let port: i32 = __port(slice_unchecked(s, colon + 1, s.len()) + "");
+  let port = __port(slice_unchecked(s, colon + 1, s.len()) + "");
   if (port < 0) {
     return None;
   }
@@ -1275,14 +1275,14 @@ function __net_error_at_high(i: i32, n: i32): NetError {
 ```fern
 <<26 pub function error_from_host(n: i32): NetError>>=
 pub function error_from_host(n: i32): NetError {
-  let e: i32 = errno.from_host(n);
-  let table: i32[] = __net_errnos();
-  let i: i32 = 0;
+  let e = errno.from_host(n);
+  let table = __net_errnos();
+  let i = 0;
   while (i < table.len()) {
     if (table[i] == e) {
       return __net_error_at(i, e);
     }
-    i = i + 1;
+    i += 1;
   }
   return Other(e);
 }
@@ -1416,7 +1416,7 @@ pub function (e: NetError) to_string(): string {
 }
 
 pub function (e: NetError) eq(other: NetError): boolean {
-  let i: i32 = __net_error_index(e);
+  let i = __net_error_index(e);
   if (i != __net_error_index(other)) {
     return false;
   }
@@ -1477,8 +1477,8 @@ pub function read(sock: Socket, buf: u8[]): Result[i32, NetError] {
 
 pub function read_up_to(sock: Socket, max: i32): Result[u8[], NetError] {
   unsafe {
-    let buf: u8[] = __alloc_u8(max);
-    let n: i32 = read(sock, buf)?;
+    let buf = __alloc_u8(max);
+    let n = read(sock, buf)?;
     __arr_set_len(buf, n);
     return Ok(buf);
   }
@@ -1490,13 +1490,13 @@ pub function write(sock: Socket, data: u8[]): Result[i32, NetError] {
 
 // write_rest sends what a non-blocking socket takes now and returns the bytes it did not take, empty once all are sent.
 pub function write_rest(sock: Socket, data: u8[]): Result[u8[], NetError] {
-  let n: i32 = tcp_send_bytes(sock, data);
+  let n = tcp_send_bytes(sock, data);
   if (n >= data.len()) {
     let none: u8[] = [];
     return Ok(none);
   }
   if (n < 0) {
-    let e: NetError = error_from_host(n);
+    let e = error_from_host(n);
     if (!e.eq(WouldBlock)) {
       return Err(e);
     }
@@ -1505,9 +1505,9 @@ pub function write_rest(sock: Socket, data: u8[]): Result[u8[], NetError] {
   if (n == 0) {
     return Ok(data);
   }
-  let b: usize = buf_new(data.len() - n);
+  let b = buf_new(data.len() - n);
   buf_push_bytes_range(b, data, n, data.len());
-  let rest: u8[] = buf_take_bytes(b);
+  let rest = buf_take_bytes(b);
   buf_free(b);
   return Ok(rest);
 }
@@ -1529,10 +1529,10 @@ pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[R
 }
 
 pub function read_watched(sock: Socket, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
-  let until: i64 = monotonic_ns() + wait.as_nanos();
+  let until = monotonic_ns() + wait.as_nanos();
   let set: i32[] = [sock.fd, interest];
   while (true) {
-    let at: i64 = until;
+    let at = until;
     if (at - monotonic_ns() < 1000000i64) {
       at = monotonic_ns() + 1000000i64;
     }
@@ -1597,7 +1597,7 @@ pub function send_queue(sock: Socket): Result[i32, NetError] {
 }
 
 pub function peer_key(sock: Socket): Option[i32] {
-  let k: i32 = tcp_socket_ctl(sock, 7, 0);
+  let k = tcp_socket_ctl(sock, 7, 0);
   if (k == 0) {
     return None;
   }
@@ -1605,7 +1605,7 @@ pub function peer_key(sock: Socket): Option[i32] {
 }
 
 pub function shutdown(sock: Socket, how: Shutdown): Result[void, NetError] {
-  let arg: i32 = 2;
+  let arg = 2;
   match (how) {
     Read => {
       arg = 0;
@@ -1626,7 +1626,7 @@ pub function shutdown(sock: Socket, how: Shutdown): Result[void, NetError] {
 ```fern
 <<37 function __socket_ctl(sock: Socket, op: i32, on: boolean): Result[void, NetError]>>=
 function __socket_ctl(sock: Socket, op: i32, on: boolean): Result[void, NetError] {
-  let arg: i32 = 0;
+  let arg = 0;
   if (on) {
     arg = 1;
   }
@@ -1676,17 +1676,17 @@ pub function send(sock: Socket, data: u8[]): Result[i32, NetError] {
 <<39 pub function sender(from: [u8]): SocketAddr>>=
 // sender reads the 19-byte address that recv_into or tcp_addr_into wrote.
 pub function sender(from: [u8]): SocketAddr {
-  let n: i32 = 4;
+  let n = 4;
   if (from[0] == 6u8) {
     n = 16;
   }
   let b: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     b = b.append(from[1 + i]);
-    i = i + 1;
+    i += 1;
   }
-  let ip: IpAddr = V4(b);
+  let ip = V4(b);
   if (n == 16) {
     ip = V6(b);
   }
@@ -1699,8 +1699,8 @@ pub function sender(from: [u8]): SocketAddr {
 ```fern
 <<40 pub function recv_from(sock: Socket, buf: u8[]): Result[(i32, SocketAddr), NetError]>>=
 pub function recv_from(sock: Socket, buf: u8[]): Result[(i32, SocketAddr), NetError] {
-  let from: u8[] = __alloc_u8(SENDER_BYTES);
-  let n: i32 = udp_recvfrom(sock, buf, from);
+  let from = __alloc_u8(SENDER_BYTES);
+  let n = udp_recvfrom(sock, buf, from);
   if (n < 0) {
     return Err(error_from_host(n));
   }
@@ -1790,8 +1790,8 @@ pub function peer_addr(sock: Socket): Result[SocketAddr, NetError] {
 ```fern
 <<43 function __name_of(sock: Socket, peer: boolean): Result[SocketAddr, NetError]>>=
 function __name_of(sock: Socket, peer: boolean): Result[SocketAddr, NetError] {
-  let rec: u8[] = __alloc_u8(SENDER_BYTES);
-  let r: i32 = tcp_addr_into(sock, peer, rec);
+  let rec = __alloc_u8(SENDER_BYTES);
+  let r = tcp_addr_into(sock, peer, rec);
   if (r < 0) {
     return Err(error_from_host(r));
   }

@@ -20,7 +20,7 @@ function block(): u8[] {
   return bytes;
 }
 
-struct Sender { sock: i32, sent: i32, stalled: boolean, failed: i32 }
+struct Sender { sock: Socket, sent: i32, stalled: boolean, failed: i32 }
 
 function sent(s: Sender, n: i32): Sender {
   if (n >= 0) {
@@ -32,7 +32,7 @@ function sent(s: Sender, n: i32): Sender {
   return Sender { ...s, failed: n };
 }
 
-struct Receiver { sock: i32, got: i32, crc: crc32.Crc32 }
+struct Receiver { sock: Socket, got: i32, crc: crc32.Crc32 }
 
 // Reads until the socket has nothing queued.
 function drain(r: Receiver, buf: u8[]): Receiver {
@@ -51,9 +51,9 @@ function drain(r: Receiver, buf: u8[]): Receiver {
 
 function main(): i32 {
   let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
-  let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
-  let s: i32 = tcp_accept(ls);
+  let ls: Socket = tcp_listen_with(lo, 0, 16, false);
+  let c: Socket = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: Socket = tcp_accept(ls);
   print(f"non-blocking: {tcp_socket_ctl(c, 3, 1)} {tcp_socket_ctl(s, 3, 1)}");
 
   let total: i32 = 8388608;
@@ -79,7 +79,7 @@ function main(): i32 {
   print(f"stalled before the end: {tx.sent < total} failed {tx.failed}");
 
   let r: i32 = reactor_new();
-  print(f"watch: {reactor_ctl(r, 1, c, 2)} {reactor_ctl(r, 1, s, 1)}");
+  print(f"watch: {reactor_ctl(r, 1, c.fd, 2)} {reactor_ctl(r, 1, s.fd, 1)}");
   let events: i32[] = [0, 0, 0, 0];
   let buf: u8[] = __alloc_u8(65536);
   let rx: Receiver = Receiver { sock: s, got: 0, crc: crc32.new() };
@@ -88,7 +88,7 @@ function main(): i32 {
     if (tx.sent < total) {
       tx = sent(tx, tcp_send_buf(c, payload, tx.sent));
     } else if (watching) {
-      reactor_ctl(r, 2, c, 0);
+      reactor_ctl(r, 2, c.fd, 0);
       watching = false;
     }
     let before: i32 = rx.got;

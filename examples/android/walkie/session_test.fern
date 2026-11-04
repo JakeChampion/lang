@@ -298,16 +298,19 @@ function test_version_mismatch_fails(): test.TestOutcome {
   return test.assert_eq(state_of(a), "ERROR");
 }
 
+// A codec that no build of the app sends.
+const OTHER_CODEC: i32 = 7;
+
 function test_codec_mismatch_fails(): test.TestOutcome {
   let s: Sim = run(sim(20), 100);
-  let (a, acts) = session.step(session.with_codec(s.a, protocol.CODEC_PCM16), session.Received(protocol.Hello(protocol.VERSION, 77 as i64, protocol.CODEC_OPUS, 0)), s.now);
+  let (a, acts) = session.step(session.with_codec(s.a, OTHER_CODEC), session.Received(protocol.Hello(protocol.VERSION, 77 as i64, protocol.CODEC_OPUS, 0)), s.now);
   let (b, _) = session.step(s.b, session.Received(protocol.Hello(protocol.VERSION, 77 as i64, protocol.CODEC_OPUS, 0)), s.now);
   return test.assert_eq(state_of(a) + " " + state_of(b), "ERROR CONNECTED_LISTENING");
 }
 
 // A restart keeps the codec, so the Hello names it.
 function test_start_keeps_the_codec(): test.TestOutcome {
-  let s0: session.Session = session.with_codec(session.new(), protocol.CODEC_PCM16);
+  let s0: session.Session = session.with_codec(session.new(), OTHER_CODEC);
   let (s1, _) = session.step(s0, session.Start(session.Offline), 0 as i64);
   let (s2, _) = session.step(s1, session.TransportUp(true, 1, 2, 9 as i64), 0 as i64);
   let (s3, acts) = session.step(s2, session.Authenticated, 0 as i64);
@@ -320,7 +323,7 @@ function test_start_keeps_the_codec(): test.TestOutcome {
       _ => {}
     }
   }
-  return test.assert_eq(codec, protocol.CODEC_PCM16);
+  return test.assert_eq(codec, OTHER_CODEC);
 }
 
 function test_leave_says_bye(): test.TestOutcome {

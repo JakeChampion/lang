@@ -54,7 +54,7 @@ function port_from_env(): i32 {
 }
 
 function main(): i32 {
-    let c: i32 = match (net.connect(net.socket_addr(net.ipv4_loopback(), port_from_env()))) {
+    let c: Socket = match (net.connect(net.socket_addr(net.ipv4_loopback(), port_from_env()))) {
         Ok(c) => c,
         Err(_) => { return 1; },
     };

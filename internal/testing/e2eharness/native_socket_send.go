@@ -21,11 +21,15 @@ func NativeSocketSendProbe(payload string, shut bool) string {
     signal_default(sig);
     if (signal_disposition(sig) != 0) { return 92; }
     let data: u8[] = bytes_of(%q);
-    if (tcp_send_bytes(-1, data) != -%d) { return 90; }
-    let i: i32 = 0;
-    while (i < %d) {
-        if (tcp_send_bytes(3, data) != %d) { return 91; }
-        i = i + 1;
+    // Descriptor 3 is the connected socket that the test passes in.
+    unsafe {
+        if (tcp_send_bytes(__socket_from_fd(-1), data) != -%d) { return 90; }
+        let peer: Socket = __socket_from_fd(3);
+        let i: i32 = 0;
+        while (i < %d) {
+            if (tcp_send_bytes(peer, data) != %d) { return 91; }
+            i = i + 1;
+        }
     }
     if (signal_disposition(sig) != 0) { return 93; }
     return 0;

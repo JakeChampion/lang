@@ -92,20 +92,20 @@ pub function cos_norm(x: f32): f32 {
 // One pass of plane rotations by the angle of `c` and `s`, between each value
 // and the value `stride` after it: first forward, and then back.
 function rotation1(own x: f32[], at: i32, len: i32, stride: i32, c: f32, s: f32): f32[] {
-  let ms: f32 = -s;
+  let ms = -s;
   for i in 0..len - stride {
-    let x1: f32 = x[at + i];
-    let x2: f32 = x[at + i + stride];
+    let x1 = x[at + i];
+    let x2 = x[at + i + stride];
     x = x.with(at + i + stride, c * x2 + s * x1);
     x = x.with(at + i, c * x1 + ms * x2);
   }
-  let i: i32 = len - 2 * stride - 1;
+  let i = len - 2 * stride - 1;
   while (i >= 0) {
-    let x1: f32 = x[at + i];
-    let x2: f32 = x[at + i + stride];
+    let x1 = x[at + i];
+    let x2 = x[at + i + stride];
     x = x.with(at + i + stride, c * x2 + s * x1);
     x = x.with(at + i, c * x1 + ms * x2);
-    i = i - 1;
+    i -= 1;
   }
   return x;
 }
@@ -116,21 +116,21 @@ pub function exp_rotation(own x: f32[], len: i32, dir: i32, stride: i32, k: i32,
   if (2 * k >= len || spread == SPREAD_NONE) {
     return x;
   }
-  let factor: i32 = SPREAD_FACTOR[spread - 1];
+  let factor = SPREAD_FACTOR[spread - 1];
   let gain: f32 = 1.0f32 * (len as f32) / ((len + factor * k) as f32);
   let theta: f32 = 0.5f32 * (gain * gain);
-  let c: f32 = cos_norm(theta);
-  let s: f32 = cos_norm(1.0f32 - theta);
-  let stride2: i32 = 0;
+  let c = cos_norm(theta);
+  let s = cos_norm(1.0f32 - theta);
+  let stride2 = 0;
   if (len >= 8 * stride) {
     stride2 = 1;
     while ((stride2 * stride2 + stride2) * stride + (stride >> 2) < len) {
-      stride2 = stride2 + 1;
+      stride2 += 1;
     }
   }
-  let block: i32 = len / stride;
+  let block = len / stride;
   for i in 0..stride {
-    let at: i32 = i * block;
+    let at = i * block;
     if (dir < 0) {
       if (stride2 > 0) {
         x = rotation1(x, at, block, stride2, s, c);
@@ -178,11 +178,11 @@ function project(own x: f32[], k: i32, n: i32): Start {
   }
   let xy: f32 = 0.0f32;
   let yy: f32 = 0.0f32;
-  let left: i32 = k;
+  let left = k;
   if (k > n >> 1) {
     let sum: f32 = 0.0f32;
     for j in 0..n {
-      sum = sum + x[j];
+      sum += x[j];
     }
     if (!(sum > EPSILON && sum < 64.0f32)) {
       x = x.with(0, 1.0f32);
@@ -193,13 +193,13 @@ function project(own x: f32[], k: i32, n: i32): Start {
     }
     let rcp: f32 = (k as f32 + 0.8f32) * (1.0f32 / sum);
     for j in 0..n {
-      let p: i32 = (rcp * x[j]).floor() as i32;
-      let v: f32 = p as f32;
+      let p = (rcp * x[j]).floor() as i32;
+      let v = p as f32;
       iy = iy.with(j, p);
       yy = yy + v * v;
       xy = xy + x[j] * v;
       y = y.with(j, v * 2.0f32);
-      left = left - p;
+      left -= p;
     }
   }
   return Start { x: x, iy: iy, y: y, xy: xy, yy: yy, left: left };
@@ -208,14 +208,14 @@ function project(own x: f32[], k: i32, n: i32): Start {
 // The index of the value where one more pulse brings the codeword nearest to
 // the shape.
 function best_pulse(x: [f32], y: [f32], xy: f32, yy: f32, n: i32): i32 {
-  let best: i32 = 0;
-  let rxy0: f32 = xy + x[0];
-  let best_num: f32 = rxy0 * rxy0;
-  let best_den: f32 = yy + y[0];
+  let best = 0;
+  let rxy0 = xy + x[0];
+  let best_num = rxy0 * rxy0;
+  let best_den = yy + y[0];
   for j in 1..n {
-    let rxy: f32 = xy + x[j];
-    let ryy: f32 = yy + y[j];
-    let num: f32 = rxy * rxy;
+    let rxy = xy + x[j];
+    let ryy = yy + y[j];
+    let num = rxy * rxy;
     if (best_den * num > ryy * best_num) {
       best_den = ryy;
       best_num = num;
@@ -233,20 +233,20 @@ pub function pvq_search(own x: f32[], k: i32, n: i32): Search {
     neg = neg.append(x[j] < 0.0f32);
     x = x.with(j, x[j].abs());
   }
-  let st: Start = project(x, k, n);
+  let st = project(x, k, n);
   let Start { x: xs, iy, y, xy, yy, left } = st;
   if (left > n + 3) {
-    let tmp: f32 = left as f32;
+    let tmp = left as f32;
     yy = yy + tmp * tmp;
     yy = yy + tmp * y[0];
     iy = iy.with(0, iy[0] + left);
     left = 0;
   }
   for i in 0..left {
-    yy = yy + 1.0f32;
-    let best: i32 = best_pulse(xs, y, xy, yy, n);
-    xy = xy + xs[best];
-    yy = yy + y[best];
+    yy += 1.0f32;
+    let best = best_pulse(xs, y, xy, yy, n);
+    xy += xs[best];
+    yy += y[best];
     y = y.with(best, y[best] + 2.0f32);
     iy = iy.with(best, iy[best] + 1);
   }
@@ -265,7 +265,7 @@ pub function pvq_search(own x: f32[], k: i32, n: i32): Search {
 <<coding>>=
 // The shape of the codeword `iy`, scaled to the length `gain`.
 function normalise_residual(iy: [i32], n: i32, ryy: f32, gain: f32): f32[] {
-  let g: f32 = 1.0f32 / ((ryy as f64).sqrt() as f32) * gain;
+  let g = 1.0f32 / ((ryy as f64).sqrt() as f32) * gain;
   let x: f32[] = [];
   for i in 0..n {
     x = x.append(g * (iy[i] as f32));
@@ -278,10 +278,10 @@ pub function collapse_mask(iy: [i32], n: i32, b: i32): i32 {
   if (b <= 1) {
     return 1;
   }
-  let n0: i32 = n / b;
-  let mask: i32 = 0;
+  let n0 = n / b;
+  let mask = 0;
   for i in 0..b {
-    let any: i32 = 0;
+    let any = 0;
     for j in 0..n0 {
       any = any | iy[i * n0 + j];
     }
@@ -298,9 +298,9 @@ pub struct Quant { e: range.Encoder, x: f32[], mask: i32 }
 // shape that the decoder gets.
 pub function alg_quant(own e: range.Encoder, own x: f32[], n: i32, k: i32, spread: i32, b: i32, gain: f32, resynth: boolean): Quant {
   x = exp_rotation(x, n, 1, b, k, spread);
-  let s: Search = pvq_search(x, k, n);
+  let s = pvq_search(x, k, n);
   e = pvq.encode_pulses(e, s.iy, k);
-  let out: f32[] = s.x;
+  let out = s.x;
   if (resynth) {
     out = exp_rotation(normalise_residual(s.iy, n, s.yy, gain), n, 0 - 1, b, k, spread);
   }
@@ -318,8 +318,8 @@ pub function alg_unquant(own d: range.Decoder, n: i32, k: i32, spread: i32, b: i
 
 // Scales `x` to the length `gain`.
 pub function renormalise_vector(own x: f32[], n: i32, gain: f32): f32[] {
-  let e: f32 = EPSILON + inner_prod(x, x, n);
-  let g: f32 = 1.0f32 / ((e as f64).sqrt() as f32) * gain;
+  let e = EPSILON + inner_prod(x, x, n);
+  let g = 1.0f32 / ((e as f64).sqrt() as f32) * gain;
   for i in 0..n {
     x = x.with(i, g * x[i]);
   }
@@ -328,13 +328,13 @@ pub function renormalise_vector(own x: f32[], n: i32, gain: f32): f32[] {
 
 // atan2(y, x) with an error of at most about 1e-4, as libopus calculates it.
 pub function fast_atan2f(y: f32, x: f32): f32 {
-  let x2: f32 = x * x;
-  let y2: f32 = y * y;
+  let x2 = x * x;
+  let y2 = y * y;
   if (x2 + y2 < 1.0e-18f32) {
     return 0.0f32;
   }
-  let ce: f32 = PI / 2.0f32;
-  let half: f32 = ce;
+  let ce = PI / 2.0f32;
+  let half = ce;
   if (y < 0.0f32) {
     half = -ce;
   }
@@ -343,7 +343,7 @@ pub function fast_atan2f(y: f32, x: f32): f32 {
     return -x * y * (y2 + 0.43157974f32 * x2) / den + half;
   }
   let den: f32 = (x2 + 0.67848403f32 * y2) * (x2 + 0.08595542f32 * y2);
-  let quad: f32 = ce;
+  let quad = ce;
   if (x * y < 0.0f32) {
     quad = -ce;
   }
@@ -353,21 +353,21 @@ pub function fast_atan2f(y: f32, x: f32): f32 {
 // The angle between the two channels of a band, from 0 to 16384. With
 // `stereo`, the angle is that of the mid and side of `x` and `y`.
 pub function stereo_itheta(x: [f32], y: [f32], stereo: boolean, n: i32): i32 {
-  let emid: f32 = EPSILON;
-  let eside: f32 = EPSILON;
+  let emid = EPSILON;
+  let eside = EPSILON;
   if (stereo) {
     for i in 0..n {
-      let m: f32 = x[i] + y[i];
-      let s: f32 = x[i] - y[i];
+      let m = x[i] + y[i];
+      let s = x[i] - y[i];
       emid = emid + m * m;
       eside = eside + s * s;
     }
   } else {
-    emid = emid + inner_prod(x, x, n);
-    eside = eside + inner_prod(y, y, n);
+    emid += inner_prod(x, x, n);
+    eside += inner_prod(y, y, n);
   }
-  let mid: f32 = (emid as f64).sqrt() as f32;
-  let side: f32 = (eside as f64).sqrt() as f32;
+  let mid = (emid as f64).sqrt() as f32;
+  let side = (eside as f64).sqrt() as f32;
   return (0.5f32 + 16384.0f32 * 0.63662f32 * fast_atan2f(side, mid)).floor() as i32;
 }
 ```

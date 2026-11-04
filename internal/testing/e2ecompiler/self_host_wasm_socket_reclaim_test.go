@@ -42,8 +42,8 @@ func TestSelfHostWasmSocketSetupReclaimsOnError(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	for _, tc := range []struct{ name, prelude, expr string }{
-		{"listen", "", "tcp_listen(0)"},
-		{"connect", "", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
+		{"listen", "", "tcp_listen(0).fd"},
+		{"connect", "", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false).fd"},
 		{"udp", e2eharness.UDPSendOnce, "send_once([127u8, 0u8, 0u8, 1u8], 1, \"x\")"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -70,11 +70,11 @@ func TestSelfHostWasmSocketCloseZeroHandles(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with([0u8, 0u8, 0u8, 0u8], 1, false)"},
-		{"accept", "tcp_accept(0)"},
+		{"accept", "tcp_accept(stdin_socket())"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := runX86_64Bin(runner, bin)
-			cmd.Stdin = strings.NewReader("function main(): i32 { let h: i32 = " + tc.expr + "; if (h < 0) { return h; } return tcp_close(h); }")
+			cmd.Stdin = strings.NewReader(e2eharness.WasiSocketCloseProbe(tc.expr))
 			wat, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("self-host socket probe: %v", err)
@@ -95,7 +95,7 @@ func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 	t.Run("close-only-heap-dependency", func(t *testing.T) {
 		cmd := runX86_64Bin(runner, bin)
-		cmd.Stdin = strings.NewReader("function main(): i32 { return tcp_close(0); }")
+		cmd.Stdin = strings.NewReader(e2eharness.StdinSocket + "function main(): i32 { return tcp_close(stdin_socket()); }")
 		wat, err := cmd.Output()
 		if err != nil {
 			t.Fatal(err)
@@ -111,8 +111,8 @@ func TestSelfHostWasmSocketGuestStorage(t *testing.T) {
 	for _, tc := range []struct{ name, expr string }{
 		{"listen", "tcp_listen(0)"},
 		{"connect", "tcp_connect_with(any, 1, false)"},
-		{"accept", "tcp_accept(0)"},
-		{"port", "tcp_local_port(0)"},
+		{"accept", "tcp_accept(stdin_socket())"},
+		{"port", "tcp_local_port(stdin_socket())"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := runX86_64Bin(runner, bin)

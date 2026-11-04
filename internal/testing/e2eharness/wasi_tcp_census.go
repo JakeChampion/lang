@@ -17,14 +17,14 @@ import (
 const WasiTCPCensusProbe = `function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        let listener: i32 = tcp_listen(0);
-        if (listener < 0) { return 1; }
+        let listener: Socket = tcp_listen(0);
+        if (listener.fd < 0) { return 1; }
         let port: i32 = tcp_local_port(listener);
         if (port <= 0) { return 2; }
-        let client: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-        if (client < 0) { return 3; }
-        let server: i32 = tcp_accept(listener);
-        if (server < 0) { return 4; }
+        let client: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+        if (client.fd < 0) { return 3; }
+        let server: Socket = tcp_accept(listener);
+        if (server.fd < 0) { return 4; }
         if (tcp_close(server) != 0) { return 5; }
         if (tcp_close(client) != 0) { return 6; }
         if (tcp_close(listener) != 0) { return 7; }
@@ -90,8 +90,8 @@ func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
 	src := fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
-        if (s < 0) { return 2; }
+        let s: Socket = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+        if (s.fd < 0) { return 2; }
         if (udp_sendto(s, [127u8, 0u8, 0u8, 1u8], %d, %q) != %d) { return 1; }
         if (tcp_close(s) != 0) { return 3; }
         i = i + 1;
@@ -159,8 +159,8 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 	src := BytesOf + fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-        if (c < 0) { return 1; }
+        let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+        if (c.fd < 0) { return 1; }
         if (tcp_send_bytes(c, bytes_of(%q)) != %d) { return 2; }
         if (tcp_close(c) != 0) { return 3; }
         i = i + 1;
@@ -169,7 +169,7 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 }`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
 	if receive {
 		src = fmt.Sprintf(`// read waits for bytes on c, reads them into buf and checks each is an x.
-function read(c: i32, buf: u8[]): i32 {
+function read(c: Socket, buf: u8[]): i32 {
     let n: i32 = tcp_recv_into(c, buf);
     let i: i32 = 0;
     while (i < n) {
@@ -181,8 +181,8 @@ function read(c: i32, buf: u8[]): i32 {
 function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
-        if (c < 0) { return 1; }
+        let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+        if (c.fd < 0) { return 1; }
         let buf: u8[] = __alloc_u8(4096);
         let total: i32 = 0;
         let n: i32 = read(c, buf);

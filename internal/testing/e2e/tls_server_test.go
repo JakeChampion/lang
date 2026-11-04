@@ -153,8 +153,8 @@ function identity_of(): Result[identity.Identity, string] {
 // serve_one answers one connection: the line it sends, echoed, then the
 // client's close. The report names the SNI, the protocol, the line and
 // how the client ended.
-function serve_one(fd: i32, cfg: server.Config): string {
-  match (server.accept(fd, cfg, time.duration_seconds(60 as i64))) {
+function serve_one(own sock: Socket, cfg: server.Config): string {
+  match (server.accept(sock, cfg, time.duration_seconds(60 as i64))) {
     Ok(c) => {
       return echo(c);
     },
@@ -236,16 +236,12 @@ function main(): i32 {
       }
     }
   }
-  let l: i32 = 0;
-  match (net.listen_at(net.socket_addr(net.ipv4_loopback(), 0), net.listen_options())) {
-    Ok(fd) => {
-      l = fd;
-    },
-    Err(e) => {
-      print("listen: " + e.message());
-      return 3;
-    }
+  let opened = net.listen_at(net.socket_addr(net.ipv4_loopback(), 0), net.listen_options());
+  if let Err(e) = opened {
+    print("listen: " + e.message());
+    return 3;
   }
+  let Ok(l) = opened else { return 3; };
   match (net.local_port(l)) {
     Ok(port) => {
       print("port " + port.to_string());
@@ -259,8 +255,8 @@ function main(): i32 {
   while (n < count) {
     n = n + 1;
     match (net.accept(l)) {
-      Ok(fd) => {
-        print("conn " + n.to_string() + ": " + serve_one(fd, cfg));
+      Ok(sock) => {
+        print("conn " + n.to_string() + ": " + serve_one(sock, cfg));
       },
       Err(e) => {
         print("conn " + n.to_string() + ": accept " + e.message());
