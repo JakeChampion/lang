@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Give each http: tool in mise.lock a checksum on every platform.
+
+`mise lock` downloads an http: tool only for the platform it runs on, so the
+other platforms get a URL and no checksum. `mise install --locked` then
+refuses those platforms. This script downloads each URL that has no checksum
+and writes its sha256.
+
+  scripts/lock-http-checksums            # mise.lock in the repository root
+  scripts/lock-http-checksums FILE
+"""
+import hashlib
+import os
+import re
+import sys
+import urllib.request
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENTRY = re.compile(r'(?ms)^\[tools\."http:[^"]+"\."platforms\.[^"]+"\]\n(.*?)(?=^\[|\Z)')
+URL = re.compile(r'(?m)^url = "([^"]+)"$')
+
+
+def sha256_of(url, seen):
+    if url not in seen:
+        h = hashlib.sha256()
+        with urllib.request.urlopen(url, timeout=120) as r:
+            for chunk in iter(lambda: r.read(1 << 20), b""):
+                h.update(chunk)
+        seen[url] = h.hexdigest()
+    return seen[url]
+
+
+def main():
+    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "mise.lock")
+    text = open(path, encoding="utf-8").read()
+    seen = {}
+    out, last, added = [], 0, 0
+    for m in ENTRY.finditer(text):
+        body = m.group(1)
+        url = URL.search(body)
+        if url is None or re.search(r'(?m)^checksum = ', body):
+            continue
+        at = m.start(1) + url.start()
+        out.append(text[last:at])
+        out.append('checksum = "sha256:%s"\n' % sha256_of(url.group(1), seen))
+        last = at
+        added += 1
+    out.append(text[last:])
+    open(path, "w", encoding="utf-8").write("".join(out))
+    print("lock-http-checksums: %d checksums added, %d files downloaded" % (added, len(seen)))
+
+
+main()

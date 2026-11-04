@@ -77,6 +77,7 @@ toolchain() {
   sed -i -E "s|^(\"http:wasi-adapter\" = \{ version = \")[^\"]+|\1$wasmtime|" mise.toml
   sed -i -E "s|^(const wasmtimePin = \")[^\"]+|\1$wasmtime|" internal/testing/e2e/wasm_e2e_test.go
   mise lock
+  scripts/lock-http-checksums
   pin_mise_release "$(curl -fsSL --max-time 60 https://mise.jdx.dev/VERSION)"
   mise install
   eval "$(scripts/toolchain-env)"

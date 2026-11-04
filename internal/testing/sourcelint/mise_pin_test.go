@@ -64,3 +64,26 @@ func TestMiseActionPinsTheMiseRelease(t *testing.T) {
 		t.Fatal("no jdx/mise-action step found under .github; the toolchain is installed through it")
 	}
 }
+
+// mise lock downloads an http: tool only for the platform it runs on, and
+// mise install --locked refuses a platform with no checksum.
+func TestMiseLockChecksumsEveryHTTPPlatform(t *testing.T) {
+	lock, err := os.ReadFile(filepath.Join("..", "..", "..", "mise.lock"))
+	if err != nil {
+		t.Fatalf("read mise.lock: %v", err)
+	}
+	entry := regexp.MustCompile(`(?m)^\[tools\."(http:[^"]+)"\."platforms\.([^"]+)"\]$`)
+	locs := entry.FindAllSubmatchIndex(lock, -1)
+	if len(locs) == 0 {
+		t.Fatal("mise.lock holds no http: tool platform entry")
+	}
+	for _, at := range locs {
+		body := string(lock[at[1]:])
+		if next := strings.Index(body, "\n["); next >= 0 {
+			body = body[:next]
+		}
+		if strings.Contains(body, "\nurl = ") && !strings.Contains(body, "\nchecksum = ") {
+			t.Errorf("mise.lock: %s on %s has a url and no checksum; run scripts/lock-http-checksums", lock[at[2]:at[3]], lock[at[4]:at[5]])
+		}
+	}
+}
