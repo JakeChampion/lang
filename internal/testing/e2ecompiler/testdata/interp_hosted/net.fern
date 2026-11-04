@@ -10,7 +10,7 @@ function main(): i32 {
   print(f"listen ok: {ls.fd >= 0}");
   let port: i32 = tcp_local_port(ls);
   print(f"port ok: {port > 0}");
-  print(f"pollable ok: {tcp_pollable(ls) >= 0}");
+  print(f"pollable ok: {tcp_pollable(ls.fd) >= 0}");
   let c: Socket = tcp_connect_with(lo, port, false);
   print(f"connect ok: {c.fd >= 0}");
   let s: Socket = tcp_accept(ls);

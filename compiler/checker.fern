@@ -4477,9 +4477,6 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if let typeinfo.TypeNever(_) = from {
     return true;
   }
-  if (semtypes.socket_descriptor_transition(from, to)) {
-    return true;
-  }
   if (integer_literal_widens(from, to)) {
     return true;
   }
@@ -4999,7 +4996,7 @@ function builtin_sigs(): string[] {
     "tcp_listen(i32): Socket",
     "tcp_listen_with(u8[], i32, i32, boolean): Socket",
     "tcp_local_port(Socket): i32",
-    "tcp_pollable(Socket): i32",
+    "tcp_pollable(i32): i32",
     "tcp_recv_into(Socket, u8[]): i32",
     "tcp_send_buf(Socket, usize, i32): i32",
     "tcp_send_bytes(Socket, u8[]): i32",

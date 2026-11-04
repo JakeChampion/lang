@@ -3024,7 +3024,7 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
     return v_int(tcp_local_port(sock));
   }
   if (name == "tcp_pollable") {
-    return v_int(tcp_pollable(sock));
+    return v_int(tcp_pollable(sock.fd));
   }
   if (name == "tcp_socket_ctl") {
     return v_int(tcp_socket_ctl(sock, arg_i32(args, 1), arg_i32(args, 2)));
