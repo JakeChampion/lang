@@ -14,6 +14,7 @@ import "./irverifygate";
 import "./ircore";
 import "./rtbytecopy";
 import "./ssa";
+import "./ssalive";
 import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
@@ -5818,15 +5819,16 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Al
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
   let cold = ssa.cold_positions(f, s.size, ssa_inline_back(s));
-  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold), cold);
+  let crossing = ssalive.call_crossers(f, ssa.hard_call_positions(f, cold));
+  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold), cold, crossing);
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold), cold);
+    return ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold), cold, crossing);
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold), cold);
+  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold), cold, crossing);
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }

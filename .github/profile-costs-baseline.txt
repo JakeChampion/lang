@@ -1,3 +1,5 @@
+# 2026-11-03: PR #14122, a local scripts/profile-costs run on its head. Most moved rows shrink 1% to 2%.
+# Preserve the original limits for higher-cost rows. Retain only the measured reductions.
 # 2026-11-02: the security stack (SEC-023, SEC-032, SEC-016, SEC-024), from a local profile-costs run on main 4f3571f1.
 # Only hardened and diagnostic rows move. Encoded free-list links, signed runtime frames and the signature
 # word of each indirect call grow the hardened rows by 1% to 10% in .emit and .bytes, and http_hello.hardened.ir
@@ -80,8 +82,8 @@ profile/arm64-linux/deflate_decode.hardened.bytes	65224
 profile/arm64-linux/deflate_decode.hardened.emit	15056
 profile/arm64-linux/deflate_decode.minimal.bytes	53656
 profile/arm64-linux/deflate_decode.minimal.emit	12238
-profile/arm64-linux/deflate_decode.safe.bytes	59432
-profile/arm64-linux/deflate_decode.safe.emit	13748
+profile/arm64-linux/deflate_decode.safe.bytes	58712
+profile/arm64-linux/deflate_decode.safe.emit	13560
 profile/arm64-linux/enum_match.diagnostic.bytes	12744
 profile/arm64-linux/enum_match.diagnostic.emit	1603
 profile/arm64-linux/enum_match.hardened.bytes	6792
@@ -97,7 +99,7 @@ profile/arm64-linux/http_hello.hardened.bytes	78712
 profile/arm64-linux/http_hello.hardened.emit	17529
 profile/arm64-linux/http_hello.minimal.bytes	60896
 profile/arm64-linux/http_hello.minimal.emit	12863
-profile/arm64-linux/http_hello.safe.bytes	73792
+profile/arm64-linux/http_hello.safe.bytes	73016
 profile/arm64-linux/http_hello.safe.emit	16098
 profile/arm64-linux/int_loop.diagnostic.bytes	4880
 profile/arm64-linux/int_loop.diagnostic.emit	504
@@ -107,14 +109,14 @@ profile/arm64-linux/int_loop.minimal.bytes	1768
 profile/arm64-linux/int_loop.minimal.emit	271
 profile/arm64-linux/int_loop.safe.bytes	1992
 profile/arm64-linux/int_loop.safe.emit	332
-profile/arm64-linux/map_string.diagnostic.bytes	140872
+profile/arm64-linux/map_string.diagnostic.bytes	139456
 profile/arm64-linux/map_string.diagnostic.emit	10799
-profile/arm64-linux/map_string.hardened.bytes	50328
-profile/arm64-linux/map_string.hardened.emit	11460
-profile/arm64-linux/map_string.minimal.bytes	41464
-profile/arm64-linux/map_string.minimal.emit	9318
-profile/arm64-linux/map_string.safe.bytes	42984
-profile/arm64-linux/map_string.safe.emit	9591
+profile/arm64-linux/map_string.hardened.bytes	49736
+profile/arm64-linux/map_string.hardened.emit	11311
+profile/arm64-linux/map_string.minimal.bytes	40968
+profile/arm64-linux/map_string.minimal.emit	9193
+profile/arm64-linux/map_string.safe.bytes	42312
+profile/arm64-linux/map_string.safe.emit	9422
 profile/arm64-linux/startup.diagnostic.bytes	4408
 profile/arm64-linux/startup.diagnostic.emit	483
 profile/arm64-linux/startup.hardened.bytes	2408
@@ -167,9 +169,9 @@ profile/x86-64-linux/deflate_decode.hardened.emit	13388
 profile/x86-64-linux/deflate_decode.hardened.ir	33974700
 profile/x86-64-linux/deflate_decode.minimal.bytes	46688
 profile/x86-64-linux/deflate_decode.minimal.emit	11521
-profile/x86-64-linux/deflate_decode.minimal.ir	42603812
-profile/x86-64-linux/deflate_decode.safe.bytes	51968
-profile/x86-64-linux/deflate_decode.safe.emit	12959
+profile/x86-64-linux/deflate_decode.minimal.ir	41850438
+profile/x86-64-linux/deflate_decode.safe.bytes	51376
+profile/x86-64-linux/deflate_decode.safe.emit	12766
 profile/x86-64-linux/deflate_decode.safe.ir	33826804
 profile/x86-64-linux/enum_match.diagnostic.bytes	10256
 profile/x86-64-linux/enum_match.diagnostic.emit	1277
@@ -210,14 +212,14 @@ profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	133696
 profile/x86-64-linux/map_string.diagnostic.emit	10871
 profile/x86-64-linux/map_string.diagnostic.ir	59644087
-profile/x86-64-linux/map_string.hardened.bytes	42480
+profile/x86-64-linux/map_string.hardened.bytes	42016
 profile/x86-64-linux/map_string.hardened.emit	9927
 profile/x86-64-linux/map_string.hardened.ir	54107043
 profile/x86-64-linux/map_string.minimal.bytes	36288
-profile/x86-64-linux/map_string.minimal.emit	9074
+profile/x86-64-linux/map_string.minimal.emit	8959
 profile/x86-64-linux/map_string.minimal.ir	54757303
-profile/x86-64-linux/map_string.safe.bytes	37536
-profile/x86-64-linux/map_string.safe.emit	9419
+profile/x86-64-linux/map_string.safe.bytes	37056
+profile/x86-64-linux/map_string.safe.emit	9267
 profile/x86-64-linux/map_string.safe.ir	52903035
 profile/x86-64-linux/startup.diagnostic.bytes	4576
 profile/x86-64-linux/startup.diagnostic.emit	447
