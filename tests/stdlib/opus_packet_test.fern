@@ -1,0 +1,268 @@
+import "std/hash/crc32";
+import "std/opus/packet";
+import "std/test";
+
+// Each case is random bytes, or random frames that `write` packs, with or
+// without padding. The trace gives what `parse` and the TOC functions say of
+// each packet and of a damaged copy. libopus 1.4 gave the CRC-32 of each
+// trace, from a C program that makes the same packets.
+
+function next(x: u32): u32 {
+  return x * 1664525u32 + 1013904223u32;
+}
+
+function line(own c: crc32.Crc32, s: string): crc32.Crc32 {
+  return c.update((s + "\n").as_bytes());
+}
+
+function hash(b: [u8]): u32 {
+  let h: u32 = 0u32;
+  for v in b {
+    h = h * 31u32 + v as u32;
+  }
+  return h;
+}
+
+function code_of(r: Result[i32, packet.PacketError]): i32 {
+  match (r) {
+    Ok(v) => {
+      return v;
+    },
+    Err(e) => {
+      return e.code();
+    }
+  }
+  return 0;
+}
+
+// The trace line of `p`, which is `len` bytes of `data`.
+function parsed(tag: string, data: [u8], len: i32): string {
+  let p: u8[] = [];
+  for i in 0..len {
+    p = p.append(data[i]);
+  }
+  let s: string = tag + " ";
+  match (packet.parse(p)) {
+    Ok(k) => {
+      s = s + k.frames.len().to_string() + " toc " + (k.toc as i32).to_string() + " off " + k.offset.to_string() + " sizes";
+      let all: u8[] = [];
+      for f in k.frames {
+        s = s + " " + f.len().to_string();
+        for b in f {
+          all = all.append(b);
+        }
+      }
+      s = s + " data " + hash(all).to_string();
+    },
+    Err(e) => {
+      s = s + e.code().to_string();
+    }
+  }
+  if (len > 0) {
+    let t: u8 = p[0];
+    let ch: i32 = 1;
+    if (packet.stereo(t)) {
+      ch = 2;
+    }
+    s = s + " bw " + packet.bandwidth(t).to_string() + " ch " + ch.to_string() + " spf " + packet.samples_per_frame(t, 48000).to_string() + " " + packet.samples_per_frame(t, 16000).to_string() + " " + packet.samples_per_frame(t, 8000).to_string() + " nf " + code_of(packet.frame_count(p)).to_string() + " ns " + code_of(packet.sample_count(p, 48000)).to_string();
+  }
+  return s;
+}
+
+function trace(seed: u32, cases: i32): u32 {
+  let x: u32 = seed;
+  let c: crc32.Crc32 = crc32.new();
+  for n in 0..cases {
+    x = next(x);
+    let kind: u32 = (x >> 16u32) % 4u32;
+    if (kind == 0u32) {
+      x = next(x);
+      let len: i32 = ((x >> 8u32) % 64u32) as i32;
+      let raw: u8[] = [];
+      for i in 0..len {
+        x = next(x);
+        raw = raw.append((x >> 24u32) as u8);
+      }
+      c = line(c, "case " + n.to_string() + " raw " + len.to_string());
+      c = line(c, parsed("p", raw, len));
+      continue;
+    }
+    x = next(x);
+    let toc: u8 = (x >> 24u32) as u8;
+    x = next(x);
+    let most: u32 = 12u32;
+    if (kind == 1u32) {
+      most = 3u32;
+    }
+    let count: i32 = 1 + ((x >> 8u32) % most) as i32;
+    x = next(x);
+    let same: boolean = (x >> 8u32) % 2u32 == 1u32;
+    x = next(x);
+    let base: i32 = ((x >> 8u32) % 400u32) as i32;
+    let frames: u8[][] = [];
+    let tot: i32 = 0;
+    for i in 0..count {
+      let len: i32 = base;
+      if (!same) {
+        x = next(x);
+        len = ((x >> 8u32) % 400u32) as i32;
+      }
+      let f: u8[] = [];
+      for k in 0..len {
+        x = next(x);
+        f = f.append((x >> 24u32) as u8);
+      }
+      frames = frames.append(f);
+      tot = tot + len;
+    }
+    let pad: boolean = kind == 3u32;
+    x = next(x);
+    let extra: i32 = ((x >> 8u32) % 600u32) as i32;
+    let pad_flag: i32 = 0;
+    if (pad) {
+      pad_flag = 1;
+    }
+    let head: string = "case " + n.to_string() + " write " + (toc as i32).to_string() + " " + count.to_string() + " " + pad_flag.to_string() + " cat ";
+    if (count * packet.samples_per_frame(toc, 8000) > 960) {
+      c = line(c, head + "-4");
+      continue;
+    }
+    let max: i32 = 70000;
+    if (pad) {
+      max = tot + 1 + extra;
+    }
+    x = next(x);
+    if ((x >> 8u32) % 5u32 == 0u32) {
+      max = tot / 2 + 1;
+    }
+    match (packet.write(toc, frames, max, pad)) {
+      Ok(out) => {
+        c = line(c, head + "0 out " + out.len().to_string() + " bytes " + hash(out).to_string());
+        c = line(c, parsed("p", out, out.len()));
+        x = next(x);
+        let at: i32 = ((x >> 8u32) % (out.len() as u32)) as i32;
+        x = next(x);
+        let bit: u32 = (x >> 8u32) % 8u32;
+        let damaged: u8[] = out.with(at, out[at] ^ (1u32 << bit) as u8);
+        x = next(x);
+        let cut: i32 = out.len() - ((x >> 8u32) % 3u32) as i32;
+        c = line(c, parsed("d", damaged, cut));
+      },
+      Err(e) => {
+        c = line(c, head + "0 out " + e.code().to_string());
+      }
+    }
+  }
+  return c.finish();
+}
+
+function test_short_trace(): test.TestOutcome {
+  return test.assert_eq(trace(7u32, 12), 500468018u32);
+}
+
+function test_long_trace(): test.TestOutcome {
+  return test.assert_eq(trace(91u32, 3000), 208449967u32);
+}
+
+function bytes(n: i32, k: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append(((i * 7 + k) % 256) as u8);
+  }
+  return out;
+}
+
+function err_code(r: Result[u8[], packet.PacketError]): i32 {
+  match (r) {
+    Ok(b) => {
+      return b.len();
+    },
+    Err(e) => {
+      return e.code();
+    }
+  }
+  return 0;
+}
+
+// Two frames of different sizes take code 2, and a size of 252 or more takes
+// two bytes.
+function test_round_trip(): test.TestOutcome {
+  let frames: u8[][] = [bytes(300, 1), bytes(3, 2)];
+  match (packet.write(128u8, frames, 1000, false)) {
+    Ok(out) => {
+      match (packet.parse(out)) {
+        Ok(p) => {
+          let same: boolean = p.frames.len() == 2 && p.frames[0] == frames[0] && p.frames[1] == frames[1];
+          return test.assert_eq((out[0] as i32).to_string() + " " + out.len().to_string() + " " + p.offset.to_string() + " " + same.to_string(), "130 306 3 true");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// Padding takes code 3. Of the 595 padding bytes, three give the length and
+// 592 are zeros. The frame does not change.
+function test_pad(): test.TestOutcome {
+  let one: u8[] = [252u8, 9u8, 8u8, 7u8];
+  match (packet.pad(one, 600)) {
+    Ok(out) => {
+      match (packet.parse(out)) {
+        Ok(p) => {
+          return test.assert_eq(out.len().to_string() + " " + (out[0] as i32 & 3).to_string() + " " + p.padding.to_string() + " " + (p.frames[0] == [9u8, 8u8, 7u8]).to_string(), "600 3 592 true");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// A packet that fills `max` with no padding keeps its code and takes none.
+function test_exact_fit_takes_no_padding(): test.TestOutcome {
+  match (packet.write(0u8, [bytes(10, 3)], 11, true)) {
+    Ok(out) => {
+      return test.assert_eq(out.len().to_string() + " " + (out[0] as i32 & 3).to_string(), "11 0");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_errors(): test.TestOutcome {
+  let empty: u8[][] = [];
+  let s: string = err_code(packet.write(0u8, empty, 100, false)).to_string() + " " + err_code(packet.write(0u8, [bytes(1276, 0)], 2000, false)).to_string() + " " + err_code(packet.write(0u8, [bytes(10, 0)], 5, false)).to_string() + " " + err_code(packet.pad([0u8, 1u8], 1)).to_string();
+  match (packet.parse([])) {
+    Ok(_) => {
+      s = s + " ok";
+    },
+    Err(e) => {
+      s = s + " " + e.code().to_string();
+    }
+  }
+  return test.assert_eq(s, "-1 -4 -2 -1 -4");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/opus/packet");
+  r = r.it("a short trace is the libopus trace", test_short_trace);
+  r = r.it("a long trace is the libopus trace", test_long_trace);
+  r = r.it("frames round-trip through a packet", test_round_trip);
+  r = r.it("padding fills the packet", test_pad);
+  r = r.it("an exact fit takes no padding", test_exact_fit_takes_no_padding);
+  r = r.it("bad arguments give the libopus errors", test_errors);
+  return r.finish();
+}

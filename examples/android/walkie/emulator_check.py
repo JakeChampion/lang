@@ -86,7 +86,7 @@ def launch(package):
     task to the front and keeps the running activity. A start with a different
     intent adds a second activity to the task, and its app_main opens a second
     node that finds both ports busy."""
-    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-n", package + ACTIVITY)
+    adb("shell", "am", "start", "-W", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-f", "0x10200000", "-n", package + ACTIVITY)
 
 
 def to_front(package):
@@ -166,6 +166,9 @@ def run(apk, second_apk, out):
     log = logcat()
     if pid(FIRST) != a or pid(SECOND) != b:
         raise Failure("a copy stopped running")
+    for p in (a, b):
+        if sum(1 for line in lines_of(log, p) if START.search(line)) != 1:
+            raise Failure("a copy started a second activity")
     lost = [line for line in log.splitlines() if LOST.search(line)]
     if lost:
         raise Failure("a copy lost its peer: " + "; ".join(lost))
