@@ -165,9 +165,16 @@ function test_long_trace(): test.TestOutcome {
   return test.assert_eq(trace(29u32, 600), 4267266800u32);
 }
 
+// In this trace, one frame has 35 bytes and a gain near the threshold, so
+// the limit of 35 bytes changes the decision.
+function test_threshold_trace(): test.TestOutcome {
+  return test.assert_eq(trace(11u32, 600), 3422963021u32);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("std/opus/celt_encoder prefilter");
   r = r.it("a short trace is the libopus trace", test_short_trace);
   r = r.it("a long trace is the libopus trace", test_long_trace);
+  r = r.it("a trace at the byte limit is the libopus trace", test_threshold_trace);
   return r.finish();
 }
