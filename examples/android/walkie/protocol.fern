@@ -6,10 +6,6 @@ pub const VERSION: i32 = 1;
 
 pub const CODEC_OPUS: i32 = 1;
 
-// Raw 16-bit samples at 16 kHz, for the LAN build until the Opus encoder is
-// ready.
-pub const CODEC_PCM16: i32 = 2;
-
 pub enum Message {
   // version, session ID, codec, capability bits
   Hello(i32, i64, i32, i32),
