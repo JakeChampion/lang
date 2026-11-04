@@ -1,0 +1,12 @@
+// spec: WK-01
+// Only a closure written at the call crosses a worker boundary, because its
+// captures are visible there. A function value carries an environment the
+// checker cannot see into.
+
+import "std/worker";
+
+function main(): i32 {
+    let body: () => i32 = (): i32 => 1;
+    let w = worker.spawn(body);
+    return w.join();
+}

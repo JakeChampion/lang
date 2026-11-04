@@ -1,0 +1,57 @@
+import "std/test";
+import "std/worker";
+
+struct Report { total: i32, name: string }
+
+function test_spawn_join_scalar(): test.TestOutcome {
+  let n: i32 = 20;
+  let w = worker.spawn((): i32 => n + 1);
+  return test.assert_eq(w.join().to_string(), "21");
+}
+
+function test_spawn_join_record(): test.TestOutcome {
+  let items: i32[] = [1, 2, 3];
+  let label: string = "three";
+  let w = worker.spawn((): Report => {
+    let total: i32 = 0;
+    for x in items {
+      total = total + x;
+    }
+    return Report { total: total, name: label };
+  });
+  let r: Report = w.join();
+  if (r.total != 6) {
+    return test.fail("total");
+  }
+  return test.assert_eq(r.name, "three");
+}
+
+function test_two_workers_join_out_of_order(): test.TestOutcome {
+  let a = worker.spawn((): string => "first");
+  let b = worker.spawn((): string => "second");
+  let second: string = b.join();
+  let first: string = a.join();
+  return test.assert_eq(first + "," + second, "first,second");
+}
+
+function test_option_and_tuple_cross(): test.TestOutcome {
+  let pair: (i32, string) = (7, "seven");
+  let w = worker.spawn((): Option[(i32, string)] => Some(pair));
+  match (w.join()) {
+    Some(p) => {
+      return test.assert_eq(p.0.to_string() + "=" + p.1, "7=seven");
+    },
+    None => {
+      return test.fail("the worker returned None");
+    }
+  }
+}
+
+function main(): i32 {
+  let r = test.new("std/worker");
+  r = r.it("spawn and join a scalar", test_spawn_join_scalar);
+  r = r.it("spawn and join a record", test_spawn_join_record);
+  r = r.it("two workers join out of order", test_two_workers_join_out_of_order);
+  r = r.it("an Option of a tuple crosses the boundary", test_option_and_tuple_cross);
+  return r.finish();
+}

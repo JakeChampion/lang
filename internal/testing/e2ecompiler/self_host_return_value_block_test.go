@@ -87,7 +87,7 @@ function main(): i32 {
 }
 `
 
-var asmLabel = regexp.MustCompile(`\.L[\w$]+`)
+var returnValueAsmLabel = regexp.MustCompile(`\.L[\w$]+`)
 
 // The text from a function's label to the end of its frame description, with
 // its name and its local labels made neutral.
@@ -100,7 +100,7 @@ func normalisedBody(assembly, name string) string {
 	if end := strings.Index(rest, "\n    .cfi_endproc"); end >= 0 {
 		rest = rest[:end]
 	}
-	return asmLabel.ReplaceAllString(strings.ReplaceAll(rest, name, "F"), "L")
+	return returnValueAsmLabel.ReplaceAllString(strings.ReplaceAll(rest, name, "F"), "L")
 }
 
 // A return of a value match or a value if gives the same code as the

@@ -9636,10 +9636,9 @@ function mc_list_consumes(list: ast.Expr[], name: string, tname: string, report:
   return (false, out);
 }
 
-function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
-  let none: util.Diag[] = [];
+function mc_call_enum_owner(callee: ast.Expr, enums: parser.EnumDecl[]): string {
   let owner: string = "";
-  match (c.callee) {
+  match (callee) {
     ast.ExprIdent(cid) => {
       owner = mx_enum_of(cid.name, enums);
       if (owner.len() == 0) {
@@ -9647,6 +9646,17 @@ function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: 
       }
     },
     _ => {}
+  }
+  return owner;
+}
+
+function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
+  let none: util.Diag[] = [];
+  let owner: string = mc_call_enum_owner(c.callee, enums);
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (mc_is_binding(fa.obj, name)) {
+      return (true, none);
+    }
   }
   for arg in c.args {
     if (mc_is_binding(arg, name)) {
@@ -9810,13 +9820,28 @@ function mc_stmt_consumes(st: ast.Stmt, name: string, tname: string, report: boo
       if (mc_is_binding(m.scrutinee, name)) {
         return (true, none);
       }
-      return (false, none);
+      return mc_expr_consumes(m.scrutinee, name, tname, report, structs, enums);
+    },
+    ast.StmtIf(f) => {
+      return mc_expr_consumes(f.cond, name, tname, report, structs, enums);
     },
     _ => {
       return (false, none);
     }
   }
   return (false, none);
+}
+
+// A literal match lowers to `if (true) { let tmp = scrutinee; ... }`, so
+// that wrapper is one block and not a branch.
+function mc_if_is_block(f: ast.StmtIf): boolean {
+  if (f.else_body.len() > 0) {
+    return false;
+  }
+  if let ast.ExprBool(b) = f.cond {
+    return b.value;
+  }
+  return false;
 }
 
 function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, boolean, util.Diag[]) {
@@ -9853,7 +9878,7 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
         if (tv || ev) {
           return (false, true, out);
         }
-        if (tc && f.else_body.len() > 0 && ec) {
+        if (tc && (f.else_body.len() > 0 && ec || mc_if_is_block(f))) {
           return (true, false, out);
         }
       },
@@ -11008,12 +11033,20 @@ function mx_e031(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], 
   return mx_fold_diags(f, line, col, if_form);
 }
 
-// mx_widen_to gives each arm that is a member of the expected union the union's type.
-function mx_widen_to(types: typeinfo.Type[], want: typeinfo.Type, unions: UnionSig[]): typeinfo.Type[] {
-  if let typeinfo.TypeUnion(_) = want {
+// mx_widen_to gives each arm that is a member of the expected union alias the alias's type.
+function mx_widen_to(types: typeinfo.Type[], want: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  if let typeinfo.TypeUnion(un) = want {
+    if (parser.is_reserved_enum_name(un.name)) {
+      return types;
+    }
+    if let Some(owner) = s.lookup_union(un.name) {
+      if (owner.is_enum) {
+        return types;
+      }
+    }
     let out: typeinfo.Type[] = [];
     for ty in types {
-      if (!is_unknown(ty) && type_assignable(ty, want, unions)) {
+      if (!is_unknown(ty) && type_assignable(ty, want, s.unions.unions)) {
         out = out.append(want);
       } else {
         out = out.append(ty);
@@ -11307,12 +11340,12 @@ function mx_iife_arms(c: ast.ExprCall, lm: ast.ExprLambda, want: typeinfo.Type, 
         if let typeinfo.TypeUnion(_) = check_expr(m.scrutinee, s) {
           enum_match = true;
         }
-        out = util.append_diags(out, mx_e031(mx_widen_to(mts, want, unions), arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+        out = util.append_diags(out, mx_e031(mx_widen_to(mts, want, s), arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
         out = util.append_diags(out, vb_pinned_ranges(mts, arms));
       },
       ast.StmtIf(f) => {
         let fts: typeinfo.Type[] = mx_if_branch_types(f, s);
-        out = util.append_diags(out, mx_if_diags(f, mx_widen_to(fts, want, unions), arms, unions, enums, lm.origin, c.line, c.col));
+        out = util.append_diags(out, mx_if_diags(f, mx_widen_to(fts, want, s), arms, unions, enums, lm.origin, c.line, c.col));
         out = util.append_diags(out, vb_pinned_ranges(fts, arms));
       },
       _ => {}
@@ -11329,7 +11362,7 @@ function mx_value_local_arms(body: ast.Stmt[], local: string, want: typeinfo.Typ
     types = types.append(store.t);
     exprs = exprs.append(store.e);
   }
-  let fold: MxFold = mx_fold_arms(mx_widen_to(types, want, unions), exprs, unions, enums, false, true);
+  let fold: MxFold = mx_fold_arms(mx_widen_to(types, want, s), exprs, unions, enums, false, true);
   if (fold.ok) {
     return [];
   }
@@ -18413,7 +18446,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
+pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[], send: boolean[] }
 
 pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
 
@@ -18423,7 +18456,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -18680,7 +18713,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret };
+  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret };
   return nested;
 }
 
@@ -18718,6 +18751,15 @@ function ow_func_flags(ofuncs: OwnFuncs, name: string): boolean[] {
   let i: i32 = ofuncs.names.find(name);
   if (i >= 0) {
     return ofuncs.rows[i].flags;
+  }
+  let empty: boolean[] = [];
+  return empty;
+}
+
+function ow_send_flags(ofuncs: OwnFuncs, name: string): boolean[] {
+  let i: i32 = ofuncs.names.find(name);
+  if (i >= 0) {
+    return ofuncs.rows[i].send;
   }
   let empty: boolean[] = [];
   return empty;
@@ -18830,12 +18872,12 @@ function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
   return false;
 }
 
-function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
-  if (ow_expr_is_scalar(e, ctx)) {
-    return true;
-  }
+function ow_is_fresh_literal(e: ast.Expr): boolean {
   match (e) {
     ast.ExprStructLit(_) => {
+      return true;
+    },
+    ast.ExprLambda(_) => {
       return true;
     },
     ast.ExprArray(_) => {
@@ -18847,6 +18889,20 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprMapLit(_) => {
       return true;
     },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_expr_is_scalar(e, ctx)) {
+    return true;
+  }
+  if (ow_is_fresh_literal(e)) {
+    return true;
+  }
+  match (e) {
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
@@ -20994,7 +21050,187 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
     }
     i = i + 1;
   }
+  return util.append_diags(out, send_guard_call(c, ctx));
+}
+
+// A `send` parameter is a worker boundary: its argument is copied into
+// another heap, so the argument's type, and a closure argument's captures
+// and result, must be send-safe (E100).
+function send_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
+  let out: util.Diag[] = [];
+  if let ast.ExprIdent(id) = c.callee {
+    if (id.builtin || util.has_str(ctx.bound, id.name)) {
+      return out;
+    }
+    let flags: boolean[] = ow_send_flags(ctx.ofuncs, id.name);
+    let names: string[] = match (ctx.scope.lookup_sig(id.name)) { Some(sig) => sig.param_names, None => [] };
+    let i: i32 = 0;
+    while (i < c.args.len() && i < flags.len()) {
+      if (flags[i]) {
+        let pname: string = if (i < names.len()) { names[i] } else { "" };
+        out = util.append_diags(out, send_arg_diags(c.args[i], pname, c, ctx));
+      }
+      i = i + 1;
+    }
+  }
   return out;
+}
+
+function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
+  let out: util.Diag[] = [];
+  let s: Scope = ctx.scope;
+  let aline: i32 = ast.expr_line(arg);
+  let acol: i32 = ast.expr_col(arg);
+  if (aline <= 0) {
+    aline = c.line;
+    acol = c.col;
+  }
+  let at: typeinfo.Type = check_expr(arg, s);
+  if let ast.ExprLambda(lm) = arg {
+    let seen: string[] = [];
+    for name in astwalk.collect_lambda_idents(lm, []) {
+      if (s.is_bound(name) && !util.has_str(seen, name)) {
+        seen = seen.append(name);
+        let ct: typeinfo.Type = s.lookup(name);
+        let why: string = send_unsafe_reason(ct, ctx, []);
+        if (why.len() > 0) {
+          out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" captures \"" + name + "\" of type " + type_label(ct) + ", which cannot cross a worker boundary: " + why, aline, acol));
+        }
+      }
+    }
+    if let typeinfo.TypeFunc(ft) = at {
+      let rwhy: string = send_unsafe_reason(ft.ret_type, ctx, []);
+      if (rwhy.len() > 0) {
+        out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" returns " + type_label(ft.ret_type) + ", which cannot cross a worker boundary: " + rwhy, aline, acol));
+      }
+    }
+    return out;
+  }
+  let why: string = send_unsafe_reason(at, ctx, []);
+  if (why.len() > 0) {
+    out = out.append(dg_at("E100", "argument to `send` parameter \"" + pname + "\" has type " + type_label(at) + ", which cannot cross a worker boundary: " + why, aline, acol));
+  }
+  return out;
+}
+
+// The reason a value of type t cannot be copied into another worker's heap,
+// or "" when every part of it can. A type already in seen is on the path
+// above and holds nothing its parent did not refuse.
+function send_unsafe_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[]): string {
+  if (is_str_view(t) || is_arr_view(t)) {
+    return "a view borrows another value's storage";
+  }
+  return send_unsafe_nonview_reason(t, ctx, seen);
+}
+
+function send_unsafe_nonview_reason(t: typeinfo.Type, ctx: OwnCtx, seen: string[]): string {
+  match (t) {
+    typeinfo.TypeArray(a) => {
+      return send_unsafe_reason(a.elem, ctx, seen);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return send_unsafe_reason_list(tup.elements, ctx, seen);
+    },
+    typeinfo.TypeMap(m) => {
+      return send_unsafe_reason_list([m.key, m.value], ctx, seen);
+    },
+    typeinfo.TypeFunc(_) => {
+      return "a function value carries its environment";
+    },
+    typeinfo.TypeDyn(_) => {
+      return "a dyn value hides its concrete type";
+    },
+    typeinfo.TypeHandle(_) => {
+      return "a resource handle is not copied";
+    },
+    typeinfo.TypeErased(e) => {
+      return "type parameter " + e.name + " is not known to be send-safe";
+    },
+    typeinfo.TypeStruct(st) => {
+      return send_unsafe_struct_reason(st, ctx, seen);
+    },
+    typeinfo.TypeUnion(u) => {
+      return send_unsafe_union_reason(u, ctx, seen);
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function send_unsafe_struct_reason(st: typeinfo.TypeStruct, ctx: OwnCtx, seen: string[]): string {
+  if (st.name == "Cell") {
+    return "a Cell is shared by aliasing";
+  }
+  if (util.has_str(["Reader", "Writer", "Dir", "Socket"], st.name)) {
+    return "a built-in handle owns a descriptor";
+  }
+  if (util.has_str(seen, st.name)) {
+    return "";
+  }
+  if (mc_struct_marked(st.name, ctx.structs)) {
+    return "a @must_consume value carries an obligation that a copy would double";
+  }
+  let below: string[] = seen.append(st.name);
+  let in_args: string = send_unsafe_reason_list(st.args, ctx, below);
+  if (in_args.len() > 0) {
+    return in_args;
+  }
+  let Some(sig) = ctx.scope.lookup_struct(st.name) else {
+    return "";
+  };
+  return send_unsafe_reason_list(send_field_types(sig, st.args, ctx.scope), ctx, below);
+}
+
+function send_unsafe_union_reason(u: typeinfo.TypeUnion, ctx: OwnCtx, seen: string[]): string {
+  if (util.has_str(seen, u.name)) {
+    return "";
+  }
+  if (mc_enum_marked(u.name, ctx.enums)) {
+    return "a @must_consume value carries an obligation that a copy would double";
+  }
+  let below: string[] = seen.append(u.name);
+  let in_args: string = send_unsafe_reason_list(u.args, ctx, below);
+  if (in_args.len() > 0) {
+    return in_args;
+  }
+  let Some(us) = ctx.scope.lookup_union(u.name) else {
+    return "";
+  };
+  for v in us.variants {
+    let Some(sig) = variant_shape_sig(ctx.scope, v, u.name) else {
+      continue;
+    };
+    let why: string = send_unsafe_reason_list(send_field_types(sig, u.args, ctx.scope), ctx, below);
+    if (why.len() > 0) {
+      return why;
+    }
+  }
+  return "";
+}
+
+// The field types of a struct or variant signature with its type
+// parameters replaced by the arguments of this instance.
+function send_field_types(sig: StructSig, args: typeinfo.Type[], s: Scope): typeinfo.Type[] {
+  if (sig.type_params.len() == 0 || sig.type_params.len() != args.len() || sig.field_type_names.len() != sig.field_types.len()) {
+    return sig.field_types;
+  }
+  let out: typeinfo.Type[] = [];
+  for name in sig.field_type_names {
+    out = out.append(type_from_name_subst(name, sig.type_params, args, s.type_names()));
+  }
+  return out;
+}
+
+function send_unsafe_reason_list(ts: typeinfo.Type[], ctx: OwnCtx, seen: string[]): string {
+  for t in ts {
+    let why: string = send_unsafe_reason(t, ctx, seen);
+    if (why.len() > 0) {
+      return why;
+    }
+  }
+  return "";
 }
 
 function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
@@ -21660,24 +21896,27 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
     let any_own: boolean = func.receiver_own;
     let flags: boolean[] = [];
     let arr: boolean[] = [];
+    let send: boolean[] = [];
     if (func.receiver_name.len() > 0) {
       flags = flags.append(func.receiver_own);
       arr = arr.append(ow_type_is_array(func.receiver_type));
+      send = send.append(false);
     }
     for param in func.params {
       let o: boolean = param.own;
       flags = flags.append(o);
       arr = arr.append(ow_type_is_array(param.type_name));
+      send = send.append(param.send);
       if (o) {
         any_own = true;
       }
     }
     if (any_own && func.receiver_name.len() == 0) {
-      out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr });
+      out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr, send: send });
       names = names.append(func.name);
     } else if (any_own) {
       let key: string = ow_receiver_ns(func.receiver_type) + "." + func.name;
-      out = out.append(OwnFunc { name: key, flags: flags, arr: arr });
+      out = out.append(OwnFunc { name: key, flags: flags, arr: arr, send: send });
       names = names.append(key);
       methods = methods.append(func.name);
     }
@@ -21686,10 +21925,10 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   // not a value the program reads again.
   for h in ["Reader", "Writer", "Dir"] {
     let key: string = h + ".close";
-    out = out.append(OwnFunc { name: key, flags: [true], arr: [false] });
+    out = out.append(OwnFunc { name: key, flags: [true], arr: [false], send: [] });
     names = names.append(key);
   }
-  out = out.append(OwnFunc { name: "tcp_close", flags: [true], arr: [false] });
+  out = out.append(OwnFunc { name: "tcp_close", flags: [true], arr: [false], send: [] });
   names = names.append("tcp_close");
   methods = methods.append("close");
   for td in mod.trait_decls {
@@ -21732,7 +21971,7 @@ function ow_trait_row(tname: string, m: parser.FuncDecl): OwnFunc {
     flags = flags.append(param.own);
     arr = arr.append(ow_type_is_array(param.type_name));
   }
-  return OwnFunc { name: "dyn " + tname + "." + m.name, flags: flags, arr: arr };
+  return OwnFunc { name: "dyn " + tname + "." + m.name, flags: flags, arr: arr, send: [] };
 }
 
 function ow_receiver_ns(rt: string): string {
@@ -22387,7 +22626,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs, handle_borrows, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs, handle_borrows, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
     let nomoved: MovedEntry[] = [];
     let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);

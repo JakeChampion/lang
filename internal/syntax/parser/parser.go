@@ -1550,7 +1550,9 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 				continue
 			}
 			own := false
-			if p.match(lexer.Ident, "own") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+			send := false
+			if (p.match(lexer.Ident, "own") || p.match(lexer.Ident, "send")) && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+				send = p.peek().Text == "send"
 				p.advance()
 				own = true
 			}
@@ -1572,7 +1574,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 					return nil, err
 				}
 			}
-			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), NamePos: pname.Pos, Type: ptype, Own: own, Default: def})
+			params = append(params, ast.Param{Name: discardName(pname.Text, pname.Pos, len(params)), NamePos: pname.Pos, Type: ptype, Own: own, Send: send, Default: def})
 			if !p.moreElems(")") {
 				break
 			}

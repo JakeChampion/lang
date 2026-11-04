@@ -122,7 +122,9 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		if p.Own {
+		if p.Send {
+			b.WriteString("send ")
+		} else if p.Own {
 			b.WriteString("own ")
 		}
 		b.WriteString(p.Name)
@@ -248,7 +250,9 @@ func printStmt(b *strings.Builder, s ast.Stmt) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			if p.Own {
+			if p.Send {
+				b.WriteString("send ")
+			} else if p.Own {
 				b.WriteString("own ")
 			}
 			b.WriteString(p.Name)
