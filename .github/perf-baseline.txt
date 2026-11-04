@@ -1,3 +1,5 @@
+# 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. A Fern runtime call takes its arguments in registers:
+# seven x86_64 rows fall 1.01% to 3.31%. Only reductions are banked, and no limit rises.
 # 2026-11-04: PR #14140, perf-aarch64 job 126444393370 on e95dda6d. A Fern runtime call takes its arguments in registers:
 # five aarch64 rows fall 1.04% to 3.22%. Every row is a reduction, and no limit rises.
 # 2026-11-04: PR #14135, perf-x86_64 job 126373947305 on 4629c363. A fused compare takes no register: sort_ints.ir
@@ -223,8 +225,8 @@ x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	15308
-x86_64/http_hello.ir	22076408
+x86_64/http_hello.text	15136
+x86_64/http_hello.ir	21796408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8478
@@ -237,7 +239,7 @@ x86_64/ordmap_insert.text	5377
 x86_64/ordmap_insert.ir	81070676
 x86_64/pmap_insert.text	2906
 x86_64/pmap_insert.ir	53294866
-x86_64/pvec_with.text	2951
+x86_64/pvec_with.text	2915
 x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	36120760
 x86_64/record_update.text	1296
@@ -246,9 +248,9 @@ x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1964
 x86_64/sort_ints.ir	27861128
 x86_64/sort_strings.text	3096
-x86_64/sort_strings.ir	101675379
+x86_64/sort_strings.ir	98313977
 x86_64/string_build.text	1883
-x86_64/string_build.ir	43427016
+x86_64/string_build.ir	42886116
 x86_64/string_count_byte.text	1180
 x86_64/string_count_byte.ir	135589355
 x86_64/string_find_byte.text	1535
@@ -260,13 +262,13 @@ x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	895
 x86_64/string_slice.ir	38460093
 x86_64/struct_drop.text	2300
-x86_64/struct_drop.ir	205020598
+x86_64/struct_drop.ir	200820598
 x86_64/tokenize.text	1198
 x86_64/tokenize.ir	37860093
 x86_64/utf8_ingest_unchecked.text	7713
 x86_64/utf8_ingest_unchecked.ir	2207993
 x86_64/utf8_ingest_validated.text	8297
-x86_64/utf8_ingest_validated.ir	5262594
+x86_64/utf8_ingest_validated.ir	5209191
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to

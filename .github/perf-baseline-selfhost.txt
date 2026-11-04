@@ -1,3 +1,5 @@
+# 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
+# the http_hello and pvec_with emits 1.04% to 1.22%. Only reductions are banked, and no limit rises.
 # 2026-11-03: PR #14122, a local scripts/perf-bench-selfhost run on its head. Liveness decides which values cross a call,
 # and a small branch splices into its two callers. Retain the measured reductions and preserve every original higher-cost limit.
 # 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
@@ -224,7 +226,7 @@ selfhost/arm64-linux/deflate_decode.emit	13560
 selfhost/arm64-linux/deflate_encode.emit	7829
 selfhost/arm64-linux/enum_match.emit	1112
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	16242
+selfhost/arm64-linux/http_hello.emit	16073
 selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -294,14 +296,14 @@ selfhost/x86-64-linux/deflate_decode.emit	12766
 selfhost/x86-64-linux/deflate_encode.emit	7275
 selfhost/x86-64-linux/enum_match.emit	886
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15308
+selfhost/x86-64-linux/http_hello.emit	15136
 selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
 selfhost/x86-64-linux/map_string.emit	9267
 selfhost/x86-64-linux/ordmap_insert.emit	5377
 selfhost/x86-64-linux/pmap_insert.emit	2906
-selfhost/x86-64-linux/pvec_with.emit	2951
+selfhost/x86-64-linux/pvec_with.emit	2915
 selfhost/x86-64-linux/record_update.emit	1296
 selfhost/x86-64-linux/sort_inplace.emit	1497
 selfhost/x86-64-linux/sort_ints.emit	1964
