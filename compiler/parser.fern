@@ -12665,7 +12665,7 @@ function bc_body(stmts: ast.Stmt[], ctx: BoundUse): (ast.Stmt[], BoundUse) {
   let out: ast.Stmt[] = [];
   let cur: BoundUse = ctx;
   for stmt in stmts {
-    let (ns, na, nh) = astwalk.map_stmt_acc(stmt, cur, bc_stmt, bc_expr);
+    let (ns, na, nh) = astwalk.map_stmt_where(stmt, cur, bc_stmt, bc_expr, astwalk.every_expr);
     out = out.append(ns);
     cur = na;
   }
@@ -12673,7 +12673,7 @@ function bc_body(stmts: ast.Stmt[], ctx: BoundUse): (ast.Stmt[], BoundUse) {
 }
 
 function bc_rewrite(e: ast.Expr, ctx: BoundUse): ast.Expr {
-  let (out, a, h) = astwalk.map_expr_acc(e, ctx, bc_stmt, bc_expr);
+  let (out, a, h) = astwalk.map_expr_where(e, ctx, bc_stmt, bc_expr, astwalk.every_expr);
   return out;
 }
 
@@ -19463,7 +19463,7 @@ function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt
 struct StepCtx { step: ast.Stmt, var_name: string, label: string, depth: i32, shadowed: boolean }
 
 function step_continues(body: ast.Stmt[], ctx: StepCtx): (ast.Stmt[], StepCtx) {
-  return astwalk.map_stmts_acc(body, ctx, step_continue_stmt, step_continue_expr);
+  return astwalk.map_stmts_where(body, ctx, step_continue_stmt, step_continue_expr, astwalk.every_expr);
 }
 
 function step_continue_stmt(st: ast.Stmt, ctx: StepCtx): (ast.Stmt, StepCtx, boolean) {
@@ -20155,12 +20155,12 @@ function fda_leave(inner: FdaWalk, outer: FdaWalk): FdaWalk {
 }
 
 function fda_expr(e: ast.Expr, w: FdaWalk): (ast.Expr, FdaWalk) {
-  let (out, tail, handled) = astwalk.map_expr_acc(e, w, fda_stmt_at, fda_expr_at);
+  let (out, tail, handled) = astwalk.map_expr_where(e, w, fda_stmt_at, fda_expr_at, astwalk.every_expr);
   return (out, tail);
 }
 
 function fda_body(stmts: ast.Stmt[], w: FdaWalk): (ast.Stmt[], FdaWalk) {
-  return astwalk.map_stmts_acc(stmts, w, fda_stmt_at, fda_expr_at);
+  return astwalk.map_stmts_where(stmts, w, fda_stmt_at, fda_expr_at, astwalk.every_expr);
 }
 
 function fda_call(c: ast.ExprCall, w: FdaWalk): (ast.Expr, FdaWalk) {
@@ -20253,7 +20253,7 @@ function fda_stmt_at(st: ast.Stmt, w: FdaWalk): (ast.Stmt, FdaWalk, boolean) {
       return (ast.StmtMatch { ...m, scrutinee: scrutinee, arms: arms }, cur, true);
     },
     ast.StmtDefer(d) => {
-      let (action, tail, handled) = astwalk.map_stmt_acc(d.action, w, fda_stmt_at, fda_expr_at);
+      let (action, tail, handled) = astwalk.map_stmt_where(d.action, w, fda_stmt_at, fda_expr_at, astwalk.every_expr);
       return (ast.StmtDefer { ...d, action: action }, fda_leave(tail, w), true);
     },
     _ => {
@@ -22555,7 +22555,7 @@ function tv_obj_body(stmts: ast.Stmt[], sc: TvScope): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let cur: TvScope = sc;
   for st in stmts {
-    let (ns, na, nh) = astwalk.map_stmt_acc(st, cur, tv_obj_stmt, tv_obj_expr);
+    let (ns, na, nh) = astwalk.map_stmt_where(st, cur, tv_obj_stmt, tv_obj_expr, astwalk.every_expr);
     out = out.append(ns);
     if let ast.StmtVar(v) = st {
       cur = tv_shadow(cur, astwalk.append_bound_name([], v.name));
@@ -22565,7 +22565,7 @@ function tv_obj_body(stmts: ast.Stmt[], sc: TvScope): ast.Stmt[] {
 }
 
 function tv_obj_in(e: ast.Expr, sc: TvScope): ast.Expr {
-  let (out, a, h) = astwalk.map_expr_acc(e, sc, tv_obj_stmt, tv_obj_expr);
+  let (out, a, h) = astwalk.map_expr_where(e, sc, tv_obj_stmt, tv_obj_expr, astwalk.every_expr);
   return out;
 }
 

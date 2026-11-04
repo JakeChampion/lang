@@ -221,17 +221,25 @@ pub function fold_assets(mod: parser.Module, assets: Assets): Folded {
   let acc: FoldAcc = FoldAcc { assets: assets, errs: [] };
   let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
-    let (body, a2) = astwalk.map_stmts_acc(fd.body, acc, fa_keep_stmt, fa_expr);
+    let (body, a2) = astwalk.map_stmts_where(fd.body, acc, fa_keep_stmt, fa_expr, fa_applies);
     acc = a2;
     funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
   }
-  let (tops, a3) = astwalk.map_stmts_acc(mod.top_stmts, acc, fa_keep_stmt, fa_expr);
+  let (tops, a3) = astwalk.map_stmts_where(mod.top_stmts, acc, fa_keep_stmt, fa_expr, fa_applies);
   acc = a3;
   return Folded { module: parser.Module { ...mod, funcs: funcs, top_stmts: tops }, errs: acc.errs };
 }
 
 function fa_keep_stmt(s: ast.Stmt, a: FoldAcc): (ast.Stmt, FoldAcc, boolean) {
   return (s, a, false);
+}
+
+// Only a call can name an asset.
+function fa_applies(e: ast.Expr): boolean {
+  if let ast.ExprCall(_) = e {
+    return true;
+  }
+  return false;
 }
 
 function fa_expr(e: ast.Expr, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
