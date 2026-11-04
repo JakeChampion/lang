@@ -471,7 +471,7 @@ pub function (r: Recovery) timer(): Option[Instant] {
 <<10 function (r: Recovery) __earliest_loss(): (i64, i32)>>=
 function (r: Recovery) __earliest_loss(): (i64, i32) {
   let at: i64 = 0;
-  let space: i32 = -1;
+  let space = -1;
   let i = 0;
   while (i < 3) {
     let t = r.spaces[i].loss_time;
@@ -487,7 +487,7 @@ function (r: Recovery) __earliest_loss(): (i64, i32) {
 function (r: Recovery) __pto_time(): (i64, i32) {
   let backoff = 1 as i64 << r.pto_count as i64;
   let at: i64 = 0;
-  let space: i32 = -1;
+  let space = -1;
   let i = 0;
   while (i < 3) {
     let s = r.spaces[i];

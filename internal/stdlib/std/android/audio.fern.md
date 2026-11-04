@@ -105,7 +105,7 @@ function open(input: boolean, rate: i32): Stream {
       return Stream { ptr: 0 as usize, rate: 0 };
     }
     let builder: usize = __load_ptr(slot);
-    let direction: i32 = 0;
+    let direction = 0;
     if (input) {
       direction = 1;
     }
@@ -168,11 +168,11 @@ pub function (s: Stream) read(n: i32, timeout_ms: i32): i32[] {
     let buf: usize = __alloc(2 * n);
     let got: i32 = c_read(s.ptr, buf, n, timeout_ms as i64 * 1000000i64);
     for k in 0..got {
-      let lo: i32 = __load_u8(buf + (2 * k) as usize) as i32;
-      let hi: i32 = __load_u8(buf + (2 * k + 1) as usize) as i32;
+      let lo = __load_u8(buf + (2 * k) as usize) as i32;
+      let hi = __load_u8(buf + (2 * k + 1) as usize) as i32;
       let v: i32 = hi << 8 | lo;
       if (v >= 32768) {
-        v = v - 65536;
+        v -= 65536;
       }
       out = out.append(v);
     }
@@ -194,8 +194,8 @@ pub function (s: Stream) write(samples: [i32], timeout_ms: i32): i32 {
       let v: i32 = samples[k];
       if (v > 32767) {
         v = 32767;
-      } else if (v < 0 - 32768) {
-        v = 0 - 32768;
+      } else if (v < -32768) {
+        v = -32768;
       }
       __store_u8(buf + (2 * k) as usize, v & 255);
       __store_u8(buf + (2 * k + 1) as usize, v >> 8 & 255);

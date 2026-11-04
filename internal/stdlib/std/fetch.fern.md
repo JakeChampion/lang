@@ -449,18 +449,18 @@ struct __Target { host: string, port: i32, target: string, host_field: string, p
 ```fern
 <<12 function __target_of(raw: string, policy: Policy): Result[__Target, FetchError]>>=
 function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] {
-  let u: Url = __http_url(raw)?;
-  let port: i32 = __permitted(policy, u.host, __effective_port(u))?;
-  let tls: boolean = u.scheme == "https";
-  let host_field: string = __host_field(u.host, port, tls);
-  let target: string = __request_target(u)?;
-  let authority: string = "";
+  let u = __http_url(raw)?;
+  let port = __permitted(policy, u.host, __effective_port(u))?;
+  let tls = u.scheme == "https";
+  let host_field = __host_field(u.host, port, tls);
+  let target = __request_target(u)?;
+  let authority = "";
   if (tls) {
     authority = u.host + ":" + port.to_string();
   }
   match (__proxy_for_url(policy.proxies, u)) {
     Some(spec) => {
-      let p: __Proxy = __proxy_named(policy.proxies, spec, tls)?;
+      let p = __proxy_named(policy.proxies, spec, tls)?;
       if (!tls) {
         target = "http://" + host_field + target;
       }
@@ -503,13 +503,13 @@ function __ambiguous_ipv4(host: string): boolean {
   if (host.contains(":")) {
     return false;
   }
-  let end: i32 = host.len();
+  let end = host.len();
   if (end > 0 && host[end - 1] == 46) {
-    end = end - 1;
+    end -= 1;
   }
-  let start: i32 = end;
+  let start = end;
   while (start > 0 && host[start - 1] != 46 as u8) {
-    start = start - 1;
+    start -= 1;
   }
   if (start >= end || host[start] < 48 || host[start] > 57) {
     return false;
@@ -518,7 +518,7 @@ function __ambiguous_ipv4(host: string): boolean {
 }
 
 function __request_target(u: Url): Result[string, FetchError] {
-  let target: string = u.path;
+  let target = u.path;
   if (target.len() == 0) {
     target = "/";
   }
@@ -535,7 +535,7 @@ function __request_ok(req: Request): Result[void, FetchError] {
   if (!http.method_ok(req.method)) {
     return Err(InvalidRequest("the method is not a token"));
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < req.headers.names.len()) {
     if (!http.field_name_ok(req.headers.names[i])) {
       return Err(InvalidRequest("a header name is not a token"));
@@ -543,7 +543,7 @@ function __request_ok(req: Request): Result[void, FetchError] {
     if (!http.field_value_ok(req.headers.values[i])) {
       return Err(InvalidRequest("a header value has a byte that cannot be written"));
     }
-    i = i + 1;
+    i += 1;
   }
   match (req.body) {
     BodyFile(path) => {
@@ -558,11 +558,11 @@ function __request_ok(req: Request): Result[void, FetchError] {
 }
 
 function __host_field(host: string, port: i32, tls: boolean): string {
-  let h: string = host;
+  let h = host;
   if (h.contains(":")) {
     h = "[" + h + "]";
   }
-  let default_port: i32 = 80;
+  let default_port = 80;
   if (tls) {
     default_port = 443;
   }
@@ -578,15 +578,15 @@ function __host_field(host: string, port: i32, tls: boolean): string {
 ```fern
 <<13 function __wire(req: Request, t: __Target, body: u8[]): u8[]>>=
 function __wire(req: Request, t: __Target, body: u8[]): u8[] {
-  let b: usize = buf_new(256 + body.len());
+  let b = buf_new(256 + body.len());
   buf_push(b, req.method);
   buf_push(b, " ");
   buf_push(b, t.target);
   buf_push(b, " HTTP/1.1\r\nHost: ");
   buf_push(b, t.host_field);
   buf_push(b, "\r\n");
-  let h: HeaderMap = req.headers;
-  let i: i32 = 0;
+  let h = req.headers;
+  let i = 0;
   while (i < h.names.len()) {
     if (__sent(h, i)) {
       buf_push(b, h.names[i]);
@@ -594,7 +594,7 @@ function __wire(req: Request, t: __Target, body: u8[]): u8[] {
       buf_push(b, h.values[i]);
       buf_push(b, "\r\n");
     }
-    i = i + 1;
+    i += 1;
   }
   if (__carries_length(req, body.len())) {
     buf_push(b, "Content-Length: ");
@@ -611,19 +611,19 @@ function __wire(req: Request, t: __Target, body: u8[]): u8[] {
   }
   buf_push(b, "\r\n");
   buf_push_bytes_range(b, body, 0, body.len());
-  let out: u8[] = buf_take_bytes(b);
+  let out = buf_take_bytes(b);
   buf_free(b);
   return out;
 }
 
 function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
-  let out: HeaderMap = headers.new();
-  let i: i32 = 0;
+  let out = headers.new();
+  let i = 0;
   while (i < req.headers.names.len()) {
     if (__sent(req.headers, i)) {
       out = out.append(req.headers.names[i], req.headers.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   if (__carries_length(req, body_len)) {
     out = out.append("Content-Length", body_len.to_string());
@@ -638,11 +638,11 @@ function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
 }
 
 function __sent(h: HeaderMap, i: i32): boolean {
-  let name: string = h.names[i];
+  let name = h.names[i];
   if (http.hop_by_hop(name) || http.connection_names(h, name)) {
     return false;
   }
-  let n: i32 = name.len();
+  let n = name.len();
   if (n == 4) {
     return !name.eq_ignore_ascii_case("host");
   }
@@ -696,7 +696,7 @@ pub function (p: Idle) proxy_env(): ProxyEnv {
     },
     None => {}
   }
-  let env: ProxyEnv = __proxies();
+  let env = __proxies();
   p.proxies.set(Some(env));
   return env;
 }
@@ -729,7 +729,7 @@ pub function idle_shared(): Idle {
   let dialing: string[] = [];
   let marks: u8[] = [];
   // No count limit: the pool never holds more than the handlers held at once.
-  let base: Idle = idle_limited(2147483647, time.duration_seconds(90 as i64));
+  let base = idle_limited(2147483647, time.duration_seconds(90 as i64));
   return Idle { ...base, shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing), socks: base.socks }), armed: Some(cell_new(marks)) };
 }
 
@@ -763,7 +763,7 @@ function __mark_fd(c: Cell[u8[]], fd: i32, mark: u8): void {
   if (fd < 0 || mark == 0 && fd >= c.get().len()) {
     return;
   }
-  let marks: u8[] = c.get();
+  let marks = c.get();
   let none: u8[] = [];
   c.set(none);
   while (marks.len() <= fd) {
@@ -774,7 +774,7 @@ function __mark_fd(c: Cell[u8[]], fd: i32, mark: u8): void {
 
 // The pool owns each socket it dials. The table is indexed by the descriptor number, which is the connection id.
 function __sock_at(c: Cell[Option[Socket][]], fd: i32): Option[Socket] {
-  let socks: Option[Socket][] = c.get();
+  let socks = c.get();
   if (fd < 0 || fd >= socks.len()) {
     return None;
   }
@@ -782,8 +782,8 @@ function __sock_at(c: Cell[Option[Socket][]], fd: i32): Option[Socket] {
 }
 
 function __keep_sock(c: Cell[Option[Socket][]], own sock: Socket): i32 {
-  let fd: i32 = sock.fd;
-  let socks: Option[Socket][] = c.get();
+  let fd = sock.fd;
+  let socks = c.get();
   let none: Option[Socket][] = [];
   c.set(none);
   while (socks.len() <= fd) {
@@ -794,7 +794,7 @@ function __keep_sock(c: Cell[Option[Socket][]], own sock: Socket): i32 {
 }
 
 function __drop_sock(c: Cell[Option[Socket][]], fd: i32): i32 {
-  let socks: Option[Socket][] = c.get();
+  let socks = c.get();
   if (fd < 0 || fd >= socks.len()) {
     return 0;
   }
@@ -835,15 +835,15 @@ pub function (p: Idle) disarm(fd: i32): void {
     },
     None => {}
   }
-  let rows: Kept[] = p.kept.get();
-  let i: i32 = 0;
+  let rows = p.kept.get();
+  let i = 0;
   while (i < rows.len()) {
     if (rows[i].fd == fd) {
       p.kept.set(__kept_without(rows, i));
       __drop_sock(p.socks, fd);
       return;
     }
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -906,18 +906,18 @@ pub function (sh: Shared) pick(key: string): Option[i32] {
 }
 
 pub function (sh: Shared) submit(fd: i32, out: http.Outgoing): i32 {
-  let rows: Driven[] = sh.rows.get();
-  let at: i32 = __driven_at(rows, fd);
+  let rows = sh.rows.get();
+  let at = __driven_at(rows, fd);
   if (at < 0) {
     return 0;
   }
-  let d: Driven = rows[at];
+  let d = rows[at];
   let (sent, stream) = d.h2.request(out);
   if (stream < 0) {
     return 0;
   }
   sh.rows.set(rows.with(at, Driven { ...d, h2: sent.conn, out: d.out.concat(sent.output), streams: d.streams + 1 }));
-  let id: i32 = 0 - sh.next.get();
+  let id = 0 - sh.next.get();
   sh.next.set(sh.next.get() + 1);
   sh.mail.set(sh.mail.get().append(Mail { id: id, fd: fd, stream: stream, key: "", answer: None }));
   return id;
@@ -941,27 +941,27 @@ pub function (sh: Shared) dialed(key: string): void {
     }
   }
   sh.dialing.set(kept);
-  let mail: Mail[] = sh.mail.get();
-  let i: i32 = 0;
+  let mail = sh.mail.get();
+  let i = 0;
   while (i < mail.len()) {
     if (mail[i].fd < 0 && mail[i].key == key) {
       mail = mail.with(i, Mail { ...mail[i], answer: Some(Ok(Answer { status: 0, headers: headers.new(), body: [], trailers: headers.new() })) });
     }
-    i = i + 1;
+    i += 1;
   }
   sh.mail.set(mail);
 }
 
 pub function (sh: Shared) await_connection(key: string): i32 {
-  let id: i32 = 0 - sh.next.get();
+  let id = 0 - sh.next.get();
   sh.next.set(sh.next.get() + 1);
   sh.mail.set(sh.mail.get().append(Mail { id: id, fd: 0 - 1, stream: 0, key: key, answer: None }));
   return id;
 }
 
 pub function (sh: Shared) take(id: i32): Option[Result[Answer, FetchError]] {
-  let mail: Mail[] = sh.mail.get();
-  let at: i32 = __mail_at(mail, id);
+  let mail = sh.mail.get();
+  let at = __mail_at(mail, id);
   if (at < 0) {
     return Some(Err(Protocol("HTTP/2: the stream's slot is gone")));
   }
@@ -978,23 +978,23 @@ pub function (sh: Shared) take(id: i32): Option[Result[Answer, FetchError]] {
 }
 
 pub function (sh: Shared) abandon(id: i32): void {
-  let mail: Mail[] = sh.mail.get();
-  let at: i32 = __mail_at(mail, id);
+  let mail = sh.mail.get();
+  let at = __mail_at(mail, id);
   if (at < 0) {
     return;
   }
-  let m: Mail = mail[at];
+  let m = mail[at];
   sh.mail.set(__mail_without(mail, at));
   if (m.fd < 0) {
     return;
   }
-  let rows: Driven[] = sh.rows.get();
-  let row: i32 = __driven_at(rows, m.fd);
+  let rows = sh.rows.get();
+  let row = __driven_at(rows, m.fd);
   if (row < 0) {
     return;
   }
-  let d: Driven = rows[row];
-  let step: h2.Step = d.h2.reset(m.stream, 8);
+  let d = rows[row];
+  let step = d.h2.reset(m.stream, 8);
   sh.rows.set(rows.with(row, Driven { ...d, h2: step.conn, out: d.out.concat(step.output), streams: d.streams - 1, since: clock.instant() }));
 }
 
@@ -1017,27 +1017,27 @@ pub function (sh: Shared) answered(): i32[] {
 ```fern
 <<22 pub function (sh: Shared) unwatched(): i32[]>>=
 pub function (sh: Shared) unwatched(): i32[] {
-  let rows: Driven[] = sh.rows.get();
+  let rows = sh.rows.get();
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < rows.len()) {
     if (!rows[i].watched) {
       out = out.append(rows[i].fd);
       rows = rows.with(i, Driven { ...rows[i], watched: true });
     }
-    i = i + 1;
+    i += 1;
   }
   sh.rows.set(rows);
   return out;
 }
 
 pub function (sh: Shared) flush(): (i32[], i32[]) {
-  let rows: Driven[] = sh.rows.get();
+  let rows = sh.rows.get();
   let now_waiting: i32[] = [];
   let drained: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < rows.len()) {
-    let d: Driven = __sealed(rows[i]);
+    let d = __sealed(rows[i]);
     if (d.wire.len() > 0) {
       match (__write_rest(sh, d.fd, d.wire)) {
         Ok(rest) => {
@@ -1050,7 +1050,7 @@ pub function (sh: Shared) flush(): (i32[], i32[]) {
         }
       }
     }
-    let waits: boolean = d.wire.len() > 0;
+    let waits = d.wire.len() > 0;
     if (waits && !d.writing) {
       now_waiting = now_waiting.append(d.fd);
     }
@@ -1058,7 +1058,7 @@ pub function (sh: Shared) flush(): (i32[], i32[]) {
       drained = drained.append(d.fd);
     }
     rows = rows.with(i, Driven { ...d, writing: waits });
-    i = i + 1;
+    i += 1;
   }
   sh.rows.set(rows);
   return (now_waiting, drained);
@@ -1078,7 +1078,7 @@ pub function (sh: Shared) sockets(): i32[] {
 ```fern
 <<23 function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]>>=
 function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
-  let session: client.Session = d.tls;
+  let session = d.tls;
   if (bytes.len() == 0) {
     match (__kernel_record_on(__sock_at(sh.socks, d.fd), d.tls, clock.now())) {
       RecordTaken(step) => {
@@ -1101,8 +1101,8 @@ function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i3
       }
     }
   }
-  let fed: h2.Step = d.h2.read(bytes);
-  let streams: i32 = __mail_answered(sh, d.fd, fed.events, d.streams);
+  let fed = d.h2.read(bytes);
+  let streams = __mail_answered(sh, d.fd, fed.events, d.streams);
   sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: session, h2: fed.conn, out: d.out.concat(fed.output), streams: streams, since: clock.instant() }));
   if (fed.conn.closed()) {
     __driven_failed(sh, d.fd, Protocol("HTTP/2: the connection closed before the response ended"));
@@ -1158,12 +1158,12 @@ pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
   if (!readable) {
     return None;
   }
-  let rows: Driven[] = sh.rows.get();
-  let at: i32 = __driven_at(rows, fd);
+  let rows = sh.rows.get();
+  let at = __driven_at(rows, fd);
   if (at < 0) {
     return None;
   }
-  let d: Driven = rows[at];
+  let d = rows[at];
   let bytes: u8[] = [];
   match (__read_up_to(sh, fd, 65536)) {
     Ok(got) => {
@@ -1201,11 +1201,11 @@ function __driven_read_failed(sh: Shared, at: i32, d: Driven, e: net.NetError): 
 }
 
 function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
-  let fd: i32 = d.fd;
+  let fd = d.fd;
   match (d.tls.read(bytes, clock.now())) {
     Ok(step) => {
-      let fed: h2.Step = d.h2.read(step.data);
-      let streams: i32 = __mail_answered(sh, fd, fed.events, d.streams);
+      let fed = d.h2.read(step.data);
+      let streams = __mail_answered(sh, fd, fed.events, d.streams);
       sh.rows.set(sh.rows.get().with(at, Driven { ...d, tls: step.session, h2: fed.conn, out: d.out.concat(step.output).concat(fed.output), streams: streams, since: clock.instant() }));
       if (fed.conn.closed() || step.closed) {
         __driven_failed(sh, fd, Protocol("HTTP/2: the connection closed before the response ended"));
@@ -1214,7 +1214,7 @@ function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]
       return None;
     },
     Err(f) => {
-      let sent: Result[u8[], net.NetError] = __write_rest(sh, fd, f.alert);
+      let sent = __write_rest(sh, fd, f.alert);
       __driven_failed(sh, fd, Tls(f.error));
       return Some(fd);
     }
@@ -1229,7 +1229,7 @@ function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]
 <<26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]>>=
 // Drops and returns the idle connections quiet for longer than `idle`, and those the peer is closing.
 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[] {
-  let rows: Driven[] = sh.rows.get();
+  let rows = sh.rows.get();
   let kept: Driven[] = [];
   let gone: i32[] = [];
   for d in rows {
@@ -1252,10 +1252,10 @@ function __mail_answered(sh: Shared, fd: i32, events: h2.Event[], streams: i32):
   for e in events {
     match (e) {
       h2.Answered(sid, resp) => {
-        streams = streams - __mail_deliver(sh, fd, sid, Ok(Answer { status: resp.status, headers: http.end_to_end(resp.headers), body: resp.body_bytes(), trailers: resp.trailers }));
+        streams -= __mail_deliver(sh, fd, sid, Ok(Answer { status: resp.status, headers: http.end_to_end(resp.headers), body: resp.body_bytes(), trailers: resp.trailers }));
       },
       h2.Reset(sid, code) => {
-        streams = streams - __mail_deliver(sh, fd, sid, Err(Protocol("HTTP/2: the server reset the stream with code " + code.to_string())));
+        streams -= __mail_deliver(sh, fd, sid, Err(Protocol("HTTP/2: the server reset the stream with code " + code.to_string())));
       },
       _ => {}
     }
@@ -1264,26 +1264,26 @@ function __mail_answered(sh: Shared, fd: i32, events: h2.Event[], streams: i32):
 }
 
 function __mail_deliver(sh: Shared, fd: i32, stream: i32, answer: Result[Answer, FetchError]): i32 {
-  let mail: Mail[] = sh.mail.get();
-  let i: i32 = 0;
+  let mail = sh.mail.get();
+  let i = 0;
   while (i < mail.len()) {
     if (mail[i].fd == fd && mail[i].stream == stream) {
       sh.mail.set(mail.with(i, Mail { ...mail[i], answer: Some(answer) }));
       return 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }
 
 function __driven_failed(sh: Shared, fd: i32, e: FetchError): void {
-  let rows: Driven[] = sh.rows.get();
-  let at: i32 = __driven_at(rows, fd);
+  let rows = sh.rows.get();
+  let at = __driven_at(rows, fd);
   if (at >= 0) {
     sh.rows.set(__driven_without(rows, at));
   }
-  let mail: Mail[] = sh.mail.get();
-  let i: i32 = 0;
+  let mail = sh.mail.get();
+  let i = 0;
   while (i < mail.len()) {
     if (mail[i].fd == fd) {
       match (mail[i].answer) {
@@ -1293,24 +1293,24 @@ function __driven_failed(sh: Shared, fd: i32, e: FetchError): void {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   sh.mail.set(mail);
 }
 
 function __driven_at(rows: Driven[], fd: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < rows.len()) {
     if (rows[i].fd == fd) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __driven_without(rows: Driven[], skip: i32): Driven[] {
-  let next: i32 = skip + 1;
+  let next = skip + 1;
   for i in next..rows.len() {
     rows = rows.with(i - 1, rows[i]);
   }
@@ -1318,18 +1318,18 @@ function __driven_without(rows: Driven[], skip: i32): Driven[] {
 }
 
 function __mail_at(mail: Mail[], id: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < mail.len()) {
     if (mail[i].id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __mail_without(mail: Mail[], skip: i32): Mail[] {
-  let next: i32 = skip + 1;
+  let next = skip + 1;
   for i in next..mail.len() {
     mail = mail.with(i - 1, mail[i]);
   }
@@ -1342,7 +1342,7 @@ function __mail_without(mail: Mail[], skip: i32): Mail[] {
 ```fern
 <<28 pub function close_idle[T: Transport](tr: T): void>>=
 pub function close_idle[T: Transport](tr: T): void {
-  let pool: Idle = tr.idle();
+  let pool = tr.idle();
   for k in pool.kept.get() {
     __close(tr, __kept_conn(k));
   }
@@ -1363,7 +1363,7 @@ struct __Place { guard: boolean, host: string, port: i32, tls: string }
 ```fern
 <<30 function __place_of(t: __Target, guard: boolean, roots: Option[verify.Roots]): __Place>>=
 function __place_of(t: __Target, guard: boolean, roots: Option[verify.Roots]): __Place {
-  let tls: string = "";
+  let tls = "";
   if (t.tls) {
     tls = t.authority + " " + __roots_key(roots);
   }
@@ -1375,11 +1375,11 @@ function __place_eq(a: __Place, b: __Place): boolean {
 }
 
 function __place_key(p: __Place): string {
-  let route: string = "open ";
+  let route = "open ";
   if (p.guard) {
     route = "global ";
   }
-  let key: string = route + p.host + " " + p.port.to_string();
+  let key = route + p.host + " " + p.port.to_string();
   if (p.tls.len() > 0) {
     key = key + " tls " + p.tls;
   }
@@ -1389,7 +1389,7 @@ function __place_key(p: __Place): string {
 function __roots_key(roots: Option[verify.Roots]): string {
   match (roots) {
     Some(r) => {
-      let h: crypto.Sha256 = crypto.sha256_new();
+      let h = crypto.sha256_new();
       for c in r.certs {
         h = h.update(c.raw);
       }
@@ -1403,26 +1403,26 @@ function __roots_key(roots: Option[verify.Roots]): string {
 }
 
 function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
-  let rows: Kept[] = __live_kept(tr);
-  let pick: i32 = rows.len() - 1;
+  let rows = __live_kept(tr);
+  let pick = rows.len() - 1;
   while (pick >= 0 && !__place_eq(rows[pick].place, place)) {
-    pick = pick - 1;
+    pick -= 1;
   }
   if (pick < 0) {
     tr.idle().kept.set(rows);
     return __no_conn();
   }
-  let conn: __Conn = __kept_conn(rows[pick]);
+  let conn = __kept_conn(rows[pick]);
   tr.idle().kept.set(__kept_without(rows, pick));
   return conn;
 }
 
 function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
-  let rows: Kept[] = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now(), tls: conn.tls, h2: conn.h2, heard: conn.heard });
-  let from: i32 = 0;
+  let rows = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now(), tls: conn.tls, h2: conn.h2, heard: conn.heard });
+  let from = 0;
   while (rows.len() - from > tr.idle().max) {
     __close(tr, __kept_conn(rows[from]));
-    from = from + 1;
+    from += 1;
   }
   if (from > 0) {
     rows = __kept_from(rows, from);
@@ -1433,18 +1433,18 @@ function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
 // Takes the rows out of the pool, so the caller updates them in place and
 // sets them back.
 function __live_kept[T: Transport](tr: T): Kept[] {
-  let pool: Idle = tr.idle();
-  let rows: Kept[] = pool.kept.get();
+  let pool = tr.idle();
+  let rows = pool.kept.get();
   let none: Kept[] = [];
   pool.kept.set(none);
   if (rows.len() == 0) {
     return rows;
   }
-  let now: Instant = tr.now();
-  let from: i32 = 0;
+  let now = tr.now();
+  let from = 0;
   while (from < rows.len() && now.since(rows[from].since).cmp(pool.idle) > 0) {
     __close(tr, __kept_conn(rows[from]));
-    from = from + 1;
+    from += 1;
   }
   if (from == 0) {
     return rows;
@@ -1457,7 +1457,7 @@ function __kept_conn(k: Kept): __Conn {
 }
 
 function __kept_without(rows: Kept[], skip: i32): Kept[] {
-  let next: i32 = skip + 1;
+  let next = skip + 1;
   for i in next..rows.len() {
     rows = rows.with(i - 1, rows[i]);
   }
@@ -1510,12 +1510,12 @@ impl Transport for Sockets {
   }
   function lookup(self: Sockets, host: string, checked: boolean): Result[Lookup, dns.DnsError] {
     let none: net.IpAddr[] = [];
-    let names: dns.Resolver = self.pool.names;
+    let names = self.pool.names;
     if (!checked) {
-      let found: net.IpAddr[] = names.resolve(host)?;
+      let found = names.resolve(host)?;
       return Ok(Lookup { dial: found, named: none, judged: none });
     }
-    let plain: net.IpAddr[] = names.resolve_plain(host)?;
+    let plain = names.resolve_plain(host)?;
     let carried: net.IpAddr[] = [];
     for a in plain {
       match (names.nat64_carried(a)) {
@@ -1547,7 +1547,7 @@ impl Transport for Sockets {
       },
       None => {}
     }
-    return 0 - 9;
+    return -9;
   }
   function read(self: Sockets, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
     match (__sock_at(self.pool.socks, conn)) {
@@ -1598,11 +1598,11 @@ pub function send_public_on[T: Transport](tr: T, req: Request): Result[HttpRespo
 ```fern
 <<35 function __send_closing(policy: Policy, req: Request): Result[HttpResponse, FetchError]>>=
 function __send_closing(policy: Policy, req: Request): Result[HttpResponse, FetchError] {
-  let tr: Sockets = sockets();
+  let tr = sockets();
   if (target_os() == "wasi-http") {
     return send_on(tr, req, policy);
   } else {
-    let answer: Result[HttpResponse, FetchError] = send_on(tr, req, policy);
+    let answer = send_on(tr, req, policy);
     close_idle(tr);
     return answer;
   }
@@ -1704,8 +1704,8 @@ function __allow_rule(e: string): Option[__AllowRule] {
 }
 
 function __allow_host(named: string, bracketed: boolean, port: i32): Option[__AllowRule] {
-  let host: string = named;
-  let sub: boolean = !bracketed && host.starts_with("*.");
+  let host = named;
+  let sub = !bracketed && host.starts_with("*.");
   if (sub) {
     host = host.drop(2);
   }
@@ -1731,8 +1731,8 @@ function __allow_parts(e: string): Option[(string, string)] {
   let Some(close) = e.index_of("]") else {
     return None;
   };
-  let host: string = e.take(close).drop(1);
-  let rest: string = e.drop(close + 1);
+  let host = e.take(close).drop(1);
+  let rest = e.drop(close + 1);
   if (rest.len() > 0 && !rest.starts_with(":")) {
     return None;
   }
@@ -1763,12 +1763,12 @@ function __permitted(policy: Policy, host: string, port: i32): Result[i32, Fetch
       return Ok(port);
     },
     Some(a) => {
-      let h: string = host.to_lower();
+      let h = host.to_lower();
       if (h.ends_with(".")) {
         h = h.take(h.len() - 1);
       }
       for r in a.rules {
-        let named: boolean = h == r.host;
+        let named = h == r.host;
         if (r.sub) {
           named = h.ends_with("." + r.host);
         }
@@ -1788,12 +1788,12 @@ function __permitted(policy: Policy, host: string, port: i32): Result[i32, Fetch
 ```fern
 <<41 pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[HttpResponse, FetchError]>>=
 pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[HttpResponse, FetchError] {
-  let started: i64 = time.instant_nanos(tr.now());
-  let cur: Request = req;
-  let hops: i32 = 0;
+  let started = time.instant_nanos(tr.now());
+  let cur = req;
+  let hops = 0;
   while (true) {
-    let hop: Request = __with_jar(tr, cur, policy.jar);
-    let resp: HttpResponse = __send_once(tr, hop, started, policy)?;
+    let hop = __with_jar(tr, cur, policy.jar);
+    let resp = __send_once(tr, hop, started, policy)?;
     __stored(tr, policy.jar, hop.url, resp.headers);
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
@@ -1801,7 +1801,7 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
     if (hops >= req.redirects) {
       return Err(Redirect("more than " + req.redirects.to_string() + " redirects"));
     }
-    hops = hops + 1;
+    hops += 1;
     cur = __next_hop(cur, resp)?;
   }
   return Err(Redirect("unreachable"));
@@ -1817,7 +1817,7 @@ function __with_jar[T: Transport](tr: T, req: Request, jar: Option[cookie.Jar]):
     Some(j) => {
       match (j.header(req.url, tr.wall())) {
         Some(v) => {
-          let all: string = v;
+          let all = v;
           match (req.headers.get("cookie")) {
             Some(given) => {
               all = given + "; " + v;
@@ -1852,7 +1852,7 @@ function __redirects(status: i32): boolean {
 }
 
 function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchError] {
-  let location: string = "";
+  let location = "";
   match (resp.headers.get("location")) {
     Some(l) => {
       location = l;
@@ -1861,7 +1861,7 @@ function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchErro
       return Err(Redirect("a " + resp.status.to_string() + " without a Location"));
     }
   }
-  let target: string = "";
+  let target = "";
   match (url.resolve(cur.url, location)) {
     Ok(t) => {
       target = t;
@@ -1870,7 +1870,7 @@ function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchErro
       return Err(Redirect("a Location that is not a URL"));
     }
   }
-  let next: Request = Request { ...cur, url: target };
+  let next = Request { ...cur, url: target };
   if (__rewrites_to_get(resp.status, cur.method)) {
     let none: u8[] = [];
     next = Request { ...next, method: "GET", body: BodyBytes(none), headers: __without(next.headers, ["content-type", "content-length"]) };
@@ -1889,13 +1889,13 @@ function __rewrites_to_get(status: i32, method: string): boolean {
 }
 
 function __without(h: HeaderMap, names: string[]): HeaderMap {
-  let out: HeaderMap = headers.new();
-  let i: i32 = 0;
+  let out = headers.new();
+  let i = 0;
   while (i < h.names.len()) {
     if (!__holds(names, h.names[i])) {
       out = out.append(h.names[i], h.values[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1910,8 +1910,8 @@ function __holds(names: string[], name: string): boolean {
 }
 
 function __same_origin(a: string, b: string): boolean {
-  let ua: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
-  let ub: Url = ua;
+  let ua = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let ub = ua;
   match (url.parse(a)) {
     Ok(p) => {
       ua = p;
@@ -1947,7 +1947,7 @@ function __effective_port(u: Url): i32 {
 ```fern
 <<43 function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Policy): Result[HttpResponse,...>>=
 function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
-  let t: __Target = __target_of(req.url, policy)?;
+  let t = __target_of(req.url, policy)?;
   match (__request_ok(req)) {
     Ok(_) => {},
     Err(e) => {
@@ -1963,8 +1963,8 @@ function __send_once[T: Transport](tr: T, req: Request, started: i64, policy: Po
 
 function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started: i64, policy: Policy): Result[HttpResponse, FetchError] {
   __origin_checked(tr, t, policy)?;
-  let guard: boolean = policy.public_only && t.direct;
-  let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard, policy.roots, true);
+  let guard = policy.public_only && t.direct;
+  let first = __attempt(tr, req, t, started, guard, policy.roots, true);
   match (first) {
     Err(e) => {
       if (__reset(e) && http.method_idempotent(req.method)) {
@@ -1995,7 +1995,7 @@ function __origin_checked[T: Transport](tr: T, t: __Target, policy: Policy): Res
       Err(_) => {}
     }
   }
-  let checked: net.IpAddr[] = __resolve(tr, t.origin, true)?;
+  let checked = __resolve(tr, t.origin, true)?;
   return Ok(());
 }
 
@@ -2012,8 +2012,8 @@ function __reset(e: FetchError): boolean {
 }
 
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Result[HttpResponse, FetchError] {
-  let place: __Place = __place_of(t, guard, roots);
-  let conn: __Conn = __no_conn();
+  let place = __place_of(t, guard, roots);
+  let conn = __no_conn();
   if (reuse && http.method_idempotent(req.method)) {
     conn = __take_idle(tr, place);
   }
@@ -2039,7 +2039,7 @@ function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, starte
 }
 
 function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[HttpResponse, FetchError] {
-  let fd: i32 = 0 - 1;
+  let fd: i32 = -1;
   match (__shared_socket(tr, req, t, started, __place_key(place), guard, roots, sh)?) {
     OnLoop(socket) => {
       fd = socket;
@@ -2048,11 +2048,11 @@ function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, starte
       return __attempt_opened(tr, req, t, started, place, conn);
     }
   }
-  let id: i32 = sh.submit(fd, __outgoing(req, t));
+  let id = sh.submit(fd, __outgoing(req, t));
   if (id == 0) {
     return Err(Io(net.ConnectionReset));
   }
-  let a: Answer = __shared_wait(tr, req, started, sh, id)?;
+  let a = __shared_wait(tr, req, started, sh, id)?;
   return __decoded(HttpResponse { status: a.status, body: BodyBytes(a.body), headers: a.headers, trailers: a.trailers, background: None }, req);
 }
 ```
@@ -2076,7 +2076,7 @@ function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started
     if (sh.dialing(key)) {
       match (__connect(tr, t, req, guard, roots)) {
         Ok(conn) => {
-          let adopted: i32 = __shared_adopted(sh, key, conn, tr.now());
+          let adopted = __shared_adopted(sh, key, conn, tr.now());
           sh.dialed(key);
           if (adopted < 0) {
             return Ok(OnTask(conn));
@@ -2089,7 +2089,7 @@ function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started
         }
       }
     }
-    let woke: Answer = __shared_wait(tr, req, started, sh, sh.await_connection(key))?;
+    let woke = __shared_wait(tr, req, started, sh, sh.await_connection(key))?;
   }
   return Err(Protocol("unreachable"));
 }
@@ -2103,22 +2103,22 @@ function __shared_adopted(sh: Shared, key: string, conn: __Conn, now: Instant): 
           return conn.fd;
         },
         None => {
-          return 0 - 1;
+          return -1;
         }
       }
     },
     None => {
-      return 0 - 1;
+      return -1;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shared, id: i32): Result[Answer, FetchError] {
   while (true) {
-    let left_ms: i64 = req.timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / 1000000;
-    let wait_ms: i64 = req.timeouts.inactivity.as_millis();
-    let bound: Phase = Inactivity;
+    let left_ms = req.timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / 1000000;
+    let wait_ms = req.timeouts.inactivity.as_millis();
+    let bound = Inactivity;
     if (left_ms < wait_ms) {
       wait_ms = left_ms;
       bound = Total;
@@ -2212,16 +2212,16 @@ struct __H2Call { conn: __Conn, h2: h2.Conn, out: u8[] }
 <<47 function __h2_answered[T: Transport](tr: T, req: Request, started: i64, call: __H2Call, stream: i32): Resul...>>=
 function __h2_answered[T: Transport](tr: T, req: Request, started: i64, call: __H2Call, stream: i32): Result[(__H2Call, HttpResponse), FetchError] {
   while (true) {
-    let conn: __Conn = __send_all(tr, call.conn, call.out)?;
-    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started, 65536)?;
+    let conn = __send_all(tr, call.conn, call.out)?;
+    let got = __recv_bounded(tr, conn, req.timeouts, started, 65536)?;
     if (got.bytes.len() == 0) {
       return Err(__closed_early(0));
     }
-    let step: h2.Step = call.h2.read(got.bytes);
+    let step = call.h2.read(got.bytes);
     call = __H2Call { conn: got.conn, h2: step.conn, out: step.output };
     match (__h2_answer(step.events, stream)) {
       Some(answer) => {
-        let resp: HttpResponse = answer?;
+        let resp = answer?;
         return Ok((__H2Call { ...call, conn: __send_all(tr, call.conn, call.out)?, out: [] }, resp));
       },
       None => {}
@@ -2304,9 +2304,9 @@ function __send_framed[T: Transport](tr: T, fd: i32, s: client.Session, output: 
 }
 
 function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolean, roots: Option[verify.Roots]): Result[__Conn, FetchError] {
-  let timeouts: Timeouts = req.timeouts;
-  let begun: i64 = time.instant_nanos(tr.now());
-  let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
+  let timeouts = req.timeouts;
+  let begun = time.instant_nanos(tr.now());
+  let addrs = __resolve(tr, t.host, guard)?;
   match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
     Ok(fd) => {
       if (!t.tls) {
@@ -2339,7 +2339,7 @@ function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolea
 }
 
 function __h2_opened[T: Transport](tr: T, fd: i32, s: client.Session): Result[__Conn, FetchError] {
-  let start: h2.Step = h2.client(h2.config());
+  let start = h2.client(h2.config());
   match (__send_all(tr, __Conn { fd: fd, tls: Some(s), closed: false, h2: Some(start.conn), heard: headers.new() }, start.output)) {
     Ok(c) => {
       return Ok(c);
@@ -2356,7 +2356,7 @@ function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64, roo
   if (!t.direct) {
     __tunnel(tr, fd, t, deadline)?;
   }
-  let s: client.Session = __tls_handshake(tr, fd, t.origin, deadline, roots)?;
+  let s = __tls_handshake(tr, fd, t.origin, deadline, roots)?;
   return __kernel_session(tr.socket(fd), s, req);
 }
 
@@ -2413,13 +2413,13 @@ function __kernel_record(sock: Socket, s: client.Session, now: time.Timestamp): 
     ktls.Opened(t, content) => {
       match (s.read(ktls.framed(t, content), now)) {
         Ok(step) => {
-          let sent: i32 = ktls.send_records(sock, step.output);
+          let sent = ktls.send_records(sock, step.output);
           if (sent < 0) {
             return RecordFailed(Io(net.error_from_host(sent)));
           }
-          let installed: i32 = ktls.install(sock, step.rekeyed);
+          let installed = ktls.install(sock, step.rekeyed);
           if (installed < 0) {
-            return RecordFailed(Tls(tls.KeysRefused(0 - installed)));
+            return RecordFailed(Tls(tls.KeysRefused(-installed)));
           }
           return RecordTaken(step);
         },
@@ -2446,7 +2446,7 @@ function __kernel_record(sock: Socket, s: client.Session, now: time.Timestamp): 
 }
 
 function __tunnel[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64): Result[void, FetchError] {
-  let ask: string = "CONNECT " + t.authority + " HTTP/1.1\r\nHost: " + t.authority + "\r\n";
+  let ask = "CONNECT " + t.authority + " HTTP/1.1\r\nHost: " + t.authority + "\r\n";
   if (t.proxy_auth.len() > 0) {
     ask = ask + "Proxy-Authorization: " + t.proxy_auth + "\r\n";
   }
@@ -2498,19 +2498,19 @@ function __tunnel_read(got: net.Recv): Result[u8[], FetchError] {
 }
 
 function __head_end(b: [u8]): i32 {
-  let i: i32 = 3;
+  let i = 3;
   while (i < b.len()) {
     if (b[i] == 10 && b[i - 1] == 13 && b[i - 2] == 10 && b[i - 3] == 13) {
       return i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function __tunnel_status(head: string): Result[void, FetchError] {
-  let line: string = head.split("\r\n")[0];
-  let parts: string[] = line.split(" ");
+  let line = head.split("\r\n")[0];
+  let parts = line.split(" ");
   if (parts.len() < 2 || !parts[0].starts_with("HTTP/1.")) {
     return Err(Protocol("a malformed answer to CONNECT"));
   }
@@ -2521,18 +2521,18 @@ function __tunnel_status(head: string): Result[void, FetchError] {
 }
 
 function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
-  let roots: verify.Roots = __roots(given)?;
-  let cfg: client.Config = client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]);
-  let step: client.Step = __tls(client.start(cfg, tr.random_bytes(client.entropy(cfg)), tr.wall()))?;
+  let roots = __roots(given)?;
+  let cfg = client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]);
+  let step = __tls(client.start(cfg, tr.random_bytes(client.entropy(cfg)), tr.wall()))?;
   __write_all(tr, fd, step.output)?;
-  let s: client.Session = step.session;
+  let s = step.session;
   while (!s.connected()) {
     let wait_ms: i64 = (deadline - time.instant_nanos(tr.now())) / 1000000;
     if (wait_ms <= 0) {
       return Err(Timeout(Connecting));
     }
-    let input: u8[] = __handshake_read(tr.read(fd, 65536, time.duration_millis(wait_ms)))?;
-    let next: client.Step = __tls_read(tr, fd, s, input)?;
+    let input = __handshake_read(tr.read(fd, 65536, time.duration_millis(wait_ms)))?;
+    let next = __tls_read(tr, fd, s, input)?;
     __write_all(tr, fd, next.output)?;
     s = next.session;
   }
@@ -2639,8 +2639,8 @@ function __global_only(found: Lookup): Result[void, FetchError] {
 }
 
 function __outgoing(req: Request, t: __Target): http.Outgoing {
-  let body: u8[] = req.body.bytes();
-  let scheme: string = "http";
+  let body = req.body.bytes();
+  let scheme = "http";
   if (t.tls) {
     scheme = "https";
   }
@@ -2655,7 +2655,7 @@ function __global_addr(named: net.IpAddr, judged: net.IpAddr): Result[void, Fetc
 }
 
 function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchError] {
-  let limits: wasi_http.Limits = wasi_http.Limits { connect: __connect_bound(req.timeouts), inactivity: req.timeouts.inactivity, body_cap: req.limits.body };
+  let limits = wasi_http.Limits { connect: __connect_bound(req.timeouts), inactivity: req.timeouts.inactivity, body_cap: req.limits.body };
   match (wasi_http.outgoing(__outgoing(req, t), limits)) {
     Ok(resp) => {
       return __decoded(HttpResponse { ...resp, headers: http.end_to_end(resp.headers) }, req);
@@ -2829,7 +2829,7 @@ function __send_all[T: Transport](tr: T, conn: __Conn, payload: u8[]): Result[__
       __write_all(tr, conn.fd, payload)?;
       return Ok(conn);
     }
-    let step: client.Step = __tls(s.write(payload))?;
+    let step = __tls(s.write(payload))?;
     __write_all(tr, conn.fd, step.output)?;
     return Ok(__Conn { ...conn, tls: Some(step.session) });
   }
@@ -2838,37 +2838,37 @@ function __send_all[T: Transport](tr: T, conn: __Conn, payload: u8[]): Result[__
 }
 
 function __write_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void, FetchError] {
-  let at: i32 = 0;
+  let at = 0;
   while (at < payload.len()) {
-    let rest: u8[] = payload;
+    let rest = payload;
     if (at > 0) {
-      let b: usize = buf_new(payload.len() - at);
+      let b = buf_new(payload.len() - at);
       buf_push_bytes_range(b, payload, at, payload.len());
       rest = buf_take_bytes(b);
       buf_free(b);
     }
-    let n: i32 = tr.write(conn, rest);
+    let n = tr.write(conn, rest);
     if (n < 0) {
-      return Err(Io(net.error_from_host(0 - n)));
+      return Err(Io(net.error_from_host(-n)));
     }
     if (n == 0) {
       return Err(Io(net.ConnectionReset));
     }
-    at = at + n;
+    at += n;
   }
   return Ok(());
 }
 
 function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, started: i64): Result[__Read, FetchError] {
   let buf: u8[] = [];
-  let from: i32 = 0;
-  let eof: boolean = false;
+  let from = 0;
+  let eof = false;
   while (true) {
     match (http.parse_response_framed_from(buf, from, req.method, eof, req.limits, conn.heard)) {
       Complete(framed) => {
-        let next: i32 = __after_interim(framed, from, req.limits)?;
+        let next = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
-          let response: HttpResponse = HttpResponse { ...framed.response, headers: http.end_to_end(framed.response.headers) };
+          let response = HttpResponse { ...framed.response, headers: http.end_to_end(framed.response.headers) };
           return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof || conn.closed), conn: __Conn { ...conn, heard: framed.response.headers } });
         }
         from = next;
@@ -2883,9 +2883,9 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
         return Err(__rejected(code));
       }
     }
-    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started, __read_size(buf.len()))?;
+    let got = __recv_bounded(tr, conn, req.timeouts, started, __read_size(buf.len()))?;
     conn = got.conn;
-    let chunk: u8[] = got.bytes;
+    let chunk = got.bytes;
     if (chunk.len() == 0) {
       eof = true;
     } else {
@@ -2921,21 +2921,21 @@ function __closed_early(got: i32): FetchError {
 }
 
 function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, FetchError] {
-  let codings: string[] = __codings(resp.headers);
-  let body: u8[] = resp.body_bytes();
+  let codings = __codings(resp.headers);
+  let body = resp.body_bytes();
   if (!__asks_codings(req) || codings.len() == 0 || body.len() == 0 || !__all_asked(codings)) {
     return Ok(resp);
   }
   if (codings.len() > req.decoding.depth) {
     return Err(Decode("content codings past the depth of " + req.decoding.depth.to_string()));
   }
-  let encoded: i32 = body.len();
-  let left: i32 = codings.len();
+  let encoded = body.len();
+  let left = codings.len();
   while (left > 0) {
-    left = left - 1;
+    left -= 1;
     body = __undone(codings[left], body, req.limits.body)?;
   }
-  let allowed: i64 = __allowed(encoded, req.decoding.ratio);
+  let allowed = __allowed(encoded, req.decoding.ratio);
   if (body.len() as i64 > allowed) {
     return Err(Decode("a body of " + body.len().to_string() + " bytes from " + encoded.to_string() + " encoded, past the " + (allowed as i32).to_string() + " allowed"));
   }
@@ -2943,7 +2943,7 @@ function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, Fetch
 }
 
 function __allowed(encoded: i32, ratio: i32): i64 {
-  let allowed: i64 = encoded as i64 * (ratio as i64);
+  let allowed = encoded as i64 * (ratio as i64);
   if (allowed < RATIO_FLOOR as i64) {
     return RATIO_FLOOR as i64;
   }
@@ -2959,7 +2959,7 @@ function __codings(h: HeaderMap): string[] {
   let out: string[] = [];
   for v in h.get_all("content-encoding") {
     for c in v.split(",") {
-      let name: string = c.trim().to_lower();
+      let name = c.trim().to_lower();
       if (name.len() > 0 && name != "identity") {
         out = out.append(name);
       }
@@ -3045,9 +3045,9 @@ function __after_interim(framed: http.HttpResponseFramed, from: i32, limits: htt
     return Err(Protocol("a protocol switch the client did not ask for"));
   }
   if (!__interim(framed.response.status)) {
-    return Ok(0 - 1);
+    return Ok(-1);
   }
-  let next: i32 = from + framed.len;
+  let next = from + framed.len;
   if (next > limits.header_bytes) {
     return Err(Protocol("interim responses past the header budget"));
   }
@@ -3079,16 +3079,16 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
       if (s.offloaded()) {
         return __recv_kernel(tr, conn, s, timeouts, started, size);
       }
-      let session: client.Session = s;
+      let session = s;
       while (true) {
-        let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started, size)?;
+        let raw = __recv_raw(tr, conn.fd, timeouts, started, size)?;
         if (raw.len() == 0) {
           if (session.held.len() > 0) {
             return Err(Tls(tls.RecordCut));
           }
           return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });
         }
-        let step: client.Step = __tls_read(tr, conn.fd, session, raw)?;
+        let step = __tls_read(tr, conn.fd, session, raw)?;
         __write_all(tr, conn.fd, step.output)?;
         session = step.session;
         if (step.data.len() > 0 || step.closed) {
@@ -3104,9 +3104,9 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
 }
 
 function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
-  let session: client.Session = s;
+  let session = s;
   while (true) {
-    let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started, size)?;
+    let raw = __recv_raw(tr, conn.fd, timeouts, started, size)?;
     if (raw.len() > 0) {
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }
@@ -3131,12 +3131,12 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
 
 function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64, size: i32): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
-  let left_ms: i64 = timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / ns_per_ms;
+  let left_ms = timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / ns_per_ms;
   if (left_ms <= 0) {
     return Err(Timeout(Total));
   }
-  let wait_ms: i64 = timeouts.inactivity.as_millis();
-  let bound: Phase = Inactivity;
+  let wait_ms = timeouts.inactivity.as_millis();
+  let bound = Inactivity;
   if (left_ms < wait_ms) {
     wait_ms = left_ms;
     bound = Total;
@@ -3192,7 +3192,7 @@ pub function proxy_env(): ProxyEnv {
 }
 
 pub function proxy_env_from(http_proxy: Option[string], https_proxy: Option[string], https_proxy_upper: Option[string], no_proxy: Option[string], no_proxy_upper: Option[string], request_method: Option[string]): ProxyEnv {
-  let skip: string = __or_empty(__either(no_proxy, no_proxy_upper));
+  let skip = __or_empty(__either(no_proxy, no_proxy_upper));
   match (request_method) {
     Some(m) => {
       return proxies("", "", skip);
@@ -3254,15 +3254,15 @@ pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
 ```fern
 <<63 function __proxy_for_url(p: ProxyEnv, u: Url): Option[string]>>=
 function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
-  let proxy: string = p.http_proxy;
+  let proxy = p.http_proxy;
   if (u.scheme == "https") {
     proxy = p.https_proxy;
   }
   if (proxy.len() == 0) {
     return None;
   }
-  let host: string = __host_name(u.host);
-  let global_ipv4: boolean = net.is_global_ipv4(host);
+  let host = __host_name(u.host);
+  let global_ipv4 = net.is_global_ipv4(host);
   let ip: Option[net.IpAddr] = None;
   if (!global_ipv4 && __address_shaped(host)) {
     ip = __canonical_ip(host);
@@ -3270,7 +3270,7 @@ function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
   if (__never_proxied(host, ip)) {
     return None;
   }
-  let port: i32 = __effective_port(u);
+  let port = __effective_port(u);
   for rule in p.rules {
     if (global_ipv4 && __global_rule_needs_address(rule, port) && ip.is_none()) {
       ip = __canonical_ip(host);
@@ -3305,7 +3305,7 @@ function __address_shaped(host: string): boolean {
   if (host.len() == 0) {
     return false;
   }
-  let b: u8 = host[0];
+  let b = host[0];
   return b >= 48 as u8 && b <= 57 as u8 || host.contains(":");
 }
 
@@ -3325,13 +3325,13 @@ function __never_proxied(host: string, ip: Option[net.IpAddr]): boolean {
 }
 
 function __host_name(h: string): string {
-  let end: i32 = h.len();
+  let end = h.len();
   if (end > 1 && h[end - 1] == 46 as u8) {
-    end = end - 1;
+    end -= 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < end && (h[i] < 65 as u8 || h[i] > 90 as u8)) {
-    i = i + 1;
+    i += 1;
   }
   if (i == end && end == h.len()) {
     return h;
@@ -3371,7 +3371,7 @@ function __rules_of(no_proxy: string): __Rule[] {
     return out;
   }
   for entry in no_proxy.split(",") {
-    let e: string = entry.trim();
+    let e = entry.trim();
     if (e.len() > 0) {
       out = out.append(__rule_of(e));
     }
@@ -3384,7 +3384,7 @@ function __rule_of(entry: string): __Rule {
     return __Rule { what: Every, port: 0 };
   }
   let split: (string, i32) = __entry_split(entry);
-  let name: string = __host_name(split.0);
+  let name = __host_name(split.0);
   if (name.contains("/")) {
     return __Rule { what: __block_of(name), port: split.1 };
   }
@@ -3404,7 +3404,7 @@ function __block_of(block: string): __Match {
   let Some(slash) = block.index_of("/") else {
     return Nothing;
   };
-  let bits: i32 = -1;
+  let bits = -1;
   match (i32.parse_i32_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
     Ok(n) => {
       bits = n;
@@ -3413,7 +3413,7 @@ function __block_of(block: string): __Match {
   }
   match (__canonical_ip(slice_unchecked(block, 0, slash).to_owned())) {
     Some(p) => {
-      let pb: u8[] = p.bytes();
+      let pb = p.bytes();
       if (bits < 0 || bits > pb.len() * 8) {
         return Nothing;
       }
@@ -3454,13 +3454,13 @@ function __no_proxy_matches(rule: __Rule, host: string, port: i32, ip: Option[ne
 }
 
 function __under(host: string, name: string): boolean {
-  let at: i32 = host.len() - name.len() - 1;
+  let at = host.len() - name.len() - 1;
   return at >= 0 && host[at] == 46 as u8 && host.ends_with(name);
 }
 
 function __entry_split(entry: string): (string, i32) {
-  let name: string = entry;
-  let rest: string = "";
+  let name = entry;
+  let rest = "";
   if (entry.starts_with("[")) {
     let Some(close) = entry.index_of("]") else {
       return (entry, -1);
@@ -3484,7 +3484,7 @@ function __without_zone(name: string): string {
   let Some(zone) = name.index_of("%") else {
     return name;
   };
-  let after: string = slice_unchecked(name, zone, name.len()).to_owned();
+  let after = slice_unchecked(name, zone, name.len()).to_owned();
   let Some(slash) = after.index_of("/") else {
     return slice_unchecked(name, 0, zone).to_owned();
   };
@@ -3545,18 +3545,18 @@ function __prefix_matches(ab: u8[], pb: u8[], bits: i32): boolean {
   if (ab.len() != pb.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i * 8 + 8 <= bits) {
     if (ab[i] != pb[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
-  let rem: i32 = bits - i * 8;
+  let rem = bits - i * 8;
   if (rem == 0) {
     return true;
   }
-  let mask: i32 = 255 << 8 - rem & 255;
+  let mask = 255 << 8 - rem & 255;
   return (ab[i] as i32 & mask) == (pb[i] as i32 & mask);
 }
 ```
@@ -3573,11 +3573,11 @@ struct __Proxy { host: string, port: i32, auth: string }
 ```fern
 <<68 function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError]>>=
 function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
-  let full: string = spec;
+  let full = spec;
   if (!full.contains("://")) {
     full = "http://" + full;
   }
-  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
+  let u = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.parse(full)) {
     Ok(parsed) => {
       u = parsed;
@@ -3589,7 +3589,7 @@ function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
   if (u.scheme != "http" || u.host.len() == 0) {
     return Err(InvalidUrl(name + " is not an http URL with a host"));
   }
-  let port: i32 = u.port;
+  let port = u.port;
   if (port == 0) {
     port = 80;
   }
@@ -3612,8 +3612,8 @@ function __proxy_read(spec: string): Option[__Proxy] {
 }
 
 function __proxy_named(p: ProxyEnv, spec: string, tls: boolean): Result[__Proxy, FetchError] {
-  let read: Option[__Proxy] = p.http;
-  let name: string = "http_proxy";
+  let read = p.http;
+  let name = "http_proxy";
   if (tls) {
     read = p.https;
     name = "https_proxy";
@@ -3633,18 +3633,18 @@ function __proxy_auth(full: string): string {
   let Some(scheme) = full.index_of("://") else {
     return "";
   };
-  let start: i32 = scheme + 3;
-  let end: i32 = full.len();
+  let start = scheme + 3;
+  let end = full.len();
   if let Some(slash) = slice_unchecked(full, start, end).to_owned().index_of("/") {
     end = start + slash;
   }
-  let authority: string = slice_unchecked(full, start, end).to_owned();
+  let authority = slice_unchecked(full, start, end).to_owned();
   let Some(at) = authority.last_index_of("@") else {
     return "";
   };
-  let userinfo: string = slice_unchecked(authority, 0, at).to_owned();
+  let userinfo = slice_unchecked(authority, 0, at).to_owned();
   if (!userinfo.contains(":")) {
-    userinfo = userinfo + ":";
+    userinfo += ":";
   }
   return "Basic " + base64.encode(userinfo.bytes());
 }

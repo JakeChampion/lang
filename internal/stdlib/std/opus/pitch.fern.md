@@ -92,7 +92,7 @@ pub function pitch_xcorr(x: [f32], xa: i32, y: [f32], ya: i32, len: i32, max_pit
   let xcorr: f32[] = [];
   let max: f32 = 1.0f32;
   for i in 0..max_pitch {
-    let s: f32 = inner_prod(x, xa, y, ya + i, len);
+    let s = inner_prod(x, xa, y, ya + i, len);
     xcorr = xcorr.append(s);
     if (s > max) {
       max = s;
@@ -114,8 +114,8 @@ pub function autocorr(x: [f32], at: i32, windowed: boolean, lag: i32, n: i32): f
       xx = xx.with(n - i - 1, x[at + n - i - 1] * modes.WINDOW[i]);
     }
   }
-  let fast: i32 = n - lag;
-  let ac: f32[] = pitch_xcorr(xx, 0, xx, 0, fast, lag + 1).xcorr;
+  let fast = n - lag;
+  let ac = pitch_xcorr(xx, 0, xx, 0, fast, lag + 1).xcorr;
   for k in 0..lag + 1 {
     let d: f32 = 0.0f32;
     for i in k + fast..n {
@@ -147,23 +147,23 @@ function zeros(n: i32): f32[] {
 
 // The `p` coefficients of the prediction from the autocorrelation `ac`.
 pub function lpc(ac: [f32], p: i32): f32[] {
-  let a: f32[] = zeros(p);
+  let a = zeros(p);
   if (!(ac[0] > TINY)) {
     return a;
   }
-  let error: f32 = ac[0];
+  let error = ac[0];
   for i in 0..p {
     let rr: f32 = 0.0f32;
     for j in 0..i {
       rr = rr + a[j] * ac[i - j];
     }
-    rr = rr + ac[i + 1];
+    rr += ac[i + 1];
     let r: f32 = -(rr / error);
     a = a.with(i, r);
-    let half: i32 = i + 1 >> 1;
+    let half = i + 1 >> 1;
     for j in 0..half {
-      let t1: f32 = a[j];
-      let t2: f32 = a[i - 1 - j];
+      let t1 = a[j];
+      let t2 = a[i - 1 - j];
       a = a.with(j, t1 + r * t2);
       a = a.with(i - 1 - j, t2 + r * t1);
     }
@@ -180,7 +180,7 @@ pub function lpc(ac: [f32], p: i32): f32[] {
 pub function fir(x: [f32], at: i32, num: [f32], n: i32, ord: i32): f32[] {
   let y: f32[] = [];
   for i in 0..n {
-    let s: f32 = x[at + i];
+    let s = x[at + i];
     for j in 0..ord {
       s = s + num[ord - 1 - j] * x[at + i + j - ord];
     }
@@ -196,12 +196,12 @@ struct Block { y: f32[], out: f32[] }
 // One block of four outputs of `iir`, as an FIR of the outputs before it,
 // with the outputs of the block added after.
 function iir_block(x: [f32], at: i32, den: [f32], own y: f32[], own out: f32[], i: i32, ord: i32): Block {
-  let s0: f32 = x[at + i];
-  let s1: f32 = x[at + i + 1];
-  let s2: f32 = x[at + i + 2];
-  let s3: f32 = x[at + i + 3];
+  let s0 = x[at + i];
+  let s1 = x[at + i + 1];
+  let s2 = x[at + i + 2];
+  let s3 = x[at + i + 3];
   for j in 0..ord {
-    let d: f32 = den[ord - 1 - j];
+    let d = den[ord - 1 - j];
     s0 = s0 + d * y[i + j];
     s1 = s1 + d * y[i + j + 1];
     s2 = s2 + d * y[i + j + 2];
@@ -225,17 +225,17 @@ function iir_block(x: [f32], at: i32, den: [f32], own y: f32[], own out: f32[], 
 // `n` values from `at`. `mem` holds the last `ord` outputs before them, the
 // newest first, and the result holds the new ones.
 pub function iir(x: [f32], at: i32, den: [f32], n: i32, ord: i32, mem: [f32]): Iir {
-  let y: f32[] = zeros(n + ord);
+  let y = zeros(n + ord);
   for i in 0..ord {
     y = y.with(i, -mem[ord - 1 - i]);
   }
   let out: f32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n - 3) {
     let Block { y: y1, out: o1 } = iir_block(x, at, den, y, out, i, ord);
     y = y1;
     out = o1;
-    i = i + 4;
+    i += 4;
   }
   let next: f32[] = [];
   for k in 0..ord {
@@ -279,7 +279,7 @@ function fir5(own x: f32[], num: [f32], n: i32): f32[] {
   let m3: f32 = 0.0f32;
   let m4: f32 = 0.0f32;
   for i in 0..n {
-    let s: f32 = x[i] + num[0] * m0 + num[1] * m1 + num[2] * m2 + num[3] * m3 + num[4] * m4;
+    let s = x[i] + num[0] * m0 + num[1] * m1 + num[2] * m2 + num[3] * m3 + num[4] * m4;
     m4 = m3;
     m3 = m2;
     m2 = m1;
@@ -293,21 +293,21 @@ function fir5(own x: f32[], num: [f32], n: i32): f32[] {
 // The signal of `channels` channels, from `x0[a0]` and `x1[a1]`, at half
 // the rate and flattened. `len` is the length at the full rate.
 pub function pitch_downsample(x0: [f32], a0: i32, x1: [f32], a1: i32, len: i32, channels: i32): f32[] {
-  let n: i32 = len >> 1;
-  let lp: f32[] = half_rate(x0, a0, n);
+  let n = len >> 1;
+  let lp = half_rate(x0, a0, n);
   if (channels == 2) {
-    let lp1: f32[] = half_rate(x1, a1, n);
+    let lp1 = half_rate(x1, a1, n);
     for i in 0..n {
       lp = lp.with(i, lp[i] + lp1[i]);
     }
   }
-  let ac: f32[] = autocorr(lp, 0, false, 4, n);
+  let ac = autocorr(lp, 0, false, 4, n);
   ac = ac.with(0, ac[0] * NOISE_FLOOR);
   for i in 1..5 {
-    let w: f32 = LAG_STEP * (i as f32);
+    let w = LAG_STEP * (i as f32);
     ac = ac.with(i, ac[i] - ac[i] * w * w);
   }
-  let a: f32[] = lpc(ac, 4);
+  let a = lpc(ac, 4);
   let tmp: f32 = 1.0f32;
   for i in 0..4 {
     tmp = LAG_DECAY * tmp;
@@ -325,11 +325,11 @@ function find_best_pitch(xcorr: [f32], y: [f32], len: i32, max_pitch: i32): Best
   for j in 0..len {
     syy = syy + y[j] * y[j];
   }
-  let b: Best = Best { num0: -1.0f32, den0: 0.0f32, p0: 0, num1: -1.0f32, den1: 0.0f32, p1: 1 };
+  let b = Best { num0: -1.0f32, den0: 0.0f32, p0: 0, num1: -1.0f32, den1: 0.0f32, p1: 1 };
   for i in 0..max_pitch {
     if (xcorr[i] > 0.0f32) {
-      let x16: f32 = xcorr[i] * XCORR_SCALE;
-      let num: f32 = x16 * x16;
+      let x16 = xcorr[i] * XCORR_SCALE;
+      let num = x16 * x16;
       if (num * b.den1 > b.num1 * syy) {
         if (num * b.den0 > b.num0 * syy) {
           b = Best { num0: num, den0: syy, p0: i, num1: b.num0, den1: b.den0, p1: b.p0 };
@@ -338,7 +338,7 @@ function find_best_pitch(xcorr: [f32], y: [f32], len: i32, max_pitch: i32): Best
         }
       }
     }
-    syy = syy + (y[i + len] * y[i + len] - y[i] * y[i]);
+    syy += y[i + len] * y[i + len] - y[i] * y[i];
     if (1.0f32 > syy) {
       syy = 1.0f32;
     }
@@ -356,7 +356,7 @@ function abs(v: i32): i32 {
 // The period of `x` in `y`, from `len` values of `x[xa]` and
 // `len + max_pitch` values of `y`.
 pub function pitch_search(x: [f32], xa: i32, y: [f32], len: i32, max_pitch: i32): i32 {
-  let lag: i32 = len + max_pitch;
+  let lag = len + max_pitch;
   let x4: f32[] = [];
   for j in 0..len >> 2 {
     x4 = x4.append(x[xa + 2 * j]);
@@ -365,26 +365,26 @@ pub function pitch_search(x: [f32], xa: i32, y: [f32], len: i32, max_pitch: i32)
   for j in 0..lag >> 2 {
     y4 = y4.append(y[2 * j]);
   }
-  let coarse: Xcorr = pitch_xcorr(x4, 0, y4, 0, len >> 2, max_pitch >> 2);
-  let b: Best = find_best_pitch(coarse.xcorr, y4, len >> 2, max_pitch >> 2);
-  let half: i32 = max_pitch >> 1;
-  let xcorr: f32[] = zeros(half);
+  let coarse = pitch_xcorr(x4, 0, y4, 0, len >> 2, max_pitch >> 2);
+  let b = find_best_pitch(coarse.xcorr, y4, len >> 2, max_pitch >> 2);
+  let half = max_pitch >> 1;
+  let xcorr = zeros(half);
   for i in 0..half {
     if (abs(i - 2 * b.p0) <= 2 || abs(i - 2 * b.p1) <= 2) {
-      let s: f32 = inner_prod(x, xa, y, i, len >> 1);
+      let s = inner_prod(x, xa, y, i, len >> 1);
       if (-1.0f32 > s) {
         s = -1.0f32;
       }
       xcorr = xcorr.with(i, s);
     }
   }
-  let fine: Best = find_best_pitch(xcorr, y, len >> 1, half);
-  let offset: i32 = 0;
-  let p: i32 = fine.p0;
+  let fine = find_best_pitch(xcorr, y, len >> 1, half);
+  let offset = 0;
+  let p = fine.p0;
   if (p > 0 && p < half - 1) {
-    let a: f32 = xcorr[p - 1];
-    let m: f32 = xcorr[p];
-    let c: f32 = xcorr[p + 1];
+    let a = xcorr[p - 1];
+    let m = xcorr[p];
+    let c = xcorr[p + 1];
     if (c - a > INTERPOLATE * (m - a)) {
       offset = 1;
     } else if (a - c > INTERPOLATE * (m - c)) {
@@ -422,7 +422,7 @@ function pitch_gain(xy: f32, xx: f32, yy: f32): f32 {
 // The energy of the `n` values before `b - i`, for each `i` up to `max`.
 function yy_lookup(x: [f32], b: i32, n: i32, max: i32, xx: f32): f32[] {
   let out: f32[] = [xx];
-  let yy: f32 = xx;
+  let yy = xx;
   for i in 1..max + 1 {
     yy = yy + x[b - i] * x[b - i] - x[b + n - i] * x[b + n - i];
     if (0.0f32 > yy) {
@@ -447,7 +447,7 @@ function second_period(t0: i32, t1: i32, k: i32, max: i32): i32 {
 
 // The part of the gain of the last frame that `t1` keeps.
 function continuity(t1: i32, k: i32, t0: i32, prev_period: i32, prev_gain: f32): f32 {
-  let d: i32 = abs(t1 - prev_period);
+  let d = abs(t1 - prev_period);
   if (d <= 1) {
     return prev_gain;
   }
@@ -458,8 +458,8 @@ function continuity(t1: i32, k: i32, t0: i32, prev_period: i32, prev_gain: f32):
 }
 
 function threshold(t1: i32, minperiod: i32, g0: f32, cont: f32): f32 {
-  let floor: f32 = LOW_FLOOR;
-  let t: f32 = INTERPOLATE * g0 - cont;
+  let floor = LOW_FLOOR;
+  let t = INTERPOLATE * g0 - cont;
   if (t1 < 3 * minperiod) {
     floor = HIGH_FLOOR;
     t = HIGH_SCALE * g0 - cont;
@@ -472,7 +472,7 @@ function threshold(t1: i32, minperiod: i32, g0: f32, cont: f32): f32 {
 
 // The gain of the chosen period, which is at most its normalised gain.
 function doubling_gain(c: Candidate): f32 {
-  let xy: f32 = c.xy;
+  let xy = c.xy;
   if (0.0f32 > xy) {
     xy = 0.0f32;
   }
@@ -489,16 +489,16 @@ function doubling_gain(c: Candidate): f32 {
 // The period at the full rate: `2 * t`, moved by one sample toward the
 // stronger neighbour, and at least `minperiod`.
 function doubling_period(x: [f32], b: i32, n: i32, t: i32, minperiod: i32): i32 {
-  let c0: f32 = inner_prod(x, b, x, b - (t - 1), n);
-  let c1: f32 = inner_prod(x, b, x, b - t, n);
-  let c2: f32 = inner_prod(x, b, x, b - (t + 1), n);
-  let offset: i32 = 0;
+  let c0 = inner_prod(x, b, x, b - (t - 1), n);
+  let c1 = inner_prod(x, b, x, b - t, n);
+  let c2 = inner_prod(x, b, x, b - (t + 1), n);
+  let offset = 0;
   if (c2 - c0 > INTERPOLATE * (c1 - c0)) {
     offset = 1;
   } else if (c0 - c2 > INTERPOLATE * (c1 - c2)) {
     offset = -1;
   }
-  let p: i32 = 2 * t + offset;
+  let p = 2 * t + offset;
   if (p < minperiod) {
     return minperiod;
   }
@@ -508,28 +508,28 @@ function doubling_period(x: [f32], b: i32, n: i32, t: i32, minperiod: i32): i32 
 // The period and the gain of the prefilter for `x`, from the period `t0`
 // that the search found.
 pub function remove_doubling(x: [f32], maxperiod: i32, minperiod: i32, n: i32, t0: i32, prev_period: i32, prev_gain: f32): Doubling {
-  let max: i32 = maxperiod / 2;
-  let min: i32 = minperiod / 2;
-  let half: i32 = n / 2;
-  let prev: i32 = prev_period / 2;
-  let t: i32 = t0 / 2;
+  let max = maxperiod / 2;
+  let min = minperiod / 2;
+  let half = n / 2;
+  let prev = prev_period / 2;
+  let t = t0 / 2;
   if (t >= max) {
     t = max - 1;
   }
-  let xx: f32 = inner_prod(x, max, x, max, half);
-  let yy: f32[] = yy_lookup(x, max, half, max, xx);
-  let xy0: f32 = inner_prod(x, max, x, max - t, half);
-  let g0: f32 = pitch_gain(xy0, xx, yy[t]);
-  let best: Candidate = Candidate { t: t, xy: xy0, yy: yy[t], g: g0 };
+  let xx = inner_prod(x, max, x, max, half);
+  let yy = yy_lookup(x, max, half, max, xx);
+  let xy0 = inner_prod(x, max, x, max - t, half);
+  let g0 = pitch_gain(xy0, xx, yy[t]);
+  let best = Candidate { t: t, xy: xy0, yy: yy[t], g: g0 };
   for k in 2..16 {
     let t1: i32 = (2 * t + k) / (2 * k);
     if (t1 < min) {
       break;
     }
-    let t1b: i32 = second_period(t, t1, k, max);
+    let t1b = second_period(t, t1, k, max);
     let xy: f32 = 0.5f32 * (inner_prod(x, max, x, max - t1, half) + inner_prod(x, max, x, max - t1b, half));
     let yy1: f32 = 0.5f32 * (yy[t1] + yy[t1b]);
-    let g1: f32 = pitch_gain(xy, xx, yy1);
+    let g1 = pitch_gain(xy, xx, yy1);
     if (g1 > threshold(t1, min, g0, continuity(t1, k, t, prev, prev_gain))) {
       best = Candidate { t: t1, xy: xy, yy: yy1, g: g1 };
     }
