@@ -225,7 +225,7 @@ function __fragment(src: [u8], from: i32, len: i32, code: i32): u8[] {
     if (code != 23) {
       return __copy(src, from, len);
     }
-    let out: u8[] = __bytes_into(__alloc_u8(len + 5), 0, src, from, len);
+    let out = __bytes_into(__alloc_u8(len + 5), 0, src, from, len);
     __arr_set_len(out, len);
     return out;
   }
@@ -254,9 +254,9 @@ pub struct Deframed { records: Record[], rest: u8[] }
 ```fern
 <<12 pub function deframe(buf: [u8]): Result[Deframed, RecordError]>>=
 pub function deframe(buf: [u8]): Result[Deframed, RecordError] {
-  let whole: i32 = framed_end(buf)?;
+  let whole = framed_end(buf)?;
   let records: Record[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < whole) {
     records = records.append(record_at(buf, at)?);
     at = record_end(buf, at);
@@ -269,12 +269,12 @@ pub function deframe(buf: [u8]): Result[Deframed, RecordError] {
 
 // The end of the last whole record in buf, every header up to it checked.
 pub function framed_end(buf: [u8]): Result[i32, RecordError] {
-  let at: i32 = 0;
+  let at = 0;
   while (at + 5 <= buf.len()) {
-    let code: i32 = buf[at] as i32;
-    let t: ContentType = __content_type(code)?;
-    let len: i32 = buf[at + 3] as i32 << 8 | buf[at + 4] as i32;
-    let limit: i32 = MAX_FRAGMENT;
+    let code = buf[at] as i32;
+    let t = __content_type(code)?;
+    let len = buf[at + 3] as i32 << 8 | buf[at + 4] as i32;
+    let limit = MAX_FRAGMENT;
     if (code == 23) {
       limit = MAX_PROTECTED;
     }
@@ -298,7 +298,7 @@ pub function record_end(buf: [u8], at: i32): i32 {
 
 // The whole record at buf[at], its fragment copied out; a protected one with room for open's header.
 pub function record_at(buf: [u8], at: i32): Result[Record, RecordError] {
-  let code: i32 = buf[at] as i32;
+  let code = buf[at] as i32;
   return Ok(Record { content_type: __content_type(code)?, version: buf[at + 1] as i32 << 8 | buf[at + 2] as i32, fragment: __fragment(buf, at + 5, record_end(buf, at) - at - 5, code) });
 }
 
@@ -308,19 +308,19 @@ pub function (r: Record) owned(): Record {
 }
 
 pub function frame(t: ContentType, legacy_version: i32, data: [u8]): u8[] {
-  let n: i32 = (data.len() + MAX_FRAGMENT - 1) / MAX_FRAGMENT;
-  let out: u8[] = __alloc_u8(data.len() + 5 * n);
-  let at: i32 = 0;
-  let from: i32 = 0;
+  let n = (data.len() + MAX_FRAGMENT - 1) / MAX_FRAGMENT;
+  let out = __alloc_u8(data.len() + 5 * n);
+  let at = 0;
+  let from = 0;
   while (from < data.len()) {
-    let len: i32 = data.len() - from;
+    let len = data.len() - from;
     if (len > MAX_FRAGMENT) {
       len = MAX_FRAGMENT;
     }
     out = __header(out, at, t.code(), legacy_version, len);
     out = __put(out, at + 5, data[from:from + len]);
     at = at + 5 + len;
-    from = from + len;
+    from += len;
   }
   return out;
 }
@@ -338,7 +338,7 @@ pub struct Protection { suite: keyschedule.CipherSuite, key: u8[], iv: u8[], seq
 ```fern
 <<14 pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): Protection>>=
 pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): Protection {
-  let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, traffic_secret);
+  let k = keyschedule.traffic_keys(suite, traffic_secret);
   return Protection { suite: suite, key: k.key, iv: k.iv, seq: 0 as u64, gcm: __gcm(suite, k.key), chacha: __chacha(suite, k.key) };
 }
 ```
@@ -387,8 +387,8 @@ function __chacha(suite: keyschedule.CipherSuite, key: [u8]): Option[chacha20pol
 ```fern
 <<16 pub function (p: Protection) kernel_info(): u8[]>>=
 pub function (p: Protection) kernel_info(): u8[] {
-  let cipher: i32 = 54;
-  let salt: i32 = 0;
+  let cipher = 54;
+  let salt = 0;
   match (p.suite) {
     keyschedule.Aes128GcmSha256 => {
       cipher = 51;
@@ -400,16 +400,16 @@ pub function (p: Protection) kernel_info(): u8[] {
     },
     keyschedule.ChaCha20Poly1305Sha256 => {}
   }
-  let out: u8[] = __alloc_u8(4 + p.iv.len() + p.key.len() + 8);
+  let out = __alloc_u8(4 + p.iv.len() + p.key.len() + 8);
   out = out.with(0, 4 as u8).with(1, 3 as u8).with(2, cipher as u8).with(3, 0 as u8);
   out = __put(out, 4, p.iv[salt:p.iv.len()]);
   out = __put(out, 4 + p.iv.len() - salt, p.key);
   out = __put(out, 4 + p.iv.len() - salt + p.key.len(), p.iv[0:salt]);
-  let at: i32 = out.len() - 8;
-  let i: i32 = 0;
+  let at = out.len() - 8;
+  let i = 0;
   while (i < 8) {
     out = out.with(at + i, (p.seq >> (8 * (7 - i)) as u64 & 255 as u64) as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -519,24 +519,24 @@ pub struct Sealed { record: u8[], next: Protection }
 ```fern
 <<19 pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): Result[Sealed, RecordError]>>=
 pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): Result[Sealed, RecordError] {
-  let pad: i32 = padding;
+  let pad = padding;
   if (pad < 0) {
     pad = 0;
   }
   if (content.len() + pad > MAX_FRAGMENT) {
     return Err(RecordOverflow(content.len() + pad));
   }
-  let checked: ContentType = __inner_type(t.code(), content.len())?;
+  let checked = __inner_type(t.code(), content.len())?;
   __advanceable(p)?;
-  let n: i32 = content.len() + 1 + pad;
-  let end: i32 = 5 + n + TAG_LEN;
-  let out: u8[] = __header(__alloc_u8(end), 0, 23, 0x0303, n + TAG_LEN);
+  let n = content.len() + 1 + pad;
+  let end = 5 + n + TAG_LEN;
+  let out = __header(__alloc_u8(end), 0, 23, 0x0303, n + TAG_LEN);
   out = __put(out, 5, content);
   out = out.with(5 + content.len(), t.code() as u8);
-  let i: i32 = 5 + content.len() + 1;
+  let i = 5 + content.len() + 1;
   while (i < 5 + n) {
     out = out.with(i, 0 as u8);
-    i = i + 1;
+    i += 1;
   }
   return Ok(Sealed { record: __seal(p, out, 5, n)?, next: __advanced(p) });
 }
@@ -551,7 +551,7 @@ pub const FRAMED_HEAD: i32 = 5;
 pub const FRAMED_TAIL: i32 = 17;
 
 pub function (p: Protection) seal_framed(t: ContentType, own buf: u8[]): Result[Sealed, RecordError] {
-  let n: i32 = buf.len() - FRAMED_HEAD - FRAMED_TAIL;
+  let n = buf.len() - FRAMED_HEAD - FRAMED_TAIL;
   if (n < 0) {
     return Err(EmptyFragment);
   }
@@ -581,19 +581,19 @@ pub function (p: Protection) open(own r: Record): Result[Opened, RecordError] {
     if (r.content_type.code() != 23) {
       return Err(UnexpectedContentType(r.content_type.code()));
     }
-    let version: i32 = r.version;
-    let fragment: u8[] = r.fragment;
+    let version = r.version;
+    let fragment = r.fragment;
     if (fragment.len() > MAX_PROTECTED) {
       return Err(RecordOverflow(fragment.len()));
     }
     __advanceable(p)?;
-    let n: i32 = fragment.len() - TAG_LEN;
+    let n = fragment.len() - TAG_LEN;
     if (n < 0) {
       return Err(BadRecordMac);
     }
-    let inner: u8[] = __open(p, __header_behind(fragment, version), n)?;
-    let end: i32 = __content_end(inner[0:n])?;
-    let t: ContentType = __inner_type(inner[end] as i32, end)?;
+    let inner = __open(p, __header_behind(fragment, version), n)?;
+    let end = __content_end(inner[0:n])?;
+    let t = __inner_type(inner[end] as i32, end)?;
     __arr_set_len(inner, end);
     return Ok(Opened { content_type: t, content: inner, next: __advanced(p) });
   }
@@ -601,7 +601,7 @@ pub function (p: Protection) open(own r: Record): Result[Opened, RecordError] {
 
 // Appends the record header behind the fragment, into the room deframe left there.
 function __header_behind(own fragment: u8[], version: i32): u8[] {
-  let n: i32 = fragment.len();
+  let n = fragment.len();
   return fragment.append(23 as u8).append((version >> 8 & 255) as u8).append((version & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8);
 }
 ```
@@ -614,9 +614,9 @@ function __content_end(inner: [u8]): Result[i32, RecordError] {
   if (inner.len() > MAX_FRAGMENT + 1) {
     return Err(RecordOverflow(inner.len()));
   }
-  let end: i32 = inner.len() - 1;
+  let end = inner.len() - 1;
   while (end >= 0 && inner[end] == 0) {
-    end = end - 1;
+    end -= 1;
   }
   if (end < 0) {
     return Err(NoContentType);
@@ -625,7 +625,7 @@ function __content_end(inner: [u8]): Result[i32, RecordError] {
 }
 
 function __inner_type(code: i32, len: i32): Result[ContentType, RecordError] {
-  let t: ContentType = __content_type(code)?;
+  let t = __content_type(code)?;
   if (code == 20) {
     return Err(UnexpectedContentType(20));
   }

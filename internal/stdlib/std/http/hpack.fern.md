@@ -205,45 +205,45 @@ function __entry_size(name: string, value: string): i32 {
 }
 
 function __added(t: Table, name: string, value: string): Table {
-  let need: i32 = __entry_size(name, value);
-  let room: Table = __evicted(t, t.max - need);
+  let need = __entry_size(name, value);
+  let room = __evicted(t, t.max - need);
   if (need > t.max) {
     return room;
   }
   let names: string[] = [name];
   let values: string[] = [value];
-  let i: i32 = 0;
+  let i = 0;
   while (i < room.names.len()) {
     names = names.append(room.names[i]);
     values = values.append(room.values[i]);
-    i = i + 1;
+    i += 1;
   }
   return Table { names: names, values: values, size: room.size + need, max: t.max };
 }
 
 function __evicted(t: Table, limit: i32): Table {
-  let keep: i32 = t.names.len();
-  let size: i32 = t.size;
+  let keep = t.names.len();
+  let size = t.size;
   while (keep > 0 && size > limit) {
-    keep = keep - 1;
-    size = size - __entry_size(t.names[keep], t.values[keep]);
+    keep -= 1;
+    size -= __entry_size(t.names[keep], t.values[keep]);
   }
   if (keep == t.names.len()) {
     return t;
   }
   let names: string[] = [];
   let values: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < keep) {
     names = names.append(t.names[i]);
     values = values.append(t.values[i]);
-    i = i + 1;
+    i += 1;
   }
   return Table { names: names, values: values, size: size, max: t.max };
 }
 
 function __resized(t: Table, max: i32): Table {
-  let out: Table = __evicted(t, max);
+  let out = __evicted(t, max);
   return Table { ...out, max: max };
 }
 ```
@@ -263,7 +263,7 @@ function __name_at(t: Table, index: i32): string {
   if (index >= 1 && index <= STATIC_LEN) {
     return STATIC_NAMES[index - 1];
   }
-  let at: i32 = index - STATIC_LEN - 1;
+  let at = index - STATIC_LEN - 1;
   if (at >= 0 && at < t.names.len()) {
     return t.names[at];
   }
@@ -271,12 +271,12 @@ function __name_at(t: Table, index: i32): string {
 }
 
 function __find(t: Table, name: string, value: string): i32 {
-  let found: i32 = __find_static(name, value);
+  let found = __find_static(name, value);
   if (found > 0) {
     return found;
   }
-  let name_only: i32 = 0 - found;
-  let i: i32 = 0;
+  let name_only = -found;
+  let i = 0;
   while (i < t.names.len()) {
     if (t.names[i] == name) {
       if (t.values[i] == value) {
@@ -286,30 +286,30 @@ function __find(t: Table, name: string, value: string): i32 {
         name_only = STATIC_LEN + 1 + i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - name_only;
+  return -name_only;
 }
 
 function __find_static(name: string, value: string): i32 {
-  let n: i32 = name.len();
+  let n = name.len();
   if (n + 1 >= STATIC_LENGTH_FROM.len()) {
     return 0;
   }
-  let k: i32 = STATIC_LENGTH_FROM[n];
+  let k = STATIC_LENGTH_FROM[n];
   while (k < STATIC_LENGTH_FROM[n + 1]) {
-    let i: i32 = STATIC_BY_LENGTH[k];
+    let i = STATIC_BY_LENGTH[k];
     if (STATIC_NAMES[i] == name) {
-      let first: i32 = i;
+      let first = i;
       while (i < STATIC_LEN && STATIC_NAMES[i] == name) {
         if (STATIC_VALUES[i] == value) {
           return i + 1;
         }
-        i = i + 1;
+        i += 1;
       }
       return 0 - (first + 1);
     }
-    k = k + 1;
+    k += 1;
   }
   return 0;
 }
@@ -335,7 +335,7 @@ pub function (d: Decoder) with_max_fields(n: i32): Decoder {
 }
 
 pub function (d: Decoder) with_max_table(n: i32): Decoder {
-  let t: Table = d.table;
+  let t = d.table;
   if (n < t.max) {
     t = __resized(t, n);
   }
@@ -359,7 +359,7 @@ pub struct Decoded { decoder: Decoder, fields: Field[] }
 ```fern
 <<17 pub function (d: Decoder) decode(block: u8[]): Result[Decoded, HpackError]>>=
 pub function (d: Decoder) decode(block: u8[]): Result[Decoded, HpackError] {
-  let st: Decoder = d.start(block);
+  let st = d.start(block);
   let fields: Field[] = [];
   while (st.more()) {
     st = st.next(block);
@@ -389,7 +389,7 @@ pub function (st: Decoder) more(): boolean {
 }
 
 pub function (st: Decoder) next(block: u8[]): Decoder {
-  let b: i32 = block[st.at] as i32;
+  let b = block[st.at] as i32;
   if (b >= 32 && b < 64) {
     return __size_update(st, block);
   }
@@ -405,7 +405,7 @@ pub function (st: Decoder) next(block: u8[]): Decoder {
   if (st.failed) {
     return st;
   }
-  let total: i32 = st.total + __entry_size(st.name, st.value);
+  let total = st.total + __entry_size(st.name, st.value);
   if (total > st.max_list) {
     return __failed(st, TooLarge(st.max_list));
   }
@@ -413,8 +413,8 @@ pub function (st: Decoder) next(block: u8[]): Decoder {
     return __failed(st, TooMany(st.max_fields));
   }
   if (st.add) {
-    let name: string = st.name;
-    let value: string = st.value;
+    let name = st.name;
+    let value = st.value;
     return Decoder { ...st, table: __added(st.table, name, value), count: st.count + 1, total: total, started: true, has: true };
   }
   return Decoder { ...st, count: st.count + 1, total: total, started: true, has: true };
@@ -434,11 +434,11 @@ function __indexed(st: Decoder, block: u8[]): Decoder {
   if (st.failed) {
     return st;
   }
-  let index: i32 = st.num;
+  let index = st.num;
   if (index >= 1 && index <= STATIC_LEN) {
     return Decoder { ...st, name: STATIC_NAMES[index - 1], value: STATIC_VALUES[index - 1], sensitive: false, add: false };
   }
-  let at: i32 = index - STATIC_LEN - 1;
+  let at = index - STATIC_LEN - 1;
   if (at < 0 || at >= st.table.names.len()) {
     return __failed(st, BadIndex(index));
   }
@@ -447,7 +447,7 @@ function __indexed(st: Decoder, block: u8[]): Decoder {
 
 function __size_update(st: Decoder, block: u8[]): Decoder {
   if (st.started) {
-    return __failed(st, BadSizeUpdate(0 - 1));
+    return __failed(st, BadSizeUpdate(-1));
   }
   st = __integer(st, block, 5);
   if (st.failed) {
@@ -456,7 +456,7 @@ function __size_update(st: Decoder, block: u8[]): Decoder {
   if (st.num > st.settings_max) {
     return __failed(st, BadSizeUpdate(st.num));
   }
-  let size: i32 = st.num;
+  let size = st.num;
   return Decoder { ...st, table: __resized(st.table, size), has: false };
 }
 
@@ -465,7 +465,7 @@ function __literal(st: Decoder, block: u8[], prefix: i32, add: boolean, sensitiv
   if (st.failed) {
     return st;
   }
-  let name: string = "";
+  let name = "";
   if (st.num > 0) {
     name = __name_at(st.table, st.num);
     if (name.len() == 0 && st.num > STATIC_LEN) {
@@ -478,41 +478,41 @@ function __literal(st: Decoder, block: u8[], prefix: i32, add: boolean, sensitiv
     }
     name = st.text;
   }
-  let total: i32 = st.total;
+  let total = st.total;
   st = __string(Decoder { ...st, total: total + name.len() }, block);
   if (st.failed) {
     return st;
   }
-  let value: string = st.text;
+  let value = st.text;
   return Decoder { ...st, total: total, name: name, value: value, sensitive: sensitive, add: add };
 }
 
 function __integer(st: Decoder, block: u8[], prefix: i32): Decoder {
-  let at: i32 = st.at;
+  let at = st.at;
   if (at >= st.end) {
     return __failed(st, Truncated);
   }
   let limit: i32 = (1 << prefix) - 1;
-  let value: i32 = block[at] as i32 & limit;
-  let i: i32 = at + 1;
+  let value = block[at] as i32 & limit;
+  let i = at + 1;
   if (value < limit) {
     return Decoder { ...st, num: value, at: i };
   }
-  let shift: i32 = 0;
+  let shift = 0;
   while (true) {
     if (i >= st.end) {
       return __failed(st, Truncated);
     }
-    let b: i32 = block[i] as i32;
-    i = i + 1;
+    let b = block[i] as i32;
+    i += 1;
     if (shift > 21) {
       return __failed(st, BadInteger);
     }
-    value = value + ((b & 127) << shift);
+    value += (b & 127) << shift;
     if (value < 0) {
       return __failed(st, BadInteger);
     }
-    shift = shift + 7;
+    shift += 7;
     if (b < 128) {
       return Decoder { ...st, num: value, at: i };
     }
@@ -524,17 +524,17 @@ function __string(st: Decoder, block: u8[]): Decoder {
   if (st.at >= st.end) {
     return __failed(st, Truncated);
   }
-  let coded: boolean = block[st.at] as i32 >= 128;
+  let coded = block[st.at] as i32 >= 128;
   st = __integer(st, block, 7);
   if (st.failed) {
     return st;
   }
-  let n: i32 = st.num;
-  let from: i32 = st.at;
+  let n = st.num;
+  let from = st.at;
   if (n > st.end - from) {
     return __failed(st, Truncated);
   }
-  let room: i32 = st.max_list - st.total - 32;
+  let room = st.max_list - st.total - 32;
   if (!coded) {
     if (n > room) {
       return __failed(st, TooLarge(st.max_list));
@@ -596,7 +596,7 @@ pub struct Encoded { encoder: Encoder, bytes: u8[] }
 ```fern
 <<22 pub function (e: Encoder) encode(fields: Field[]): Encoded>>=
 pub function (e: Encoder) encode(fields: Field[]): Encoded {
-  let en: Encoding = e.begin();
+  let en = e.begin();
   for f in fields {
     en = en.put(f.name, f.value, f.sensitive);
   }
@@ -627,9 +627,9 @@ pub function (e: Encoder) begin_in(own out: u8[]): Encoding {
 }
 
 pub function (en: Encoding) put(name: string, value: string, sensitive: boolean): Encoding {
-  let e: Encoder = en.encoder;
-  let out: u8[] = en.out;
-  let found: i32 = __find(e.table, name, value);
+  let e = en.encoder;
+  let out = en.out;
+  let found = __find(e.table, name, value);
   if (found > 0 && !sensitive) {
     return Encoding { encoder: e, out: __put_integer(out, 128, 7, found) };
   }
@@ -653,13 +653,13 @@ pub function (en: Encoding) finish(): Encoded {
 <<25 function __abs(n: i32): i32>>=
 function __abs(n: i32): i32 {
   if (n < 0) {
-    return 0 - n;
+    return -n;
   }
   return n;
 }
 
 function __put_name_value(out: u8[], e: Encoder, name: string, value: string, found: i32): u8[] {
-  let o: u8[] = out;
+  let o = out;
   if (found == 0) {
     o = __put_string(o, e, name);
   }
@@ -671,8 +671,8 @@ function __put_integer(out: u8[], pattern: i32, prefix: i32, value: i32): u8[] {
   if (value < limit) {
     return out.append((pattern | value) as u8);
   }
-  let o: u8[] = out.append((pattern | limit) as u8);
-  let rest: i32 = value - limit;
+  let o = out.append((pattern | limit) as u8);
+  let rest = value - limit;
   while (rest >= 128) {
     o = o.append((rest & 127 | 128) as u8);
     rest = rest >> 7;
@@ -681,14 +681,14 @@ function __put_integer(out: u8[], pattern: i32, prefix: i32, value: i32): u8[] {
 }
 
 function __put_string(out: u8[], e: Encoder, s: string): u8[] {
-  let bytes: u8[] = s.bytes();
+  let bytes = s.bytes();
   if (e.huffman) {
-    let coded: i32 = huffman.encoded_len(bytes);
+    let coded = huffman.encoded_len(bytes);
     if (coded <= bytes.len()) {
       return huffman.encode(__put_integer(out, 128, 7, coded), bytes);
     }
   }
-  let o: u8[] = __put_integer(out, 0, 7, bytes.len());
+  let o = __put_integer(out, 0, 7, bytes.len());
   return o.concat(bytes);
 }
 ```

@@ -5711,6 +5711,37 @@ function main(): i32 { return 0; }`, "unknown trait"},
 	}
 }
 
+// The gates check a program a second time, with each method already hoisted.
+// That check still finds the types whose method consumes its receiver, so a
+// payload of such a type from a call stays owned.
+func TestConsumingTypesSurviveASecondCheck(t *testing.T) {
+	prog, err := parser.Parse(`
+struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+enum Tail { NoTail, Kept(Handle) }
+function finish(own h: Handle): Tail { return Kept(h); }
+function main(): i32 {
+    match (finish(Handle { fd: 5 })) {
+        NoTail => { return 0; },
+        Kept(k) => { print("kept " + k.close().to_string()); }
+    }
+    match (finish(Handle { fd: 6 })) {
+        NoTail => { return 0; },
+        Kept(k) => { print("kept " + k.close().to_string()); }
+    }
+    return 0;
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("first check: %v", err)
+	}
+	if _, err := CheckTarget(prog, "x86-64-linux"); err != nil {
+		t.Errorf("second check: %v", err)
+	}
+}
+
 func TestDeriveFieldConformancePreCheck(t *testing.T) {
 	const ordTrait = "trait Ord { function cmp(self: Self, other: Self): i32; }\n"
 	const ordI32 = "impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n"

@@ -61,6 +61,26 @@ func TestSelfHostOwnDestructuredReceiver(t *testing.T) {
 	}
 }
 
+// The fields that a destructure takes from a fresh local at its last use
+// move into own parameters and receivers (#14144), and the moves leave the
+// heap balanced.
+func TestSelfHostOwnLocalDestructuredAtLastUse(t *testing.T) {
+	prog, err := os.ReadFile(filepath.Join(langSrcAbs(t, "conformance"), "cases", "own_local_destructured_at_last_use", "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, string(prog), target, "FERN_LEAKCHECK=1")
+			if code != 25 {
+				t.Fatalf("exit %d, want 25 (99 is an rc underflow)\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
+
 // An alias that takes a local at its last use moves into an own method
 // receiver after a self-update of that local (#14109), and the moves leave
 // the heap balanced.

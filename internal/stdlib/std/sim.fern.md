@@ -139,7 +139,7 @@ function __sim_interest(s: Sim, fd: i32): i32 {
 }
 
 function __sim_rewatch(s: Sim, fd: i32, row: string): i32 {
-  let out: string = "";
+  let out = "";
   for r in __sim_rows(s.watched.get()) {
     if (__sim_field(r, 0) != fd) {
       out = out + r[0] + ":" + r[1] + ";";
@@ -176,7 +176,7 @@ pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
     if (!prop(s)) {
       return s;
     }
-    s = s + 1;
+    s += 1;
   }
   return 0;
 }
@@ -197,7 +197,7 @@ impl async.Driver for Sim {
   }
   function unwatch(self: Sim, fd: i32): i32 {
     __sim_rewatch(self, fd, "");
-    let kept: string = "";
+    let kept = "";
     for r in __sim_rows(self.readiness.get()) {
       if (__sim_field(r, 0) != fd) {
         kept = kept + r[0] + ":" + r[1] + ":" + r[2] + ";";
@@ -207,16 +207,16 @@ impl async.Driver for Sim {
     return 0;
   }
   function wait_into(self: Sim, own events: i32[], timeout: Option[Duration]): i32[] {
-    let timeout_ms: i32 = time.timeout_millis(timeout);
-    let room: i32 = events.len() / 2;
+    let timeout_ms = time.timeout_millis(timeout);
+    let room = events.len() / 2;
     if (room <= 0) {
       return async.end_pairs(events, 0);
     }
-    let now_ms: i32 = (self.clock_ns.get() / 1000000) as i32;
-    let best: i32 = -1;
+    let now_ms = (self.clock_ns.get() / 1000000) as i32;
+    let best = -1;
     for r in __sim_rows(self.readiness.get()) {
       if ((__sim_field(r, 2) & __sim_interest(self, __sim_field(r, 0))) != 0) {
-        let at: i32 = __sim_field(r, 1);
+        let at = __sim_field(r, 1);
         if (at < now_ms) {
           at = now_ms;
         }
@@ -233,18 +233,18 @@ impl async.Driver for Sim {
       return async.end_pairs(events, 0);
     }
     self.clock_ns.set(best as i64 * 1000000);
-    let kept: string = "";
-    let n: i32 = 0;
+    let kept = "";
+    let n = 0;
     for r in __sim_rows(self.readiness.get()) {
-      let fd: i32 = __sim_field(r, 0);
-      let at: i32 = __sim_field(r, 1);
-      let bits: i32 = __sim_field(r, 2);
+      let fd = __sim_field(r, 0);
+      let at = __sim_field(r, 1);
+      let bits = __sim_field(r, 2);
       if (at < now_ms) {
         at = now_ms;
       }
       if (at == best && (bits & __sim_interest(self, fd)) != 0 && n < room) {
         events = events.with(n * 2, fd).with(n * 2 + 1, bits);
-        n = n + 1;
+        n += 1;
       } else {
         kept = kept + r[0] + ":" + r[1] + ":" + r[2] + ";";
       }
@@ -253,10 +253,10 @@ impl async.Driver for Sim {
     return async.end_pairs(events, n);
   }
   function watch_signal(self: Sim, sig: i32): i32 {
-    return self.watch(0 - sig, 1);
+    return self.watch(-sig, 1);
   }
   function unwatch_signal(self: Sim, sig: i32): i32 {
-    return self.unwatch(0 - sig);
+    return self.unwatch(-sig);
   }
   function watch_parent(self: Sim): i32 {
     return 0;
@@ -284,7 +284,7 @@ pub function (s: Sim) advance_to(to: Instant): boolean {
       return false;
     }
   }
-  let to_ns: i64 = time.instant_nanos(to);
+  let to_ns = time.instant_nanos(to);
   if (to_ns > s.clock_ns.get()) {
     s.clock_ns.set(to_ns);
   }
@@ -296,11 +296,11 @@ pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at: Option[Inst
   let tasks: async.Task[T][] = [];
   let out: async.TaskStatus[T][] = [];
   for e in entries {
-    let t: async.Task[T] = async.task_new(e);
+    let t = async.task_new(e);
     tasks = tasks.append(t);
     out = out.append(async.task_start(t));
   }
-  let next: i32 = __next_due(drv, out, cancel_at);
+  let next = __next_due(drv, out, cancel_at);
   while (next >= 0) {
     out = out.with(next, __run_due(drv, tasks[next], out[next], __cancel_at(cancel_at, next)));
     next = __next_due(drv, out, cancel_at);
@@ -311,7 +311,7 @@ pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at: Option[Inst
 // Drives `f` on the virtual clock, with no task. None when `f` ends cancelled
 // or waits with no deadline.
 pub function block_on[T](drv: Sim, f: async.Future[T]): Option[T] {
-  let cur: async.Future[T] = f;
+  let cur = f;
   while (true) {
     match (cur) {
       Ready(v) => {
@@ -322,10 +322,10 @@ pub function block_on[T](drv: Sim, f: async.Future[T]): Option[T] {
       },
       Pending(w, k) => {
         let Some(at) = w.until else {
-          let gone: async.Future[T] = k(async.Wake.Cancelled);
+          let gone = k(async.Wake.Cancelled);
           return None;
         };
-        let moved: boolean = drv.advance_to(at);
+        let moved = drv.advance_to(at);
         cur = k(async.Wake.TimedOut);
       }
     }
@@ -348,10 +348,10 @@ function __cancel_at(cancel_at: Option[Instant][], i: i32): Option[Instant] {
 // The virtual nanosecond a wait is due at, never before the clock: -1 when
 // nothing is due.
 function __wait_due(w: async.Wait, now_ns: i64, cancel: Option[Instant]): i64 {
-  let due: i64 = 0 - 1;
+  let due: i64 = -1;
   for at in [w.until, cancel] {
     if let Some(i) = at {
-      let ns: i64 = time.instant_nanos(i);
+      let ns = time.instant_nanos(i);
       if (due < 0 || ns < due) {
         due = ns;
       }
@@ -364,12 +364,12 @@ function __wait_due(w: async.Wait, now_ns: i64, cancel: Option[Instant]): i64 {
 }
 
 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32 {
-  let now_ns: i64 = drv.clock_ns.get();
+  let now_ns = drv.clock_ns.get();
   let best: i64 = 0 - 1;
   let ties: i32[] = [];
   for i in 0..out.len() {
     if let Suspended(w) = out[i] {
-      let due: i64 = __wait_due(w, now_ns, __cancel_at(cancel_at, i));
+      let due = __wait_due(w, now_ns, __cancel_at(cancel_at, i));
       if (due >= 0) {
         if (ties.len() == 0 || due < best) {
           best = due;
@@ -394,7 +394,7 @@ function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cance
   let Suspended(w) = st else {
     return st;
   };
-  let due: i64 = __wait_due(w, drv.clock_ns.get(), cancel);
+  let due = __wait_due(w, drv.clock_ns.get(), cancel);
   drv.clock_ns.set(due);
   if let Some(c) = cancel {
     if (time.instant_nanos(c) <= due) {
@@ -410,13 +410,13 @@ function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cance
 ```fern
 <<10 pub function future_at[T](at: Instant, v: T): async.Future[T]>>=
 pub function future_at[T](at: Instant, v: T): async.Future[T] {
-  let done: async.Future[T] = Ready(v);
+  let done = Ready(v);
   return __pend(at, done);
 }
 
 // Ready at `at`, after `resuspends` further waits `step` apart.
 pub function future_chain[T](at: Instant, step: Duration, resuspends: i32, v: T): async.Future[T] {
-  let f: async.Future[T] = Ready(v);
+  let f = Ready(v);
   for back in 0..resuspends + 1 {
     f = __pend(at.add(step.mul(resuspends - back)), f);
   }

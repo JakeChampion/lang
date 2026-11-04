@@ -269,7 +269,7 @@ const BUNDLES: string[] = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/c
 pub function roots_from_file(path: string): Result[Roots, VerifyError] {
   match (read_file(path)) {
     Ok(text) => {
-      let r: Roots = roots_from_pem(text)?;
+      let r = roots_from_pem(text)?;
       if (r.certs.len() > 0) {
         return Ok(r);
       }
@@ -280,7 +280,7 @@ pub function roots_from_file(path: string): Result[Roots, VerifyError] {
 }
 
 pub function system_roots(): Option[Roots] {
-  let paths: string[] = BUNDLES;
+  let paths = BUNDLES;
   if let Some(p) = env("SSL_CERT_FILE") {
     paths = [p];
   }
@@ -351,10 +351,10 @@ function __rsa(n: u8[], e: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Res
 }
 
 function __rsa_check(key: rsa.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
-  let name: string = x509.algorithm_name(alg);
+  let name = x509.algorithm_name(alg);
   let hashes: string[] = ["sha256", "sha384", "sha512"];
   let hs: sha2.Hash[] = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 3) {
     if (name == "rsa_pkcs1_" + hashes[i]) {
       return Ok(key.verify_pkcs1v15(hs[i], msg, sig));
@@ -362,7 +362,7 @@ function __rsa_check(key: rsa.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u
     if (name == "rsa_pss_" + hashes[i]) {
       return Ok(key.verify_pss(hs[i], msg, sig));
     }
-    i = i + 1;
+    i += 1;
   }
   return Err(UnsupportedAlgorithm(name + " under an RSA key"));
 }
@@ -389,15 +389,15 @@ function __scheme_curve(key: x509.PublicKey, scheme: i32): boolean {
 function __ecdsa(curve: ecdsa.Curve, point: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
   match (ecdsa.public_key(curve, point)) {
     Ok(k) => {
-      let name: string = x509.algorithm_name(alg);
+      let name = x509.algorithm_name(alg);
       let hashes: string[] = ["sha256", "sha384", "sha512"];
       let hs: sha2.Hash[] = [sha2.Sha256, sha2.Sha384, sha2.Sha512];
-      let i: i32 = 0;
+      let i = 0;
       while (i < 3) {
         if (name == "ecdsa_" + hashes[i]) {
           return Ok(k.verify(hs[i], msg, sig));
         }
-        i = i + 1;
+        i += 1;
       }
       return Err(UnsupportedAlgorithm(name + " under an EC key"));
     },
@@ -435,7 +435,7 @@ pub function signed(cert: x509.Certificate, scheme: i32, data: [u8], sig: [u8]):
   if (!scheme_fits(cert, scheme)) {
     return false;
   }
-  let alg: x509.Algorithm = x509.OtherAlgorithm("");
+  let alg = x509.OtherAlgorithm("");
   if (scheme == 0x0403 || scheme == 0x0503) {
     alg = x509.EcdsaSha256;
     if (scheme == 0x0503) {
@@ -509,9 +509,9 @@ function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[],
   if (at >= MAX_PATH) {
     return Search { found: false, err: PathTooLong(at) };
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < roots.certs.len()) {
-    let r: Search = __try(below, roots.certs[i], at, now, s);
+    let r = __try(below, roots.certs[i], at, now, s);
     if (r.found && !(server && __distrusted(roots, i, below[0]))) {
       return r;
     }
@@ -519,31 +519,31 @@ function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[],
     if (r.found) {
       s = Search { found: false, err: Distrusted(at) };
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < inter.len()) {
-    let r: Search = __try(below, inter[i], at, now, s);
+    let r = __try(below, inter[i], at, now, s);
     if (r.found) {
-      let up: Search = __extend(below.append(inter[i]), at + 1, inter, roots, now, server, Search { found: false, err: r.err });
+      let up = __extend(below.append(inter[i]), at + 1, inter, roots, now, server, Search { found: false, err: r.err });
       if (up.found) {
         return up;
       }
       r = up;
     }
     s = Search { found: false, err: r.err };
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
 
 function __distrusted(roots: Roots, i: i32, leaf: x509.Certificate): boolean {
-  let after: i64 = roots.distrust_after[i];
+  let after = roots.distrust_after[i];
   return after > 0 as i64 && leaf.not_before > after;
 }
 
 function __try(below: x509.Certificate[], candidate: x509.Certificate, at: i32, now: i64, s: Search): Search {
-  let c: x509.Certificate = below[below.len() - 1];
+  let c = below[below.len() - 1];
   if (!__same_bytes(candidate.subject.raw, c.issuer.raw)) {
     return s;
   }
@@ -591,9 +591,9 @@ function __constraints_ok(ca: x509.Certificate, below: x509.Certificate[]): bool
 }
 
 function __dns_within_any(name: string, subtrees: string[]): boolean {
-  let n: string = __normal(name);
+  let n = __normal(name);
   for t in subtrees {
-    let c: string = __normal(t);
+    let c = __normal(t);
     if (c.len() == 0 || n == c && !c.starts_with(".") || n.ends_with(c) && c.starts_with(".") || n.ends_with("." + c)) {
       return true;
     }
@@ -611,13 +611,13 @@ function __ip_within_any(ip: u8[], subtrees: u8[][]): boolean {
 }
 
 function __masked_equal(ip: u8[], t: u8[]): boolean {
-  let n: i32 = ip.len();
-  let i: i32 = 0;
+  let n = ip.len();
+  let i = 0;
   while (i < n) {
     if ((ip[i] & t[n + i]) != (t[i] & t[n + i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -626,12 +626,12 @@ function __same_bytes(a: u8[], b: u8[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -675,13 +675,13 @@ function __has(v: string[], x: string): boolean {
 ```fern
 <<19 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>=
 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
-  let certs: x509.Certificate[] = __parsed(chain)?;
+  let certs = __parsed(chain)?;
   __leaf_ok(certs[0], name, now.sec)?;
   return __rooted(certs, roots, now.sec, true);
 }
 
 pub function client(chain: u8[][], roots: Roots, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
-  let certs: x509.Certificate[] = __parsed(chain)?;
+  let certs = __parsed(chain)?;
   __signing_leaf(certs[0], now.sec)?;
   if (certs[0].has_ext_key_usage && !__has(certs[0].ext_key_usage, x509.EKU_CLIENT_AUTH) && !__has(certs[0].ext_key_usage, x509.EKU_ANY)) {
     return Err(NotForClients);
@@ -699,7 +699,7 @@ function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
     return Err(EmptyChain);
   }
   let certs: x509.Certificate[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < chain.len()) {
     match (x509.parse(chain[i])) {
       Ok(c) => {
@@ -709,7 +709,7 @@ function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
         return Err(Parse(i, e));
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (denied_key(certs[0])) {
     return Err(DeniedKey(0));
@@ -723,7 +723,7 @@ function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
 ```fern
 <<21 pub function denied_key(c: x509.Certificate): boolean>>=
 pub function denied_key(c: x509.Certificate): boolean {
-  let h: string = hex.encode(crypto.sha256_new().update(c.spki).finish());
+  let h = hex.encode(crypto.sha256_new().update(c.spki).finish());
   for d in DENIED_SPKI {
     if (h == d) {
       return true;
@@ -738,8 +738,8 @@ pub function denied_key(c: x509.Certificate): boolean {
 ```fern
 <<22 function __rooted(certs: x509.Certificate[], roots: Roots, now: i64, server: boolean): Result[x509.Certific...>>=
 function __rooted(certs: x509.Certificate[], roots: Roots, now: i64, server: boolean): Result[x509.Certificate, VerifyError] {
-  let leaf: x509.Certificate = certs[0];
-  let s: Search = __extend([leaf], 1, certs.drop(1), roots, now, server, Search { found: false, err: UnknownIssuer });
+  let leaf = certs[0];
+  let s = __extend([leaf], 1, certs.drop(1), roots, now, server, Search { found: false, err: UnknownIssuer });
   if (!s.found) {
     return Err(s.err);
   }
@@ -754,7 +754,7 @@ function __rooted(certs: x509.Certificate[], roots: Roots, now: i64, server: boo
 pub function matches_name(c: x509.Certificate, name: string): boolean {
   match (net.ip_parse(name)) {
     Ok(ip) => {
-      let want: u8[] = ip.bytes();
+      let want = ip.bytes();
       for got in c.ip_addresses {
         if (__same_bytes(got, want)) {
           return true;
@@ -778,7 +778,7 @@ pub function matches_name(c: x509.Certificate, name: string): boolean {
 ```fern
 <<24 function __normal(name: string): string>>=
 function __normal(name: string): string {
-  let n: string = name.to_ascii_lower();
+  let n = name.to_ascii_lower();
   match (n.strip_suffix(".")) {
     Some(s) => {
       return s;
@@ -792,7 +792,7 @@ function __normal(name: string): string {
 
 function __dns_match(patterns: string[], name: string): boolean {
   for p in patterns {
-    let pat: string = __normal(p);
+    let pat = __normal(p);
     if (pat == name) {
       return true;
     }

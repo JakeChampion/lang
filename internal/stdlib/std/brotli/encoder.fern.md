@@ -49,15 +49,15 @@ fip function write_byte(own bytes: u8[], at: i32, value: u8): u8[] {
 }
 
 function put(own w: Writer, value: i32, bits: i32): Writer {
-  let acc: u64 = w.acc | (value as u32) as u64 << w.used as u64;
-  let used: i32 = w.used + bits;
-  let at: i32 = w.at;
-  let bytes: u8[] = w.bytes;
+  let acc = w.acc | (value as u32) as u64 << w.used as u64;
+  let used = w.used + bits;
+  let at = w.at;
+  let bytes = w.bytes;
   while (used >= 8) {
     bytes = write_byte(bytes, at, (acc & 255) as u8);
-    at = at + 1;
+    at += 1;
     acc = acc >> 8;
-    used = used - 8;
+    used -= 8;
   }
   return Writer { bytes: bytes, at: at, acc: acc, used: used };
 }
@@ -72,25 +72,25 @@ function code(own w: Writer, value: i32, bits: i32): Writer {
 }
 
 function literals(own w: Writer, input: [u8], from: i32, to: i32): Writer {
-  let used: i32 = w.used;
-  let shift: u64 = used as u64;
-  let acc: u64 = w.acc;
-  let at: i32 = w.at;
-  let bytes: u8[] = w.bytes;
-  let position: i32 = from;
+  let used = w.used;
+  let shift = used as u64;
+  let acc = w.acc;
+  let at = w.at;
+  let bytes = w.bytes;
+  let position = from;
   while (position < to) {
-    let packed: u64 = acc | REVERSE_BYTE[input[position] as i32] as u64 << shift;
+    let packed = acc | REVERSE_BYTE[input[position] as i32] as u64 << shift;
     bytes = write_byte(bytes, at, (packed & 255) as u8);
     acc = packed >> 8;
-    at = at + 1;
-    position = position + 1;
+    at += 1;
+    position += 1;
   }
   return Writer { bytes: bytes, at: at, acc: acc, used: used };
 }
 
 function align(own w: Writer): Writer {
   if (w.used > 0) {
-    let padding: i32 = 8 - w.used;
+    let padding = 8 - w.used;
     return put(w, 0, padding);
   }
   return w;
@@ -101,9 +101,9 @@ function align(own w: Writer): Writer {
 function finish(own w: Writer): u8[] {
   unsafe {
     w = align(w);
-    let bytes: u8[] = w.bytes;
+    let bytes = w.bytes;
     let none: u8[] = [];
-    let at: i32 = w.at;
+    let at = w.at;
     w = Writer { ...w, bytes: none };
     __arr_set_len(bytes, at);
     return bytes;
@@ -126,7 +126,7 @@ function code_length(own w: Writer, length: i32): Writer {
 function uniform_tree(own w: Writer, length: i32): Writer {
   w = put(w, 0, 2);
   for symbol in [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10, 11, 12, 13, 14, 15] {
-    let bits: i32 = 0;
+    let bits = 0;
     if (symbol == length) {
       bits = 1;
     }
@@ -137,26 +137,26 @@ function uniform_tree(own w: Writer, length: i32): Writer {
 
 function repeat_length(own w: Writer, count: i32): Writer {
   let digits: i32[] = [];
-  let n: i32 = count;
+  let n = count;
   while (n > 6) {
     let extra: i32 = (n - 3) % 4;
     digits = digits.append(extra);
     n = (n - extra - 3) / 4 + 2;
   }
   digits = digits.append(n - 3);
-  let at: i32 = digits.len() - 1;
+  let at = digits.len() - 1;
   while (at >= 0) {
     w = put(code(w, 3, 2), digits[at], 2);
-    at = at - 1;
+    at -= 1;
   }
   return w;
 }
 
 function command_tree(own w: Writer): Writer {
   w = put(w, 0, 2);
-  let space: i32 = 32;
+  let space = 32;
   for symbol in [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10] {
-    let length: i32 = 0;
+    let length = 0;
     if (symbol == 9) {
       length = 1;
     }
@@ -187,7 +187,7 @@ function insert_code(length: i32): i32 {
     return length;
   }
   if (length < 130) {
-    let nbits: i32 = log2(length - 2) - 1;
+    let nbits = log2(length - 2) - 1;
     return (nbits << 1) + (length - 2 >> nbits) + 2;
   }
   if (length < 2114) {
@@ -208,7 +208,7 @@ function copy_code(length: i32): i32 {
     return length - 2;
   }
   if (length < 134) {
-    let nbits: i32 = log2(length - 6) - 1;
+    let nbits = log2(length - 6) - 1;
     return (nbits << 1) + (length - 6 >> nbits) + 4;
   }
   if (length < 2118) {
@@ -218,10 +218,10 @@ function copy_code(length: i32): i32 {
 }
 
 function command(own w: Writer, insert: i32, copy: i32): Writer {
-  let ic: i32 = insert_code(insert);
-  let cc: i32 = copy_code(copy);
+  let ic = insert_code(insert);
+  let cc = copy_code(copy);
   let cell: i32 = [2, 3, 6, 4, 5, 8, 7, 9, 10][ic / 8 * 3 + cc / 8];
-  let symbol: i32 = cell * 64 + ic % 8 * 8 + cc % 8;
+  let symbol = cell * 64 + ic % 8 * 8 + cc % 8;
   if (symbol < 320) {
     w = code(w, symbol, 9);
   } else {
@@ -240,7 +240,7 @@ function distance(own w: Writer, value: i32, last: Option[i32]): Writer {
     },
     None => {}
   }
-  let n: i32 = log2(value + 3) - 1;
+  let n = log2(value + 3) - 1;
   let high: i32 = (value + 3 >> n) - 2;
   w = code(w, 16 + 2 * (n - 1) + high, 6);
   return put(w, value + 3 - (2 + high << n), n);
@@ -256,12 +256,12 @@ Each meta-block starts a fresh match table. Earlier blocks remain valid decoder 
 ```fern
 <<Find matches>>=
 function hash(input: [u8], at: i32): i32 {
-  let word: u32 = input[at] as u32 | input[at + 1] as u32 << 8 | input[at + 2] as u32 << 16 | input[at + 3] as u32 << 24;
+  let word = input[at] as u32 | input[at + 1] as u32 << 8 | input[at + 2] as u32 << 16 | input[at + 3] as u32 << 24;
   return (word * (0x1e35a7bd as u32) >> 17) as i32;
 }
 
 function block(own w: Writer, input: u8[], start: i32, end: i32, last_block: boolean): Writer {
-  let last_flag: i32 = 0;
+  let last_flag = 0;
   if (last_block) {
     last_flag = 1;
   }
@@ -281,15 +281,15 @@ function block(own w: Writer, input: u8[], start: i32, end: i32, last_block: boo
   w = uniform_tree(w, 8);
   w = command_tree(w);
   w = uniform_tree(w, 6);
-  let heads: i32[] = __alloc_i32(32768);
-  let at: i32 = start;
-  let anchor: i32 = start;
+  let heads = __alloc_i32(32768);
+  let at = start;
+  let anchor = start;
   let last: Option[i32] = None;
   while (at + 5 <= end) {
-    let slot: i32 = hash(input, at);
-    let previous: i32 = heads[slot] - 1;
+    let slot = hash(input, at);
+    let previous = heads[slot] - 1;
     heads = heads.with(slot, at + 1);
-    let length: i32 = 0;
+    let length = 0;
     if (previous >= start && at - previous <= 65520) {
       length = __mismatch_bytes(input, previous, input, at, end - at);
     }
@@ -298,10 +298,10 @@ function block(own w: Writer, input: u8[], start: i32, end: i32, last_block: boo
       w = literals(w, input, anchor, at);
       w = distance(w, at - previous, last);
       last = Some(at - previous);
-      at = at + length;
+      at += length;
       anchor = at;
     } else {
-      at = at + 1;
+      at += 1;
     }
   }
   if (anchor < end) {
@@ -319,22 +319,22 @@ The encoder splits large inputs into 64 KiB meta-blocks. A zero-length stream ha
 ```fern
 <<Encode a stream>>=
 pub function compress(input: u8[]): u8[] {
-  let w: Writer = Writer { bytes: __alloc_u8(input.len() * 2 + 1024), at: 0, acc: 0, used: 0 };
+  let w = Writer { bytes: __alloc_u8(input.len() * 2 + 1024), at: 0, acc: 0, used: 0 };
   w = put(w, 0, 1);
   if (input.len() == 0) {
     w = put(w, 3, 2);
   }
-  let start: i32 = 0;
+  let start = 0;
   while (start < input.len()) {
-    let end: i32 = start + 65536;
+    let end = start + 65536;
     if (end > input.len()) {
       end = input.len();
     }
     w = block(w, input, start, end, end == input.len());
     start = end;
   }
-  let encoded: u8[] = finish(w);
-  let raw_size: i32 = input.len() + (input.len() + 65535) / 65536 * 3 + 1;
+  let encoded = finish(w);
+  let raw_size = input.len() + (input.len() + 65535) / 65536 * 3 + 1;
   if (encoded.len() > raw_size) {
     return stored(input);
   }
@@ -349,11 +349,11 @@ Random bytes can expand under a compressed prefix. A stored stream bounds that e
 ```fern
 <<Stored blocks>>=
 function stored(input: [u8]): u8[] {
-  let w: Writer = Writer { bytes: __alloc_u8(input.len() + (input.len() + 65535) / 65536 * 4 + 16), at: 0, acc: 0, used: 0 };
+  let w = Writer { bytes: __alloc_u8(input.len() + (input.len() + 65535) / 65536 * 4 + 16), at: 0, acc: 0, used: 0 };
   w = put(w, 0, 1);
-  let start: i32 = 0;
+  let start = 0;
   while (start < input.len()) {
-    let end: i32 = start + 65536;
+    let end = start + 65536;
     if (end > input.len()) {
       end = input.len();
     }
@@ -362,7 +362,7 @@ function stored(input: [u8]): u8[] {
     w = align(put(w, 1, 1));
     while (start < end) {
       w = put(w, input[start] as i32, 8);
-      start = start + 1;
+      start += 1;
     }
   }
   return finish(put(w, 3, 2));

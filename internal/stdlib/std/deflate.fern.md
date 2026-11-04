@@ -181,17 +181,17 @@ pub function inflate_after(history: [u8], input: [u8], max_out: i32): Result[Inf
 ```fern
 <<6 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError]>>=
 function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
-  let out: u8[] = history;
+  let out = history;
   if (history.len() == 0) {
     out = __room(input.len() - from, max_out);
   }
-  let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: out, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
-  let done: boolean = false;
+  let s = __State { pos: from, bitbuf: 0, bitcnt: 0, out: out, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
+  let done = false;
   while (!done && !s.failed) {
     s = __bits(s, input, 1);
     done = s.last == 1;
     s = __bits(s, input, 2);
-    let kind: i32 = s.last;
+    let kind = s.last;
     s = __block(s, input, kind);
   }
   if (s.failed) {
@@ -204,7 +204,7 @@ function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result
 // limit, so the output rarely grows and copies.
 function __room(avail: i32, max_out: i32): u8[] {
   unsafe {
-    let want: i64 = avail as i64 * 4i64;
+    let want = avail as i64 * 4i64;
     if (want < 4096i64) {
       want = 4096i64;
     }
@@ -214,7 +214,7 @@ function __room(avail: i32, max_out: i32): u8[] {
     if (want < 0i64) {
       want = 0i64;
     }
-    let out: u8[] = __alloc_u8(want as i32);
+    let out = __alloc_u8(want as i32);
     __arr_set_len(out, 0);
     return out;
   }
@@ -256,16 +256,16 @@ function __bits(own s: __State, data: [u8], need: i32): __State {
   if (s.failed) {
     return s;
   }
-  let val: i32 = s.bitbuf;
-  let cnt: i32 = s.bitcnt;
-  let pos: i32 = s.pos;
+  let val = s.bitbuf;
+  let cnt = s.bitcnt;
+  let pos = s.pos;
   while (cnt < need) {
     if (pos >= data.len()) {
       return __fail(s, Truncated);
     }
     val = val | data[pos] as i32 << cnt;
-    pos = pos + 1;
-    cnt = cnt + 8;
+    pos += 1;
+    cnt += 8;
   }
   let mask: i32 = (1 << need) - 1;
   return __State { ...s, pos: pos, bitbuf: val >> need, bitcnt: cnt - need, last: val & mask };
@@ -276,24 +276,24 @@ function __stored(own s: __State, data: [u8]): __State {
   if (s.pos + 4 > data.len()) {
     return __fail(s, Truncated);
   }
-  let len: i32 = data[s.pos] as i32 | data[s.pos + 1] as i32 << 8;
-  let nlen: i32 = data[s.pos + 2] as i32 | data[s.pos + 3] as i32 << 8;
+  let len = data[s.pos] as i32 | data[s.pos + 1] as i32 << 8;
+  let nlen = data[s.pos + 2] as i32 | data[s.pos + 3] as i32 << 8;
   if (len != (nlen ^ 65535)) {
     return __fail(s, Malformed("a stored block's length and its complement disagree"));
   }
-  let at: i32 = s.pos + 4;
+  let at = s.pos + 4;
   if (at + len > data.len()) {
     return __fail(s, Truncated);
   }
   if (s.out.len() + len > s.max_out) {
     return __fail(s, OutputLimit);
   }
-  let out: u8[] = s.out;
+  let out = s.out;
   s = __State { ...s, out: [] };
-  let i: i32 = 0;
+  let i = 0;
   while (i < len) {
     out = out.append(data[at + i]);
-    i = i + 1;
+    i += 1;
   }
   return __State { ...s, pos: at + len, out: out };
 }
@@ -318,69 +318,69 @@ function __empty_tables(s: __State): __Tables {
 ```fern
 <<10 function __construct(lengths: i32[], n: i32): __Huff>>=
 function __construct(lengths: i32[], n: i32): __Huff {
-  let count: i32[] = __zeros(16);
-  let sym: i32 = 0;
+  let count = __zeros(16);
+  let sym = 0;
   while (sym < n) {
     count = count.with(lengths[sym], count[lengths[sym]] + 1);
-    sym = sym + 1;
+    sym += 1;
   }
-  let left: i32 = 1;
-  let len: i32 = 1;
+  let left = 1;
+  let len = 1;
   while (len <= 15) {
     left = left << 1;
-    left = left - count[len];
+    left -= count[len];
     if (left < 0) {
       return __Huff { count: count, symbol: [], left: 0 - 1 };
     }
-    len = len + 1;
+    len += 1;
   }
-  let offs: i32[] = __zeros(16);
+  let offs = __zeros(16);
   len = 1;
   while (len < 15) {
     offs = offs.with(len + 1, offs[len] + count[len]);
-    len = len + 1;
+    len += 1;
   }
-  let symbols: i32[] = __zeros(n);
+  let symbols = __zeros(n);
   sym = 0;
   while (sym < n) {
     if (lengths[sym] != 0) {
       symbols = symbols.with(offs[lengths[sym]], sym);
       offs = offs.with(lengths[sym], offs[lengths[sym]] + 1);
     }
-    sym = sym + 1;
+    sym += 1;
   }
   return __Huff { count: count, symbol: symbols, left: left };
 }
 
 function __zeros(n: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(0);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __decode(own s: __State, data: [u8], h: __Huff): __State {
-  let code: i32 = 0;
-  let first: i32 = 0;
-  let index: i32 = 0;
-  let len: i32 = 1;
+  let code = 0;
+  let first = 0;
+  let index = 0;
+  let len = 1;
   while (len <= 15) {
     s = __bits(s, data, 1);
     if (s.failed) {
       return s;
     }
     code = code | s.last;
-    let count: i32 = h.count[len];
+    let count = h.count[len];
     if (code - count < first) {
       return __State { ...s, last: h.symbol[index + (code - first)] };
     }
-    index = index + count;
+    index += count;
     first = first + count << 1;
     code = code << 1;
-    len = len + 1;
+    len += 1;
   }
   return __fail(s, Malformed("a bit pattern that is no code"));
 }
@@ -423,25 +423,25 @@ const E_NO_CODE: i32 = 1024;
 const E_PAST: i32 = 2048;
 
 function __table(h: __Huff, bits: i32, lit: boolean): i32[] {
-  let table: i32[] = __zeros(1 << bits);
-  let code: i32 = 0;
-  let index: i32 = 0;
-  let len: i32 = 1;
+  let table = __zeros(1 << bits);
+  let code = 0;
+  let index = 0;
+  let len = 1;
   while (len <= bits) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < h.count[len]) {
-      let entry: i32 = __entry(h.symbol[index], len, lit);
-      let at: i32 = __reversed(code, len);
+      let entry = __entry(h.symbol[index], len, lit);
+      let at = __reversed(code, len);
       while (at < table.len()) {
         table = table.with(at, entry);
-        at = at + (1 << len);
+        at += 1 << len;
       }
-      code = code + 1;
-      index = index + 1;
-      k = k + 1;
+      code += 1;
+      index += 1;
+      k += 1;
     }
     code = code << 1;
-    len = len + 1;
+    len += 1;
   }
   return table;
 }
@@ -468,23 +468,23 @@ function __entry(sym: i32, len: i32, lit: boolean): i32 {
 // The entry of a code longer than the table: zero when `avail` bits do not
 // hold it, E_NO_CODE when no code matches.
 function __walk(h: __Huff, bits: u64, avail: i32, lit: boolean): i32 {
-  let code: i32 = 0;
-  let first: i32 = 0;
-  let index: i32 = 0;
-  let len: i32 = 1;
+  let code = 0;
+  let first = 0;
+  let index = 0;
+  let len = 1;
   while (len <= 15) {
     if (len > avail) {
       return 0;
     }
     code = code | (bits >> (len - 1) as u64 & 1u64) as i32;
-    let count: i32 = h.count[len];
+    let count = h.count[len];
     if (code - count < first) {
       return __entry(h.symbol[index + (code - first)], len, lit);
     }
-    index = index + count;
+    index += count;
     first = first + count << 1;
     code = code << 1;
-    len = len + 1;
+    len += 1;
   }
   return E_NO_CODE;
 }
@@ -508,20 +508,20 @@ in separate functions so that the fast one has the registers to itself.
 <<13 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State>>=
 // fern-lint: allow cyclomatic-complexity
 function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State {
-  let lit: i32[] = __table(lencode, LIT_BITS, true);
-  let dtab: i32[] = __table(distcode, DIST_BITS, false);
-  let lmask: u64 = (1 << LIT_BITS) as u64 - 1u64;
-  let dmask: u64 = (1 << DIST_BITS) as u64 - 1u64;
-  let out: u8[] = s.out;
-  let max_out: i32 = s.max_out;
-  let pos: i32 = s.pos;
-  let bitbuf: u64 = s.bitbuf as u64;
-  let bitcnt: i32 = s.bitcnt;
-  let n: i32 = data.len();
+  let lit = __table(lencode, LIT_BITS, true);
+  let dtab = __table(distcode, DIST_BITS, false);
+  let lmask = (1 << LIT_BITS) as u64 - 1u64;
+  let dmask = (1 << DIST_BITS) as u64 - 1u64;
+  let out = s.out;
+  let max_out = s.max_out;
+  let pos = s.pos;
+  let bitbuf = s.bitbuf as u64;
+  let bitcnt = s.bitcnt;
+  let n = data.len();
   s = __State { ...s, out: [], lengths: [] };
   let error: Option[InflateError] = None;
-  let done: boolean = false;
-  let fast: __Fast = __fast(out, data, pos, bitbuf, bitcnt, max_out, lit, dtab, lencode, distcode);
+  let done = false;
+  let fast = __fast(out, data, pos, bitbuf, bitcnt, max_out, lit, dtab, lencode, distcode);
   out = fast.out;
   pos = fast.pos;
   bitbuf = fast.bitbuf;
@@ -533,20 +533,20 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
   while (!done) {
     while (bitcnt <= 48 && pos < n) {
       bitbuf = bitbuf | data[pos] as u64 << bitcnt as u64;
-      pos = pos + 1;
-      bitcnt = bitcnt + 8;
+      pos += 1;
+      bitcnt += 8;
     }
-    let e: i32 = lit[(bitbuf & lmask) as i32];
+    let e = lit[(bitbuf & lmask) as i32];
     if (e == 0) {
       e = __walk(lencode, bitbuf, bitcnt, true);
     }
-    let used: i32 = e & 15;
+    let used = e & 15;
     if (e == 0 || used > bitcnt) {
       error = Some(Truncated);
       done = true;
     } else {
       bitbuf = bitbuf >> used as u64;
-      bitcnt = bitcnt - used;
+      bitcnt -= used;
       if ((e & E_LITERAL) != 0) {
         if (out.len() >= max_out) {
           error = Some(OutputLimit);
@@ -558,31 +558,31 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
         error = __symbol_error(e, true);
         done = true;
       } else {
-        let lx: i32 = e >> 4 & 15;
-        let len: i32 = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
+        let lx = e >> 4 & 15;
+        let len = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
         if (lx > bitcnt) {
           error = Some(Truncated);
           done = true;
         } else {
           bitbuf = bitbuf >> lx as u64;
-          bitcnt = bitcnt - lx;
+          bitcnt -= lx;
           while (bitcnt <= 48 && pos < n) {
             bitbuf = bitbuf | data[pos] as u64 << bitcnt as u64;
-            pos = pos + 1;
-            bitcnt = bitcnt + 8;
+            pos += 1;
+            bitcnt += 8;
           }
-          let d: i32 = dtab[(bitbuf & dmask) as i32];
+          let d = dtab[(bitbuf & dmask) as i32];
           if (d == 0) {
             d = __walk(distcode, bitbuf, bitcnt, false);
           }
-          let dused: i32 = d & 15;
+          let dused = d & 15;
           if (d == 0 || dused > bitcnt) {
             error = Some(Truncated);
             done = true;
           } else {
             bitbuf = bitbuf >> dused as u64;
-            bitcnt = bitcnt - dused;
-            let dx: i32 = d >> 4 & 15;
+            bitcnt -= dused;
+            let dx = d >> 4 & 15;
             if ((d & (E_NO_CODE | E_PAST)) != 0) {
               error = __symbol_error(d, false);
               done = true;
@@ -590,9 +590,9 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
               error = Some(Truncated);
               done = true;
             } else {
-              let dist: i32 = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
+              let dist = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
               bitbuf = bitbuf >> dx as u64;
-              bitcnt = bitcnt - dx;
+              bitcnt -= dx;
               if (dist > out.len()) {
                 error = Some(Malformed("a distance before the start of the output"));
                 done = true;
@@ -608,7 +608,7 @@ function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff):
       }
     }
   }
-  let back: i32 = bitcnt >> 3;
+  let back = bitcnt >> 3;
   bitcnt = bitcnt & 7;
   s = __State { ...s, out: out, pos: pos - back, bitbuf: (bitbuf & (1u64 << bitcnt as u64) - 1u64) as i32, bitcnt: bitcnt };
   match (error) {
@@ -642,16 +642,16 @@ const F_TOO_FAR: i32 = 5;
 // decoded with no refill. After a match `e` is -1 and is read after it. The guard at the top is what lets the
 // bounds prover drop the checks on the input words and the two tables.
 function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, max_out: i32, lit: i32[], dtab: i32[], lencode: __Huff, distcode: __Huff): __Fast {
-  let fast_in: i32 = data.len() - 8;
-  let fast_out: i32 = max_out - 258;
-  let status: i32 = F_ROOM;
+  let fast_in = data.len() - 8;
+  let fast_out = max_out - 258;
+  let status = F_ROOM;
   if (pos < 0 || lit.len() < 1 << LIT_BITS || dtab.len() < 1 << DIST_BITS) {
     return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
   }
-  let e: i32 = 0 - 1;
+  let e: i32 = -1;
   while (pos <= fast_in && out.len() <= fast_out) {
     bitbuf = bitbuf | __le64(data, pos) << bitcnt as u64;
-    pos = pos + ((bitcnt >> 3 ^ 7) & 7);
+    pos += (bitcnt >> 3 ^ 7) & 7;
     bitcnt = bitcnt | 56;
     if (e < 0) {
       e = lit[(bitbuf & LIT_MASK) as i32];
@@ -659,15 +659,15 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
     if (e == 0) {
       e = __walk(lencode, bitbuf, bitcnt, true);
     }
-    let used: i32 = e & 15;
+    let used = e & 15;
     bitbuf = bitbuf >> used as u64;
-    bitcnt = bitcnt - used;
+    bitcnt -= used;
     if ((e & E_LITERAL) != 0) {
       out = out.append((e >> 16) as u8);
       e = lit[(bitbuf & LIT_MASK) as i32];
       if ((e & E_LITERAL) != 0) {
         bitbuf = bitbuf >> (e & 15) as u64;
-        bitcnt = bitcnt - (e & 15);
+        bitcnt -= e & 15;
         out = out.append((e >> 16) as u8);
         e = lit[(bitbuf & LIT_MASK) as i32];
       }
@@ -677,31 +677,31 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
       status = __fast_status(e, F_LENGTH_PAST);
       break;
     }
-    let lx: i32 = e >> 4 & 15;
-    let len: i32 = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
+    let lx = e >> 4 & 15;
+    let len = (e >> 16) + (bitbuf & (1u64 << lx as u64) - 1u64) as i32;
     bitbuf = bitbuf >> lx as u64;
-    bitcnt = bitcnt - lx;
-    let d: i32 = dtab[(bitbuf & DIST_MASK) as i32];
+    bitcnt -= lx;
+    let d = dtab[(bitbuf & DIST_MASK) as i32];
     if (d == 0) {
       d = __walk(distcode, bitbuf, bitcnt, false);
     }
-    let dused: i32 = d & 15;
+    let dused = d & 15;
     bitbuf = bitbuf >> dused as u64;
-    bitcnt = bitcnt - dused;
+    bitcnt -= dused;
     if ((d & (E_NO_CODE | E_PAST)) != 0) {
       status = __fast_status(d, F_DISTANCE_PAST);
       break;
     }
-    let dx: i32 = d >> 4 & 15;
-    let dist: i32 = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
+    let dx = d >> 4 & 15;
+    let dist = (d >> 16) + (bitbuf & (1u64 << dx as u64) - 1u64) as i32;
     bitbuf = bitbuf >> dx as u64;
-    bitcnt = bitcnt - dx;
+    bitcnt -= dx;
     if (dist > out.len()) {
       status = F_TOO_FAR;
       break;
     }
     out = __copy(out, len, dist);
-    e = 0 - 1;
+    e = -1;
   }
   return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
 }
@@ -747,10 +747,10 @@ function __symbol_error(e: i32, lit: boolean): Option[InflateError] {
 }
 
 function __copy(own out: u8[], len: i32, dist: i32): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < len) {
     out = out.append(out[out.len() - dist]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -767,16 +767,16 @@ function __fixed(own s: __State, data: [u8]): __State {
 
 function __fixed_tables(s: __State): __Tables {
   let lengths: i32[] = [];
-  let sym: i32 = 0;
+  let sym = 0;
   while (sym < 288) {
     lengths = lengths.append(__fixed_length(sym));
-    sym = sym + 1;
+    sym += 1;
   }
   let dlengths: i32[] = [];
   sym = 0;
   while (sym < 30) {
     dlengths = dlengths.append(5);
-    sym = sym + 1;
+    sym += 1;
   }
   return __Tables { state: s, literal: __construct(lengths, 288), distance: __construct(dlengths, 30) };
 }
@@ -808,23 +808,23 @@ function __dynamic(own s: __State, data: [u8]): __State {
 
 function __dynamic_tables(own s: __State, data: [u8]): __Tables {
   s = __bits(s, data, 5);
-  let nlen: i32 = s.last + 257;
+  let nlen = s.last + 257;
   s = __bits(s, data, 5);
-  let ndist: i32 = s.last + 1;
+  let ndist = s.last + 1;
   s = __bits(s, data, 4);
-  let ncode: i32 = s.last + 4;
+  let ncode = s.last + 4;
   if (nlen > 286 || ndist > 30) {
     return __empty_tables(__fail(s, Malformed("too many length or distance codes")));
   }
-  let order: i32[] = __code_length_order();
-  let lengths: i32[] = __zeros(19);
-  let i: i32 = 0;
+  let order = __code_length_order();
+  let lengths = __zeros(19);
+  let i = 0;
   while (i < ncode) {
     s = __bits(s, data, 3);
     lengths = lengths.with(order[i], s.last);
-    i = i + 1;
+    i += 1;
   }
-  let lencode: __Huff = __construct(lengths, 19);
+  let lencode = __construct(lengths, 19);
   if (lencode.left != 0) {
     return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed code length code")));
   }
@@ -836,15 +836,15 @@ function __dynamic_tables(own s: __State, data: [u8]): __Tables {
 }
 
 function __dynamic_codes(own s: __State, nlen: i32, ndist: i32): __Tables {
-  let all: i32[] = s.lengths;
+  let all = s.lengths;
   if (all[256] == 0) {
     return __empty_tables(__fail(s, Malformed("no end-of-block code")));
   }
-  let lit: __Huff = __construct(all, nlen);
+  let lit = __construct(all, nlen);
   if (__invalid_tree(lit, nlen, false)) {
     return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed literal/length code")));
   }
-  let dist: __Huff = __construct(__tail(all, nlen, nlen + ndist), ndist);
+  let dist = __construct(__tail(all, nlen, nlen + ndist), ndist);
   if (__invalid_tree(dist, ndist, true)) {
     return __empty_tables(__fail(s, Malformed("an incomplete or over-subscribed distance code")));
   }
@@ -861,10 +861,10 @@ function __invalid_tree(tree: __Huff, symbols: i32, empty: boolean): boolean {
 
 function __tail(xs: i32[], from: i32, end: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < end) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -873,7 +873,7 @@ function __code_lengths(own s: __State, data: [u8], code: __Huff, n: i32): __Sta
   let lengths: i32[] = [];
   while (lengths.len() < n && !s.failed) {
     s = __decode(s, data, code);
-    let sym: i32 = s.last;
+    let sym = s.last;
     if (sym < 16) {
       lengths = lengths.append(sym);
     } else {
@@ -881,7 +881,7 @@ function __code_lengths(own s: __State, data: [u8], code: __Huff, n: i32): __Sta
       if (lengths.len() + s.last > n) {
         return __fail(s, Malformed("more code lengths than codes"));
       }
-      let value: i32 = __repeat_value(sym, lengths);
+      let value = __repeat_value(sym, lengths);
       lengths = __repeated(lengths, s.last, value);
     }
   }
@@ -917,10 +917,10 @@ function __repeat_value(sym: i32, lengths: i32[]): i32 {
 ```fern
 <<15 function __repeated(own lengths: i32[], times: i32, value: i32): i32[]>>=
 function __repeated(own lengths: i32[], times: i32, value: i32): i32[] {
-  let k: i32 = 0;
+  let k = 0;
   while (k < times) {
     lengths = lengths.append(value);
-    k = k + 1;
+    k += 1;
   }
   return lengths;
 }
@@ -932,11 +932,11 @@ function __repeated(own lengths: i32[], times: i32, value: i32): i32[] {
 <<16 pub function gunzip(input: [u8], max_out: i32): Result[u8[], InflateError]>>=
 pub function gunzip(input: [u8], max_out: i32): Result[u8[], InflateError] {
   let out: u8[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < input.len()) {
-    let member: Inflated = __gzip_member(input, at, max_out - out.len())?;
+    let member = __gzip_member(input, at, max_out - out.len())?;
     out = __joined(out, member.out);
-    at = at + member.consumed;
+    at += member.consumed;
   }
   if (input.len() == 0) {
     return Err(BadHeader("empty"));
@@ -950,23 +950,23 @@ pub function gunzip(input: [u8], max_out: i32): Result[u8[], InflateError] {
 ```fern
 <<17 function __joined(own out: u8[], more: [u8]): u8[]>>=
 function __joined(own out: u8[], more: [u8]): u8[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < more.len()) {
     out = out.append(more[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
-  let body: i32 = __gzip_header(input, from)?;
-  let inflated: Inflated = inflate_from(input, body, max_out)?;
-  let trailer: i32 = body + inflated.consumed;
+  let body = __gzip_header(input, from)?;
+  let inflated = inflate_from(input, body, max_out)?;
+  let trailer = body + inflated.consumed;
   if (trailer + 8 > input.len()) {
     return Err(Truncated);
   }
-  let crc: u32 = __le32(input, trailer);
-  let isize: u32 = __le32(input, trailer + 4);
+  let crc = __le32(input, trailer);
+  let isize = __le32(input, trailer + 4);
   if (crc != crc32.new().update(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
     return Err(BadChecksum);
   }
@@ -986,7 +986,7 @@ function __gzip_header(input: [u8], from: i32): Result[i32, InflateError] {
   if (input[from + 2] != 8 as u8) {
     return Err(BadHeader("a gzip compression method other than deflate"));
   }
-  let flags: i32 = input[from + 3] as i32;
+  let flags = input[from + 3] as i32;
   if ((flags & 224) != 0) {
     return Err(BadHeader("reserved gzip flags"));
   }
@@ -1007,7 +1007,7 @@ function __gzip_optional(input: [u8], at: i32, flags: i32): Result[i32, InflateE
     at = __past_nul(input, at)?;
   }
   if ((flags & 2) != 0) {
-    at = at + 2;
+    at += 2;
   }
   if (at > input.len()) {
     return Err(Truncated);
@@ -1016,12 +1016,12 @@ function __gzip_optional(input: [u8], at: i32, flags: i32): Result[i32, InflateE
 }
 
 function __past_nul(input: [u8], at: i32): Result[i32, InflateError] {
-  let i: i32 = at;
+  let i = at;
   while (i < input.len()) {
     if (input[i] == 0 as u8) {
       return Ok(i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return Err(Truncated);
 }
@@ -1039,8 +1039,8 @@ pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] 
   if (input.len() < 2) {
     return Err(Truncated);
   }
-  let cmf: i32 = input[0] as i32;
-  let flg: i32 = input[1] as i32;
+  let cmf = input[0] as i32;
+  let flg = input[1] as i32;
   if ((cmf & 15) != 8 || cmf >> 4 > 7) {
     return Err(BadHeader("a zlib compression method or window this decoder does not read"));
   }
@@ -1050,12 +1050,12 @@ pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] 
   if ((flg & 32) != 0) {
     return Err(BadHeader("a zlib preset dictionary"));
   }
-  let inflated: Inflated = inflate_from(input, 2, max_out)?;
-  let trailer: i32 = 2 + inflated.consumed;
+  let inflated = inflate_from(input, 2, max_out)?;
+  let trailer = 2 + inflated.consumed;
   if (trailer + 4 > input.len()) {
     return Err(Truncated);
   }
-  let want: u32 = input[trailer] as u32 << 24 | input[trailer + 1] as u32 << 16 | input[trailer + 2] as u32 << 8 | input[trailer + 3] as u32;
+  let want = input[trailer] as u32 << 24 | input[trailer + 1] as u32 << 16 | input[trailer + 2] as u32 << 8 | input[trailer + 3] as u32;
   if (want != adler32(inflated.out)) {
     return Err(BadChecksum);
   }
@@ -1067,28 +1067,28 @@ pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] 
 pub function adler32(bs: [u8]): u32 {
   let a: u32 = 1;
   let b: u32 = 0;
-  let n: i32 = bs.len();
-  let i: i32 = 0;
+  let n = bs.len();
+  let i = 0;
   while (i < n) {
-    let end: i32 = cmp.min(n, i + 5552);
+    let end = cmp.min(n, i + 5552);
     while (i + 4 <= end) {
       a = a + bs[i] as u32;
-      b = b + a;
+      b += a;
       a = a + bs[i + 1] as u32;
-      b = b + a;
+      b += a;
       a = a + bs[i + 2] as u32;
-      b = b + a;
+      b += a;
       a = a + bs[i + 3] as u32;
-      b = b + a;
-      i = i + 4;
+      b += a;
+      i += 4;
     }
     while (i < end) {
       a = a + bs[i] as u32;
-      b = b + a;
-      i = i + 1;
+      b += a;
+      i += 1;
     }
-    a = a % 65521;
-    b = b % 65521;
+    a %= 65521;
+    b %= 65521;
   }
   return b << 16 | a;
 }
@@ -1102,7 +1102,7 @@ pub function deflate_fast(input: [u8]): u8[] {
 }
 
 pub function gzip(input: [u8]): u8[] {
-  let crc: u32 = crc32.new().update(input).finish();
+  let crc = crc32.new().update(input).finish();
   let head: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
   return __put_le32(__put_le32(__joined(head, deflate(input)), crc), input.len() as u32);
 }
@@ -1138,13 +1138,13 @@ struct __Bits { out: u8[], acc: i32, n: i32 }
 ```fern
 <<22 function __put(w: __Bits, value: i32, bits: i32): __Bits>>=
 function __put(w: __Bits, value: i32, bits: i32): __Bits {
-  let acc: i32 = w.acc | value << w.n;
-  let n: i32 = w.n + bits;
-  let out: u8[] = w.out;
+  let acc = w.acc | value << w.n;
+  let n = w.n + bits;
+  let out = w.out;
   while (n >= 8) {
     out = out.append((acc & 255) as u8);
     acc = acc >> 8;
-    n = n - 8;
+    n -= 8;
   }
   return __Bits { out: out, acc: acc, n: n };
 }
@@ -1173,19 +1173,19 @@ function __put_sym(w: __Bits, c: __Code, sym: i32): __Bits {
 }
 
 function __canonical(lens: i32[]): __Code {
-  let count: i32[] = __filled(16, 0);
+  let count = __filled(16, 0);
   for l in lens {
     if (l > 0) {
       count = __bump(count, l);
     }
   }
-  let next: i32[] = __filled(16, 0);
-  let code: i32 = 0;
-  let b: i32 = 1;
+  let next = __filled(16, 0);
+  let code = 0;
+  let b = 1;
   while (b < 16) {
     code = code + count[b - 1] << 1;
     next = next.with(b, code);
-    b = b + 1;
+    b += 1;
   }
   let codes: i32[] = [];
   for l in lens {
@@ -1196,11 +1196,11 @@ function __canonical(lens: i32[]): __Code {
 }
 
 function __reversed(code: i32, bits: i32): i32 {
-  let rev: i32 = 0;
-  let i: i32 = 0;
+  let rev = 0;
+  let i = 0;
   while (i < bits) {
     rev = rev << 1 | code >> i & 1;
-    i = i + 1;
+    i += 1;
   }
   return rev;
 }
@@ -1211,10 +1211,10 @@ function __bump(own xs: i32[], i: i32): i32[] {
 
 function __fixed_lit(): __Code {
   let lens: i32[] = [];
-  let s: i32 = 0;
+  let s = 0;
   while (s < 288) {
     lens = lens.append(__fixed_len(s));
-    s = s + 1;
+    s += 1;
   }
   return __canonical(lens);
 }
@@ -1240,11 +1240,11 @@ function __len_sym(len: i32): i32 {
   if (len == 258) {
     return 28;
   }
-  let x: i32 = len - 3;
+  let x = len - 3;
   if (x < 8) {
     return x;
   }
-  let k: i32 = __log2(x);
+  let k = __log2(x);
   return 4 * (k - 1) + (x >> k - 2 & 3);
 }
 
@@ -1266,11 +1266,11 @@ function __len_extra_of(li: i32): i32 {
 }
 
 function __dist_sym(d: i32): i32 {
-  let x: i32 = d - 1;
+  let x = d - 1;
   if (x < 4) {
     return x;
   }
-  let k: i32 = __log2(x);
+  let k = __log2(x);
   return 2 * k + (x >> k - 1 & 1);
 }
 
@@ -1304,10 +1304,10 @@ function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
 function __deflated_tokens(input: [u8], toks: i32[], final: boolean): u8[] {
   let fixed: (__Code, __Code) = (__fixed_lit(), __fixed_dist());
   let empty: u8[] = [];
-  let w: __Bits = __Bits { out: empty, acc: 0, n: 0 };
-  let s: __Span = __Span { from: 0, len: 0, at: 0, end: 0, last: false };
+  let w = __Bits { out: empty, acc: 0, n: 0 };
+  let s = __Span { from: 0, len: 0, at: 0, end: 0, last: false };
   while (s.end < toks.len() || s.at == 0 && s.end == 0) {
-    let end: i32 = s.end + 16384;
+    let end = s.end + 16384;
     if (end > toks.len()) {
       end = toks.len();
     }
@@ -1338,31 +1338,31 @@ struct __Span { from: i32, len: i32, at: i32, end: i32, last: boolean }
 ```fern
 <<27 function __span(toks: i32[], at: i32, end: i32): i32>>=
 function __span(toks: i32[], at: i32, end: i32): i32 {
-  let n: i32 = 0;
-  let i: i32 = at;
+  let n = 0;
+  let i = at;
   while (i < end) {
     if (toks[i] < 256) {
-      n = n + 1;
+      n += 1;
     } else {
-      n = n + (toks[i] >> 16);
+      n += toks[i] >> 16;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function __put_block(w: __Bits, input: [u8], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
   let f: (i32[], i32[]) = __freqs(toks, s.at, s.end);
-  let lit: __Code = __canonical(huffman_lengths(__two_used(f.0), 15));
-  let dist: __Code = __canonical(huffman_lengths(__two_used(f.1), 15));
-  let h: __Header = __header(lit.lens, dist.lens);
-  let extra: i32 = __extra_cost(f.0, f.1);
-  let own_cost: i32 = h.bits + __weighted(f.0, lit.lens) + __weighted(f.1, dist.lens);
-  let fixed_cost: i32 = __weighted(f.0, fixed.0.lens) + __weighted(f.1, fixed.1.lens);
+  let lit = __canonical(huffman_lengths(__two_used(f.0), 15));
+  let dist = __canonical(huffman_lengths(__two_used(f.1), 15));
+  let h = __header(lit.lens, dist.lens);
+  let extra = __extra_cost(f.0, f.1);
+  let own_cost = h.bits + __weighted(f.0, lit.lens) + __weighted(f.1, dist.lens);
+  let fixed_cost = __weighted(f.0, fixed.0.lens) + __weighted(f.1, fixed.1.lens);
   if (__stored_cost(s.len) < 3 + extra + cmp.min(own_cost, fixed_cost)) {
     return __put_stored(w, input, s);
   }
-  let fin: i32 = 0;
+  let fin = 0;
   if (s.last) {
     fin = 1;
   }
@@ -1375,45 +1375,45 @@ function __put_block(w: __Bits, input: [u8], toks: i32[], s: __Span, fixed: (__C
 }
 
 function __freqs(toks: i32[], at: i32, end: i32): (i32[], i32[]) {
-  let lit: i32[] = __filled(286, 0);
-  let dist: i32[] = __filled(30, 0);
-  let i: i32 = at;
+  let lit = __filled(286, 0);
+  let dist = __filled(30, 0);
+  let i = at;
   while (i < end) {
-    let t: i32 = toks[i];
+    let t = toks[i];
     if (t < 256) {
       lit = lit.with(t, lit[t] + 1);
     } else {
-      let ls: i32 = 257 + __len_sym(t >> 16);
-      let ds: i32 = __dist_sym(t & 65535);
+      let ls = 257 + __len_sym(t >> 16);
+      let ds = __dist_sym(t & 65535);
       lit = lit.with(ls, lit[ls] + 1);
       dist = dist.with(ds, dist[ds] + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return (__bump(lit, 256), dist);
 }
 
 function __extra_cost(lit: i32[], dist: i32[]): i32 {
-  let bits: i32 = 0;
-  let i: i32 = 0;
+  let bits = 0;
+  let i = 0;
   while (i < 29) {
     bits = bits + lit[257 + i] * __len_extra_of(i);
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < 30) {
     bits = bits + dist[i] * __dist_extra_of(i);
-    i = i + 1;
+    i += 1;
   }
   return bits;
 }
 
 function __weighted(freq: i32[], lens: i32[]): i32 {
-  let bits: i32 = 0;
-  let i: i32 = 0;
+  let bits = 0;
+  let i = 0;
   while (i < freq.len()) {
     bits = bits + freq[i] * lens[i];
-    i = i + 1;
+    i += 1;
   }
   return bits;
 }
@@ -1423,29 +1423,29 @@ function __stored_cost(len: i32): i32 {
 }
 
 function __put_stored(w: __Bits, input: [u8], s: __Span): __Bits {
-  let at: i32 = s.from;
-  let end: i32 = s.from + s.len;
-  let first: boolean = true;
+  let at = s.from;
+  let end = s.from + s.len;
+  let first = true;
   while (first || at < end) {
-    let n: i32 = cmp.min(end - at, 65535);
-    let fin: i32 = 0;
+    let n = cmp.min(end - at, 65535);
+    let fin = 0;
     if (s.last && at + n == end) {
       fin = 1;
     }
     w = __flush_byte(__put(__put(w, fin, 1), 0, 2));
     w = __put(__put(w, n, 16), n ^ 65535, 16);
     w = __Bits { ...w, out: __joined_range(w.out, input, at, at + n) };
-    at = at + n;
+    at += n;
     first = false;
   }
   return w;
 }
 
 function __joined_range(out: u8[], more: [u8], from: i32, to: i32): u8[] {
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     out = out.append(more[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1453,29 +1453,29 @@ function __joined_range(out: u8[], more: [u8], from: i32, to: i32): u8[] {
 // A token adds at most 48 bits to fewer than 8 held ones, so one flush of
 // whole bytes after each token keeps the 64-bit buffer from overflowing.
 function __put_tokens(w: __Bits, toks: i32[], s: __Span, lit: __Code, dist: __Code): __Bits {
-  let words: i64[] = __length_words(lit);
-  let lcodes: i32[] = lit.codes;
-  let llens: i32[] = lit.lens;
-  let dcodes: i32[] = dist.codes;
-  let dlens: i32[] = dist.lens;
-  let out: u8[] = w.out;
-  let acc: u64 = w.acc as u64;
-  let n: i32 = w.n;
-  let i: i32 = s.at;
+  let words = __length_words(lit);
+  let lcodes = lit.codes;
+  let llens = lit.lens;
+  let dcodes = dist.codes;
+  let dlens = dist.lens;
+  let out = w.out;
+  let acc = w.acc as u64;
+  let n = w.n;
+  let i = s.at;
   while (i < s.end) {
-    let t: i32 = toks[i];
+    let t = toks[i];
     if (t < 256) {
       acc = acc | lcodes[t] as u64 << n as u64;
-      n = n + llens[t];
+      n += llens[t];
     } else {
-      let e: i64 = words[t >> 16];
+      let e = words[t >> 16];
       acc = acc | (e >> 8) as u64 << n as u64;
       n = n + (e & 255i64) as i32;
       let x: i32 = (t & 65535) - 1;
-      let di: i32 = x;
-      let nb: i32 = 0;
+      let di = x;
+      let nb = 0;
       if (x >= 4) {
-        let k: i32 = __log2(x);
+        let k = __log2(x);
         di = 2 * k + (x >> k - 1 & 1);
         nb = k - 1;
       }
@@ -1485,9 +1485,9 @@ function __put_tokens(w: __Bits, toks: i32[], s: __Span, lit: __Code, dist: __Co
     while (n >= 8) {
       out = out.append((acc & 255u64) as u8);
       acc = acc >> 8u64;
-      n = n - 8;
+      n -= 8;
     }
-    i = i + 1;
+    i += 1;
   }
   return __put_sym(__Bits { out: out, acc: acc as i32, n: n }, lit, 256);
 }
@@ -1495,14 +1495,14 @@ function __put_tokens(w: __Bits, toks: i32[], s: __Span, lit: __Code, dist: __Co
 // For each match length, its symbol's code and extra bits as one word, the
 // bits above bit 8 and their count below.
 function __length_words(lit: __Code): i64[] {
-  let out: i64[] = __alloc_i64(259);
-  let length: i32 = 3;
+  let out = __alloc_i64(259);
+  let length = 3;
   while (length <= 258) {
-    let li: i32 = __len_sym(length);
-    let sym: i32 = 257 + li;
-    let bits: i64 = (lit.codes[sym] | length - __len_base_of(li) << lit.lens[sym]) as i64;
+    let li = __len_sym(length);
+    let sym = 257 + li;
+    let bits = (lit.codes[sym] | length - __len_base_of(li) << lit.lens[sym]) as i64;
     out = out.with(length, bits << 8 | (lit.lens[sym] + __len_extra_of(li)) as i64);
-    length = length + 1;
+    length += 1;
   }
   return out;
 }
@@ -1513,19 +1513,19 @@ function __length_words(lit: __Code): i64[] {
 ```fern
 <<28 function __two_used(freq: i32[]): i32[]>>=
 function __two_used(freq: i32[]): i32[] {
-  let used: i32 = 0;
+  let used = 0;
   for f in freq {
     if (f > 0) {
-      used = used + 1;
+      used += 1;
     }
   }
-  let s: i32 = 0;
+  let s = 0;
   while (used < 2) {
     if (freq[s] == 0) {
       freq = freq.with(s, 1);
-      used = used + 1;
+      used += 1;
     }
-    s = s + 1;
+    s += 1;
   }
   return freq;
 }
@@ -1537,12 +1537,12 @@ function __two_used(freq: i32[]): i32[] {
 <<29 pub function huffman_lengths(freq: i32[], limit: i32): i32[]>>=
 pub function huffman_lengths(freq: i32[], limit: i32): i32[] {
   let keys: i32[] = [];
-  let s: i32 = 0;
+  let s = 0;
   while (s < freq.len()) {
     if (freq[s] > 0) {
       keys = keys.append(freq[s] << 9 | s);
     }
-    s = s + 1;
+    s += 1;
   }
   keys = cmp.sort(keys);
   let weights: i32[] = [];
@@ -1558,23 +1558,23 @@ pub function huffman_lengths(freq: i32[], limit: i32): i32[] {
 ```fern
 <<30 function __assigned(keys: i32[], counts: i32[], size: i32): i32[]>>=
 function __assigned(keys: i32[], counts: i32[], size: i32): i32[] {
-  let lens: i32[] = __filled(size, 0);
-  let j: i32 = keys.len();
-  let l: i32 = 1;
+  let lens = __filled(size, 0);
+  let j = keys.len();
+  let l = 1;
   while (l < counts.len()) {
-    let c: i32 = counts[l];
+    let c = counts[l];
     while (c > 0) {
-      j = j - 1;
+      j -= 1;
       lens = lens.with(keys[j] & 511, l);
-      c = c - 1;
+      c -= 1;
     }
-    l = l + 1;
+    l += 1;
   }
   return lens;
 }
 
 function __moffat(own a: i32[]): i32[] {
-  let n: i32 = a.len();
+  let n = a.len();
   if (n == 1) {
     return a.with(0, 1);
   }
@@ -1585,79 +1585,79 @@ function __moffat(own a: i32[]): i32[] {
 }
 
 function __moffat_parents(own a: i32[]): i32[] {
-  let n: i32 = a.len();
+  let n = a.len();
   a = a.with(0, a[0] + a[1]);
-  let root: i32 = 0;
-  let leaf: i32 = 2;
-  let next: i32 = 1;
+  let root = 0;
+  let leaf = 2;
+  let next = 1;
   while (next < n - 1) {
     if (leaf >= n || a[root] < a[leaf]) {
       a = a.with(next, a[root]).with(root, next);
-      root = root + 1;
+      root += 1;
     } else {
       a = a.with(next, a[leaf]);
-      leaf = leaf + 1;
+      leaf += 1;
     }
     if (leaf >= n || root < next && a[root] < a[leaf]) {
       a = a.with(next, a[next] + a[root]).with(root, next);
-      root = root + 1;
+      root += 1;
     } else {
       a = a.with(next, a[next] + a[leaf]);
-      leaf = leaf + 1;
+      leaf += 1;
     }
-    next = next + 1;
+    next += 1;
   }
   return a;
 }
 
 function __moffat_depths(own a: i32[]): i32[] {
-  let n: i32 = a.len();
+  let n = a.len();
   a = a.with(n - 2, 0);
-  let next: i32 = n - 3;
+  let next = n - 3;
   while (next >= 0) {
     a = a.with(next, a[a[next]] + 1);
-    next = next - 1;
+    next -= 1;
   }
-  let avail: i32 = 1;
-  let depth: i32 = 0;
-  let root: i32 = n - 2;
+  let avail = 1;
+  let depth = 0;
+  let root = n - 2;
   next = n - 1;
   while (avail > 0) {
-    let used: i32 = 0;
+    let used = 0;
     while (root >= 0 && a[root] == depth) {
-      used = used + 1;
-      root = root - 1;
+      used += 1;
+      root -= 1;
     }
     while (avail > used) {
       a = a.with(next, depth);
-      next = next - 1;
-      avail = avail - 1;
+      next -= 1;
+      avail -= 1;
     }
     avail = 2 * used;
-    depth = depth + 1;
+    depth += 1;
   }
   return a;
 }
 
 function __limited(depths: i32[], limit: i32): i32[] {
-  let counts: i32[] = __filled(limit + 1, 0);
+  let counts = __filled(limit + 1, 0);
   for d in depths {
     counts = __bump(counts, cmp.min(d, limit));
   }
-  let total: i32 = 0;
-  let l: i32 = 1;
+  let total = 0;
+  let l = 1;
   while (l <= limit) {
-    total = total + (counts[l] << limit - l);
-    l = l + 1;
+    total += counts[l] << limit - l;
+    l += 1;
   }
   while (total > 1 << limit) {
     counts = counts.with(limit, counts[limit] - 1);
-    let i: i32 = limit - 1;
+    let i = limit - 1;
     while (counts[i] == 0) {
-      i = i - 1;
+      i -= 1;
     }
     counts = counts.with(i, counts[i] - 1).with(i + 1, counts[i + 1] + 2);
-    total = total - 1;
+    total -= 1;
   }
   return counts;
 }
@@ -1679,21 +1679,21 @@ function __cl_order(): i32[] {
 }
 
 function __header(lit: i32[], dist: i32[]): __Header {
-  let hlit: i32 = __sent(lit, 257);
-  let hdist: i32 = __sent(dist, 1);
-  let lens: i32[] = array.slice(lit, 0, hlit).concat(array.slice(dist, 0, hdist));
-  let rle: i32[] = __rle(lens);
-  let freq: i32[] = __filled(19, 0);
+  let hlit = __sent(lit, 257);
+  let hdist = __sent(dist, 1);
+  let lens = array.slice(lit, 0, hlit).concat(array.slice(dist, 0, hdist));
+  let rle = __rle(lens);
+  let freq = __filled(19, 0);
   for r in rle {
     freq = __bump(freq, r & 31);
   }
-  let cl: __Code = __canonical(huffman_lengths(__two_used(freq), 7));
-  let order: i32[] = __cl_order();
-  let hclen: i32 = 19;
+  let cl = __canonical(huffman_lengths(__two_used(freq), 7));
+  let order = __cl_order();
+  let hclen = 19;
   while (hclen > 4 && cl.lens[order[hclen - 1]] == 0) {
-    hclen = hclen - 1;
+    hclen -= 1;
   }
-  let bits: i32 = 14 + 3 * hclen;
+  let bits = 14 + 3 * hclen;
   for r in rle {
     bits = bits + cl.lens[r & 31] + __cl_extra(r & 31);
   }
@@ -1701,9 +1701,9 @@ function __header(lit: i32[], dist: i32[]): __Header {
 }
 
 function __sent(lens: i32[], least: i32): i32 {
-  let n: i32 = lens.len();
+  let n = lens.len();
   while (n > least && lens[n - 1] == 0) {
-    n = n - 1;
+    n -= 1;
   }
   return n;
 }
@@ -1723,36 +1723,36 @@ function __cl_extra(sym: i32): i32 {
 
 function __rle(lens: i32[]): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < lens.len()) {
     let step: (i32, i32) = __rle_step(lens, i);
     out = out.append(step.0);
-    i = i + step.1;
+    i += step.1;
   }
   return out;
 }
 
 function __rle_step(lens: i32[], i: i32): (i32, i32) {
-  let v: i32 = lens[i];
-  let run: i32 = __run(lens, i);
+  let v = lens[i];
+  let run = __run(lens, i);
   if (v == 0 && run >= 11) {
     return (18 | run - 11 << 5, run);
   }
   if (v == 0 && run >= 3) {
-    let r: i32 = cmp.min(run, 10);
+    let r = cmp.min(run, 10);
     return (17 | r - 3 << 5, r);
   }
   if (v != 0 && i > 0 && lens[i - 1] == v && run >= 3) {
-    let r: i32 = cmp.min(run, 6);
+    let r = cmp.min(run, 6);
     return (16 | r - 3 << 5, r);
   }
   return (v, 1);
 }
 
 function __run(lens: i32[], i: i32): i32 {
-  let run: i32 = 1;
+  let run = 1;
   while (run < 138 && i + run < lens.len() && lens[i + run] == lens[i]) {
-    run = run + 1;
+    run += 1;
   }
   return run;
 }
@@ -1761,11 +1761,11 @@ function __put_header(w: __Bits, h: __Header): __Bits {
   w = __put(w, h.hlit - 257, 5);
   w = __put(w, h.hdist - 1, 5);
   w = __put(w, h.hclen - 4, 4);
-  let order: i32[] = __cl_order();
-  let k: i32 = 0;
+  let order = __cl_order();
+  let k = 0;
   while (k < h.hclen) {
     w = __put(w, h.cl.lens[order[k]], 3);
-    k = k + 1;
+    k += 1;
   }
   for r in h.rle {
     w = __put(__put_sym(w, h.cl, r & 31), r >> 5, __cl_extra(r & 31));
@@ -1777,21 +1777,21 @@ function __put_header(w: __Bits, h: __Header): __Bits {
 // link in its low word and the three-byte link in its high word. Heads
 // refer only to positions whose ring entries have already been written.
 function __tokens(input: [u8], window: i32): i32[] {
-  let n: i32 = input.len();
-  let head3: i32[] = __filled(32768, 0 - 1);
-  let head4: i32[] = __filled(65536, 0 - 1);
-  let prev: i64[] = __alloc_i64(window);
+  let n = input.len();
+  let head3 = __filled(32768, -1);
+  let head4 = __filled(65536, -1);
+  let prev = __alloc_i64(window);
   let out: i32[] = [];
-  let held: (i32, i32) = (0 - 1, 0);
-  let skip: i32 = 0;
-  let pos: i32 = 0;
+  let held: (i32, i32) = (-1, 0);
+  let skip = 0;
+  let pos = 0;
   while (pos < n) {
-    let c3: i32 = 0 - 1;
-    let c4: i32 = 0 - 1;
+    let c3: i32 = -1;
+    let c4: i32 = -1;
     if (pos + 3 < n) {
-      let w: u32 = __le32(input, pos);
-      let h3: i32 = ((w << 8) * 506832829u32 >> 17) as i32;
-      let h4: i32 = (w * 506832829u32 >> 16) as i32;
+      let w = __le32(input, pos);
+      let h3 = ((w << 8) * 506832829u32 >> 17) as i32;
+      let h4 = (w * 506832829u32 >> 16) as i32;
       c3 = head3[h3];
       c4 = head4[h4];
       head3 = head3.with(h3, pos);
@@ -1805,14 +1805,14 @@ function __tokens(input: [u8], window: i32): i32[] {
     if (pos >= skip && held.0 >= 3 && cur.0 <= held.0) {
       out = out.append(held.0 << 16 | held.1);
       skip = pos - 1 + held.0;
-      held = (0 - 1, 0);
+      held = (-1, 0);
     } else if (pos >= skip) {
       if (held.0 >= 0) {
         out = out.append(input[pos - 1] as i32);
       }
       held = cur;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   if (held.0 >= 3) {
     return out.append(held.0 << 16 | held.1);
@@ -1829,14 +1829,14 @@ function __tokens(input: [u8], window: i32): i32[] {
 ```fern
 <<33 function __fast_tokens(input: [u8]): i32[]>>=
 function __fast_tokens(input: [u8]): i32[] {
-  let head: i32[] = __filled(32768, -1);
+  let head = __filled(32768, -1);
   let out: i32[] = [];
-  let pos: i32 = 0;
+  let pos = 0;
   while (pos < input.len()) {
-    let length: i32 = 0;
-    let distance: i32 = 0;
+    let length = 0;
+    let distance = 0;
     if (pos + 2 < input.len()) {
-      let candidate: i32 = head[__hash3(input, pos)];
+      let candidate = head[__hash3(input, pos)];
       if (candidate >= 0 && pos - candidate <= 32768) {
         length = __common(input, candidate, pos);
         distance = pos - candidate;
@@ -1848,23 +1848,23 @@ function __fast_tokens(input: [u8]): i32[] {
       out = out.append(input[pos] as i32);
       length = 1;
     }
-    let end: i32 = pos + length;
+    let end = pos + length;
     while (pos < end) {
       if (pos + 2 < input.len()) {
         head = head.with(__hash3(input, pos), pos);
       }
-      pos = pos + 1;
+      pos += 1;
     }
   }
   return out;
 }
 
 function __filled(n: i32, v: i32): i32[] {
-  let out: i32[] = __alloc_i32(cmp.max(n, 0));
-  let i: i32 = 0;
+  let out = __alloc_i32(cmp.max(n, 0));
+  let i = 0;
   while (i < n) {
     out = out.with(i, v);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1873,7 +1873,7 @@ function __hash3(input: [u8], pos: i32): i32 {
   if (pos + 2 >= input.len()) {
     return 0;
   }
-  let h: i32 = input[pos] as i32 << 10 ^ input[pos + 1] as i32 << 5 ^ input[pos + 2] as i32;
+  let h = input[pos] as i32 << 10 ^ input[pos + 1] as i32 << 5 ^ input[pos + 2] as i32;
   return h * 2057 & 32767;
 }
 
@@ -1888,15 +1888,15 @@ function __common(input: [u8], from: i32, pos: i32): i32 {
 // and no longer match exists, its chain supplies an earlier matching entry.
 @inline
 function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i64[], window: i32, held: i32): (i32, i32) {
-  let max: i32 = cmp.min(258, input.len() - pos);
-  let nice: i32 = cmp.min(65, max);
+  let max = cmp.min(258, input.len() - pos);
+  let nice = cmp.min(65, max);
   if (max < 4 || held >= nice) {
     return (0, 0);
   }
-  let first: u32 = __le32(input, pos);
-  let best_len: i32 = 0;
-  let best_dist: i32 = 0;
-  let depth: i32 = 35;
+  let first = __le32(input, pos);
+  let best_len = 0;
+  let best_dist = 0;
+  let depth = 35;
   if (held >= 3) {
     best_len = held;
     depth = 17;
@@ -1906,7 +1906,7 @@ function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i64[], windo
   }
   while (cand >= 0 && pos - cand < window && depth > 0) {
     if (input[cand + best_len] == input[pos + best_len] && __le32(input, cand) == first) {
-      let len: i32 = __extend(input, cand, pos, max);
+      let len = __extend(input, cand, pos, max);
       if (len > best_len) {
         best_len = len;
         best_dist = pos - cand;
@@ -1916,10 +1916,10 @@ function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i64[], windo
       }
     }
     cand = prev[cand & window - 1] as i32;
-    depth = depth - 1;
+    depth -= 1;
   }
   if (best_len < 3) {
-    let distance: i32 = __short_match(input, pos, c3, prev, window, first);
+    let distance = __short_match(input, pos, c3, prev, window, first);
     if (distance > 0) {
       return (3, distance);
     }
@@ -1928,13 +1928,13 @@ function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i64[], windo
 }
 
 function __short_match(input: [u8], pos: i32, cand: i32, prev: i64[], window: i32, first: u32): i32 {
-  let depth: i32 = 35;
+  let depth = 35;
   while (cand >= 0 && pos - cand < window && depth > 0) {
     if ((__le32(input, cand) ^ first) << 8 == 0u32) {
       return pos - cand;
     }
     cand = (prev[cand & window - 1] >> 32) as i32;
-    depth = depth - 1;
+    depth -= 1;
   }
   return 0;
 }
@@ -1943,16 +1943,16 @@ function __short_match(input: [u8], pos: i32, cand: i32, prev: i64[], window: i3
 // A call here would keep the chain walk's values out of registers.
 @inline
 function __extend(input: [u8], cand: i32, pos: i32, max: i32): i32 {
-  let len: i32 = 4;
+  let len = 4;
   while (len + 8 <= max) {
-    let x: u64 = __le64(input, cand + len) ^ __le64(input, pos + len);
+    let x = __le64(input, cand + len) ^ __le64(input, pos + len);
     if (x != 0u64) {
       return len + (__ctz64(x) >> 3);
     }
-    len = len + 8;
+    len += 8;
   }
   while (len < max && input[cand + len] == input[pos + len]) {
-    len = len + 1;
+    len += 1;
   }
   return len;
 }
@@ -2011,7 +2011,7 @@ pub function inflate_reader(input: u8[], max_out: i32): Result[InflateReader, In
     state: bits, literal: empty, distance_code: empty, history: [], total: 0, phase: ReadHeader,
     final_block: false, remaining: 0, distance: 0, byte: 0 - 1, cancelled: false,
   };
-  let state: Cell[Option[__ReadCursor]] = cell_new(Some(initial));
+  let state = cell_new(Some(initial));
   let read = (count: i32, cancelled: () => boolean): Result[InflateChunk, InflateReadError] => __read_request(state, input, count, cancelled);
   return Ok(InflateReader { read: read });
 }
@@ -2050,7 +2050,7 @@ function __read_run(own cursor: __ReadCursor, input: [u8], count: i32, cancelled
         output = output.append(cursor.byte as u8);
       }
     }
-    steps = steps + 1;
+    steps += 1;
     if (steps == 256) {
       steps = 0;
     }

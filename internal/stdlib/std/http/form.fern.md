@@ -121,7 +121,7 @@ impl http.ToResponse for FormError {
 ```fern
 <<6 pub function parse(req: HttpRequest): Result[Form, FormError]>>=
 pub function parse(req: HttpRequest): Result[Form, FormError] {
-  let ct: string = "";
+  let ct = "";
   match (req.headers.get("content-type")) {
     Some(v) => {
       ct = v;
@@ -148,7 +148,7 @@ pub function parse(req: HttpRequest): Result[Form, FormError] {
 ```fern
 <<7 function __is_form(ct: string): boolean>>=
 function __is_form(ct: string): boolean {
-  let kind: string = ct;
+  let kind = ct;
   if let Some(semi) = ct.index_of(";") {
     kind = ct.slice_snap(0, semi);
   }

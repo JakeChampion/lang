@@ -119,35 +119,35 @@ function __url_hex_val(c: i32): i32 {
 ```fern
 <<4 pub function encode(s: string): string>>=
 pub function encode(s: string): string {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return "";
   }
-  let out_len: i32 = 0;
-  let i: i32 = 0;
+  let out_len = 0;
+  let i = 0;
   while (i < n) {
     if (__url_unreserved(s[i] as i32)) {
-      out_len = out_len + 1;
+      out_len += 1;
     } else {
-      out_len = out_len + 3;
+      out_len += 3;
     }
-    i = i + 1;
+    i += 1;
   }
-  let buf: u8[] = __alloc_u8(out_len);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(out_len);
+  let pos = 0;
   i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (__url_unreserved(b)) {
       buf = buf.with(pos, b as u8);
-      pos = pos + 1;
+      pos += 1;
     } else {
       buf = buf.with(pos, 37 as u8);
       buf = buf.with(pos + 1, __url_hex_char(b >> 4 & 15) as u8);
       buf = buf.with(pos + 2, __url_hex_char(b & 15) as u8);
-      pos = pos + 3;
+      pos += 3;
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
@@ -157,35 +157,35 @@ pub function decode(s: string): string {
 }
 
 pub function decode_bytes(s: string): u8[] {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return [];
   }
-  let out_len: i32 = 0;
-  let i: i32 = 0;
+  let out_len = 0;
+  let i = 0;
   while (i < n) {
     if (s[i] == 37 && i + 2 < n
       && __url_hex_val(s[i + 1] as i32) >= 0 && __url_hex_val(s[i + 2] as i32) >= 0) {
-      i = i + 3;
+      i += 3;
     } else {
-      i = i + 1;
+      i += 1;
     }
-    out_len = out_len + 1;
+    out_len += 1;
   }
-  let buf: u8[] = __alloc_u8(out_len);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(out_len);
+  let pos = 0;
   i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 37 && i + 2 < n
       && __url_hex_val(s[i + 1] as i32) >= 0 && __url_hex_val(s[i + 2] as i32) >= 0) {
       buf = buf.with(pos, (__url_hex_val(s[i + 1] as i32) << 4 | __url_hex_val(s[i + 2] as i32)) as u8);
-      i = i + 3;
+      i += 3;
     } else {
       buf = buf.with(pos, b as u8);
-      i = i + 1;
+      i += 1;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return buf;
 }
@@ -195,38 +195,38 @@ pub function form_decode(s: string): string {
 }
 
 pub function form_decode_bytes(s: string): u8[] {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return [];
   }
-  let out_len: i32 = 0;
-  let i: i32 = 0;
+  let out_len = 0;
+  let i = 0;
   while (i < n) {
     if (s[i] == 37 && i + 2 < n
       && __url_hex_val(s[i + 1] as i32) >= 0 && __url_hex_val(s[i + 2] as i32) >= 0) {
-      i = i + 3;
+      i += 3;
     } else {
-      i = i + 1;
+      i += 1;
     }
-    out_len = out_len + 1;
+    out_len += 1;
   }
-  let buf: u8[] = __alloc_u8(out_len);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(out_len);
+  let pos = 0;
   i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 43) {
       buf = buf.with(pos, 32 as u8);
-      i = i + 1;
+      i += 1;
     } else if (b == 37 && i + 2 < n
       && __url_hex_val(s[i + 1] as i32) >= 0 && __url_hex_val(s[i + 2] as i32) >= 0) {
       buf = buf.with(pos, (__url_hex_val(s[i + 1] as i32) << 4 | __url_hex_val(s[i + 2] as i32)) as u8);
-      i = i + 3;
+      i += 3;
     } else {
       buf = buf.with(pos, b as u8);
-      i = i + 1;
+      i += 1;
     }
-    pos = pos + 1;
+    pos += 1;
   }
   return buf;
 }
@@ -237,41 +237,41 @@ pub function form_decode_bytes(s: string): u8[] {
 ```fern
 <<5 pub function form_encode(s: string): string>>=
 pub function form_encode(s: string): string {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return "";
   }
-  let out_len: i32 = 0;
-  let i: i32 = 0;
+  let out_len = 0;
+  let i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 32) {
-      out_len = out_len + 1;
+      out_len += 1;
     } else if (__url_unreserved(b)) {
-      out_len = out_len + 1;
+      out_len += 1;
     } else {
-      out_len = out_len + 3;
+      out_len += 3;
     }
-    i = i + 1;
+    i += 1;
   }
-  let buf: u8[] = __alloc_u8(out_len);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(out_len);
+  let pos = 0;
   i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 32) {
       buf = buf.with(pos, 43 as u8);
-      pos = pos + 1;
+      pos += 1;
     } else if (__url_unreserved(b)) {
       buf = buf.with(pos, b as u8);
-      pos = pos + 1;
+      pos += 1;
     } else {
       buf = buf.with(pos, 37 as u8);
       buf = buf.with(pos + 1, __url_hex_char(b >> 4 & 15) as u8);
       buf = buf.with(pos + 2, __url_hex_char(b & 15) as u8);
-      pos = pos + 3;
+      pos += 3;
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
@@ -335,7 +335,7 @@ function __url_reg_name_char(b: i32): boolean {
 ```fern
 <<7 pub function resolve(base: string, reference: string): Result[string, UrlError]>>=
 pub function resolve(base: string, reference: string): Result[string, UrlError] {
-  let b: Url = parse(base)?;
+  let b = parse(base)?;
   if (b.scheme.len() == 0) {
     return Err(UrlError { text: base, kind: RelativeBase });
   }
@@ -354,7 +354,7 @@ function __resolved(b: Url, reference: string): Result[string, UrlError] {
   if (reference.len() >= 2 && reference[0] == 47 as u8 && reference[1] == 47 as u8) {
     return Ok(b.scheme + ":" + reference);
   }
-  let r: Url = parse(reference)?;
+  let r = parse(reference)?;
   if (r.scheme.len() > 0) {
     return Ok(reference);
   }
@@ -376,9 +376,9 @@ function __merged(b: Url, r: Url, reference: string): (string, string) {
 }
 
 function __merged_path(base: string, rel: string): string {
-  let cut: i32 = base.len();
+  let cut = base.len();
   while (cut > 0 && base[cut - 1] != 47 as u8) {
-    cut = cut - 1;
+    cut -= 1;
   }
   if (cut == 0) {
     return "/" + rel;
@@ -387,16 +387,16 @@ function __merged_path(base: string, rel: string): string {
 }
 
 function __url_compose(scheme: string, host: string, port: i32, path: string, query: string, fragment: string): string {
-  let out: string = scheme + "://";
+  let out = scheme + "://";
   if (host.contains(":")) {
     out = out + "[" + host + "]";
   } else {
-    out = out + host;
+    out += host;
   }
   if (port != 0) {
     out = out + ":" + __port_text(port);
   }
-  out = out + path;
+  out += path;
   if (query.len() > 0) {
     out = out + "?" + query;
   }
@@ -407,11 +407,11 @@ function __url_compose(scheme: string, host: string, port: i32, path: string, qu
 }
 
 function __port_text(port: i32): string {
-  let digits: string = "";
-  let n: i32 = port;
+  let digits = "";
+  let n = port;
   while (n > 0) {
     digits = string_from_bytes_unchecked([(48 + n % 10) as u8]) + digits;
-    n = n / 10;
+    n /= 10;
   }
   return digits;
 }
@@ -423,19 +423,19 @@ function __port_text(port: i32): string {
 <<9 pub function remove_dot_segments(path: string): string>>=
 pub function remove_dot_segments(path: string): string {
   let segments: string[] = [];
-  let n: i32 = path.len();
-  let absolute: boolean = n > 0 && path[0] == 47 as u8;
-  let at: i32 = 0;
+  let n = path.len();
+  let absolute = n > 0 && path[0] == 47 as u8;
+  let at = 0;
   if (absolute) {
     at = 1;
   }
   while (at <= n) {
-    let seg_end: i32 = at;
+    let seg_end = at;
     while (seg_end < n && path[seg_end] != 47 as u8) {
-      seg_end = seg_end + 1;
+      seg_end += 1;
     }
-    let seg: string = slice_unchecked(path, at, seg_end).to_owned();
-    let last: boolean = seg_end == n;
+    let seg = slice_unchecked(path, at, seg_end).to_owned();
+    let last = seg_end == n;
     if (seg == "..") {
       segments = __drop_last(segments);
     }
@@ -458,23 +458,23 @@ pub function remove_dot_segments(path: string): string {
 <<10 function __drop_last(segments: string[]): string[]>>=
 function __drop_last(segments: string[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < segments.len()) {
     out = out.append(segments[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function __joined_path(segments: string[], absolute: boolean): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < segments.len()) {
     if (i > 0 || absolute) {
-      out = out + "/";
+      out += "/";
     }
-    out = out + segments[i];
-    i = i + 1;
+    out += segments[i];
+    i += 1;
   }
   return out;
 }
@@ -494,7 +494,7 @@ impl error.Error for UrlError {}
 impl cmp.Display for UrlError {}
 
 pub function (e: UrlError) message(): string {
-  let quoted: string = "\"" + e.text + "\"";
+  let quoted = "\"" + e.text + "\"";
   match (e.kind) {
     EmptyUrl => {
       return "a URL cannot be empty";
@@ -516,29 +516,29 @@ pub function (e: UrlError) to_string(): string {
 }
 
 pub function parse(s: string): Result[Url, UrlError] {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return Err(UrlError { text: s, kind: EmptyUrl });
   }
 
-  let scheme_end: i32 = -1;
-  let i: i32 = 0;
+  let scheme_end = -1;
+  let i = 0;
   while (i < n) {
-    let sb: i32 = s[i] as i32;
+    let sb = s[i] as i32;
     if (sb == 58) {
       if (i + 2 < n && s[i + 1] == 47 && s[i + 2] == 47) {
         scheme_end = i;
       }
       i = n;
     } else if (__url_scheme_char(sb, i == 0)) {
-      i = i + 1;
+      i += 1;
     } else {
       i = n;
     }
   }
 
-  let scheme: string = "";
-  let rest_start: i32 = 0;
+  let scheme = "";
+  let rest_start = 0;
   if (scheme_end > 0) {
     scheme = slice_unchecked(s, 0, scheme_end) + "";
     rest_start = scheme_end + 3;
@@ -546,11 +546,11 @@ pub function parse(s: string): Result[Url, UrlError] {
 
   // The fragment starts at the first '#', the query at the first '?' before
   // it, and the authority ends at the first '/' before the query.
-  let frag_start: i32 = n;
-  let query_start: i32 = -1;
-  let slash: i32 = -1;
+  let frag_start = n;
+  let query_start = -1;
+  let slash = -1;
   for k in rest_start..n {
-    let b: i32 = s[k] as i32;
+    let b = s[k] as i32;
     if (b == 35) {
       frag_start = k;
       break;
@@ -564,16 +564,16 @@ pub function parse(s: string): Result[Url, UrlError] {
   if (query_start < 0) {
     query_start = frag_start;
   }
-  let fragment: string = "";
+  let fragment = "";
   if (frag_start < n) {
     fragment = slice_unchecked(s, frag_start + 1, n) + "";
   }
-  let query: string = "";
+  let query = "";
   if (query_start < frag_start) {
     query = slice_unchecked(s, query_start + 1, frag_start) + "";
   }
 
-  let authority_end: i32 = rest_start;
+  let authority_end = rest_start;
   if (scheme_end > 0) {
     authority_end = query_start;
     if (slash >= 0) {
@@ -581,21 +581,21 @@ pub function parse(s: string): Result[Url, UrlError] {
     }
   }
 
-  let host: string = "";
-  let port: i32 = 0;
+  let host = "";
+  let port = 0;
   if (scheme_end > 0) {
-    let host_start: i32 = rest_start;
+    let host_start = rest_start;
     i = rest_start;
     while (i < authority_end) {
       if (s[i] == 64) {
         host_start = i + 1;
       }
-      i = i + 1;
+      i += 1;
     }
 
-    let colon: i32 = -1;
+    let colon = -1;
     if (host_start < authority_end && s[host_start] == 91) {
-      let close: i32 = -1;
+      let close = -1;
       i = host_start + 1;
       while (i < authority_end) {
         if (s[i] == 93) {
@@ -604,7 +604,7 @@ pub function parse(s: string): Result[Url, UrlError] {
         } else if (!__url_ip_literal_char(s[i] as i32)) {
           return Err(UrlError { text: s, kind: InvalidHost });
         } else {
-          i = i + 1;
+          i += 1;
         }
       }
       if (close < 0) {
@@ -629,10 +629,10 @@ pub function parse(s: string): Result[Url, UrlError] {
         } else if (!__url_reg_name_char(s[i] as i32)) {
           return Err(UrlError { text: s, kind: InvalidHost });
         } else {
-          i = i + 1;
+          i += 1;
         }
       }
-      let host_end: i32 = authority_end;
+      let host_end = authority_end;
       if (colon >= 0) {
         host_end = colon;
       }
@@ -642,7 +642,7 @@ pub function parse(s: string): Result[Url, UrlError] {
     if (colon >= 0) {
       i = colon + 1;
       while (i < authority_end) {
-        let b: i32 = s[i] as i32;
+        let b = s[i] as i32;
         if (b < 48 || b > 57) {
           return Err(UrlError { text: s, kind: InvalidPort });
         }
@@ -650,12 +650,12 @@ pub function parse(s: string): Result[Url, UrlError] {
         if (port > 65535) {
           return Err(UrlError { text: s, kind: InvalidPort });
         }
-        i = i + 1;
+        i += 1;
       }
     }
   }
 
-  let path: string = "";
+  let path = "";
   if (authority_end < query_start) {
     path = slice_unchecked(s, authority_end, query_start) + "";
   }
@@ -670,28 +670,28 @@ pub function parse(s: string): Result[Url, UrlError] {
 <<12 pub function query_parse(s: string): Map[string, string[]]>>=
 pub function query_parse(s: string): Map[string, string[]] {
   let m: Map[string, string[]] = map_new(8);
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return m;
   }
 
-  let pair_start: i32 = 0;
-  let i: i32 = 0;
+  let pair_start = 0;
+  let i = 0;
   while (i <= n) {
-    let sep: boolean = false;
+    let sep = false;
     if (i == n) {
       sep = true;
     } else if (s[i] == 38) {
       sep = true;
     }
     if (sep) {
-      let pair_len: i32 = i - pair_start;
+      let pair_len = i - pair_start;
       if (pair_len > 0) {
         m = __query_pair(m, s, pair_start, i);
       }
       pair_start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return m;
 }
@@ -702,17 +702,17 @@ pub function query_parse(s: string): Map[string, string[]] {
 ```fern
 <<13 function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32): Map[string, string[]]>>=
 function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32): Map[string, string[]] {
-  let eq: i32 = -1;
-  let j: i32 = start;
+  let eq = -1;
+  let j = start;
   while (j < end) {
     if (s[j] == 61) {
       eq = j;
       break;
     }
-    j = j + 1;
+    j += 1;
   }
-  let key: string = "";
-  let val: string = "";
+  let key = "";
+  let val = "";
   if (eq >= 0) {
     key = form_decode(slice_unchecked(s, start, eq));
     val = form_decode(slice_unchecked(s, eq + 1, end));
@@ -732,18 +732,18 @@ function __query_pair(m: Map[string, string[]], s: string, start: i32, end: i32)
 }
 
 function __query_eq_pos(s: string, start: i32, end: i32): i32 {
-  let j: i32 = start;
+  let j = start;
   while (j < end) {
     if (s[j] == 61) {
       return j;
     }
-    j = j + 1;
+    j += 1;
   }
   return -1;
 }
 
 function __query_key_at(s: string, start: i32, end: i32): string {
-  let eq: i32 = __query_eq_pos(s, start, end);
+  let eq = __query_eq_pos(s, start, end);
   if (eq >= 0) {
     return form_decode(slice_unchecked(s, start, eq));
   }
@@ -751,7 +751,7 @@ function __query_key_at(s: string, start: i32, end: i32): string {
 }
 
 function __query_val_at(s: string, start: i32, end: i32): string {
-  let eq: i32 = __query_eq_pos(s, start, end);
+  let eq = __query_eq_pos(s, start, end);
   if (eq >= 0) {
     return form_decode(slice_unchecked(s, eq + 1, end));
   }
@@ -764,11 +764,11 @@ function __query_val_at(s: string, start: i32, end: i32): string {
 ```fern
 <<14 pub function query_get(query: string, key: string): Option[string]>>=
 pub function query_get(query: string, key: string): Option[string] {
-  let n: i32 = query.len();
-  let pair_start: i32 = 0;
-  let i: i32 = 0;
+  let n = query.len();
+  let pair_start = 0;
+  let i = 0;
   while (i <= n) {
-    let sep: boolean = false;
+    let sep = false;
     if (i == n) {
       sep = true;
     } else if (query[i] == 38) {
@@ -780,17 +780,17 @@ pub function query_get(query: string, key: string): Option[string] {
       }
       pair_start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 pub function query_has(query: string, key: string): boolean {
-  let n: i32 = query.len();
-  let pair_start: i32 = 0;
-  let i: i32 = 0;
+  let n = query.len();
+  let pair_start = 0;
+  let i = 0;
   while (i <= n) {
-    let sep: boolean = false;
+    let sep = false;
     if (i == n) {
       sep = true;
     } else if (query[i] == 38) {
@@ -802,18 +802,18 @@ pub function query_has(query: string, key: string): boolean {
       }
       pair_start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function query_get_all(query: string, key: string): string[] {
   let out: string[] = [];
-  let n: i32 = query.len();
-  let pair_start: i32 = 0;
-  let i: i32 = 0;
+  let n = query.len();
+  let pair_start = 0;
+  let i = 0;
   while (i <= n) {
-    let sep: boolean = false;
+    let sep = false;
     if (i == n) {
       sep = true;
     } else if (query[i] == 38) {
@@ -825,54 +825,54 @@ pub function query_get_all(query: string, key: string): string[] {
       }
       pair_start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function query_encode(pairs: (string, string)[]): string {
-  let n: i32 = pairs.len();
+  let n = pairs.len();
   if (n == 0) {
     return "";
   }
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let total = 0;
+  let i = 0;
   while (i < n) {
     if (i > 0) {
-      total = total + 1;
+      total += 1;
     }
     let (k, v) = pairs[i];
     total = total + form_encode(k).len() + 1 + form_encode(v).len();
-    i = i + 1;
+    i += 1;
   }
-  let buf: u8[] = __alloc_u8(total);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(total);
+  let pos = 0;
   i = 0;
   while (i < n) {
     if (i > 0) {
       buf = buf.with(pos, 38 as u8);
-      pos = pos + 1;
+      pos += 1;
     }
     let (k2, v2) = pairs[i];
-    let ek: string = form_encode(k2);
-    let ekl: i32 = ek.len();
-    let a: i32 = 0;
+    let ek = form_encode(k2);
+    let ekl = ek.len();
+    let a = 0;
     while (a < ekl) {
       buf = buf.with(pos, ek[a] as u8);
-      pos = pos + 1;
-      a = a + 1;
+      pos += 1;
+      a += 1;
     }
     buf = buf.with(pos, 61 as u8);
-    pos = pos + 1;
-    let ev: string = form_encode(v2);
-    let evl: i32 = ev.len();
-    let b: i32 = 0;
+    pos += 1;
+    let ev = form_encode(v2);
+    let evl = ev.len();
+    let b = 0;
     while (b < evl) {
       buf = buf.with(pos, ev[b] as u8);
-      pos = pos + 1;
-      b = b + 1;
+      pos += 1;
+      b += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }

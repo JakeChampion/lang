@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**119 of 122** claims are pinned by a conformance case. The remaining
+**120 of 123** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -200,6 +200,7 @@ of them.
 | `RH-33` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result cannot hold a handle is a fresh value | `local_from_handle_free_call_is_fresh` |
 | `RH-34` | `docs/security/HANDLE-AUDIT.md` | A local read out of a borrowed structure passes to an `own` parameter at its last use, in a `let`, an assignment or a `return`, when its type cannot hold a handle | `local_read_from_borrowed_struct_moves_at_last_use` |
 | `RH-35` | `docs/security/HANDLE-AUDIT.md` | A handle read out of a borrowed structure cannot pass to an `own` parameter, not even at its last use (`E051`) | `diag_e051_handle_local_read_from_borrowed_struct` |
+| `RH-36` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a fresh value or an `own` parameter is an owned name that moves once when its type can hold a handle, and a fresh local when it cannot | `payload_binding_is_a_local` |
 
 ## Every gap this index opened with is now closed
 

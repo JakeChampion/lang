@@ -4,7 +4,7 @@ Status: [reference] the gates a release passes, for [SEC-050](https://github.com
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 Gate: `TestSecurityClaimsNameLiveGates` fails when a test or a lane this file names does not exist.
 
-`release.yml` builds `fern` and the coreutils binary for linux-x86_64, linux-arm64 and darwin-arm64 every night and on dispatch. It signs and notarizes the macOS binaries, writes a SHA-256 sidecar per archive, and publishes the archives.
+`release.yml` builds `fern` and the coreutils binary for linux-x86_64, linux-arm64 and darwin-arm64 every night and on dispatch. It also builds the Android example APKs. It signs and notarizes the macOS binaries, signs the APKs with the release keys, writes a SHA-256 sidecar per file, and publishes the files.
 A release is the commit on `main` that the workflow ran on.
 Before a release is announced, each item below has evidence. The evidence is a CI run URL or a command output recorded in the release notes.
 
@@ -20,7 +20,8 @@ Before a release is announced, each item below has evidence. The evidence is a C
 | The profile costs are within their baselines | the perf lane's profile-costs comparison | `.github/workflows/perf.yml`, `.github/profile-costs-baseline.txt` |
 | Both shipped binaries were built for the matrix target with the safe profile | `fern -manifest` on `fern` and on `fern-coreutils` names the target and reads `harden: no`, `pie: no`, `sanitize: no`, `size: no` and `shared: no` | the manifest step of the build job in `.github/workflows/release.yml` |
 | The security smoke matrix passes on the shipped linux-x86_64 compiler | `scripts/security-smoke` compiles the bounds and compile-fail cases on both native Linux targets, inspects each image, and writes the `security-smoke-report` artifact | the build job in `.github/workflows/release.yml` |
-| The archive hashes match their sidecars | `shasum -a 256 -c` over the downloaded archives | the release page |
+| The archive hashes match their sidecars | `shasum -a 256 -c` over the downloaded archives and APKs | the release page |
+| The APKs are signed with the release keys | `apksigner verify --print-certs` on each APK, with the certificate digests of the release keys | the apk job in `.github/workflows/release.yml` |
 | The macOS binaries are notarized | the `macos-sign` action's notarization step | `.github/workflows/release.yml` |
 
 ## Refusals

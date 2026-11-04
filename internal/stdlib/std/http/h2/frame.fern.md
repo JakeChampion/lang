@@ -243,17 +243,17 @@ pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError
   if (buf.len() - from < HEADER_LEN) {
     return Ok(More);
   }
-  let len: i32 = __be24(buf, from);
-  let kind: i32 = buf[from + 3] as i32;
-  let flags: i32 = buf[from + 4] as i32;
-  let stream: i32 = __be32(buf, from + 5) & MAX_WINDOW;
+  let len = __be24(buf, from);
+  let kind = buf[from + 3] as i32;
+  let flags = buf[from + 4] as i32;
+  let stream = __be32(buf, from + 5) & MAX_WINDOW;
   if (len > max_frame) {
     return Err(__connection(FRAME_SIZE_ERROR, "frame of " + len.to_string() + " bytes over the " + max_frame.to_string() + " allowed"));
   }
   if (buf.len() - from - HEADER_LEN < len) {
     return Ok(More);
   }
-  let payload: u8[] = __bytes_range(buf, from + HEADER_LEN, from + HEADER_LEN + len);
+  let payload = __bytes_range(buf, from + HEADER_LEN, from + HEADER_LEN + len);
   return Ok(Got(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
 }
 
@@ -261,8 +261,8 @@ pub function plain_headers_at(buf: u8[], from: i32, max_frame: i32): Option[i32]
   if (buf.len() - from < HEADER_LEN) {
     return None;
   }
-  let len: i32 = __be24(buf, from);
-  let flags: i32 = buf[from + 4] as i32;
+  let len = __be24(buf, from);
+  let flags = buf[from + 4] as i32;
   if (buf[from + 3] as i32 != HEADERS || len > max_frame || buf.len() - from - HEADER_LEN < len) {
     return None;
   }
@@ -330,7 +330,7 @@ function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[u8[], FrameE
   if (payload.len() == 0) {
     return Err(__connection(PROTOCOL_ERROR, "a PADDED frame with no pad length"));
   }
-  let pad: i32 = payload[0] as i32;
+  let pad = payload[0] as i32;
   if (pad >= payload.len()) {
     return Err(__connection(PROTOCOL_ERROR, "padding of " + pad.to_string() + " bytes in a payload of " + payload.len().to_string()));
   }
@@ -341,8 +341,8 @@ function __data(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameErro
   if (stream == 0) {
     return Err(__connection(PROTOCOL_ERROR, "DATA on stream 0"));
   }
-  let n: i32 = payload.len();
-  let body: u8[] = __unpadded(flags, stream, payload)?;
+  let n = payload.len();
+  let body = __unpadded(flags, stream, payload)?;
   return Ok(Data(DataFrame { stream: stream, end_stream: (flags & 1) != 0, padding: n - body.len(), data: body }));
 }
 
@@ -350,9 +350,9 @@ function __headers(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameE
   if (stream == 0) {
     return Err(__connection(PROTOCOL_ERROR, "HEADERS on stream 0"));
   }
-  let n: i32 = payload.len();
-  let block: u8[] = __unpadded(flags, stream, payload)?;
-  let padding: i32 = n - block.len();
+  let n = payload.len();
+  let block = __unpadded(flags, stream, payload)?;
+  let padding = n - block.len();
   let priority: Option[Priority] = None;
   if ((flags & 32) != 0) {
     if (block.len() < 5) {
@@ -365,7 +365,7 @@ function __headers(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameE
 }
 
 function __priority(payload: u8[], at: i32): Priority {
-  let word: i32 = __be32(payload, at);
+  let word = __be32(payload, at);
   return Priority { exclusive: word < 0, dependency: word & MAX_WINDOW, weight: payload[at + 4] as i32 + 1 };
 }
 
@@ -401,10 +401,10 @@ function __settings(flags: i32, stream: i32, payload: u8[]): Result[Frame, Frame
     return Err(__connection(FRAME_SIZE_ERROR, "SETTINGS of " + payload.len().to_string() + " bytes"));
   }
   let settings: Setting[] = [];
-  let at: i32 = 0;
+  let at = 0;
   while (at < payload.len()) {
     settings = settings.append(__setting(payload[at] as i32 << 8 | payload[at + 1] as i32, __be32(payload, at + 2))?);
-    at = at + 6;
+    at += 6;
   }
   return Ok(Settings(ack, settings));
 }
@@ -434,7 +434,7 @@ function __push_promise(flags: i32, stream: i32, payload: u8[]): Result[Frame, F
   if (stream == 0) {
     return Err(__connection(PROTOCOL_ERROR, "PUSH_PROMISE on stream 0"));
   }
-  let body: u8[] = __unpadded(flags, stream, payload)?;
+  let body = __unpadded(flags, stream, payload)?;
   if (body.len() < 4) {
     return Err(__connection(FRAME_SIZE_ERROR, "PUSH_PROMISE shorter than its promised stream"));
   }
@@ -465,7 +465,7 @@ function __window_update(stream: i32, payload: u8[]): Result[Frame, FrameError] 
   if (payload.len() != 4) {
     return Err(__connection(FRAME_SIZE_ERROR, "WINDOW_UPDATE of " + payload.len().to_string() + " bytes"));
   }
-  let increment: i32 = __be32(payload, 0) & MAX_WINDOW;
+  let increment = __be32(payload, 0) & MAX_WINDOW;
   if (increment == 0) {
     return Err(FrameError { code: PROTOCOL_ERROR, stream: stream, reason: "WINDOW_UPDATE of 0" });
   }
@@ -541,7 +541,7 @@ function __encode_rest(f: Frame): u8[] {
 }
 
 function __encode_headers(h: HeadersFrame): u8[] {
-  let flags: i32 = __flag(h.end_stream, 1) | __flag(h.end_headers, 4);
+  let flags = __flag(h.end_stream, 1) | __flag(h.end_headers, 4);
   match (h.priority) {
     Some(p) => {
       return __framed(HEADERS, flags | 32, h.stream, __priority_bytes(p).concat(h.block));
@@ -561,8 +561,8 @@ function __flag(on: boolean, bit: i32): i32 {
 }
 
 function __framed(kind: i32, flags: i32, stream: i32, payload: u8[]): u8[] {
-  let n: i32 = payload.len();
-  let out: u8[] = header_into(__alloc_u8(HEADER_LEN + n), 0, kind, flags, stream, n);
+  let n = payload.len();
+  let out = header_into(__alloc_u8(HEADER_LEN + n), 0, kind, flags, stream, n);
   if (n == 0) {
     return out;
   }
@@ -593,7 +593,7 @@ pub const BLOCK_ROOM: i32 = 128;
 <<18 pub function headers_room(data_len: i32): u8[]>>=
 pub function headers_room(data_len: i32): u8[] {
   unsafe {
-    let out: u8[] = __alloc_u8(HEADER_LEN + BLOCK_ROOM + HEADER_LEN + data_len);
+    let out = __alloc_u8(HEADER_LEN + BLOCK_ROOM + HEADER_LEN + data_len);
     __arr_set_len(out, HEADER_LEN);
     return out;
   }
@@ -602,22 +602,22 @@ pub function headers_room(data_len: i32): u8[] {
 // The DATA frame goes on by appends, which use the room headers_room left
 // when the block still has it and grow the array when it does not.
 pub function headers_data(own out: u8[], stream: i32, data: [u8], n: i32): u8[] {
-  let block_len: i32 = out.len() - HEADER_LEN;
+  let block_len = out.len() - HEADER_LEN;
   if (n == 0) {
     return header_into(out, 0, HEADERS, 5, stream, block_len);
   }
   out = header_into(out, 0, HEADERS, 4, stream, block_len);
-  let at: i32 = out.len();
-  let i: i32 = 0;
+  let at = out.len();
+  let i = 0;
   while (i < HEADER_LEN) {
     out = out.append(0 as u8);
-    i = i + 1;
+    i += 1;
   }
   out = header_into(out, at, DATA, 1, stream, n);
   i = 0;
   while (i < n) {
     out = out.append(data[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -636,8 +636,8 @@ pub function data_bytes(stream: i32, end_stream: boolean, data: u8[]): u8[] {
 ```fern
 <<19 function __priority_bytes(p: Priority): u8[]>>=
 function __priority_bytes(p: Priority): u8[] {
-  let word: i32 = p.dependency & MAX_WINDOW;
-  let out: u8[] = __be32_bytes([], word);
+  let word = p.dependency & MAX_WINDOW;
+  let out = __be32_bytes([], word);
   if (p.exclusive) {
     out = out.with(0, (out[0] as i32 | 128) as u8);
   }

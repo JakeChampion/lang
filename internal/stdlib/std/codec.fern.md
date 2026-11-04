@@ -83,7 +83,7 @@ pub function (e: DecodeError) message(): string {
 }
 
 pub function (e: DecodeError) to_string(): string {
-  let reason: string = "invalid encoded input";
+  let reason = "invalid encoded input";
   match (e.kind) {
     DecodeErrorKind.InvalidByte(byte) => {
       reason = "invalid byte " + (byte as i32).to_string();
@@ -107,14 +107,14 @@ pub function error(encoding: string, offset: i32, kind: DecodeErrorKind): Decode
 
 // A missing error means that the pad bytes are valid.
 pub(package) function padding_error(input: string, data_end: i32, max_pad: i32, group: i32, encoding: string): Option[DecodeError] {
-  let i: i32 = data_end;
+  let i = data_end;
   while (i < input.len()) {
     if (input[i] != 61) {
       return Some(error(encoding, i, DecodeErrorKind.InvalidPadding));
     }
-    i = i + 1;
+    i += 1;
   }
-  let count: i32 = input.len() - data_end;
+  let count = input.len() - data_end;
   if (count > max_pad) {
     return Some(error(encoding, data_end + max_pad, DecodeErrorKind.InvalidPadding));
   }

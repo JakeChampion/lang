@@ -27,6 +27,7 @@
 # record per task. RC traces and debug symbols identify all ten blocks.
 #
 # Measured 2026-10-04: 569 fixtures, 567 clean.
+a_binding_arm_can_follow_a_literal_arm               0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
@@ -36,6 +37,7 @@ a_map_key_eq_may_take_its_keys_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
+a_returned_value_match_returns_from_each_arm         0
 a_three_trait_bound_in_an_imported_module            0
 a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_variant_pattern_names_the_scrutinees_enum          0
@@ -157,6 +159,7 @@ bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
 call_result_arg_temp                                 0
+call_result_payload_is_a_fresh_local                 0
 call_type_args_user_type                             0
 captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
@@ -272,6 +275,7 @@ dyn_downcast_of_a_scalar_is_none                     0
 dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
 dyn_two_word_dispatch                                0
+element_for_copy_allocates_as_indexed                0
 elementary_automaton                                 0
 empty_array                                          0
 enum_array_match                                     0
@@ -491,6 +495,7 @@ lanes_spill_pressure                                 0
 lanes_through_calls                                  0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0
+let_else_binding_of_call_result_is_copied            0
 let_else_chained                                     0
 let_else_destructure_forms_untouched                 0
 let_else_else_breaks                                 0
@@ -498,6 +503,7 @@ let_else_inner_block_scope                           0
 let_else_loop_else_diverges                          0
 let_else_nested_pattern                              0
 let_else_or_pattern                                  0
+let_else_payload_copy                                0
 let_else_pattern_forms                               0
 let_else_qualified_variant                           0
 let_else_variant_binding_outlives_stmt               0
@@ -642,6 +648,7 @@ own_consuming_match                                  0
 own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
+own_local_destructured_at_last_use                   0
 own_loop_takes_and_rebinds_each_round                0
 own_param_alias_after_self_update                    0
 own_param_array_move                                 0
@@ -678,6 +685,7 @@ param_pattern_tuple_and_discard                      0
 param_pattern_two_destructured_params                0
 param_strarr_elem_shared                             0
 path_join                                            0
+payload_binding_is_a_local                           0
 payload_struct_patterns                              0
 pipe_hole_named_argument                             0
 prim_recv_array_method                               0
@@ -1233,6 +1241,7 @@ user_fn_shadows_stdlib_param                         0
 usize_wraps_at_32_bits                               0
 usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0
+value_arms_widen_to_expected_union                   0
 value_block_branch_tail                              0
 value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0

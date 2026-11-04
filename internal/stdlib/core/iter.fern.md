@@ -16,7 +16,7 @@ This module provides value iterators and lazy adapters.
 import "core/iter";
 
 function main(): i32 {
-  let values: i32[] = iter.range(0, 4).collect();
+  let values = iter.range(0, 4).collect();
   if (values.len() != 4 || values[3] != 3) { return 1; }
   return 0;
 }
@@ -98,9 +98,9 @@ pub trait Iterator[T] {
   }
 
   function fold[A](self: Self, init: A, f: (A, T) => A): A {
-    let acc: A = init;
-    let cur: Self = self;
-    let go: boolean = true;
+    let acc = init;
+    let cur = self;
+    let go = true;
     while (go) {
       match (cur.next()) {
         Some(t) => {
@@ -119,8 +119,8 @@ pub trait Iterator[T] {
   }
   function collect(self: Self): T[] {
     let out: T[] = [];
-    let cur: Self = self;
-    let go: boolean = true;
+    let cur = self;
+    let go = true;
     while (go) {
       match (cur.next()) {
         Some(t) => {
@@ -135,8 +135,8 @@ pub trait Iterator[T] {
     return out;
   }
   function find(self: Self, pred: (T) => boolean): Option[T] {
-    let cur: Self = self;
-    let go: boolean = true;
+    let cur = self;
+    let go = true;
     while (go) {
       match (cur.next()) {
         Some(t) => {
@@ -198,7 +198,7 @@ pub struct Filtered[I, T] { it: I, keep: (T) => boolean }
 <<4 impl[I: Iterator[T], T] Iterator[T] for Filtered[I, T]>>=
 impl[I: Iterator[T], T] Iterator[T] for Filtered[I, T] {
   function next(self: Filtered[I, T]): Option[(T, Filtered[I, T])] {
-    let cur: I = self.it;
+    let cur = self.it;
     while (true) {
       match (cur.next()) {
         Some(t) => {
@@ -238,15 +238,15 @@ pub struct Skipped[I, T] { it: I, left: i32 }
 
 impl[I: Iterator[T], T] Iterator[T] for Skipped[I, T] {
   function next(self: Skipped[I, T]): Option[(T, Skipped[I, T])] {
-    let cur: I = self.it;
-    let left: i32 = self.left;
+    let cur = self.it;
+    let left = self.left;
     while (true) {
       match (cur.next()) {
         Some(t) => {
           if (left <= 0) {
             return Some((t.0, Skipped[I, T] { it: t.1, left: 0 }));
           }
-          left = left - 1;
+          left -= 1;
           cur = t.1;
         },
         None => {
@@ -266,13 +266,13 @@ impl[I: Iterator[T], T] Iterator[T] for Stepped[I, T] {
     if (self.step <= 0) {
       return None;
     }
-    let cur: I = self.it;
+    let cur = self.it;
     let left: i32 = if (self.first) { 0 } else { self.step - 1 };
     while (left > 0) {
       match (cur.next()) {
         Some(t) => {
           cur = t.1;
-          left = left - 1;
+          left -= 1;
         },
         None => {
           return None;
@@ -294,9 +294,9 @@ pub struct FlatMapped[I, T, U] { it: I, f: (T) => U[], ys: U[], at: i32 }
 
 impl[I: Iterator[T], T, U] Iterator[U] for FlatMapped[I, T, U] {
   function next(self: FlatMapped[I, T, U]): Option[(U, FlatMapped[I, T, U])] {
-    let cur: I = self.it;
-    let ys: U[] = self.ys;
-    let at: i32 = self.at;
+    let cur = self.it;
+    let ys = self.ys;
+    let at = self.at;
     while (at >= ys.len()) {
       match (cur.next()) {
         Some(t) => {
@@ -410,7 +410,7 @@ impl[T] Iterator[T] for ArrayIter[T] {
 ```fern
 <<9 pub function sum[T: ops.Add + ops.Zero, I: Iterator[T]](it: I): T>>=
 pub function sum[T: ops.Add + ops.Zero, I: Iterator[T]](it: I): T {
-  let total: T = T.zero();
+  let total = T.zero();
   let cur = it;
   let go = true;
   while (go) {
@@ -437,7 +437,7 @@ pub function position[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[i3
         if (pred(t.0)) {
           return Some(i);
         }
-        i = i + 1;
+        i += 1;
         cur = t.1;
       },
       None => {
@@ -456,7 +456,7 @@ pub function count_where[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
     match (cur.next()) {
       Some(t) => {
         if (pred(t.0)) {
-          n = n + 1;
+          n += 1;
         }
         cur = t.1;
       },
@@ -478,7 +478,7 @@ pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
         if (k == 0) {
           return Some(t.0);
         }
-        k = k - 1;
+        k -= 1;
         cur = t.1;
       },
       None => {
@@ -492,7 +492,7 @@ pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
 pub function min[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
   match (it.next()) {
     Some(first) => {
-      let best: T = first.0;
+      let best = first.0;
       let cur = first.1;
       let go = true;
       while (go) {
@@ -519,7 +519,7 @@ pub function min[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
 pub function max[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
   match (it.next()) {
     Some(first) => {
-      let best: T = first.0;
+      let best = first.0;
       let cur = first.1;
       let go = true;
       while (go) {
@@ -567,7 +567,7 @@ pub function last[T, I: Iterator[T]](it: I): Option[T] {
 }
 
 pub function product[T: ops.Mul + ops.One, I: Iterator[T]](it: I): T {
-  let p: T = T.one();
+  let p = T.one();
   let cur = it;
   let go = true;
   while (go) {
@@ -594,7 +594,7 @@ pub function index_of[T: cmp.Eq, I: Iterator[T]](it: I, target: T): Option[i32] 
         if (t.0.eq(target)) {
           return Some(i);
         }
-        i = i + 1;
+        i += 1;
         cur = t.1;
       },
       None => {
@@ -632,7 +632,7 @@ pub function count[T: cmp.Eq, I: Iterator[T]](it: I, target: T): i32 {
     match (cur.next()) {
       Some(t) => {
         if (t.0.eq(target)) {
-          n = n + 1;
+          n += 1;
         }
         cur = t.1;
       },

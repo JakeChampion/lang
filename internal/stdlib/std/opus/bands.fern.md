@@ -41,6 +41,8 @@ The values of a frame are in four arrays of `Bands`: `x` and `y` for the two cha
 <<stereo band>>
 
 <<all bands>>
+
+<<analysis>>
 ```
 
 ### `module introduction`
@@ -78,6 +80,7 @@ The values of a frame are in four arrays of `Bands`: `x` and `y` for the two cha
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import "std/f64";
 import "std/opus/modes";
+import "std/opus/pitch";
 import "std/opus/range";
 import "std/opus/rate";
 import "std/opus/vq";
@@ -1279,5 +1282,164 @@ function dot(a: [f32], b: [f32], n: i32): f32 {
     s = s + a[j] * b[j];
   }
   return s;
+}
+```
+
+### `analysis`
+
+The encoder runs these functions before it codes the bands. `compute_band_energies` gives the amplitude of each band, and `normalise_bands` scales each band to unit length. `spreading_decision` counts the small values of each band, and selects the spreading of the frame and the tapset of the prefilter. `hysteresis_decision` selects a step from a list of thresholds. It changes the step of the last frame only when the value is clearly past the threshold.
+
+```fern
+<<analysis>>=
+const ENERGY_FLOOR: f32 = 1.0000000272452012e-27f32;
+
+// The amplitude of each band below `end`, with `modes.BANDS` values for
+// each of `channels` channels. The bands from `end` are 0.
+pub function compute_band_energies(x: [f32], end: i32, channels: i32, lm: i32): f32[] {
+  let n: i32 = modes.SHORT_MDCT_SIZE << lm;
+  let out: f32[] = [];
+  for c in 0..channels {
+    for i in 0..modes.BANDS {
+      if (i < end) {
+        let at: i32 = c * n + (modes.EBANDS[i] << lm);
+        let sum: f32 = ENERGY_FLOOR + pitch.inner_prod(x, at, x, at, modes.EBANDS[i + 1] - modes.EBANDS[i] << lm);
+        out = out.append((sum as f64).sqrt() as f32);
+      } else {
+        out = out.append(0.0f32);
+      }
+    }
+  }
+  return out;
+}
+
+// The bands below `end` of `freq`, each scaled to unit length by its
+// amplitude in `band_e`. The other values are 0.
+pub function normalise_bands(freq: [f32], band_e: [f32], end: i32, channels: i32, m: i32): f32[] {
+  let n: i32 = m * modes.SHORT_MDCT_SIZE;
+  let out: f32[] = [];
+  for c in 0..channels {
+    for j in 0..n {
+      out = out.append(0.0f32);
+    }
+    for i in 0..end {
+      let g: f32 = 1.0f32 / (ENERGY_FLOOR + band_e[i + c * modes.BANDS]);
+      for j in m * modes.EBANDS[i]..m * modes.EBANDS[i + 1] {
+        out = out.with(j + c * n, freq[j + c * n] * g);
+      }
+    }
+  }
+  return out;
+}
+
+// `decision` is the spreading of the last frame on input. `average`,
+// `hf_average` and `tapset` are the state that the decision keeps.
+pub struct Spread { decision: i32, average: i32, hf_average: i32, tapset: i32 }
+
+struct Counts { quarter: i32, sixteenth: i32, tiny: i32 }
+
+// The number of values of the band whose energy share is below 1/4,
+// 1/16 and 1/64 of the mean.
+function small_counts(x: [f32], at: i32, n: i32): Counts {
+  let t: Counts = Counts { quarter: 0, sixteenth: 0, tiny: 0 };
+  for j in 0..n {
+    let x2n: f32 = x[at + j] * x[at + j] * (n as f32);
+    if (x2n < 0.25f32) {
+      t = Counts { ...t, quarter: t.quarter + 1 };
+    }
+    if (x2n < 0.0625f32) {
+      t = Counts { ...t, sixteenth: t.sixteenth + 1 };
+    }
+    if (x2n < 0.015625f32) {
+      t = Counts { ...t, tiny: t.tiny + 1 };
+    }
+  }
+  return t;
+}
+
+function half_or_more(count: i32, n: i32): i32 {
+  if (2 * count >= n) {
+    return 1;
+  }
+  return 0;
+}
+
+// The tapset of the prefilter, from the share of small values in the
+// highest bands. The tapset of the last frame wins a near value.
+function tapset_of(hf_average: i32, last: i32): i32 {
+  let hf: i32 = hf_average;
+  if (last == 2) {
+    hf = hf + 4;
+  } else if (last == 0) {
+    hf = hf - 4;
+  }
+  if (hf > 22) {
+    return 2;
+  }
+  if (hf > 18) {
+    return 1;
+  }
+  return 0;
+}
+
+function spread_of(sum: i32): i32 {
+  if (sum < 80) {
+    return vq.SPREAD_AGGRESSIVE;
+  }
+  if (sum < 256) {
+    return vq.SPREAD_NORMAL;
+  }
+  if (sum < 384) {
+    return vq.SPREAD_LIGHT;
+  }
+  return vq.SPREAD_NONE;
+}
+
+pub function spreading_decision(x: [f32], s: Spread, update_hf: boolean, end: i32, channels: i32, m: i32, weights: [i32]): Spread {
+  let n0: i32 = m * modes.SHORT_MDCT_SIZE;
+  if (m * (modes.EBANDS[end] - modes.EBANDS[end - 1]) <= 8) {
+    return Spread { ...s, decision: vq.SPREAD_NONE };
+  }
+  let sum: i32 = 0;
+  let bands: i32 = 0;
+  let hf_sum: i32 = 0;
+  for c in 0..channels {
+    for i in 0..end {
+      let n: i32 = m * (modes.EBANDS[i + 1] - modes.EBANDS[i]);
+      if (n > 8) {
+        let t: Counts = small_counts(x, m * modes.EBANDS[i] + c * n0, n);
+        if (i > modes.BANDS - 4) {
+          hf_sum = hf_sum + 32 * (t.sixteenth + t.quarter) / n;
+        }
+        let tmp: i32 = half_or_more(t.tiny, n) + half_or_more(t.sixteenth, n) + half_or_more(t.quarter, n);
+        sum = sum + tmp * weights[i];
+        bands = bands + weights[i];
+      }
+    }
+  }
+  let r: Spread = s;
+  if (update_hf) {
+    if (hf_sum != 0) {
+      hf_sum = hf_sum / (channels * (4 - modes.BANDS + end));
+    }
+    let hf_average: i32 = s.hf_average + hf_sum >> 1;
+    r = Spread { ...r, hf_average: hf_average, tapset: tapset_of(hf_average, s.tapset) };
+  }
+  let average: i32 = (sum << 8) / bands + s.average >> 1;
+  let biased: i32 = 3 * average + ((3 - s.decision << 7) + 64) + 2 >> 2;
+  return Spread { ...r, decision: spread_of(biased), average: average };
+}
+
+pub function hysteresis_decision(val: f32, thresholds: [f32], hysteresis: [f32], n: i32, prev: i32): i32 {
+  let i: i32 = 0;
+  while (i < n && !(val < thresholds[i])) {
+    i = i + 1;
+  }
+  if (i > prev && val < thresholds[prev] + hysteresis[prev]) {
+    return prev;
+  }
+  if (i < prev && val > thresholds[prev - 1] - hysteresis[prev - 1]) {
+    return prev;
+  }
+  return i;
 }
 ```

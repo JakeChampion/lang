@@ -143,6 +143,14 @@ type ArgDeaths struct {
 }
 
 func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
+	return callArgDeaths(fn, info, nil)
+}
+
+// callArgDeaths is CallArgDeaths with handleFree, which reports a type that
+// cannot hold a handle. A payload an arm binds from a fresh value or an own
+// parameter is a fresh local when its type is handle-free; without the
+// predicate no such payload is.
+func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) ArgDeaths {
 	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
 	occurrences := map[string]int{}
@@ -394,24 +402,37 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 	}
 	// A match on a local or a field path at its last use takes its payloads,
-	// so each name an arm binds is a fresh local. One walk in source order
-	// decides a match before the matches inside its arms, so a name an outer
-	// match binds is admitted when an inner match on it is decided.
+	// so each name an arm binds is a fresh local. A match on a fresh value or
+	// an own parameter takes them too, and a name it binds is a fresh local
+	// when its type is handle-free; a payload that can hold a handle is an
+	// owned name that moves once. One walk in source order decides a match
+	// before the matches inside its arms, so a name an outer match binds is
+	// admitted when an inner match on it is decided.
+	type armBinds struct {
+		names []string
+		types []ast.Type
+	}
+	freshTag := func(tag ast.Expr) bool {
+		if id, ok := tag.(*ast.Ident); ok {
+			return ownParam[id.Name] && declCount[id.Name] == 0
+		}
+		return freshInit(info, tag)
+	}
 	ast.Walk(body, func(n ast.Node) bool {
 		var tag ast.Expr
-		var arms [][]string
+		var arms []armBinds
 		switch x := n.(type) {
 		case *ast.Match:
 			moveSite(x, x.Tag)
 			tag = x.Tag
 			for _, arm := range x.Arms {
-				arms = append(arms, arm.Bindings)
+				arms = append(arms, armBinds{arm.Bindings, arm.BindingTypes})
 			}
 		case *ast.MatchExpr:
 			moveSite(x, x.Tag)
 			tag = x.Tag
 			for _, arm := range x.Arms {
-				arms = append(arms, arm.Bindings)
+				arms = append(arms, armBinds{arm.Bindings, arm.BindingTypes})
 			}
 		case *ast.Var:
 			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
@@ -421,12 +442,18 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		default:
 			return true
 		}
-		if id, ok := tag.(*ast.Ident); !moves[tag] || ok && isParam[id.Name] {
+		taken := moves[tag]
+		if id, ok := tag.(*ast.Ident); ok && isParam[id.Name] {
+			taken = false
+		}
+		if !taken && (handleFree == nil || !freshTag(tag)) {
 			return true
 		}
-		for _, bindings := range arms {
-			for _, b := range bindings {
-				freshInitLocal[b] = true
+		for _, arm := range arms {
+			for i, b := range arm.names {
+				if taken || i < len(arm.types) && arm.types[i] != nil && handleFree(arm.types[i]) {
+					freshInitLocal[b] = true
+				}
 			}
 		}
 		return true
@@ -599,7 +626,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if !lastInBinding(body, c, aid, order) && arrayArgPosition(info, c, aid) {
 				continue
 			}
-			if liveAfter(info, body, c, aid, order) {
+			if liveAfterBinding(info, body, c, aid, order, declNode[aid.Name]) {
 				continue
 			}
 			markOnce(c, aid.Name)
@@ -1011,6 +1038,10 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 		src, ok := e.(*ast.Ident)
 		return ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src)
 	}
+	freshAtLastUse := func(e ast.Expr) bool {
+		src, ok := e.(*ast.Ident)
+		return ok && freshLocal[src.Name] && sole(src.Name) && order.IsLast(src)
+	}
 	out := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -1019,9 +1050,9 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 				out[x.Name] = true
 			}
 		case *ast.Destructure:
-			// The fields of an own parameter that the destructure takes at
-			// its last use are owned, as the parameter is.
-			if x.AtName != "" || !ownedAtLastUse(x.Init) {
+			// The fields that the destructure takes from an own parameter
+			// or a fresh local at its last use are owned, as the source is.
+			if x.AtName != "" || !ownedAtLastUse(x.Init) && !freshAtLastUse(x.Init) {
 				return true
 			}
 			for i, name := range x.Names {
@@ -1152,15 +1183,21 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 
 // lastUseArgs returns the arguments at their last use, and the subset of
 // them that are unadmitted locals (see ArgDeaths.Unadmitted).
-func lastUseArgs(fn *ast.FuncDecl, info *Info) (map[ast.Expr]bool, map[ast.Expr]bool) {
+func lastUseArgs(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool) (map[ast.Expr]bool, map[ast.Expr]bool) {
 	out := map[ast.Expr]bool{}
 	loose := map[ast.Expr]bool{}
 	if fn.Body == nil {
 		return out, loose
 	}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if inner, ok := n.(*ast.FuncDecl); ok && inner != fn {
-			innerOut, innerLoose := lastUseArgs(inner, info)
+		inner, ok := n.(*ast.FuncDecl)
+		// A lambda is decided as a function of its own, so a name it declares
+		// can move at its last use in the lambda's body.
+		if lm, isLambda := n.(*ast.Lambda); isLambda {
+			inner, ok = &ast.FuncDecl{Params: lm.Params, Body: lm.Body}, true
+		}
+		if ok && inner != fn {
+			innerOut, innerLoose := lastUseArgs(inner, info, handleFree)
 			for e := range innerOut {
 				out[e] = true
 			}
@@ -1171,7 +1208,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) (map[ast.Expr]bool, map[ast.Expr]
 		}
 		return true
 	})
-	d := CallArgDeaths(fn, info)
+	d := callArgDeaths(fn, info, handleFree)
 	isParam := map[string]bool{}
 	ownParam := map[string]bool{}
 	for _, p := range fn.Params {
@@ -1645,6 +1682,10 @@ func loopHeadLive(frames []liveFrame, l int, name string) bool {
 // that reaches the end of a loop body, or continues, comes back to every
 // use in that loop.
 func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder) bool {
+	return liveAfterBinding(info, body, c, aid, order, nil)
+}
+
+func liveAfterBinding(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order IdentOrder, decl ast.Node) bool {
 	frames := enclosingFrames(body, c)
 	if len(frames) == 0 {
 		return true
@@ -1656,17 +1697,7 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	}
 	// A loop inside the statement runs the call again each round: the call
 	// sits in a loop's head, or in a loop inside an expression-level block.
-	repeats := false
-	ast.Walk(st, func(m ast.Node) bool {
-		switch m.(type) {
-		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
-			if nodeHolds(m, c) {
-				repeats = true
-			}
-		}
-		return !repeats
-	})
-	if repeats {
+	if loopRepeats(st, c, decl) {
 		return true
 	}
 	reach := settleReach{frames: frames, level: len(frames) - 1, scope: bindingLevel(frames, aid.Name)}
@@ -1875,7 +1906,7 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string, scope int)
 		// The binding ends with the block that declares it.
 		return false
 	}
-	if f.loop != nil && loopHeadLive(frames, level, name) {
+	if f.loop != nil && (scope >= 0 || loopHeadLive(frames, level, name)) {
 		return true
 	}
 	if level == 0 {
@@ -1893,7 +1924,7 @@ func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name 
 		if l >= 0 && l <= scope {
 			continue
 		}
-		if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
+		if l < 0 || scope >= 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name, scope) {
 			return true
 		}
 	}
@@ -1911,7 +1942,8 @@ func jumpsLive(info *Info, frames []liveFrame, level int, jumps stmtJumps, name 
 
 // bindingLevel is the level of the innermost frame that binds name before the
 // statement that the frame holds: the block that the read binding belongs to.
-// It is -1 when no frame binds name, as for a parameter.
+// A match arm binds its names for its body. It is -1 when no frame binds
+// name, as for a parameter.
 func bindingLevel(frames []liveFrame, name string) int {
 	for l := len(frames) - 1; l >= 0; l-- {
 		f := frames[l]
@@ -1930,8 +1962,26 @@ func bindingLevel(frames []liveFrame, name string) int {
 				return l
 			}
 		}
+		if l > 0 && armBinds(frames[l-1], f, name) {
+			return l
+		}
 	}
 	return -1
+}
+
+// armBinds reports whether the arm whose body is f binds name, when f is the
+// body of an arm of the match that parent holds.
+func armBinds(parent, f liveFrame, name string) bool {
+	m, ok := parent.stmts[parent.idx].(*ast.Match)
+	if !ok {
+		return false
+	}
+	for _, arm := range m.Arms {
+		if arm.Body != nil && nodeHolds(arm.Body, f.stmts[f.idx]) {
+			return slices.Contains(arm.Binders(), name)
+		}
+	}
+	return false
 }
 
 // lastInBinding reports whether no later read of name belongs to the binding

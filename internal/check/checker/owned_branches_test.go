@@ -21,6 +21,57 @@ func TestOwnedExclusiveBranches(t *testing.T) {
 	}
 }
 
+func TestOwnedPayloadLifetimeInValueBlock(t *testing.T) {
+	const prefix = `struct Box { data: i32[] }
+enum Choice { Wrapped(Box), Empty }
+function consume(own item: Box): i32 { return item.data.len(); }
+`
+	for _, tc := range []struct {
+		name, body string
+		refused    bool
+	}{
+		{"outer-local-shadowed-in-unused-match", `let item = Box { data: data };
+            let result = 0;
+            for tag in [0, 1] {
+                result = result + consume(item);
+                let unused = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => 0, Choice.Empty => 0 };
+            }
+            return result;`, true},
+		{"outer-local-shadowed-in-unused-block", `let item = Box { data: data };
+            let result = 0;
+            for tag in [0, 1] {
+                result = result + consume(item);
+                let unused = { let item = Box { data: data }; 0 };
+            }
+            return result;`, true},
+		{"fresh-each-round", `return {
+            let result = 0;
+            for tag in [0, 1] {
+                let value = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };
+                result = result + value;
+            }
+            result
+        };`, false},
+		{"binding-outside-inner-loop", `return match (Choice.Wrapped(Box { data: data })) {
+            Choice.Wrapped(item) => {
+                let result = 0;
+                for tag in [0, 1] { result = result + consume(item); }
+                result
+            },
+            Choice.Empty => 0
+        };`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := prefix + "function f(data: i32[]): i32 { " + tc.body + " }"
+			if tc.refused {
+				wantE051(t, tc.name, source)
+			} else {
+				wantOK(t, tc.name, source)
+			}
+		})
+	}
+}
+
 func TestOwnedBranchJoinsPreserveErrors(t *testing.T) {
 	const prefix = `struct Box { data: i32[] }
 struct Wrap { state: Box }

@@ -1,5 +1,7 @@
 # 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
 # the http_hello and pvec_with emits 1.04% to 1.22%. Only reductions are banked, and no limit rises.
+# 2026-11-04: #14094, a local scripts/perf-bench-selfhost run. A join of constants that only returns goes back into
+# its arms: http_hello.emit -1.2% to -2.0%, and wasm sort_ints, sort_strings and string_find_byte -1.5% to -1.6%.
 # 2026-11-03: PR #14122, a local scripts/perf-bench-selfhost run on its head. Liveness decides which values cross a call,
 # and a small branch splices into its two callers. Retain the measured reductions and preserve every original higher-cost limit.
 # 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
@@ -226,7 +228,7 @@ selfhost/arm64-linux/deflate_decode.emit	13560
 selfhost/arm64-linux/deflate_encode.emit	7829
 selfhost/arm64-linux/enum_match.emit	1112
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	16073
+selfhost/arm64-linux/http_hello.emit	16029
 selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -261,7 +263,7 @@ selfhost/wasm32-wasi/deflate_decode.emit	19608
 selfhost/wasm32-wasi/deflate_encode.emit	11578
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	18209
+selfhost/wasm32-wasi/http_hello.emit	17893
 selfhost/wasm32-wasi/int_loop.emit	73
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
@@ -271,11 +273,11 @@ selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
 selfhost/wasm32-wasi/record_update.emit	510
 selfhost/wasm32-wasi/sort_inplace.emit	1013
-selfhost/wasm32-wasi/sort_ints.emit	2058
-selfhost/wasm32-wasi/sort_strings.emit	3375
+selfhost/wasm32-wasi/sort_ints.emit	2031
+selfhost/wasm32-wasi/sort_strings.emit	3323
 selfhost/wasm32-wasi/string_build.emit	1267
 selfhost/wasm32-wasi/string_count_byte.emit	544
-selfhost/wasm32-wasi/string_find_byte.emit	1723
+selfhost/wasm32-wasi/string_find_byte.emit	1695
 selfhost/wasm32-wasi/string_rfind_byte.emit	1744
 selfhost/wasm32-wasi/string_scan.emit	1405
 selfhost/wasm32-wasi/string_slice.emit	543
@@ -296,7 +298,7 @@ selfhost/x86-64-linux/deflate_decode.emit	12766
 selfhost/x86-64-linux/deflate_encode.emit	7275
 selfhost/x86-64-linux/enum_match.emit	886
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	15136
+selfhost/x86-64-linux/http_hello.emit	15117
 selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482

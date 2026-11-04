@@ -197,27 +197,27 @@ pub function from(pairs: (string, JsonValue)[]): JsonObject {
 }
 
 pub function object_of(keys: string[], values: JsonValue[]): JsonObject {
-  let n: i32 = keys.len();
+  let n = keys.len();
   if (n <= JSON_LINEAR_MAX) {
-    let i: i32 = 1;
+    let i = 1;
     while (i < n) {
       if (__json_linear_find(keys, i, keys[i]) >= 0) {
         return __json_dedupe(keys, values);
       }
-      i = i + 1;
+      i += 1;
     }
     return JsonObject { names: keys, items: values, index: [] };
   }
-  let index: i32[] = __json_index_new(n);
-  let seed: i32 = __map_hash_seed();
-  let i: i32 = 0;
+  let index = __json_index_new(n);
+  let seed = __map_hash_seed();
+  let i = 0;
   while (i < n) {
-    let slot: i32 = __json_index_slot(index, keys, keys[i], seed);
+    let slot = __json_index_slot(index, keys, keys[i], seed);
     if (index[slot] != 0) {
       return __json_dedupe(keys, values);
     }
     index = index.with(slot, i + 1);
-    i = i + 1;
+    i += 1;
   }
   return JsonObject { names: keys, items: values, index: index };
 }
@@ -228,30 +228,30 @@ pub function object_of(keys: string[], values: JsonValue[]): JsonObject {
 ```fern
 <<4 function __json_dedupe(keys: string[], values: JsonValue[]): JsonObject>>=
 function __json_dedupe(keys: string[], values: JsonValue[]): JsonObject {
-  let o: JsonObject = object();
-  let i: i32 = 0;
+  let o = object();
+  let i = 0;
   while (i < keys.len()) {
     o = o.insert(keys[i], values[i]);
-    i = i + 1;
+    i += 1;
   }
   return o;
 }
 
 function __json_linear_find(keys: string[], n: i32, key: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (keys[i] == key) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function __json_index_new(n: i32): i32[] {
-  let cap: i32 = 16;
+  let cap = 16;
   while (cap < 2 * n) {
-    cap = cap * 2;
+    cap *= 2;
   }
   let index: i32[] = [];
   while (index.len() < cap) {
@@ -261,10 +261,10 @@ function __json_index_new(n: i32): i32[] {
 }
 
 function __json_index_slot(index: i32[], keys: string[], key: string, seed: i32): i32 {
-  let mask: i32 = index.len() - 1;
-  let h: i32 = __map_fnv_str_seeded(key, seed) & mask;
+  let mask = index.len() - 1;
+  let h = __map_fnv_str_seeded(key, seed) & mask;
   while (true) {
-    let at: i32 = index[h];
+    let at = index[h];
     if (at == 0 || keys[at - 1] == key) {
       return h;
     }
@@ -274,12 +274,12 @@ function __json_index_slot(index: i32[], keys: string[], key: string, seed: i32)
 }
 
 function __json_index_of(keys: string[], n: i32): i32[] {
-  let index: i32[] = __json_index_new(n);
-  let seed: i32 = __map_hash_seed();
-  let i: i32 = 0;
+  let index = __json_index_new(n);
+  let seed = __map_hash_seed();
+  let i = 0;
   while (i < n) {
     index = index.with(__json_index_slot(index, keys, keys[i], seed), i + 1);
-    i = i + 1;
+    i += 1;
   }
   return index;
 }
@@ -290,7 +290,7 @@ function __json_index_of(keys: string[], n: i32): i32[] {
 ```fern
 <<5 pub function (o: JsonObject) index_of(key: string): Option[i32]>>=
 pub function (o: JsonObject) index_of(key: string): Option[i32] {
-  let at: i32 = __json_member_at(o, key);
+  let at = __json_member_at(o, key);
   if (at < 0) {
     return None;
   }
@@ -327,7 +327,7 @@ pub function (o: JsonObject) contains(key: string): boolean {
 }
 
 pub function (o: JsonObject) get(key: string): Option[JsonValue] {
-  let at: i32 = __json_member_at(o, key);
+  let at = __json_member_at(o, key);
   if (at < 0) {
     return None;
   }
@@ -335,7 +335,7 @@ pub function (o: JsonObject) get(key: string): Option[JsonValue] {
 }
 
 pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue {
-  let at: i32 = __json_member_at(o, key);
+  let at = __json_member_at(o, key);
   if (at < 0) {
     return fallback;
   }
@@ -343,14 +343,14 @@ pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue
 }
 
 pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
-  let at: i32 = __json_member_at(o, key);
+  let at = __json_member_at(o, key);
   if (at >= 0) {
     return JsonObject { ...o, items: o.items.with(at, value) };
   }
-  let n: i32 = o.names.len();
-  let keys: string[] = o.names.append(key);
-  let values: JsonValue[] = o.items.append(value);
-  let index: i32[] = o.index;
+  let n = o.names.len();
+  let keys = o.names.append(key);
+  let values = o.items.append(value);
+  let index = o.index;
   if (n + 1 > JSON_LINEAR_MAX) {
     if (2 * (n + 1) > index.len()) {
       index = __json_index_of(keys, n + 1);
@@ -362,34 +362,34 @@ pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObje
 }
 
 pub function (o: JsonObject) remove(key: string): JsonObject {
-  let at: i32 = __json_member_at(o, key);
+  let at = __json_member_at(o, key);
   if (at < 0) {
     return o;
   }
   let keys: string[] = [];
   let values: JsonValue[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < o.names.len()) {
     if (i != at) {
       keys = keys.append(o.names[i]);
       values = values.append(o.items[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return object_of(keys, values);
 }
 
 pub function (own o: JsonObject) update(key: string, init: JsonValue, f: (JsonValue) => JsonValue): JsonObject {
-  let v: JsonValue = f(o.get_or(key, init));
+  let v = f(o.get_or(key, init));
   return o.insert(key, v);
 }
 
 pub function (own o: JsonObject) merge(other: JsonObject): JsonObject {
-  let out: JsonObject = o;
-  let i: i32 = 0;
+  let out = o;
+  let i = 0;
   while (i < other.names.len()) {
     out = out.insert(other.names[i], other.items[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -404,10 +404,10 @@ pub function (o: JsonObject) values(): JsonValue[] {
 
 pub function (o: JsonObject) entries(): (string, JsonValue)[] {
   let out: (string, JsonValue)[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < o.names.len()) {
     out = out.append((o.names[i], o.items[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -415,33 +415,33 @@ pub function (o: JsonObject) entries(): (string, JsonValue)[] {
 pub function (o: JsonObject) filter(pred: (string, JsonValue) => boolean): JsonObject {
   let keys: string[] = [];
   let values: JsonValue[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < o.names.len()) {
     if (pred(o.names[i], o.items[i])) {
       keys = keys.append(o.names[i]);
       values = values.append(o.items[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return object_of(keys, values);
 }
 
 pub function (o: JsonObject) fold[A](init: A, f: (A, string, JsonValue) => A): A {
-  let acc: A = init;
-  let i: i32 = 0;
+  let acc = init;
+  let i = 0;
   while (i < o.names.len()) {
     acc = f(acc, o.names[i], o.items[i]);
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
 
 pub function (o: JsonObject) map_values(f: (JsonValue) => JsonValue): JsonObject {
   let values: JsonValue[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < o.items.len()) {
     values = values.append(f(o.items[i]));
-    i = i + 1;
+    i += 1;
   }
   return JsonObject { ...o, items: values };
 }
@@ -452,10 +452,10 @@ pub function (o: JsonObject) map_values(f: (JsonValue) => JsonValue): JsonObject
 ```fern
 <<8 pub function (o: JsonObject) for_each(f: (string, JsonValue)>>=
 pub function (o: JsonObject) for_each(f: (string, JsonValue) => void): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < o.names.len()) {
     f(o.names[i], o.items[i]);
-    i = i + 1;
+    i += 1;
   }
 }
 ```
@@ -491,29 +491,29 @@ const JSON_ESCAPES: u8[] = [
 ```fern
 <<11 pub function escape(s: string): string>>=
 pub function escape(s: string): string {
-  let n: i32 = s.len();
-  let i: i32 = __scan_set(s, 0, JSON_ESCAPES);
+  let n = s.len();
+  let i = __scan_set(s, 0, JSON_ESCAPES);
   if (i == n) {
     return s;
   }
-  let total: i32 = n;
+  let total = n;
   while (i < n) {
     total = total + __json_escape_width(s[i] as i32) - 1;
     i = __scan_set(s, i + 1, JSON_ESCAPES);
   }
-  let buf: u8[] = __alloc_u8(total);
-  let pos: i32 = 0;
-  let from: i32 = 0;
+  let buf = __alloc_u8(total);
+  let pos = 0;
+  let from = 0;
   while (from < n) {
-    let stop: i32 = __scan_set(s, from, JSON_ESCAPES);
+    let stop = __scan_set(s, from, JSON_ESCAPES);
     while (from < stop) {
       buf = buf.with(pos, s[from] as u8);
-      pos = pos + 1;
-      from = from + 1;
+      pos += 1;
+      from += 1;
     }
     if (stop < n) {
       buf = __json_put_escape(buf, pos, s[stop] as i32);
-      pos = pos + __json_escape_width(s[stop] as i32);
+      pos += __json_escape_width(s[stop] as i32);
       from = stop + 1;
     }
   }
@@ -533,7 +533,7 @@ function __json_escape_width(b: i32): i32 {
 }
 
 function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
-  let out: u8[] = buf.with(pos, 92 as u8);
+  let out = buf.with(pos, 92 as u8);
   if (b == 34 || b == 92) {
     return out.with(pos + 1, b as u8);
   }
@@ -560,7 +560,7 @@ function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
 <<13 pub function encode(v: JsonValue): string>>=
 pub function encode(v: JsonValue): string {
   let buf: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   match (v) {
     JNull => {
       return "null";
@@ -579,48 +579,48 @@ pub function encode(v: JsonValue): string {
     },
     JArray(arr) => {
       buf = buf.append(91 as u8);
-      let n: i32 = arr.len();
+      let n = arr.len();
       while (i < n) {
         if (i > 0) {
           buf = buf.append(44 as u8);
         }
-        let enc: string = encode(arr[i]);
-        let el: i32 = enc.len();
-        let k: i32 = 0;
+        let enc = encode(arr[i]);
+        let el = enc.len();
+        let k = 0;
         while (k < el) {
           buf = buf.append(enc[k] as u8);
-          k = k + 1;
+          k += 1;
         }
-        i = i + 1;
+        i += 1;
       }
       buf = buf.append(93 as u8);
       return string_from_bytes_unchecked(buf);
     },
     JObject(o) => {
       buf = buf.append(123 as u8);
-      let mi: i32 = 0;
+      let mi = 0;
       while (mi < o.names.len()) {
         if (mi > 0) {
           buf = buf.append(44 as u8);
         }
         buf = buf.append(34 as u8);
-        let ek: string = escape(o.names[mi]);
-        let ekl: i32 = ek.len();
-        let kk: i32 = 0;
+        let ek = escape(o.names[mi]);
+        let ekl = ek.len();
+        let kk = 0;
         while (kk < ekl) {
           buf = buf.append(ek[kk] as u8);
-          kk = kk + 1;
+          kk += 1;
         }
         buf = buf.append(34 as u8);
         buf = buf.append(58 as u8);
-        let ev: string = encode(o.items[mi]);
-        let evl: i32 = ev.len();
-        let vk: i32 = 0;
+        let ev = encode(o.items[mi]);
+        let evl = ev.len();
+        let vk = 0;
         while (vk < evl) {
           buf = buf.append(ev[vk] as u8);
-          vk = vk + 1;
+          vk += 1;
         }
-        mi = mi + 1;
+        mi += 1;
       }
       buf = buf.append(125 as u8);
       return string_from_bytes_unchecked(buf);
@@ -635,20 +635,20 @@ pub function encode(v: JsonValue): string {
 <<14 function __json_spaces(n: i32): string>>=
 function __json_spaces(n: i32): string {
   let b: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     b = b.append(32 as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(b);
 }
 
 function __json_append_str(buf: u8[], s: string): u8[] {
-  let i: i32 = 0;
-  let out: u8[] = buf;
+  let i = 0;
+  let out = buf;
   while (i < s.len()) {
     out = out.append(s[i] as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -671,23 +671,23 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       return "\"" + escape(s) + "\"";
     },
     JArray(arr) => {
-      let n: i32 = arr.len();
+      let n = arr.len();
       if (n == 0) {
         return "[]";
       }
-      let inner: string = __json_spaces((depth + 1) * indent);
-      let close: string = __json_spaces(depth * indent);
+      let inner = __json_spaces((depth + 1) * indent);
+      let close = __json_spaces(depth * indent);
       let buf: u8[] = [];
       buf = buf.append(91 as u8);
       buf = __json_append_str(buf, "\n");
-      let i: i32 = 0;
+      let i = 0;
       while (i < n) {
         if (i > 0) {
           buf = __json_append_str(buf, ",\n");
         }
         buf = __json_append_str(buf, inner);
         buf = __json_append_str(buf, __json_pretty(arr[i], indent, depth + 1));
-        i = i + 1;
+        i += 1;
       }
       buf = __json_append_str(buf, "\n");
       buf = __json_append_str(buf, close);
@@ -698,12 +698,12 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       if (o.len() == 0) {
         return "{}";
       }
-      let inner: string = __json_spaces((depth + 1) * indent);
-      let close: string = __json_spaces(depth * indent);
+      let inner = __json_spaces((depth + 1) * indent);
+      let close = __json_spaces(depth * indent);
       let buf: u8[] = [];
       buf = buf.append(123 as u8);
       buf = __json_append_str(buf, "\n");
-      let mi: i32 = 0;
+      let mi = 0;
       while (mi < o.names.len()) {
         if (mi > 0) {
           buf = __json_append_str(buf, ",\n");
@@ -714,7 +714,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
         buf = buf.append(34 as u8);
         buf = __json_append_str(buf, ": ");
         buf = __json_append_str(buf, __json_pretty(o.items[mi], indent, depth + 1));
-        mi = mi + 1;
+        mi += 1;
       }
       buf = __json_append_str(buf, "\n");
       buf = __json_append_str(buf, close);
@@ -764,7 +764,7 @@ const JSON_NOT_WS: u8[] = [
 <<17 function __json_ws(s: string, i: i32): i32>>=
 function __json_ws(s: string, i: i32): i32 {
   if (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b == 32 || b == 9 || b == 10 || b == 13) {
       return __scan_set(s, i + 1, JSON_NOT_WS);
     }
@@ -799,12 +799,12 @@ function __json_hex_value(c: i32): i32 {
 }
 
 function __json_number_end(s: string, start: i32): (i32, boolean) {
-  let n: i32 = s.len();
-  let i: i32 = start;
+  let n = s.len();
+  let i = start;
   if (i < n && s[i] == 45) {
-    i = i + 1;
+    i += 1;
   }
-  let intStart: i32 = i;
+  let intStart = i;
   i = __scan_set(s, i, JSON_NOT_DIGIT);
   if (i == intStart) {
     return (-1 - i, false);
@@ -812,9 +812,9 @@ function __json_number_end(s: string, start: i32): (i32, boolean) {
   if (s[intStart] == 48 && i - intStart > 1) {
     return (-2 - intStart, false);
   }
-  let whole: boolean = true;
+  let whole = true;
   if (i < n && s[i] == 46) {
-    let fracStart: i32 = i + 1;
+    let fracStart = i + 1;
     i = __scan_set(s, fracStart, JSON_NOT_DIGIT);
     if (i == fracStart) {
       return (-1 - i, false);
@@ -822,11 +822,11 @@ function __json_number_end(s: string, start: i32): (i32, boolean) {
     whole = false;
   }
   if (i < n && (s[i] == 101 || s[i] == 69)) {
-    i = i + 1;
+    i += 1;
     if (i < n && (s[i] == 43 || s[i] == 45)) {
-      i = i + 1;
+      i += 1;
     }
-    let expStart: i32 = i;
+    let expStart = i;
     i = __scan_set(s, expStart, JSON_NOT_DIGIT);
     if (i == expStart) {
       return (-1 - i, false);
@@ -905,16 +905,16 @@ function __json_p_uhex(s: string, i: i32, at: Cell[i32]): i32 {
     __json_fail(at, i);
     return -1;
   }
-  let u: i32 = 0;
-  let k: i32 = 0;
+  let u = 0;
+  let k = 0;
   while (k < 4) {
-    let hv: i32 = __json_hex_value(s[i + k] as i32);
+    let hv = __json_hex_value(s[i + k] as i32);
     if (hv < 0) {
       __json_fail(at, i + k);
       return -1;
     }
     u = u << 4 | hv;
-    k = k + 1;
+    k += 1;
   }
   return u;
 }
@@ -929,17 +929,17 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
     __json_fail(at, start);
     return "";
   }
-  let i: i32 = start + 1;
-  let plain: i32 = __scan_set(s, i, JSON_STRING_STOPS);
+  let i = start + 1;
+  let plain = __scan_set(s, i, JSON_STRING_STOPS);
   if (plain < s.len() && s[plain] == 34) {
     at.set(plain + 1);
     return slice_unchecked(s, i, plain) + "";
   }
   let out: u8[] = [];
-  let n: i32 = s.len();
-  let b: i32 = 0;
+  let n = s.len();
+  let b = 0;
   let cb: u8[] = [];
-  let ci: i32 = 0;
+  let ci = 0;
   while (true) {
     b = __json_byte(s, i);
     if (b < 32) {
@@ -951,33 +951,33 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
       return string_from_bytes_unchecked(out);
     }
     if (b == 92) {
-      i = i + 1;
-      let esc: i32 = __json_byte(s, i);
+      i += 1;
+      let esc = __json_byte(s, i);
       if (esc == 0) {
         __json_fail(at, i);
         return "";
       }
       if (esc == 117) {
-        i = i + 1;
-        let u: i32 = __json_p_uhex(s, i, at);
+        i += 1;
+        let u = __json_p_uhex(s, i, at);
         if (u < 0) {
           return "";
         }
-        i = i + 4;
-        let cp1: i32 = 65533;
-        let cp2: i32 = -1;
+        i += 4;
+        let cp1 = 65533;
+        let cp2 = -1;
         if (u >= 55296 && u <= 56319) {
           if (i + 6 > n
             || s[i] != 92
             || s[i + 1] != 117) {
             cp1 = 65533;
           } else {
-            i = i + 2;
-            let low: i32 = __json_p_uhex(s, i, at);
+            i += 2;
+            let low = __json_p_uhex(s, i, at);
             if (low < 0) {
               return "";
             }
-            i = i + 4;
+            i += 4;
             if (low < 56320 || low > 57343) {
               cp1 = 65533;
               cp2 = low;
@@ -996,18 +996,18 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
         ci = 0;
         while (ci < cb.len()) {
           out = out.append(cb[ci] as u8);
-          ci = ci + 1;
+          ci += 1;
         }
         if (cp2 >= 0) {
           cb = __json_cp_bytes(cp2);
           ci = 0;
           while (ci < cb.len()) {
             out = out.append(cb[ci] as u8);
-            ci = ci + 1;
+            ci += 1;
           }
         }
       } else {
-        let ch: i32 = -1;
+        let ch = -1;
         if (esc == 34 || esc == 92 || esc == 47) {
           ch = esc;
         } else if (esc == 110) {
@@ -1025,10 +1025,10 @@ function __json_p_string(s: string, start: i32, at: Cell[i32]): string {
           return "";
         }
         out = out.append(ch as u8);
-        i = i + 1;
+        i += 1;
       }
     } else {
-      let stop: i32 = __scan_set(s, i, JSON_STRING_STOPS);
+      let stop = __scan_set(s, i, JSON_STRING_STOPS);
       out = __json_append_run(out, s, i, stop);
       i = stop;
     }
@@ -1066,17 +1066,17 @@ const JSON_STRING_STOPS: u8[] = [
 ```fern
 <<22 function __json_append_run(out: u8[], s: string, from: i32, stop: i32): u8[]>>=
 function __json_append_run(out: u8[], s: string, from: i32, stop: i32): u8[] {
-  let acc: u8[] = out;
-  let i: i32 = from;
+  let acc = out;
+  let i = from;
   while (i < stop) {
     acc = acc.append(s[i] as u8);
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
 
 function __json_p_array(s: string, start: i32, at: Cell[i32], depth: i32): JsonValue {
-  let i: i32 = __json_ws(s, start + 1);
+  let i = __json_ws(s, start + 1);
   if (__json_byte(s, i) == 93) {
     at.set(i + 1);
     let empty: JsonValue[] = [];
@@ -1085,14 +1085,14 @@ function __json_p_array(s: string, start: i32, at: Cell[i32], depth: i32): JsonV
   let arr: JsonValue[] = [];
   at.set(i);
   while (true) {
-    let elem: JsonValue = __json_p_value(s, at, depth);
+    let elem = __json_p_value(s, at, depth);
     i = at.get();
     if (i < 0) {
       return JNull;
     }
     arr = arr.append(elem);
     i = __json_ws(s, i);
-    let b: i32 = __json_byte(s, i);
+    let b = __json_byte(s, i);
     if (b == 44) {
       at.set(i + 1);
       continue;
@@ -1108,7 +1108,7 @@ function __json_p_array(s: string, start: i32, at: Cell[i32], depth: i32): JsonV
 }
 
 function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): JsonValue {
-  let i: i32 = __json_ws(s, start + 1);
+  let i = __json_ws(s, start + 1);
   if (__json_byte(s, i) == 125) {
     at.set(i + 1);
     return JObject(object());
@@ -1116,7 +1116,7 @@ function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): Json
   let keys: string[] = [];
   let values: JsonValue[] = [];
   while (true) {
-    let key: string = __json_p_string(s, i, at);
+    let key = __json_p_string(s, i, at);
     i = at.get();
     if (i < 0) {
       return JNull;
@@ -1127,7 +1127,7 @@ function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): Json
       return JNull;
     }
     at.set(i + 1);
-    let val: JsonValue = __json_p_value(s, at, depth);
+    let val = __json_p_value(s, at, depth);
     i = at.get();
     if (i < 0) {
       return JNull;
@@ -1135,7 +1135,7 @@ function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): Json
     keys = keys.append(key);
     values = values.append(val);
     i = __json_ws(s, i);
-    let b: i32 = __json_byte(s, i);
+    let b = __json_byte(s, i);
     if (b == 44) {
       i = __json_ws(s, i + 1);
       continue;
@@ -1151,10 +1151,10 @@ function __json_p_object(s: string, start: i32, at: Cell[i32], depth: i32): Json
 }
 
 function __json_p_value(s: string, at: Cell[i32], depth: i32): JsonValue {
-  let i: i32 = __json_ws(s, at.get());
-  let b: i32 = __json_byte(s, i);
+  let i = __json_ws(s, at.get());
+  let b = __json_byte(s, i);
   if (b == 34) {
-    let str: string = __json_p_string(s, i, at);
+    let str = __json_p_string(s, i, at);
     if (at.get() < 0) {
       return JNull;
     }
@@ -1198,32 +1198,32 @@ function __json_word(s: string, i: i32, word: string): boolean {
   if (i + word.len() > s.len()) {
     return false;
   }
-  let k: i32 = 1;
+  let k = 1;
   while (k < word.len()) {
     if (s[i + k] != word[k]) {
       return false;
     }
-    k = k + 1;
+    k += 1;
   }
   return true;
 }
 
 function __json_line_col(s: string, off: i32): (i32, i32) {
-  let line: i32 = 1;
-  let col: i32 = 1;
-  let i: i32 = 0;
-  let stop: i32 = off;
+  let line = 1;
+  let col = 1;
+  let i = 0;
+  let stop = off;
   if (stop > s.len()) {
     stop = s.len();
   }
   while (i < stop) {
     if (s[i] as i32 == 10) {
-      line = line + 1;
+      line += 1;
       col = 1;
     } else {
-      col = col + 1;
+      col += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return (line, col);
 }
@@ -1280,7 +1280,7 @@ function __json_message(s: string, off: i32): string {
   if (off >= s.len()) {
     return "unexpected end of input";
   }
-  let b: i32 = s[off] as i32;
+  let b = s[off] as i32;
   if (b < 32) {
     return "unexpected control byte in input";
   }
@@ -1326,14 +1326,14 @@ function __json_t_node(own tape: u64[], kind: i32, flags: i32, a: i32, b: i32): 
 }
 
 function __json_t_close(own tape: u64[], node: i32, kind: i32, count: i32): u64[] {
-  let next: i32 = tape.len() / 2;
+  let next = tape.len() / 2;
   return tape.with(2 * node, __json_t_word(kind, 0, next)).with(2 * node + 1, (count as u32) as u64);
 }
 
 function __json_string_end(s: string, plain: i32): i32 {
-  let i: i32 = plain;
+  let i = plain;
   while (true) {
-    let b: i32 = __json_byte(s, i);
+    let b = __json_byte(s, i);
     if (b == 34) {
       return i + 1;
     }
@@ -1356,29 +1356,29 @@ function __json_short_escape(esc: i32): boolean {
 }
 
 function __json_escape_end(s: string, i: i32): i32 {
-  let esc: i32 = __json_byte(s, i);
+  let esc = __json_byte(s, i);
   if (__json_short_escape(esc)) {
     return i + 1;
   }
   if (esc != 117) {
     return -1 - i;
   }
-  let h: i32 = i + 1;
+  let h = i + 1;
   if (h + 4 > s.len()) {
     return -1 - h;
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < 4) {
     if (__json_hex_value(s[h + k] as i32) < 0) {
       return -1 - (h + k);
     }
-    k = k + 1;
+    k += 1;
   }
   return h + 4;
 }
 
 function __json_t_scalar(s: string, i: i32, own tape: u64[]): (u64[], i32) {
-  let b: i32 = __json_byte(s, i);
+  let b = __json_byte(s, i);
   if (b == 34) {
     return __json_t_string(s, i, tape);
   }
@@ -1387,7 +1387,7 @@ function __json_t_scalar(s: string, i: i32, own tape: u64[]): (u64[], i32) {
     if (end < 0) {
       return (tape, end);
     }
-    let flag: i32 = 0;
+    let flag = 0;
     if (whole) {
       flag = 1;
     }
@@ -1397,11 +1397,11 @@ function __json_t_scalar(s: string, i: i32, own tape: u64[]): (u64[], i32) {
 }
 
 function __json_t_string(s: string, i: i32, own tape: u64[]): (u64[], i32) {
-  let plain: i32 = __scan_set(s, i + 1, JSON_STRING_STOPS);
+  let plain = __scan_set(s, i + 1, JSON_STRING_STOPS);
   if (plain < s.len() && s[plain] == 34) {
     return (__json_t_node(tape, JSON_T_STRING, 0, i + 1, plain), plain + 1);
   }
-  let end: i32 = __json_string_end(s, plain);
+  let end = __json_string_end(s, plain);
   if (end < 0) {
     return (tape, end);
   }
@@ -1429,7 +1429,7 @@ function __json_t_key(s: string, i: i32, own tape: u64[]): (u64[], i32) {
   if (end < 0) {
     return (t, end);
   }
-  let k: i32 = __json_ws(s, end);
+  let k = __json_ws(s, end);
   if (__json_byte(s, k) != 58) {
     return (t, -1 - k);
   }
@@ -1446,7 +1446,7 @@ function __json_t_kind(tape: u64[], node: i32): i32 {
 ```fern
 <<32 function __json_t_value(s: string, i: i32, own tape: u64[], depth: i32): (u64[], i32)>>=
 function __json_t_value(s: string, i: i32, own tape: u64[], depth: i32): (u64[], i32) {
-  let b: i32 = __json_byte(s, i);
+  let b = __json_byte(s, i);
   if (b != 91 && b != 123) {
     return __json_t_scalar(s, i, tape);
   }
@@ -1460,10 +1460,10 @@ function __json_t_value(s: string, i: i32, own tape: u64[], depth: i32): (u64[],
 }
 
 function __json_t_array(s: string, start: i32, own tape: u64[], depth: i32): (u64[], i32) {
-  let node: i32 = tape.len() / 2;
+  let node = tape.len() / 2;
   tape = __json_t_node(tape, JSON_T_ARRAY, 0, 0, 0);
-  let i: i32 = __json_ws(s, start + 1);
-  let count: i32 = 0;
+  let i = __json_ws(s, start + 1);
+  let count = 0;
   if (__json_byte(s, i) == 93) {
     return (__json_t_close(tape, node, JSON_T_ARRAY, 0), i + 1);
   }
@@ -1473,9 +1473,9 @@ function __json_t_array(s: string, start: i32, own tape: u64[], depth: i32): (u6
     if (end < 0) {
       return (tape, end);
     }
-    count = count + 1;
+    count += 1;
     i = __json_ws(s, end);
-    let b: i32 = __json_byte(s, i);
+    let b = __json_byte(s, i);
     if (b == 93) {
       return (__json_t_close(tape, node, JSON_T_ARRAY, count), i + 1);
     }
@@ -1488,10 +1488,10 @@ function __json_t_array(s: string, start: i32, own tape: u64[], depth: i32): (u6
 }
 
 function __json_t_object(s: string, start: i32, own tape: u64[], depth: i32): (u64[], i32) {
-  let node: i32 = tape.len() / 2;
+  let node = tape.len() / 2;
   tape = __json_t_node(tape, JSON_T_OBJECT, 0, 0, 0);
-  let i: i32 = __json_ws(s, start + 1);
-  let count: i32 = 0;
+  let i = __json_ws(s, start + 1);
+  let count = 0;
   if (__json_byte(s, i) == 125) {
     return (__json_t_close(tape, node, JSON_T_OBJECT, 0), i + 1);
   }
@@ -1506,9 +1506,9 @@ function __json_t_object(s: string, start: i32, own tape: u64[], depth: i32): (u
     if (end < 0) {
       return (tape, end);
     }
-    count = count + 1;
+    count += 1;
     i = __json_ws(s, end);
-    let b: i32 = __json_byte(s, i);
+    let b = __json_byte(s, i);
     if (b == 125) {
       return (__json_t_close(tape, node, JSON_T_OBJECT, count), i + 1);
     }
@@ -1528,7 +1528,7 @@ function __json_t_object(s: string, start: i32, own tape: u64[], depth: i32): (u
 pub function parse_document(s: string): Result[Document, JsonError] {
   let empty: u64[] = [];
   let (tape, end) = __json_t_value(s, __json_ws(s, 0), empty, 0);
-  let fail: i32 = -1 - end;
+  let fail = -1 - end;
   if (end >= 0) {
     fail = __json_ws(s, end);
     if (fail == s.len()) {
@@ -1560,7 +1560,7 @@ function __json_t_flag(d: Document, n: i32): boolean {
 }
 
 function __json_t_after(d: Document, n: i32): i32 {
-  let k: i32 = __json_t_kind(d.tape, n);
+  let k = __json_t_kind(d.tape, n);
   if (k == JSON_T_ARRAY || k == JSON_T_OBJECT) {
     return __json_t_a(d, n);
   }
@@ -1581,7 +1581,7 @@ pub function (d: Document) is_null(n: i32): boolean {
 }
 
 pub function (d: Document) is_bool(n: i32): boolean {
-  let k: i32 = __json_t_kind(d.tape, n);
+  let k = __json_t_kind(d.tape, n);
   return k == JSON_T_TRUE || k == JSON_T_FALSE;
 }
 
@@ -1602,7 +1602,7 @@ pub function (d: Document) is_object(n: i32): boolean {
 }
 
 pub function (d: Document) len(n: i32): i32 {
-  let k: i32 = __json_t_kind(d.tape, n);
+  let k = __json_t_kind(d.tape, n);
   if (k == JSON_T_ARRAY || k == JSON_T_OBJECT) {
     return __json_t_b(d, n);
   }
@@ -1617,7 +1617,7 @@ pub function (d: Document) first(n: i32): i32 {
 }
 
 pub function (d: Document) next(parent: i32, c: i32): i32 {
-  let after: i32 = __json_t_after(d, c);
+  let after = __json_t_after(d, c);
   if (__json_t_kind(d.tape, parent) == JSON_T_OBJECT) {
     after = __json_t_after(d, after);
   }
@@ -1635,11 +1635,11 @@ pub function (d: Document) at(n: i32, k: i32): Option[i32] {
   if (__json_t_kind(d.tape, n) != JSON_T_ARRAY || k < 0 || k >= __json_t_b(d, n)) {
     return None;
   }
-  let c: i32 = n + 1;
-  let j: i32 = 0;
+  let c = n + 1;
+  let j = 0;
   while (j < k) {
     c = __json_t_after(d, c);
-    j = j + 1;
+    j += 1;
   }
   return Some(c);
 }
@@ -1648,8 +1648,8 @@ pub function (d: Document) get(n: i32, key: string): Option[i32] {
   if (__json_t_kind(d.tape, n) != JSON_T_OBJECT) {
     return None;
   }
-  let found: i32 = -1;
-  let c: i32 = d.first(n);
+  let found = -1;
+  let c = d.first(n);
   while (c >= 0) {
     if (__json_t_key_is(d, c, key)) {
       found = c + 1;
@@ -1671,8 +1671,8 @@ function __json_t_key_is(d: Document, k: i32, key: string): boolean {
   if (__json_t_flag(d, k)) {
     return __json_t_decode(d, k) == key;
   }
-  let a: i32 = __json_t_a(d, k);
-  let b: i32 = __json_t_b(d, k);
+  let a = __json_t_a(d, k);
+  let b = __json_t_b(d, k);
   return b - a == key.len() && slice_unchecked(d.text, a, b) == key;
 }
 
@@ -1697,7 +1697,7 @@ function __json_t_decode(d: Document, n: i32): string {
 ```fern
 <<37 pub function (d: Document) as_bool(n: i32): Option[boolean]>>=
 pub function (d: Document) as_bool(n: i32): Option[boolean] {
-  let k: i32 = __json_t_kind(d.tape, n);
+  let k = __json_t_kind(d.tape, n);
   if (k == JSON_T_TRUE) {
     return Some(true);
   }
@@ -1736,7 +1736,7 @@ pub function (d: Document) as_i64(n: i32): Option[i64] {
 }
 
 pub function (d: Document) to_value(n: i32): JsonValue {
-  let k: i32 = __json_t_kind(d.tape, n);
+  let k = __json_t_kind(d.tape, n);
   if (k == JSON_T_NULL) {
     return JNull;
   }
@@ -1762,7 +1762,7 @@ pub function (d: Document) to_value(n: i32): JsonValue {
 <<38 function __json_t_elements(d: Document, n: i32): JsonValue[]>>=
 function __json_t_elements(d: Document, n: i32): JsonValue[] {
   let arr: JsonValue[] = [];
-  let c: i32 = d.first(n);
+  let c = d.first(n);
   while (c >= 0) {
     arr = arr.append(d.to_value(c));
     c = d.next(n, c);
@@ -1773,7 +1773,7 @@ function __json_t_elements(d: Document, n: i32): JsonValue[] {
 function __json_t_members(d: Document, n: i32): JsonObject {
   let keys: string[] = [];
   let values: JsonValue[] = [];
-  let c: i32 = d.first(n);
+  let c = d.first(n);
   while (c >= 0) {
     keys = keys.append(__json_t_text(d, c));
     values = values.append(d.to_value(c + 1));
@@ -1876,10 +1876,10 @@ pub function get_i64(obj: JsonValue, key: string): Option[i64] {
 <<42 function __json_number_i64(s: string): Option[i64]>>=
 // Accumulates negatively so that -2^63 fits.
 function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
-  let i: i32 = start;
-  let neg: boolean = i < end && s[i] == 45;
+  let i = start;
+  let neg = i < end && s[i] == 45;
   if (neg) {
-    i = i + 1;
+    i += 1;
   }
   if (i >= end) {
     return None;
@@ -1887,16 +1887,16 @@ function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
   let acc: i64 = 0;
   let floor: i64 = -922337203685477580;
   while (i < end) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 48 || b > 57) {
       return None;
     }
-    let digit: i64 = (b - 48) as i64;
+    let digit = (b - 48) as i64;
     if (acc < floor || acc == floor && digit > 8) {
       return None;
     }
     acc = acc * 10 - digit;
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
     return Some(acc);
@@ -1904,7 +1904,7 @@ function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
   if (acc == -9223372036854775807 - 1) {
     return None;
   }
-  return Some(0 - acc);
+  return Some(-acc);
 }
 ```
 
@@ -1994,15 +1994,15 @@ pub function get_object(obj: JsonValue, key: string): Option[JsonValue] {
 ```fern
 <<44 function __json_ptr_unescape(tok: string): string>>=
 function __json_ptr_unescape(tok: string): string {
-  let n: i32 = tok.len();
-  let has: boolean = false;
-  let i: i32 = 0;
+  let n = tok.len();
+  let has = false;
+  let i = 0;
   while (i < n) {
     if (tok[i] == 126) {
       has = true;
       i = n;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
   if (!has) {
@@ -2011,47 +2011,47 @@ function __json_ptr_unescape(tok: string): string {
   let out: u8[] = [];
   i = 0;
   while (i < n) {
-    let c: i32 = tok[i] as i32;
+    let c = tok[i] as i32;
     if (c == 126 && i + 1 < n) {
-      let d: i32 = tok[i + 1] as i32;
+      let d = tok[i + 1] as i32;
       if (d == 49) {
         out = out.append(47 as u8);
-        i = i + 2;
+        i += 2;
       } else if (d == 48) {
         out = out.append(126 as u8);
-        i = i + 2;
+        i += 2;
       } else {
         out = out.append(tok[i]);
-        i = i + 1;
+        i += 1;
       }
     } else {
       out = out.append(tok[i]);
-      i = i + 1;
+      i += 1;
     }
   }
   return string_from_bytes_unchecked(out);
 }
 
 function __json_ptr_index(tok: string): i32 {
-  let n: i32 = tok.len();
+  let n = tok.len();
   if (n == 0) {
-    return 0 - 1;
+    return -1;
   }
   if (tok[0] == 48 && n > 1) {
-    return 0 - 1;
+    return -1;
   }
   let acc: i64 = 0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let b: i32 = tok[i] as i32;
+    let b = tok[i] as i32;
     if (b < 48 || b > 57) {
-      return 0 - 1;
+      return -1;
     }
     acc = acc * 10 + (b - 48) as i64;
     if (acc > 2147483647) {
-      return 0 - 1;
+      return -1;
     }
-    i = i + 1;
+    i += 1;
   }
   return acc as i32;
 }
@@ -2062,21 +2062,21 @@ function __json_ptr_index(tok: string): i32 {
 ```fern
 <<45 pub function pointer(doc: JsonValue, path: string): Option[JsonValue]>>=
 pub function pointer(doc: JsonValue, path: string): Option[JsonValue] {
-  let n: i32 = path.len();
+  let n = path.len();
   if (n == 0) {
     return Some(doc);
   }
   if (path[0] != 47) {
     return None;
   }
-  let cur: JsonValue = doc;
-  let i: i32 = 1;
+  let cur = doc;
+  let i = 1;
   while (i <= n) {
-    let j: i32 = i;
+    let j = i;
     while (j < n && path[j] != 47) {
-      j = j + 1;
+      j += 1;
     }
-    let tok: string = __json_ptr_unescape(slice_unchecked(path, i, j));
+    let tok = __json_ptr_unescape(slice_unchecked(path, i, j));
     match (cur) {
       JObject(m) => {
         match (m.get(tok)) {
@@ -2089,7 +2089,7 @@ pub function pointer(doc: JsonValue, path: string): Option[JsonValue] {
         }
       },
       JArray(arr) => {
-        let idx: i32 = __json_ptr_index(tok);
+        let idx = __json_ptr_index(tok);
         if (idx < 0 || idx >= arr.len()) {
           return None;
         }
@@ -2184,19 +2184,19 @@ impl Json for string {
 pub function (xs: (T: Json)[]) to_json(): string {
   let out: u8[] = [];
   out = out.append(91 as u8);
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (i > 0) {
       out = out.append(44 as u8);
     }
-    let e: string = xs[i].to_json();
-    let el: i32 = e.len();
-    let k: i32 = 0;
+    let e = xs[i].to_json();
+    let el = e.len();
+    let k = 0;
     while (k < el) {
       out = out.append(e[k] as u8);
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   out = out.append(93 as u8);
   return string_from_bytes_unchecked(out);
@@ -2450,7 +2450,7 @@ pub(package) function from_json_array[T: FromJson](v: JsonValue): Result[T[], Js
   match (v) {
     JArray(xs) => {
       let out: T[] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i < xs.len()) {
         match (T.from_json_value(xs[i])) {
           Ok(x) => {
@@ -2460,7 +2460,7 @@ pub(package) function from_json_array[T: FromJson](v: JsonValue): Result[T[], Js
             return Err(from_json_index(i, why));
           }
         }
-        i = i + 1;
+        i += 1;
       }
       return Ok(out);
     },
@@ -2636,11 +2636,11 @@ pub function error(message: string): JsonError {
 }
 
 pub function parse(s: string): Result[JsonValue, JsonError] {
-  let at: Cell[i32] = cell_new(0);
-  let v: JsonValue = __json_p_value(s, at, 0);
-  let end: i32 = at.get();
+  let at = cell_new(0);
+  let v = __json_p_value(s, at, 0);
+  let end = at.get();
   if (end < 0) {
-    let off: i32 = -1 - end;
+    let off = -1 - end;
     let (ln, cl) = __json_line_col(s, off);
     return Err(JsonError {
       message: __json_message(s, off),
@@ -2777,7 +2777,7 @@ impl cmp.Eq for JsonObject {
     if (self.len() != other.len()) {
       return false;
     }
-    let i: i32 = 0;
+    let i = 0;
     while (i < self.names.len()) {
       match (other.get(self.names[i])) {
         Some(v) => {
@@ -2789,7 +2789,7 @@ impl cmp.Eq for JsonObject {
           return false;
         }
       }
-      i = i + 1;
+      i += 1;
     }
     return true;
   }
@@ -2814,11 +2814,11 @@ impl cmp.Hash for JsonValue {
         return 7 * 31 + s.hash();
       },
       JArray(xs) => {
-        let h: i32 = 11;
-        let i: i32 = 0;
+        let h = 11;
+        let i = 0;
         while (i < xs.len()) {
           h = h * 31 + xs[i].hash();
-          i = i + 1;
+          i += 1;
         }
         return h;
       },

@@ -153,14 +153,14 @@ impl Math for f64 {}
 ```fern
 <<4 function pow2_f64(k: f64): f64>>=
 function pow2_f64(k: f64): f64 {
-  let kk: i64 = k as i64;
+  let kk = k as i64;
   if (kk > 2046) {
     kk = 2046;
   }
   if (kk < -2044) {
     kk = -2044;
   }
-  let k1: i64 = kk >> 1;
+  let k1 = kk >> 1;
   return f64_from_bits(k1 + 1023 << 52) * f64_from_bits(kk - k1 + 1023 << 52);
 }
 ```
@@ -287,10 +287,10 @@ impl Lanes for f32x4 {
   }
   @inline
   function with_lane(self: f32x4, i: i32, x: f64): f32x4 {
-    let a: f32 = __f32x4_lane(self, 0);
-    let b: f32 = __f32x4_lane(self, 1);
-    let c: f32 = __f32x4_lane(self, 2);
-    let d: f32 = __f32x4_lane(self, 3);
+    let a = __f32x4_lane(self, 0);
+    let b = __f32x4_lane(self, 1);
+    let c = __f32x4_lane(self, 2);
+    let d = __f32x4_lane(self, 3);
     if (i == 0) {
       return __f32x4_of(x as f32, b, c, d);
     }
@@ -346,70 +346,70 @@ Each method applies the scalar method to each lane. The loop has a constant trip
 <<impl[const N: i32, T] Math for Vec[N, T]>>=
 impl[const N: i32, T] Math for Vec[N, T] {
   function exp(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).exp());
     }
     return out;
   }
   function log(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).log());
     }
     return out;
   }
   function sin(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).sin());
     }
     return out;
   }
   function cos(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).cos());
     }
     return out;
   }
   function tan(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).tan());
     }
     return out;
   }
   function tanh(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).tanh());
     }
     return out;
   }
   function atan(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).atan());
     }
     return out;
   }
   function expm1(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).expm1());
     }
     return out;
   }
   function log1p(self: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).log1p());
     }
     return out;
   }
   function pow(self: Vec[N, T], y: Vec[N, T]): Vec[N, T] {
-    let out: Vec[N, T] = self;
+    let out = self;
     for i in 0..N {
       out = out.with_lane(i, self.lane(i).pow(y.lane(i)));
     }
@@ -427,11 +427,11 @@ pub function eq[T: Lanes](a: T, b: T): T {
 }
 
 pub function horner[T: Lanes](x: T, c: f64[]): T {
-  let acc: T = T.splat(c[c.len() - 1]);
-  let i: i32 = c.len() - 2;
+  let acc = T.splat(c[c.len() - 1]);
+  let i = c.len() - 2;
   while (i >= 0) {
     acc = acc.mul_add(x, T.splat(c[i]));
-    i = i - 1;
+    i -= 1;
   }
   return acc;
 }
@@ -509,11 +509,11 @@ impl[T: Lanes] Lanes for Dual[T] {
     return Dual { v: self.v.mul_add(b.v, c.v), d: self.d * b.v + self.v * b.d + c.d };
   }
   function sqrt(self: Dual[T]): Dual[T] {
-    let r: T = self.v.sqrt();
+    let r = self.v.sqrt();
     return Dual { v: r, d: self.d / (r + r) };
   }
   function abs(self: Dual[T]): Dual[T] {
-    let neg: T = self.v.lt(T.splat(0.0));
+    let neg = self.v.lt(T.splat(0.0));
     return Dual { v: self.v.abs(), d: T.select(neg, -self.d, self.d) };
   }
   function floor(self: Dual[T]): Dual[T] {
@@ -523,11 +523,11 @@ impl[T: Lanes] Lanes for Dual[T] {
     return Dual { v: self.v.round(), d: T.splat(0.0) };
   }
   function min(self: Dual[T], o: Dual[T]): Dual[T] {
-    let m: T = o.v.lt(self.v);
+    let m = o.v.lt(self.v);
     return Dual { v: T.select(m, o.v, self.v), d: T.select(m, o.d, self.d) };
   }
   function max(self: Dual[T], o: Dual[T]): Dual[T] {
-    let m: T = self.v.lt(o.v);
+    let m = self.v.lt(o.v);
     return Dual { v: T.select(m, o.v, self.v), d: T.select(m, o.d, self.d) };
   }
   function lt(self: Dual[T], o: Dual[T]): Dual[T] {
@@ -546,7 +546,7 @@ impl[T: Lanes] Lanes for Dual[T] {
 
 impl[T: Math] Math for Dual[T] {
   function exp(self: Dual[T]): Dual[T] {
-    let e: T = self.v.exp();
+    let e = self.v.exp();
     return Dual { v: e, d: self.d * e };
   }
   function log(self: Dual[T]): Dual[T] {
@@ -559,11 +559,11 @@ impl[T: Math] Math for Dual[T] {
     return Dual { v: self.v.cos(), d: -(self.d * self.v.sin()) };
   }
   function tan(self: Dual[T]): Dual[T] {
-    let t: T = self.v.tan();
+    let t = self.v.tan();
     return Dual { v: t, d: self.d * (T.splat(1.0) + t * t) };
   }
   function tanh(self: Dual[T]): Dual[T] {
-    let t: T = self.v.tanh();
+    let t = self.v.tanh();
     return Dual { v: t, d: self.d * (T.splat(1.0) - t * t) };
   }
   function atan(self: Dual[T]): Dual[T] {
@@ -576,7 +576,7 @@ impl[T: Math] Math for Dual[T] {
     return Dual { v: self.v.log1p(), d: self.d / (T.splat(1.0) + self.v) };
   }
   function pow(self: Dual[T], y: Dual[T]): Dual[T] {
-    let p: T = self.v.pow(y.v);
+    let p = self.v.pow(y.v);
     return Dual { v: p, d: p * (y.d * self.v.log() + y.v * self.d / self.v) };
   }
 }
@@ -598,27 +598,27 @@ pub function dd[T: Lanes](hi: T, lo: T): DoubleDouble[T] {
 ```fern
 <<12 function two_sum[T: Lanes](a: T, b: T): DoubleDouble[T]>>=
 function two_sum[T: Lanes](a: T, b: T): DoubleDouble[T] {
-  let s: T = a + b;
-  let bb: T = s - a;
+  let s = a + b;
+  let bb = s - a;
   return DoubleDouble { hi: s, lo: a - (s - bb) + (b - bb) };
 }
 
 function quick_two_sum[T: Lanes](a: T, b: T): DoubleDouble[T] {
-  let s: T = a + b;
+  let s = a + b;
   return DoubleDouble { hi: s, lo: b - (s - a) };
 }
 
 function split[T: Lanes](a: T): DoubleDouble[T] {
-  let t: T = T.splat(T.SPLIT) * a;
-  let hi: T = t - (t - a);
+  let t = T.splat(T.SPLIT) * a;
+  let hi = t - (t - a);
   return DoubleDouble { hi: hi, lo: a - hi };
 }
 
 function two_prod[T: Lanes](a: T, b: T): DoubleDouble[T] {
-  let p: T = a * b;
-  let sa: DoubleDouble[T] = split(a);
-  let sb: DoubleDouble[T] = split(b);
-  let e: T = sa.hi * sb.hi - p + sa.hi * sb.lo + sa.lo * sb.hi + sa.lo * sb.lo;
+  let p = a * b;
+  let sa = split(a);
+  let sb = split(b);
+  let e = sa.hi * sb.hi - p + sa.hi * sb.lo + sa.lo * sb.hi + sa.lo * sb.lo;
   return DoubleDouble { hi: p, lo: e };
 }
 ```
@@ -629,9 +629,9 @@ function two_prod[T: Lanes](a: T, b: T): DoubleDouble[T] {
 <<13 impl[T: Lanes] ops.Add for DoubleDouble[T]>>=
 impl[T: Lanes] ops.Add for DoubleDouble[T] {
   function add(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
-    let s: DoubleDouble[T] = two_sum(self.hi, o.hi);
-    let t: DoubleDouble[T] = two_sum(self.lo, o.lo);
-    let u: DoubleDouble[T] = quick_two_sum(s.hi, s.lo + t.hi);
+    let s = two_sum(self.hi, o.hi);
+    let t = two_sum(self.lo, o.lo);
+    let u = quick_two_sum(s.hi, s.lo + t.hi);
     return quick_two_sum(u.hi, u.lo + t.lo);
   }
 }
@@ -644,19 +644,19 @@ impl[T: Lanes] ops.Sub for DoubleDouble[T] {
 
 impl[T: Lanes] ops.Mul for DoubleDouble[T] {
   function mul(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
-    let p: DoubleDouble[T] = two_prod(self.hi, o.hi);
+    let p = two_prod(self.hi, o.hi);
     return quick_two_sum(p.hi, p.lo + (self.hi * o.lo + self.lo * o.hi));
   }
 }
 
 impl[T: Lanes] ops.Div for DoubleDouble[T] {
   function div(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
-    let q1: T = self.hi / o.hi;
-    let r: DoubleDouble[T] = self - o * dd_of(q1);
-    let q2: T = r.hi / o.hi;
+    let q1 = self.hi / o.hi;
+    let r = self - o * dd_of(q1);
+    let q2 = r.hi / o.hi;
     r = r - o * dd_of(q2);
-    let q3: T = r.hi / o.hi;
-    let q: DoubleDouble[T] = quick_two_sum(q1, q2);
+    let q3 = r.hi / o.hi;
+    let q = quick_two_sum(q1, q2);
     return q + dd_of(q3);
   }
 }
@@ -716,25 +716,25 @@ impl[T: Lanes] Lanes for DoubleDouble[T] {
     return self * b + c;
   }
   function sqrt(self: DoubleDouble[T]): DoubleDouble[T] {
-    let x: T = self.hi.sqrt();
-    let xd: DoubleDouble[T] = dd_of(x);
+    let x = self.hi.sqrt();
+    let xd = dd_of(x);
     let r: DoubleDouble[T] = (self - xd * xd) / (xd + xd);
-    let zero: T = self.hi.lt(T.splat(0.0)) + eq(self.hi, T.splat(0.0));
-    let root: DoubleDouble[T] = xd + r;
+    let zero = self.hi.lt(T.splat(0.0)) + eq(self.hi, T.splat(0.0));
+    let root = xd + r;
     return DoubleDouble { hi: T.select(zero, x, root.hi), lo: T.select(zero, T.splat(0.0), root.lo) };
   }
   function abs(self: DoubleDouble[T]): DoubleDouble[T] {
-    let neg: T = self.hi.lt(T.splat(0.0));
+    let neg = self.hi.lt(T.splat(0.0));
     return DoubleDouble { hi: T.select(neg, -self.hi, self.hi), lo: T.select(neg, -self.lo, self.lo) };
   }
   function floor(self: DoubleDouble[T]): DoubleDouble[T] {
-    let f: T = self.hi.floor();
-    let whole: T = eq(f, self.hi);
+    let f = self.hi.floor();
+    let whole = eq(f, self.hi);
     return quick_two_sum(f, T.select(whole, self.lo.floor(), T.splat(0.0)));
   }
   function round(self: DoubleDouble[T]): DoubleDouble[T] {
-    let r: T = self.hi.round();
-    let whole: T = eq(r, self.hi);
+    let r = self.hi.round();
+    let whole = eq(r, self.hi);
     return quick_two_sum(r, T.select(whole, self.lo.round(), T.splat(0.0)));
   }
   function min(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
@@ -744,7 +744,7 @@ impl[T: Lanes] Lanes for DoubleDouble[T] {
     return dd_select(self.lt(o).hi, o, self);
   }
   function lt(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
-    let m: T = self.hi.lt(o.hi) + eq(self.hi, o.hi) * self.lo.lt(o.lo);
+    let m = self.hi.lt(o.hi) + eq(self.hi, o.hi) * self.lo.lt(o.lo);
     return DoubleDouble { hi: m, lo: T.splat(0.0) };
   }
   function ne(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
@@ -772,55 +772,55 @@ function dd_pio2[T: Lanes](): DoubleDouble[T] {
 }
 
 function dd_series[T: Lanes](x: DoubleDouble[T], first: i32, last: i32, acc: DoubleDouble[T]): DoubleDouble[T] {
-  let term: DoubleDouble[T] = dd_splat[T](1.0);
-  let k: i32 = 1;
-  let sum: DoubleDouble[T] = acc;
+  let term = dd_splat[T](1.0);
+  let k = 1;
+  let sum = acc;
   while (k <= last) {
     term = term * x / dd_splat[T](k as f64);
     if (k >= first) {
-      sum = sum + term;
+      sum += term;
     }
-    k = k + 1;
+    k += 1;
   }
   return sum;
 }
 
 function dd_exp_reduced[T: Lanes](r: DoubleDouble[T]): DoubleDouble[T] {
-  let s: DoubleDouble[T] = r.ldexp(dd_splat[T](-9.0));
-  let p: DoubleDouble[T] = dd_series(s, 1, 12, dd_splat[T](0.0));
-  let two: DoubleDouble[T] = dd_splat[T](2.0);
-  let i: i32 = 0;
+  let s = r.ldexp(dd_splat[T](-9.0));
+  let p = dd_series(s, 1, 12, dd_splat[T](0.0));
+  let two = dd_splat[T](2.0);
+  let i = 0;
   while (i < 9) {
-    p = p * (p + two);
-    i = i + 1;
+    p *= p + two;
+    i += 1;
   }
   return p;
 }
 
 function dd_sin_reduced[T: Lanes](r: DoubleDouble[T]): DoubleDouble[T] {
-  let x2: DoubleDouble[T] = r * r;
-  let term: DoubleDouble[T] = r;
-  let sum: DoubleDouble[T] = r;
-  let k: i32 = 1;
+  let x2 = r * r;
+  let term = r;
+  let sum = r;
+  let k = 1;
   while (k < 15) {
-    let n: f64 = (2 * k) as f64;
+    let n = (2 * k) as f64;
     term = -(term * x2) / dd_splat[T](n * (n + 1.0));
-    sum = sum + term;
-    k = k + 1;
+    sum += term;
+    k += 1;
   }
   return sum;
 }
 
 function dd_cos_reduced[T: Lanes](r: DoubleDouble[T]): DoubleDouble[T] {
-  let x2: DoubleDouble[T] = r * r;
-  let term: DoubleDouble[T] = dd_splat[T](1.0);
-  let sum: DoubleDouble[T] = term;
-  let k: i32 = 1;
+  let x2 = r * r;
+  let term = dd_splat[T](1.0);
+  let sum = term;
+  let k = 1;
   while (k < 15) {
-    let n: f64 = (2 * k) as f64;
+    let n = (2 * k) as f64;
     term = -(term * x2) / dd_splat[T](n * (n - 1.0));
-    sum = sum + term;
-    k = k + 1;
+    sum += term;
+    k += 1;
   }
   return sum;
 }
@@ -838,19 +838,19 @@ struct Reduced[T] { r: DoubleDouble[T], q: T }
 ```fern
 <<19 function dd_quadrant[T: Lanes](x: DoubleDouble[T]): Reduced[T]>>=
 function dd_quadrant[T: Lanes](x: DoubleDouble[T]): Reduced[T] {
-  let k: T = (x.hi / dd_pio2[T]().hi).round();
-  let r: DoubleDouble[T] = x - dd_pio2[T]() * dd_of(k);
-  let four: T = T.splat(4.0);
-  let q: T = k - four * (k / four).floor();
+  let k = (x.hi / dd_pio2[T]().hi).round();
+  let r = x - dd_pio2[T]() * dd_of(k);
+  let four = T.splat(4.0);
+  let q = k - four * (k / four).floor();
   return Reduced { r: r, q: q };
 }
 
 function dd_pick[T: Lanes](q: T, s: DoubleDouble[T], c: DoubleDouble[T], shift: f64): DoubleDouble[T] {
-  let qq: T = q + T.splat(shift);
+  let qq = q + T.splat(shift);
   qq = qq - T.splat(4.0) * (qq / T.splat(4.0)).floor();
-  let odd: T = eq(qq, T.splat(1.0)) + eq(qq, T.splat(3.0));
-  let flip: T = eq(qq, T.splat(2.0)) + eq(qq, T.splat(3.0));
-  let y: DoubleDouble[T] = dd_select(odd, c, s);
+  let odd = eq(qq, T.splat(1.0)) + eq(qq, T.splat(3.0));
+  let flip = eq(qq, T.splat(2.0)) + eq(qq, T.splat(3.0));
+  let y = dd_select(odd, c, s);
   return dd_select(flip, -y, y);
 }
 ```
@@ -861,63 +861,63 @@ function dd_pick[T: Lanes](q: T, s: DoubleDouble[T], c: DoubleDouble[T], shift: 
 <<20 impl[T: Math] Math for DoubleDouble[T]>>=
 impl[T: Math] Math for DoubleDouble[T] {
   function exp(self: DoubleDouble[T]): DoubleDouble[T] {
-    let k: T = (self.hi / dd_ln2[T]().hi).round();
-    let r: DoubleDouble[T] = self - dd_ln2[T]() * dd_of(k);
-    let e: DoubleDouble[T] = dd_exp_reduced(r) + dd_splat[T](1.0);
+    let k = (self.hi / dd_ln2[T]().hi).round();
+    let r = self - dd_ln2[T]() * dd_of(k);
+    let e = dd_exp_reduced(r) + dd_splat[T](1.0);
     return e.ldexp(dd_of(k));
   }
   function log(self: DoubleDouble[T]): DoubleDouble[T] {
-    let y: DoubleDouble[T] = dd_of(self.hi.log());
-    let one: DoubleDouble[T] = dd_splat[T](1.0);
+    let y = dd_of(self.hi.log());
+    let one = dd_splat[T](1.0);
     y = y + self * (-y).exp() - one;
     y = y + self * (-y).exp() - one;
     return y;
   }
   function sin(self: DoubleDouble[T]): DoubleDouble[T] {
-    let red: Reduced[T] = dd_quadrant(self);
+    let red = dd_quadrant(self);
     return dd_pick(red.q, dd_sin_reduced(red.r), dd_cos_reduced(red.r), 0.0);
   }
   function cos(self: DoubleDouble[T]): DoubleDouble[T] {
-    let red: Reduced[T] = dd_quadrant(self);
+    let red = dd_quadrant(self);
     return dd_pick(red.q, dd_sin_reduced(red.r), dd_cos_reduced(red.r), 1.0);
   }
   function tan(self: DoubleDouble[T]): DoubleDouble[T] {
     return self.sin() / self.cos();
   }
   function tanh(self: DoubleDouble[T]): DoubleDouble[T] {
-    let e: DoubleDouble[T] = (self + self).expm1();
+    let e = (self + self).expm1();
     return e / (e + dd_splat[T](2.0));
   }
   function atan(self: DoubleDouble[T]): DoubleDouble[T] {
-    let y: DoubleDouble[T] = dd_of(self.hi.atan());
-    let i: i32 = 0;
+    let y = dd_of(self.hi.atan());
+    let i = 0;
     while (i < 2) {
-      let s: DoubleDouble[T] = y.sin();
-      let c: DoubleDouble[T] = y.cos();
+      let s = y.sin();
+      let c = y.cos();
       y = y - (s - self * c) / (c + self * s);
-      i = i + 1;
+      i += 1;
     }
     return y;
   }
   function expm1(self: DoubleDouble[T]): DoubleDouble[T] {
-    let small: T = self.hi.abs().lt(T.splat(0.5));
-    let direct: DoubleDouble[T] = dd_series(self, 1, 30, dd_splat[T](0.0));
-    let far: DoubleDouble[T] = self.exp() - dd_splat[T](1.0);
+    let small = self.hi.abs().lt(T.splat(0.5));
+    let direct = dd_series(self, 1, 30, dd_splat[T](0.0));
+    let far = self.exp() - dd_splat[T](1.0);
     return dd_select(small, direct, far);
   }
   function log1p(self: DoubleDouble[T]): DoubleDouble[T] {
-    let small: T = self.hi.abs().lt(T.splat(0.5));
-    let s: DoubleDouble[T] = self / (self + dd_splat[T](2.0));
-    let s2: DoubleDouble[T] = s * s;
-    let term: DoubleDouble[T] = s;
-    let sum: DoubleDouble[T] = s;
-    let k: i32 = 1;
+    let small = self.hi.abs().lt(T.splat(0.5));
+    let s = self / (self + dd_splat[T](2.0));
+    let s2 = s * s;
+    let term = s;
+    let sum = s;
+    let k = 1;
     while (k < 26) {
-      term = term * s2;
+      term *= s2;
       sum = sum + term / dd_splat[T]((2 * k + 1) as f64);
-      k = k + 1;
+      k += 1;
     }
-    let far: DoubleDouble[T] = (self + dd_splat[T](1.0)).log();
+    let far = (self + dd_splat[T](1.0)).log();
     return dd_select(small, sum + sum, far);
   }
   function pow(self: DoubleDouble[T], y: DoubleDouble[T]): DoubleDouble[T] {

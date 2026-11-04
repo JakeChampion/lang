@@ -1,0 +1,22 @@
+// The arms of a value `match` on a tuple, a struct or a nested pattern, and
+// the arms of a value `if let`, are different members of a union. Nothing
+// names the union they must widen to, so the arms disagree.
+
+struct Circle { r: i32 }
+
+struct Square { s: i32 }
+
+type Shape = Circle | Square;
+
+struct Key { n: i32 }
+
+function main(): i32 {
+  let t = (1, 2);
+  let tm = match (t) { (1, _) => Circle { r: 1 }, _ => Square { s: 2 } };
+  let key = Key { n: 0 };
+  let sm = match (key) { Key { n: 0 } => Square { s: 3 }, _ => Circle { r: 4 } };
+  let o: Option[(i32, i32)] = Some((1, 2));
+  let nm = match (o) { Some((1, _)) => Square { s: 5 }, _ => Circle { r: 6 } };
+  let im = if let Some(q) = o { Circle { r: 7 } } else { Square { s: 8 } };
+  return 0;
+}

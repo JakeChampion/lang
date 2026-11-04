@@ -69,7 +69,7 @@ pub function bearer[U](req: HttpRequest, verify: (string) => Option[U], next: (U
 }
 
 pub function basic[U](req: HttpRequest, realm: string, verify: (string, string) => Option[U], next: (U) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-  let challenge: string = "Basic realm=\"" + __quoted(realm) + "\", charset=\"UTF-8\"";
+  let challenge = "Basic realm=\"" + __quoted(realm) + "\", charset=\"UTF-8\"";
   match (credential(req, "Basic")) {
     Some(encoded) => {
       match (__user_pass(encoded)) {
@@ -98,11 +98,11 @@ pub function basic[U](req: HttpRequest, realm: string, verify: (string, string) 
 pub function credential(req: HttpRequest, scheme: string): Option[string] {
   match (req.headers.get("authorization")) {
     Some(v) => {
-      let value: string = v.trim();
+      let value = v.trim();
       if (value.len() <= scheme.len() + 1 || !value.starts_with_ci(scheme) || value[scheme.len()] != b' ') {
         return None;
       }
-      let rest: string = value.slice_snap(scheme.len() + 1, value.len()).trim();
+      let rest = value.slice_snap(scheme.len() + 1, value.len()).trim();
       if (rest.len() == 0) {
         return None;
       }
@@ -119,13 +119,13 @@ pub function token_eq(a: string, b: string): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let diff: i32 = 0;
-  let i: i32 = 0;
+  let diff = 0;
+  let i = 0;
   while (i < a.len()) {
-    let x: i32 = a[i] as i32;
-    let y: i32 = b[i] as i32;
+    let x = a[i] as i32;
+    let y = b[i] as i32;
     diff = diff | x ^ y;
-    i = i + 1;
+    i += 1;
   }
   return diff == 0;
 }
@@ -174,9 +174,9 @@ function __user_pass(encoded: string): Option[(string, string)] {
 }
 
 function __token68(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len() && __token68_byte(s[i] as i32)) {
-    i = i + 1;
+    i += 1;
   }
   if (i == 0) {
     return false;
@@ -185,7 +185,7 @@ function __token68(s: string): boolean {
     if (s[i] != b'=') {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }

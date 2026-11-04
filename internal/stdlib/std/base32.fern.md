@@ -71,7 +71,7 @@ function __b32_decode_char(c: i32): i32 {
   if (c >= 50 && c < 56) {
     return c - 24;
   }
-  return 0 - 1;
+  return -1;
 }
 ```
 
@@ -81,18 +81,18 @@ function __b32_decode_char(c: i32): i32 {
 <<4 pub function encode(bs: [u8]): string>>=
 pub function encode(bs: [u8]): string {
   let out: u8[] = [];
-  let acc: i32 = 0;
-  let bits: i32 = 0;
-  let i: i32 = 0;
-  let n: i32 = bs.len();
+  let acc = 0;
+  let bits = 0;
+  let i = 0;
+  let n = bs.len();
   while (i < n) {
     acc = acc << 8 | bs[i] as i32;
-    bits = bits + 8;
+    bits += 8;
     while (bits >= 5) {
-      bits = bits - 5;
+      bits -= 5;
       out = out.append(__b32_alphabet(acc >> bits & 31) as u8);
     }
-    i = i + 1;
+    i += 1;
   }
   if (bits > 0) {
     out = out.append(__b32_alphabet(acc << 5 - bits & 31) as u8);
@@ -104,35 +104,35 @@ pub function encode(bs: [u8]): string {
 }
 
 pub function decode(input: string): Result[u8[], codec.DecodeError] {
-  let n: i32 = 0;
+  let n = 0;
   while (n < input.len() && input[n] != 61) {
     if (__b32_decode_char(input[n] as i32) < 0) {
       return Err(codec.error("base32", n, codec.InvalidByte(input[n])));
     }
-    n = n + 1;
+    n += 1;
   }
   if let Some(problem) = codec.padding_error(input, n, 6, 8, "base32") {
     return Err(problem);
   }
-  let rem: i32 = n % 8;
+  let rem = n % 8;
   if (rem == 1 || rem == 3 || rem == 6) {
     return Err(codec.error("base32", n, codec.InvalidLength));
   }
-  let trailing: i32 = rem * 5 % 8;
+  let trailing = rem * 5 % 8;
   if (trailing > 0 && (__b32_decode_char(input[n - 1] as i32) & (1 << trailing) - 1) != 0) {
     return Err(codec.error("base32", n - 1, codec.NonZeroTrailingBits));
   }
-  let output: u8[] = __alloc_u8(n / 8 * 5 + rem * 5 / 8);
-  let at: i32 = 0;
-  let acc: i32 = 0;
-  let bits: i32 = 0;
+  let output = __alloc_u8(n / 8 * 5 + rem * 5 / 8);
+  let at = 0;
+  let acc = 0;
+  let bits = 0;
   for i in 0..n {
     acc = acc << 5 | __b32_decode_char(input[i] as i32);
-    bits = bits + 5;
+    bits += 5;
     if (bits >= 8) {
-      bits = bits - 8;
+      bits -= 8;
       output = output.with(at, (acc >> bits & 255) as u8);
-      at = at + 1;
+      at += 1;
     }
   }
   return Ok(output);

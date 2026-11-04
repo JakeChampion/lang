@@ -1,0 +1,2 @@
+match arms have incompatible types: Circle vs Square
+if-expression branches differ: Circle vs Square

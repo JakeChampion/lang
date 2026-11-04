@@ -1,0 +1,20 @@
+// A binding of a fresh call that can hold a handle stays owned, so the
+// handle moves once. A copy moves it, and a close after the copy is a use
+// after move.
+function main(): i32 {
+  match (open_reader("/dev/null")) {
+    Err(_) => {
+      return 1;
+    },
+    Ok(r) => {
+      let kept = r;
+      match (r.close()) {
+        Err(_) => {
+          return 2;
+        },
+        Ok(_) => {}
+      }
+    }
+  }
+  return 0;
+}

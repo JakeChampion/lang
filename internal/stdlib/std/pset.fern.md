@@ -75,10 +75,10 @@ pub function new[T](): PSet[T] {
 
 pub function of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
   let s: PSet[T] = new();
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     s = s.insert(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
@@ -124,11 +124,11 @@ pub function (s: PSet[T: cmp.Hash + cmp.Eq]) union(other: PSet[T]): PSet[T] {
 ```fern
 <<5 function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T]>>=
 function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
-  let out: PSet[T] = s;
-  let i: i32 = 0;
+  let out = s;
+  let i = 0;
   while (i < xs.len()) {
     out = out.insert(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -140,24 +140,24 @@ function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
 <<6 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T]>>=
 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T] {
   let out: PSet[T] = new();
-  let xs: T[] = s.to_array();
-  let i: i32 = 0;
+  let xs = s.to_array();
+  let i = 0;
   while (i < xs.len()) {
     if (other.contains(xs[i])) {
       out = out.insert(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) difference(other: PSet[T]): PSet[T] {
-  let out: PSet[T] = s;
-  let xs: T[] = other.to_array();
-  let i: i32 = 0;
+  let out = s;
+  let xs = other.to_array();
+  let i = 0;
   while (i < xs.len()) {
     out = out.remove(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -166,13 +166,13 @@ pub function (s: PSet[T: cmp.Hash + cmp.Eq]) is_subset(other: PSet[T]): boolean 
   if (s.len() > other.len()) {
     return false;
   }
-  let xs: T[] = s.to_array();
-  let i: i32 = 0;
+  let xs = s.to_array();
+  let i = 0;
   while (i < xs.len()) {
     if (!other.contains(xs[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -192,15 +192,15 @@ impl[T: cmp.Hash] cmp.Hash for PSet[T] {
 
 impl[T: cmp.Display] cmp.Display for PSet[T] {
   function to_string(self: PSet[T]): string {
-    let out: string = "{";
-    let xs: T[] = self.to_array();
-    let i: i32 = 0;
+    let out = "{";
+    let xs = self.to_array();
+    let i = 0;
     while (i < xs.len()) {
       if (i > 0) {
-        out = out + ", ";
+        out += ", ";
       }
-      out = out + xs[i].to_string();
-      i = i + 1;
+      out += xs[i].to_string();
+      i += 1;
     }
     return out + "}";
   }
@@ -208,13 +208,13 @@ impl[T: cmp.Display] cmp.Display for PSet[T] {
 
 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) filter(pred: (T) => boolean): PSet[T] {
   let out: PSet[T] = new();
-  let xs: T[] = s.to_array();
-  let i: i32 = 0;
+  let xs = s.to_array();
+  let i = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       out = out.insert(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

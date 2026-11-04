@@ -6,12 +6,15 @@ This module finds the pitch period of a signal, and holds the linear prediction 
 
 The pitch search works on a copy of the signal at half the sample rate. A filter of five taps makes the spectrum of that copy flat, so the strong harmonics do not hide the period. Then a coarse search at a quarter of the rate finds the two best candidates. A fine search at half the rate examines the periods near them, and an interpolation can move the result by one sample.
 
+The encoder searches for the period of the prefilter at half the rate. A strong correlation at a multiple of the true period can win that search. `remove_doubling` examines each period `T / k` for `k` from 2 to 15. It takes the shortest period whose gain passes a threshold, then corrects the result by one sample and gives the gain of the prefilter.
+
 The linear prediction finds the filter of order `p` that predicts each sample from the samples before it. `lpc` gets the filter from the autocorrelation, `fir` gives the error of the prediction, and `iir` makes a signal again from an error signal.
 
 ## Contracts
 
 - An offset `at` in an argument is the index of the first value. `fir` and `iir` also read the `ord` values before it.
-- `pitch_search` takes the signals at half the rate that `pitch_downsample` gives. `len` and `max_pitch` are in samples at the full rate, and are multiples of 4. It reads `len / 2` values of `x` and `(len + max_pitch) / 2` values of `y`.
+- `pitch_search` takes the signals at half the rate that `pitch_downsample` gives. `len` and `max_pitch` are in samples at the full rate, and `len` is a multiple of 4. It reads `len / 2` values of `x` and `(len + max_pitch) / 2` values of `y`.
+- `remove_doubling` takes the signal at half the rate, with `maxperiod / 2` values of history before the `n / 2` values of the frame. `maxperiod`, `minperiod`, `n`, the period `t0` and the period of the last frame are at the full rate.
 - `iir` takes an `n` that is a multiple of 4, and an `ord` that is a multiple of 4.
 - The arithmetic is in f32, in the same order as libopus, so the results are the same bits.
 
@@ -26,6 +29,8 @@ The linear prediction finds the filter of order `p` that predicts each sample fr
 <<prediction>>
 
 <<pitch>>
+
+<<doubling>>
 ```
 
 ### `module introduction`
@@ -60,6 +65,7 @@ The linear prediction finds the filter of order `p` that predicts each sample fr
 // LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+import "std/f64";
 import "std/opus/modes";
 ```
 
@@ -386,5 +392,148 @@ pub function pitch_search(x: [f32], xa: i32, y: [f32], len: i32, max_pitch: i32)
     }
   }
   return 2 * p - offset;
+}
+```
+
+### `doubling`
+
+The gain of a period is its correlation, normalised by the energy of the frame and of the signal one period earlier. The square root is in f64, as `celt_sqrt` is in the float build of libopus. The search compares each shorter period `T1` with a threshold that falls when `T1` is near the period of the last frame. For `k` above 2, the search also averages the correlation at a second multiple of `T1`. Thus a period of `T / k` must explain more of the signal than `T` does.
+
+libopus also tests `T1 < 2 * minperiod` after the test of `T1 < 3 * minperiod`. The first test is true whenever the second is true, so the port does not have the second test.
+
+```fern
+<<doubling>>=
+pub struct Doubling { period: i32, gain: f32 }
+
+struct Candidate { t: i32, xy: f32, yy: f32, g: f32 }
+
+const SECOND_CHECK: i32[] = [0, 0, 3, 2, 3, 2, 5, 2, 3, 2, 3, 2, 5, 2, 3, 2];
+
+const LOW_FLOOR: f32 = 0.30000001192092896f32;
+
+const HIGH_FLOOR: f32 = 0.4000000059604645f32;
+
+const HIGH_SCALE: f32 = 0.8500000238418579f32;
+
+function pitch_gain(xy: f32, xx: f32, yy: f32): f32 {
+  return xy / (((1.0f32 + xx * yy) as f64).sqrt() as f32);
+}
+
+// The energy of the `n` values before `b - i`, for each `i` up to `max`.
+function yy_lookup(x: [f32], b: i32, n: i32, max: i32, xx: f32): f32[] {
+  let out: f32[] = [xx];
+  let yy: f32 = xx;
+  for i in 1..max + 1 {
+    yy = yy + x[b - i] * x[b - i] - x[b + n - i] * x[b + n - i];
+    if (0.0f32 > yy) {
+      out = out.append(0.0f32);
+    } else {
+      out = out.append(yy);
+    }
+  }
+  return out;
+}
+
+// The second period that the search averages with `t1`.
+function second_period(t0: i32, t1: i32, k: i32, max: i32): i32 {
+  if (k > 2) {
+    return (2 * SECOND_CHECK[k] * t0 + k) / (2 * k);
+  }
+  if (t1 + t0 > max) {
+    return t0;
+  }
+  return t0 + t1;
+}
+
+// The part of the gain of the last frame that `t1` keeps.
+function continuity(t1: i32, k: i32, t0: i32, prev_period: i32, prev_gain: f32): f32 {
+  let d: i32 = abs(t1 - prev_period);
+  if (d <= 1) {
+    return prev_gain;
+  }
+  if (d <= 2 && 5 * k * k < t0) {
+    return 0.5f32 * prev_gain;
+  }
+  return 0.0f32;
+}
+
+function threshold(t1: i32, minperiod: i32, g0: f32, cont: f32): f32 {
+  let floor: f32 = LOW_FLOOR;
+  let t: f32 = INTERPOLATE * g0 - cont;
+  if (t1 < 3 * minperiod) {
+    floor = HIGH_FLOOR;
+    t = HIGH_SCALE * g0 - cont;
+  }
+  if (floor > t) {
+    return floor;
+  }
+  return t;
+}
+
+// The gain of the chosen period, which is at most its normalised gain.
+function doubling_gain(c: Candidate): f32 {
+  let xy: f32 = c.xy;
+  if (0.0f32 > xy) {
+    xy = 0.0f32;
+  }
+  let pg: f32 = 1.0f32;
+  if (!(c.yy <= xy)) {
+    pg = xy / (c.yy + 1.0f32);
+  }
+  if (pg > c.g) {
+    return c.g;
+  }
+  return pg;
+}
+
+// The period at the full rate: `2 * t`, moved by one sample toward the
+// stronger neighbour, and at least `minperiod`.
+function doubling_period(x: [f32], b: i32, n: i32, t: i32, minperiod: i32): i32 {
+  let c0: f32 = inner_prod(x, b, x, b - (t - 1), n);
+  let c1: f32 = inner_prod(x, b, x, b - t, n);
+  let c2: f32 = inner_prod(x, b, x, b - (t + 1), n);
+  let offset: i32 = 0;
+  if (c2 - c0 > INTERPOLATE * (c1 - c0)) {
+    offset = 1;
+  } else if (c0 - c2 > INTERPOLATE * (c1 - c2)) {
+    offset = -1;
+  }
+  let p: i32 = 2 * t + offset;
+  if (p < minperiod) {
+    return minperiod;
+  }
+  return p;
+}
+
+// The period and the gain of the prefilter for `x`, from the period `t0`
+// that the search found.
+pub function remove_doubling(x: [f32], maxperiod: i32, minperiod: i32, n: i32, t0: i32, prev_period: i32, prev_gain: f32): Doubling {
+  let max: i32 = maxperiod / 2;
+  let min: i32 = minperiod / 2;
+  let half: i32 = n / 2;
+  let prev: i32 = prev_period / 2;
+  let t: i32 = t0 / 2;
+  if (t >= max) {
+    t = max - 1;
+  }
+  let xx: f32 = inner_prod(x, max, x, max, half);
+  let yy: f32[] = yy_lookup(x, max, half, max, xx);
+  let xy0: f32 = inner_prod(x, max, x, max - t, half);
+  let g0: f32 = pitch_gain(xy0, xx, yy[t]);
+  let best: Candidate = Candidate { t: t, xy: xy0, yy: yy[t], g: g0 };
+  for k in 2..16 {
+    let t1: i32 = (2 * t + k) / (2 * k);
+    if (t1 < min) {
+      break;
+    }
+    let t1b: i32 = second_period(t, t1, k, max);
+    let xy: f32 = 0.5f32 * (inner_prod(x, max, x, max - t1, half) + inner_prod(x, max, x, max - t1b, half));
+    let yy1: f32 = 0.5f32 * (yy[t1] + yy[t1b]);
+    let g1: f32 = pitch_gain(xy, xx, yy1);
+    if (g1 > threshold(t1, min, g0, continuity(t1, k, t, prev, prev_gain))) {
+      best = Candidate { t: t1, xy: xy, yy: yy1, g: g1 };
+    }
+  }
+  return Doubling { period: doubling_period(x, max, half, best.t, minperiod), gain: doubling_gain(best) };
 }
 ```

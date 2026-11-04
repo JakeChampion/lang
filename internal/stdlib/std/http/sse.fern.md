@@ -91,7 +91,7 @@ pub function (e: Event) with_retry(delay: Duration): Event {
 }
 
 pub function (e: Event) encode(): string {
-  let out: string = "";
+  let out = "";
   if (e.name.len() > 0) {
     out = out + "event: " + __one_line(e.name) + "\n";
   }
@@ -145,27 +145,27 @@ function __encoded(e: Option[Event]): Option[u8[]] {
 }
 
 function __one_line(s: string): string {
-  let out: string = "";
+  let out = "";
   for line in __lines(s) {
-    out = out + line;
+    out += line;
   }
   return out;
 }
 
 function __lines(s: string): string[] {
   let out: string[] = [];
-  let bs: u8[] = s.bytes();
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let bs = s.bytes();
+  let start = 0;
+  let i = 0;
   while (i < bs.len()) {
     if (bs[i] == 10 || bs[i] == 13) {
       out = out.append(utf8.from_bytes_lossy(array.slice(bs, start, i)));
       if (bs[i] == 13 && i + 1 < bs.len() && bs[i + 1] == 10) {
-        i = i + 1;
+        i += 1;
       }
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out.append(utf8.from_bytes_lossy(array.slice(bs, start, bs.len())));
 }
@@ -190,12 +190,12 @@ pub function decoder(): Decoder {
 pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
   let unmarked: (Decoder, u8[]) = __unmarked(d, d.buf.concat(bytes));
   d = unmarked.0;
-  let buf: u8[] = unmarked.1;
+  let buf = unmarked.1;
   let out: Event[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i < buf.len()) {
-    let brk: i32 = __break_at(buf, i);
+    let brk = __break_at(buf, i);
     if (brk < 0) {
       break;
     }
@@ -211,7 +211,7 @@ pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
       i = i + brk - 1;
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return (Decoder { ...d, buf: array.slice(buf, start, buf.len()) }, out);
 }
@@ -255,8 +255,8 @@ function __line(d: Decoder, line: string): (Decoder, Option[Event]) {
   if (line.starts_with(":")) {
     return (d, None);
   }
-  let field: string = line;
-  let value: string = "";
+  let field = line;
+  let value = "";
   if let Some(at) = line.index_of(":") {
     field = line.slice_snap(0, at);
     value = line.slice_snap(at + 1, line.len());
@@ -303,11 +303,11 @@ function __has_nul(s: string): boolean {
 }
 
 function __dispatch(d: Decoder): (Decoder, Option[Event]) {
-  let cleared: Decoder = Decoder { ...d, data: "", name: "" };
+  let cleared = Decoder { ...d, data: "", name: "" };
   if (d.data.len() == 0) {
     return (cleared, None);
   }
-  let data: string = d.data.slice_snap(0, d.data.len() - 1);
+  let data = d.data.slice_snap(0, d.data.len() - 1);
   return (cleared, Some(Event { data: data, name: d.name, id: d.last_id, retry: None }));
 }
 ```

@@ -83,7 +83,7 @@ import "core/ops";
 ```fern
 <<3 pub function (xs: (T: ops.Gcd + ops.Zero)[]) gcd_all(): T>>=
 pub function (xs: (T: ops.Gcd + ops.Zero)[]) gcd_all(): T {
-  let g: T = T.zero();
+  let g = T.zero();
   for x in xs {
     g = g.gcd(x);
   }
@@ -91,7 +91,7 @@ pub function (xs: (T: ops.Gcd + ops.Zero)[]) gcd_all(): T {
 }
 
 pub function (xs: (T: ops.Gcd + ops.One)[]) lcm_all(): T {
-  let l: T = T.one();
+  let l = T.one();
   for x in xs {
     l = l.lcm(x);
   }
@@ -99,24 +99,24 @@ pub function (xs: (T: ops.Gcd + ops.One)[]) lcm_all(): T {
 }
 
 pub function (arr: i32[]) abs_each(): i32[] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(arr[i].abs());
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (arr: i32[]) min_max(): Option[(i32, i32)] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n == 0) {
     return None;
   }
-  let lo: i32 = arr[0];
-  let hi: i32 = arr[0];
-  let i: i32 = 1;
+  let lo = arr[0];
+  let hi = arr[0];
+  let i = 1;
   while (i < n) {
     if (arr[i] < lo) {
       lo = arr[i];
@@ -124,49 +124,49 @@ pub function (arr: i32[]) min_max(): Option[(i32, i32)] {
     if (arr[i] > hi) {
       hi = arr[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return Some((lo, hi));
 }
 
 pub function (arr: i32[]) every_positive(): boolean {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     if (arr[i] <= 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function (arr: i32[]) sum_squared(): i32 {
-  let n: i32 = arr.len();
-  let s: i32 = 0;
-  let i: i32 = 0;
+  let n = arr.len();
+  let s = 0;
+  let i = 0;
   while (i < n) {
     s = s + arr[i] * arr[i];
-    i = i + 1;
+    i += 1;
   }
   return s;
 }
 
 pub function (arr: i32[]) mode(): Option[i32] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n == 0) {
     return None;
   }
-  let best: i32 = arr[0];
-  let best_count: i32 = 1;
-  let i: i32 = 0;
+  let best = arr[0];
+  let best_count = 1;
+  let i = 0;
   while (i < n) {
-    let c: i32 = arr.count(arr[i]);
+    let c = arr.count(arr[i]);
     if (c > best_count) {
       best = arr[i];
       best_count = c;
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -177,136 +177,136 @@ pub function (arr: i32[]) mode(): Option[i32] {
 ```fern
 <<4 pub function (arr: string[]) join(sep: string): string>>=
 pub function (arr: string[]) join(sep: string): string {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n == 0) {
     return "";
   }
   if (n == 1) {
     return arr[0];
   }
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let total = 0;
+  let i = 0;
   while (i < n) {
-    total = total + arr[i].len();
-    i = i + 1;
+    total += arr[i].len();
+    i += 1;
   }
   total = total + sep.len() * (n - 1);
-  let b: usize = buf_new(total);
+  let b = buf_new(total);
   i = 0;
   while (i < n) {
     if (i > 0) {
       buf_push(b, sep);
     }
     buf_push(b, arr[i]);
-    i = i + 1;
+    i += 1;
   }
-  let out: string = buf_take(b);
+  let out = buf_take(b);
   buf_free(b);
   return out;
 }
 
 pub function (arr: string[]) filter_non_empty(): string[] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (arr[i].len() > 0) {
       out = out.append(arr[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function (arr: string[]) count_non_empty(): i32 {
-  let n: i32 = arr.len();
-  let c: i32 = 0;
-  let i: i32 = 0;
+  let n = arr.len();
+  let c = 0;
+  let i = 0;
   while (i < n) {
     if (arr[i].len() > 0) {
-      c = c + 1;
+      c += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return c;
 }
 
 pub function (arr: string[]) distinct_count(): i32 {
-  let n: i32 = arr.len();
+  let n = arr.len();
   let seen: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (!cmp.contains(seen, arr[i])) {
       seen = seen.append(arr[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return seen.len();
 }
 
 pub function (arr: string[]) max_by_len(): Option[string] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n == 0) {
     return None;
   }
-  let best: string = arr[0];
-  let i: i32 = 1;
+  let best = arr[0];
+  let i = 1;
   while (i < n) {
     if (arr[i].len() > best.len()) {
       best = arr[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
 
 pub function (arr: string[]) min_by_len(): Option[string] {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n == 0) {
     return None;
   }
-  let best: string = arr[0];
-  let i: i32 = 1;
+  let best = arr[0];
+  let i = 1;
   while (i < n) {
     if (arr[i].len() < best.len()) {
       best = arr[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
 
 pub function (arr: string[]) sum_lens(): i32 {
-  let n: i32 = arr.len();
-  let s: i32 = 0;
-  let i: i32 = 0;
+  let n = arr.len();
+  let s = 0;
+  let i = 0;
   while (i < n) {
-    s = s + arr[i].len();
-    i = i + 1;
+    s += arr[i].len();
+    i += 1;
   }
   return s;
 }
 
 pub function (arr: string[]) all_non_empty(): boolean {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     if (arr[i].len() == 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function (arr: string[]) any_contains(needle: string): boolean {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     if (arr[i].contains(needle)) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -317,31 +317,31 @@ pub function (arr: string[]) any_contains(needle: string): boolean {
 ```fern
 <<5 pub function (arr: string[]) all_starts_with(prefix: string): boolean>>=
 pub function (arr: string[]) all_starts_with(prefix: string): boolean {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     if (!arr[i].starts_with(prefix)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function (arr: string[]) all_ends_with(suffix: string): boolean {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     if (!arr[i].ends_with(suffix)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function (arr: string[]) join_with_last(sep: string, last_sep: string): string {
-  let n: i32 = arr.len();
+  let n = arr.len();
   if (n == 0) {
     return "";
   }
@@ -351,74 +351,74 @@ pub function (arr: string[]) join_with_last(sep: string, last_sep: string): stri
   if (n == 2) {
     return arr[0] + last_sep + arr[1];
   }
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let total = 0;
+  let i = 0;
   while (i < n) {
-    total = total + arr[i].len();
-    i = i + 1;
+    total += arr[i].len();
+    i += 1;
   }
   total = total + sep.len() * (n - 2) + last_sep.len();
-  let buf: u8[] = __alloc_u8(total);
-  let pos: i32 = 0;
+  let buf = __alloc_u8(total);
+  let pos = 0;
   i = 0;
   while (i < n) {
     if (i > 0) {
-      let sp: string = sep;
+      let sp = sep;
       if (i == n - 1) {
         sp = last_sep;
       }
-      let spl: i32 = sp.len();
-      let j: i32 = 0;
+      let spl = sp.len();
+      let j = 0;
       while (j < spl) {
         buf = buf.with(pos, sp[j] as u8);
-        pos = pos + 1;
-        j = j + 1;
+        pos += 1;
+        j += 1;
       }
     }
-    let e: string = arr[i];
-    let el: i32 = e.len();
-    let k: i32 = 0;
+    let e = arr[i];
+    let el = e.len();
+    let k = 0;
     while (k < el) {
       buf = buf.with(pos, e[k] as u8);
-      pos = pos + 1;
-      k = k + 1;
+      pos += 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
 
 pub function (arr: i32[]) sum_abs(): i32 {
-  let n: i32 = arr.len();
-  let s: i32 = 0;
-  let i: i32 = 0;
+  let n = arr.len();
+  let s = 0;
+  let i = 0;
   while (i < n) {
-    s = s + arr[i].abs();
-    i = i + 1;
+    s += arr[i].abs();
+    i += 1;
   }
   return s;
 }
 
 pub function (arr: i32[]) all_zero(): boolean {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     if (arr[i] != 0) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function (arr: string[]) all_eq_str(target: string): boolean {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     if (arr[i] != target) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -440,43 +440,43 @@ pub function stddev_f64(arr: f64[]): Option[f64] {
 }
 
 pub function norm_f64(arr: f64[]): f64 {
-  let n: i32 = arr.len();
+  let n = arr.len();
   let s: f64 = 0.0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     s = s + arr[i] * arr[i];
-    i = i + 1;
+    i += 1;
   }
   return __sqrt_f64(s);
 }
 
 pub function distance_f64(a: f64[], b: f64[]): f64 {
-  let n: i32 = a.len();
-  let m: i32 = b.len();
+  let n = a.len();
+  let m = b.len();
   if (m < n) {
     n = m;
   }
   let s: f64 = 0.0;
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let d: f64 = a[i] - b[i];
+    let d = a[i] - b[i];
     s = s + d * d;
-    i = i + 1;
+    i += 1;
   }
   return __sqrt_f64(s);
 }
 
 pub function normalize_f64(arr: f64[]): f64[] {
-  let mag: f64 = norm_f64(arr);
+  let mag = norm_f64(arr);
   if (mag == 0.0) {
     return arr;
   }
   let out: f64[] = [];
-  let n: i32 = arr.len();
-  let i: i32 = 0;
+  let n = arr.len();
+  let i = 0;
   while (i < n) {
     out = out.append(arr[i] / mag);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -510,7 +510,7 @@ pub function first[T](xs: T[]): Option[T] {
 }
 
 pub function last[T](xs: T[]): Option[T] {
-  let n: i32 = xs.len();
+  let n = xs.len();
   if (n == 0) {
     return None;
   }
@@ -543,7 +543,7 @@ pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
 }
 
 pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
-  let acc: A = init;
+  let acc = init;
   for x in xs {
     acc = f(acc, x);
   }
@@ -587,12 +587,12 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
 }
 
 pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
-  let i: i32 = xs.len() - 1;
+  let i = xs.len() - 1;
   while (i >= 0) {
     if (pred(xs[i])) {
       return Some(xs[i]);
     }
-    i = i - 1;
+    i -= 1;
   }
   return None;
 }
@@ -613,16 +613,16 @@ pub function (xs: T[]) max_by_key[K: cmp.Ord](key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: T = xs[0];
-  let best_k: K = key(best);
-  let i: i32 = 1;
+  let best = xs[0];
+  let best_k = key(best);
+  let i = 1;
   while (i < xs.len()) {
-    let k: K = key(xs[i]);
+    let k = key(xs[i]);
     if (k.cmp(best_k) > 0) {
       best = xs[i];
       best_k = k;
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -636,16 +636,16 @@ pub function (xs: T[]) min_by_key[K: cmp.Ord](key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: T = xs[0];
-  let best_k: K = key(best);
-  let i: i32 = 1;
+  let best = xs[0];
+  let best_k = key(best);
+  let i = 1;
   while (i < xs.len()) {
-    let k: K = key(xs[i]);
+    let k = key(xs[i]);
     if (k.cmp(best_k) < 0) {
       best = xs[i];
       best_k = k;
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -654,13 +654,13 @@ pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: i32 = 0;
-  let i: i32 = 1;
+  let best = 0;
+  let i = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(xs[best]) > 0) {
       best = i;
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -669,13 +669,13 @@ pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: i32 = 0;
-  let i: i32 = 1;
+  let best = 0;
+  let i = 1;
   while (i < xs.len()) {
     if (xs[i].cmp(xs[best]) < 0) {
       best = i;
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -685,14 +685,14 @@ pub function running_max[T: cmp.Ord](xs: T[]): T[] {
   if (xs.len() == 0) {
     return out;
   }
-  let best: T = xs[0];
-  let i: i32 = 0;
+  let best = xs[0];
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i].cmp(best) > 0) {
       best = xs[i];
     }
     out = out.append(best);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -702,14 +702,14 @@ pub function running_min[T: cmp.Ord](xs: T[]): T[] {
   if (xs.len() == 0) {
     return out;
   }
-  let best: T = xs[0];
-  let i: i32 = 0;
+  let best = xs[0];
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i].cmp(best) < 0) {
       best = xs[i];
     }
     out = out.append(best);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -718,13 +718,13 @@ pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: T = xs[0];
-  let i: i32 = 1;
+  let best = xs[0];
+  let i = 1;
   while (i < xs.len()) {
     if (cmp(xs[i], best) > 0) {
       best = xs[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
@@ -733,36 +733,36 @@ pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let best: T = xs[0];
-  let i: i32 = 1;
+  let best = xs[0];
+  let i = 1;
   while (i < xs.len()) {
     if (cmp(xs[i], best) < 0) {
       best = xs[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return Some(best);
 }
 
 pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       return Some(i);
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
       out = out.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -773,92 +773,92 @@ pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
 ```fern
 <<9 pub function rposition[T](xs: T[], pred: (T)>>=
 pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
-  let i: i32 = xs.len() - 1;
+  let i = xs.len() - 1;
   while (i >= 0) {
     if (pred(xs[i])) {
       return Some(i);
     }
-    i = i - 1;
+    i -= 1;
   }
   return None;
 }
 
 pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
-  let c: i32 = 0;
-  let i: i32 = 0;
+  let c = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
-      c = c + 1;
+      c += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return c;
 }
 
 pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
-  let total: i32 = 0;
-  let i: i32 = 0;
+  let total = 0;
+  let i = 0;
   while (i < xs.len()) {
-    total = total + key(xs[i]);
-    i = i + 1;
+    total += key(xs[i]);
+    i += 1;
   }
   return total;
 }
 
 pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
   let out: T[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len() && pred(xs[i])) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len() && pred(xs[i])) {
-    i = i + 1;
+    i += 1;
   }
   let out: T[] = [];
   while (i < xs.len()) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function enumerate[T](xs: T[]): (i32, T)[] {
   let out: (i32, T)[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for x in xs {
     out = out.append((i, x));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function reverse[T](xs: T[]): T[] {
   let out: T[] = [];
-  let i: i32 = xs.len() - 1;
+  let i = xs.len() - 1;
   while (i >= 0) {
     out = out.append(xs[i]);
-    i = i - 1;
+    i -= 1;
   }
   return out;
 }
 
 pub function rotate_left[T](xs: T[], n: i32): T[] {
-  let len: i32 = xs.len();
+  let len = xs.len();
   let out: T[] = [];
   if (len == 0) {
     return out;
   }
-  let sh: i32 = (n % len + len) % len;
-  let i: i32 = 0;
+  let sh = (n % len + len) % len;
+  let i = 0;
   while (i < len) {
     out = out.append(xs[(i + sh) % len]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -873,13 +873,13 @@ pub function take[T](xs: T[], n: i32): T[] {
 
 pub function drop[T](xs: T[], n: i32): T[] {
   let out: T[] = [];
-  let i: i32 = n;
+  let i = n;
   if (i < 0) {
     i = 0;
   }
   while (i < xs.len()) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -893,7 +893,7 @@ pub function take_last[T](xs: T[], n: i32): T[] {
   if (n <= 0) {
     return [];
   }
-  let start: i32 = xs.len() - n;
+  let start = xs.len() - n;
   if (start < 0) {
     start = 0;
   }
@@ -913,8 +913,8 @@ pub function drop_last[T](xs: T[], n: i32): T[] {
 }
 
 pub function slice[T](xs: T[], start: i32, end: i32): T[] {
-  let lo: i32 = start;
-  let hi: i32 = end;
+  let lo = start;
+  let hi = end;
   if (lo < 0) {
     lo = 0;
   }
@@ -922,10 +922,10 @@ pub function slice[T](xs: T[], start: i32, end: i32): T[] {
     hi = xs.len();
   }
   let out: T[] = [];
-  let i: i32 = lo;
+  let i = lo;
   while (i < hi) {
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -935,15 +935,15 @@ pub function chunks[T](xs: T[], size: i32): T[][] {
   if (size <= 0) {
     return out;
   }
-  let n: i32 = xs.len();
-  let i: i32 = 0;
+  let n = xs.len();
+  let i = 0;
   while (i < n) {
-    let hi: i32 = i + size;
+    let hi = i + size;
     if (hi > n) {
       hi = n;
     }
     out = out.append(slice(xs, i, hi));
-    i = i + size;
+    i += size;
   }
   return out;
 }
@@ -953,11 +953,11 @@ pub function chunks_exact[T](xs: T[], size: i32): T[][] {
   if (size <= 0) {
     return out;
   }
-  let n: i32 = xs.len();
-  let i: i32 = 0;
+  let n = xs.len();
+  let i = 0;
   while (i + size <= n) {
     out = out.append(slice(xs, i, i + size));
-    i = i + size;
+    i += size;
   }
   return out;
 }
@@ -967,11 +967,11 @@ pub function windows[T](xs: T[], size: i32): T[][] {
   if (size <= 0) {
     return out;
   }
-  let n: i32 = xs.len();
-  let i: i32 = 0;
+  let n = xs.len();
+  let i = 0;
   while (i + size <= n) {
     out = out.append(slice(xs, i, i + size));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -989,14 +989,14 @@ pub function concat[T](a: T[], b: [T]): T[] {
 
 pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
   let out: (T, U)[] = [];
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append((a[i], b[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1051,14 +1051,14 @@ pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
 
 pub function intersperse[T](xs: T[], sep: T): T[] {
   let out: T[] = [];
-  let i: i32 = 0;
-  let n: i32 = xs.len();
+  let i = 0;
+  let n = xs.len();
   while (i < n) {
     if (i > 0) {
       out = out.append(sep);
     }
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1068,10 +1068,10 @@ pub function step_by[T](xs: T[], n: i32): T[] {
   if (n <= 0) {
     return out;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     out = out.append(xs[i]);
-    i = i + n;
+    i += n;
   }
   return out;
 }
@@ -1080,21 +1080,21 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let acc: T = xs[0];
-  let i: i32 = 1;
+  let acc = xs[0];
+  let i = 1;
   while (i < xs.len()) {
     acc = f(acc, xs[i]);
-    i = i + 1;
+    i += 1;
   }
   return Some(acc);
 }
 
 pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
-  let lo: i32 = 0;
-  let hi: i32 = xs.len();
+  let lo = 0;
+  let hi = xs.len();
   while (lo < hi) {
-    let mid: i32 = lo + (hi - lo) / 2;
-    let c: i32 = xs[mid].cmp(target);
+    let mid = lo + (hi - lo) / 2;
+    let c = xs[mid].cmp(target);
     if (c == 0) {
       return Some(mid);
     }
@@ -1108,37 +1108,37 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
 }
 
 pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
-  let n: i32 = xs.len();
+  let n = xs.len();
   if (n < 2) {
     return true;
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < n) {
     if (!xs[i].eq(xs[0])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function dedup[T: cmp.Eq](xs: T[]): T[] {
   let out: T[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (i == 0 || !xs[i].eq(xs[i - 1])) {
       out = out.append(xs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
-  let c: i32 = 0;
+  let c = 0;
   for x in xs {
     if (x.eq(target)) {
-      c = c + 1;
+      c += 1;
     }
   }
   return c;
@@ -1185,12 +1185,12 @@ pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
 }
 
 pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
-  let i: i32 = xs.len() - 1;
+  let i = xs.len() - 1;
   while (i >= 0) {
     if (xs[i].eq(target)) {
       return Some(i);
     }
-    i = i - 1;
+    i -= 1;
   }
   return None;
 }
@@ -1199,28 +1199,28 @@ pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
   if (prefix.len() > xs.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < prefix.len()) {
     if (!xs[i].eq(prefix[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
-  let n: i32 = xs.len();
-  let m: i32 = suffix.len();
+  let n = xs.len();
+  let m = suffix.len();
   if (m > n) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < m) {
     if (!xs[n - m + i].eq(suffix[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -1415,15 +1415,15 @@ pub function (xs: (T: ops.Num + ops.Zero + ops.One)[]) variance(): Option[T] {
 // The middle element of the sorted array, or the mean of the two middle
 // elements when the length is even; integers truncate.
 pub function (xs: (T: cmp.Ord + ops.Add + ops.Div + ops.One)[]) median(): Option[T] {
-  let n: i32 = xs.len();
+  let n = xs.len();
   if (n == 0) {
     return None;
   }
-  let sorted: T[] = cmp.sort(xs);
+  let sorted = cmp.sort(xs);
   if (n % 2 == 1) {
     return Some(sorted[n / 2]);
   }
-  let two: T = T.one().add(T.one());
+  let two = T.one().add(T.one());
   return Some(sorted[n / 2 - 1].add(sorted[n / 2]).div(two));
 }
 
@@ -1433,15 +1433,15 @@ pub function (xs: (T: ops.Add + ops.Mul + ops.Zero)[]) dot(other: T[]): T {
 
 // Elementwise sum, as long as the shorter array.
 pub function (xs: (T: ops.Add)[]) add(other: T[]): T[] {
-  let n: i32 = xs.len();
+  let n = xs.len();
   if (other.len() < n) {
     n = other.len();
   }
   let out: T[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(xs[i].add(other[i]));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1474,8 +1474,8 @@ pub function (xs: (T: cmp.Ord + ops.Sub)[]) spread(): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  let lo: T = xs[0];
-  let hi: T = xs[0];
+  let lo = xs[0];
+  let hi = xs[0];
   for x in xs {
     if (x.cmp(lo) < 0) {
       lo = x;

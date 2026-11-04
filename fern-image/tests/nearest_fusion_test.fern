@@ -157,7 +157,9 @@ function ownership(): test.TestOutcome {
   for _ in 1..64 {
     graph = match (pipeline.nearest(graph, 4, 4, limits)) { Ok(v) => v, Err(_) => { return test.fail("depth"); } };
   }
-  let row = match (pipeline.render_row(graph, 0, limits, never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("row"); } };
+  let Ok(row) = pipeline.render_row(graph, 0, limits, never_cancel) else {
+    return test.fail("row");
+  };
   let kept = row;
   let Ok(changed) = pixels.write_pixel(row, 0, 0, color.rgb(255, 0, 0)) else {
     return test.fail("write");

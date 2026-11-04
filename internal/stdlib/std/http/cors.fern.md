@@ -137,7 +137,7 @@ pub function preflight(req: HttpRequest, origin: string, p: Policy): Option[Http
   if (req.method != "OPTIONS") {
     return None;
   }
-  let method: string = "";
+  let method = "";
   match (req.headers.get("access-control-request-method")) {
     Some(m) => {
       method = m.trim();
@@ -146,12 +146,12 @@ pub function preflight(req: HttpRequest, origin: string, p: Policy): Option[Http
       return None;
     }
   }
-  let bare: HttpResponse = http.no_content().with_vary("Origin").with_vary("Access-Control-Request-Method").with_vary("Access-Control-Request-Headers");
-  let asked: string[] = __asked_headers(req);
+  let bare = http.no_content().with_vary("Origin").with_vary("Access-Control-Request-Method").with_vary("Access-Control-Request-Headers");
+  let asked = __asked_headers(req);
   if (!__admits(p, origin, method, asked)) {
     return Some(bare);
   }
-  let out: HttpResponse = __origin_headers(bare, origin, p).with_header("Access-Control-Allow-Methods", method);
+  let out = __origin_headers(bare, origin, p).with_header("Access-Control-Allow-Methods", method);
   if (asked.len() > 0) {
     out = out.with_header("Access-Control-Allow-Headers", asked.join(", "));
   }
@@ -187,7 +187,7 @@ function __admits(p: Policy, origin: string, method: string, asked: string[]): b
 ```fern
 <<6 pub function allowed(resp: HttpResponse, origin: string, p: Policy): HttpResponse>>=
 pub function allowed(resp: HttpResponse, origin: string, p: Policy): HttpResponse {
-  let out: HttpResponse = resp.with_vary("Origin");
+  let out = resp.with_vary("Origin");
   if (!p.allows_origin(origin)) {
     return out;
   }
@@ -204,11 +204,11 @@ pub function allowed(resp: HttpResponse, origin: string, p: Policy): HttpRespons
 ```fern
 <<7 function __origin_headers(resp: HttpResponse, origin: string, p: Policy): HttpResponse>>=
 function __origin_headers(resp: HttpResponse, origin: string, p: Policy): HttpResponse {
-  let value: string = origin;
+  let value = origin;
   if (!p.credentials && __has_str(p.origins, "*")) {
     value = "*";
   }
-  let out: HttpResponse = resp.with_header("Access-Control-Allow-Origin", value);
+  let out = resp.with_header("Access-Control-Allow-Origin", value);
   if (p.credentials) {
     out = out.with_header("Access-Control-Allow-Credentials", "true");
   }
@@ -219,7 +219,7 @@ function __asked_headers(req: HttpRequest): string[] {
   let out: string[] = [];
   for raw in req.headers.get_all("access-control-request-headers") {
     for name in raw.split(",") {
-      let t: string = name.trim();
+      let t = name.trim();
       if (t.len() > 0) {
         out = out.append(t);
       }
@@ -232,12 +232,12 @@ function __wildcard_origin(pattern: string, origin: string): boolean {
   let Some(star) = pattern.index_of("://*.") else {
     return false;
   };
-  let scheme: string = pattern.slice_snap(0, star + 3);
-  let domain: string = pattern.slice_snap(star + 4, pattern.len());
+  let scheme = pattern.slice_snap(0, star + 3);
+  let domain = pattern.slice_snap(star + 4, pattern.len());
   if (!origin.starts_with(scheme) || !origin.ends_with(domain)) {
     return false;
   }
-  let host: string = origin.slice_snap(scheme.len(), origin.len() - domain.len());
+  let host = origin.slice_snap(scheme.len(), origin.len() - domain.len());
   return host.len() > 0 && !host.contains("/") && !host.contains(":");
 }
 

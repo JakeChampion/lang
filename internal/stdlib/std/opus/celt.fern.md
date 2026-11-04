@@ -99,6 +99,8 @@ pub const MAX_PACKET: i32 = 1275;
 
 pub const COMBFILTER_MINPERIOD: i32 = 15;
 
+pub const COMBFILTER_MAXPERIOD: i32 = 1024;
+
 pub const LPC_ORDER: i32 = 24;
 
 const MEM: i32 = 2168;
@@ -215,7 +217,7 @@ The header of a frame holds the silence flag, the pitch postfilter, the transien
 
 ```fern
 <<header>>=
-const TAPSET_ICDF: u8[] = [2u8, 1u8, 0u8];
+pub const TAPSET_ICDF: u8[] = [2u8, 1u8, 0u8];
 
 pub const SPREAD_ICDF: u8[] = [25u8, 23u8, 2u8, 0u8];
 
@@ -344,7 +346,7 @@ function tf_decode(own d: range.Decoder, start: i32, end: i32, transient: boolea
 }
 
 // The largest allocation of each band, in 1/8 bits.
-function init_caps(lm: i32, channels: i32): i32[] {
+pub function init_caps(lm: i32, channels: i32): i32[] {
   let cap: i32[] = [];
   for i in 0..modes.BANDS {
     let n: i32 = modes.EBANDS[i + 1] - modes.EBANDS[i] << lm;
@@ -510,7 +512,7 @@ function anti_collapse(r: Collapse, own x: f32[], own y: f32[], log_e: [f32], pr
 
 ### `postfilter`
 
-The pitch postfilter is a comb filter with three taps around the pitch period. Over the overlap, the window fades from the filter of the last frame to the filter of this frame. The decoder runs the filter in place, so each output sample feeds the samples one period after it.
+The pitch postfilter is a comb filter with three taps around the pitch period. Over the overlap, the window fades from the filter of the last frame to the filter of this frame. The decoder runs the filter in place, so each output sample feeds the samples one period after it. The prefilter of the encoder runs the same taps as an FIR filter, with `comb_fir`.
 
 ```fern
 <<postfilter>>=
@@ -520,30 +522,30 @@ const GAINS: f32[] = [
   0.7998046875f32, 0.10009765625f32, 0.0f32,
 ];
 
-struct Comb { t0: i32, t1: i32, n: i32, g0: f32, g1: f32, tapset0: i32, tapset1: i32 }
+pub struct Comb { t0: i32, t1: i32, n: i32, g0: f32, g1: f32, tapset0: i32, tapset1: i32 }
 
-function comb_overlap(own x: f32[], at: i32, f: Comb, t0: i32, t1: i32, overlap: i32): f32[] {
-  let g00: f32 = f.g0 * GAINS[3 * f.tapset0];
-  let g01: f32 = f.g0 * GAINS[3 * f.tapset0 + 1];
-  let g02: f32 = f.g0 * GAINS[3 * f.tapset0 + 2];
-  let g10: f32 = f.g1 * GAINS[3 * f.tapset1];
-  let g11: f32 = f.g1 * GAINS[3 * f.tapset1 + 1];
-  let g12: f32 = f.g1 * GAINS[3 * f.tapset1 + 2];
-  for i in 0..overlap {
-    let w: f32 = modes.WINDOW[i] * modes.WINDOW[i];
-    let u: f32 = 1.0f32 - w;
-    let p: i32 = at + i;
-    let v: f32 = x[p] + u * g00 * x[p - t0] + u * g01 * (x[p - t0 + 1] + x[p - t0 - 1]) + u * g02 * (x[p - t0 + 2] + x[p - t0 - 2]) + w * g10 * x[p - t1] + w * g11 * (x[p - t1 + 1] + x[p - t1 - 1]) + w * g12 * (x[p - t1 + 2] + x[p - t1 - 2]);
-    x = x.with(p, v);
-  }
-  return x;
+struct Taps { a: f32, b: f32, c: f32 }
+
+function taps_of(g: f32, tapset: i32): Taps {
+  return Taps { a: g * GAINS[3 * tapset], b: g * GAINS[3 * tapset + 1], c: g * GAINS[3 * tapset + 2] };
 }
 
-// The comb filter, in place, on the `f.n` samples of `x` from `at`.
-function comb_filter(own x: f32[], at: i32, f: Comb): f32[] {
-  if (f.g0 == 0.0f32 && f.g1 == 0.0f32) {
-    return x;
-  }
+// `acc` plus the taps `t` at the period `d` before `x[p]`, each tap scaled
+// by `s`. The additions are in the order of libopus.
+function add_taps(acc: f32, x: [f32], p: i32, d: i32, t: Taps, s: f32): f32 {
+  return acc + s * t.a * x[p - d] + s * t.b * (x[p - d + 1] + x[p - d - 1]) + s * t.c * (x[p - d + 2] + x[p - d - 2]);
+}
+
+// The value at `p` of the comb filter of `x` over the overlap: the window
+// fades from the taps `old` at the period `t0` to the taps `new` at `t1`.
+function fade_taps(x: [f32], p: i32, i: i32, t0: i32, t1: i32, old: Taps, new: Taps): f32 {
+  let w: f32 = modes.WINDOW[i] * modes.WINDOW[i];
+  return add_taps(add_taps(x[p], x, p, t0, old, 1.0f32 - w), x, p, t1, new, w);
+}
+
+struct CombPlan { t0: i32, t1: i32, overlap: i32, old: Taps, new: Taps }
+
+function comb_plan(f: Comb): CombPlan {
   let t0: i32 = f.t0;
   let t1: i32 = f.t1;
   if (t0 < COMBFILTER_MINPERIOD) {
@@ -556,19 +558,48 @@ function comb_filter(own x: f32[], at: i32, f: Comb): f32[] {
   if (f.g0 == f.g1 && t0 == t1 && f.tapset0 == f.tapset1) {
     overlap = 0;
   }
-  x = comb_overlap(x, at, f, t0, t1, overlap);
+  return CombPlan { t0: t0, t1: t1, overlap: overlap, old: taps_of(f.g0, f.tapset0), new: taps_of(f.g1, f.tapset1) };
+}
+
+// The comb filter, in place, on the `f.n` samples of `x` from `at`.
+function comb_filter(own x: f32[], at: i32, f: Comb): f32[] {
+  if (f.g0 == 0.0f32 && f.g1 == 0.0f32) {
+    return x;
+  }
+  let c: CombPlan = comb_plan(f);
+  for i in 0..c.overlap {
+    x = x.with(at + i, fade_taps(x, at + i, i, c.t0, c.t1, c.old, c.new));
+  }
   if (f.g1 == 0.0f32) {
     return x;
   }
-  let g10: f32 = f.g1 * GAINS[3 * f.tapset1];
-  let g11: f32 = f.g1 * GAINS[3 * f.tapset1 + 1];
-  let g12: f32 = f.g1 * GAINS[3 * f.tapset1 + 2];
-  for i in overlap..f.n {
-    let p: i32 = at + i;
-    let v: f32 = x[p] + g10 * x[p - t1] + g11 * (x[p - t1 + 1] + x[p - t1 - 1]) + g12 * (x[p - t1 + 2] + x[p - t1 - 2]);
-    x = x.with(p, v);
+  for i in c.overlap..f.n {
+    x = x.with(at + i, add_taps(x[at + i], x, at + i, c.t1, c.new, 1.0f32));
   }
   return x;
+}
+
+// The comb filter of the `f.n` samples of `x` from `xat`, written to `y`
+// from `yat`. It reads only `x`, so it is an FIR filter.
+pub function comb_fir(own y: f32[], yat: i32, x: [f32], xat: i32, f: Comb): f32[] {
+  let c: CombPlan = comb_plan(f);
+  let first: i32 = c.overlap;
+  if (f.g0 == 0.0f32 && f.g1 == 0.0f32) {
+    first = 0;
+  }
+  for i in 0..first {
+    y = y.with(yat + i, fade_taps(x, xat + i, i, c.t0, c.t1, c.old, c.new));
+  }
+  if (f.g1 == 0.0f32) {
+    for i in first..f.n {
+      y = y.with(yat + i, x[xat + i]);
+    }
+    return y;
+  }
+  for i in first..f.n {
+    y = y.with(yat + i, add_taps(x[xat + i], x, xat + i, c.t1, c.new, 1.0f32));
+  }
+  return y;
 }
 ```
 
