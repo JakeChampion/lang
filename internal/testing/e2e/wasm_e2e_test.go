@@ -39,7 +39,7 @@ var (
 	preview2Drift error
 )
 
-const wasmtimePin = "46.0.1"
+const wasmtimePin = "50.0.1"
 
 func wasmtimeVersion() (string, error) {
 	out, err := exec.Command("wasmtime", "--version").Output()
