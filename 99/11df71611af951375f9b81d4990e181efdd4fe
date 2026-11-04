@@ -1,0 +1,10 @@
+# lane: bootstrap-arm64-linux
+bootstrap/arm64-linux/stage1.wall_s	56
+bootstrap/arm64-linux/stage1.peak_rss_mb	2247
+bootstrap/arm64-linux/stage1.size_bytes	17822088
+bootstrap/arm64-linux/stage2.wall_s	57
+bootstrap/arm64-linux/stage2.peak_rss_mb	2270
+bootstrap/arm64-linux/stage2.size_bytes	17508776
+bootstrap/arm64-linux/stage3.wall_s	57
+bootstrap/arm64-linux/stage3.peak_rss_mb	2269
+bootstrap/arm64-linux/stage3.size_bytes	17508776
