@@ -498,6 +498,7 @@ let_else_inner_block_scope                           0
 let_else_loop_else_diverges                          0
 let_else_nested_pattern                              0
 let_else_or_pattern                                  0
+let_else_payload_copy                                0
 let_else_pattern_forms                               0
 let_else_qualified_variant                           0
 let_else_variant_binding_outlives_stmt               0
@@ -1086,6 +1087,8 @@ slice_unchecked_oob                                  0
 slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
+socket_descriptor_transition                         0
+socket_from_fd                                       0
 socket_handle_round_trip                             0
 socket_udp_round_trip                                0
 some_branch                                          0

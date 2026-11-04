@@ -1339,6 +1339,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	c.info.FuncSigs["__socket_from_fd"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: sock,
+	}
 	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
 		Params: []ast.Type{sock},
 		Result: ast.NumberType{},
@@ -9137,7 +9141,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
 	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
-	"__fd_close": true, "__tcp_close_unchecked": true,
+	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
 	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true,
@@ -10555,11 +10559,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			delete(armMoved, key)
 		}
 	}
-	joinGuardInto := func(dst, guard movedSet, bindings []string) {
+	joinGuardInto := func(dst, guard movedSet, scope *ownedBindingScope) {
 		guard = cloneMoved(guard)
-		for _, name := range bindings {
-			delete(guard, name)
-		}
+		scope.hideMoves(guard)
 		joinInto(dst, guard, false)
 	}
 
@@ -10575,36 +10577,24 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return false
 	}
-	// bindArm classes the bindings of an arm. On a borrowed scrutinee they
-	// are lent. On an owned scrutinee a payload that can hold a handle is an
-	// owned name that moves once, and a handle-free payload is a fresh
-	// local, like any other let. On a taken local every payload is a fresh
-	// local.
-	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, taken bool) (added, lent []string) {
+	bindArm := func(bindings []string, types []ast.Type, scrutOwned, taken bool, armMoved movedSet) *ownedBindingScope {
+		scope := shadowOwnedBindings(bindings, owned, borrowedParam, armMoved, deferMoved)
 		for i, bname := range bindings {
 			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) {
 				continue
 			}
+			// A copyable payload is a local value. A payload that can hold
+			// a handle keeps its linear ownership.
+			if scrutOwned && c.holdsNoHandle(types[i]) {
+				continue
+			}
 			if scrutOwned {
-				if !owned[bname] && !c.holdsNoHandle(types[i]) {
-					owned[bname] = true
-					added = append(added, bname)
-				}
-			} else if !borrowedParam[bname] {
+				owned[bname] = true
+			} else {
 				borrowedParam[bname] = true
-				lent = append(lent, bname)
 			}
 		}
-		return added, lent
-	}
-	unbindArm := func(added, lent []string, armMoved movedSet) {
-		for _, bname := range lent {
-			delete(borrowedParam, bname)
-		}
-		for _, bname := range added {
-			delete(owned, bname)
-			delete(armMoved, bname)
-		}
+		return scope
 	}
 
 	var recordExprUses func(e ast.Expr, moved movedSet)
@@ -10630,13 +10620,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if len(arm.Binders()) == 0 {
 				restoreTag(armMoved, whole, m.Tag)
 			}
-			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(m.Tag))
+			scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(m.Tag), armMoved)
 			recordExprUses(arm.Guard, armMoved)
 			if arm.Guard != nil {
-				joinGuardInto(baseline, armMoved, arm.Binders())
+				joinGuardInto(baseline, armMoved, scope)
 			}
 			recordExprUses(arm.Body, armMoved)
-			unbindArm(added, lent, armMoved)
+			scope.restore()
 			branches = append(branches, armMoved)
 			continues = append(continues, !c.ownedExprDiverges(arm.Body))
 		}
@@ -10995,15 +10985,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				if len(arm.Binders()) == 0 {
 					restoreTag(armMoved, whole, x.Tag)
 				}
-				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(x.Tag))
+				scope := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(x.Tag), armMoved)
 				recordExprUses(arm.Guard, armMoved)
 				if arm.Guard != nil {
-					joinGuardInto(baseline, armMoved, arm.Binders())
+					joinGuardInto(baseline, armMoved, scope)
 				}
 				if arm.Body != nil {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
-				unbindArm(added, lent, armMoved)
+				scope.restore()
 				branches = append(branches, armMoved)
 				continues = append(continues, !(arm.Body != nil && c.blockLeaves(arm.Body, c.info.NoReturn)))
 			}

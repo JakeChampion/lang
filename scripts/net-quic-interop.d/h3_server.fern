@@ -12,7 +12,7 @@ import "std/option";
 import "std/i64";
 import "std/rand";
 
-struct Server { cfg: conn.Config, sock: i32, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32 }
+struct Server { cfg: conn.Config, sock: Socket, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32 }
 
 function now(): Instant {
   return clock.instant();
@@ -163,7 +163,7 @@ function main(): i32 {
   let s = s0;
   let started = now();
   while (now().since(started).cmp(time.duration_seconds(20)) < 0) {
-    let _ = async.wait_any([s.sock, 1], wait_for(s));
+    let _ = async.wait_any([s.sock.fd, 1], wait_for(s));
     s = drained(s, buf);
     if let Some(c) = s.current {
       s = sent(s, c);

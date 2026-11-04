@@ -981,6 +981,91 @@ function f(path: string): Option[u8[]] {
 }`)
 }
 
+func TestOwnGuardCopiesFreshPatternPayload(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"let-else", `function f(): i32 {
+    let Ok(xs) = make(2) else { return 0; };
+    let retained = xs;
+    xs = xs.with(0, 77);
+    return retained[0] + xs[0];
+}`},
+		{"statement-arm", `function f(): i32 {
+    match (make(2)) {
+        Ok(xs) => { let retained = xs; xs = xs.with(0, 77); return retained[0] + xs[0]; },
+        Err(_) => { return 0; }
+    }
+    return 0;
+}`},
+		{"if-let", `function f(): i32 {
+    if let Ok(xs) = make(2) {
+        let retained = xs;
+        xs = xs.with(0, 77);
+        return retained[0] + xs[0];
+    }
+    return 0;
+}`},
+		{"value-arm", `function f(): i32 {
+    return match (make(2)) {
+        Ok(xs) => { let retained = xs; xs = xs.with(0, 77); retained[0] + xs[0] },
+        Err(_) => 0
+    };
+}`},
+		{"shadow-owned", `function f(own xs: i32[]): i32 {
+    let n = consume(xs);
+    if let Ok(xs) = make(2) {
+        let retained = xs;
+        xs = xs.with(0, 77);
+        n = n + retained[0] + xs[0];
+    }
+    return n;
+}`},
+		{"shadow-borrowed", `function f(xs: i32[]): i32 {
+    if let Ok(xs) = make(2) { return consume(xs); }
+    return 0;
+}`},
+		{"lambda-local", `function run(g: () => i32): i32 { return g(); }
+function f(): i32 {
+    return run((): i32 => {
+        let Ok(xs) = make(2) else { return 0; };
+        let retained = xs;
+        return retained[0] + xs[0];
+    });
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wantOK(t, "fresh-pattern-copy-"+tc.name, freshResultPrelude+tc.body)
+		})
+	}
+}
+
+func TestOwnGuardKeepsLinearPatternSources(t *testing.T) {
+	wantOK(t, "owned-handle-free-source-payload-is-a-local", freshResultPrelude+`
+function f(own r: Result[i32[], string]): i32 {
+    let Ok(xs) = r else { return 0; };
+    let retained = xs;
+    return retained[0] + xs[0];
+}`)
+	wantE050(t, "owned-handle-source-payload-stays-linear", `
+function f(own r: Result[Writer, string]): i32 {
+    let Ok(w) = r else { return 0; };
+    let retained = w;
+    return retained.fd + w.fd;
+}`)
+	wantE050(t, "handle-payload-stays-linear", `
+function opened(): Result[Writer, string] { return Ok(stdout()); }
+function f(): i32 {
+    let Ok(w) = opened() else { return 0; };
+    let retained = w;
+    return retained.fd + w.fd;
+}`)
+	wantE050(t, "outer-move-survives-a-pattern-shadow", freshResultPrelude+`
+function f(own xs: i32[]): i32 {
+    let n = consume(xs);
+    if let Ok(xs) = make(2) { let retained = xs; n = n + retained[0] + xs[0]; }
+    return n + xs[0];
+}`)
+}
+
 func TestOwnedUseAfterResultPayloadTaken(t *testing.T) {
 	wantE050(t, "own-result-matched-then-used", freshResultPrelude+`
 function f(own r: Result[i32[], string]): i32 {
@@ -2529,5 +2614,50 @@ function f(): i32 {
         }
     }
     return 0;
+}`)
+}
+
+// A call whose body returns a fresh handle is an owned scrutinee in a match
+// and in a let-else.
+func TestOwnGuardScrutineeOfBodyFreshCall(t *testing.T) {
+	const opener = `
+function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); }
+function take(own s: Socket): i32 { return tcp_close(s); }
+`
+	if err := checkSource(t, opener+`
+function f(l: Socket): i32 {
+    match (accepted(l)) {
+        Ok(s) => { return take(s); },
+        Err(e) => { return e; }
+    }
+    return 0;
+}
+
+function g(l: Socket): i32 {
+    let Ok(s) = accepted(l) else { return 1; };
+    return take(s);
+}`); err != nil {
+		t.Errorf("a body-fresh scrutinee should own its payload, got: %v", err)
+	}
+	wantE051(t, "scrutinee-returns-its-parameter", `
+function passed(l: Socket): Result[Socket, i32] { return Ok(l); }
+function take(own s: Socket): i32 { return tcp_close(s); }
+function f(l: Socket): i32 {
+    match (passed(l)) {
+        Ok(s) => { return take(s); },
+        Err(e) => { return e; }
+    }
+    return 0;
+}`)
+}
+
+func TestOwnGuardBodyFreshValuePayloadRemainsCopyable(t *testing.T) {
+	wantOK(t, "copyable-payload-of-body-fresh-call", `
+struct Box { items: i32[] }
+function make(s: Socket): Result[Box, i32] { return Ok(Box { items: [7] }); }
+function f(s: Socket): i32 {
+    let Ok(input) = make(s) else { return 1; };
+    let alias = input;
+    return input.items[0] + alias.items[0];
 }`)
 }

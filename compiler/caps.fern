@@ -19,6 +19,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "tcp_close", capability: "net" },
     BuiltinCap { builtin: "__tcp_close_unchecked", capability: "net" },
     BuiltinCap { builtin: "__fd_close", capability: "net" },
+    BuiltinCap { builtin: "__socket_from_fd", capability: "net" },
     BuiltinCap { builtin: "tcp_pollable", capability: "net" },
     BuiltinCap { builtin: "tcp_listen_with", capability: "net" },
     BuiltinCap { builtin: "tcp_socket_ctl", capability: "net" },

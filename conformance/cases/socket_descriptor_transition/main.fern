@@ -1,0 +1,20 @@
+// For one release a descriptor number passes where a Socket is expected, and a
+// Socket passes where a descriptor number is expected.
+
+function width(s: Socket): i32 {
+  return s.fd;
+}
+
+function number(n: i32): i32 {
+  return n;
+}
+
+function main(): i32 {
+  let n: i32 = 7;
+  print("as socket " + width(n).to_string());
+  let s: Socket = udp_bind([127u8, 0u8, 0u8, 1u8], 0);
+  print("as number " + (number(s) == s.fd).to_string());
+  let closed: i32 = tcp_close(s);
+  print("closed " + closed.to_string());
+  return 0;
+}

@@ -243,7 +243,7 @@ var freshResultBuiltins = map[string]bool{
 	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
-	"tcp_accept": true, "tcp_connect_with": true, "tcp_listen": true, "tcp_listen_with": true,
+	"__socket_from_fd": true, "tcp_accept": true, "tcp_connect_with": true, "tcp_listen": true, "tcp_listen_with": true,
 	"udp_bind": true, "udp_bind_with": true, "unix_connect": true, "unix_listen": true,
 }
 
@@ -268,9 +268,9 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	return false
 }
 
-// A call scrutinee is owned when its result is fresh by signature: a
-// variant, a fresh method, or a function with no borrowed pointer parameter
-// that can hold a handle.
+// A call scrutinee is owned when its result is fresh: a variant, a fresh
+// method, a function with no borrowed pointer parameter that can hold a
+// handle, or a function whose body returns a handle-bearing value with no borrow.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
 		id, isIdent := call.Callee.(*ast.Ident)
@@ -287,7 +287,7 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 		if call.Method != nil {
 			return c.freshMethodResult(call)
 		}
-		return !c.signatureResultBorrows(id.Name)
+		return !c.signatureResultBorrows(id.Name) || c.resultAnalysed[id.Name] && !c.resultBorrows[id.Name] && !c.holdsNoHandle(sig.Result)
 	}
 	return inferred(tag)
 }

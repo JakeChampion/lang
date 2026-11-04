@@ -116,7 +116,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<50 enum __Record>>
 
-<<51 function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record>>
+<<51 function __kernel_record(sock: Socket, s: client.Session, now: time.Timestamp): __Record>>
 
 <<52 function __handshake_read(got: Result[net.Recv, net.NetError]): Result[u8[], FetchError]>>
 
@@ -178,6 +178,7 @@ import "std/http/cookie";
 import "std/url";
 import "std/dns";
 import "std/net";
+import "std/array";
 import "std/errno";
 import "core/error";
 import "std/base64";
@@ -678,10 +679,10 @@ pub trait Transport {
   function read(self: Self, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError];
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
-  function socket(self: Self, conn: i32): i32;
+  function socket(self: Self, conn: i32): Option[Socket];
 }
 
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[u8[]]] }
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[u8[]]], socks: Cell[Option[Socket][]] }
 ```
 
 ### `15 pub function (p: Idle) proxy_env(): ProxyEnv`
@@ -718,7 +719,8 @@ pub function idle(): Idle {
 
 pub function idle_limited(max: i32, idle: Duration): Idle {
   let none: Kept[] = [];
-  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None), armed: None };
+  let no_socks: Option[Socket][] = [];
+  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None), armed: None, socks: cell_new(no_socks) };
 }
 
 pub function idle_shared(): Idle {
@@ -727,7 +729,8 @@ pub function idle_shared(): Idle {
   let dialing: string[] = [];
   let marks: u8[] = [];
   // No count limit: the pool never holds more than the handlers held at once.
-  return Idle { ...idle_limited(2147483647, time.duration_seconds(90 as i64)), shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) }), armed: Some(cell_new(marks)) };
+  let base: Idle = idle_limited(2147483647, time.duration_seconds(90 as i64));
+  return Idle { ...base, shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing), socks: base.socks }), armed: Some(cell_new(marks)) };
 }
 
 pub function (p: Idle) read_interest(fd: i32): i32 {
@@ -768,6 +771,45 @@ function __mark_fd(c: Cell[u8[]], fd: i32, mark: u8): void {
   }
   c.set(marks.with(fd, mark));
 }
+
+// The pool owns each socket it dials. The table is indexed by the descriptor number, which is the connection id.
+function __sock_at(c: Cell[Option[Socket][]], fd: i32): Option[Socket] {
+  let socks: Option[Socket][] = c.get();
+  if (fd < 0 || fd >= socks.len()) {
+    return None;
+  }
+  return socks[fd];
+}
+
+function __keep_sock(c: Cell[Option[Socket][]], own sock: Socket): i32 {
+  let fd: i32 = sock.fd;
+  let socks: Option[Socket][] = c.get();
+  let none: Option[Socket][] = [];
+  c.set(none);
+  while (socks.len() <= fd) {
+    socks = socks.append(None);
+  }
+  c.set(socks.with(fd, Some(sock)));
+  return fd;
+}
+
+function __drop_sock(c: Cell[Option[Socket][]], fd: i32): i32 {
+  let socks: Option[Socket][] = c.get();
+  if (fd < 0 || fd >= socks.len()) {
+    return 0;
+  }
+  let none: Option[Socket][] = [];
+  c.set(none);
+  let (slot, rest) = socks.swap_at(fd, None);
+  c.set(rest);
+  match (slot) {
+    Some(sock) => {
+      return tcp_close(sock);
+    },
+    None => {}
+  }
+  return 0;
+}
 ```
 
 ### `19 pub function (p: Idle) armed(fd: i32): boolean`
@@ -798,7 +840,7 @@ pub function (p: Idle) disarm(fd: i32): void {
   while (i < rows.len()) {
     if (rows[i].fd == fd) {
       p.kept.set(__kept_without(rows, i));
-      tcp_close(fd);
+      __drop_sock(p.socks, fd);
       return;
     }
     i = i + 1;
@@ -814,7 +856,7 @@ pub function shared_of(pool: Idle): Shared {
       let rows: Driven[] = [];
       let mail: Mail[] = [];
       let dialing: string[] = [];
-      return Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) };
+      return Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing), socks: pool.socks };
     }
   }
   return shared_of(pool);
@@ -825,7 +867,7 @@ pub function shared_of(pool: Idle): Shared {
 
 ```fern
 <<20 pub struct Shared>>=
-pub struct Shared { rows: Cell[Driven[]], mail: Cell[Mail[]], next: Cell[i32], dialing: Cell[string[]] }
+pub struct Shared { rows: Cell[Driven[]], mail: Cell[Mail[]], next: Cell[i32], dialing: Cell[string[]], socks: Cell[Option[Socket][]] }
 
 pub struct Driven { key: string, fd: i32, tls: client.Session, h2: h2.Conn, out: u8[], wire: u8[], streams: i32, since: Instant, watched: boolean, writing: boolean }
 
@@ -997,7 +1039,7 @@ pub function (sh: Shared) flush(): (i32[], i32[]) {
   while (i < rows.len()) {
     let d: Driven = __sealed(rows[i]);
     if (d.wire.len() > 0) {
-      match (net.write_rest(d.fd, d.wire)) {
+      match (__write_rest(sh, d.fd, d.wire)) {
         Ok(rest) => {
           d = Driven { ...d, wire: rest };
         },
@@ -1038,7 +1080,7 @@ pub function (sh: Shared) sockets(): i32[] {
 function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
   let session: client.Session = d.tls;
   if (bytes.len() == 0) {
-    match (__kernel_record(d.fd, d.tls, clock.now())) {
+    match (__kernel_record_on(__sock_at(sh.socks, d.fd), d.tls, clock.now())) {
       RecordTaken(step) => {
         session = step.session;
         if (step.closed) {
@@ -1092,6 +1134,26 @@ function __sealed(d: Driven): Driven {
 
 ```fern
 <<24 pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32]>>=
+function __write_rest(sh: Shared, fd: i32, data: u8[]): Result[u8[], net.NetError] {
+  match (__sock_at(sh.socks, fd)) {
+    Some(sock) => {
+      return net.write_rest(sock, data);
+    },
+    None => {}
+  }
+  return Err(net.Other(9));
+}
+
+function __read_up_to(sh: Shared, fd: i32, max: i32): Result[u8[], net.NetError] {
+  match (__sock_at(sh.socks, fd)) {
+    Some(sock) => {
+      return net.read_up_to(sock, max);
+    },
+    None => {}
+  }
+  return Err(net.Other(9));
+}
+
 pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
   if (!readable) {
     return None;
@@ -1103,7 +1165,7 @@ pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
   }
   let d: Driven = rows[at];
   let bytes: u8[] = [];
-  match (net.read_up_to(fd, 65536)) {
+  match (__read_up_to(sh, fd, 65536)) {
     Ok(got) => {
       bytes = got;
     },
@@ -1152,7 +1214,7 @@ function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]
       return None;
     },
     Err(f) => {
-      let sent: i32 = tcp_send_bytes(fd, f.alert);
+      let sent: Result[u8[], net.NetError] = __write_rest(sh, fd, f.alert);
       __driven_failed(sh, fd, Tls(f.error));
       return Some(fd);
     }
@@ -1468,13 +1530,33 @@ impl Transport for Sockets {
     return Ok(Lookup { dial: names.synthesized(plain), named: plain, judged: carried });
   }
   function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError] {
-    return dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: timeout });
+    match (dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: timeout })) {
+      Ok(sock) => {
+        return Ok(__keep_sock(self.pool.socks, sock));
+      },
+      Err(e) => {
+        return Err(e);
+      }
+    }
+    return Err(net.TimedOut);
   }
   function write(self: Sockets, conn: i32, data: u8[]): i32 {
-    return tcp_send_bytes(conn, data);
+    match (__sock_at(self.pool.socks, conn)) {
+      Some(sock) => {
+        return tcp_send_bytes(sock, data);
+      },
+      None => {}
+    }
+    return 0 - 9;
   }
   function read(self: Sockets, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
-    return net.read_watched(conn, max, wait, self.pool.read_interest(conn));
+    match (__sock_at(self.pool.socks, conn)) {
+      Some(sock) => {
+        return net.read_watched(sock, max, wait, self.pool.read_interest(conn));
+      },
+      None => {}
+    }
+    return Err(net.Other(9));
   }
   function close(self: Sockets, conn: i32): i32 {
     match (self.pool.armed) {
@@ -1483,14 +1565,13 @@ impl Transport for Sockets {
       },
       None => {}
     }
-    tcp_close(conn);
-    return 0;
+    return __drop_sock(self.pool.socks, conn);
   }
   function idle(self: Sockets): Idle {
     return self.pool;
   }
-  function socket(self: Sockets, conn: i32): i32 {
-    return conn;
+  function socket(self: Sockets, conn: i32): Option[Socket] {
+    return __sock_at(self.pool.socks, conn);
   }
 }
 ```
@@ -2214,7 +2295,9 @@ function __close[T: Transport](tr: T, conn: __Conn): void {
 
 function __send_framed[T: Transport](tr: T, fd: i32, s: client.Session, output: u8[]): void {
   if (s.offloaded()) {
-    ktls.send_records(tr.socket(fd), output);
+    if let Some(sock) = tr.socket(fd) {
+      ktls.send_records(sock, output);
+    }
   } else {
     tr.write(fd, output);
   }
@@ -2277,10 +2360,17 @@ function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64, roo
   return __kernel_session(tr.socket(fd), s, req);
 }
 
-function __kernel_session(sock: i32, s: client.Session, req: Request): Result[client.Session, FetchError] {
-  if (sock < 0 || !__ktls_asked(req)) {
+function __kernel_session(found: Option[Socket], s: client.Session, req: Request): Result[client.Session, FetchError] {
+  if (!__ktls_asked(req)) {
     return Ok(s);
   }
+  if let Some(sock) = found {
+    return __kernel_attach(sock, s);
+  }
+  return Ok(s);
+}
+
+function __kernel_attach(sock: Socket, s: client.Session): Result[client.Session, FetchError] {
   if let Some(o) = s.offload() {
     match (ktls.attach(sock, o.keys)) {
       ktls.Kernel => {
@@ -2307,11 +2397,18 @@ function __ktls_asked(req: Request): boolean {
 enum __Record { RecordTaken(client.Step), RecordsEnded, RecordAwaited, RecordFailed(FetchError) }
 ```
 
-### `51 function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record`
+### `51 function __kernel_record(sock: Socket, s: client.Session, now: time.Timestamp): __Record`
 
 ```fern
-<<51 function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record>>=
-function __kernel_record(sock: i32, s: client.Session, now: time.Timestamp): __Record {
+<<51 function __kernel_record(sock: Socket, s: client.Session, now: time.Timestamp): __Record>>=
+function __kernel_record_on(found: Option[Socket], s: client.Session, now: time.Timestamp): __Record {
+  if let Some(sock) = found {
+    return __kernel_record(sock, s, now);
+  }
+  return RecordFailed(Tls(tls.KernelReadFailed(9)));
+}
+
+function __kernel_record(sock: Socket, s: client.Session, now: time.Timestamp): __Record {
   match (ktls.read_now(sock)) {
     ktls.Opened(t, content) => {
       match (s.read(ktls.framed(t, content), now)) {
@@ -3013,7 +3110,7 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
     if (raw.len() > 0) {
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }
-    match (__kernel_record(tr.socket(conn.fd), session, tr.wall())) {
+    match (__kernel_record_on(tr.socket(conn.fd), session, tr.wall())) {
       RecordTaken(step) => {
         session = step.session;
         if (step.closed) {
