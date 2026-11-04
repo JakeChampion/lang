@@ -3514,9 +3514,34 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   return ssa_ldst(s, false, v, a, 8 + 8 * c);
 }
 
+// A runtime function compiled from Fern has a `.r` entry that takes its
+// arguments in registers. One written in assembly has none.
+function ssa_register_runtime(ins: ssa.SInst, reg_of: i32[], target: string, s: asmcore.EmitState): boolean {
+  if (ins.args.len() > ssa_nargs()) {
+    return false;
+  }
+  for a in ins.args {
+    if (reg_of[a] == 0 - 1) {
+      return false;
+    }
+  }
+  return util.has_str(rtmodule.names(asmcore.runtime_files(s, s.runtime_target)), target);
+}
+
 function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = ssa_str_marks(ins.str, s);
+  let target: string = "__fern_" + ssa_str_target(ins.str);
+  if (ssa_register_runtime(ins, reg_of, target, s)) {
+    let srcs: i32[] = [];
+    let dsts: i32[] = [];
+    for a in 0..ins.args.len() {
+      srcs = srcs.append(reg_of[ins.args[a]]);
+      dsts = dsts.append(ssa_arg_loc("", a));
+    }
+    s = ssa_bl_sym(ssa_parallel_moves(srcs, dsts, s), "__fn_" + target + ".r");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  }
   let argc: i32 = ins.args.len();
   let i: i32 = argc - 1;
   while (i >= 0) {

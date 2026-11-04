@@ -98,3 +98,34 @@ func TestSelfHostSSASavedRegistersUsed(t *testing.T) {
 		t.Errorf("functions save registers they never use: %v", bad)
 	}
 }
+
+// A runtime function compiled from Fern has a `.r` entry that takes its
+// arguments in registers, so a call to it pushes nothing.
+func TestSelfHostSSARuntimeRegisterCalls(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "regcall.fern")
+	if err := os.WriteFile(src, []byte(savedUsedProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ target, call string }{
+		{"x86-64-linux", "call __fn___fern_str_cmp"},
+		{"arm64-linux", "bl __fn___fern_str_cmp"},
+	} {
+		out := filepath.Join(dir, tc.target+".s")
+		if combined, err := exec.Command(h.cli, "-target", tc.target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+			t.Fatalf("%s: emitting: %v\n%s", tc.target, err, combined)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(asm)
+		if !strings.Contains(text, tc.call+".r\n") {
+			t.Errorf("%s: no call reaches __fern_str_cmp's register entry", tc.target)
+		}
+		if strings.Contains(text, tc.call+"\n") {
+			t.Errorf("%s: a call still reaches __fern_str_cmp's stack entry", tc.target)
+		}
+	}
+}
