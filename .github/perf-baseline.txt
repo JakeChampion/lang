@@ -1,3 +1,5 @@
+# 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
+# #14134 into the branch. x86_64/deflate_encode.ir rises 1.44% to 42176472.
 # 2026-11-04: PR #14136, perf-aarch64 job 126444330446 on 086a210e. #14094 returns a join of constants from its arms:
 # aarch64/deflate_encode.ir falls 1.22% to 43566583. It is a reduction, and no limit rises.
 # 2026-11-04: PR #14135, perf-x86_64 job 126373947305 on 4629c363. A fused compare takes no register: sort_ints.ir
@@ -220,7 +222,7 @@ x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12766
-x86_64/deflate_encode.ir	41579468
+x86_64/deflate_encode.ir	42176472
 x86_64/deflate_encode.text	7275
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
