@@ -2921,6 +2921,17 @@ function call_host_fs_list(heap: interpheap.Heap, name: string, path: string): V
   return v_err("undefined function: " + name);
 }
 
+// A guest Socket runs as its descriptor number, which the host takes as a Socket.
+function host_socket(args: Value[], i: i32): Socket {
+  unsafe {
+    return __socket_from_fd(arg_i32(args, i));
+  }
+}
+
+function socket_number(s: Socket): Value {
+  return v_int(s.fd);
+}
+
 function call_host_net(name: string, args: Value[]): Value {
   if (name == "__socket_from_fd") {
     return arg_at(args, 0);
@@ -2942,78 +2953,81 @@ function call_host_net(name: string, args: Value[]): Value {
 
 function call_host_udp_send(name: string, args: Value[]): Value {
   if (name == "udp_sendto") {
-    return v_int(udp_sendto(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_str(args, 3)));
+    return v_int(udp_sendto(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_str(args, 3)));
   }
-  return v_int(udp_sendto_bytes(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_bytes(args, 3)));
+  return v_int(udp_sendto_bytes(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_bytes(args, 3)));
 }
 
 function call_host_udp(name: string, args: Value[]): Value {
   if (name == "udp_bind") {
-    return v_int(udp_bind(arg_bytes(args, 0), arg_i32(args, 1)));
+    return socket_number(udp_bind(arg_bytes(args, 0), arg_i32(args, 1)));
   }
   if (name == "udp_bind_with") {
-    return v_int(udp_bind_with(arg_bytes(args, 0), arg_i32(args, 1), arg_bool(args, 2)));
+    return socket_number(udp_bind_with(arg_bytes(args, 0), arg_i32(args, 1), arg_bool(args, 2)));
   }
   if (name == "udp_recvfrom") {
     let buf: u8[] = arg_bytes(args, 1);
     let from: u8[] = arg_bytes(args, 2);
-    let n: i32 = udp_recvfrom(arg_i32(args, 0), buf, from);
+    let n: i32 = udp_recvfrom(host_socket(args, 0), buf, from);
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
     arr_fill(arg_at(args, 2), bytes_as_i64s(from));
     return v_int(n);
   }
-  return v_int(udp_connect(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2)));
+  return v_int(udp_connect(host_socket(args, 0), arg_bytes(args, 1), arg_i32(args, 2)));
 }
 
 function call_host_tcp_open(name: string, args: Value[]): Value {
   if (name == "tcp_listen") {
-    return v_int(tcp_listen(arg_i32(args, 0)));
+    return socket_number(tcp_listen(arg_i32(args, 0)));
   }
   if (name == "tcp_listen_with") {
-    return v_int(tcp_listen_with(arg_bytes(args, 0), arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
+    return socket_number(tcp_listen_with(arg_bytes(args, 0), arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
   }
-  return v_int(tcp_connect_with(arg_bytes(args, 0), arg_i32(args, 1), arg_bool(args, 2)));
+  return socket_number(tcp_connect_with(arg_bytes(args, 0), arg_i32(args, 1), arg_bool(args, 2)));
 }
 
 function call_host_tcp_io(name: string, args: Value[]): Value {
-  let fd: i32 = arg_i32(args, 0);
+  let sock: Socket = host_socket(args, 0);
   if (name == "tcp_send_bytes") {
-    return v_int(tcp_send_bytes(fd, arg_bytes(args, 1)));
+    return v_int(tcp_send_bytes(sock, arg_bytes(args, 1)));
   }
   if (name == "tcp_send_buf") {
-    return v_int(tcp_send_buf(fd, buf_handle_of(arg_at(args, 1)), arg_i32(args, 2)));
+    return v_int(tcp_send_buf(sock, buf_handle_of(arg_at(args, 1)), arg_i32(args, 2)));
   }
   if (name == "tcp_recv_into") {
     let buf: u8[] = arg_bytes(args, 1);
-    let n: i32 = tcp_recv_into(fd, buf);
+    let n: i32 = tcp_recv_into(sock, buf);
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
     return v_int(n);
   }
   if (name == "tcp_addr_into") {
     let rec: u8[] = arg_bytes(args, 2);
-    let n: i32 = tcp_addr_into(fd, arg_bool(args, 1), rec);
+    let n: i32 = tcp_addr_into(sock, arg_bool(args, 1), rec);
     arr_fill(arg_at(args, 2), bytes_as_i64s(rec));
     return v_int(n);
   }
-  return v_int(tcp_sendfile(fd, arg_i32(args, 1), arg_i32(args, 2)));
+  return v_int(tcp_sendfile(sock, arg_i32(args, 1), arg_i32(args, 2)));
 }
 
+// A guest close borrows the number its value shares, so the host close is unchecked.
 function call_host_tcp_fd(name: string, args: Value[]): Value {
-  let fd: i32 = arg_i32(args, 0);
+  let sock: Socket = host_socket(args, 0);
   if (name == "tcp_accept") {
-    return v_int(tcp_accept(fd));
+    return socket_number(tcp_accept(sock));
   }
   if (util.has_str(["tcp_close", "__tcp_close_unchecked", "__fd_close"], name)) {
-    return v_int(tcp_close(fd));
+    unsafe {
+      return v_int(__tcp_close_unchecked(sock));
+    }
   }
   if (name == "tcp_local_port") {
-    return v_int(tcp_local_port(fd));
+    return v_int(tcp_local_port(sock));
   }
   if (name == "tcp_pollable") {
-    return v_int(tcp_pollable(fd));
+    return v_int(tcp_pollable(sock));
   }
   if (name == "tcp_socket_ctl") {
-    return v_int(tcp_socket_ctl(fd, arg_i32(args, 1), arg_i32(args, 2)));
+    return v_int(tcp_socket_ctl(sock, arg_i32(args, 1), arg_i32(args, 2)));
   }
   return v_err("undefined function: " + name);
 }
@@ -3155,10 +3169,10 @@ function call_host_system(heap: interpheap.Heap, name: string, args: Value[]): V
     return void_result_value(chdir(arg_str(args, 0)));
   }
   if (name == "unix_listen") {
-    return v_int(unix_listen(arg_str(args, 0), arg_i32(args, 1)));
+    return socket_number(unix_listen(arg_str(args, 0), arg_i32(args, 1)));
   }
   if (name == "unix_connect") {
-    return v_int(unix_connect(arg_str(args, 0)));
+    return socket_number(unix_connect(arg_str(args, 0)));
   }
   if (name == "timer_fd") {
     return v_int(timer_fd(arg_i32(args, 0)));

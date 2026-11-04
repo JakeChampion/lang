@@ -72,7 +72,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<28 function __slot_of(slots: u8[], fd: i32): i32>>
 
-<<29 function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config)>>
+<<29 function __serve_accept[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config)>>
 
 <<30 function __serve_read_proxy[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option[server.Session], hea...>>
 
@@ -122,7 +122,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<53 struct __Body>>
 
-<<54 function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource>>
+<<54 function __body_source(sock: Socket, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource>>
 
 <<55 function __pull_read(p: __Pull, raw: u8[]): u8[]>>
 
@@ -164,7 +164,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<74 function __h3_pending_max(): i64>>
 
-<<75 function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void>>
+<<75 function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void>>
 
 <<76 struct __H3Req>>
 
@@ -334,8 +334,8 @@ pub function run(port: i32, opts: Config, handler: (HttpRequest, platform.Host) 
 
 pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): Result[i32, ListenError] {
   let l: __Listen = __serve_listener(port, opts);
-  if (l.fd < 0) {
-    return Err(__listen_error(port, l.fd));
+  if (l.sock.fd < 0) {
+    return Err(__listen_error(port, l.sock.fd));
   }
   return __serve_loop(l, handler, opts, shutdown, None);
 }
@@ -347,8 +347,8 @@ pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platfo
 <<10 function __serve_listener(port: i32, opts: Config): __Listen>>=
 function __serve_listener(port: i32, opts: Config): __Listen {
   let l: __Listen = __listener_of(port, opts);
-  if (l.fd >= 0) {
-    tcp_socket_ctl(l.fd, 3, 1);
+  if (l.sock.fd >= 0) {
+    tcp_socket_ctl(l.sock, 3, 1);
   }
   return l;
 }
@@ -358,13 +358,27 @@ function __serve_listener(port: i32, opts: Config): __Listen {
 
 ```fern
 <<11 struct __Listen>>=
-struct __Listen { fd: i32, inherited: boolean }
+struct __Listen { sock: Socket, inherited: boolean }
 
 // __listen_release closes a listener serve bound itself. An inherited
 // LISTEN_FDS listener stays open, so a caller can retry on it.
 function __listen_release(l: __Listen): void {
-  if (l.fd >= 0 && !l.inherited) {
-    tcp_close(l.fd);
+  if (l.sock.fd >= 0 && !l.inherited) {
+    __shut(l.sock);
+  }
+}
+
+// A descriptor this process inherited, from LISTEN_FDS or across a fork.
+function __adopt(fd: i32): Socket {
+  unsafe {
+    return __socket_from_fd(fd);
+  }
+}
+
+// The loop copies a __Listen and a __Conns, so a socket closes through a borrow, once, when its owner lets it go.
+function __shut(sock: Socket): i32 {
+  unsafe {
+    return __tcp_close_unchecked(sock);
   }
 }
 ```
@@ -414,7 +428,7 @@ function __listener_of(port: i32, opts: Config): __Listen {
       match (i32.parse_i32_radix(n, 10)) {
         Ok(count) => {
           if (count >= 1) {
-            return __Listen { fd: 3, inherited: true };
+            return __Listen { sock: __adopt(3), inherited: true };
           }
         },
         Err(_) => {}
@@ -423,12 +437,12 @@ function __listener_of(port: i32, opts: Config): __Listen {
     None => {}
   }
   if (target_os() != "wasi") {
-    let both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
-    if (both >= 0 || !net.error_from_host(both).ipv6_unavailable()) {
-      return __Listen { fd: both, inherited: false };
+    let both: Socket = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
+    if (both.fd >= 0 || !net.error_from_host(both.fd).ipv6_unavailable()) {
+      return __Listen { sock: both, inherited: false };
     }
   }
-  return __Listen { fd: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), inherited: false };
+  return __Listen { sock: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), inherited: false };
 }
 ```
 
@@ -442,8 +456,8 @@ pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequ
 
 pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, ListenError] {
   let l: __Listen = __serve_listener(port, opts);
-  if (l.fd < 0) {
-    return Err(__listen_error(port, l.fd));
+  if (l.sock.fd < 0) {
+    return Err(__listen_error(port, l.sock.fd));
   }
   return __serve_loop_with(l, init, handler, opts, shutdown, None);
 }
@@ -494,7 +508,7 @@ function __recv_scratch(): u8[] {
 
 ```fern
 <<15 struct __Conns>>=
-struct __Conns { open: i32, free: i32, fds: i32[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], due: i64, keep: boolean[], served: i32[], backlog: boolean[], queued: i32[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], request_host: platform.Host, addresses: Option[net.SocketAddr][], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic, date: string, peer_counts: __PeerCounts }
+struct __Conns { open: i32, free: i32, fds: i32[], socks: Socket[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], due: i64, keep: boolean[], served: i32[], backlog: boolean[], queued: i32[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], request_host: platform.Host, addresses: Option[net.SocketAddr][], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic, date: string, peer_counts: __PeerCounts }
 
 // The open connections of each peer key, in an open-addressing table whose
 // size is a power of two. A zero key marks an empty slot, and no peer key is 0.
@@ -1304,7 +1318,8 @@ function __slot_set(slots: u8[], fd: i32, v: i32): u8[] {
   return slots.with(at, (w & 255) as u8).with(at + 1, (w >> 8) as u8);
 }
 
-function __conns_add(own c: __Conns, fd: i32, deadline: i64, peer: i32, addr: Option[net.SocketAddr], tls: __Tls): __Conns {
+function __conns_add(own c: __Conns, own sock: Socket, deadline: i64, peer: i32, addr: Option[net.SocketAddr], tls: __Tls): __Conns {
+  let fd: i32 = sock.fd;
   let empty: u8[] = [];
   let keep: boolean = false;
   match (tls) {
@@ -1324,9 +1339,9 @@ function __conns_add(own c: __Conns, fd: i32, deadline: i64, peer: i32, addr: Op
   let k: i32 = c.free;
   if (k >= 0) {
     let next: i32 = c.offs[k];
-    return __Conns { ...c, open: c.open + 1, free: next, fds: c.fds.with(k, fd), slots: __slot_set(c.slots, fd, k + 1), bufs: c.bufs.with(k, empty), offs: c.offs.with(k, 0), pending: c.pending.with(k, empty), deadlines: c.deadlines.with(k, deadline), due: __sooner(c.due, deadline), keep: c.keep.with(k, keep), served: c.served.with(k, 0), backlog: c.backlog.with(k, false), continued: c.continued.with(k, false), rate_since: c.rate_since.with(k, 0 - 1 as i64), rate_base: c.rate_base.with(k, 0), send_since: c.send_since.with(k, 0 - 1 as i64), send_base: c.send_base.with(k, 0), peers: c.peers.with(k, peer), addresses: c.addresses.with(k, addr), tails: c.tails.with(k, NoTail), tls: c.tls.with(k, tls), framing: c.framing.with(k, Http1), peer_counts: __peer_raise(c.peer_counts, peer) };
+    return __Conns { ...c, open: c.open + 1, free: next, fds: c.fds.with(k, fd), socks: c.socks.with(k, sock), slots: __slot_set(c.slots, fd, k + 1), bufs: c.bufs.with(k, empty), offs: c.offs.with(k, 0), pending: c.pending.with(k, empty), deadlines: c.deadlines.with(k, deadline), due: __sooner(c.due, deadline), keep: c.keep.with(k, keep), served: c.served.with(k, 0), backlog: c.backlog.with(k, false), continued: c.continued.with(k, false), rate_since: c.rate_since.with(k, 0 - 1 as i64), rate_base: c.rate_base.with(k, 0), send_since: c.send_since.with(k, 0 - 1 as i64), send_base: c.send_base.with(k, 0), peers: c.peers.with(k, peer), addresses: c.addresses.with(k, addr), tails: c.tails.with(k, NoTail), tls: c.tls.with(k, tls), framing: c.framing.with(k, Http1), peer_counts: __peer_raise(c.peer_counts, peer) };
   }
-  return __Conns { open: c.open + 1, free: c.free, fds: c.fds.append(fd), slots: __slot_set(c.slots, fd, c.fds.len() + 1), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), due: __sooner(c.due, deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), queued: c.queued, continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), request_host: c.request_host, addresses: c.addresses.append(addr), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date, peer_counts: __peer_raise(c.peer_counts, peer) };
+  return __Conns { open: c.open + 1, free: c.free, fds: c.fds.append(fd), socks: c.socks.append(sock), slots: __slot_set(c.slots, fd, c.fds.len() + 1), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), due: __sooner(c.due, deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), queued: c.queued, continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), request_host: c.request_host, addresses: c.addresses.append(addr), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date, peer_counts: __peer_raise(c.peer_counts, peer) };
 }
 
 function __with_connection_host(own c: __Conns, at: i32): __Conns {
@@ -1487,49 +1502,50 @@ function __backlog_due(c: __Conns, at: i32): i64 {
 }
 ```
 
-### `29 function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config)`
+### `29 function __serve_accept[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config)`
 
 ```fern
-<<29 function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config)>>=
-function __serve_accept[D: async.Driver](drv: D, listener: i32, own c: __Conns, opts: Config): __Conns {
-  let fd: i32 = tcp_accept(listener);
-  if (fd < 0) {
+<<29 function __serve_accept[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config)>>=
+function __serve_accept[D: async.Driver](drv: D, listener: Socket, own c: __Conns, opts: Config): __Conns {
+  let sock: Socket = tcp_accept(listener);
+  if (sock.fd < 0) {
     return c;
   }
   let peer: i32 = 0;
   if (opts.max_connections_per_ip > 0) {
-    peer = tcp_socket_ctl(fd, 7, 0);
+    peer = tcp_socket_ctl(sock, 7, 0);
     if (peer != 0 && __peer_count(c.peer_counts, peer) >= opts.max_connections_per_ip) {
-      tcp_close(fd);
+      tcp_close(sock);
       return c;
     }
   }
-  tcp_socket_ctl(fd, 3, 1);
-  tcp_socket_ctl(fd, 1, 1);
+  tcp_socket_ctl(sock, 3, 1);
+  tcp_socket_ctl(sock, 1, 1);
   let tls: __Tls = Plain;
   match (__tls_session(opts)) {
     Ok(t) => {
       tls = t;
     },
     Err(_) => {
-      tcp_close(fd);
+      tcp_close(sock);
       return c;
     }
   }
   if (opts.proxy_protocol) {
     tls = __awaiting(tls);
   }
-  if (drv.watch(fd, __read_interest(c, tls)) < 0) {
-    tcp_close(fd);
+  if (drv.watch(sock.fd, __read_interest(c, tls)) < 0) {
+    tcp_close(sock);
     return c;
   }
   c.metrics.accepted.inc();
   c.metrics.open.inc();
-  return __conns_add(c, fd, monotonic_ns() + opts.recv_deadline.as_nanos(), peer, __peer_of(fd), tls);
+  let addr: Option[net.SocketAddr] = __peer_of(sock);
+  return __conns_add(c, sock, monotonic_ns() + opts.recv_deadline.as_nanos(), peer, addr, tls);
 }
 
-function __peer_of(fd: i32): Option[net.SocketAddr] {
-  match (net.peer_addr(fd)) {
+function __peer_of(sock: Socket): Option[net.SocketAddr] {
+  match (net.peer_addr(sock)) {
     Ok(a) => {
       return Some(a);
     },
@@ -1563,12 +1579,12 @@ function __serve_close[D: async.Driver](drv: D, own c: __Conns, at: i32): __Conn
   match (c.tls[at]) {
     Secured(sess) => {
       if let Ok(step) = sess.close() {
-        tcp_send_bytes(c.fds[at], step.output);
+        tcp_send_bytes(c.socks[at], step.output);
       }
     },
     InKernel(sess) => {
       if let Ok(step) = sess.close() {
-        ktls.send_records(c.fds[at], step.output);
+        ktls.send_records(c.socks[at], step.output);
       }
     },
     Lent => {
@@ -1576,7 +1592,7 @@ function __serve_close[D: async.Driver](drv: D, own c: __Conns, at: i32): __Conn
     },
     _ => {}
   }
-  tcp_close(c.fds[at]);
+  __shut(c.socks[at]);
   return __conns_remove(__tail_drop(c, at), at);
 }
 
@@ -1669,7 +1685,7 @@ function __serve_read_plain[D: async.Driver](drv: D, c: __Conns, at: i32, scratc
         lent = 0 - 1;
       }
       __arr_set_len(scratch, __recv_room());
-      let n: i32 = drv.recv_into(c.fds[at], scratch);
+      let n: i32 = drv.recv_into(c.socks[at], scratch);
       if (n == 0 - __eagain()) {
         more = false;
       } else if (n <= 0) {
@@ -1722,7 +1738,7 @@ function __serve_read_tls[D: async.Driver](drv: D, own c: __Conns, at: i32, scra
     let more: boolean = true;
     while (more) {
       __arr_set_len(scratch, __recv_room());
-      let n: i32 = drv.recv_into(c.fds[at], scratch);
+      let n: i32 = drv.recv_into(c.socks[at], scratch);
       if (n == 0 - __eagain()) {
         more = false;
       } else if (n <= 0) {
@@ -1774,7 +1790,7 @@ function __serve_offload(c: __Conns, at: i32, sess: server.Session): (__Conns, b
     return (c, false);
   }
   if let Some(o) = sess.offload() {
-    match (ktls.attach(c.fds[at], o.keys)) {
+    match (ktls.attach(c.socks[at], o.keys)) {
       ktls.Kernel => {
         return (__Conns { ...c, tls: c.tls.with(at, InKernel(o.session)) }, false);
       },
@@ -1797,20 +1813,20 @@ function __plain_stopped(c: __Conns, at: i32, n: i32): (__Conns, boolean) {
 }
 
 function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
-  let fd: i32 = c.fds[at];
+  let sock: Socket = c.socks[at];
   if let InKernel(sess) = c.tls[at] {
-    match (ktls.read_now(fd)) {
+    match (ktls.read_now(sock)) {
       ktls.Opened(t, content) => {
         match (sess.read(ktls.framed(t, content), clock.now())) {
           Ok(step) => {
             let c2: __Conns = __Conns { ...c, tls: c.tls.with(at, InKernel(step.session)) };
-            if (ktls.send_records(fd, step.output) < 0 || ktls.install(fd, step.rekeyed) < 0) {
+            if (ktls.send_records(sock, step.output) < 0 || ktls.install(sock, step.rekeyed) < 0) {
               return (c2, true);
             }
             return (c2, step.closed);
           },
           Err(f) => {
-            ktls.send_records(fd, f.alert);
+            ktls.send_records(sock, f.alert);
             return (c, true);
           }
         }
@@ -1820,7 +1836,7 @@ function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
       },
       ktls.ReadFailed(e) => {
         if (e == 74) {
-          ktls.alert(fd, 20);
+          ktls.alert(sock, 20);
         }
         return (c, true);
       },
@@ -1851,7 +1867,7 @@ function __tls_taken[D: async.Driver](drv: D, own c: __Conns, at: i32, t: __Tls,
         return (c, Secured(step.session), step.data, done);
       },
       Err(f) => {
-        tcp_send_bytes(c.fds[at], f.alert);
+        tcp_send_bytes(c.socks[at], f.alert);
         return (c, Plain, none, true);
       }
     }
@@ -3023,7 +3039,7 @@ function __lent_closed(c: __Conns, at: i32): void {
         Some(sess) => {
           body.tls.set(None);
           if let Ok(step) = sess.close() {
-            tcp_send_bytes(c.fds[at], step.output);
+            tcp_send_bytes(c.socks[at], step.output);
           }
         },
         None => {}
@@ -3061,7 +3077,7 @@ function __lent_sealed(c: __Conns, at: i32, payload: u8[]): Option[u8[]] {
 }
 
 function __serve_send_raw[D: async.Driver](drv: D, own c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
-  match (net.write_rest(c.fds[at], payload)) {
+  match (net.write_rest(c.socks[at], payload)) {
     Ok(rest) => {
       if (rest.len() == 0) {
         return (c, Whole);
@@ -3111,7 +3127,7 @@ function __serve_send_out[D: async.Driver](drv: D, own c: __Conns, at: i32, opts
     },
     _ => {}
   }
-  let n: i32 = tcp_send_buf(c.fds[at], c.out, OUT_HEAD.len());
+  let n: i32 = tcp_send_buf(c.socks[at], c.out, OUT_HEAD.len());
   if (n >= buf_len(c.out) - OUT_HEAD.len()) {
     __out_reset(c.out);
     return (c, Whole);
@@ -3280,7 +3296,7 @@ function __zc_landed[D: async.Driver](drv: D, c: __Conns, at: i32, from: i32, sl
 
 function __zc_write[D: async.Driver](drv: D, c: __Conns, at: i32, body: u8[], off: i32, opts: Config): (__Conns, __Sent, boolean) {
   if (c.zc_bytes > 0) {
-    let s: i32 = drv.send_zc(c.fds[at], body, off);
+    let s: i32 = drv.send_zc(c.socks[at], body, off);
     if (s >= 0) {
       drv.watch(c.fds[at], 8);
       c = __drain_deadline(c, at, opts, true);
@@ -3360,7 +3376,7 @@ function __file_tail_send[D: async.Driver](drv: D, own c: __Conns, at: i32, opts
       if (left < want as i64) {
         want = left as i32;
       }
-      let n: i32 = tcp_sendfile(c.fds[at], r.fd, want);
+      let n: i32 = tcp_sendfile(c.socks[at], r.fd, want);
       if (n == 0 - __enotsup()) {
         return (c, Whole, false);
       }
@@ -3424,7 +3440,7 @@ function __drain_deadline(own c: __Conns, at: i32, opts: Config, first: boolean)
   let now: i64 = monotonic_ns();
   let since: i64 = c.send_since[at];
   let base: i32 = c.send_base[at];
-  let queued: i32 = tcp_socket_ctl(c.fds[at], 6, 0);
+  let queued: i32 = tcp_socket_ctl(c.socks[at], 6, 0);
   if (queued < 0) {
     queued = 0;
   }
@@ -3475,7 +3491,7 @@ function __stop_signal(fd: i32): i32 {
   return 0;
 }
 
-function __serve_pass_end[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, stop: __Stop, accepting: boolean, parked: i32): (__Conns, __Stop, boolean, boolean) {
+function __serve_pass_end[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config, stop: __Stop, accepting: boolean, parked: i32): (__Conns, __Stop, boolean, boolean) {
   let now: i64 = monotonic_ns();
   c = __serve_expire(drv, c, opts, now);
   if (!__serve_stopping(stop)) {
@@ -3525,7 +3541,7 @@ function __stop_timeout(stop: __Stop, opts: Config, now: i64, timeout: i32): i32
   return ms as i32;
 }
 
-function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, stop: __Stop, accepting: boolean, now: i64, parked: i32): (__Conns, __Stop, boolean, boolean) {
+function __serve_stop_step[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config, stop: __Stop, accepting: boolean, now: i64, parked: i32): (__Conns, __Stop, boolean, boolean) {
   if (!__serve_stopping(stop)) {
     return (c, stop, accepting, false);
   }
@@ -3534,9 +3550,9 @@ function __serve_stop_step[D: async.Driver](drv: D, listener: i32, c: __Conns, o
       return (c, stop, accepting, false);
     }
     if (accepting) {
-      drv.unwatch(listener);
+      drv.unwatch(listener.fd);
     }
-    tcp_close(listener);
+    __shut(listener);
     stop = __Stop { ...stop, closed: true };
     accepting = false;
   }
@@ -3587,18 +3603,18 @@ function __serve_not_ready(req: HttpRequest, opts: Config, stop: __Stop): boolea
   return __serve_stopping(stop) && opts.readiness_path.len() > 0 && req.path == opts.readiness_path;
 }
 
-function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: Config, accepting: boolean, parked: i32): boolean {
+function __serve_gate[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config, accepting: boolean, parked: i32): boolean {
   let cap: i32 = opts.max_connections;
   if (cap < 1) {
     cap = 1;
   }
   let full: boolean = c.open >= cap || parked >= opts.max_in_flight;
   if (accepting && full) {
-    drv.unwatch(listener);
+    drv.unwatch(listener.fd);
     return false;
   }
   if (!accepting && !full) {
-    return drv.watch(listener, LISTENER_INTEREST) >= 0;
+    return drv.watch(listener.fd, LISTENER_INTEREST) >= 0;
   }
   return accepting;
 }
@@ -3632,14 +3648,14 @@ function __serve_expire[D: async.Driver](drv: D, own c: __Conns, opts: Config, n
 <<53 struct __Body>>=
 struct __Body { state: Cell[i32], rest: Cell[u8[]], tls: Cell[Option[server.Session]] }
 
-struct __Pull { fd: i32, left: Cell[i32], dstate: Cell[i32], dheld: Cell[u8[]], dleft: Cell[i32], dbudget: Cell[i32], droom: Cell[i32], pending: Cell[u8[]], since: Cell[i64], got: Cell[i32], continue_owed: Cell[i32], opts: Config, body: __Body, fault: Cell[Option[StreamFault]] }
+struct __Pull { fd: i32, sock: Socket, left: Cell[i32], dstate: Cell[i32], dheld: Cell[u8[]], dleft: Cell[i32], dbudget: Cell[i32], droom: Cell[i32], pending: Cell[u8[]], since: Cell[i64], got: Cell[i32], continue_owed: Cell[i32], opts: Config, body: __Body, fault: Cell[Option[StreamFault]] }
 ```
 
-### `54 function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource`
+### `54 function __body_source(sock: Socket, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource`
 
 ```fern
-<<54 function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource>>=
-function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource {
+<<54 function __body_source(sock: Socket, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource>>=
+function __body_source(sock: Socket, head: http.HttpHead, initial: u8[], opts: Config, body: __Body): BodySource {
   let no_fault: Option[StreamFault] = None;
   let fault: Cell[Option[StreamFault]] = cell_new(no_fault);
   let owed: i32 = 0;
@@ -3647,7 +3663,7 @@ function __body_source(fd: i32, head: http.HttpHead, initial: u8[], opts: Config
     owed = 1;
   }
   let empty: u8[] = [];
-  let p: __Pull = __Pull { fd: fd, left: cell_new(head.length), dstate: cell_new(0), dheld: cell_new(empty), dleft: cell_new(0), dbudget: cell_new(opts.limits.header_bytes), droom: cell_new(opts.limits.body), pending: cell_new(initial), since: cell_new(0 as i64), got: cell_new(0), continue_owed: cell_new(owed), opts: opts, body: body, fault: fault };
+  let p: __Pull = __Pull { fd: sock.fd, sock: sock, left: cell_new(head.length), dstate: cell_new(0), dheld: cell_new(empty), dleft: cell_new(0), dbudget: cell_new(opts.limits.header_bytes), droom: cell_new(opts.limits.body), pending: cell_new(initial), since: cell_new(0 as i64), got: cell_new(0), continue_owed: cell_new(owed), opts: opts, body: body, fault: fault };
   return BodySource { next: (): Option[u8[]] => __body_next(p), fault: fault, send: (bytes: u8[]): i32 => __pull_write(p, bytes) };
 }
 
@@ -3669,7 +3685,7 @@ function __pull_write(p: __Pull, bytes: u8[]): i32 {
   }
   let at: i32 = 0;
   while (at < wire.len()) {
-    let n: i32 = tcp_send_bytes(p.fd, __bytes_from(wire, at));
+    let n: i32 = tcp_send_bytes(p.sock, __bytes_from(wire, at));
     if (n > 0) {
       at = at + n;
       continue;
@@ -3761,7 +3777,7 @@ function __body_take(p: __Pull): u8[] {
 
 function __pull_chunk(p: __Pull): Option[u8[]] {
   let scratch: u8[] = __alloc_u8(__body_recv_size(p));
-  let n: i32 = tcp_recv_into(p.fd, scratch);
+  let n: i32 = tcp_recv_into(p.sock, scratch);
   if (n > 0) {
     p.got.set(p.got.get() + n);
     let data: u8[] = __pull_read(p, scratch.take(n));
@@ -3805,7 +3821,7 @@ function __pull_opened(p: __Pull, sess: server.Session, raw: u8[]): Option[u8[]]
     Ok(step) => {
       p.body.tls.set(Some(step.session));
       if (step.output.len() > 0) {
-        tcp_send_bytes(p.fd, step.output);
+        tcp_send_bytes(p.sock, step.output);
       }
       if (step.closed) {
         return None;
@@ -3813,7 +3829,7 @@ function __pull_opened(p: __Pull, sess: server.Session, raw: u8[]): Option[u8[]]
       return Some(step.data);
     },
     Err(f) => {
-      tcp_send_bytes(p.fd, f.alert);
+      tcp_send_bytes(p.sock, f.alert);
       return None;
     }
   }
@@ -3825,11 +3841,11 @@ function __pull_send(p: __Pull, bytes: u8[]): void {
     Some(sess) => {
       if let Ok(step) = sess.write(bytes) {
         p.body.tls.set(Some(step.session));
-        tcp_send_bytes(p.fd, step.output);
+        tcp_send_bytes(p.sock, step.output);
       }
     },
     None => {
-      tcp_send_bytes(p.fd, bytes);
+      tcp_send_bytes(p.sock, bytes);
     }
   }
 }
@@ -4032,7 +4048,7 @@ function __serve_stream[D: async.Driver](drv: D, own c: __Conns, fls: __Flights,
     },
     _ => {}
   }
-  let src: BodySource = __body_source(fd, h, __bytes_from(buf, c.offs[at] + h.len), opts, body);
+  let src: BodySource = __body_source(c.socks[at], h, __bytes_from(buf, c.offs[at] + h.len), opts, body);
   let req: HttpRequest = HttpRequest { ...h.request, body: stream.from_source(src) };
   let served: i32 = c.served[at] + 1;
   let keep: boolean = h.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
@@ -4809,7 +4825,7 @@ function __shared_event[D: async.Driver](drv: D, pool: fetch.Idle, own c: __Conn
   match (s.event(fd, (readiness & 1) != 0)) {
     Some(dead) => {
       let unwatched: i32 = drv.unwatch(dead);
-      tcp_close(dead);
+      s.close(dead);
     },
     None => {}
   }
@@ -4874,7 +4890,7 @@ function __shared_turn[D: async.Driver](drv: D, pool: fetch.Idle, own c: __Conns
   }
   for fd in s.expired(clock.instant(), idle) {
     let unwatched: i32 = drv.unwatch(fd);
-    tcp_close(fd);
+    s.close(fd);
   }
   return (c, fls);
 }
@@ -4884,7 +4900,7 @@ function __shared_close[D: async.Driver](drv: D, pool: fetch.Idle): void {
     Some(s) => {
       for fd in s.sockets() {
         let unwatched: i32 = drv.unwatch(fd);
-        tcp_close(fd);
+        s.close(fd);
       }
     },
     None => {}
@@ -4901,9 +4917,9 @@ function __init_platform(): platform.Host {
 ```fern
 <<63 function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host)>>=
 function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, on_stop: (string) => void, snap: Option[Writer]): Result[i32, ListenError] {
-  let listener: i32 = l.fd;
+  let listener: Socket = l.sock;
   let drv: async.RealDriver = __loop_driver(opts);
-  let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
+  let watched: i32 = drv.watch(listener.fd, LISTENER_INTEREST);
   if (watched < 0) {
     drv.close();
     __listen_release(l);
@@ -4914,7 +4930,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "", peer_counts: __PeerCounts { keys: [], counts: [], used: 0 } };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], socks: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "", peer_counts: __PeerCounts { keys: [], counts: [], used: 0 } };
   let flights: __Flights = __flights_none();
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
@@ -4946,7 +4962,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
         ex = __scrape_wake(drv, ex, fd, __exposition_of(conns.metrics, opts), !__serve_stopping(stop));
         continue;
       }
-      if (fd == listener) {
+      if (fd == listener.fd) {
         conns = __serve_accept(drv, listener, conns, opts);
         continue;
       }
@@ -5019,7 +5035,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
     }
   }
   if (accepting) {
-    drv.unwatch(listener);
+    drv.unwatch(listener.fd);
   }
   __quic_close(drv, conns.quic);
   __shared_close(drv, plat.pool);
@@ -5103,10 +5119,10 @@ function __serve_burst[D: async.Driver](drv: D, own c: __Conns, own fls: __Fligh
 ```fern
 <<65 function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, platform.Host)>>=
 function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, on_stop: (string, S) => void, snap: Option[Writer]): Result[i32, ListenError] {
-  let listener: i32 = l.fd;
+  let listener: Socket = l.sock;
   let st: S = init;
   let drv: async.RealDriver = __loop_driver(opts);
-  let watched: i32 = drv.watch(listener, LISTENER_INTEREST);
+  let watched: i32 = drv.watch(listener.fd, LISTENER_INTEREST);
   if (watched < 0) {
     drv.close();
     __listen_release(l);
@@ -5117,7 +5133,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "", peer_counts: __PeerCounts { keys: [], counts: [], used: 0 } };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], socks: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "", peer_counts: __PeerCounts { keys: [], counts: [], used: 0 } };
   let flights: __Flights = __flights_none();
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
@@ -5148,7 +5164,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
         ex = __scrape_wake(drv, ex, fd, __exposition_of(conns.metrics, opts), !__serve_stopping(stop));
         continue;
       }
-      if (fd == listener) {
+      if (fd == listener.fd) {
         conns = __serve_accept(drv, listener, conns, opts);
         continue;
       }
@@ -5255,7 +5271,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
     }
   }
   if (accepting) {
-    drv.unwatch(listener);
+    drv.unwatch(listener.fd);
   }
   __quic_close(drv, conns.quic);
   __exporter_close(drv, ex);
@@ -5299,7 +5315,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     workers = 1;
   }
   let resolved: Config = Config { ...opts, workers: workers };
-  let shared: __Listen = __Listen { fd: 0 - 1, inherited: false };
+  let shared: __Listen = __Listen { sock: __adopt(0 - 1), inherited: false };
   let pool: i32[] = [];
   if (__per_worker_listeners(resolved)) {
     match (__worker_pool(port, resolved)) {
@@ -5312,15 +5328,15 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     }
   } else {
     shared = __serve_listener(port, opts);
-    if (shared.fd < 0) {
-      return Err(__listen_error(port, shared.fd));
+    if (shared.sock.fd < 0) {
+      return Err(__listen_error(port, shared.sock.fd));
     }
   }
-  let bound_fd: i32 = shared.fd;
+  let bound_fd: i32 = shared.sock.fd;
   if (pool.len() > 0) {
     bound_fd = pool[0];
   }
-  let sup: __Supervisor = __Supervisor { pids: [], spawned: [], pipes: [], partial: [], snaps: [], quic: [], h3_free: __h3_pool(bound_fd, resolved), tcp: [], tcp_free: pool, backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
+  let sup: __Supervisor = __Supervisor { pids: [], spawned: [], pipes: [], readers: [], partial: [], snaps: [], quic: [], h3_free: __h3_pool(bound_fd, resolved), tcp: [], tcp_free: pool, backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
   let drv: async.RealDriver = async.real_driver();
   let chld: i32 = drv.watch_signal(17);
   if (chld < 0) {
@@ -5336,7 +5352,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     if (!sup.stopping && sup.pids.len() < workers) {
       let wait_ms: i64 = sup.fork_after - now_unix_ms();
       if (wait_ms <= 0 as i64) {
-        let forked: (__Supervisor, Option[Result[i32, ListenError]]) = __supervisor_fork(drv, __worker_listen(shared, sup), shared.fd, worker, resolved, sup);
+        let forked: (__Supervisor, Option[Result[i32, ListenError]]) = __supervisor_fork(drv, __worker_listen(shared, sup), shared.sock.fd, worker, resolved, sup);
         sup = forked.0;
         match (forked.1) {
           Some(ended) => {
@@ -5404,11 +5420,10 @@ function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
 
 function __supervisor_snapshot(sup: __Supervisor, i: i32): __Supervisor {
   let got: u8[] = [];
-  match (net.read_up_to(sup.pipes[i], 65536)) {
-    Ok(bytes) => {
+  if let Some(r) = sup.readers[i] {
+    if let Ok(bytes) = r.read_chunk_bytes(65536) {
       got = bytes;
-    },
-    Err(_) => {}
+    }
   }
   if (got.len() == 0) {
     return sup;
@@ -5466,8 +5481,8 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
     __pool_close(sup.h3_free, h3_sock);
     let alone: __Supervisor = sup;
     if (listener < 0) {
-      __pool_close(sup.tcp_free, own.fd);
-      alone = __Supervisor { ...sup, tcp_free: [own.fd] };
+      __pool_close(sup.tcp_free, own.sock.fd);
+      alone = __Supervisor { ...sup, tcp_free: [own.sock.fd] };
     }
     return (alone, Some(worker(own, Config { ...opts, workers: 1, h3_sock: h3_sock }, None)));
   }
@@ -5487,19 +5502,21 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
   let held: i32 = 0 - 1;
   let free: i32[] = sup.tcp_free;
   if (listener < 0) {
-    held = own.fd;
+    held = own.sock.fd;
     free = __without_index_i32(free, 0);
   }
   let read_end: i32 = 0 - 1;
+  let reader: Option[Reader] = None;
   match (snap) {
     Some(q) => {
       q.w.close();
       drv.watch(q.r.fd, 1);
       read_end = q.r.fd;
+      reader = Some(q.r);
     },
     None => {}
   }
-  return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()), pipes: sup.pipes.append(read_end), partial: sup.partial.append(""), snaps: sup.snaps.append(""), quic: sup.quic.append(h3_sock), h3_free: __without_index_i32(sup.h3_free, 0), tcp: sup.tcp.append(held), tcp_free: free }, None);
+  return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()), pipes: sup.pipes.append(read_end), readers: sup.readers.append(reader), partial: sup.partial.append(""), snaps: sup.snaps.append(""), quic: sup.quic.append(h3_sock), h3_free: __without_index_i32(sup.h3_free, 0), tcp: sup.tcp.append(held), tcp_free: free }, None);
 }
 
 function __snapshot_pipe(opts: Config): Option[Pipe] {
@@ -5673,24 +5690,24 @@ function __worker_pool(port: i32, opts: Config): Result[i32[], i32] {
   let at: i32 = port;
   for i in 0..opts.workers {
     let l: __Listen = __serve_listener(at, each);
-    if (l.fd < 0) {
+    if (l.sock.fd < 0) {
       __pool_close(pool, 0 - 1);
-      return Err(l.fd);
+      return Err(l.sock.fd);
     }
-    tcp_socket_ctl(l.fd, 8, 0);
+    tcp_socket_ctl(l.sock, 8, 0);
     if (i == 0) {
-      at = tcp_local_port(l.fd);
+      at = tcp_local_port(l.sock);
     }
-    pool = pool.append(l.fd);
+    pool = pool.append(l.sock.fd);
   }
   return Ok(pool);
 }
 
 function __worker_listen(shared: __Listen, sup: __Supervisor): __Listen {
-  if (shared.fd >= 0 || sup.tcp_free.len() == 0) {
+  if (shared.sock.fd >= 0 || sup.tcp_free.len() == 0) {
     return shared;
   }
-  return __Listen { fd: sup.tcp_free[0], inherited: false };
+  return __Listen { sock: __adopt(sup.tcp_free[0]), inherited: false };
 }
 
 function __supervisor_release(shared: __Listen, sup: __Supervisor): void {
@@ -5704,7 +5721,7 @@ function __supervisor_release(shared: __Listen, sup: __Supervisor): void {
 
 ```fern
 <<70 struct __Supervisor>>=
-struct __Supervisor { pids: i32[], spawned: i64[], pipes: i32[], partial: string[], snaps: string[], quic: i32[], h3_free: i32[], tcp: i32[], tcp_free: i32[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
+struct __Supervisor { pids: i32[], spawned: i64[], pipes: i32[], readers: Option[Reader][], partial: string[], snaps: string[], quic: i32[], h3_free: i32[], tcp: i32[], tcp_free: i32[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
 ```
 
 ### `71 function (s: __Supervisor) gave_up(): boolean`
@@ -5763,8 +5780,10 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
       code = 0 - code;
     }
     let lived_ms: i64 = now_unix_ms() - sup.spawned[i];
-    if (sup.pipes[i] >= 0) {
-      tcp_close(sup.pipes[i]);
+    if let Some(r) = sup.readers[i] {
+      unsafe {
+        r.close_unchecked();
+      }
     }
     let freed: i32[] = sup.h3_free;
     if (sup.quic[i] >= 0) {
@@ -5774,7 +5793,7 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
     if (sup.tcp[i] >= 0) {
       listeners = listeners.append(sup.tcp[i]);
     }
-    sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i), pipes: __without_index_i32(sup.pipes, i), partial: __without_index_str(sup.partial, i), snaps: __without_index_str(sup.snaps, i), quic: __without_index_i32(sup.quic, i), h3_free: freed, tcp: __without_index_i32(sup.tcp, i), tcp_free: listeners };
+    sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i), pipes: __without_index_i32(sup.pipes, i), readers: __without_index_reader(sup.readers, i), partial: __without_index_str(sup.partial, i), snaps: __without_index_str(sup.snaps, i), quic: __without_index_i32(sup.quic, i), h3_free: freed, tcp: __without_index_i32(sup.tcp, i), tcp_free: listeners };
     if (sup.stopping) {
       if (code > sup.worst) {
         sup = __Supervisor { ...sup, worst: code };
@@ -5803,6 +5822,18 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
 
 function __without_index_i32(xs: i32[], at: i32): i32[] {
   let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (i != at) {
+      out = out.append(xs[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function __without_index_reader(xs: Option[Reader][], at: i32): Option[Reader][] {
+  let out: Option[Reader][] = [];
   let i: i32 = 0;
   while (i < xs.len()) {
     if (i != at) {
@@ -5874,7 +5905,7 @@ function __port_from_env(name: string, fallback: i32): i32 {
 
 ```fern
 <<73 struct __Quic>>=
-struct __Quic { sock: i32, port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][], origs: u8[][], peers: net.SocketAddr[], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
+struct __Quic { sock: Socket, port: i32, cfg: quic.Config, conns: h3q.Conn[], keys: u8[][], origs: u8[][], peers: net.SocketAddr[], hosts: platform.Host[], serials: i32[], next: i32, producers: __H3Producer[], stopping: boolean, buf: u8[], from: u8[] }
 
 struct __H3Producer { serial: i32, stream: i64, producer: ChunkProducer, index: i32, trailers: HeaderMap, running: boolean }
 ```
@@ -5892,13 +5923,13 @@ function __h3_burst(): i32 {
 }
 
 function __quic_none(): __Quic {
-  return __Quic { sock: 0 - 1, port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
+  return __Quic { sock: __adopt(0 - 1), port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], hosts: [], serials: [], next: 1, producers: [], stopping: false, buf: [], from: [] };
 }
 
-function __quic_socket(port: i32): i32 {
+function __quic_socket(port: i32): Socket {
   if (target_os() != "wasi") {
-    let both: i32 = udp_bind_with(__every_v6(), port, true);
-    if (both >= 0 || !net.error_from_host(both).ipv6_unavailable()) {
+    let both: Socket = udp_bind_with(__every_v6(), port, true);
+    if (both.fd >= 0 || !net.error_from_host(both.fd).ipv6_unavailable()) {
       return both;
     }
   }
@@ -5915,16 +5946,16 @@ function __h3_pool(listener: i32, opts: Config): i32[] {
   if (!opts.h3 || listener < 0) {
     return [];
   }
-  let port: i32 = tcp_local_port(listener);
+  let port: i32 = tcp_local_port(__adopt(listener));
   let pool: i32[] = [];
   let i: i32 = 0;
   while (i < opts.workers) {
-    let sock: i32 = __quic_socket(port);
-    if (sock < 0) {
+    let sock: Socket = __quic_socket(port);
+    if (sock.fd < 0) {
       __pool_close(pool, 0 - 1);
       return [];
     }
-    pool = pool.append(sock);
+    pool = pool.append(sock.fd);
     i = i + 1;
   }
   return pool;
@@ -5934,13 +5965,15 @@ function __pool_close(pool: i32[], keep: i32): void {
   let i: i32 = 0;
   while (i < pool.len()) {
     if (pool[i] != keep) {
-      let closed: Result[void, net.NetError] = net.close(pool[i]);
+      unsafe {
+        __fd_close(pool[i]);
+      }
     }
     i = i + 1;
   }
 }
 
-function __quic_open[D: async.Driver](drv: D, listener: i32, opts: Config): __Quic {
+function __quic_open[D: async.Driver](drv: D, listener: Socket, opts: Config): __Quic {
   let Some(t) = opts.tls else {
     return __quic_none();
   };
@@ -5948,15 +5981,15 @@ function __quic_open[D: async.Driver](drv: D, listener: i32, opts: Config): __Qu
     return __quic_none();
   }
   let port: i32 = tcp_local_port(listener);
-  let sock: i32 = opts.h3_sock;
-  if (sock < 0) {
+  let sock: Socket = __adopt(opts.h3_sock);
+  if (sock.fd < 0) {
     sock = __quic_socket(port);
   }
-  if (sock < 0) {
+  if (sock.fd < 0) {
     return __quic_none();
   }
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
-  if (drv.watch(sock, LISTENER_INTEREST) < 0) {
+  if (drv.watch(sock.fd, LISTENER_INTEREST) < 0) {
     let closed: Result[void, net.NetError] = net.close(sock);
     return __quic_none();
   }
@@ -5964,15 +5997,15 @@ function __quic_open[D: async.Driver](drv: D, listener: i32, opts: Config): __Qu
 }
 
 function __quic_on(c: __Conns): boolean {
-  return c.quic.sock >= 0;
+  return c.quic.sock.fd >= 0;
 }
 
 function __quic_owns(c: __Conns, fd: i32): boolean {
-  return __quic_on(c) && fd == c.quic.sock;
+  return __quic_on(c) && fd == c.quic.sock.fd;
 }
 
 function __quic_close[D: async.Driver](drv: D, q: __Quic): void {
-  if (q.sock < 0) {
+  if (q.sock.fd < 0) {
     return;
   }
   let now: Instant = clock.instant();
@@ -5982,8 +6015,8 @@ function __quic_close[D: async.Driver](drv: D, q: __Quic): void {
     __h3_sent(q.sock, closing.datagrams(), q.peers[i]);
     i = i + 1;
   }
-  drv.unwatch(q.sock);
-  let closed: Result[void, net.NetError] = net.close(q.sock);
+  drv.unwatch(q.sock.fd);
+  __shut(q.sock);
 }
 
 function __quic_timeout(q: __Quic, now: i64): i32 {
@@ -6010,11 +6043,11 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
 }
 ```
 
-### `75 function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void`
+### `75 function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void`
 
 ```fern
-<<75 function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void>>=
-function __h3_sent(sock: i32, out: u8[][], to: net.SocketAddr): void {
+<<75 function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void>>=
+function __h3_sent(sock: Socket, out: u8[][], to: net.SocketAddr): void {
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(sock, d, to);
   }
