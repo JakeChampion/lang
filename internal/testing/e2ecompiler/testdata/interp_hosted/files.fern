@@ -149,6 +149,8 @@ function main(): i32 {
       done("writer syncfs", w.syncfs());
       done("writer drop_cache", w.drop_cache(0i64, 0i64));
       done("writer truncate", w.truncate(16i64));
+      done("writer set_nonblocking", w.set_nonblocking(true));
+      done("writer set_nonblocking off", w.set_nonblocking(false));
       done("writer splice_forever", w.splice_forever("y\n"));
       done("writer close", w.close());
     },

@@ -19,8 +19,8 @@ function fill(b: usize): void {
     for i in 0..8193 { buf_push_byte(b, i % 256); }
 }
 function main(): i32 {
-    let fd: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], TCP_PORT, false);
-    assert(fd >= 0);
+    let fd: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], TCP_PORT, false);
+    assert(fd.fd >= 0);
     let b: usize = buf_new(16);
     fill(b);
     send_from(fd, b, 0);

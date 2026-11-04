@@ -117,12 +117,12 @@ function fail(n: i32): i32 {
 
 function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 4, false);
-    if (ln < 0) { return fail(1); }
-    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
-    if (c < 0) { return fail(2); }
-    let a: i32 = tcp_accept(ln);
-    if (a < 0) { return fail(3); }
+    let ln: Socket = tcp_listen_with(any, 0, 4, false);
+    if (ln.fd < 0) { return fail(1); }
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
+    if (c.fd < 0) { return fail(2); }
+    let a: Socket = tcp_accept(ln);
+    if (a.fd < 0) { return fail(3); }
     if (tcp_send_bytes(c, [98u8, 121u8, 116u8, 101u8, 115u8]) != 5) { return fail(4); }
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(a, buf) != 5) { return fail(5); }
@@ -180,8 +180,8 @@ function all_report(r: i32, events: i32[], fds: i32[], bit: i32): boolean {
 
 function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
-    let ln: i32 = tcp_listen_with(any, 0, 32, false);
-    if (ln < 0) { return fail(1); }
+    let ln: Socket = tcp_listen_with(any, 0, 32, false);
+    if (ln.fd < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     let r: i32 = reactor_new();
     if (r < 0) { return fail(2); }
@@ -190,16 +190,16 @@ function main(): i32 {
     let all: i32[] = [];
     let i: i32 = 0;
     while (i < 20) {
-        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-        if (c < 0) { return fail(3); }
-        let a: i32 = tcp_accept(ln);
+        let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+        if (c.fd < 0) { return fail(3); }
+        let a: Socket = tcp_accept(ln);
         let tries: i32 = 0;
-        while (a < 0 && tries < 200) {
+        while (a.fd < 0 && tries < 200) {
             sleep_ms(5 as i64);
             a = tcp_accept(ln);
             tries = tries + 1;
         }
-        if (a < 0) { return fail(4); }
+        if (a.fd < 0) { return fail(4); }
         if (reactor_ctl(r, 1, c, 3) != 0 || reactor_ctl(r, 1, a, 3) != 0) { return fail(5); }
         cs = cs.append(c);
         accs = accs.append(a);

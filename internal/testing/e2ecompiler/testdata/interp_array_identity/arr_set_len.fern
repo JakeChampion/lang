@@ -12,9 +12,9 @@ function main(): i32 {
     print(f"regrown: {buf.len()} {buf[2]} {buf[3]}");
 
     let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
-    let ls: i32 = tcp_listen_with(lo, 0, 16, false);
-    let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
-    let s: i32 = tcp_accept(ls);
+    let ls: Socket = tcp_listen_with(lo, 0, 16, false);
+    let c: Socket = tcp_connect_with(lo, tcp_local_port(ls), false);
+    let s: Socket = tcp_accept(ls);
     let room: u8[] = __alloc_u8(6);
     let seen: [u8] = room[0:6];
     print(f"send: {tcp_send_bytes(c, "abcdef".bytes())}");

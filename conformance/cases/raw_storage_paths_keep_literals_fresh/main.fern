@@ -119,8 +119,8 @@ function check(fd: i32, mode: string): boolean {
 }
 
 function main(): i32 {
-  let fd: i32 = tcp_listen(0);
-  if (fd < 0) {
+  let fd: Socket = tcp_listen(0);
+  if (fd.fd < 0) {
     return 1;
   }
   let modes = ["record", "method", "tuple", "variant", "array", "return", "chain", "indirect-return", "cell", "cell-set", "cell-argument", "closure", "indirect-argument"];

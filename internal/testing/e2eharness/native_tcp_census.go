@@ -25,14 +25,14 @@ func NativeTCPCensusCases() []struct{ Name, Source string } {
 `
 	for _, n := range []int{0, 1, 7, 4097} {
 		src := read + fmt.Sprintf(`function exercise(): i32 {
-    let listener: i32 = tcp_listen(0);
-    if (listener < 0) { return 1; }
+    let listener: Socket = tcp_listen(0);
+    if (listener.fd < 0) { return 1; }
     let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 2; }
-    let client: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
-    if (client < 0) { return 3; }
-    let server: i32 = tcp_accept(listener);
-    if (server < 0) { return 4; }
+    let client: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+    if (client.fd < 0) { return 3; }
+    let server: Socket = tcp_accept(listener);
+    if (server.fd < 0) { return 4; }
     if (tcp_send_bytes(client, bytes_of(%q)) != %d) { return 5; }
     if (tcp_close(client) != 0) { return 6; }
     let buf: u8[] = __alloc_u8(4096);

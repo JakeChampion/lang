@@ -141,6 +141,14 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 	return checkerBin, runner, progDir
 }
 
+const destructureReassignPrelude = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct HPair { h: Handle, n: i32 }
+function sinkh(own h: Handle): i32 { return h.close(); }
+function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function keep(p: HPair): HPair { return p; }
+`
+
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 	const loopPayloadPrefix = `struct Box { data: u8[] }
@@ -153,6 +161,10 @@ function consume(own item: Box): i32 { return item.data.len(); }
 		src  string
 		want []string
 	}{
+		{"destructure-after-borrowed-assignment", destructureReassignPrelude + "function f(q: HPair): i32 { let p: HPair = mkp(); p = q; let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"destructure-after-borrowed-call-assignment", destructureReassignPrelude + "function f(q: HPair): i32 { let p: HPair = mkp(); p = keep(q); let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"destructure-after-fresh-call-assignment", destructureReassignPrelude + "function f(): i32 { let p: HPair = mkp(); p = mkp(); let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"destructure-after-fresh-local-assignment", destructureReassignPrelude + "function f(): i32 { let p: HPair = mkp(); let q: HPair = mkp(); p = q; let HPair { h, n } = p; return sinkh(h) + n; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"call-payload-stored-then-read", "struct T { aux: string } function take(t: T, n: i32): i32 { return t.aux.len() + n; } function pick(xs: string[]): Option[string] { for x in xs { return Some(x); } return None; } function f(xs: string[]): i32 { if let Some(u) = pick(xs) { let t = T { aux: u }; return take(t, u.len()); } return 0; } function main(): i32 { return 0; }", nil},
 		{"call-payload-moved-at-its-last-use", "function make(n: i32): Result[i32[], string] { return Ok([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { match (make(1)) { Ok(xs) => { let kept = xs; let k: i32 = keep(xs); return k + kept[0]; }, Err(_) => { return 0; } } return 0; } function main(): i32 { return 0; }", nil},
 		{"call-payload-same-name-in-two-matches", "function make(n: i32): Result[i32[], string] { return Ok([n]); } function keep(own ys: i32[]): i32 { return ys[0]; } function f(): i32 { let t: i32 = 0; match (make(1)) { Ok(xs) => { let a: i32 = keep(xs); t = t + a; }, Err(_) => {} } match (make(2)) { Ok(xs) => { let b: i32 = keep(xs); t = t + b; }, Err(_) => {} } return t; } function main(): i32 { return 0; }", nil},
@@ -362,7 +374,7 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"socket-from-body-fresh-scrutinee", "function accepted(l: Socket): Result[Socket, i32] { return Ok(tcp_accept(l)); }\nfunction take(own s: Socket): i32 { return tcp_close(s); }\nfunction main(): i32 { let l: Socket = tcp_listen(0); match (accepted(l)) { Ok(s) => { let n: i32 = take(s); }, Err(e) => {} } let Ok(t) = accepted(l) else { return tcp_close(l); }; let m: i32 = take(t); return tcp_close(l); }", nil},
 		{"socket-from-borrowing-scrutinee", "function passed(l: Socket): Result[Socket, i32] { return Ok(l); }\nfunction take(own s: Socket): i32 { return tcp_close(s); }\nfunction main(): i32 { let l: Socket = tcp_listen(0); match (passed(l)) { Ok(s) => { let n: i32 = take(s); }, Err(e) => {} } return 0; }", []string{"E051"}},
 		{"socket-literal", "function main(): i32 { let s: Socket = Socket { fd: 3 }; return tcp_close(s); }", []string{"E099"}},
-		{"socket-descriptor-transition", "function main(): i32 { let fd: i32 = tcp_listen(0); return tcp_close(fd); }", nil},
+		{"socket-descriptor-transition", "function main(): i32 { let fd: Socket = tcp_listen(0); return tcp_close(fd); }", nil},
 		{"send-captures-cell", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let c: Cell[i32] = cell_new(1); return spawn((): i32 => c.get()); }", []string{"E100"}},
 		{"send-captures-handle", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let w: Writer = stdout(); return spawn((): i32 => w.fd); }", []string{"E100"}},
 		{"send-captures-function-value", "function spawn(send body: () => i32): i32 { return body(); } function spawn_cell(send body: () => Cell[i32]): i32 { return body().get(); } struct Box { n: i32 } struct Pair[T] { a: T, b: T } struct Holder { c: Cell[i32] } @must_consume\nstruct Ticket { id: i32 } function redeem(own t: Ticket): i32 { return t.id; }\nfunction main(): i32 { let f: () => i32 = (): i32 => 1; return spawn((): i32 => f()); }", []string{"E100"}},
