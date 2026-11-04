@@ -110,6 +110,69 @@ func TestSelfHostSemReach(t *testing.T) {
 	}
 }
 
+const semReachNoReturnProg = `struct Pair { a: string, b: i32[] }
+
+function stop(code: i32): Pair {
+  eprint("stopped");
+  exit(code);
+}
+
+@noinline function after(p: Pair): i32 {
+  return p.a.len() * 7 + p.b.len();
+}
+
+@noinline function k(n: i32, s: string): i32 {
+  if (n > 100) {
+    let p: Pair = stop(3);
+    return after(p);
+  }
+  return n + s.len();
+}
+
+function main(): i32 {
+  return k(N, "ab" + "cd");
+}
+`
+
+// No return of stop is reached, so the walk ends its block at the call: after
+// is never reached, and the code that would read the result is not emitted.
+func TestSelfHostSemReachNoReturnCall(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	fern := buildLangBinForInterp(t)
+	after := regexp.MustCompile(`(?m)^__fn_after:`)
+	for _, tc := range []struct {
+		name, n string
+		want    int
+	}{
+		{"returns", "5", 9},
+		{"stops", "200", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(semReachNoReturnProg, "N", tc.n, 1)
+			if got := interpExitStdin(t, fern, src, ""); got != tc.want {
+				t.Fatalf("the interpreter exited %d, want %d", got, tc.want)
+			}
+			path := filepath.Join(t.TempDir(), "noreturn.fern")
+			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+				if after.MatchString(readFile(t, cli.emit(t, path, target))) {
+					t.Errorf("%s: after is emitted, but only a call that never returns leads to it", target)
+				}
+				if !after.MatchString(readFile(t, cli.emit(t, path, target, "FERN_NO_SEM_REACH=1"))) {
+					t.Errorf("%s FERN_NO_SEM_REACH=1: after dropped", target)
+				}
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				if _, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s: exit %d, want %d", target, code, tc.want)
+				}
+			}
+		})
+	}
+}
+
 const semReachOptionProg = `import "core/map";
 import "std/option";
 import "std/array";
@@ -421,6 +484,17 @@ func TestSelfHostSemReachServeWithoutH2(t *testing.T) {
 	off := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1", "FERN_NO_SEM_REACH=1"))
 	if !h2.MatchString(off) {
 		t.Errorf("FERN_NO_SEM_REACH=1: the server links no HTTP/2 either, so this test shows nothing")
+	}
+	enabled := strings.Replace(serveWithoutH2Prog, "...serve.config(),", "...serve.config().with_h2(),", 1)
+	if enabled == serveWithoutH2Prog {
+		t.Fatal("the enabled control did not change the server configuration")
+	}
+	if err := os.WriteFile(path, []byte(enabled), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	on := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1"))
+	if !h2.MatchString(on) {
+		t.Error("the server with HTTP/2 enabled links no HTTP/2 functions")
 	}
 }
 

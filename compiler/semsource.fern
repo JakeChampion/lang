@@ -2810,7 +2810,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (ssasem.contract_variables(contract).len() > 0) {
     return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
   }
-  let kept: boolean = keeps(s, key);
+  let kept: boolean = keeps(s, contract);
   let lent: Value = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], kept);
   s = lent.s;
   recv = lent.id;
@@ -3043,8 +3043,11 @@ function lend(v: Value, param: typeinfo.Type, m: i32, kept: boolean): Value {
   return define(empty.s, 9, [v.id, empty.id], 0, "+", param);
 }
 
-function keeps(s: State, callee: string): boolean {
-  return s.handers.has(callee);
+function keeps(s: State, contract: ssasem.Contract): boolean {
+  // A scalar result cannot contain a borrowed string. Method names alone
+  // can mark an unrelated scalar reader as a function that returns a borrow.
+  let t: typeinfo.Type = contract.result;
+  return !ssasem.is_integer(t) && !ssasem.is_bool(t) && !ssasem.is_float(t) && s.handers.has(contract.name);
 }
 
 function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolean): Value {
@@ -3750,7 +3753,7 @@ function invoke_method(recv: i32, args: ast.Expr[], contract: ssasem.Contract, s
   if (!written.ok) {
     return refused(s, written.why);
   }
-  let kept: boolean = keeps(s, contract.name);
+  let kept: boolean = keeps(s, contract);
   let v: Value = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], kept);
   s = v.s;
   if (!s.ok) {
@@ -3779,7 +3782,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!semtypes.concrete(want, false)) {
       want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s));
     }
-    let kept: boolean = keeps(s, contract.name);
+    let kept: boolean = keeps(s, contract);
     let v: Value = lend(expr(args[i], s, want), want, contract.modes[at], kept);
     s = v.s;
     if (!s.ok) {
