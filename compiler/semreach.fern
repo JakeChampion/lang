@@ -17,7 +17,7 @@ pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blo
   let w: World = start(ctx, roots, op, zeroed(funcs, usable));
   let walks: Walk[] = [];
   while (walks.len() < funcs.len()) {
-    walks = walks.append(Walk { vals: [], exec: [], edges: [], stale: [], keys: [], cut: [], changed: false });
+    walks = walks.append(Walk { vals: [], exec: [], edges: [], stale: [], keys: [], cut: [], waits: [], changed: false });
   }
   while (w.next < w.queue.len()) {
     let i: i32 = w.queue[w.next];
@@ -410,14 +410,6 @@ function counters_of(funcs: ssasem.Func[], usable: boolean[], u: Universe): i32[
               out = noted(out, r, i);
             }
           }
-          if (ins.kind_tag == ssasem.call()) {
-            for a in ins.args {
-              let r: i32 = own_record(u, f.values[a]);
-              if (r >= 0) {
-                out = noted(out, r, i);
-              }
-            }
-          }
         }
       }
     }
@@ -490,7 +482,8 @@ function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
   return 0 - 1;
 }
 
-struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], inhabited: boolean[], queue: i32[], next: i32, queued: boolean[] }
+// waiters[r] are the functions with a call cut because no record r is built.
+struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], inhabited: boolean[], waiters: i32[][], queue: i32[], next: i32, queued: boolean[] }
 
 function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.Type[]): World {
   let built: boolean[] = [];
@@ -501,7 +494,7 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
   while (rets.len() < ctx.funcs.len()) {
     rets = rets.append(none());
   }
-  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
+  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), waiters: lists(ctx.u.recs.len()), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
   let i: i32 = 0;
   while (i < roots.len()) {
     if (roots[i]) {
@@ -585,13 +578,14 @@ function reached_name(ctx: Ctx, w: World, name: string): World {
 }
 
 // cut[pos] is how many instructions of the block run, or -1 when all of them do.
-struct Walk { vals: i64[], exec: boolean[], edges: boolean[][], stale: boolean[], keys: i32[], cut: i32[], changed: boolean }
+// waits are the record types whose absence cut a call.
+struct Walk { vals: i64[], exec: boolean[], edges: boolean[][], stale: boolean[], keys: i32[], cut: i32[], waits: i32[], changed: boolean }
 
 function walk(ctx: Ctx, w: World, i: i32): Walk {
   let f: ssasem.Func = ctx.funcs[i];
   let g: ssa.SFunc = f.graph;
   let at: i32[] = ssadeps.position_of(g);
-  let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], cut: no_cuts(g), changed: true };
+  let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], cut: util.minus_ones(g.blocks.len()), waits: [], changed: true };
   while (wk.changed) {
     wk = Walk { ...wk, changed: false };
     let pos: i32 = 0;
@@ -617,14 +611,6 @@ function entry_values(g: ssa.SFunc): i64[] {
   return vals;
 }
 
-function no_cuts(g: ssa.SFunc): i32[] {
-  let cut: i32[] = [];
-  while (cut.len() < g.blocks.len()) {
-    cut = cut.append(0 - 1);
-  }
-  return cut;
-}
-
 function no_edges(g: ssa.SFunc): boolean[][] {
   let edges: boolean[][] = [];
   for b in g.blocks {
@@ -644,11 +630,17 @@ function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, p
         wk = Walk { ...wk, vals: wk.vals.with(ins.result, next), changed: true };
       }
     }
-    if (ins.kind_tag == ssasem.call() && holds_none(ctx, w, f, wk, ins)) {
-      return Walk { ...wk, cut: wk.cut.with(pos, n) };
+    if (ins.kind_tag == ssasem.call()) {
+      let r: i32 = none_held(ctx, w, f, wk, ins);
+      if (r >= 0 && util.index_of_i32(wk.waits, r) < 0) {
+        wk = Walk { ...wk, waits: wk.waits.append(r) };
+      }
+      if (r != 0 - 1) {
+        return cut_at(wk, pos, n);
+      }
     }
     if (ins.kind_tag == ssasem.call() && call_value(ctx, w, ins) == top()) {
-      return Walk { ...wk, cut: wk.cut.with(pos, n + 1) };
+      return cut_at(wk, pos, n + 1);
     }
     n = n + 1;
   }
@@ -658,19 +650,27 @@ function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, p
   return followed(g, at, wk, pos, b);
 }
 
+function cut_at(wk: Walk, pos: i32, n: i32): Walk {
+  if (wk.cut[pos] == n) {
+    return wk;
+  }
+  return Walk { ...wk, cut: wk.cut.with(pos, n) };
+}
+
 // An argument that no value reaches, or a record that is never built, means
-// that the call itself never runs.
-function holds_none(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): boolean {
+// that the call itself never runs. The result is that record, -2 for a value
+// that no path gives, or -1 when the call can run.
+function none_held(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): i32 {
   for a in ins.args {
     if (wk.vals[a] == top()) {
-      return true;
+      return 0 - 2;
     }
     let r: i32 = own_record(ctx.u, f.values[a]);
     if (r >= 0 && !w.inhabited[r]) {
-      return true;
+      return r;
     }
   }
-  return false;
+  return 0 - 1;
 }
 
 function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Walk {
@@ -908,6 +908,11 @@ function truth(b: boolean): i64 {
 
 function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
   let f: ssasem.Func = ctx.funcs[i];
+  for r in wk.waits {
+    if (util.index_of_i32(w.waiters[r], i) < 0) {
+      w = World { ...w, waiters: w.waiters.with(r, w.waiters[r].append(i)) };
+    }
+  }
   let pos: i32 = 0;
   while (pos < f.graph.blocks.len()) {
     if (wk.exec[pos]) {
@@ -983,7 +988,7 @@ function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: 
     return w;
   }
   if (!w.inhabited[r]) {
-    w = queued_all(World { ...w, inhabited: w.inhabited.with(r, true) }, ctx.counters[r]);
+    w = queued_all(queued_all(World { ...w, inhabited: w.inhabited.with(r, true) }, ctx.counters[r]), w.waiters[r]);
   }
   let at: i32[] = ctx.u.rec_fields[r];
   let k: i32 = 0;

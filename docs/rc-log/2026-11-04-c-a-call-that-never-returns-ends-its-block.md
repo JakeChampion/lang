@@ -33,8 +33,16 @@ inliner kept, and `__driven_kernel` then stayed a function of its own.
 
 The walk records the cut for each block. `absorb` takes only the
 instructions before the cut, so the callee of a pruned call is not reached.
-`counters_of` also lists each function that passes a record to a call, so
-the walk visits it again when that record type becomes inhabited.
+A walk also records each record type whose absence cut a call. `absorb`
+adds the function to the waiters of that type, and the function is walked
+again when the type becomes inhabited. Without that walk, a cut stays after
+its record is built: the stage1 compiler then miscompiled `tr`.
+
+The pass does more work. When the compiler compiles `checker.fern`, it
+makes 107,429 more allocations (0.28%), all in `semreach`: with
+`FERN_NO_SEM_REACH=1`, main and this change both make 38,195,744. An
+earlier form queued every function that passes a record. It cost 132,654
+allocations.
 
 In the TLS server, the call to `h2__Conn.read` is now pruned. Before this
 change, the trap was spliced into its callers. The compiler that the
