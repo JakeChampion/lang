@@ -26,7 +26,7 @@ lockfile = true
 # The one mise release the repo runs: scripts/toolchain-env installs exactly
 # it, and every jdx/mise-action step passes it as `version:`.
 # internal/testing/sourcelint keeps them equal.
-FERN_MISE_VERSION = "2026.9.1"
+FERN_MISE_VERSION = "2026.11.0"
 
 [tools]
 go = "1.27"
@@ -34,10 +34,10 @@ go = "1.27"
 # so these two versions must always be equal. The adapter is a data file the
 # wasm e2e tests read via FERN_WASI_ADAPTER, which every consumer derives from
 # `mise where http:wasi-adapter`.
-wasmtime = "46.0.1"
-"http:wasi-adapter" = { version = "46.0.1", url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{{ version }}/wasi_snapshot_preview1.command.wasm" }
-wasm-tools = "1.253.0"
-actionlint = "1.7.10"
+wasmtime = "50.0.1"
+"http:wasi-adapter" = { version = "50.0.1", url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{{ version }}/wasi_snapshot_preview1.command.wasm" }
+wasm-tools = "1.263.0"
+actionlint = "1.7.12"
 gotestsum = "1.13.0"
 # The HTTP load generator of the net-nightly lane (scripts/net-bench).
 oha = "1.16.0"
