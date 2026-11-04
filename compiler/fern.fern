@@ -1556,7 +1556,7 @@ function jni_java_head(class: string, library: string, all_static: boolean, head
     mods = "final ";
     ctor = "\n    private " + simple + "() {}\n";
   }
-  return out + mods + "class " + simple + head + " {\n    static {\n        System.loadLibrary(\"" + library + "\");\n    }\n" + ctor + "\n";
+  return out + mods + "class " + simple + head + " {\n    static {\n        System.loadLibrary(\"" + library + "\");\n    }\n\n    // The state of the native library, for its callbacks.\n    public static long fern;\n" + ctor + "\n";
 }
 
 // The Java source of `class`: its JNI methods as native declarations, and

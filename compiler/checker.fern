@@ -19402,17 +19402,7 @@ function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string, root: ast.S
       return lu_payload_expr_fresh(fx, f.iter, name, root) && (f.var_name == name || lu_payload_scan_fresh(fx, f.body, name, 0, root));
     },
     ast.StmtMatch(m) => {
-      if (!lu_payload_expr_fresh(fx, m.scrutinee, name, root)) {
-        return false;
-      }
-      for arm in m.arms {
-        if (!util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
-          if (arm.has_guard && !lu_payload_expr_fresh(fx, arm.guard, name, root) || !lu_payload_scan_fresh(fx, arm.body, name, 0, root)) {
-            return false;
-          }
-        }
-      }
-      return true;
+      return lu_payload_match_fresh(fx, m, name, root);
     },
     _ => {
       let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
@@ -19420,6 +19410,21 @@ function lu_payload_stmt_fresh(fx: LuFn, st: ast.Stmt, name: string, root: ast.S
     }
   }
   return false;
+}
+
+// The scrutinee of `m`, and each arm that does not bind `name` again.
+function lu_payload_match_fresh(fx: LuFn, m: ast.StmtMatch, name: string, root: ast.Stmt[]): boolean {
+  if (!lu_payload_expr_fresh(fx, m.scrutinee, name, root)) {
+    return false;
+  }
+  for arm in m.arms {
+    if (!util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
+      if (arm.has_guard && !lu_payload_expr_fresh(fx, arm.guard, name, root) || !lu_payload_scan_fresh(fx, arm.body, name, 0, root)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function lu_payload_expr_fresh(fx: LuFn, e: ast.Expr, name: string, root: ast.Stmt[]): boolean {
@@ -19461,7 +19466,20 @@ function lu_fresh_local_replacement(fx: LuFn, e: ast.Expr, body: ast.Stmt[]): bo
   let ast.ExprIdent(id) = e else {
     return false;
   };
-  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != 1 || !lu_fresh_init(fx, id.name) || !lu_is_last(fx, id)
+  if (!lu_fresh_init(fx, id.name) || !lu_sole_last_read(fx, id, 1) || !lu_body_declares(body, id.name)) {
+    return false;
+  }
+  let state: LuReplacement = LuReplacement { value: e, name: id.name, repeats: false };
+  for st in body {
+    state = astwalk.fold_stmt_nodes(st, state, lu_replacement_loop, lu_replacement_keep, astwalk.descend_all);
+  }
+  return !state.repeats;
+}
+
+// `id` is not a parameter, has `decls` declarations, is at its last read,
+// is not captured and does not escape, and nothing assigns it.
+function lu_sole_last_read(fx: LuFn, id: ast.ExprIdent, decls: i32): boolean {
+  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != decls || !lu_is_last(fx, id)
     || util.has_str(fx.facts.captured, id.name) || util.has_str(fx.facts.escaping, id.name)) {
     return false;
   }
@@ -19470,17 +19488,18 @@ function lu_fresh_local_replacement(fx: LuFn, e: ast.Expr, body: ast.Stmt[]): bo
       return false;
     }
   }
+  return true;
+}
+
+// `body` declares the local `name`.
+function lu_body_declares(body: ast.Stmt[], name: string): boolean {
   let facts: LuFacts = lu_empty_facts();
   for st in body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   }
   for v in facts.vars {
-    if (v.name == id.name) {
-      let state: LuReplacement = LuReplacement { value: e, name: id.name, repeats: false };
-      for st in body {
-        state = astwalk.fold_stmt_nodes(st, state, lu_replacement_loop, lu_replacement_keep, astwalk.descend_all);
-      }
-      return !state.repeats;
+    if (v.name == name) {
+      return true;
     }
   }
   return false;
@@ -19492,14 +19511,8 @@ function lu_fresh_payload_value(fx: LuFn, e: ast.Expr): boolean {
   let ast.ExprIdent(id) = e else {
     return false;
   };
-  if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) != 0 || !lu_is_last(fx, id)
-    || util.has_str(fx.facts.captured, id.name) || util.has_str(fx.facts.escaping, id.name)) {
+  if (!lu_sole_last_read(fx, id, 0)) {
     return false;
-  }
-  for a in fx.facts.assigns {
-    if (a.name == id.name) {
-      return false;
-    }
   }
   let found: boolean = false;
   for m in fx.facts.matched {

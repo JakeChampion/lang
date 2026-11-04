@@ -1,0 +1,23 @@
+// A qualified pattern with a payload in parentheses names the variant of
+// the imported module, although the module has a struct with that name. A
+// pattern with braces still names the struct.
+import "./events";
+
+function size(e: events.Event): i32 {
+  match (e) {
+    events.Group(g) => {
+      return g.n;
+    },
+    events.Quiet => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  let events.Group { n } = events.Group { n: 5 };
+  print(size(events.grouped(7)).to_string());
+  print(size(events.Quiet).to_string());
+  print(n.to_string());
+  return 0;
+}

@@ -27,6 +27,26 @@ function test_buttons_fit_and_do_not_overlap(): test.TestOutcome {
   return test.pass();
 }
 
+// The rows of the peer list fit, do not overlap each other, and stay above
+// the talk button.
+function test_peer_rows_fit_above_the_talk_button(): test.TestOutcome {
+  for size in [[1080, 2400], [720, 1280], [320, 480]] {
+    let w: i32 = size[0];
+    let h: i32 = size[1];
+    let talk: screen.Rect = screen.talk_button(w, h);
+    for k in 0..screen.PEER_ROWS {
+      let row: screen.Rect = screen.peer_row(w, h, k);
+      if (!inside(row, w, h) || overlap(row, talk)) {
+        return test.fail("peer row " + k.to_string() + " is off the screen or on the talk button at " + w.to_string() + "x" + h.to_string());
+      }
+      if (k > 0 && overlap(row, screen.peer_row(w, h, k - 1))) {
+        return test.fail("peer rows overlap at " + w.to_string() + "x" + h.to_string());
+      }
+    }
+  }
+  return test.pass();
+}
+
 function test_contains_is_half_open(): test.TestOutcome {
   let r: screen.Rect = screen.Rect { x: 10, y: 20, w: 5, h: 5 };
   let s: string = screen.contains(r, 10.0f32, 20.0f32).to_string() + " " + screen.contains(r, 15.0f32, 22.0f32).to_string() + " " + screen.contains(r, 14.5f32, 24.9f32).to_string();
@@ -63,6 +83,7 @@ function test_wrap(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie screen");
   r = r.it("the buttons fit and do not overlap", test_buttons_fit_and_do_not_overlap);
+  r = r.it("the peer rows fit above the talk button", test_peer_rows_fit_above_the_talk_button);
   r = r.it("contains is half-open", test_contains_is_half_open);
   r = r.it("the text scale follows the width", test_text_scale);
   r = r.it("text wraps at spaces", test_wrap);

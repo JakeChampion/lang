@@ -1,0 +1,11 @@
+// An enum whose variant has the name of the struct it holds.
+pub struct Group { n: i32 }
+
+pub enum Event {
+  Group(Group),
+  Quiet,
+}
+
+pub function grouped(n: i32): Event {
+  return Group(Group { n: n });
+}
