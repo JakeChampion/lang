@@ -2579,7 +2579,8 @@ function is_exit(ins: ssa.SInst): boolean {
   return ins.kind_tag == 50 && ins.str == "exit";
 }
 
-// A block that calls exit leaves the process, so no path goes on from it.
+// A block that calls exit leaves the process, so no path goes on from it,
+// and a block that only such a path reached is gone.
 function ended_at_exit(f: ssa.SFunc): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
   let cut: boolean = false;
@@ -2595,7 +2596,15 @@ function ended_at_exit(f: ssa.SFunc): ssa.SFunc {
     return f;
   }
   let g: ssa.SFunc = ssa.SFunc { ...f, blocks: blocks };
-  return ssa.SFunc { ...g, blocks: ssa.refreshed_preds(g) };
+  let live: boolean[] = ssadeps.reachable_blocks(g);
+  let kept: ssa.SBlock[] = [];
+  for i in 0..blocks.len() {
+    if (live[i]) {
+      kept = kept.append(blocks[i]);
+    }
+  }
+  let h: ssa.SFunc = ssa.SFunc { ...g, blocks: kept };
+  return ssa.SFunc { ...h, blocks: ssa.refreshed_preds(h) };
 }
 
 function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
