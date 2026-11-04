@@ -66,10 +66,11 @@ function main(): i32 {
     match (async.wait_any(set, Some(clock.instant().add(time.duration_millis(5000))))) { Woke(i) => {}, _ => { return fail(11); } }
     closed = net.close(a2);
     match (net.read_deadline(c2, 16, wait)) {
-        Ok(net.Chunk(b)) => { return fail(12); },
+        // wasi:sockets hides the reset: wasmtime 46 reports a failed stream
+        // read with no errno, and wasmtime 50 reports a closed stream.
+        Ok(net.Chunk(b)) => { if (target_os() != "wasi" || b.len() != 0) { return fail(12); } },
         Ok(_) => { return fail(13); },
         Err(e) => {
-            // wasi:sockets reports a failed stream read with no errno.
             if (target_os() != "wasi" && !e.eq(net.ConnectionReset)) { return fail(14); }
         }
     }
