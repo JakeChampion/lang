@@ -19564,10 +19564,11 @@ function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIden
   }
   if let ast.StmtMatch(m) = st {
     let r: i32 = LU_CONTINUES;
+    let reach: LuReach = LuReach { noret: fx.noret, frames: site.frames, level: site.frames.len() - 1, scope: lu_binding_level(site.frames, aid.name) };
     if (lu_same_ident(m.scrutinee, aid)) {
-      r = lu_match_tag_live(fx, m, aid.name);
+      r = lu_match_tag_live(reach, m, aid.name);
     } else if (lu_mentions_at(m.scrutinee, aid)) {
-      r = lu_call_tag_settles(fx, m, aid);
+      r = lu_call_tag_settles(reach, m, aid);
     } else {
       r = LU_NOT_TAG;
     }
@@ -19603,7 +19604,7 @@ function lu_mentions_at(e: ast.Expr, aid: ast.ExprIdent): boolean {
 // A local that a call in a match tag takes. LU_LIVE: a later read in the
 // tag, or a read in a guard or an arm before a whole assignment. LU_SETTLED:
 // every arm assigns the local whole or leaves the statement.
-function lu_call_tag_settles(fx: LuFn, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
+function lu_call_tag_settles(reach: LuReach, m: ast.StmtMatch, aid: ast.ExprIdent): i32 {
   let facts: LuFacts = astwalk.fold_expr_nodes(m.scrutinee, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   for o in facts.occ {
     if (o.name == aid.name && (o.line > aid.line || o.line == aid.line && o.col > aid.col)) {
@@ -19615,7 +19616,7 @@ function lu_call_tag_settles(fx: LuFn, m: ast.StmtMatch, aid: ast.ExprIdent): i3
     if (arm.has_guard && astwalk.count_ident_expr(arm.guard, aid.name) > 0) {
       return LU_LIVE;
     }
-    let r: i32 = lu_stmts_settle(fx, arm.body, aid.name);
+    let r: i32 = lu_stmts_settle(reach, arm.body, aid.name);
     if (r == LU_LIVE) {
       return LU_LIVE;
     }
@@ -19641,7 +19642,7 @@ function lu_same_ident(e: ast.Expr, aid: ast.ExprIdent): boolean {
 // of the taken value. LU_LIVE: an arm that binds a payload reads the taken
 // value. LU_SETTLED: every such arm gives the local a new value or leaves the
 // statement, so the statements after the match do not read the taken value.
-function lu_match_tag_live(fx: LuFn, m: ast.StmtMatch, name: string): i32 {
+function lu_match_tag_live(reach: LuReach, m: ast.StmtMatch, name: string): i32 {
   let settled: boolean = true;
   for arm in m.arms {
     if (astwalk.pattern_binders(arm.pattern, []).len() == 0) {
@@ -19650,7 +19651,7 @@ function lu_match_tag_live(fx: LuFn, m: ast.StmtMatch, name: string): i32 {
     if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
       return LU_LIVE;
     }
-    let r: i32 = lu_stmts_settle(fx, arm.body, name);
+    let r: i32 = lu_stmts_settle(reach, arm.body, name);
     if (r == LU_LIVE) {
       return LU_LIVE;
     }
@@ -19664,16 +19665,20 @@ function lu_match_tag_live(fx: LuFn, m: ast.StmtMatch, name: string): i32 {
   return LU_CONTINUES;
 }
 
+// Where a statement list sits: a break or a continue in it leaves to a loop
+// of frames, seen from level, for a binding at scope.
+struct LuReach { noret: util.NameIndex, frames: LuFrame[], level: i32, scope: i32 }
+
 // A statement list that follows a take of name. LU_LIVE: a read of name
-// before a whole assignment to it. LU_SETTLED: every path assigns name whole
-// or leaves the list early. LU_CONTINUES: a path reaches the end with the
-// taken value still in name.
-function lu_stmts_settle(fx: LuFn, stmts: ast.Stmt[], name: string): i32 {
+// before a whole assignment to it, also after a break or a continue.
+// LU_SETTLED: every path assigns name whole or leaves the list early.
+// LU_CONTINUES: a path reaches the end with the taken value still in name.
+function lu_stmts_settle(reach: LuReach, stmts: ast.Stmt[], name: string): i32 {
   for st in stmts {
     if (lu_assigns_whole(st, name)) {
       return LU_SETTLED;
     }
-    let r: i32 = lu_branch_settle(fx, st, name);
+    let r: i32 = lu_branch_settle(reach, st, name);
     if (r == LU_LIVE || r == LU_SETTLED) {
       return r;
     }
@@ -19683,8 +19688,11 @@ function lu_stmts_settle(fx: LuFn, stmts: ast.Stmt[], name: string): i32 {
     if (lu_mentions(st, name) > 0) {
       return LU_LIVE;
     }
+    if (lu_jumps_live(reach.noret, reach.frames, reach.level, lu_jumps(st), name, reach.scope)) {
+      return LU_LIVE;
+    }
     let one: ast.Stmt[] = [st];
-    if (block_diverges(one, false) || lu_never_returns(fx.noret, st)) {
+    if (block_diverges(one, false) || lu_never_returns(reach.noret, st)) {
       return LU_SETTLED;
     }
   }
@@ -19695,7 +19703,7 @@ const LU_NOT_BRANCH: i32 = 3;
 
 // A match or an if statement settles when each of its paths settles, and is
 // live when one path reads name. Any other statement is LU_NOT_BRANCH.
-function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
+function lu_branch_settle(reach: LuReach, st: ast.Stmt, name: string): i32 {
   match (st) {
     ast.StmtMatch(m) => {
       if (astwalk.count_ident_expr(m.scrutinee, name) > 0) {
@@ -19706,7 +19714,7 @@ function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
         if (arm.has_guard && astwalk.count_ident_expr(arm.guard, name) > 0) {
           return LU_LIVE;
         }
-        let r: i32 = lu_stmts_settle(fx, arm.body, name);
+        let r: i32 = lu_stmts_settle(reach, arm.body, name);
         if (r == LU_LIVE) {
           return LU_LIVE;
         }
@@ -19723,7 +19731,7 @@ function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
       if (astwalk.count_ident_expr(f.cond, name) > 0) {
         return LU_LIVE;
       }
-      let rt: i32 = lu_stmts_settle(fx, f.then_body, name);
+      let rt: i32 = lu_stmts_settle(reach, f.then_body, name);
       if (rt == LU_LIVE) {
         return LU_LIVE;
       }
@@ -19733,7 +19741,7 @@ function lu_branch_settle(fx: LuFn, st: ast.Stmt, name: string): i32 {
       if (f.else_body.len() == 0) {
         return LU_CONTINUES;
       }
-      let re: i32 = lu_stmts_settle(fx, f.else_body, name);
+      let re: i32 = lu_stmts_settle(reach, f.else_body, name);
       if (re == LU_LIVE) {
         return LU_LIVE;
       }
@@ -19841,20 +19849,15 @@ function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name
     return false;
   }
   let f: LuFrame = frames[level];
+  let reach: LuReach = LuReach { noret: noret, frames: frames, level: level, scope: scope };
   for j in f.idx + 1..f.stmts.len() {
-    let st: ast.Stmt = f.stmts[j];
-    if (lu_assigns_whole(st, name)) {
-      // A new value replaces the local before any read of the old one.
-      return false;
-    }
-    if (lu_mentions(st, name) > 0) {
+    // A new value on every path replaces the local before any read of the
+    // old one.
+    let r: i32 = lu_stmts_settle(reach, [f.stmts[j]], name);
+    if (r == LU_LIVE) {
       return true;
     }
-    if (lu_jumps_live(noret, frames, level, lu_jumps(st), name, scope)) {
-      return true;
-    }
-    let one: ast.Stmt[] = [st];
-    if (block_diverges(one, false) || lu_never_returns(noret, st)) {
+    if (r == LU_SETTLED) {
       return false;
     }
   }
@@ -20011,7 +20014,27 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
     return false;
   }
-  return lu_path_is_last(fx, q, fa.field);
+  return lu_path_is_last(fx, q, fa.field) || lu_field_base_dead(fx, site, q, fa.field);
+}
+
+// No path after the statement that holds the call reads q, and the statement
+// reads only other fields of q after q.field. A later mention in a branch
+// that the call does not reach is not a read.
+function lu_field_base_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
+  if (site.frames.len() == 0) {
+    return false;
+  }
+  let inner: LuFrame = site.frames[site.frames.len() - 1];
+  let facts: LuFacts = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
+      let sel: string = lu_sel_at(facts, o.line, o.col);
+      if (sel.len() == 0 || sel == field) {
+        return false;
+      }
+    }
+  }
+  return !lu_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name));
 }
 
 struct LuFieldReads { name: string, field: string, n: i32 }

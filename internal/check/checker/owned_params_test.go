@@ -2220,6 +2220,162 @@ function g(own names: string[]): i32 {
 }`)
 }
 
+const reboundPrelude = `struct G { x: i32[], n: i32 }
+function rnd(own g: G): (G, i32) { return (G { x: g.x, n: g.n + 1 }, g.n); }
+`
+
+// A local that every path of the next statement rebinds is dead after the
+// call that takes it, as it is after a plain assignment (#14124).
+func TestOwnGuardLocalReboundOnEveryBranch(t *testing.T) {
+	wantOK(t, "if-else-rebinds", reboundPrelude+`
+function f(): i32 {
+    let g: G = G { x: [], n: 0 };
+    let (g1, a) = rnd(g);
+    if (a % 2 == 0) { g = g1; } else { g = g1; }
+    let (g2, b) = rnd(g);
+    return a + b + g2.n;
+}`)
+	wantOK(t, "if-else-rebinds-in-loop", reboundPrelude+`
+function f(): i32 {
+    let g: G = G { x: [], n: 0 };
+    let t: i32 = 0;
+    for k in 0..4 {
+        let (g1, a) = rnd(g);
+        if (a % 2 == 0) { g = g1; } else { g = g1; t = t + a; }
+    }
+    return t + g.n;
+}`)
+	wantOK(t, "match-arms-rebind", reboundPrelude+`
+function f(o: Option[i32]): i32 {
+    let g: G = G { x: [], n: 0 };
+    let (g1, a) = rnd(g);
+    match (o) { Some(v) => { g = g1; }, None => { g = G { x: [], n: a }; } }
+    let (g2, b) = rnd(g);
+    return b + g2.n;
+}`)
+	wantOK(t, "block-rebinds", reboundPrelude+`
+function f(): i32 {
+    let g: G = G { x: [], n: 0 };
+    let (g1, a) = rnd(g);
+    {
+        g = g1;
+    }
+    let (g2, b) = rnd(g);
+    return a + b + g2.n;
+}`)
+}
+
+func TestOwnGuardLocalNotReboundOnEveryBranch(t *testing.T) {
+	wantE051(t, "only-then-rebinds", reboundPrelude+`
+function f(): i32 {
+    let g: G = G { x: [], n: 0 };
+    let (g1, a) = rnd(g);
+    if (a % 2 == 0) { g = g1; }
+    let (g2, b) = rnd(g);
+    return a + b + g2.n;
+}`)
+	wantE051(t, "branch-reads-before-rebind", reboundPrelude+`
+function f(): i32 {
+    let g: G = G { x: [], n: 0 };
+    let (g1, a) = rnd(g);
+    if (a % 2 == 0) { let m: i32 = g.n; g = g1; } else { g = g1; }
+    let (g2, b) = rnd(g);
+    return a + b + g2.n;
+}`)
+}
+
+// A break or a continue in an arm after a call in a match tag takes the
+// local reaches the read where the jump lands (#14125).
+func TestOwnGuardJumpAfterMatchTagTake(t *testing.T) {
+	const settle = `struct R { items: i32[], n: i32 }
+function settle(own r: R): Result[i32, R] { return Err(r); }
+`
+	wantE051(t, "continue-reaches-the-tag", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    let k: i32 = 0;
+    while (k < 5) {
+        k = k + 1;
+        match (settle(r)) { Ok(n) => { continue; }, Err(after) => { r = after; } }
+    }
+    return 0;
+}`)
+	wantE051(t, "break-reaches-a-read-after-the-loop", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    while (true) {
+        match (settle(r)) { Ok(n) => { break; }, Err(after) => { r = after; } }
+    }
+    return r.n;
+}`)
+	wantOK(t, "break-with-no-read-after", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    let total: i32 = 0;
+    while (true) {
+        match (settle(r)) { Ok(n) => { total = n; break; }, Err(after) => { r = after; } }
+    }
+    return total;
+}`)
+	wantOK(t, "continue-after-a-rebind", settle+`
+function f(): i32 {
+    let r: R = R { items: [], n: 0 };
+    let k: i32 = 0;
+    while (k < 5) {
+        k = k + 1;
+        match (settle(r)) { Ok(n) => { r = R { items: [], n: n }; continue; }, Err(after) => { r = after; } }
+    }
+    return r.n;
+}`)
+}
+
+const fieldBranchPrelude = `struct Gen { x: i32[], n: i32 }
+struct Fill { g: Gen, xs: i32[] }
+function take(own g: Gen, xs: [i32]): (Gen, i32) { return (Gen { x: g.x, n: g.n + 1 }, xs.len()); }
+function make(n: i32): Fill { return Fill { g: Gen { x: [], n: n }, xs: [1, 2] }; }
+`
+
+// A field move in one branch dies there when a sibling branch mentions the
+// field, because no path from the call reaches the sibling (#14126).
+func TestOwnGuardFieldMoveBesideSiblingBranch(t *testing.T) {
+	wantOK(t, "field-move-in-one-branch", fieldBranchPrelude+`
+function f(): i32 {
+    let g: Gen = Gen { x: [], n: 0 };
+    let total: i32 = 0;
+    for k in 0..3 {
+        let f: Fill = make(g.n);
+        if (k == 0) {
+            let (g1, n) = take(f.g, f.xs);
+            g = g1;
+            total = total + n;
+        } else {
+            g = f.g;
+        }
+    }
+    return total + g.n;
+}`)
+	wantE051(t, "field-read-after-the-branches", fieldBranchPrelude+`
+function f(c: boolean): i32 {
+    let f: Fill = make(1);
+    let total: i32 = 0;
+    if (c) {
+        let (g1, n) = take(f.g, f.xs);
+        total = n + g1.n;
+    }
+    return total + f.g.n;
+}`)
+	wantE051(t, "base-read-later-in-the-branch", fieldBranchPrelude+`
+function keep(own f: Fill): i32 { return f.xs.len(); }
+function f(c: boolean): i32 {
+    let f: Fill = make(1);
+    if (c) {
+        let (g1, n) = take(f.g, f.xs);
+        return n + keep(f);
+    }
+    return keep(f);
+}`)
+}
+
 func TestOwnGuardCallInMatchTagKeepsBindingScope(t *testing.T) {
 	const settle = `struct R { items: i32[], n: i32 }
 function settle(own r: R): Result[i32, R] { return Err(r); }

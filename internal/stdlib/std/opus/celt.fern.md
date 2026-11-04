@@ -217,13 +217,13 @@ The header of a frame holds the silence flag, the pitch postfilter, the transien
 <<header>>=
 const TAPSET_ICDF: u8[] = [2u8, 1u8, 0u8];
 
-const SPREAD_ICDF: u8[] = [25u8, 23u8, 2u8, 0u8];
+pub const SPREAD_ICDF: u8[] = [25u8, 23u8, 2u8, 0u8];
 
-const TRIM_ICDF: u8[] = [126u8, 124u8, 119u8, 109u8, 87u8, 41u8, 19u8, 9u8, 4u8, 2u8, 0u8];
+pub const TRIM_ICDF: u8[] = [126u8, 124u8, 119u8, 109u8, 87u8, 41u8, 19u8, 9u8, 4u8, 2u8, 0u8];
 
 // The TF change of each band, by frame size, then by 4 * transient +
 // 2 * tf_select + the flag of the band.
-const TF_SELECT: i32[] = [
+pub const TF_SELECT: i32[] = [
   0, -1, 0, -1, 0, -1, 0, -1,
   0, -1, 0, -2, 1, 0, 1, -1,
   0, -2, 0, -3, 2, 0, 1, -1,
