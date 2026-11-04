@@ -14,7 +14,7 @@ function main(): i32 {
   let c: Socket = tcp_connect_with(lo, tcp_local_port(ls), false);
   let s: Socket = tcp_accept(ls);
   let r: i32 = reactor_new();
-  print(f"watch: {reactor_ctl(r, 1, s, 1)}");
+  print(f"watch: {reactor_ctl(r, 1, s.fd, 1)}");
   print(f"send: {tcp_send_bytes(c, "ready".bytes())}");
 
   let events: i32[] = [0, 0, 0, 0];
