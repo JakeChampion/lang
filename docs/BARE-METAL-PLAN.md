@@ -4,7 +4,8 @@ Status: [plan] the scope is decided, the sequencing below is accepted, none
 of it is built. Epic #6506 (the freestanding core) is the prerequisite. Its
 capability half is in the compiler. Its codegen half left with the deleted
 native backends, and #14245 ports it to the compiler. This doc is what comes
-after #6506, and what #6506 must not prevent.
+after #6506, and what #6506 must not prevent. Epic #14248 tracks the work, with
+one sub-issue for each piece and each milestone.
 
 This plan names historical or proposed source paths. The reference documentation identifies current files.
 
@@ -303,24 +304,24 @@ check time, in the same mechanism that enforces the OS boundary today.
 - **Physical memory.** #6511's embedder-supplied heap is the guest half. A kernel
   *produces* memory: page-frame allocator, page tables, then the Fern heap on
   top of that, then a fresh heap per process.
-- **DMA.** Volatile is not sufficient. A driver needs physically contiguous,
+- **DMA** (#14255). Volatile is not sufficient. A driver needs physically contiguous,
   uncached (or explicitly cache-maintained) allocations, and physical addresses
   distinct from virtual ones. This is an allocator feature, and it is the one
   driver requirement the list above genuinely misses. TamaGo keeps DMA regions
   outside the Go runtime, so that the GC never touches them. For Fern, DMA memory
   is a second region that the RC machinery never sees, used through the
   `__raw_*` surface. It is not a flag on ordinary boxes.
-- **Panic scope.** A Fern panic stops the program: `__fern_report` exits the
+- **Panic scope** (#14257). A Fern panic stops the program: `__fern_report` exits the
   process, and off the process entry it is a trap (#14245). eggshell's kernel
   uses no unsafe code, and a panic during a syscall ends the process that made the call,
   not the kernel. Per-process heaps let FernOS do the same: discard the heap of
   the process and end only that process. Decide this before milestone 4,
   because it decides what a panic in kernel code means.
-- **A network stack in Fern.** TamaGo uses the pure-Go gVisor TCP/IP stack over
+- **A network stack in Fern** (#14259). TamaGo uses the pure-Go gVisor TCP/IP stack over
   virtio-net. The Fern `tcp_*` builtins are host syscalls. A kernel or a
   unikernel needs a TCP/IP stack in Fern, core-safe by the `std/` partition, over
   a virtio-net driver.
-- **A sanctioned raw-pointer surface.** `__raw_*` is a **self-host-compiler
+- **A sanctioned raw-pointer surface** (#14256). `__raw_*` is a **self-host-compiler
   internal**. In `internal/`, only the capability tables of
   `internal/pkg/platforms` name it. An OS needs it as a
   *language* surface, capability-gated. Being self-host-only is the right side of
@@ -334,12 +335,14 @@ check time, in the same mechanism that enforces the OS boundary today.
 ### Milestones, each producing something that runs
 
 1. Boot to a serial "hello" on a microVM (Firecracker or QEMU `microvm`), and on
-   qemu-virt for arm64 — proves entry, layout, MMIO.
-2. Interrupts and a timer tick — proves the handler rule under real preemption.
-3. A page-frame allocator and the Fern heap on top of it.
-4. Two processes, separate heaps, preemptively scheduled — the C1 claim, tested.
-5. A filesystem and an ELF loader.
-6. The self-host compiler runs on it.
+   qemu-virt for arm64 — proves entry, layout, MMIO (#14260).
+2. Interrupts and a timer tick — proves the handler rule under real preemption
+   (#14261).
+3. A page-frame allocator and the Fern heap on top of it (#14262).
+4. Two processes, separate heaps, preemptively scheduled — the C1 claim, tested
+   (#14263).
+5. A filesystem and an ELF loader (#14264).
+6. The self-host compiler runs on it (#14265).
 
 Step 4 is where the design either holds or does not, and it is reachable long
 before anything resembling a usable OS. Worth getting to early for that reason
@@ -373,15 +376,18 @@ environment over the FernOS syscalls can come later, as an improvement.
 2. **Read the entry shape from the descriptor** in #14245. The port must not
    assume that freestanding means exported symbols, because `EntryReset` is the
    kernel posture.
-3. **Give MMIO loads and stores an effect kind** when the first driver needs
-   them. Add a test that `ssa.prune_dead` keeps an unused MMIO load. The
+3. **Give MMIO loads and stores an effect kind** (#14249) when the first driver
+   needs them. Add a test that `ssa.prune_dead` keeps an unused MMIO load. The
    compiler removes an unused plain raw load today (see "Volatile").
-4. **Decide the interrupt/RC rule.** Design work, no code, and it gates 3 of the
+4. **Decide the interrupt/RC rule** (#14250). Design work, no code, and it gates 3 of the
    5 mechanical pieces. The proposed answer is the TamaGo shape above: a checked
    top half, a bottom half in the reactor, and no preemption of the kernel heap.
-5. Then: capability providers → effect intrinsics → function attributes and the
-   no-RC property → memory layout → volatile qualifier (if drivers materialise)
-   → atomics (if SMP does).
+5. Then: capability providers (#14251) → effect intrinsics (#14252) → function
+   attributes and the no-RC property (#14253) → memory layout (#14254) →
+   volatile qualifier (if drivers materialise) → atomics (#14258, if SMP does).
+6. Beside those: the DMA region (#14255), the raw-pointer surface (#14256), the
+   panic scope decision (#14257, before milestone 4) and a TCP/IP stack in Fern
+   (#14259).
 
 ## Prior art: TamaGo, GoTEE and eggshell
 
