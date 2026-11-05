@@ -1,4 +1,5 @@
 import "std/f64";
+import "std/opus/celt";
 import "std/opus/packet";
 import "std/test";
 import "./voice";
@@ -18,6 +19,18 @@ function speech(n: i32, start: i32): i32[] {
 
 struct Coded { input: i32[], output: i32[], bytes: i32, frames: i32 }
 
+function decode_frame(own dec: Option[celt.Decoder], p: [u8]): (Option[celt.Decoder], i32[]) {
+  match (dec) {
+    Some(d) => {
+      let (d1, y) = voice.decode(d, p);
+      return (Some(d1), y);
+    },
+    None => {
+      return (None, []);
+    }
+  }
+}
+
 function code(frames: i32): Coded {
   let enc = voice.encoder();
   let dec = voice.decoder();
@@ -32,15 +45,10 @@ function code(frames: i32): Coded {
     let (e1, p) = voice.encode(enc, x);
     enc = e1;
     bytes = bytes + p.len();
-    match (dec) {
-      Some(d) => {
-        let (d1, y) = voice.decode(d, p);
-        dec = Some(d1);
-        for v in y {
-          output = output.append(v);
-        }
-      },
-      None => {}
+    let (d1, y) = decode_frame(dec, p);
+    dec = d1;
+    for v in y {
+      output = output.append(v);
     }
   }
   return Coded { input: input, output: output, bytes: bytes, frames: frames };

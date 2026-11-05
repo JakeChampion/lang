@@ -10,11 +10,13 @@ not in front keeps running as a second phone would. Then it:
 
 1. starts both copies, and requires the start line of each: one on port
    47120 and one on 47121, and that each one runs its foreground service;
-2. waits until both made their keys, then taps SAME in each copy;
+2. waits until both made their keys, then taps MATCH in each copy;
 3. holds the talk button of the first copy, then of the second, and requires
    that each copy transmits and the other hears it;
 4. waits 20 seconds, and requires that neither copy lost its peer and that
-   both still run with no crash in logcat.
+   both still run with no crash in logcat;
+5. stops both copies and starts them again, and requires that each copy
+   kept the identity of the other and connects with no string to compare.
 
 OUT_DIR gets logcat and a screenshot of each copy.
 """
@@ -30,6 +32,7 @@ SECOND = "dev.fern.walkie2"
 ACTIVITY = "/android.app.NativeActivity"
 START = re.compile(r"walkie: node \d+, port (4712[01]), socket (-?\d+), speaker rate ([1-9]\d*)")
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
+IDENTITY = re.compile(r"walkie: identity [0-9a-f]{8}, (\d+) known phones")
 LOST = re.compile(r"walkie: (the peer stopped answering|the other phone did not confirm the code|the peer left|the connection was lost)")
 LOGCAT = ["logcat", "-d", "-v", "brief", "fern:I", "AndroidRuntime:E", "DEBUG:F", "*:F"]
 WAIT_SECONDS = 30
@@ -98,6 +101,38 @@ def check_node(log, p):
         raise Failure("a copy did not open its UDP socket")
 
 
+def known_phones(log, p):
+    """The phones that the copy in process p knew when it started."""
+    found = [IDENTITY.search(line) for line in lines_of(log, p) if IDENTITY.search(line)]
+    if len(found) != 1:
+        raise Failure("expected one identity line in process " + p)
+    return int(found[0].group(1))
+
+
+def start_both():
+    """Starts both copies, and gives their processes."""
+    to_front(FIRST)
+    wait_for("the first copy starts", lambda log: pid(FIRST) != "" and any(START.search(line) and START.search(line).group(1) == "47120" for line in lines_of(log, pid(FIRST))))
+    to_front(SECOND)
+    wait_for("the second copy starts", lambda log: pid(SECOND) != "" and any(START.search(line) and START.search(line).group(1) == "47121" for line in lines_of(log, pid(SECOND))))
+    return pid(FIRST), pid(SECOND)
+
+
+def meet_again():
+    """Stops both copies and starts them again. Each copy loads the identity
+    of the other from its files, so the two connect with no string."""
+    for package in (FIRST, SECOND):
+        adb("shell", "am", "force-stop", package)
+    adb("logcat", "-c")
+    a, b = start_both()
+    log = logcat()
+    for p in (a, b):
+        if known_phones(log, p) != 1:
+            raise Failure("a copy did not keep the identity of the other phone")
+    wait_for("the copies know each other", lambda log: has(log, a, "walkie: the other phone is known: no string to compare") and has(log, b, "walkie: the other phone is known: no string to compare"))
+    wait_for("each copy sees the other confirm again", lambda log: has(log, a, "walkie: the other phone confirmed") and has(log, b, "walkie: the other phone confirmed"), 10)
+
+
 def screen_size():
     m = re.search(r"(\d+)x(\d+)", adb("shell", "wm", "size").splitlines()[-1])
     return int(m.group(1)), int(m.group(2))
@@ -116,7 +151,7 @@ def confirm(package, p, w, h):
     to_front(package)
     check_node(logcat(), p)
     # The middle of screen.same_button.
-    adb("shell", "input", "tap", str(w // 10 + w * 7 // 40), str(h * 3 // 10 + h // 16))
+    adb("shell", "input", "tap", str(w // 10 + w * 37 // 200), str(h * 33 // 100 + h * 3 // 100))
     wait_for(package + " confirms the code", lambda log: has(log, p, "walkie: the string is confirmed"), 10)
 
 
@@ -125,7 +160,7 @@ def talk(package, talker, listener, w, h):
     check_node(logcat(), talker)
     mark = len(lines_of(logcat(), listener))
     # A long press in the middle of screen.talk_button.
-    adb("shell", "input", "swipe", str(w // 2), str(h * 7 // 10), str(w // 2), str(h * 7 // 10), "4000")
+    adb("shell", "input", "swipe", str(w // 2), str(h * 68 // 100), str(w // 2), str(h * 68 // 100), "4000")
     log = logcat()
     if not has(log, talker, "walkie: state TRANSMITTING"):
         raise Failure(package + " did not transmit while its button was held")
@@ -188,13 +223,11 @@ def run(apk, second_apk, out):
         adb("install", "-r", "-g", a)
         adb("shell", "pm", "grant", package, "android.permission.RECORD_AUDIO")
     adb("logcat", "-c")
-    to_front(FIRST)
-    wait_for("the first copy starts", lambda log: pid(FIRST) != "" and any(START.search(line) and START.search(line).group(1) == "47120" for line in lines_of(log, pid(FIRST))))
-    to_front(SECOND)
-    wait_for("the second copy starts", lambda log: pid(SECOND) != "" and any(START.search(line) and START.search(line).group(1) == "47121" for line in lines_of(log, pid(SECOND))))
-    a, b = pid(FIRST), pid(SECOND)
+    a, b = start_both()
     for p in (a, b):
         check_node(logcat(), p)
+        if known_phones(logcat(), p) != 0:
+            raise Failure("a new copy already knows a phone")
     for package in (FIRST, SECOND):
         wait_for(package + " runs its foreground service", lambda log: foreground(package))
     wait_for("both copies make keys", lambda log: has(log, a, "walkie: keys are ready") and has(log, b, "walkie: keys are ready"))
@@ -202,6 +235,7 @@ def run(apk, second_apk, out):
     confirm(SECOND, b, w, h)
     confirm(FIRST, a, w, h)
     wait_for("each copy sees the other confirm", lambda log: has(log, a, "walkie: the other phone confirmed") and has(log, b, "walkie: the other phone confirmed"), 10)
+    wait_for("each copy keeps the identity of the other", lambda log: has(log, a, "walkie: known phones 1") and has(log, b, "walkie: known phones 1"), 10)
     talk(FIRST, a, b, w, h)
     screenshot(f"{out}/first.png")
     talk(SECOND, b, a, w, h)
@@ -218,6 +252,7 @@ def run(apk, second_apk, out):
     crashes = [line for line in log.splitlines() if CRASH.search(line)]
     if crashes:
         raise Failure("logcat: " + "; ".join(crashes))
+    meet_again()
 
 
 def main(apk, second_apk, out):

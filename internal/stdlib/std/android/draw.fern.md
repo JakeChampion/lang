@@ -27,8 +27,10 @@ The pixels of a frame are valid until the window is posted. A rectangle or text 
 
 ```fern
 <<module introduction>>=
-// This module draws rectangles and text on the pixels of an Android window.
+// This module draws rectangles, discs, rings and text on the pixels of an
+// Android window.
 import "std/android/font";
+import "std/f64";
 import "std/string";
 ```
 
@@ -81,6 +83,88 @@ pub function (f: Frame) pixel(x: i32, y: i32): i32 {
   }
   unsafe {
     return __load_i32(f.bits + ((y * f.stride + x) * 4) as usize);
+  }
+}
+
+// The coverage from 0 to 15 of a pixel whose centre is `d` pixels from the
+// centre of a disc of radius `r`. The edge is one pixel wide.
+function cover(d: f64, r: f64): i32 {
+  let c = r - d + 0.5;
+  if (c <= 0.0) {
+    return 0;
+  }
+  if (c >= 1.0) {
+    return 15;
+  }
+  return (c * 15.0) as i32;
+}
+
+// Blends `color` over the pixel at x and y with the coverage `a`.
+function put(f: Frame, x: i32, y: i32, color: i32, a: i32): void {
+  if (a <= 0 || x < 0 || y < 0 || x >= f.width || y >= f.height) {
+    return;
+  }
+  unsafe {
+    let at = f.bits + ((y * f.stride + x) * 4) as usize;
+    __store_i32(at, blend(color, __load_i32(at), a));
+  }
+}
+
+function dist(x: i32, y: i32, cx: f64, cy: f64): f64 {
+  let dx = x as f64 + 0.5 - cx;
+  let dy = y as f64 + 0.5 - cy;
+  return (dx * dx + dy * dy).sqrt();
+}
+
+// Fills the disc of radius `r` around cx and cy. Each pixel of the edge
+// takes the part of `color` that the disc covers.
+pub function (f: Frame) disc(cx: i32, cy: i32, r: i32, color: i32): void {
+  f.ring(cx, cy, r, r + 1, color);
+}
+
+// Fills the band of `width` pixels inside the circle of radius `r` around cx
+// and cy, with smooth edges.
+pub function (f: Frame) ring(cx: i32, cy: i32, r: i32, width: i32, color: i32): void {
+  let ox = cx as f64;
+  let oy = cy as f64;
+  let outer = r as f64;
+  let inner = (r - width) as f64;
+  for y in cy - r - 1..cy + r + 1 {
+    for x in cx - r - 1..cx + r + 1 {
+      let d = dist(x, y, ox, oy);
+      let a = cover(d, outer) - cover(d, inner);
+      put(f, x, y, color, a);
+    }
+  }
+}
+
+// Fills the rectangle at x and y, of width w and height h, with its corners
+// rounded to radius `r` and smooth edges. A radius of half the height makes
+// a pill.
+pub function (f: Frame) round_rect(x: i32, y: i32, w: i32, h: i32, r0: i32, color: i32): void {
+  let r = r0;
+  if (r > w / 2) {
+    r = w / 2;
+  }
+  if (r > h / 2) {
+    r = h / 2;
+  }
+  f.fill(x + r, y, w - 2 * r, h, color);
+  f.fill(x, y + r, r, h - 2 * r, color);
+  f.fill(x + w - r, y + r, r, h - 2 * r, color);
+  corner(f, x + r, y + r, x, y, r, color);
+  corner(f, x + w - r, y + r, x + w - r, y, r, color);
+  corner(f, x + r, y + h - r, x, y + h - r, r, color);
+  corner(f, x + w - r, y + h - r, x + w - r, y + h - r, r, color);
+}
+
+// The square of side `r` at x0 and y0, covered by the circle of radius `r`
+// around cx and cy.
+function corner(f: Frame, cx: i32, cy: i32, x0: i32, y0: i32, r: i32, color: i32): void {
+  for y in y0..y0 + r {
+    for x in x0..x0 + r {
+      put(f, x, y, color, cover(dist(x, y, cx as f64, cy as f64), r as f64));
+    }
   }
 }
 ```

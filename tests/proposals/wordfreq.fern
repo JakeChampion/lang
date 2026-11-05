@@ -29,15 +29,15 @@ function to_lower_byte(c: u8): u8 {
 
 function words_of(text: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < text.len()) {
     while (i < text.len() && !is_word_byte(text[i])) {
-      i = i + 1;
+      i += 1;
     }
     let buf: u8[] = [];
     while (i < text.len() && is_word_byte(text[i])) {
       buf = buf.append(to_lower_byte(text[i]));
-      i = i + 1;
+      i += 1;
     }
     if (buf.len() > 0) {
       out = out.append(string_from_bytes_unchecked(buf));
@@ -47,16 +47,16 @@ function words_of(text: string): string[] {
 }
 
 function str_lt(a: string, b: string): boolean {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (a[i] != b[i]) {
       return a[i] as i32 < b[i] as i32;
     }
-    i = i + 1;
+    i += 1;
   }
   return a.len() < b.len();
 }
@@ -69,69 +69,69 @@ function beats(a: Count, b: Count): boolean {
 }
 
 function index_of_word(cs: Count[], w: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].word == w) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function tally(text: string): Count[] {
   let out: Count[] = [];
-  let ws: string[] = words_of(text);
-  let i: i32 = 0;
+  let ws = words_of(text);
+  let i = 0;
   while (i < ws.len()) {
-    let at: i32 = index_of_word(out, ws[i]);
+    let at = index_of_word(out, ws[i]);
     if (at < 0) {
       out = out.append(Count { word: ws[i], n: 1 });
     } else {
       out = out.with(at, Count { word: ws[i], n: out[at].n + 1 });
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function ranked(text: string): Count[] {
-  let cs: Count[] = tally(text);
-  let i: i32 = 1;
+  let cs = tally(text);
+  let i = 1;
   while (i < cs.len()) {
-    let j: i32 = i;
+    let j = i;
     while (j > 0 && beats(cs[j], cs[j - 1])) {
-      let a: Count = cs[j - 1];
-      let b: Count = cs[j];
+      let a = cs[j - 1];
+      let b = cs[j];
       cs = cs.with(j - 1, b);
       cs = cs.with(j, a);
-      j = j - 1;
+      j -= 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return cs;
 }
 
 function top(text: string, n: i32): Count[] {
-  let all: Count[] = ranked(text);
+  let all = ranked(text);
   let out: Count[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < all.len() && i < n) {
     out = out.append(all[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function count_of(text: string, w: string): i32 {
-  let ws: string[] = words_of(text);
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let ws = words_of(text);
+  let n = 0;
+  let i = 0;
   while (i < ws.len()) {
     if (ws[i] == w) {
-      n = n + 1;
+      n += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
@@ -154,35 +154,35 @@ function texts(): string[] {
 }
 
 function show(cs: Count[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < cs.len()) {
     if (i > 0) {
-      out = out + " ";
+      out += " ";
     }
     out = out + cs[i].word + ":" + cs[i].n.to_string();
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function test_the_ranking_obeys_the_tie_rule_throughout(): test.TestOutcome {
-  let ts: string[] = texts();
-  let checked: i32 = 0;
-  let t: i32 = 0;
+  let ts = texts();
+  let checked = 0;
+  let t = 0;
   while (t < ts.len()) {
-    let cs: Count[] = ranked(ts[t]);
-    let i: i32 = 0;
+    let cs = ranked(ts[t]);
+    let i = 0;
     while (i + 1 < cs.len()) {
       if (!beats(cs[i], cs[i + 1])) {
         return test.fail("text " + t.to_string() + ": \"" + cs[i].word + "\":"
           + cs[i].n.to_string() + " does not beat \"" + cs[i + 1].word + "\":"
           + cs[i + 1].n.to_string() + " — " + show(cs));
       }
-      checked = checked + 1;
-      i = i + 1;
+      checked += 1;
+      i += 1;
     }
-    t = t + 1;
+    t += 1;
   }
   if (checked < 30) {
     return test.fail("only " + checked.to_string() + " adjacent pairs were checked");
@@ -191,38 +191,38 @@ function test_the_ranking_obeys_the_tie_rule_throughout(): test.TestOutcome {
 }
 
 function test_equal_counts_are_alphabetical(): test.TestOutcome {
-  let cs: Count[] = ranked("gamma delta charlie bravo alpha");
+  let cs = ranked("gamma delta charlie bravo alpha");
   let want: string[] = ["alpha", "bravo", "charlie", "delta", "gamma"];
   if (cs.len() != want.len()) {
     return test.fail("expected " + want.len().to_string() + " words, got " + show(cs));
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < want.len()) {
     if (cs[i].word != want[i] || cs[i].n != 1) {
       return test.fail("all-tied text ranked as " + show(cs));
     }
-    i = i + 1;
+    i += 1;
   }
-  let cs2: Count[] = ranked("delta charlie bravo alpha delta charlie bravo alpha");
-  let j: i32 = 0;
+  let cs2 = ranked("delta charlie bravo alpha delta charlie bravo alpha");
+  let j = 0;
   while (j < want.len() - 1) {
     if (cs2[j].word != want[j] || cs2[j].n != 2) {
       return test.fail("all-tied-at-two ranked as " + show(cs2));
     }
-    j = j + 1;
+    j += 1;
   }
   return test.pass();
 }
 
 function test_top_n_is_a_prefix_of_the_full_ranking(): test.TestOutcome {
-  let ts: string[] = texts();
-  let t: i32 = 0;
+  let ts = texts();
+  let t = 0;
   while (t < ts.len()) {
-    let all: Count[] = ranked(ts[t]);
-    let n: i32 = 0;
+    let all = ranked(ts[t]);
+    let n = 0;
     while (n <= all.len() + 2) {
-      let got: Count[] = top(ts[t], n);
-      let want_len: i32 = n;
+      let got = top(ts[t], n);
+      let want_len = n;
       if (all.len() < want_len) {
         want_len = all.len();
       }
@@ -231,72 +231,72 @@ function test_top_n_is_a_prefix_of_the_full_ranking(): test.TestOutcome {
           + ") has " + got.len().to_string() + " entries, want "
           + want_len.to_string());
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < got.len()) {
         if (got[i].word != all[i].word || got[i].n != all[i].n) {
           return test.fail("text " + t.to_string() + ": top(" + n.to_string()
             + ") differs from the full ranking at " + i.to_string());
         }
-        i = i + 1;
+        i += 1;
       }
-      n = n + 1;
+      n += 1;
     }
-    t = t + 1;
+    t += 1;
   }
   return test.pass();
 }
 
 function test_the_counts_match_a_rescan(): test.TestOutcome {
-  let ts: string[] = texts();
-  let t: i32 = 0;
+  let ts = texts();
+  let t = 0;
   while (t < ts.len()) {
-    let cs: Count[] = ranked(ts[t]);
-    let i: i32 = 0;
+    let cs = ranked(ts[t]);
+    let i = 0;
     while (i < cs.len()) {
-      let want: i32 = count_of(ts[t], cs[i].word);
+      let want = count_of(ts[t], cs[i].word);
       if (cs[i].n != want) {
         return test.fail("text " + t.to_string() + ": \"" + cs[i].word
           + "\" counted " + cs[i].n.to_string() + ", rescan says "
           + want.to_string());
       }
-      i = i + 1;
+      i += 1;
     }
-    t = t + 1;
+    t += 1;
   }
   return test.pass();
 }
 
 function test_every_word_appears_once_and_the_counts_sum(): test.TestOutcome {
-  let ts: string[] = texts();
-  let t: i32 = 0;
+  let ts = texts();
+  let t = 0;
   while (t < ts.len()) {
-    let cs: Count[] = ranked(ts[t]);
-    let total: i32 = 0;
-    let i: i32 = 0;
+    let cs = ranked(ts[t]);
+    let total = 0;
+    let i = 0;
     while (i < cs.len()) {
-      total = total + cs[i].n;
-      let j: i32 = i + 1;
+      total += cs[i].n;
+      let j = i + 1;
       while (j < cs.len()) {
         if (cs[i].word == cs[j].word) {
           return test.fail("text " + t.to_string() + ": \"" + cs[i].word
             + "\" appears twice in the ranking");
         }
-        j = j + 1;
+        j += 1;
       }
-      i = i + 1;
+      i += 1;
     }
     if (total != words_of(ts[t]).len()) {
       return test.fail("text " + t.to_string() + ": counts sum to "
         + total.to_string() + ", the text has "
         + words_of(ts[t]).len().to_string() + " words");
     }
-    t = t + 1;
+    t += 1;
   }
   return test.pass();
 }
 
 function test_words_are_case_folded(): test.TestOutcome {
-  let cs: Count[] = ranked("The THE the tHe cat CAT Cat");
+  let cs = ranked("The THE the tHe cat CAT Cat");
   if (cs.len() != 2) {
     return test.fail("case folding produced " + cs.len().to_string()
       + " words: " + show(cs));
@@ -311,21 +311,21 @@ function test_words_are_case_folded(): test.TestOutcome {
 }
 
 function test_the_word_boundary_rule(): test.TestOutcome {
-  let ws: string[] = words_of("don't stop; don't! stop. it's -- it's");
+  let ws = words_of("don't stop; don't! stop. it's -- it's");
   let want: string[] = ["don't", "stop", "don't", "stop", "it's", "it's"];
   if (ws.len() != want.len()) {
     return test.fail("tokenised to " + ws.len().to_string() + " words, want "
       + want.len().to_string());
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < want.len()) {
     if (ws[i] != want[i]) {
       return test.fail("token " + i.to_string() + " is \"" + ws[i] + "\", want \""
         + want[i] + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
-  let digits: Count[] = ranked("r2d2 c3po r2d2 42 42 42");
+  let digits = ranked("r2d2 c3po r2d2 42 42 42");
   if (digits.len() != 3) {
     return test.fail("digit words: " + show(digits));
   }
@@ -337,7 +337,7 @@ function test_the_word_boundary_rule(): test.TestOutcome {
 
 function test_empty_input(): test.TestOutcome {
   let empties: string[] = ["", "   ", "  ;; -- .. "];
-  let i: i32 = 0;
+  let i = 0;
   while (i < empties.len()) {
     if (ranked(empties[i]).len() != 0) {
       return test.fail("\"" + empties[i] + "\" produced "
@@ -346,7 +346,7 @@ function test_empty_input(): test.TestOutcome {
     if (top(empties[i], 5).len() != 0) {
       return test.fail("top(5) of empty input is not empty");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -354,17 +354,17 @@ function test_empty_input(): test.TestOutcome {
 function main(): i32 {
   eprint("wordfreq — top words by count, ties broken alphabetically");
 
-  let ts: string[] = texts();
-  let i: i32 = 0;
+  let ts = texts();
+  let i = 0;
   while (i < ts.len()) {
     if (ts[i].len() > 0) {
       eprint("  top 4 of \"" + ts[i] + "\"");
       eprint("    " + show(top(ts[i], 4)));
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let r: test.TestRunner = test.new("wordfreq");
+  let r = test.new("wordfreq");
   r = r.it("the ranking obeys the tie rule throughout", test_the_ranking_obeys_the_tie_rule_throughout);
   r = r.it("equal counts are alphabetical", test_equal_counts_are_alphabetical);
   r = r.it("top n is a prefix of the full ranking", test_top_n_is_a_prefix_of_the_full_ranking);

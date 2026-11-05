@@ -10,7 +10,7 @@ import "std/test";
 struct Gen { x: u32 }
 
 function rnd(own g: Gen): (Gen, i32) {
-  let x: u32 = g.x * 1664525u32 + 1013904223u32;
+  let x = g.x * 1664525u32 + 1013904223u32;
   return (Gen { x: x }, (x >> 8u32) as i32);
 }
 
@@ -44,7 +44,7 @@ struct Channel { g: Gen, mem: f32[], input: f32[], in_mem: f32[] }
 // of one channel.
 function channel(own g: Gen, n: i32): Channel {
   let (g1, pr) = rnd(g);
-  let period: i32 = 8 + pr % 1000;
+  let period = 8 + pr % 1000;
   let (g2, short) = rnd(g1);
   if (short % 2 == 1) {
     period = 8 + period % 60;
@@ -62,7 +62,7 @@ function channel(own g: Gen, n: i32): Channel {
   for i in 0..1024 + n {
     let (g5, v) = frand(g, -100.0f32, 100.0f32);
     g = g5;
-    let s: f32 = pat[i % period] + noise * v;
+    let s = pat[i % period] + noise * v;
     if (i < 1024) {
       mem = mem.append(s);
     } else {
@@ -90,7 +90,7 @@ function channel(own g: Gen, n: i32): Channel {
 function last_state(own g: Gen): (Gen, celt_encoder.PrefilterState) {
   let (g1, period) = rnd(g);
   let (g2, q0) = rnd(g1);
-  let q: i32 = q0 % 9;
+  let q = q0 % 9;
   let gain: f32 = 0.0f32;
   if (q == 8) {
     let (g3, v) = frand(g2, 0.0f32, 0.75f32);
@@ -101,7 +101,7 @@ function last_state(own g: Gen): (Gen, celt_encoder.PrefilterState) {
   }
   let (g4, tapset) = rnd(g2);
   let (g5, lossy) = rnd(g4);
-  let loss: i32 = 0;
+  let loss = 0;
   if (lossy % 4 == 0) {
     let (g6, l) = rnd(g5);
     g5 = g6;
@@ -112,15 +112,15 @@ function last_state(own g: Gen): (Gen, celt_encoder.PrefilterState) {
 
 function prefilter_case(own g: Gen): (Gen, string) {
   let (g1, c0) = rnd(g);
-  let cc: i32 = 1 + c0 % 2;
+  let cc = 1 + c0 % 2;
   let (g2, n0) = rnd(g1);
-  let n: i32 = 120 << n0 % 4;
+  let n = 120 << n0 % 4;
   g = g2;
   let mem: f32[] = [];
   let input: f32[] = [];
   let in_mem: f32[] = [];
   for c in 0..cc {
-    let ch: Channel = channel(g, n);
+    let ch = channel(g, n);
     g = ch.g;
     for v in ch.mem {
       mem = mem.append(v);
@@ -138,17 +138,17 @@ function prefilter_case(own g: Gen): (Gen, string) {
   let (g6, b0) = rnd(g5);
   let (g7, valid) = rnd(g6);
   let (g8, ratio) = frand(g7, 0.5f32, 1.0f32);
-  let f: celt_encoder.PrefilterFrame = celt_encoder.PrefilterFrame { channels: cc, n: n, tapset: t0 % 3, enabled: e0 % 4 != 0, available_bytes: 10 + b0 % 190 };
-  let an: celt_encoder.Analysis = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid % 2 == 1, max_pitch_ratio: ratio };
-  let r: celt_encoder.Prefilter = celt_encoder.run_prefilter(st, input, mem, in_mem, f, an);
-  let head: string = cc.to_string() + " " + n.to_string() + " " + r.last_period.to_string() + " " + st.tapset.to_string() + " " + bits(st.gain) + " " + st.loss_rate.to_string() + " " + f.tapset.to_string() + " " + flag(f.enabled) + " " + f.available_bytes.to_string();
-  let tail: string = flag(r.on) + " " + r.pitch.to_string() + " " + bits(r.gain) + " " + r.qgain.to_string() + " " + hash(r.input).to_string() + " " + hash(r.mem).to_string() + " " + hash(r.in_mem).to_string();
+  let f = celt_encoder.PrefilterFrame { channels: cc, n: n, tapset: t0 % 3, enabled: e0 % 4 != 0, available_bytes: 10 + b0 % 190 };
+  let an = celt_encoder.Analysis { ...celt_encoder.no_analysis(), valid: valid % 2 == 1, max_pitch_ratio: ratio };
+  let r = celt_encoder.run_prefilter(st, input, mem, in_mem, f, an);
+  let head = cc.to_string() + " " + n.to_string() + " " + r.last_period.to_string() + " " + st.tapset.to_string() + " " + bits(st.gain) + " " + st.loss_rate.to_string() + " " + f.tapset.to_string() + " " + flag(f.enabled) + " " + f.available_bytes.to_string();
+  let tail = flag(r.on) + " " + r.pitch.to_string() + " " + bits(r.gain) + " " + r.qgain.to_string() + " " + hash(r.input).to_string() + " " + hash(r.mem).to_string() + " " + hash(r.in_mem).to_string();
   return (g8, head + " | " + tail);
 }
 
 function trace(seed: u32, cases: i32): u32 {
-  let g: Gen = Gen { x: seed };
-  let crc: crc32.Crc32 = crc32.new();
+  let g = Gen { x: seed };
+  let crc = crc32.new();
   for k in 0..cases {
     let (g1, line) = prefilter_case(g);
     g = g1;
@@ -172,7 +172,7 @@ function test_threshold_trace(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/celt_encoder prefilter");
+  let r = test.new("std/opus/celt_encoder prefilter");
   r = r.it("a short trace is the libopus trace", test_short_trace);
   r = r.it("a long trace is the libopus trace", test_long_trace);
   r = r.it("a trace at the byte limit is the libopus trace", test_threshold_trace);

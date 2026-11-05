@@ -1125,10 +1125,18 @@ function so_imports(merged: parser.Module): elf.SoImports {
   let imp = elf.no_so_imports();
   for f in merged.funcs {
     if (is_c_library(f.import_iface)) {
-      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0) };
+      imp = elf.SoImports { libs: imp.libs.append(f.import_iface), syms: imp.syms.append(f.import_wit), slots: imp.slots.append(0), data: imp.data.append(false) };
     }
   }
   return imp;
+}
+
+function shared_environ_import(imp: elf.SoImports, slot: i32, target: string): elf.SoImports {
+  let libc = "libc.so.6";
+  if (asmcore.is_android(target)) {
+    libc = "libc.so";
+  }
+  return elf.SoImports { libs: imp.libs.append(libc), syms: imp.syms.append("environ"), slots: imp.slots.append(slot), data: imp.data.append(true) };
 }
 
 function import_stub_names(merged: parser.Module): string[] {
@@ -1907,11 +1915,16 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     slots = slots.append(arm64_native.arm64_symbol_addr(p, got_label(stub), tv as i64, dv as i64) as i32);
   }
   imp = elf.SoImports { ...imp, slots: slots };
-  let so = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, note);
+  let env_slot = arm64_native.arm64_symbol_addr(p, "__fern_environ_slot", tv as i64, dv as i64);
+  if (env_slot >= 0i64) {
+    imp = shared_environ_import(imp, env_slot as i32, target);
+  }
+  let init_at = arm64_native.arm64_symbol_addr(p, "__fern_init_array", tv as i64, dv as i64) as i32;
+  let so = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, note, init_at);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
-function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string, merged: parser.Module): string {
+function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module): string {
   let a = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   let tv = elf.elf_text_off_so(false);
   let hdr_len = x86_native.x86_eh_frame_hdr_len(a);
@@ -1952,7 +1965,15 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     slots = slots.append(data_at + x86_native.x86_symbol_addr(a, got_label(stub), 0) - base);
   }
   imp = elf.SoImports { ...imp, slots: slots };
-  let so = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, false);
+  let env_slot = x86_native.x86_symbol_addr(a, "__fern_environ_slot", 0);
+  if (env_slot >= 0) {
+    imp = shared_environ_import(imp, data_at + env_slot - base, target);
+  }
+  let init_at = x86_native.x86_symbol_addr(a, "__fern_init_array", 0);
+  if (init_at >= 0) {
+    init_at = data_at + init_at - base;
+  }
+  let so = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, false, init_at);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -6939,7 +6960,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = export_entries(merged, entry_names(merged, shared_roots), false, harden) + import_entries(merged, false) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", merged);
+      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()) + "", target, merged);
       if (out_asm.len() == 0) {
         return 2;
       }

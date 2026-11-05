@@ -1549,16 +1549,16 @@ pub function main(): i32 {
   let o = gnu.out_new();
   let ok = true;
   if (merge) {
-    let j = run_merge(c, files, o, ok);
-    o = j.o;
-    ok = j.ok;
+    let merged = run_merge(c, files, o, ok);
+    o = merged.o;
+    ok = merged.ok;
   } else {
     let i = 0;
     while (i < files.len()) {
-      let j = run_serial(c, files[i], o, ok);
-      o = j.o;
-      ok = j.ok;
-      if (j.fatal) {
+      let serial = run_serial(c, files[i], o, ok);
+      o = serial.o;
+      ok = serial.ok;
+      if (serial.fatal) {
         i = files.len();
       }
       i += 1;

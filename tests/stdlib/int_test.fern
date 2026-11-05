@@ -25,7 +25,7 @@ function test_to_string_pos(): test.TestOutcome {
 }
 
 function test_to_string_neg(): test.TestOutcome {
-  return test.assert_eq((0 - 7).to_string(), "-7");
+  return test.assert_eq((-7).to_string(), "-7");
 }
 
 function test_to_string_max(): test.TestOutcome {
@@ -33,7 +33,7 @@ function test_to_string_max(): test.TestOutcome {
 }
 
 function test_to_string_min(): test.TestOutcome {
-  return test.assert_eq((0 - 2147483647 - 1).to_string(), "-2147483648");
+  return test.assert_eq((-2147483647 - 1).to_string(), "-2147483648");
 }
 
 function parsed(s: string, base: i32): string {
@@ -78,7 +78,7 @@ function test_parse_binary(): test.TestOutcome {
 function test_parse_neg_base36(): test.TestOutcome {
   match (i32.parse_i32_radix("-z", 36)) {
     Ok(v) => {
-      return test.assert_eq(v, 0 - 35);
+      return test.assert_eq(v, -35);
     },
     Err(_) => {
       return test.fail("parse_int_radix(-z,36) expected Some");
@@ -155,11 +155,11 @@ function test_radix_zero(): test.TestOutcome {
 }
 
 function test_radix_neg(): test.TestOutcome {
-  return test.assert_eq((0 - 255).to_string_radix(16), "-ff");
+  return test.assert_eq((-255).to_string_radix(16), "-ff");
 }
 
 function test_radix_min(): test.TestOutcome {
-  return test.assert_eq((0 - 2147483647 - 1).to_string_radix(16), "-80000000");
+  return test.assert_eq((-2147483647 - 1).to_string_radix(16), "-80000000");
 }
 
 function test_roundtrip(): test.TestOutcome {

@@ -7,7 +7,7 @@ function idx(o: Option[i32]): i32 {
       return v;
     },
     None => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -71,7 +71,7 @@ function test_strings(): test.TestOutcome {
   if (idx(ss.binary_search("cherry")) != 2) {
     return test.fail("cherry at 2");
   }
-  return test.assert_true(idx(ss.binary_search("fig")) == 0 - 1);
+  return test.assert_true(idx(ss.binary_search("fig")) == -1);
 }
 
 function main(): i32 {

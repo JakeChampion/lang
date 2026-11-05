@@ -1590,10 +1590,17 @@ function take(own flags: boolean[]): i32 { return flags.len(); }
     flags = [true];
     return n + m + flags.len();
 }`)
-	wantE051(t, "branch-between", prelude+`function f(k: i32): i32 {
+	wantOK(t, "branch-between", prelude+`function f(k: i32): i32 {
     let flags: boolean[] = [false];
     let n: i32 = take(flags);
     if (k > 0) { k = k + 1; }
+    flags = [true];
+    return n + k + flags.len();
+}`)
+	wantE051(t, "branch-reads-between", prelude+`function f(k: i32): i32 {
+    let flags: boolean[] = [false];
+    let n: i32 = take(flags);
+    if (k > 0) { k = k + flags.len(); }
     flags = [true];
     return n + k + flags.len();
 }`)
@@ -2290,6 +2297,152 @@ function f(q: HPair, c: boolean): i32 {
     let r: i32 = sinkh(h);
     return r + n;
 }`)
+}
+
+func TestOwnGuardRejectsFreshLocalGivenABorrowedHandle(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"assigned-a-borrowed-param", `
+function f(q: Handle): i32 {
+    let x: Handle = Handle { fd: 1 };
+    x = q;
+    let r: i32 = sinkh(x);
+    return r;
+}`},
+		{"assigned-a-borrowed-param-in-return", `
+function f(q: Handle): i32 {
+    let x: Handle = Handle { fd: 1 };
+    x = q;
+    return sinkh(x);
+}`},
+		{"assigned-a-field-of-a-borrowed-param-then-closed", `
+function f(q: HPair): i32 {
+    let x: Handle = Handle { fd: 1 };
+    x = q.h;
+    return x.close();
+}`},
+		{"alias-of-a-borrowed-param", `
+function f(q: Handle): i32 {
+    let y: Handle = q;
+    return sinkh(y);
+}`},
+		{"field-closed-out-of-a-reassigned-local", `
+function mk(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(q: HPair): i32 {
+    let p: HPair = mk();
+    p = q;
+    return p.h.close() + p.n;
+}`},
+		{"match-on-a-reassigned-local-takes-its-payload", `
+enum Slot { Full(Handle), Empty }
+function mk(): Slot { return Full(Handle { fd: 1 }); }
+function f(q: Slot): i32 {
+    let p: Slot = mk();
+    p = q;
+    match (p) {
+        Full(h) => { return h.close(); },
+        Empty => { return 0; }
+    }
+    return 2;
+}`},
+	} {
+		wantE051(t, tc.name, ownHandleConsumer+tc.body)
+	}
+	for _, tc := range []struct{ name, body string }{
+		{"assigned-a-fresh-value", `
+function f(c: boolean): i32 {
+    let x: Handle = Handle { fd: 1 };
+    if (c) {
+        x = Handle { fd: 2 };
+    }
+    return sinkh(x);
+}`},
+		{"assigned-a-self-update", `
+function mk(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
+function f(c: boolean): i32 {
+    let p: HPair = mk();
+    if (c) {
+        p = HPair { ...p, n: 3 };
+    }
+    return sinkp(p);
+}`},
+		{"assigned-an-unpack", `
+function f(): i32 {
+    let x: Handle = Handle { fd: 1 };
+    let t: (Handle, i32) = hstep();
+    x = t.0;
+    return sinkh(x) + t.1;
+}`},
+		{"assigned-another-fresh-local", `
+function f(): i32 {
+    let x: Handle = Handle { fd: 1 };
+    let y: Handle = Handle { fd: 2 };
+    x = y;
+    return sinkh(x);
+}`},
+		{"alias-of-an-own-param", `
+function f(own q: Handle): i32 {
+    let y: Handle = q;
+    return sinkh(y);
+}`},
+		{"handle-free-local-assigned-a-borrow", `
+function keep(own xs: i32[]): i32 { return xs[0]; }
+function f(q: i32[]): i32 {
+    let xs: i32[] = [1];
+    xs = q;
+    return keep(xs);
+}`},
+		{"assigned-a-pass-through-call", `
+function settle(o: Handle, n: i32): Handle { return o; }
+function f(): i32 {
+    let o: Handle = Handle { fd: 1 };
+    o = settle(o, 2);
+    return sinkh(o);
+}`},
+		{"assigned-a-pass-through-call-with-a-handle-free-union", `
+struct A { n: i32 }
+struct B { s: string }
+type U = A | B;
+function settle(o: Handle, u: U): Handle { return o; }
+function f(u: U): i32 {
+    let o: Handle = Handle { fd: 1 };
+    o = settle(o, u);
+    return sinkh(o);
+}`},
+		{"assigned-a-payload-of-a-fresh-match", `
+enum Slot { Full(Handle), Empty }
+function mk(): Slot { return Full(Handle { fd: 1 }); }
+function f(): i32 {
+    let x: Handle = Handle { fd: 2 };
+    match (mk()) {
+        Full(h) => { x = h; },
+        Empty => {}
+    }
+    return sinkh(x);
+}`},
+	} {
+		wantOK(t, tc.name, ownHandleConsumer+tc.body)
+	}
+	for _, tc := range []struct{ name, body string }{
+		{"assigned-a-pass-through-call-with-another-lender", `
+function pick(o: Handle, p: Handle): Handle { return p; }
+function f(q: Handle): i32 {
+    let o: Handle = Handle { fd: 1 };
+    o = pick(o, q);
+    return sinkh(o);
+}`},
+		{"assigned-a-payload-of-a-borrowed-match", `
+enum Slot { Full(Handle), Empty }
+function f(q: Slot): i32 {
+    let x: Handle = Handle { fd: 2 };
+    match (q) {
+        Full(h) => { x = h; },
+        Empty => {}
+    }
+    return sinkh(x);
+}`},
+	} {
+		wantE051(t, tc.name, ownHandleConsumer+tc.body)
+	}
 }
 
 func TestOwnGuardAllowsHandleFreeLocalReadFromBorrowed(t *testing.T) {
@@ -2997,4 +3150,21 @@ function f(l: Socket): i32 {
     }
     return 0;
 }`)
+}
+
+// The receiver of a method is not an argument for the result-borrow
+// analysis. cmd/fern checks the same program after the method rewrite (#14234).
+const cellTakeSrc = `
+struct Keys { a: Cell[i32[]] }
+function take(slot: Cell[i32[]]): i32[] {
+    let got = slot.get();
+    slot.set([]);
+    return got;
+}
+function consume(own xs: i32[]): i32 { return xs.len(); }
+function f(k: Keys): i32 { return consume(take(k.a)); }
+function main(): i32 { return 0; }`
+
+func TestOwnGuardIgnoresAMethodReceiver(t *testing.T) {
+	wantOK(t, "method-receiver-result", cellTakeSrc)
 }

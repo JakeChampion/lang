@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +63,29 @@ func TestSelfHostConstArm64(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A module uses a const of a module it imports, though the importer sorts
+// first in the merge. A forward reference inside a module stays E093.
+func TestSelfHostConstFromImportedModule(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	for name, source := range map[string]string{
+		"a.fern":       "import \"./zz\";\npub const N: i32 = 48 + zz.A;\n",
+		"zz.fern":      "pub const A: i32 = 64;\n",
+		"main.fern":    "import \"./a\";\nfunction main(): i32 { return a.N - 70; }\n",
+		"forward.fern": "import \"./zz\";\nconst X: i32 = Y + zz.A;\nconst Y: i32 = 1;\nfunction main(): i32 { return X; }\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stderr, code := cli.exitOfFile(t, filepath.Join(dir, "main.fern"), "x86-64-linux", nil); code != 42 {
+		t.Fatalf("main.fern exited %d, want 42\n%s", code, stderr)
+	}
+	out, err := runX86_64Bin(cli.runner, cli.bin, "-check", filepath.Join(dir, "forward.fern"), cli.stdlib).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), `error[E093]: const X: "Y" is not a constant`) {
+		t.Fatalf("a forward reference in a module: %v\n%s", err, out)
 	}
 }

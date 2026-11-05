@@ -530,7 +530,7 @@ function group_across(h: usize, bs: u8[], i: i32, group: i32, bits: i32, alphabe
   return col;
 }
 
-function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
+function encode(r: Reader, c: Codec, wrap: i64, own o: io_buffered.BufWriter): void {
   unsafe {
     let out = o;
     let cap = block_bytes();
@@ -776,7 +776,7 @@ function push_low_bytes(h: usize, word: u64, bits: i32): void {
   }
 }
 
-function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
+function decode(r: Reader, c: Codec, ignore: boolean, own o: io_buffered.BufWriter): void {
   unsafe {
     let out = o;
     let cap = block_bytes();

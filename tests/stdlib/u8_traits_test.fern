@@ -23,7 +23,7 @@ function test_ord(): test.TestOutcome {
   let lo: u8 = 1;
   let hi: u8 = 255;
   return test.assert_true(
-    lo.cmp(hi) == 0 - 1
+    lo.cmp(hi) == -1
       && hi.cmp(lo) == 1
       && lo.cmp(lo) == 0,
   );
@@ -49,7 +49,7 @@ function test_debug(): test.TestOutcome {
 struct Pixel { r: u8, a: i32 }
 
 function test_derive_debug(): test.TestOutcome {
-  let p: Pixel = Pixel { r: 200, a: 7 };
+  let p = Pixel { r: 200, a: 7 };
   return test.assert_eq(p.to_debug(), "Pixel { r: 200, a: 7 }");
 }
 
@@ -67,7 +67,7 @@ function test_generic_bound(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("core/cmp u8 impls");
+  let r = test.new("core/cmp u8 impls");
   r = r.it("Display", test_display);
   r = r.it("Eq", test_eq);
   r = r.it("Ord unsigned order", test_ord);

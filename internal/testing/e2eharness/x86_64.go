@@ -69,10 +69,10 @@ func lookupX86_64Runner() (runner []string, ok bool) {
 
 func RunX86_64Bin(runner []string, binPath string, args ...string) *exec.Cmd {
 	if len(runner) == 0 {
-		return exec.Command(binPath, args...)
+		return WithoutCoreDump(exec.Command(binPath, args...))
 	}
 	argv := append(append(append([]string{}, runner[1:]...), binPath), args...)
-	return exec.Command(runner[0], argv...)
+	return WithoutCoreDump(exec.Command(runner[0], argv...))
 }
 
 func CompileAndRunX86_64(t testing.TB, src string) (stdout string, exitCode int) {

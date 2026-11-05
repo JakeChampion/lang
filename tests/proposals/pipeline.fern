@@ -14,28 +14,28 @@ function note(c: Ctx, name: string): Ctx {
 
 function adder(name: string, n: i32): Stage {
   return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
-    let t: Ctx = note(c, name);
+    let t = note(c, name);
     return Ok(Ctx { value: t.value + n, ran: t.ran });
   } };
 }
 
 function doubler(name: string): Stage {
   return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
-    let t: Ctx = note(c, name);
+    let t = note(c, name);
     return Ok(Ctx { value: t.value * 2, ran: t.ran });
   } };
 }
 
 function failer(name: string, why: string): Stage {
   return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
-    let t: Ctx = note(c, name);
+    let t = note(c, name);
     return Err(Fault { step: name, why: why, ran: t.ran });
   } };
 }
 
 function guard(name: string, limit: i32): Stage {
   return Stage { name: name, run: (c: Ctx): Result[Ctx, Fault] => {
-    let t: Ctx = note(c, name);
+    let t = note(c, name);
     if (t.value > limit) {
       return Err(Fault { step: name, why: "over " + limit.to_string(), ran: t.ran });
     }
@@ -48,18 +48,18 @@ function nop(name: string): Stage {
 }
 
 function run_pipeline(stages: Stage[], input: Ctx): Result[Ctx, Fault] {
-  let c: Ctx = input;
-  let i: i32 = 0;
+  let c = input;
+  let i = 0;
   while (i < stages.len()) {
     c = stages[i].run(c)?;
-    i = i + 1;
+    i += 1;
   }
   return Ok(c);
 }
 
 function run_explicit(stages: Stage[], input: Ctx): Result[Ctx, Fault] {
-  let c: Ctx = input;
-  let i: i32 = 0;
+  let c = input;
+  let i = 0;
   while (i < stages.len()) {
     match (stages[i].run(c)) {
       Err(e) => {
@@ -69,17 +69,17 @@ function run_explicit(stages: Stage[], input: Ctx): Result[Ctx, Fault] {
         c = next;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(c);
 }
 
 function concat_stages(a: Stage[], b: Stage[]): Stage[] {
-  let out: Stage[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -108,10 +108,10 @@ function pipelines(): Stage[][] {
 
 function names_of(ss: Stage[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ss.len()) {
     out = out.append(ss[i].name);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -120,25 +120,25 @@ function strings_equal(a: string[], b: string[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function show(xs: string[]): string {
-  let out: string = "[";
-  let i: i32 = 0;
+  let out = "[";
+  let i = 0;
   while (i < xs.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + xs[i];
-    i = i + 1;
+    out += xs[i];
+    i += 1;
   }
   return out + "]";
 }
@@ -155,46 +155,46 @@ function describe(r: Result[Ctx, Fault]): string {
 }
 
 function test_the_try_operator_matches_the_explicit_match(): test.TestOutcome {
-  let ps: Stage[][] = pipelines();
-  let i: i32 = 0;
+  let ps = pipelines();
+  let i = 0;
   while (i < ps.len()) {
-    let a: string = describe(run_pipeline(ps[i], fresh()));
-    let b: string = describe(run_explicit(ps[i], fresh()));
+    let a = describe(run_pipeline(ps[i], fresh()));
+    let b = describe(run_explicit(ps[i], fresh()));
     if (a != b) {
       return test.fail("pipeline " + i.to_string() + " differs:\n  ?     " + a
         + "\n  match " + b);
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_no_stage_runs_after_the_failure(): test.TestOutcome {
-  let ps: Stage[][] = pipelines();
-  let i: i32 = 0;
+  let ps = pipelines();
+  let i = 0;
   while (i < ps.len()) {
     match (run_pipeline(ps[i], fresh())) {
       Ok(c) => {},
       Err(e) => {
-        let at: i32 = -1;
-        let k: i32 = 0;
+        let at = -1;
+        let k = 0;
         while (k < ps[i].len()) {
           if (at < 0 && ps[i][k].name == e.step) {
             at = k;
           }
-          k = k + 1;
+          k += 1;
         }
         if (at < 0) {
           return test.fail("pipeline " + i.to_string() + " blamed \"" + e.step
             + "\", which is not in it");
         }
         let want: string[] = [];
-        let m: i32 = 0;
+        let m = 0;
         while (m <= at) {
           if (ps[i][m].name != "n") {
             want = want.append(ps[i][m].name);
           }
-          m = m + 1;
+          m += 1;
         }
         if (!strings_equal(e.ran, want)) {
           return test.fail("pipeline " + i.to_string() + " failed at \"" + e.step
@@ -202,7 +202,7 @@ function test_no_stage_runs_after_the_failure(): test.TestOutcome {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -232,19 +232,19 @@ function test_the_first_failure_wins(): test.TestOutcome {
 }
 
 function test_success_runs_every_stage_in_order(): test.TestOutcome {
-  let ps: Stage[][] = pipelines();
-  let i: i32 = 0;
+  let ps = pipelines();
+  let i = 0;
   while (i < ps.len()) {
     match (run_pipeline(ps[i], fresh())) {
       Err(e) => {},
       Ok(c) => {
         let want: string[] = [];
-        let k: i32 = 0;
+        let k = 0;
         while (k < ps[i].len()) {
           if (ps[i][k].name != "n") {
             want = want.append(ps[i][k].name);
           }
-          k = k + 1;
+          k += 1;
         }
         if (!strings_equal(c.ran, want)) {
           return test.fail("pipeline " + i.to_string() + " ran " + show(c.ran)
@@ -252,7 +252,7 @@ function test_success_runs_every_stage_in_order(): test.TestOutcome {
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -279,57 +279,57 @@ function test_the_fault_propagates_unchanged(): test.TestOutcome {
 }
 
 function test_composition_is_associative(): test.TestOutcome {
-  let ps: Stage[][] = pipelines();
-  let a: i32 = 0;
+  let ps = pipelines();
+  let a = 0;
   while (a < ps.len()) {
-    let b: i32 = 0;
+    let b = 0;
     while (b < ps.len()) {
-      let c: i32 = 0;
+      let c = 0;
       while (c < ps.len()) {
-        let left: Stage[] = concat_stages(concat_stages(ps[a], ps[b]), ps[c]);
-        let right: Stage[] = concat_stages(ps[a], concat_stages(ps[b], ps[c]));
-        let lr: string = describe(run_pipeline(left, fresh()));
-        let rr: string = describe(run_pipeline(right, fresh()));
+        let left = concat_stages(concat_stages(ps[a], ps[b]), ps[c]);
+        let right = concat_stages(ps[a], concat_stages(ps[b], ps[c]));
+        let lr = describe(run_pipeline(left, fresh()));
+        let rr = describe(run_pipeline(right, fresh()));
         if (lr != rr) {
           return test.fail("(" + a.to_string() + "," + b.to_string() + ","
             + c.to_string() + ") is not associative:\n  " + lr + "\n  " + rr);
         }
-        c = c + 1;
+        c += 1;
       }
-      b = b + 1;
+      b += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return test.pass();
 }
 
 function test_a_nop_stage_is_an_identity(): test.TestOutcome {
-  let ps: Stage[][] = pipelines();
-  let i: i32 = 0;
+  let ps = pipelines();
+  let i = 0;
   while (i < ps.len()) {
-    let base: string = describe(run_pipeline(ps[i], fresh()));
-    let at: i32 = 0;
+    let base = describe(run_pipeline(ps[i], fresh()));
+    let at = 0;
     while (at <= ps[i].len()) {
       let with_nop: Stage[] = [];
-      let k: i32 = 0;
+      let k = 0;
       while (k < ps[i].len()) {
         if (k == at) {
           with_nop = with_nop.append(nop("n"));
         }
         with_nop = with_nop.append(ps[i][k]);
-        k = k + 1;
+        k += 1;
       }
       if (at == ps[i].len()) {
         with_nop = with_nop.append(nop("n"));
       }
-      let got: string = describe(run_pipeline(with_nop, fresh()));
+      let got = describe(run_pipeline(with_nop, fresh()));
       if (got != base) {
         return test.fail("pipeline " + i.to_string() + " changed when a nop was "
           + "inserted at " + at.to_string() + ":\n  " + base + "\n  " + got);
       }
-      at = at + 1;
+      at += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -381,14 +381,14 @@ function test_a_guard_trips_on_the_value_it_sees(): test.TestOutcome {
 function main(): i32 {
   eprint("pipeline — fallible stages composed with Result and ?");
 
-  let ps: Stage[][] = pipelines();
-  let i: i32 = 0;
+  let ps = pipelines();
+  let i = 0;
   while (i < ps.len()) {
     eprint("  " + show(names_of(ps[i])) + "  ->  " + describe(run_pipeline(ps[i], fresh())));
-    i = i + 1;
+    i += 1;
   }
 
-  let r: test.TestRunner = test.new("pipeline");
+  let r = test.new("pipeline");
   r = r.it("the try operator matches the explicit match", test_the_try_operator_matches_the_explicit_match);
   r = r.it("no stage runs after the failure", test_no_stage_runs_after_the_failure);
   r = r.it("the first failure wins", test_the_first_failure_wins);

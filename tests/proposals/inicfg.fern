@@ -39,12 +39,12 @@ function is_digit(c: u8): boolean {
 }
 
 function parse_i64(s: string): I64R {
-  let n: i32 = s.len();
+  let n = s.len();
   if (n == 0) {
     return I64R { ok: false, v: 0 };
   }
-  let neg: boolean = false;
-  let at: i32 = 0;
+  let neg = false;
+  let at = 0;
   if (s[0] == 45) {
     neg = true;
     at = 1;
@@ -58,10 +58,10 @@ function parse_i64(s: string): I64R {
       return I64R { ok: false, v: 0 };
     }
     acc = acc * 10 + (s[at] - 48) as i64;
-    at = at + 1;
+    at += 1;
   }
   if (neg) {
-    acc = 0 - acc;
+    acc = -acc;
   }
   return I64R { ok: true, v: acc };
 }
@@ -87,7 +87,7 @@ function classify(v: string): ValR {
       code: 0, msg: "",
     };
   }
-  let num: I64R = parse_i64(v);
+  let num = parse_i64(v);
   if (num.ok) {
     return ValR { ok: true, kind: 0, i: num.v, b: false, s: "", code: 0, msg: "" };
   }
@@ -95,26 +95,26 @@ function classify(v: string): ValR {
 }
 
 function has_key(cfg: Config, section: string, key: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < cfg.entries.len()) {
-    let e: Entry = cfg.entries[i];
+    let e = cfg.entries[i];
     if (e.section == section && e.key == key) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function parse(text: string): ParseR {
-  let lines: string[] = text.split("\n");
-  let cfg: Config = Config { entries: [] };
-  let section: string = "";
-  let idx: i32 = 0;
+  let lines = text.split("\n");
+  let cfg = Config { entries: [] };
+  let section = "";
+  let idx = 0;
   while (idx < lines.len()) {
-    let lineno: i32 = idx + 1;
-    let raw: string = lines[idx].trim().to_owned();
-    idx = idx + 1;
+    let lineno = idx + 1;
+    let raw = lines[idx].trim().to_owned();
+    idx += 1;
 
     if (raw.len() == 0) {
       continue;
@@ -130,7 +130,7 @@ function parse(text: string): ParseR {
           err: Fault { line: lineno, code: 2, msg: "section header is missing its closing ]" },
         };
       }
-      let name: string = raw.drop(1).take(raw.len() - 2).trim().to_owned();
+      let name = raw.drop(1).take(raw.len() - 2).trim().to_owned();
       if (name.len() == 0) {
         return ParseR {
           ok: false, cfg: cfg,
@@ -147,14 +147,14 @@ function parse(text: string): ParseR {
         err: Fault { line: lineno, code: 1, msg: "expected `key = value`, found no `=`" },
       };
     };
-    let key: string = raw.take(eq).trim().to_owned();
+    let key = raw.take(eq).trim().to_owned();
     if (key.len() == 0) {
       return ParseR {
         ok: false, cfg: cfg,
         err: Fault { line: lineno, code: 3, msg: "empty key before `=`" },
       };
     }
-    let val: ValR = classify(raw.drop(eq + 1).trim().to_owned());
+    let val = classify(raw.drop(eq + 1).trim().to_owned());
     if (!val.ok) {
       return ParseR {
         ok: false, cfg: cfg,
@@ -177,13 +177,13 @@ function parse(text: string): ParseR {
 }
 
 function find(cfg: Config, section: string, key: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < cfg.entries.len()) {
-    let e: Entry = cfg.entries[i];
+    let e = cfg.entries[i];
     if (e.section == section && e.key == key) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -197,11 +197,11 @@ function wrong_type(key: string, want: string): Fault {
 }
 
 function get_int(cfg: Config, section: string, key: string): IntR {
-  let at: i32 = find(cfg, section, key);
+  let at = find(cfg, section, key);
   if (at < 0) {
     return IntR { ok: false, v: 0, err: missing(section, key) };
   }
-  let e: Entry = cfg.entries[at];
+  let e = cfg.entries[at];
   if (e.kind != 0) {
     return IntR { ok: false, v: 0, err: wrong_type(key, "an integer") };
   }
@@ -209,11 +209,11 @@ function get_int(cfg: Config, section: string, key: string): IntR {
 }
 
 function get_bool(cfg: Config, section: string, key: string): BoolR {
-  let at: i32 = find(cfg, section, key);
+  let at = find(cfg, section, key);
   if (at < 0) {
     return BoolR { ok: false, v: false, err: missing(section, key) };
   }
-  let e: Entry = cfg.entries[at];
+  let e = cfg.entries[at];
   if (e.kind != 1) {
     return BoolR { ok: false, v: false, err: wrong_type(key, "a boolean") };
   }
@@ -221,11 +221,11 @@ function get_bool(cfg: Config, section: string, key: string): BoolR {
 }
 
 function get_str(cfg: Config, section: string, key: string): StrR {
-  let at: i32 = find(cfg, section, key);
+  let at = find(cfg, section, key);
   if (at < 0) {
     return StrR { ok: false, v: "", err: missing(section, key) };
   }
-  let e: Entry = cfg.entries[at];
+  let e = cfg.entries[at];
   if (e.kind != 2) {
     return StrR { ok: false, v: "", err: wrong_type(key, "a string") };
   }
@@ -246,39 +246,39 @@ function render_value(e: Entry): string {
 }
 
 function render(cfg: Config): string {
-  let out: string = "";
+  let out = "";
   let sections: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cfg.entries.len()) {
-    let s: string = cfg.entries[i].section;
-    let seen: boolean = false;
-    let k: i32 = 0;
+    let s = cfg.entries[i].section;
+    let seen = false;
+    let k = 0;
     while (k < sections.len()) {
       if (sections[k] == s) {
         seen = true;
       }
-      k = k + 1;
+      k += 1;
     }
     if (!seen) {
       sections = sections.append(s);
     }
-    i = i + 1;
+    i += 1;
   }
-  let si: i32 = 0;
+  let si = 0;
   while (si < sections.len()) {
-    let sec: string = sections[si];
+    let sec = sections[si];
     if (sec.len() > 0) {
       out = out + "[" + sec + "]\n";
     }
-    let j: i32 = 0;
+    let j = 0;
     while (j < cfg.entries.len()) {
-      let e: Entry = cfg.entries[j];
+      let e = cfg.entries[j];
       if (e.section == sec) {
         out = out + e.key + " = " + render_value(e) + "\n";
       }
-      j = j + 1;
+      j += 1;
     }
-    si = si + 1;
+    si += 1;
   }
   return out;
 }
@@ -287,14 +287,14 @@ function same_entries(a: Config, b: Config): boolean {
   if (a.entries.len() != b.entries.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.entries.len()) {
-    let x: Entry = a.entries[i];
-    let at: i32 = find(b, x.section, x.key);
+    let x = a.entries[i];
+    let at = find(b, x.section, x.key);
     if (at < 0) {
       return false;
     }
-    let y: Entry = b.entries[at];
+    let y = b.entries[at];
     if (x.kind != y.kind) {
       return false;
     }
@@ -307,38 +307,38 @@ function same_entries(a: Config, b: Config): boolean {
     if (x.kind == 2 && x.s != y.s) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function join_lines(lines: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < lines.len()) {
     out = out + lines[i] + "\n";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function valid_lines(pad: i32): string[] {
   let out: string[] = [];
-  let s: i32 = 0;
+  let s = 0;
   while (s < 3) {
-    let p: i32 = 0;
+    let p = 0;
     while (p < pad) {
       if (p % 2 == 0) {
         out = out.append("# a comment");
       } else {
         out = out.append("");
       }
-      p = p + 1;
+      p += 1;
     }
     out = out.append("[sec" + s.to_string() + "]");
-    let k: i32 = 0;
+    let k = 0;
     while (k < 3) {
-      let key: string = "k" + k.to_string();
+      let key = "k" + k.to_string();
       if (k == 0) {
         out = out.append(key + " = " + (s * 10 + k).to_string());
       }
@@ -353,9 +353,9 @@ function valid_lines(pad: i32): string[] {
       if (k == 2) {
         out = out.append(key + " = \"v" + s.to_string() + "\"");
       }
-      k = k + 1;
+      k += 1;
     }
-    s = s + 1;
+    s += 1;
   }
   return out;
 }
@@ -370,7 +370,7 @@ function bad_codes(): i32[] {
 
 function splice(lines: string[], at: i32, replacement: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < lines.len()) {
     if (i == at) {
       out = out.append(replacement);
@@ -378,21 +378,21 @@ function splice(lines: string[], at: i32, replacement: string): string[] {
     if (i != at) {
       out = out.append(lines[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function test_the_reported_line_is_the_malformed_one(): test.TestOutcome {
-  let base: string[] = valid_lines(0);
-  let bads: string[] = bad_lines();
-  let codes: i32[] = bad_codes();
-  let b: i32 = 0;
+  let base = valid_lines(0);
+  let bads = bad_lines();
+  let codes = bad_codes();
+  let b = 0;
   while (b < bads.len()) {
-    let at: i32 = 0;
+    let at = 0;
     while (at < base.len()) {
-      let doc: string[] = splice(base, at, bads[b]);
-      let r: ParseR = parse(join_lines(doc));
+      let doc = splice(base, at, bads[b]);
+      let r = parse(join_lines(doc));
       if (r.ok) {
         return test.fail("line " + (at + 1).to_string() + " `" + bads[b]
           + "` parsed clean; a malformed line must be rejected");
@@ -406,20 +406,20 @@ function test_the_reported_line_is_the_malformed_one(): test.TestOutcome {
         return test.fail("`" + bads[b] + "` reported code "
           + r.err.code.to_string() + ", want " + codes[b].to_string());
       }
-      at = at + 1;
+      at += 1;
     }
-    b = b + 1;
+    b += 1;
   }
   return test.pass();
 }
 
 function test_comments_and_blanks_do_not_shift_the_line(): test.TestOutcome {
-  let pad: i32 = 0;
+  let pad = 0;
   while (pad < 5) {
-    let base: string[] = valid_lines(pad);
-    let at: i32 = base.len() - 1;
-    let doc: string[] = splice(base, at, "no equals here");
-    let r: ParseR = parse(join_lines(doc));
+    let base = valid_lines(pad);
+    let at = base.len() - 1;
+    let doc = splice(base, at, "no equals here");
+    let r = parse(join_lines(doc));
     if (r.ok) {
       return test.fail("pad=" + pad.to_string() + ": malformed line parsed clean");
     }
@@ -428,15 +428,15 @@ function test_comments_and_blanks_do_not_shift_the_line(): test.TestOutcome {
         + (at + 1).to_string() + " reported at " + r.err.line.to_string()
         + " — the counter is skipping comments/blanks");
     }
-    pad = pad + 1;
+    pad += 1;
   }
   return test.pass();
 }
 
 function test_a_valid_document_parses_clean(): test.TestOutcome {
-  let pad: i32 = 0;
+  let pad = 0;
   while (pad < 5) {
-    let r: ParseR = parse(join_lines(valid_lines(pad)));
+    let r = parse(join_lines(valid_lines(pad)));
     if (!r.ok) {
       return test.fail("pad=" + pad.to_string() + ": valid document rejected at line "
         + r.err.line.to_string() + ": " + r.err.msg);
@@ -445,72 +445,72 @@ function test_a_valid_document_parses_clean(): test.TestOutcome {
       return test.fail("pad=" + pad.to_string() + ": got "
         + r.cfg.entries.len().to_string() + " entries, want 9");
     }
-    pad = pad + 1;
+    pad += 1;
   }
   return test.pass();
 }
 
 function test_typed_lookups_agree_with_the_source(): test.TestOutcome {
-  let r: ParseR = parse(join_lines(valid_lines(2)));
+  let r = parse(join_lines(valid_lines(2)));
   if (!r.ok) {
     return test.fail("valid document rejected: " + r.err.msg);
   }
-  let s: i32 = 0;
+  let s = 0;
   while (s < 3) {
-    let sec: string = "sec" + s.to_string();
-    let iv: IntR = get_int(r.cfg, sec, "k0");
+    let sec = "sec" + s.to_string();
+    let iv = get_int(r.cfg, sec, "k0");
     if (!iv.ok) {
       return test.fail(sec + ".k0: " + iv.err.msg);
     }
     if (iv.v != (s * 10) as i64) {
       return test.fail(sec + ".k0 = " + iv.v.to_string() + ", want " + (s * 10).to_string());
     }
-    let bv: BoolR = get_bool(r.cfg, sec, "k1");
+    let bv = get_bool(r.cfg, sec, "k1");
     if (!bv.ok) {
       return test.fail(sec + ".k1: " + bv.err.msg);
     }
     if (bv.v != (s % 2 == 0)) {
       return test.fail(sec + ".k1 has the wrong boolean");
     }
-    let sv: StrR = get_str(r.cfg, sec, "k2");
+    let sv = get_str(r.cfg, sec, "k2");
     if (!sv.ok) {
       return test.fail(sec + ".k2: " + sv.err.msg);
     }
     if (sv.v != "v" + s.to_string()) {
       return test.fail(sec + ".k2 = `" + sv.v + "`, want `v" + s.to_string() + "`");
     }
-    s = s + 1;
+    s += 1;
   }
   return test.pass();
 }
 
 function test_a_wrong_type_lookup_is_an_error(): test.TestOutcome {
-  let r: ParseR = parse("[s]\nn = 7\nflag = true\nname = \"x\"\none = 1\nyes = \"true\"\n");
+  let r = parse("[s]\nn = 7\nflag = true\nname = \"x\"\none = 1\nyes = \"true\"\n");
   if (!r.ok) {
     return test.fail("setup document rejected: " + r.err.msg);
   }
 
-  let a: IntR = get_int(r.cfg, "s", "flag");
+  let a = get_int(r.cfg, "s", "flag");
   if (a.ok) {
     return test.fail("get_int on a boolean returned " + a.v.to_string());
   }
-  let b: IntR = get_int(r.cfg, "s", "name");
+  let b = get_int(r.cfg, "s", "name");
   if (b.ok) {
     return test.fail("get_int on a string returned " + b.v.to_string());
   }
-  let c: BoolR = get_bool(r.cfg, "s", "n");
+  let c = get_bool(r.cfg, "s", "n");
   if (c.ok) {
     return test.fail("get_bool on an integer succeeded");
   }
-  let d: BoolR = get_bool(r.cfg, "s", "one");
+  let d = get_bool(r.cfg, "s", "one");
   if (d.ok) {
     return test.fail("get_bool on `1` succeeded — truthiness is a coercion");
   }
-  let e: BoolR = get_bool(r.cfg, "s", "yes");
+  let e = get_bool(r.cfg, "s", "yes");
   if (e.ok) {
     return test.fail("get_bool on the quoted string \"true\" succeeded");
   }
-  let f: StrR = get_str(r.cfg, "s", "n");
+  let f = get_str(r.cfg, "s", "n");
   if (f.ok) {
     return test.fail("get_str on an integer returned `" + f.v + "`");
   }
@@ -522,26 +522,26 @@ function test_a_wrong_type_lookup_is_an_error(): test.TestOutcome {
 }
 
 function test_a_missing_key_is_an_error_not_a_default(): test.TestOutcome {
-  let r: ParseR = parse("[s]\nn = 7\n");
+  let r = parse("[s]\nn = 7\n");
   if (!r.ok) {
     return test.fail("setup document rejected: " + r.err.msg);
   }
-  let a: IntR = get_int(r.cfg, "s", "absent");
+  let a = get_int(r.cfg, "s", "absent");
   if (a.ok) {
     return test.fail("a missing key returned " + a.v.to_string() + " instead of failing");
   }
   if (a.err.code != 10) {
     return test.fail("missing key reported code " + a.err.code.to_string());
   }
-  let b: IntR = get_int(r.cfg, "nosuch", "n");
+  let b = get_int(r.cfg, "nosuch", "n");
   if (b.ok) {
     return test.fail("a key in a missing section returned " + b.v.to_string());
   }
-  let c: BoolR = get_bool(r.cfg, "s", "absent");
+  let c = get_bool(r.cfg, "s", "absent");
   if (c.ok) {
     return test.fail("a missing boolean returned false instead of failing");
   }
-  let d: StrR = get_str(r.cfg, "s", "absent");
+  let d = get_str(r.cfg, "s", "absent");
   if (d.ok) {
     return test.fail("a missing string returned `" + d.v + "` instead of failing");
   }
@@ -554,13 +554,13 @@ function test_render_round_trips_through_the_parser(): test.TestOutcome {
     "[s]\nnum_like = \"42\"\nbool_like = \"true\"\nreal = 42\nreal_b = true\n",
     "bare = 1\n[a]\nx = -5\n[b]\ny = \"hi there\"\n",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < docs.len()) {
-    let first: ParseR = parse(docs[i]);
+    let first = parse(docs[i]);
     if (!first.ok) {
       return test.fail("doc " + i.to_string() + " rejected: " + first.err.msg);
     }
-    let again: ParseR = parse(render(first.cfg));
+    let again = parse(render(first.cfg));
     if (!again.ok) {
       return test.fail("doc " + i.to_string() + ": rendered output does not parse: "
         + again.err.msg);
@@ -568,13 +568,13 @@ function test_render_round_trips_through_the_parser(): test.TestOutcome {
     if (!same_entries(first.cfg, again.cfg)) {
       return test.fail("doc " + i.to_string() + ": round trip changed the entries");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_a_duplicate_key_is_rejected(): test.TestOutcome {
-  let r: ParseR = parse("[s]\nn = 1\nm = 2\nn = 3\n");
+  let r = parse("[s]\nn = 1\nm = 2\nn = 3\n");
   if (r.ok) {
     return test.fail("a duplicate key parsed clean");
   }
@@ -584,7 +584,7 @@ function test_a_duplicate_key_is_rejected(): test.TestOutcome {
   if (r.err.code != 5) {
     return test.fail("duplicate reported code " + r.err.code.to_string());
   }
-  let ok: ParseR = parse("[a]\nn = 1\n[b]\nn = 2\n");
+  let ok = parse("[a]\nn = 1\n[b]\nn = 2\n");
   if (!ok.ok) {
     return test.fail("the same key in two sections was rejected: " + ok.err.msg);
   }
@@ -594,18 +594,18 @@ function test_a_duplicate_key_is_rejected(): test.TestOutcome {
 function main(): i32 {
   eprint("inicfg — typed config lookups, and an error that names the line");
 
-  let doc: string = "# server settings\n\n[server]\nport = 8080\ntls = true\nhost = \"localhost\"\n";
-  let r: ParseR = parse(doc);
+  let doc = "# server settings\n\n[server]\nport = 8080\ntls = true\nhost = \"localhost\"\n";
+  let r = parse(doc);
   eprint("  parsed " + r.cfg.entries.len().to_string() + " entries");
-  let port: IntR = get_int(r.cfg, "server", "port");
+  let port = get_int(r.cfg, "server", "port");
   eprint("  server.port = " + port.v.to_string());
-  let bad: IntR = get_int(r.cfg, "server", "host");
+  let bad = get_int(r.cfg, "server", "host");
   eprint("  get_int(server.host) -> " + bad.err.msg);
 
-  let broken: ParseR = parse("[server]\nport = 8080\n# note\n\nthis is not a setting\n");
+  let broken = parse("[server]\nport = 8080\n# note\n\nthis is not a setting\n");
   eprint("  line " + broken.err.line.to_string() + ": " + broken.err.msg);
 
-  let t: test.TestRunner = test.new("inicfg");
+  let t = test.new("inicfg");
   t = t.it("the reported line is the malformed one", test_the_reported_line_is_the_malformed_one);
   t = t.it("comments and blanks do not shift the line", test_comments_and_blanks_do_not_shift_the_line);
   t = t.it("a valid document parses clean", test_a_valid_document_parses_clean);

@@ -15,31 +15,31 @@ function no_fault(): Fault {
 }
 
 function strip(src: string): StripR {
-  let out: string = "";
-  let n: i32 = src.len();
-  let i: i32 = 0;
+  let out = "";
+  let n = src.len();
+  let i = 0;
   while (i < n) {
-    let c: u8 = src[i];
+    let c = src[i];
 
     if (c == 47 && i + 1 < n && src[i + 1] == 47) {
-      i = i + 2;
+      i += 2;
       while (i < n && src[i] != 10) {
-        i = i + 1;
+        i += 1;
       }
       continue;
     }
 
     if (c == 47 && i + 1 < n && src[i + 1] == 42) {
-      let start: i32 = i;
-      i = i + 2;
-      let closed: boolean = false;
+      let start = i;
+      i += 2;
+      let closed = false;
       while (i < n) {
         if (src[i] == 42 && i + 1 < n && src[i + 1] == 47) {
-          i = i + 2;
+          i += 2;
           closed = true;
           break;
         }
-        i = i + 1;
+        i += 1;
       }
       if (!closed) {
         return StripR {
@@ -51,28 +51,28 @@ function strip(src: string): StripR {
     }
 
     if (c == 34 || c == 39) {
-      let quote: u8 = c;
-      let lit_start: i32 = i;
-      out = out + slice_unchecked(src, i, i + 1).to_owned();
-      i = i + 1;
-      let done: boolean = false;
+      let quote = c;
+      let lit_start = i;
+      out += slice_unchecked(src, i, i + 1).to_owned();
+      i += 1;
+      let done = false;
       while (i < n) {
-        let d: u8 = src[i];
+        let d = src[i];
         if (d == 92 && i + 1 < n) {
-          out = out + slice_unchecked(src, i, i + 2).to_owned();
-          i = i + 2;
+          out += slice_unchecked(src, i, i + 2).to_owned();
+          i += 2;
           continue;
         }
-        out = out + slice_unchecked(src, i, i + 1).to_owned();
-        i = i + 1;
+        out += slice_unchecked(src, i, i + 1).to_owned();
+        i += 1;
         if (d == quote) {
           done = true;
           break;
         }
       }
       if (!done) {
-        let code: i32 = 2;
-        let what: string = "unterminated string literal";
+        let code = 2;
+        let what = "unterminated string literal";
         if (quote == 39) {
           code = 3;
           what = "unterminated char literal";
@@ -82,8 +82,8 @@ function strip(src: string): StripR {
       continue;
     }
 
-    out = out + slice_unchecked(src, i, i + 1).to_owned();
-    i = i + 1;
+    out += slice_unchecked(src, i, i + 1).to_owned();
+    i += 1;
   }
   return StripR { ok: true, out: out, err: no_fault() };
 }
@@ -113,54 +113,54 @@ function pool(): Seg[] {
 }
 
 function assemble(idxs: i32[]): Doc {
-  let segs: Seg[] = pool();
-  let src: string = "";
-  let want: string = "";
-  let i: i32 = 0;
+  let segs = pool();
+  let src = "";
+  let want = "";
+  let i = 0;
   while (i < idxs.len()) {
-    let s: Seg = segs[idxs[i]];
+    let s = segs[idxs[i]];
     src = src + s.text + " ";
     want = want + s.keep + " ";
-    i = i + 1;
+    i += 1;
   }
   return Doc { src: src, want: want };
 }
 
 function combos(): i32[][] {
-  let segs: Seg[] = pool();
-  let n: i32 = segs.len();
+  let segs = pool();
+  let n = segs.len();
   let out: i32[][] = [];
-  let a: i32 = 0;
+  let a = 0;
   while (a < n) {
-    let b: i32 = 0;
+    let b = 0;
     while (b < n) {
       out = out.append([a, b]);
       out = out.append([b, a, (a + b) % n]);
-      b = b + 1;
+      b += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return out;
 }
 
 function is_subsequence(sub: string, sup: string): boolean {
-  let i: i32 = 0;
-  let j: i32 = 0;
+  let i = 0;
+  let j = 0;
   while (i < sub.len() && j < sup.len()) {
     if (sub[i] == sup[j]) {
-      i = i + 1;
+      i += 1;
     }
-    j = j + 1;
+    j += 1;
   }
   return i == sub.len();
 }
 
 function test_exactly_the_comments_are_removed(): test.TestOutcome {
-  let cs: i32[][] = combos();
-  let i: i32 = 0;
+  let cs = combos();
+  let i = 0;
   while (i < cs.len()) {
-    let d: Doc = assemble(cs[i]);
-    let r: StripR = strip(d.src);
+    let d = assemble(cs[i]);
+    let r = strip(d.src);
     if (!r.ok) {
       return test.fail("combo " + i.to_string() + " `" + d.src + "` was rejected: " + r.err.msg);
     }
@@ -168,21 +168,21 @@ function test_exactly_the_comments_are_removed(): test.TestOutcome {
       return test.fail("combo " + i.to_string() + " on `" + d.src + "`\n  got  `"
         + r.out + "`\n  want `" + d.want + "`");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_stripping_is_idempotent(): test.TestOutcome {
-  let cs: i32[][] = combos();
-  let i: i32 = 0;
+  let cs = combos();
+  let i = 0;
   while (i < cs.len()) {
-    let d: Doc = assemble(cs[i]);
-    let once: StripR = strip(d.src);
+    let d = assemble(cs[i]);
+    let once = strip(d.src);
     if (!once.ok) {
       return test.fail("combo " + i.to_string() + " rejected: " + once.err.msg);
     }
-    let twice: StripR = strip(once.out);
+    let twice = strip(once.out);
     if (!twice.ok) {
       return test.fail("combo " + i.to_string() + ": stripped output was rejected: " + twice.err.msg);
     }
@@ -190,17 +190,17 @@ function test_stripping_is_idempotent(): test.TestOutcome {
       return test.fail("combo " + i.to_string() + " is not idempotent on `" + d.src
         + "`\n  once  `" + once.out + "`\n  twice `" + twice.out + "`");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_output_is_a_subsequence_of_the_input(): test.TestOutcome {
-  let cs: i32[][] = combos();
-  let i: i32 = 0;
+  let cs = combos();
+  let i = 0;
   while (i < cs.len()) {
-    let d: Doc = assemble(cs[i]);
-    let r: StripR = strip(d.src);
+    let d = assemble(cs[i]);
+    let r = strip(d.src);
     if (!r.ok) {
       return test.fail("combo " + i.to_string() + " rejected: " + r.err.msg);
     }
@@ -208,7 +208,7 @@ function test_the_output_is_a_subsequence_of_the_input(): test.TestOutcome {
       return test.fail("combo " + i.to_string() + ": output is not a subsequence of the input\n  in  `"
         + d.src + "`\n  out `" + r.out + "`");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -221,16 +221,16 @@ function test_a_comment_marker_inside_a_literal_survives(): test.TestOutcome {
     ["f(\"a//b\", \"c/*d\");", "f(\"a//b\", \"c/*d\");"],
     ["let s = \"keep\"; // drop\n", "let s = \"keep\"; \n"],
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cases.len()) {
-    let r: StripR = strip(cases[i][0]);
+    let r = strip(cases[i][0]);
     if (!r.ok) {
       return test.fail("`" + cases[i][0] + "` rejected: " + r.err.msg);
     }
     if (r.out != cases[i][1]) {
       return test.fail("`" + cases[i][0] + "`\n  got  `" + r.out + "`\n  want `" + cases[i][1] + "`");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -242,16 +242,16 @@ function test_a_quote_inside_a_comment_opens_nothing(): test.TestOutcome {
     ["a; /* ' */ b;", "a;  b;"],
     ["a; // \"\nlet s = \"kept\";", "a; \nlet s = \"kept\";"],
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cases.len()) {
-    let r: StripR = strip(cases[i][0]);
+    let r = strip(cases[i][0]);
     if (!r.ok) {
       return test.fail("`" + cases[i][0] + "` rejected: " + r.err.msg);
     }
     if (r.out != cases[i][1]) {
       return test.fail("`" + cases[i][0] + "`\n  got  `" + r.out + "`\n  want `" + cases[i][1] + "`");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -259,24 +259,24 @@ function test_a_quote_inside_a_comment_opens_nothing(): test.TestOutcome {
 function test_a_slash_that_starts_nothing_is_kept(): test.TestOutcome {
   let cases: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; // gone\n"];
   let wants: string[] = ["a / b", "a /= 2;", "*/", "a/b/c", "x = y / z; \n"];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cases.len()) {
-    let r: StripR = strip(cases[i]);
+    let r = strip(cases[i]);
     if (!r.ok) {
       return test.fail("`" + cases[i] + "` rejected: " + r.err.msg);
     }
     if (r.out != wants[i]) {
       return test.fail("`" + cases[i] + "`\n  got  `" + r.out + "`\n  want `" + wants[i] + "`");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
-  let closed: string = "let s = \"a\\\\\"; // gone\n";
-  let want_closed: string = "let s = \"a\\\\\"; \n";
-  let r: StripR = strip(closed);
+  let closed = "let s = \"a\\\\\"; // gone\n";
+  let want_closed = "let s = \"a\\\\\"; \n";
+  let r = strip(closed);
   if (!r.ok) {
     return test.fail("escaped-backslash string rejected: " + r.err.msg);
   }
@@ -284,9 +284,9 @@ function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
     return test.fail("`" + closed + "`\n  got  `" + r.out + "`\n  want `" + want_closed + "`");
   }
 
-  let quoted: string = "let s = \"a\\\"b\"; // gone\n";
-  let want_quoted: string = "let s = \"a\\\"b\"; \n";
-  let q: StripR = strip(quoted);
+  let quoted = "let s = \"a\\\"b\"; // gone\n";
+  let want_quoted = "let s = \"a\\\"b\"; \n";
+  let q = strip(quoted);
   if (!q.ok) {
     return test.fail("escaped-quote string rejected: " + q.err.msg);
   }
@@ -297,7 +297,7 @@ function test_escapes_decide_where_a_literal_ends(): test.TestOutcome {
 }
 
 function test_unterminated_input_is_reported(): test.TestOutcome {
-  let block: StripR = strip("a;\n/* never closed\nb;\n");
+  let block = strip("a;\n/* never closed\nb;\n");
   if (block.ok) {
     return test.fail("an unterminated block comment was accepted");
   }
@@ -308,7 +308,7 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
     return test.fail("block comment opener is at 3, reported at " + block.err.at.to_string());
   }
 
-  let str: StripR = strip("let s = \"never closed;\n");
+  let str = strip("let s = \"never closed;\n");
   if (str.ok) {
     return test.fail("an unterminated string was accepted");
   }
@@ -319,7 +319,7 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
     return test.fail("string opener is at 8, reported at " + str.err.at.to_string());
   }
 
-  let ch: StripR = strip("let c = 'x;\n");
+  let ch = strip("let c = 'x;\n");
   if (ch.ok) {
     return test.fail("an unterminated char literal was accepted");
   }
@@ -327,7 +327,7 @@ function test_unterminated_input_is_reported(): test.TestOutcome {
     return test.fail("char reported code " + ch.err.code.to_string());
   }
 
-  let eof: StripR = strip("a; // to the end");
+  let eof = strip("a; // to the end");
   if (!eof.ok) {
     return test.fail("a line comment at EOF was rejected: " + eof.err.msg);
   }
@@ -344,19 +344,19 @@ function main(): i32 {
     + "    printf(\"// not a comment\\n\");\n"
     + "    /* block\n       spanning lines */\n"
     + "    return 0 /* trailing */ ;\n}\n";
-  let r: StripR = strip(sample);
-  let lines: string[] = r.out.split("\n");
-  let i: i32 = 0;
+  let r = strip(sample);
+  let lines = r.out.split("\n");
+  let i = 0;
   while (i < lines.len()) {
     eprint("  |" + lines[i]);
-    i = i + 1;
+    i += 1;
   }
 
-  let bad: StripR = strip("a;\n/* never closed\n");
+  let bad = strip("a;\n/* never closed\n");
   eprint("  offset " + bad.err.at.to_string() + ": " + bad.err.msg);
   eprint("  generated documents: " + combos().len().to_string());
 
-  let t: test.TestRunner = test.new("decomment");
+  let t = test.new("decomment");
   t = t.it("exactly the comments are removed", test_exactly_the_comments_are_removed);
   t = t.it("stripping is idempotent", test_stripping_is_idempotent);
   t = t.it("the output is a subsequence of the input", test_the_output_is_a_subsequence_of_the_input);

@@ -59,6 +59,9 @@ type Info struct {
 	// CallBorrows reports a plain call whose result can borrow from one of
 	// its arguments at this site.
 	CallBorrows func(*ast.Call) bool
+	// CallBorrowsBeside reports a plain call whose result can borrow from
+	// an argument other than the plain name given.
+	CallBorrowsBeside func(*ast.Call, string) bool
 	// NoReturn names the functions whose body never returns.
 	NoReturn        map[string]bool
 	Structs         map[string]*ast.StructDecl
@@ -2972,6 +2975,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.OwnFuncs = c.ownFuncs
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
+	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)
@@ -2982,6 +2986,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 		c.checkFunction(fn)
 	}
+	// Method calls now have their resolved receiver arguments. Analyse the
+	// complete typed program before the owned-argument checks use its results.
+	c.computeResultBorrows(prog)
+	for _, fn := range prog.Funcs {
+		c.current = fn
+		c.checkOwnedParams(fn)
+	}
+	c.current = nil
 
 	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
@@ -3920,7 +3932,7 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 const cmpImport = "`import \"core/cmp\";`"
 
 // cmpHint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option, Result, arrays, slices and tuples when their parts
+// Ord and Hash for Option, Result, owned arrays and tuples when their parts
 // do, so the hint moves to the first part that is not a scalar, or else asks
 // for the import. A type that no module can implement the trait for gets
 // advice on its parts, not an impl that the orphan rule refuses.
@@ -3953,8 +3965,6 @@ func cmpParts(t ast.Type) ([]ast.Type, bool) {
 			return t.Args, true
 		}
 	case ast.ArrayType:
-		return []ast.Type{t.Elem}, true
-	case ast.SliceType:
 		return []ast.Type{t.Elem}, true
 	case ast.TupleType:
 		return t.Elems, true
@@ -9342,7 +9352,6 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	if infer {
 		c.inferReturnType(fn, rets)
 	}
-	c.checkOwnedParams(fn)
 	c.checkMustConsume(fn)
 	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !c.funcBodyExits(fn.Body) {
 		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())

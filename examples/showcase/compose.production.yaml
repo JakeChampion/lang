@@ -33,6 +33,26 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - proxy-data:/data
       - proxy-config:/config
+  # The room server of the walkie-talkie, examples/android/walkie. It serves
+  # TLS on TCP 47130 with the certificate that Caddy keeps for the site, and
+  # it reloads that certificate after each renewal. It relays the voice on
+  # UDP 47130. Start it with --profile walkie.
+  walkie:
+    profiles: [walkie]
+    image: ${FERN_WALKIE_IMAGE:-fern-walkie:latest}
+    restart: unless-stopped
+    depends_on: [proxy]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command:
+      - /caddy/caddy/certificates/${FERN_WALKIE_ISSUER:-acme-v02.api.letsencrypt.org-directory}/${FERN_SITE_ADDRESS}/${FERN_SITE_ADDRESS}.crt
+      - /caddy/caddy/certificates/${FERN_WALKIE_ISSUER:-acme-v02.api.letsencrypt.org-directory}/${FERN_SITE_ADDRESS}/${FERN_SITE_ADDRESS}.key
+      - "47130"
+    volumes: [proxy-data:/caddy:ro]
+    ports:
+      - "47130:47130/tcp"
+      - "47130:47130/udp"
 volumes:
   app-data:
   proxy-data:

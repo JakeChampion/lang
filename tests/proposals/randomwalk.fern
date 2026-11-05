@@ -6,7 +6,7 @@ import "std/string";
 function next(state: i32): i32 {
   let s: i64 = (state as i64 * 1103515245 + 12345) % 2147483648;
   if (s < 0) {
-    s = s + 2147483648;
+    s += 2147483648;
   }
   return s as i32;
 }
@@ -19,63 +19,63 @@ function bit(state: i32): i32 {
 }
 
 function walk(n: i32, seed: i32): (i32, i32) {
-  let pos: i32 = 0;
-  let s: i32 = seed;
-  let i: i32 = 0;
+  let pos = 0;
+  let s = seed;
+  let i = 0;
   while (i < n) {
     s = next(s);
-    pos = pos + bit(s);
-    i = i + 1;
+    pos += bit(s);
+    i += 1;
   }
   return (pos, s);
 }
 
 function simulate(trials: i32, n: i32, seed: i32): i32[] {
   let counts: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i <= n) {
     counts = counts.append(0);
-    i = i + 1;
+    i += 1;
   }
 
-  let s: i32 = seed;
-  let t: i32 = 0;
+  let s = seed;
+  let t = 0;
   while (t < trials) {
     let (pos, s2) = walk(n, s);
     s = s2;
-    let d: i32 = pos;
+    let d = pos;
     if (d < 0) {
-      d = 0 - d;
+      d = -d;
     }
     counts = counts.with(d, counts[d] + 1);
-    t = t + 1;
+    t += 1;
   }
   return counts;
 }
 
 function enumerate(n: i32): i32[] {
   let counts: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i <= 2 * n) {
     counts = counts.append(0);
-    i = i + 1;
+    i += 1;
   }
 
-  let total: i32 = 1 << n;
-  let mask: i32 = 0;
+  let total = 1 << n;
+  let mask = 0;
   while (mask < total) {
-    let pos: i32 = 0;
-    let b: i32 = 0;
+    let pos = 0;
+    let b = 0;
     while (b < n) {
       if (mask / (1 << b) % 2 == 0) {
-        pos = pos - 1;
+        pos -= 1;
       } else {
-        pos = pos + 1;
+        pos += 1;
       }
-      b = b + 1;
+      b += 1;
     }
     counts = counts.with(pos + n, counts[pos + n] + 1);
-    mask = mask + 1;
+    mask += 1;
   }
   return counts;
 }
@@ -85,27 +85,27 @@ function binom(n: i32, k: i32): i64 {
     return 0;
   }
   let row: i64[] = [1];
-  let r: i32 = 1;
+  let r = 1;
   while (r <= n) {
     let next_row: i64[] = [1];
-    let j: i32 = 1;
+    let j = 1;
     while (j < r) {
       next_row = next_row.append(row[j - 1] + row[j]);
-      j = j + 1;
+      j += 1;
     }
     next_row = next_row.append(1);
     row = next_row;
-    r = r + 1;
+    r += 1;
   }
   return row[k];
 }
 
 function total_of(counts: i32[]): i32 {
-  let t: i32 = 0;
-  let i: i32 = 0;
+  let t = 0;
+  let i = 0;
   while (i < counts.len()) {
-    t = t + counts[i];
-    i = i + 1;
+    t += counts[i];
+    i += 1;
   }
   return t;
 }
@@ -113,11 +113,11 @@ function total_of(counts: i32[]): i32 {
 function mean_distance_milli(counts: i32[]): i32 {
   let sum: i64 = 0;
   let n: i64 = 0;
-  let d: i32 = 0;
+  let d = 0;
   while (d < counts.len()) {
     sum = sum + d as i64 * (counts[d] as i64);
     n = n + counts[d] as i64;
-    d = d + 1;
+    d += 1;
   }
   if (n == 0) {
     return 0;
@@ -126,26 +126,26 @@ function mean_distance_milli(counts: i32[]): i32 {
 }
 
 function bar(count: i32, scale: i32): string {
-  let n: i32 = 0;
+  let n = 0;
   if (scale > 0) {
     n = count * 40 / scale;
   }
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < n) {
-    out = out + "#";
-    i = i + 1;
+    out += "#";
+    i += 1;
   }
   return out;
 }
 
 function test_enumeration_matches_the_closed_form(): test.TestOutcome {
-  let n: i32 = 0;
+  let n = 0;
   while (n <= 14) {
-    let counts: i32[] = enumerate(n);
+    let counts = enumerate(n);
     let pos: i32 = 0 - n;
     while (pos <= n) {
-      let got: i64 = counts[pos + n] as i64;
+      let got = counts[pos + n] as i64;
       let want: i64 = 0;
       if ((n + pos) % 2 == 0) {
         want = binom(n, (n + pos) / 2);
@@ -154,83 +154,83 @@ function test_enumeration_matches_the_closed_form(): test.TestOutcome {
         return test.fail("n=" + n.to_string() + " pos=" + pos.to_string()
           + ": enumerated " + got.to_string() + ", C(n,k) says " + want.to_string());
       }
-      pos = pos + 1;
+      pos += 1;
     }
-    n = n + 1;
+    n += 1;
   }
   return test.pass();
 }
 
 function test_every_path_is_counted_once(): test.TestOutcome {
-  let n: i32 = 0;
+  let n = 0;
   while (n <= 14) {
-    let got: i32 = total_of(enumerate(n));
-    let want: i32 = 1 << n;
+    let got = total_of(enumerate(n));
+    let want = 1 << n;
     if (got != want) {
       return test.fail("n=" + n.to_string() + ": " + got.to_string()
         + " paths enumerated, want " + want.to_string());
     }
-    n = n + 1;
+    n += 1;
   }
   return test.pass();
 }
 
 function test_parity_forbids_half_the_endpoints(): test.TestOutcome {
-  let n: i32 = 0;
+  let n = 0;
   while (n <= 12) {
-    let counts: i32[] = enumerate(n);
+    let counts = enumerate(n);
     let pos: i32 = 0 - n;
     while (pos <= n) {
       if ((n + pos) % 2 != 0 && counts[pos + n] != 0) {
         return test.fail("n=" + n.to_string() + ": position " + pos.to_string()
           + " has the wrong parity but " + counts[pos + n].to_string() + " paths");
       }
-      pos = pos + 1;
+      pos += 1;
     }
-    n = n + 1;
+    n += 1;
   }
   let ns: i32[] = [1, 2, 7, 8, 25, 40];
-  let k: i32 = 0;
+  let k = 0;
   while (k < ns.len()) {
-    let sim: i32[] = simulate(200, ns[k], 20260808 + k);
-    let d: i32 = 0;
+    let sim = simulate(200, ns[k], 20260808 + k);
+    let d = 0;
     while (d < sim.len()) {
       if ((ns[k] + d) % 2 != 0 && sim[d] != 0) {
         return test.fail("n=" + ns[k].to_string() + ": simulated "
           + sim[d].to_string() + " walks ending at distance " + d.to_string()
           + ", which parity forbids");
       }
-      d = d + 1;
+      d += 1;
     }
-    k = k + 1;
+    k += 1;
   }
   return test.pass();
 }
 
 function test_the_exact_distribution_is_symmetric(): test.TestOutcome {
-  let n: i32 = 1;
+  let n = 1;
   while (n <= 14) {
-    let counts: i32[] = enumerate(n);
-    let pos: i32 = 1;
+    let counts = enumerate(n);
+    let pos = 1;
     while (pos <= n) {
       if (counts[n + pos] != counts[n - pos]) {
         return test.fail("n=" + n.to_string() + ": +" + pos.to_string() + " has "
           + counts[n + pos].to_string() + " paths, -" + pos.to_string() + " has "
           + counts[n - pos].to_string());
       }
-      pos = pos + 1;
+      pos += 1;
     }
-    n = n + 1;
+    n += 1;
   }
   return test.pass();
 }
 
 function test_the_histogram_conserves_trials(): test.TestOutcome {
   let cases: i32[] = [1, 2, 3, 10, 33, 64];
-  let i: i32 = 0;
+  let i = 0;
   while (i < cases.len()) {
-    let trials: i32 = 137;
-    let sim: i32[] = simulate(trials, cases[i], 99 + i * 7);
+    let trials = 137;
+    let sim = simulate(trials, cases[i], 99 + i * 7);
     if (total_of(sim) != trials) {
       return test.fail("n=" + cases[i].to_string() + ": counts sum to "
         + total_of(sim).to_string() + ", want " + trials.to_string());
@@ -239,12 +239,12 @@ function test_the_histogram_conserves_trials(): test.TestOutcome {
       return test.fail("n=" + cases[i].to_string() + ": histogram has "
         + sim.len().to_string() + " slots, want " + (cases[i] + 1).to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   if (total_of(simulate(0, 10, 1)) != 0) {
     return test.fail("zero trials counted something");
   }
-  let still: i32[] = simulate(50, 0, 1);
+  let still = simulate(50, 0, 1);
   if (still.len() != 1 || still[0] != 50) {
     return test.fail("a zero-step walk did not stay at the origin");
   }
@@ -253,12 +253,12 @@ function test_the_histogram_conserves_trials(): test.TestOutcome {
 
 function test_simulated_endpoints_are_all_reachable(): test.TestOutcome {
   let ns: i32[] = [1, 2, 3, 5, 8, 12];
-  let k: i32 = 0;
+  let k = 0;
   while (k < ns.len()) {
-    let n: i32 = ns[k];
-    let exact: i32[] = enumerate(n);
-    let sim: i32[] = simulate(300, n, 4242 + k * 31);
-    let d: i32 = 0;
+    let n = ns[k];
+    let exact = enumerate(n);
+    let sim = simulate(300, n, 4242 + k * 31);
+    let d = 0;
     while (d < sim.len()) {
       if (sim[d] > 0) {
         if (exact[n + d] == 0 && exact[n - d] == 0) {
@@ -266,31 +266,31 @@ function test_simulated_endpoints_are_all_reachable(): test.TestOutcome {
             + d.to_string() + " is unreachable in the exact model");
         }
       }
-      d = d + 1;
+      d += 1;
     }
-    k = k + 1;
+    k += 1;
   }
   return test.pass();
 }
 
 function test_the_simulation_is_reproducible(): test.TestOutcome {
-  let a: i32[] = simulate(150, 20, 777);
-  let b: i32[] = simulate(150, 20, 777);
-  let i: i32 = 0;
+  let a = simulate(150, 20, 777);
+  let b = simulate(150, 20, 777);
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return test.fail("same seed diverged at distance " + i.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
-  let c: i32[] = simulate(150, 20, 778);
-  let differs: boolean = false;
-  let j: i32 = 0;
+  let c = simulate(150, 20, 778);
+  let differs = false;
+  let j = 0;
   while (j < a.len()) {
     if (a[j] != c[j]) {
       differs = true;
     }
-    j = j + 1;
+    j += 1;
   }
   if (!differs) {
     return test.fail("a different seed produced an identical histogram — "
@@ -301,10 +301,10 @@ function test_the_simulation_is_reproducible(): test.TestOutcome {
 
 function test_mean_distance_grows_with_the_step_count(): test.TestOutcome {
   let ns: i32[] = [4, 16, 64, 256];
-  let prev: i32 = -1;
-  let i: i32 = 0;
+  let prev = -1;
+  let i = 0;
   while (i < ns.len()) {
-    let m: i32 = mean_distance_milli(simulate(400, ns[i], 31337));
+    let m = mean_distance_milli(simulate(400, ns[i], 31337));
     if (m <= prev) {
       return test.fail("mean distance did not grow at n=" + ns[i].to_string()
         + ": " + m.to_string() + " vs " + prev.to_string());
@@ -313,7 +313,7 @@ function test_mean_distance_grows_with_the_step_count(): test.TestOutcome {
       return test.fail("mean distance " + m.to_string() + " exceeds n=" + ns[i].to_string());
     }
     prev = m;
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -321,16 +321,16 @@ function test_mean_distance_grows_with_the_step_count(): test.TestOutcome {
 function main(): i32 {
   eprint("randomwalk — 1D walk, exact enumeration as the oracle");
 
-  let n: i32 = 20;
-  let trials: i32 = 2000;
-  let sim: i32[] = simulate(trials, n, 20260809);
-  let peak: i32 = 0;
-  let d: i32 = 0;
+  let n = 20;
+  let trials = 2000;
+  let sim = simulate(trials, n, 20260809);
+  let peak = 0;
+  let d = 0;
   while (d < sim.len()) {
     if (sim[d] > peak) {
       peak = sim[d];
     }
-    d = d + 1;
+    d += 1;
   }
 
   eprint("n=" + n.to_string() + " trials=" + trials.to_string()
@@ -338,29 +338,29 @@ function main(): i32 {
   d = 0;
   while (d < sim.len()) {
     if (sim[d] > 0) {
-      let pad: string = "";
+      let pad = "";
       if (d < 10) {
         pad = " ";
       }
       eprint("  d=" + pad + d.to_string()
         + " " + bar(sim[d], peak) + " " + sim[d].to_string());
     }
-    d = d + 1;
+    d += 1;
   }
 
   eprint("exact distribution for n=6 (paths per endpoint):");
-  let ex: i32[] = enumerate(6);
-  let line: string = "  ";
-  let p: i32 = 0 - 6;
+  let ex = enumerate(6);
+  let line = "  ";
+  let p: i32 = -6;
   while (p <= 6) {
     if (ex[p + 6] > 0) {
       line = line + p.to_string() + ":" + ex[p + 6].to_string() + " ";
     }
-    p = p + 1;
+    p += 1;
   }
   eprint(line);
 
-  let r: test.TestRunner = test.new("randomwalk");
+  let r = test.new("randomwalk");
   r = r.it("enumeration matches the closed form", test_enumeration_matches_the_closed_form);
   r = r.it("every path is counted once", test_every_path_is_counted_once);
   r = r.it("parity forbids half the endpoints", test_parity_forbids_half_the_endpoints);

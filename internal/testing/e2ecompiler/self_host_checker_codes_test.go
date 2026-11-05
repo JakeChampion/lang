@@ -20,6 +20,14 @@ import (
 
 var codeRE = regexp.MustCompile(`E\d{3}`)
 
+const methodBorrowPrelude = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Box { h: Handle }
+function consume(own h: Handle): i32 { return h.close(); }
+`
+
+const methodBorrowEnd = "\nfunction main(): i32 { return 0; }\n"
+
 func goCheckerCodes(t *testing.T, dir, src string) []string {
 	t.Helper()
 	return uniqueSortedCodes(goCheckerDiagCodes(t, dir, src))
@@ -1325,6 +1333,9 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
 		{"e082-shared-struct-graph-view", e082SharedChain("str"), []string{"E082"}},
 		{"e082-recursive-viewless-enum", "enum L { Cons(i32, L), Nil }\nfunction f(): i32 { let l: L = Cons(1, Nil); let g = (): i32 => match (l) { Cons(x, r) => x, Nil => 0 }; return g(); }\nfunction main(): i32 { return f(); }\n", nil},
+		{"e051-shared-struct-graph-handle", sharedStructChain("Handle", "struct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\n"+borrowedGraphConsumer), []string{"E051"}},
+		{"e051-shared-struct-graph-value", sharedStructChain("i32", borrowedGraphConsumer), nil},
+		{"e051-recursive-struct-graph-handle", "struct S0 { next: S1 }\nstruct S1 { back: S0, h: Handle }\nstruct Handle { fd: i32 }\nfunction (own h: Handle) close(): i32 { return h.fd; }\n" + borrowedGraphConsumer, []string{"E051"}},
 		{"e065-callee-var-binding", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { let s: string = mk(); let t: str = idv(slice_unchecked(s, 0, 1)); return t; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"len-method-string-sink", "function main(): i32 { let s: string = \"hello\"; let b: boolean = s.len(); return 0; }\n", []string{"E003"}},
 		{"len-method-array-sink", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let b: boolean = xs.len(); return 0; }\n", []string{"E003"}},
@@ -1950,10 +1961,23 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"method-own-param-borrowed", "struct B { xs: i32[] }\nfunction (b: B) put(own ys: i32[]): i32 { return b.xs.len() + ys.len(); }\nfunction f(b: B, ys: i32[]): i32 { return b.put(ys); }\nfunction main(): i32 { return f(B { xs: [1] }, [2]); }\n", []string{"E051"}},
 		{"method-own-param-last-use", "struct B { xs: i32[] }\nfunction (b: B) put(own ys: i32[]): i32 { return b.xs.len() + ys.len(); }\nfunction f(b: B, xs: i32[]): i32 {\n  let ys: i32[] = xs;\n  return b.put(ys);\n}\nfunction main(): i32 { return f(B { xs: [1] }, [2]); }\n", nil},
 		{"method-own-param-dies-before-return", "struct P { v: i32 }\nstruct B { n: i32 }\nfunction (b: B) put(own p: P): i32 { return b.n + p.v; }\nfunction f(b: B, k: boolean): i32 {\n  let p: P = P { v: 1 };\n  if (k) {\n    let n: i32 = b.put(p);\n    return n;\n  }\n  return p.v;\n}\nfunction main(): i32 { return f(B { n: 1 }, true); }\n", nil},
-		{"method-own-array-param-dies-before-return", "struct B { n: i32 }\nfunction (b: B) put(own ys: i32[]): i32 { return b.n + ys.len(); }\nfunction f(b: B, k: boolean): i32 {\n  let ys: i32[] = [1];\n  if (k) {\n    let n: i32 = b.put(ys);\n    return n;\n  }\n  return ys.len();\n}\nfunction main(): i32 { return f(B { n: 1 }, true); }\n", []string{"E051"}},
+		{"method-own-array-param-dies-before-return", "struct B { n: i32 }\nfunction (b: B) put(own ys: i32[]): i32 { return b.n + ys.len(); }\nfunction f(b: B, k: boolean): i32 {\n  let ys: i32[] = [1];\n  if (k) {\n    let n: i32 = b.put(ys);\n    return n;\n  }\n  return ys.len();\n}\nfunction main(): i32 { return f(B { n: 1 }, true); }\n", nil},
 		{"own-dyn-arg-borrowed", "trait Consume { function take(own self: Self, own xs: i32[]): i32; }\nstruct A { v: i32 }\nfunction (a: A) take(own xs: i32[]): i32 { return a.v + xs.len(); }\nfunction f(c: dyn Consume, xs: i32[]): i32 { return c.take(xs); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-dyn-arg-last-use", "trait Consume { function take(own self: Self, own xs: i32[]): i32; }\nstruct A { v: i32 }\nfunction (a: A) take(own xs: i32[]): i32 { return a.v + xs.len(); }\nfunction f(c: dyn Consume, xs: i32[]): i32 {\n  let ys: i32[] = xs;\n  return c.take(ys);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-fresh-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { return consume([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-method-receiver-result-ok", "struct Keys { a: Cell[i32[]] }\nfunction take(slot: Cell[i32[]]): i32[] { let got = slot.get(); slot.set([]); return got; }\nfunction consume(own xs: i32[]): i32 { return xs.len(); }\nfunction f(k: Keys): i32 { return consume(take(k.a)); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-forward-borrow-chain", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.next(); }\nfunction (b: Box) next(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-fresh-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return Handle { fd: 3 }; }\nfunction fresh(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(fresh(b)); }" + methodBorrowEnd, nil},
+		{"own-method-owned-receiver-wrapper", methodBorrowPrelude + "function (own b: Box) get(): Handle { return b.h; }\nfunction take(own b: Box): Handle { return b.get(); }\nfunction f(own b: Box): i32 { return consume(take(b)); }" + methodBorrowEnd, nil},
+		{"own-method-cell-get-name-collision", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction take(slot: Cell[i32[]]): i32[] { let xs = slot.get(); slot.set([]); return xs; }\nfunction eat(own xs: i32[]): i32 { return xs.len(); }\nfunction f(slot: Cell[i32[]]): i32 { return eat(take(slot)); }" + methodBorrowEnd, nil},
+		{"own-method-cell-borrowed-handle", methodBorrowPrelude + "function read(slot: Cell[Handle]): Handle { return slot.get(); }\nfunction f(slot: Cell[Handle]): i32 { return consume(read(slot)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-generic-receiver-borrow", methodBorrowPrelude + "struct Holder[T] { value: T }\nfunction (h: Holder[T]) get(): T { return h.value; }\nfunction borrow(h: Holder[Handle]): Handle { return h.get(); }\nfunction f(h: Holder[Handle]): i32 { return consume(borrow(h)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-nested-receiver-borrow", methodBorrowPrelude + "struct Outer { box: Box }\nfunction (o: Outer) box(): Box { return o.box; }\nfunction (b: Box) get(): Handle { return b.h; }\nfunction borrow(o: Outer): Handle { return o.box().get(); }\nfunction f(o: Outer): i32 { return consume(borrow(o)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-nested-argument-borrow", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction (b: Box) choose(h: Handle): Handle { return h; }\nfunction borrow(b: Box): Handle { return b.choose(b.get()); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-dynamic-receiver-borrow", methodBorrowPrelude + "trait Access { function get(self: Self): Handle; }\nfunction (b: Box) get(): Handle { return b.h; }\nimpl Access for Box {}\nfunction borrow(b: dyn Access): Handle { return b.get(); }\nfunction f(b: dyn Access): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-arg-forward-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own ys: i32[]): i32 { return consume(ys); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cap-assign-string", "function main(): i32 { let s: string = \"x\"; let f = (): i32 => { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-array", "function main(): i32 { let a: i32[] = [1]; let f = (): i32 => { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
@@ -2313,7 +2337,8 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"own-store-after-gap-ok", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    let xs: i32[] = [];\n    let fl: boolean[] = [false];\n    let i: i32 = 0;\n    while (i < 3) {\n        let p: P = step(xs, fl);\n        xs = p.a;\n        fl = p.b;\n        i = i + 1;\n    }\n    return xs.len() + fl.len();\n}\n", nil},
 		{"own-store-after-unrelated-var-ok", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    let fl: boolean[] = [false];\n    let n: i32 = take(fl);\n    let m: i32 = 3;\n    fl = [true];\n    return n + m + fl.len();\n}\n", nil},
 		{"own-store-after-read-bad", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    let fl: boolean[] = [false];\n    let n: i32 = take(fl);\n    let m: i32 = fl.len();\n    fl = [true];\n    return n + m + fl.len();\n}\n", []string{"E051"}},
-		{"own-store-after-branch-bad", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    let k: i32 = 1;\n    let fl: boolean[] = [false];\n    let n: i32 = take(fl);\n    if (k > 0) { k = k + 1; }\n    fl = [true];\n    return n + k + fl.len();\n}\n", []string{"E051"}},
+		{"own-store-after-branch-ok", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    let k: i32 = 1;\n    let fl: boolean[] = [false];\n    let n: i32 = take(fl);\n    if (k > 0) { k = k + 1; }\n    fl = [true];\n    return n + k + fl.len();\n}\n", nil},
+		{"own-store-after-branch-read-bad", "struct P { a: i32[], b: boolean[] }\nfunction step(own xs: i32[], own fl: boolean[]): P { return P { a: xs, b: fl }; }\nfunction take(own fl: boolean[]): i32 { return fl.len(); }\nfunction main(): i32 {\n    let k: i32 = 1;\n    let fl: boolean[] = [false];\n    let n: i32 = take(fl);\n    if (k > 0) { k = k + fl.len(); }\n    fl = [true];\n    return n + k + fl.len();\n}\n", []string{"E051"}},
 		{"own-self-reassign-local-func-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        let a: B = B { items: [] };\n        a = grow(a, 1);\n        return a.items.len();\n    }\n    return build();\n}\n", nil},
 		{"own-other-name-last-use-local-func-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        let a: B = B { items: [] };\n        let c: B = grow(a, 1);\n        return c.items.len();\n    }\n    return build();\n}\n", nil},
 		{"own-local-func-param-transfer-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction main(): i32 {\n    function inner(own b: i32[]): i32 { return consume(b); }\n    return inner([1]);\n}\n", nil},
@@ -2644,13 +2669,19 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 var mainBodyRE = regexp.MustCompile(`(?s)function main\(\):\s*i32\s*\{(.*)\}\s*$`)
 
 func e082SharedChain(leaf string) string {
+	return sharedStructChain(leaf, "function h(s: S0): i32 { return 0; }\nfunction f(s: S0): i32 { let g = (): i32 => h(s); return g(); }\nfunction main(): i32 { return 0; }\n")
+}
+
+const borrowedGraphConsumer = "function pass(s: S0): S0 { return s; }\nfunction eat(own s: S0): i32 { return 0; }\nfunction f(s: S0): i32 { let x: S0 = pass(s); return eat(x); }\nfunction main(): i32 { return 0; }\n"
+
+func sharedStructChain(leaf, body string) string {
 	var b strings.Builder
 	const depth = 40
 	for i := 0; i < depth; i++ {
 		fmt.Fprintf(&b, "struct S%d { a: S%d, b: S%d }\n", i, i+1, i+1)
 	}
 	fmt.Fprintf(&b, "struct S%d { x: %s }\n", depth, leaf)
-	b.WriteString("function h(s: S0): i32 { return 0; }\nfunction f(s: S0): i32 { let g = (): i32 => h(s); return g(); }\nfunction main(): i32 { return 0; }\n")
+	b.WriteString(body)
 	return b.String()
 }
 
@@ -2689,6 +2720,17 @@ const lastUsePrelude = "struct W { d: i32[], n: i32 }\nstruct Pair { a: W, b: W 
 	"function mkw(n: i32): W { return W { d: [n], n: n }; }\n" +
 	"function mkp(n: i32): Pair { return Pair { a: mkw(n), b: mkw(n) }; }\n" +
 	"function (w: W) bump(k: i32): W { return W { d: w.d, n: w.n + k }; }\n" +
+	"function main(): i32 { return 0; }\n"
+
+// handleLocalPrelude declares a handle type with a consuming method, so a
+// local of it is refused an `own` parameter unless it is owned.
+const handleLocalPrelude = "struct Handle { fd: i32 }\nstruct HPair { h: Handle, n: i32 }\nenum Slot { Full(Handle), Empty }\n" +
+	"function (own h: Handle) close(): i32 { return h.fd; }\n" +
+	"function sinkh(own h: Handle): i32 { return h.close(); }\n" +
+	"function sinkp(own p: HPair): i32 { return p.n; }\n" +
+	"function hstep(): (Handle, i32) { return (Handle { fd: 1 }, 2); }\n" +
+	"function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }\n" +
+	"function mks(): Slot { return Full(Handle { fd: 1 }); }\n" +
 	"function main(): i32 { return 0; }\n"
 
 func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
@@ -3175,6 +3217,23 @@ function main(): i32 { return 0; }`},
 		{"e051-last-use-struct-destructure", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(): i32 { let Pair { a, b } = mkp(1); let r: i32 = eat(a); return r + b.n; }\n"},
 		{"e051-last-use-struct-destructure-param", lastUsePrelude + "function pw(n: i32): (W, i32) { return (mkw(n), n); }\nfunction f(p: Pair): i32 { let Pair { a, b } = p; let r: i32 = eat(a); return r + b.n; }\n"},
 		{"e051-last-use-struct-destructure-reassigned-from-a-borrow", lastUsePrelude + "function f(q: Pair, c: boolean): i32 { let p: Pair = mkp(1); if (c) { p = q; } let Pair { a, b } = p; let r: i32 = eat(a); return r + b.n; }\n"},
+		{"e051-fresh-local-assigned-a-borrowed-param", handleLocalPrelude + "function f(q: Handle): i32 { let x: Handle = Handle { fd: 1 }; x = q; let r: i32 = sinkh(x); return r; }\n"},
+		{"e051-fresh-local-assigned-a-borrowed-param-in-return", handleLocalPrelude + "function f(q: Handle): i32 { let x: Handle = Handle { fd: 1 }; x = q; return sinkh(x); }\n"},
+		{"e051-fresh-local-assigned-a-borrowed-field-then-closed", handleLocalPrelude + "function f(q: HPair): i32 { let x: Handle = Handle { fd: 1 }; x = q.h; return x.close(); }\n"},
+		{"e051-alias-of-a-borrowed-param", handleLocalPrelude + "function f(q: Handle): i32 { let y: Handle = q; return sinkh(y); }\n"},
+		{"e051-field-closed-out-of-a-reassigned-local", handleLocalPrelude + "function f(q: HPair): i32 { let p: HPair = mkp(); p = q; return p.h.close() + p.n; }\n"},
+		{"e051-match-on-a-reassigned-local-takes-its-payload", handleLocalPrelude + "function f(q: Slot): i32 { let p: Slot = mks(); p = q; match (p) { Full(h) => { return h.close(); }, Empty => { return 0; } } return 2; }\n"},
+		{"fresh-local-assigned-a-fresh-value", handleLocalPrelude + "function f(c: boolean): i32 { let x: Handle = Handle { fd: 1 }; if (c) { x = Handle { fd: 2 }; } return sinkh(x); }\n"},
+		{"fresh-local-assigned-a-self-update", handleLocalPrelude + "function f(c: boolean): i32 { let p: HPair = mkp(); if (c) { p = HPair { ...p, n: 3 }; } return sinkp(p); }\n"},
+		{"fresh-local-assigned-an-unpack", handleLocalPrelude + "function f(): i32 { let x: Handle = Handle { fd: 1 }; let t: (Handle, i32) = hstep(); x = t.0; return sinkh(x) + t.1; }\n"},
+		{"fresh-local-assigned-another-fresh-local", handleLocalPrelude + "function f(): i32 { let x: Handle = Handle { fd: 1 }; let y: Handle = Handle { fd: 2 }; x = y; return sinkh(x); }\n"},
+		{"alias-of-an-own-param", handleLocalPrelude + "function f(own q: Handle): i32 { let y: Handle = q; return sinkh(y); }\n"},
+		{"handle-free-local-assigned-a-borrow", handleLocalPrelude + "function keep(own xs: i32[]): i32 { return xs[0]; }\nfunction f(q: i32[]): i32 { let xs: i32[] = [1]; xs = q; return keep(xs); }\n"},
+		{"fresh-local-assigned-a-pass-through-call", handleLocalPrelude + "function settle(o: Handle, n: i32): Handle { return o; }\nfunction f(): i32 { let o: Handle = Handle { fd: 1 }; o = settle(o, 2); return sinkh(o); }\n"},
+		{"fresh-local-assigned-a-pass-through-call-with-a-handle-free-union", handleLocalPrelude + "struct A { n: i32 }\nstruct B { s: string }\ntype U = A | B;\nfunction settle(o: Handle, u: U): Handle { return o; }\nfunction f(u: U): i32 { let o: Handle = Handle { fd: 1 }; o = settle(o, u); return sinkh(o); }\n"},
+		{"e051-fresh-local-assigned-a-pass-through-call-with-another-lender", handleLocalPrelude + "function pick(o: Handle, p: Handle): Handle { return p; }\nfunction f(q: Handle): i32 { let o: Handle = Handle { fd: 1 }; o = pick(o, q); return sinkh(o); }\n"},
+		{"fresh-local-assigned-a-payload-of-a-fresh-match", handleLocalPrelude + "function f(): i32 { let x: Handle = Handle { fd: 2 }; match (mks()) { Full(h) => { x = h; }, Empty => {} } return sinkh(x); }\n"},
+		{"e051-fresh-local-assigned-a-payload-of-a-borrowed-match", handleLocalPrelude + "function f(q: Slot): i32 { let x: Handle = Handle { fd: 2 }; match (q) { Full(h) => { x = h; }, Empty => {} } return sinkh(x); }\n"},
 		{"e051-last-use-method-chain", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); let v: W = w.bump(1); let u: W = v.bump(2); return eat(u); }\n"},
 		{"e051-last-use-field-arg-local", lastUsePrelude + "function f(): i32 { let w: W = mkw(1); return keep(w.d, 1); }\n"},
 		{"e051-last-use-if-expr", lastUsePrelude + "function f(c: boolean): i32 { let a: i32[] = mk(1); let r: i32 = if (c) { keep(a, 1) } else { 0 }; return r; }\n"},

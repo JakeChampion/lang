@@ -10,11 +10,11 @@ function test_abs_diff_reversed(): test.TestOutcome {
 }
 
 function test_abs_diff_mixed_sign(): test.TestOutcome {
-  return test.assert_eq((0 - 3).abs_diff(4), 7);
+  return test.assert_eq((-3).abs_diff(4), 7);
 }
 
 function test_abs_diff_both_negative(): test.TestOutcome {
-  return test.assert_eq((0 - 10).abs_diff(0 - 2), 8);
+  return test.assert_eq((-10).abs_diff(-2), 8);
 }
 
 function test_abs_diff_equal(): test.TestOutcome {

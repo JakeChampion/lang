@@ -6,8 +6,8 @@ import "std/i32";
 struct Ranked { name: string, distance: i32 }
 
 function edit_distance(a: string, b: string): i32 {
-  let n: i32 = a.len();
-  let m: i32 = b.len();
+  let n = a.len();
+  let m = b.len();
   if (n == 0) {
     return m;
   }
@@ -16,25 +16,25 @@ function edit_distance(a: string, b: string): i32 {
   }
 
   let prev: i32[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j <= m) {
     prev = prev.append(j);
-    j = j + 1;
+    j += 1;
   }
 
-  let i: i32 = 1;
+  let i = 1;
   while (i <= n) {
     let cur: i32[] = [i];
-    let k: i32 = 1;
+    let k = 1;
     while (k <= m) {
-      let cost: i32 = 1;
+      let cost = 1;
       if (a[i - 1] as i32 == b[k - 1] as i32) {
         cost = 0;
       }
-      let del: i32 = prev[k] + 1;
-      let ins: i32 = cur[k - 1] + 1;
-      let sub: i32 = prev[k - 1] + cost;
-      let best: i32 = del;
+      let del = prev[k] + 1;
+      let ins = cur[k - 1] + 1;
+      let sub = prev[k - 1] + cost;
+      let best = del;
       if (ins < best) {
         best = ins;
       }
@@ -42,10 +42,10 @@ function edit_distance(a: string, b: string): i32 {
         best = sub;
       }
       cur = cur.append(best);
-      k = k + 1;
+      k += 1;
     }
     prev = cur;
-    i = i + 1;
+    i += 1;
   }
   return prev[m];
 }
@@ -56,22 +56,22 @@ function max_distance(typed: string): i32 {
 
 function rank(typed: string, candidates: string[]): Ranked[] {
   let out: Ranked[] = [];
-  let limit: i32 = max_distance(typed);
-  let i: i32 = 0;
+  let limit = max_distance(typed);
+  let i = 0;
   while (i < candidates.len()) {
-    let d: i32 = edit_distance(typed, candidates[i]);
+    let d = edit_distance(typed, candidates[i]);
     if (d <= limit) {
       out = out.append(Ranked { name: candidates[i], distance: d });
     }
-    i = i + 1;
+    i += 1;
   }
-  let a: i32 = 1;
+  let a = 1;
   while (a < out.len()) {
-    let b: i32 = a;
+    let b = a;
     while (b > 0) {
-      let lo: Ranked = out[b - 1];
-      let hi: Ranked = out[b];
-      let swap: boolean = false;
+      let lo = out[b - 1];
+      let hi = out[b];
+      let swap = false;
       if (hi.distance < lo.distance) {
         swap = true;
       }
@@ -83,32 +83,32 @@ function rank(typed: string, candidates: string[]): Ranked[] {
       }
       out = out.with(b - 1, hi);
       out = out.with(b, lo);
-      b = b - 1;
+      b -= 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return out;
 }
 
 function name_lt(a: string, b: string): boolean {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let x: i32 = a[i] as i32;
-    let y: i32 = b[i] as i32;
+    let x = a[i] as i32;
+    let y = b[i] as i32;
     if (x != y) {
       return x < y;
     }
-    i = i + 1;
+    i += 1;
   }
   return a.len() < b.len();
 }
 
 function suggest(typed: string, candidates: string[]): Option[string] {
-  let r: Ranked[] = rank(typed, candidates);
+  let r = rank(typed, candidates);
   if (r.len() == 0) {
     return None;
   }
@@ -140,8 +140,8 @@ function test_distance_agrees_with_stdlib(): test.TestOutcome {
   ];
   for i in 0..words.len() {
     for j in 0..words.len() {
-      let mine: i32 = edit_distance(words[i], words[j]);
-      let theirs: i32 = strdist.levenshtein(words[i], words[j]);
+      let mine = edit_distance(words[i], words[j]);
+      let theirs = strdist.levenshtein(words[i], words[j]);
       if (mine != theirs) {
         return test.fail("distance(\"" + words[i] + "\", \"" + words[j]
           + "\"): mine=" + mine.to_string()
@@ -182,8 +182,8 @@ function test_distance_is_a_metric(): test.TestOutcome {
         return test.fail("d == 0 for different strings");
       }
       for k in 0..w.len() {
-        let direct: i32 = edit_distance(w[i], w[k]);
-        let via: i32 = edit_distance(w[i], w[j]) + edit_distance(w[j], w[k]);
+        let direct = edit_distance(w[i], w[k]);
+        let via = edit_distance(w[i], w[j]) + edit_distance(w[j], w[k]);
         if (direct > via) {
           return test.fail("triangle inequality violated");
         }
@@ -248,8 +248,8 @@ function test_short_names_are_stricter(): test.TestOutcome {
 
 function test_ranking_is_ordered_and_deterministic(): test.TestOutcome {
   let cands: string[] = ["rng_next", "rng_seed", "rng_below"];
-  let r1: Ranked[] = rank("rng_", cands);
-  let r2: Ranked[] = rank("rng_", cands);
+  let r1 = rank("rng_", cands);
+  let r2 = rank("rng_", cands);
   if (r1.len() != r2.len()) {
     return test.fail("ranking length varied");
   }
@@ -269,7 +269,7 @@ function test_ranking_is_ordered_and_deterministic(): test.TestOutcome {
 }
 
 function test_an_exact_name_ranks_first_at_zero(): test.TestOutcome {
-  let r: Ranked[] = rank("shuffle", api());
+  let r = rank("shuffle", api());
   if (r.len() == 0) {
     return test.fail("exact name produced no ranking");
   }
@@ -286,7 +286,7 @@ function main(): i32 {
     eprint("  " + hint(typed[i], api()));
   }
 
-  let r: test.TestRunner = test.new("didyoumean");
+  let r = test.new("didyoumean");
   r = r.it("distance agrees with stdlib", test_distance_agrees_with_stdlib);
   r = r.it("known distances", test_known_distances);
   r = r.it("distance is a metric", test_distance_is_a_metric);

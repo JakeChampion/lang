@@ -30,7 +30,7 @@ function port_of(sock: Socket): i32 {
 }
 
 function sent(sock: Socket, port: i32): boolean {
-  let to: net.SocketAddr = net.socket_addr(net.V4([127u8, 255u8, 255u8, 255u8]), port);
+  let to = net.socket_addr(net.V4([127u8, 255u8, 255u8, 255u8]), port);
   match (net.send_to(sock, [104u8, 105u8], to)) {
     Ok(n) => {
       return n == 2;
@@ -47,10 +47,10 @@ function test_broadcast_needs_the_option(): test.TestOutcome {
     return test.fail("no UDP socket");
   };
   let Some(tx) = bound(net.V4([0u8, 0u8, 0u8, 0u8])) else {
-    let closed: Result[void, net.NetError] = net.close(rx);
+    let closed = net.close(rx);
     return test.fail("no UDP socket");
   };
-  let port: i32 = port_of(rx);
+  let port = port_of(rx);
   if (sent(tx, port)) {
     return test.fail("a broadcast went out without SO_BROADCAST");
   }
@@ -80,9 +80,9 @@ function test_broadcast_needs_the_option(): test.TestOutcome {
       return test.fail("set_broadcast(false) refused");
     }
   }
-  let again: boolean = sent(tx, port);
-  let a: Result[void, net.NetError] = net.close(rx);
-  let b: Result[void, net.NetError] = net.close(tx);
+  let again = sent(tx, port);
+  let a = net.close(rx);
+  let b = net.close(tx);
   if (again) {
     return test.fail("a broadcast went out after the option was cleared");
   }
@@ -90,7 +90,7 @@ function test_broadcast_needs_the_option(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/net broadcast");
+  let r = test.new("std/net broadcast");
   r = r.it("a broadcast needs set_broadcast", test_broadcast_needs_the_option);
   return r.finish();
 }

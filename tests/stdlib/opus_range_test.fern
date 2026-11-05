@@ -18,7 +18,7 @@ function next(x: u32): u32 {
 
 function make_op(own x: u32): (u32, Op) {
   x = next(x);
-  let op: i32 = ((x >> 16u32) % 6u32) as i32;
+  let op = ((x >> 16u32) % 6u32) as i32;
   let a: u32 = 0u32;
   let b: u32 = 0u32;
   let c: u32 = 0u32;
@@ -32,7 +32,7 @@ function make_op(own x: u32): (u32, Op) {
   } else if (op == 1) {
     x = next(x);
     c = 1u32 + (x >> 8u32) % 15u32;
-    let ft: u32 = 1u32 << c;
+    let ft = 1u32 << c;
     x = next(x);
     a = (x >> 8u32) % ft;
     x = next(x);
@@ -65,7 +65,7 @@ function make_op(own x: u32): (u32, Op) {
 }
 
 function script(seed: u32, n: i32): Op[] {
-  let x: u32 = seed;
+  let x = seed;
   let ops: Op[] = [];
   for i in 0..n {
     let (y, o) = make_op(x);
@@ -143,9 +143,9 @@ function garbled(packet: [u8]): u8[] {
 // bytes. `patch` replaces the first 2 bits with 3, and `garble` changes each
 // byte before the decoder reads it.
 function trace(seed: u32, n: i32, size: i32, patch: boolean, garble: boolean): u32 {
-  let ops: Op[] = script(seed, n);
-  let c: crc32.Crc32 = crc32.new();
-  let e: range.Encoder = range.encoder(size);
+  let ops = script(seed, n);
+  let c = crc32.new();
+  let e = range.encoder(size);
   for i in 0..n {
     e = encode_op(e, ops[i]);
     c = line(c, "e " + i.to_string() + " " + e.tell().to_string() + " " + e.tell_frac().to_string());
@@ -155,12 +155,12 @@ function trace(seed: u32, n: i32, size: i32, patch: boolean, garble: boolean): u
   }
   e = e.done();
   c = line(c, "err " + flag(e.error));
-  let packet: u8[] = e.bytes();
+  let packet = e.bytes();
   c = line(c, "bytes " + hex.encode(packet));
   if (garble) {
     packet = garbled(packet);
   }
-  let d: range.Decoder = range.decoder(packet);
+  let d = range.decoder(packet);
   for i in 0..n {
     let (d1, v) = decode_op(d, ops[i]);
     d = d1;
@@ -171,7 +171,7 @@ function trace(seed: u32, n: i32, size: i32, patch: boolean, garble: boolean): u
 }
 
 function test_short_script_bytes(): test.TestOutcome {
-  let e: range.Encoder = range.encoder(64);
+  let e = range.encoder(64);
   for o in script(1u32, 20) {
     e = encode_op(e, o);
   }
@@ -209,16 +209,16 @@ function test_garbled_long(): test.TestOutcome {
 }
 
 function test_round_trip(): test.TestOutcome {
-  let ops: Op[] = script(99u32, 500);
-  let e: range.Encoder = range.encoder(4000);
+  let ops = script(99u32, 500);
+  let e = range.encoder(4000);
   for o in ops {
     e = encode_op(e, o);
   }
-  let d: range.Decoder = range.decoder(e.done().bytes());
+  let d = range.decoder(e.done().bytes());
   for o in ops {
     let (d1, v) = decode_op(d, o);
     d = d1;
-    let ok: boolean = v == o.a;
+    let ok = v == o.a;
     if (o.op <= 1) {
       ok = v >= o.a && v < o.b;
     }
@@ -232,21 +232,21 @@ function test_round_trip(): test.TestOutcome {
 // 513 values need 10 bits: 129 range steps of 4 raw values each. A step of
 // 128 with the raw value 3 gives 515, which is too large.
 function test_uint_out_of_range(): test.TestOutcome {
-  let e: range.Encoder = range.encoder(8);
+  let e = range.encoder(8);
   e = e.encode(128, 129, 129).bits(3u32, 2).done();
   let (d, v) = range.decoder(e.bytes()).uint(513u32);
   return test.assert_eq(v.to_string() + " " + flag(d.error), "512 1");
 }
 
 function test_tell_starts_at_one_bit(): test.TestOutcome {
-  let e: range.Encoder = range.encoder(4);
-  let d: range.Decoder = range.decoder([0u8, 0u8, 0u8, 0u8]);
-  let all: string = e.tell().to_string() + " " + e.tell_frac().to_string() + " " + d.tell().to_string() + " " + d.tell_frac().to_string();
+  let e = range.encoder(4);
+  let d = range.decoder([0u8, 0u8, 0u8, 0u8]);
+  let all = e.tell().to_string() + " " + e.tell_frac().to_string() + " " + d.tell().to_string() + " " + d.tell_frac().to_string();
   return test.assert_eq(all, "1 8 1 8");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/range");
+  let r = test.new("std/opus/range");
   r = r.it("a short script gives the libopus bytes", test_short_script_bytes);
   r = r.it("a short script gives the libopus trace", test_short_script);
   r = r.it("a full packet gives the libopus trace", test_full_packet);

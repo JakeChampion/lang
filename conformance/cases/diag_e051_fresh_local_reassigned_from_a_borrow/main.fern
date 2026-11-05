@@ -1,0 +1,41 @@
+// spec: RH-37
+// A fresh local stays fresh only while each assignment to it stores an
+// owned value. An assignment of a borrowed handle, or of a field of a
+// borrowed structure, makes the local a second name for that handle, so the
+// local cannot pass to an `own` parameter, and a consuming method cannot
+// take it. An alias of a borrowed parameter is refused the same way.
+
+struct Handle { fd: i32 }
+
+struct H { w: Handle, n: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function eat(own x: Handle): i32 {
+  return x.close();
+}
+
+function by_assign(h: Handle): i32 {
+  let x: Handle = Handle { fd: 1 };
+  x = h;
+  return eat(x);
+}
+
+function by_field(h: H): i32 {
+  let x: Handle = Handle { fd: 1 };
+  x = h.w;
+  return x.close();
+}
+
+function by_alias(h: Handle): i32 {
+  let y: Handle = h;
+  return eat(y);
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 2 };
+  let n: i32 = by_assign(h) + by_alias(h);
+  return n + h.close();
+}

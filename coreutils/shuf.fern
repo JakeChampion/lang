@@ -646,7 +646,7 @@ function terminator(a: Args): string {
   return "\n";
 }
 
-function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head: u64): void {
+function emit(own o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head: u64): void {
   let o = o0;
   let h = o.handle();
   let term = terminator(a);
@@ -682,7 +682,7 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
   gnu.finish(o);
 }
 
-function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): void {
+function run_repeat(own o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): void {
   let o = o0;
   let rs = rs0;
   let h = o.handle();

@@ -1,7 +1,8 @@
-// The transport of the LAN build: UDP datagrams between two phones on the
-// same Wi-Fi network. Each phone sends a beacon to the broadcast address
-// until it hears another phone. Then the two run the key exchange of
-// `secure`, and the users compare the authentication string.
+// The transport of the app: UDP datagrams between two phones on the same
+// network, or through the relay of a room. Each phone sends a beacon to the
+// broadcast address, or to the relay, until it hears another phone. Then the
+// two run the key exchange of `secure`, and the users compare the
+// authentication string.
 //
 // A datagram is the byte 247, a kind, the sender's node ID in 8 bytes, and
 // the body. The node with the smaller ID starts the key exchange and is the
@@ -21,6 +22,9 @@ pub const HANDSHAKE: i32 = 2;
 pub const CONTROL: i32 = 3;
 
 pub const VOICE: i32 = 4;
+
+// A proof of identity, while the users compare the string.
+pub const IDENTITY: i32 = 5;
 
 const MAGIC: u8 = 247u8;
 
@@ -101,6 +105,8 @@ pub enum Heard {
   Failed,
   // A control or voice frame of the peer, for the secure channel.
   Frame(i32, u8[]),
+  // A proof of identity of the peer, for `secure.check_proof`.
+  Identity(u8[]),
 }
 
 // The datagrams to send to the peer after a step.
@@ -119,13 +125,13 @@ pub function beacon(l: Link, now: i64): (Link, u8[][]) {
   return (l, []);
 }
 
-// Starts the key exchange with `peer`, from 32 random bytes for the key and
-// 16 for the nonce. The side that waits for the first message sends its
+// Starts the key exchange with `peer`, from 32 random bytes for the key, 16
+// for the nonce and secure.KEM_RANDOM for ML-KEM. The side that waits for the first message sends its
 // beacon to the peer directly until that message comes, because the peer
 // possibly did not hear its broadcasts.
-pub function pair(l: Link, peer: i64, now: i64, own random_key: u8[], random_nonce: u8[]): (Link, u8[][]) {
+pub function pair(l: Link, peer: i64, now: i64, own random_key: u8[], random_nonce: u8[], own random_kem: u8[]): (Link, u8[][]) {
   let first: boolean = l.me < peer;
-  let h: secure.Handshake = secure.start(first, random_key, random_nonce);
+  let h: secure.Handshake = secure.start(first, random_key, random_nonce, random_kem);
   let out: u8[] = encode(BEACON, l.me, []);
   if (first) {
     out = encode(HANDSHAKE, l.me, secure.first(h));
@@ -214,6 +220,14 @@ pub function heard(l: Link, p: Packet, now: i64): Step {
   }
   if (p.kind == HANDSHAKE) {
     return handshake(l, p.body, now);
+  }
+  if (p.kind == IDENTITY) {
+    match (l.phase) {
+      Verifying => {
+        return Step { link: l, out: [], heard: Identity(p.body) };
+      },
+      _ => {}
+    }
   }
   if (p.kind == CONTROL || p.kind == VOICE) {
     match (l.phase) {

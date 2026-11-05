@@ -6,33 +6,33 @@ struct Decoded { ok: boolean, bytes: u8[], err: string }
 
 function encode(src: u8[]): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < src.len()) {
-    let run: i32 = 1;
+    let run = 1;
     while (i + run < src.len() && src[i + run] == src[i] && run < 128) {
-      run = run + 1;
+      run += 1;
     }
     if (run >= 3) {
       out = out.append((257 - run) as u8);
       out = out.append(src[i]);
-      i = i + run;
+      i += run;
     } else {
-      let start: i32 = i;
-      let lit: i32 = 0;
-      let stop: boolean = false;
+      let start = i;
+      let lit = 0;
+      let stop = false;
       while (i < src.len() && lit < 128 && !stop) {
         if (i + 2 < src.len() && src[i + 1] == src[i] && src[i + 2] == src[i]) {
           stop = true;
         } else {
-          i = i + 1;
-          lit = lit + 1;
+          i += 1;
+          lit += 1;
         }
       }
       out = out.append((lit - 1) as u8);
-      let k: i32 = 0;
+      let k = 0;
       while (k < lit) {
         out = out.append(src[start + k]);
-        k = k + 1;
+        k += 1;
       }
     }
   }
@@ -45,35 +45,35 @@ function fail_decode(out: u8[], why: string): Decoded {
 
 function decode(enc: u8[]): Decoded {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < enc.len()) {
-    let h: i32 = enc[i] as i32;
-    i = i + 1;
+    let h = enc[i] as i32;
+    i += 1;
     if (h == 128) {
       return fail_decode(out, "reserved header byte 128");
     }
     if (h < 128) {
-      let n: i32 = h + 1;
+      let n = h + 1;
       if (i + n > enc.len()) {
         return fail_decode(out, "truncated literal run");
       }
-      let k: i32 = 0;
+      let k = 0;
       while (k < n) {
         out = out.append(enc[i + k]);
-        k = k + 1;
+        k += 1;
       }
-      i = i + n;
+      i += n;
     } else {
-      let n: i32 = 257 - h;
+      let n = 257 - h;
       if (i >= enc.len()) {
         return fail_decode(out, "truncated repeat run");
       }
-      let b: u8 = enc[i];
-      i = i + 1;
-      let k: i32 = 0;
+      let b = enc[i];
+      i += 1;
+      let k = 0;
       while (k < n) {
         out = out.append(b);
-        k = k + 1;
+        k += 1;
       }
     }
   }
@@ -84,12 +84,12 @@ function bytes_equal(a: u8[], b: u8[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -98,25 +98,25 @@ function is_prefix(p: u8[], whole: u8[]): boolean {
   if (p.len() > whole.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < p.len()) {
     if (p[i] != whole[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function show(bs: u8[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < bs.len() && i < 24) {
     if (i > 0) {
-      out = out + " ";
+      out += " ";
     }
-    out = out + (bs[i] as i32).to_string();
-    i = i + 1;
+    out += (bs[i] as i32).to_string();
+    i += 1;
   }
   if (bs.len() > 24) {
     out = out + " …(" + bs.len().to_string() + ")";
@@ -126,26 +126,26 @@ function show(bs: u8[]): string {
 
 function repeated(b: i32, n: i32): u8[] {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(b as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function lcg_bytes(seed: i32, n: i32): u8[] {
   let out: u8[] = [];
-  let s: i32 = seed;
-  let i: i32 = 0;
+  let s = seed;
+  let i = 0;
   while (i < n) {
     s = s * 1103515245 + 12345;
-    let v: i32 = s / 65536 % 256;
+    let v = s / 65536 % 256;
     if (v < 0) {
-      v = v + 256;
+      v += 256;
     }
     out = out.append(v as u8);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -156,25 +156,25 @@ function exhaustive(): u8[][] {
   let empty: u8[] = [];
   out = out.append(empty);
   let cur: u8[][] = [empty];
-  let len: i32 = 1;
+  let len = 1;
   while (len <= 5) {
     let next: u8[][] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i < cur.len()) {
-      let a: i32 = 0;
+      let a = 0;
       while (a < alpha.len()) {
         next = next.append(cur[i].append(alpha[a] as u8));
-        a = a + 1;
+        a += 1;
       }
-      i = i + 1;
+      i += 1;
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < next.len()) {
       out = out.append(next[k]);
-      k = k + 1;
+      k += 1;
     }
     cur = next;
-    len = len + 1;
+    len += 1;
   }
   return out;
 }
@@ -183,53 +183,53 @@ function edge_cases(): u8[][] {
   let out: u8[][] = [];
   let lens: i32[] = [1, 2, 3, 127, 128, 129, 130, 255, 256, 257, 300];
   let vals: i32[] = [0, 65, 128, 255];
-  let v: i32 = 0;
+  let v = 0;
   while (v < vals.len()) {
-    let l: i32 = 0;
+    let l = 0;
     while (l < lens.len()) {
       out = out.append(repeated(vals[v], lens[l]));
-      l = l + 1;
+      l += 1;
     }
-    v = v + 1;
+    v += 1;
   }
   let all: u8[] = [];
-  let b: i32 = 0;
+  let b = 0;
   while (b < 256) {
     all = all.append(b as u8);
-    b = b + 1;
+    b += 1;
   }
   out = out.append(all);
   out = out.append(repeated(7, 200).append(1).append(2).append(3));
   let seeds: i32[] = [1, 7, 12345];
-  let s: i32 = 0;
+  let s = 0;
   while (s < seeds.len()) {
     let ns: i32[] = [0, 1, 5, 63, 64, 200];
-    let j: i32 = 0;
+    let j = 0;
     while (j < ns.len()) {
       out = out.append(lcg_bytes(seeds[s], ns[j]));
-      j = j + 1;
+      j += 1;
     }
-    s = s + 1;
+    s += 1;
   }
   return out;
 }
 
 function corpus(): u8[][] {
-  let out: u8[][] = exhaustive();
-  let e: u8[][] = edge_cases();
-  let i: i32 = 0;
+  let out = exhaustive();
+  let e = edge_cases();
+  let i = 0;
   while (i < e.len()) {
     out = out.append(e[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function test_it_round_trips_the_whole_corpus(): test.TestOutcome {
-  let cs: u8[][] = corpus();
-  let i: i32 = 0;
+  let cs = corpus();
+  let i = 0;
   while (i < cs.len()) {
-    let d: Decoded = decode(encode(cs[i]));
+    let d = decode(encode(cs[i]));
     if (!d.ok) {
       return test.fail("case " + i.to_string() + " (" + cs[i].len().to_string()
         + " bytes) failed to decode its own encoding: " + d.err);
@@ -238,7 +238,7 @@ function test_it_round_trips_the_whole_corpus(): test.TestOutcome {
       return test.fail("case " + i.to_string() + " did not round-trip:\n  in  "
         + show(cs[i]) + "\n  out " + show(d.bytes));
     }
-    i = i + 1;
+    i += 1;
   }
   if (cs.len() < 400) {
     return test.fail("the corpus is only " + cs.len().to_string() + " cases");
@@ -247,32 +247,32 @@ function test_it_round_trips_the_whole_corpus(): test.TestOutcome {
 }
 
 function test_every_byte_value_survives(): test.TestOutcome {
-  let b: i32 = 0;
+  let b = 0;
   while (b < 256) {
     let one: u8[] = [b as u8];
-    let d: Decoded = decode(encode(one));
+    let d = decode(encode(one));
     if (!d.ok || !bytes_equal(d.bytes, one)) {
       return test.fail("the byte " + b.to_string() + " did not round-trip");
     }
-    let many: u8[] = repeated(b, 5);
-    let d2: Decoded = decode(encode(many));
+    let many = repeated(b, 5);
+    let d2 = decode(encode(many));
     if (!d2.ok || !bytes_equal(d2.bytes, many)) {
       return test.fail("a run of byte " + b.to_string() + " did not round-trip");
     }
-    b = b + 1;
+    b += 1;
   }
   return test.pass();
 }
 
 function test_it_actually_compresses_runs(): test.TestOutcome {
-  let n: i32 = 1000;
-  let run: u8[] = repeated(88, n);
-  let enc: u8[] = encode(run);
+  let n = 1000;
+  let run = repeated(88, n);
+  let enc = encode(run);
   if (enc.len() > 20) {
     return test.fail("a run of " + n.to_string() + " bytes encoded to "
       + enc.len().to_string() + " bytes, want about 16");
   }
-  let d: Decoded = decode(enc);
+  let d = decode(enc);
   if (!d.ok || !bytes_equal(d.bytes, run)) {
     return test.fail("the compressed run did not round-trip");
   }
@@ -280,38 +280,38 @@ function test_it_actually_compresses_runs(): test.TestOutcome {
 }
 
 function test_it_never_expands_past_the_bound(): test.TestOutcome {
-  let cs: u8[][] = corpus();
-  let i: i32 = 0;
+  let cs = corpus();
+  let i = 0;
   while (i < cs.len()) {
-    let n: i32 = cs[i].len();
-    let bound: i32 = n + (n + 127) / 128;
-    let enc: u8[] = encode(cs[i]);
+    let n = cs[i].len();
+    let bound = n + (n + 127) / 128;
+    let enc = encode(cs[i]);
     if (enc.len() > bound) {
       return test.fail("case " + i.to_string() + ": " + n.to_string()
         + " bytes encoded to " + enc.len().to_string() + ", bound is "
         + bound.to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_a_truncated_stream_is_rejected_or_a_prefix(): test.TestOutcome {
-  let cs: u8[][] = corpus();
-  let checked: i32 = 0;
-  let i: i32 = 0;
+  let cs = corpus();
+  let checked = 0;
+  let i = 0;
   while (i < cs.len()) {
     if (cs[i].len() <= 12) {
-      let enc: u8[] = encode(cs[i]);
-      let cut: i32 = 0;
+      let enc = encode(cs[i]);
+      let cut = 0;
       while (cut < enc.len()) {
         let part: u8[] = [];
-        let k: i32 = 0;
+        let k = 0;
         while (k < cut) {
           part = part.append(enc[k]);
-          k = k + 1;
+          k += 1;
         }
-        let d: Decoded = decode(part);
+        let d = decode(part);
         if (d.ok && !bytes_equal(d.bytes, cs[i]) && !is_prefix(d.bytes, cs[i])) {
           return test.fail("truncating case " + i.to_string() + " to "
             + cut.to_string() + " bytes decoded to something that is not a "
@@ -322,11 +322,11 @@ function test_a_truncated_stream_is_rejected_or_a_prefix(): test.TestOutcome {
           return test.fail("the partial output of a rejected decode is not a "
             + "prefix of the original");
         }
-        checked = checked + 1;
-        cut = cut + 1;
+        checked += 1;
+        cut += 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   if (checked < 500) {
     return test.fail("only " + checked.to_string() + " truncations were checked");
@@ -336,12 +336,12 @@ function test_a_truncated_stream_is_rejected_or_a_prefix(): test.TestOutcome {
 
 function test_the_reserved_header_is_rejected(): test.TestOutcome {
   let bad: u8[] = [128];
-  let d: Decoded = decode(bad);
+  let d = decode(bad);
   if (d.ok) {
     return test.fail("a lone reserved header byte was accepted");
   }
-  let mixed: u8[] = encode(repeated(3, 4)).append(128 as u8);
-  let d2: Decoded = decode(mixed);
+  let mixed = encode(repeated(3, 4)).append(128 as u8);
+  let d2 = decode(mixed);
   if (d2.ok) {
     return test.fail("a reserved header after a valid packet was accepted");
   }
@@ -353,11 +353,11 @@ function test_the_reserved_header_is_rejected(): test.TestOutcome {
 
 function test_the_empty_input(): test.TestOutcome {
   let empty: u8[] = [];
-  let enc: u8[] = encode(empty);
+  let enc = encode(empty);
   if (enc.len() != 0) {
     return test.fail("the empty input encoded to " + enc.len().to_string() + " bytes");
   }
-  let d: Decoded = decode(enc);
+  let d = decode(enc);
   if (!d.ok || d.bytes.len() != 0) {
     return test.fail("the empty encoding did not decode to nothing");
   }
@@ -365,20 +365,20 @@ function test_the_empty_input(): test.TestOutcome {
 }
 
 function test_the_encoding_is_canonical(): test.TestOutcome {
-  let cs: u8[][] = corpus();
-  let i: i32 = 0;
+  let cs = corpus();
+  let i = 0;
   while (i < cs.len()) {
-    let once: u8[] = encode(cs[i]);
-    let d: Decoded = decode(once);
+    let once = encode(cs[i]);
+    let d = decode(once);
     if (!d.ok) {
       return test.fail("case " + i.to_string() + " failed to decode");
     }
-    let twice: u8[] = encode(d.bytes);
+    let twice = encode(d.bytes);
     if (!bytes_equal(once, twice)) {
       return test.fail("case " + i.to_string() + " re-encodes differently:\n  "
         + show(once) + "\n  " + show(twice));
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -390,11 +390,11 @@ function main(): i32 {
     repeated(65, 12), lcg_bytes(7, 12),
     repeated(9, 5).append(1).append(2).append(3),
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < samples.len()) {
-    let enc: u8[] = encode(samples[i]);
-    let d: Decoded = decode(enc);
-    let verdict: string = "round-trips";
+    let enc = encode(samples[i]);
+    let d = decode(enc);
+    let verdict = "round-trips";
     if (!d.ok || !bytes_equal(d.bytes, samples[i])) {
       verdict = "FAILED";
     }
@@ -402,12 +402,12 @@ function main(): i32 {
       + "   " + verdict);
     eprint("    in  " + show(samples[i]));
     eprint("    enc " + show(enc));
-    i = i + 1;
+    i += 1;
   }
-  let big: u8[] = repeated(88, 1000);
+  let big = repeated(88, 1000);
   eprint("  a run of 1000 encodes to " + encode(big).len().to_string() + " bytes");
 
-  let r: test.TestRunner = test.new("rle");
+  let r = test.new("rle");
   r = r.it("it round trips the whole corpus", test_it_round_trips_the_whole_corpus);
   r = r.it("every byte value survives", test_every_byte_value_survives);
   r = r.it("it actually compresses runs", test_it_actually_compresses_runs);

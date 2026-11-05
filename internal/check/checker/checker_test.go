@@ -1497,6 +1497,13 @@ function main(): i32 { let a: P = P{x:1}; let b: P = P{x:1}; if (a == b) { retur
 			"does not implement `Eq`"},
 		{`function main(): i32 { let a: i32[] = [1,2]; let b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
 			"i32[] implements `Eq` in core/cmp: add `import \"core/cmp\";`"},
+		// core/cmp has no Eq for a view, so the hint names none (#14228).
+		{`function f(a: [i32], b: [i32]): boolean { return a == b; }
+function main(): i32 { return 0; }`,
+			"[i32] cannot implement `Eq`: compare its parts instead"},
+		{`function f(a: i32[], b: [i32]): boolean { return a == b; }
+function main(): i32 { return 0; }`,
+			"cannot compare i32[] with [i32]: both sides of \"==\" must have the same type"},
 	}
 	for _, c := range reject {
 		err := checkSource(t, c.src)

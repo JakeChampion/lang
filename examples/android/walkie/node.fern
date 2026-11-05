@@ -4,6 +4,8 @@
 // sends the datagrams in `out`, plays the frames in `heard`, and runs the
 // microphone while `capture` is true. A host test runs two nodes on a
 // simulated network.
+import "std/crypto";
+import "std/crypto/ed25519";
 import "std/net";
 import "std/opus/celt_encoder";
 import "./lan";
@@ -30,18 +32,72 @@ pub struct Node {
   rx: voice.Receiver,
   notice: string,
   heard_at: i64,
+  // Fresh random bytes from the app for the rekeys, which the copies of the
+  // node share, and the rekey of this side's voice: due at the next tick,
+  // or offered and not accepted yet.
+  random: Cell[u8[]],
+  rekey_due: boolean,
+  offer: Option[secure.Offer],
+  offer_at: i64,
+  // The last accept that this side sent, for an offer that comes again.
+  accepted: i32,
+  accepted_key: u8[],
+  // This phone's identity, and the identities of the phones that a user
+  // confirmed before. While the users compare the string, this side sends
+  // `proof` again at `proof_at`, and `peer_identity` is the identity in the
+  // peer's proof, which knows this phone when `peer_knows` is set.
+  identity: Option[ed25519.PrivateKey],
+  pins: u8[][],
+  proof: u8[],
+  proof_knows: boolean,
+  proof_at: i64,
+  peer_identity: u8[],
+  peer_knows: boolean,
   // The outputs since the app last took them.
   out: Datagram[],
   heard: i32[][],
   logs: string[],
 }
 
-pub const SEED_BYTES: i32 = 48;
+pub const SEED_BYTES: i32 = 48 + secure.KEM_RANDOM;
+
+// The random bytes that the app gives with `fresh` before each tick: enough
+// for one offer and one accept.
+pub const RANDOM_BYTES: i32 = 64;
 
 // A node with ID `me`, which sends Opus voice frames.
 pub function new(me: i64, own seed: u8[], now: i64): Node {
   let (s1, _) = session.step(session.new(), session.Start(session.Offline), now);
-  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, out: [], heard: [], logs: [] };
+  return Node { link: lan.new(me), peer_addr: net.socket_addr(net.V4([0u8, 0u8, 0u8, 0u8]), 0), chan: None, sess: s1, seed: seed, capture: false, pending: [], enc: voice.encoder(), rx: voice.receiver(), notice: "", heard_at: 0i64, random: cell_new([]), rekey_due: false, offer: None, offer_at: 0i64, accepted: 0, accepted_key: [], identity: None, pins: [], proof: [], proof_knows: false, proof_at: 0i64, peer_identity: [], peer_knows: false, out: [], heard: [], logs: [] };
+}
+
+// The node with this phone's identity, from a 32-byte seed, and the
+// identities of the phones that a user confirmed before.
+pub function with_identity(n: Node, seed: [u8], pins: u8[][]): Node {
+  match (ed25519.private_key(seed)) {
+    Ok(k) => {
+      return Node { ...n, identity: Some(k), pins: pins };
+    },
+    Err(_) => {}
+  }
+  return Node { ...n, pins: pins };
+}
+
+// The public key of this phone's identity, or empty.
+pub function identity_key(n: Node): u8[] {
+  if let Some(k) = n.identity {
+    return k.public_point();
+  }
+  return [];
+}
+
+function knows(n: Node, identity: u8[]): boolean {
+  for p in n.pins {
+    if (p == identity) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The node with its outputs taken.
@@ -56,6 +112,12 @@ pub function close(own n: Node): void {
     },
     None => {}
   }
+  if let Some(o) = n.offer {
+    secure.close_offer(o);
+  }
+  let pool = n.random.get();
+  n.random.set([]);
+  crypto.erase(pool);
   let closed: lan.Link = lan.close(n.link);
 }
 
@@ -121,7 +183,7 @@ function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
   match (st.heard) {
     lan.Found(peer) => {
       let u: Node = log(t, "found peer " + peer.to_string() + " at " + from.to_string());
-      let (l, out) = lan.pair(u.link, peer, now, part(u.seed, 0, 32), part(u.seed, 32, 16));
+      let (l, out) = lan.pair(u.link, peer, now, part(u.seed, 0, 32), part(u.seed, 32, 16), part(u.seed, 48, secure.KEM_RANDOM));
       return to_peer(act(Node { ...u, link: l, peer_addr: from, seed: [] }, session.PeerFound, now), out);
     },
     lan.Verify(sas) => {
@@ -131,10 +193,14 @@ function packet(n: Node, p: lan.Packet, from: net.SocketAddr, now: i64): Node {
         me = 1;
         id = t.link.me;
       }
-      return act(log(t, "keys are ready"), session.TransportUp(lan.initiator(t.link), me, 3 - me, id), now);
+      let u: Node = act(log(t, "keys are ready"), session.TransportUp(lan.initiator(t.link), me, 3 - me, id), now);
+      return proved(u, false, now);
     },
     lan.Failed => {
       return act(log(t, "the key exchange failed"), session.AuthFailed, now);
+    },
+    lan.Identity(body) => {
+      return identified(t, body, now);
     },
     lan.Frame(kind, body) => {
       return frame(t, kind, body, now);
@@ -153,6 +219,12 @@ function frame(n: Node, kind: i32, body: u8[], now: i64): Node {
         match (plain) {
           Some(b) => {
             match (protocol.decode(b)) {
+              Some(protocol.KeyOffer(epoch, public)) => {
+                return offered(t, epoch, public);
+              },
+              Some(protocol.KeyAccept(epoch, public)) => {
+                return accepted(t, epoch, public);
+              },
               Some(m) => {
                 return act(t, session.Received(m), now);
               },
@@ -218,7 +290,7 @@ function action(n: Node, a: session.Action): Node {
       return send_frame(n, lan.CONTROL, protocol.encode(m));
     },
     session.Capture(on) => {
-      return Node { ...n, capture: on, pending: [] };
+      return Node { ...n, capture: on, pending: [], rekey_due: n.rekey_due || on };
     },
     session.Notice(text) => {
       return log(Node { ...n, notice: text }, text);
@@ -242,7 +314,58 @@ function send_frame(n: Node, kind: i32, plain: u8[]): Node {
   return n;
 }
 
-// The beacons, the handshake resends and the session timers at `now`.
+// This side's proof of identity, which says whether it knows the peer, to
+// the peer now and again at each RESEND_MS while the users compare.
+function proved(n: Node, knows_peer: boolean, now: i64): Node {
+  let Some(id) = n.identity else {
+    return n;
+  };
+  let Some(k) = n.link.keys else {
+    return n;
+  };
+  let proof: u8[] = secure.prove(k, id, knows_peer);
+  let t: Node = Node { ...n, proof: proof, proof_knows: knows_peer, proof_at: now + lan.RESEND_MS };
+  return to_peer(t, [lan.encode(lan.IDENTITY, n.link.me, proof)]);
+}
+
+function proving(n: Node, now: i64): Node {
+  match (n.link.phase) {
+    lan.Verifying => {},
+    _ => {
+      return n;
+    }
+  }
+  if (n.proof.len() == 0 || now < n.proof_at) {
+    return n;
+  }
+  return to_peer(Node { ...n, proof_at: now + lan.RESEND_MS }, [lan.encode(lan.IDENTITY, n.link.me, n.proof)]);
+}
+
+// The peer's proof of identity. When this phone knows the peer, its next
+// proof says so. When the peer also knows this phone, the two phones met
+// before and a user confirmed the string then: they need no new check.
+function identified(n: Node, body: u8[], now: i64): Node {
+  let Some(k) = n.link.keys else {
+    return n;
+  };
+  let Some(p) = secure.check_proof(k, body) else {
+    return n;
+  };
+  let t: Node = Node { ...n, peer_identity: p.identity, peer_knows: p.knows };
+  if (!knows(t, p.identity)) {
+    return t;
+  }
+  if (!t.proof_knows) {
+    t = proved(t, true, now);
+  }
+  if (!p.knows) {
+    return t;
+  }
+  return confirm(log(t, "the other phone is known: no string to compare"), now);
+}
+
+// The beacons, the handshake resends, the session timers and the rekey at
+// `now`.
 pub function tick(n: Node, now: i64): Node {
   let (l1, beacons) = lan.beacon(n.link, now);
   let out: Datagram[] = n.out;
@@ -250,7 +373,83 @@ pub function tick(n: Node, now: i64): Node {
     out = out.append(Datagram { broadcast: true, data: b });
   }
   let (l2, again) = lan.resend(l1, now);
-  return act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now);
+  return proving(rekeying(act(to_peer(Node { ...n, link: l2, out: out }, again), session.Tick, now), now), now);
+}
+
+// The node with `random`, fresh random bytes for the rekeys, in place of the
+// bytes it did not use. The app gives RANDOM_BYTES before each tick.
+pub function fresh(n: Node, own random: u8[]): Node {
+  let old = n.random.get();
+  n.random.set(random);
+  crypto.erase(old);
+  return n;
+}
+
+// 32 of the random bytes, which leave the node. Too few gives none.
+function draw(n: Node): u8[] {
+  let pool = n.random.get();
+  if (pool.len() < 32) {
+    return [];
+  }
+  let out: u8[] = part(pool, 0, 32);
+  n.random.set(part(pool, 32, pool.len() - 32));
+  crypto.erase(pool);
+  return out;
+}
+
+// A transmission starts with an offer of a new key for this side's voice.
+// The offer goes again after each RESEND_MS until the peer accepts it.
+function rekeying(n: Node, now: i64): Node {
+  let Some(c) = n.chan else {
+    return n;
+  };
+  if let Some(o) = n.offer {
+    if (now < n.offer_at) {
+      return n;
+    }
+    return send_frame(Node { ...n, offer_at: now + lan.RESEND_MS }, lan.CONTROL, protocol.encode(protocol.KeyOffer(o.epoch, o.public)));
+  }
+  if (!n.rekey_due) {
+    return n;
+  }
+  let Some(o) = secure.offer(c, draw(n)) else {
+    return n;
+  };
+  let next: Node = Node { ...n, rekey_due: false, offer: Some(o), offer_at: now + lan.RESEND_MS };
+  return send_frame(next, lan.CONTROL, protocol.encode(protocol.KeyOffer(o.epoch, o.public)));
+}
+
+// The peer offers a new key for its voice. The first offer of the next epoch
+// gets an accept with a new key of this side. The same offer again gets the
+// same accept, because the first one can be lost.
+function offered(n: Node, epoch: i32, public: u8[]): Node {
+  let Some(c) = n.chan else {
+    return n;
+  };
+  if (epoch == n.accepted && n.accepted_key.len() > 0) {
+    return send_frame(n, lan.CONTROL, protocol.encode(protocol.KeyAccept(epoch, n.accepted_key)));
+  }
+  let (c1, mine) = secure.accept_offer(c, epoch, public, draw(n));
+  if (mine.len() == 0) {
+    return n;
+  }
+  let u: Node = log(Node { ...n, chan: Some(c1), accepted: epoch, accepted_key: mine }, "the peer's voice has key " + epoch.to_string());
+  return send_frame(u, lan.CONTROL, protocol.encode(protocol.KeyAccept(epoch, mine)));
+}
+
+// The peer accepts this side's offer: this side sends with the new key.
+function accepted(n: Node, epoch: i32, public: u8[]): Node {
+  let Some(c) = n.chan else {
+    return n;
+  };
+  let Some(o) = n.offer else {
+    return n;
+  };
+  if (o.epoch != epoch) {
+    return n;
+  }
+  let c1 = secure.complete_offer(c, o, epoch, public);
+  return log(Node { ...n, chan: Some(c1), offer: None }, "this side's voice has key " + secure.send_epoch(c1).to_string());
 }
 
 // Microphone samples at `voice.RATE`. Each full frame goes to the peer as
@@ -301,7 +500,11 @@ pub function confirm(n: Node, now: i64): Node {
     }
   }
   let (l, chan) = lan.confirm(n.link);
-  return act(log(Node { ...n, link: l, chan: chan }, "the string is confirmed"), session.Authenticated, now);
+  let t: Node = log(Node { ...n, link: l, chan: chan, proof: [] }, "the string is confirmed");
+  if (t.peer_identity.len() > 0 && !knows(t, t.peer_identity)) {
+    t = log(Node { ...t, pins: t.pins.append(t.peer_identity) }, "this phone now knows the other phone");
+  }
+  return act(t, session.Authenticated, now);
 }
 
 // The user says that the strings differ.

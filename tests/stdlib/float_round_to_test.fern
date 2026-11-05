@@ -22,10 +22,10 @@ function test_negative_value(): test.TestOutcome {
 }
 
 function test_negative_digits(): test.TestOutcome {
-  if (!float_near(1234.0.round_to(0 - 2), 1200.0)) {
+  if (!float_near(1234.0.round_to(-2), 1200.0)) {
     return test.fail("1234 -> 1200");
   }
-  return test.assert_eq_f64_near(1250.0.round_to(0 - 2), 1300.0, 0.0001);
+  return test.assert_eq_f64_near(1250.0.round_to(-2), 1300.0, 0.0001);
 }
 
 function test_whole_number(): test.TestOutcome {

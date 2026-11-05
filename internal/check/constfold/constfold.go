@@ -38,7 +38,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	var deferred []*ast.ConstDecl
 	var errs []error
 
-	for _, cd := range prog.Consts {
+	for _, cd := range foldOrder(prog.Consts) {
 		if earlier[cd.Name] {
 			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", cd.Name), ErrCode: "E006"})
 			continue
@@ -115,6 +115,53 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		return diag.Errors(sub.errs)
 	}
 	return nil
+}
+
+// foldOrder gives the consts in the order to fold them. A const comes after
+// each const of another module that its initializer reads, so a module can
+// use the consts of a module it imports whatever the merge order is. Within
+// a module the source order stays, so a forward reference stays an error.
+// Consts on a cycle keep their order and get the diagnostic they had.
+func foldOrder(consts []*ast.ConstDecl) []*ast.ConstDecl {
+	moduleOf := make(map[string]string, len(consts))
+	for _, cd := range consts {
+		if _, seen := moduleOf[cd.Name]; !seen {
+			moduleOf[cd.Name] = cd.SourceModule
+		}
+	}
+	done := make(map[string]bool, len(consts))
+	ready := func(cd *ast.ConstDecl) bool {
+		ok := true
+		ast.Walk(cd.Value, func(n ast.Node) bool {
+			if id, isID := n.(*ast.Ident); isID {
+				if m, isConst := moduleOf[id.Name]; isConst && m != cd.SourceModule && !done[id.Name] {
+					ok = false
+				}
+			}
+			return ok
+		})
+		return ok
+	}
+	out := make([]*ast.ConstDecl, 0, len(consts))
+	pending := consts
+	for len(pending) > 0 {
+		var next []*ast.ConstDecl
+		blocked := map[string]bool{}
+		for _, cd := range pending {
+			if blocked[cd.SourceModule] || !ready(cd) {
+				blocked[cd.SourceModule] = true
+				next = append(next, cd)
+				continue
+			}
+			out = append(out, cd)
+			done[cd.Name] = true
+		}
+		if len(next) == len(pending) {
+			return append(out, next...)
+		}
+		pending = next
+	}
+	return out
 }
 
 // errDeferredOperand marks an initializer that reads a const which was itself

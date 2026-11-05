@@ -20,11 +20,11 @@ function put_u16(out: u8[], v: i32): u8[] {
 }
 
 function put_u32(out: u8[], v: i32): u8[] {
-  let o: u8[] = out;
-  let x: i32 = v;
+  let o = out;
+  let x = v;
   for i in 0..4 {
     o = o.append((x % 256) as u8);
-    x = x / 256;
+    x /= 256;
   }
   return o;
 }
@@ -34,11 +34,11 @@ function get_u16(bs: u8[], at: i32): i32 {
 }
 
 function get_u32(bs: u8[], at: i32): i32 {
-  let v: i32 = 0;
-  let mul: i32 = 1;
+  let v = 0;
+  let mul = 1;
   for i in 0..4 {
     v = v + bs[at + i] as i32 * mul;
-    mul = mul * 256;
+    mul *= 256;
   }
   return v;
 }
@@ -54,8 +54,8 @@ function frame(payload: u8[]): u8[] {
 }
 
 function append_record(log: u8[], payload: u8[]): u8[] {
-  let out: u8[] = log;
-  let f: u8[] = frame(payload);
+  let out = log;
+  let f = frame(payload);
   for i in 0..f.len() {
     out = out.append(f[i]);
   }
@@ -66,11 +66,11 @@ struct Replay { records: u8[][], torn: boolean, consumed: i32 }
 
 function replay(log: u8[]): Replay {
   let recs: u8[][] = [];
-  let pos: i32 = 0;
-  let n: i32 = log.len();
+  let pos = 0;
+  let n = log.len();
   while (pos + HEADER() <= n) {
-    let len: i32 = get_u16(log, pos);
-    let want: i32 = get_u32(log, pos + 2);
+    let len = get_u16(log, pos);
+    let want = get_u32(log, pos + 2);
     if (pos + HEADER() + len > n) {
       return Replay { records: recs, torn: true, consumed: pos };
     }
@@ -137,25 +137,25 @@ function build_log(recs: u8[][]): u8[] {
 }
 
 function whole_records_within(recs: u8[][], k: i32): i32 {
-  let pos: i32 = 0;
-  let n: i32 = 0;
+  let pos = 0;
+  let n = 0;
   for i in 0..recs.len() {
-    let end: i32 = pos + HEADER() + recs[i].len();
+    let end = pos + HEADER() + recs[i].len();
     if (end > k) {
       return n;
     }
     pos = end;
-    n = n + 1;
+    n += 1;
   }
   return n;
 }
 
 function test_every_truncation_yields_a_valid_prefix(): test.TestOutcome {
-  let recs: u8[][] = corpus();
-  let log: u8[] = build_log(recs);
+  let recs = corpus();
+  let log = build_log(recs);
   for k in 0..log.len() + 1 {
-    let r: Replay = replay(take_bytes(log, k));
-    let want: i32 = whole_records_within(recs, k);
+    let r = replay(take_bytes(log, k));
+    let want = whole_records_within(recs, k);
     if (r.records.len() != want) {
       return test.fail("cut at " + k.to_string() + " of "
         + log.len().to_string() + ": replayed "
@@ -168,7 +168,7 @@ function test_every_truncation_yields_a_valid_prefix(): test.TestOutcome {
           + i.to_string() + " came back with different bytes");
       }
     }
-    let boundary: boolean = r.consumed == k;
+    let boundary = r.consumed == k;
     if (r.torn == boundary) {
       return test.fail("cut at " + k.to_string() + ": torn="
         + r.torn.to_string() + " but consumed=" + r.consumed.to_string()
@@ -179,8 +179,8 @@ function test_every_truncation_yields_a_valid_prefix(): test.TestOutcome {
 }
 
 function test_a_whole_log_replays_exactly(): test.TestOutcome {
-  let recs: u8[][] = corpus();
-  let r: Replay = replay(build_log(recs));
+  let recs = corpus();
+  let r = replay(build_log(recs));
   if (r.torn) {
     return test.fail("an intact log replayed as torn after "
       + r.records.len().to_string() + " records");
@@ -201,11 +201,11 @@ function test_a_whole_log_replays_exactly(): test.TestOutcome {
 }
 
 function test_corruption_never_invents_a_record(): test.TestOutcome {
-  let recs: u8[][] = corpus();
-  let log: u8[] = build_log(recs);
+  let recs = corpus();
+  let log = build_log(recs);
   for pos in 0..log.len() {
-    let bad: u8[] = log.with(pos, (log[pos] as i32 ^ 0x5A) as u8);
-    let r: Replay = replay(bad);
+    let bad = log.with(pos, (log[pos] as i32 ^ 0x5A) as u8);
+    let r = replay(bad);
     for i in 0..r.records.len() {
       if (i >= recs.len() || !bytes_eq(r.records[i], recs[i])) {
         return test.fail("corrupting byte " + pos.to_string()
@@ -218,11 +218,11 @@ function test_corruption_never_invents_a_record(): test.TestOutcome {
 }
 
 function test_a_corrupt_payload_stops_the_replay(): test.TestOutcome {
-  let recs: u8[][] = corpus();
-  let log: u8[] = build_log(recs);
-  let at: i32 = HEADER();
-  let bad: u8[] = log.with(at, (log[at] as i32 ^ 0xFF) as u8);
-  let r: Replay = replay(bad);
+  let recs = corpus();
+  let log = build_log(recs);
+  let at = HEADER();
+  let bad = log.with(at, (log[at] as i32 ^ 0xFF) as u8);
+  let r = replay(bad);
   if (!r.torn) {
     return test.fail("a corrupted payload replayed as intact");
   }
@@ -238,12 +238,12 @@ function test_a_corrupt_payload_stops_the_replay(): test.TestOutcome {
 }
 
 function test_an_empty_log_is_not_torn(): test.TestOutcome {
-  let r: Replay = replay([]);
+  let r = replay([]);
   if (r.torn || r.records.len() != 0) {
     return test.fail("an empty log replayed as torn=" + r.torn.to_string()
       + " with " + r.records.len().to_string() + " records");
   }
-  let one: Replay = replay(append_record([], []));
+  let one = replay(append_record([], []));
   if (one.torn || one.records.len() != 1 || one.records[0].len() != 0) {
     return test.fail("a zero-length record did not replay as one empty"
       + " record");
@@ -252,11 +252,11 @@ function test_an_empty_log_is_not_torn(): test.TestOutcome {
 }
 
 function test_replay_after_k_appends_gives_the_first_k(): test.TestOutcome {
-  let recs: u8[][] = corpus();
+  let recs = corpus();
   let log: u8[] = [];
   for k in 0..recs.len() {
     log = append_record(log, recs[k]);
-    let r: Replay = replay(log);
+    let r = replay(log);
     if (r.torn) {
       return test.fail("after " + (k + 1).to_string()
         + " appends the log replayed as torn");
@@ -280,8 +280,8 @@ function test_the_framing_is_binary_safe(): test.TestOutcome {
   for i in 0..256 {
     awkward = awkward.append(i as u8);
   }
-  let log: u8[] = append_record(append_record([], awkward), awkward);
-  let r: Replay = replay(log);
+  let log = append_record(append_record([], awkward), awkward);
+  let r = replay(log);
   if (r.torn || r.records.len() != 2) {
     return test.fail("two all-byte-values records replayed as torn="
       + r.torn.to_string() + " with " + r.records.len().to_string()
@@ -297,25 +297,25 @@ function test_the_framing_is_binary_safe(): test.TestOutcome {
 }
 
 function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
-  let recs: u8[][] = corpus();
-  let log: u8[] = build_log(recs);
+  let recs = corpus();
+  let log = build_log(recs);
   match (temp_dir("wal")) {
     Err(e) => {
       return test.fail("could not create a temp directory");
     },
     Ok(d) => {
-      let path: string = d + "/log.bin";
+      let path = d + "/log.bin";
       match (write_file(path, string_from_bytes_unchecked(log))) {
         Err(e) => {
-          let _x: Result[void, IoError] = remove_dir_all(d);
+          let _x = remove_dir_all(d);
           return test.fail("could not write the log");
         },
         Ok(_) => {}
       }
-      let whole: Replay = replay([]);
+      let whole = replay([]);
       match (read_file_bytes(path)) {
         Err(e) => {
-          let _x: Result[void, IoError] = remove_dir_all(d);
+          let _x = remove_dir_all(d);
           return test.fail("could not read the log back");
         },
         Ok(body) => {
@@ -323,31 +323,31 @@ function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
         }
       }
       if (whole.torn || whole.records.len() != recs.len()) {
-        let _x: Result[void, IoError] = remove_dir_all(d);
+        let _x = remove_dir_all(d);
         return test.fail("the log read from disk replayed as torn="
           + whole.torn.to_string() + " with "
           + whole.records.len().to_string() + " records");
       }
-      let cut: i32 = log.len() - 2;
+      let cut = log.len() - 2;
       let _t: Result[void, IoError] = write_file(
         path,
         string_from_bytes_unchecked(take_bytes(log, cut)),
       );
-      let torn: Replay = replay([]);
+      let torn = replay([]);
       match (read_file_bytes(path)) {
         Err(e) => {
-          let _x: Result[void, IoError] = remove_dir_all(d);
+          let _x = remove_dir_all(d);
           return test.fail("could not read the truncated log");
         },
         Ok(body) => {
           torn = replay(body);
         }
       }
-      let _x2: Result[void, IoError] = remove_dir_all(d);
+      let _x2 = remove_dir_all(d);
       if (!torn.torn) {
         return test.fail("a log cut mid-record replayed as intact");
       }
-      let want: i32 = whole_records_within(recs, cut);
+      let want = whole_records_within(recs, cut);
       if (torn.records.len() != want) {
         return test.fail("the truncated log replayed "
           + torn.records.len().to_string() + " records, "
@@ -366,37 +366,37 @@ function test_a_real_file_survives_a_real_truncation(): test.TestOutcome {
 
 function main(): i32 {
   eprint("wal — append, replay, and stop at the first torn record");
-  let recs: u8[][] = corpus();
-  let log: u8[] = build_log(recs);
+  let recs = corpus();
+  let log = build_log(recs);
   eprint("  " + recs.len().to_string() + " records in "
     + log.len().to_string() + " bytes");
 
-  let whole: Replay = replay(log);
+  let whole = replay(log);
   eprint("  intact:    " + whole.records.len().to_string()
     + " records, torn=" + whole.torn.to_string());
 
-  let cut: i32 = log.len() - 3;
-  let short: Replay = replay(take_bytes(log, cut));
+  let cut = log.len() - 3;
+  let short = replay(take_bytes(log, cut));
   eprint("  cut at " + cut.to_string() + ":  "
     + short.records.len().to_string() + " records, torn="
     + short.torn.to_string() + ", consumed=" + short.consumed.to_string());
 
-  let at: i32 = HEADER() + 1;
-  let bad: Replay = replay(log.with(at, (log[at] as i32 ^ 0xFF) as u8));
+  let at = HEADER() + 1;
+  let bad = replay(log.with(at, (log[at] as i32 ^ 0xFF) as u8));
   eprint("  byte " + at.to_string() + " flipped: "
     + bad.records.len().to_string() + " records, torn="
     + bad.torn.to_string());
 
-  let torncuts: i32 = 0;
+  let torncuts = 0;
   for k in 0..log.len() + 1 {
     if (replay(take_bytes(log, k)).torn) {
-      torncuts = torncuts + 1;
+      torncuts += 1;
     }
   }
   eprint("  of " + (log.len() + 1).to_string() + " truncation points, "
     + torncuts.to_string() + " land inside a record");
 
-  let t: test.TestRunner = test.new("wal");
+  let t = test.new("wal");
   t = t.it("every truncation yields a valid prefix", test_every_truncation_yields_a_valid_prefix);
   t = t.it("a whole log replays exactly", test_a_whole_log_replays_exactly);
   t = t.it("corruption never invents a record", test_corruption_never_invents_a_record);

@@ -2,44 +2,44 @@ import "std/i32";
 
 function scan(names: string[], extra: string[]): i32 {
   let g: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     g = g.append(names[i]);
-    i = i + 1;
+    i += 1;
   }
-  let lg: string[] = g;
-  let j: i32 = 0;
+  let lg = g;
+  let j = 0;
   while (j < extra.len()) {
     lg = lg.append(extra[j]);
-    j = j + 1;
+    j += 1;
   }
   return g.len() + lg.len();
 }
 
 function main(): i32 {
   let names: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 8) {
     names = names.append("a_long_mangled_function_name_" + i.to_string());
-    i = i + 1;
+    i += 1;
   }
   let extra: string[] = ["e0", "e1"];
-  let seen: i32 = scan(names, extra);
+  let seen = scan(names, extra);
   if (seen != 18) {
     return 1;
   }
   let again: string[] = [];
-  let m: i32 = 0;
+  let m = 0;
   while (m < names.len()) {
     again = again.append(names[m]);
-    m = m + 1;
+    m += 1;
   }
-  let n: i32 = 0;
+  let n = 0;
   while (n < again.len()) {
     if (again[n].len() != 30) {
       return 1;
     }
-    n = n + 1;
+    n += 1;
   }
   return 0;
 }

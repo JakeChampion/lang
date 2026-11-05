@@ -26,8 +26,15 @@ import (
 )
 
 // writeTestIdentity writes a self-signed P-256 certificate for 127.0.0.1 and
-// its key, and gives the pool that trusts the certificate.
+// its PKCS #8 key, and gives the pool that trusts the certificate.
 func writeTestIdentity(t *testing.T, dir string) (string, string, *x509.CertPool) {
+	t.Helper()
+	return writeTestIdentityKey(t, dir, false)
+}
+
+// writeTestIdentityKey writes the key in the SEC1 form, the form that Caddy
+// writes, when sec1 is true.
+func writeTestIdentityKey(t *testing.T, dir string, sec1 bool) (string, string, *x509.CertPool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -48,7 +55,12 @@ func writeTestIdentity(t *testing.T, dir string) (string, string, *x509.CertPool
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	keyType := "PRIVATE KEY"
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if sec1 {
+		keyType = "EC PRIVATE KEY"
+		keyDER, err = x509.MarshalECPrivateKey(key)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +69,7 @@ func writeTestIdentity(t *testing.T, dir string) (string, string, *x509.CertPool
 	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}), 0o600); err != nil {
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: keyType, Bytes: keyDER}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cert, err := x509.ParseCertificate(der)
@@ -237,5 +249,29 @@ func TestWalkieRelayServer(t *testing.T) {
 	stranger.WriteToUDP(relayed(make([]byte, 16), "not a member"), relay)
 	if got := receive(b, 300*time.Millisecond); got != "" {
 		t.Fatalf("the relay sent a datagram with an unknown token: %q", got)
+	}
+
+	// A renewal replaces the files, as Caddy does. A new certificate with the
+	// old key does not load, so the old identity stays. When the new key
+	// arrives too, new clients get the new certificate with no restart.
+	renewal := t.TempDir()
+	newCert, newKey, newPool := writeTestIdentityKey(t, renewal, true)
+	if err := os.Rename(newCert, certPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := ask(t, addr, pool, "CREATE"); !strings.HasPrefix(got, "ROOM ") {
+		t.Fatalf("CREATE with half a renewal: %q", got)
+	}
+	if err := os.Rename(newKey, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := ask(t, addr, newPool, "CREATE"); !strings.HasPrefix(got, "ROOM ") {
+		t.Fatalf("CREATE after the renewal: %q", got)
+	}
+	old, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr,
+		&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13})
+	if err == nil {
+		old.Close()
+		t.Fatal("the old certificate still verifies after the renewal")
 	}
 }

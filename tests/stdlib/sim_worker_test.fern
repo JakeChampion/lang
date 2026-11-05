@@ -7,10 +7,10 @@ import "std/worker";
 // A worker that parks until `ms` of virtual time and then returns `tag`.
 // Its captures are an instant and a string, which are send-safe.
 function waiter(s: sim.Sim, ms: i64, tag: string): worker.Worker[string] {
-  let at: Instant = sim.at(time.duration_millis(ms));
+  let at = sim.at(time.duration_millis(ms));
   return worker.spawn_on(s, (): string => {
     let none: i32[] = [];
-    let woke: async.Wake = async.wait_any(none, Some(at));
+    let woke = async.wait_any(none, Some(at));
     return tag;
   });
 }
@@ -23,7 +23,7 @@ function ms(s: sim.Sim): string {
 function trace(seed: i64): string {
   let s = sim.new(seed);
   let a = waiter(s, 30i64, "a");
-  let out: string = ms(s);
+  let out = ms(s);
   let b = waiter(s, 10i64, "b");
   out = out + " " + ms(s);
   let c = waiter(s, 20i64, "c");
@@ -38,7 +38,7 @@ function test_results_cross_and_the_clock_moves(): test.TestOutcome {
   let s = sim.new(1);
   let a = waiter(s, 10i64, "a");
   let b = waiter(s, 20i64, "b");
-  let got: string = b.join() + a.join();
+  let got = b.join() + a.join();
   if (got != "ba") {
     return test.fail("results: " + got);
   }
@@ -49,7 +49,7 @@ function test_results_cross_and_the_clock_moves(): test.TestOutcome {
 }
 
 function test_a_seed_replays_its_schedule(): test.TestOutcome {
-  let first: string = trace(7);
+  let first = trace(7);
   if (first != trace(7)) {
     return test.fail("seed 7 gave two traces: " + first + " and " + trace(7));
   }
@@ -67,8 +67,8 @@ function test_seeds_differ_at_the_spawns(): test.TestOutcome {
   }
   let seen: string[] = [];
   for seed in 1..33 {
-    let t: string = trace(seed as i64);
-    let fresh: boolean = true;
+    let t = trace(seed as i64);
+    let fresh = true;
     for prior in seen {
       if (prior == t) {
         fresh = false;
@@ -85,7 +85,7 @@ function test_seeds_differ_at_the_spawns(): test.TestOutcome {
 }
 
 function test_inline_scheduler_runs_at_spawn(): test.TestOutcome {
-  let n: i32 = 20;
+  let n = 20;
   let w = worker.spawn_on(worker.inline(), (): i32 => n + 1);
   let v = worker.spawn_on(worker.inline(), (): string => "v" + n.to_string());
   return test.assert_eq(w.join().to_string() + v.join(), "21v20");

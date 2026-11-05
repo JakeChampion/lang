@@ -408,7 +408,7 @@ function test_retry(): test.TestOutcome {
       c3 = c3.sent();
       let again = header_of(out2[0]);
       let opened = "no";
-      match (packet.open(out2[0], again, packet.initial_keys(again.dcid, true), 0 - 1 as i64)) {
+      match (packet.open(out2[0], again, packet.initial_keys(again.dcid, true), -1i64)) {
         Ok(o) => {
           opened = "pn " + o.pn.to_string();
         },
@@ -686,7 +686,7 @@ function close_code(c: conn.Conn): i64 {
   if let Some(why) = c.close {
     return why.code;
   }
-  return 0 - 1 as i64;
+  return -1i64;
 }
 
 function received_pn(c: conn.Conn, pn: i64): boolean {
@@ -734,7 +734,7 @@ function test_key_update_reordering(): test.TestOutcome {
   let old = server_of(p);
   let promoted = old.receive(phase_packet(p, pn + 3, 1), at_ns(p.now));
   let reordered = promoted.receive(phase_packet(p, pn + 1, 0), at_ns(p.now));
-  if (reordered.failed_auth != 0 || !received_pn(reordered, pn + 1) || close_code(reordered) != 0 - 1 as i64) {
+  if (reordered.failed_auth != 0 || !received_pn(reordered, pn + 1) || close_code(reordered) != -1i64) {
     return test.fail("old reordered packet refused");
   }
   let expired = reordered.tick(at_ns(reordered.key_discard_at));

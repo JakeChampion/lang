@@ -1,0 +1,243 @@
+// The look of the walkie-talkie screen: a dark theme with one accent colour
+// for each state, rounded shapes and a round talk button. It draws a View on
+// a frame and does no other I/O, so the host tests it on a frame in memory.
+import "std/android/draw";
+import "std/string";
+import "./rooms";
+import "./screen";
+
+pub struct Peer { name: string, invited: boolean }
+
+pub struct View {
+  title: string,
+  status: string,
+  notice: string,
+  // The words of the talk button.
+  label: string,
+  // The code that the users compare, or "".
+  code: string,
+  // True while the phone looks for a peer.
+  searching: boolean,
+  peers: Peer[],
+  room_buttons: boolean,
+  // The code that the user types, while the keypad shows.
+  typing: Option[string],
+}
+
+pub function bg(): i32 {
+  return draw.rgb(14, 16, 20);
+}
+
+pub function surface(): i32 {
+  return draw.rgb(30, 33, 40);
+}
+
+function outline(): i32 {
+  return draw.rgb(66, 71, 82);
+}
+
+pub function ink(): i32 {
+  return draw.rgb(236, 238, 242);
+}
+
+function muted(): i32 {
+  return draw.rgb(150, 156, 168);
+}
+
+pub function green(): i32 {
+  return draw.rgb(52, 199, 123);
+}
+
+pub function blue(): i32 {
+  return draw.rgb(72, 146, 255);
+}
+
+pub function amber(): i32 {
+  return draw.rgb(255, 184, 77);
+}
+
+pub function red(): i32 {
+  return draw.rgb(240, 90, 86);
+}
+
+// The accent of the state that the talk button shows.
+pub function accent(label: string): i32 {
+  if (label == "TALKING" || label == "HOLD TO TALK") {
+    return green();
+  }
+  if (label == "LISTENING") {
+    return blue();
+  }
+  if (label == "WAIT" || label == "WAITING") {
+    return amber();
+  }
+  if (label == "TAP TO SEARCH AGAIN") {
+    return red();
+  }
+  return outline();
+}
+
+// The scale of the smaller text: the status, the notice and the peers.
+function small_scale(sc: i32): i32 {
+  if (sc * 3 / 4 < 1) {
+    return 1;
+  }
+  return sc * 3 / 4;
+}
+
+// The largest scale up to `cap` at which `text` fits in `w` pixels.
+pub function fit_scale(text: string, w: i32, cap: i32): i32 {
+  let sc: i32 = cap;
+  while (sc > 1 && draw.text_width(text, sc) > w) {
+    sc = sc - 1;
+  }
+  return sc;
+}
+
+function centered(f: draw.Frame, r: screen.Rect, text: string, sc: i32, color: i32): void {
+  let ts: i32 = fit_scale(text, r.w * 8 / 10, sc);
+  f.text(screen.center_x(r, draw.text_width(text, ts)), r.y + r.h / 2 - draw.text_height(ts) / 2, text, ts, color);
+}
+
+// A pill: a rounded button with its words in the middle.
+pub function pill(f: draw.Frame, r: screen.Rect, label: string, fill: i32, text: i32, sc: i32): void {
+  f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, fill);
+  centered(f, r, label, sc, text);
+}
+
+// A pill with only its outline in `color`.
+function outlined(f: draw.Frame, r: screen.Rect, label: string, color: i32, sc: i32): void {
+  let t: i32 = r.h / 18 + 1;
+  f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, color);
+  f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 2 - t, bg());
+  centered(f, r, label, sc, color);
+}
+
+pub function render(f: draw.Frame, v: View): void {
+  let sc: i32 = screen.text_scale(f.width, draw.text_width("x", 1));
+  f.fill(0, 0, f.width, f.height, bg());
+  header(f, v, sc);
+  if let Some(typed) = v.typing {
+    keypad(f, typed, sc);
+    return;
+  }
+  if (v.code.len() > 0) {
+    compare(f, v.code, sc);
+  } else if (v.searching) {
+    peers(f, v.peers, sc);
+  }
+  talk(f, v.label, sc);
+  if (v.room_buttons) {
+    pill(f, screen.room_button(f.width, f.height), "NEW ROOM", draw.rgb(28, 58, 44), green(), sc);
+    pill(f, screen.join_button(f.width, f.height), "JOIN ROOM", draw.rgb(28, 44, 72), blue(), sc);
+  }
+}
+
+// The title, a dot in the colour of the state, the status and the notice.
+function header(f: draw.Frame, v: View, sc: i32): void {
+  let left: i32 = f.width / 14;
+  let line: i32 = draw.text_height(sc) * 3 / 2;
+  let big: i32 = fit_scale(v.title, f.width - left * 2, sc * 3 / 2);
+  f.text(left, line - draw.text_height(big) / 3, v.title, big, ink());
+  let small: i32 = small_scale(sc);
+  let th: i32 = draw.text_height(small);
+  let chars: i32 = screen.line_chars(f.width - left * 2 - th, draw.text_width("x", 1), small) * 10 / 9;
+  let y: i32 = line * 2 + line / 2;
+  f.disc(left + th / 3, y + th / 2, th / 4, accent(v.label));
+  for l in screen.wrap(v.status, chars) {
+    f.text(left + th, y, l, small, muted());
+    y = y + th * 4 / 3;
+  }
+  for l in screen.wrap(v.notice, chars) {
+    f.text(left + th, y, l, small, amber());
+    y = y + th * 4 / 3;
+  }
+}
+
+// The code that the users compare, in two groups of three, and the two
+// buttons.
+function compare(f: draw.Frame, code: string, sc: i32): void {
+  let shown: string = code;
+  if (code.len() == 6) {
+    shown = code.take(3) + " " + code.drop(3);
+  }
+  let big: i32 = sc * 3;
+  f.text((f.width - draw.text_width(shown, big)) / 2, f.height / 5, shown, big, ink());
+  pill(f, screen.same_button(f.width, f.height), "MATCH", green(), bg(), sc);
+  outlined(f, screen.differ_button(f.width, f.height), "NO MATCH", red(), sc);
+}
+
+// The Wi-Fi Direct peers, one card each.
+function peers(f: draw.Frame, list: Peer[], sc: i32): void {
+  for k in 0..list.len() {
+    if (k < screen.PEER_ROWS) {
+      let row: screen.Rect = screen.peer_row(f.width, f.height, k);
+      f.round_rect(row.x, row.y, row.w, row.h, row.h / 4, surface());
+      let ts: i32 = fit_scale(list[k].name, row.w * 6 / 10, small_scale(sc));
+      let ty: i32 = row.y + row.h / 2 - draw.text_height(ts) / 2;
+      f.text(row.x + row.h / 3, ty, list[k].name, ts, ink());
+      if (list[k].invited) {
+        let tag: string = "INVITED";
+        let tags: i32 = fit_scale(tag, row.w * 3 / 10, small_scale(sc));
+        f.text(row.x + row.w - row.h / 3 - draw.text_width(tag, tags), row.y + row.h / 2 - draw.text_height(tags) / 2, tag, tags, amber());
+      }
+    }
+  }
+}
+
+// The round talk button: filled while it talks or listens, and a ring in the
+// colour of the state otherwise.
+function talk(f: draw.Frame, label: string, sc: i32): void {
+  let r: screen.Rect = screen.talk_button(f.width, f.height);
+  let cx: i32 = r.x + r.w / 2;
+  let cy: i32 = r.y + r.h / 2;
+  let rad: i32 = r.w / 2;
+  let color: i32 = accent(label);
+  let text: i32 = ink();
+  if (label == "TALKING" || label == "LISTENING") {
+    f.ring(cx, cy, rad + rad / 10, rad / 30 + 1, color);
+    f.disc(cx, cy, rad, color);
+    text = bg();
+  } else {
+    f.disc(cx, cy, rad, surface());
+    f.ring(cx, cy, rad, rad / 14 + 1, color);
+  }
+  let ts: i32 = fit_scale(label, r.w * 7 / 10, sc * 3 / 2);
+  f.text(cx - draw.text_width(label, ts) / 2, cy - draw.text_height(ts) / 2, label, ts, text);
+}
+
+// The six boxes of the code, the keys, CANCEL and JOIN.
+function keypad(f: draw.Frame, typed: string, sc: i32): void {
+  let n: i32 = rooms.CODE_LEN;
+  let gap: i32 = f.width / 60;
+  let bw: i32 = (f.width * 8 / 10 - gap * (n - 1)) / n;
+  let bh: i32 = bw * 5 / 4;
+  let y: i32 = f.height * 3 / 10 - bh - f.height / 40;
+  for k in 0..n {
+    let bx: i32 = f.width / 10 + k * (bw + gap);
+    let edge: i32 = outline();
+    if (k == typed.len()) {
+      edge = blue();
+    }
+    f.round_rect(bx, y, bw, bh, bw / 5, edge);
+    f.round_rect(bx + 3, y + 3, bw - 6, bh - 6, bw / 5 - 3, surface());
+    if (k < typed.len()) {
+      centered(f, screen.Rect { x: bx, y: y, w: bw, h: bh }, typed.drop(k).take(1), sc * 2, ink());
+    }
+  }
+  for k in 0..screen.DELETE_KEY + 1 {
+    let key: screen.Rect = screen.key_rect(f.width, f.height, k);
+    let color: i32 = ink();
+    if (k == screen.DELETE_KEY) {
+      color = amber();
+    }
+    f.round_rect(key.x, key.y, key.w, key.h, key.w / 5, surface());
+    centered(f, key, screen.key_label(k), sc * 3 / 2, color);
+  }
+  outlined(f, screen.room_button(f.width, f.height), "CANCEL", muted(), sc);
+  if (typed.len() == n) {
+    pill(f, screen.join_button(f.width, f.height), "JOIN", blue(), bg(), sc);
+  } else {
+    pill(f, screen.join_button(f.width, f.height), "JOIN", surface(), muted(), sc);
+  }
+}

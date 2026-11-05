@@ -25,7 +25,7 @@ function utilisation_permille(s: Stats): i32 {
 }
 
 function xs_next(s: i64): i64 {
-  let x: i64 = s;
+  let x = s;
   x = x ^ x << 13;
   x = x ^ x >> 7;
   x = x ^ x << 17;
@@ -33,7 +33,7 @@ function xs_next(s: i64): i64 {
 }
 
 function xs_below(s: i64, m: i32): i32 {
-  let v: i64 = s;
+  let v = s;
   if (v < 0) {
     v = 0 - v;
   }
@@ -41,8 +41,8 @@ function xs_below(s: i64, m: i32): i32 {
 }
 
 function exp_ticks(s: i64, m: i32): i32 {
-  let u: i32 = xs_below(s, 1000) + 1;
-  let t: i32 = m * 1000 / u;
+  let u = xs_below(s, 1000) + 1;
+  let t = m * 1000 / u;
   if (t < 1) {
     t = 1;
   }
@@ -53,33 +53,33 @@ function exp_ticks(s: i64, m: i32): i32 {
 }
 
 function simulate(n: i32, mean_gap: i32, mean_svc: i32, seed: i64): Stats {
-  let s: i64 = seed;
-  let clock: i32 = 0;
-  let free_at: i32 = 0;
-  let total_wait: i32 = 0;
-  let total_system: i32 = 0;
-  let busy: i32 = 0;
-  let i: i32 = 0;
+  let s = seed;
+  let clock = 0;
+  let free_at = 0;
+  let total_wait = 0;
+  let total_system = 0;
+  let busy = 0;
+  let i = 0;
   while (i < n) {
     s = xs_next(s);
-    clock = clock + exp_ticks(s, mean_gap);
+    clock += exp_ticks(s, mean_gap);
 
-    let start: i32 = clock;
+    let start = clock;
     if (free_at > start) {
       start = free_at;
     }
-    let wait: i32 = start - clock;
+    let wait = start - clock;
 
     s = xs_next(s);
-    let svc: i32 = exp_ticks(s, mean_svc);
+    let svc = exp_ticks(s, mean_svc);
     free_at = start + svc;
 
-    total_wait = total_wait + wait;
+    total_wait += wait;
     total_system = total_system + wait + svc;
-    busy = busy + svc;
-    i = i + 1;
+    busy += svc;
+    i += 1;
   }
-  let horizon: i32 = free_at;
+  let horizon = free_at;
   if (horizon < clock) {
     horizon = clock;
   }
@@ -90,7 +90,7 @@ function simulate(n: i32, mean_gap: i32, mean_svc: i32, seed: i64): Stats {
 }
 
 function test_a_light_load_never_queues(): test.TestOutcome {
-  let st: Stats = simulate(200, 400, 10, 4242);
+  let st = simulate(200, 400, 10, 4242);
   if (mean_wait(st) != 0) {
     return test.fail("light load produced a mean wait of "
       + mean_wait(st).to_string() + " ticks");
@@ -104,12 +104,12 @@ function test_a_light_load_never_queues(): test.TestOutcome {
 
 function test_wait_grows_with_utilisation(): test.TestOutcome {
   let gaps: i32[] = [200, 100, 50, 30, 22, 18];
-  let prev_wait: i32 = -1;
-  let prev_util: i32 = -1;
+  let prev_wait = -1;
+  let prev_util = -1;
   for i in 0..gaps.len() {
-    let st: Stats = simulate(400, gaps[i], 16, 20260807);
-    let w: i32 = mean_wait(st);
-    let u: i32 = utilisation_permille(st);
+    let st = simulate(400, gaps[i], 16, 20260807);
+    let w = mean_wait(st);
+    let u = utilisation_permille(st);
     if (u < prev_util) {
       return test.fail("utilisation fell from " + prev_util.to_string()
         + " to " + u.to_string() + " as arrivals got closer");
@@ -128,14 +128,14 @@ function test_wait_grows_with_utilisation(): test.TestOutcome {
 }
 
 function test_littles_law_holds(): test.TestOutcome {
-  let st: Stats = simulate(500, 40, 25, 99991);
+  let st = simulate(500, 40, 25, 99991);
   if (st.horizon == 0) {
     return test.fail("zero horizon");
   }
-  let l_side: i32 = st.total_system * 1000 / st.horizon;
-  let w_side: i32 = st.served * 1000 / st.horizon * (st.total_system / st.served);
-  let lo: i32 = l_side - l_side / 4 - 50;
-  let hi: i32 = l_side + l_side / 4 + 50;
+  let l_side = st.total_system * 1000 / st.horizon;
+  let w_side = st.served * 1000 / st.horizon * (st.total_system / st.served);
+  let lo = l_side - l_side / 4 - 50;
+  let hi = l_side + l_side / 4 + 50;
   if (w_side < lo || w_side > hi) {
     return test.fail("Little's law: L=" + l_side.to_string()
       + " but lambda*W=" + w_side.to_string());
@@ -146,7 +146,7 @@ function test_littles_law_holds(): test.TestOutcome {
 function test_every_customer_is_served_once(): test.TestOutcome {
   let counts: i32[] = [1, 10, 137, 500];
   for i in 0..counts.len() {
-    let st: Stats = simulate(counts[i], 30, 20, 7);
+    let st = simulate(counts[i], 30, 20, 7);
     if (st.served != counts[i]) {
       return test.fail("served " + st.served.to_string() + " of "
         + counts[i].to_string());
@@ -163,7 +163,7 @@ function test_every_customer_is_served_once(): test.TestOutcome {
 }
 
 function test_system_time_dominates_wait(): test.TestOutcome {
-  let st: Stats = simulate(300, 35, 25, 5150);
+  let st = simulate(300, 35, 25, 5150);
   if (st.total_system < st.total_wait) {
     return test.fail("time in system " + st.total_system.to_string()
       + " is below waiting time " + st.total_wait.to_string());
@@ -175,8 +175,8 @@ function test_system_time_dominates_wait(): test.TestOutcome {
 }
 
 function test_runs_are_deterministic(): test.TestOutcome {
-  let a: Stats = simulate(250, 40, 25, 31337);
-  let b: Stats = simulate(250, 40, 25, 31337);
+  let a = simulate(250, 40, 25, 31337);
+  let b = simulate(250, 40, 25, 31337);
   if (a.total_wait != b.total_wait || a.horizon != b.horizon) {
     return test.fail("same seed gave different runs");
   }
@@ -187,13 +187,13 @@ function main(): i32 {
   eprint("mm1_queue — a single-server FIFO queue, wait against load");
   let gaps: i32[] = [200, 100, 50, 30, 22, 18];
   for i in 0..gaps.len() {
-    let st: Stats = simulate(400, gaps[i], 16, 20260807);
+    let st = simulate(400, gaps[i], 16, 20260807);
     eprint("  gap=" + gaps[i].to_string()
       + " util=" + utilisation_permille(st).to_string() + "/1000"
       + " mean_wait=" + mean_wait(st).to_string() + " ticks");
   }
 
-  let r: test.TestRunner = test.new("mm1_queue");
+  let r = test.new("mm1_queue");
   r = r.it("a light load never queues", test_a_light_load_never_queues);
   r = r.it("wait grows with utilisation", test_wait_grows_with_utilisation);
   r = r.it("Little's law holds", test_littles_law_holds);
