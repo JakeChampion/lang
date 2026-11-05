@@ -19297,6 +19297,11 @@ function lu_fresh_local_replacement(fx: LuFn, e: ast.Expr, body: ast.Stmt[]): bo
   return !state.repeats;
 }
 
+// A local declared once, and read only at `id`.
+function lu_one_read(fx: LuFn, id: ast.ExprIdent): boolean {
+  return lu_occ_count(fx, id.name) == 1 && lu_sole_last_read(fx, id, 1);
+}
+
 // `id` is not a parameter, has `decls` declarations, is at its last read,
 // is not captured and does not escape, and nothing assigns it.
 function lu_sole_last_read(fx: LuFn, id: ast.ExprIdent, decls: i32): boolean {
@@ -19409,7 +19414,7 @@ function lu_assigned_name_owned(fx: LuFn, src: ast.ExprIdent, seen: string[]): b
 // each have one read, and the match took p from a fresh call, so the arm
 // declares each afresh on each round of a loop.
 function lu_payload_elem_local(fx: LuFn, id: ast.ExprIdent): boolean {
-  if (lu_occ_count(fx, id.name) != 1 || !lu_sole_last_read(fx, id, 1)) {
+  if (!lu_one_read(fx, id)) {
     return false;
   }
   let Some(init) = lu_init_of(fx, id.name) else {
@@ -19418,7 +19423,7 @@ function lu_payload_elem_local(fx: LuFn, id: ast.ExprIdent): boolean {
   let ast.ExprIdent(elem) = init else {
     return false;
   };
-  if (lu_occ_count(fx, elem.name) != 1 || !lu_sole_last_read(fx, elem, 1)) {
+  if (!lu_one_read(fx, elem)) {
     return false;
   }
   for u in fx.facts.unpacked {
@@ -20195,11 +20200,13 @@ struct LuReach { noret: util.NameIndex, frames: LuFrame[], level: i32, scope: i3
 // LU_SETTLED: every path assigns name whole or leaves the list early.
 // LU_CONTINUES: a path reaches the end with the taken value still in name.
 function lu_stmts_settle(reach: LuReach, stmts: ast.Stmt[], name: string): i32 {
+  let chain = LuChain { flag: "", settles: true, result: LU_NOT_ARM };
   for st in stmts {
     if (lu_assigns_whole(st, name)) {
       return LU_SETTLED;
     }
-    let r = lu_branch_settle(reach, st, name);
+    chain = lu_chain_next(reach, st, name, chain);
+    let r = lu_settle_step(reach, st, name, chain);
     if (r == LU_LIVE || r == LU_SETTLED) {
       return r;
     }
@@ -20221,6 +20228,160 @@ function lu_stmts_settle(reach: LuReach, stmts: ast.Stmt[], name: string): i32 {
 }
 
 const LU_NOT_BRANCH: i32 = 3;
+
+const LU_NOT_ARM: i32 = LU_NOT_BRANCH;
+
+// The statement as an arm of the chain, else as a branch.
+function lu_settle_step(reach: LuReach, st: ast.Stmt, name: string, chain: LuChain): i32 {
+  if (chain.result != LU_NOT_ARM) {
+    return chain.result;
+  }
+  return lu_branch_settle(reach, st, name);
+}
+
+const LU_ARM_GUARDED: i32 = 1;
+
+const LU_ARM_ALWAYS: i32 = 2;
+
+// A chain of arms on a flag, as the parser lowers a tuple pattern:
+// `let flag = false;` and then `if (!flag && ...) { ...; flag = true; ... }`
+// for each arm. A path that does not set the flag goes on to the next arm.
+// `settles`: each path of the arms so far that sets the flag settles.
+// `result`: LU_NOT_ARM when the statement is not an arm, else as
+// lu_stmts_settle.
+struct LuChain { flag: string, settles: boolean, result: i32 }
+
+// The chain after `st`. An arm that sets the flag on each path that enters
+// it ends the chain: when each arm settles, so does the chain.
+function lu_chain_next(reach: LuReach, st: ast.Stmt, name: string, chain: LuChain): LuChain {
+  let kind = lu_flag_arm_kind(st, chain.flag);
+  let ast.StmtIf(f) = st else {
+    return lu_chain_after(st, chain);
+  };
+  if (kind == LU_NOT_ARM) {
+    return lu_chain_after(st, chain);
+  }
+  if (astwalk.count_ident_expr(f.cond, name) > 0) {
+    return LuChain { ...chain, result: LU_LIVE };
+  }
+  let r = lu_flag_arm_settle(reach, f.then_body, name, chain.flag);
+  if (r == LU_LIVE) {
+    return LuChain { ...chain, result: LU_LIVE };
+  }
+  let settles = chain.settles && r == LU_SETTLED;
+  if (kind == LU_ARM_ALWAYS && settles) {
+    return LuChain { ...chain, result: LU_SETTLED };
+  }
+  return LuChain { flag: chain.flag, settles: settles, result: LU_CONTINUES };
+}
+
+// `let flag = false` starts a chain. Any other mention of the flag ends it.
+function lu_chain_after(st: ast.Stmt, chain: LuChain): LuChain {
+  if let ast.StmtVar(v) = st {
+    if let ast.ExprBool(b) = v.init {
+      if (!b.value && !name_has_comma(v.name)) {
+        return LuChain { flag: v.name, settles: true, result: LU_NOT_ARM };
+      }
+    }
+  }
+  if (chain.flag.len() > 0 && lu_mentions(st, chain.flag) > 0) {
+    return LuChain { flag: "", settles: true, result: LU_NOT_ARM };
+  }
+  return LuChain { ...chain, result: LU_NOT_ARM };
+}
+
+// LU_ARM_ALWAYS: `if (true)` or `if (!flag)` that sets the flag first.
+// LU_ARM_GUARDED: another `if (!flag && ...)` with no else.
+function lu_flag_arm_kind(st: ast.Stmt, flag: string): i32 {
+  let ast.StmtIf(f) = st else {
+    return LU_NOT_ARM;
+  };
+  if (flag.len() == 0 || f.else_body.len() > 0 || f.then_body.len() == 0 || !lu_flag_gated(f.cond, flag)) {
+    return LU_NOT_ARM;
+  }
+  if (lu_sets_flag(f.then_body[0], flag) && lu_flag_test(f.cond, flag)) {
+    return LU_ARM_ALWAYS;
+  }
+  return LU_ARM_GUARDED;
+}
+
+// `true`, `!flag`, or one of them followed by `&& e` where e does not
+// mention the flag.
+function lu_flag_gated(e: ast.Expr, flag: string): boolean {
+  if let ast.ExprBinary(b) = e {
+    return b.op == "&&" && lu_flag_gated(b.left, flag) && astwalk.count_ident_expr(b.right, flag) == 0;
+  }
+  return lu_flag_test(e, flag);
+}
+
+function lu_flag_test(e: ast.Expr, flag: string): boolean {
+  if let ast.ExprBool(b) = e {
+    return b.value;
+  }
+  if let ast.ExprUnary(u) = e {
+    if let ast.ExprIdent(id) = u.operand {
+      return u.op == "!" && id.name == flag;
+    }
+  }
+  return false;
+}
+
+function lu_sets_flag(st: ast.Stmt, flag: string): boolean {
+  if let ast.StmtAssign(a) = st {
+    if let ast.ExprBool(b) = a.value {
+      return a.target == flag && a.op.len() == 0 && b.value;
+    }
+  }
+  return false;
+}
+
+// The paths of an arm body that set the flag. The body binds names first,
+// and then sets the flag, or ends in `if (guard) { flag = true; ... }`.
+// A body of another shape is settled on each of its paths.
+function lu_flag_arm_settle(reach: LuReach, body: ast.Stmt[], name: string, flag: string): i32 {
+  let k = lu_first_nonbinding(body, name, flag);
+  if (k < body.len() && lu_sets_flag(body[k], flag)) {
+    return lu_stmts_settle(reach, lu_stmts_from(body, k), name);
+  }
+  if (k == body.len() - 1 && lu_guard_commits(body[k], name, flag)) {
+    if let ast.StmtIf(g) = body[k] {
+      return lu_stmts_settle(reach, g.then_body, name);
+    }
+  }
+  return lu_stmts_settle(reach, body, name);
+}
+
+function lu_first_nonbinding(body: ast.Stmt[], name: string, flag: string): i32 {
+  for i in 0..body.len() {
+    if (!lu_binds_only(body[i], name, flag)) {
+      return i;
+    }
+  }
+  return body.len();
+}
+
+// `if (guard) { flag = true; ... }`, where the guard does not read name.
+function lu_guard_commits(st: ast.Stmt, name: string, flag: string): boolean {
+  let ast.StmtIf(g) = st else {
+    return false;
+  };
+  return g.else_body.len() == 0 && g.then_body.len() > 0 && lu_sets_flag(g.then_body[0], flag) && astwalk.count_ident_expr(g.cond, name) == 0;
+}
+
+function lu_binds_only(st: ast.Stmt, name: string, flag: string): boolean {
+  if let ast.StmtVar(_) = st {
+    return lu_mentions(st, name) == 0 && lu_mentions(st, flag) == 0;
+  }
+  return false;
+}
+
+function lu_stmts_from(stmts: ast.Stmt[], k: i32): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  for i in k..stmts.len() {
+    out = out.append(stmts[i]);
+  }
+  return out;
+}
 
 // A match or an if statement settles when each of its paths settles, and is
 // live when one path reads name. Any other statement is LU_NOT_BRANCH.
