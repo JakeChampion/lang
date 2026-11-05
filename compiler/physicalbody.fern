@@ -77,12 +77,12 @@ pub function metadata(lowered: Lowered): Metadata {
 
 pub function lowered_origins(lowered: Lowered, producer: i32): Origin[] {
   let out: Origin[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for body in lowered.bodies {
     let symbol: string = if (i < lowered.declarations.len()) { lowered.declarations[i] } else { body.name };
     let helper: Option[Helper] = if (i < lowered.helper_types.len()) { lowered.helper_types[i] } else { None };
     out = out.append(Origin { producer: producer, symbol: symbol, helper: helper });
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -115,17 +115,17 @@ function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
   if (sempair.three_reference_tuple(t)) {
     return -1;
   }
-  let at: i32 = semrecords.find_enum(m.enums, t);
+  let at = semrecords.find_enum(m.enums, t);
   if (at < 0 || semscalarreturn.variant_in_lanes(m.enums[at])) {
     return 0;
   }
-  let variants: semrecords.Variant[] = m.enums[at].variants;
-  let mask: i32 = 0;
+  let variants = m.enums[at].variants;
+  let mask = 0;
   for tag in 0..variants.len() {
-    let v: semrecords.Variant = variants[tag];
-    let held: boolean = false;
+    let v = variants[tag];
+    let held = false;
     if (v.fields.len() == 1) {
-      let parts: typeinfo.Type[] = sempair.split_parts(m.records, m.finalizers, v.fields[0].ty);
+      let parts = sempair.split_parts(m.records, m.finalizers, v.fields[0].ty);
       if (parts.len() == 2) {
         held = ssasem.reference(parts[slot]);
       } else {
@@ -133,7 +133,7 @@ function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
       }
     }
     if (held && tag >= 31) {
-      return 0 - 2;
+      return -2;
     }
     if (held) {
       mask = mask | 1 << tag;
@@ -150,7 +150,7 @@ function pair_parts(m: Metadata, t: typeinfo.Type): typeinfo.Type[] {
 }
 
 function pair_first(m: Metadata, t: typeinfo.Type): boolean {
-  let parts: typeinfo.Type[] = pair_parts(m, t);
+  let parts = pair_parts(m, t);
   return (parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.reference(parts[0]);
 }
 
@@ -158,22 +158,22 @@ function pair_second(m: Metadata, t: typeinfo.Type): i32 {
   if (ssasem.is_wide(t)) {
     return 0;
   }
-  let parts: typeinfo.Type[] = pair_parts(m, t);
+  let parts = pair_parts(m, t);
   if (parts.len() > 0) {
     if ((parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.reference(parts[1])) {
       return -1;
     }
     return 0;
   }
-  let at: i32 = semrecords.find_enum(m.enums, t);
+  let at = semrecords.find_enum(m.enums, t);
   if (at < 0) {
     return -2;
   }
   if (semscalarreturn.variant_in_lanes(m.enums[at])) {
     return 0;
   }
-  let mask: i32 = 0;
-  let tag: i32 = 0;
+  let mask = 0;
+  let tag = 0;
   for v in m.enums[at].variants {
     if (v.fields.len() == 1 && ssasem.reference(v.fields[0].ty)) {
       if (tag >= 31) {
@@ -181,7 +181,7 @@ function pair_second(m: Metadata, t: typeinfo.Type): i32 {
       }
       mask = mask | 1 << tag;
     }
-    tag = tag + 1;
+    tag += 1;
   }
   return mask;
 }

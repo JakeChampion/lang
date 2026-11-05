@@ -61,7 +61,7 @@ function moves(): void {
       move_pair(width, suffix, regs, i, j);
       arithmetic_pairs(width, suffix, regs, i, j);
       unary_moves(width, suffix, regs[i], i);
-      i = i + 1;
+      i += 1;
     }
   }
 }
@@ -135,7 +135,7 @@ pub function run(output: string): void {
       require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1);
       require(body.lines[at].ends_with(body.lines[op.target].split(":")[0]));
     }
-    at = at + 1;
+    at += 1;
   }
   moves();
   memory();

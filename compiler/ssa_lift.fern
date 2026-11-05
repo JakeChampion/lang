@@ -15,20 +15,20 @@ function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
 
 function drop_last(a: i32[]): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len() - 1) {
     out = out.append(a[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function drop_last2(a: i32[]): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len() - 2) {
     out = out.append(a[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -41,16 +41,16 @@ function put_at(own xs: i32[], d: i32, v: i32): i32[] {
 }
 
 function scope_edges(link: i32[], last: i32): i32[] {
-  let n: i32 = 0;
-  let e: i32 = last;
+  let n = 0;
+  let e = last;
   while (e >= 0) {
-    n = n + 1;
+    n += 1;
     e = link[e];
   }
-  let out: i32[] = __alloc_i32(n);
+  let out = __alloc_i32(n);
   e = last;
   while (e >= 0) {
-    n = n - 1;
+    n -= 1;
     out = out.with(n, e);
     e = link[e];
   }
@@ -147,10 +147,10 @@ function bin_sym(k: string): string {
 
 function drop_n(a: i32[], n: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len() - n) {
     out = out.append(a[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -210,44 +210,44 @@ function flat_arm_op(op: ir.Op): boolean {
 pub struct KindTable { names: string[], classes: i32[], argc: i32[], host: boolean[], pops: i32[] }
 
 pub function kind_table(): KindTable {
-  let facts: KindFacts = kind_facts();
+  let facts = kind_facts();
   let names: string[] = [];
   let classes: i32[] = [];
   let argc: i32[] = [];
   let host: boolean[] = [];
-  let id: i32 = 0;
+  let id = 0;
   while (id < 1024) {
-    let k: string = ir.kind_name(id);
-    let at: i32 = facts.ix.find(k);
-    let listed: i32 = 0;
-    let n: i32 = 0;
-    let h: boolean = false;
+    let k = ir.kind_name(id);
+    let at = facts.ix.find(k);
+    let listed = 0;
+    let n = 0;
+    let h = false;
     if (at >= 0) {
       listed = facts.bits[at];
       n = facts.argc[at];
       h = facts.host[at];
     }
-    let bin: boolean = bin_sym(k) != "";
-    let mem: boolean = (listed & 2) != 0 || n > 0 || h;
-    let flt: boolean = (listed & 4) != 0 || fbin_sym(k) != "";
-    let c: i32 = listed & 16;
+    let bin = bin_sym(k) != "";
+    let mem = (listed & 2) != 0 || n > 0 || h;
+    let flt = (listed & 4) != 0 || fbin_sym(k) != "";
+    let c = listed & 16;
     if (bin || (listed & 17) != 0 || mem || flt) {
-      c = c + 1;
+      c += 1;
     }
     if (mem) {
-      c = c + 2;
+      c += 2;
     }
     if (flt) {
-      c = c + 4;
+      c += 4;
     }
     if (bin) {
-      c = c + 8;
+      c += 8;
     }
     names = names.append(k);
     classes = classes.append(c);
     argc = argc.append(n);
     host = host.append(h);
-    id = id + 1;
+    id += 1;
   }
   return KindTable { names: names, classes: classes, argc: argc, host: host, pops: ir.pops_by_kind() };
 }
@@ -286,7 +286,7 @@ function kind_facts(): KindFacts {
     "const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
     "i32_to_f64", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
   ];
-  let f: KindFacts = KindFacts { ix: util.name_index([]), bits: [], argc: [], host: [] };
+  let f = KindFacts { ix: util.name_index([]), bits: [], argc: [], host: [] };
   f = listed(f, spine, 1, 0, false);
   f = listed(f, mem, 2, 0, false);
   f = listed(f, two, 0, 2, false);
@@ -300,11 +300,11 @@ function kind_facts(): KindFacts {
 
 function listed(own f: KindFacts, names: string[], bit: i32, argc: i32, host: boolean): KindFacts {
   for n in names {
-    let at: i32 = f.ix.find(n);
+    let at = f.ix.find(n);
     if (at < 0) {
       f = KindFacts { ix: f.ix.added(n), bits: f.bits.append(bit), argc: f.argc.append(argc), host: f.host.append(host) };
     } else {
-      let a: i32 = f.argc[at];
+      let a = f.argc[at];
       if (a == 0) {
         a = argc;
       }
@@ -323,7 +323,7 @@ pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: 
   if (lane_slots.len() == 0 || l.func.blocks.len() == 0) {
     return Ok(l);
   }
-  let entry: ssa.SBlock = l.func.blocks[0];
+  let entry = l.func.blocks[0];
   let insts: ssa.SInst[] = [];
   for ins in entry.insts {
     if (ins.kind_tag == 6 && util.index_of_i32(lane_slots, ins.imm) >= 0) {
@@ -331,27 +331,27 @@ pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: 
     }
     insts = insts.append(ins);
   }
-  let blocks: ssa.SBlock[] = l.func.blocks.with(0, ssa.SBlock { ...entry, insts: insts });
+  let blocks = l.func.blocks.with(0, ssa.SBlock { ...entry, insts: insts });
   return Ok(Lifted { ...l, func: ssa.SFunc { ...l.func, blocks: blocks } });
 }
 
 function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
-  let argc: i32 = ir.op_pops(op);
+  let argc = ir.op_pops(op);
   if (stack.len() < argc) {
     return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false };
   }
   let args: i32[] = [];
-  let i: i32 = stack.len() - argc;
+  let i = stack.len() - argc;
   while (i < stack.len()) {
     args = args.append(stack[i]);
-    i = i + 1;
+    i += 1;
   }
   stack = drop_n(stack, argc);
-  let what: string = k;
+  let what = k;
   if (k == "vextract" || k == "vreplace") {
     what = k + ":" + util.i32_to_string(op.i32_imm);
   }
-  let kind: i32 = 10;
+  let kind = 10;
   if (ir.lane_writes(op.kind_tag)) {
     kind = 62;
   } else if (argc == 2) {
@@ -359,8 +359,8 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
   } else if (argc == 3) {
     kind = 61;
   }
-  let v: i32 = nvals;
-  nvals = nvals + 1;
+  let v = nvals;
+  nvals += 1;
   insts = insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: op.width, str: what });
   if (!ir.lane_writes(op.kind_tag)) {
     stack = stack.append(v);
@@ -369,7 +369,7 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
 }
 
 function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
-  let argc: i32 = 1;
+  let argc = 1;
   if (fbin_sym(k) != "") {
     argc = 2;
   }
@@ -377,26 +377,26 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
     return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false };
   }
   let args: i32[] = [];
-  let i: i32 = stack.len() - argc;
+  let i = stack.len() - argc;
   while (i < stack.len()) {
     args = args.append(stack[i]);
-    i = i + 1;
+    i += 1;
   }
   stack = drop_n(stack, argc);
-  let v: i32 = nvals;
-  nvals = nvals + 1;
+  let v = nvals;
+  nvals += 1;
   if (fbin_sym(k) != "") {
     insts = insts.append(ssa.SInst { kind_tag: 9, result: v, args: args, imm: 64, str: k });
   } else {
-    let what: string = k;
+    let what = k;
     if (k == "i32_to_f64") {
-      let w: i32 = register_width(op.width);
+      let w = register_width(op.width);
       if (w == 0) {
         w = 32;
       }
       what = k + ":" + util.i32_to_string(w);
     }
-    let flag: i32 = 0;
+    let flag = 0;
     if (op.unsigned) {
       flag = 1;
     }
@@ -432,12 +432,12 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_pop_push(lv, 1, 10, 0, k);
   }
   if (k == "store_i64" || k == "store_ptr" || k == "store_i32") {
-    let stored: LiftVals = lift_store(lv, 41, 0);
+    let stored = lift_store(lv, 41, 0);
     if (!stored.ok) {
       return stored;
     }
     if (k == "store_i32") {
-      let last: i32 = stored.insts.len() - 1;
+      let last = stored.insts.len() - 1;
       stored = LiftVals { ...stored, insts: stored.insts.with(last, ssa.SInst { ...stored.insts[last], str: "i32" }) };
     }
     return lift_pop_push(stored, 0, 1, 0, "");
@@ -525,7 +525,7 @@ function mark_packed(lv: LiftVals, op: ir.Op): LiftVals {
   if (!lv.ok || !ir.is_packed(op)) {
     return lv;
   }
-  let last: i32 = lv.insts.len() - 1;
+  let last = lv.insts.len() - 1;
   return LiftVals { ...lv, insts: lv.insts.with(last, ssa.SInst { ...lv.insts[last], str: "u8" }) };
 }
 
@@ -556,11 +556,11 @@ function ld_off(k: string, op: ir.Op): i32 {
   if (k == "tuple_get") {
     return op.i32_imm * 8;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
-  let lv: LiftVals = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
+  let lv = LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: true };
   if (kt.host[tag]) {
     return lift_prod_host(k, op, lv);
   }
@@ -589,25 +589,25 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
 }
 
 function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
-  let argc: i32 = op.i32_imm;
+  let argc = op.i32_imm;
   if (lv.stack.len() < argc + 1) {
     return LiftVals { ...lv, ok: false };
   }
-  let target: i32 = lv.stack[lv.stack.len() - 1];
+  let target = lv.stack[lv.stack.len() - 1];
   let args: i32[] = [target];
-  let d: i32 = argc;
+  let d = argc;
   while (d >= 1) {
     args = args.append(lv.stack[lv.stack.len() - 1 - d]);
-    d = d - 1;
+    d -= 1;
   }
-  let stack: i32[] = lv.stack;
-  let e: i32 = 0;
+  let stack = lv.stack;
+  let e = 0;
   while (e <= argc) {
     stack = drop_last(stack);
-    e = e + 1;
+    e += 1;
   }
-  let v: i32 = lv.nvals;
-  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 56, result: v, args: args, imm: op.i64_imm as i32, str: "" });
+  let v = lv.nvals;
+  let insts = lv.insts.append(ssa.SInst { kind_tag: 56, result: v, args: args, imm: op.i64_imm as i32, str: "" });
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 
@@ -663,8 +663,8 @@ function lift_store_keep(lv: LiftVals, kind: i32): LiftVals {
   if (lv.stack.len() < 3) {
     return LiftVals { ...lv, ok: false };
   }
-  let val: i32 = lv.stack[lv.stack.len() - 1];
-  let stored: LiftVals = lift_store(lv, kind, 0);
+  let val = lv.stack[lv.stack.len() - 1];
+  let stored = lift_store(lv, kind, 0);
   if (!stored.ok) {
     return stored;
   }
@@ -701,24 +701,24 @@ function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string
     return LiftVals { ...lv, ok: false };
   }
   let args: i32[] = [];
-  let d: i32 = npop - 1;
+  let d = npop - 1;
   while (d >= 0) {
     args = args.append(lv.stack[lv.stack.len() - 1 - d]);
-    d = d - 1;
+    d -= 1;
   }
-  let stack: i32[] = lv.stack;
-  let e: i32 = 0;
+  let stack = lv.stack;
+  let e = 0;
   while (e < npop) {
     stack = drop_last(stack);
-    e = e + 1;
+    e += 1;
   }
-  let v: i32 = lv.nvals;
-  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str });
+  let v = lv.nvals;
+  let insts = lv.insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str });
   return LiftVals { nvals: v + 1, stack: stack.append(v), insts: insts, ok: true };
 }
 
 function lift_line(op: ir.Op, lv: LiftVals): LiftVals {
-  let pushed: LiftVals = lift_pop_push(lv, 0, 35, op.i32_imm, util.i64_to_string(op.i64_imm));
+  let pushed = lift_pop_push(lv, 0, 35, op.i32_imm, util.i64_to_string(op.i64_imm));
   if (!pushed.ok) {
     return pushed;
   }
@@ -726,11 +726,11 @@ function lift_line(op: ir.Op, lv: LiftVals): LiftVals {
 }
 
 function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
-  let npop: i32 = 2;
+  let npop = 2;
   if (kind == 43 || kind == 53 || kind == 55) {
     npop = 3;
   }
-  let pushed: LiftVals = lift_pop_push(lv, npop, kind, imm, "");
+  let pushed = lift_pop_push(lv, npop, kind, imm, "");
   if (!pushed.ok) {
     return pushed;
   }
@@ -741,12 +741,12 @@ function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
   if (lv.stack.len() < 1) {
     return LiftVals { ...lv, ok: false };
   }
-  let box: i32 = lv.stack[lv.stack.len() - 1];
-  let shape: LiftVals = lift_pop_push(lv, 0, 46, 0, op.str);
+  let box = lv.stack[lv.stack.len() - 1];
+  let shape = lift_pop_push(lv, 0, 46, 0, op.str);
   if (!shape.ok) {
     return shape;
   }
-  let stored: LiftVals = lift_store(shape, 41, 0);
+  let stored = lift_store(shape, 41, 0);
   if (!stored.ok) {
     return stored;
   }
@@ -754,11 +754,11 @@ function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
 }
 
 function lift_variant_is_prod(op: ir.Op, lv: LiftVals): LiftVals {
-  let tag: LiftVals = lift_pop_push(lv, 1, 40, 0, "");
+  let tag = lift_pop_push(lv, 1, 40, 0, "");
   if (!tag.ok) {
     return tag;
   }
-  let shape: LiftVals = lift_pop_push(tag, 0, 46, 0, op.str);
+  let shape = lift_pop_push(tag, 0, 46, 0, op.str);
   return lift_pop_push(shape, 2, 9, 0, "eq");
 }
 
@@ -767,33 +767,33 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
     return LiftVals { ...lv, ok: false };
   }
   let elems: i32[] = [];
-  let d: i32 = n - 1;
+  let d = n - 1;
   while (d >= 0) {
     elems = elems.append(lv.stack[lv.stack.len() - 1 - d]);
-    d = d - 1;
+    d -= 1;
   }
-  let stack: i32[] = lv.stack;
-  let e: i32 = 0;
+  let stack = lv.stack;
+  let e = 0;
   while (e < n) {
     stack = drop_last(stack);
-    e = e + 1;
+    e += 1;
   }
-  let nvals: i32 = lv.nvals;
-  let box: i32 = nvals;
-  nvals = nvals + 1;
-  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: cap, str: "" });
+  let nvals = lv.nvals;
+  let box = nvals;
+  nvals += 1;
+  let insts = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: cap, str: "" });
   if (shape.len() > 0) {
-    let sh: i32 = nvals;
-    nvals = nvals + 1;
+    let sh = nvals;
+    nvals += 1;
     insts = insts.append(ssa.SInst { kind_tag: 46, result: sh, args: [], imm: 0, str: shape });
     insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, sh], imm: 0, str: "" });
-    nvals = nvals + 1;
+    nvals += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, elems[i]], imm: first + i * 8, str: "" });
-    nvals = nvals + 1;
-    i = i + 1;
+    nvals += 1;
+    i += 1;
   }
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
@@ -803,59 +803,59 @@ function lift_packed_make(n: i32, lv: LiftVals): LiftVals {
     return LiftVals { ...lv, ok: false };
   }
   let elems: i32[] = [];
-  let d: i32 = n - 1;
+  let d = n - 1;
   while (d >= 0) {
     elems = elems.append(lv.stack[lv.stack.len() - 1 - d]);
-    d = d - 1;
+    d -= 1;
   }
-  let stack: i32[] = lv.stack;
-  let e: i32 = 0;
+  let stack = lv.stack;
+  let e = 0;
   while (e < n) {
     stack = drop_last(stack);
-    e = e + 1;
+    e += 1;
   }
-  let box: i32 = lv.nvals;
-  let len: i32 = box + 1;
-  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: (n + 7) / 8, str: "" });
+  let box = lv.nvals;
+  let len = box + 1;
+  let insts = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: (n + 7) / 8, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: 1, result: len, args: [], imm: n, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: 41, result: len + 1, args: [box, len], imm: 0, str: "" });
-  let nvals: i32 = len + 2;
-  let i: i32 = 0;
+  let nvals = len + 2;
+  let i = 0;
   while (i < n) {
     insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, elems[i]], imm: 8 + i, str: "u8" });
-    nvals = nvals + 1;
-    i = i + 1;
+    nvals += 1;
+    i += 1;
   }
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
 
 function lift_empty_arr(lv: LiftVals): LiftVals {
-  let box: i32 = lv.nvals;
-  let zero: i32 = box + 1;
-  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: 4, str: "" });
+  let box = lv.nvals;
+  let zero = box + 1;
+  let insts = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: 4, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: 41, result: zero + 1, args: [box, zero], imm: 0, str: "" });
   return LiftVals { nvals: zero + 2, stack: lv.stack.append(box), insts: insts, ok: true };
 }
 
 function lift_opt_make_prod(tag: i32, lv: LiftVals): LiftVals {
-  let stack: i32[] = lv.stack;
+  let stack = lv.stack;
   if (stack.len() < 1) {
     return LiftVals { ...lv, ok: false };
   }
-  let payload: i32 = stack[stack.len() - 1];
+  let payload = stack[stack.len() - 1];
   stack = drop_last(stack);
-  let nvals: i32 = lv.nvals;
-  let box: i32 = nvals;
-  nvals = nvals + 1;
-  let insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: 2, str: "" });
-  let tv: i32 = nvals;
-  nvals = nvals + 1;
+  let nvals = lv.nvals;
+  let box = nvals;
+  nvals += 1;
+  let insts = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: 2, str: "" });
+  let tv = nvals;
+  nvals += 1;
   insts = insts.append(ssa.SInst { kind_tag: 1, result: tv, args: [], imm: tag, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, tv], imm: 0, str: "" });
-  nvals = nvals + 1;
+  nvals += 1;
   insts = insts.append(ssa.SInst { kind_tag: 41, result: nvals, args: [box, payload], imm: 8, str: "" });
-  nvals = nvals + 1;
+  nvals += 1;
   return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
 }
 
@@ -866,18 +866,18 @@ function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
   if ((k == "int_extend" || k == "int_wrap") && op.width == ir.width_ptr()) {
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
   }
-  let a: i32 = stack[stack.len() - 1];
+  let a = stack[stack.len() - 1];
   stack = drop_last(stack);
-  let what: string = k;
+  let what = k;
   if (k == "int_cast") {
     what = "int_cast:" + op.str;
   }
-  let flag: i32 = 0;
+  let flag = 0;
   if (op.unsigned) {
     flag = 1;
   }
-  let v: i32 = nvals;
-  nvals = nvals + 1;
+  let v = nvals;
+  nvals += 1;
   cur_insts = cur_insts.append(ssa.SInst { kind_tag: 10, result: v, args: [a], imm: flag, str: what });
   stack = stack.append(v);
   return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
@@ -891,13 +891,13 @@ function register_width(width: i32): i32 {
 }
 
 function lift_const_text_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[]): LiftVals {
-  let width: i32 = 0;
+  let width = 0;
   if (k == "const_i64" || op.width == ir.width_ptr()) {
     width = 64;
   }
-  let v: i32 = nvals;
-  nvals = nvals + 1;
-  let text: string = op.str;
+  let v = nvals;
+  nvals += 1;
+  let text = op.str;
   if (k == "const_i64") {
     text = ir.const_i64_text(op);
   }
@@ -914,37 +914,37 @@ function tracked(xs: i32[], on: boolean, x: i32): i32[] {
 }
 
 function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): Result[Lifted, string] {
-  let nvals: i32 = 0;
+  let nvals = 0;
   let seen_vals: i32[] = [];
   let seen_slots: i32[] = [];
   let source_returns: ReturnPos[] = [];
   let source_values: i64[] = [];
-  let next_blk: i32 = 0;
-  let bail: string = "";
+  let next_blk = 0;
+  let bail = "";
 
   let blocks: ssa.SBlock[] = [];
-  let cur_id: i32 = next_blk;
-  next_blk = next_blk + 1;
+  let cur_id = next_blk;
+  next_blk += 1;
   let cur_insts: ssa.SInst[] = [];
   let cur_preds: i32[] = [];
-  let cur_term: ssa.STerm = STerm_none();
-  let cur_dead: boolean = false;
+  let cur_term = STerm_none();
+  let cur_dead = false;
 
   let stack: i32[] = [];
   let slots: i32[] = [];
-  let ok: boolean = true;
+  let ok = true;
 
-  let p: i32 = 0;
+  let p = 0;
   while (p < nparams) {
-    let pv: i32 = nvals;
-    nvals = nvals + 1;
+    let pv = nvals;
+    nvals += 1;
     cur_insts = cur_insts.append(ssa.SInst { kind_tag: 6, result: pv, args: [], imm: p, str: "" });
     slots = slots.append(pv);
-    p = p + 1;
+    p += 1;
   }
   while (slots.len() < nslots) {
-    let zv: i32 = nvals;
-    nvals = nvals + 1;
+    let zv = nvals;
+    nvals += 1;
     cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: zv, args: [], imm: 0, str: "" });
     slots = slots.append(zv);
   }
@@ -962,25 +962,25 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let sc_tl_from: i32[] = [];
   let sc_lp_from: i32[] = [];
   let sc_op: i32[] = [];
-  let sc_n: i32 = 0;
-  let sc_outer_loop: i32 = 0 - 1;
+  let sc_n = 0;
+  let sc_outer_loop: i32 = -1;
 
-  let slot_mark: i32[] = filled(nslots, 0 - 1);
-  let slot_pos: i32[] = filled(nslots, 0 - 1);
+  let slot_mark = filled(nslots, -1);
+  let slot_pos = filled(nslots, -1);
   let matb: i32[] = [];
   let dl_slot: i32[] = [];
   let dl_old: i32[] = [];
   let dl_prev: i32[] = [];
-  let dl_n: i32 = 0;
+  let dl_n = 0;
   let tl_slot: i32[] = [];
   let tl_val: i32[] = [];
   let tl_old: i32[] = [];
   let tl_prev: i32[] = [];
-  let tl_n: i32 = 0;
+  let tl_n = 0;
   let lp_slot: i32[] = [];
   let lp_phi: i32[] = [];
   let lp_pre: i32[] = [];
-  let lp_n: i32 = 0;
+  let lp_n = 0;
 
   let edge_link: i32[] = [];
   let edge_block: i32[] = [];
@@ -988,58 +988,58 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let ep_slot: i32[] = [];
   let ep_val: i32[] = [];
 
-  let t_block: i32 = ir.K_BLOCK;
-  let t_br: i32 = ir.K_BR;
-  let t_brif: i32 = ir.K_BRIF;
-  let t_call_direct: i32 = ir.K_CALL_DIRECT;
-  let t_const_f64: i32 = ir.K_CONST_F64;
-  let t_const_i32: i32 = ir.K_CONST_I32;
-  let t_ptr_width: i32 = ir.K_PTR_WIDTH;
-  let t_const_i32_text: i32 = ir.K_CONST_I32_TEXT;
-  let t_const_i64: i32 = ir.K_CONST_I64;
-  let t_drop: i32 = ir.K_DROP;
-  let t_dyn_dispatch: i32 = ir.K_DYN_DISPATCH;
-  let t_else: i32 = ir.K_ELSE;
-  let t_end: i32 = ir.K_END;
-  let t_if: i32 = ir.K_IF;
-  let t_int_cast: i32 = ir.K_INT_CAST;
-  let t_int_extend: i32 = ir.K_INT_EXTEND;
-  let t_int_wrap: i32 = ir.K_INT_WRAP;
-  let t_load_local: i32 = ir.K_LOAD_LOCAL;
-  let t_loop: i32 = ir.K_LOOP;
-  let t_not: i32 = ir.K_NOT;
-  let t_return: i32 = ir.K_RETURN;
-  let t_store_local: i32 = ir.K_STORE_LOCAL;
-  let t_tee_local: i32 = ir.K_TEE_LOCAL;
-  let t_u32_wrap: i32 = ir.K_U32_WRAP;
+  let t_block = ir.K_BLOCK;
+  let t_br = ir.K_BR;
+  let t_brif = ir.K_BRIF;
+  let t_call_direct = ir.K_CALL_DIRECT;
+  let t_const_f64 = ir.K_CONST_F64;
+  let t_const_i32 = ir.K_CONST_I32;
+  let t_ptr_width = ir.K_PTR_WIDTH;
+  let t_const_i32_text = ir.K_CONST_I32_TEXT;
+  let t_const_i64 = ir.K_CONST_I64;
+  let t_drop = ir.K_DROP;
+  let t_dyn_dispatch = ir.K_DYN_DISPATCH;
+  let t_else = ir.K_ELSE;
+  let t_end = ir.K_END;
+  let t_if = ir.K_IF;
+  let t_int_cast = ir.K_INT_CAST;
+  let t_int_extend = ir.K_INT_EXTEND;
+  let t_int_wrap = ir.K_INT_WRAP;
+  let t_load_local = ir.K_LOAD_LOCAL;
+  let t_loop = ir.K_LOOP;
+  let t_not = ir.K_NOT;
+  let t_return = ir.K_RETURN;
+  let t_store_local = ir.K_STORE_LOCAL;
+  let t_tee_local = ir.K_TEE_LOCAL;
+  let t_u32_wrap = ir.K_U32_WRAP;
   let scan_tags: i32[] = [t_block, t_loop, t_if, t_end, t_store_local, t_tee_local];
-  let last_read: i32[] = last_reads(ops, nslots, t_load_local, t_dyn_dispatch);
-  let i: i32 = 0;
+  let last_read = last_reads(ops, nslots, t_load_local, t_dyn_dispatch);
+  let i = 0;
   while (i < ops.len() && ok) {
-    let op: ir.Op = ops[i];
-    let tag: i32 = op.kind_tag;
+    let op = ops[i];
+    let tag = op.kind_tag;
     if (tag < 0 || tag >= kt.names.len()) {
       ok = false;
       bail = "invalid#" + util.i32_to_string(tag);
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let k: string = kt.names[tag];
-    let cls: i32 = kt.classes[tag];
+    let k = kt.names[tag];
+    let cls = kt.classes[tag];
 
     if (cur_term.kind_tag != 0 && tag != t_else && tag != t_end) {
-      i = i + 1;
+      i += 1;
       continue;
     }
 
     let old_vals = nvals;
     if (tag == t_ptr_width) {
-      let pv: i32 = nvals;
-      nvals = nvals + 1;
+      let pv = nvals;
+      nvals += 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: pv, args: [], imm: 8, str: "" });
       stack = stack.append(pv);
     } else if ((cls & 1) == 0 && flat_arm_op(op)) {
-      let lv: LiftVals = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops_by(kt.pops, op), 59, i, flat_name(k, op));
+      let lv = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops_by(kt.pops, op), 59, i, flat_name(k, op));
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
@@ -1047,42 +1047,42 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     } else if ((cls & 1) == 0) {
       ok = false;
     } else if (tag == t_const_i32_text || tag == t_const_i64) {
-      let lv: LiftVals = lift_const_text_prod(k, op, nvals, stack, []);
+      let lv = lift_const_text_prod(k, op, nvals, stack, []);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
     } else if (tag == t_int_extend || tag == t_int_wrap || tag == t_int_cast || tag == t_u32_wrap) {
-      let lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, [], ok);
+      let lv = lift_int_narrow_prod(k, op, nvals, stack, [], ok);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
       ok = lv.ok;
     } else if ((cls & 2) != 0) {
-      let lv: LiftVals = lift_prod_mem(kt, tag, k, op, nvals, stack, []);
+      let lv = lift_prod_mem(kt, tag, k, op, nvals, stack, []);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
       ok = lv.ok;
     } else if ((cls & 16) != 0) {
-      let lv: LiftVals = lift_lane_prod(k, op, nvals, stack, []);
+      let lv = lift_lane_prod(k, op, nvals, stack, []);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
       ok = lv.ok;
     } else if (tag != t_const_f64 && (cls & 4) != 0) {
-      let lv: LiftVals = lift_float_prod(k, op, nvals, stack, []);
+      let lv = lift_float_prod(k, op, nvals, stack, []);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
       ok = lv.ok;
     } else if (tag == t_const_i32) {
-      let v: i32 = nvals;
-      nvals = nvals + 1;
+      let v = nvals;
+      nvals += 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: op.i32_imm, str: "" });
       stack = stack.append(v);
     } else if (tag == t_const_f64) {
-      let fcv: i32 = nvals;
-      nvals = nvals + 1;
+      let fcv = nvals;
+      nvals += 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 4, result: fcv, args: [], imm: 0, str: util.i64_to_string(ir.const_f64_bits(op)) });
       stack = stack.append(fcv);
     } else if (tag == t_load_local) {
@@ -1097,16 +1097,16 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       if (stack.len() < 1) {
         ok = false;
       } else {
-        let sv: i32 = stack[stack.len() - 1];
+        let sv = stack[stack.len() - 1];
         if (tag == t_store_local) {
           stack = drop_last(stack);
         }
-        let ss: i32 = op.i32_imm;
+        let ss = op.i32_imm;
         if (sc_n > 0 && slot_mark[ss] < sc_n - 1) {
           dl_slot = put_at(dl_slot, dl_n, ss);
           dl_old = put_at(dl_old, dl_n, slots[ss]);
           dl_prev = put_at(dl_prev, dl_n, slot_mark[ss]);
-          dl_n = dl_n + 1;
+          dl_n += 1;
           slot_mark = slot_mark.with(ss, sc_n - 1);
         }
         slots = slots.with(ss, sv);
@@ -1117,11 +1117,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       if (stack.len() < 2) {
         ok = false;
       } else {
-        let r: i32 = stack[stack.len() - 1];
-        let l: i32 = stack[stack.len() - 2];
+        let r = stack[stack.len() - 1];
+        let l = stack[stack.len() - 2];
         stack = drop_last2(stack);
-        let bv: i32 = nvals;
-        nvals = nvals + 1;
+        let bv = nvals;
+        nvals += 1;
         cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: bv, args: [l, r], imm: register_width(op.width), str: k });
         stack = stack.append(bv);
       }
@@ -1129,32 +1129,32 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       if (stack.len() < 1) {
         ok = false;
       } else {
-        let x: i32 = stack[stack.len() - 1];
+        let x = stack[stack.len() - 1];
         stack = drop_last(stack);
-        let nv: i32 = nvals;
-        nvals = nvals + 1;
+        let nv = nvals;
+        nvals += 1;
         cur_insts = cur_insts.append(ssa.SInst { kind_tag: 10, result: nv, args: [x], imm: 0, str: "!" });
         stack = stack.append(nv);
       }
     } else if (tag == t_call_direct) {
-      let lv: LiftVals = lift_call_direct(op, nvals, stack, [], ok);
+      let lv = lift_call_direct(op, nvals, stack, [], ok);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);
       ok = lv.ok;
     } else if (tag == t_dyn_dispatch) {
       let dargs: i32[] = [];
-      let dk: i32 = 0;
+      let dk = 0;
       while (dk < op.width) {
         if (op.i32_imm + dk < 0 || op.i32_imm + dk >= slots.len()) {
           ok = false;
         } else {
           dargs = dargs.append(slots[op.i32_imm + dk]);
         }
-        dk = dk + 1;
+        dk += 1;
       }
-      let dv: i32 = nvals;
-      nvals = nvals + 1;
+      let dv = nvals;
+      nvals += 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 60, result: dv, args: dargs, imm: i, str: op.str });
       stack = stack.append(dv);
     } else if (tag == t_drop) {
@@ -1167,7 +1167,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       if (stack.len() < 1) {
         ok = false;
       } else {
-        let rv: i32 = stack[stack.len() - 1];
+        let rv = stack[stack.len() - 1];
         stack = drop_last(stack);
         cur_term = STerm_ret(rv);
         if (op.source > 0) {
@@ -1180,15 +1180,15 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       } else if (stack.len() < 1) {
         ok = false;
       } else {
-        let cond: i32 = stack[stack.len() - 1];
+        let cond = stack[stack.len() - 1];
         stack = drop_last(stack);
-        let then_id: i32 = next_blk;
-        next_blk = next_blk + 1;
-        let else_id: i32 = next_blk;
-        next_blk = next_blk + 1;
-        let merge_id: i32 = next_blk;
-        next_blk = next_blk + 1;
-        let parent_id: i32 = cur_id;
+        let then_id = next_blk;
+        next_blk += 1;
+        let else_id = next_blk;
+        next_blk += 1;
+        let merge_id = next_blk;
+        next_blk += 1;
+        let parent_id = cur_id;
         cur_term = STerm_brif(cond, then_id, else_id);
         blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
         sc_kind = put_at_s(sc_kind, sc_n, "if");
@@ -1196,15 +1196,15 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         sc_target = put_at(sc_target, sc_n, merge_id);
         sc_else = put_at(sc_else, sc_n, else_id);
         sc_seen_else = put_at(sc_seen_else, sc_n, 0);
-        sc_then_blk = put_at(sc_then_blk, sc_n, 0 - 1);
+        sc_then_blk = put_at(sc_then_blk, sc_n, -1);
         sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
         sc_parent = put_at(sc_parent, sc_n, parent_id);
-        sc_edge_last = put_at(sc_edge_last, sc_n, 0 - 1);
+        sc_edge_last = put_at(sc_edge_last, sc_n, -1);
         sc_blk_from = put_at(sc_blk_from, sc_n, 0);
         sc_dl_from = put_at(sc_dl_from, sc_n, dl_n);
         sc_tl_from = put_at(sc_tl_from, sc_n, tl_n);
         sc_lp_from = put_at(sc_lp_from, sc_n, lp_n);
-        sc_n = sc_n + 1;
+        sc_n += 1;
         cur_id = then_id;
         cur_insts = [];
         cur_preds = [parent_id];
@@ -1212,12 +1212,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         cur_dead = false;
       }
     } else if (tag == t_else) {
-      let top: i32 = sc_n - 1;
+      let top = sc_n - 1;
       if (top < 0 || sc_kind[top] != "if" || sc_seen_else[top] == 1) {
         ok = false;
       } else {
-        let merge_id2: i32 = sc_target[top];
-        let reaches: i32 = 0;
+        let merge_id2 = sc_target[top];
+        let reaches = 0;
         if (cur_term.kind_tag == 0 && !cur_dead) {
           reaches = 1;
         }
@@ -1226,17 +1226,17 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         sc_then_blk = sc_then_blk.with(top, cur_id);
         sc_then_reaches = sc_then_reaches.with(top, reaches);
-        let je: i32 = sc_dl_from[top];
+        let je = sc_dl_from[top];
         while (je < dl_n) {
-          let se: i32 = dl_slot[je];
+          let se = dl_slot[je];
           tl_slot = put_at(tl_slot, tl_n, se);
           tl_val = put_at(tl_val, tl_n, slots[se]);
           tl_old = put_at(tl_old, tl_n, dl_old[je]);
           tl_prev = put_at(tl_prev, tl_n, dl_prev[je]);
-          tl_n = tl_n + 1;
+          tl_n += 1;
           slot_mark = slot_mark.with(se, dl_prev[je]);
           slots = slots.with(se, dl_old[je]);
-          je = je + 1;
+          je += 1;
         }
         dl_n = sc_dl_from[top];
         if (!cur_dead) {
@@ -1250,8 +1250,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         cur_dead = false;
       }
     } else if (tag == t_block) {
-      let exit_id: i32 = next_blk;
-      next_blk = next_blk + 1;
+      let exit_id = next_blk;
+      next_blk += 1;
       sc_kind = put_at_s(sc_kind, sc_n, "block");
       sc_op = put_at(sc_op, sc_n, i);
       sc_target = put_at(sc_target, sc_n, exit_id);
@@ -1260,37 +1260,37 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       sc_then_blk = put_at(sc_then_blk, sc_n, 0);
       sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
       sc_parent = put_at(sc_parent, sc_n, 0);
-      sc_edge_last = put_at(sc_edge_last, sc_n, 0 - 1);
+      sc_edge_last = put_at(sc_edge_last, sc_n, -1);
       sc_blk_from = put_at(sc_blk_from, sc_n, 0);
       sc_dl_from = put_at(sc_dl_from, sc_n, dl_n);
       sc_tl_from = put_at(sc_tl_from, sc_n, tl_n);
       sc_lp_from = put_at(sc_lp_from, sc_n, lp_n);
-      sc_n = sc_n + 1;
+      sc_n += 1;
     } else if (tag == t_loop) {
-      let hdr_id: i32 = next_blk;
-      next_blk = next_blk + 1;
-      let entry_blk: i32 = cur_id;
+      let hdr_id = next_blk;
+      next_blk += 1;
+      let entry_blk = cur_id;
       cur_term = STerm_br(hdr_id);
       blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
-      edge_link = edge_link.append(0 - 1);
+      edge_link = edge_link.append(-1);
       edge_block = edge_block.append(entry_blk);
       edge_from = edge_from.append(ep_slot.len());
-      let wl: i32[] = loop_writes(ops, i, nslots, scan_tags);
-      let lp_from_l: i32 = lp_n;
+      let wl = loop_writes(ops, i, nslots, scan_tags);
+      let lp_from_l = lp_n;
       let hdr_insts: ssa.SInst[] = [];
       for hs in wl {
-        let ph: i32 = nvals;
-        nvals = nvals + 1;
+        let ph = nvals;
+        nvals += 1;
         hdr_insts = hdr_insts.append(ssa.SInst { kind_tag: 8, result: ph, args: [], imm: 0, str: "" });
         lp_slot = put_at(lp_slot, lp_n, hs);
         lp_phi = put_at(lp_phi, lp_n, ph);
         lp_pre = put_at(lp_pre, lp_n, slots[hs]);
-        lp_n = lp_n + 1;
+        lp_n += 1;
         if (sc_n > 0 && slot_mark[hs] < sc_n - 1) {
           dl_slot = put_at(dl_slot, dl_n, hs);
           dl_old = put_at(dl_old, dl_n, slots[hs]);
           dl_prev = put_at(dl_prev, dl_n, slot_mark[hs]);
-          dl_n = dl_n + 1;
+          dl_n += 1;
           slot_mark = slot_mark.with(hs, sc_n - 1);
         }
         slots = slots.with(hs, ph);
@@ -1311,20 +1311,20 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       sc_dl_from = put_at(sc_dl_from, sc_n, dl_n);
       sc_tl_from = put_at(sc_tl_from, sc_n, tl_n);
       sc_lp_from = put_at(sc_lp_from, sc_n, lp_from_l);
-      sc_n = sc_n + 1;
+      sc_n += 1;
       cur_id = hdr_id;
       cur_insts = hdr_insts;
       cur_preds = [entry_blk];
       cur_term = STerm_none();
       cur_dead = false;
     } else if (tag == t_br || tag == t_brif) {
-      let depth: i32 = op.i32_imm;
-      let pos: i32 = sc_n - 1 - depth;
+      let depth = op.i32_imm;
+      let pos = sc_n - 1 - depth;
       if (pos < 0 || pos >= sc_n) {
         ok = false;
       } else {
-        let cond_b: i32 = 0;
-        let ok_b: boolean = true;
+        let cond_b = 0;
+        let ok_b = true;
         if (tag == t_brif) {
           if (stack.len() < 1) {
             ok_b = false;
@@ -1336,33 +1336,33 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         if (!ok_b) {
           ok = false;
         } else {
-          let tgt: i32 = sc_target[pos];
-          let obid: i32 = cur_id;
+          let tgt = sc_target[pos];
+          let obid = cur_id;
           edge_link = edge_link.append(sc_edge_last[pos]);
           sc_edge_last = sc_edge_last.with(pos, edge_link.len() - 1);
           edge_block = edge_block.append(obid);
           edge_from = edge_from.append(ep_slot.len());
-          let jv: i32 = sc_dl_from[pos];
+          let jv = sc_dl_from[pos];
           while (jv < dl_n) {
-            let ev: i32 = slots[dl_slot[jv]];
+            let ev = slots[dl_slot[jv]];
             if (ev != dl_old[jv]) {
               ep_slot = ep_slot.append(dl_slot[jv]);
               ep_val = ep_val.append(ev);
             }
-            jv = jv + 1;
+            jv += 1;
           }
           if (tag == t_br) {
             cur_term = STerm_br(tgt);
             blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
             cur_id = next_blk;
-            next_blk = next_blk + 1;
+            next_blk += 1;
             cur_insts = [];
             cur_preds = [];
             cur_term = STerm_none();
             cur_dead = true;
           } else {
-            let ftid: i32 = next_blk;
-            next_blk = next_blk + 1;
+            let ftid = next_blk;
+            next_blk += 1;
             cur_term = STerm_brif(cond_b, tgt, ftid);
             blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
             cur_id = ftid;
@@ -1374,20 +1374,20 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
       }
     } else if (tag == t_end) {
-      let t2: i32 = sc_n - 1;
+      let t2 = sc_n - 1;
       if (t2 < 0) {
         ok = false;
       } else if (sc_kind[t2] == "if") {
-        let merge3: i32 = sc_target[t2];
-        let parent3: i32 = sc_parent[t2];
-        let dfrom: i32 = sc_dl_from[t2];
+        let merge3 = sc_target[t2];
+        let parent3 = sc_parent[t2];
+        let dfrom = sc_dl_from[t2];
         if (sc_seen_else[t2] == 0) {
-          let else_id_a: i32 = sc_else[t2];
-          let t_reaches: i32 = 0;
+          let else_id_a = sc_else[t2];
+          let t_reaches = 0;
           if (cur_term.kind_tag == 0 && !cur_dead) {
             t_reaches = 1;
           }
-          let then_blk: i32 = cur_id;
+          let then_blk = cur_id;
           if (t_reaches == 1) {
             cur_term = STerm_br(merge3);
           }
@@ -1405,11 +1405,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_preds = preds_a;
           cur_term = STerm_none();
           cur_dead = false;
-          let lo_a: i32 = nslots;
-          let hi_a: i32 = 0 - 1;
-          let ja: i32 = dfrom;
+          let lo_a = nslots;
+          let hi_a: i32 = -1;
+          let ja = dfrom;
           while (ja < dl_n) {
-            let sa: i32 = dl_slot[ja];
+            let sa = dl_slot[ja];
             slot_pos = slot_pos.with(sa, ja);
             if (sa < lo_a) {
               lo_a = sa;
@@ -1417,41 +1417,41 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             if (sa > hi_a) {
               hi_a = sa;
             }
-            ja = ja + 1;
+            ja += 1;
           }
-          let s2: i32 = lo_a;
+          let s2 = lo_a;
           while (s2 <= hi_a) {
             if (slot_pos[s2] >= 0) {
-              let snapv: i32 = dl_old[slot_pos[s2]];
+              let snapv = dl_old[slot_pos[s2]];
               if (t_reaches == 1) {
-                let tv2: i32 = slots[s2];
+                let tv2 = slots[s2];
                 if (tv2 != snapv) {
-                  let ph2a: i32 = nvals;
-                  nvals = nvals + 1;
+                  let ph2a = nvals;
+                  nvals += 1;
                   cur_insts = cur_insts.append(ssa.SInst { kind_tag: 8, result: ph2a, args: [tv2, snapv], imm: 0, str: "" });
                   slots = slots.with(s2, ph2a);
                 }
               } else {
                 slots = slots.with(s2, snapv);
               }
-              slot_pos = slot_pos.with(s2, 0 - 1);
+              slot_pos = slot_pos.with(s2, -1);
             }
-            s2 = s2 + 1;
+            s2 += 1;
           }
         } else {
-          let e_reaches: i32 = 0;
+          let e_reaches = 0;
           if (cur_term.kind_tag == 0 && !cur_dead) {
             e_reaches = 1;
           }
-          let else_blk: i32 = cur_id;
+          let else_blk = cur_id;
           if (e_reaches == 1) {
             cur_term = STerm_br(merge3);
           }
           if (!cur_dead) {
             blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
           }
-          let then_blk2: i32 = sc_then_blk[t2];
-          let then_reaches2: i32 = sc_then_reaches[t2];
+          let then_blk2 = sc_then_blk[t2];
+          let then_reaches2 = sc_then_reaches[t2];
           let preds_b: i32[] = [];
           if (then_reaches2 == 1) {
             preds_b = preds_b.append(then_blk2);
@@ -1464,12 +1464,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_preds = preds_b;
           cur_term = STerm_none();
           cur_dead = preds_b.len() == 0;
-          let tfrom: i32 = sc_tl_from[t2];
-          let lo_b: i32 = nslots;
-          let hi_b: i32 = 0 - 1;
-          let jt: i32 = tfrom;
+          let tfrom = sc_tl_from[t2];
+          let lo_b = nslots;
+          let hi_b: i32 = -1;
+          let jt = tfrom;
           while (jt < tl_n) {
-            let sb0: i32 = tl_slot[jt];
+            let sb0 = tl_slot[jt];
             slot_pos = slot_pos.with(sb0, jt);
             if (sb0 < lo_b) {
               lo_b = sb0;
@@ -1477,11 +1477,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             if (sb0 > hi_b) {
               hi_b = sb0;
             }
-            jt = jt + 1;
+            jt += 1;
           }
-          let jb: i32 = dfrom;
+          let jb = dfrom;
           while (jb < dl_n) {
-            let sb: i32 = dl_slot[jb];
+            let sb = dl_slot[jb];
             if (slot_pos[sb] < 0) {
               slot_pos = slot_pos.with(sb, tl_n + jb);
             }
@@ -1491,23 +1491,23 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             if (sb > hi_b) {
               hi_b = sb;
             }
-            jb = jb + 1;
+            jb += 1;
           }
-          let s3: i32 = lo_b;
+          let s3 = lo_b;
           while (s3 <= hi_b) {
-            let pb: i32 = slot_pos[s3];
+            let pb = slot_pos[s3];
             if (pb >= 0) {
-              let tvv: i32 = 0;
+              let tvv = 0;
               if (pb < tl_n) {
                 tvv = tl_val[pb];
               } else {
                 tvv = dl_old[pb - tl_n];
               }
-              let evv: i32 = slots[s3];
+              let evv = slots[s3];
               if (then_reaches2 == 1 && e_reaches == 1) {
                 if (tvv != evv) {
-                  let ph3: i32 = nvals;
-                  nvals = nvals + 1;
+                  let ph3 = nvals;
+                  nvals += 1;
                   cur_insts = cur_insts.append(ssa.SInst { kind_tag: 8, result: ph3, args: [tvv, evv], imm: 0, str: "" });
                   slots = slots.with(s3, ph3);
                 } else {
@@ -1520,107 +1520,107 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
               } else {
                 slots = slots.with(s3, tvv);
               }
-              slot_pos = slot_pos.with(s3, 0 - 1);
+              slot_pos = slot_pos.with(s3, -1);
             }
-            s3 = s3 + 1;
+            s3 += 1;
           }
         }
-        let hq: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
-        let wq: i32 = dfrom;
-        let jq: i32 = dfrom;
+        let hq = read_horizon(sc_outer_loop, sc_op, t2, i);
+        let wq = dfrom;
+        let jq = dfrom;
         while (jq < dl_n) {
-          let sq: i32 = dl_slot[jq];
+          let sq = dl_slot[jq];
           if (t2 > 0 && dl_prev[jq] < t2 - 1 && last_read[sq] >= hq) {
             if (wq != jq) {
               dl_slot = dl_slot.with(wq, sq);
               dl_old = dl_old.with(wq, dl_old[jq]);
               dl_prev = dl_prev.with(wq, dl_prev[jq]);
             }
-            wq = wq + 1;
+            wq += 1;
           }
           slot_mark = slot_mark.with(sq, t2 - 1);
-          jq = jq + 1;
+          jq += 1;
         }
         dl_n = wq;
-        let jt2: i32 = sc_tl_from[t2];
+        let jt2 = sc_tl_from[t2];
         while (jt2 < tl_n) {
-          let st: i32 = tl_slot[jt2];
+          let st = tl_slot[jt2];
           if (t2 > 0 && slot_mark[st] < t2 - 1 && last_read[st] >= hq) {
             dl_slot = put_at(dl_slot, dl_n, st);
             dl_old = put_at(dl_old, dl_n, tl_old[jt2]);
             dl_prev = put_at(dl_prev, dl_n, tl_prev[jt2]);
-            dl_n = dl_n + 1;
+            dl_n += 1;
             slot_mark = slot_mark.with(st, t2 - 1);
           }
-          jt2 = jt2 + 1;
+          jt2 += 1;
         }
         tl_n = sc_tl_from[t2];
-        sc_n = sc_n - 1;
+        sc_n -= 1;
       } else if (sc_kind[t2] == "loop") {
-        let lf: LoopFall = loop_fall(cur_dead, cur_term, cur_id, next_blk);
+        let lf = loop_fall(cur_dead, cur_term, cur_id, next_blk);
         next_blk = lf.next_blk;
         if (lf.falls) {
           cur_term = STerm_br(lf.cont);
         }
         blocks = loop_tail_appended(blocks, cur_dead, cur_id, cur_insts, cur_term, cur_preds);
-        let hid: i32 = sc_target[t2];
-        let eidx: i32[] = scope_edges(edge_link, sc_edge_last[t2]);
+        let hid = sc_target[t2];
+        let eidx = scope_edges(edge_link, sc_edge_last[t2]);
         let lpreds: i32[] = [];
-        let q: i32 = 0;
+        let q = 0;
         while (q < eidx.len()) {
           lpreds = lpreds.append(edge_block[eidx[q]]);
-          q = q + 1;
+          q += 1;
         }
-        let lfrom: i32 = sc_lp_from[t2];
-        let nw: i32 = lp_n - lfrom;
-        let nback: i32 = eidx.len() - 1;
+        let lfrom = sc_lp_from[t2];
+        let nw = lp_n - lfrom;
+        let nback = eidx.len() - 1;
         let mat: i32[] = [];
-        let r0: i32 = 0;
+        let r0 = 0;
         while (r0 < nw) {
           slot_pos = slot_pos.with(lp_slot[lfrom + r0], r0);
-          let q0: i32 = 0;
+          let q0 = 0;
           while (q0 < nback) {
             mat = mat.append(lp_phi[lfrom + r0]);
-            q0 = q0 + 1;
+            q0 += 1;
           }
-          r0 = r0 + 1;
+          r0 += 1;
         }
-        let q1: i32 = 1;
+        let q1 = 1;
         while (q1 < eidx.len()) {
-          let e1: i32 = eidx[q1];
-          let pj: i32 = edge_from[e1];
-          let pend: i32 = edge_end(edge_from, e1, ep_slot.len());
+          let e1 = eidx[q1];
+          let pj = edge_from[e1];
+          let pend = edge_end(edge_from, e1, ep_slot.len());
           while (pj < pend) {
-            let rr: i32 = slot_pos[ep_slot[pj]];
+            let rr = slot_pos[ep_slot[pj]];
             if (rr >= 0) {
               mat = mat.with(rr * nback + q1 - 1, ep_val[pj]);
             }
-            pj = pj + 1;
+            pj += 1;
           }
-          q1 = q1 + 1;
+          q1 += 1;
         }
-        let bi: i32 = sc_blk_from[t2];
+        let bi = sc_blk_from[t2];
         while (bi < blocks.len() && blocks[bi].id != hid) {
-          bi = bi + 1;
+          bi += 1;
         }
         if (bi < blocks.len()) {
-          let b: ssa.SBlock = blocks[bi];
+          let b = blocks[bi];
           let ni: ssa.SInst[] = [];
-          let ii: i32 = 0;
+          let ii = 0;
           while (ii < b.insts.len()) {
-            let inst: ssa.SInst = b.insts[ii];
+            let inst = b.insts[ii];
             if (ii < nw && inst.kind_tag == 8 && lp_phi[lfrom + ii] == inst.result) {
               let pargs: i32[] = [lp_pre[lfrom + ii]];
-              let qq: i32 = 0;
+              let qq = 0;
               while (qq < nback) {
                 pargs = pargs.append(mat[ii * nback + qq]);
-                qq = qq + 1;
+                qq += 1;
               }
               ni = ni.append(ssa.SInst { kind_tag: 8, result: inst.result, args: pargs, imm: 0, str: "" });
             } else {
               ni = ni.append(inst);
             }
-            ii = ii + 1;
+            ii += 1;
           }
           blocks = blocks.with(bi, ssa.SBlock { id: b.id, insts: ni, term: b.term, preds: lpreds });
         }
@@ -1633,51 +1633,51 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           cur_dead = false;
         } else {
           cur_id = next_blk;
-          next_blk = next_blk + 1;
+          next_blk += 1;
           cur_insts = [];
           cur_preds = [];
           cur_term = STerm_none();
-          let jr: i32 = sc_dl_from[t2];
+          let jr = sc_dl_from[t2];
           while (jr < dl_n) {
-            let rr2: i32 = slot_pos[dl_slot[jr]];
+            let rr2 = slot_pos[dl_slot[jr]];
             if (rr2 >= 0) {
               slots = slots.with(dl_slot[jr], lp_phi[lfrom + rr2]);
             }
-            jr = jr + 1;
+            jr += 1;
           }
         }
         r0 = 0;
         while (r0 < nw) {
-          slot_pos = slot_pos.with(lp_slot[lfrom + r0], 0 - 1);
-          r0 = r0 + 1;
+          slot_pos = slot_pos.with(lp_slot[lfrom + r0], -1);
+          r0 += 1;
         }
         lp_n = lfrom;
-        let hl: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
-        let wl2: i32 = sc_dl_from[t2];
-        let jl: i32 = wl2;
+        let hl = read_horizon(sc_outer_loop, sc_op, t2, i);
+        let wl2 = sc_dl_from[t2];
+        let jl = wl2;
         while (jl < dl_n) {
-          let sl: i32 = dl_slot[jl];
+          let sl = dl_slot[jl];
           if (t2 > 0 && dl_prev[jl] < t2 - 1 && last_read[sl] >= hl) {
             if (wl2 != jl) {
               dl_slot = dl_slot.with(wl2, sl);
               dl_old = dl_old.with(wl2, dl_old[jl]);
               dl_prev = dl_prev.with(wl2, dl_prev[jl]);
             }
-            wl2 = wl2 + 1;
+            wl2 += 1;
           }
           slot_mark = slot_mark.with(sl, t2 - 1);
-          jl = jl + 1;
+          jl += 1;
         }
         dl_n = wl2;
-        sc_n = sc_n - 1;
+        sc_n -= 1;
         if (sc_outer_loop == t2) {
-          sc_outer_loop = 0 - 1;
+          sc_outer_loop = -1;
         }
       } else {
-        let eid: i32 = sc_target[t2];
-        let bidx: i32[] = scope_edges(edge_link, sc_edge_last[t2]);
-        let falls_through: boolean = !cur_dead && cur_term.kind_tag == 0;
-        let fcur: i32 = cur_id;
+        let eid = sc_target[t2];
+        let bidx = scope_edges(edge_link, sc_edge_last[t2]);
+        let falls_through = !cur_dead && cur_term.kind_tag == 0;
+        let fcur = cur_id;
         if (!cur_dead) {
           if (falls_through) {
             cur_term = STerm_br(eid);
@@ -1685,66 +1685,66 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
         }
         let bpreds: i32[] = [];
-        let qb: i32 = 0;
+        let qb = 0;
         while (qb < bidx.len()) {
           bpreds = bpreds.append(edge_block[bidx[qb]]);
-          qb = qb + 1;
+          qb += 1;
         }
         if (falls_through) {
           bpreds = bpreds.append(fcur);
         }
         let eo_insts: ssa.SInst[] = [];
-        let dfrom_b: i32 = sc_dl_from[t2];
+        let dfrom_b = sc_dl_from[t2];
         if (bidx.len() > 0) {
-          let nb: i32 = dl_n - dfrom_b;
-          let ne: i32 = bidx.len();
+          let nb = dl_n - dfrom_b;
+          let ne = bidx.len();
           while (matb.len() < nb * ne) {
             matb = matb.append(0);
           }
-          let rb: i32 = 0;
+          let rb = 0;
           while (rb < nb) {
             slot_pos = slot_pos.with(dl_slot[dfrom_b + rb], rb);
-            let ob: i32 = dl_old[dfrom_b + rb];
-            let cell: i32 = rb * ne;
-            let stop: i32 = cell + ne;
+            let ob = dl_old[dfrom_b + rb];
+            let cell = rb * ne;
+            let stop = cell + ne;
             while (cell < stop) {
               matb = matb.with(cell, ob);
-              cell = cell + 1;
+              cell += 1;
             }
-            rb = rb + 1;
+            rb += 1;
           }
-          let qb1: i32 = 0;
+          let qb1 = 0;
           while (qb1 < ne) {
-            let eb: i32 = bidx[qb1];
-            let pjb: i32 = edge_from[eb];
-            let pendb: i32 = edge_end(edge_from, eb, ep_slot.len());
+            let eb = bidx[qb1];
+            let pjb = edge_from[eb];
+            let pendb = edge_end(edge_from, eb, ep_slot.len());
             while (pjb < pendb) {
-              let rrb: i32 = slot_pos[ep_slot[pjb]];
+              let rrb = slot_pos[ep_slot[pjb]];
               if (rrb >= 0) {
                 matb = matb.with(rrb * ne + qb1, ep_val[pjb]);
               }
-              pjb = pjb + 1;
+              pjb += 1;
             }
-            qb1 = qb1 + 1;
+            qb1 += 1;
           }
           let ph_row: i32[] = [];
-          let ph_lo: i32 = nslots;
-          let ph_hi: i32 = 0 - 1;
+          let ph_lo = nslots;
+          let ph_hi: i32 = -1;
           rb = 0;
           while (rb < nb) {
-            let es: i32 = dl_slot[dfrom_b + rb];
-            let first: i32 = matb[rb * ne];
-            let alleq: boolean = !falls_through || slots[es] == first;
-            let qv: i32 = 1;
+            let es = dl_slot[dfrom_b + rb];
+            let first = matb[rb * ne];
+            let alleq = !falls_through || slots[es] == first;
+            let qv = 1;
             while (alleq && qv < ne) {
               if (matb[rb * ne + qv] != first) {
                 alleq = false;
               }
-              qv = qv + 1;
+              qv += 1;
             }
             if (alleq) {
               slots = slots.with(es, first);
-              slot_pos = slot_pos.with(es, 0 - 1);
+              slot_pos = slot_pos.with(es, -1);
             } else {
               ph_row = ph_row.append(rb);
               if (es < ph_lo) {
@@ -1754,50 +1754,50 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
                 ph_hi = es;
               }
             }
-            rb = rb + 1;
+            rb += 1;
           }
-          let np: i32 = ph_row.len();
+          let np = ph_row.len();
           if (np > 1 && ph_hi - ph_lo + 1 <= np * np) {
             ph_row = [];
-            let ps: i32 = ph_lo;
+            let ps = ph_lo;
             while (ps <= ph_hi) {
               if (slot_pos[ps] >= 0) {
                 ph_row = ph_row.append(slot_pos[ps]);
               }
-              ps = ps + 1;
+              ps += 1;
             }
           } else {
-            let pi: i32 = 1;
+            let pi = 1;
             while (pi < np) {
-              let moving: i32 = ph_row[pi];
-              let at: i32 = pi;
+              let moving = ph_row[pi];
+              let at = pi;
               while (at > 0 && dl_slot[dfrom_b + ph_row[at - 1]] > dl_slot[dfrom_b + moving]) {
                 ph_row = ph_row.with(at, ph_row[at - 1]);
-                at = at - 1;
+                at -= 1;
               }
               ph_row = ph_row.with(at, moving);
-              pi = pi + 1;
+              pi += 1;
             }
           }
-          let pk: i32 = 0;
+          let pk = 0;
           while (pk < ph_row.len()) {
-            let row: i32 = ph_row[pk];
-            let es: i32 = dl_slot[dfrom_b + row];
-            slot_pos = slot_pos.with(es, 0 - 1);
+            let row = ph_row[pk];
+            let es = dl_slot[dfrom_b + row];
+            slot_pos = slot_pos.with(es, -1);
             let vals: i32[] = [];
-            let qe: i32 = 0;
+            let qe = 0;
             while (qe < ne) {
               vals = vals.append(matb[row * ne + qe]);
-              qe = qe + 1;
+              qe += 1;
             }
             if (falls_through) {
               vals = vals.append(slots[es]);
             }
-            let phe: i32 = nvals;
-            nvals = nvals + 1;
+            let phe = nvals;
+            nvals += 1;
             eo_insts = eo_insts.append(ssa.SInst { kind_tag: 8, result: phe, args: vals, imm: 0, str: "" });
             slots = slots.with(es, phe);
-            pk = pk + 1;
+            pk += 1;
           }
         }
         cur_id = eid;
@@ -1805,24 +1805,24 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         cur_preds = bpreds;
         cur_term = STerm_none();
         cur_dead = bpreds.len() == 0;
-        let hb: i32 = read_horizon(sc_outer_loop, sc_op, t2, i);
-        let wb: i32 = dfrom_b;
-        let jf: i32 = dfrom_b;
+        let hb = read_horizon(sc_outer_loop, sc_op, t2, i);
+        let wb = dfrom_b;
+        let jf = dfrom_b;
         while (jf < dl_n) {
-          let sf: i32 = dl_slot[jf];
+          let sf = dl_slot[jf];
           if (t2 > 0 && dl_prev[jf] < t2 - 1 && last_read[sf] >= hb) {
             if (wb != jf) {
               dl_slot = dl_slot.with(wb, sf);
               dl_old = dl_old.with(wb, dl_old[jf]);
               dl_prev = dl_prev.with(wb, dl_prev[jf]);
             }
-            wb = wb + 1;
+            wb += 1;
           }
           slot_mark = slot_mark.with(sf, t2 - 1);
-          jf = jf + 1;
+          jf += 1;
         }
         dl_n = wb;
-        sc_n = sc_n - 1;
+        sc_n -= 1;
       }
     } else {
       ok = false;
@@ -1836,7 +1836,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         bail = bail + "#" + util.i32_to_string(op.kind_tag);
       }
     }
-    i = i + 1;
+    i += 1;
   }
 
   if (ok && sc_n != 0) {
@@ -1849,8 +1849,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     if (cur_term.kind_tag == 0 && stack.len() >= 1) {
       cur_term = STerm_ret(stack[stack.len() - 1]);
     } else if (cur_term.kind_tag == 0 && !cur_dead) {
-      let dz: i32 = nvals;
-      nvals = nvals + 1;
+      let dz = nvals;
+      nvals += 1;
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: dz, args: [], imm: 0, str: "" });
       cur_term = STerm_ret(dz);
     }
@@ -1862,7 +1862,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   if (!ok) {
     return Err(bail);
   }
-  let f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
+  let f = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
   return Ok(Lifted { func: f, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values });
 }
 
@@ -1882,24 +1882,24 @@ function edge_end(edge_from: i32[], e: i32, total: i32): i32 {
 }
 
 function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
-  let out: i32[] = filled(nslots, 0 - 1);
-  let i: i32 = 0;
+  let out = filled(nslots, -1);
+  let i = 0;
   while (i < ops.len()) {
-    let o: ir.Op = ops[i];
-    let n: i32 = 0;
+    let o = ops[i];
+    let n = 0;
     if (o.kind_tag == t_load) {
       n = 1;
     } else if (o.kind_tag == t_dyn) {
       n = o.width;
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < n) {
       if (o.i32_imm + k >= 0 && o.i32_imm + k < nslots) {
         out = out.with(o.i32_imm + k, i);
       }
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -1913,21 +1913,21 @@ function read_horizon(outer_loop: i32, opened: i32[], t2: i32, at: i32): i32 {
 
 function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   let raw: i32[] = [];
-  let lo: i32 = nslots;
-  let hi: i32 = 0 - 1;
-  let depth: i32 = 0;
-  let j: i32 = at + 1;
+  let lo = nslots;
+  let hi: i32 = -1;
+  let depth = 0;
+  let j = at + 1;
   while (j < ops.len()) {
-    let tg: i32 = ops[j].kind_tag;
+    let tg = ops[j].kind_tag;
     if (tg == tags[3]) {
       if (depth == 0) {
         break;
       }
-      depth = depth - 1;
+      depth -= 1;
     } else if (tg == tags[0] || tg == tags[1] || tg == tags[2]) {
-      depth = depth + 1;
+      depth += 1;
     } else if (tg == tags[4] || tg == tags[5]) {
-      let sl: i32 = ops[j].i32_imm;
+      let sl = ops[j].i32_imm;
       if (sl >= 0 && sl < nslots) {
         raw = raw.append(sl);
         if (sl < lo) {
@@ -1938,22 +1938,22 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
         }
       }
     }
-    j = j + 1;
+    j += 1;
   }
   let out: i32[] = [];
   if (hi < lo) {
     return out;
   }
-  let seen: i32[] = __alloc_i32(hi - lo + 1);
+  let seen = __alloc_i32(hi - lo + 1);
   for sv in raw {
     seen = seen.with(sv - lo, 1);
   }
-  let s: i32 = 0;
+  let s = 0;
   while (s < seen.len()) {
     if (seen[s] == 1) {
       out = out.append(lo + s);
     }
-    s = s + 1;
+    s += 1;
   }
   return out;
 }
@@ -1962,7 +1962,7 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
 // not a call. The load is marked for rccertify.resumes.
 function lift_task_mode(nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
   let none: i32[] = [];
-  let insts: ssa.SInst[] = cur_insts.append(ssa.SInst { kind_tag: 58, result: nvals, args: none, imm: 0, str: "__fern_task_state" });
+  let insts = cur_insts.append(ssa.SInst { kind_tag: 58, result: nvals, args: none, imm: 0, str: "__fern_task_state" });
   insts = insts.append(ssa.SInst { kind_tag: 1, result: nvals + 1, args: none, imm: 6, str: "" });
   insts = insts.append(ssa.SInst { kind_tag: 52, result: nvals + 2, args: [nvals, nvals + 1], imm: 0, str: "task_mode" });
   return LiftVals { nvals: nvals + 3, stack: stack.append(nvals + 2), insts: insts, ok: ok };
@@ -1985,7 +1985,7 @@ function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts:
 }
 
 function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
-  let argc: i32 = op.i32_imm;
+  let argc = op.i32_imm;
   if (argc == 0 && op.str == "__fern_task_mode") {
     return lift_task_mode(nvals, stack, cur_insts, ok);
   }
@@ -1993,18 +1993,18 @@ function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SI
     ok = false;
   } else {
     let cargs: i32[] = [];
-    let d: i32 = argc - 1;
+    let d = argc - 1;
     while (d >= 0) {
       cargs = cargs.append(stack[stack.len() - 1 - d]);
-      d = d - 1;
+      d -= 1;
     }
-    let e: i32 = 0;
+    let e = 0;
     while (e < argc) {
       stack = drop_last(stack);
-      e = e + 1;
+      e += 1;
     }
-    let pv: i32 = nvals;
-    nvals = nvals + 1;
+    let pv = nvals;
+    nvals += 1;
     cur_insts = cur_insts.append(ssa.SInst { kind_tag: 11, result: pv, args: cargs, imm: call_mark(op), str: op.str });
     stack = stack.append(pv);
   }

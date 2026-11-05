@@ -65,10 +65,10 @@ function operands(s: string): string[] {
   let i = 0;
   while (i < s.len()) {
     if (s[i] == b'(') {
-      depth = depth + 1;
+      depth += 1;
     }
     if (s[i] == b')') {
-      depth = depth - 1;
+      depth -= 1;
     }
     if (depth < 0 || depth > 1) {
       return [];
@@ -77,7 +77,7 @@ function operands(s: string): string[] {
       result = result.append(util.trim(slice_unchecked(s, start, i) + ""));
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (depth != 0) {
     return [];
@@ -217,7 +217,7 @@ function decode(line: string, labels: names.Names): Op {
   }
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -343,7 +343,7 @@ function extended_decode(line: string, mode: i32): Op {
 function allocator_decode(line: string): Op {
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -412,7 +412,7 @@ function allocator_operands(name: string, a: string, b: string): Op {
 function array_box_decode(line: string): Op {
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -470,7 +470,7 @@ function constructor_decode(line: string): Op {
   }
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -505,7 +505,7 @@ function caller_decode(line: string): Op {
   }
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -532,7 +532,7 @@ function caller_memory(name: string, source: string, destination: string): Op {
 function string_decode(line: string): Op {
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -588,7 +588,7 @@ function array_dependency(name: string): boolean {
 function array_decode(line: string): Op {
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -658,7 +658,7 @@ function index_only_parts(parts: string[], displacement: string, dst: i32): Op {
 function large_decode(line: string): Op {
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   if (at == line.len()) {
     return empty(0);
@@ -703,7 +703,7 @@ function large_literal(s: string): string {
     if (n > 2147483647) {
       return "";
     }
-    i = i + 1;
+    i += 1;
   }
   return n.to_string();
 }

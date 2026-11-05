@@ -31,7 +31,7 @@ function symbol(s: string): boolean {
 function definition(line: string): string {
   let at = 0;
   while (at < line.len() && symbol_byte(line[at])) {
-    at = at + 1;
+    at += 1;
   }
   let name = slice_unchecked(line, 0, at) + "";
   return if (at < line.len() && line[at] == b':' && symbol(name)) { name } else { "" };
@@ -40,7 +40,7 @@ function definition(line: string): string {
 function word(line: string): string {
   let at = 0;
   while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
-    at = at + 1;
+    at += 1;
   }
   return slice_unchecked(line, 0, at) + "";
 }
@@ -102,12 +102,12 @@ function quoted_data(arg: string): boolean {
       return false;
     }
     if (c == b'\\') {
-      at = at + 1;
+      at += 1;
       if (at >= arg.len() || arg[at] < 32) {
         return false;
       }
     }
-    at = at + 1;
+    at += 1;
   }
   return false;
 }
@@ -168,7 +168,7 @@ function raw_line(raw: string): boolean {
     if (c == 127) {
       return false;
     }
-    at = at + 1;
+    at += 1;
   }
   return true;
 }
@@ -264,7 +264,7 @@ function body(s: Scan, ix: names.Names, start: i32, register: i32, unguarded: i3
       ung = code.len();
     }
     code = code.append(line);
-    at = at + 1;
+    at += 1;
   }
   if (register >= 0 && reg < 0 || unguarded >= 0 && ung < 0) {
     return failure("decrement entry outside body");
@@ -320,7 +320,7 @@ function writable_declarations(s: Scan): boolean {
         return false;
       }
     }
-    at = at + 1;
+    at += 1;
   }
   return true;
 }
@@ -341,7 +341,7 @@ function storage_alignment(s: Scan, at: i32, name: string): boolean {
   let section = s.sections[at];
   let before = at - 1;
   while (before >= 0 && s.sections[before] == section && s.lines[before] == ".globl " + name) {
-    before = before - 1;
+    before -= 1;
   }
   if (before < 0 || s.sections[before] != section) {
     return false;
@@ -399,7 +399,7 @@ function unique_writable(s: Scan, ix: names.Names): boolean {
         return false;
       }
     }
-    at = at + 1;
+    at += 1;
   }
   return true;
 }
@@ -441,7 +441,7 @@ function native_writable(s: Scan): boolean {
         return false;
       }
     }
-    at = at + 1;
+    at += 1;
   }
   return true;
 }
@@ -574,7 +574,7 @@ function retained_lines(s: Scan, start: i32, entry: string): Body {
     }
     ended = line == ".cfi_endproc";
     code = code.append(line);
-    at = at + 1;
+    at += 1;
   }
   if (!ended || code.len() < 3 || code[1] != ".cfi_startproc") {
     return failure("missing retained function frame");
@@ -642,11 +642,11 @@ function ascii_bytes(arg: string): Literal {
   while (at < arg.len() - 1) {
     let c = arg[at];
     if (c == b'\\') {
-      at = at + 1;
+      at += 1;
       let value = escaped_byte(arg[at]);
       if (value < 0) {
         value = octal_byte(arg, at);
-        at = at + 2;
+        at += 2;
       }
       if (value < 0) {
         return no_literal("unsupported ASCII escape");
@@ -658,7 +658,7 @@ function ascii_bytes(arg: string): Literal {
       }
       bytes = bytes.append(c);
     }
-    at = at + 1;
+    at += 1;
   }
   return Literal { bytes: bytes, error: "" };
 }

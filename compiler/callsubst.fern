@@ -31,7 +31,7 @@ function shadow(ctx: Context, names: string[]): Context {
 function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
   let out: ast.Stmt[] = [];
   for stmt in stmts {
-    let initctx: Context = ctx;
+    let initctx = ctx;
     if let ast.StmtVar(v) = stmt {
       if (ast.var_binds_itself(v)) {
         initctx = shadow(ctx, astwalk.append_bound_name([], v.name));
@@ -71,7 +71,7 @@ function lambda(lm: ast.ExprLambda, ctx: Context): ast.Expr {
   for name in astwalk.collect_lambda_idents(rewritten, []) {
     if (!util.has_str(seen, name)) {
       seen = seen.append(name);
-      let found: boolean = false;
+      let found = false;
       for cap in lm.captures {
         if (cap.name == name) {
           caps = caps.append(cap);
@@ -147,7 +147,7 @@ function stmt_at(st: ast.Stmt, ctx: Context): (ast.Stmt, Context, boolean) {
       let arms: ast.MatchArm[] = [];
       for arm in m.arms {
         let ac = shadow(ctx, astwalk.pattern_binders(arm.pattern, []));
-        let guard: ast.Expr = arm.guard;
+        let guard = arm.guard;
         if (arm.has_guard) {
           guard = expr(guard, ac);
         }

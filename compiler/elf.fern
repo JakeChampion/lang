@@ -53,10 +53,10 @@ function elf_le64(buf: i32[], v: i64): i32[] {
 }
 
 pub function elf_cat(buf: i32[], src: i32[]): i32[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < src.len()) {
     buf = buf.append(src[i]);
-    i = i + 1;
+    i += 1;
   }
   return buf;
 }
@@ -69,9 +69,9 @@ pub function elf_cat_u8(buf: i32[], src: u8[]): i32[] {
 }
 
 function elf_u32_to_i64(v: i32): i64 {
-  let u: i64 = v as i64;
+  let u = v as i64;
   if (u < 0) {
-    u = u + (1 as i64 << 32);
+    u += 1 as i64 << 32;
   }
   return u;
 }
@@ -85,9 +85,9 @@ function elf_image_entry(body: i32[], flags: i32, machine: i32, entry_off: i32):
 }
 
 pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_off: i32, bss: i32): i32[] {
-  let filesz: i64 = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
-  let memsz: i64 = filesz + elf_u32_to_i64(bss);
-  let entry: i64 = (elf_text_vaddr() + entry_off) as i64;
+  let filesz = (elf_eh_size() + elf_ph_size() + body.len()) as i64;
+  let memsz = filesz + elf_u32_to_i64(bss);
+  let entry = (elf_text_vaddr() + entry_off) as i64;
   let zero64: i64 = 0;
 
   let buf: i32[] = [];
@@ -100,10 +100,10 @@ pub function elf_image_entry_bss(body: i32[], flags: i32, machine: i32, entry_of
   buf = buf.append(1);
   buf = buf.append(1);
   buf = buf.append(0);
-  let p: i32 = 0;
+  let p = 0;
   while (p < 8) {
     buf = buf.append(0);
-    p = p + 1;
+    p += 1;
   }
   buf = elf_le16(buf, 2);
   buf = elf_le16(buf, machine);
@@ -140,7 +140,7 @@ function elf_static_executable_x86(text: i32[]): i32[] {
 }
 
 function elf_static_executable_data_x86(text: u8[], data: i32[]): i32[] {
-  let body: i32[] = elf_cat_u8([], text);
+  let body = elf_cat_u8([], text);
   body = elf_pad_to(body, elf_align16(body.len()));
   body = elf_cat(body, data);
   return elf_image(body, 7, elf_em_x86_64());
@@ -167,18 +167,18 @@ pub function elf_x86_data_base(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
 }
 
 pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
-  let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-  let text_off: i32 = elf_text_off_x86();
-  let hdr_off: i32 = 0;
-  let eh_off: i32 = 0;
+  let has_unwind = hdr.len() > 0 && eh.len() > 0;
+  let text_off = elf_text_off_x86();
+  let hdr_off = 0;
+  let eh_off = 0;
   if (has_unwind) {
     hdr_off = elf_align4(text_off + text.len());
     eh_off = elf_align8(hdr_off + hdr.len());
   }
-  let data_off: i32 = text_off + elf_x86_data_base(text.len(), hdr.len(), eh.len());
-  let filesz: i64 = (data_off + data.len()) as i64;
-  let memsz: i64 = filesz + elf_u32_to_i64(bss);
-  let entry: i64 = (elf_text_vaddr_x86() + entry_off) as i64;
+  let data_off = text_off + elf_x86_data_base(text.len(), hdr.len(), eh.len());
+  let filesz = (data_off + data.len()) as i64;
+  let memsz = filesz + elf_u32_to_i64(bss);
+  let entry = (elf_text_vaddr_x86() + entry_off) as i64;
   let zero64: i64 = 0;
 
   let buf: i32[] = [];
@@ -190,10 +190,10 @@ pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss
   buf = buf.append(1);
   buf = buf.append(1);
   buf = buf.append(0);
-  let p: i32 = 0;
+  let p = 0;
   while (p < 8) {
     buf = buf.append(0);
-    p = p + 1;
+    p += 1;
   }
   buf = elf_le16(buf, 2);
   buf = elf_le16(buf, elf_em_x86_64());
@@ -228,14 +228,14 @@ pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss
     buf = elf_le64(buf, hdr.len() as i64);
     buf = elf_le64(buf, 4 as i64);
   } else {
-    let z: i32 = 0;
+    let z = 0;
     while (z < elf_ph_size()) {
       buf = buf.append(0);
-      z = z + 1;
+      z += 1;
     }
   }
 
-  let img: usize = buf_new(data_off + data.len());
+  let img = buf_new(data_off + data.len());
   elf_push_ints(img, buf);
   buf_push_bytes_range(img, text, 0, text.len());
   if (has_unwind) {
@@ -246,7 +246,7 @@ pub function elf_program_x86(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss
   }
   elf_push_zeros(img, data_off - buf_len(img));
   elf_push_ints(img, data);
-  let out: u8[] = buf_take_bytes(img);
+  let out = buf_take_bytes(img);
   buf_free(img);
   return out;
 }
@@ -258,10 +258,10 @@ function elf_push_ints(b: usize, xs: i32[]): void {
 }
 
 function elf_push_zeros(b: usize, n: i32): void {
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     buf_push_byte(b, 0);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -314,12 +314,12 @@ function elf_so_section_names(): string[] {
 
 // Section index `i` names elf_so_section_names()[i - 1], at this offset.
 function elf_so_shname(i: i32): i32 {
-  let off: i32 = 1;
-  let names: string[] = elf_so_section_names();
-  let k: i32 = 0;
+  let off = 1;
+  let names = elf_so_section_names();
+  let k = 0;
   while (k + 1 < i) {
     off = off + names[k].len() + 1;
-    k = k + 1;
+    k += 1;
   }
   return off;
 }
@@ -345,7 +345,7 @@ pub function no_so_imports(): SoImports {
 function so_needed(imp: SoImports): string[] {
   let out: string[] = [];
   for lib in imp.libs {
-    let seen: boolean = false;
+    let seen = false;
     for o in out {
       if (o == lib) {
         seen = true;
@@ -374,7 +374,7 @@ function so_import_syms(buf: i32[], offs: i32[]): i32[] {
 // A GLOB_DAT relocation for each import slot; the symbols follow the
 // `first` exported ones in the dynamic symbol table.
 function so_import_relocs(buf: i32[], imp: SoImports, first: i32, machine: i32): i32[] {
-  let glob_dat: i64 = 6 as i64;
+  let glob_dat = 6 as i64;
   if (machine == elf_em_aarch64()) {
     glob_dat = 1025 as i64;
   }
@@ -396,39 +396,39 @@ function so_string_entries(buf: i32[], names: string[]): (i32[], i32[]) {
 }
 
 pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string, imp: SoImports, note: boolean): i32[] {
-  let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-  let text_off: i32 = elf_text_off_so(note);
-  let unwind_end: i32 = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
-  let code_end: i32 = elf_code_end(unwind_end, note);
-  let page: i32 = elf_page_align();
-  let rel_type: i32 = 8;
+  let has_unwind = hdr.len() > 0 && eh.len() > 0;
+  let text_off = elf_text_off_so(note);
+  let unwind_end = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
+  let code_end = elf_code_end(unwind_end, note);
+  let page = elf_page_align();
+  let rel_type = 8;
   if (machine == elf_em_aarch64()) {
     rel_type = 1027;
   }
 
   let dynstr: i32[] = [0];
-  let soname_off: i32 = 0;
+  let soname_off = 0;
   if (soname.len() > 0) {
     soname_off = dynstr.len();
     dynstr = elf_str_bytes(dynstr, soname);
   }
-  let needed: string[] = so_needed(imp);
+  let needed = so_needed(imp);
   let (needed_strs, needed_offs) = so_string_entries(dynstr, needed);
   let (export_strs, name_offs) = so_string_entries(needed_strs, names);
   let (import_strs, imp_offs) = so_string_entries(export_strs, imp.syms);
   dynstr = import_strs;
 
-  let image_sz: i32 = data_off + data.len();
-  let tab_file: i32 = (image_sz + page - 1) / page * page;
-  let slide: i32 = (image_sz + bss + page - 1) / page * page - tab_file;
-  let rela_off: i32 = tab_file;
-  let nrela: i32 = rel_offs.len() + imp.syms.len();
-  let rela_sz: i32 = nrela * 24;
-  let sym_off: i32 = elf_align8(rela_off + rela_sz);
-  let nsym: i32 = names.len() + imp.syms.len() + 1;
-  let str_off: i32 = sym_off + nsym * 24;
-  let hash_off: i32 = elf_align4(str_off + dynstr.len());
-  let dyn_off: i32 = elf_align8(hash_off + (3 + nsym) * 4);
+  let image_sz = data_off + data.len();
+  let tab_file = (image_sz + page - 1) / page * page;
+  let slide = (image_sz + bss + page - 1) / page * page - tab_file;
+  let rela_off = tab_file;
+  let nrela = rel_offs.len() + imp.syms.len();
+  let rela_sz = nrela * 24;
+  let sym_off = elf_align8(rela_off + rela_sz);
+  let nsym = names.len() + imp.syms.len() + 1;
+  let str_off = sym_off + nsym * 24;
+  let hash_off = elf_align4(str_off + dynstr.len());
+  let dyn_off = elf_align8(hash_off + (3 + nsym) * 4);
   let tags: i64[] = [4 as i64, 5 as i64, 6 as i64, 10 as i64, 11 as i64];
   let vals_d: i64[] = [(hash_off + slide) as i64, (str_off + slide) as i64, (sym_off + slide) as i64, dynstr.len() as i64, 24 as i64];
   if (soname.len() > 0) {
@@ -445,12 +445,12 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   }
   tags = tags.append(0 as i64);
   vals_d = vals_d.append(0 as i64);
-  let dyn_sz: i32 = tags.len() * 16;
-  let end: i32 = dyn_off + dyn_sz;
-  let tab_mem: i32 = (end - tab_file + page - 1) / page * page;
-  let shstrtab: i32[] = elf_so_shstrtab();
-  let shnum: i32 = elf_so_section_names().len() + 1;
-  let sh_off: i32 = elf_align8(end + shstrtab.len());
+  let dyn_sz = tags.len() * 16;
+  let end = dyn_off + dyn_sz;
+  let tab_mem = (end - tab_file + page - 1) / page * page;
+  let shstrtab = elf_so_shstrtab();
+  let shnum = elf_so_section_names().len() + 1;
+  let sh_off = elf_align8(end + shstrtab.len());
 
   let buf: i32[] = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   buf = elf_le16(buf, 3);
@@ -473,7 +473,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_phdr(buf, 2, 6, dyn_off, dyn_off + slide, dyn_sz, dyn_sz, 8);
   buf = elf_phdr(buf, 1685382482, 4, tab_file, tab_file + slide, tab_mem, tab_mem, 1);
   if (has_unwind) {
-    let ho: i32 = elf_eh_hdr_off_so(text.len(), note);
+    let ho = elf_eh_hdr_off_so(text.len(), note);
     buf = elf_phdr(buf, 1685382480, 4, ho, ho, hdr.len(), hdr.len(), 4);
   } else {
     buf = elf_pad_to(buf, buf.len() + elf_ph_size());
@@ -491,16 +491,16 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = elf_so_note(buf, note, elf_align8(unwind_end));
   buf = elf_cat(elf_pad_to(buf, data_off), data);
   buf = elf_pad_to(buf, rela_off);
-  let r: i32 = 0;
+  let r = 0;
   while (r < rel_offs.len()) {
     buf = elf_le64(buf, rel_offs[r] as i64);
     buf = elf_le64(buf, rel_type as i64);
     buf = elf_le64(buf, rel_adds[r]);
-    r = r + 1;
+    r += 1;
   }
   buf = so_import_relocs(buf, imp, names.len() + 1, machine);
   buf = elf_pad_to(buf, sym_off + 24);
-  let k: i32 = 0;
+  let k = 0;
   while (k < names.len()) {
     buf = elf_le32(buf, name_offs[k]);
     buf = buf.append(18);
@@ -508,7 +508,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
     buf = elf_le16(buf, 1);
     buf = elf_le64(buf, vals[k] as i64);
     buf = elf_le64(buf, sizes[k] as i64);
-    k = k + 1;
+    k += 1;
   }
   buf = so_import_syms(buf, imp_offs);
   buf = elf_cat(buf, dynstr);
@@ -520,24 +520,24 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   } else {
     buf = elf_le32(buf, 0);
   }
-  let c: i32 = 0;
+  let c = 0;
   while (c < nsym) {
     if (c == 0 || c + 1 >= nsym) {
       buf = elf_le32(buf, 0);
     } else {
       buf = elf_le32(buf, c + 1);
     }
-    c = c + 1;
+    c += 1;
   }
   buf = elf_pad_to(buf, dyn_off);
-  let d: i32 = 0;
+  let d = 0;
   while (d < tags.len()) {
     buf = elf_le64(buf, tags[d]);
     buf = elf_le64(buf, vals_d[d]);
-    d = d + 1;
+    d += 1;
   }
   buf = elf_pad_to(elf_cat(buf, shstrtab), sh_off + 64);
-  let bss_off: i64 = (data_off + data.len()) as i64;
+  let bss_off = (data_off + data.len()) as i64;
   buf = elf_shdr(buf, elf_so_shname(1), 1, 6, text_off as i64, text_off as i64, text.len() as i64, 0, 0, 16, 0);
   buf = elf_shdr(buf, elf_so_shname(2), 1, 3, data_off as i64, data_off as i64, data.len() as i64, 0, 0, 16, 0);
   buf = elf_shdr(buf, elf_so_shname(3), 8, 3, bss_off, bss_off, bss as i64, 0, 0, 1, 0);
@@ -566,7 +566,7 @@ function elf_align16(v: i32): i32 {
 }
 
 pub function elf_unwind_end(text_off: i32, text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-  let end: i32 = text_off + text_len;
+  let end = text_off + text_len;
   if (hdr_len > 0 && eh_len > 0) {
     end = elf_align8(elf_align4(end) + hdr_len) + eh_len;
   }
@@ -582,8 +582,8 @@ pub function elf_eh_frame_vaddr_wx(text_len: i32, hdr_len: i32, note: boolean): 
 }
 
 function elf_page_up(v: i32): i32 {
-  let pa: i32 = elf_page_align();
-  let rem: i32 = v % pa;
+  let pa = elf_page_align();
+  let rem = v % pa;
   if (rem == 0) {
     return v;
   }
@@ -606,11 +606,11 @@ function elf_code_end(end: i32, note: boolean): i32 {
 }
 
 pub function elf_bti_note(): i32[] {
-  let b: i32[] = elf_le32([], 4);
+  let b = elf_le32([], 4);
   b = elf_le32(b, 16);
   b = elf_le32(b, 5);
   b = b.append(71).append(78).append(85).append(0);
-  b = elf_le32(b, 0 - 1073741824);
+  b = elf_le32(b, -1073741824);
   b = elf_le32(b, 4);
   b = elf_le32(b, 1);
   return elf_le32(b, 0);
@@ -684,7 +684,7 @@ pub function elf_x86_pie_eh_frame_vaddr(text_len: i32, hdr_len: i32): i32 {
 }
 
 pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-  let end: i32 = elf_unwind_end(elf_x86_wx_text_off(), text_len, hdr_len, eh_len);
+  let end = elf_unwind_end(elf_x86_wx_text_off(), text_len, hdr_len, eh_len);
   return elf_data_vaddr_after(end, elf_x86_page_align());
 }
 
@@ -697,23 +697,23 @@ pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], 
 }
 
 function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i32, e_type: i32, unwind_ph: boolean, note: boolean, nx_stack: boolean, page_align: i32, relro: i32): u8[] {
-  let nph: i32 = elf_image_phnum(unwind_ph, note, nx_stack);
-  let headers: i32 = elf_align16(elf_eh_size() + nph * elf_ph_size());
-  let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-  let hdr_off: i32 = 0;
-  let eh_off: i32 = 0;
+  let nph = elf_image_phnum(unwind_ph, note, nx_stack);
+  let headers = elf_align16(elf_eh_size() + nph * elf_ph_size());
+  let has_unwind = hdr.len() > 0 && eh.len() > 0;
+  let hdr_off = 0;
+  let eh_off = 0;
   if (has_unwind) {
     hdr_off = elf_align4(headers + text.len());
     eh_off = elf_align8(hdr_off + hdr.len());
   }
-  let unwind_end: i32 = elf_unwind_end(headers, text.len(), hdr.len(), eh.len());
-  let note_off: i32 = elf_align8(unwind_end);
-  let text_end: i32 = elf_code_end(unwind_end, note);
-  let data_off: i32 = elf_align16(text_end);
-  let code_sz: i64 = text_end as i64;
-  let hole: i32 = 0;
-  let readonly: i32 = 0;
-  let mutable: i32 = 0;
+  let unwind_end = elf_unwind_end(headers, text.len(), hdr.len(), eh.len());
+  let note_off = elf_align8(unwind_end);
+  let text_end = elf_code_end(unwind_end, note);
+  let data_off = elf_align16(text_end);
+  let code_sz = text_end as i64;
+  let hole = 0;
+  let readonly = 0;
+  let mutable = 0;
   if (relro > 0) {
     hole = page_align;
     readonly = relro - hole;
@@ -723,11 +723,11 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
     eprint("fern: invalid constant data layout");
     exit(3);
   }
-  let data_filesz: i64 = (data.len() - mutable) as i64;
-  let data_memsz: i64 = data_filesz + elf_u32_to_i64(bss);
-  let code_vaddr: i64 = base as i64;
-  let data_vaddr: i64 = (base + elf_data_vaddr_after(text_end, page_align)) as i64;
-  let entry: i64 = (base + headers + entry_off) as i64;
+  let data_filesz = (data.len() - mutable) as i64;
+  let data_memsz = data_filesz + elf_u32_to_i64(bss);
+  let code_vaddr = base as i64;
+  let data_vaddr = (base + elf_data_vaddr_after(text_end, page_align)) as i64;
+  let entry = (base + headers + entry_off) as i64;
   let zero64: i64 = 0;
 
   let buf: i32[] = [];
@@ -740,10 +740,10 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   buf = buf.append(1);
   buf = buf.append(1);
   buf = buf.append(0);
-  let p: i32 = 0;
+  let p = 0;
   while (p < 8) {
     buf = buf.append(0);
-    p = p + 1;
+    p += 1;
   }
   buf = elf_le16(buf, e_type);
   buf = elf_le16(buf, machine);
@@ -769,8 +769,8 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   buf = elf_le64(buf, page_align as i64);
 
   if (hole > 0) {
-    let flags: i32 = 4;
-    let mapped: i32 = readonly;
+    let flags = 4;
+    let mapped = readonly;
     if (e_type == 3) {
       flags = 6;
       mapped = relro - (data_vaddr as i32 + relro) % elf_relro_page();
@@ -790,7 +790,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   if (hole == 0) {
     buf = elf_phdr(buf, 0, 0, 0, 0, 0, 0, 0);
   }
-  let protected: i32 = relro;
+  let protected = relro;
   if (hole > 0) {
     protected = readonly;
     if (e_type == 3) {
@@ -817,10 +817,10 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
       buf = elf_le64(buf, hdr.len() as i64);
       buf = elf_le64(buf, 4 as i64);
     } else {
-      let z: i32 = 0;
+      let z = 0;
       while (z < elf_ph_size()) {
         buf = buf.append(0);
-        z = z + 1;
+        z += 1;
       }
     }
   }
@@ -828,7 +828,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   buf = elf_property_ph(buf, note, base, note_off);
   buf = elf_stack_ph(buf, nx_stack);
 
-  let img: usize = buf_new(data_off + data.len() - hole);
+  let img = buf_new(data_off + data.len() - hole);
   elf_push_ints(img, buf);
   elf_push_zeros(img, headers - buf_len(img));
   buf_push_bytes_range(img, text, 0, text.len());
@@ -850,7 +850,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
   } else {
     elf_push_ints(img, data);
   }
-  let out: u8[] = buf_take_bytes(img);
+  let out = buf_take_bytes(img);
   buf_free(img);
   return out;
 }
@@ -859,7 +859,7 @@ function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], ma
 // The segment maps one page later at the same offset within the page, as the
 // loader requires, so the file carries no page padding between them.
 function elf_data_vaddr_after(text_end: i32, page_align: i32): i32 {
-  let page: i32 = (text_end + page_align - 1) / page_align * page_align;
+  let page = (text_end + page_align - 1) / page_align * page_align;
   return page + elf_align16(text_end) % page_align;
 }
 
@@ -892,12 +892,12 @@ pub function elf_relro_page(): i32 {
 // Code, constant and writable load slots, the RELRO header, and the optional
 // unwind, property and stack headers. PIE leaves the constant load slot null.
 function elf_image_phnum(unwind: boolean, note: boolean, stack: boolean): i32 {
-  let n: i32 = 4 + elf_property_phs(note);
+  let n = 4 + elf_property_phs(note);
   if (unwind) {
-    n = n + 1;
+    n += 1;
   }
   if (stack) {
-    n = n + 1;
+    n += 1;
   }
   return n;
 }
@@ -908,10 +908,10 @@ function elf_stack_ph(own buf: i32[], enabled: boolean): i32[] {
   }
   buf = elf_le32(buf, 1685382481);
   buf = elf_le32(buf, 6);
-  let z: i32 = 0;
+  let z = 0;
   while (z < 5) {
     buf = elf_le64(buf, 0i64);
-    z = z + 1;
+    z += 1;
   }
   return elf_le64(buf, 16i64);
 }
@@ -941,7 +941,7 @@ function elf_property_ph(own buf: i32[], note: boolean, base: i32, off: i32): i3
   if (!note) {
     return buf;
   }
-  let len: i64 = elf_bti_note().len() as i64;
+  let len = elf_bti_note().len() as i64;
   buf = elf_le32(buf, 1685382483);
   buf = elf_le32(buf, 4);
   buf = elf_le64(buf, off as i64);
@@ -981,7 +981,7 @@ pub function elf_sh_size(): i32 {
 }
 
 function elf_align8_buf(b: i32[]): i32[] {
-  let out: i32[] = b;
+  let out = b;
   while (out.len() % 8 != 0) {
     out = out.append(0);
   }
@@ -993,29 +993,29 @@ function elf_str_bytes(b: i32[], s: string): i32[] {
 }
 
 function elf_str_bytes_from(b: i32[], s: string, start: i32): i32[] {
-  let out: i32[] = b;
-  let i: i32 = start;
+  let out = b;
+  let i = start;
   while (i < s.len()) {
     out = out.append(s[i] as i32);
-    i = i + 1;
+    i += 1;
   }
   return out.append(0);
 }
 
 function elf_patch_le16(b: i32[], off: i32, v: i32): i32[] {
-  let out: i32[] = b.with(off, v & 255);
+  let out = b.with(off, v & 255);
   return out.with(off + 1, v >> 8 & 255);
 }
 
 function elf_patch_le32(b: i32[], off: i32, v: i32): i32[] {
-  let out: i32[] = b.with(off, v & 255);
+  let out = b.with(off, v & 255);
   out = out.with(off + 1, v >> 8 & 255);
   out = out.with(off + 2, v >> 16 & 255);
   return out.with(off + 3, v >> 24 & 255);
 }
 
 function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, off: i64, size: i64, link: i32, info: i32, align: i64, entsize: i64): i32[] {
-  let out: i32[] = b;
+  let out = b;
   out = elf_le32(out, name_off);
   out = elf_le32(out, sh_type);
   out = elf_le64(out, flags);
@@ -1030,11 +1030,11 @@ function elf_shdr(b: i32[], name_off: i32, sh_type: i32, flags: i64, addr: i64, 
 }
 
 function dw_uleb(b: i32[], v: i32): i32[] {
-  let out: i32[] = b;
-  let x: i32 = v;
-  let more: boolean = true;
+  let out = b;
+  let x = v;
+  let more = true;
   while (more) {
-    let c: i32 = x & 127;
+    let c = x & 127;
     x = x >> 7;
     if (x == 0) {
       more = false;
@@ -1051,13 +1051,13 @@ function dw_attr(b: i32[], at: i32, form: i32): i32[] {
 }
 
 function dw_sleb(b: i32[], v: i32): i32[] {
-  let out: i32[] = b;
-  let x: i32 = v;
-  let more: boolean = true;
+  let out = b;
+  let x = v;
+  let more = true;
   while (more) {
-    let c: i32 = x & 127;
+    let c = x & 127;
     x = x >> 7;
-    if (x == 0 && (c & 64) == 0 || x == 0 - 1 && (c & 64) != 0) {
+    if (x == 0 && (c & 64) == 0 || x == -1 && (c & 64) != 0) {
       more = false;
     } else {
       c = c | 128;
@@ -1141,9 +1141,9 @@ function dw_types_add(t: DwTypes, key: string, kind: i32, size: i32): DwTypes {
 }
 
 function dw_token(s: string, i: i32): string {
-  let j: i32 = i;
+  let j = i;
   while (j < s.len() && s[j] != b'@' && s[j] != b'{' && s[j] != b'}' && s[j] != b',' && s[j] != b':' && s[j] != b'=') {
-    j = j + 1;
+    j += 1;
   }
   return slice_unchecked(s, i, j) + "";
 }
@@ -1156,16 +1156,16 @@ function dw_type_parse(t: DwTypes, s: string, i: i32): DwParsed {
     return dw_in_place_parse(t, s, i);
   }
   if (s[i] != b'*') {
-    let name: string = dw_token(s, i);
-    let bt: i32[] = dw_base_type(name);
+    let name = dw_token(s, i);
+    let bt = dw_base_type(name);
     return DwParsed { t: dw_types_add(t, name, 0, bt[0]), key: name, next: i + name.len() };
   }
-  let name: string = dw_token(s, i + 1);
-  let at: i32 = i + 1 + name.len();
+  let name = dw_token(s, i + 1);
+  let at = i + 1 + name.len();
   t = dw_types_add(t, "*" + name, 1, 8);
   if (at < s.len() && s[at] == b'@') {
-    let size: string = dw_token(s, at + 1);
-    let p: DwParsed = dw_members_parse(dw_types_add(t, name, 2, dw_atoi(size)), name, s, at + 2 + size.len());
+    let size = dw_token(s, at + 1);
+    let p = dw_members_parse(dw_types_add(t, name, 2, dw_atoi(size)), name, s, at + 2 + size.len());
     return DwParsed { ...p, key: "*" + name };
   }
   return DwParsed { t: t, key: "*" + name, next: at };
@@ -1173,44 +1173,44 @@ function dw_type_parse(t: DwTypes, s: string, i: i32): DwParsed {
 
 // `&Name@size{...}` is a record held in place rather than behind a pointer.
 function dw_in_place_parse(t: DwTypes, s: string, i: i32): DwParsed {
-  let name: string = dw_token(s, i + 1);
-  let at: i32 = i + 1 + name.len();
-  let size: string = dw_token(s, at + 1);
+  let name = dw_token(s, i + 1);
+  let at = i + 1 + name.len();
+  let size = dw_token(s, at + 1);
   return dw_members_parse(dw_types_add(t, "&" + name, 4, dw_atoi(size)), "&" + name, s, at + 2 + size.len());
 }
 
 function dw_enum_parse(t: DwTypes, s: string, i: i32): DwParsed {
-  let name: string = dw_token(s, i + 1);
+  let name = dw_token(s, i + 1);
   t = dw_types_add(dw_types_add(t, "%" + name, 1, 8), name, 3, 8);
-  let first: boolean = !dw_has_members(t, util_index_of(t.keys, name));
-  let at: i32 = i + 2 + name.len();
+  let first = !dw_has_members(t, util_index_of(t.keys, name));
+  let at = i + 2 + name.len();
   while (at < s.len() && s[at] != b'}') {
-    let variant: string = dw_token(s, at);
-    let value: string = dw_token(s, at + variant.len() + 1);
+    let variant = dw_token(s, at);
+    let value = dw_token(s, at + variant.len() + 1);
     if (first) {
       t = DwTypes { ...t, m_owner: t.m_owner.append(util_index_of(t.keys, name)), m_names: t.m_names.append(variant), m_types: t.m_types.append(""), m_offs: t.m_offs.append(dw_atoi(value)) };
     }
     at = at + variant.len() + 1 + value.len();
     if (at < s.len() && s[at] == b',') {
-      at = at + 1;
+      at += 1;
     }
   }
   return DwParsed { t: t, key: "%" + name, next: at + 1 };
 }
 
 function dw_members_parse(t: DwTypes, owner: string, s: string, i: i32): DwParsed {
-  let first: boolean = !dw_has_members(t, util_index_of(t.keys, owner));
+  let first = !dw_has_members(t, util_index_of(t.keys, owner));
   while (i < s.len() && s[i] != b'}') {
-    let field: string = dw_token(s, i);
-    let p: DwParsed = dw_type_parse(t, s, i + field.len() + 1);
-    let off: string = dw_token(s, p.next + 1);
+    let field = dw_token(s, i);
+    let p = dw_type_parse(t, s, i + field.len() + 1);
+    let off = dw_token(s, p.next + 1);
     t = p.t;
     if (first) {
       t = DwTypes { ...t, m_owner: t.m_owner.append(util_index_of(t.keys, owner)), m_names: t.m_names.append(field), m_types: t.m_types.append(p.key), m_offs: t.m_offs.append(dw_atoi(off)) };
     }
     i = p.next + 1 + off.len();
     if (i < s.len() && s[i] == b',') {
-      i = i + 1;
+      i += 1;
     }
   }
   return DwParsed { t: t, key: owner, next: i + 1 };
@@ -1219,24 +1219,24 @@ function dw_members_parse(t: DwTypes, owner: string, s: string, i: i32): DwParse
 struct DwEmit { die: i32[], offs: i32[], p_at: i32[], p_key: string[] }
 
 function dw_types_emit(e: DwEmit, t: DwTypes): DwEmit {
-  let k: i32 = 0;
+  let k = 0;
   while (k < t.keys.len()) {
     e = DwEmit { ...e, offs: e.offs.append(11 + e.die.len()) };
     e = dw_type_emit(e, t, k);
-    k = k + 1;
+    k += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < e.p_at.len()) {
     e = DwEmit { ...e, die: elf_patch_le32(e.die, e.p_at[i], e.offs[util_index_of(t.keys, e.p_key[i])]) };
-    i = i + 1;
+    i += 1;
   }
   return e;
 }
 
 function dw_type_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
-  let key: string = t.keys[k];
+  let key = t.keys[k];
   if (t.kinds[k] == 0) {
-    let bt: i32[] = dw_base_type(key);
+    let bt = dw_base_type(key);
     return DwEmit { ...e, die: elf_str_bytes(dw_uleb(e.die, 4), key).append(bt[0]).append(bt[1]) };
   }
   if (t.kinds[k] == 1) {
@@ -1245,30 +1245,30 @@ function dw_type_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
   if (t.kinds[k] == 3) {
     return dw_enum_emit(e, t, k);
   }
-  let name: string = key;
+  let name = key;
   if (t.kinds[k] == 4) {
     name = slice_unchecked(key, 1, key.len()) + "";
   }
   e = DwEmit { ...e, die: dw_uleb(elf_str_bytes(dw_uleb(e.die, 8), name), t.sizes[k]) };
-  let m: i32 = 0;
+  let m = 0;
   while (m < t.m_owner.len()) {
     if (t.m_owner[m] == k) {
       e = dw_type_ref(DwEmit { ...e, die: elf_str_bytes(dw_uleb(e.die, 9), t.m_names[m]) }, t.m_types[m]);
       e = DwEmit { ...e, die: dw_uleb(e.die, t.m_offs[m]) };
     }
-    m = m + 1;
+    m += 1;
   }
   return DwEmit { ...e, die: dw_uleb(e.die, 0) };
 }
 
 function dw_enum_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
-  let die: i32[] = elf_str_bytes(dw_uleb(e.die, 10), t.keys[k]).append(t.sizes[k]);
-  let m: i32 = 0;
+  let die = elf_str_bytes(dw_uleb(e.die, 10), t.keys[k]).append(t.sizes[k]);
+  let m = 0;
   while (m < t.m_owner.len()) {
     if (t.m_owner[m] == k) {
       die = dw_sleb(elf_str_bytes(dw_uleb(die, 11), t.m_names[m]), t.m_offs[m]);
     }
-    m = m + 1;
+    m += 1;
   }
   return DwEmit { ...e, die: dw_uleb(die, 0) };
 }
@@ -1287,7 +1287,7 @@ function dw_has_members(t: DwTypes, k: i32): boolean {
 }
 
 function dw_atoi(s: string): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for c in s {
     n = n * 10 + (c - b'0') as i32;
   }
@@ -1303,17 +1303,17 @@ pub function no_var_ranges(): VarRanges {
 }
 
 function dw_vars(r: VarRanges): DwVars {
-  let d: DwVars = DwVars { fns: [], names: [], types: [], params: [], loc_at: [], loc: [] };
-  let nb: i32 = r.fns.len() * 2 + 1;
-  let bucket: i32[] = dw_filled(nb);
+  let d = DwVars { fns: [], names: [], types: [], params: [], loc_at: [], loc: [] };
+  let nb = r.fns.len() * 2 + 1;
+  let bucket = dw_filled(nb);
   let chain: i32[] = [];
   let head: i32[] = [];
   let tail: i32[] = [];
-  let next: i32[] = dw_filled(r.fns.len());
-  let i: i32 = 0;
+  let next = dw_filled(r.fns.len());
+  let i = 0;
   while (i < r.fns.len()) {
-    let b: i32 = dw_var_bucket(r, i, nb);
-    let k: i32 = bucket[b];
+    let b = dw_var_bucket(r, i, nb);
+    let k = bucket[b];
     while (k >= 0 && !dw_same_var(d, k, r, i)) {
       k = chain[k];
     }
@@ -1328,22 +1328,22 @@ function dw_vars(r: VarRanges): DwVars {
       next = next.with(tail[k], i);
       tail = tail.with(k, i);
     }
-    i = i + 1;
+    i += 1;
   }
   let loc: i32[] = [];
   let loc_at: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < d.fns.len()) {
     loc_at = loc_at.append(loc.len());
-    let j: i32 = head[k];
+    let j = head[k];
     while (j >= 0) {
-      let expr: i32[] = dw_unhex(r.locs[j]);
+      let expr = dw_unhex(r.locs[j]);
       loc = elf_le64(elf_le64(loc, r.lo[j] as i64), r.hi[j] as i64);
       loc = elf_cat(elf_le16(loc, expr.len()), expr);
       j = next[j];
     }
     loc = elf_le64(elf_le64(loc, 0 as i64), 0 as i64);
-    k = k + 1;
+    k += 1;
   }
   return DwVars { ...d, loc: loc, loc_at: loc_at };
 }
@@ -1357,11 +1357,11 @@ function dw_var_bucket(r: VarRanges, i: i32, nb: i32): i32 {
 }
 
 function dw_hash(h0: i32, s: string): i32 {
-  let h: i32 = h0;
-  let i: i32 = 0;
+  let h = h0;
+  let i = 0;
   while (i < s.len()) {
     h = (h * 31 + s[i] as i32) % 1000003;
-    i = i + 1;
+    i += 1;
   }
   return h;
 }
@@ -1369,7 +1369,7 @@ function dw_hash(h0: i32, s: string): i32 {
 function dw_filled(n: i32): i32[] {
   let out: i32[] = [];
   while (out.len() < n) {
-    out = out.append(0 - 1);
+    out = out.append(-1);
   }
   return out;
 }
@@ -1397,22 +1397,22 @@ function dw_base_type(t: string): i32[] {
 }
 
 function util_index_of(xs: string[], s: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == s) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function dw_unhex(s: string): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i + 1 < s.len()) {
     out = out.append(dw_hex_digit(s[i]) * 16 + dw_hex_digit(s[i + 1]));
-    i = i + 2;
+    i += 2;
   }
   return out;
 }
@@ -1443,18 +1443,18 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
   if (lines) {
     die = elf_le32(die, 0);
   }
-  let tys: DwTypes = dw_types_new();
+  let tys = dw_types_new();
   let var_keys: string[] = [];
   for t in vars.types {
-    let p: DwParsed = dw_type_parse(tys, t, 0);
+    let p = dw_type_parse(tys, t, 0);
     tys = p.t;
     var_keys = var_keys.append(p.key);
   }
-  let emitted: DwEmit = dw_types_emit(DwEmit { die: die, offs: [], p_at: [], p_key: [] }, tys);
+  let emitted = dw_types_emit(DwEmit { die: die, offs: [], p_at: [], p_key: [] }, tys);
   die = emitted.die;
-  let i: i32 = 0;
+  let i = 0;
   while (i < sym_names.len()) {
-    let has_vars: boolean = util_index_of(vars.fns, sym_names[i]) >= 0;
+    let has_vars = util_index_of(vars.fns, sym_names[i]) >= 0;
     if (has_vars) {
       die = dw_uleb(die, 3);
     } else {
@@ -1464,7 +1464,7 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
     die = elf_le64(die, text_vaddr + sym_offs[i] as i64);
     die = elf_le64(die, text_vaddr + (sym_offs[i] + sym_sizes[i]) as i64);
     if (has_vars) {
-      let v: i32 = 0;
+      let v = 0;
       while (v < vars.fns.len()) {
         if (vars.fns[v] == sym_names[i]) {
           if (vars.params[v]) {
@@ -1476,11 +1476,11 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
           die = elf_le32(die, emitted.offs[util_index_of(tys.keys, var_keys[v])]);
           die = elf_le32(die, vars.loc_at[v]);
         }
-        v = v + 1;
+        v += 1;
       }
       die = dw_uleb(die, 0);
     }
-    i = i + 1;
+    i += 1;
   }
   die = dw_uleb(die, 0);
   let body: i32[] = [];
@@ -1488,28 +1488,28 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
   body = elf_le32(body, 0);
   body = body.append(8);
   body = elf_cat(body, die);
-  let out: i32[] = elf_le32([], body.len());
+  let out = elf_le32([], body.len());
   return elf_cat(out, body);
 }
 
 function dw_last_slash(path: string): i32 {
-  let i: i32 = path.len() - 1;
+  let i = path.len() - 1;
   while (i >= 0) {
     if (path[i] == b'/') {
       return i;
     }
-    i = i - 1;
+    i -= 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function dw_dir_index(dirs: string[], dir: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < dirs.len()) {
     if (dirs[i] == dir) {
       return i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return dirs.len() + 1;
 }
@@ -1519,14 +1519,14 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
   let dirs: string[] = [];
   let file_dir: i32[] = [];
   let file_name: string[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < files.len()) {
-    let path: string = files[fi];
-    let slash: i32 = dw_last_slash(path);
-    let d: i32 = 0;
-    let name: string = path;
+    let path = files[fi];
+    let slash = dw_last_slash(path);
+    let d = 0;
+    let name = path;
     if (slash > 0) {
-      let dir: string = slice_unchecked(path, 0, slash) + "";
+      let dir = slice_unchecked(path, 0, slash) + "";
       if (dir != ".") {
         d = dw_dir_index(dirs, dir);
         if (d > dirs.len()) {
@@ -1539,12 +1539,12 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
     }
     file_dir = file_dir.append(d);
     file_name = file_name.append(name);
-    fi = fi + 1;
+    fi += 1;
   }
-  let di: i32 = 0;
+  let di = 0;
   while (di < dirs.len()) {
     hdr = elf_str_bytes(hdr, dirs[di]);
-    di = di + 1;
+    di += 1;
   }
   hdr = hdr.append(0);
   fi = 0;
@@ -1553,21 +1553,21 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
     hdr = dw_uleb(hdr, file_dir[fi]);
     hdr = dw_uleb(hdr, 0);
     hdr = dw_uleb(hdr, 0);
-    fi = fi + 1;
+    fi += 1;
   }
   hdr = hdr.append(0);
 
   let prog: i32[] = [];
   if (loc_offs.len() > 0) {
-    let addr: i32 = loc_offs[0];
-    let file: i32 = 1;
-    let line: i32 = 1;
-    let col: i32 = 0;
+    let addr = loc_offs[0];
+    let file = 1;
+    let line = 1;
+    let col = 0;
     prog = prog.append(0);
     prog = prog.append(9);
     prog = prog.append(2);
     prog = elf_le64(prog, text_vaddr + addr as i64);
-    let ri: i32 = 0;
+    let ri = 0;
     while (ri < loc_offs.len()) {
       if (loc_files[ri] != file) {
         prog = dw_uleb(prog.append(4), loc_files[ri]);
@@ -1580,10 +1580,10 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
       if ((loc_flags[ri] & 1) != 0) {
         prog = prog.append(10);
       }
-      let addr_adv: i32 = loc_offs[ri] - addr;
-      let line_adv: i32 = loc_lines[ri] - line;
-      let special: i32 = line_adv + 5 + 14 * addr_adv + 13;
-      if (line_adv >= 0 - 5 && line_adv < 9 && special <= 255) {
+      let addr_adv = loc_offs[ri] - addr;
+      let line_adv = loc_lines[ri] - line;
+      let special = line_adv + 5 + 14 * addr_adv + 13;
+      if (line_adv >= -5 && line_adv < 9 && special <= 255) {
         prog = prog.append(special);
       } else {
         if (addr_adv > 0) {
@@ -1596,7 +1596,7 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
       }
       addr = loc_offs[ri];
       line = loc_lines[ri];
-      ri = ri + 1;
+      ri += 1;
     }
     if (text_len > addr) {
       prog = dw_uleb(prog.append(2), text_len - addr);
@@ -1611,15 +1611,15 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
   body = elf_le32(body, hdr.len());
   body = elf_cat(body, hdr);
   body = elf_cat(body, prog);
-  let out: i32[] = elf_le32([], body.len());
+  let out = elf_le32([], body.len());
   return elf_cat(out, body);
 }
 
 pub struct DwSections { abbrev: i32[], info: i32[], line: i32[], loc: i32[] }
 
 pub function dw_sections(text_vaddr: i64, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[], vars: VarRanges): DwSections {
-  let lines: boolean = loc_offs.len() > 0;
-  let dv: DwVars = dw_vars(vars);
+  let lines = loc_offs.len() > 0;
+  let dv = dw_vars(vars);
   let dline: i32[] = [];
   if (lines) {
     dline = elf_debug_line(text_vaddr, text_len, files, loc_offs, loc_files, loc_lines, loc_cols, loc_flags);
@@ -1637,52 +1637,52 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
     return img;
   }
 
-  let nsym: i32 = sym_names.len();
+  let nsym = sym_names.len();
   let zero64: i64 = 0;
 
   let strtab: i32[] = [0];
   let name_offs: i32[] = [];
-  let si: i32 = 0;
+  let si = 0;
   while (si < nsym) {
     name_offs = name_offs.append(strtab.len());
     strtab = elf_str_bytes(strtab, sym_names[si]);
-    si = si + 1;
+    si += 1;
   }
 
   let shstrtab: i32[] = [0];
-  let n_text: i32 = shstrtab.len();
+  let n_text = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".text");
-  let n_symtab: i32 = shstrtab.len();
+  let n_symtab = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".symtab");
-  let n_strtab: i32 = shstrtab.len();
+  let n_strtab = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".strtab");
-  let n_shstrtab: i32 = shstrtab.len();
+  let n_shstrtab = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".shstrtab");
-  let n_debug_abbrev: i32 = shstrtab.len();
+  let n_debug_abbrev = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".debug_abbrev");
-  let n_debug_info: i32 = shstrtab.len();
+  let n_debug_info = shstrtab.len();
   shstrtab = elf_str_bytes(shstrtab, ".debug_info");
-  let lines: boolean = loc_offs.len() > 0;
-  let n_debug_line: i32 = shstrtab.len();
+  let lines = loc_offs.len() > 0;
+  let n_debug_line = shstrtab.len();
   shstrtab = elf_opt_str(shstrtab, ".debug_line", lines);
-  let n_debug_frame: i32 = shstrtab.len();
+  let n_debug_frame = shstrtab.len();
   shstrtab = elf_opt_str(shstrtab, ".debug_frame", frame.len() > 0);
-  let dw: DwSections = dw_sections(text_vaddr as i64, text_len, sym_names, sym_offs, sym_sizes, cu_name, comp_dir, files, loc_offs, loc_files, loc_lines, loc_cols, loc_flags, vars);
-  let n_debug_loc: i32 = shstrtab.len();
+  let dw = dw_sections(text_vaddr as i64, text_len, sym_names, sym_offs, sym_sizes, cu_name, comp_dir, files, loc_offs, loc_files, loc_lines, loc_cols, loc_flags, vars);
+  let n_debug_loc = shstrtab.len();
   shstrtab = elf_opt_str(shstrtab, ".debug_loc", dw.loc.len() > 0);
 
-  let out: i32[] = elf_align8_buf(img);
+  let out = elf_align8_buf(img);
 
-  let symtab_off: i32 = out.len();
-  let symtab_size: i32 = (nsym + 1) * elf_sym_size();
+  let symtab_off = out.len();
+  let symtab_size = (nsym + 1) * elf_sym_size();
 
-  let z: i32 = 0;
+  let z = 0;
   while (z < elf_sym_size()) {
     out = out.append(0);
-    z = z + 1;
+    z += 1;
   }
 
-  let k: i32 = 0;
+  let k = 0;
   while (k < nsym) {
     out = elf_le32(out, name_offs[k]);
     out = out.append(18);
@@ -1690,27 +1690,27 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
     out = elf_le16(out, 1);
     out = elf_le64(out, (text_vaddr + sym_offs[k]) as i64);
     out = elf_le64(out, sym_sizes[k] as i64);
-    k = k + 1;
+    k += 1;
   }
 
-  let strtab_off: i32 = out.len();
+  let strtab_off = out.len();
   out = elf_cat(out, strtab);
-  let shstrtab_off: i32 = out.len();
+  let shstrtab_off = out.len();
   out = elf_cat(out, shstrtab);
-  let abbrev_off: i32 = out.len();
+  let abbrev_off = out.len();
   out = elf_cat(out, dw.abbrev);
-  let info_off: i32 = out.len();
+  let info_off = out.len();
   out = elf_cat(out, dw.info);
-  let dline_off: i32 = out.len();
+  let dline_off = out.len();
   out = elf_cat(out, dw.line);
   out = elf_align8_buf(out);
-  let frame_off: i32 = out.len();
+  let frame_off = out.len();
   out = elf_cat(out, frame);
-  let loc_off: i32 = out.len();
+  let loc_off = out.len();
   out = elf_cat(out, dw.loc);
 
   out = elf_align8_buf(out);
-  let sh_off: i32 = out.len();
+  let sh_off = out.len();
 
   out = elf_shdr(out, 0, 0, zero64, zero64, zero64, zero64, 0, 0, zero64, zero64);
   out = elf_shdr(out, n_text, 1, 6, text_vaddr as i64, text_off as i64, text_len as i64, 0, 0, 16, zero64);
@@ -1722,7 +1722,7 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   out = elf_opt_shdr(out, lines, n_debug_line, dline_off, dw.line.len(), 1);
   out = elf_opt_shdr(out, frame.len() > 0, n_debug_frame, frame_off, frame.len(), 8);
   out = elf_opt_shdr(out, dw.loc.len() > 0, n_debug_loc, loc_off, dw.loc.len(), 1);
-  let nsh: i32 = (out.len() - sh_off) / elf_sh_size();
+  let nsh = (out.len() - sh_off) / elf_sh_size();
 
   out = elf_patch_le32(out, 40, sh_off);
   out = elf_patch_le16(out, 58, elf_sh_size());
@@ -1751,63 +1751,63 @@ pub function elf_wx_text_off(note: boolean): i32 {
 }
 
 pub function elf_func_sym_names(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): string[] {
-  let idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+  let idx = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < idx.len()) {
     out = out.append(lab_names[idx[i]]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function elf_func_sym_offs(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
-  let idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+  let idx = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < idx.len()) {
     out = out.append(lab_offs[idx[i]]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): i32[] {
-  let idx: i32[] = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
+  let idx = elf_func_sym_order(lab_names, lab_offs, lab_secs, sec_filter);
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < idx.len()) {
-    let here: i32 = lab_offs[idx[i]];
-    let end: i32 = text_end;
+    let here = lab_offs[idx[i]];
+    let end = text_end;
     if (i + 1 < idx.len()) {
       end = lab_offs[idx[i + 1]];
     }
-    let sz: i32 = end - here;
+    let sz = end - here;
     if (sz < 0) {
       sz = 0;
     }
     out = out.append(sz);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function elf_inner_label(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] == b'.' || s[i] == b'#') {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
   let idx: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < lab_names.len()) {
-    let keep: boolean = lab_names[i].len() > 0 && !elf_inner_label(lab_names[i]);
+    let keep = lab_names[i].len() > 0 && !elf_inner_label(lab_names[i]);
     if (keep && sec_filter >= 0) {
       if (i >= lab_secs.len() || lab_secs[i] != sec_filter) {
         keep = false;
@@ -1816,40 +1816,40 @@ function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[
     if (keep) {
       idx = idx.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
-  let a: i32 = 1;
+  let a = 1;
   while (a < idx.len()) {
-    let cur: i32 = idx[a];
-    let b: i32 = a - 1;
+    let cur = idx[a];
+    let b = a - 1;
     while (b >= 0) {
-      let prev: i32 = idx[b];
-      let after: boolean = lab_offs[prev] > lab_offs[cur];
+      let prev = idx[b];
+      let after = lab_offs[prev] > lab_offs[cur];
       if (!after && lab_offs[prev] == lab_offs[cur]) {
         after = elf_str_gt(lab_names[prev], lab_names[cur]);
       }
       if (!after) {
-        b = 0 - 1;
+        b = -1;
       } else {
         idx = idx.with(b + 1, prev);
         idx = idx.with(b, cur);
-        b = b - 1;
+        b -= 1;
       }
     }
-    a = a + 1;
+    a += 1;
   }
   return idx;
 }
 
 function elf_str_gt(x: string, y: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < x.len() && i < y.len()) {
-    let cx: i32 = x[i] as i32;
-    let cy: i32 = y[i] as i32;
+    let cx = x[i] as i32;
+    let cy = y[i] as i32;
     if (cx != cy) {
       return cx > cy;
     }
-    i = i + 1;
+    i += 1;
   }
   return x.len() > y.len();
 }

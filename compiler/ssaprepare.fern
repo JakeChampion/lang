@@ -92,8 +92,8 @@ pub function finish_formed(lowered: irtables.Lowered, selected: physicalbody.Sel
 }
 
 pub function with_selects(b: Body): Body {
-  let picked: ssa.Selection = ssa.select_branches(b.formed.f);
-  let terms: sourcepos.SourcePos[] = b.source.terms;
+  let picked = ssa.select_branches(b.formed.f);
+  let terms = b.source.terms;
   for k in 0..picked.from.len() {
     if (picked.from[k] < terms.len() && picked.to[k] < terms.len()) {
       terms = terms.with(picked.to[k], terms[picked.from[k]]);
@@ -106,10 +106,10 @@ pub struct SourceLines { values: sourcepos.SourcePos[], terms: sourcepos.SourceP
 
 function blank_positions(n: i32): sourcepos.SourcePos[] {
   let out: sourcepos.SourcePos[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(sourcepos.SourcePos { line: 0, col: "0" });
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -118,7 +118,7 @@ function source_lines(r: irtables.Lowered, lifted: ssa_lift.Lifted, formed: ssa.
   if (r.source_positions.entry.line == 0) {
     return SourceLines { values: [], terms: [] };
   }
-  let top: i32 = 0;
+  let top = 0;
   for b in formed.f.blocks {
     if (b.id >= top) {
       top = b.id + 1;
@@ -177,13 +177,13 @@ function first_source(own out: SourceLines, f: ssa.SFunc, pos: sourcepos.SourceP
 }
 
 function source_values(own out: SourceLines, positions: i64[], repl: i32[]): SourceLines {
-  let i: i32 = 0;
+  let i = 0;
   while (i < positions.len()) {
     let packed = positions[i];
     if (packed > 0) {
       out = source_value(out, i, repl, sourcepos.SourcePos { line: (packed >> 32) as i32, col: util.i64_to_string(packed & 4294967295i64) });
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }

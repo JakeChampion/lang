@@ -24,9 +24,9 @@ pub struct Service { name: string, types: i32 }
 // FOREGROUND_SERVICE_<TYPE> permission gives the flag of its type.
 pub function foreground_types(permissions: string[]): i32 {
   let names: string[] = ["DATA_SYNC", "MEDIA_PLAYBACK", "PHONE_CALL", "LOCATION", "CONNECTED_DEVICE", "MEDIA_PROJECTION", "CAMERA", "MICROPHONE", "HEALTH", "REMOTE_MESSAGING", "SYSTEM_EXEMPTED"];
-  let types: i32 = 0;
+  let types = 0;
   for p in permissions {
-    let k: i32 = util.index_of_str(names, p.replace("android.permission.FOREGROUND_SERVICE_", ""));
+    let k = util.index_of_str(names, p.replace("android.permission.FOREGROUND_SERVICE_", ""));
     if (p.starts_with("android.permission.FOREGROUND_SERVICE_") && k >= 0) {
       types = types | 1 << k;
     }
@@ -150,17 +150,17 @@ function service_element(out: u8[], line: i32, pool: string[], sv: Service): u8[
   if (sv.types != 0) {
     attrs = attrs.append(attr_int(S_FOREGROUND_TYPE, 17, sv.types));
   }
-  let tag: i32 = at(pool, "service");
+  let tag = at(pool, "service");
   return end(start(out, line, tag, attrs), line, tag);
 }
 
 // The UTF-16 code units of `s`.
 function utf16(s: string): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
-    let n: i32 = 1;
+    let c = s[i] as i32;
+    let n = 1;
     if (c >= 240) {
       c = c & 7;
       n = 4;
@@ -181,7 +181,7 @@ function utf16(s: string): i32[] {
     } else {
       out = out.append(c);
     }
-    i = i + n;
+    i += n;
   }
   return out;
 }
@@ -191,7 +191,7 @@ function string_pool(strings: string[]): u8[] {
   let data: u8[] = [];
   for s in strings {
     offs = put32(offs, data.len());
-    let units: i32[] = utf16(s);
+    let units = utf16(s);
     data = put16(data, units.len());
     for u in units {
       data = put16(data, u);
@@ -201,15 +201,15 @@ function string_pool(strings: string[]): u8[] {
   while (data.len() % 4 != 0) {
     data = data.append(0 as u8);
   }
-  let head: u8[] = put16(put16([], 1), 28);
+  let head = put16(put16([], 1), 28);
   head = put32(head, 28 + offs.len() + data.len());
   head = put32(put32(put32(put32(put32(head, strings.len()), 0), 0), 28 + offs.len()), 0);
   return cat(cat(head, offs), data);
 }
 
 function resource_map(): u8[] {
-  let ids: i32[] = attr_ids();
-  let out: u8[] = put32(put16(put16([], 384), 8), 8 + 4 * ids.len());
+  let ids = attr_ids();
+  let out = put32(put16(put16([], 384), 8), 8 + 4 * ids.len());
   for id in ids {
     out = put32(out, id);
   }
@@ -227,19 +227,19 @@ function attr_int(name: i32, kind: i32, v: i32): Attr {
 }
 
 function node(out: u8[], kind: i32, size: i32, line: i32): u8[] {
-  return put32(put32(put32(put16(put16(out, kind), 16), size), line), 0 - 1);
+  return put32(put32(put32(put16(put16(out, kind), 16), size), line), -1);
 }
 
 function start(out: u8[], line: i32, name: i32, attrs: Attr[]): u8[] {
   out = node(out, 258, 36 + 20 * attrs.len(), line);
-  out = put32(put32(out, 0 - 1), name);
+  out = put32(put32(out, -1), name);
   out = put16(put16(put16(put16(put16(put16(out, 20), 20), attrs.len()), 0), 0), 0);
   for a in attrs {
-    let ns: i32 = 0 - 1;
+    let ns: i32 = -1;
     if (a.android) {
       ns = S_URI;
     }
-    let raw: i32 = 0 - 1;
+    let raw: i32 = -1;
     if (a.kind == 3) {
       raw = a.data;
     }
@@ -250,30 +250,30 @@ function start(out: u8[], line: i32, name: i32, attrs: Attr[]): u8[] {
 }
 
 function end(out: u8[], line: i32, name: i32): u8[] {
-  return put32(put32(node(out, 259, 24, line), 0 - 1), name);
+  return put32(put32(node(out, 259, 24, line), -1), name);
 }
 
 // The binary AndroidManifest.xml of `app`: one NativeActivity that loads
 // lib<app.lib>.so, with the launcher intent filter.
 pub function manifest(app: App): u8[] {
-  let s: string[] = pool_strings(app);
-  let body: u8[] = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
-  let manifest_tag: i32 = at(s, "manifest");
+  let s = pool_strings(app);
+  let body = put32(put32(node([], 256, 24, 1), S_PREFIX), S_URI);
+  let manifest_tag = at(s, "manifest");
   body = start(body, 1, manifest_tag, [attr_int(S_VERSION_CODE, 16, app.version_code), attr_str(S_VERSION_NAME, at(s, app.version_name)), Attr { android: false, name: S_PACKAGE, kind: 3, data: at(s, app.package) }]);
-  let sdk_tag: i32 = at(s, "uses-sdk");
+  let sdk_tag = at(s, "uses-sdk");
   body = end(start(body, 2, sdk_tag, [attr_int(S_MIN_SDK, 16, app.min_sdk), attr_int(S_TARGET_SDK, 16, TARGET_SDK)]), 2, sdk_tag);
-  let uses: i32 = at(s, "uses-permission");
+  let uses = at(s, "uses-permission");
   for p in app.permissions {
     body = end(start(body, 2, uses, [attr_str(S_NAME, at(s, p))]), 2, uses);
   }
-  let has_code: i32 = 0;
+  let has_code = 0;
   if (app.dex.len() > 0) {
-    has_code = 0 - 1;
+    has_code = -1;
   }
-  let application: i32 = at(s, "application");
-  let activity: i32 = at(s, "activity");
+  let application = at(s, "application");
+  let activity = at(s, "activity");
   body = start(body, 3, application, [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, at(s, app.label)), attr_int(S_HAS_CODE, 18, has_code)]);
-  body = start(body, 4, activity, [attr_str(S_LABEL, at(s, app.label)), attr_str(S_NAME, at(s, app.activity)), attr_int(S_EXPORTED, 18, 0 - 1), attr_int(S_CONFIG_CHANGES, 17, 1184)]);
+  body = start(body, 4, activity, [attr_str(S_LABEL, at(s, app.label)), attr_str(S_NAME, at(s, app.activity)), attr_int(S_EXPORTED, 18, -1), attr_int(S_CONFIG_CHANGES, 17, 1184)]);
   body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));
   body = start(body, 6, at(s, "intent-filter"), []);
   body = end(start(body, 7, at(s, "action"), [attr_str(S_NAME, at(s, "android.intent.action.MAIN"))]), 7, at(s, "action"));
@@ -284,7 +284,7 @@ pub function manifest(app: App): u8[] {
   }
   body = end(end(body, 11, application), 12, manifest_tag);
   body = put32(put32(node(body, 257, 24, 12), S_PREFIX), S_URI);
-  let rest: u8[] = cat(cat(string_pool(s), resource_map()), body);
+  let rest = cat(cat(string_pool(s), resource_map()), body);
   return cat(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
 }
 
@@ -305,17 +305,17 @@ function align_of(name: string): i32 {
 }
 
 function add_entry(z: Zip, e: Entry): Zip {
-  let off: i32 = z.body.len();
-  let crc: i32 = crc32.of(e.data) as i32;
-  let align: i32 = align_of(e.name);
-  let pad: i32 = (align - (off + 36 + e.name.len()) % align) % align;
-  let head: u8[] = put16(put16(put16(put16(put16(put32([], 67324752), 10), 0), 0), 0), 33);
+  let off = z.body.len();
+  let crc = crc32.of(e.data) as i32;
+  let align = align_of(e.name);
+  let pad = (align - (off + 36 + e.name.len()) % align) % align;
+  let head = put16(put16(put16(put16(put16(put32([], 67324752), 10), 0), 0), 0), 33);
   head = put16(put16(put32(put32(put32(head, crc), e.data.len()), e.data.len()), e.name.len()), 6 + pad);
   head = put16(put16(put16(cat(head, text(e.name)), 55605), 2 + pad), align);
   for k in 0..pad {
     head = head.append(0 as u8);
   }
-  let cd: u8[] = put16(put16(put16(put16(put16(put16(put32(z.central, 33639248), 20), 10), 0), 0), 0), 33);
+  let cd = put16(put16(put16(put16(put16(put16(put32(z.central, 33639248), 20), 10), 0), 0), 0), 33);
   cd = put16(put16(put16(put16(put32(put32(put32(cd, crc), e.data.len()), e.data.len()), e.name.len()), 0), 0), 0);
   cd = cat(put32(put32(put16(cd, 0), 0), off), text(e.name));
   return Zip { body: cat(cat(z.body, head), e.data), central: cd, count: z.count + 1 };
@@ -330,7 +330,7 @@ function slice_bytes(b: [u8], from: i32, to: i32): u8[] {
 }
 
 pub function zip(entries: Entry[]): Zip {
-  let z: Zip = Zip { body: [], central: [], count: 0 };
+  let z = Zip { body: [], central: [], count: 0 };
   for e in entries {
     z = add_entry(z, e);
   }
@@ -346,8 +346,8 @@ pub function eocd(count: i32, size: i32, offset: i32): u8[] {
 // The DER encoding of the certificate, the key, and the signatures.
 
 function der(tag: i32, content: [u8]): u8[] {
-  let out: u8[] = put8([], tag);
-  let n: i32 = content.len();
+  let out = put8([], tag);
+  let n = content.len();
   if (n < 128) {
     out = put8(out, n);
   } else if (n < 256) {
@@ -398,13 +398,13 @@ function name(cn: string): u8[] {
 // A version 1 certificate for `key`, signed by itself. The dates are fixed,
 // so the same key gives the same certificate.
 pub function certificate(key: ecdsa.PrivateKey): u8[] {
-  let point: u8[] = key.public_point();
+  let point = key.public_point();
   let serial: u8[] = [1 as u8];
   for b in crypto.sha256(point)[0:8] {
     serial = serial.append(b);
   }
-  let validity: u8[] = seq([der(23, text("260101000000Z")), der(24, text("20991231235959Z"))]);
-  let tbs: u8[] = seq([der(2, serial), ecdsa_sha256(), name("Fern"), validity, name("Fern"), public_key_info(point)]);
+  let validity = seq([der(23, text("260101000000Z")), der(24, text("20991231235959Z"))]);
+  let tbs = seq([der(2, serial), ecdsa_sha256(), name("Fern"), validity, name("Fern"), public_key_info(point)]);
   return seq([tbs, ecdsa_sha256(), bit_string(sign(key, tbs))]);
 }
 
@@ -430,13 +430,13 @@ pub function key_pem(d: [u8]): string {
       return "";
     }
   }
-  let ec: u8[] = seq([der(2, [1 as u8]), der(4, d), der(161, bit_string(point))]);
-  let pk: u8[] = seq([der(2, [0 as u8]), seq([oid_ec_public_key(), oid_p256()]), der(4, ec)]);
-  let b64: string = base64.encode(pk);
-  let out: string = "-----BEGIN PRIVATE KEY-----\n";
-  let i: i32 = 0;
+  let ec = seq([der(2, [1 as u8]), der(4, d), der(161, bit_string(point))]);
+  let pk = seq([der(2, [0 as u8]), seq([oid_ec_public_key(), oid_p256()]), der(4, ec)]);
+  let b64 = base64.encode(pk);
+  let out = "-----BEGIN PRIVATE KEY-----\n";
+  let i = 0;
   while (i < b64.len()) {
-    let j: i32 = i + 64;
+    let j = i + 64;
     if (j > b64.len()) {
       j = b64.len();
     }
@@ -453,10 +453,10 @@ function tlv(b: [u8], at: i32): Tlv {
   if (at + 2 > b.len()) {
     return Tlv { tag: 0 - 1, start: at, end: at };
   }
-  let n: i32 = b[at + 1] as i32;
-  let start: i32 = at + 2;
+  let n = b[at + 1] as i32;
+  let start = at + 2;
   if (n > 128 && n <= 130) {
-    let len: i32 = 0;
+    let len = 0;
     for k in 0..n - 128 {
       if (start + k < b.len()) {
         len = len << 8 | b[start + k] as i32;
@@ -475,10 +475,10 @@ function tlv(b: [u8], at: i32): Tlv {
 // ("EC PRIVATE KEY") for P-256. The result is empty when the file is not
 // one of these.
 pub function key_scalar(pem: string): u8[] {
-  let body: string = "";
+  let body = "";
   for line in pem.split("\n") {
     if (line.len() > 0 && !line.starts_with("-----")) {
-      body = body + line;
+      body += line;
     }
   }
   match (base64.decode(body)) {
@@ -492,16 +492,16 @@ pub function key_scalar(pem: string): u8[] {
 }
 
 function scalar_of(raw: [u8]): u8[] {
-  let top: Tlv = tlv(raw, 0);
-  let version: Tlv = tlv(raw, top.start);
-  let next: Tlv = tlv(raw, version.end);
+  let top = tlv(raw, 0);
+  let version = tlv(raw, top.start);
+  let next = tlv(raw, version.end);
   if (top.tag != 48 || version.tag != 2) {
     return [];
   }
   if (next.tag == 4 && next.end - next.start == 32) {
     return slice_bytes(raw, next.start, next.end);
   }
-  let wrapped: Tlv = tlv(raw, next.end);
+  let wrapped = tlv(raw, next.end);
   if (next.tag != 48 || wrapped.tag != 4) {
     return [];
   }
@@ -511,7 +511,7 @@ function scalar_of(raw: [u8]): u8[] {
 // A new random P-256 scalar.
 pub function new_scalar(): u8[] {
   while (true) {
-    let d: u8[] = rand.bytes(32);
+    let d = rand.bytes(32);
     match (ecdsa.private_key(ecdsa.P256, d)) {
       Ok(_) => {
         return d;
@@ -528,10 +528,10 @@ pub function new_scalar(): u8[] {
 const CHUNK: i32 = 1048576;
 
 function chunk_digests(out: u8[], b: [u8]): (u8[], i32) {
-  let n: i32 = (b.len() + CHUNK - 1) / CHUNK;
+  let n = (b.len() + CHUNK - 1) / CHUNK;
   for k in 0..n {
-    let at: i32 = k * CHUNK;
-    let to: i32 = at + CHUNK;
+    let at = k * CHUNK;
+    let to = at + CHUNK;
     if (to > b.len()) {
       to = b.len();
     }
@@ -554,13 +554,13 @@ const V2_BLOCK_ID: i32 = 1896449818;
 
 // The APK Signing Block with one v2 signer.
 pub function signing_block(key: ecdsa.PrivateKey, cert: [u8], digest: [u8]): u8[] {
-  let digests: u8[] = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(digest))));
-  let signed: u8[] = cat(cat(digests, prefixed(prefixed(cert))), put32([], 0));
-  let sigs: u8[] = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(sign(key, signed)))));
-  let signer: u8[] = cat(cat(prefixed(signed), sigs), prefixed(public_key_info(key.public_point())));
-  let value: u8[] = prefixed(prefixed(signer));
-  let pair: u8[] = cat(put32(put64([], (4 + value.len()) as i64), V2_BLOCK_ID), value);
-  let size: i64 = (pair.len() + 24) as i64;
+  let digests = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(digest))));
+  let signed = cat(cat(digests, prefixed(prefixed(cert))), put32([], 0));
+  let sigs = prefixed(prefixed(cat(put32([], ECDSA_SHA256), prefixed(sign(key, signed)))));
+  let signer = cat(cat(prefixed(signed), sigs), prefixed(public_key_info(key.public_point())));
+  let value = prefixed(prefixed(signer));
+  let pair = cat(put32(put64([], (4 + value.len()) as i64), V2_BLOCK_ID), value);
+  let size = (pair.len() + 24) as i64;
   return cat(put64(cat(put64([], size), pair), size), text("APK Sig Block 42"));
 }
 
@@ -585,9 +585,9 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   for l in libs {
     entries = entries.append(Entry { name: "lib/" + l.abi + "/lib" + app.lib + ".so", data: l.image });
   }
-  let z: Zip = zip(entries);
-  let at: i32 = z.body.len();
-  let digest: u8[] = content_digest(z.body, z.central, eocd(z.count, z.central.len(), at));
-  let block: u8[] = signing_block(key, certificate(key), digest);
+  let z = zip(entries);
+  let at = z.body.len();
+  let digest = content_digest(z.body, z.central, eocd(z.count, z.central.len(), at));
+  let block = signing_block(key, certificate(key), digest);
   return cat(cat(cat(z.body, block), z.central), eocd(z.count, z.central.len(), at + block.len()));
 }

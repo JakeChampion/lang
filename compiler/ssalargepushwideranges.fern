@@ -10,7 +10,7 @@ pub function capacities(): i64[] {
   for index in 0..61 {
     result = result.append((4 + index % 4) as i64 * quarter);
     if (index % 4 == 3) {
-      quarter = quarter * (2 as i64);
+      quarter *= 2 as i64;
     }
   }
   return result;
@@ -44,7 +44,7 @@ pub function intervals(): Interval[] {
         result = result.append(Interval { low: low, high: cut - 1 as i64 });
         low = cut;
       }
-      cut = cut * (2 as i64);
+      cut *= 2 as i64;
     }
     result = result.append(Interval { low: low, high: cap });
     low = cap + 1 as i64;
@@ -56,8 +56,8 @@ function highest(n: i64): i32 {
   let rest = n;
   let bit = -1;
   while (rest > 0 as i64) {
-    rest = rest / (2 as i64);
-    bit = bit + 1;
+    rest /= 2 as i64;
+    bit += 1;
   }
   return bit;
 }
@@ -75,8 +75,8 @@ pub function rounded(r: Interval): i64 {
   let quantum = 131072 as i64;
   let at = 19;
   while (at < bit) {
-    quantum = quantum * (2 as i64);
-    at = at + 1;
+    quantum *= 2 as i64;
+    at += 1;
   }
   let a = ((low - 1 as i64) / quantum + 1 as i64) * quantum;
   let b = ((high - 1 as i64) / quantum + 1 as i64) * quantum;

@@ -59,7 +59,7 @@ function parse_severity(v: string): i32 {
   if (v == "deny") {
     return DENY;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function severity_name(sev: i32): string {
@@ -73,12 +73,12 @@ function severity_name(sev: i32): string {
 }
 
 pub function set_option(c: Config, dotted: string, value: string): (Config, string) {
-  let dot: i32 = util.index_of_sub(dotted, ".");
+  let dot = util.index_of_sub(dotted, ".");
   if (dot < 0) {
     return (c, "lint option \"" + dotted + "\" must be spelled <rule>.<key>");
   }
-  let rule: string = slice_unchecked(dotted, 0, dot) + "";
-  let key: string = slice_unchecked(dotted, dot + 1, dotted.len()) + "";
+  let rule = slice_unchecked(dotted, 0, dot) + "";
+  let key = slice_unchecked(dotted, dot + 1, dotted.len()) + "";
   if (rule != COMPLEXITY && rule != RISK) {
     return (c, "unknown lint rule \"" + rule + "\" (" + known_rules() + ")");
   }
@@ -88,7 +88,7 @@ pub function set_option(c: Config, dotted: string, value: string): (Config, stri
   if (value.len() == 0 || value.len() > 9 || !util.is_decimal_i32(value)) {
     return (c, "lint option " + dotted + ": max: \"" + value + "\" is not a number");
   }
-  let n: i32 = util.digits_to_i32(value);
+  let n = util.digits_to_i32(value);
   if (n < 1) {
     return (c, "lint option " + dotted + ": max: must be at least 1, got " + value);
   }
@@ -102,7 +102,7 @@ pub function set_pair(c: Config, key: string, value: string): (Config, string) {
   if (util.index_of_sub(key, ".") >= 0) {
     return set_option(c, key, value);
   }
-  let sev: i32 = parse_severity(value);
+  let sev = parse_severity(value);
   if (sev < 0) {
     return (c, "lint rule " + key + ": unknown severity \"" + value + "\" (want allow, warn, or deny)");
   }
@@ -129,25 +129,25 @@ pub function score(fd: parser.FuncDecl): i32 {
 }
 
 function stmts_forks(sts: ast.Stmt[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for st in sts {
-    n = n + stmt_forks(st);
+    n += stmt_forks(st);
   }
   return n;
 }
 
 function arm_forks(arms: ast.MatchArm[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for a in arms {
-    n = n + arm_fork(is_wild(a.pattern), a.has_guard, a.guard, a.body);
+    n += arm_fork(is_wild(a.pattern), a.has_guard, a.guard, a.body);
   }
   return n;
 }
 
 function arm_fork(wild: boolean, has_guard: boolean, guard: ast.Expr, body: ast.Stmt[]): i32 {
-  let n: i32 = stmts_forks(body);
+  let n = stmts_forks(body);
   if (!wild) {
-    n = n + 1;
+    n += 1;
   }
   if (has_guard) {
     n = n + 1 + expr_forks(guard);
@@ -168,18 +168,18 @@ function is_wild(p: ast.Pattern): boolean {
 }
 
 function sugar_forks(sg: ast.MatchSugar): i32 {
-  let n: i32 = expr_forks(sg.scrut);
+  let n = expr_forks(sg.scrut);
   for a in sg.tup {
-    n = n + arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
+    n += arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
   }
   for a in sg.strct {
-    n = n + arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
+    n += arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
   }
   for a in sg.lits {
-    n = n + arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
+    n += arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
   }
   for a in sg.arms {
-    n = n + arm_fork(is_wild(a.pattern), a.has_guard, a.guard, a.body);
+    n += arm_fork(is_wild(a.pattern), a.has_guard, a.guard, a.body);
   }
   return n;
 }
@@ -200,7 +200,7 @@ function stmt_forks(st: ast.Stmt): i32 {
         },
         None => {}
       }
-      let own_fork: i32 = 1;
+      let own_fork = 1;
       if (i.origin == "block" || i.origin == "unsafe" || i.origin == "chain_assign" || i.origin == parser.ORIGIN_ASSERT || i.origin == parser.ORIGIN_TODO) {
         own_fork = 0;
       }
@@ -241,9 +241,9 @@ function stmt_forks(st: ast.Stmt): i32 {
 }
 
 function exprs_forks(es: ast.Expr[]): i32 {
-  let n: i32 = 0;
+  let n = 0;
   for e in es {
-    n = n + expr_forks(e);
+    n += expr_forks(e);
   }
   return n;
 }
@@ -251,14 +251,14 @@ function exprs_forks(es: ast.Expr[]): i32 {
 function expr_forks(e: ast.Expr): i32 {
   match (e) {
     ast.ExprBinary(b) => {
-      let own_fork: i32 = 0;
+      let own_fork = 0;
       if (b.op == "&&" || b.op == "||") {
         own_fork = 1;
       }
       return own_fork + expr_forks(b.left) + expr_forks(b.right);
     },
     ast.ExprUnary(u) => {
-      let own_fork: i32 = 0;
+      let own_fork = 0;
       if (u.op == "try_") {
         own_fork = 1;
       }
@@ -274,13 +274,13 @@ function expr_forks(e: ast.Expr): i32 {
       return exprs_forks(ml.keys) + exprs_forks(ml.vals);
     },
     ast.ExprFString(fs) => {
-      let n: i32 = 0;
-      let i: i32 = 0;
+      let n = 0;
+      let i = 0;
       while (i < fs.exprs.len()) {
         if (fs.is_expr[i]) {
-          n = n + expr_forks(fs.exprs[i]);
+          n += expr_forks(fs.exprs[i]);
         }
-        i = i + 1;
+        i += 1;
       }
       return n;
     },
@@ -294,9 +294,9 @@ function expr_forks(e: ast.Expr): i32 {
       return expr_forks(sl.array) + expr_forks(sl.start) + expr_forks(sl.end);
     },
     ast.ExprStructLit(sl) => {
-      let n: i32 = exprs_forks(sl.field_values);
+      let n = exprs_forks(sl.field_values);
       if (sl.has_base) {
-        n = n + expr_forks(sl.base);
+        n += expr_forks(sl.base);
       }
       return n;
     },
@@ -314,7 +314,7 @@ function expr_forks(e: ast.Expr): i32 {
 }
 
 pub function display_name(fd: parser.FuncDecl): string {
-  let t: string = fd.receiver_type;
+  let t = fd.receiver_type;
   if (t.len() == 0 || util.index_of_sub(t, "[") >= 0 || util.has_str(PRIMITIVES, t)) {
     return fd.name;
   }
@@ -336,14 +336,14 @@ function is_blank(line: string): boolean {
 
 function split_src(src: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let i = 0;
   while (i <= src.len()) {
     if (i == src.len() || src[i] == b'\n') {
       out = out.append(slice_unchecked(src, start, i) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -352,8 +352,8 @@ function comment_only(lines: string[], c: lexer.Comment): boolean {
   if (c.line < 1 || c.line > lines.len()) {
     return false;
   }
-  let text: string = lines[c.line - 1];
-  let before: i32 = c.col - 1;
+  let text = lines[c.line - 1];
+  let before = c.col - 1;
   return before >= 0 && before <= text.len() && util.trim(slice_unchecked(text, 0, before)).len() == 0;
 }
 
@@ -361,9 +361,9 @@ function target_line(lines: string[], comments: lexer.Comment[], c: lexer.Commen
   if (!comment_only(lines, c)) {
     return c.line;
   }
-  let ln: i32 = c.line + 1;
+  let ln = c.line + 1;
   while (ln <= lines.len()) {
-    let skip: boolean = is_blank(lines[ln - 1]);
+    let skip = is_blank(lines[ln - 1]);
     if (!skip) {
       for o in comments {
         if (o.line == ln && comment_only(lines, o)) {
@@ -375,7 +375,7 @@ function target_line(lines: string[], comments: lexer.Comment[], c: lexer.Commen
     if (!skip) {
       return ln;
     }
-    ln = ln + 1;
+    ln += 1;
   }
   return 0;
 }
@@ -385,7 +385,7 @@ function directive_finding(c: lexer.Comment, msg: string, help: string): Finding
 }
 
 function comment_body(text: string): string {
-  let t: string = util.trim(text);
+  let t = util.trim(text);
   if (util.str_has_prefix(t, "//")) {
     t = util.trim(slice_unchecked(t, 2, t.len()) + "");
   }
@@ -393,17 +393,17 @@ function comment_body(text: string): string {
 }
 
 function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressions {
-  let lines: string[] = split_src(src);
-  let sup: Suppressions = Suppressions { file_rules: [], lines: [], rules: [], bad: [] };
+  let lines = split_src(src);
+  let sup = Suppressions { file_rules: [], lines: [], rules: [], bad: [] };
   for c in comments {
-    let text: string = comment_body(c.text);
+    let text = comment_body(c.text);
     if (!util.str_has_prefix(text, "fern-lint:")) {
       continue;
     }
-    let body: string = util.trim(slice_unchecked(text, 10, text.len()) + "");
-    let sp: i32 = util.index_of_sub(body, " ");
-    let verb: string = body;
-    let rest: string = "";
+    let body = util.trim(slice_unchecked(text, 10, text.len()) + "");
+    let sp = util.index_of_sub(body, " ");
+    let verb = body;
+    let rest = "";
     if (sp >= 0) {
       verb = slice_unchecked(body, 0, sp) + "";
       rest = slice_unchecked(body, sp + 1, body.len()) + "";
@@ -413,17 +413,17 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
       continue;
     }
     let names: string[] = [];
-    let start: i32 = 0;
-    let i: i32 = 0;
+    let start = 0;
+    let i = 0;
     while (i <= rest.len()) {
       if (i == rest.len() || rest[i] == b',') {
-        let r: string = util.trim(slice_unchecked(rest, start, i) + "");
+        let r = util.trim(slice_unchecked(rest, start, i) + "");
         if (r.len() > 0) {
           names = names.append(r);
         }
         start = i + 1;
       }
-      i = i + 1;
+      i += 1;
     }
     if (names.len() == 0) {
       sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "lint directive `" + verb + "` names no rule", "")) };
@@ -438,7 +438,7 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
         sup = Suppressions { ...sup, file_rules: sup.file_rules.append(r) };
         continue;
       }
-      let target: i32 = target_line(lines, comments, c);
+      let target = target_line(lines, comments, c);
       if (target == 0) {
         sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "`allow " + r + "` covers no code — nothing follows this comment", "use `fern-lint: allow-file` to silence the rule for the whole file")) };
         continue;
@@ -453,12 +453,12 @@ function allows(sup: Suppressions, rule: string, line: i32): boolean {
   if (util.has_str(sup.file_rules, rule)) {
     return true;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < sup.lines.len()) {
     if (sup.lines[i] == line && sup.rules[i] == rule) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -481,7 +481,7 @@ pub function scored(m: parser.Module, fd: parser.FuncDecl): boolean {
 }
 
 function span_end(fd: parser.FuncDecl): i32 {
-  let end: i32 = fd.line;
+  let end = fd.line;
   for st in fd.body {
     end = astwalk.fold_stmt_nodes(st, end, max_stmt_line, max_expr_line, astwalk.descend_all);
   }
@@ -489,7 +489,7 @@ function span_end(fd: parser.FuncDecl): i32 {
 }
 
 function max_stmt_line(st: ast.Stmt, own acc: i32): i32 {
-  let l: i32 = ast.stmt_line(st);
+  let l = ast.stmt_line(st);
   if (l > acc) {
     return l;
   }
@@ -497,7 +497,7 @@ function max_stmt_line(st: ast.Stmt, own acc: i32): i32 {
 }
 
 function max_expr_line(e: ast.Expr, own acc: i32): i32 {
-  let l: i32 = ast.expr_line(e);
+  let l = ast.expr_line(e);
   if (l > acc) {
     return l;
   }
@@ -505,66 +505,66 @@ function max_expr_line(e: ast.Expr, own acc: i32): i32 {
 }
 
 pub function cover_of(cover: coverreport.File[], file: string): i32 {
-  let best: i32 = 0 - 1;
-  let i: i32 = 0;
+  let best: i32 = -1;
+  let i = 0;
   while (i < cover.len()) {
-    let n: string = cover[i].name;
+    let n = cover[i].name;
     if (n == file) {
       return i;
     }
     if ((util.str_has_suffix(n, "/" + file) || util.str_has_suffix(file, "/" + n)) && (best < 0 || n.len() > cover[best].name.len())) {
       best = i;
     }
-    i = i + 1;
+    i += 1;
   }
   return best;
 }
 
 pub function cover_names(cover: coverreport.File[]): string {
-  let out: string = "";
+  let out = "";
   for f in cover {
     if (out.len() > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + f.name;
+    out += f.name;
   }
   return out;
 }
 
 function lines_hit(f: coverreport.File, lo: i32, hi: i32): (i32, i32) {
-  let a: i32 = 0;
-  let b: i32 = f.lines.len();
+  let a = 0;
+  let b = f.lines.len();
   while (a < b) {
-    let mid: i32 = a + (b - a) / 2;
+    let mid = a + (b - a) / 2;
     if (f.lines[mid] < lo) {
       a = mid + 1;
     } else {
       b = mid;
     }
   }
-  let total: i32 = 0;
-  let hit: i32 = 0;
+  let total = 0;
+  let hit = 0;
   while (a < f.lines.len() && f.lines[a] <= hi) {
-    total = total + 1;
+    total += 1;
     if (f.hits[a] > 0) {
-      hit = hit + 1;
+      hit += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return (total, hit);
 }
 
 function risk_score(complexity: i32, total: i32, hit: i32): i32 {
-  let c: i64 = complexity as i64;
-  let t: i64 = total as i64;
-  let missed: i64 = (total - hit) as i64;
-  let num: i64 = c * c * missed * missed * missed;
-  let den: i64 = t * t * t;
+  let c = complexity as i64;
+  let t = total as i64;
+  let missed = (total - hit) as i64;
+  let num = c * c * missed * missed * missed;
+  let den = t * t * t;
   return complexity + ((num + den / 2) / den) as i32;
 }
 
 pub function lint_file(c: Config, file: string, src: string, m: parser.Module, comments: lexer.Comment[], cover: coverreport.File[]): Finding[] {
-  let sup: Suppressions = collect_suppressions(src, comments);
+  let sup = collect_suppressions(src, comments);
   let out: Finding[] = [];
   for b in sup.bad {
     out = out.append(Finding { ...b, file: file });
@@ -572,20 +572,20 @@ pub function lint_file(c: Config, file: string, src: string, m: parser.Module, c
   if (c.complexity != ALLOW) {
     out = complexity_findings(c, file, m, sup, out);
   }
-  let cf: i32 = cover_of(cover, file);
+  let cf = cover_of(cover, file);
   if (c.risk != ALLOW && cf >= 0) {
     out = risk_findings(c, file, m, sup, cover[cf], out);
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < out.len()) {
-    let f: Finding = out[i];
-    let j: i32 = i - 1;
+    let f = out[i];
+    let j = i - 1;
     while (j >= 0 && before(f, out[j])) {
       out = out.with(j + 1, out[j]);
-      j = j - 1;
+      j -= 1;
     }
     out = out.with(j + 1, f);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -595,7 +595,7 @@ function complexity_findings(c: Config, file: string, m: parser.Module, sup: Sup
     if (!scored(m, fd)) {
       continue;
     }
-    let sc: i32 = score(fd);
+    let sc = score(fd);
     if (sc <= c.max || allows(sup, COMPLEXITY, fd.line)) {
       continue;
     }
@@ -619,8 +619,8 @@ function risk_findings(c: Config, file: string, m: parser.Module, sup: Suppressi
     if (total == 0) {
       continue;
     }
-    let sc: i32 = score(fd);
-    let risk: i32 = risk_score(sc, total, hit);
+    let sc = score(fd);
+    let risk = risk_score(sc, total, hit);
     if (risk <= c.risk_max) {
       continue;
     }
@@ -653,24 +653,24 @@ function plural(n: i32, word: string): string {
 }
 
 pub function summary(fs: Finding[]): string {
-  let warns: i32 = 0;
-  let denies: i32 = 0;
+  let warns = 0;
+  let denies = 0;
   for f in fs {
     if (f.severity == DENY) {
-      denies = denies + 1;
+      denies += 1;
     } else if (f.severity == WARN) {
-      warns = warns + 1;
+      warns += 1;
     }
   }
-  let out: string = "";
+  let out = "";
   if (denies > 0) {
     out = plural(denies, "error");
   }
   if (warns > 0) {
     if (out.len() > 0) {
-      out = out + " and ";
+      out += " and ";
     }
-    out = out + plural(warns, "warning");
+    out += plural(warns, "warning");
   }
   if (out.len() == 0) {
     return "";

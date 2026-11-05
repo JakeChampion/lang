@@ -31,23 +31,23 @@ const T_NAMESPACE: i32 = 10;
 pub struct SemTok { line: i32, col: i32, len: i32, kind: i32 }
 
 pub function semantic_tokens(p: lspquery.Program, m: i32): SemTok[] {
-  let v: lspquery.View = lspquery.view_of(p);
-  let x: Ctx = Ctx { toks: lspquery.module_toks(p, m), aliases: lspquery.quals_of(v, m).aliases };
+  let v = lspquery.view_of(p);
+  let x = Ctx { toks: lspquery.module_toks(p, m), aliases: lspquery.quals_of(v, m).aliases };
   let kinds: i32[] = [];
   for t in x.toks {
-    kinds = kinds.append(0 - 1);
+    kinds = kinds.append(-1);
   }
-  let body: Mark[] = body_classes(v.types, m, x);
+  let body = body_classes(v.types, m, x);
   kinds = applied(kinds, decl_classes(p, m, x, body));
-  let types: Mark[] = type_classes(v, type_params(lspquery.parsed_module(p, m)), m, x, kinds);
+  let types = type_classes(v, type_params(lspquery.parsed_module(p, m)), m, x, kinds);
   kinds = applied(kinds, types);
   let out: SemTok[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < x.toks.len()) {
     if (kinds[i] >= 0) {
       out = out.append(SemTok { line: x.toks[i].line, col: x.toks[i].col, len: x.toks[i].text.len(), kind: kinds[i] });
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -73,7 +73,7 @@ function marked(x: Ctx, i: i32, kind: i32, own acc: Mark[]): Mark[] {
 }
 
 function node_at(x: Ctx, line: i32, col: i32, kind: i32, own acc: Mark[]): Mark[] {
-  let i: i32 = lspquery.tok_at(x.toks, line, col);
+  let i = lspquery.tok_at(x.toks, line, col);
   if (i < 0) {
     return acc;
   }
@@ -91,11 +91,11 @@ function qualifies(x: Ctx, i: i32): boolean {
 }
 
 function body_classes(v: checker.QueryView, m: i32, x: Ctx): Mark[] {
-  let s: checker.Scope = checker.module_scope(v);
+  let s = checker.module_scope(v);
   let out: Mark[] = [];
   for fd in v.mod.funcs {
     if (lspquery.declared_in(fd.line, m)) {
-      let r: lexical.ResolvedFunction = lexical.resolve_func(fd);
+      let r = lexical.resolve_func(fd);
       let params: string[] = [];
       for b in r.bindings {
         if (lspquery.is_param(b, fd)) {
@@ -105,7 +105,7 @@ function body_classes(v: checker.QueryView, m: i32, x: Ctx): Mark[] {
       out = func_classes(s, x, r.func.body, params, out);
       for b in r.bindings {
         if let Some(a) = lspquery.binding_decl(x.toks, b, util.has_str(params, b.symbol), b.name) {
-          let i: i32 = lspquery.tok_at(x.toks, a.line, a.col);
+          let i = lspquery.tok_at(x.toks, a.line, a.col);
           if (i >= 0 && x.toks[i].text == b.name) {
             out = marked(x, i, local_kind(b.symbol, params), out);
           }
@@ -119,7 +119,7 @@ function body_classes(v: checker.QueryView, m: i32, x: Ctx): Mark[] {
 struct Classify { s: checker.Scope, x: Ctx, params: string[], marks: Mark[] }
 
 function func_classes(s: checker.Scope, x: Ctx, body: ast.Stmt[], params: string[], own out: Mark[]): Mark[] {
-  let c: Classify = Classify { s: s, x: x, params: params, marks: out };
+  let c = Classify { s: s, x: x, params: params, marks: out };
   for st in body {
     c = astwalk.fold_stmt_nodes(st, c, classify_stmt, classify_expr, astwalk.descend_all);
   }
@@ -157,13 +157,13 @@ function pattern_variants(x: Ctx, i: i32, name: string, own acc: Mark[]): Mark[]
   if (i < 0) {
     return acc;
   }
-  let end: i32 = lspquery.pattern_end(x.toks, i);
-  let j: i32 = i;
+  let end = lspquery.pattern_end(x.toks, i);
+  let j = i;
   while (j < end) {
     if (spells_variant(x.toks[j], name) && lspquery.text_at(x.toks, j + 1) != ":") {
       acc = pattern_class(x, qualifier_of(x, j), acc);
     }
-    j = j + 1;
+    j += 1;
   }
   return acc;
 }
@@ -207,10 +207,10 @@ function expr_class(s: checker.Scope, x: Ctx, e: ast.Expr, params: string[], own
     },
     ast.ExprStructLit(sl) => {
       acc = node_at(x, sl.line, sl.col, T_STRUCT, acc);
-      let i: i32 = 0;
+      let i = 0;
       while (i < sl.field_lines.len()) {
         acc = node_at(x, sl.field_lines[i], sl.field_cols[i], T_PROPERTY, acc);
-        i = i + 1;
+        i += 1;
       }
     },
     _ => {}
@@ -269,7 +269,7 @@ function type_kind(s: checker.Scope, name: string): i32 {
   if (s.has_struct(name)) {
     return T_STRUCT;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function decl_classes(p: lspquery.Program, m: i32, x: Ctx, own acc: Mark[]): Mark[] {
@@ -310,29 +310,29 @@ function symbol_kind(kind: i32): i32 {
 }
 
 function type_classes(v: lspquery.View, tparams: string[], m: i32, x: Ctx, kinds: i32[]): Mark[] {
-  let s: checker.Scope = checker.module_scope(v.types);
-  let q: flatten.Qualifiers = lspquery.quals_of(v, m);
+  let s = checker.module_scope(v.types);
+  let q = lspquery.quals_of(v, m);
   let out: Mark[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < x.toks.len()) {
     if (kinds[i] < 0 && !lspquery.punct_before(x.toks, i, ".")) {
       out = type_class(s, q, tparams, x, i, out);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function type_class(s: checker.Scope, q: flatten.Qualifiers, tparams: string[], x: Ctx, i: i32, own acc: Mark[]): Mark[] {
-  let t: lspquery.Tok = x.toks[i];
+  let t = x.toks[i];
   if (qualifies(x, i)) {
-    let name: string = flatten.qualified_name(q, t.text, x.toks[i + 2].text);
+    let name = flatten.qualified_name(q, t.text, x.toks[i + 2].text);
     return marked(x, i + 2, global_kind(s, name), marked(x, i, T_NAMESPACE, acc));
   }
   if (!t.ident) {
     return acc;
   }
-  let kind: i32 = 0 - 1;
+  let kind: i32 = -1;
   if (q.own.len() > 0) {
     kind = type_kind(s, q.own + "__" + t.text);
   }

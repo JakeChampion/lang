@@ -33,7 +33,7 @@ function byte_tests(): void {
       let op = sample(line);
       require(op.kind == 26 && op.width == 8 && op.source == i && op.immediate == n, line);
     }
-    i = i + 1;
+    i += 1;
   }
   let hex = sample("testb $0xFF, %r15b");
   require(hex.kind == 26 && hex.immediate == 255 && hex.source == 15, "byte hex");
@@ -50,9 +50,9 @@ function comparisons(): void {
         let line = name + " " + src + ", " + dst;
         let op = sample(line);
         require(op.kind == 28 && op.width == width && op.source == i && op.destination == j, line);
-        j = j + 1;
+        j += 1;
       }
-      i = i + 1;
+      i += 1;
     }
   }
 }
@@ -62,7 +62,7 @@ function wide_tests(): void {
   for reg in registers.registers(false, 64) {
     let op = sample("testq " + reg + ", " + reg);
     require(op.kind == 27 && op.width == 64 && op.source == i, "test64 " + reg);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -83,7 +83,7 @@ function heap_bounds(): void {
       for symbol in ["__fern_heap_base", "__fern_heap_end"] {
         heap_pair(symbol, reg, suffix, width, i);
       }
-      i = i + 1;
+      i += 1;
     }
   }
 }
@@ -147,7 +147,7 @@ function actual(output: string): void {
   for op in p.ops {
     require(op.kind == kinds[i], "actual kind " + i.to_string());
     actual_branch(op, p, body, i);
-    i = i + 1;
+    i += 1;
   }
   require(p.ops[19].symbol == "__fern_heap_base" && p.ops[22].symbol == "__fern_heap_end", "actual heap bounds");
   require(p.ops[33].symbol == "__fern_capw" && p.ops[52].symbol == "__fern_large_push" && p.ops[79].symbol == "__fern_capw" && p.ops[85].symbol == "__fern_large_push", "actual dependencies");

@@ -49,7 +49,7 @@ function addresses(): void {
       }
     }
     global_address(regs[i], i);
-    i = i + 1;
+    i += 1;
   }
   let default_scale = sample("movq 2147483647(%r15,%r12), %rax");
   require(default_scale.kind == 3 && exact_address(default_scale, 64, 15, 12, 1, 2147483647), "default scale");
@@ -68,7 +68,7 @@ function shifts(): void {
           require(op.kind == (if (direction == "shl") { 20 } else { 21 }) && op.width == width && op.destination == i && op.immediate == count, line);
         }
       }
-      i = i + 1;
+      i += 1;
     }
   }
 }
@@ -126,7 +126,7 @@ pub function run(output: string): void {
   for op in p.ops {
     require(op.instruction.kind == kinds[at], "actual kind " + at.to_string());
     actual_branch(p, body, at, op.instruction);
-    at = at + 1;
+    at += 1;
   }
   require(p.ops[0].immediate == 17179869184 as i64 && p.ops[23].instruction.symbol == "__fern_large_freelist", "actual threshold/global");
   require(p.ops[0].instruction.width == 64 && p.ops[0].instruction.destination == 0 && p.ops[1].instruction.width == 64 && p.ops[1].instruction.source == 0 && p.ops[1].instruction.destination == 6, "actual guard operands");

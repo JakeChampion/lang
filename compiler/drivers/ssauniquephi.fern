@@ -75,7 +75,7 @@ function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
     let id = 2147483646 - i * 17;
     insts = insts.append(ssa.SInst { kind_tag: 7, result: id, args: [last], imm: 0, str: "" });
     last = id;
-    i = i + 1;
+    i += 1;
   }
   let copied = ssa.SFunc { ...f, nvals: 2147483647, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, value: last } }) };
   check(row, copied, true);
@@ -92,12 +92,12 @@ function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
     let term = if (i == 64) { ret } else { ssa.STerm { ...ret, kind_tag: 2, target: id + 31 } };
     blocks = blocks.append(ssa.SBlock { ...b, id: id, insts: [], preds: [prior], term: term });
     prior = id;
-    i = i + 1;
+    i += 1;
   }
   let reversed: ssa.SBlock[] = [];
   i = blocks.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     reversed = reversed.append(blocks[i]);
   }
   let chained = ssa.SFunc { ...copied, blocks: reversed };
@@ -141,7 +141,7 @@ function predecessor_graph(f: ssa.SFunc, join: i32, take_first: boolean): ssa.SF
   let args: i32[] = [];
   let i = 65;
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     let leaf = 100000 + i * 31;
     let spine = 200000 + i * 31;
     let copy = ssa.SInst { kind_tag: 7, result: f.nvals + 1 + i, args: [b.term.value], imm: 0, str: "" };
@@ -176,7 +176,7 @@ function predecessor_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32):
   while (i < last) {
     args = args.append(phi.args[i]);
     preds = preds.append(b.preds[i]);
-    i = i + 1;
+    i += 1;
   }
   check(row, replace(good, tail, ssa.SInst { ...phi, args: args }, preds), false);
 }
@@ -191,7 +191,7 @@ pub function run(out: ssaprepare.Output): void {
     if (b.insts.len() == 1 && b.insts[0].kind_tag == 8) {
       join = i;
     }
-    i = i + 1;
+    i += 1;
   }
   require(join >= 0);
   let b = f.blocks[join];

@@ -16,10 +16,10 @@ pub function render(v: Verdict): string {
 
 function filled(n: i32, value: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     out = out.append(value);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -48,13 +48,13 @@ function boundary_error(f: ssa.SFunc, boundary: Boundary, ninst: i32): Verdict {
     || f.nvals > ninst + f.nparams) {
     return verdict(f, 3, -1, "invalid boundary or value count");
   }
-  let refs: i32 = 0;
+  let refs = 0;
   for mode in boundary.params {
     if (mode < 0 || mode > 2) {
       return verdict(f, 3, -1, "invalid parameter mode");
     }
     if (mode != 0) {
-      refs = refs + 1;
+      refs += 1;
     }
   }
   if (refs > 1) {
@@ -64,13 +64,13 @@ function boundary_error(f: ssa.SFunc, boundary: Boundary, ninst: i32): Verdict {
 }
 
 function transfer(f: ssa.SFunc, boundary: Boundary, ops: ssa.SInst[], state: Accounts): Progress {
-  let roots: i32[] = state.roots;
-  let credits: i32[] = state.credits;
-  let external: i32[] = state.external;
-  let params: i32[] = state.params;
-  let point: i32 = 0;
+  let roots = state.roots;
+  let credits = state.credits;
+  let external = state.external;
+  let params = state.params;
+  let point = 0;
   for op in ops {
-    let v: i32 = op.result;
+    let v = op.result;
     if (v < 0 || v >= f.nvals || roots[v] != -2) {
       return rejected(f, 3, point, "invalid or duplicate value definition");
     }
@@ -79,13 +79,13 @@ function transfer(f: ssa.SFunc, boundary: Boundary, ops: ssa.SInst[], state: Acc
         return rejected(f, 3, point, "undefined operand");
       }
     }
-    let root: i32 = -1;
+    let root = -1;
     if (op.kind_tag == 6) {
       if (op.args.len() != 0 || op.imm < 0 || op.imm >= f.nparams || params[op.imm] != 0) {
         return rejected(f, 3, point, "invalid or duplicate parameter");
       }
       params = params.with(op.imm, 1);
-      let mode: i32 = boundary.params[op.imm];
+      let mode = boundary.params[op.imm];
       if (mode != 0) {
         root = v;
         if (mode == 1) {
@@ -142,7 +142,7 @@ function transfer(f: ssa.SFunc, boundary: Boundary, ops: ssa.SInst[], state: Acc
       return rejected(f, 2, point, "unsupported operation " + ssa.kind_name(op.kind_tag));
     }
     roots = roots.with(v, root);
-    point = point + 1;
+    point += 1;
   }
   return Progress {
     accounts: Accounts { roots: roots, credits: credits, external: external, params: params },
@@ -151,9 +151,9 @@ function transfer(f: ssa.SFunc, boundary: Boundary, ops: ssa.SInst[], state: Acc
 }
 
 function finish(f: ssa.SFunc, boundary: Boundary, result: i32, state: Accounts, point: i32): Verdict {
-  let roots: i32[] = state.roots;
-  let credits: i32[] = state.credits;
-  let params: i32[] = state.params;
+  let roots = state.roots;
+  let credits = state.credits;
+  let params = state.params;
   for seen in params {
     if (seen == 0) {
       return verdict(f, 3, point, "missing parameter definition");
@@ -162,7 +162,7 @@ function finish(f: ssa.SFunc, boundary: Boundary, result: i32, state: Accounts, 
   if (result < 0 || result >= f.nvals || roots[result] == -2) {
     return verdict(f, 3, point, "undefined return value");
   }
-  let returned: i32 = roots[result];
+  let returned = roots[result];
   if (boundary.owned_result) {
     if (returned < 0) {
       return verdict(f, 3, point, "owned result lacks counted provenance");
@@ -183,12 +183,12 @@ function finish(f: ssa.SFunc, boundary: Boundary, result: i32, state: Accounts, 
 }
 
 function block_at(f: ssa.SFunc, id: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.blocks.len()) {
     if (f.blocks[i].id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -207,8 +207,8 @@ function successors(t: ssa.STerm): i32[] {
 }
 
 function structure(f: ssa.SFunc): Verdict {
-  let defined: i32[] = filled(f.nvals, -1);
-  let bi: i32 = 0;
+  let defined = filled(f.nvals, -1);
+  let bi = 0;
   for b in f.blocks {
     if (b.id < 0 || block_at(f, b.id) != bi) {
       return verdict(f, 3, bi, "invalid or duplicate block ID");
@@ -216,19 +216,19 @@ function structure(f: ssa.SFunc): Verdict {
     if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
       return verdict(f, 2, bi, "unsupported terminator");
     }
-    let pi: i32 = 0;
+    let pi = 0;
     for pred in b.preds {
-      let pos: i32 = block_at(f, pred);
+      let pos = block_at(f, pred);
       if (pos < 0 || util.index_of_i32(b.preds, pred) != pi) {
         return verdict(f, 3, bi, "invalid predecessor");
       }
       if (util.index_of_i32(successors(f.blocks[pos].term), b.id) < 0) {
         return verdict(f, 3, bi, "predecessor is not an edge");
       }
-      pi = pi + 1;
+      pi += 1;
     }
     for id in successors(b.term) {
-      let pos: i32 = block_at(f, id);
+      let pos = block_at(f, id);
       if (pos < 0) {
         return verdict(f, 3, bi, "missing successor");
       }
@@ -236,7 +236,7 @@ function structure(f: ssa.SFunc): Verdict {
         return verdict(f, 3, bi, "missing predecessor edge");
       }
     }
-    let body: boolean = false;
+    let body = false;
     for op in b.insts {
       if (op.result < 0 || op.result >= f.nvals || defined[op.result] != -1) {
         return verdict(f, 3, bi, "invalid or duplicate value definition");
@@ -253,17 +253,17 @@ function structure(f: ssa.SFunc): Verdict {
         body = true;
       }
     }
-    bi = bi + 1;
+    bi += 1;
   }
   return verdict(f, 0, -1, "");
 }
 
 function edge(f: ssa.SFunc, b: ssa.SBlock, pred: i32, state: Accounts): Progress {
-  let at: i32 = util.index_of_i32(b.preds, pred);
-  let roots: i32[] = state.roots;
+  let at = util.index_of_i32(b.preds, pred);
+  let roots = state.roots;
   for op in b.insts {
     if (op.kind_tag == 8) {
-      let a: i32 = op.args[at];
+      let a = op.args[at];
       if (a < 0 || a >= f.nvals || state.roots[a] == -2) {
         return rejected(f, 3, b.id, "unavailable phi operand");
       }
@@ -274,8 +274,8 @@ function edge(f: ssa.SFunc, b: ssa.SBlock, pred: i32, state: Accounts): Progress
 }
 
 function join(f: ssa.SFunc, b: ssa.SBlock, a: Accounts, other: Accounts): Progress {
-  let roots: i32[] = a.roots;
-  let i: i32 = 0;
+  let roots = a.roots;
+  let i = 0;
   while (i < f.nvals) {
     if (a.credits[i] != other.credits[i] || a.external[i] != other.external[i]) {
       return rejected(f, 2, b.id, "path-dependent credit accounts not admitted");
@@ -283,7 +283,7 @@ function join(f: ssa.SFunc, b: ssa.SBlock, a: Accounts, other: Accounts): Progre
     if (roots[i] != other.roots[i]) {
       roots = roots.with(i, -2);
     }
-    i = i + 1;
+    i += 1;
   }
   for op in b.insts {
     if (op.kind_tag == 8 && roots[op.result] == -2) {
@@ -295,13 +295,13 @@ function join(f: ssa.SFunc, b: ssa.SBlock, a: Accounts, other: Accounts): Progre
 
 function dense(f: ssa.SFunc): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for b in f.blocks {
     let preds: i32[] = [];
     for p in b.preds {
       preds = preds.append(block_at(f, p));
     }
-    let term: ssa.STerm = b.term;
+    let term = b.term;
     if (term.kind_tag == 2) {
       term = ssa.STerm { ...term, target: block_at(f, term.target) };
     }
@@ -309,23 +309,23 @@ function dense(f: ssa.SFunc): ssa.SFunc {
       term = ssa.STerm { ...term, t: block_at(f, term.t), f: block_at(f, term.f) };
     }
     blocks = blocks.append(ssa.SBlock { ...b, id: i, preds: preds, term: term });
-    i = i + 1;
+    i += 1;
   }
   return ssa.SFunc { ...f, blocks: blocks, entry: block_at(f, f.entry) };
 }
 
 function loop_members(f: ssa.SFunc, dom: ssadeps.Dom): i32[] {
-  let members: i32[] = filled(f.blocks.len(), 0);
-  let from: i32 = 0;
+  let members = filled(f.blocks.len(), 0);
+  let from = 0;
   for b in f.blocks {
     for header in successors(b.term) {
       if (ssadeps.dom_holds(dom, from, header)) {
-        let seen: i32[] = filled(f.blocks.len(), 0).with(header, 1);
+        let seen = filled(f.blocks.len(), 0).with(header, 1);
         let todo: i32[] = [from];
         members = members.with(header, 1);
-        let i: i32 = 0;
+        let i = 0;
         while (i < todo.len()) {
-          let at: i32 = todo[i];
+          let at = todo[i];
           if (seen[at] == 0) {
             seen = seen.with(at, 1);
             members = members.with(at, 1);
@@ -335,17 +335,17 @@ function loop_members(f: ssa.SFunc, dom: ssadeps.Dom): i32[] {
               }
             }
           }
-          i = i + 1;
+          i += 1;
         }
       }
     }
-    from = from + 1;
+    from += 1;
   }
   return members;
 }
 
 function invariant(f: ssa.SFunc, header: i32, initial: Accounts, back: Accounts): Verdict {
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.nvals) {
     if (initial.credits[i] != back.credits[i] || initial.external[i] != back.external[i]) {
       return verdict(f, 1, header, "loop credit invariant is not preserved");
@@ -353,7 +353,7 @@ function invariant(f: ssa.SFunc, header: i32, initial: Accounts, back: Accounts)
     if (initial.roots[i] != -2 && initial.roots[i] != back.roots[i]) {
       return verdict(f, 2, header, "loop alias invariant is not admitted");
     }
-    i = i + 1;
+    i += 1;
   }
   return verdict(f, 0, header, "");
 }
@@ -373,7 +373,7 @@ pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
   if (admission.status != 0) {
     return admission;
   }
-  let entry: i32 = block_at(f, f.entry);
+  let entry = block_at(f, f.entry);
   if (entry < 0) {
     return verdict(f, 3, -1, "missing entry");
   }
@@ -386,8 +386,8 @@ pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
   }
   let cfg = dense(f);
   let dom = ssadeps.dominates(cfg);
-  let cyclic: i32[] = loop_members(cfg, dom);
-  let ci: i32 = 0;
+  let cyclic = loop_members(cfg, dom);
+  let ci = 0;
   for b in f.blocks {
     if (cyclic[ci] != 0) {
       for op in b.insts {
@@ -396,28 +396,28 @@ pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
         }
       }
     }
-    ci = ci + 1;
+    ci += 1;
   }
   let states: Accounts[] = [];
   let pending: i32[] = [];
-  let received: i32[] = filled(f.blocks.len(), 0);
+  let received = filled(f.blocks.len(), 0);
   for b in f.blocks {
     states = states.append(empty_accounts());
-    let count: i32 = 0;
-    let pos: i32 = block_at(f, b.id);
+    let count = 0;
+    let pos = block_at(f, b.id);
     for pred in b.preds {
       if (!ssadeps.dom_holds(dom, block_at(f, pred), pos)) {
-        count = count + 1;
+        count += 1;
       }
     }
     pending = pending.append(count);
   }
   states = states.with(entry, initial(f));
   let queue: i32[] = [entry];
-  let qi: i32 = 0;
+  let qi = 0;
   while (qi < queue.len()) {
-    let bi: i32 = queue[qi];
-    let b: ssa.SBlock = f.blocks[bi];
+    let bi = queue[qi];
+    let b = f.blocks[bi];
     let ops: ssa.SInst[] = [];
     for op in b.insts {
       if (op.kind_tag != 8) {
@@ -435,13 +435,13 @@ pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
       }
     } else {
       if (b.term.kind_tag == 3) {
-        let v: i32 = b.term.cond;
+        let v = b.term.cond;
         if (v < 0 || v >= f.nvals || run.accounts.roots[v] != -1) {
           return verdict(f, 3, b.id, "condition lacks available scalar provenance");
         }
       }
       for id in successors(b.term) {
-        let pos: i32 = block_at(f, id);
+        let pos = block_at(f, id);
         let next = edge(f, f.blocks[pos], b.id, run.accounts);
         if (next.result.status != 0) {
           return next.result;
@@ -470,7 +470,7 @@ pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
         }
       }
     }
-    qi = qi + 1;
+    qi += 1;
   }
   if (qi != f.blocks.len()) {
     return verdict(f, 2, -1, "cycle or unreachable block not admitted");

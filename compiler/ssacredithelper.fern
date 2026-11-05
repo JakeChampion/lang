@@ -45,12 +45,12 @@ function shape(f: ssa.SFunc): boolean {
 }
 
 function block_index(f: ssa.SFunc, id: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   for b in f.blocks {
     if (b.id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -78,7 +78,7 @@ pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
     return refused(f, "unsupported drop graph");
   }
   let b = f.blocks[0];
-  let first: i32 = 1;
+  let first = 1;
   if (b.insts.len() % 2 != 0) {
     first = 2;
   }
@@ -91,7 +91,7 @@ pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
     return refused(f, "unsupported drop values");
   }
   let released: i32[] = [];
-  let i: i32 = first;
+  let i = first;
   while (i < b.insts.len() - 1) {
     let load = b.insts[i];
     let dec = b.insts[i + 1];
@@ -102,7 +102,7 @@ pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
       return refused(f, "child release mismatch");
     }
     released = released.append(load.imm);
-    i = i + 2;
+    i += 2;
   }
   if (b.term.kind_tag != 1 || b.term.value != result.result) {
     return refused(f, "drop return mismatch");

@@ -31,32 +31,32 @@ function expect(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, ok: boolean, 
 
 function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
-  let i: i32 = 0;
+  let hits = 0;
+  let i = 0;
   for op in r.ops {
     if (mode == 0 && freed_parent(r.ops, i)) {
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
       ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 3 && op.kind_tag == ir.kind_id("const_i32") && i + 1 < r.ops.len() && r.ops[i + 1].kind_tag == ir.kind_id("eq")) {
       ops = ops.append(ir.op_const_i32(1));
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 4 && op.kind_tag == ir.kind_id("struct_get") && hits == 0) {
       ops = ops.append(ir.Op { ...op, i32_imm: 1 });
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 5 && op.kind_tag == ir.kind_id("return")) {
       ops = ops.append(ir.op_load_local(1)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop()).append(op);
-      hits = hits + 1;
+      hits += 1;
     } else if (mode == 6 && op.kind_tag == ir.kind_id("if") && hits == 0) {
       ops = ops.append(ir.op_const_i32(0)).append(ir.Op { ...op, kind_tag: ir.kind_id("eq"), i32_imm: 0 }).append(op);
-      hits = hits + 1;
+      hits += 1;
     } else {
       ops = ops.append(op);
     }
-    i = i + 1;
+    i += 1;
   }
   require(hits == 1, 3);
   return irtables.LowerResult { ...r, ops: ops };
@@ -95,7 +95,7 @@ function target_checks(target: string): void {
   let absent = extract.check_selected(f, d, r, helper.FlatChildren { offsets: [8] }, 16);
   require(!absent.ok && absent.function_name == f.name && absent.message == "selected child slot absent from layout", 33);
   let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "freeing a shared parent"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < 7) {
     let mutated = lift(mutate(body, mode));
     expect(mutated, d, r, false, 11 + mode);
@@ -104,12 +104,12 @@ function target_checks(target: string): void {
       print(rejected.message);
       exit(40 + mode);
     }
-    mode = mode + 1;
+    mode += 1;
   }
   let reversed: ssa.SBlock[] = [];
-  let i: i32 = f.blocks.len();
+  let i = f.blocks.len();
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     reversed = reversed.append(f.blocks[i]);
   }
   expect(ssa.SFunc { ...f, blocks: reversed }, d, r, true, 18);
@@ -129,22 +129,22 @@ function target_checks(target: string): void {
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, 20);
   expect(ssa.SFunc { ...f, nparams: 2 }, d, r, false, 21);
   let early: ir.Op[] = [];
-  let inserted: i32 = 0;
-  let removed: i32 = 0;
+  let inserted = 0;
+  let removed = 0;
   i = 0;
   while (i < body.ops.len()) {
     let op = body.ops[i];
     if (op.kind_tag == ir.kind_id("load_local") && i + 1 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == "__fern_rc_inc") {
       early = early.append(ir.op_load_local(0)).append(ir.op_call_direct(r.name, 1)).append(ir.op_drop());
-      inserted = inserted + 1;
+      inserted += 1;
     }
     if (op.kind_tag == ir.kind_id("load_local") && i + 2 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == r.name) {
       require(body.ops[i + 2].kind_tag == ir.kind_id("drop"), 22);
-      i = i + 3;
-      removed = removed + 1;
+      i += 3;
+      removed += 1;
     } else {
       early = early.append(op);
-      i = i + 1;
+      i += 1;
     }
   }
   require(inserted == 1 && removed == 1, 23);
@@ -163,14 +163,14 @@ function target_checks(target: string): void {
   let reserved_drop = extract.check(f, ssa.SFunc { ...d, name: "__fern_rc_dec" }, r, helper.FlatChild { offset: 8 });
   require(!reserved_drop.ok && reserved_drop.function_name == "__fern_rc_dec", 30);
   let free_use: ssa.SBlock[] = [];
-  let frees: i32 = 0;
+  let frees = 0;
   for b in f.blocks {
     let ops: ssa.SInst[] = [];
     for op in b.insts {
       ops = ops.append(op);
       if (op.kind_tag == 11 && op.str == "__fern_rc_dec" && op.args.len() == 1 && op.args[0] == 0) {
         ops = ops.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" });
-        frees = frees + 1;
+        frees += 1;
       }
     }
     free_use = free_use.append(ssa.SBlock { ...b, insts: ops });
@@ -182,8 +182,8 @@ function target_checks(target: string): void {
 }
 
 function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): ssa.SFunc {
-  let load: i32 = -1;
-  let constant: i32 = -1;
+  let load = -1;
+  let constant = -1;
   for b in f.blocks {
     for op in b.insts {
       if (op.kind_tag == 40 && op.imm == other) {
@@ -196,7 +196,7 @@ function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): 
   }
   require(load >= 0 && constant >= 0, 76);
   let blocks: ssa.SBlock[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   let nvals = f.nvals;
   for b in f.blocks {
     let insts: ssa.SInst[] = [];
@@ -205,17 +205,17 @@ function sibling_mutated(f: ssa.SFunc, other: i32, mode: i32, release: string): 
       let parent_free = op.kind_tag == 11 && op.str == "__fern_rc_dec" && op.args.len() == 1 && op.args[0] == 0;
       if (mode == 0 && sibling_release) {
         insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 1 && parent_free) {
         insts = insts.append(ssa.SInst { ...op, str: release });
-        hits = hits + 1;
+        hits += 1;
       } else if (mode == 2 && sibling_release) {
         insts = insts.append(op).append(ssa.SInst { kind_tag: 40, result: nvals, args: [0], imm: other, str: "" });
-        nvals = nvals + 1;
-        hits = hits + 1;
+        nvals += 1;
+        hits += 1;
       } else if (mode == 3 && op.result == constant) {
         insts = insts.append(ssa.SInst { ...op, imm: 1 });
-        hits = hits + 1;
+        hits += 1;
       } else {
         insts = insts.append(op);
       }
@@ -243,40 +243,40 @@ function sibling_checks(target: string): void {
   let d = lift(drops[0]);
   let r = lift(releases[0]);
   let layout = helper.FlatChildren { offsets: [8, 24] };
-  let checked: i32 = 0;
+  let checked = 0;
   for body in sub.bodies {
     if (body.name == "left" || body.name == "right") {
-      let offset: i32 = 8;
+      let offset = 8;
       if (body.name == "right") {
         offset = 24;
       }
       let f = lift(body);
       let valid = extract.check_selected(f, d, r, layout, offset);
       require(valid.ok && valid.function_name == f.name, 61);
-      let other: i32 = 24;
+      let other = 24;
       if (offset == 24) {
         other = 8;
       }
       let sibling_reasons: string[] = ["sibling slot left in a freed parent", "sibling released twice", "load from released sibling slot", "uniqueness token joins a nonzero value"];
-      let sm: i32 = 0;
+      let sm = 0;
       while (sm < sibling_reasons.len()) {
         let refused = extract.check_selected(sibling_mutated(f, other, sm, r.name), d, r, layout, offset);
         if (refused.ok || refused.message != sibling_reasons[sm]) {
           print(refused.message);
           exit(78 + sm);
         }
-        sm = sm + 1;
+        sm += 1;
       }
       require(!extract.check(f, d, r, helper.FlatChild { offset: offset }).ok, 62);
       let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "uniqueness token compared with a nonzero value", "unsupported containment operation", "return without child credit", "releasing a shared parent's child"];
-      let mode: i32 = 0;
+      let mode = 0;
       while (mode < 7) {
         let result = extract.check_selected(lift(mutate(body, mode)), d, r, layout, offset);
         require(!result.ok && result.function_name == f.name && result.message == reasons[mode], 63 + mode);
-        mode = mode + 1;
+        mode += 1;
       }
       let changed: ir.Op[] = [];
-      let loads: i32 = 0;
+      let loads = 0;
       for op in body.ops {
         if (op.kind_tag == ir.kind_id("struct_get")) {
           if (loads == 1) {
@@ -284,7 +284,7 @@ function sibling_checks(target: string): void {
           } else {
             changed = changed.append(op);
           }
-          loads = loads + 1;
+          loads += 1;
         } else {
           changed = changed.append(op);
         }
@@ -293,15 +293,15 @@ function sibling_checks(target: string): void {
       let wrong = extract.check_selected(lift(irtables.LowerResult { ...body, ops: changed }), d, r, layout, offset);
       require(!wrong.ok && wrong.function_name == f.name && wrong.message == "child release without local credit", 71);
       let ops: ir.Op[] = [];
-      let slot: i32 = -1;
-      let hits: i32 = 0;
+      let slot = -1;
+      let hits = 0;
       for op in drops[0].ops {
         if (op.kind_tag == ir.kind_id("struct_get")) {
           slot = (op.i32_imm + 1) * 8;
         }
         if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && slot != offset) {
           ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
-          hits = hits + 1;
+          hits += 1;
         } else {
           ops = ops.append(op);
         }
@@ -310,7 +310,7 @@ function sibling_checks(target: string): void {
       let corrupt = extract.check_selected(f, lift(irtables.LowerResult { ...drops[0], ops: ops }), r, layout, offset);
       require(!corrupt.ok && corrupt.function_name == d.name && corrupt.message == "child release mismatch", 73);
       require(extract.check_selected(f, d, r, helper.FlatChildren { offsets: [24, 8] }, offset).ok, 74);
-      checked = checked + 1;
+      checked += 1;
     }
   }
   require(checked == 2, 75);

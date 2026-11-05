@@ -8,21 +8,21 @@ function scalar(t: typeinfo.Type): boolean {
 }
 
 function option_schema(f: ssasem.Func, t: typeinfo.Type): i32 {
-  let at: i32 = semrecords.find_enum(f.enums, t);
+  let at = semrecords.find_enum(f.enums, t);
   if (at < 0 || ssasem.has_finalizer(f, t)) {
-    return 0 - 1;
+    return -1;
   }
-  let e: semrecords.Enum = f.enums[at];
+  let e = f.enums[at];
   if (e.layout != semrecords.layout_option() || e.variants.len() != 2) {
-    return 0 - 1;
+    return -1;
   }
-  let some: semrecords.Variant = e.variants[0];
-  let none: semrecords.Variant = e.variants[1];
+  let some = e.variants[0];
+  let none = e.variants[1];
   if (some.name != "Some" || none.name != "None" || some.fields.len() != 1 || none.fields.len() != 0) {
-    return 0 - 1;
+    return -1;
   }
   if (!scalar(some.fields[0].ty)) {
-    return 0 - 1;
+    return -1;
   }
   return at;
 }
@@ -51,14 +51,14 @@ function local_read(ins: ssa.SInst, active: boolean[]): boolean {
 function candidates(f: ssasem.Func): boolean[] {
   let active: boolean[] = [];
   let peers: i32[][] = [];
-  let bad: boolean[] = __alloc_bool(f.values.len());
+  let bad = __alloc_bool(f.values.len());
   for t in f.values {
     active = active.append(option_schema(f, t) >= 0);
     peers = peers.append([]);
   }
   for b in f.graph.blocks {
     for ins in b.insts {
-      let r: i32 = ins.result;
+      let r = ins.result;
       if (member(active, r) && !local_origin(ins)) {
         bad = bad.with(r, true);
       }
@@ -84,15 +84,15 @@ function candidates(f: ssasem.Func): boolean[] {
     }
   }
   let queue: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < active.len()) {
     if (active[v] && bad[v]) {
       queue = queue.append(v);
       active = active.with(v, false);
     }
-    v = v + 1;
+    v += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < queue.len()) {
     for p in peers[queue[i]] {
       if (active[p]) {
@@ -100,21 +100,21 @@ function candidates(f: ssasem.Func): boolean[] {
         queue = queue.append(p);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return active;
 }
 
 function pair(ins: ssa.SInst, payloads: i32[]): ssa.SInst[] {
-  let tag: ssa.SInst = ins;
-  let payload: ssa.SInst = ssa.SInst { ...ins, result: payloads[ins.result] };
+  let tag = ins;
+  let payload = ssa.SInst { ...ins, result: payloads[ins.result] };
   if (ins.kind_tag == ssasem.variant_new()) {
-    let present: i32 = 0;
+    let present = 0;
     if (ins.str == "Some") {
       present = 1;
     }
     tag = ssa.SInst { ...tag, kind_tag: 2, args: [], imm: present, str: "" };
-    let kind: i32 = ssasem.zero();
+    let kind = ssasem.zero();
     if (present == 1) {
       kind = 7;
     }
@@ -130,9 +130,9 @@ function pair(ins: ssa.SInst, payloads: i32[]): ssa.SInst[] {
 }
 
 function projection(ins: ssa.SInst, payloads: i32[]): ssa.SInst {
-  let kind: i32 = 7;
-  let name: string = "";
-  let arg: i32 = ins.args[0];
+  let kind = 7;
+  let name = "";
+  let arg = ins.args[0];
   if (ins.kind_tag == ssasem.variant_get()) {
     arg = payloads[arg];
   } else if (ins.str == "None") {
@@ -143,20 +143,20 @@ function projection(ins: ssa.SInst, payloads: i32[]): ssa.SInst {
 }
 
 pub function split(f: ssasem.Func): ssasem.Func {
-  let active: boolean[] = candidates(f);
-  let values: typeinfo.Type[] = f.values;
+  let active = candidates(f);
+  let values = f.values;
   let payloads: i32[] = [];
-  let v: i32 = 0;
+  let v = 0;
   while (v < f.values.len()) {
-    let p: i32 = 0 - 1;
+    let p: i32 = -1;
     if (active[v]) {
       p = values.len();
-      let at: i32 = option_schema(f, f.values[v]);
+      let at = option_schema(f, f.values[v]);
       values = values.append(f.enums[at].variants[0].fields[0].ty);
       values = values.with(v, typeinfo.TypeBool { tag: 0 });
     }
     payloads = payloads.append(p);
-    v = v + 1;
+    v += 1;
   }
   if (values.len() == f.values.len()) {
     return f;
@@ -183,14 +183,14 @@ pub function split(f: ssasem.Func): ssasem.Func {
 function unsplit_debug_bindings(f: ssasem.Func, split: boolean[]): ssasem.Func {
   let vals: i32[] = [];
   let names: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.dbg_vals.len()) {
-    let v: i32 = f.dbg_vals[i];
+    let v = f.dbg_vals[i];
     if (!member(split, v)) {
       vals = vals.append(v);
       names = names.append(f.dbg_names[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return ssasem.Func { ...f, dbg_vals: vals, dbg_names: names };
 }

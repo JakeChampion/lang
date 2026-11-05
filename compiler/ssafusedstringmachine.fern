@@ -76,7 +76,7 @@ function initial(r: value.Interval, register_entry: boolean, grown: boolean): St
   let i = 0;
   while (i < 16) {
     regs = regs.append(if (i == 4) { identity(3, 0) } else { identity(2, i) });
-    i = i + 1;
+    i += 1;
   }
   if (register_entry) {
     regs = regs.with(0, identity(6, 0));
@@ -87,7 +87,7 @@ function initial(r: value.Interval, register_entry: boolean, grown: boolean): St
   i = 6;
   while (i < 16) {
     cells = cells.append(token(5, i, 0));
-    i = i + 1;
+    i += 1;
   }
   cells = cells.append(token(4, 0, 0)).append(token(4, 0, 1));
   let argument = if (register_entry) { identity(5, 18) } else { identity(6, 0) };
@@ -536,7 +536,7 @@ function final_registers(s: State, r: value.Interval): boolean {
     if (!same_word(s.regs[i], expected_register(r, i, s.grown))) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -564,7 +564,7 @@ function finished(s: State, r: value.Interval, register_entry: boolean): boolean
     if (!same_half(s.cells[i], wanted)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -583,14 +583,14 @@ function unguarded(s: State, original: State, r: value.Interval): State {
       }
       regs = regs.with(i, original.regs[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < s.cells.len()) {
     if (!same_half(s.cells[i], original.cells[i])) {
       return State { ...s, ok: false };
     }
-    i = i + 1;
+    i += 1;
   }
   return State { ...s, regs: regs, flags: unknown_flags(), ok: s.ok && s.zeros == 0 && s.links == 0 && s.slots == 0 && s.call_return == -1 };
 }
@@ -626,7 +626,7 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, g
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return false;

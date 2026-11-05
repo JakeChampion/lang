@@ -42,29 +42,29 @@ pub function find(records: Records, ty: typeinfo.Type): i32 {
   if let typeinfo.TypeStruct(s) = ty {
     return find_struct(records, s.name, ty);
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function find_named(list: Record[], names: util.NameIndex, name: string, ty: typeinfo.Type): i32 {
-  let i: i32 = names.chain(name);
+  let i = names.chain(name);
   while (i >= 0) {
     if (names.names[i] == name && semtypes.equal(list[i].ty, ty)) {
       return i;
     }
     i = names.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function find_named_enum(list: Enum[], names: util.NameIndex, name: string, ty: typeinfo.Type): i32 {
-  let i: i32 = names.chain(name);
+  let i = names.chain(name);
   while (i >= 0) {
     if (names.names[i] == name && semtypes.equal(list[i].ty, ty)) {
       return i;
     }
     i = names.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function union_name_of(t: typeinfo.Type): string {
@@ -85,42 +85,42 @@ pub function find_enum(enums: Enum[], ty: typeinfo.Type): i32 {
   if let typeinfo.TypeUnion(u) = ty {
     return find_union(enums, u.name, ty);
   }
-  return 0 - 1;
+  return -1;
 }
 
 function find_struct(records: Records, name: string, ty: typeinfo.Type): i32 {
-  let i: i32 = records.names.chain(name);
+  let i = records.names.chain(name);
   while (i >= 0) {
     if (records.names.names[i] == name && semtypes.equal(records.list[i].ty, ty)) {
       return i;
     }
     i = records.names.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function find_union(enums: Enum[], name: string, ty: typeinfo.Type): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < enums.len()) {
     if let typeinfo.TypeUnion(e) = enums[i].ty {
       if (e.name == name && semtypes.equal(enums[i].ty, ty)) {
         return i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function find_variant(e: Enum, name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < e.variants.len()) {
     if (e.variants[i].name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function resolved_all(types: typeinfo.Type[], records: Records, enums: Enum[]): boolean {
@@ -165,9 +165,9 @@ function resolved_structural(ty: typeinfo.Type, records: Records, enums: Enum[])
 }
 
 function fields_error(fields: Field[], records: Records, enums: Enum[], variant: boolean): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < fields.len()) {
-    let field: Field = fields[i];
+    let field = fields[i];
     if (field.name == "") {
       return "empty record field name";
     }
@@ -177,14 +177,14 @@ function fields_error(fields: Field[], records: Records, enums: Enum[], variant:
     if (!resolved(field.ty, records, enums)) {
       return "missing nested record schema";
     }
-    let j: i32 = 0;
+    let j = 0;
     while (j < i) {
       if (fields[j].name == field.name) {
         return "duplicate record field name";
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -201,12 +201,12 @@ function instance_error(a: Record, b: Record): string {
       if (x.args.len() != y.args.len() || a.fields.len() != b.fields.len()) {
         return "inconsistent record instance schema";
       }
-      let i: i32 = 0;
+      let i = 0;
       while (i < a.fields.len()) {
         if (a.fields[i].name != b.fields[i].name) {
           return "inconsistent record instance schema";
         }
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -221,31 +221,31 @@ pub function record_name(r: Record): string {
 }
 
 function records_error(records: Records, enums: Enum[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < records.list.len()) {
-    let record: Record = records.list[i];
+    let record = records.list[i];
     if (!semtypes.concrete(record.ty, false)) {
       return "unresolved record identity";
     }
     if let typeinfo.TypeStruct(_) = record.ty {} else {
       return "non-nominal record identity";
     }
-    let name: string = record_name(record);
-    let j: i32 = records.names.chain(name);
+    let name = record_name(record);
+    let j = records.names.chain(name);
     while (j >= 0 && j < i) {
       if (records.names.names[j] == name) {
-        let clash: string = instance_error(record, records.list[j]);
+        let clash = instance_error(record, records.list[j]);
         if (clash != "") {
           return clash;
         }
       }
       j = records.names.next[j];
     }
-    let why: string = fields_error(record.fields, records, enums, false);
+    let why = fields_error(record.fields, records, enums, false);
     if (why != "") {
       return why;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -260,23 +260,23 @@ pub function inhabited(v: Variant): boolean {
 }
 
 function variants_error(variants: Variant[], records: Records, enums: Enum[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < variants.len()) {
     if (variants[i].name == "") {
       return "empty variant name";
     }
-    let j: i32 = 0;
+    let j = 0;
     while (j < i) {
       if (variants[j].name == variants[i].name) {
         return "duplicate variant name";
       }
-      j = j + 1;
+      j += 1;
     }
-    let why: string = fields_error(variants[i].fields, records, enums, true);
+    let why = fields_error(variants[i].fields, records, enums, true);
     if (why != "") {
       return why;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -292,7 +292,7 @@ function layout_error(e: Enum, records: Records): string {
     return "";
   }
   for v in e.variants {
-    let at: i32 = records.names.find(v.name);
+    let at = records.names.find(v.name);
     if (at < 0) {
       return "missing union member record";
     }
@@ -307,8 +307,8 @@ function option_layout_error(e: Enum): string {
   if (e.variants.len() != 2) {
     return "builtin union arity";
   }
-  let first: string = e.variants[0].name;
-  let second: string = e.variants[1].name;
+  let first = e.variants[0].name;
+  let second = e.variants[1].name;
   if (first != "Some" && first != "Ok") {
     return "builtin union variant order";
   }
@@ -327,34 +327,34 @@ function same_fields(a: Field[], b: Field[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i].name != b[i].name || !semtypes.equal(a[i].ty, b[i].ty)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function enums_error(records: Records, enums: Enum[]): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < enums.len()) {
-    let e: Enum = enums[i];
+    let e = enums[i];
     if (!semtypes.concrete(e.ty, false)) {
       return "unresolved enum identity";
     }
     if let typeinfo.TypeUnion(_) = e.ty {} else {
       return "non-union enum identity";
     }
-    let j: i32 = 0;
+    let j = 0;
     while (j < i) {
       if (semtypes.equal(e.ty, enums[j].ty)) {
         return "duplicate enum schema";
       }
-      j = j + 1;
+      j += 1;
     }
-    let why: string = variants_error(e.variants, records, enums);
+    let why = variants_error(e.variants, records, enums);
     if (why != "") {
       return why;
     }
@@ -362,13 +362,13 @@ function enums_error(records: Records, enums: Enum[]): string {
     if (why != "") {
       return why;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 pub function verify(records: Records, enums: Enum[]): string {
-  let why: string = records_error(records, enums);
+  let why = records_error(records, enums);
   if (why != "") {
     return why;
   }

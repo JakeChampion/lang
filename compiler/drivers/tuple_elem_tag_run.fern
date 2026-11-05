@@ -2,43 +2,43 @@ import "../irtables";
 import "../util";
 
 function ref_trim(s: string): string {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && s[a] == b' ') {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && s[b - 1] == b' ') {
-    b = b - 1;
+    b -= 1;
   }
   return slice_unchecked(s, a, b) + "";
 }
 
 function ref_elem_tag(t: string, n: i32): string {
-  let len: i32 = t.len();
+  let len = t.len();
   if (len < 3 || slice_unchecked(t, 0, 1) != "(" || slice_unchecked(t, len - 1, len) != ")") {
     return "";
   }
-  let inner: str = slice_unchecked(t, 1, len - 1);
-  let depth: i32 = 0;
-  let start: i32 = 0;
-  let idx: i32 = 0;
-  let i: i32 = 0;
+  let inner = slice_unchecked(t, 1, len - 1);
+  let depth = 0;
+  let start = 0;
+  let idx = 0;
+  let i = 0;
   while (i <= inner.len()) {
     if (i == inner.len() || depth == 0 && inner[i] == b',') {
       if (idx == n) {
         return ref_trim(slice_unchecked(inner, start, i));
       }
-      idx = idx + 1;
+      idx += 1;
       start = i + 1;
     } else {
-      let ch: i32 = inner[i] as i32;
+      let ch = inner[i] as i32;
       if (ch == 91 || ch == 40) {
-        depth = depth + 1;
+        depth += 1;
       } else if (ch == 93 || ch == 41) {
-        depth = depth - 1;
+        depth -= 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -58,24 +58,24 @@ function main(): i32 {
     "(x)", "(i32, i32)[]", "()", "i32", "Map[a, b]", "Option[i32]", "",
     "(a, (b, c), d)",
   ];
-  let out: string = "";
-  let bad: i32 = 0;
-  let i: i32 = 0;
+  let out = "";
+  let bad = 0;
+  let i = 0;
   while (i < corpus.len()) {
-    let t: string = corpus[i];
-    let n: i32 = 0 - 1;
+    let t = corpus[i];
+    let n: i32 = -1;
     while (n <= 4) {
-      let real: string = irtables.tuple_type_elem_tag(t, n);
-      let ref: string = ref_elem_tag(t, n);
-      let mark: string = "ok  ";
+      let real = irtables.tuple_type_elem_tag(t, n);
+      let ref = ref_elem_tag(t, n);
+      let mark = "ok  ";
       if (real != ref) {
         mark = "BAD ";
-        bad = bad + 1;
+        bad += 1;
       }
       out = out + mark + show(t) + "[" + util.i32_to_string(n) + "]=" + show(real) + "\n";
-      n = n + 1;
+      n += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   out = out + "mismatches=" + util.i32_to_string(bad) + "\n";
   write(out);

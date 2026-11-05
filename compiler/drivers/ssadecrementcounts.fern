@@ -34,7 +34,7 @@ pub function run(): void {
   let code = 102;
   for v in malformed {
     invalid(v, code);
-    code = code + 1;
+    code += 1;
   }
   flags(count.test(kept), 0, 1, 0, 0, 1, 233);
   flags(count.test(shared), 0, 0, 0, 0, 0, 234);

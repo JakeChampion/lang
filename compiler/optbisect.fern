@@ -8,7 +8,7 @@ pub function key_hash(pass: string, name: string): i64 {
 pub struct Switches { trace: boolean, bisect: boolean, floor: i64 }
 
 pub function switches(): Switches {
-  let trace: boolean = envflag.on("FERN_OPT_TRACE");
+  let trace = envflag.on("FERN_OPT_TRACE");
   match (env("FERN_OPT_BISECT")) {
     Some(v) => {
       return Switches { trace: trace, bisect: true, floor: util.digits_to_i64(v) };
@@ -27,7 +27,7 @@ pub function allowed_by(sw: Switches, pass: string, name: string): boolean {
   if (!sw.trace && !sw.bisect) {
     return true;
   }
-  let h: i64 = key_hash(pass, name);
+  let h = key_hash(pass, name);
   if (sw.trace) {
     eprint(line(h, pass, name));
   }

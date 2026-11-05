@@ -1,7 +1,7 @@
 function gf_mul(a: i32, b: i32): i32 {
-  let p: i32 = 0;
-  let x: i32 = a;
-  let y: i32 = b;
+  let p = 0;
+  let x = a;
+  let y = b;
   while (y != 0) {
     if ((y & 1) != 0) {
       p = p ^ x;
@@ -20,13 +20,13 @@ function rotl8(x: i32, k: i32): i32 {
 }
 
 function sbox_byte(x: i32): i32 {
-  let inv: i32 = 0;
+  let inv = 0;
   if (x != 0) {
     inv = 1;
-    let k: i32 = 0;
+    let k = 0;
     while (k < 254) {
       inv = gf_mul(inv, x);
-      k = k + 1;
+      k += 1;
     }
   }
   return inv ^ rotl8(inv, 1) ^ rotl8(inv, 2) ^ rotl8(inv, 3) ^ rotl8(inv, 4) ^ 99;
@@ -34,24 +34,24 @@ function sbox_byte(x: i32): i32 {
 
 function sbox_table(): i32[] {
   let t: i32[] = [];
-  let x: i32 = 0;
+  let x = 0;
   while (x < 256) {
     t = t.append(sbox_byte(x));
-    x = x + 1;
+    x += 1;
   }
   return t;
 }
 
 function sub_rot_word(w: u8[], at: i32, sb: i32[], rot: boolean, rcon: i32): u8[] {
-  let out: u8[] = __alloc_u8(4);
-  let k: i32 = 0;
+  let out = __alloc_u8(4);
+  let k = 0;
   while (k < 4) {
-    let src: i32 = k;
+    let src = k;
     if (rot) {
       src = k + 1 & 3;
     }
     out = out.with(k, sb[w[at + src] as i32] as u8);
-    k = k + 1;
+    k += 1;
   }
   if (rot) {
     out = out.with(0, out[0] ^ rcon as u8);
@@ -60,22 +60,22 @@ function sub_rot_word(w: u8[], at: i32, sb: i32[], rot: boolean, rcon: i32): u8[
 }
 
 pub function expand_key(key: u8[]): u8[] {
-  let nk: i32 = key.len() / 4;
+  let nk = key.len() / 4;
   if (key.len() != 16 && key.len() != 32) {
     return __alloc_u8(0);
   }
   let total: i32 = 16 * (nk + 7);
-  let sb: i32[] = sbox_table();
-  let w: u8[] = __alloc_u8(total);
-  let i: i32 = 0;
+  let sb = sbox_table();
+  let w = __alloc_u8(total);
+  let i = 0;
   while (i < key.len()) {
     w = w.with(i, key[i]);
-    i = i + 1;
+    i += 1;
   }
-  let rcon: i32 = 1;
-  let word: i32 = nk;
+  let rcon = 1;
+  let word = nk;
   while (word * 4 < total) {
-    let t: u8[] = sub_rot_word(w, 4 * word - 4, sb, word % nk == 0, rcon);
+    let t = sub_rot_word(w, 4 * word - 4, sb, word % nk == 0, rcon);
     if (word % nk == 0) {
       rcon = gf_mul(rcon, 2);
     } else {
@@ -83,44 +83,44 @@ pub function expand_key(key: u8[]): u8[] {
         t = word_at(w, 4 * word - 4);
       }
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < 4) {
       w = w.with(4 * word + k, w[4 * (word - nk) + k] ^ t[k]);
-      k = k + 1;
+      k += 1;
     }
-    word = word + 1;
+    word += 1;
   }
   return w;
 }
 
 function word_at(w: u8[], at: i32): u8[] {
-  let out: u8[] = __alloc_u8(4);
-  let k: i32 = 0;
+  let out = __alloc_u8(4);
+  let k = 0;
   while (k < 4) {
     out = out.with(k, w[at + k]);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function cipher_round(st: u8[], rk: u8[], at: i32, sb: i32[], last: boolean): u8[] {
-  let out: u8[] = __alloc_u8(16);
-  let c: i32 = 0;
+  let out = __alloc_u8(16);
+  let c = 0;
   while (c < 4) {
-    let a0: i32 = sb[st[4 * c] as i32];
-    let a1: i32 = sb[st[4 * (c + 1 & 3) + 1] as i32];
-    let a2: i32 = sb[st[4 * (c + 2 & 3) + 2] as i32];
-    let a3: i32 = sb[st[4 * (c + 3 & 3) + 3] as i32];
+    let a0 = sb[st[4 * c] as i32];
+    let a1 = sb[st[4 * (c + 1 & 3) + 1] as i32];
+    let a2 = sb[st[4 * (c + 2 & 3) + 2] as i32];
+    let a3 = sb[st[4 * (c + 3 & 3) + 3] as i32];
     let m: i32[] = [a0, a1, a2, a3];
     if (!last) {
       m = mix_column(a0, a1, a2, a3);
     }
-    let r: i32 = 0;
+    let r = 0;
     while (r < 4) {
       out = out.with(4 * c + r, m[r] as u8 ^ rk[at + 4 * c + r]);
-      r = r + 1;
+      r += 1;
     }
-    c = c + 1;
+    c += 1;
   }
   return out;
 }
@@ -135,34 +135,34 @@ function mix_column(a0: i32, a1: i32, a2: i32, a3: i32): i32[] {
 }
 
 function encrypt_block(rk: u8[], rounds: i32, block: u8[], sb: i32[]): u8[] {
-  let st: u8[] = __alloc_u8(16);
-  let i: i32 = 0;
+  let st = __alloc_u8(16);
+  let i = 0;
   while (i < 16) {
     st = st.with(i, block[i] ^ rk[i]);
-    i = i + 1;
+    i += 1;
   }
-  let r: i32 = 1;
+  let r = 1;
   while (r <= rounds) {
     st = cipher_round(st, rk, 16 * r, sb, r == rounds);
-    r = r + 1;
+    r += 1;
   }
   return st;
 }
 
 function inc32(cb: u8[]): u8[] {
-  let k: i32 = 15;
-  let carry: boolean = true;
+  let k = 15;
+  let carry = true;
   while (k >= 12 && carry) {
-    let v: i32 = cb[k] as i32 + 1;
+    let v = cb[k] as i32 + 1;
     cb = cb.with(k, (v & 255) as u8);
     carry = v > 255;
-    k = k - 1;
+    k -= 1;
   }
   return cb;
 }
 
 pub function ctr32(rk: u8[], counter: u8[], data: u8[]): u8[] {
-  let rounds: i32 = 0;
+  let rounds = 0;
   if (rk.len() >= 240) {
     rounds = 14;
   } else {
@@ -173,57 +173,57 @@ pub function ctr32(rk: u8[], counter: u8[], data: u8[]): u8[] {
   if (rounds == 0 || counter.len() < 16) {
     return __alloc_u8(0);
   }
-  let sb: i32[] = sbox_table();
-  let cb: u8[] = block_at(counter, 0, 16);
-  let out: u8[] = __alloc_u8(data.len());
-  let at: i32 = 0;
+  let sb = sbox_table();
+  let cb = block_at(counter, 0, 16);
+  let out = __alloc_u8(data.len());
+  let at = 0;
   while (at < data.len()) {
-    let ks: u8[] = encrypt_block(rk, rounds, cb, sb);
-    let k: i32 = 0;
+    let ks = encrypt_block(rk, rounds, cb, sb);
+    let k = 0;
     while (k < 16 && at + k < data.len()) {
       out = out.with(at + k, data[at + k] ^ ks[k]);
-      k = k + 1;
+      k += 1;
     }
     cb = inc32(cb);
-    at = at + 16;
+    at += 16;
   }
   return out;
 }
 
 function block_at(src: u8[], at: i32, n: i32): u8[] {
-  let out: u8[] = __alloc_u8(16);
-  let k: i32 = 0;
+  let out = __alloc_u8(16);
+  let k = 0;
   while (k < n && at + k < src.len()) {
     out = out.with(k, src[at + k]);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function gf128_mul(x: u8[], y: u8[]): u8[] {
-  let z: u8[] = __alloc_u8(16);
-  let v: u8[] = block_at(y, 0, 16);
-  let i: i32 = 0;
+  let z = __alloc_u8(16);
+  let v = block_at(y, 0, 16);
+  let i = 0;
   while (i < 128) {
     if ((x[i / 8] as i32 >> 7 - i % 8 & 1) != 0) {
-      let k: i32 = 0;
+      let k = 0;
       while (k < 16) {
         z = z.with(k, z[k] ^ v[k]);
-        k = k + 1;
+        k += 1;
       }
     }
     v = shift_right1(v);
-    i = i + 1;
+    i += 1;
   }
   return z;
 }
 
 function shift_right1(v: u8[]): u8[] {
-  let lsb: i32 = v[15] as i32 & 1;
-  let k: i32 = 15;
+  let lsb = v[15] as i32 & 1;
+  let k = 15;
   while (k > 0) {
     v = v.with(k, ((v[k] as i32 >> 1 | v[k - 1] as i32 << 7) & 255) as u8);
-    k = k - 1;
+    k -= 1;
   }
   v = v.with(0, v[0] >> 1);
   if (lsb != 0) {
@@ -236,17 +236,17 @@ pub function ghash(h: u8[], y: u8[], data: u8[]): u8[] {
   if (h.len() < 16 || y.len() < 16) {
     return __alloc_u8(0);
   }
-  let acc: u8[] = block_at(y, 0, 16);
-  let at: i32 = 0;
+  let acc = block_at(y, 0, 16);
+  let at = 0;
   while (at < data.len()) {
-    let blk: u8[] = block_at(data, at, 16);
-    let k: i32 = 0;
+    let blk = block_at(data, at, 16);
+    let k = 0;
     while (k < 16) {
       acc = acc.with(k, acc[k] ^ blk[k]);
-      k = k + 1;
+      k += 1;
     }
     acc = gf128_mul(acc, h);
-    at = at + 16;
+    at += 16;
   }
   return acc;
 }
@@ -255,30 +255,30 @@ pub function gcm(rk: u8[], h: u8[], nonce: u8[], aad: u8[], data: u8[], seal: bo
   if (rk.len() < 176 || h.len() < 16 || nonce.len() != 12) {
     return __alloc_u8(0);
   }
-  let j0: u8[] = block_at(nonce, 0, 12).with(15, 1 as u8);
-  let out: u8[] = ctr32(rk, inc32(j0), data);
+  let j0 = block_at(nonce, 0, 12).with(15, 1 as u8);
+  let out = ctr32(rk, inc32(j0), data);
   let ct: u8[] = if (seal) { out } else { data };
-  let y: u8[] = ghash(h, ghash(h, __alloc_u8(16), aad), ct);
-  let lens: u8[] = __alloc_u8(16);
-  let abits: i64 = aad.len() as i64 * 8;
-  let cbits: i64 = ct.len() as i64 * 8;
-  let k: i32 = 0;
+  let y = ghash(h, ghash(h, __alloc_u8(16), aad), ct);
+  let lens = __alloc_u8(16);
+  let abits = aad.len() as i64 * 8;
+  let cbits = ct.len() as i64 * 8;
+  let k = 0;
   while (k < 8) {
     lens = lens.with(7 - k, (abits >> (8 * k) as i64 & 255) as u8);
     lens = lens.with(15 - k, (cbits >> (8 * k) as i64 & 255) as u8);
-    k = k + 1;
+    k += 1;
   }
-  let tag: u8[] = ctr32(rk, j0, ghash(h, y, lens));
-  let all: u8[] = __alloc_u8(out.len() + 16);
+  let tag = ctr32(rk, j0, ghash(h, y, lens));
+  let all = __alloc_u8(out.len() + 16);
   k = 0;
   while (k < out.len()) {
     all = all.with(k, out[k]);
-    k = k + 1;
+    k += 1;
   }
   k = 0;
   while (k < 16) {
     all = all.with(out.len() + k, tag[k]);
-    k = k + 1;
+    k += 1;
   }
   return all;
 }

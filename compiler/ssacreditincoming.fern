@@ -53,11 +53,11 @@ function bindings(caller: string, producers: ssa.SFunc[], consumers: ssa.SFunc[]
 function initial(ids: i32[]): State {
   let values: Value[] = [];
   let credits: i32[] = [1, 1, 1];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ids.len()) {
     values = values.append(Value { kind: -1, identity: 0, words: 0 });
     credits = credits.append(0);
-    i = i + 1;
+    i += 1;
   }
   return State { ids: ids, values: values, credits: credits, sites: [], error: "" };
 }
@@ -87,12 +87,12 @@ function consumer_call(s: State, op: ssa.SInst, block: i32, input: i32): State {
   if (child.kind != 1 || child.identity != 2 || child.words != 0 || s.credits[2] != 1) {
     return State { ...s, error: "independent incoming child argument required" };
   }
-  let index: i32 = 0;
+  let index = 0;
   for credit in s.credits {
     if (index != parent.identity && index != 2 && credit != 0) {
       return State { ...s, error: "leftover incoming boundary credits" };
     }
-    index = index + 1;
+    index += 1;
   }
   let site = Site { input: input, block: block, call: op.result, consumer: op.str, parameter: 0, argument: op.args[0], incoming: op.args[1], words: 3 };
   return State { ...s, sites: [site] };

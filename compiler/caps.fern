@@ -164,13 +164,13 @@ pub function frontend_ungated(): string[] {
 }
 
 pub function capability_of(name: string): string {
-  let bs: BuiltinCap[] = builtin_caps();
-  let i: i32 = 0;
+  let bs = builtin_caps();
+  let i = 0;
   while (i < bs.len()) {
     if (bs[i].builtin == name) {
       return bs[i].capability;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -198,29 +198,29 @@ pub struct Pkg {
 }
 
 pub function pkg_of(pkgs: Pkg[], module: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pkgs.len()) {
     if (pkgs[i].module == module) {
       return pkgs[i].dir;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 function pkg_index(pkgs: Pkg[], dir: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pkgs.len()) {
     if (pkgs[i].dir == dir) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
-  let non_root: boolean = false;
+  let non_root = false;
   for p in pkgs {
     if (!p.root) {
       non_root = true;
@@ -229,16 +229,16 @@ pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
   if (!non_root) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
-    let p: string = pkg_of(pkgs, mod.funcs[i].module);
+    let p = pkg_of(pkgs, mod.funcs[i].module);
     if (p.len() > 0) {
-      let k: i32 = pkg_index(pkgs, p);
+      let k = pkg_index(pkgs, p);
       if (k >= 0 && !pkgs[k].root) {
         return true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -248,25 +248,25 @@ pub struct Use { capability: string, chain: string[] }
 pub struct Row { key: string, pkg: string, uses: Use[] }
 
 function has_i32(xs: i32[], v: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == v) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function func_index(mod: parser.Module, name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function analysis_want(): string[] {
@@ -279,16 +279,16 @@ function analysis_want(): string[] {
 
 function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, builtin: string): string[] {
   let rev: string[] = [];
-  let p: i32 = at;
+  let p = at;
   while (p >= 0) {
     rev = rev.append(mod.funcs[order[p]].name);
     p = parent[p];
   }
   let out: string[] = [];
-  let i: i32 = rev.len() - 1;
+  let i = rev.len() - 1;
   while (i >= 0) {
     out = out.append(rev[i]);
-    i = i - 1;
+    i -= 1;
   }
   return out.append(builtin);
 }
@@ -296,115 +296,115 @@ function chain_of(mod: parser.Module, order: i32[], parent: i32[], at: i32, buil
 function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
   let order: i32[] = [];
   let parent: i32[] = [];
-  let ri: i32 = 0;
+  let ri = 0;
   while (ri < roots.len()) {
     if (!has_i32(order, roots[ri])) {
       order = order.append(roots[ri]);
-      parent = parent.append(0 - 1);
+      parent = parent.append(-1);
     }
-    ri = ri + 1;
+    ri += 1;
   }
 
   let found_cap: string[] = [];
   let found_at: i32[] = [];
   let found_builtin: string[] = [];
 
-  let qi: i32 = 0;
+  let qi = 0;
   while (qi < order.len()) {
-    let fd: parser.FuncDecl = mod.funcs[order[qi]];
+    let fd = mod.funcs[order[qi]];
 
     let calls: astwalk.CallSite[] = [];
-    let bi: i32 = 0;
+    let bi = 0;
     while (bi < fd.body.len()) {
       calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
-      bi = bi + 1;
+      bi += 1;
     }
-    let ci: i32 = 0;
+    let ci = 0;
     while (ci < calls.len()) {
-      let cap: string = capability_of(calls[ci].name);
+      let cap = capability_of(calls[ci].name);
       if (!calls[ci].method && cap.len() > 0 && !util.has_str(found_cap, cap)) {
         found_cap = found_cap.append(cap);
         found_at = found_at.append(qi);
         found_builtin = found_builtin.append(calls[ci].name);
       }
-      ci = ci + 1;
+      ci += 1;
     }
 
-    let refs: treeshake.BodyRefs = treeshake.body_refs(fd);
-    let fi: i32 = 0;
+    let refs = treeshake.body_refs(fd);
+    let fi = 0;
     while (fi < mod.funcs.len()) {
       if (!has_i32(order, fi) && treeshake.refs_name(refs, mod.funcs[fi])) {
         order = order.append(fi);
         parent = parent.append(qi);
       }
-      fi = fi + 1;
+      fi += 1;
     }
-    qi = qi + 1;
+    qi += 1;
   }
 
   let uses: Use[] = [];
-  let vocab: string[] = capabilities();
-  let vi: i32 = 0;
+  let vocab = capabilities();
+  let vi = 0;
   while (vi < vocab.len()) {
-    let k: i32 = util.index_of_str(found_cap, vocab[vi]);
+    let k = util.index_of_str(found_cap, vocab[vi]);
     if (k >= 0) {
       uses = uses.append(Use { capability: vocab[vi], chain: chain_of(mod, order, parent, found_at[k], found_builtin[k]) });
     }
-    vi = vi + 1;
+    vi += 1;
   }
   return uses;
 }
 
 function sort_rows(rows: Row[]): Row[] {
-  let taken: i32[] = __alloc_i32(rows.len());
+  let taken = __alloc_i32(rows.len());
   let out: Row[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < rows.len()) {
-    let best: i32 = 0 - 1;
-    let j: i32 = 0;
+    let best: i32 = -1;
+    let j = 0;
     while (j < rows.len()) {
       if (taken[j] == 0) {
         if (best < 0 || util.str_less(rows[j].pkg, rows[best].pkg)) {
           best = j;
         }
       }
-      j = j + 1;
+      j += 1;
     }
     taken = taken.with(best, 1);
     out = out.append(rows[best]);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
-  let want: util.NameIndex = util.name_index(analysis_want());
+  let want = util.name_index(analysis_want());
   let names: string[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
-    let p: string = pkg_of(pkgs, mod.funcs[fi].module);
+    let p = pkg_of(pkgs, mod.funcs[fi].module);
     if (p.len() > 0 && !util.has_str(names, p)) {
       names = names.append(p);
     }
-    fi = fi + 1;
+    fi += 1;
   }
 
   let rows: Row[] = [];
-  let pi: i32 = 0;
+  let pi = 0;
   while (pi < names.len()) {
     let roots: i32[] = [];
-    let fj: i32 = 0;
+    let fj = 0;
     while (fj < mod.funcs.len()) {
       if (pkg_of(pkgs, mod.funcs[fj].module) == names[pi]) {
         roots = roots.append(fj);
       }
-      fj = fj + 1;
+      fj += 1;
     }
-    let k: i32 = pkg_index(pkgs, names[pi]);
-    let label: string = pkgs[k].name;
-    let duplicate: boolean = false;
+    let k = pkg_index(pkgs, names[pi]);
+    let label = pkgs[k].name;
+    let duplicate = false;
     for other in names {
-      let oi: i32 = pkg_index(pkgs, other);
+      let oi = pkg_index(pkgs, other);
       if (other != names[pi] && pkgs[oi].name == label) {
         duplicate = true;
       }
@@ -413,43 +413,43 @@ pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
       label = label + " (" + names[pi] + ")";
     }
     rows = rows.append(Row { key: names[pi], pkg: label, uses: walk(mod, roots, want) });
-    pi = pi + 1;
+    pi += 1;
   }
   return sort_rows(rows);
 }
 
 function join_chain(chain: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < chain.len()) {
     if (i > 0) {
-      out = out + " → ";
+      out += " → ";
     }
-    out = out + chain[i];
-    i = i + 1;
+    out += chain[i];
+    i += 1;
   }
   return out;
 }
 
 pub function format_rows(rows: Row[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < rows.len()) {
     if (rows[i].uses.len() == 0) {
       out = out + rows[i].pkg + "  -\n";
     } else {
-      let names: string = "";
-      let u: i32 = 0;
+      let names = "";
+      let u = 0;
       while (u < rows[i].uses.len()) {
         if (u > 0) {
-          names = names + ",";
+          names += ",";
         }
-        names = names + rows[i].uses[u].capability;
-        u = u + 1;
+        names += rows[i].uses[u].capability;
+        u += 1;
       }
       out = out + rows[i].pkg + "  " + names + "  (example: " + join_chain(rows[i].uses[0].chain) + ")\n";
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -463,16 +463,16 @@ pub struct Violation {
 
 pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
   let out: Violation[] = [];
-  let ri: i32 = 0;
+  let ri = 0;
   while (ri < rows.len()) {
-    let k: i32 = pkg_index(pkgs, rows[ri].key);
-    let is_root: boolean = k >= 0 && pkgs[k].root;
+    let k = pkg_index(pkgs, rows[ri].key);
+    let is_root = k >= 0 && pkgs[k].root;
     if (!is_root) {
-      let governed: boolean = k >= 0 && pkgs[k].governed;
-      let ui: i32 = 0;
+      let governed = k >= 0 && pkgs[k].governed;
+      let ui = 0;
       while (ui < rows[ri].uses.len()) {
-        let u: Use = rows[ri].uses[ui];
-        let granted: boolean = false;
+        let u = rows[ri].uses[ui];
+        let granted = false;
         if (governed) {
           granted = util.has_str(pkgs[k].grants, u.capability);
         }
@@ -484,10 +484,10 @@ pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
             governed: governed,
           });
         }
-        ui = ui + 1;
+        ui += 1;
       }
     }
-    ri = ri + 1;
+    ri += 1;
   }
   return out;
 }
@@ -495,10 +495,10 @@ pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
 pub function source_chain(mod: parser.Module, chain: string[]): string[] {
   let out: string[] = [];
   for name in chain {
-    let shown: string = name;
-    let fi: i32 = func_index(mod, name);
+    let shown = name;
+    let fi = func_index(mod, name);
     if (fi >= 0) {
-      let pre: string = mod.funcs[fi].module + "__";
+      let pre = mod.funcs[fi].module + "__";
       if (mod.funcs[fi].module.len() > 0 && util.str_has_prefix(name, pre)) {
         shown = slice_unchecked(name, pre.len(), name.len()) + "";
       }
@@ -509,11 +509,11 @@ pub function source_chain(mod: parser.Module, chain: string[]): string[] {
 }
 
 pub function violation_message(v: Violation): string {
-  let builtin: string = "";
+  let builtin = "";
   if (v.chain.len() > 0) {
     builtin = v.chain[v.chain.len() - 1];
   }
-  let head: string = "package \"" + v.pkg + "\" reaches '" + v.capability + "' (" + builtin + ")";
+  let head = "package \"" + v.pkg + "\" reaches '" + v.capability + "' (" + builtin + ")";
   if (v.governed) {
     return head + " without a capability grant: " + join_chain(v.chain)
       + "; add \"" + v.capability + "\" to its capabilities in fern.toml or remove the call";

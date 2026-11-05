@@ -98,7 +98,7 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
   for op in block.insts {
     if (op.kind_tag == 8) {
       let identity = zero.id;
-      let kind: i32 = 0;
+      let kind = 0;
       let scalar = zero.id;
       for e in edges {
         let pos = util.index_of_i32(block.preds, e.predecessor);

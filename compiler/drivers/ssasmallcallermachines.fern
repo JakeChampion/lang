@@ -39,7 +39,7 @@ function first(text: string, old: string, replacement: string): string {
   let i = 2;
   while (i < parts.len()) {
     result = result + old + parts[i];
-    i = i + 1;
+    i += 1;
   }
   return result;
 }

@@ -92,8 +92,8 @@ pub function power(bit: i32): i64 {
   let result = 1 as i64;
   let at = 0;
   while (at < bit) {
-    result = result * (2 as i64);
-    at = at + 1;
+    result *= 2 as i64;
+    at += 1;
   }
   return result;
 }
@@ -102,8 +102,8 @@ function highest(n: i64): i32 {
   let rest = n;
   let bit = -1;
   while (rest > 0 as i64) {
-    rest = rest / (2 as i64);
-    bit = bit + 1;
+    rest /= 2 as i64;
+    bit += 1;
   }
   return bit;
 }

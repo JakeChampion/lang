@@ -83,33 +83,33 @@ function child(c: Context, v: phi.Value): Context {
     return failed(c, "flat child reference required");
   }
   let out = c;
-  let total: i32 = 0;
-  let root: i32 = 3;
+  let total = 0;
+  let root = 3;
   while (root <= 5 && out.error == "") {
     out = mask(out, v.identity, root);
     let path = out.temp;
     out = calc(out, 0, total, path);
     total = out.temp;
     let count = out.state.children[root - 3];
-    let slot: i32 = 0;
+    let slot = 0;
     while (slot < 4) {
       out = literal(out, root);
       out = calc(out, 2, out.state.contents[slot], out.temp);
       out = calc(out, 4, out.temp, out.state.credits[slot]);
       out = calc(out, 0, count, out.temp);
       count = out.temp;
-      slot = slot + 1;
+      slot += 1;
     }
     out = positive(out, path, count, "child used after final credit or anchor");
-    root = root + 1;
+    root += 1;
   }
   return equal(out, out.state.path, total, 1, "flat child reference required");
 }
 
 function reference_copy(c: Context, v: phi.Value): Context {
   let out = c;
-  let root: i32 = 0;
-  let total: i32 = 0;
+  let root = 0;
+  let total = 0;
   while (root <= 5 && out.error == "") {
     out = mask(out, v.identity, root);
     let path = out.temp;
@@ -123,7 +123,7 @@ function reference_copy(c: Context, v: phi.Value): Context {
       out = child(out, v);
     }
     out = Context { ...out, state: State { ...out.state, path: saved } };
-    root = root + 1;
+    root += 1;
   }
   return equal(out, out.state.path, total, 1, "unsupported reference identity");
 }
@@ -132,12 +132,12 @@ function drop_children(c: Context, v: phi.Value): Context {
   let out = parent(c, v);
   out = equal(out, out.state.path, v.identity, 1, "only old-parent child drop admitted");
   out = equal(out, out.state.path, out.unique, 1, "children-only drop requires unique parent");
-  let slot: i32 = 0;
+  let slot = 0;
   while (slot < 2 && out.error == "") {
     out = mask(out, out.state.contents[slot], 0);
     let covered = out.temp;
     out = equal(out, covered, out.state.credits[slot], 0, "null slot carries child credit");
-    let root: i32 = 3;
+    let root = 3;
     while (root <= 5 && out.error == "") {
       out = mask(out, out.state.contents[slot], root);
       let path = out.temp;
@@ -146,10 +146,10 @@ function drop_children(c: Context, v: phi.Value): Context {
       out = equal(out, path, out.state.credits[slot], 1, "children-only drop with stale slot");
       out = calc(out, 1, out.state.credits[slot], path);
       out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
-      root = root + 1;
+      root += 1;
     }
     out = equal(out, out.state.path, covered, 1, "invalid child-drop slot identity");
-    slot = slot + 1;
+    slot += 1;
   }
   return out;
 }
@@ -168,12 +168,12 @@ function narrow_number(v: phi.Value): boolean {
 }
 
 function call_index(calls: CheckedCall[], name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   for call in calls {
     if (call.name == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -188,7 +188,7 @@ function scalar_call(c: Context, op: ssa.SInst, call: CheckedCall): Context {
     return failed(c, "scalar call requires Boolean and narrowed i32 operands");
   }
   let out = c;
-  let covered: i32 = 0;
+  let covered = 0;
   for input in [0, 1] {
     out = mask(out, condition.identity, input);
     let path = out.temp;
@@ -253,11 +253,11 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     return out;
   }
   let op = ssa.SInst { ...physical, result: util.index_of_i32(c.ids, physical.result), args: args };
-  let kind: i32 = -1;
-  let identity: i32 = 0;
+  let kind = -1;
+  let identity = 0;
   if (op.kind_tag == 6 && op.args.len() == 0 && op.imm >= 0 && op.imm < 2 && op.str == "") {
     kind = 1;
-    let root: i32 = 1;
+    let root = 1;
     if (op.imm == 1) {
       root = 3;
     }
@@ -325,7 +325,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
   } else if (op.kind_tag == 40 && op.args.len() == 1 && !old_parent_on_path(out, out.values[op.args[0]]) && fields.len() > 0 && ssa.plain_str(op) == "") {
     let base = out.values[op.args[0]];
     out = child(out, base);
-    let covered: i32 = 0;
+    let covered = 0;
     for field in fields {
       if (field.offset == op.imm) {
         out = mask(out, base.identity, field.root);
@@ -339,7 +339,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     let base = out.values[op.args[0]];
     out = parent(out, base);
     kind = 1;
-    let p: i32 = 0;
+    let p = 0;
     while (p < 2 && out.error == "") {
       out = mask(out, base.identity, p + 1);
       let path = out.temp;
@@ -348,7 +348,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = calc(out, 4, path, out.state.contents[slot]);
       out = calc(out, 0, identity, out.temp);
       identity = out.temp;
-      p = p + 1;
+      p += 1;
     }
   } else if (op.kind_tag == 41 && op.args.len() == 2 && op.str == "") {
     let base = out.values[op.args[0]];
@@ -366,8 +366,8 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = equal(out, out.state.path, out.unique, 1, "clearing shared parent slot");
       let slot = op.imm / 8 - 1;
       out = equal(out, out.state.path, out.state.credits[slot], 1, "clearing slot without contained credit");
-      let transferred: i32 = 0;
-      let root: i32 = 3;
+      let transferred = 0;
+      let root = 3;
       while (root <= 5 && out.error == "") {
         out = mask(out, out.state.contents[slot], root);
         let path = out.temp;
@@ -375,7 +375,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
         transferred = out.temp;
         out = calc(out, 0, out.state.children[root - 3], path);
         out = Context { ...out, state: State { ...out.state, children: out.state.children.with(root - 3, out.temp) } };
-        root = root + 1;
+        root += 1;
       }
       out = equal(out, out.state.path, transferred, 1, "clearing slot without child identity");
       let contents = guard.select(out.arena, out.state.path, 0, out.state.contents[slot]);
@@ -386,7 +386,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
     } else if ((op.imm == 8 || op.imm == 16) && source.kind == 1) {
       out = child(out, source);
-      let p: i32 = 0;
+      let p = 0;
       while (p < 2 && out.error == "") {
         out = mask(out, base.identity, p + 1);
         let path = out.temp;
@@ -395,7 +395,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
           out = equal(out, path, out.unique, 1, "overwriting shared parent");
         }
         out = equal(out, path, out.state.credits[slot], 0, "overwriting live slot credit");
-        let root: i32 = 3;
+        let root = 3;
         while (root <= 5 && out.error == "") {
           out = mask(out, source.identity, root);
           out = calc(out, 4, path, out.temp);
@@ -403,7 +403,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
           out = positive(out, consume, out.state.children[root - 3], "slot store without local child credit");
           out = calc(out, 1, out.state.children[root - 3], consume);
           out = Context { ...out, state: State { ...out.state, children: out.state.children.with(root - 3, out.temp) } };
-          root = root + 1;
+          root += 1;
         }
         let contents = guard.select(out.arena, path, source.identity, out.state.contents[slot]);
         if (out.error == "") {
@@ -411,7 +411,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
         }
         out = calc(out, 0, out.state.credits[slot], path);
         out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
-        p = p + 1;
+        p += 1;
       }
     } else {
       return failed(out, "unsupported reuse store");
@@ -449,13 +449,13 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     } else if (op.str == release && op.imm == 0) {
       out = parent(out, v);
       out = equal(out, out.state.path, v.identity, 1, "only old-parent release admitted");
-      let slot: i32 = 0;
+      let slot = 0;
       while (slot < 2) {
         out = equal(out, out.state.path, out.state.credits[slot], 1, "parent release with stale slot");
         out = calc(out, 4, out.state.path, out.unique);
         out = calc(out, 1, out.state.credits[slot], out.temp);
         out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
-        slot = slot + 1;
+        slot += 1;
       }
       out = calc(out, 1, out.state.parents[0], out.state.path);
       out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
@@ -471,7 +471,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = child(out, v);
       kind = 1;
       identity = v.identity;
-      let root: i32 = 3;
+      let root = 3;
       while (root <= 5 && out.error == "") {
         out = mask(out, v.identity, root);
         let path = out.temp;
@@ -500,7 +500,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
             out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
           }
         }
-        root = root + 1;
+        root += 1;
       }
     } else {
       return failed(out, "unsupported reuse call");
@@ -515,12 +515,12 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
 }
 
 function at(f: ssa.SFunc, id: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   for b in f.blocks {
     if (b.id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -554,7 +554,7 @@ function outgoing(c: Context, term: ssa.STerm): Outgoing {
 }
 
 function last_value(f: ssa.SFunc): i32 {
-  let last: i32 = -1;
+  let last = -1;
   for b in f.blocks {
     for op in b.insts {
       if (op.result > last) {
@@ -632,13 +632,13 @@ struct Numbers { arena: guard.Arena, values: i32[], error: string }
 function joined(a: guard.Arena, old: i32[], current: i32[], path: i32): Numbers {
   let arena = a;
   let values = old;
-  let i: i32 = 0;
+  let i = 0;
   while (i < old.len()) {
     let masked: guard.Built = match (guard.combine(arena, 4, path, current[i])) { Ok(value) => value, Err(error) => { return Numbers { arena: error.arena, values: values, error: error.message }; } };
     let sum: guard.Built = match (guard.combine(masked.arena, 0, old[i], masked.id)) { Ok(value) => value, Err(error) => { return Numbers { arena: error.arena, values: values, error: error.message }; } };
     arena = sum.arena;
     values = values.with(i, sum.id);
-    i = i + 1;
+    i += 1;
   }
   return Numbers { arena: arena, values: values, error: "" };
 }
@@ -691,7 +691,7 @@ function returned(c: Context, value: i32, composed: boolean): Context {
     c = literal(c, 2);
     c = equal(c, c.state.path, result.identity, c.temp, "storage result requires new generation");
   }
-  let p: i32 = 0;
+  let p = 0;
   while (p < 2 && c.error == "") {
     c = mask(c, result.identity, p + 1);
     let path = c.temp;
@@ -700,11 +700,11 @@ function returned(c: Context, value: i32, composed: boolean): Context {
     let slot = p * 2;
     while (slot < p * 2 + 2) {
       c = equal(c, path, c.state.credits[slot], 1, "result has stale or uninitialized slot");
-      slot = slot + 1;
+      slot += 1;
     }
     c = calc(c, 1, c.state.parents[p], path);
     c = Context { ...c, state: State { ...c.state, parents: c.state.parents.with(p, c.temp) } };
-    p = p + 1;
+    p += 1;
   }
   for count in c.state.parents {
     c = equal(c, c.state.path, count, 0, "unconsumed parent credit");
@@ -758,7 +758,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
   let empty = State { path: 0, parents: [0, 0], children: [0, 0, 0], contents: [0, 0, 0, 0], credits: [0, 0, 0, 0], shapes: [0, 0], allocated: 0 };
   let values: phi.Value[] = [];
   let ids: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   for b in f.blocks {
     for op in b.insts {
       ids = ids.append(op.result);
@@ -778,7 +778,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
   let c = Context { arena: u.arena, ids: ids, values: values, state: empty, unique: u.id, temp: 0, error: "" };
   let remaining = f.blocks.len();
   while (remaining > 0 && c.error == "") {
-    let chosen: i32 = -1;
+    let chosen = -1;
     i = 0;
     for b in f.blocks {
       let ready = !done[i] && (b.id == f.entry || b.preds.len() > 0);
@@ -790,7 +790,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
       if (ready && chosen < 0) {
         chosen = i;
       }
-      i = i + 1;
+      i += 1;
     }
     if (chosen < 0) {
       c = failed(c, "unsupported reuse cycle or unreachable block");
@@ -834,11 +834,11 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
             incoming = incoming.with(ti, Incoming { state: c.state, edges: edges });
             c = Context { ...c, state: state };
           }
-          i = i + 1;
+          i += 1;
         }
       }
       done = done.with(chosen, true);
-      remaining = remaining - 1;
+      remaining -= 1;
     }
   }
   let message = c.error;

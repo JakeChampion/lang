@@ -73,7 +73,7 @@ function stack_and_registers(s: string): void {
   for reg in wide {
     mutation(s, "ret", "movq " + reg + ", " + reg + "\nret", true);
     mutation(s, "ret", "movl " + narrow[i] + ", " + narrow[i] + "\nret", false);
-    i = i + 1;
+    i += 1;
   }
   for code in ["movq %rax, (%rsp)", "movq %rax, 8(%rsp)", "pushq %rax", "popq %rax", "movq (%rax), %rcx", "movq %rax, (%rax)"] {
     mutation(s, "ret", code + "\nret", false);

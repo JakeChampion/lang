@@ -20,20 +20,20 @@ pub function entry_module(entry: parser.Module, target: string): parser.Module {
 // http_entry_refused is why a wasm32-wasi-http entry cannot be built, or a
 // diagnostic with no message when it can.
 pub function http_entry_refused(entry: parser.Module, target: string): util.Diag {
-  let none: util.Diag = util.Diag { related: [], length: 0, code: "", message: "", line: 0, col: 0, fix: None };
+  let none = util.Diag { related: [], length: 0, code: "", message: "", line: 0, col: 0, fix: None };
   if (target != "wasm32-wasi-http") {
     return none;
   }
-  let i: i32 = 0;
-  let found: boolean = false;
-  let hook: i32 = -1;
+  let i = 0;
+  let found = false;
+  let hook = -1;
   while (i < entry.funcs.len()) {
-    let fd: parser.FuncDecl = entry.funcs[i];
+    let fd = entry.funcs[i];
     if (fd.receiver_type.len() == 0 && (fd.name == "init" || fd.name == "shutdown") && hook < 0) {
       hook = i;
     }
     if (fd.name == "handle" && fd.receiver_type.len() == 0) {
-      let at: util.Diag = util.Diag { ...none, code: "E075", line: fd.line, col: fd.col };
+      let at = util.Diag { ...none, code: "E075", line: fd.line, col: fd.col };
       if (fd.params.len() == 3) {
         return util.Diag { ...at, message: "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target" };
       }
@@ -42,11 +42,11 @@ pub function http_entry_refused(entry: parser.Module, target: string): util.Diag
       }
       found = true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (found) {
     if (hook >= 0) {
-      let fd: parser.FuncDecl = entry.funcs[hook];
+      let fd = entry.funcs[hook];
       return util.Diag { ...none, code: "E075", line: fd.line, col: fd.col, message: "a wasi:http proxy does not run `" + fd.name + "`; its entry point is `handle(req, plat)`" };
     }
     return none;
@@ -59,55 +59,55 @@ pub function http_refused(why: string): string {
 }
 
 pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
-  let needs: string[] = wasm_ir.needs_of(util.append_all(sub.bodies, sub.extra));
-  let host: boolean = wasm_ir.component_needs_host(full, sub.switches) || wasm_ir.needs_abort(needs) || wasm_ir.module_extern_needs_heap(full);
+  let needs = wasm_ir.needs_of(util.append_all(sub.bodies, sub.extra));
+  let host = wasm_ir.component_needs_host(full, sub.switches) || wasm_ir.needs_abort(needs) || wasm_ir.module_extern_needs_heap(full);
   return wasm_ir.emit_module_mode_or_error_sub(full, true, host, sub);
 }
 
 pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
-  let asyncs: parser.FuncDecl[] = util.append_all(wasm_ir.async_exports(full), wasm_ir.async_imports(full));
+  let asyncs = util.append_all(wasm_ir.async_exports(full), wasm_ir.async_imports(full));
   if (asyncs.len() > 0) {
     return wit_compose.Composed { bytes: [], refused: "async function " + asyncs[0].name + ": only -target wasm32-wasi lifts an async export or lowers an async import" };
   }
-  let wat: string = wasm_http_core(full, sub);
+  let wat = wasm_http_core(full, sub);
   if (wat.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "" };
   }
-  let core: i32[] = watbin.wat_to_binary(wat);
-  let tbody: i32[] = wit_decode.wit_section_body(watbin.hex_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
+  let core = watbin.wat_to_binary(wat);
+  let tbody = wit_decode.wit_section_body(watbin.hex_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
   return wit_compose.compose_http(tbody, core);
 }
 
 function declares_extern(full: parser.Module): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < full.funcs.len()) {
     if (full.funcs[i].import_iface.len() > 0) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
-  let ap: AsyncPlan = async_plan(full);
+  let ap = async_plan(full);
   if (ap.refused.len() > 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + ap.refused };
   }
-  let shape: i32 = wasm_ir.lowered_shape(full, sub.switches, util.append_all(sub.bodies, sub.extra));
-  let framed: boolean = shape >= 0 && !declares_extern(full) && ap.asy.lifts.len() == 0;
+  let shape = wasm_ir.lowered_shape(full, sub.switches, util.append_all(sub.bodies, sub.extra));
+  let framed = shape >= 0 && !declares_extern(full) && ap.asy.lifts.len() == 0;
   if (framed && shape == 0) {
     return wit_compose.Composed { bytes: watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub))), refused: "" };
   }
-  let core: wasm_ir.EmittedCore = wasm_ir.emit_core_or_error_sub(full, true, true, sub);
+  let core = wasm_ir.emit_core_or_error_sub(full, true, true, sub);
   if (core.wat.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "" };
   }
   if (framed && wasm_ir.component_framable(core.needs)) {
     return wit_compose.Composed { bytes: framed_component(watbin.wat_to_binary(core.wat), shape), refused: "" };
   }
-  let tbody: i32[] = wit_decode.wit_section_body(watbin.hex_to_bytes(wit_fern_world.fern_world_payload()), 7);
-  let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat), ap.asy);
+  let tbody = wit_decode.wit_section_body(watbin.hex_to_bytes(wit_fern_world.fern_world_payload()), 7);
+  let c = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat), ap.asy);
   if (c.bytes.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: the fern world cannot take this program: " + c.refused };
   }
@@ -123,7 +123,7 @@ function sig_refused(why: string): AsyncSig {
 }
 
 function async_type(t: string, mem: boolean): i32[] {
-  let vt: i32 = wasm_ir.async_lift_valtype(t);
+  let vt = wasm_ir.async_lift_valtype(t);
   if (vt >= 0) {
     return [vt];
   }
@@ -137,12 +137,12 @@ function async_type(t: string, mem: boolean): i32[] {
     return [112, wasm_ir.async_lift_valtype(wasm_ir.list_elem(t))];
   }
   if (wasm_ir.extern_tuple_param_supported(t)) {
-    let n: i32 = wasm_ir.tuple_type_elem_count(t);
+    let n = wasm_ir.tuple_type_elem_count(t);
     let out: i32[] = [111, n];
-    let i: i32 = 0;
+    let i = 0;
     while (i < n) {
       out = out.append(wasm_ir.async_lift_valtype(wasm_ir.nth_tuple_type_elem(t, i)));
-      i = i + 1;
+      i += 1;
     }
     return out;
   }
@@ -165,9 +165,9 @@ function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
   }
   let names: string[] = [];
   let types: i32[][] = [];
-  let flat: i32 = 0;
+  let flat = 0;
   for p in f.params {
-    let ct: i32[] = async_type(p.type_name, mem);
+    let ct = async_type(p.type_name, mem);
     if (ct.len() == 0) {
       return sig_refused("parameter " + p.name + " has type " + p.type_name + ", which an " + role + " cannot take yet");
     }
@@ -176,7 +176,7 @@ function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
     }
     names = names.append(kebab(p.name));
     types = types.append(ct);
-    flat = flat + flat_count(ct);
+    flat += flat_count(ct);
   }
   let rt: i32[] = [];
   if (wasm_ir.returns_value(f.ret_type)) {
@@ -191,8 +191,8 @@ function async_sig(f: parser.FuncDecl, role: string, mem: boolean): AsyncSig {
 function async_plan(full: parser.Module): AsyncPlan {
   let lifts: watbin.AsyncLift[] = [];
   for f in wasm_ir.async_exports(full) {
-    let sg: AsyncSig = async_sig(f, "async export", false);
-    let name: string = kebab(f.name);
+    let sg = async_sig(f, "async export", false);
+    let name = kebab(f.name);
     if (sg.refused.len() == 0 && name.len() == 0) {
       sg = sig_refused("the name has no kebab-case form for the component export");
     }
@@ -203,7 +203,7 @@ function async_plan(full: parser.Module): AsyncPlan {
   }
   let lowers: watbin.AsyncLower[] = [];
   for f in wasm_ir.async_imports(full) {
-    let sg: AsyncSig = with_streams(f, async_sig(f, "async import", true));
+    let sg = with_streams(f, async_sig(f, "async import", true));
     if (sg.refused.len() == 0 && sg.flat > 4) {
       sg = sig_refused("its parameters flatten to more than four core values, which an async import cannot pass yet");
     }
@@ -220,11 +220,11 @@ function with_streams(f: parser.FuncDecl, sg: AsyncSig): AsyncSig {
     return sg;
   }
   for k in f.streams {
-    let t: string = f.ret_type;
+    let t = f.ret_type;
     if (k >= 0) {
       t = f.params[k].type_name;
     }
-    let vt: i32 = wasm_ir.async_lift_valtype(wasm_ir.list_elem(t));
+    let vt = wasm_ir.async_lift_valtype(wasm_ir.list_elem(t));
     if (vt < 0) {
       return sig_refused("a stream of " + t + " elements, which an async import cannot carry yet");
     }
@@ -243,7 +243,7 @@ function plan_refused(why: string): AsyncPlan {
 
 function kebab(id: string): string {
   let out: u8[] = [];
-  let word_start: boolean = true;
+  let word_start = true;
   for c in id {
     if (c == 95) {
       if (word_start) {
