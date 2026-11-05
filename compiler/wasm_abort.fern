@@ -7,24 +7,24 @@ pub function texts(): string[] {
 
 pub function helpers(offsets: i32[], mode: i32): string {
   let names: string[] = ["arr", "str", "slice", "alloc", "oom", "free_range", "double_free"];
-  let messages: string[] = texts();
-  let out: string = "";
-  let i: i32 = 0;
+  let messages = texts();
+  let out = "";
+  let i = 0;
   while (i < names.len()) {
     out = out + "  (func $__fern_abort_" + names[i] + "\n";
     if (i < offsets.len()) {
-      let ptr: string = util.i32_to_string(offsets[i] + 4);
-      let len: string = util.i32_to_string(messages[i].len());
+      let ptr = util.i32_to_string(offsets[i] + 4);
+      let len = util.i32_to_string(messages[i].len());
       if (mode == 0) {
         out = out + "    (i32.store (i32.const 0) (i32.const " + ptr + "))\n";
         out = out + "    (i32.store (i32.const 4) (i32.const " + len + "))\n";
-        out = out + "    (drop (call $__fern_fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+        out += "    (drop (call $__fern_fd_write (i32.const 2) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
       } else {
         out = out + "    (call $__fern_bwf (call $__fern_get_stderr) (i32.const " + ptr + ") (i32.const " + len + ") (i32.const 0))\n";
       }
     }
-    out = out + "    (unreachable))\n";
-    i = i + 1;
+    out += "    (unreachable))\n";
+    i += 1;
   }
   return out;
 }

@@ -14,7 +14,7 @@ import "../util";
 // width with its sign flag, and a callee name with a declaration index.
 
 function width_of(b: i32): i32 {
-  let r: i32 = b % 5;
+  let r = b % 5;
   if (r == 0) {
     return 0;
   }
@@ -31,7 +31,7 @@ function width_of(b: i32): i32 {
 }
 
 function name_of(b: i32): string {
-  let r: i32 = b % 4;
+  let r = b % 4;
   if (r == 0) {
     return "";
   }
@@ -46,13 +46,13 @@ function name_of(b: i32): string {
 
 function decode(bytes: u8[]): ir.Op[] {
   let ops: ir.Op[] = [];
-  let i: i32 = 2;
+  let i = 2;
   while (i + 4 <= bytes.len()) {
-    let b0: i32 = bytes[i] as i32;
-    let b1: i32 = bytes[i + 1] as i32;
-    let b2: i32 = bytes[i + 2] as i32;
-    let b3: i32 = bytes[i + 3] as i32;
-    let imm: i32 = b1 / 2 - 64;
+    let b0 = bytes[i] as i32;
+    let b1 = bytes[i + 1] as i32;
+    let b2 = bytes[i + 2] as i32;
+    let b3 = bytes[i + 3] as i32;
+    let imm = b1 / 2 - 64;
     ops = ops.append(ir.Op {
       kind_tag: b0 + b1 % 2 * 256,
       i32_imm: imm,
@@ -64,13 +64,13 @@ function decode(bytes: u8[]): ir.Op[] {
       decl: b3 / 4 - 1,
       source: 0,
     });
-    i = i + 4;
+    i += 4;
   }
   return ops;
 }
 
 function main(): i32 {
-  let av: string[] = args();
+  let av = args();
   if (av.len() < 2) {
     eprint("usage: irverify_fuzz_run FILE");
     return 2;
@@ -85,20 +85,20 @@ function main(): i32 {
       return 2;
     }
   }
-  let n_params: i32 = 0;
-  let n_locals: i32 = 0;
+  let n_params = 0;
+  let n_locals = 0;
   if (bytes.len() >= 2) {
     n_params = bytes[0] as i32 % 8;
     n_locals = n_params + bytes[1] as i32 % 16;
   }
-  let ops: ir.Op[] = decode(bytes);
+  let ops = decode(bytes);
   let sigs: irverify.NameIndex = irverify.sig_index([
     irverify.FnSig { name: "f", n_params: n_params },
     irverify.FnSig { name: "g", n_params: 2 },
   ]);
-  let structural: i32 = irverify.verify_fn("f", ops, n_params, n_locals, sigs).len();
-  let stack: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
-  let rc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", ops);
+  let structural = irverify.verify_fn("f", ops, n_params, n_locals, sigs).len();
+  let stack = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
+  let rc = irverifyrc.verify_rc_fn("f", ops);
   print("ops " + util.i32_to_string(ops.len())
     + " structural " + util.i32_to_string(structural)
     + " stack " + util.i32_to_string(stack.problems.len())

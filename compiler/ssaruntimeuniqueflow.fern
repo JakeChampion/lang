@@ -24,14 +24,14 @@ pub function decode(line: string, arm: boolean): Decoded {
     if (instruction != "" && instruction == line) {
       return Decoded { kind: i, target: "" };
     }
-    i = i + 1;
+    i += 1;
   }
   i = 20;
   for prefix in branches(arm) {
     if (prefix != "" && util.str_has_prefix(line, prefix)) {
       return Decoded { kind: i, target: slice_unchecked(line, prefix.len(), line.len()) + "" };
     }
-    i = i + 1;
+    i += 1;
   }
   return Decoded { kind: 0, target: "" };
 }
@@ -103,7 +103,7 @@ function path_marks(size: i32): boolean[] {
   let i = 0;
   while (i < size) {
     marks = marks.append(false);
-    i = i + 1;
+    i += 1;
   }
   return marks;
 }
@@ -132,7 +132,7 @@ pub function path(ops: Op[], tagged: boolean, low: boolean, rc: i32, arm: boolea
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return false;

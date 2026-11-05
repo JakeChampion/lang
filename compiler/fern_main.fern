@@ -7,7 +7,7 @@ import "core/error";
 import "std/rand";
 
 function main(): i32 {
-  let root: string = stdlib_root();
+  let root = stdlib_root();
   if (root.len() == 0) {
     return 1;
   }
@@ -15,7 +15,7 @@ function main(): i32 {
 }
 
 function stdlib_digest(): string {
-  let h: crypto.Sha256 = crypto.sha256_new();
+  let h = crypto.sha256_new();
   for a in __fern_assets() {
     h = h.update(a.0.as_bytes()).update("\n".as_bytes()).update(util.i32_to_string(a.1.len()).as_bytes()).update("\n".as_bytes()).update(a.1.as_bytes());
   }
@@ -39,22 +39,22 @@ function stdlib_installed(root: string): boolean {
 }
 
 function stdlib_root(): string {
-  let base: string = util.cache_base();
+  let base = util.cache_base();
   if (base.len() == 0) {
     eprint("fern: no cache directory for the stdlib: set FERN_CACHE_DIR, XDG_CACHE_HOME or HOME");
     return "";
   }
-  let root: string = base + "/stdlib-" + stdlib_digest();
+  let root = base + "/stdlib-" + stdlib_digest();
   if (stdlib_installed(root)) {
     return root;
   }
-  let suffix: string = "";
+  let suffix = "";
   for b in rand.bytes(6) {
-    suffix = suffix + util.i32_to_string(b as i32);
+    suffix += util.i32_to_string(b as i32);
   }
-  let tmp: string = root + ".tmp-" + suffix;
+  let tmp = root + ".tmp-" + suffix;
   for a in __fern_assets() {
-    let path: string = tmp + "/" + a.0;
+    let path = tmp + "/" + a.0;
     match (create_dir_all(util.dir_of(path))) {
       Ok(_) => {},
       Err(e) => {

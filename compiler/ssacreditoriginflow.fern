@@ -33,11 +33,11 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
   }
   let empty: Value[] = [];
   let credits: i32[] = [1, 1];
-  let i: i32 = 0;
+  let i = 0;
   while (i < checked.values.len()) {
     empty = empty.append(Value { kind: -1, identity: 0, words: 0 });
     credits = credits.append(0);
-    i = i + 1;
+    i += 1;
   }
   for input in [0, 1] {
     let rows: Value[][] = [];
@@ -53,7 +53,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
       let b = f.blocks[index];
       let row = empty;
       let balance = credits;
-      let previous: i32 = -1;
+      let previous = -1;
       let active = b.id == f.entry;
       for p in b.preds {
         let pi = flow_graph.block_index(f, p);

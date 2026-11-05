@@ -62,14 +62,14 @@ function initial(capacity: i32, register_entry: boolean): State {
   let i = 0;
   while (i < 16) {
     regs = regs.append(initial_register(capacity, register_entry, i));
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < 22 + (capacity + 3) * 2) {
     let w = initial_word(capacity, register_entry, i);
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
     writes = writes.append(0);
-    i = i + 1;
+    i += 1;
   }
   return State { regs: regs, memory: memory, writes: writes, calls: 0, ok: true };
 }
@@ -154,7 +154,7 @@ function store_at(s: State, at: i32, width: i32, w: Word): State {
     }
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
     writes = writes.with(pos, writes[pos] + 1);
-    i = i + 1;
+    i += 1;
   }
   return State { ...s, memory: memory, writes: writes };
 }
@@ -210,13 +210,13 @@ function helper_memory(memory: Half[], sp: Word, capacity: i32): Half[] {
   let i = 0;
   while (i < (sp.low.identity + 40) as i32 / 4) {
     memory = memory.with(i, half(11, i as i64, false));
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < 6) {
     let w = number(if (i == 2 || i == 3) { 1 } else { capacity as i64 });
     memory = memory.with(22 + i, if (i % 2 == 0) { w.low } else { w.high });
-    i = i + 1;
+    i += 1;
   }
   return memory;
 }
@@ -293,7 +293,7 @@ function finished(s: State, capacity: i32, register_entry: boolean): boolean {
     if (!equal(s.regs[i], expected)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return finished_memory(s, original, capacity);
 }
@@ -307,7 +307,7 @@ function finished_memory(s: State, original: State, capacity: i32): boolean {
     if (i >= 26 && i < s.memory.len() - 2 && s.writes[i] != 1) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -338,7 +338,7 @@ function path(p: isa.ArrayProgram, capacity: i32, symbol: string, successor: i32
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return false;
@@ -358,7 +358,7 @@ function allocator_successor(output: string): i32 {
       }
       successor = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return successor;
 }

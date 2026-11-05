@@ -42,7 +42,7 @@ function pos_key(line: i32, col: i32): i32 {
 function bind_stmt(st: ast.Stmt, own w: Walk): Walk {
   match (st) {
     ast.StmtVar(v) => {
-      let s: Scan = w.s;
+      let s = w.s;
       match (v.init) {
         ast.ExprLambda(_) => {
           s = Scan { ...s, lambda_locals: s.lambda_locals.append(v.name) };
@@ -55,7 +55,7 @@ function bind_stmt(st: ast.Stmt, own w: Walk): Walk {
       return Walk { ...w, s: Scan { ...w.s, locals: bound(w.s.locals, f.var_name) } };
     },
     ast.StmtMatch(m) => {
-      let locals: string[] = w.s.locals;
+      let locals = w.s.locals;
       for arm in m.arms {
         locals = astwalk.pattern_binders(arm.pattern, locals);
       }
@@ -67,7 +67,7 @@ function bind_stmt(st: ast.Stmt, own w: Walk): Walk {
 }
 
 function bound(locals: string[], binder: string): string[] {
-  let out: string[] = locals;
+  let out = locals;
   for n in astwalk.append_bound_name([], binder) {
     out = out.append(n);
   }
@@ -77,7 +77,7 @@ function bound(locals: string[], binder: string): string[] {
 function bind_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprLambda(lm) => {
-      let locals: string[] = w.s.locals;
+      let locals = w.s.locals;
       for p in lm.params {
         locals = locals.append(p.name);
       }
@@ -104,7 +104,7 @@ function call_expr(e: ast.Expr, own w: Walk): Walk {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(id) => {
-          let s: Scan = Scan { ...w.s, callee_pos: w.s.callee_pos.append(pos_key(id.line, id.col)) };
+          let s = Scan { ...w.s, callee_pos: w.s.callee_pos.append(pos_key(id.line, id.col)) };
           if (util.has_str(s.locals, id.name)) {
             if (!util.has_str(s.lambda_locals, id.name)) {
               s = Scan { ...s, indirect: true };
@@ -139,7 +139,7 @@ function ident_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprIdent(id) => {
       if (!has_i32(w.s.callee_pos, pos_key(id.line, id.col)) && !util.has_str(w.s.locals, id.name) && w.ctx.names.has(id.name)) {
-        let k: i32 = func_at(w.funcs, id.name);
+        let k = func_at(w.funcs, id.name);
         return Walk { ...w, s: Scan { ...add_edge(w.s, k), escaping: w.s.escaping.append(k) } };
       }
     },
@@ -152,14 +152,14 @@ function lambda_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprLambda(lm) => {
       if (!has_i32(w.s.applied_pos, pos_key(lm.line, lm.col))) {
-        let inner: Walk = Walk { ...w, s: Scan { ...fresh_scan(), locals: w.s.locals, lambda_locals: w.s.lambda_locals } };
+        let inner = Walk { ...w, s: Scan { ...fresh_scan(), locals: w.s.locals, lambda_locals: w.s.lambda_locals } };
         for st in lm.body {
           inner = astwalk.fold_stmt_nodes(st, inner, no_stmt, call_expr, astwalk.descend_all);
         }
         for st in lm.body {
           inner = astwalk.fold_stmt_nodes(st, inner, no_stmt, ident_expr, astwalk.descend_all);
         }
-        let s: Scan = w.s;
+        let s = w.s;
         for k in inner.s.edges {
           s = Scan { ...s, escaping: s.escaping.append(k) };
         }
@@ -179,7 +179,7 @@ function fresh_scan(): Scan {
 }
 
 function scan(ctx: Ctx, funcs: parser.FuncDecl[], fd: parser.FuncDecl): Scan {
-  let w: Walk = Walk { ctx: ctx, s: fresh_scan(), funcs: funcs };
+  let w = Walk { ctx: ctx, s: fresh_scan(), funcs: funcs };
   for p in fd.params {
     w = Walk { ...w, s: Scan { ...w.s, locals: w.s.locals.append(p.name) } };
   }
@@ -195,27 +195,27 @@ function scan(ctx: Ctx, funcs: parser.FuncDecl[], fd: parser.FuncDecl): Scan {
   for st in fd.body {
     w = astwalk.fold_stmt_nodes(st, w, no_stmt, lambda_expr, astwalk.descend_all);
   }
-  let refs: treeshake.BodyRefs = treeshake.body_refs(fd);
-  let s: Scan = w.s;
-  let k: i32 = 0;
+  let refs = treeshake.body_refs(fd);
+  let s = w.s;
+  let k = 0;
   while (k < funcs.len()) {
     if (funcs[k].receiver_type.len() > 0 && treeshake.refs_name(refs, funcs[k])) {
       s = add_edge(s, k);
     }
-    k = k + 1;
+    k += 1;
   }
   return s;
 }
 
 function func_at(funcs: parser.FuncDecl[], name: string): i32 {
-  let k: i32 = 0;
+  let k = 0;
   while (k < funcs.len()) {
     if (funcs[k].name == name) {
       return k;
     }
-    k = k + 1;
+    k += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function has_i32(xs: i32[], v: i32): boolean {
@@ -248,17 +248,17 @@ function context(mod: parser.Module, tagged: string[]): Ctx {
 }
 
 function add_scan(g: Graph, k: i32, s: Scan): Graph {
-  let edges: i32[] = g.edges;
+  let edges = g.edges;
   for e in s.edges {
     if (e != k) {
       edges = edges.append(e);
     }
   }
-  let builtins: string[] = g.builtins;
+  let builtins = g.builtins;
   for b in s.builtins {
     builtins = builtins.append(b);
   }
-  let esc_b: string[] = g.esc_builtins;
+  let esc_b = g.esc_builtins;
   for b in s.esc_builtins {
     if (!util.has_str(esc_b, b)) {
       esc_b = esc_b.append(b);
@@ -268,19 +268,19 @@ function add_scan(g: Graph, k: i32, s: Scan): Graph {
 }
 
 function build(mod: parser.Module, tagged: string[]): Graph {
-  let ctx: Ctx = context(mod, tagged);
-  let g: Graph = Graph { funcs: mod.funcs, edge_at: [], edges: [], builtin_at: [], builtins: [], indirect: [], escaping: [], esc_builtins: [] };
+  let ctx = context(mod, tagged);
+  let g = Graph { funcs: mod.funcs, edge_at: [], edges: [], builtin_at: [], builtins: [], indirect: [], escaping: [], esc_builtins: [] };
   let esc: boolean[] = [];
   let escaping: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < mod.funcs.len()) {
-    let s: Scan = scan(ctx, mod.funcs, mod.funcs[k]);
+    let s = scan(ctx, mod.funcs, mod.funcs[k]);
     g = add_scan(g, k, s);
     for e in s.escaping {
       escaping = escaping.append(e);
     }
     esc = esc.append(false);
-    k = k + 1;
+    k += 1;
   }
   for e in escaping {
     esc = esc.with(e, true);
@@ -291,7 +291,7 @@ function build(mod: parser.Module, tagged: string[]): Graph {
 function sorted(xs: string[]): string[] {
   let out: string[] = [];
   for x in xs {
-    let placed: boolean = false;
+    let placed = false;
     let next: string[] = [];
     for y in out {
       if (!placed && util.str_less(x, y)) {
@@ -311,90 +311,90 @@ function sorted(xs: string[]): string[] {
 struct Vocab { labels: string[], builtins: string[], of: string[] }
 
 function bit_of(v: Vocab, builtin: string): i64 {
-  let k: i32 = util.index_of_str(v.builtins, builtin);
+  let k = util.index_of_str(v.builtins, builtin);
   if (k < 0) {
     return 0i64;
   }
-  let l: i32 = util.index_of_str(v.labels, v.of[k]);
+  let l = util.index_of_str(v.labels, v.of[k]);
   return 1i64 << l as i64;
 }
 
 function label_names(v: Vocab, row: i64): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < v.labels.len()) {
     if ((row & 1i64 << i as i64) != 0i64) {
       out = out.append(v.labels[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function solve(g: Graph, v: Vocab, use_indirect: boolean): (i64[], i64) {
-  let n: i32 = g.funcs.len();
+  let n = g.funcs.len();
   let direct: i64[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < n) {
     let row: i64 = 0i64;
-    let b: i32 = g.builtin_at[k];
+    let b = g.builtin_at[k];
     while (b < g.builtin_at[k + 1]) {
       row = row | bit_of(v, g.builtins[b]);
-      b = b + 1;
+      b += 1;
     }
     direct = direct.append(row);
-    k = k + 1;
+    k += 1;
   }
   let seed: i64 = 0i64;
   for b in g.esc_builtins {
     seed = seed | bit_of(v, b);
   }
-  let rows: i64[] = direct;
+  let rows = direct;
   let indirect: i64 = 0i64;
-  let changed: boolean = true;
+  let changed = true;
   while (changed) {
     changed = false;
-    let ind: i64 = seed;
-    let e: i32 = 0;
+    let ind = seed;
+    let e = 0;
     while (e < n) {
       if (g.escaping[e]) {
         ind = ind | rows[e];
       }
-      e = e + 1;
+      e += 1;
     }
     if (ind != indirect) {
       indirect = ind;
       changed = true;
     }
-    let f: i32 = 0;
+    let f = 0;
     while (f < n) {
-      let row: i64 = direct[f];
+      let row = direct[f];
       if (use_indirect && g.indirect[f]) {
         row = row | indirect;
       }
-      let c: i32 = g.edge_at[f];
+      let c = g.edge_at[f];
       while (c < g.edge_at[f + 1]) {
         row = row | rows[g.edges[c]];
-        c = c + 1;
+        c += 1;
       }
       if (row != rows[f]) {
         rows = rows.with(f, row);
         changed = true;
       }
-      f = f + 1;
+      f += 1;
     }
   }
   return (rows, indirect);
 }
 
 function witness(g: Graph, v: Vocab, fn: i32, want: i64): string[] {
-  let seen: i32[] = __alloc_i32(g.funcs.len() + 1);
+  let seen = __alloc_i32(g.funcs.len() + 1);
   seen = seen.with(fn, 1);
   let order: i32[] = [fn];
-  let parent: i32[] = [0 - 1];
-  let qi: i32 = 0;
+  let parent: i32[] = [-1];
+  let qi = 0;
   while (qi < order.len()) {
-    let at: i32 = order[qi];
+    let at = order[qi];
     for b in builtins_of(g, at) {
       if ((bit_of(v, b) & want) != 0i64 && first_label(v, bit_of(v, b)) == first_label(v, want)) {
         return chain(g, order, parent, qi).append(b);
@@ -407,13 +407,13 @@ function witness(g: Graph, v: Vocab, fn: i32, want: i64): string[] {
         parent = parent.append(qi);
       }
     }
-    qi = qi + 1;
+    qi += 1;
   }
   return [];
 }
 
 function first_label(v: Vocab, row: i64): string {
-  let names: string[] = label_names(v, row);
+  let names = label_names(v, row);
   if (names.len() == 0) {
     return "";
   }
@@ -425,10 +425,10 @@ function builtins_of(g: Graph, at: i32): string[] {
     return g.esc_builtins;
   }
   let out: string[] = [];
-  let b: i32 = g.builtin_at[at];
+  let b = g.builtin_at[at];
   while (b < g.builtin_at[at + 1]) {
     out = out.append(g.builtins[b]);
-    b = b + 1;
+    b += 1;
   }
   return out;
 }
@@ -436,19 +436,19 @@ function builtins_of(g: Graph, at: i32): string[] {
 function edges_of(g: Graph, at: i32): i32[] {
   let out: i32[] = [];
   if (at == g.funcs.len()) {
-    let k: i32 = 0;
+    let k = 0;
     while (k < g.funcs.len()) {
       if (g.escaping[k]) {
         out = out.append(k);
       }
-      k = k + 1;
+      k += 1;
     }
     return out;
   }
-  let c: i32 = g.edge_at[at];
+  let c = g.edge_at[at];
   while (c < g.edge_at[at + 1]) {
     out = out.append(g.edges[c]);
-    c = c + 1;
+    c += 1;
   }
   if (g.indirect[at]) {
     out = out.append(g.funcs.len());
@@ -458,7 +458,7 @@ function edges_of(g: Graph, at: i32): i32[] {
 
 function chain(g: Graph, order: i32[], parent: i32[], at: i32): string[] {
   let rev: string[] = [];
-  let p: i32 = at;
+  let p = at;
   while (p >= 0) {
     if (order[p] == g.funcs.len()) {
       rev = rev.append(INDIRECT);
@@ -468,10 +468,10 @@ function chain(g: Graph, order: i32[], parent: i32[], at: i32): string[] {
     p = parent[p];
   }
   let out: string[] = [];
-  let i: i32 = rev.len() - 1;
+  let i = rev.len() - 1;
   while (i >= 0) {
     out = out.append(rev[i]);
-    i = i - 1;
+    i -= 1;
   }
   return out;
 }
@@ -507,12 +507,12 @@ function host(): Vocab {
 }
 
 function joined(xs: string[], sep: string): string {
-  let out: string = "";
+  let out = "";
   for x in xs {
     if (out.len() > 0) {
-      out = out + sep;
+      out += sep;
     }
-    out = out + x;
+    out += x;
   }
   return out;
 }
@@ -520,19 +520,19 @@ function joined(xs: string[], sep: string): string {
 function section(g: Graph, title: string, v: Vocab): string {
   let (rows, _) = solve(g, v, true);
   let (direct, _) = solve(g, v, false);
-  let out: string = "== " + title + " ==\n";
+  let out = "== " + title + " ==\n";
   let sizes: i32[] = [];
   let counts: i32[] = [];
-  let effectful: i32 = 0;
-  let origins: i32 = 0;
-  let pubs: i32 = 0;
-  let pub_effectful: i32 = 0;
-  let through_value: i32 = 0;
-  let k: i32 = 0;
+  let effectful = 0;
+  let origins = 0;
+  let pubs = 0;
+  let pub_effectful = 0;
+  let through_value = 0;
+  let k = 0;
   while (k < g.funcs.len()) {
-    let reached: string[] = label_names(v, rows[k]);
-    let via: string[] = label_names(v, (rows[k] | direct[k]) ^ direct[k]);
-    let at: i32 = index_of_i32(sizes, reached.len());
+    let reached = label_names(v, rows[k]);
+    let via = label_names(v, (rows[k] | direct[k]) ^ direct[k]);
+    let at = index_of_i32(sizes, reached.len());
     if (at < 0) {
       sizes = sizes.append(reached.len());
       counts = counts.append(1);
@@ -540,45 +540,45 @@ function section(g: Graph, title: string, v: Vocab): string {
       counts = counts.with(at, counts[at] + 1);
     }
     if (via.len() > 0) {
-      through_value = through_value + 1;
+      through_value += 1;
     }
     if (direct_origin(g, v, k)) {
-      origins = origins + 1;
+      origins += 1;
     }
     if (g.funcs[k].is_pub) {
-      pubs = pubs + 1;
+      pubs += 1;
     }
     if (reached.len() > 0) {
-      effectful = effectful + 1;
+      effectful += 1;
       if (g.funcs[k].is_pub) {
-        pub_effectful = pub_effectful + 1;
+        pub_effectful += 1;
       }
       out = out + display(g.funcs[k]) + "  " + joined(reached, ",");
       if (via.len() > 0) {
         out = out + "  (via a function value: " + joined(via, ",") + ")";
       }
-      let w: string[] = witness(g, v, k, rows[k]);
+      let w = witness(g, v, k, rows[k]);
       if (w.len() > 0) {
         out = out + "  (example: " + joined(w, " → ") + ")";
       }
-      out = out + "\n";
+      out += "\n";
     }
-    k = k + 1;
+    k += 1;
   }
   out = out + "\n" + util.i32_to_string(g.funcs.len()) + " functions; " + util.i32_to_string(effectful) + " reach an effect, of which "
     + util.i32_to_string(origins) + " call a tagged builtin themselves and " + util.i32_to_string(effectful - origins) + " only inherit\n";
   out = out + util.i32_to_string(pubs) + " are `pub`, of which " + util.i32_to_string(pub_effectful)
     + " reach an effect — the size of a \"require a row on public signatures\" rule\n";
   out = out + util.i32_to_string(through_value) + " reach an effect only through a function value\n";
-  let size: i32 = 0;
-  let shown: i32 = 0;
+  let size = 0;
+  let shown = 0;
   while (shown < sizes.len()) {
-    let at: i32 = index_of_i32(sizes, size);
+    let at = index_of_i32(sizes, size);
     if (at >= 0) {
       out = out + "  row size " + util.i32_to_string(size) + ": " + util.i32_to_string(counts[at]) + " functions\n";
-      shown = shown + 1;
+      shown += 1;
     }
-    size = size + 1;
+    size += 1;
   }
   return out;
 }
@@ -591,37 +591,37 @@ function display(fd: parser.FuncDecl): string {
 }
 
 function direct_origin(g: Graph, v: Vocab, k: i32): boolean {
-  let b: i32 = g.builtin_at[k];
+  let b = g.builtin_at[k];
   while (b < g.builtin_at[k + 1]) {
     if (bit_of(v, g.builtins[b]) != 0i64) {
       return true;
     }
-    b = b + 1;
+    b += 1;
   }
   return false;
 }
 
 function index_of_i32(xs: i32[], v: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == v) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function report(mod: parser.Module): string {
-  let a: Vocab = authority();
-  let h: Vocab = host();
-  let tagged: string[] = a.builtins;
+  let a = authority();
+  let h = host();
+  let tagged = a.builtins;
   for b in h.builtins {
     if (!util.has_str(tagged, b)) {
       tagged = tagged.append(b);
     }
   }
-  let g: Graph = build(mod, tagged);
+  let g = build(mod, tagged);
   return section(g, "authority (caps) — what a dependency can reach", a) + "\n"
     + section(g, "host (platforms) — what the target must provide", h) + "\n";
 }

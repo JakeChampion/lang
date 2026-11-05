@@ -22,7 +22,7 @@ function definition(line: string): string {
     if (!symbol_byte(c)) {
       return "";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
@@ -38,7 +38,7 @@ function index(lines: string[]): names.Names {
 function assignment(line: string): boolean {
   let i = 0;
   while (i < line.len() && symbol_byte(line[i])) {
-    i = i + 1;
+    i += 1;
   }
   let rest = util.trim(slice_unchecked(line, i, line.len()) + "");
   return i > 0 && util.str_has_prefix(rest, "=");
@@ -72,7 +72,7 @@ function body(all: string[], start: i32): string[] {
       return out;
     }
     out = out.append(line);
-    at = at + 1;
+    at += 1;
   }
   return out;
 }

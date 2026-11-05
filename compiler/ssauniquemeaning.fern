@@ -15,12 +15,12 @@ function merge_order(ids: i32[], order: i32[], left: i32, mid: i32, end: i32, ou
   while (at < end) {
     if (b >= end || a < mid && ids[order[a]] <= ids[order[b]]) {
       out = out.with(at, order[a]);
-      a = a + 1;
+      a += 1;
     } else {
       out = out.with(at, order[b]);
-      b = b + 1;
+      b += 1;
     }
-    at = at + 1;
+    at += 1;
   }
   return out;
 }
@@ -31,7 +31,7 @@ function distinct_ids(ids: i32[], order: i32[]): boolean {
     if (ids[at] < 0 || i > 0 && ids[order[i - 1]] == ids[at]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -53,7 +53,7 @@ function id_index(ids: i32[]): IdIndex {
   let i = 0;
   for id in ids {
     order = order.append(i);
-    i = i + 1;
+    i += 1;
   }
   let width = 1;
   while (width < ids.len()) {
@@ -201,7 +201,7 @@ function declarations(f: ssa.SFunc): Graph {
     }
     for op in b.insts {
       if (op.kind_tag == 6) {
-        params = params + 1;
+        params += 1;
       }
     }
   }
@@ -223,7 +223,7 @@ function block_order(f: ssa.SFunc, blocks: IdIndex): i32[] {
     if (b.preds.len() == 0) {
       order = order.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < order.len()) {
@@ -238,7 +238,7 @@ function block_order(f: ssa.SFunc, blocks: IdIndex): i32[] {
         order = order.append(at);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return order;
 }
@@ -252,7 +252,7 @@ function incoming_row(blocks: IdIndex, b: ssa.SBlock, rows: boolean[][], empty: 
       let i = 0;
       while (i < row.len()) {
         row = row.with(i, row[i] && incoming[i]);
-        i = i + 1;
+        i += 1;
       }
     }
   }
@@ -286,7 +286,7 @@ function available(f: ssa.SFunc, g: Graph): Graph {
         if (!readable(source, g.slots, arg)) {
           return Graph { ...g, ok: false };
         }
-        i = i + 1;
+        i += 1;
       }
       row = row.with(position(g.slots, op.result), true);
     }

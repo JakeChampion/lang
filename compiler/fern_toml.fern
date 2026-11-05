@@ -32,21 +32,21 @@ pub struct Manifest {
 }
 
 function index_of(s: string, c: u8, from: i32): i32 {
-  let i: i32 = from;
+  let i = from;
   while (i < s.len()) {
     if (s[i] == c) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function parse_quoted(s: string): Result[string, string] {
   if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
     return Err("expected a quoted string, got " + docsummary.quote(s));
   }
-  let inner: string = slice_unchecked(s, 1, s.len() - 1) + "";
+  let inner = slice_unchecked(s, 1, s.len() - 1) + "";
   if (index_of(inner, b'"', 0) >= 0 || index_of(inner, b'\\', 0) >= 0) {
     return Err("escapes unsupported in " + docsummary.quote(s));
   }
@@ -54,21 +54,21 @@ pub function parse_quoted(s: string): Result[string, string] {
 }
 
 pub function line_content(raw: string): string {
-  let quoted: boolean = false;
-  let i: i32 = 0;
+  let quoted = false;
+  let i = 0;
   while (i < raw.len()) {
     if (raw[i] == b'"') {
       quoted = !quoted;
     } else if (raw[i] == b'#' && !quoted) {
       return util.trim(slice_unchecked(raw, 0, i));
     }
-    i = i + 1;
+    i += 1;
   }
   return util.trim(raw);
 }
 
 function is_integer_text(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   if (s.len() > 1 && s[0] == b'-') {
     i = 1;
   }
@@ -76,7 +76,7 @@ function is_integer_text(s: string): boolean {
     if (s[i] < b'0' || s[i] > b'9') {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return s.len() > 0;
 }
@@ -86,15 +86,15 @@ pub function parse(src: string): Manifest {
     name: "", lib: "lib.fern", index: "", index_key: "", deps: [], members: [],
     excl_pkg: [], excl_ver: [], lint_keys: [], lint_vals: [], err: "", err_line: 0,
   };
-  let package_line: i32 = 1;
-  let workspace: boolean = false;
-  let section: string = "";
+  let package_line = 1;
+  let workspace = false;
+  let section = "";
   let seen: string[] = [];
-  let lines: string[] = util.split_char(src, b'\n');
-  let li: i32 = 0;
+  let lines = util.split_char(src, b'\n');
+  let li = 0;
   while (li < lines.len() && m.err.len() == 0) {
-    let line: string = line_content(lines[li]);
-    li = li + 1;
+    let line = line_content(lines[li]);
+    li += 1;
     if (line.len() == 0) {
       continue;
     }
@@ -121,7 +121,7 @@ pub function parse(src: string): Manifest {
 }
 
 pub function diagnostic(path: string, m: Manifest): string {
-  let at: string = util.i32_to_string(m.err_line) + ":1";
+  let at = util.i32_to_string(m.err_line) + ":1";
   if (path.len() > 0) {
     at = path + ":" + at;
   }
@@ -140,7 +140,7 @@ function section_error(section: string, seen: string[]): string {
 }
 
 function entry_key(line: string): string {
-  let eq: i32 = index_of(line, b'=', 0);
+  let eq = index_of(line, b'=', 0);
   if (eq < 0) {
     return "";
   }
@@ -152,12 +152,12 @@ function failed(m: Manifest, err: string): Manifest {
 }
 
 function with_entry(m: Manifest, section: string, line: string, at: i32, seen: string[]): Manifest {
-  let eq: i32 = index_of(line, b'=', 0);
+  let eq = index_of(line, b'=', 0);
   if (eq < 0) {
     return failed(m, "expected `key = value`, got " + docsummary.quote(line));
   }
-  let key: string = util.trim(slice_unchecked(line, 0, eq));
-  let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  let key = util.trim(slice_unchecked(line, 0, eq));
+  let val = util.trim(slice_unchecked(line, eq + 1, line.len()));
   if (section.len() > 0 && util.has_str(seen, section + "\n" + key)) {
     return failed(m, "duplicate key " + docsummary.quote(key) + " in [" + section + "]");
   }
@@ -253,8 +253,8 @@ function with_exclude(m: Manifest, key: string, val: string): Manifest {
   }
   match (parse_str_array(val)) {
     Ok(versions) => {
-      let excl_pkg: string[] = m.excl_pkg;
-      let excl_ver: string[] = m.excl_ver;
+      let excl_pkg = m.excl_pkg;
+      let excl_ver = m.excl_ver;
       for v in versions {
         if (!is_version(v)) {
           return failed(m, "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
@@ -274,7 +274,7 @@ function parse_string(val: string): Result[string, string] {
   if (val.len() < 2 || val[0] != b'"' || val[val.len() - 1] != b'"') {
     return Err("expected a double-quoted string, got " + docsummary.quote(val));
   }
-  let s: string = slice_unchecked(val, 1, val.len() - 1) + "";
+  let s = slice_unchecked(val, 1, val.len() - 1) + "";
   if (index_of(s, b'"', 0) >= 0 || index_of(s, b'\\', 0) >= 0) {
     return Err("escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)");
   }
@@ -300,7 +300,7 @@ function parse_str_array(val: string): Result[string[], string] {
   }
   let out: string[] = [];
   for raw in util.split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
-    let part: string = util.trim(raw);
+    let part = util.trim(raw);
     if (part.len() > 0) {
       match (parse_string(part)) {
         Ok(value) => {
@@ -316,7 +316,7 @@ function parse_str_array(val: string): Result[string[], string] {
 }
 
 pub function is_version(s: string): boolean {
-  let parts: string[] = util.split_char(s, b'.');
+  let parts = util.split_char(s, b'.');
   if (parts.len() != 3) {
     return false;
   }
@@ -360,19 +360,19 @@ function tagged_hex(text: string, prefix: string, bad: string): Result[string, s
   if (text.len() < prefix.len() || slice_unchecked(text, 0, prefix.len()) != prefix) {
     return Err(bad);
   }
-  let hex: string = slice_unchecked(text, prefix.len(), text.len()) + "";
+  let hex = slice_unchecked(text, prefix.len(), text.len()) + "";
   if (hex.len() != 64) {
     return Err(bad);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < hex.len()) {
-    let c: u8 = hex[i];
-    let digit: boolean = c >= b'0' && c <= b'9';
-    let lower: boolean = c >= b'a' && c <= b'f';
+    let c = hex[i];
+    let digit = c >= b'0' && c <= b'9';
+    let lower = c >= b'a' && c <= b'f';
     if (!digit && !lower) {
       return Err(bad);
     }
-    i = i + 1;
+    i += 1;
   }
   return Ok(hex);
 }
@@ -386,7 +386,7 @@ pub function validate_index_key(key: string): Result[string, string] {
 }
 
 function parse_dep(name: string, val: string): Result[Dep, string] {
-  let d: Dep = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [], line: 0 };
+  let d = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [], line: 0 };
   if (val.len() == 0 || val[0] != b'{') {
     match (parse_string(val)) {
       Ok(value) => {
@@ -408,7 +408,7 @@ function parse_dep(name: string, val: string): Result[Dep, string] {
     return Err("malformed inline table " + docsummary.quote(val));
   }
   for raw in inline_parts(util.trim(slice_unchecked(val, 1, val.len() - 1))) {
-    let part: string = util.trim(raw);
+    let part = util.trim(raw);
     if (part.len() > 0) {
       match (with_dep_field(d, part)) {
         Ok(dep) => {
@@ -424,12 +424,12 @@ function parse_dep(name: string, val: string): Result[Dep, string] {
 }
 
 function with_dep_field(d: Dep, part: string): Result[Dep, string] {
-  let eq: i32 = index_of(part, b'=', 0);
+  let eq = index_of(part, b'=', 0);
   if (eq < 0) {
     return Err("expected `key = value` in inline table, got " + docsummary.quote(part));
   }
-  let k: string = util.trim(slice_unchecked(part, 0, eq));
-  let v: string = util.trim(slice_unchecked(part, eq + 1, part.len()));
+  let k = util.trim(slice_unchecked(part, 0, eq));
+  let v = util.trim(slice_unchecked(part, eq + 1, part.len()));
   if (k == "workspace") {
     if (v != "true") {
       return Err("workspace must be `true` (the only supported value), got " + docsummary.quote(v));
@@ -485,7 +485,7 @@ function with_dep_string(d: Dep, k: string, s: string): Result[Dep, string] {
 }
 
 function classified(d: Dep): Result[Dep, string] {
-  let remote: boolean = d.url.len() > 0 || d.hash.len() > 0;
+  let remote = d.url.len() > 0 || d.hash.len() > 0;
   if (d.kind == "workspace") {
     if (d.path.len() > 0 || remote || d.version.len() > 0) {
       return Err("a `workspace` dependency takes no path/url/hash/version");
@@ -519,23 +519,23 @@ function source_classified(d: Dep, remote: boolean): Result[Dep, string] {
 
 function inline_parts(body: string): string[] {
   let out: string[] = [];
-  let start: i32 = 0;
-  let depth: i32 = 0;
-  let quoted: boolean = false;
-  let i: i32 = 0;
+  let start = 0;
+  let depth = 0;
+  let quoted = false;
+  let i = 0;
   while (i < body.len()) {
-    let c: u8 = body[i];
+    let c = body[i];
     if (c == b'"') {
       quoted = !quoted;
     } else if (!quoted && c == b'[') {
-      depth = depth + 1;
+      depth += 1;
     } else if (!quoted && c == b']') {
-      depth = depth - 1;
+      depth -= 1;
     } else if (!quoted && c == b',' && depth == 0) {
       out = out.append(slice_unchecked(body, start, i) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out.append(slice_unchecked(body, start, body.len()) + "");
 }
@@ -557,12 +557,12 @@ pub function parse_capabilities(val: string): Result[string[], string] {
 }
 
 function capability_choices(): string {
-  let out: string = "";
+  let out = "";
   for cap in capvocab.capabilities() {
     if (out.len() > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + cap;
+    out += cap;
   }
   return out;
 }
@@ -578,89 +578,89 @@ function ordered_caps(values: string[]): string[] {
 }
 
 pub function dep_path(m: Manifest, name: string): Option[string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name && m.deps[i].kind == "path") {
       return Some(m.deps[i].path + "");
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 pub function has_dep(m: Manifest, name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function dep_kind(m: Manifest, name: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return m.deps[i].kind + "";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 pub function dep_version(m: Manifest, name: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return m.deps[i].version + "";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 pub function dep_names(m: Manifest): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     out = out.append(m.deps[i].name + "");
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 pub function dep_governed(m: Manifest, name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return m.deps[i].governed;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function dep_caps(m: Manifest, name: string): string[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name) {
       return m.deps[i].caps;
     }
-    i = i + 1;
+    i += 1;
   }
   let empty: string[] = [];
   return empty;
 }
 
 pub function dep_hash(m: Manifest, name: string): Option[string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.deps.len()) {
     if (m.deps[i].name == name && m.deps[i].kind == "url" && m.deps[i].hash.len() > 0) {
       return Some(m.deps[i].hash + "");
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
@@ -681,14 +681,14 @@ pub struct Lock {
 }
 
 pub function parse_lock(src: string): Result[Lock, string] {
-  let serial: string = "";
+  let serial = "";
   let out: LockEntry[] = [];
   let cur: Option[LockEntry] = None;
-  let lines: string[] = util.split_char(src, b'\n');
-  let li: i32 = 0;
+  let lines = util.split_char(src, b'\n');
+  let li = 0;
   while (li < lines.len()) {
-    let line: string = line_content(lines[li]);
-    li = li + 1;
+    let line = line_content(lines[li]);
+    li += 1;
     if (line.len() == 0) {
       continue;
     }
@@ -701,11 +701,11 @@ pub function parse_lock(src: string): Result[Lock, string] {
       continue;
     }
     let entry: LockEntry = match (cur) { Some(e) => e, None => { serial = match (lock_top_level(line, serial)) { Ok(value) => value, Err(message) => { return Err(lock_line(li, message)); } }; continue; } };
-    let eq: i32 = index_of(line, b'=', 0);
+    let eq = index_of(line, b'=', 0);
     if (eq < 0) {
       return Err(lock_line(li, "expected `key = value`"));
     }
-    let key: string = util.trim(slice_unchecked(line, 0, eq));
+    let key = util.trim(slice_unchecked(line, 0, eq));
     let v: string = match (parse_quoted(util.trim(slice_unchecked(line, eq + 1, line.len())))) { Ok(value) => value, Err(message) => { return Err(lock_line(li, key + ": " + message)); } };
     let updated: LockEntry = match (with_lock_field(entry, key, v)) { Ok(e) => e, Err(message) => { return Err(lock_line(li, message)); } };
     cur = Some(updated);
@@ -719,14 +719,14 @@ pub function parse_lock(src: string): Result[Lock, string] {
 
 // A line above the first entry: only `index_serial = N`.
 function lock_top_level(line: string, serial: string): Result[string, string] {
-  let eq: i32 = index_of(line, b'=', 0);
+  let eq = index_of(line, b'=', 0);
   if (eq < 0 || util.trim(slice_unchecked(line, 0, eq)) != "index_serial") {
     return Err(docsummary.quote(line) + " outside a [[package]] entry");
   }
   if (serial.len() > 0) {
     return Err("index_serial given twice");
   }
-  let v: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  let v = util.trim(slice_unchecked(line, eq + 1, line.len()));
   if let Err(message) = validate_serial(v) {
     return Err("index_serial " + message);
   }
@@ -735,11 +735,11 @@ function lock_top_level(line: string, serial: string): Result[string, string] {
 
 // The spelling of an index serial: 1 to 18 decimal digits, no leading zero.
 pub function validate_serial(s: string): Result[string, string] {
-  let ok: boolean = s.len() >= 1 && s.len() <= 18 && (s == "0" || s[0] != b'0');
-  let i: i32 = 0;
+  let ok = s.len() >= 1 && s.len() <= 18 && (s == "0" || s[0] != b'0');
+  let i = 0;
   while (ok && i < s.len()) {
     ok = s[i] >= b'0' && s[i] <= b'9';
-    i = i + 1;
+    i += 1;
   }
   if (!ok) {
     return Err("must be 1 to 18 decimal digits with no leading zero, got " + docsummary.quote(s));
@@ -815,45 +815,45 @@ function with_lock_field(e: LockEntry, key: string, v: string): Result[LockEntry
 }
 
 pub function lock_has(entries: LockEntry[], name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < entries.len()) {
     if (entries[i].name == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 pub function lock_version_of(entries: LockEntry[], name: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < entries.len()) {
     if (entries[i].name == name) {
       return entries[i].version + "";
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 pub function lock_path_of(entries: LockEntry[], name: string): Option[string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < entries.len()) {
     if (entries[i].name == name && entries[i].path.len() > 0) {
       return Some(entries[i].path + "");
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }
 
 pub function lock_hash_of(entries: LockEntry[], name: string): Option[string] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < entries.len()) {
     if (entries[i].name == name && entries[i].hash.len() > 0) {
       return Some(entries[i].hash + "");
     }
-    i = i + 1;
+    i += 1;
   }
   return None;
 }

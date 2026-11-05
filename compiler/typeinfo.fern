@@ -1,7 +1,7 @@
 pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean, polymorphic: boolean }
 
 pub function width_ptr(): i32 {
-  return 0 - 1;
+  return -1;
 }
 
 pub function is_primitive_type_name(t: string): boolean {
@@ -55,15 +55,15 @@ pub function ownable(t: Type): boolean {
 
 pub function own_flags(flags: boolean[], params: Type[]): boolean[] {
   let kept: boolean[] = [];
-  let any: boolean = false;
-  let i: i32 = 0;
+  let any = false;
+  let i = 0;
   while (i < params.len()) {
-    let on: boolean = i < flags.len() && flags[i] && ownable(params[i]);
+    let on = i < flags.len() && flags[i] && ownable(params[i]);
     kept = kept.append(on);
     if (on) {
       any = true;
     }
-    i = i + 1;
+    i += 1;
   }
   if (!any) {
     return [];
@@ -149,7 +149,7 @@ pub function handle_spelling(h: TypeHandle): string {
 
 pub function renamed_nominals(t: Type, clone_of: (Type) => string): Type {
   if let TypeStruct(s) = t {
-    let n: string = "";
+    let n = "";
     if (s.args.len() > 0) {
       n = clone_of(t);
     }
@@ -159,7 +159,7 @@ pub function renamed_nominals(t: Type, clone_of: (Type) => string): Type {
     return TypeStruct { ...s, args: renamed_list(s.args, clone_of) };
   }
   if let TypeUnion(u) = t {
-    let n: string = "";
+    let n = "";
     if (u.args.len() > 0) {
       n = clone_of(t);
     }
@@ -205,7 +205,7 @@ pub function lanes_spelling(width: i32): string {
 // tier has none.
 pub function vec_lanes(n: string, elem: string): string {
   for lanes in lane_types() {
-    let pair: string[] = lane_vec_spellings(lanes);
+    let pair = lane_vec_spellings(lanes);
     if (pair[0] == n && pair[1] == elem) {
       return lanes;
     }
@@ -234,7 +234,7 @@ pub function lane_vec_args(t: Type): Type[] {
   let TypeLanes(l) = t else {
     return [];
   };
-  let nt: string[] = lane_vec_spellings(lanes_spelling(l.width));
+  let nt = lane_vec_spellings(lanes_spelling(l.width));
   return [TypeConst { value: nt[0] }, TypeFloat { width: l.width, polymorphic: false }];
 }
 
@@ -269,12 +269,12 @@ pub function lane_builtin_verb(name: string): string {
 }
 
 pub function lane_builtin_params(name: string): Type[] {
-  let w: i32 = lane_builtin_width(name);
+  let w = lane_builtin_width(name);
   let lt: Type = TypeLanes { width: w };
   let e: Type = TypeFloat { width: w, polymorphic: false };
   let i: Type = TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   let arr: Type = TypeArray { elem: e, view: false };
-  let v: string = lane_builtin_verb(name);
+  let v = lane_builtin_verb(name);
   if (v == "splat") {
     return [e];
   }
@@ -308,8 +308,8 @@ function lane_operands(v: string, lt: Type): Type[] {
 }
 
 pub function lane_builtin_result(name: string): Type {
-  let w: i32 = lane_builtin_width(name);
-  let v: string = lane_builtin_verb(name);
+  let w = lane_builtin_width(name);
+  let v = lane_builtin_verb(name);
   if (v == "bitmask") {
     return TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   }
@@ -352,7 +352,7 @@ pub function spelling(t: Type): string {
       return lanes_spelling(l.width);
     },
     TypeArray(a) => {
-      let elem: string = spelling(a.elem);
+      let elem = spelling(a.elem);
       if (elem.len() == 0) {
         return "";
       }
@@ -371,7 +371,7 @@ pub function spelling(t: Type): string {
       if (tup.elements.len() < 2) {
         return "";
       }
-      let fields: string = type_list_spelling(tup.elements);
+      let fields = type_list_spelling(tup.elements);
       if (fields.len() == 0) {
         return "";
       }
@@ -381,19 +381,19 @@ pub function spelling(t: Type): string {
       if (!f.params_known) {
         return "";
       }
-      let params: string = param_list_spelling(f);
+      let params = param_list_spelling(f);
       if (params.len() == 0 && f.param_types.len() > 0) {
         return "";
       }
-      let ret: string = spelling(f.ret_type);
+      let ret = spelling(f.ret_type);
       if (ret.len() == 0) {
         return "";
       }
       return "((" + params + ") => " + ret + ")";
     },
     TypeMap(m) => {
-      let key: string = spelling(m.key);
-      let value: string = spelling(m.value);
+      let key = spelling(m.key);
+      let value = spelling(m.value);
       if (key.len() == 0 || value.len() == 0) {
         return "";
       }
@@ -428,38 +428,38 @@ pub function spelling(t: Type): string {
 }
 
 function param_list_spelling(f: TypeFunc): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < f.param_types.len()) {
-    let one: string = spelling(f.param_types[i]);
+    let one = spelling(f.param_types[i]);
     if (one.len() == 0) {
       return "";
     }
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
     if (fn_own_at(f, i)) {
-      out = out + "own ";
+      out += "own ";
     }
-    out = out + one;
-    i = i + 1;
+    out += one;
+    i += 1;
   }
   return out;
 }
 
 function type_list_spelling(ts: Type[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < ts.len()) {
-    let next: string = spelling(ts[i]);
+    let next = spelling(ts[i]);
     if (next.len() == 0) {
       return "";
     }
     if (i > 0) {
-      out = out + ", ";
+      out += ", ";
     }
-    out = out + next;
-    i = i + 1;
+    out += next;
+    i += 1;
   }
   return out;
 }
@@ -468,7 +468,7 @@ function nominal_spelling(name: string, args: Type[]): string {
   if (name.len() == 0 || args.len() == 0) {
     return name;
   }
-  let params: string = type_list_spelling(args);
+  let params = type_list_spelling(args);
   if (params.len() == 0) {
     return "";
   }
@@ -497,7 +497,7 @@ pub function mixed_integer_join(left: Type, right: Type): Type {
   if let TypeI32(a) = left {
     if let TypeI32(b) = right {
       if (fixed_integer(a) && fixed_integer(b) && a.unsigned != b.unsigned) {
-        let width: i32 = signed_join_width(a, b);
+        let width = signed_join_width(a, b);
         let target: Type = TypeI32 { is_char: false, width: width, unsigned: false, polymorphic: false };
         if (fits_signed_join(a, left, width, target) && fits_signed_join(b, right, width, target)) {
           return target;

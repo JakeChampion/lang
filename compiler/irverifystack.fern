@@ -32,24 +32,24 @@ pub function coverage_add(c: Coverage, fn_name: string, bail: string): Coverage 
 }
 
 pub function coverage_str(c: Coverage): string {
-  let out: string = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
+  let out = "modelled " + util.i32_to_string(c.modelled) + "/" + util.i32_to_string(c.funcs);
   let seen: string[] = [];
   let count: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < c.skipped_why.len()) {
-    let at: i32 = util.index_of_str(seen, c.skipped_why[i]);
+    let at = util.index_of_str(seen, c.skipped_why[i]);
     if (at < 0) {
       seen = seen.append(c.skipped_why[i]);
       count = count.append(1);
     } else {
       count = count.with(at, count[at] + 1);
     }
-    i = i + 1;
+    i += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < seen.len()) {
     out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
@@ -63,25 +63,25 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
   let none: irverify.Problem[] = [];
 
   let fr_kind: i32[] = [0];
-  let fr_at: i32[] = [0 - 1];
+  let fr_at: i32[] = [-1];
   let fr_height: i32[] = [0];
   let fr_unreach: i32[] = [0];
   let fr_else: i32[] = [0];
-  let depth: i32 = 1;
+  let depth = 1;
 
-  let height: i32 = 0;
+  let height = 0;
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < ops.len()) {
-    let o: ir.Op = ops[i];
-    let t: i32 = o.kind_tag;
-    let base: i32 = fr_height[depth - 1];
-    let unreach: boolean = fr_unreach[depth - 1] != 0;
+    let o = ops[i];
+    let t = o.kind_tag;
+    let base = fr_height[depth - 1];
+    let unreach = fr_unreach[depth - 1] != 0;
 
     if (t == 152 || t == 153 || t == 154) {
       if (t == 154) {
         if (height > base) {
-          height = height - 1;
+          height -= 1;
         } else if (!unreach) {
           out = out.append(irverify.Problem {
             fn_name: fn_name, op: i, kind: "if",
@@ -105,7 +105,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
         fr_unreach = fr_unreach.append(0);
         fr_else = fr_else.append(0);
       }
-      depth = depth + 1;
+      depth += 1;
     } else if (t == 155) {
       if (depth == 1 || fr_kind[depth - 1] != 154 || fr_else[depth - 1] != 0) {
         return StackResult { problems: none, bail: "malformed else" };
@@ -134,11 +134,11 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
         });
       }
       height = base;
-      depth = depth - 1;
+      depth -= 1;
     } else if (t == 157 || t == 158) {
       if (t == 158) {
         if (height > base) {
-          height = height - 1;
+          height -= 1;
         } else if (!unreach) {
           out = out.append(irverify.Problem {
             fn_name: fn_name, op: i, kind: "brif",
@@ -146,7 +146,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
           });
         }
       }
-      let d: i32 = o.i32_imm;
+      let d = o.i32_imm;
       if (d < 0 || d >= depth) {
         return StackResult { problems: none, bail: "branch depth has no target" };
       }
@@ -163,7 +163,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
         height = base;
       }
     } else {
-      let np: i32 = ir.op_pops_by(pops, o);
+      let np = ir.op_pops_by(pops, o);
       if (np < 0) {
         return StackResult { problems: none, bail: "unmodelled op " + ir.kind_name(t) };
       }
@@ -178,15 +178,15 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
         }
         height = base;
       } else {
-        height = height - np;
+        height -= np;
       }
-      height = height + ir.op_pushes(o);
+      height += ir.op_pushes(o);
       if (t == 160) {
         fr_unreach = fr_unreach.with(depth - 1, 1);
         height = fr_height[depth - 1];
       }
     }
-    i = i + 1;
+    i += 1;
   }
 
   if (depth != 1) {

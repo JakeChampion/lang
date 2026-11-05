@@ -4,7 +4,7 @@ import "./docsummary";
 pub struct Version { major: i64, minor: i64, patch: i64 }
 
 pub function parse(text: string): Result[Version, string] {
-  let parts: string[] = util.split_char(text, b'.');
+  let parts = util.split_char(text, b'.');
   if (parts.len() != 3) {
     return Err(invalid_version(text) + " (want MAJOR.MINOR.PATCH)");
   }
@@ -15,7 +15,7 @@ pub function parse(text: string): Result[Version, string] {
     }
     let at = 0;
     while (at + 1 < part.len() && part[at] == b'0') {
-      at = at + 1;
+      at += 1;
     }
     let digits = slice_unchecked(part, at, part.len()) + "";
     if (!util.is_decimal_i64(digits)) {

@@ -25,7 +25,7 @@ function fill(inp: Input): (Input, boolean) {
 }
 
 pub function read_frame(inp: Input): Frame {
-  let at: i32 = util.index_of_sub(inp.pending, "\r\n\r\n");
+  let at = util.index_of_sub(inp.pending, "\r\n\r\n");
   while (at < 0) {
     let (more, ok) = fill(inp);
     inp = more;
@@ -34,11 +34,11 @@ pub function read_frame(inp: Input): Frame {
     }
     at = util.index_of_sub(inp.pending, "\r\n\r\n");
   }
-  let n: i32 = content_length(slice_unchecked(inp.pending, 0, at) + "");
+  let n = content_length(slice_unchecked(inp.pending, 0, at) + "");
   if (n < 0) {
     return Frame { inp: inp, body: "", done: true, err: "missing Content-Length header" };
   }
-  let start: i32 = at + 4;
+  let start = at + 4;
   while (inp.pending.len() - start < n) {
     let (more, ok) = fill(inp);
     inp = more;
@@ -46,23 +46,23 @@ pub function read_frame(inp: Input): Frame {
       return Frame { inp: inp, body: "", done: true, err: "input ended inside a message" };
     }
   }
-  let body: string = slice_unchecked(inp.pending, start, start + n) + "";
-  let rest: string = slice_unchecked(inp.pending, start + n, inp.pending.len()) + "";
+  let body = slice_unchecked(inp.pending, start, start + n) + "";
+  let rest = slice_unchecked(inp.pending, start + n, inp.pending.len()) + "";
   return Frame { inp: Input { r: inp.r, pending: rest }, body: body, done: false, err: "" };
 }
 
 function content_length(headers: string): i32 {
-  let n: i32 = 0 - 1;
-  let rest: string = headers;
+  let n: i32 = -1;
+  let rest = headers;
   while (rest.len() > 0) {
-    let end: i32 = util.index_of_sub(rest, "\r\n");
+    let end = util.index_of_sub(rest, "\r\n");
     if (end < 0) {
       end = rest.len();
     }
-    let line: string = slice_unchecked(rest, 0, end) + "";
-    let colon: i32 = util.index_of_sub(line, ":");
+    let line = slice_unchecked(rest, 0, end) + "";
+    let colon = util.index_of_sub(line, ":");
     if (colon > 0 && lower_ascii(util.trim(slice_unchecked(line, 0, colon) + "")) == "content-length") {
-      let v: string = util.trim(slice_unchecked(line, colon + 1, line.len()) + "");
+      let v = util.trim(slice_unchecked(line, colon + 1, line.len()) + "");
       if (util.is_all_digits(v)) {
         n = util.digits_to_i32(v);
       }
@@ -77,14 +77,14 @@ function content_length(headers: string): i32 {
 
 function lower_ascii(s: string): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b >= 65 && b <= 90) {
-      b = b + 32;
+      b += 32;
     }
     out = out.append(b as u8);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -94,11 +94,11 @@ pub struct Message { method: string, id: string, params: json.JsonValue }
 pub function parse_message(body: string): Option[Message] {
   match (json.parse(body)) {
     Ok(v) => {
-      let method: string = get_string(v, "method");
+      let method = get_string(v, "method");
       if (method.len() == 0) {
         return None;
       }
-      let id: string = "";
+      let id = "";
       match (json.get(v, "id")) {
         Some(iv) => {
           id = json.encode(iv);
@@ -158,15 +158,15 @@ function position_in(p: json.JsonValue): (i32, i32) {
     },
     None => {}
   }
-  return (0 - 1, 0 - 1);
+  return (-1, -1);
 }
 
 pub function request_range(params: json.JsonValue): (i32, i32, i32, i32) {
-  let r: json.JsonValue = get_value(params, "range");
+  let r = get_value(params, "range");
   let (l0, c0) = position_in(get_value(r, "start"));
   let (l1, c1) = position_in(get_value(r, "end"));
   if (l0 < 0 || l1 < 0) {
-    return (0 - 1, 0 - 1, 0 - 1, 0 - 1);
+    return (-1, -1, -1, -1);
   }
   return (l0, c0, l1, c1);
 }
@@ -227,8 +227,8 @@ pub struct SemanticToken { line: i32, start: i32, len: i32, kind: i32 }
 
 pub function semantic_tokens(toks: SemanticToken[]): string {
   let out: string[] = [];
-  let line: i32 = 0;
-  let start: i32 = 0;
+  let line = 0;
+  let start = 0;
   for t in sorted_tokens(toks) {
     if (t.line != line) {
       start = 0;
@@ -244,19 +244,19 @@ function sorted_tokens(toks: SemanticToken[]): SemanticToken[] {
   if (toks.len() <= 1) {
     return toks;
   }
-  let half: i32 = toks.len() / 2;
-  let a: SemanticToken[] = sorted_tokens(token_range(toks, 0, half));
-  let b: SemanticToken[] = sorted_tokens(token_range(toks, half, toks.len()));
+  let half = toks.len() / 2;
+  let a = sorted_tokens(token_range(toks, 0, half));
+  let b = sorted_tokens(token_range(toks, half, toks.len()));
   let out: SemanticToken[] = [];
-  let i: i32 = 0;
-  let j: i32 = 0;
+  let i = 0;
+  let j = 0;
   while (i < a.len() || j < b.len()) {
     if (j >= b.len() || i < a.len() && (a[i].line < b[j].line || a[i].line == b[j].line && a[i].start <= b[j].start)) {
       out = out.append(a[i]);
-      i = i + 1;
+      i += 1;
     } else {
       out = out.append(b[j]);
-      j = j + 1;
+      j += 1;
     }
   }
   return out;
@@ -264,10 +264,10 @@ function sorted_tokens(toks: SemanticToken[]): SemanticToken[] {
 
 function token_range(toks: SemanticToken[], from: i32, to: i32): SemanticToken[] {
   let out: SemanticToken[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     out = out.append(toks[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -277,7 +277,7 @@ pub function completion_list(items: string[]): string {
 }
 
 pub function completion_item(label: string, kind: i32, detail: string): string {
-  let out: string = "{\"label\":" + quote(label) + ",\"kind\":" + util.i32_to_string(kind);
+  let out = "{\"label\":" + quote(label) + ",\"kind\":" + util.i32_to_string(kind);
   if (detail.len() > 0) {
     out = out + ",\"detail\":" + quote(detail);
   }
@@ -286,12 +286,12 @@ pub function completion_item(label: string, kind: i32, detail: string): string {
 
 pub function signature_help(label: string, starts: i32[], ends: i32[], active: i32): string {
   let params: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < starts.len()) {
     params = params.append("{\"label\":[" + util.i32_to_string(utf16_units(label, starts[i])) + "," + util.i32_to_string(utf16_units(label, ends[i])) + "]}");
-    i = i + 1;
+    i += 1;
   }
-  let sig: string = "{\"label\":" + quote(label);
+  let sig = "{\"label\":" + quote(label);
   if (params.len() > 0) {
     sig = sig + ",\"parameters\":" + json_array(params);
   }
@@ -299,7 +299,7 @@ pub function signature_help(label: string, starts: i32[], ends: i32[], active: i
 }
 
 pub function document_symbol(name: string, detail: string, kind: i32, range: string, selection: string, children: string[]): string {
-  let out: string = "{\"name\":" + quote(name);
+  let out = "{\"name\":" + quote(name);
   if (detail.len() > 0) {
     out = out + ",\"detail\":" + quote(detail);
   }
@@ -315,7 +315,7 @@ pub function inlay_hint(line: i32, character: i32, label: string): string {
 }
 
 pub function hover_result(code: string, doc: string, range: string): string {
-  let value: string = "```fern\n" + code + "\n```";
+  let value = "```fern\n" + code + "\n```";
   if (doc.len() > 0) {
     value = value + "\n\n" + doc;
   }
@@ -331,14 +331,14 @@ pub function publish_diagnostics(uri: string, diagnostics: string): string {
 }
 
 pub function json_array(items: string[]): string {
-  let out: string = "[";
-  let i: i32 = 0;
+  let out = "[";
+  let i = 0;
   while (i < items.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + items[i];
-    i = i + 1;
+    out += items[i];
+    i += 1;
   }
   return out + "]";
 }
@@ -348,15 +348,15 @@ pub function diagnostic(src: Text, line: i32, col: i32, code: string, message: s
 }
 
 pub function diagnostic_with_related(src: Text, line: i32, col: i32, code: string, message: string, warning: boolean, data: string, related: string[]): string {
-  let r: string = range_json(0, 0, 0, 0);
+  let r = range_json(0, 0, 0, 0);
   if (line > 0) {
     r = span_range(src, line, col, 1);
   }
-  let severity: string = "1";
+  let severity = "1";
   if (warning) {
     severity = "2";
   }
-  let out: string = "{\"range\":" + r + ",\"severity\":" + severity + ",\"source\":\"fern\"";
+  let out = "{\"range\":" + r + ",\"severity\":" + severity + ",\"source\":\"fern\"";
   if (util.is_diagnostic_code(code)) {
     out = out + ",\"code\":" + quote(code);
   }
@@ -371,11 +371,11 @@ pub function diagnostic_with_related(src: Text, line: i32, col: i32, code: strin
 }
 
 pub function related_information(uri: string, src: Text, r: util.Related): string {
-  let length: i32 = r.length;
+  let length = r.length;
   if (length <= 0) {
     length = 1;
   }
-  let range: string = span_range(src, util.pos_line(r.line), r.col, length);
+  let range = span_range(src, util.pos_line(r.line), r.col, length);
   return "{\"location\":{\"uri\":" + quote(uri) + ",\"range\":" + range + "},\"message\":" + quote(r.message) + "}";
 }
 
@@ -384,17 +384,17 @@ pub function fix_data(range: string, new_text: string, title: string): string {
 }
 
 pub function code_actions(params: json.JsonValue): string {
-  let uri: string = document_uri(params);
+  let uri = document_uri(params);
   let out: string[] = [];
   match (json.get_array(get_value(params, "context"), "diagnostics")) {
     Some(ds) => {
       for d in ds {
-        let data: json.JsonValue = get_value(d, "data");
-        let title: string = get_string(data, "title");
-        let text: string = get_string(data, "newText");
-        let range: json.JsonValue = get_value(data, "range");
+        let data = get_value(d, "data");
+        let title = get_string(data, "title");
+        let text = get_string(data, "newText");
+        let range = get_value(data, "range");
         if (title.len() > 0 && text.len() > 0 && !json.is_null(range)) {
-          let edit: string = text_edit(json.encode(range), text);
+          let edit = text_edit(json.encode(range), text);
           out = out.append("{\"title\":" + quote(title) + ",\"kind\":\"quickfix\",\"diagnostics\":[" + json.encode(d) + "],\"edit\":" + workspace_edit([uri], [[edit]]) + "}");
         }
       }
@@ -419,20 +419,20 @@ pub function include_declaration(params: json.JsonValue): boolean {
 }
 
 pub function workspace_edit(uris: string[], edits: string[][]): string {
-  let out: string = "{\"changes\":{";
-  let i: i32 = 0;
+  let out = "{\"changes\":{";
+  let i = 0;
   while (i < uris.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
     out = out + quote(uris[i]) + ":" + json_array(edits[i]);
-    i = i + 1;
+    i += 1;
   }
   return out + "}}";
 }
 
 pub function span_range(src: Text, line: i32, col: i32, len: i32): string {
-  let text: string = line_text(src, line);
+  let text = line_text(src, line);
   return range_json(line - 1, utf16_col(text, col), line - 1, utf16_col(text, col + len));
 }
 
@@ -453,9 +453,9 @@ function position_json(line: i32, character: i32): string {
 }
 
 pub function whole_document_edit(src: string, text: string): string {
-  let t: Text = text_of(src);
-  let last: i32 = t.starts.len() - 1;
-  let tail: string = slice_unchecked(src, t.starts[last], src.len()) + "";
+  let t = text_of(src);
+  let last = t.starts.len() - 1;
+  let tail = slice_unchecked(src, t.starts[last], src.len()) + "";
   return text_edit(range_json(0, 0, last, utf16_units(tail, tail.len())), text);
 }
 
@@ -463,12 +463,12 @@ pub struct Text { src: string, starts: i32[] }
 
 pub function text_of(src: string): Text {
   let starts: i32[] = [0];
-  let i: i32 = 0;
+  let i = 0;
   while (i < src.len()) {
     if (src[i] == b'\n') {
       starts = starts.append(i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   return Text { src: src, starts: starts };
 }
@@ -477,13 +477,13 @@ pub function line_text(t: Text, n: i32): string {
   if (n < 1 || n > t.starts.len()) {
     return "";
   }
-  let start: i32 = t.starts[n - 1];
-  let end: i32 = t.src.len();
+  let start = t.starts[n - 1];
+  let end = t.src.len();
   if (n < t.starts.len()) {
     end = t.starts[n] - 1;
   }
   if (end > start && t.src[end - 1] == b'\r') {
-    end = end - 1;
+    end -= 1;
   }
   return slice_unchecked(t.src, start, end) + "";
 }
@@ -492,7 +492,7 @@ pub function utf16_col(line: string, col: i32): i32 {
   if (col <= 1) {
     return 0;
   }
-  let b: i32 = col - 1;
+  let b = col - 1;
   if (b > line.len()) {
     b = line.len();
   }
@@ -500,12 +500,12 @@ pub function utf16_col(line: string, col: i32): i32 {
 }
 
 pub function byte_col(line: string, units: i32): i32 {
-  let u: i32 = 0;
-  let i: i32 = 0;
+  let u = 0;
+  let i = 0;
   while (i < line.len()) {
-    let b: i32 = line[i] as i32;
-    let w: i32 = 1;
-    let n: i32 = 1;
+    let b = line[i] as i32;
+    let w = 1;
+    let n = 1;
     if (b >= 240) {
       w = 2;
       n = 4;
@@ -517,35 +517,35 @@ pub function byte_col(line: string, units: i32): i32 {
     if (u + w > units) {
       return i + 1;
     }
-    u = u + w;
-    i = i + n;
+    u += w;
+    i += n;
   }
   return line.len() + 1;
 }
 
 function utf16_units(s: string, n: i32): i32 {
-  let units: i32 = 0;
-  let i: i32 = 0;
+  let units = 0;
+  let i = 0;
   while (i < n) {
-    let b: i32 = s[i] as i32;
+    let b = s[i] as i32;
     if (b < 128 || b >= 192) {
-      units = units + 1;
+      units += 1;
     }
     if (b >= 240) {
-      units = units + 1;
+      units += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return units;
 }
 
 pub function uri_path(uri: string): string {
-  let scheme: string = "file://";
+  let scheme = "file://";
   if (uri.len() <= scheme.len() || slice_unchecked(uri, 0, scheme.len()) != scheme) {
     return "";
   }
-  let rest: string = slice_unchecked(uri, scheme.len(), uri.len()) + "";
-  let slash: i32 = util.index_of_sub(rest, "/");
+  let rest = slice_unchecked(uri, scheme.len(), uri.len()) + "";
+  let slash = util.index_of_sub(rest, "/");
   if (slash < 0) {
     return "";
   }
@@ -553,17 +553,17 @@ pub function uri_path(uri: string): string {
 }
 
 pub function file_uri(path: string): string {
-  let hex: string = "0123456789ABCDEF";
+  let hex = "0123456789ABCDEF";
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < path.len()) {
-    let b: i32 = path[i] as i32;
+    let b = path[i] as i32;
     if (uri_unreserved(b)) {
       out = out.append(path[i]);
     } else {
       out = out.append(b'%').append(hex[b / 16]).append(hex[b % 16]);
     }
-    i = i + 1;
+    i += 1;
   }
   return "file://" + string_from_bytes_unchecked(out);
 }
@@ -574,23 +574,23 @@ function uri_unreserved(b: i32): boolean {
 
 function percent_decode(s: string): string {
   let out: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
     if (s[i] != b'%') {
       out = out.append(s[i]);
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (i + 2 >= s.len()) {
       return "";
     }
-    let hi: i32 = hex_digit(s[i + 1] as i32);
-    let lo: i32 = hex_digit(s[i + 2] as i32);
+    let hi = hex_digit(s[i + 1] as i32);
+    let lo = hex_digit(s[i + 2] as i32);
     if (hi < 0 || lo < 0) {
       return "";
     }
     out = out.append((hi * 16 + lo) as u8);
-    i = i + 3;
+    i += 3;
   }
   return string_from_bytes_unchecked(out);
 }
@@ -605,5 +605,5 @@ function hex_digit(b: i32): i32 {
   if (b >= 65 && b <= 70) {
     return b - 55;
   }
-  return 0 - 1;
+  return -1;
 }

@@ -90,7 +90,7 @@ function identities(s: string): void {
     mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
     mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", i == 1);
     mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
-    i = i + 1;
+    i += 1;
   }
   let rc = "movl -8(%rax), %ecx";
   mutation(s, rc, "movq %rbx, %rcx\nmovq %rcx, %rbx\n" + rc, true);
@@ -119,7 +119,7 @@ function flag_case(s: string, a: i32, b: i32, width: i32): void {
   let i = 0;
   while (i < names.len()) {
     mutation(s, "movl -8(%rax), %ecx", prefix + names[i] + " .Lstrfree_ret\nmovl -8(%rax), %ecx", !conditions[i]);
-    i = i + 1;
+    i += 1;
   }
 }
 

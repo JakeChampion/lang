@@ -5,7 +5,7 @@ import "./parser";
 import "./util";
 
 function ts_op_method(op: string): string {
-  let named: string = ast.operator_method(op);
+  let named = ast.operator_method(op);
   if (named != "") {
     return named;
   }
@@ -51,12 +51,12 @@ function ts_named_tag(tag: string): boolean {
   if (tag.len() == 0) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < tag.len()) {
     if (!lexer.is_alphanumeric(tag[i] as i32)) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -75,9 +75,9 @@ function ts_routed_map_roots(): string[] {
 }
 
 function ts_with_key_roots(mod: parser.Module, rs: RefSet): RefSet {
-  let live: util.NameIndex = ts_live_type_names(mod, rs);
+  let live = ts_live_type_names(mod, rs);
   for fd in mod.funcs {
-    let base: string = util.base_type_name(fd.receiver_type);
+    let base = util.base_type_name(fd.receiver_type);
     if (ts_key_method(fd) && ts_nominal(mod, base) && live.has(base)) {
       rs = ts_with_root(rs, ts_qualified_root(base, fd.name));
     }
@@ -119,12 +119,12 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       return acc.append(ts_free_root(id.name));
     },
     ast.ExprBinary(b) => {
-      let m: string = ts_op_method(b.op);
+      let m = ts_op_method(b.op);
       if (m.len() == 0) {
         return acc;
       }
       if (ts_op_overloads(b.op)) {
-        let bt: string = ts_recv_tag(b.left);
+        let bt = ts_recv_tag(b.left);
         if (bt.len() > 0) {
           return acc.append(ts_qualified_root(bt, m));
         }
@@ -138,7 +138,7 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
       if (u.op != "-") {
         return acc;
       }
-      let ut: string = ts_recv_tag(u.operand);
+      let ut = ts_recv_tag(u.operand);
       if (ut.len() > 0) {
         return acc.append(ts_qualified_root(ut, "neg"));
       }
@@ -197,8 +197,8 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 }
 
 function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
-  let tag: string = ts_recv_tag(fa.obj);
-  let ft: string = util.base_type_name(tag);
+  let tag = ts_recv_tag(fa.obj);
+  let ft = util.base_type_name(tag);
   if (ts_named_tag(ft) && !util.str_has_suffix(tag, "[]")) {
     return acc.append(ts_qualified_root(ft, fa.field)).append(ts_any_root(fa.field));
   }
@@ -210,11 +210,11 @@ function ts_any_root(method: string): string {
 }
 
 function ts_widened(names: string[], open: RefSet, fd: parser.FuncDecl): string[] {
-  let out: string[] = names;
+  let out = names;
   for n in names {
-    let bar: i32 = util.index_of_sub(n, "|");
+    let bar = util.index_of_sub(n, "|");
     if (bar > 0) {
-      let tag: string = slice_unchecked(n, 0, bar) + "";
+      let tag = slice_unchecked(n, 0, bar) + "";
       if (refset_has(open, tag) || util.has_str(fd.type_params, tag) || util.has_str(fd.all_type_params, tag) || util.str_has_prefix(tag, "impl ")) {
         out = out.append(slice_unchecked(n, bar + 1, n.len()) + "");
       }
@@ -248,7 +248,7 @@ function ts_names_stmt(st: ast.Stmt, own acc: string[]): string[] {
 }
 
 function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
-  let lt: LocalTypes = local_types(fd);
+  let lt = local_types(fd);
   function name_of(e: ast.Expr, own names: string[]): string[] {
     if let ast.ExprCall(c) = e {
       if let ast.ExprFieldAccess(fa) = c.callee {
@@ -259,7 +259,7 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
       if let ast.ExprIdent(id) = c.callee {
         if (id.name == "print" || id.name == "write" || id.name == "eprint") {
           for arg in c.args {
-            let display: ast.ExprFieldAccess = ast.ExprFieldAccess { obj: arg, field: "to_string", line: c.line, col: c.col, ty: "", const_read: false };
+            let display = ast.ExprFieldAccess { obj: arg, field: "to_string", line: c.line, col: c.col, ty: "", const_read: false };
             names = typed_method_name_of(display, lt, names);
           }
         }
@@ -270,22 +270,22 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
   if (fd.name == "inner" && util.base_type_name(fd.receiver_type) == "ndarray__NdArray") {
     acc = acc.append("ndarray__inner_kernel");
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < fd.body.len()) {
     acc = astwalk.fold_stmt(fd.body[i], acc, name_of);
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
 
 function ts_interposed_method_name(name: string): string {
-  let last_dot: i32 = 0 - 1;
-  let i: i32 = 0;
+  let last_dot: i32 = -1;
+  let i = 0;
   while (i < name.len()) {
     if (name[i] == b'.') {
       last_dot = i;
     }
-    i = i + 1;
+    i += 1;
   }
   if (last_dot < 0) {
     return "";
@@ -297,12 +297,12 @@ function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (fd.receiver_type.len() == 0) {
     return false;
   }
-  let base: string = util.base_type_name(fd.receiver_type);
+  let base = util.base_type_name(fd.receiver_type);
   if (base.len() == 0) {
     return false;
   }
-  let name: string = fd.name;
-  let im: string = ts_interposed_method_name(fd.name);
+  let name = fd.name;
+  let im = ts_interposed_method_name(fd.name);
   if (im.len() > 0) {
     name = im;
   }
@@ -320,35 +320,35 @@ pub struct RefSet { names: string[], head: i32[], next: i32[] }
 pub struct BodyRefs { any: RefSet, methods: RefSet }
 
 pub function body_refs(fd: parser.FuncDecl): BodyRefs {
-  let lt: LocalTypes = local_types(fd);
+  let lt = local_types(fd);
   function method_of(e: ast.Expr, own acc: string[]): string[] {
     return method_name_of(e, lt, acc);
   }
   let methods: string[] = [];
   let bare: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < fd.body.len()) {
     methods = astwalk.fold_stmt(fd.body[i], methods, method_of);
     bare = astwalk.fold_stmt(fd.body[i], bare, ts_method_name_of);
-    i = i + 1;
+    i += 1;
   }
   let bound: string[] = [];
   if (fd.receiver_name.len() > 0) {
     bound = bound.append(fd.receiver_name);
   }
-  let pi: i32 = 0;
+  let pi = 0;
   while (pi < fd.params.len()) {
     bound = bound.append(fd.params[pi].name);
-    pi = pi + 1;
+    pi += 1;
   }
   let any: string[] = [];
   any = util.append_all(any, methods);
   any = util.append_all(any, bare);
-  let free: string[] = astwalk.collect_free_idents(bound, fd.body, []);
-  let fi: i32 = 0;
+  let free = astwalk.collect_free_idents(bound, fd.body, []);
+  let fi = 0;
   while (fi < free.len()) {
     any = any.append(ts_free_root(free[fi]));
-    fi = fi + 1;
+    fi += 1;
   }
   return BodyRefs { any: refset_of(any), methods: refset_of(methods) };
 }
@@ -358,11 +358,11 @@ struct LocalTypes { names: string[], types: string[] }
 function lt_bind(own lt: LocalTypes, name: string, ty0: string): LocalTypes {
   // A generic `Vec[N, T]` is a lane type the instance picks, so its methods
   // keep the bare method root.
-  let ty: string = ty0;
+  let ty = ty0;
   if (util.str_has_prefix(ty, "Vec[") && util.str_has_suffix(ty, "]")) {
     ty = "";
   }
-  let k: i32 = util.index_of_str(lt.names, name);
+  let k = util.index_of_str(lt.names, name);
   if (k < 0) {
     return LocalTypes { names: lt.names.append(name), types: lt.types.append(ty) };
   }
@@ -393,17 +393,17 @@ function lt_stmt(st: ast.Stmt, own lt: LocalTypes): LocalTypes {
 }
 
 function local_types(fd: parser.FuncDecl): LocalTypes {
-  let lt: LocalTypes = LocalTypes { names: [], types: [] };
+  let lt = LocalTypes { names: [], types: [] };
   if (fd.receiver_name.len() > 0) {
     lt = lt_bind(lt, fd.receiver_name, fd.receiver_type);
   }
-  let pi: i32 = 0;
+  let pi = 0;
   while (pi < fd.params.len()) {
-    let ty: string = fd.params[pi].type_name;
+    let ty = fd.params[pi].type_name;
     if (util.base_type_name(ty) == "Self") {
       ty = fd.receiver_type;
     }
-    let tk: i32 = util.index_of_str(fd.type_params, util.base_type_name(ty));
+    let tk = util.index_of_str(fd.type_params, util.base_type_name(ty));
     if (tk >= 0) {
       ty = "";
       if (tk < fd.bound_traits.len() && fd.bound_traits[tk].len() > 0) {
@@ -411,12 +411,12 @@ function local_types(fd: parser.FuncDecl): LocalTypes {
       }
     }
     lt = lt_bind(lt, fd.params[pi].name, ty);
-    pi = pi + 1;
+    pi += 1;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < fd.body.len()) {
     lt = astwalk.fold_stmt_spine(fd.body[i], lt, lt_stmt);
-    i = i + 1;
+    i += 1;
   }
   return lt;
 }
@@ -437,7 +437,7 @@ function body_recv_tag(e: ast.Expr, lt: LocalTypes): string {
     return "[]";
   }
   if let ast.ExprIdent(id) = e {
-    let k: i32 = util.index_of_str(lt.names, id.name);
+    let k = util.index_of_str(lt.names, id.name);
     if (k >= 0 && lt.types[k].len() > 0) {
       return lt.types[k];
     }
@@ -464,16 +464,16 @@ function method_name_of(e: ast.Expr, lt: LocalTypes, own acc: string[]): string[
 
 function typed_method_name_of(fa: ast.ExprFieldAccess, lt: LocalTypes, own acc: string[]): string[] {
   if let ast.ExprIdent(id) = fa.obj {
-    let k: i32 = util.index_of_str(lt.names, id.name);
+    let k = util.index_of_str(lt.names, id.name);
     if (k >= 0) {
-      let spelled: string = lt.types[k];
+      let spelled = lt.types[k];
       if (util.str_has_prefix(spelled, "impl ")) {
         for b in parser.split_plus_bounds(slice_unchecked(spelled, 5, spelled.len()) + "") {
           acc = acc.append(ts_qualified_root(ts_impl_tag(b), fa.field));
         }
         return acc;
       }
-      let base: string = util.base_type_name(spelled);
+      let base = util.base_type_name(spelled);
       if (ts_named_tag(base) && !util.str_has_suffix(spelled, "[]")) {
         return acc.append(ts_qualified_root(base, fa.field)).append(ts_any_root(fa.field));
       }
@@ -484,7 +484,7 @@ function typed_method_name_of(fa: ast.ExprFieldAccess, lt: LocalTypes, own acc: 
 
 pub function free_names(br: BodyRefs): string[] {
   let out: string[] = [];
-  let root: string = ts_free_root("");
+  let root = ts_free_root("");
   for n in br.any.names {
     if (util.str_has_prefix(n, root)) {
       out = out.append(slice_unchecked(n, root.len(), n.len()) + "");
@@ -504,13 +504,13 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
     if (fd.impl_trait.len() > 0 && refset_has(br.methods, ts_qualified_root(ts_impl_tag(fd.impl_trait), fd.name))) {
       return true;
     }
-    let im: string = ts_interposed_method_name(fd.name);
+    let im = ts_interposed_method_name(fd.name);
     return im.len() > 0 && refset_has(br.any, im);
   }
   if (refset_has(br.any, ts_free_root(fd.name))) {
     return true;
   }
-  let im: string = ts_interposed_method_name(fd.name);
+  let im = ts_interposed_method_name(fd.name);
   return im.len() > 0 && refset_has(br.any, im);
 }
 
@@ -527,25 +527,25 @@ function ts_buckets(): i32 {
 
 function refset_of(names: string[]): RefSet {
   let head: i32[] = [];
-  let b: i32 = 0;
-  let nb: i32 = ts_buckets();
+  let b = 0;
+  let nb = ts_buckets();
   while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
+    head = head.append(-1);
+    b += 1;
   }
   let next: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < names.len()) {
-    let bk: i32 = util.hash_bucket(names[k], nb);
+    let bk = util.hash_bucket(names[k], nb);
     next = next.append(head[bk]);
     head = head.with(bk, k);
-    k = k + 1;
+    k += 1;
   }
   return RefSet { names: names, head: head, next: next };
 }
 
 function refset_has(rs: RefSet, name: string): boolean {
-  let i: i32 = rs.head[util.hash_bucket(name, rs.head.len())];
+  let i = rs.head[util.hash_bucket(name, rs.head.len())];
   while (i >= 0) {
     if (rs.names[i] == name) {
       return true;
@@ -556,10 +556,10 @@ function refset_has(rs: RefSet, name: string): boolean {
 }
 
 function refset_add(rs: RefSet, name: string): RefSet {
-  let bk: i32 = util.hash_bucket(name, rs.head.len());
-  let names: string[] = rs.names.append(name);
-  let next: i32[] = rs.next.append(rs.head[bk]);
-  let head: i32[] = rs.head.with(bk, names.len() - 1);
+  let bk = util.hash_bucket(name, rs.head.len());
+  let names = rs.names.append(name);
+  let next = rs.next.append(rs.head[bk]);
+  let head = rs.head.with(bk, names.len() - 1);
   return RefSet { names: names, head: head, next: next };
 }
 
@@ -573,12 +573,12 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   // Primitive method syntax can dispatch to a private free runtime body.
   // Unknown generic receivers contribute the bare method root until bound.
   if (fd.receiver_type.len() == 0 && util.str_has_prefix(fd.name, "__primitive_") && util.str_has_suffix(fd.name, "_to_string")) {
-    let owner: string = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
+    let owner = slice_unchecked(fd.name, 12, fd.name.len() - 10) + "";
     if (refset_has(refs, "to_string") || refset_has(refs, ts_qualified_root(owner, "to_string"))) {
       return true;
     }
   }
-  let im: string = ts_interposed_method_name(fd.name);
+  let im = ts_interposed_method_name(fd.name);
   if (im.len() > 0 && refset_has(refs, im)) {
     return true;
   }
@@ -588,30 +588,30 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
 struct TsGrown { rs: RefSet, pending: i32[] }
 
 function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
-  let open: RefSet = ts_open_tags(mod);
-  let rs: RefSet = rs0;
-  let pending: i32[] = pending0;
-  let changed: boolean = true;
+  let open = ts_open_tags(mod);
+  let rs = rs0;
+  let pending = pending0;
+  let changed = true;
   while (changed) {
     changed = false;
     let still: i32[] = [];
-    let pi: i32 = 0;
+    let pi = 0;
     while (pi < pending.len()) {
-      let fi: i32 = pending[pi];
+      let fi = pending[pi];
       if (ts_kept_name(mod.funcs[fi], rs)) {
-        let body_names: string[] = ts_widened(ts_func_names(mod.funcs[fi], []), open, mod.funcs[fi]);
-        let bi: i32 = 0;
+        let body_names = ts_widened(ts_func_names(mod.funcs[fi], []), open, mod.funcs[fi]);
+        let bi = 0;
         while (bi < body_names.len()) {
           if (!refset_has(rs, body_names[bi])) {
             rs = refset_add(rs, body_names[bi]);
             changed = true;
           }
-          bi = bi + 1;
+          bi += 1;
         }
       } else {
         still = still.append(fi);
       }
-      pi = pi + 1;
+      pi += 1;
     }
     pending = still;
   }
@@ -631,7 +631,7 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   let owners: string[] = [];
   for st in mod.structs {
     if (ts_holds_map(st)) {
-      let key: string = st.name;
+      let key = st.name;
       if (st.enum_owner.len() > 0) {
         key = st.enum_owner;
       }
@@ -643,7 +643,7 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (owners.len() == 0) {
     return false;
   }
-  let live: util.NameIndex = ts_live_type_names(mod, rs);
+  let live = ts_live_type_names(mod, rs);
   for o in owners {
     if (live.has(o)) {
       return true;
@@ -653,7 +653,7 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
 }
 
 function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
-  let live: util.NameIndex = util.name_index([]);
+  let live = util.name_index([]);
   for fd in mod.funcs {
     if (ts_kept_name(fd, rs)) {
       for t in ts_named_types(fd) {
@@ -662,8 +662,8 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
     }
   }
   for st in mod.structs {
-    let owner: string = st.enum_owner;
-    let key: string = st.name;
+    let owner = st.enum_owner;
+    let key = st.name;
     if (owner.len() > 0) {
       key = owner;
     }
@@ -673,11 +673,11 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
       live = live.added(key);
     }
   }
-  let grew: boolean = true;
+  let grew = true;
   while (grew) {
     grew = false;
     for st in mod.structs {
-      let key: string = st.name;
+      let key = st.name;
       if (st.enum_owner.len() > 0) {
         key = st.enum_owner;
       }
@@ -685,7 +685,7 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
         continue;
       }
       for fl in st.fields {
-        let before: i32 = live.names.len();
+        let before = live.names.len();
         live = ts_add_type_words(live, fl.type_name);
         if (live.names.len() > before) {
           grew = true;
@@ -697,17 +697,17 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
 }
 
 function ts_add_type_words(names: util.NameIndex, t: string): util.NameIndex {
-  let i: i32 = 0;
+  let i = 0;
   while (i < t.len()) {
     if (!lexer.is_alphanumeric(t[i] as i32)) {
-      i = i + 1;
+      i += 1;
       continue;
     }
-    let j: i32 = i;
+    let j = i;
     while (j < t.len() && lexer.is_alphanumeric(t[j] as i32)) {
-      j = j + 1;
+      j += 1;
     }
-    let w: string = slice_unchecked(t, i, j) + "";
+    let w = slice_unchecked(t, i, j) + "";
     if (!names.has(w)) {
       names = names.added(w);
     }
@@ -770,57 +770,57 @@ pub function treeshake(mod: parser.Module): parser.Module {
 }
 
 pub function treeshake_roots(mod: parser.Module, own roots: string[]): parser.Module {
-  let refs: string[] = top_level_names(mod, roots);
-  let ei: i32 = 0;
+  let refs = top_level_names(mod, roots);
+  let ei = 0;
   while (ei < mod.exports.len()) {
     refs = refs.append(mod.exports[ei].func_name);
-    ei = ei + 1;
+    ei += 1;
   }
 
-  let di: i32 = 0;
+  let di = 0;
   while (di < mod.impls.len()) {
     if (mod.impls[di].trait_name == "Drop") {
-      let dm: i32 = 0;
+      let dm = 0;
       while (dm < mod.impls[di].method_names.len()) {
         refs = refs.append(ts_qualified_root(ts_impl_tag("Drop"), mod.impls[di].method_names[dm]));
-        dm = dm + 1;
+        dm += 1;
       }
     }
-    di = di + 1;
+    di += 1;
   }
 
-  let ai: i32 = 0;
+  let ai = 0;
   while (ai < mod.funcs.len()) {
     if (mod.funcs[ai].async && mod.funcs[ai].import_iface.len() == 0) {
       refs = refs.append(mod.funcs[ai].name);
     }
-    ai = ai + 1;
+    ai += 1;
   }
 
   let pending: i32[] = [];
-  let pi0: i32 = 0;
+  let pi0 = 0;
   while (pi0 < mod.funcs.len()) {
     pending = pending.append(pi0);
-    pi0 = pi0 + 1;
+    pi0 += 1;
   }
 
-  let grown: TsGrown = ts_grow(mod, refset_of(refs), pending);
+  let grown = ts_grow(mod, refset_of(refs), pending);
   if (ts_reaches_map(mod, grown.rs)) {
-    let rs0: RefSet = grown.rs;
+    let rs0 = grown.rs;
     for root in ts_routed_map_roots() {
       rs0 = ts_with_root(rs0, root);
     }
     grown = ts_grow(mod, ts_with_key_roots(mod, rs0), grown.pending);
   }
-  let rs: RefSet = grown.rs;
+  let rs = grown.rs;
 
   let kept: parser.FuncDecl[] = [];
-  let ki: i32 = 0;
+  let ki = 0;
   while (ki < mod.funcs.len()) {
     if (ts_kept_name(mod.funcs[ki], rs)) {
       kept = kept.append(mod.funcs[ki]);
     }
-    ki = ki + 1;
+    ki += 1;
   }
   return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls, inferred_consts: mod.inferred_consts, todo_sites: mod.todo_sites, sights: mod.sights };
 }
@@ -835,7 +835,7 @@ pub function without_extern_callers(mod: parser.Module): parser.Module {
   if (dropped.len() == 0) {
     return mod;
   }
-  let grew: boolean = true;
+  let grew = true;
   while (grew) {
     grew = false;
     for f in mod.funcs {

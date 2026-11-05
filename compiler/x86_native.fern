@@ -27,7 +27,7 @@ function x86_rex_w(): i32 {
 }
 
 function x86_rex(w: i32, reg: i32, index: i32, base: i32): i32 {
-  let v: i32 = 64;
+  let v = 64;
   if (w != 0) {
     v = v | 8;
   }
@@ -146,7 +146,7 @@ function x86_rex_w_of(size: i32): i32 {
 }
 
 function x86_rex_rr(own buf: i32[], size: i32, reg: i32, rm: i32): i32[] {
-  let rex: i32 = x86_rex(x86_rex_w_of(size), reg, 0, rm);
+  let rex = x86_rex(x86_rex_w_of(size), reg, 0, rm);
   if (rex != 64 || x86_rex8_force(size, reg) || x86_rex8_force(size, rm)) {
     buf = buf.append(rex);
   }
@@ -154,7 +154,7 @@ function x86_rex_rr(own buf: i32[], size: i32, reg: i32, rm: i32): i32[] {
 }
 
 function x86_rex_r(own buf: i32[], size: i32, reg: i32): i32[] {
-  let rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, reg);
+  let rex = x86_rex(x86_rex_w_of(size), 0, 0, reg);
   if (rex != 64 || x86_rex8_force(size, reg)) {
     buf = buf.append(rex);
   }
@@ -177,7 +177,7 @@ function x86_op0f_rr(own buf: i32[], size: i32, op: i32, reg: i32, rm: i32): i32
 }
 
 function x86_imm_fits8(v: i32): boolean {
-  return v >= 0 - 128 && v <= 127;
+  return v >= -128 && v <= 127;
 }
 
 function x86_imm_wide(own buf: i32[], size: i32, imm: i32): i32[] {
@@ -280,15 +280,15 @@ function x86_sib(scale: i32, index: i32, base: i32): i32 {
 }
 
 function x86_emit_mem(own buf: i32[], reg: i32, base: i32, disp: i32): i32[] {
-  let b: i32 = base & 7;
-  let is_rsp: boolean = b == 4;
-  let is_rbp: boolean = b == 5;
+  let b = base & 7;
+  let is_rsp = b == 4;
+  let is_rbp = b == 5;
 
-  let md: i32 = 2;
-  let has_disp8: boolean = false;
+  let md = 2;
+  let has_disp8 = false;
   if (disp == 0 && !is_rbp) {
     md = 0;
-  } else if (disp >= 0 - 128 && disp <= 127) {
+  } else if (disp >= -128 && disp <= 127) {
     md = 1;
     has_disp8 = true;
   }
@@ -320,16 +320,16 @@ function x86_mov_store_r64(own buf: i32[], base: i32, disp: i32, src: i32): i32[
 }
 
 function x86_lea_load(own buf: i32[], size: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
   buf = x86_osz(buf, size);
-  let w: i32 = 0;
+  let w = 0;
   if (size == 64) {
     w = 1;
   }
-  let rex: i32 = x86_rex(w, dst, ix, base);
+  let rex = x86_rex(w, dst, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -359,14 +359,14 @@ function x86_scale_bits(scale: i32): i32 {
 }
 
 function x86_emit_mem_idx(own buf: i32[], reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
-  let b: i32 = base & 7;
-  let is_rbp: boolean = b == 5;
-  let md: i32 = 2;
-  let has_disp8: boolean = false;
+  let b = base & 7;
+  let is_rbp = b == 5;
+  let md = 2;
+  let has_disp8 = false;
   if (disp == 0 && !is_rbp) {
     md = 0;
   } else {
-    if (disp >= 0 - 128 && disp <= 127) {
+    if (disp >= -128 && disp <= 127) {
       md = 1;
       has_disp8 = true;
     }
@@ -396,12 +396,12 @@ function x86_mov_store_r64_idx(own buf: i32[], base: i32, index: i32, scale: i32
 }
 
 function x86_byte_mem_rex(own buf: i32[], w: i32, reg: i32, has_index: boolean, index: i32, base: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
-  let rex: i32 = x86_rex(w, reg, ix, base);
-  let force: boolean = w == 0 && reg >= 4 && reg <= 7;
+  let rex = x86_rex(w, reg, ix, base);
+  let force = w == 0 && reg >= 4 && reg <= 7;
   if (rex != 64 || force) {
     buf = buf.append(rex);
   }
@@ -433,11 +433,11 @@ function x86_movzb_mem(own buf: i32[], w: i32, dst: i32, base: i32, has_index: b
 }
 
 function x86_movext_mem(own buf: i32[], op: i32, w: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
-  let rex: i32 = x86_rex(w, dst, ix, base);
+  let rex = x86_rex(w, dst, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -451,8 +451,8 @@ function x86_movzb_reg(own buf: i32[], w: i32, dst: i32, src8: i32): i32[] {
 }
 
 function x86_movext_reg(own buf: i32[], op: i32, w: i32, dst: i32, src: i32): i32[] {
-  let rex: i32 = x86_rex(w, dst, 0, src);
-  let force: boolean = (op == 182 || op == 190) && x86_rex8_force(8, src);
+  let rex = x86_rex(w, dst, 0, src);
+  let force = (op == 182 || op == 190) && x86_rex8_force(8, src);
   if (rex != 64 || force) {
     buf = buf.append(rex);
   }
@@ -462,11 +462,11 @@ function x86_movext_reg(own buf: i32[], op: i32, w: i32, dst: i32, src: i32): i3
 }
 
 function x86_push_mem(own buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
-  let rex: i32 = x86_rex(0, 0, ix, base);
+  let rex = x86_rex(0, 0, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -475,11 +475,11 @@ function x86_push_mem(own buf: i32[], base: i32, has_index: boolean, index: i32,
 }
 
 function x86_pop_mem(own buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
-  let rex: i32 = x86_rex(0, 0, ix, base);
+  let rex = x86_rex(0, 0, ix, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -488,8 +488,8 @@ function x86_pop_mem(own buf: i32[], base: i32, has_index: boolean, index: i32, 
 }
 
 function x86_setcc_reg8(own buf: i32[], op: i32, reg8: i32): i32[] {
-  let rex: i32 = x86_rex(0, 0, 0, reg8);
-  let force: boolean = reg8 >= 4 && reg8 <= 7;
+  let rex = x86_rex(0, 0, 0, reg8);
+  let force = reg8 >= 4 && reg8 <= 7;
   if (rex != 64 || force) {
     buf = buf.append(rex);
   }
@@ -533,7 +533,7 @@ function x86_sse_any_rr(own buf: i32[], pfx: i32, opcode: i32, reg: i32, rm: i32
   if (pfx != 0) {
     buf = buf.append(pfx);
   }
-  let rex: i32 = x86_rex(0, reg, 0, rm);
+  let rex = x86_rex(0, reg, 0, rm);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -544,7 +544,7 @@ function x86_sse_any_rr(own buf: i32[], pfx: i32, opcode: i32, reg: i32, rm: i32
 
 function x86_sse_3a_imm(own buf: i32[], w: i32, opcode: i32, reg: i32, rm: i32, imm: i32): i32[] {
   buf = buf.append(102);
-  let rex: i32 = x86_rex(w, reg, 0, rm);
+  let rex = x86_rex(w, reg, 0, rm);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -557,7 +557,7 @@ function x86_sse_3a_imm(own buf: i32[], w: i32, opcode: i32, reg: i32, rm: i32, 
 
 function x86_movd_gpr_to_xmm(own buf: i32[], xmm: i32, gpr: i32): i32[] {
   buf = buf.append(102);
-  let rex: i32 = x86_rex(0, xmm, 0, gpr);
+  let rex = x86_rex(0, xmm, 0, gpr);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -568,7 +568,7 @@ function x86_movd_gpr_to_xmm(own buf: i32[], xmm: i32, gpr: i32): i32[] {
 
 function x86_movd_xmm_to_gpr(own buf: i32[], xmm: i32, gpr: i32): i32[] {
   buf = buf.append(102);
-  let rex: i32 = x86_rex(0, xmm, 0, gpr);
+  let rex = x86_rex(0, xmm, 0, gpr);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -585,7 +585,7 @@ function x86_bitscan_rr(own buf: i32[], pfx: i32, opcode: i32, w: i32, dst: i32,
   if (pfx != 0) {
     buf = buf.append(pfx);
   }
-  let rex: i32 = x86_rex(w, dst, 0, src);
+  let rex = x86_rex(w, dst, 0, src);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -604,7 +604,7 @@ function x86_bsr_r32(own buf: i32[], dst: i32, src: i32): i32[] {
 
 function x86_cvt_to_gpr(own buf: i32[], pfx: i32, op: i32, w: i32, gpr: i32, xmm: i32): i32[] {
   buf = buf.append(pfx);
-  let rex: i32 = x86_rex(w, gpr, 0, xmm);
+  let rex = x86_rex(w, gpr, 0, xmm);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -615,7 +615,7 @@ function x86_cvt_to_gpr(own buf: i32[], pfx: i32, op: i32, w: i32, gpr: i32, xmm
 
 function x86_cvt_to_xmm(own buf: i32[], pfx: i32, w: i32, xmm: i32, gpr: i32): i32[] {
   buf = buf.append(pfx);
-  let rex: i32 = x86_rex(w, xmm, 0, gpr);
+  let rex = x86_rex(w, xmm, 0, gpr);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
@@ -693,7 +693,7 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
   x86_push_arr(a.code, x86_le32([], 0));
-  let patch_off: i32 = buf_len(a.code) - 4;
+  let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
@@ -703,7 +703,7 @@ function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm 
   buf_push_byte(a.code, 139);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
   x86_push_arr(a.code, x86_le32([], 0));
-  let patch_off: i32 = buf_len(a.code) - 4;
+  let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
@@ -715,7 +715,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
   buf_push_byte(a.code, opcode);
   buf_push_byte(a.code, x86_modrm(0, 0, 5));
   x86_push_arr(a.code, x86_le32([], 0));
-  let patch_off: i32 = buf_len(a.code) - 4;
+  let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name + "");
   a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
   a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(imm_bytes) };
@@ -728,12 +728,12 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
 }
 
 function x86_fix_tail(a: X86Asm, patch_off: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.fix_tail_offs.len()) {
     if (a.fix_tail_offs[i] == patch_off) {
       return a.fix_tail_bytes[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return 0;
 }
@@ -743,7 +743,7 @@ function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm 
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
   x86_push_arr(a.code, x86_le32([], 0));
-  let patch_off: i32 = buf_len(a.code) - 4;
+  let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
@@ -755,12 +755,12 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
   buf_push_byte(a.code, 137);
   buf_push_byte(a.code, x86_modrm(0, src, 5));
   x86_push_arr(a.code, x86_le32([], 0));
-  let patch_off: i32 = buf_len(a.code) - 4;
+  let patch_off = buf_len(a.code) - 4;
   return x86_queue_fixup(a, patch_off, 4, name);
 }
 
 function x86_rex_opt(own buf: i32[], reg: i32, index: i32, base: i32): i32[] {
-  let rex: i32 = x86_rex(0, reg, index, base);
+  let rex = x86_rex(0, reg, index, base);
   if (rex != 64) {
     buf = buf.append(rex);
   }
@@ -774,7 +774,7 @@ function x86_mov_r32_r32(own buf: i32[], dst: i32, src: i32): i32[] {
 }
 
 function x86_movl_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
@@ -784,7 +784,7 @@ function x86_movl_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, 
 }
 
 function x86_movslq_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
@@ -800,7 +800,7 @@ function x86_movslq_rr(own buf: i32[], dst: i32, src: i32): i32[] {
 }
 
 function x86_movzwq_load(own buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-  let ix: i32 = 0;
+  let ix = 0;
   if (has_index) {
     ix = index;
   }
@@ -858,7 +858,7 @@ function x86_nop_fill(own buf: i32[], n: i32): i32[] {
 function x86_nop_pad(own buf: i32[], n: i32): i32[] {
   while (n > 11) {
     buf = x86_nop_fill(buf, 11);
-    n = n - 11;
+    n -= 11;
   }
   if (n > 0) {
     buf = x86_nop_fill(buf, n);
@@ -973,12 +973,12 @@ function x86_name_bucket(name: string): i32 {
 }
 
 function x86_empty_buckets(): i32[] {
-  let n: i32 = x86_label_buckets();
-  let b: i32[] = __alloc_i32(n);
-  let i: i32 = 0;
+  let n = x86_label_buckets();
+  let b = __alloc_i32(n);
+  let i = 0;
   while (i < n) {
-    b = b.with(i, 0 - 1);
-    i = i + 1;
+    b = b.with(i, -1);
+    i += 1;
   }
   return b;
 }
@@ -988,8 +988,8 @@ function x86_asm_new(): X86Asm {
 }
 
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
-  let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  let n = labs.names.len() + labs.nids;
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, -1), lab_offs: x86_filled(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 function x86_filled(n: i32, v: i32): i32[] {
@@ -1017,9 +1017,9 @@ pub function x86_eh_frame_hdr(a: X86Asm, text_vaddr: i64, eh_vaddr: i64, hdr_vad
 }
 
 function x86_align8(n: i32): i32 {
-  let p: i32 = n;
+  let p = n;
   while (p % 8 != 0) {
-    p = p + 1;
+    p += 1;
   }
   return p;
 }
@@ -1029,21 +1029,21 @@ function x86_align16(n: i32): i32 {
 }
 
 function x86_align4(n: i32): i32 {
-  let p: i32 = n;
+  let p = n;
   while (p % 4 != 0) {
-    p = p + 1;
+    p += 1;
   }
   return p;
 }
 
 function x86_add_label(own a: X86Asm, name: string, sec: i32, off: i32): X86Asm {
-  let at: i32 = a.lab_names.len();
-  let b: i32 = x86_name_bucket(name);
-  let prev: i32 = a.lab_tail[b];
+  let at = a.lab_names.len();
+  let b = x86_name_bucket(name);
+  let prev = a.lab_tail[b];
   a = X86Asm { ...a, lab_names: a.lab_names.append(name) };
   a = X86Asm { ...a, lab_secs: a.lab_secs.append(sec) };
   a = X86Asm { ...a, lab_offs: a.lab_offs.append(off) };
-  a = X86Asm { ...a, lab_next: a.lab_next.append(0 - 1) };
+  a = X86Asm { ...a, lab_next: a.lab_next.append(-1) };
   if (prev < 0) {
     a = X86Asm { ...a, lab_head: a.lab_head.with(b, at) };
   } else {
@@ -1059,7 +1059,7 @@ function x86_place_label(own a: X86Asm, idx: i32, sec: i32, off: i32): X86Asm {
 }
 
 function x86_label(own a: X86Asm, name: string): X86Asm {
-  let off: i32 = buf_len(a.code);
+  let off = buf_len(a.code);
   return x86_add_label(a, name, 0, off);
 }
 
@@ -1067,9 +1067,9 @@ function x86_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   if (idx < 0) {
     return x86_label(a, name);
   }
-  let off: i32 = buf_len(a.code);
+  let off = buf_len(a.code);
   a = x86_place_label(a, idx, 0, off);
-  let n: i32 = a.pads.len();
+  let n = a.pads.len();
   if (n > 0 && a.pads[n - 5] + a.pads[n - 4] == off) {
     a = X86Asm { ...a, pad_labels: a.pad_labels.append(idx).append(n / 5 - 1) };
   }
@@ -1077,7 +1077,7 @@ function x86_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
 }
 
 function x86_rodata_label(own a: X86Asm, name: string, sec: i32): X86Asm {
-  let off: i32 = a.rodata.len();
+  let off = a.rodata.len();
   return x86_add_label(a, name, sec, off);
 }
 
@@ -1085,7 +1085,7 @@ function x86_rodata_label_at(own a: X86Asm, name: string, idx: i32, sec: i32): X
   if (idx < 0) {
     return x86_rodata_label(a, name, sec);
   }
-  let off: i32 = a.rodata.len();
+  let off = a.rodata.len();
   return x86_place_label(a, idx, sec, off);
 }
 
@@ -1133,7 +1133,7 @@ function x86_enter_section(own a: X86Asm, from: i32, to: i32): X86Asm {
 }
 
 function x86_section_swap(own a: X86Asm, sec: i32): X86Asm {
-  let active: i32[] = a.rodata;
+  let active = a.rodata;
   if (sec == 3) {
     return X86Asm { ...a, rodata: a.ro, ro: active };
   }
@@ -1148,7 +1148,7 @@ function x86_rodata_quad(own a: X86Asm, v: i64): X86Asm {
 }
 
 function x86_bss_label(own a: X86Asm, name: string): X86Asm {
-  let off: i32 = a.bss_size;
+  let off = a.bss_size;
   return x86_add_label(a, name, 2, off);
 }
 
@@ -1156,7 +1156,7 @@ function x86_bss_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   if (idx < 0) {
     return x86_bss_label(a, name);
   }
-  let off: i32 = a.bss_size;
+  let off = a.bss_size;
   return x86_place_label(a, idx, 2, off);
 }
 
@@ -1166,27 +1166,27 @@ function x86_bss_skip(own a: X86Asm, n: i32): X86Asm {
 }
 
 function x86_label_idx(a: X86Asm, name: string): i32 {
-  let i: i32 = a.lab_head[x86_name_bucket(name)];
+  let i = a.lab_head[x86_name_bucket(name)];
   while (i >= 0) {
     if (a.lab_names[i] == name) {
       return i;
     }
     i = a.lab_next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function x86_label_off(a: X86Asm, name: string): i32 {
-  let i: i32 = x86_label_idx(a, name);
+  let i = x86_label_idx(a, name);
   if (i < 0 || a.lab_secs[i] != 0) {
-    return 0 - 1;
+    return -1;
   }
   return a.lab_offs[i];
 }
 
 function x86_label_off_at(a: X86Asm, idx: i32): i32 {
   if (idx < 0 || a.lab_secs[idx] != 0) {
-    return 0 - 1;
+    return -1;
   }
   return a.lab_offs[idx];
 }
@@ -1204,7 +1204,7 @@ function x86_final_off(a: X86Asm, name: string, padded_text: i32, bss_base: i32)
 
 function x86_final_off_at(a: X86Asm, i: i32, padded_text: i32, bss_base: i32): i32 {
   if (i < 0 || a.lab_secs[i] < 0) {
-    return 0 - 1;
+    return -1;
   }
   if (a.lab_secs[i] == 1 || a.lab_secs[i] == 4) {
     return padded_text + a.lab_offs[i];
@@ -1222,36 +1222,36 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   if (idx >= 0) {
     return x86_final_off_at(a, idx, padded_text, bss_base);
   }
-  let direct: i32 = x86_final_off(a, name, padded_text, bss_base);
+  let direct = x86_final_off(a, name, padded_text, bss_base);
   if (direct >= 0) {
     return direct;
   }
-  let split: i32 = x86_symbol_addend_at(name);
+  let split = x86_symbol_addend_at(name);
   if (split < 0) {
-    return 0 - 1;
+    return -1;
   }
-  let symbol: string = x86_gas_trimmed(slice_unchecked(name, 0, split) + "") + "";
-  let target: i32 = x86_final_off(a, symbol, padded_text, bss_base);
-  let addend: i64 = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()) + "");
+  let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split) + "") + "";
+  let target = x86_final_off(a, symbol, padded_text, bss_base);
+  let addend = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()) + "");
   if (target < 0 || addend < 0) {
-    return 0 - 1;
+    return -1;
   }
   if (name[split] == 45) {
-    addend = 0 - addend;
+    addend = -addend;
   }
-  let value: i64 = target as i64 + addend;
+  let value = target as i64 + addend;
   if (value < 0 as i64 || value > 2147483647i64) {
-    return 0 - 1;
+    return -1;
   }
   return value as i32;
 }
 
 function x86_symbol_addend_at(name: string): i32 {
-  let quoted: boolean = false;
-  let escaped: boolean = false;
-  let i: i32 = 0;
+  let quoted = false;
+  let escaped = false;
+  let i = 0;
   while (i < name.len()) {
-    let c: i32 = name[i] as i32;
+    let c = name[i] as i32;
     if (escaped) {
       escaped = false;
     } else if (quoted && c == 92) {
@@ -1261,9 +1261,9 @@ function x86_symbol_addend_at(name: string): i32 {
     } else if (!quoted && i > 0 && (c == 43 || c == 45)) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_addend_digit(c: i32): i32 {
@@ -1276,13 +1276,13 @@ function x86_addend_digit(c: i32): i32 {
   if (c >= 97 && c <= 102) {
     return c - 87;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_symbol_addend_value(token: string): i64 {
-  let s: str = x86_gas_trimmed(token);
+  let s = x86_gas_trimmed(token);
   let radix: i64 = 10;
-  let i: i32 = 0;
+  let i = 0;
   if (s.len() >= 2 && s[0] == 48) {
     radix = 8;
     i = 1;
@@ -1295,36 +1295,36 @@ function x86_symbol_addend_value(token: string): i64 {
     }
   }
   if (i == s.len()) {
-    return 0 - 1;
+    return -1;
   }
   let value: i64 = 0;
   while (i < s.len()) {
-    let d: i64 = x86_addend_digit(s[i] as i32) as i64;
+    let d = x86_addend_digit(s[i] as i32) as i64;
     if (d < 0 as i64 || d >= radix || value > (2147483647i64 - d) / radix) {
-      return 0 - 1;
+      return -1;
     }
     value = value * radix + d;
-    i = i + 1;
+    i += 1;
   }
   return value;
 }
 
 function x86_queue_rel32_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  let at: i32 = buf_len(a.code) - 4;
+  let at = buf_len(a.code) - 4;
   return x86_queue_fixup_at(a, at, 4, name, idx);
 }
 
 function x86_queue_abs32_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  let at: i32 = buf_len(a.code) - 4;
+  let at = buf_len(a.code) - 4;
   return X86Asm { ...a, afix_offs: a.afix_offs.append(at), afix_names: a.afix_names.append(name), afix_idx: a.afix_idx.append(idx) };
 }
 
 function x86_queue_fixup(own a: X86Asm, at: i32, width: i32, name: string): X86Asm {
-  return x86_queue_fixup_at(a, at, width, name, 0 - 1);
+  return x86_queue_fixup_at(a, at, width, name, -1);
 }
 
 function x86_queue_fixup_at(own a: X86Asm, at: i32, width: i32, name: string, idx: i32): X86Asm {
-  let hi: i32 = idx << 2;
+  let hi = idx << 2;
   if (idx < 0) {
     hi = a.fix_names.len() << 2 | 2;
     a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
@@ -1348,7 +1348,7 @@ function x86_br_count(a: X86Asm): i32 {
 
 function x86_br_idx(a: X86Asm, k: i32): i32 {
   if ((a.br_hi[k] & 2) != 0) {
-    return 0 - 1;
+    return -1;
   }
   return a.br_hi[k] >> 2;
 }
@@ -1365,18 +1365,18 @@ struct LeSplit { lo: i32[], hi: i32[] }
 function x86_le32_split(b: u8[]): LeSplit {
   let lo: i32[] = [];
   let hi: i32[] = [];
-  let i: i32 = 0;
-  let n: i32 = b.len() - 7;
+  let i = 0;
+  let n = b.len() - 7;
   while (i < n) {
     lo = lo.append(b[i] as i32 | b[i + 1] as i32 << 8 | b[i + 2] as i32 << 16 | b[i + 3] as i32 << 24);
     hi = hi.append(b[i + 4] as i32 | b[i + 5] as i32 << 8 | b[i + 6] as i32 << 16 | b[i + 7] as i32 << 24);
-    i = i + 8;
+    i += 8;
   }
   return LeSplit { lo: lo, hi: hi };
 }
 
 function x86_branch_record(own a: X86Asm, at: i32, name: string, idx: i32, short: boolean): X86Asm {
-  let hi: i32 = idx << 2;
+  let hi = idx << 2;
   if (idx < 0) {
     hi = a.br_names.len() << 2 | 2;
     a = X86Asm { ...a, br_names: a.br_names.append(name) };
@@ -1396,25 +1396,25 @@ function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
   buf_push_byte(a.code, 141);
   buf_push_byte(a.code, x86_modrm(0, dst, 5));
   x86_push_arr(a.code, x86_le32([], 0));
-  let patch_off: i32 = buf_len(a.code) - 4;
+  let patch_off = buf_len(a.code) - 4;
   a = x86_queue_fixup(a, patch_off, 4, name);
   return a;
 }
 
 function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
-  return x86_jcc_label_at(a, cc, name, 0 - 1);
+  return x86_jcc_label_at(a, cc, name, -1);
 }
 
 function x86_jcc_label_at(own a: X86Asm, cc: i32, name: string, idx: i32): X86Asm {
   if (a.relaxing) {
     buf_push_byte(a.code, 112 + (cc & 15));
     buf_push_byte(a.code, 0);
-    let at: i32 = buf_len(a.code) - 1;
+    let at = buf_len(a.code) - 1;
     a = x86_queue_fixup_at(a, at, 1, name, idx);
     return x86_branch_record(a, at, name, idx, true);
   }
   x86_push_arr(a.code, x86_jcc_rel32([], cc, 0));
-  let at4: i32 = buf_len(a.code) - 4;
+  let at4 = buf_len(a.code) - 4;
   a = x86_queue_rel32_at(a, name, idx);
   return x86_branch_record(a, at4, name, idx, false);
 }
@@ -1423,12 +1423,12 @@ function x86_jmp_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   if (a.relaxing) {
     buf_push_byte(a.code, 235);
     buf_push_byte(a.code, 0);
-    let at: i32 = buf_len(a.code) - 1;
+    let at = buf_len(a.code) - 1;
     a = x86_queue_fixup_at(a, at, 1, name, idx);
     return x86_branch_record(a, at, name, idx, true);
   }
   x86_push_arr(a.code, x86_jmp_rel32([], 0));
-  let at4: i32 = buf_len(a.code) - 4;
+  let at4 = buf_len(a.code) - 4;
   a = x86_queue_rel32_at(a, name, idx);
   return x86_branch_record(a, at4, name, idx, false);
 }
@@ -1450,7 +1450,7 @@ function x86_jmp_reg(own buf: i32[], reg: i32): i32[] {
 }
 
 function x86_call_label(own a: X86Asm, name: string): X86Asm {
-  return x86_call_label_at(a, name, 0 - 1);
+  return x86_call_label_at(a, name, -1);
 }
 
 function x86_call_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
@@ -1462,7 +1462,7 @@ function x86_gas_is_symbol(tok: string): boolean {
   if (tok.len() == 0) {
     return false;
   }
-  let c: i32 = tok[0] as i32;
+  let c = tok[0] as i32;
   if (c == 45 || c == 36) {
     return false;
   }
@@ -1473,7 +1473,7 @@ function x86_gas_is_symbol(tok: string): boolean {
 }
 
 function x86_rodata_quad_sym_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  let off: i32 = a.rodata.len();
+  let off = a.rodata.len();
   a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, 0) };
   a = X86Asm { ...a, dfix_offs: a.dfix_offs.append(off) };
   a = X86Asm { ...a, dfix_names: a.dfix_names.append(name) };
@@ -1481,7 +1481,7 @@ function x86_rodata_quad_sym_at(own a: X86Asm, name: string, idx: i32): X86Asm {
 }
 
 function x86_relro_quad_sym_at(own a: X86Asm, name: string, idx: i32): X86Asm {
-  let off: i32 = a.rodata.len();
+  let off = a.rodata.len();
   a = X86Asm { ...a, rodata: x86_le64_i64(a.rodata, 0) };
   a = X86Asm { ...a, rfix_offs: a.rfix_offs.append(off) };
   a = X86Asm { ...a, rfix_names: a.rfix_names.append(name) };
@@ -1495,7 +1495,7 @@ pub function x86_relro_gap(own a: X86Asm, gap: i32): X86Asm {
   if (gap == 0 || a.relro_pad == 0) {
     return a;
   }
-  let at: i32 = a.relro_pad;
+  let at = a.relro_pad;
   let data: i32[] = [];
   for i in 0..at {
     data = data.append(a.rodata[i]);
@@ -1506,13 +1506,13 @@ pub function x86_relro_gap(own a: X86Asm, gap: i32): X86Asm {
   for i in at..a.rodata.len() {
     data = data.append(a.rodata[i]);
   }
-  let dfix_offs: i32[] = a.dfix_offs;
+  let dfix_offs = a.dfix_offs;
   for i in 0..dfix_offs.len() {
     if (dfix_offs[i] >= at) {
       dfix_offs = dfix_offs.with(i, dfix_offs[i] + gap);
     }
   }
-  let offs: i32[] = a.lab_offs;
+  let offs = a.lab_offs;
   for i in 0..offs.len() {
     if (a.lab_secs[i] == 1 && offs[i] >= at) {
       offs = offs.with(i, offs[i] + gap);
@@ -1529,22 +1529,22 @@ function x86_fold_relro(own a: X86Asm): X86Asm {
     return a;
   }
   let pad: i32 = (a.relro.len() + 15) / 16 * 16;
-  let data: i32[] = a.relro;
+  let data = a.relro;
   while (data.len() < pad) {
     data = data.append(0);
   }
   for b in a.rodata {
     data = data.append(b);
   }
-  let dfix_offs: i32[] = a.rfix_offs;
-  let dfix_names: string[] = a.rfix_names;
-  let dfix_idx: i32[] = a.rfix_idx;
+  let dfix_offs = a.rfix_offs;
+  let dfix_names = a.rfix_names;
+  let dfix_idx = a.rfix_idx;
   for i in 0..a.dfix_offs.len() {
     dfix_offs = dfix_offs.append(a.dfix_offs[i] + pad);
     dfix_names = dfix_names.append(a.dfix_names[i]);
     dfix_idx = dfix_idx.append(a.dfix_idx[i]);
   }
-  let offs: i32[] = a.lab_offs;
+  let offs = a.lab_offs;
   for i in 0..offs.len() {
     if (a.lab_secs[i] == 1) {
       offs = offs.with(i, offs[i] + pad);
@@ -1568,9 +1568,9 @@ pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
   if (a.data_offset >= 0) {
     return a.data_offset;
   }
-  let end: i32 = text_len;
-  let hdr_len: i32 = x86_unwind_hdr_len(a);
-  let eh_len: i32 = x86_unwind_eh_len(a);
+  let end = text_len;
+  let hdr_len = x86_unwind_hdr_len(a);
+  let eh_len = x86_unwind_eh_len(a);
   if (hdr_len > 0 && eh_len > 0) {
     end = x86_align8(x86_align4(end) + hdr_len) + eh_len;
   }
@@ -1578,49 +1578,49 @@ pub function x86_data_base(a: X86Asm, text_len: i32): i32 {
 }
 
 pub function x86_symbol_addr(a: X86Asm, name: string, text_vaddr: i32): i32 {
-  let padded_text: i32 = x86_data_base(a, a.text.len());
-  let off: i32 = x86_final_off(a, name, padded_text, padded_text + a.rodata.len());
+  let padded_text = x86_data_base(a, a.text.len());
+  let off = x86_final_off(a, name, padded_text, padded_text + a.rodata.len());
   if (off < 0) {
-    return 0 - 1;
+    return -1;
   }
   return text_vaddr + off;
 }
 
 pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
-  let padded_text: i32 = x86_data_base(a, a.text.len());
-  let bss_base: i32 = padded_text + a.rodata.len();
-  let rodata: i32[] = a.rodata;
+  let padded_text = x86_data_base(a, a.text.len());
+  let bss_base = padded_text + a.rodata.len();
+  let rodata = a.rodata;
   a = X86Asm { ...a, rodata: [] };
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.dfix_offs.len()) {
-    let name: string = a.dfix_names[i];
-    let target: i32 = x86_final_target(a, name, a.dfix_idx[i], padded_text, bss_base);
+    let name = a.dfix_names[i];
+    let target = x86_final_target(a, name, a.dfix_idx[i], padded_text, bss_base);
     if (target < 0) {
       a = X86Asm { ...a, unknown: a.unknown.append(".quad " + name) };
     } else {
-      let at: i32 = a.dfix_offs[i];
-      let abs: i64 = text_vaddr as i64 + target as i64;
-      let j: i32 = 0;
+      let at = a.dfix_offs[i];
+      let abs = text_vaddr as i64 + target as i64;
+      let j = 0;
       while (j < 8) {
         rodata = rodata.with(at + j, (abs >> (j * 8) as i64 & 255 as i64) as i32);
-        j = j + 1;
+        j += 1;
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  let text: u8[] = a.text;
+  let text = a.text;
   a = X86Asm { ...a, text: [] };
   i = 0;
   while (i < a.afix_offs.len()) {
-    let name: string = a.afix_names[i];
-    let target: i32 = x86_final_target(a, name, a.afix_idx[i], padded_text, bss_base);
-    let abs: i64 = text_vaddr as i64 + target as i64;
+    let name = a.afix_names[i];
+    let target = x86_final_target(a, name, a.afix_idx[i], padded_text, bss_base);
+    let abs = text_vaddr as i64 + target as i64;
     if (target < 0 || abs > 2147483647i64) {
       a = X86Asm { ...a, unknown: a.unknown.append("imm32 address of " + name) };
     } else {
       text = x86_patch_rel32_bytes(text, a.afix_offs[i], abs as i32);
     }
-    i = i + 1;
+    i += 1;
   }
   return X86Asm { ...a, rodata: rodata, text: text };
 }
@@ -1637,14 +1637,14 @@ function x86_fold_ro(own a: X86Asm): X86Asm {
   if (a.ro.len() == 0) {
     return a;
   }
-  let text: u8[] = a.text;
-  let ro: i32[] = a.ro;
-  let end: i32 = text.len();
+  let text = a.text;
+  let ro = a.ro;
+  let end = text.len();
   a = X86Asm { ...a, text: [], ro: [] };
   while (text.len() % 16 != 0) {
     text = text.append(0 as u8);
   }
-  let base: i32 = text.len();
+  let base = text.len();
   for b in ro {
     text = text.append(b as u8);
   }
@@ -1652,16 +1652,16 @@ function x86_fold_ro(own a: X86Asm): X86Asm {
 }
 
 function x86_take(own a: X86Asm): X86Asm {
-  let code: u8[] = buf_take_bytes(a.code);
+  let code = buf_take_bytes(a.code);
   buf_free(a.code);
   a = X86Asm { ...a, code: 0 as usize, text: code };
   if (a.fixq != 0 as usize) {
-    let fq: u8[] = buf_take_bytes(a.fixq);
+    let fq = buf_take_bytes(a.fixq);
     buf_free(a.fixq);
     a = X86Asm { ...a, fixq: 0 as usize, fixes: fq };
   }
   if (a.brq != 0 as usize) {
-    let bq: LeSplit = x86_le32_split(buf_take_bytes(a.brq));
+    let bq = x86_le32_split(buf_take_bytes(a.brq));
     buf_free(a.brq);
     a = X86Asm { ...a, brq: 0 as usize, br_offs: bq.lo, br_hi: bq.hi };
   }
@@ -1673,31 +1673,31 @@ function x86_patch(own a: X86Asm): X86Asm {
     a = X86Asm { ...a, rodata: a.rodata.append(0) };
   }
   a = x86_fold_relro(x86_fold_ro(a));
-  let padded_text: i32 = x86_data_base(a, a.text.len());
-  let bss_base: i32 = padded_text + a.rodata.len();
-  let code: u8[] = a.text;
-  let fq: u8[] = a.fixes;
+  let padded_text = x86_data_base(a, a.text.len());
+  let bss_base = padded_text + a.rodata.len();
+  let code = a.text;
+  let fq = a.fixes;
   a = X86Asm { ...a, text: [], fixes: [] };
-  let nfix: i32 = fq.len() / 8;
-  let i: i32 = 0;
+  let nfix = fq.len() / 8;
+  let i = 0;
   while (i < nfix) {
-    let at: i32 = 8 * i;
-    let patch_off: i32 = fq[at] as i32 | fq[at + 1] as i32 << 8 | fq[at + 2] as i32 << 16 | fq[at + 3] as i32 << 24;
-    let hi: i32 = fq[at + 4] as i32 | fq[at + 5] as i32 << 8 | fq[at + 6] as i32 << 16 | fq[at + 7] as i32 << 24;
-    let idx: i32 = hi >> 2;
-    let name: string = "";
+    let at = 8 * i;
+    let patch_off = fq[at] as i32 | fq[at + 1] as i32 << 8 | fq[at + 2] as i32 << 16 | fq[at + 3] as i32 << 24;
+    let hi = fq[at + 4] as i32 | fq[at + 5] as i32 << 8 | fq[at + 6] as i32 << 16 | fq[at + 7] as i32 << 24;
+    let idx = hi >> 2;
+    let name = "";
     if ((hi & 2) != 0) {
       name = a.fix_names[idx];
-      idx = 0 - 1;
+      idx = -1;
     } else if (idx < a.lab_names.len()) {
       name = a.lab_names[idx];
     }
-    let target: i32 = x86_final_target(a, name, idx, padded_text, bss_base);
+    let target = x86_final_target(a, name, idx, padded_text, bss_base);
     if (target < 0) {
       a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + name) };
     } else if ((hi & 1) != 0) {
-      let rel8: i32 = target - (patch_off + 1);
-      if (rel8 < 0 - 128 || rel8 > 127) {
+      let rel8 = target - (patch_off + 1);
+      if (rel8 < -128 || rel8 > 127) {
         a = X86Asm { ...a, unknown: a.unknown.append("rel8 out of range for " + name) };
       } else {
         code = code.with(patch_off, (rel8 & 255) as u8);
@@ -1705,54 +1705,54 @@ function x86_patch(own a: X86Asm): X86Asm {
     } else {
       code = x86_patch_rel32_bytes(code, patch_off, x86_rel_to(target, patch_off) - x86_fix_tail(a, patch_off));
     }
-    i = i + 1;
+    i += 1;
   }
   return X86Asm { ...a, text: code };
 }
 
 function x86_str_indexof(s: string, sub: string): i32 {
-  let n: i32 = s.len();
-  let m: i32 = sub.len();
+  let n = s.len();
+  let m = sub.len();
   if (m == 0) {
     return 0;
   }
   if (m > n) {
-    return 0 - 1;
+    return -1;
   }
-  let c0: u8 = sub[0];
+  let c0 = sub[0];
   if (m == 1) {
     return __memchr(s, c0 as i32, 0);
   }
-  let last: i32 = n - m;
-  let i: i32 = 0;
+  let last = n - m;
+  let i = 0;
   while (i <= last) {
     i = __memchr(s, c0 as i32, i);
     if (i < 0 || i > last) {
-      return 0 - 1;
+      return -1;
     }
-    let j: i32 = 1;
+    let j = 1;
     while (j < m && s[i + j] == sub[j]) {
-      j = j + 1;
+      j += 1;
     }
     if (j == m) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_str_starts_with(s: string, pre: string): boolean {
-  let m: i32 = pre.len();
+  let m = pre.len();
   if (m > s.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < m) {
     if (s[i] != pre[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -1767,31 +1767,31 @@ function x86_gas_has_paren(s: string): boolean {
 
 function x86_str_split(s: string, sep: string): string[] {
   let out: string[] = [];
-  let m: i32 = sep.len();
+  let m = sep.len();
   if (m == 0) {
     out = out.append(s);
     return out;
   }
-  let n: i32 = s.len();
-  let c0: u8 = sep[0];
-  let last: i32 = n - m;
-  let start: i32 = 0;
-  let i: i32 = 0;
+  let n = s.len();
+  let c0 = sep[0];
+  let last = n - m;
+  let start = 0;
+  let i = 0;
   while (i <= last) {
     i = __memchr(s, c0 as i32, i);
     if (i < 0 || i > last) {
       break;
     }
-    let j: i32 = 1;
+    let j = 1;
     while (j < m && s[i + j] == sep[j]) {
-      j = j + 1;
+      j += 1;
     }
     if (j == m) {
       out = out.append(slice_unchecked(s, start, i) + "");
-      i = i + m;
+      i += m;
       start = i;
     } else {
-      i = i + 1;
+      i += 1;
     }
   }
   out = out.append(slice_unchecked(s, start, n) + "");
@@ -1810,67 +1810,67 @@ struct GasMem {
 }
 
 function x86_gas_trim(s: string): string {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
-    b = b - 1;
+    b -= 1;
   }
   return slice_unchecked(s, a, b) + "";
 }
 
 function x86_gas_trimmed(s: str): str {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t')) {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t')) {
-    b = b - 1;
+    b -= 1;
   }
   return slice_unchecked(s, a, b);
 }
 
 function x86_gas_reg_decode(tok: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   if (tok.len() > 0 && tok[0] == b'%') {
     i = 1;
   }
-  let n: i32 = tok.len() - i;
+  let n = tok.len() - i;
   if (n >= 2 && tok[i] == b'r' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9') {
     return x86_gas_reg_numbered(tok, i + 1);
   }
   if (n == 2) {
     if (tok[i + 1] == b'l') {
-      let low: i32 = x86_gas_reg_pair(tok[i], b'x');
+      let low = x86_gas_reg_pair(tok[i], b'x');
       if (low >= 0 && low < 4) {
         return 8 * 16 + low;
       }
-      return 0 - 1;
+      return -1;
     }
-    let word: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
+    let word = x86_gas_reg_pair(tok[i], tok[i + 1]);
     if (word >= 0) {
       return 16 * 16 + word;
     }
-    return 0 - 1;
+    return -1;
   }
   if (n != 3) {
-    return 0 - 1;
+    return -1;
   }
-  let tail: i32 = x86_gas_reg_pair(tok[i + 1], tok[i + 2]);
+  let tail = x86_gas_reg_pair(tok[i + 1], tok[i + 2]);
   if (tail >= 0 && tok[i] == b'r') {
     return 64 * 16 + tail;
   }
   if (tail >= 0 && tok[i] == b'e') {
     return 32 * 16 + tail;
   }
-  let head: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
+  let head = x86_gas_reg_pair(tok[i], tok[i + 1]);
   if (head >= 4 && tok[i + 2] == b'l') {
     return 8 * 16 + head;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_gas_reg_pair(a: u8, b: u8): i32 {
@@ -1887,7 +1887,7 @@ function x86_gas_reg_pair(a: u8, b: u8): i32 {
     if (a == b'b') {
       return 3;
     }
-    return 0 - 1;
+    return -1;
   }
   if (a == b's' && b == b'p') {
     return 4;
@@ -1901,27 +1901,27 @@ function x86_gas_reg_pair(a: u8, b: u8): i32 {
   if (a == b'd' && b == b'i') {
     return 7;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_gas_reg_numbered(tok: string, at: i32): i32 {
-  let j: i32 = at;
-  let num: i32 = 0 - 1;
+  let j = at;
+  let num: i32 = -1;
   if (tok[j] == b'8' || tok[j] == b'9') {
     num = tok[j] as i32 - 48;
-    j = j + 1;
+    j += 1;
   } else if (tok[j] == b'1' && j + 1 < tok.len() && tok[j + 1] >= b'0' && tok[j + 1] <= b'5') {
     num = tok[j + 1] as i32 - 38;
-    j = j + 2;
+    j += 2;
   }
   if (num < 0) {
-    return 0 - 1;
+    return -1;
   }
   if (j == tok.len()) {
     return 64 * 16 + num;
   }
   if (j + 1 != tok.len()) {
-    return 0 - 1;
+    return -1;
   }
   if (tok[j] == b'd') {
     return 32 * 16 + num;
@@ -1932,23 +1932,23 @@ function x86_gas_reg_numbered(tok: string, at: i32): i32 {
   if (tok[j] == b'b') {
     return 8 * 16 + num;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_gas_reg_sized(tok: string, width: i32): i32 {
-  let r: i32 = x86_gas_reg_decode(tok);
+  let r = x86_gas_reg_decode(tok);
   if (r >= 0 && r / 16 == width) {
     return r % 16;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_gas_reg(tok: string): i32 {
-  let r: i32 = x86_gas_reg_decode(tok);
+  let r = x86_gas_reg_decode(tok);
   if (r >= 0 && (r / 16 == 64 || r / 16 == 32)) {
     return r % 16;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_gas_reg8(tok: string): i32 {
@@ -1984,7 +1984,7 @@ function x86_gas_suffix_size(mnem: string): i32 {
   if (mnem.len() < 2) {
     return 0;
   }
-  let c: u8 = mnem[mnem.len() - 1];
+  let c = mnem[mnem.len() - 1];
   if (c == b'b') {
     return 8;
   }
@@ -2005,7 +2005,7 @@ function x86_gas_strip_suffix(mnem: string): string {
 }
 
 function x86_gas_is_xmm(tok: string): boolean {
-  let at: i32 = 0;
+  let at = 0;
   if (tok.len() > 0 && tok[0] == b'%') {
     at = 1;
   }
@@ -2013,53 +2013,53 @@ function x86_gas_is_xmm(tok: string): boolean {
 }
 
 function x86_gas_xmm(tok: string): i32 {
-  let s: string = tok;
+  let s = tok;
   if (s.len() > 0 && s[0] == b'%') {
     s = slice_unchecked(s, 1, s.len()) + "";
   }
   if (s.len() < 4) {
-    return 0 - 1;
+    return -1;
   }
   if (s[0] != b'x' || s[1] != b'm' || s[2] != b'm') {
-    return 0 - 1;
+    return -1;
   }
-  let v: i32 = 0;
-  let i: i32 = 3;
+  let v = 0;
+  let i = 3;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c >= 48 && c <= 57) {
       v = v * 10 + (c - 48);
     }
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function x86_gas_ymm(tok: string): i32 {
-  let s: string = tok;
+  let s = tok;
   if (s.len() > 0 && s[0] == b'%') {
     s = slice_unchecked(s, 1, s.len()) + "";
   }
   if (s.len() < 4) {
-    return 0 - 1;
+    return -1;
   }
   if (s[0] != b'y' || s[1] != b'm' || s[2] != b'm') {
-    return 0 - 1;
+    return -1;
   }
-  let v: i32 = 0;
-  let i: i32 = 3;
+  let v = 0;
+  let i = 3;
   while (i < s.len()) {
-    let c: i32 = s[i] as i32;
+    let c = s[i] as i32;
     if (c >= 48 && c <= 57) {
       v = v * 10 + (c - 48);
     }
-    i = i + 1;
+    i += 1;
   }
   return v;
 }
 
 function x86_gas_vreg(tok: string): i32 {
-  let y: i32 = x86_gas_ymm(tok);
+  let y = x86_gas_ymm(tok);
   if (y >= 0) {
     return y + 16;
   }
@@ -2075,13 +2075,13 @@ const PF64_HEAD: i32 = 512;
 const PF64_CAP: i32 = 2560;
 
 function pf64_halve(own buf: i32[], lo: i32, hi: i32): i32[] {
-  let r: i32 = 0;
-  let i: i32 = lo;
+  let r = 0;
+  let i = lo;
   while (i < hi) {
-    let cur: i32 = r * 10 + buf[i];
+    let cur = r * 10 + buf[i];
     buf = buf.with(i, cur / 2);
     r = cur % 2;
-    i = i + 1;
+    i += 1;
   }
   if (r != 0) {
     buf = buf.with(hi, 5);
@@ -2090,13 +2090,13 @@ function pf64_halve(own buf: i32[], lo: i32, hi: i32): i32[] {
 }
 
 function pf64_double(own buf: i32[], lo: i32, hi: i32): i32[] {
-  let carry: i32 = 0;
-  let j: i32 = hi - 1;
+  let carry = 0;
+  let j = hi - 1;
   while (j >= lo) {
-    let cur: i32 = buf[j] * 2 + carry;
+    let cur = buf[j] * 2 + carry;
     buf = buf.with(j, cur % 10);
     carry = cur / 10;
-    j = j - 1;
+    j -= 1;
   }
   return buf.with(lo - 1, carry);
 }
@@ -2109,16 +2109,16 @@ function pf64_top_bit(buf: i32[], lo: i32): i64 {
 }
 
 function pf64_trim(buf: i32[], lo: i32, hi: i32): i32 {
-  let h: i32 = hi;
+  let h = hi;
   while (h > lo && buf[h - 1] == 0) {
-    h = h - 1;
+    h -= 1;
   }
   return h;
 }
 
 function parse_f64_bits(s: string): i64 {
-  let i: i32 = 0;
-  let neg: boolean = false;
+  let i = 0;
+  let neg = false;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
@@ -2130,68 +2130,68 @@ function parse_f64_bits(s: string): i64 {
     let one: i64 = 1;
     signbit = one << 63;
   }
-  let buf: i32[] = __alloc_i32(PF64_CAP);
-  let lo: i32 = PF64_HEAD;
-  let hi: i32 = PF64_HEAD;
-  let dp: i32 = 0;
-  let sticky: boolean = false;
-  let started: boolean = false;
+  let buf = __alloc_i32(PF64_CAP);
+  let lo = PF64_HEAD;
+  let hi = PF64_HEAD;
+  let dp = 0;
+  let sticky = false;
+  let started = false;
   while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-    let d: i32 = s[i] as i32 - 48;
+    let d = s[i] as i32 - 48;
     if (started || d != 0) {
       started = true;
       if (hi - lo < PF64_DIGITS) {
         buf = buf.with(hi, d);
-        hi = hi + 1;
+        hi += 1;
       } else {
         if (d != 0) {
           sticky = true;
         }
       }
-      dp = dp + 1;
+      dp += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (i < s.len() && s[i] == b'.') {
-    i = i + 1;
+    i += 1;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
-      let fd: i32 = s[i] as i32 - 48;
+      let fd = s[i] as i32 - 48;
       if (started || fd != 0) {
         started = true;
         if (hi - lo < PF64_DIGITS) {
           buf = buf.with(hi, fd);
-          hi = hi + 1;
+          hi += 1;
         } else {
           if (fd != 0) {
             sticky = true;
           }
         }
       } else {
-        dp = dp - 1;
+        dp -= 1;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   if (i < s.len() && (s[i] == b'e' || s[i] == b'E')) {
-    i = i + 1;
-    let eneg: boolean = false;
+    i += 1;
+    let eneg = false;
     if (i < s.len() && s[i] == b'-') {
       eneg = true;
-      i = i + 1;
+      i += 1;
     } else if (i < s.len() && s[i] == b'+') {
-      i = i + 1;
+      i += 1;
     }
-    let exp: i32 = 0;
+    let exp = 0;
     while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
       if (exp < 100000) {
         exp = exp * 10 + (s[i] as i32 - 48);
       }
-      i = i + 1;
+      i += 1;
     }
     if (eneg) {
-      dp = dp - exp;
+      dp -= exp;
     } else {
-      dp = dp + exp;
+      dp += exp;
     }
   }
   hi = pf64_trim(buf, lo, hi);
@@ -2202,43 +2202,43 @@ function parse_f64_bits(s: string): i64 {
     let inf: i64 = 2047;
     return signbit | inf << 52;
   }
-  if (dp < 0 - 350) {
+  if (dp < -350) {
     return signbit;
   }
-  let bexp: i32 = 0;
+  let bexp = 0;
   while (dp > 0) {
-    let lead_zero: boolean = buf[lo] < 2;
-    let odd: boolean = buf[hi - 1] % 2 == 1;
+    let lead_zero = buf[lo] < 2;
+    let odd = buf[hi - 1] % 2 == 1;
     buf = pf64_halve(buf, lo, hi);
     if (odd) {
-      hi = hi + 1;
+      hi += 1;
     }
     if (lead_zero) {
-      lo = lo + 1;
-      dp = dp - 1;
+      lo += 1;
+      dp -= 1;
     }
-    bexp = bexp + 1;
+    bexp += 1;
     hi = pf64_trim(buf, lo, hi);
   }
   while (dp < 0 || hi > lo && buf[lo] < 5) {
-    let carry: boolean = buf[lo] >= 5;
+    let carry = buf[lo] >= 5;
     buf = pf64_double(buf, lo, hi);
     if (carry) {
-      lo = lo - 1;
-      dp = dp + 1;
+      lo -= 1;
+      dp += 1;
     }
-    bexp = bexp - 1;
+    bexp -= 1;
     hi = pf64_trim(buf, lo, hi);
     if (hi == lo) {
       return signbit;
     }
   }
-  let e: i32 = bexp + 1022;
+  let e = bexp + 1022;
   if (e >= 2047) {
     let inf2: i64 = 2047;
     return signbit | inf2 << 52;
   }
-  let nbits: i32 = 53;
+  let nbits = 53;
   if (e <= 0) {
     nbits = 52 + e;
   }
@@ -2246,17 +2246,17 @@ function parse_f64_bits(s: string): i64 {
     return signbit;
   }
   let mant: i64 = 0;
-  let k2: i32 = 0;
+  let k2 = 0;
   while (k2 < nbits) {
     mant = mant * 2 + pf64_top_bit(buf, lo);
     buf = pf64_double(buf, lo, hi);
-    k2 = k2 + 1;
+    k2 += 1;
   }
-  let roundbit: i64 = pf64_top_bit(buf, lo);
+  let roundbit = pf64_top_bit(buf, lo);
   buf = pf64_double(buf, lo, hi);
-  let st: boolean = sticky || pf64_trim(buf, lo, hi) > lo;
+  let st = sticky || pf64_trim(buf, lo, hi) > lo;
   if (roundbit == 1 && (st || (mant & 1) == 1)) {
-    mant = mant + 1;
+    mant += 1;
   }
   if (e <= 0) {
     return signbit | mant;
@@ -2264,8 +2264,8 @@ function parse_f64_bits(s: string): i64 {
   let full: i64 = 1;
   full = full << 53;
   if (mant == full) {
-    mant = mant / 2;
-    e = e + 1;
+    mant /= 2;
+    e += 1;
     if (e >= 2047) {
       let inf3: i64 = 2047;
       return signbit | inf3 << 52;
@@ -2281,7 +2281,7 @@ function x86_gas_parse_f64(s: string): f64 {
 }
 
 function x86_gas_escape(line: string, i: i32): (i32, i32) {
-  let e: i32 = line[i + 1] as i32;
+  let e = line[i + 1] as i32;
   if (e == 110) {
     return (10, 2);
   }
@@ -2292,15 +2292,15 @@ function x86_gas_escape(line: string, i: i32): (i32, i32) {
     return (13, 2);
   }
   if (e >= 48 && e <= 55) {
-    let v: i32 = e - 48;
-    let n: i32 = 2;
+    let v = e - 48;
+    let n = 2;
     while (n < 4 && i + n < line.len()) {
-      let d: i32 = line[i + n] as i32;
+      let d = line[i + n] as i32;
       if (d < 48 || d > 55) {
         break;
       }
       v = v * 8 + (d - 48);
-      n = n + 1;
+      n += 1;
     }
     return (v & 255, n);
   }
@@ -2308,13 +2308,13 @@ function x86_gas_escape(line: string, i: i32): (i32, i32) {
 }
 
 function x86_gas_ascii(own buf: i32[], line: string): i32[] {
-  let q1: i32 = x86_str_indexof(line, "\"");
+  let q1 = x86_str_indexof(line, "\"");
   if (q1 < 0) {
     return buf;
   }
-  let i: i32 = q1 + 1;
+  let i = q1 + 1;
   while (i < line.len()) {
-    let c: i32 = line[i] as i32;
+    let c = line[i] as i32;
     if (c == 34) {
       return buf;
     }
@@ -2324,28 +2324,28 @@ function x86_gas_ascii(own buf: i32[], line: string): i32[] {
       i = i + span - 1;
     }
     buf = buf.append(c & 255);
-    i = i + 1;
+    i += 1;
   }
   return buf;
 }
 
 function x86_gas_atoi(tok: string): i32 {
-  let s: string = tok;
-  let i: i32 = 0;
+  let s = tok;
+  let i = 0;
   if (s.len() > 0 && s[0] == b'$') {
     i = 1;
   }
-  let neg: boolean = false;
+  let neg = false;
   if (i < s.len() && s[i] == b'-') {
     neg = true;
-    i = i + 1;
+    i += 1;
   }
-  let v: i32 = 0;
+  let v = 0;
   if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
-    i = i + 2;
+    i += 2;
     while (i < s.len()) {
-      let c: i32 = s[i] as i32;
-      let d: i32 = 0 - 1;
+      let c = s[i] as i32;
+      let d: i32 = -1;
       if (c >= 48 && c <= 57) {
         d = c - 48;
       } else {
@@ -2360,40 +2360,40 @@ function x86_gas_atoi(tok: string): i32 {
       if (d >= 0) {
         v = v * 16 + d;
       }
-      i = i + 1;
+      i += 1;
     }
   } else {
     while (i < s.len()) {
-      let c: i32 = s[i] as i32;
+      let c = s[i] as i32;
       if (c >= 48 && c <= 57) {
         v = v * 10 + (c - 48);
       }
-      i = i + 1;
+      i += 1;
     }
   }
   if (neg) {
-    return 0 - v;
+    return -v;
   }
   return v;
 }
 
 function x86_gas_atoi64(tok: string): i64 {
-  let s: string = tok;
+  let s = tok;
   if (s.len() > 0 && s[0] == b'$') {
     s = slice_unchecked(s, 1, s.len()) + "";
   }
-  let neg: boolean = false;
-  let i: i32 = 0;
+  let neg = false;
+  let i = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   }
   let v: i64 = 0;
   if (i + 1 < s.len() && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')) {
-    i = i + 2;
+    i += 2;
     while (i < s.len()) {
-      let c: i32 = s[i] as i32;
-      let d: i32 = 0 - 1;
+      let c = s[i] as i32;
+      let d: i32 = -1;
       if (c >= 48 && c <= 57) {
         d = c - 48;
       } else {
@@ -2408,67 +2408,67 @@ function x86_gas_atoi64(tok: string): i64 {
       if (d >= 0) {
         v = v * 16 + d as i64;
       }
-      i = i + 1;
+      i += 1;
     }
   } else {
     while (i < s.len()) {
-      let c: i32 = s[i] as i32;
+      let c = s[i] as i32;
       if (c >= 48 && c <= 57) {
         v = v * 10 + (c - 48) as i64;
       }
-      i = i + 1;
+      i += 1;
     }
   }
   if (neg) {
-    return 0 - v;
+    return -v;
   }
   return v;
 }
 
 function x86_gas_parse_mem(op: string): GasMem {
-  let lp: i32 = x86_str_indexof(op, "(");
+  let lp = x86_str_indexof(op, "(");
   if (lp < 0) {
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(op), disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
   }
-  let disp_str: str = slice_unchecked(op, 0, lp);
-  let inner: str = slice_unchecked(op, lp + 1, op.len() - 1);
+  let disp_str = slice_unchecked(op, 0, lp);
+  let inner = slice_unchecked(op, lp + 1, op.len() - 1);
   if (inner == "%rip") {
     return GasMem { is_rip: true, label: disp_str + "", base: 0, disp: 0, has_index: false, index: 0, scale: 1, no_base: false };
   }
-  let d: i32 = 0;
+  let d = 0;
   if (disp_str.len() > 0) {
     d = x86_gas_atoi(disp_str);
   }
-  let c1: i32 = x86_str_indexof(inner, ",");
+  let c1 = x86_str_indexof(inner, ",");
   if (c1 < 0) {
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(x86_gas_trimmed(inner)), disp: d, has_index: false, index: 0, scale: 1, no_base: false };
   }
-  let b0: str = x86_gas_trimmed(slice_unchecked(inner, 0, c1));
-  let after: str = slice_unchecked(inner, c1 + 1, inner.len());
-  let c2: i32 = x86_str_indexof(after, ",");
+  let b0 = x86_gas_trimmed(slice_unchecked(inner, 0, c1));
+  let after = slice_unchecked(inner, c1 + 1, inner.len());
+  let c2 = x86_str_indexof(after, ",");
   if (c2 < 0) {
     return GasMem { is_rip: false, label: "", base: x86_gas_reg(b0), disp: d, has_index: true, index: x86_gas_reg(x86_gas_trimmed(after)), scale: 1, no_base: b0.len() == 0 };
   }
-  let ix: i32 = x86_gas_reg(x86_gas_trimmed(slice_unchecked(after, 0, c2)));
-  let scale_str: str = slice_unchecked(after, c2 + 1, after.len());
-  let c3: i32 = x86_str_indexof(scale_str, ",");
+  let ix = x86_gas_reg(x86_gas_trimmed(slice_unchecked(after, 0, c2)));
+  let scale_str = slice_unchecked(after, c2 + 1, after.len());
+  let c3 = x86_str_indexof(scale_str, ",");
   if (c3 >= 0) {
     scale_str = slice_unchecked(scale_str, 0, c3);
   }
-  let sc: i32 = x86_gas_atoi(x86_gas_trimmed(scale_str));
+  let sc = x86_gas_atoi(x86_gas_trimmed(scale_str));
   return GasMem { is_rip: false, label: "", base: x86_gas_reg(b0), disp: d, has_index: true, index: ix, scale: sc, no_base: b0.len() == 0 };
 }
 
 function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
-  let src_xmm: boolean = x86_gas_is_xmm(src);
-  let dst_xmm: boolean = x86_gas_is_xmm(dst);
+  let src_xmm = x86_gas_is_xmm(src);
+  let dst_xmm = x86_gas_is_xmm(dst);
   if (dst_xmm && src_xmm) {
     x86_push_arr(a.code, x86_sse_any_rr([], 243, 126, x86_gas_xmm(dst), x86_gas_xmm(src)));
     return a;
   }
   if (dst_xmm && !src_xmm) {
     if (x86_gas_has_paren(src)) {
-      let xm: GasMem = x86_gas_parse_mem(src);
+      let xm = x86_gas_parse_mem(src);
       if (!x86_gas_mem_ok(xm)) {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
       }
@@ -2478,7 +2478,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
       buf_push_byte(a.code, 110);
       return x86_gas_membytes(a, x86_gas_xmm(dst), xm, 0);
     }
-    let gs: i32 = x86_gas_reg(src);
+    let gs = x86_gas_reg(src);
     if (gs < 0) {
       return x86_gas_bad(a, "movq " + src + ", " + dst);
     }
@@ -2487,7 +2487,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
   }
   if (src_xmm && !dst_xmm) {
     if (x86_gas_has_paren(dst)) {
-      let xm2: GasMem = x86_gas_parse_mem(dst);
+      let xm2 = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(xm2)) {
         return x86_gas_bad(a, "movq " + src + ", " + dst);
       }
@@ -2497,7 +2497,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
       buf_push_byte(a.code, 126);
       return x86_gas_membytes(a, x86_gas_xmm(src), xm2, 0);
     }
-    let gd: i32 = x86_gas_reg(dst);
+    let gd = x86_gas_reg(dst);
     if (gd < 0) {
       return x86_gas_bad(a, "movq " + src + ", " + dst);
     }
@@ -2508,24 +2508,24 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
 }
 
 function x86_gas_top_comma(s: string): i32 {
-  let depth: i32 = 0;
-  let i: i32 = 0;
+  let depth = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: u8 = s[i];
+    let c = s[i];
     if (c == b'(') {
-      depth = depth + 1;
+      depth += 1;
     } else {
       if (c == b')') {
-        depth = depth - 1;
+        depth -= 1;
       } else {
         if (c == b',' && depth == 0) {
           return i;
         }
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 // BEGIN GENERATED NAMED VOCABULARY (cmd/x86tblgen) — do not edit by hand.
@@ -2547,7 +2547,7 @@ function x86_gas_rep_pfx(mnem: string): i32 {
       return 242;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2576,7 +2576,7 @@ function x86_gas_lea_size(mnem: string): i32 {
       return 16;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2596,7 +2596,7 @@ function x86_gas_mov_size(mnem: string): i32 {
       return 64;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2640,7 +2640,7 @@ function x86_gas_extend_op(mnem: string): i32 {
       return 48904;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2692,7 +2692,7 @@ function x86_gas_bitscan_op(mnem: string): i32 {
       return 15972353;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2706,7 +2706,7 @@ function x86_gas_shld_op(mnem: string): i32 {
       return 172;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2724,7 +2724,7 @@ function x86_gas_rmw_op(mnem: string): i32 {
       return 176;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2756,7 +2756,7 @@ function x86_gas_mov10_pfx(mnem: string): i32 {
       return 102;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2770,7 +2770,7 @@ function x86_gas_movdq_pfx(mnem: string): i32 {
       return 102;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2796,7 +2796,7 @@ function x86_gas_cvt2s_op(mnem: string): i32 {
       return 62208;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2842,7 +2842,7 @@ function x86_gas_cvt2si(mnem: string): i32 {
       return 62253;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2877,7 +2877,7 @@ function x86_gas_imm3a_op(mnem: string): i32 {
       return 15;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2900,7 +2900,7 @@ function x86_gas_shuf_op(mnem: string): i32 {
       return 26306;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2925,7 +2925,7 @@ function x86_gas_movmsk_op(mnem: string): i32 {
       return 26192;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -2965,7 +2965,7 @@ function x86_gas_vshift_op(mnem: string): i32 {
       return 1907;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3014,7 +3014,7 @@ function x86_gas_sse38_op(mnem: string): i32 {
       return 221;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3022,11 +3022,11 @@ function x86_gas_sse38_op(mnem: string): i32 {
 // END GENERATED NAMED VOCABULARY
 
 function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: string): X86Asm {
-  let w: i32 = 0;
+  let w = 0;
   if (size == 64) {
     w = 1;
   }
-  let d: i32 = x86_gas_reg_w(dst, size);
+  let d = x86_gas_reg_w(dst, size);
   if (d < 0) {
     return x86_gas_bad(a, "movext " + src + ", " + dst);
   }
@@ -3034,7 +3034,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     x86_push_arr(a.code, x86_osz([], 16));
   }
   if (x86_gas_has_paren(src)) {
-    let m: GasMem = x86_gas_parse_mem(src);
+    let m = x86_gas_parse_mem(src);
     if (m.no_base) {
       return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) };
     }
@@ -3044,7 +3044,7 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     x86_push_arr(a.code, x86_movext_mem([], op, w, d, m.base, m.has_index, m.index, m.scale, m.disp));
     return a;
   }
-  let sr: i32 = x86_gas_reg8(src);
+  let sr = x86_gas_reg8(src);
   if (op == 191 || op == 183) {
     sr = x86_gas_reg16(src);
   }
@@ -3073,15 +3073,15 @@ function x86_gas_mem_ok(m: GasMem): boolean {
 }
 
 function x86_gas_mem_rex(own buf: i32[], size: i32, reg: i32, m: GasMem, force8: boolean): i32[] {
-  let ix: i32 = 0;
-  let bs: i32 = 0;
+  let ix = 0;
+  let bs = 0;
   if (!m.is_rip) {
     if (m.has_index) {
       ix = m.index;
     }
     bs = m.base;
   }
-  let rex: i32 = x86_rex(x86_rex_w_of(size), reg, ix, bs);
+  let rex = x86_rex(x86_rex_w_of(size), reg, ix, bs);
   if (rex != 64 || force8) {
     buf = buf.append(rex);
   }
@@ -3092,7 +3092,7 @@ function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm
   if (m.is_rip) {
     buf_push_byte(a.code, x86_modrm(0, reg, 5));
     x86_push_arr(a.code, x86_le32([], 0));
-    let patch_off: i32 = buf_len(a.code) - 4;
+    let patch_off = buf_len(a.code) - 4;
     if (tail > 0) {
       a = x86_queue_fixup(a, patch_off, 4, m.label);
       a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
@@ -3137,7 +3137,7 @@ pub function x86_rec_mov_rr(size: i32, dst: i32, src: i32): i32[] {
 }
 
 pub function x86_rec_mov_rm(size: i32, load: boolean, reg: i32, base: i32, disp: i32): i32[] {
-  let op: i32 = 136;
+  let op = 136;
   if (load) {
     op = 138;
   }
@@ -3162,7 +3162,7 @@ pub function x86_rec_alu_ima(ext: i32, size: i32, base: i32, disp: i32): i32[] {
 
 pub function x86_rec_alu_im(ext: i32, size: i32, imm: i32, base: i32, disp: i32): i32[] {
   if (size == 8 || x86_imm_fits8(imm)) {
-    let opi: i32 = 131;
+    let opi = 131;
     if (size == 8) {
       opi = 128;
     }
@@ -3172,7 +3172,7 @@ pub function x86_rec_alu_im(ext: i32, size: i32, imm: i32, base: i32, disp: i32)
 }
 
 pub function x86_rec_alu_rm(ext: i32, size: i32, load: boolean, reg: i32, base: i32, disp: i32): i32[] {
-  let op: i32 = ext * 8;
+  let op = ext * 8;
   if (load) {
     op = op | 2;
   }
@@ -3224,11 +3224,11 @@ pub function x86_rec_movslq_rr(dst: i32, src: i32): i32[] {
 }
 
 pub function x86_rec_mov_rmi(size: i32, load: boolean, reg: i32, base: i32, index: i32, scale: i32, disp: i32): i32[] {
-  let op: i32 = 136;
+  let op = 136;
   if (load) {
     op = 138;
   }
-  let m: GasMem = GasMem { is_rip: false, label: "", base: base, disp: disp, has_index: true, index: index, scale: scale, no_base: false };
+  let m = GasMem { is_rip: false, label: "", base: base, disp: disp, has_index: true, index: index, scale: scale, no_base: false };
   return x86_mem_op_bytes([], size, false, x86_opsel(op, size), reg, m, x86_rex8_force(size, reg));
 }
 
@@ -3240,7 +3240,7 @@ pub function x86_rec_mov_ir(size: i32, imm: i32, dst: i32): i32[] {
   if (size == 64) {
     return x86_mov_r64_imm32([], dst, imm);
   }
-  let b: i32[] = x86_rex_r(x86_osz([], size), size, dst);
+  let b = x86_rex_r(x86_osz([], size), size, dst);
   b = b.append(184 + (dst & 7));
   return x86_imm_wide(b, size, imm);
 }
@@ -3257,29 +3257,29 @@ pub function x86_rec_mov(size: i32, src: string, dst: string): i32[] {
   if (src.len() == 0 || src[0] == b'$' || x86_gas_is_xmm(src) || x86_gas_is_xmm(dst)) {
     return [];
   }
-  let src_mem: boolean = x86_gas_has_paren(src);
-  let dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem = x86_gas_has_paren(src);
+  let dst_mem = x86_gas_has_paren(dst);
   if (src_mem && dst_mem) {
     return [];
   }
   if (src_mem || dst_mem) {
-    let mt: string = dst;
-    let rt: string = src;
-    let op: i32 = 136;
+    let mt = dst;
+    let rt = src;
+    let op = 136;
     if (src_mem) {
       mt = src;
       rt = dst;
       op = 138;
     }
-    let m: GasMem = x86_gas_parse_mem(mt);
-    let r: i32 = x86_gas_reg_w(rt, size);
+    let m = x86_gas_parse_mem(mt);
+    let r = x86_gas_reg_w(rt, size);
     if (!x86_gas_mem_ok(m) || m.is_rip || r < 0) {
       return [];
     }
     return x86_mem_op_bytes([], size, false, x86_opsel(op, size), r, m, x86_rex8_force(size, r));
   }
-  let r1: i32 = x86_gas_reg_w(src, size);
-  let r2: i32 = x86_gas_reg_w(dst, size);
+  let r1 = x86_gas_reg_w(src, size);
+  let r2 = x86_gas_reg_w(dst, size);
   if (r1 < 0 || r2 < 0) {
     return [];
   }
@@ -3287,14 +3287,14 @@ pub function x86_rec_mov(size: i32, src: string, dst: string): i32[] {
 }
 
 function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
-  let b: i32[] = x86_rec_mov(size, src, dst);
+  let b = x86_rec_mov(size, src, dst);
   if (b.len() > 0) {
     x86_push_arr(a.code, b);
     return a;
   }
   if (src.len() > 0 && src[0] == b'$') {
-    let imm: i32 = x86_gas_atoi(src);
-    let tail: i32 = 4;
+    let imm = x86_gas_atoi(src);
+    let tail = 4;
     if (size == 8) {
       tail = 1;
     }
@@ -3302,7 +3302,7 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
       tail = 2;
     }
     if (x86_gas_has_paren(dst)) {
-      let mi: GasMem = x86_gas_parse_mem(dst);
+      let mi = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
@@ -3320,13 +3320,13 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
       x86_push_arr(a.code, x86_imm_wide([], size, imm));
       return a;
     }
-    let rd: i32 = x86_gas_reg_w(dst, size);
+    let rd = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     if (size == 64) {
-      let iv: i64 = x86_gas_atoi64(src);
-      if (iv >= (0 - 2147483648) as i64 && iv <= 2147483647 as i64) {
+      let iv = x86_gas_atoi64(src);
+      if (iv >= (-2147483648) as i64 && iv <= 2147483647 as i64) {
         x86_push_arr(a.code, x86_mov_r64_imm32([], rd, iv as i32));
         return a;
       }
@@ -3344,11 +3344,11 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     x86_push_arr(a.code, x86_imm_wide([], size, imm));
     return a;
   }
-  let src_mem: boolean = x86_gas_has_paren(src);
-  let dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem = x86_gas_has_paren(src);
+  let dst_mem = x86_gas_has_paren(dst);
   if (src_mem && !dst_mem) {
-    let ml: GasMem = x86_gas_parse_mem(src);
-    let rl: i32 = x86_gas_reg_w(dst, size);
+    let ml = x86_gas_parse_mem(src);
+    let rl = x86_gas_reg_w(dst, size);
     if (x86_gas_mem_ok(ml) && rl >= 0 && size == 64) {
       return x86_mov_load_rip_label(a, rl, ml.label);
     }
@@ -3357,8 +3357,8 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
     }
   }
   if (dst_mem && !src_mem) {
-    let ms: GasMem = x86_gas_parse_mem(dst);
-    let rs: i32 = x86_gas_reg_w(src, size);
+    let ms = x86_gas_parse_mem(dst);
+    let rs = x86_gas_reg_w(src, size);
     if (x86_gas_mem_ok(ms) && rs >= 0 && size == 64) {
       return x86_mov_store_rip_label(a, rs, ms.label);
     }
@@ -3371,8 +3371,8 @@ function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst
 
 function x86_gas_split_ops(rest: string): string[] {
   let out: string[] = [];
-  let s: string = rest;
-  let c: i32 = x86_gas_top_comma(s);
+  let s = rest;
+  let c = x86_gas_top_comma(s);
   while (c >= 0) {
     out = out.append(x86_gas_trim(slice_unchecked(s, 0, c)));
     s = slice_unchecked(s, c + 1, s.len()) + "";
@@ -3409,7 +3409,7 @@ function x86_gas_alu_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3435,7 +3435,7 @@ function x86_gas_unary_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3449,7 +3449,7 @@ function x86_gas_incdec_ext(mnem: string): i32 {
       return 1;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3481,7 +3481,7 @@ function x86_gas_shift_ext(mnem: string): i32 {
       return 7;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3501,7 +3501,7 @@ function x86_gas_bt_idx(mnem: string): i32 {
       return 3;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3526,12 +3526,12 @@ function x86_gas_lockable(mnem: string): boolean {
     "xchg",
     "xor",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < names.len()) {
     if (names[i] == mnem) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -3629,7 +3629,7 @@ function x86_gas_cc_code(cond: string): i32 {
       return 15;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -3638,19 +3638,19 @@ function x86_gas_cc_code(cond: string): i32 {
 
 function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean, mmmmm: i32, w: boolean, vvvv: i32, l: boolean, pp: i32): i32[] {
   let vinv: i32 = (15 - (vvvv & 15)) * 8;
-  let lbit: i32 = 0;
+  let lbit = 0;
   if (l) {
     lbit = 4;
   }
   if (mmmmm == 1 && !w && !rex_x && !rex_b) {
-    let b2: i32 = pp & 3 | lbit | vinv;
+    let b2 = pp & 3 | lbit | vinv;
     if (!rex_r) {
       b2 = b2 | 128;
     }
     buf = buf.append(197);
     return buf.append(b2);
   }
-  let c2: i32 = mmmmm & 31;
+  let c2 = mmmmm & 31;
   if (!rex_r) {
     c2 = c2 | 128;
   }
@@ -3660,7 +3660,7 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
   if (!rex_b) {
     c2 = c2 | 32;
   }
-  let c3: i32 = pp & 3 | lbit | vinv;
+  let c3 = pp & 3 | lbit | vinv;
   if (w) {
     c3 = c3 | 128;
   }
@@ -3671,12 +3671,12 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
 
 function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean, w: boolean): X86Asm {
   if (x86_gas_has_paren(rm)) {
-    let m: GasMem = x86_gas_parse_mem(rm);
+    let m = x86_gas_parse_mem(rm);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + rm);
     }
-    let ix: boolean = false;
-    let bs: boolean = false;
+    let ix = false;
+    let bs = false;
     if (!m.is_rip) {
       if (m.has_index) {
         ix = m.index >= 8;
@@ -3687,11 +3687,11 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
     buf_push_byte(a.code, op);
     return x86_gas_membytes(a, reg, m, 0);
   }
-  let rv: i32 = x86_gas_vreg(rm);
+  let rv = x86_gas_vreg(rm);
   if (rv < 0) {
     return x86_gas_bad(a, mnem + " " + rm);
   }
-  let rr: i32 = rv & 15;
+  let rr = rv & 15;
   x86_push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, w, vvvv, l, pp));
   buf_push_byte(a.code, op);
   buf_push_byte(a.code, x86_modrm(3, reg, rr));
@@ -3703,8 +3703,8 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     return x86_gas_vex_move(a, mnem, src, dst);
   }
   if (mnem == "vmovq") {
-    let qd: i32 = x86_gas_xmm(dst);
-    let qs: i32 = x86_gas_reg(src);
+    let qd = x86_gas_xmm(dst);
+    let qs = x86_gas_reg(src);
     if (qd < 0 || qs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -3714,37 +3714,37 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     return a;
   }
   if (mnem == "vbroadcasti128") {
-    let id: i32 = x86_gas_ymm(dst);
+    let id = x86_gas_ymm(dst);
     if (id < 0 || !x86_gas_has_paren(src)) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true, false);
   }
   if (mnem == "vpbroadcastb" && x86_gas_has_paren(src)) {
-    let md: i32 = x86_gas_ymm(dst);
+    let md = x86_gas_ymm(dst);
     if (md < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true, false);
   }
   if (mnem == "vpbroadcastb" || mnem == "vpbroadcastd" || mnem == "vbroadcastsd") {
-    let bv: i32 = x86_gas_vreg(dst);
-    let bx: i32 = x86_gas_xmm(src);
+    let bv = x86_gas_vreg(dst);
+    let bx = x86_gas_xmm(src);
     if (bv < 0 || bx < 0 || mnem == "vbroadcastsd" && bv < 16) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    let bd: i32 = bv & 15;
+    let bd = bv & 15;
     x86_push_arr(a.code, x86_vex([], bd >= 8, false, bx >= 8, 2, false, 0, bv >= 16, 1));
     buf_push_byte(a.code, x86_broadcast_op(mnem));
     buf_push_byte(a.code, x86_modrm(3, bd, bx));
     return a;
   }
-  let rd: i32 = x86_gas_reg32(dst);
-  let vs: i32 = x86_gas_vreg(src);
+  let rd = x86_gas_reg32(dst);
+  let vs = x86_gas_vreg(src);
   if (rd < 0 || vs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  let ys: i32 = vs & 15;
+  let ys = vs & 15;
   x86_push_arr(a.code, x86_vex([], rd >= 8, false, ys >= 8, 1, false, 0, vs >= 16, 1));
   if (mnem == "vmovmskpd") {
     buf_push_byte(a.code, 80);
@@ -3768,16 +3768,16 @@ function x86_broadcast_op(mnem: string): i32 {
 }
 
 function x86_gas_vex_move(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  let store: boolean = x86_gas_has_paren(dst);
-  let v: i32 = x86_gas_vreg(dst);
+  let store = x86_gas_has_paren(dst);
+  let v = x86_gas_vreg(dst);
   if (store) {
     v = x86_gas_vreg(src);
   }
   if (v < 0 || mnem == "vmovupd" && v < 16) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  let pp: i32 = 2;
-  let op: i32 = 111;
+  let pp = 2;
+  let op = 111;
   if (mnem == "vmovupd") {
     pp = 1;
     op = 16;
@@ -3816,12 +3816,12 @@ function x86_vex_shift_imm(mnem: string): i32 {
       return VEX_SHIFT_OPS[k];
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_vex_three_op(mnem: string): i32 {
   if (mnem.len() >= 4 && mnem[0] == b'v') {
-    let name: string = slice_unchecked(mnem, 1, mnem.len()) + "";
+    let name = slice_unchecked(mnem, 1, mnem.len()) + "";
     for packed in [
       "addpd", "subpd", "mulpd", "divpd", "andpd", "orpd", "xorpd", "andnpd", "minpd", "maxpd",
       "addps", "subps", "mulps", "divps", "andps", "orps", "xorps", "andnps", "minps", "maxps",
@@ -3836,20 +3836,20 @@ function x86_vex_three_op(mnem: string): i32 {
       return VEX_THREE_OPS[k];
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let v1: i32 = x86_gas_vreg(ops[1]);
-  let vd: i32 = x86_gas_vreg(ops[2]);
+  let v1 = x86_gas_vreg(ops[1]);
+  let vd = x86_gas_vreg(ops[2]);
   if (v1 < 0 || vd < 0 || v1 >= 16 != vd >= 16) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let shift: i32 = x86_vex_shift_imm(mnem);
+  let shift = x86_vex_shift_imm(mnem);
   if (shift >= 0) {
     x86_push_arr(a.code, x86_vex([], false, false, (v1 & 15) >= 8, 1, false, vd & 15, vd >= 16, 1));
     buf_push_byte(a.code, shift / 8);
@@ -3857,8 +3857,8 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
     buf_push_byte(a.code, x86_gas_atoi(ops[0]) & 255);
     return a;
   }
-  let mo: i32 = x86_vex_three_op(mnem);
-  let pp: i32 = 1;
+  let mo = x86_vex_three_op(mnem);
+  let pp = 1;
   if (mnem.len() >= 2 && mnem[mnem.len() - 2] == b'p' && mnem[mnem.len() - 1] == b's' && mnem != "vfmadd213ps") {
     pp = 0;
   }
@@ -3866,27 +3866,27 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
 }
 
 function x86_gas_andn(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let inv: i32 = x86_gas_reg_w(ops[1], size);
-  let dst: i32 = x86_gas_reg_w(ops[2], size);
+  let inv = x86_gas_reg_w(ops[1], size);
+  let dst = x86_gas_reg_w(ops[2], size);
   if (inv < 0 || dst < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   if (x86_gas_has_paren(ops[0])) {
-    let m: GasMem = x86_gas_parse_mem(ops[0]);
+    let m = x86_gas_parse_mem(ops[0]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
-    let ix: boolean = !m.is_rip && m.has_index && m.index >= 8;
-    let bs: boolean = !m.is_rip && m.base >= 8;
+    let ix = !m.is_rip && m.has_index && m.index >= 8;
+    let bs = !m.is_rip && m.base >= 8;
     x86_push_arr(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, inv, false, 0));
     buf_push_byte(a.code, 242);
     return x86_gas_membytes(a, dst, m, 0);
   }
-  let other: i32 = x86_gas_reg_w(ops[0], size);
+  let other = x86_gas_reg_w(ops[0], size);
   if (other < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -3909,29 +3909,29 @@ function x86_shiftx_pp(mnem: string): i32 {
 
 // AT&T order: the count, the source (a register or memory), the destination.
 function x86_gas_shiftx(own a: X86Asm, mnem: string, ext: i32, rest: string): X86Asm {
-  let size: i32 = ext & 127;
-  let pp: i32 = ext >> 7;
-  let ops: string[] = x86_gas_split_ops(rest);
+  let size = ext & 127;
+  let pp = ext >> 7;
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let count: i32 = x86_gas_reg_w(ops[0], size);
-  let dst: i32 = x86_gas_reg_w(ops[2], size);
+  let count = x86_gas_reg_w(ops[0], size);
+  let dst = x86_gas_reg_w(ops[2], size);
   if (count < 0 || dst < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   if (x86_gas_has_paren(ops[1])) {
-    let m: GasMem = x86_gas_parse_mem(ops[1]);
+    let m = x86_gas_parse_mem(ops[1]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
-    let ix: boolean = !m.is_rip && m.has_index && m.index >= 8;
-    let bs: boolean = !m.is_rip && m.base >= 8;
+    let ix = !m.is_rip && m.has_index && m.index >= 8;
+    let bs = !m.is_rip && m.base >= 8;
     x86_push_arr(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, count, false, pp));
     buf_push_byte(a.code, 247);
     return x86_gas_membytes(a, dst, m, 0);
   }
-  let src: i32 = x86_gas_reg_w(ops[1], size);
+  let src = x86_gas_reg_w(ops[1], size);
   if (src < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -3940,32 +3940,32 @@ function x86_gas_shiftx(own a: X86Asm, mnem: string, ext: i32, rest: string): X8
 }
 
 pub function x86_rec_shiftx_rr(size: i32, pp: i32, dst: i32, src: i32, count: i32): i32[] {
-  let b: i32[] = x86_vex([], dst >= 8, false, src >= 8, 2, size == 64, count, false, pp);
+  let b = x86_vex([], dst >= 8, false, src >= 8, 2, size == 64, count, false, pp);
   return b.append(247).append(x86_modrm(3, dst, src));
 }
 
 pub function x86_rec_andn_rr(size: i32, dst: i32, inverted: i32, other: i32): i32[] {
-  let b: i32[] = x86_vex([], dst >= 8, false, other >= 8, 2, size == 64, inverted, false, 0);
+  let b = x86_vex([], dst >= 8, false, other >= 8, 2, size == 64, inverted, false, 0);
   return b.append(242).append(x86_modrm(3, dst, other));
 }
 
 function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let imm: i32 = x86_gas_atoi(ops[0]);
-  let rd: i32 = x86_gas_reg_w(ops[2], size);
+  let imm = x86_gas_atoi(ops[0]);
+  let rd = x86_gas_reg_w(ops[2], size);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   if (x86_gas_has_paren(ops[1])) {
-    let m: GasMem = x86_gas_parse_mem(ops[1]);
+    let m = x86_gas_parse_mem(ops[1]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[1]);
     }
-    let ix: boolean = false;
-    let bs: boolean = false;
+    let ix = false;
+    let bs = false;
     if (!m.is_rip) {
       if (m.has_index) {
         ix = m.index >= 8;
@@ -3978,7 +3978,7 @@ function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  let rs: i32 = x86_gas_reg_w(ops[1], size);
+  let rs = x86_gas_reg_w(ops[1], size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -3987,7 +3987,7 @@ function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86
 }
 
 pub function x86_rec_rorx_rr(size: i32, dst: i32, src: i32, n: i32): i32[] {
-  let b: i32[] = x86_vex([], dst >= 8, false, src >= 8, 3, size == 64, 0, false, 3);
+  let b = x86_vex([], dst >= 8, false, src >= 8, 3, size == 64, 0, false, 3);
   b = b.append(240);
   b = b.append(x86_modrm(3, dst, src));
   return b.append(n & 255);
@@ -4163,7 +4163,7 @@ function x86_gas_fixed_op(mnem: string): i32 {
       return x86_pack2(72, 167);
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -4241,7 +4241,7 @@ function x86_gas_rep_ok(mnem: string): boolean {
 // END GENERATED FIXED-OP TABLE
 
 function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
-  let n: i32 = packed / 16777216;
+  let n = packed / 16777216;
   buf_push_byte(a.code, packed & 255);
   if (n >= 2) {
     buf_push_byte(a.code, packed / 256 & 255);
@@ -4254,26 +4254,26 @@ function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
 
 function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
   if (src.len() > 1 && src[0] == b'$' && x86_gas_is_symbol(slice_unchecked(src, 1, src.len()) + "")) {
-    let name: string = slice_unchecked(src, 1, src.len()) + "";
+    let name = slice_unchecked(src, 1, src.len()) + "";
     if (size != 64 && size != 32) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     if (x86_gas_has_paren(dst)) {
-      let mi: GasMem = x86_gas_parse_mem(dst);
+      let mi = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi) || mi.is_rip) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
       x86_push_arr(a.code, x86_le32(x86_mem_op_bytes([], size, false, 129, ext, mi, false), 0));
-      return x86_queue_abs32_at(a, name, 0 - 1);
+      return x86_queue_abs32_at(a, name, -1);
     }
-    let rd: i32 = x86_gas_reg_w(dst, size);
+    let rd = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     x86_push_arr(a.code, x86_grp1_imm32_r([], size, ext, rd, 0));
-    return x86_queue_abs32_at(a, name, 0 - 1);
+    return x86_queue_abs32_at(a, name, -1);
   }
-  let b: i32[] = x86_rec_alu(ext, size, src, dst);
+  let b = x86_rec_alu(ext, size, src, dst);
   if (b.len() > 0) {
     x86_push_arr(a.code, b);
     return a;
@@ -4282,13 +4282,13 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
     if (!x86_gas_has_paren(dst)) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    let mi: GasMem = x86_gas_parse_mem(dst);
+    let mi = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(mi)) {
       return x86_gas_bad(a, mnem + " " + dst);
     }
-    let imm: i32 = x86_gas_atoi(src);
+    let imm = x86_gas_atoi(src);
     if (size == 8 || x86_imm_fits8(imm)) {
-      let opi: i32 = 131;
+      let opi = 131;
       if (size == 8) {
         opi = 128;
       }
@@ -4296,7 +4296,7 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
       buf_push_byte(a.code, imm & 255);
       return a;
     }
-    let ib: i32 = 4;
+    let ib = 4;
     if (size == 16) {
       ib = 2;
     }
@@ -4304,19 +4304,19 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
     x86_push_arr(a.code, x86_imm_wide([], size, imm));
     return a;
   }
-  let src_mem: boolean = x86_gas_has_paren(src);
-  let dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem = x86_gas_has_paren(src);
+  let dst_mem = x86_gas_has_paren(dst);
   if (src_mem != dst_mem) {
-    let mt: string = dst;
-    let rt: string = src;
-    let op: i32 = ext * 8;
+    let mt = dst;
+    let rt = src;
+    let op = ext * 8;
     if (src_mem) {
       mt = src;
       rt = dst;
       op = op | 2;
     }
-    let m: GasMem = x86_gas_parse_mem(mt);
-    let r: i32 = x86_gas_reg_w(rt, size);
+    let m = x86_gas_parse_mem(mt);
+    let r = x86_gas_reg_w(rt, size);
     if (x86_gas_mem_ok(m) && r >= 0) {
       return x86_gas_mem_op(a, size, false, x86_opsel(op, size), r, m, x86_rex8_force(size, r), 0);
     }
@@ -4325,16 +4325,16 @@ function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, sr
 }
 
 pub function x86_rec_alu(ext: i32, size: i32, src: string, dst: string): i32[] {
-  let opbase: i32 = ext * 8;
+  let opbase = ext * 8;
   if (src.len() > 0 && src[0] == b'$') {
-    let imm: i32 = x86_gas_atoi(src);
+    let imm = x86_gas_atoi(src);
     if (x86_gas_has_paren(dst)) {
-      let mi: GasMem = x86_gas_parse_mem(dst);
+      let mi = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi) || mi.is_rip) {
         return [];
       }
       if (size == 8 || x86_imm_fits8(imm)) {
-        let opi: i32 = 131;
+        let opi = 131;
         if (size == 8) {
           opi = 128;
         }
@@ -4342,35 +4342,35 @@ pub function x86_rec_alu(ext: i32, size: i32, src: string, dst: string): i32[] {
       }
       return x86_imm_wide(x86_mem_op_bytes([], size, false, 129, ext, mi, false), size, imm);
     }
-    let rd: i32 = x86_gas_reg_w(dst, size);
+    let rd = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return [];
     }
     return x86_rec_alu_ir(ext, size, imm, rd);
   }
-  let src_mem: boolean = x86_gas_has_paren(src);
-  let dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem = x86_gas_has_paren(src);
+  let dst_mem = x86_gas_has_paren(dst);
   if (src_mem && dst_mem) {
     return [];
   }
   if (src_mem || dst_mem) {
-    let mt: string = dst;
-    let rt: string = src;
-    let op: i32 = opbase;
+    let mt = dst;
+    let rt = src;
+    let op = opbase;
     if (src_mem) {
       mt = src;
       rt = dst;
       op = opbase | 2;
     }
-    let m: GasMem = x86_gas_parse_mem(mt);
-    let r: i32 = x86_gas_reg_w(rt, size);
+    let m = x86_gas_parse_mem(mt);
+    let r = x86_gas_reg_w(rt, size);
     if (!x86_gas_mem_ok(m) || m.is_rip || r < 0) {
       return [];
     }
     return x86_mem_op_bytes([], size, false, x86_opsel(op, size), r, m, x86_rex8_force(size, r));
   }
-  let r1: i32 = x86_gas_reg_w(src, size);
-  let r2: i32 = x86_gas_reg_w(dst, size);
+  let r1 = x86_gas_reg_w(src, size);
+  let r2 = x86_gas_reg_w(dst, size);
   if (r1 < 0 || r2 < 0) {
     return [];
   }
@@ -4384,7 +4384,7 @@ function x86_push_arr(b: usize, xs: i32[]): void {
 }
 
 function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
-  let b: i32[] = x86_rec_test(size, src, dst);
+  let b = x86_rec_test(size, src, dst);
   if (b.len() > 0) {
     x86_push_arr(a.code, b);
     return a;
@@ -4393,12 +4393,12 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
     if (!x86_gas_has_paren(dst)) {
       return x86_gas_bad(a, "test " + src + ", " + dst);
     }
-    let mi: GasMem = x86_gas_parse_mem(dst);
+    let mi = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(mi)) {
       return x86_gas_bad(a, "test " + dst);
     }
-    let imm: i32 = x86_gas_atoi(src);
-    let ib: i32 = 4;
+    let imm = x86_gas_atoi(src);
+    let ib = 4;
     if (size == 8) {
       ib = 1;
     }
@@ -4413,16 +4413,16 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
     x86_push_arr(a.code, x86_imm_wide([], size, imm));
     return a;
   }
-  let src_mem: boolean = x86_gas_has_paren(src);
+  let src_mem = x86_gas_has_paren(src);
   if (src_mem != x86_gas_has_paren(dst)) {
-    let mop: string = src;
-    let rop: string = dst;
+    let mop = src;
+    let rop = dst;
     if (!src_mem) {
       mop = dst;
       rop = src;
     }
-    let m2: GasMem = x86_gas_parse_mem(mop);
-    let rr: i32 = x86_gas_reg_w(rop, size);
+    let m2 = x86_gas_parse_mem(mop);
+    let rr = x86_gas_reg_w(rop, size);
     if (x86_gas_mem_ok(m2) && rr >= 0) {
       return x86_gas_mem_op(a, size, false, x86_opsel(132, size), rr, m2, x86_rex8_force(size, rr), 0);
     }
@@ -4432,45 +4432,45 @@ function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string)
 
 pub function x86_rec_test(size: i32, src: string, dst: string): i32[] {
   if (src.len() > 0 && src[0] == b'$') {
-    let imm: i32 = x86_gas_atoi(src);
+    let imm = x86_gas_atoi(src);
     if (x86_gas_has_paren(dst)) {
-      let mi: GasMem = x86_gas_parse_mem(dst);
+      let mi = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi) || mi.is_rip) {
         return [];
       }
-      let mb: i32[] = x86_mem_op_bytes([], size, false, x86_opsel(246, size), 0, mi, false);
+      let mb = x86_mem_op_bytes([], size, false, x86_opsel(246, size), 0, mi, false);
       if (size == 8) {
         return mb.append(imm & 255);
       }
       return x86_imm_wide(mb, size, imm);
     }
-    let rd: i32 = x86_gas_reg_w(dst, size);
+    let rd = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return [];
     }
     return x86_rec_test_ir(size, imm, rd);
   }
-  let src_mem: boolean = x86_gas_has_paren(src);
-  let dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem = x86_gas_has_paren(src);
+  let dst_mem = x86_gas_has_paren(dst);
   if (src_mem && dst_mem) {
     return [];
   }
   if (src_mem || dst_mem) {
-    let mop: string = src;
-    let rop: string = dst;
+    let mop = src;
+    let rop = dst;
     if (dst_mem) {
       mop = dst;
       rop = src;
     }
-    let m2: GasMem = x86_gas_parse_mem(mop);
-    let rr: i32 = x86_gas_reg_w(rop, size);
+    let m2 = x86_gas_parse_mem(mop);
+    let rr = x86_gas_reg_w(rop, size);
     if (!x86_gas_mem_ok(m2) || m2.is_rip || rr < 0) {
       return [];
     }
     return x86_mem_op_bytes([], size, false, x86_opsel(132, size), rr, m2, x86_rex8_force(size, rr));
   }
-  let r1: i32 = x86_gas_reg_w(src, size);
-  let r2: i32 = x86_gas_reg_w(dst, size);
+  let r1 = x86_gas_reg_w(src, size);
+  let r2 = x86_gas_reg_w(dst, size);
   if (r1 < 0 || r2 < 0) {
     return [];
   }
@@ -4479,13 +4479,13 @@ pub function x86_rec_test(size: i32, src: string, dst: string): i32[] {
 
 function x86_gas_unary_family(own a: X86Asm, mnem: string, opbase: i32, ext: i32, size: i32, op: string): X86Asm {
   if (x86_gas_has_paren(op)) {
-    let m: GasMem = x86_gas_parse_mem(op);
+    let m = x86_gas_parse_mem(op);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + op);
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(opbase, size), ext, m, false, 0);
   }
-  let r: i32 = x86_gas_reg_w(op, size);
+  let r = x86_gas_reg_w(op, size);
   if (r < 0) {
     return x86_gas_bad(a, mnem + " " + op);
   }
@@ -4494,21 +4494,21 @@ function x86_gas_unary_family(own a: X86Asm, mnem: string, opbase: i32, ext: i32
 }
 
 function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
-  let by_cl: boolean = src == "%cl";
+  let by_cl = src == "%cl";
   if (!by_cl && (src.len() == 0 || src[0] != b'$')) {
     return x86_gas_bad(a, mnem + " " + src);
   }
-  let imm: i32 = 0;
+  let imm = 0;
   if (!by_cl) {
     imm = x86_gas_atoi(src);
   }
   if (x86_gas_has_paren(dst)) {
-    let m: GasMem = x86_gas_parse_mem(dst);
+    let m = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
     }
-    let op: i32 = x86_opsel(210, size);
-    let tail: i32 = 0;
+    let op = x86_opsel(210, size);
+    let tail = 0;
     if (!by_cl) {
       if (imm == 1) {
         op = x86_opsel(208, size);
@@ -4524,7 +4524,7 @@ function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, 
     }
     return a;
   }
-  let r: i32 = x86_gas_reg_w(dst, size);
+  let r = x86_gas_reg_w(dst, size);
   if (r < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4537,30 +4537,30 @@ function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, 
 }
 
 function x86_gas_shld_family(own a: X86Asm, mnem: string, opimm: i32, size: i32, rest: string): X86Asm {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3 || size == 8) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let rs: i32 = x86_gas_reg_w(ops[1], size);
+  let rs = x86_gas_reg_w(ops[1], size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let by_cl: boolean = ops[0] == "%cl";
+  let by_cl = ops[0] == "%cl";
   if (!by_cl && (ops[0].len() == 0 || ops[0][0] != b'$')) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let op: i32 = opimm;
+  let op = opimm;
   if (by_cl) {
     op = opimm + 1;
   }
-  let imm: i32 = 0;
-  let tail: i32 = 0;
+  let imm = 0;
+  let tail = 0;
   if (!by_cl) {
     imm = x86_gas_atoi(ops[0]);
     tail = 1;
   }
   if (x86_gas_has_paren(ops[2])) {
-    let m: GasMem = x86_gas_parse_mem(ops[2]);
+    let m = x86_gas_parse_mem(ops[2]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[2]);
     }
@@ -4571,7 +4571,7 @@ function x86_gas_shld_family(own a: X86Asm, mnem: string, opimm: i32, size: i32,
     }
     return a;
   }
-  let rd: i32 = x86_gas_reg_w(ops[2], size);
+  let rd = x86_gas_reg_w(ops[2], size);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -4588,9 +4588,9 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   if (src.len() > 0 && src[0] == b'$') {
-    let imm: i32 = x86_gas_atoi(src);
+    let imm = x86_gas_atoi(src);
     if (x86_gas_has_paren(dst)) {
-      let mi: GasMem = x86_gas_parse_mem(dst);
+      let mi = x86_gas_parse_mem(dst);
       if (!x86_gas_mem_ok(mi)) {
         return x86_gas_bad(a, mnem + " " + dst);
       }
@@ -4598,7 +4598,7 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
       buf_push_byte(a.code, imm & 255);
       return a;
     }
-    let rd: i32 = x86_gas_reg_w(dst, size);
+    let rd = x86_gas_reg_w(dst, size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -4606,19 +4606,19 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  let rs: i32 = x86_gas_reg_w(src, size);
+  let rs = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  let regop: i32 = 163 + idx * 8;
+  let regop = 163 + idx * 8;
   if (x86_gas_has_paren(dst)) {
-    let m: GasMem = x86_gas_parse_mem(dst);
+    let m = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
     }
     return x86_gas_mem_op(a, size, true, regop, rs, m, false, 0);
   }
-  let rd2: i32 = x86_gas_reg_w(dst, size);
+  let rd2 = x86_gas_reg_w(dst, size);
   if (rd2 < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4627,19 +4627,19 @@ function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src
 }
 
 function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32, src: string, dst: string): X86Asm {
-  let rs: i32 = x86_gas_reg_w(src, size);
+  let rs = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  let op: i32 = x86_opsel(opbase, size);
+  let op = x86_opsel(opbase, size);
   if (x86_gas_has_paren(dst)) {
-    let m: GasMem = x86_gas_parse_mem(dst);
+    let m = x86_gas_parse_mem(dst);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + dst);
     }
     return x86_gas_mem_op(a, size, true, op, rs, m, x86_rex8_force(size, rs), 0);
   }
-  let rd: i32 = x86_gas_reg_w(dst, size);
+  let rd = x86_gas_reg_w(dst, size);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4648,24 +4648,24 @@ function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32,
 }
 
 function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
-  let src_mem: boolean = x86_gas_has_paren(src);
-  let dst_mem: boolean = x86_gas_has_paren(dst);
+  let src_mem = x86_gas_has_paren(src);
+  let dst_mem = x86_gas_has_paren(dst);
   if (src_mem != dst_mem) {
-    let mop: string = src;
-    let rop: string = dst;
+    let mop = src;
+    let rop = dst;
     if (dst_mem) {
       mop = dst;
       rop = src;
     }
-    let m: GasMem = x86_gas_parse_mem(mop);
-    let rr: i32 = x86_gas_reg_w(rop, size);
+    let m = x86_gas_parse_mem(mop);
+    let rr = x86_gas_reg_w(rop, size);
     if (!x86_gas_mem_ok(m) || rr < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     return x86_gas_mem_op(a, size, false, x86_opsel(134, size), rr, m, x86_rex8_force(size, rr), 0);
   }
-  let r1: i32 = x86_gas_reg_w(src, size);
-  let r2: i32 = x86_gas_reg_w(dst, size);
+  let r1 = x86_gas_reg_w(src, size);
+  let r2 = x86_gas_reg_w(dst, size);
   if (r1 < 0 || r2 < 0 || src_mem) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4674,9 +4674,9 @@ function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string
 }
 
 function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  let cond: string = slice_unchecked(mnem, 4, mnem.len()) + "";
-  let size: i32 = 0;
-  let cc: i32 = x86_gas_cc_code(cond);
+  let cond = slice_unchecked(mnem, 4, mnem.len()) + "";
+  let size = 0;
+  let cc = x86_gas_cc_code(cond);
   if (cc >= 0) {
     size = 64;
     if (x86_gas_reg32(dst) >= 0) {
@@ -4695,18 +4695,18 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
   }
-  let rd: i32 = x86_gas_reg_w(dst, size);
+  let rd = x86_gas_reg_w(dst, size);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   if (x86_gas_has_paren(src)) {
-    let m: GasMem = x86_gas_parse_mem(src);
+    let m = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + src);
     }
     return x86_gas_mem_op(a, size, true, 64 + cc, rd, m, false, 0);
   }
-  let rs: i32 = x86_gas_reg_w(src, size);
+  let rs = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -4715,7 +4715,7 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
 }
 
 function x86_gas_imul_ops(rest: string): string[] {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() == 2 && ops[0].len() > 0 && ops[0][0] == b'$') {
     return ops.append(ops[1]);
   }
@@ -4723,7 +4723,7 @@ function x86_gas_imul_ops(rest: string): string[] {
 }
 
 function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
-  let ops: string[] = x86_gas_imul_ops(rest);
+  let ops = x86_gas_imul_ops(rest);
   if (ops.len() == 1) {
     return x86_gas_unary_family(a, mnem, 246, 5, size, ops[0]);
   }
@@ -4731,18 +4731,18 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
     return x86_gas_bad(a, mnem + " " + rest);
   }
   if (ops.len() == 2) {
-    let rd: i32 = x86_gas_reg_w(ops[1], size);
+    let rd = x86_gas_reg_w(ops[1], size);
     if (rd < 0) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
     if (x86_gas_has_paren(ops[0])) {
-      let m: GasMem = x86_gas_parse_mem(ops[0]);
+      let m = x86_gas_parse_mem(ops[0]);
       if (!x86_gas_mem_ok(m)) {
         return x86_gas_bad(a, mnem + " " + ops[0]);
       }
       return x86_gas_mem_op(a, size, true, 175, rd, m, false, 0);
     }
-    let rs: i32 = x86_gas_reg_w(ops[0], size);
+    let rs = x86_gas_reg_w(ops[0], size);
     if (rs < 0) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
@@ -4752,9 +4752,9 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let imm: i32 = x86_gas_atoi(ops[0]);
-  let rs3: i32 = x86_gas_reg_w(ops[1], size);
-  let rd3: i32 = x86_gas_reg_w(ops[2], size);
+  let imm = x86_gas_atoi(ops[0]);
+  let rs3 = x86_gas_reg_w(ops[1], size);
+  let rd3 = x86_gas_reg_w(ops[2], size);
   if (rs3 < 0 || rd3 < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -4781,11 +4781,11 @@ function x86_gas_bswap(own a: X86Asm, mnem: string, size: i32, op: string): X86A
   if (size != 32 && size != 64) {
     return x86_gas_bad(a, mnem + " " + op);
   }
-  let r: i32 = x86_gas_reg_w(op, size);
+  let r = x86_gas_reg_w(op, size);
   if (r < 0) {
     return x86_gas_bad(a, mnem + " " + op);
   }
-  let rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, r);
+  let rex = x86_rex(x86_rex_w_of(size), 0, 0, r);
   if (rex != 64) {
     buf_push_byte(a.code, rex);
   }
@@ -4795,8 +4795,8 @@ function x86_gas_bswap(own a: X86Asm, mnem: string, size: i32, op: string): X86A
 }
 
 function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
-  let dsize: i32 = 32;
-  let rd: i32 = x86_gas_reg32(dst);
+  let dsize = 32;
+  let rd = x86_gas_reg32(dst);
   if (rd < 0) {
     rd = x86_gas_reg64(dst);
     dsize = 64;
@@ -4810,7 +4810,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
   if (dsize == 32 && size == 64) {
     return x86_gas_bad(a, "crc32 " + src + ", " + dst);
   }
-  let op: i32 = 241;
+  let op = 241;
   if (size == 8) {
     op = 240;
   }
@@ -4819,7 +4819,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
   }
   buf_push_byte(a.code, 242);
   if (x86_gas_has_paren(src)) {
-    let m: GasMem = x86_gas_parse_mem(src);
+    let m = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, "crc32 " + src);
     }
@@ -4829,11 +4829,11 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
     buf_push_byte(a.code, op);
     return x86_gas_membytes(a, rd, m, 0);
   }
-  let rs: i32 = x86_gas_reg_w(src, size);
+  let rs = x86_gas_reg_w(src, size);
   if (rs < 0) {
     return x86_gas_bad(a, "crc32 " + src + ", " + dst);
   }
-  let rex: i32 = x86_rex(x86_rex_w_of(dsize), rd, 0, rs);
+  let rex = x86_rex(x86_rex_w_of(dsize), rd, 0, rs);
   if (rex != 64 || x86_rex8_force(size, rs)) {
     buf_push_byte(a.code, rex);
   }
@@ -5018,7 +5018,7 @@ function x86_gas_sse_fp_op(mnem: string): i32 {
       return 22;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -5181,7 +5181,7 @@ function x86_gas_sse_int_op(mnem: string): i32 {
       return 102 * 256 + 226;
     },
     _ => {
-      return 0 - 1;
+      return -1;
     }
   }
 }
@@ -5193,7 +5193,7 @@ function x86_gas_sse_reg_only(mnem: string): boolean {
 // END GENERATED SSE TABLES
 
 function x86_gas_sse_op(mnem: string): i32 {
-  let v: i32 = x86_gas_sse_fp_op(mnem);
+  let v = x86_gas_sse_fp_op(mnem);
   if (v >= 0) {
     return v;
   }
@@ -5211,18 +5211,18 @@ function x86_gas_sse_mem(own a: X86Asm, pfx: i32, op: i32, reg: i32, m: GasMem, 
 }
 
 function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: string, dst: string): X86Asm {
-  let xd: i32 = x86_gas_xmm(dst);
+  let xd = x86_gas_xmm(dst);
   if (xd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   if (x86_gas_has_paren(src)) {
-    let m: GasMem = x86_gas_parse_mem(src);
+    let m = x86_gas_parse_mem(src);
     if (!x86_gas_mem_ok(m) || x86_gas_sse_reg_only(mnem)) {
       return x86_gas_bad(a, mnem + " " + src);
     }
     return x86_gas_sse_mem(a, pfx, op, xd, m, 0);
   }
-  let xs: i32 = x86_gas_xmm(src);
+  let xs = x86_gas_xmm(src);
   if (xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -5231,10 +5231,10 @@ function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: 
 }
 
 function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-  let pfx: i32 = x86_gas_movdq_pfx(mnem);
+  let pfx = x86_gas_movdq_pfx(mnem);
   if (x86_gas_has_paren(dst)) {
-    let m: GasMem = x86_gas_parse_mem(dst);
-    let xs: i32 = x86_gas_xmm(src);
+    let m = x86_gas_parse_mem(dst);
+    let xs = x86_gas_xmm(src);
     if (!x86_gas_mem_ok(m) || xs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5245,8 +5245,8 @@ function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X
 
 function x86_gas_sse_mov10(own a: X86Asm, mnem: string, pfx: i32, src: string, dst: string): X86Asm {
   if (x86_gas_has_paren(dst)) {
-    let m: GasMem = x86_gas_parse_mem(dst);
-    let xs: i32 = x86_gas_xmm(src);
+    let m = x86_gas_parse_mem(dst);
+    let xs = x86_gas_xmm(src);
     if (!x86_gas_mem_ok(m) || xs < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5256,11 +5256,11 @@ function x86_gas_sse_mov10(own a: X86Asm, mnem: string, pfx: i32, src: string, d
 }
 
 function x86_gas_movmsk(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: string, dst: string): X86Asm {
-  let rd: i32 = x86_gas_reg32(dst);
+  let rd = x86_gas_reg32(dst);
   if (rd < 0) {
     rd = x86_gas_reg64(dst);
   }
-  let xs: i32 = x86_gas_xmm(src);
+  let xs = x86_gas_xmm(src);
   if (rd < 0 || xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
@@ -5269,12 +5269,12 @@ function x86_gas_movmsk(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: str
 }
 
 function x86_gas_vshift_imm(own a: X86Asm, mnem: string, packed: i32, src: string, dst: string): X86Asm {
-  let xr: i32 = x86_gas_xmm(dst);
+  let xr = x86_gas_xmm(dst);
   if (xr < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   buf_push_byte(a.code, 102);
-  let rex: i32 = x86_rex(0, 0, 0, xr);
+  let rex = x86_rex(0, 0, 0, xr);
   if (rex != 64) {
     buf_push_byte(a.code, rex);
   }
@@ -5286,13 +5286,13 @@ function x86_gas_vshift_imm(own a: X86Asm, mnem: string, packed: i32, src: strin
 }
 
 function x86_gas_sse38(own a: X86Asm, mnem: string, op: i32, src: string, dst: string): X86Asm {
-  let xd: i32 = x86_gas_xmm(dst);
-  let xs: i32 = x86_gas_xmm(src);
+  let xd = x86_gas_xmm(dst);
+  let xs = x86_gas_xmm(src);
   if (xd < 0 || xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
   buf_push_byte(a.code, 102);
-  let rex: i32 = x86_rex(0, xd, 0, xs);
+  let rex = x86_rex(0, xd, 0, xs);
   if (rex != 64) {
     buf_push_byte(a.code, rex);
   }
@@ -5304,55 +5304,55 @@ function x86_gas_sse38(own a: X86Asm, mnem: string, op: i32, src: string, dst: s
 }
 
 function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let imm: i32 = x86_gas_atoi(ops[0]);
+  let imm = x86_gas_atoi(ops[0]);
   if (x86_gas_shuf_op(mnem) >= 0 && x86_gas_has_paren(ops[1])) {
     return x86_gas_shuf_mem(a, mnem, imm, ops[1], ops[2]);
   }
-  let xs: i32 = x86_gas_xmm(ops[1]);
-  let xd: i32 = x86_gas_xmm(ops[2]);
+  let xs = x86_gas_xmm(ops[1]);
+  let xd = x86_gas_xmm(ops[2]);
   if (xs < 0 || xd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let op3a: i32 = x86_gas_imm3a_op(mnem);
+  let op3a = x86_gas_imm3a_op(mnem);
   if (op3a >= 0) {
     x86_push_arr(a.code, x86_sse_3a_imm([], 0, op3a, xd, xs, imm));
     return a;
   }
-  let sh: i32 = x86_gas_shuf_op(mnem);
+  let sh = x86_gas_shuf_op(mnem);
   x86_push_arr(a.code, x86_sse_any_rr([], sh / 256, sh & 255, xd, xs));
   buf_push_byte(a.code, imm & 255);
   return a;
 }
 
 function x86_gas_shuf_mem(own a: X86Asm, mnem: string, imm: i32, src: string, dst: string): X86Asm {
-  let m: GasMem = x86_gas_parse_mem(src);
-  let xd: i32 = x86_gas_xmm(dst);
+  let m = x86_gas_parse_mem(src);
+  let xd = x86_gas_xmm(dst);
   if (!x86_gas_mem_ok(m) || xd < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  let sh: i32 = x86_gas_shuf_op(mnem);
+  let sh = x86_gas_shuf_op(mnem);
   a = x86_gas_sse_mem(a, sh / 256, sh & 255, xd, m, 1);
   buf_push_byte(a.code, imm & 255);
   return a;
 }
 
 function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let imm: i32 = x86_gas_atoi(ops[0]);
-  let xs: i32 = x86_gas_xmm(ops[1]);
+  let imm = x86_gas_atoi(ops[0]);
+  let xs = x86_gas_xmm(ops[1]);
   if (xs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let op: i32 = 20;
-  let w: i32 = 0;
-  let dsize: i32 = 32;
+  let op = 20;
+  let w = 0;
+  let dsize = 32;
   if (mnem == "pextrw") {
     op = 21;
   }
@@ -5365,12 +5365,12 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     dsize = 64;
   }
   if (x86_gas_has_paren(ops[2])) {
-    let m: GasMem = x86_gas_parse_mem(ops[2]);
+    let m = x86_gas_parse_mem(ops[2]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[2]);
     }
     buf_push_byte(a.code, 102);
-    let msz: i32 = 32;
+    let msz = 32;
     if (w == 1) {
       msz = 64;
     }
@@ -5382,7 +5382,7 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  let rd: i32 = x86_gas_reg_w(ops[2], dsize);
+  let rd = x86_gas_reg_w(ops[2], dsize);
   if (rd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -5396,18 +5396,18 @@ function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
 }
 
 function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  let ops: string[] = x86_gas_split_ops(rest);
+  let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let imm: i32 = x86_gas_atoi(ops[0]);
-  let xd: i32 = x86_gas_xmm(ops[2]);
+  let imm = x86_gas_atoi(ops[0]);
+  let xd = x86_gas_xmm(ops[2]);
   if (xd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  let w: i32 = 0;
-  let ssize: i32 = 32;
-  let op: i32 = 32;
+  let w = 0;
+  let ssize = 32;
+  let op = 32;
   if (mnem == "pinsrd") {
     op = 34;
   }
@@ -5416,14 +5416,14 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     w = 1;
     ssize = 64;
   }
-  let legacy: boolean = mnem == "pinsrw";
+  let legacy = mnem == "pinsrw";
   if (x86_gas_has_paren(ops[1])) {
-    let m: GasMem = x86_gas_parse_mem(ops[1]);
+    let m = x86_gas_parse_mem(ops[1]);
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + ops[1]);
     }
     buf_push_byte(a.code, 102);
-    let msz: i32 = 32;
+    let msz = 32;
     if (w == 1) {
       msz = 64;
     }
@@ -5439,7 +5439,7 @@ function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
     buf_push_byte(a.code, imm & 255);
     return a;
   }
-  let rs: i32 = x86_gas_reg_w(ops[1], ssize);
+  let rs = x86_gas_reg_w(ops[1], ssize);
   if (rs < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -5474,9 +5474,9 @@ function x86_gas_bytes(own a: X86Asm, words: u8[], at: i32, to: i32): X86Asm {
   if (at < 0) {
     return x86_gas_bad(a, "instruction records do not match their marker lines");
   }
-  let i: i32 = at;
+  let i = at;
   while (i < to) {
-    let end: i32 = i + 1 + words[i] as i32;
+    let end = i + 1 + words[i] as i32;
     buf_push_bytes_range(a.code, words, i + 1, end);
     i = end;
   }
@@ -5484,9 +5484,9 @@ function x86_gas_bytes(own a: X86Asm, words: u8[], at: i32, to: i32): X86Asm {
 }
 
 function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
-  let mnem: string = l.mnem;
-  let rest: string = l.rest;
-  let k: i32 = l.kind;
+  let mnem = l.mnem;
+  let rest = l.rest;
+  let k = l.kind;
   if (k == GK_VZEROUPPER) {
     return x86_gas_emit_packed(a, x86_pack3(197, 248, 119));
   }
@@ -5510,11 +5510,11 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return x86_gas_emit_packed(a, x86_pack3(15, 30, 250));
   }
   if (k == GK_REP) {
-    let rpfx: i32 = l.ext;
+    let rpfx = l.ext;
     if (!x86_gas_rep_ok(rest)) {
       return x86_gas_bad(a, mnem + " " + rest);
     }
-    let sop: i32 = x86_gas_fixed_op(rest);
+    let sop = x86_gas_fixed_op(rest);
     if ((sop & 255) == 102) {
       buf_push_byte(a.code, 102);
       buf_push_byte(a.code, rpfx);
@@ -5524,14 +5524,14 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return x86_gas_emit_packed(a, sop);
   }
   if (k == GK_LOCK) {
-    let lsp: i32 = x86_str_indexof(rest, " ");
-    let lm: string = rest;
-    let lr: string = "";
+    let lsp = x86_str_indexof(rest, " ");
+    let lm = rest;
+    let lr = "";
     if (lsp >= 0) {
       lm = slice_unchecked(rest, 0, lsp) + "";
       lr = x86_gas_trim(slice_unchecked(rest, lsp + 1, rest.len()));
     }
-    let lb: string = lm;
+    let lb = lm;
     if (x86_gas_suffix_size(lm) > 0) {
       lb = x86_gas_strip_suffix(lm);
     }
@@ -5546,11 +5546,11 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return a;
   }
   if (k == GK_BRANCH) {
-    let ext: i32 = l.ext;
+    let ext = l.ext;
     if (rest.len() > 0 && rest[0] == b'*') {
-      let ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
+      let ind = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
       if (x86_gas_has_paren(ind)) {
-        let cm: GasMem = x86_gas_parse_mem(ind);
+        let cm = x86_gas_parse_mem(ind);
         if (!x86_gas_mem_ok(cm)) {
           return x86_gas_bad(a, mnem + " " + rest);
         }
@@ -5558,7 +5558,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         buf_push_byte(a.code, 255);
         return x86_gas_membytes(a, ext, cm, 0);
       }
-      let ireg: i32 = x86_gas_reg(ind);
+      let ireg = x86_gas_reg(ind);
       if (ireg < 0) {
         return x86_gas_bad(a, mnem + " " + rest);
       }
@@ -5579,7 +5579,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   }
   if (k == GK_PUSHQ) {
     if (rest.len() > 0 && rest[0] == b'$') {
-      let pv: i32 = x86_gas_atoi(rest);
+      let pv = x86_gas_atoi(rest);
       if (x86_imm_fits8(pv)) {
         buf_push_byte(a.code, 106);
         buf_push_byte(a.code, pv & 255);
@@ -5588,7 +5588,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       x86_push_arr(a.code, x86_push_imm32([], pv));
     } else {
       if (x86_gas_has_paren(rest)) {
-        let pm: GasMem = x86_gas_parse_mem(rest);
+        let pm = x86_gas_parse_mem(rest);
         if (pm.no_base) {
           return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) };
         }
@@ -5604,7 +5604,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   }
   if (k == GK_POPQ) {
     if (x86_gas_has_paren(rest)) {
-      let qm: GasMem = x86_gas_parse_mem(rest);
+      let qm = x86_gas_parse_mem(rest);
       if (qm.no_base) {
         return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) };
       }
@@ -5617,7 +5617,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     }
     return a;
   }
-  let sfx: i32 = l.sfx;
+  let sfx = l.sfx;
   if (k == GK_IMUL) {
     return x86_gas_imul_family(a, mnem, sfx, rest);
   }
@@ -5645,15 +5645,15 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_UNKNOWN1) {
     return X86Asm { ...a, unknown: a.unknown.append(mnem) };
   }
-  let src: string = l.src;
-  let dst: string = l.dst;
+  let src = l.src;
+  let dst = l.dst;
   if (k == GK_LEA) {
-    let lsz: i32 = l.ext;
-    let ld: i32 = x86_gas_reg_w(dst, lsz);
+    let lsz = l.ext;
+    let ld = x86_gas_reg_w(dst, lsz);
     if (ld < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    let m: GasMem = x86_gas_parse_mem(src);
+    let m = x86_gas_parse_mem(src);
     if (m.is_rip) {
       if (lsz != 64) {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
@@ -5690,14 +5690,14 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return x86_gas_sse_mov10(a, mnem, l.ext, src, dst);
   }
   if (k == GK_MOVMSK) {
-    let mmk: i32 = l.ext;
+    let mmk = l.ext;
     return x86_gas_movmsk(a, mnem, mmk / 256, mmk % 256, src, dst);
   }
   if (k == GK_BITSCAN) {
-    let bsc: i32 = l.ext;
-    let bsw: i32 = bsc % 256;
-    let bsd: i32 = x86_gas_reg32(dst);
-    let bss: i32 = x86_gas_reg32(src);
+    let bsc = l.ext;
+    let bsw = bsc % 256;
+    let bsd = x86_gas_reg32(dst);
+    let bss = x86_gas_reg32(src);
     if (bsw == 1) {
       bsd = x86_gas_reg64(dst);
       bss = x86_gas_reg64(src);
@@ -5717,13 +5717,13 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return a;
   }
   if (k == GK_MOVEXT) {
-    let mx: i32 = l.ext;
+    let mx = l.ext;
     return x86_gas_movext(a, mx / 256, mx % 256 * 8, src, dst);
   }
   if (k == GK_CVT2SI) {
-    let f2i: i32 = l.ext;
-    let cvw: i32 = 1;
-    let cvd: i32 = x86_gas_reg32(dst);
+    let f2i = l.ext;
+    let cvw = 1;
+    let cvd = x86_gas_reg32(dst);
     if (cvd >= 0) {
       cvw = 0;
     } else {
@@ -5732,7 +5732,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
         return x86_gas_bad(a, mnem + " " + src + ", " + dst);
       }
     }
-    let cvx: i32 = x86_gas_xmm(src);
+    let cvx = x86_gas_xmm(src);
     if (cvx < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
@@ -5740,19 +5740,19 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return a;
   }
   if (k == GK_CVT2S) {
-    let c2s: i32 = l.ext;
-    let cpfx: i32 = c2s / 256;
-    let cw: i32 = c2s % 256;
-    let cxd: i32 = x86_gas_xmm(dst);
+    let c2s = l.ext;
+    let cpfx = c2s / 256;
+    let cw = c2s % 256;
+    let cxd = x86_gas_xmm(dst);
     if (cxd < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
     if (x86_gas_has_paren(src)) {
-      let cm2: GasMem = x86_gas_parse_mem(src);
+      let cm2 = x86_gas_parse_mem(src);
       if (!x86_gas_mem_ok(cm2)) {
         return x86_gas_bad(a, mnem + " " + src);
       }
-      let csz: i32 = 32;
+      let csz = 32;
       if (cw == 1) {
         csz = 64;
       }
@@ -5762,7 +5762,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
       buf_push_byte(a.code, 42);
       return x86_gas_membytes(a, cxd, cm2, 0);
     }
-    let crs: i32 = x86_gas_reg64(src);
+    let crs = x86_gas_reg64(src);
     if (cw == 0) {
       crs = x86_gas_reg32(src);
     }
@@ -5800,7 +5800,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
     return x86_gas_vshift_imm(a, mnem, l.ext, src, dst);
   }
   if (k == GK_SSE) {
-    let sse: i32 = l.ext;
+    let sse = l.ext;
     return x86_gas_sse_table(a, mnem, sse / 256, sse & 255, src, dst);
   }
   if (k == GK_SSE38) {
@@ -5808,7 +5808,7 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   }
   if (k == GK_MOVSXD) {
     if (x86_gas_has_paren(src)) {
-      let sm: GasMem = x86_gas_parse_mem(src);
+      let sm = x86_gas_parse_mem(src);
       if (sm.no_base) {
         return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) };
       }
@@ -5832,14 +5832,14 @@ function x86_gas_directive_ignorable(line: string): boolean {
 
 function x86_dw_fields(line: string): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < line.len()) {
     while (i < line.len() && (line[i] == b' ' || line[i] == b'\t')) {
-      i = i + 1;
+      i += 1;
     }
-    let start: i32 = i;
+    let start = i;
     while (i < line.len() && line[i] != b' ' && line[i] != b'\t') {
-      i = i + 1;
+      i += 1;
     }
     if (i > start) {
       out = out.append(slice_unchecked(line, start, i) + "");
@@ -5849,20 +5849,20 @@ function x86_dw_fields(line: string): string[] {
 }
 
 function x86_file_entry(own a: X86Asm, line: string): X86Asm {
-  let f: string[] = x86_dw_fields(line);
+  let f = x86_dw_fields(line);
   if (f.len() < 3) {
     return a;
   }
-  let n: i32 = x86_gas_atoi(f[1]);
-  let q1: i32 = x86_str_indexof(line, "\"");
-  let q2: i32 = line.len() - 1;
+  let n = x86_gas_atoi(f[1]);
+  let q1 = x86_str_indexof(line, "\"");
+  let q2 = line.len() - 1;
   while (q2 > q1 && line[q2] != b'"') {
-    q2 = q2 - 1;
+    q2 -= 1;
   }
   if (n < 1 || q1 < 0 || q2 <= q1) {
     return a;
   }
-  let files: string[] = a.files;
+  let files = a.files;
   while (files.len() < n) {
     files = files.append("");
   }
@@ -5870,21 +5870,21 @@ function x86_file_entry(own a: X86Asm, line: string): X86Asm {
 }
 
 function x86_loc_row(own a: X86Asm, line: string): X86Asm {
-  let f: string[] = x86_dw_fields(line);
+  let f = x86_dw_fields(line);
   if (f.len() < 3) {
     return a;
   }
-  let col: i32 = 0;
+  let col = 0;
   if (f.len() > 3) {
     col = x86_gas_atoi(f[3]);
   }
-  let flags: i32 = 0;
-  let i: i32 = 3;
+  let flags = 0;
+  let i = 3;
   while (i < f.len()) {
     if (f[i] == "prologue_end") {
       flags = 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return X86Asm {
     ...a,
@@ -5894,22 +5894,22 @@ function x86_loc_row(own a: X86Asm, line: string): X86Asm {
 }
 
 function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
-  let sp: i32 = x86_str_indexof(line, " ");
+  let sp = x86_str_indexof(line, " ");
   if (sp < 0) {
     return x86_gas_bad(a, line);
   }
-  let parts: string[] = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
-  let n: i32 = x86_gas_atoi(x86_gas_trim(parts[0]));
-  let align: i32 = n;
+  let parts = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
+  let n = x86_gas_atoi(x86_gas_trim(parts[0]));
+  let align = n;
   if (x86_str_starts_with(line, ".p2align")) {
     if (n > 30) {
       return x86_gas_bad(a, line);
     }
     align = 1;
-    let k: i32 = 0;
+    let k = 0;
     while (k < n) {
-      align = align * 2;
-      k = k + 1;
+      align *= 2;
+      k += 1;
     }
   }
   if (align <= 1) {
@@ -5930,15 +5930,15 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     }
     return a;
   }
-  let max: i32 = 0 - 1;
+  let max: i32 = -1;
   if (parts.len() >= 3) {
-    let ms: string = x86_gas_trim(parts[2]);
+    let ms = x86_gas_trim(parts[2]);
     if (ms.len() > 0) {
       max = x86_gas_atoi(ms);
     }
   }
-  let at: i32 = buf_len(a.code);
-  let pad: i32 = x86_pad_width(at, align, max);
+  let at = buf_len(a.code);
+  let pad = x86_pad_width(at, align, max);
   a = X86Asm { ...a, pads: a.pads.append(at).append(pad).append(align).append(max).append(x86_br_count(a)) };
   if (pad == 0) {
     return a;
@@ -5948,7 +5948,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
 }
 
 function x86_pad_width(at: i32, align: i32, max: i32): i32 {
-  let pad: i32 = (align - at % align) % align;
+  let pad = (align - at % align) % align;
   if (max >= 0 && pad > max) {
     return 0;
   }
@@ -5956,21 +5956,21 @@ function x86_pad_width(at: i32, align: i32, max: i32): i32 {
 }
 
 function x86_gas_comment_start(line: string): i32 {
-  let hash: i32 = x86_str_indexof(line, "#");
+  let hash = x86_str_indexof(line, "#");
   if (hash < 0) {
     return hash;
   }
-  let quote: i32 = x86_str_indexof(line, "\"");
+  let quote = x86_str_indexof(line, "\"");
   if (quote < 0 || quote > hash) {
     return hash;
   }
-  let i: i32 = quote;
-  let in_str: boolean = false;
+  let i = quote;
+  let in_str = false;
   while (i < line.len()) {
-    let c: i32 = line[i] as i32;
+    let c = line[i] as i32;
     if (in_str) {
       if (c == 92) {
-        i = i + 2;
+        i += 2;
         continue;
       }
       if (c == 34) {
@@ -5983,9 +5983,9 @@ function x86_gas_comment_start(line: string): i32 {
         return i;
       }
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function x86_gas_assemble(src: string): X86Asm {
@@ -5997,14 +5997,14 @@ pub function x86_gas_assemble_words(src: string, words: u8[]): X86Asm {
 }
 
 pub function x86_gas_assemble_words_unlinked(src: string, words: u8[]): X86Asm {
-  let prog: GasText = x86_gas_prepare(src, words);
-  let pl: GasLine[] = prog.lines;
+  let prog = x86_gas_prepare(src, words);
+  let pl = prog.lines;
   prog = GasText { ...prog, lines: [] };
-  let labs: GasLabels = x86_gas_label_table(pl, prog.nids);
+  let labs = x86_gas_label_table(pl, prog.nids);
   pl = x86_gas_link_labels(pl, labs);
   prog = GasText { ...prog, lines: pl };
-  let a: X86Asm = x86_gas_assemble_pass_prepared(prog, labs, words);
-  let plan: RelaxPlan = x86_relax_settle(a);
+  let a = x86_gas_assemble_pass_prepared(prog, labs, words);
+  let plan = x86_relax_settle(a);
   if (x86_plan_long(plan)) {
     a = x86_relax_apply(a, plan);
   }
@@ -6021,8 +6021,8 @@ pub function x86_code_len(a: X86Asm): i32 {
 struct RelaxLayout { ev: i32[], start: i32[], size: i32[], grow: i32[], pads_before: i32[], br_ev: i32[], pad_ev: i32[] }
 
 function x86_relax_layout(a: X86Asm): RelaxLayout {
-  let nb: i32 = x86_br_count(a);
-  let np: i32 = a.pads.len() / 5;
+  let nb = x86_br_count(a);
+  let np = a.pads.len() / 5;
   let ev: i32[] = [];
   let start: i32[] = [];
   let size: i32[] = [];
@@ -6030,19 +6030,19 @@ function x86_relax_layout(a: X86Asm): RelaxLayout {
   let pads_before: i32[] = [0];
   let br_ev: i32[] = [];
   let pad_ev: i32[] = [];
-  let k: i32 = 0;
-  let p: i32 = 0;
-  let pads: i32 = 0;
+  let k = 0;
+  let p = 0;
+  let pads = 0;
   while (k < nb || p < np) {
     if (p < np && (k >= nb || a.pads[p * 5 + 4] <= k)) {
       pad_ev = pad_ev.append(ev.len());
       ev = ev.append(0 - (p + 1));
       start = start.append(a.pads[p * 5]);
       size = size.append(a.pads[p * 5 + 1]);
-      pads = pads + 1;
-      p = p + 1;
+      pads += 1;
+      p += 1;
     } else {
-      let g: i32 = 4;
+      let g = 4;
       if (a.text[a.br_offs[k] - 1] as i32 == 235) {
         g = 3;
       }
@@ -6051,7 +6051,7 @@ function x86_relax_layout(a: X86Asm): RelaxLayout {
       start = start.append(a.br_offs[k] - 1);
       size = size.append(2);
       grow = grow.append(g);
-      k = k + 1;
+      k += 1;
     }
     pads_before = pads_before.append(pads);
   }
@@ -6064,34 +6064,34 @@ function x86_relax_targets(a: X86Asm, l: RelaxLayout): RelaxTargets {
   let off_s: i32[] = [];
   let before: i32[] = [];
   let pad: i32[] = [];
-  let k: i32 = 0;
-  let nb: i32 = a.br_offs.len();
+  let k = 0;
+  let nb = a.br_offs.len();
   while (k < nb) {
-    let idx: i32 = x86_br_idx(a, k);
-    let name: string = x86_br_name(a, k);
-    let off: i32 = x86_label_target(a, name, idx);
+    let idx = x86_br_idx(a, k);
+    let name = x86_br_name(a, k);
+    let off = x86_label_target(a, name, idx);
     if (idx < 0) {
       idx = x86_label_idx(a, name);
     }
-    let bound: i32 = 0 - 1;
-    let j: i32 = 0;
+    let bound: i32 = -1;
+    let j = 0;
     while (idx >= 0 && j < a.pad_labels.len()) {
       if (a.pad_labels[j] == idx) {
         bound = l.pad_ev[a.pad_labels[j + 1]];
       }
-      j = j + 2;
+      j += 2;
     }
     off_s = off_s.append(off);
     before = before.append(x86_events_near(l.start, off, l.br_ev[k]));
     pad = pad.append(bound);
-    k = k + 1;
+    k += 1;
   }
   return RelaxTargets { off: off_s, before: before, pad: pad };
 }
 
 function x86_events_before(starts: i32[], off: i32): i32 {
-  let lo: i32 = 0;
-  let hi: i32 = starts.len();
+  let lo = 0;
+  let hi = starts.len();
   while (lo < hi) {
     let mid: i32 = (lo + hi) / 2;
     if (starts[mid] < off) {
@@ -6110,36 +6110,36 @@ function x86_relax_fresh(n: i32, short: boolean[]): RelaxPass {
 struct RelaxPass { new_start: i32[], new_size: i32[], prefix: i32[], before: i32[], short: boolean[] }
 
 function x86_relax_settle(a: X86Asm): RelaxPlan {
-  let l: RelaxLayout = x86_relax_layout(a);
-  let t: RelaxTargets = x86_relax_targets(a, l);
-  let n: i32 = l.ev.len();
+  let l = x86_relax_layout(a);
+  let t = x86_relax_targets(a, l);
+  let n = l.ev.len();
   let short: boolean[] = [];
-  let k: i32 = 0;
-  let nb: i32 = a.br_offs.len();
+  let k = 0;
+  let nb = a.br_offs.len();
   while (k < nb) {
     short = short.append(t.off[k] >= 0);
-    k = k + 1;
+    k += 1;
   }
-  let st: RelaxPass = x86_relax_fresh(n, short);
-  let laid: RelaxStep = x86_relax_pass(a, l, t, st, false);
+  let st = x86_relax_fresh(n, short);
+  let laid = x86_relax_pass(a, l, t, st, false);
   st = laid.st;
-  let iter: i32 = 0;
+  let iter = 0;
   while (iter < n + 2) {
     st = RelaxPass { ...st, before: st.prefix, prefix: st.before };
-    let r: RelaxStep = x86_relax_pass(a, l, t, st, true);
+    let r = x86_relax_pass(a, l, t, st, true);
     st = r.st;
     if (!r.changed) {
       return RelaxPlan { l: l, st: st };
     }
-    iter = iter + 1;
+    iter += 1;
   }
   let longs: boolean[] = [];
   k = 0;
   while (k < nb) {
     longs = longs.append(false);
-    k = k + 1;
+    k += 1;
   }
-  let all: RelaxPass = x86_relax_fresh(n, longs);
+  let all = x86_relax_fresh(n, longs);
   return RelaxPlan { l: l, st: x86_relax_pass(a, l, t, all, false).st };
 }
 
@@ -6155,18 +6155,18 @@ function x86_plan_long(p: RelaxPlan): boolean {
 }
 
 function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
-  let l: RelaxLayout = p.l;
-  let st: RelaxPass = p.st;
-  let n: i32 = l.ev.len();
-  let text: u8[] = a.text;
+  let l = p.l;
+  let st = p.st;
+  let n = l.ev.len();
+  let text = a.text;
   a = X86Asm { ...a, text: [] };
-  let out: usize = buf_new(text.len() + 64);
-  let pos: i32 = 0;
-  let i: i32 = 0;
+  let out = buf_new(text.len() + 64);
+  let pos = 0;
+  let i = 0;
   while (i < n) {
-    let s: i32 = l.start[i];
+    let s = l.start[i];
     buf_push_bytes_range(out, text, pos, s);
-    let e: i32 = l.ev[i];
+    let e = l.ev[i];
     if (e < 0) {
       x86_push_arr(out, x86_nop_pad([], st.new_size[i]));
       pos = s + l.size[i];
@@ -6180,49 +6180,49 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
       }
       pos = s + 2;
     }
-    i = i + 1;
+    i += 1;
   }
   buf_push_bytes_range(out, text, pos, text.len());
-  let code: u8[] = buf_take_bytes(out);
+  let code = buf_take_bytes(out);
   buf_free(out);
-  let fq: u8[] = a.fixes;
+  let fq = a.fixes;
   a = X86Asm { ...a, fixes: [] };
-  let nq: usize = buf_new(fq.len() + 8);
-  let j: i32 = 0;
-  let k: i32 = 0;
-  let f: i32 = 0;
-  let nf: i32 = fq.len();
+  let nq = buf_new(fq.len() + 8);
+  let j = 0;
+  let k = 0;
+  let f = 0;
+  let nf = fq.len();
   while (f < nf) {
-    let po: i32 = fq[f] as i32 | fq[f + 1] as i32 << 8 | fq[f + 2] as i32 << 16 | fq[f + 3] as i32 << 24;
-    let hi: i32 = fq[f + 4] as i32 | fq[f + 5] as i32 << 8 | fq[f + 6] as i32 << 16 | fq[f + 7] as i32 << 24;
+    let po = fq[f] as i32 | fq[f + 1] as i32 << 8 | fq[f + 2] as i32 << 16 | fq[f + 3] as i32 << 24;
+    let hi = fq[f + 4] as i32 | fq[f + 5] as i32 << 8 | fq[f + 6] as i32 << 16 | fq[f + 7] as i32 << 24;
     if ((hi & 1) != 0) {
       while (a.br_offs[k] != po) {
-        k = k + 1;
+        k += 1;
       }
-      let ei: i32 = l.br_ev[k];
+      let ei = l.br_ev[k];
       po = st.new_start[ei] + 1;
       if (!st.short[k]) {
-        hi = hi - 1;
+        hi -= 1;
         if (text[l.start[ei]] as i32 != 235) {
-          po = po + 1;
+          po += 1;
         }
       }
     } else {
       while (j < n && l.start[j] < po) {
-        j = j + 1;
+        j += 1;
       }
-      po = po + x86_relax_shift(st, j);
+      po += x86_relax_shift(st, j);
     }
     buf_push_u64(nq, (hi as i64 << 32 | po as i64 & 4294967295i64) as u64);
-    f = f + 8;
+    f += 8;
   }
-  let fixes: u8[] = buf_take_bytes(nq);
+  let fixes = buf_take_bytes(nq);
   buf_free(nq);
   let tails: i32[] = [];
   j = 0;
   for t in a.fix_tail_offs {
     while (j < n && l.start[j] < t) {
-      j = j + 1;
+      j += 1;
     }
     tails = tails.append(t + x86_relax_shift(st, j));
   }
@@ -6230,49 +6230,49 @@ function x86_relax_apply(own a: X86Asm, p: RelaxPlan): X86Asm {
   j = 0;
   for t in a.afix_offs {
     while (j < n && l.start[j] < t) {
-      j = j + 1;
+      j += 1;
     }
     abs_offs = abs_offs.append(t + x86_relax_shift(st, j));
   }
-  let offs: i32[] = a.lab_offs;
+  let offs = a.lab_offs;
   a = X86Asm { ...a, lab_offs: [] };
-  let li: i32 = 0;
+  let li = 0;
   j = 0;
   while (li < offs.len()) {
     if (a.lab_secs[li] == 0 && offs[li] >= 0) {
       j = x86_events_near(l.start, offs[li], j);
       offs = offs.with(li, offs[li] + x86_relax_shift(st, j));
     }
-    li = li + 1;
+    li += 1;
   }
-  let pl: i32 = 0;
+  let pl = 0;
   while (pl < a.pad_labels.len()) {
-    let pe: i32 = l.pad_ev[a.pad_labels[pl + 1]];
+    let pe = l.pad_ev[a.pad_labels[pl + 1]];
     offs = offs.with(a.pad_labels[pl], st.new_start[pe] + st.new_size[pe]);
-    pl = pl + 2;
+    pl += 2;
   }
-  let cfi: CfiState = a.cfi;
+  let cfi = a.cfi;
   let moved: CfiState = CfiState {
     ...cfi,
     rule_off: x86_relax_moved(cfi.rule_off, l, st, a.pad_marks, 1),
     fde_start: x86_relax_moved(cfi.fde_start, l, st, a.pad_marks, 2),
     fde_end: x86_relax_moved(cfi.fde_end, l, st, a.pad_marks, 3),
   };
-  let locs: i32[] = x86_relax_moved(a.loc_offs, l, st, a.pad_marks, 0);
+  let locs = x86_relax_moved(a.loc_offs, l, st, a.pad_marks, 0);
   return X86Asm { ...a, text: code, fixes: fixes, fix_tail_offs: tails, afix_offs: abs_offs, lab_offs: offs, loc_offs: locs, cfi: moved };
 }
 
 function x86_events_near(starts: i32[], off: i32, j: i32): i32 {
-  let k: i32 = 0;
+  let k = 0;
   while (k < 8) {
     if (j > 0 && starts[j - 1] >= off) {
-      j = j - 1;
+      j -= 1;
     } else if (j < starts.len() && starts[j] < off) {
-      j = j + 1;
+      j += 1;
     } else {
       return j;
     }
-    k = k + 1;
+    k += 1;
   }
   return x86_events_before(starts, off);
 }
@@ -6286,23 +6286,23 @@ function x86_relax_shift(st: RelaxPass, j: i32): i32 {
 
 function x86_relax_moved(xs: i32[], l: RelaxLayout, st: RelaxPass, marks: i32[], cat: i32): i32[] {
   let out: i32[] = [];
-  let n: i32 = l.ev.len();
-  let j: i32 = 0;
-  let i: i32 = 0;
+  let n = l.ev.len();
+  let j = 0;
+  let i = 0;
   while (i < xs.len()) {
     while (j < n && x86_relax_before(l, marks, cat, j, xs[i], i)) {
-      j = j + 1;
+      j += 1;
     }
     out = out.append(xs[i] + x86_relax_shift(st, j));
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function x86_relax_before(l: RelaxLayout, marks: i32[], cat: i32, j: i32, x: i32, i: i32): boolean {
-  let e: i32 = l.ev[j];
+  let e = l.ev[j];
   if (e < 0) {
-    return marks[(0 - e - 1) * 4 + cat] <= i;
+    return marks[(-e - 1) * 4 + cat] <= i;
   }
   return l.start[j] < x;
 }
@@ -6310,25 +6310,25 @@ function x86_relax_before(l: RelaxLayout, marks: i32[], cat: i32, j: i32, x: i32
 struct RelaxStep { st: RelaxPass, changed: boolean }
 
 function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: RelaxPass, judge: boolean): RelaxStep {
-  let new_start: i32[] = st.new_start;
-  let new_size: i32[] = st.new_size;
-  let prefix: i32[] = st.prefix;
-  let short: boolean[] = st.short;
-  let cum: i32 = 0;
-  let changed: boolean = false;
-  let i: i32 = 0;
+  let new_start = st.new_start;
+  let new_size = st.new_size;
+  let prefix = st.prefix;
+  let short = st.short;
+  let cum = 0;
+  let changed = false;
+  let i = 0;
   while (i < l.ev.len()) {
-    let at: i32 = l.start[i] + cum;
-    let size: i32 = 0;
-    let e: i32 = l.ev[i];
+    let at = l.start[i] + cum;
+    let size = 0;
+    let e = l.ev[i];
     if (e < 0) {
-      let p: i32 = 0 - e - 1;
+      let p = -e - 1;
       size = x86_pad_width(at, a.pads[p * 5 + 2], a.pads[p * 5 + 3]);
     } else {
       size = 2;
       if (short[e] && judge) {
-        let disp: i32 = x86_relax_seen(l, t, st.before, new_start, new_size, prefix, e, i, cum) - (at + 2);
-        if (disp < 0 - 128 || disp > 127) {
+        let disp = x86_relax_seen(l, t, st.before, new_start, new_size, prefix, e, i, cum) - (at + 2);
+        if (disp < -128 || disp > 127) {
           short = short.with(e, false);
           changed = true;
         }
@@ -6341,26 +6341,26 @@ function x86_relax_pass(a: X86Asm, l: RelaxLayout, t: RelaxTargets, own st: Rela
     new_size = new_size.with(i, size);
     cum = cum + size - l.size[i];
     prefix = prefix.with(i, cum);
-    i = i + 1;
+    i += 1;
   }
   return RelaxStep { st: RelaxPass { new_start: new_start, new_size: new_size, prefix: prefix, before: st.before, short: short }, changed: changed };
 }
 
 function x86_relax_seen(l: RelaxLayout, t: RelaxTargets, before: i32[], new_start: i32[], new_size: i32[], prefix: i32[], k: i32, i: i32, cum: i32): i32 {
-  let stretch: i32 = cum;
+  let stretch = cum;
   if (i > 0) {
-    stretch = stretch - before[i - 1];
+    stretch -= before[i - 1];
   }
-  let b: i32 = t.pad[k];
+  let b = t.pad[k];
   if (b >= 0) {
-    let edge: i32 = new_start[b] + new_size[b];
+    let edge = new_start[b] + new_size[b];
     if (b >= i) {
-      edge = edge + x86_relax_carried(l, stretch, b + 1, i);
+      edge += x86_relax_carried(l, stretch, b + 1, i);
     }
     return edge;
   }
-  let off: i32 = t.off[k];
-  let j: i32 = t.before[k];
+  let off = t.off[k];
+  let j = t.before[k];
   if (j == 0) {
     return off;
   }
@@ -6518,21 +6518,21 @@ struct GasLabels {
 
 function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
   let names: string[] = [];
-  let head: i32[] = x86_empty_buckets();
-  let tail: i32[] = x86_empty_buckets();
+  let head = x86_empty_buckets();
+  let tail = x86_empty_buckets();
   let next: i32[] = [];
-  let li: i32 = 0;
+  let li = 0;
   while (li < pl.len()) {
-    let name: string = pl[li].label;
-    li = li + 1;
+    let name = pl[li].label;
+    li += 1;
     if (name.len() == 0) {
       continue;
     }
-    let at: i32 = names.len();
-    let b: i32 = x86_name_bucket(name);
-    let prev: i32 = tail[b];
+    let at = names.len();
+    let b = x86_name_bucket(name);
+    let prev = tail[b];
     names = names.append(name);
-    next = next.append(0 - 1);
+    next = next.append(-1);
     if (prev < 0) {
       head = head.with(b, at);
     } else {
@@ -6544,27 +6544,27 @@ function x86_gas_label_table(pl: GasLine[], nids: i32): GasLabels {
 }
 
 function x86_gas_label_lookup(labs: GasLabels, name: string): i32 {
-  let i: i32 = labs.head[x86_name_bucket(name)];
+  let i = labs.head[x86_name_bucket(name)];
   while (i >= 0) {
     if (labs.names[i] == name) {
       return i;
     }
     i = labs.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
-  let ndef: i32 = 0;
-  let li: i32 = 0;
+  let ndef = 0;
+  let li = 0;
   while (li < pl.len()) {
-    let l: GasLine = pl[li];
-    let def_idx: i32 = 0 - 1;
+    let l = pl[li];
+    let def_idx: i32 = -1;
     if (l.label.len() > 0) {
       def_idx = ndef;
-      ndef = ndef + 1;
+      ndef += 1;
     }
-    let ref_idx: i32 = 0 - 1;
+    let ref_idx: i32 = -1;
     if (l.kind == GK_JCC) {
       ref_idx = x86_gas_label_lookup(labs, l.rest);
     } else if (l.kind == GK_BRANCH) {
@@ -6572,7 +6572,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
         ref_idx = x86_gas_label_lookup(labs, l.rest);
       }
     } else if (l.kind == GK_NONE && x86_str_starts_with(l.body, ".quad")) {
-      let qop: string = x86_gas_trim(slice_unchecked(l.body, 6, l.body.len()));
+      let qop = x86_gas_trim(slice_unchecked(l.body, 6, l.body.len()));
       if (x86_gas_is_symbol(qop)) {
         ref_idx = x86_gas_label_lookup(labs, qop);
       }
@@ -6580,7 +6580,7 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
     if (def_idx >= 0 || ref_idx >= 0) {
       pl = pl.with(li, GasLine { ...l, def_idx: def_idx, ref_idx: ref_idx });
     }
-    li = li + 1;
+    li += 1;
   }
   return pl;
 }
@@ -6588,49 +6588,49 @@ function x86_gas_link_labels(own pl: GasLine[], labs: GasLabels): GasLine[] {
 struct MnemIndex { names: string[], head: i32[], next: i32[] }
 
 function x86_mnem_lookup(ix: MnemIndex, mnem: string): i32 {
-  let i: i32 = ix.head[x86_name_bucket(mnem)];
+  let i = ix.head[x86_name_bucket(mnem)];
   while (i >= 0) {
     if (ix.names[i] == mnem) {
       return i;
     }
     i = ix.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_mnem_added(ix: MnemIndex, mnem: string): MnemIndex {
-  let b: i32 = x86_name_bucket(mnem);
-  let at: i32 = ix.names.len();
+  let b = x86_name_bucket(mnem);
+  let at = ix.names.len();
   return MnemIndex { names: ix.names.append(mnem), head: ix.head.with(b, at), next: ix.next.append(ix.head[b]) };
 }
 
 struct LineMemo { keys: string[], head: i32[], next: i32[], at: i32[] }
 
 function x86_line_bucket(s: str): i32 {
-  let h: i32 = 0;
-  let i: i32 = 0;
+  let h = 0;
+  let i = 0;
   while (i < s.len()) {
     h = h * 131 + s[i] as i32 & 8388607;
-    i = i + 1;
+    i += 1;
   }
   return h % 4093;
 }
 
 function x86_line_memo_lookup(m: LineMemo, raw: str): i32 {
-  let i: i32 = m.head[x86_line_bucket(raw)];
+  let i = m.head[x86_line_bucket(raw)];
   while (i >= 0) {
     if (m.keys[i] == raw) {
       return i;
     }
     i = m.next[i];
   }
-  return 0 - 1;
+  return -1;
 }
 
 function x86_line_memo_added(own m: LineMemo, raw: str, li: i32): LineMemo {
-  let b: i32 = x86_line_bucket(raw);
-  let at: i32 = m.keys.len();
-  let prev: i32 = m.head[b];
+  let b = x86_line_bucket(raw);
+  let at = m.keys.len();
+  let prev = m.head[b];
   m = LineMemo { ...m, keys: m.keys.append(raw + ""), head: m.head.with(b, at), next: m.next.append(prev), at: m.at.append(li) };
   return m;
 }
@@ -6654,9 +6654,9 @@ function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
   if (mnem == "rorxl") {
     return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 32 };
   }
-  let pp: i32 = x86_shiftx_pp(mnem);
+  let pp = x86_shiftx_pp(mnem);
   if (pp > 0) {
-    let size: i32 = 32;
+    let size = 32;
     if (mnem[mnem.len() - 1] == b'q') {
       size = 64;
     }
@@ -6669,15 +6669,15 @@ function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
 }
 
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
-  let v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
+  let v = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
   if (x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
-  let bmi: MnemVerdict = x86_gas_bmi_verdict(v, mnem);
+  let bmi = x86_gas_bmi_verdict(v, mnem);
   if (bmi.a_kind != GK_NONE) {
     return bmi;
   }
-  let rpfx: i32 = x86_gas_rep_pfx(mnem);
+  let rpfx = x86_gas_rep_pfx(mnem);
   if (rpfx >= 0) {
     return MnemVerdict { ...v, a_kind: GK_REP, a_ext: rpfx };
   }
@@ -6685,20 +6685,20 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     return MnemVerdict { ...v, a_kind: GK_LOCK };
   }
   if (x86_str_starts_with(mnem, "set")) {
-    let scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
+    let scc = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
     if (scc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_SETCC, a_ext: scc };
     }
   }
   if (x86_gas_is_branch(mnem)) {
-    let bext: i32 = 2;
+    let bext = 2;
     if (mnem == "jmp") {
       bext = 4;
     }
     return MnemVerdict { ...v, a_kind: GK_BRANCH, a_ext: bext };
   }
   if (x86_str_starts_with(mnem, "j")) {
-    let jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
+    let jcc = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
     if (jcc >= 0) {
       return MnemVerdict { ...v, a_kind: GK_JCC, a_ext: jcc };
     }
@@ -6709,26 +6709,26 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_is_pushpop(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_POPQ };
   }
-  let sfx: i32 = x86_gas_suffix_size(mnem);
+  let sfx = x86_gas_suffix_size(mnem);
   v = MnemVerdict { ...v, a_sfx: sfx, sfx: sfx };
-  let bse: string = "";
+  let bse = "";
   if (sfx > 0) {
     bse = x86_gas_strip_suffix(mnem);
     if (x86_gas_is_imul(bse)) {
       return MnemVerdict { ...v, a_kind: GK_IMUL };
     }
-    let ue: i32 = x86_gas_unary_ext(bse);
+    let ue = x86_gas_unary_ext(bse);
     if (ue >= 0) {
       return MnemVerdict { ...v, a_kind: GK_UNARY, a_ext: ue };
     }
-    let ide: i32 = x86_gas_incdec_ext(bse);
+    let ide = x86_gas_incdec_ext(bse);
     if (ide >= 0) {
       return MnemVerdict { ...v, a_kind: GK_INCDEC, a_ext: ide };
     }
     if (x86_gas_is_bswap(bse)) {
       return MnemVerdict { ...v, a_kind: GK_BSWAP };
     }
-    let sho: i32 = x86_gas_shld_op(bse);
+    let sho = x86_gas_shld_op(bse);
     if (sho >= 0) {
       return MnemVerdict { ...v, a_kind: GK_SHLD, a_ext: sho };
     }
@@ -6745,11 +6745,11 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_is_pinsr(mnem)) {
     return MnemVerdict { ...v, a_kind: GK_PINSR };
   }
-  let lsz: i32 = x86_gas_lea_size(mnem);
+  let lsz = x86_gas_lea_size(mnem);
   if (lsz >= 0) {
     return MnemVerdict { ...v, b_kind: GK_LEA, b_ext: lsz };
   }
-  let msz: i32 = x86_gas_mov_size(mnem);
+  let msz = x86_gas_mov_size(mnem);
   if (msz == 64) {
     return MnemVerdict { ...v, b_kind: GK_MOVQ };
   }
@@ -6765,50 +6765,50 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_gas_movdq_pfx(mnem) >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVDQ };
   }
-  let m10: i32 = x86_gas_mov10_pfx(mnem);
+  let m10 = x86_gas_mov10_pfx(mnem);
   if (m10 >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOV10, b_ext: m10 };
   }
-  let mmk: i32 = x86_gas_movmsk_op(mnem);
+  let mmk = x86_gas_movmsk_op(mnem);
   if (mmk >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVMSK, b_ext: mmk };
   }
-  let bsc: i32 = x86_gas_bitscan_op(mnem);
+  let bsc = x86_gas_bitscan_op(mnem);
   if (bsc >= 0) {
     return MnemVerdict { ...v, b_kind: GK_BITSCAN, b_ext: bsc };
   }
   if (x86_gas_is_movqd(mnem)) {
     return MnemVerdict { ...v, b_kind: GK_MOVQD };
   }
-  let mx: i32 = x86_gas_extend_op(mnem);
+  let mx = x86_gas_extend_op(mnem);
   if (mx >= 0) {
     return MnemVerdict { ...v, b_kind: GK_MOVEXT, b_ext: mx };
   }
-  let f2i: i32 = x86_gas_cvt2si(mnem);
+  let f2i = x86_gas_cvt2si(mnem);
   if (f2i >= 0) {
     return MnemVerdict { ...v, b_kind: GK_CVT2SI, b_ext: f2i };
   }
-  let c2s: i32 = x86_gas_cvt2s_op(mnem);
+  let c2s = x86_gas_cvt2s_op(mnem);
   if (c2s >= 0) {
     return MnemVerdict { ...v, b_kind: GK_CVT2S, b_ext: c2s };
   }
   if (sfx > 0) {
-    let ae: i32 = x86_gas_alu_ext(bse);
+    let ae = x86_gas_alu_ext(bse);
     if (ae >= 0) {
       return MnemVerdict { ...v, b_kind: GK_ALU, b_ext: ae };
     }
     if (x86_gas_is_test(bse)) {
       return MnemVerdict { ...v, b_kind: GK_TEST };
     }
-    let she: i32 = x86_gas_shift_ext(bse);
+    let she = x86_gas_shift_ext(bse);
     if (she >= 0) {
       return MnemVerdict { ...v, b_kind: GK_SHIFT, b_ext: she };
     }
-    let bti: i32 = x86_gas_bt_idx(bse);
+    let bti = x86_gas_bt_idx(bse);
     if (bti >= 0) {
       return MnemVerdict { ...v, b_kind: GK_BT, b_ext: bti };
     }
-    let rmw: i32 = x86_gas_rmw_op(bse);
+    let rmw = x86_gas_rmw_op(bse);
     if (rmw >= 0) {
       return MnemVerdict { ...v, b_kind: GK_RMW, b_ext: rmw };
     }
@@ -6822,11 +6822,11 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   if (x86_str_starts_with(mnem, "cmov")) {
     return MnemVerdict { ...v, b_kind: GK_CMOV };
   }
-  let sse: i32 = x86_gas_sse_op(mnem);
+  let sse = x86_gas_sse_op(mnem);
   if (sse >= 0) {
     return MnemVerdict { ...v, c_kind: GK_SSE, c_ext: sse };
   }
-  let s38: i32 = x86_gas_sse38_op(mnem);
+  let s38 = x86_gas_sse38_op(mnem);
   if (s38 >= 0) {
     return MnemVerdict { ...v, c_kind: GK_SSE38, c_ext: s38 };
   }
@@ -6841,7 +6841,7 @@ function x86_gas_classify(mnem: string, rest: string): GasLine {
 }
 
 function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasLine {
-  let l: GasLine = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+  let l = GasLine { label: "", body: "", mnem: mnem, rest: rest, kind: GK_UNKNOWN2, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
   if (v.vz && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
@@ -6858,12 +6858,12 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
     return GasLine { ...l, kind: v.a_kind, ext: v.a_ext, sfx: v.a_sfx };
   }
   l = GasLine { ...l, sfx: v.sfx };
-  let ci: i32 = x86_gas_top_comma(rest);
+  let ci = x86_gas_top_comma(rest);
   if (ci < 0) {
     return GasLine { ...l, kind: GK_UNKNOWN1 };
   }
-  let src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
-  let dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
+  let src = x86_gas_trim(slice_unchecked(rest, 0, ci));
+  let dst = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
   l = GasLine { ...l, src: src, dst: dst };
   if (v.b_kind != GK_NONE) {
     return GasLine { ...l, kind: v.b_kind, ext: v.b_ext };
@@ -6881,15 +6881,15 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
   let ops: i32[] = [];
   let out: GasLine[] = [];
   let named: string[] = [];
-  let nids: i32 = 0;
-  let seen: MnemIndex = MnemIndex { names: [], head: x86_empty_buckets(), next: [] };
+  let nids = 0;
+  let seen = MnemIndex { names: [], head: x86_empty_buckets(), next: [] };
   let verdicts: MnemVerdict[] = [];
-  let memo: LineMemo = LineMemo { keys: [], head: x86_empty_buckets(), next: [], at: [] };
-  let n: i32 = src.len();
-  let pos: i32 = 0;
-  let wi: i32 = 0;
-  let run_at: i32 = 0 - 1;
-  let run_end: i32 = 0;
+  let memo = LineMemo { keys: [], head: x86_empty_buckets(), next: [], at: [] };
+  let n = src.len();
+  let pos = 0;
+  let wi = 0;
+  let run_at: i32 = -1;
+  let run_end = 0;
   while (pos <= n) {
     if (pos < n && src[pos] == 1 && wi < words.len() && wi + 1 + words[wi] as i32 <= words.len()) {
       if (run_at < 0) {
@@ -6897,20 +6897,20 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       }
       wi = wi + 1 + words[wi] as i32;
       run_end = wi;
-      pos = pos + 2;
+      pos += 2;
       continue;
     }
     if (run_at >= 0) {
       ops = ops.append(GP_BYTES).append(run_at).append(run_end);
-      run_at = 0 - 1;
+      run_at = -1;
     }
     if (pos < n && src[pos] == 1) {
-      ops = ops.append(GP_BYTES).append(0 - 1).append(0);
-      pos = pos + 2;
+      ops = ops.append(GP_BYTES).append(-1).append(0);
+      pos += 2;
       continue;
     }
     if (pos < n && (src[pos] == 7 || src[pos] == 8)) {
-      let nl7: i32 = __memchr(src, 10, pos);
+      let nl7 = __memchr(src, 10, pos);
       if (nl7 < 0) {
         nl7 = n;
       }
@@ -6919,18 +6919,18 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
         named = named.append(slice_unchecked(src, pos + 1, nl7) + "");
         wi = wi + 1 + words[wi] as i32;
       } else {
-        ops = ops.append(GP_BYTES).append(0 - 1).append(0);
+        ops = ops.append(GP_BYTES).append(-1).append(0);
       }
       pos = nl7 + 1;
       continue;
     }
     if (pos < n && (src[pos] == 4 || src[pos] == 5 || src[pos] == 6)) {
       if (wi + 8 > words.len()) {
-        ops = ops.append(GP_BYTES).append(0 - 1).append(0);
+        ops = ops.append(GP_BYTES).append(-1).append(0);
       } else if (src[pos] == 6) {
         ops = ops.append(GP_CFI).append(wi).append(0);
       } else if (src[pos] == 4) {
-        let lid: i32 = x86_words_i32(words, wi);
+        let lid = x86_words_i32(words, wi);
         if (lid >= nids) {
           nids = lid + 1;
         }
@@ -6938,18 +6938,18 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
       } else {
         ops = ops.append(GP_JUMP).append(x86_words_i32(words, wi)).append(x86_words_i32(words, wi + 4));
       }
-      wi = wi + 8;
-      pos = pos + 2;
+      wi += 8;
+      pos += 2;
       continue;
     }
-    let nl: i32 = __memchr(src, 10, pos);
+    let nl = __memchr(src, 10, pos);
     if (nl < 0) {
       nl = n;
     }
-    let raw: str = slice_unchecked(src, pos, nl);
+    let raw = slice_unchecked(src, pos, nl);
     pos = nl + 1;
-    let line: string = "";
-    let label: string = "";
+    let line = "";
+    let label = "";
     let mark: u8 = 0;
     if (raw.len() > 0) {
       mark = raw[0];
@@ -6957,24 +6957,24 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
     if (mark == 3) {
       line = slice_unchecked(raw, 1, raw.len()) + "";
     } else {
-      let mi0: i32 = x86_line_memo_lookup(memo, raw);
+      let mi0 = x86_line_memo_lookup(memo, raw);
       if (mi0 >= 0) {
         ops = ops.append(GP_TEXT).append(memo.at[mi0]).append(0);
         continue;
       }
-      let hash: i32 = x86_gas_comment_start(raw);
-      let code: str = raw;
+      let hash = x86_gas_comment_start(raw);
+      let code = raw;
       if (hash >= 0) {
         code = slice_unchecked(raw, 0, hash);
       }
-      let lv: str = x86_gas_trimmed(code);
+      let lv = x86_gas_trimmed(code);
       if (lv.len() == 0) {
         continue;
       }
       line = lv + "";
-      let colon: i32 = x86_str_indexof(line, ":");
+      let colon = x86_str_indexof(line, ":");
       if (colon > 0) {
-        let before: str = slice_unchecked(line, 0, colon);
+        let before = slice_unchecked(line, 0, colon);
         if (x86_str_indexof(before, " ") < 0 && x86_str_indexof(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
           label = before + "";
           line = x86_gas_trim(slice_unchecked(line, colon + 1, line.len()));
@@ -6984,19 +6984,19 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
     if (label.len() == 0 && line.len() == 0) {
       continue;
     }
-    let mnem: string = "";
-    let rest: string = "";
+    let mnem = "";
+    let rest = "";
     if (line.len() > 0 && line[0] != b'.') {
       mnem = line;
-      let sp: i32 = x86_str_indexof(line, " ");
+      let sp = x86_str_indexof(line, " ");
       if (sp >= 0) {
         mnem = slice_unchecked(line, 0, sp) + "";
         rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
       }
     }
-    let gl: GasLine = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
+    let gl = GasLine { label: label, body: line, mnem: mnem, rest: rest, kind: GK_NONE, ext: 0 - 1, sfx: 0, src: "", dst: "", def_idx: 0 - 1, ref_idx: 0 - 1 };
     if (mnem.len() > 0) {
-      let mi: i32 = x86_mnem_lookup(seen, mnem);
+      let mi = x86_mnem_lookup(seen, mnem);
       if (mi < 0) {
         mi = seen.names.len();
         seen = x86_mnem_added(seen, mnem);
@@ -7014,35 +7014,35 @@ function x86_gas_prepare(src: string, words: u8[]): GasText {
     ops = ops.append(GP_BYTES).append(run_at).append(run_end);
   }
   if (wi != words.len()) {
-    ops = ops.append(GP_BYTES).append(0 - 1).append(0);
+    ops = ops.append(GP_BYTES).append(-1).append(0);
   }
   return GasText { ops: ops, lines: out, named: named, nids: nids };
 }
 
 function x86_rodata_zero(own a: X86Asm, n: i32): X86Asm {
-  let rodata: i32[] = a.rodata;
+  let rodata = a.rodata;
   a = X86Asm { ...a, rodata: [] };
-  let zi: i32 = 0;
+  let zi = 0;
   while (zi < n) {
     rodata = rodata.append(0);
-    zi = zi + 1;
+    zi += 1;
   }
   return X86Asm { ...a, rodata: rodata };
 }
 
 function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
-  let rodata: i32[] = a.rodata;
+  let rodata = a.rodata;
   a = X86Asm { ...a, rodata: [] };
-  let btok: string = "";
-  let bci: i32 = 0;
+  let btok = "";
+  let bci = 0;
   while (bci < brest.len()) {
     if (brest[bci] == b',') {
       rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
       btok = "";
     } else {
-      btok = btok + slice_unchecked(brest, bci, bci + 1);
+      btok += slice_unchecked(brest, bci, bci + 1);
     }
-    bci = bci + 1;
+    bci += 1;
   }
   if (x86_gas_trim(btok).len() > 0) {
     rodata = rodata.append(x86_gas_atoi(x86_gas_trim(btok)) & 255);
@@ -7060,7 +7060,7 @@ function x86_gas_longs(own a: X86Asm, section: i32, vals: string[]): X86Asm {
     return a;
   }
   for v in vals {
-    let w: i32 = x86_gas_atoi(v);
+    let w = x86_gas_atoi(v);
     buf_push_byte(a.code, w & 255);
     buf_push_byte(a.code, w >> 8 & 255);
     buf_push_byte(a.code, w >> 16 & 255);
@@ -7083,24 +7083,24 @@ function x86_gas_data_width(line: string): i32 {
 }
 
 function x86_gas_values(line: string): string[] {
-  let start: i32 = 0;
+  let start = 0;
   while (start < line.len() && line[start] != b' ' && line[start] != b'\t') {
-    start = start + 1;
+    start += 1;
   }
   return x86_gas_split_ops(x86_gas_trim(slice_unchecked(line, start, line.len())));
 }
 
 function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u8[]): X86Asm {
-  let a: X86Asm = x86_asm_new_prepared(labs);
-  let cfi: CfiState = cfi_new(cfi_profile_x86());
-  let section: i32 = 0;
-  let ops: i32[] = prog.ops;
-  let oi: i32 = 0;
+  let a = x86_asm_new_prepared(labs);
+  let cfi = cfi_new(cfi_profile_x86());
+  let section = 0;
+  let ops = prog.ops;
+  let oi = 0;
   while (oi < ops.len()) {
-    let op: i32 = ops[oi];
-    let ox: i32 = ops[oi + 1];
-    let oy: i32 = ops[oi + 2];
-    oi = oi + 3;
+    let op = ops[oi];
+    let ox = ops[oi + 1];
+    let oy = ops[oi + 2];
+    oi += 3;
     if (op == GP_BYTES) {
       a = x86_gas_bytes(a, words, ox, oy);
       continue;
@@ -7114,13 +7114,13 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       continue;
     }
     if (op == GP_NAMED) {
-      let name: string = prog.named[oy];
+      let name = prog.named[oy];
       a = x86_gas_bytes(a, words, ox, ox + 1 + words[ox] as i32);
       a = x86_queue_rel32_at(a, name, x86_gas_label_lookup(labs, name));
       continue;
     }
     if (op == GP_NAMED_ABS) {
-      let name: string = prog.named[oy];
+      let name = prog.named[oy];
       a = x86_gas_bytes(a, words, ox, ox + 1 + words[ox] as i32);
       a = x86_queue_abs32_at(a, name, x86_gas_label_lookup(labs, name));
       continue;
@@ -7129,8 +7129,8 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       if (section != 0) {
         a = X86Asm { ...a, unknown: a.unknown.append("a cfi record outside .text") };
       } else {
-        let w0: i32 = x86_words_i32(words, ox);
-        let cfi_bad_before: i32 = cfi.bad.len();
+        let w0 = x86_words_i32(words, ox);
+        let cfi_bad_before = cfi.bad.len();
         cfi = cfi_record(cfi, w0 & 255, w0 >> 8 & 255, x86_words_i32(words, ox + 4), buf_len(a.code));
         if (cfi.bad.len() > cfi_bad_before) {
           a = X86Asm { ...a, unknown: a.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
@@ -7138,9 +7138,9 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       }
       continue;
     }
-    let pline: GasLine = prog.lines[ox];
-    let lbl: string = pline.label;
-    let line: string = pline.body;
+    let pline = prog.lines[ox];
+    let lbl = pline.label;
+    let line = pline.body;
     if (lbl.len() > 0) {
       if (x86_data_like(section)) {
         a = x86_rodata_label_at(a, lbl, pline.def_idx, section);
@@ -7164,14 +7164,14 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
         if (section != 0) {
           a = X86Asm { ...a, unknown: a.unknown.append(line + " outside .text") };
         } else {
-          let cfi_bad_before: i32 = cfi.bad.len();
+          let cfi_bad_before = cfi.bad.len();
           cfi = cfi_directive(cfi, line, buf_len(a.code));
           if (cfi.bad.len() > cfi_bad_before) {
             a = X86Asm { ...a, unknown: a.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
           }
         }
       } else if (x86_str_starts_with(line, ".section")) {
-        let to: i32 = x86_section_kind(line);
+        let to = x86_section_kind(line);
         a = x86_enter_section(a, section, to);
         section = to;
       } else if (line == ".text") {
@@ -7186,11 +7186,11 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       } else if (section == 2 && x86_gas_data_width(line) > 0) {
         a = x86_bss_skip(a, x86_gas_data_width(line) * x86_gas_values(line).len());
       } else if (x86_str_starts_with(line, ".quad")) {
-        let qvals: string[] = x86_gas_values(line);
-        let qi: i32 = 0;
+        let qvals = x86_gas_values(line);
+        let qi = 0;
         while (qi < qvals.len()) {
           if (x86_gas_is_symbol(qvals[qi])) {
-            let qref: i32 = 0 - 1;
+            let qref: i32 = -1;
             if (qvals.len() == 1) {
               qref = pline.ref_idx;
             }
@@ -7198,7 +7198,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
           } else {
             a = x86_rodata_quad(a, x86_gas_atoi64(qvals[qi]));
           }
-          qi = qi + 1;
+          qi += 1;
         }
       } else if (x86_str_starts_with(line, ".long")) {
         a = x86_gas_longs(a, section, x86_gas_values(line));
@@ -7207,7 +7207,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       } else if (x86_str_starts_with(line, ".ascii")) {
         a = X86Asm { ...a, rodata: x86_gas_ascii(a.rodata, line) };
       } else if (x86_str_starts_with(line, ".skip") || x86_str_starts_with(line, ".zero") || x86_str_starts_with(line, ".space")) {
-        let zn: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, x86_str_indexof(line, " "), line.len())));
+        let zn = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, x86_str_indexof(line, " "), line.len())));
         if (section == 2) {
           a = x86_bss_skip(a, zn);
         } else if (x86_data_like(section)) {
@@ -7216,12 +7216,12 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
       } else if (x86_str_starts_with(line, ".byte")) {
         a = x86_rodata_bytes(a, x86_gas_trim(slice_unchecked(line, 5, line.len())));
       } else if (x86_str_starts_with(line, ".align") || x86_str_starts_with(line, ".balign") || x86_str_starts_with(line, ".p2align")) {
-        let np: i32 = a.pads.len();
+        let np = a.pads.len();
         a = x86_gas_align(a, section, line);
         if (a.pads.len() > np) {
-          let closed: i32 = cfi.fde_end.len();
+          let closed = cfi.fde_end.len();
           if (cfi.open) {
-            closed = closed - 1;
+            closed -= 1;
           }
           a = X86Asm { ...a, pad_marks: a.pad_marks.append(a.loc_offs.len()).append(cfi.rule_off.len()).append(cfi.fde_start.len()).append(closed) };
         }
@@ -7342,45 +7342,45 @@ pub function cfi_empty(s: CfiState): boolean {
 }
 
 function cfi_trim(s: string): string {
-  let i: i32 = 0;
-  let j: i32 = s.len();
+  let i = 0;
+  let j = s.len();
   while (i < j && (s[i] == b' ' || s[i] == b'\t')) {
-    i = i + 1;
+    i += 1;
   }
   while (j > i && (s[j - 1] == b' ' || s[j - 1] == b'\t')) {
-    j = j - 1;
+    j -= 1;
   }
   return slice_unchecked(s, i, j) + "";
 }
 
 function cfi_split_ops(rest: string): string[] {
   let out: string[] = [];
-  let tok: string = "";
-  let i: i32 = 0;
+  let tok = "";
+  let i = 0;
   while (i < rest.len()) {
     if (rest[i] == b',') {
       out = out.append(cfi_trim(tok));
       tok = "";
     } else {
-      tok = tok + slice_unchecked(rest, i, i + 1);
+      tok += slice_unchecked(rest, i, i + 1);
     }
-    i = i + 1;
+    i += 1;
   }
   if (cfi_trim(tok).len() > 0 || out.len() > 0) {
     out = out.append(cfi_trim(tok));
   }
-  let k: i32 = 0;
+  let k = 0;
   while (k < out.len()) {
     if (out[k].len() > 0 && out[k][0] == b'%') {
       out = out.with(k, slice_unchecked(out[k], 1, out[k].len()) + "");
     }
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function cfi_is_int(s: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   if (s.len() > 0 && (s[0] == b'-' || s[0] == b'+')) {
     i = 1;
   }
@@ -7391,53 +7391,53 @@ function cfi_is_int(s: string): boolean {
     if (s[i] < b'0' || s[i] > b'9') {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function cfi_atoi(s: string): i32 {
-  let neg: boolean = false;
-  let i: i32 = 0;
+  let neg = false;
+  let i = 0;
   if (s.len() > 0 && s[0] == b'-') {
     neg = true;
     i = 1;
   } else if (s.len() > 0 && s[0] == b'+') {
     i = 1;
   }
-  let v: i32 = 0;
+  let v = 0;
   while (i < s.len()) {
     v = v * 10 + (s[i] as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
-    return 0 - v;
+    return -v;
   }
   return v;
 }
 
 function cfi_reg_num(p: CfiProfile, tok: string): i32 {
   if (cfi_is_int(tok)) {
-    let n: i32 = cfi_atoi(tok);
+    let n = cfi_atoi(tok);
     if (n < 0) {
-      return 0 - 1;
+      return -1;
     }
     return n;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < p.reg_names.len()) {
     if (p.reg_names[i] == tok) {
       return p.reg_nums[i];
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function cfi_uleb(b: i32[], v: i32): i32[] {
-  let x: i32 = v;
+  let x = v;
   while (true) {
-    let c: i32 = x & 127;
+    let c = x & 127;
     x = x >> 7;
     if (x != 0) {
       b = b.append(c | 128);
@@ -7449,11 +7449,11 @@ pub function cfi_uleb(b: i32[], v: i32): i32[] {
 }
 
 pub function cfi_sleb(b: i32[], v: i32): i32[] {
-  let x: i32 = v;
+  let x = v;
   while (true) {
-    let c: i32 = x & 127;
+    let c = x & 127;
     x = x >> 7;
-    if (x == 0 && (c & 64) == 0 || x == 0 - 1 && (c & 64) != 0) {
+    if (x == 0 && (c & 64) == 0 || x == -1 && (c & 64) != 0) {
       return b.append(c);
     }
     b = b.append(c | 128);
@@ -7478,11 +7478,11 @@ function cfi_le64_i64(own b: i32[], v: i64): i32[] {
 }
 
 function cfi_add_rule(own s: CfiState, off: i32, body: i32[]): CfiState {
-  let pos: i32 = s.rule_bytes.len();
-  let i: i32 = 0;
+  let pos = s.rule_bytes.len();
+  let i = 0;
   while (i < body.len()) {
     s = CfiState { ...s, rule_bytes: s.rule_bytes.append(body[i]) };
-    i = i + 1;
+    i += 1;
   }
   return CfiState {
     ...s,
@@ -7497,17 +7497,17 @@ function cfi_bad(own s: CfiState, what: string): CfiState {
 }
 
 pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
-  let t: string = cfi_trim(line);
-  let sp: i32 = 0;
+  let t = cfi_trim(line);
+  let sp = 0;
   while (sp < t.len() && t[sp] != b' ' && t[sp] != b'\t') {
-    sp = sp + 1;
+    sp += 1;
   }
-  let d: string = slice_unchecked(t, 0, sp) + "";
-  let rest: string = "";
+  let d = slice_unchecked(t, 0, sp) + "";
+  let rest = "";
   if (sp < t.len()) {
     rest = cfi_trim(slice_unchecked(t, sp, t.len()) + "");
   }
-  let ops: string[] = cfi_split_ops(rest);
+  let ops = cfi_split_ops(rest);
 
   if (d == ".cfi_sections") {
     return s;
@@ -7553,7 +7553,7 @@ pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): C
     return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_def_cfa()], r), n));
   }
   if (kind == 6) {
-    let reg: string = cfi_reg_label(s.profile, r);
+    let reg = cfi_reg_label(s.profile, r);
     return cfi_offset_rule(s, reg, r, n, off);
   }
   if (kind == 7) {
@@ -7569,12 +7569,12 @@ pub function cfi_record(own s: CfiState, kind: i32, r: i32, n: i32, off: i32): C
 }
 
 function cfi_reg_label(p: CfiProfile, r: i32): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < p.reg_nums.len()) {
     if (p.reg_nums[i] == r) {
       return p.reg_names[i];
     }
-    i = i + 1;
+    i += 1;
   }
   return cfi_uleb_text(r);
 }
@@ -7590,7 +7590,7 @@ function cfi_offset_rule(own s: CfiState, reg: string, r: i32, n: i32, off: i32)
   if (n % s.profile.data_align != 0) {
     return cfi_bad(s, ".cfi_offset " + reg + ": offset not a multiple of the data alignment");
   }
-  let f: i32 = n / s.profile.data_align;
+  let f = n / s.profile.data_align;
   if (f < 0) {
     return cfi_bad(s, ".cfi_offset " + reg + ": positive offset is not supported");
   }
@@ -7632,7 +7632,7 @@ function cfi_cfa_directive(own s: CfiState, d: string, ops: string[], rest: stri
   if (ops.len() < 1) {
     return cfi_bad(s, d + ": missing register operand");
   }
-  let r: i32 = cfi_reg_num(s.profile, ops[0]);
+  let r = cfi_reg_num(s.profile, ops[0]);
   if (r < 0) {
     return cfi_bad(s, d + " " + rest);
   }
@@ -7649,7 +7649,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
   if (ops.len() < 1) {
     return cfi_bad(s, d + ": missing register operand");
   }
-  let r: i32 = cfi_reg_num(s.profile, ops[0]);
+  let r = cfi_reg_num(s.profile, ops[0]);
   if (r < 0) {
     return cfi_bad(s, d + " " + rest);
   }
@@ -7663,7 +7663,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
     if (ops.len() < 2) {
       return cfi_bad(s, d + ": missing operand");
     }
-    let rb: i32 = cfi_reg_num(s.profile, ops[1]);
+    let rb = cfi_reg_num(s.profile, ops[1]);
     if (rb < 0) {
       return cfi_bad(s, d + " " + rest);
     }
@@ -7685,7 +7685,7 @@ function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: stri
 }
 
 function cfi_advance(own b: i32[], p: CfiProfile, delta: i32): i32[] {
-  let d: i32 = delta / p.code_align;
+  let d = delta / p.code_align;
   if (d == 0) {
     return b;
   }
@@ -7731,20 +7731,20 @@ function cfi_cie(p: CfiProfile): i32[] {
   b = cfi_uleb(b, p.ra_column);
   b = cfi_uleb(b, 1);
   b = b.append(p.ptr_enc);
-  let i: i32 = 0;
+  let i = 0;
   while (i < p.initial.len()) {
     b = b.append(p.initial[i]);
-    i = i + 1;
+    i += 1;
   }
   b = cfi_pad4(b);
   return cfi_cat(cfi_le32([], b.len()), b);
 }
 
 function cfi_cat(own a: i32[], b: i32[]): i32[] {
-  let i: i32 = 0;
+  let i = 0;
   while (i < b.len()) {
     a = a.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return a;
 }
@@ -7752,8 +7752,8 @@ function cfi_cat(own a: i32[], b: i32[]): i32[] {
 function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
   let b: i32[] = [];
   b = cfi_le32(b, at + 4);
-  let field_va: i64 = eh_vaddr + (at + 8) as i64;
-  let loc: i64 = text_vaddr + s.fde_start[k] as i64 - field_va;
+  let field_va = eh_vaddr + (at + 8) as i64;
+  let loc = text_vaddr + s.fde_start[k] as i64 - field_va;
   if (p.ptr_size == 8) {
     b = cfi_le64_i64(b, loc);
     b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
@@ -7768,21 +7768,21 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
 }
 
 function cfi_fde_rules(own b: i32[], s: CfiState, p: CfiProfile, k: i32): i32[] {
-  let pc: i32 = s.fde_start[k];
-  let r: i32 = s.fde_rule_first[k];
-  let end: i32 = s.rule_off.len();
+  let pc = s.fde_start[k];
+  let r = s.fde_rule_first[k];
+  let end = s.rule_off.len();
   if (k + 1 < s.fde_rule_first.len()) {
     end = s.fde_rule_first[k + 1];
   }
   while (r < end) {
     b = cfi_advance(b, p, s.rule_off[r] - pc);
     pc = s.rule_off[r];
-    let q: i32 = 0;
+    let q = 0;
     while (q < s.rule_len[r]) {
       b = b.append(s.rule_bytes[s.rule_pos[r] + q]);
-      q = q + 1;
+      q += 1;
     }
-    r = r + 1;
+    r += 1;
   }
   return b;
 }
@@ -7792,7 +7792,7 @@ pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[]
     return [];
   }
   let cie: i32[] = [];
-  cie = cfi_le32(cie, 0 - 1);
+  cie = cfi_le32(cie, -1);
   cie = cie.append(1);
   cie = cie.append(0);
   cie = cfi_uleb(cie, p.code_align);
@@ -7800,16 +7800,16 @@ pub function cfi_debug_frame(s: CfiState, p: CfiProfile, text_vaddr: i64): i32[]
   cie = cfi_uleb(cie, p.ra_column);
   cie = cfi_cat(cie, p.initial);
   cie = cfi_pad_entry(cie, 0, 8);
-  let out: i32[] = cfi_cat(cfi_le32([], cie.len()), cie);
-  let k: i32 = 0;
+  let out = cfi_cat(cfi_le32([], cie.len()), cie);
+  let k = 0;
   while (k < s.fde_start.len()) {
-    let b: i32[] = cfi_le32([], 0);
+    let b = cfi_le32([], 0);
     b = cfi_le64_i64(b, text_vaddr + s.fde_start[k] as i64);
     b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
     b = cfi_fde_rules(b, s, p, k);
     b = cfi_pad_entry(b, out.len(), 8);
     out = cfi_cat(cfi_le32(out, b.len()), b);
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
@@ -7818,33 +7818,33 @@ pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr:
   if (cfi_empty(s) || s.open) {
     return [];
   }
-  let out: i32[] = cfi_cie(p);
-  let at: i32 = out.len();
-  let n: i32 = s.fde_start.len();
+  let out = cfi_cie(p);
+  let at = out.len();
+  let n = s.fde_start.len();
   let payloads: i32[] = [];
   let lens: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < n) {
-    let pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+    let pl = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
     if (k == n - 1 && (at + 4 + pl.len()) % 8 != 0) {
       pl = cfi_cat(pl, [0, 0, 0, 0]);
     }
     payloads = cfi_cat(payloads, pl);
     lens = lens.append(pl.len());
     at = at + 4 + pl.len();
-    k = k + 1;
+    k += 1;
   }
-  let pos: i32 = 0;
+  let pos = 0;
   k = 0;
   while (k < n) {
     out = cfi_le32(out, lens[k]);
-    let q: i32 = 0;
+    let q = 0;
     while (q < lens[k]) {
       out = out.append(payloads[pos + q]);
-      q = q + 1;
+      q += 1;
     }
-    pos = pos + lens[k];
-    k = k + 1;
+    pos += lens[k];
+    k += 1;
   }
   out = cfi_cat(out, [0, 0, 0, 0]);
   return out;
@@ -7861,36 +7861,36 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
   if (cfi_empty(s) || s.open) {
     return [];
   }
-  let cie_len: i32 = cfi_cie(p).len();
-  let at: i32 = cie_len;
-  let n: i32 = s.fde_start.len();
+  let cie_len = cfi_cie(p).len();
+  let at = cie_len;
+  let n = s.fde_start.len();
   let fns: i64[] = [];
   let fdes: i64[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < n) {
-    let pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
-    let plen: i32 = pl.len();
+    let pl = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+    let plen = pl.len();
     if (k == n - 1 && (at + 4 + plen) % 8 != 0) {
-      plen = plen + 4;
+      plen += 4;
     }
     fns = fns.append(text_vaddr + s.fde_start[k] as i64);
     fdes = fdes.append(eh_vaddr + at as i64);
     at = at + 4 + plen;
-    k = k + 1;
+    k += 1;
   }
-  let i: i32 = 1;
+  let i = 1;
   while (i < n) {
-    let j: i32 = i;
+    let j = i;
     while (j > 0 && fns[j] < fns[j - 1]) {
-      let tf: i64 = fns[j];
+      let tf = fns[j];
       fns = fns.with(j, fns[j - 1]);
       fns = fns.with(j - 1, tf);
-      let td: i64 = fdes[j];
+      let td = fdes[j];
       fdes = fdes.with(j, fdes[j - 1]);
       fdes = fdes.with(j - 1, td);
-      j = j - 1;
+      j -= 1;
     }
-    i = i + 1;
+    i += 1;
   }
   let b: i32[] = [1, 27, 3, 59];
   b = cfi_le32_i64(b, eh_vaddr - (hdr_vaddr + 4 as i64));
@@ -7899,7 +7899,7 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
   while (k < n) {
     b = cfi_le32_i64(b, fns[k] - hdr_vaddr);
     b = cfi_le32_i64(b, fdes[k] - hdr_vaddr);
-    k = k + 1;
+    k += 1;
   }
   return b;
 }

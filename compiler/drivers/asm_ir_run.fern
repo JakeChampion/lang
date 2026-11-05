@@ -13,19 +13,19 @@ function main(): i32 {
 }
 
 function run(): i32 {
-  let av: string[] = args();
-  let probe: boolean = false;
-  let unit: string = "";
-  let ns: string = "";
-  let needs_probe: boolean = false;
+  let av = args();
+  let probe = false;
+  let unit = "";
+  let ns = "";
+  let needs_probe = false;
   let extra: string[] = [];
   let sig_paths: string[] = [];
-  let target: string = "x86-64-linux";
-  let ai: i32 = 1;
+  let target = "x86-64-linux";
+  let ai = 1;
   while (ai < av.len()) {
     if (av[ai] == "-target" && ai + 1 < av.len()) {
       target = av[ai + 1];
-      ai = ai + 1;
+      ai += 1;
     }
     if (av[ai] == "-ir-probe") {
       probe = true;
@@ -35,35 +35,35 @@ function run(): i32 {
     }
     if (av[ai] == "-ir-unit" && ai + 1 < av.len()) {
       unit = av[ai + 1];
-      ai = ai + 1;
+      ai += 1;
     }
     if (av[ai] == "-ir-ns" && ai + 1 < av.len()) {
       ns = av[ai + 1];
-      ai = ai + 1;
+      ai += 1;
     }
     if (av[ai] == "-ir-extra-need" && ai + 1 < av.len()) {
       extra = extra.append(av[ai + 1]);
-      ai = ai + 1;
+      ai += 1;
     }
     if (av[ai] == "-ir-sigs" && ai + 1 < av.len()) {
       sig_paths = sig_paths.append(av[ai + 1]);
-      ai = ai + 1;
+      ai += 1;
     }
-    ai = ai + 1;
+    ai += 1;
   }
   if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-darwin") {
     eprint("asm_ir_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)");
     return 2;
   }
-  let mod: parser.Module = rundriver.parse_stdin("asm_ir_run");
+  let mod = rundriver.parse_stdin("asm_ir_run");
   if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
   let siblings: parser.Module[] = [];
-  let sp: i32 = 0;
+  let sp = 0;
   while (sp < sig_paths.len()) {
-    let ssrc: string = "";
-    let sok: boolean = false;
+    let ssrc = "";
+    let sok = false;
     match (read_file(sig_paths[sp])) {
       Ok(s) => {
         ssrc = s;
@@ -76,26 +76,26 @@ function run(): i32 {
     if (sok) {
       siblings = siblings.append(parser.parse_module(lexer.tokenize(ssrc)));
     }
-    sp = sp + 1;
+    sp += 1;
   }
   if (probe) {
     write(semlower.verdict_text(semlower.verdict(with_siblings(mod, siblings), target)));
     return 0;
   }
   if (needs_probe) {
-    let nt: TypedUnits = typed_units(mod, siblings, target);
+    let nt = typed_units(mod, siblings, target);
     for nd in asm_ir.module_runtime_needs(nt.u.mods[0], nt.g.im.funcs, nt.g.stab, nt.u.caches[0], nt.u.physical[0]) {
       print(nd + "\n");
     }
     return 0;
   }
   if (target == "arm64-linux") {
-    let d64: semlower.Driven = semlower.driven(mod, target);
+    let d64 = semlower.driven(mod, target);
     print(asm_arm64_ir.emit_module_or_error_sub(d64.full, false, d64.sub, 0 as usize));
     return 0;
   }
   if (target == "arm64-darwin") {
-    let dd: semlower.Driven = semlower.driven(mod, target);
+    let dd = semlower.driven(mod, target);
     print(asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(dd.full, true, dd.sub, 0 as usize)));
     return 0;
   }
@@ -103,26 +103,26 @@ function run(): i32 {
     print(typed_unit(mod, siblings, unit == "entry", ns, extra, target));
     return 0;
   }
-  let d: semlower.Driven = semlower.driven(mod, target);
+  let d = semlower.driven(mod, target);
   print(asm_ir.emit_module_or_error_sub(d.full, d.sub, 0 as usize));
   return 0;
 }
 
 function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boolean, ns: string, extra: string[], target: string): string {
-  let t: TypedUnits = typed_units(mod, siblings, target);
+  let t = typed_units(mod, siblings, target);
   ircore.refuse_claims(t.d.sub.refused);
   let needs: string[] = [];
   if (is_entry) {
     needs = extra;
   }
-  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.u.physical[0], t.d.sub.rt_lower, 0 as usize, asmcore.env_switches());
+  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, -1, t.u.caches[0], t.u.physical[0], t.d.sub.rt_lower, 0 as usize, asmcore.env_switches());
 }
 
 struct TypedUnits { d: semlower.Driven, g: ircore.Gated, u: ircore.Units }
 
 function typed_units(mod: parser.Module, siblings: parser.Module[], target: string): TypedUnits {
-  let d: semlower.Driven = semlower.driven(with_siblings(mod, siblings), target);
-  let g: ircore.Gated = semlower.program(d);
+  let d = semlower.driven(with_siblings(mod, siblings), target);
+  let g = semlower.program(d);
   let parts: parser.Module[] = [mod];
   for sm in siblings {
     parts = parts.append(sm);
@@ -131,7 +131,7 @@ function typed_units(mod: parser.Module, siblings: parser.Module[], target: stri
 }
 
 function with_siblings(mod: parser.Module, siblings: parser.Module[]): parser.Module {
-  let whole: parser.Module = mod;
+  let whole = mod;
   for sm in siblings {
     let calls: parser.FuncDecl[] = [];
     for fd in sm.funcs {

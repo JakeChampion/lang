@@ -5,8 +5,8 @@ import "../parser";
 import "../util";
 
 function tree(): string {
-  let dir: string = "";
-  let av: string[] = args();
+  let dir = "";
+  let av = args();
   if (av.len() > 1) {
     dir = av[1];
   } else {
@@ -60,25 +60,25 @@ function bytes_are(bs: u8[], want: u8[]): boolean {
   if (bs.len() != want.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < bs.len()) {
     if (bs[i] != want[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function bytes_of(e: ast.Expr): string {
-  let out: string = "";
+  let out = "";
   match (e) {
     ast.ExprBytes(bs) => {
       for b in bs.value {
         if (out.len() > 0) {
-          out = out + ",";
+          out += ",";
         }
-        out = out + util.i32_to_string(b as i32);
+        out += util.i32_to_string(b as i32);
       }
     },
     _ => {}
@@ -104,8 +104,8 @@ function var_init_of(mod: parser.Module): ast.Expr {
 }
 
 function folded_init(src: string, a: embed.Assets): (ast.Expr, string[]) {
-  let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-  let folded: embed.Folded = embed.fold_assets(mod, a);
+  let mod = parser.parse_module(lexer.tokenize(src));
+  let folded = embed.fold_assets(mod, a);
   let msgs: string[] = [];
   for d in folded.errs {
     msgs = msgs.append(d.code + " " + util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": " + d.message);
@@ -126,7 +126,7 @@ function str_of(e: ast.Expr): string {
 }
 
 function main(): i32 {
-  let dir: string = tree();
+  let dir = tree();
   if (dir.len() == 0) {
     return 10;
   }
@@ -185,7 +185,7 @@ function main(): i32 {
     }
   }
 
-  let empty_dir: string = dir + "/empty";
+  let empty_dir = dir + "/empty";
   match (create_dir_all(empty_dir)) {
     Ok(u) => {},
     Err(e) => {
@@ -216,7 +216,7 @@ function main(): i32 {
     return 36;
   }
 
-  let one: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\"); return s.len(); }\n";
+  let one = "function main(): i32 { let s: string = __fern_asset(\"a.txt\"); return s.len(); }\n";
   let (e1, err1) = folded_init(one, a);
   if (err1.len() != 0) {
     return 40;
@@ -225,7 +225,7 @@ function main(): i32 {
     return 41;
   }
 
-  let nested: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\") + __fern_asset(\"sub/b.txt\"); return s.len(); }\n";
+  let nested = "function main(): i32 { let s: string = __fern_asset(\"a.txt\") + __fern_asset(\"sub/b.txt\"); return s.len(); }\n";
   let (e2, err2) = folded_init(nested, a);
   if (err2.len() != 0) {
     return 42;
@@ -252,7 +252,7 @@ function main(): i32 {
     return 51;
   }
 
-  let missing: string = "function main(): i32 { let s: string = __fern_asset(\"a.tx\"); return 0; }\n";
+  let missing = "function main(): i32 { let s: string = __fern_asset(\"a.tx\"); return 0; }\n";
   let (e4, err4) = folded_init(missing, a);
   if (err4.len() != 1) {
     return 52;
@@ -261,7 +261,7 @@ function main(): i32 {
     return 53;
   }
 
-  let far: string = "function main(): i32 { let s: string = __fern_asset(\"totally-unrelated-xyzzy\"); return 0; }\n";
+  let far = "function main(): i32 { let s: string = __fern_asset(\"totally-unrelated-xyzzy\"); return 0; }\n";
   let (e5, err5) = folded_init(far, a);
   if (err5.len() != 1) {
     return 54;
@@ -273,7 +273,7 @@ function main(): i32 {
     return 56;
   }
 
-  let arity: string = "function main(): i32 { let s: string = __fern_asset(\"a.txt\", \"b\"); return 0; }\n";
+  let arity = "function main(): i32 { let s: string = __fern_asset(\"a.txt\", \"b\"); return 0; }\n";
   let (e6, err6) = folded_init(arity, a);
   if (err6.len() != 1) {
     return 57;
@@ -282,7 +282,7 @@ function main(): i32 {
     return 58;
   }
 
-  let computed: string = "function main(): i32 { let n: string = \"a.txt\"; let s: string = __fern_asset(n); return 0; }\n";
+  let computed = "function main(): i32 { let n: string = \"a.txt\"; let s: string = __fern_asset(n); return 0; }\n";
   let (e7, err7) = folded_init(computed, a);
   if (err7.len() != 1) {
     return 59;
@@ -291,7 +291,7 @@ function main(): i32 {
     return 60;
   }
 
-  let inner: string = "function main(): i32 { let s: string = __fern_asset(__fern_asset(\"a.txt\")); return 0; }\n";
+  let inner = "function main(): i32 { let s: string = __fern_asset(__fern_asset(\"a.txt\")); return 0; }\n";
   let (e13, err13) = folded_init(inner, a);
   if (err13.len() != 1) {
     return 62;
@@ -300,13 +300,13 @@ function main(): i32 {
     return 63;
   }
 
-  let two_bad: string = "function main(): i32 { let s: string = __fern_asset(\"nope1\") + __fern_asset(\"nope2\"); return 0; }\n";
+  let two_bad = "function main(): i32 { let s: string = __fern_asset(\"nope1\") + __fern_asset(\"nope2\"); return 0; }\n";
   let (e8, err8) = folded_init(two_bad, a);
   if (err8.len() != 2) {
     return 61;
   }
 
-  let text_of_blob: string = "function main(): i32 { let s: string = __fern_asset(\"blob.bin\"); return 0; }\n";
+  let text_of_blob = "function main(): i32 { let s: string = __fern_asset(\"blob.bin\"); return 0; }\n";
   let (e14, err14) = folded_init(text_of_blob, a);
   if (err14.len() != 1) {
     return 64;
@@ -315,7 +315,7 @@ function main(): i32 {
     return 65;
   }
 
-  let bytes_one: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"blob.bin\"); return 0; }\n";
+  let bytes_one = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"blob.bin\"); return 0; }\n";
   let (e15, err15) = folded_init(bytes_one, a);
   if (err15.len() != 0) {
     return 66;
@@ -323,23 +323,23 @@ function main(): i32 {
   if (bytes_of(e15) != "65,0,66,255,67") {
     return 67;
   }
-  let bytes_text: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"sub/b.txt\"); return 0; }\n";
+  let bytes_text = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"sub/b.txt\"); return 0; }\n";
   let (e16, err16) = folded_init(bytes_text, a);
   if (err16.len() != 0 || bytes_of(e16) != "66,66") {
     return 68;
   }
-  let bytes_arity: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(); return 0; }\n";
+  let bytes_arity = "function main(): i32 { let b: u8[] = __fern_asset_bytes(); return 0; }\n";
   let (e17, err17) = folded_init(bytes_arity, a);
   if (err17.len() != 1 || !util.contains(err17[0], "__fern_asset_bytes takes exactly one argument, got 0")) {
     return 69;
   }
 
-  let all: string = "function main(): i32 { let xs = __fern_assets(); return xs.len(); }\n";
+  let all = "function main(): i32 { let xs = __fern_assets(); return xs.len(); }\n";
   let (e18, err18) = folded_init(all, a);
   if (err18.len() != 1 || !util.contains(err18[0], "\"blob.bin\"")) {
     return 86;
   }
-  let all_bytes: string = "function main(): i32 { let xs = __fern_assets_bytes(); return xs.len(); }\n";
+  let all_bytes = "function main(): i32 { let xs = __fern_assets_bytes(); return xs.len(); }\n";
   let (e9, err9) = folded_init(all_bytes, a);
   if (err9.len() != 0) {
     return 70;
@@ -416,7 +416,7 @@ function main(): i32 {
     return 83;
   }
 
-  let all_arity: string = "function main(): i32 { let xs = __fern_assets(\"a.txt\"); return 0; }\n";
+  let all_arity = "function main(): i32 { let xs = __fern_assets(\"a.txt\"); return 0; }\n";
   let (e12, err12) = folded_init(all_arity, a);
   if (err12.len() != 1) {
     return 84;

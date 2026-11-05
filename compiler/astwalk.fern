@@ -63,21 +63,21 @@ pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, 
       return acc;
     },
     ast.ExprMapLit(ml) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < ml.keys.len()) {
         acc = fold_expr_nodes(ml.keys[i], acc, visit_stmt, visit_expr, descend);
         acc = fold_expr_nodes(ml.vals[i], acc, visit_stmt, visit_expr, descend);
-        i = i + 1;
+        i += 1;
       }
       return acc;
     },
     ast.ExprFString(fs) => {
-      let i: i32 = 0;
+      let i = 0;
       while (i < fs.exprs.len()) {
         if (fs.is_expr[i]) {
           acc = fold_expr_nodes(fs.exprs[i], acc, visit_stmt, visit_expr, descend);
         }
-        i = i + 1;
+        i += 1;
       }
       return acc;
     },
@@ -364,7 +364,7 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       for field_value in st.field_values {
         fv = fv.append(map_expr(field_value, visit));
       }
-      let nb: ast.Expr = st.base;
+      let nb = st.base;
       if (st.has_base) {
         nb = map_expr(st.base, visit);
       }
@@ -389,14 +389,14 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
     },
     ast.ExprFString(fs) => {
       let xs: ast.Expr[] = [];
-      let q: i32 = 0;
+      let q = 0;
       while (q < fs.exprs.len()) {
         if (fs.is_expr[q]) {
           xs = xs.append(map_expr(fs.exprs[q], visit));
         } else {
           xs = xs.append(fs.exprs[q]);
         }
-        q = q + 1;
+        q += 1;
       }
       return visit(ast.ExprFString { ...fs, exprs: xs });
     }
@@ -430,7 +430,7 @@ pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
     ast.StmtMatch(mt) => {
       let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
-        let g: ast.Expr = arm.guard;
+        let g = arm.guard;
         if (arm.has_guard) {
           g = map_expr(arm.guard, visit);
         }
@@ -470,7 +470,7 @@ pub function every_expr(e: ast.Expr): boolean {
 }
 
 pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Expr, T, boolean) {
-  let a: T = acc;
+  let a = acc;
   if (applies(e)) {
     let (ve, va, vh) = visit(e, acc);
     if (vh) {
@@ -478,8 +478,8 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
     }
     a = va;
   }
-  let out: ast.Expr = e;
-  let changed: boolean = false;
+  let out = e;
+  let changed = false;
   match (e) {
     ast.ExprBinary(b) => {
       let (le, la, lh) = map_expr_where(b.left, a, visit_stmt, visit, applies);
@@ -546,7 +546,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
       let (fv, fa, fh) = map_exprs_where(sl.field_values, a, visit_stmt, visit, applies);
       a = fa;
       changed = fh;
-      let nb: ast.Expr = sl.base;
+      let nb = sl.base;
       if (sl.has_base) {
         let (be, ba, bh) = map_expr_where(sl.base, a, visit_stmt, visit, applies);
         a = ba;
@@ -576,7 +576,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
     ast.ExprMapLit(ml) => {
       let ks: ast.Expr[] = [];
       let vs: ast.Expr[] = [];
-      let q: i32 = 0;
+      let q = 0;
       while (q < ml.keys.len()) {
         let (ke, ka, kh) = map_expr_where(ml.keys[q], a, visit_stmt, visit, applies);
         let (ue, ua, uh) = map_expr_where(ml.vals[q], ka, visit_stmt, visit, applies);
@@ -584,7 +584,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
         ks = ks.append(ke);
         vs = vs.append(ue);
         changed = changed || kh || uh;
-        q = q + 1;
+        q += 1;
       }
       if (changed) {
         out = ast.ExprMapLit { ...ml, keys: ks, vals: vs };
@@ -592,7 +592,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
     },
     ast.ExprFString(fs) => {
       let xs: ast.Expr[] = [];
-      let q: i32 = 0;
+      let q = 0;
       while (q < fs.exprs.len()) {
         if (fs.is_expr[q]) {
           let (pe, pa, ph) = map_expr_where(fs.exprs[q], a, visit_stmt, visit, applies);
@@ -602,7 +602,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
         } else {
           xs = xs.append(fs.exprs[q]);
         }
-        q = q + 1;
+        q += 1;
       }
       if (changed) {
         out = ast.ExprFString { ...fs, exprs: xs };
@@ -615,23 +615,23 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
 
 function map_exprs_where[T](es: ast.Expr[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Expr[], T, boolean) {
   let out: ast.Expr[] = [];
-  let changed: boolean = false;
-  let i: i32 = 0;
+  let changed = false;
+  let i = 0;
   while (i < es.len()) {
     let (ne, na, nh) = map_expr_where(es[i], acc, visit_stmt, visit, applies);
     acc = na;
     if (nh && !changed) {
       changed = true;
-      let j: i32 = 0;
+      let j = 0;
       while (j < i) {
         out = out.append(es[j]);
-        j = j + 1;
+        j += 1;
       }
     }
     if (changed) {
       out = out.append(ne);
     }
-    i = i + 1;
+    i += 1;
   }
   if (!changed) {
     return (es, acc, false);
@@ -644,9 +644,9 @@ pub function map_stmt_where[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) =
   if (vh) {
     return (vs, va, true);
   }
-  let a: T = va;
-  let out: ast.Stmt = st;
-  let changed: boolean = false;
+  let a = va;
+  let out = st;
+  let changed = false;
   match (st) {
     ast.StmtVar(v) => {
       let (ie, ia, ih) = map_expr_where(v.init, a, visit_stmt, visit, applies);
@@ -714,7 +714,7 @@ pub function map_stmt_where[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) =
       changed = sh;
       let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
-        let g: ast.Expr = arm.guard;
+        let g = arm.guard;
         if (arm.has_guard) {
           let (ge, ga, gh) = map_expr_where(arm.guard, a, visit_stmt, visit, applies);
           a = ga;
@@ -750,23 +750,23 @@ pub function map_stmts_where[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt
 
 function map_stmts_where_changed[T](stmts: ast.Stmt[], acc: T, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Stmt[], T, boolean) {
   let out: ast.Stmt[] = [];
-  let changed: boolean = false;
-  let i: i32 = 0;
+  let changed = false;
+  let i = 0;
   while (i < stmts.len()) {
     let (ns, na, nh) = map_stmt_where(stmts[i], acc, visit_stmt, visit, applies);
     acc = na;
     if (nh && !changed) {
       changed = true;
-      let j: i32 = 0;
+      let j = 0;
       while (j < i) {
         out = out.append(stmts[j]);
-        j = j + 1;
+        j += 1;
       }
     }
     if (changed) {
       out = out.append(ns);
     }
-    i = i + 1;
+    i += 1;
   }
   if (!changed) {
     return (stmts, acc, false);
@@ -796,7 +796,7 @@ pub function splice_stmts_with_lambda(stmts: ast.Stmt[], visit: (ast.Stmt) => as
 function splice_own(stmts: ast.Stmt[], visit: (ast.Stmt) => ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   for stmt in stmts {
-    let repl: ast.Stmt[] = visit(splice_own_children(stmt, visit));
+    let repl = visit(splice_own_children(stmt, visit));
     for r in repl {
       out = out.append(r);
     }
@@ -899,7 +899,7 @@ function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.E
 function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
-      let init_bound: string[] = bound;
+      let init_bound = bound;
       if (ast.var_binds_itself(v)) {
         init_bound = append_bound_name(init_bound, v.name);
       }
@@ -1037,7 +1037,7 @@ pub function count_ident_expr(e: ast.Expr, name: string): i32 {
   function at_expr(node: ast.Expr, own n: i32): i32 {
     for id in binding_read_of(node, []) {
       if (id == name) {
-        n = n + 1;
+        n += 1;
       }
     }
     return n;
@@ -1049,7 +1049,7 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
   function at_stmt(st: ast.Stmt, own n: i32): i32 {
     for id in assign_target_of(st, []) {
       if (id == name) {
-        n = n + 1;
+        n += 1;
       }
     }
     return n;
@@ -1057,12 +1057,12 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
   function at_expr(e: ast.Expr, own n: i32): i32 {
     for id in binding_read_of(e, []) {
       if (id == name) {
-        n = n + 1;
+        n += 1;
       }
     }
     return n;
   }
-  let count: i32 = 0;
+  let count = 0;
   for st in stmts {
     count = fold_stmt_nodes(st, count, at_stmt, at_expr, not_lambda);
   }
@@ -1070,12 +1070,12 @@ pub function count_ident_stmts(stmts: ast.Stmt[], name: string): i32 {
 }
 
 pub function append_bound_name(own acc: string[], name: string): string[] {
-  let start: i32 = 0;
-  let depth: i32 = 0;
-  let i: i32 = 0;
+  let start = 0;
+  let depth = 0;
+  let i = 0;
   while (i <= name.len()) {
     if (i == name.len() || name[i] == b',' && depth == 0) {
-      let piece: string = slice_unchecked(name, start, i) + "";
+      let piece = slice_unchecked(name, start, i) + "";
       if (util.is_tuple_type_name(piece)) {
         acc = append_bound_name(acc, slice_unchecked(piece, 1, piece.len() - 1) + "");
       } else if (piece.len() > 0 && piece != "_") {
@@ -1083,11 +1083,11 @@ pub function append_bound_name(own acc: string[], name: string): string[] {
       }
       start = i + 1;
     } else if (name[i] == b'(') {
-      depth = depth + 1;
+      depth += 1;
     } else if (name[i] == b')') {
-      depth = depth - 1;
+      depth -= 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -1391,7 +1391,7 @@ pub function rewrite_assoc_const_reads(stmts: ast.Stmt[], bound: string[], types
 struct TypeFieldScan { types: TypeNames, net: i32 }
 
 function reads_type_field(stmts: ast.Stmt[], types: TypeNames): boolean {
-  let scan: TypeFieldScan = TypeFieldScan { types: types, net: 0 };
+  let scan = TypeFieldScan { types: types, net: 0 };
   for st in stmts {
     scan = fold_stmt_nodes(st, scan, type_field_stmt, type_field_expr, descend_all);
   }
@@ -1426,7 +1426,7 @@ function names_type(e: ast.Expr, types: TypeNames): boolean {
 }
 
 function cs_bind(c: ConstSubst, packed: string): ConstSubst {
-  let bound: string[] = c.bound;
+  let bound = c.bound;
   for name in append_bound_name([], packed) {
     bound = bound.append(name);
   }
@@ -1440,7 +1440,7 @@ function cs_expr(e: ast.Expr, c: ConstSubst): ast.Expr {
 
 function cs_body(stmts: ast.Stmt[], c: ConstSubst): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let cur: ConstSubst = c;
+  let cur = c;
   for st in stmts {
     let (next, tail, handled) = map_stmt_where(st, cur, cs_stmt_at, cs_expr_at, every_expr);
     out = out.append(next);
@@ -1453,7 +1453,7 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
   match (e) {
     ast.ExprIdent(i) => {
       if (!util.has_str(c.bound, i.name)) {
-        let k: i32 = util.index_of_str(c.names, i.name);
+        let k = util.index_of_str(c.names, i.name);
         if (k >= 0) {
           return (placed_at(c.values[k], i.line, i.col), c, true);
         }
@@ -1461,7 +1461,7 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
       return (e, c, true);
     },
     ast.ExprLambda(lm) => {
-      let inner: ConstSubst = c;
+      let inner = c;
       for p in lm.params {
         inner = cs_bind(inner, p.name);
       }
@@ -1528,7 +1528,7 @@ function placed_at(e: ast.Expr, line: i32, col: i32): ast.Expr {
 function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean) {
   match (st) {
     ast.StmtVar(v) => {
-      let before: ConstSubst = c;
+      let before = c;
       if (ast.var_binds_itself(v)) {
         before = cs_bind(before, v.name);
       }
@@ -1546,11 +1546,11 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
       for arm in m.arms {
-        let inner: ConstSubst = c;
+        let inner = c;
         for n in pattern_binders(arm.pattern, []) {
           inner = cs_bind(inner, n);
         }
-        let guard: ast.Expr = arm.guard;
+        let guard = arm.guard;
         if (arm.has_guard) {
           guard = cs_expr(guard, inner);
         }

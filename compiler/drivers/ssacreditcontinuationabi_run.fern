@@ -58,10 +58,10 @@ function contracts_except(sub: ircore.Sub, name: string): ssasem.Contract[] {
 }
 
 function assertion_contracts(sub: ircore.Sub): void {
-  let found: i32 = 0;
+  let found = 0;
   for c in sub.physical_contracts {
     if (c.name == "require") {
-      found = found + 1;
+      found += 1;
       let rows = contracts_except(sub, c.name);
       for copies in [rows, rows.append(c).append(c)] {
         check(ircore.Sub { ...sub, physical_contracts: copies }, "replace", "require: missing or ambiguous assertion ABI");
@@ -78,10 +78,10 @@ function assertion_contracts(sub: ircore.Sub): void {
 }
 
 function body_controls(sub: ircore.Sub, name: string): void {
-  let found: i32 = 0;
+  let found = 0;
   for b in util.append_all(sub.bodies, sub.extra) {
     if (b.name == name) {
-      found = found + 1;
+      found += 1;
       let rows: irtables.LowerResult[] = [];
       for other in util.append_all(sub.bodies, sub.extra) {
         if (other.name != name) {

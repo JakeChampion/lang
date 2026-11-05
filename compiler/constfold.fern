@@ -5,7 +5,7 @@ import "./util";
 import "./astwalk";
 
 function lit_int(v: i64, suffix: string): ast.Expr {
-  let s: string = util.i64_to_string(v);
+  let s = util.i64_to_string(v);
   if (v >= 0) {
     return num_lit(s, suffix);
   }
@@ -90,8 +90,8 @@ function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Exp
   if let Some(li) = as_int_lit(lhs) {
     if let Some(ri) = as_int_lit(rhs) {
       if (li.suffix == ri.suffix && fits(li.v, li.suffix, li.v) && fits(ri.v, ri.suffix, ri.v) && !float_differs(op, li.v, ri.v, li.suffix)) {
-        let sfx: string = li.suffix;
-        let peak: i64 = li.v;
+        let sfx = li.suffix;
+        let peak = li.v;
         if (ri.v > peak) {
           peak = ri.v;
         }
@@ -272,7 +272,7 @@ function wrap(v: i64, w: IntWidth): i64 {
   if (w.unsigned) {
     return v & (1i64 << w.bits) - 1i64;
   }
-  let s: i64 = 64i64 - w.bits;
+  let s = 64i64 - w.bits;
   return v << s >> s;
 }
 
@@ -378,7 +378,7 @@ function number_value(n: ast.ExprNumber): ConstNum {
 }
 
 function env_value(env: ConstEnv, name: string): ConstNum {
-  let i: i32 = util.index_of_str(env.names, name);
+  let i = util.index_of_str(env.names, name);
   if (i < 0) {
     return no_num();
   }
@@ -393,7 +393,7 @@ pub function eval_const(e: ast.Expr, ty: string, env: ConstEnv): ConstNum {
 }
 
 function eval_at(e: ast.Expr, t: parser.TypeRef, env: ConstEnv): ConstNum {
-  let none: parser.TypeRef = parser.parse_type_ref("");
+  let none = parser.parse_type_ref("");
   match (e) {
     ast.ExprArray(a) => {
       if (t.array_depth > 0) {
@@ -418,11 +418,11 @@ function eval_at(e: ast.Expr, t: parser.TypeRef, env: ConstEnv): ConstNum {
 // The last of `ts` is the type of every element past the end of it.
 function eval_elems(elems: ast.Expr[], ts: parser.TypeRef[], env: ConstEnv): ConstNum {
   for i in 0..elems.len() {
-    let k: i32 = i;
+    let k = i;
     if (k >= ts.len()) {
       k = ts.len() - 1;
     }
-    let v: ConstNum = eval_at(elems[i], ts[k], env);
+    let v = eval_at(elems[i], ts[k], env);
     if (v.err.len() > 0) {
       return v;
     }
@@ -439,18 +439,18 @@ function eval_scalar(e: ast.Expr, t: parser.TypeRef, env: ConstEnv): ConstNum {
       return env_value(env, id.name);
     },
     ast.ExprUnary(u) => {
-      let v: ConstNum = eval_at(u.operand, t, env);
+      let v = eval_at(u.operand, t, env);
       if (v.err.len() > 0) {
         return v;
       }
       return num_unary(u.op, v, int_width(t));
     },
     ast.ExprBinary(b) => {
-      let l: ConstNum = eval_at(b.left, t, env);
+      let l = eval_at(b.left, t, env);
       if (l.err.len() > 0) {
         return l;
       }
-      let r: ConstNum = eval_at(b.right, t, env);
+      let r = eval_at(b.right, t, env);
       if (r.err.len() > 0) {
         return r;
       }
@@ -471,10 +471,10 @@ function fold_block(body: ast.Stmt[]): ast.Stmt[] {
 
 pub function fold_module(mod: parser.Module): parser.Module {
   let funcs: parser.FuncDecl[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: fold_block(mod.funcs[i].body) });
-    i = i + 1;
+    i += 1;
   }
   return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
@@ -520,13 +520,13 @@ function prune_arm(body: ast.Stmt[]): ast.Stmt[] {
     return body;
   }
   let leading: ast.Stmt[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < body.len() - 1) {
     leading = leading.append(body[i]);
-    i = i + 1;
+    i += 1;
   }
-  let out: ast.Stmt[] = prune_block(leading);
-  let last: ast.Stmt = body[body.len() - 1];
+  let out = prune_block(leading);
+  let last = body[body.len() - 1];
   match (last) {
     ast.StmtIf(f) => {
       return out.append(ast.StmtIf { ...f, cond: fold_expr(f.cond), then_body: prune_arm(f.then_body), else_body: prune_arm(f.else_body) });
@@ -554,7 +554,7 @@ function prune_stmt(s: ast.Stmt, a: i32): (ast.Stmt, i32, boolean) {
 }
 
 function pruned_if(f: ast.StmtIf): ast.Stmt {
-  let cond: ast.Expr = fold_expr(f.cond);
+  let cond = fold_expr(f.cond);
   let none: ast.Stmt[] = [];
   if let ast.ExprBool(lit) = cond {
     if (lit.value) {
@@ -575,7 +575,7 @@ pub function fold_target_name(mod: parser.Module, env: string, arch: string): pa
   if (env.len() == 0) {
     return mod;
   }
-  let acc: TargetAcc = TargetAcc { env: env, arch: arch };
+  let acc = TargetAcc { env: env, arch: arch };
   let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     let (body, a2) = astwalk.map_stmts_where(fd.body, acc, to_keep_stmt, to_expr, to_applies);
@@ -626,10 +626,10 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
 
 pub function elide_asserts(mod: parser.Module): parser.Module {
   let funcs: parser.FuncDecl[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < mod.funcs.len()) {
     funcs = funcs.append(parser.FuncDecl { ...mod.funcs[i], body: astwalk.splice_stmts_with_lambda(mod.funcs[i].body, drop_assert, elided_lambda_captures) });
-    i = i + 1;
+    i += 1;
   }
   return parser.Module { ...mod, funcs: funcs, top_stmts: astwalk.splice_stmts_with_lambda(mod.top_stmts, drop_assert, elided_lambda_captures) };
 }
@@ -684,7 +684,7 @@ function fold_source(src: string): parser.Module {
 }
 
 function main(): i32 {
-  let mod1: parser.Module = fold_source("let a = 1 + 2 * 3; return a;");
+  let mod1 = fold_source("let a = 1 + 2 * 3; return a;");
   match (mod1.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -703,7 +703,7 @@ function main(): i32 {
     }
   }
 
-  let mod2: parser.Module = fold_source("let a = (1 + 2) * 3; return a;");
+  let mod2 = fold_source("let a = (1 + 2) * 3; return a;");
   match (mod2.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -722,7 +722,7 @@ function main(): i32 {
     }
   }
 
-  let mod3: parser.Module = fold_source("let b = 5 < 10; return 0;");
+  let mod3 = fold_source("let b = 5 < 10; return 0;");
   match (mod3.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -741,7 +741,7 @@ function main(): i32 {
     }
   }
 
-  let mod4: parser.Module = fold_source("let a = true && false; let b = !true; return 0;");
+  let mod4 = fold_source("let a = true && false; let b = !true; return 0;");
   match (mod4.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -777,7 +777,7 @@ function main(): i32 {
     }
   }
 
-  let mod5: parser.Module = fold_source("let s = \"hi \" + \"there\"; return 0;");
+  let mod5 = fold_source("let s = \"hi \" + \"there\"; return 0;");
   match (mod5.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -796,7 +796,7 @@ function main(): i32 {
     }
   }
 
-  let mod6: parser.Module = fold_source("let a = 1 + x; return 0;");
+  let mod6 = fold_source("let a = 1 + x; return 0;");
   match (mod6.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -815,7 +815,7 @@ function main(): i32 {
     }
   }
 
-  let mod7: parser.Module = fold_source("let a = 1 / 0; return 0;");
+  let mod7 = fold_source("let a = 1 / 0; return 0;");
   match (mod7.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -834,7 +834,7 @@ function main(): i32 {
     }
   }
 
-  let mod8: parser.Module = fold_source("let a = (2 + 3) * (4 + 5); return 0;");
+  let mod8 = fold_source("let a = (2 + 3) * (4 + 5); return 0;");
   match (mod8.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -853,7 +853,7 @@ function main(): i32 {
     }
   }
 
-  let mod9: parser.Module = fold_source("function add(): i32 { return 1 + 2; } function main(): i32 { return add(); }");
+  let mod9 = fold_source("function add(): i32 { return 1 + 2; } function main(): i32 { return add(); }");
   if (mod9.funcs.len() != 2) {
     return 90;
   }
@@ -875,7 +875,7 @@ function main(): i32 {
     }
   }
 
-  let mod10: parser.Module = fold_source("let a = 2147484527u32 % 861u32; return 0;");
+  let mod10 = fold_source("let a = 2147484527u32 % 861u32; return 0;");
   match (mod10.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -897,7 +897,7 @@ function main(): i32 {
     }
   }
 
-  let mod11: parser.Module = fold_source("let a = 5u32 - 10u32; return 0;");
+  let mod11 = fold_source("let a = 5u32 - 10u32; return 0;");
   match (mod11.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -916,7 +916,7 @@ function main(): i32 {
     }
   }
 
-  let mod12: parser.Module = fold_source("let a = 2000000000 + 2000000000; return 0;");
+  let mod12 = fold_source("let a = 2000000000 + 2000000000; return 0;");
   match (mod12.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -935,7 +935,7 @@ function main(): i32 {
     }
   }
 
-  let mod13: parser.Module = fold_source("let a = 5u32 + 5; return 0;");
+  let mod13 = fold_source("let a = 5u32 + 5; return 0;");
   match (mod13.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -954,7 +954,7 @@ function main(): i32 {
     }
   }
 
-  let mod14: parser.Module = fold_source("let a = 0i32 - 2147483647i32 - 1i32; return 0;");
+  let mod14 = fold_source("let a = 0i32 - 2147483647i32 - 1i32; return 0;");
   match (mod14.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -983,10 +983,10 @@ function main(): i32 {
     }
   }
 
-  if (!is_binary_init(fold_source("let a = 0 - 2147483647 - 1; return 0;"), "-")) {
+  if (!is_binary_init(fold_source("let a = -2147483647 - 1; return 0;"), "-")) {
     return 145;
   }
-  if (!is_binary_init(fold_source("let a = 0 - 1; return 0;"), "-")) {
+  if (!is_binary_init(fold_source("let a = -1; return 0;"), "-")) {
     return 146;
   }
   if (!is_binary_init(fold_source("let a = (255 + 1) / 2; return 0;"), "/")) {
@@ -1013,7 +1013,7 @@ function main(): i32 {
     }
   }
 
-  let el: i32 = elide_cases();
+  let el = elide_cases();
   if (el != 0) {
     return el;
   }
@@ -1028,7 +1028,7 @@ function main(): i32 {
     return 201;
   }
 
-  let mod22: parser.Module = fold_source("let a = 1 + x; let b = !y; return 0;");
+  let mod22 = fold_source("let a = 1 + x; let b = !y; return 0;");
   match (mod22.top_stmts[0]) {
     ast.StmtVar(v) => {
       match (v.init) {
@@ -1064,7 +1064,7 @@ function main(): i32 {
     }
   }
 
-  let ec: i32 = eval_cases();
+  let ec = eval_cases();
   if (ec != 0) {
     return ec;
   }
@@ -1188,7 +1188,7 @@ function eval_cases(): i32 {
     "const A: u8 = 200u8 + 100u8;",
     "const A: i32 = 1 << 33;",
     "const A: u32 = 4294967288u32 >> 2;",
-    "const A: i64 = 0 - 8;\nconst B: i64 = A >> 1;",
+    "const A: i64 = -8;\nconst B: i64 = A >> 1;",
     "const A: u64 = 18446744073709551615u64 / 2u64;",
     "const A: i64 = 2147483647 + 1 + 2147483647 + 1;\nconst B: i64 = 5 / A;",
   ];
@@ -1223,9 +1223,9 @@ function eval_cases(): i32 {
 }
 
 function eval_source(src: string): ConstNum {
-  let mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-  let env: ConstEnv = ConstEnv { names: [], values: [] };
-  let last: ConstNum = no_num();
+  let mod = parser.parse_module(lexer.tokenize(src));
+  let env = ConstEnv { names: [], values: [] };
+  let last = no_num();
   for fd in mod.funcs {
     if let ast.StmtReturn(r) = fd.body[0] {
       last = eval_const(r.value, fd.ret_type, env);
@@ -1236,6 +1236,6 @@ function eval_source(src: string): ConstNum {
 }
 
 function eval_is_int(src: string, want: i64): boolean {
-  let v: ConstNum = eval_source(src);
+  let v = eval_source(src);
   return v.err == "" && v.kind == 1 && v.i == want;
 }

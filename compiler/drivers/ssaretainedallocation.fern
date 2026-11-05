@@ -92,7 +92,7 @@ function spills(g: ircore.Gated, arm: boolean, params: i32): void {
   let i = 1;
   while (i < params) {
     ops = ops.append(ir.op_load_local(i)).append(ir.op_bin("add", 64, false));
-    i = i + 1;
+    i += 1;
   }
   let r = irtables.LowerResult { ...g.cache[0], n_params: params, n_locals: params, ops: ops.append(ir.op_return()) };
   let out = checked(g, r, arm);
@@ -208,7 +208,7 @@ function fusion(out: ssaprepare.Output, fused: boolean, inverted: boolean, align
   let bi = 0;
   for fu in row.allocation.fusions {
     if (fu.unique) {
-      count = count + 1;
+      count += 1;
       require(fu.inverted == inverted && fu.aligned == aligned && fu.n == (if (inverted) { 2 } else { 1 }), 121);
       let blk = row.body.formed.f.blocks[bi];
       let ins = blk.insts[blk.insts.len() - fu.n];
@@ -216,7 +216,7 @@ function fusion(out: ssaprepare.Output, fused: boolean, inverted: boolean, align
       require(fu.tag == ir.kind_id("eq") && fu.b == 0, 131);
       require(out.text.contains(".Lssa_first_uq" + util.i32_to_string(blk.id)), 123);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   require(count == (if (fused) { 1 } else { 0 }), 124);
   require(fused || out.text.contains(".Lssa_first_rcuniq"), 125);
@@ -239,13 +239,13 @@ function compare_fusion(row: ssaprepare.Emitted, mode: i32): void {
   let bi = 0;
   for fu in row.allocation.fusions {
     if (fu.n > 0) {
-      count = count + 1;
+      count += 1;
       let blk = row.body.formed.f.blocks[bi];
       compare_operands(blk, fu, mode);
       require(row.allocation.imm.is_imm[fu.b] == (mode != 0) && !row.allocation.imm.is_imm[fu.a], 136);
       require(mode == 0 || row.allocation.imm.value[fu.b] == 13i64, 137);
     }
-    bi = bi + 1;
+    bi += 1;
   }
   require(count == 1, 138);
 }
@@ -264,13 +264,13 @@ function unique_pressure(g: ircore.Gated, arm: boolean): void {
   let i = 0;
   while (i < 25) {
     ops = util.append_all(ops, [ir.op_load_local(i), ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_store_local(25 + i)]);
-    i = i + 1;
+    i += 1;
   }
   ops = ops.append(ir.op_const_i32(0));
   i = 0;
   while (i < 50) {
     ops = util.append_all(ops, [ir.op_load_local(i), ir.op_bin("add", 64, false)]);
-    i = i + 1;
+    i += 1;
   }
   let r = irtables.LowerResult { ...g.cache[0], n_params: 25, n_locals: 50, ops: ops.append(ir.op_return()) };
   let row = checked(g, r, arm).bodies[0];

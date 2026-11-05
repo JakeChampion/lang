@@ -123,7 +123,7 @@ pub function description(name: string): string {
 }
 
 pub function handler_kinds(name: string): string[] {
-  let env_name: string = target_environment(name);
+  let env_name = target_environment(name);
   if (env_name == "linux" || env_name == "darwin" || env_name == "android") {
     return ["handle", "main"];
   }
@@ -142,7 +142,7 @@ pub function emits_code(name: string): boolean {
 }
 
 pub function for_target(name: string): Descriptor {
-  let env_name: string = target_environment(name);
+  let env_name = target_environment(name);
   let empty: string[] = [];
   if (env_name.len() == 0) {
     return Descriptor { name: name, isa: "", environment: "", capabilities: empty, known: false };
@@ -157,7 +157,7 @@ pub function for_target(name: string): Descriptor {
 }
 
 pub function has_capability(target: string, capability: string): boolean {
-  let d: Descriptor = for_target(target);
+  let d = for_target(target);
   if (!d.known) {
     return false;
   }
@@ -166,13 +166,13 @@ pub function has_capability(target: string, capability: string): boolean {
 
 pub function targets_providing(capability: string): string[] {
   let out: string[] = [];
-  let all: string[] = targets();
-  let i: i32 = 0;
+  let all = targets();
+  let i = 0;
   while (i < all.len()) {
     if (has_capability(all[i], capability)) {
       out = out.append(all[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -404,30 +404,30 @@ pub function core_builtin(name: string): boolean {
 }
 
 pub function gated_capability(name: string): string {
-  let gates: Gate[] = gated_builtins();
-  let i: i32 = 0;
+  let gates = gated_builtins();
+  let i = 0;
   while (i < gates.len()) {
     if (gates[i].builtin == name) {
       return gates[i].capability;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 pub function forbidden_gates(target: string): Gate[] {
   let out: Gate[] = [];
-  let d: Descriptor = for_target(target);
+  let d = for_target(target);
   if (!d.known) {
     return out;
   }
-  let gates: Gate[] = gated_builtins();
-  let i: i32 = 0;
+  let gates = gated_builtins();
+  let i = 0;
   while (i < gates.len()) {
     if (!util.has_str(d.capabilities, gates[i].capability)) {
       out = out.append(gates[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -444,31 +444,31 @@ pub struct Violation {
 
 pub function enforce(mod: parser.Module, target: string): Violation[] {
   let out: Violation[] = [];
-  let forbidden: Gate[] = forbidden_gates(target);
+  let forbidden = forbidden_gates(target);
   if (forbidden.len() == 0) {
     return out;
   }
   let wanted: string[] = [];
-  let wi: i32 = 0;
+  let wi = 0;
   while (wi < forbidden.len()) {
     wanted = wanted.append(forbidden[wi].builtin);
-    wi = wi + 1;
+    wi += 1;
   }
-  let want: util.NameIndex = util.name_index(wanted);
+  let want = util.name_index(wanted);
 
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
-    let fd: parser.FuncDecl = mod.funcs[fi];
+    let fd = mod.funcs[fi];
     let calls: astwalk.CallSite[] = [];
-    let bi: i32 = 0;
+    let bi = 0;
     while (bi < fd.body.len()) {
       calls = astwalk.collect_calls_stmt(fd.body[bi], want, calls);
-      bi = bi + 1;
+      bi += 1;
     }
     let seen: string[] = [];
-    let ci: i32 = 0;
+    let ci = 0;
     while (ci < calls.len()) {
-      let gi: i32 = 0;
+      let gi = 0;
       while (gi < forbidden.len()) {
         if (!calls[ci].method && calls[ci].name == forbidden[gi].builtin && !util.has_str(seen, calls[ci].name)) {
           seen = seen.append(calls[ci].name);
@@ -482,70 +482,70 @@ pub function enforce(mod: parser.Module, target: string): Violation[] {
             fn_module: util.mangled_module(fd.name),
           });
         }
-        gi = gi + 1;
+        gi += 1;
       }
-      ci = ci + 1;
+      ci += 1;
     }
-    fi = fi + 1;
+    fi += 1;
   }
   return out;
 }
 
 pub function reach(mod: parser.Module): string[] {
-  let gates: Gate[] = gated_builtins();
+  let gates = gated_builtins();
   let wanted: string[] = [];
-  let wi: i32 = 0;
+  let wi = 0;
   while (wi < gates.len()) {
     wanted = wanted.append(gates[wi].builtin);
-    wi = wi + 1;
+    wi += 1;
   }
-  let want: util.NameIndex = util.name_index(wanted);
+  let want = util.name_index(wanted);
 
   let found: string[] = [];
-  let fi: i32 = 0;
+  let fi = 0;
   while (fi < mod.funcs.len()) {
     let calls: astwalk.CallSite[] = [];
-    let bi: i32 = 0;
+    let bi = 0;
     while (bi < mod.funcs[fi].body.len()) {
       calls = astwalk.collect_calls_stmt(mod.funcs[fi].body[bi], want, calls);
-      bi = bi + 1;
+      bi += 1;
     }
-    let ci: i32 = 0;
+    let ci = 0;
     while (ci < calls.len()) {
       if (!calls[ci].method) {
-        let cap: string = gated_capability(calls[ci].name);
+        let cap = gated_capability(calls[ci].name);
         if (cap.len() > 0 && !util.has_str(found, cap)) {
           found = found.append(cap);
         }
       }
-      ci = ci + 1;
+      ci += 1;
     }
-    fi = fi + 1;
+    fi += 1;
   }
   return sorted(found);
 }
 
 function sorted(xs: string[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
-    let pos: i32 = 0;
+    let pos = 0;
     while (pos < out.len() && util.str_less(out[pos], xs[i])) {
-      pos = pos + 1;
+      pos += 1;
     }
     let next: string[] = [];
-    let j: i32 = 0;
+    let j = 0;
     while (j < pos) {
       next = next.append(out[j]);
-      j = j + 1;
+      j += 1;
     }
     next = next.append(xs[i]);
     while (j < out.len()) {
       next = next.append(out[j]);
-      j = j + 1;
+      j += 1;
     }
     out = next;
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -555,23 +555,23 @@ pub function violation_diag(v: Violation): util.Diag {
 }
 
 pub function violation_message(v: Violation): string {
-  let where: string = "";
+  let where = "";
   if (v.fn_module.len() > 0) {
     where = " (reached via \"" + v.fn_name + "\" from module \"" + v.fn_module + "\")";
   }
-  let providers: string[] = targets_providing(v.capability);
-  let list: string = "";
-  let i: i32 = 0;
+  let providers = targets_providing(v.capability);
+  let list = "";
+  let i = 0;
   while (i < providers.len()) {
     if (i > 0) {
-      list = list + " ";
+      list += " ";
     }
-    list = list + providers[i];
-    i = i + 1;
+    list += providers[i];
+    i += 1;
   }
   let msg: string = "target \"" + v.target + "\" does not provide `" + v.capability + "`, required by `"
     + v.builtin + "`" + where + "; targets providing it: [" + list + "]";
-  let alt: string = equivalent(v.builtin);
+  let alt = equivalent(v.builtin);
   if (alt.len() > 0 && has_capability(v.target, gated_capability(alt))) {
     msg = msg + "; use `" + alt + "`, which this target provides";
   }
