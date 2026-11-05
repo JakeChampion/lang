@@ -7,13 +7,13 @@ function mkT(name: string, line: i32): Tk {
 }
 
 function main(): i32 {
-  let acc: i32 = 0;
-  let r: i32 = 0;
+  let acc = 0;
+  let r = 0;
   while (r < 1000) {
-    let s: string = "id" + r.to_string();
-    let t: Tk = mkT(s, r);
-    acc = acc + t.name.len();
-    r = r + 1;
+    let s = "id" + r.to_string();
+    let t = mkT(s, r);
+    acc += t.name.len();
+    r += 1;
   }
   return acc % 5;
 }

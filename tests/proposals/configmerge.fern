@@ -9,133 +9,133 @@ struct Layer { name: string, entries: Entry[] }
 struct Resolved { key: string, value: string, from: string }
 
 function str_lt(a: string, b: string): boolean {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (a[i] != b[i]) {
       return a[i] as i32 < b[i] as i32;
     }
-    i = i + 1;
+    i += 1;
   }
   return a.len() < b.len();
 }
 
 function sort_resolved(rs: Resolved[]): Resolved[] {
-  let out: Resolved[] = rs;
-  let i: i32 = 1;
+  let out = rs;
+  let i = 1;
   while (i < out.len()) {
-    let j: i32 = i;
+    let j = i;
     while (j > 0 && str_lt(out[j].key, out[j - 1].key)) {
-      let a: Resolved = out[j - 1];
-      let b: Resolved = out[j];
+      let a = out[j - 1];
+      let b = out[j];
       out = out.with(j - 1, b);
       out = out.with(j, a);
-      j = j - 1;
+      j -= 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function index_of_key(rs: Resolved[], k: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < rs.len()) {
     if (rs[i].key == k) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
 
 function as_resolved(l: Layer): Resolved[] {
   let out: Resolved[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < l.entries.len()) {
-    let e: Entry = l.entries[i];
-    let at: i32 = index_of_key(out, e.key);
-    let r: Resolved = Resolved { key: e.key, value: e.value, from: l.name };
+    let e = l.entries[i];
+    let at = index_of_key(out, e.key);
+    let r = Resolved { key: e.key, value: e.value, from: l.name };
     if (at < 0) {
       out = out.append(r);
     } else {
       out = out.with(at, r);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function overlay(base: Resolved[], top: Resolved[]): Resolved[] {
-  let out: Resolved[] = base;
-  let i: i32 = 0;
+  let out = base;
+  let i = 0;
   while (i < top.len()) {
-    let at: i32 = index_of_key(out, top[i].key);
+    let at = index_of_key(out, top[i].key);
     if (at < 0) {
       out = out.append(top[i]);
     } else {
       out = out.with(at, top[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function merge_all(ls: Layer[]): Resolved[] {
   let acc: Resolved[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ls.len()) {
     acc = overlay(acc, as_resolved(ls[i]));
-    i = i + 1;
+    i += 1;
   }
   return sort_resolved(acc);
 }
 
 function resolve(ls: Layer[], k: string): Resolved {
-  let i: i32 = ls.len() - 1;
+  let i = ls.len() - 1;
   while (i >= 0) {
-    let l: Layer = ls[i];
-    let found: boolean = false;
-    let v: string = "";
-    let j: i32 = 0;
+    let l = ls[i];
+    let found = false;
+    let v = "";
+    let j = 0;
     while (j < l.entries.len()) {
       if (l.entries[j].key == k) {
         found = true;
         v = l.entries[j].value;
       }
-      j = j + 1;
+      j += 1;
     }
     if (found) {
       return Resolved { key: k, value: v, from: l.name };
     }
-    i = i - 1;
+    i -= 1;
   }
   return Resolved { key: k, value: "", from: "<absent>" };
 }
 
 function all_keys(ls: Layer[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ls.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ls[i].entries.len()) {
-      let k: string = ls[i].entries[j].key;
-      let seen: boolean = false;
-      let m: i32 = 0;
+      let k = ls[i].entries[j].key;
+      let seen = false;
+      let m = 0;
       while (m < out.len()) {
         if (out[m] == k) {
           seen = true;
         }
-        m = m + 1;
+        m += 1;
       }
       if (!seen) {
         out = out.append(k);
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -150,9 +150,9 @@ function env_to_key(name: string): MappedKey {
     return MappedKey { ok: false, key: "" };
   }
   let buf: u8[] = [];
-  let i: i32 = 5;
+  let i = 5;
   while (i < name.len()) {
-    let c: u8 = name[i];
+    let c = name[i];
     if (c == 95) {
       buf = buf.append(46);
     } else if (c >= 65 && c <= 90) {
@@ -162,7 +162,7 @@ function env_to_key(name: string): MappedKey {
     } else {
       return MappedKey { ok: false, key: "" };
     }
-    i = i + 1;
+    i += 1;
   }
   return MappedKey { ok: true, key: string_from_bytes_unchecked(buf) };
 }
@@ -172,9 +172,9 @@ function key_to_env(k: string): MappedKey {
     return MappedKey { ok: false, key: "" };
   }
   let buf: u8[] = [70, 69, 82, 78, 95];
-  let i: i32 = 0;
+  let i = 0;
   while (i < k.len()) {
-    let c: u8 = k[i];
+    let c = k[i];
     if (c == 46) {
       buf = buf.append(95);
     } else if (c >= 97 && c <= 122) {
@@ -184,24 +184,24 @@ function key_to_env(k: string): MappedKey {
     } else {
       return MappedKey { ok: false, key: "" };
     }
-    i = i + 1;
+    i += 1;
   }
   return MappedKey { ok: true, key: string_from_bytes_unchecked(buf) };
 }
 
 function env_layer(vars: string[]): Layer {
   let es: Entry[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < vars.len()) {
     if let Some(at) = vars[i].index_of("=") {
-      let name: string = slice_unchecked(vars[i], 0, at).to_owned();
-      let val: string = slice_unchecked(vars[i], at + 1, vars[i].len()).to_owned();
-      let m: MappedKey = env_to_key(name);
+      let name = slice_unchecked(vars[i], 0, at).to_owned();
+      let val = slice_unchecked(vars[i], at + 1, vars[i].len()).to_owned();
+      let m = env_to_key(name);
       if (m.ok) {
         es = es.append(Entry { key: m.key, value: val });
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return Layer { name: "env", entries: es };
 }
@@ -212,8 +212,8 @@ function parse_i32_strict(s: string): IntGet {
   if (s.len() == 0) {
     return IntGet { ok: false, value: 0, err: "empty" };
   }
-  let neg: boolean = false;
-  let i: i32 = 0;
+  let neg = false;
+  let i = 0;
   if (s[0] == 45) {
     neg = true;
     i = 1;
@@ -221,27 +221,27 @@ function parse_i32_strict(s: string): IntGet {
   if (i >= s.len()) {
     return IntGet { ok: false, value: 0, err: "no digits" };
   }
-  let v: i32 = 0;
+  let v = 0;
   while (i < s.len()) {
-    let c: u8 = s[i];
+    let c = s[i];
     if (c < 48 || c > 57) {
       return IntGet { ok: false, value: 0, err: "not a number" };
     }
     v = v * 10 + (c as i32 - 48);
-    i = i + 1;
+    i += 1;
   }
   if (neg) {
-    v = 0 - v;
+    v = -v;
   }
   return IntGet { ok: true, value: v, err: "" };
 }
 
 function get_int(rs: Resolved[], key: string, dflt: i32): IntGet {
-  let at: i32 = index_of_key(rs, key);
+  let at = index_of_key(rs, key);
   if (at < 0) {
     return IntGet { ok: true, value: dflt, err: "" };
   }
-  let p: IntGet = parse_i32_strict(rs[at].value);
+  let p = parse_i32_strict(rs[at].value);
   if (!p.ok) {
     return IntGet {
       ok: false, value: dflt,
@@ -266,7 +266,7 @@ function stacks(): Layer[][] {
     entry("db.host", "db.internal"),
     entry("timeout", "30"),
   ] };
-  let e1: Layer = Layer { name: "env", entries: [entry("db.port", "6543")] };
+  let e1 = Layer { name: "env", entries: [entry("db.port", "6543")] };
   out = out.append([d1, f1, e1]);
 
   out = out.append([
@@ -286,7 +286,7 @@ function stacks(): Layer[][] {
     ] },
   ]);
 
-  let empty: Layer = Layer { name: "empty", entries: [] };
+  let empty = Layer { name: "empty", entries: [] };
   out = out.append([empty, f1, e1]);
   out = out.append([d1, empty, e1]);
   out = out.append([d1, f1, empty]);
@@ -313,25 +313,25 @@ function resolved_equal(a: Resolved[], b: Resolved[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i].key != b[i].key || a[i].value != b[i].value || a[i].from != b[i].from) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function show(rs: Resolved[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < rs.len()) {
     if (i > 0) {
-      out = out + " ";
+      out += " ";
     }
     out = out + rs[i].key + "=\"" + rs[i].value + "\"(" + rs[i].from + ")";
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -344,19 +344,19 @@ function env_names(): string[] {
 }
 
 function test_the_merge_agrees_with_top_down_resolution(): test.TestOutcome {
-  let ss: Layer[][] = stacks();
-  let i: i32 = 0;
+  let ss = stacks();
+  let i = 0;
   while (i < ss.len()) {
-    let merged: Resolved[] = merge_all(ss[i]);
-    let keys: string[] = all_keys(ss[i]);
+    let merged = merge_all(ss[i]);
+    let keys = all_keys(ss[i]);
     if (merged.len() != keys.len()) {
       return test.fail("stack " + i.to_string() + ": merged " + merged.len().to_string()
         + " settings but the layers mention " + keys.len().to_string() + " keys");
     }
-    let j: i32 = 0;
+    let j = 0;
     while (j < keys.len()) {
-      let want: Resolved = resolve(ss[i], keys[j]);
-      let at: i32 = index_of_key(merged, keys[j]);
+      let want = resolve(ss[i], keys[j]);
+      let at = index_of_key(merged, keys[j]);
       if (at < 0) {
         return test.fail("stack " + i.to_string() + ": \"" + keys[j] + "\" is missing");
       }
@@ -368,76 +368,76 @@ function test_the_merge_agrees_with_top_down_resolution(): test.TestOutcome {
         return test.fail("stack " + i.to_string() + ": \"" + keys[j]
           + "\" is credited to " + merged[at].from + ", top-down says " + want.from);
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_winning_layer_is_the_highest_one_that_has_the_key(): test.TestOutcome {
-  let ss: Layer[][] = stacks();
-  let i: i32 = 0;
+  let ss = stacks();
+  let i = 0;
   while (i < ss.len()) {
-    let merged: Resolved[] = merge_all(ss[i]);
-    let j: i32 = 0;
+    let merged = merge_all(ss[i]);
+    let j = 0;
     while (j < merged.len()) {
-      let expect: string = "";
-      let l: i32 = ss[i].len() - 1;
+      let expect = "";
+      let l = ss[i].len() - 1;
       while (l >= 0) {
-        let has: boolean = false;
-        let m: i32 = 0;
+        let has = false;
+        let m = 0;
         while (m < ss[i][l].entries.len()) {
           if (ss[i][l].entries[m].key == merged[j].key) {
             has = true;
           }
-          m = m + 1;
+          m += 1;
         }
         if (has && expect == "") {
           expect = ss[i][l].name;
         }
-        l = l - 1;
+        l -= 1;
       }
       if (merged[j].from != expect) {
         return test.fail("stack " + i.to_string() + ": \"" + merged[j].key
           + "\" credited to " + merged[j].from + ", highest layer holding it is "
           + expect);
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_overlay_is_associative(): test.TestOutcome {
-  let ss: Layer[][] = stacks();
-  let i: i32 = 0;
+  let ss = stacks();
+  let i = 0;
   while (i < ss.len()) {
     if (ss[i].len() == 3) {
-      let a: Resolved[] = as_resolved(ss[i][0]);
-      let b: Resolved[] = as_resolved(ss[i][1]);
-      let c: Resolved[] = as_resolved(ss[i][2]);
-      let left: Resolved[] = sort_resolved(overlay(overlay(a, b), c));
-      let right: Resolved[] = sort_resolved(overlay(a, overlay(b, c)));
+      let a = as_resolved(ss[i][0]);
+      let b = as_resolved(ss[i][1]);
+      let c = as_resolved(ss[i][2]);
+      let left = sort_resolved(overlay(overlay(a, b), c));
+      let right = sort_resolved(overlay(a, overlay(b, c)));
       if (!resolved_equal(left, right)) {
         return test.fail("stack " + i.to_string() + " is not associative:\n  (a.b).c = "
           + show(left) + "\n  a.(b.c) = " + show(right));
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_identity_and_idempotence(): test.TestOutcome {
-  let ss: Layer[][] = stacks();
+  let ss = stacks();
   let none: Resolved[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ss.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ss[i].len()) {
-      let a: Resolved[] = as_resolved(ss[i][j]);
+      let a = as_resolved(ss[i][j]);
       if (!resolved_equal(sort_resolved(overlay(none, a)), sort_resolved(a))) {
         return test.fail("empty is not a left identity for " + ss[i][j].name);
       }
@@ -447,26 +447,26 @@ function test_identity_and_idempotence(): test.TestOutcome {
       if (!resolved_equal(sort_resolved(overlay(a, a)), sort_resolved(a))) {
         return test.fail("overlay is not idempotent for " + ss[i][j].name);
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_an_absent_key_stays_absent(): test.TestOutcome {
-  let ss: Layer[][] = stacks();
-  let i: i32 = 0;
+  let ss = stacks();
+  let i = 0;
   while (i < ss.len()) {
-    let merged: Resolved[] = merge_all(ss[i]);
+    let merged = merge_all(ss[i]);
     if (index_of_key(merged, "no.such.key") >= 0) {
       return test.fail("stack " + i.to_string() + " invented a key");
     }
-    let r: Resolved = resolve(ss[i], "no.such.key");
+    let r = resolve(ss[i], "no.such.key");
     if (r.from != "<absent>") {
       return test.fail("top-down reported " + r.from + " for a key nobody has");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -476,8 +476,8 @@ function test_an_empty_value_overrides_a_default(): test.TestOutcome {
     Layer { name: "defaults", entries: [entry("log", "info")] },
     Layer { name: "env", entries: [entry("log", "")] },
   ];
-  let merged: Resolved[] = merge_all(ls);
-  let at: i32 = index_of_key(merged, "log");
+  let merged = merge_all(ls);
+  let at = index_of_key(merged, "log");
   if (at < 0) {
     return test.fail("\"log\" disappeared");
   }
@@ -487,7 +487,7 @@ function test_an_empty_value_overrides_a_default(): test.TestOutcome {
   if (merged[at].from != "env") {
     return test.fail("\"log\" credited to " + merged[at].from + ", want env");
   }
-  let el: Layer = env_layer(["FERN_LOG="]);
+  let el = env_layer(["FERN_LOG="]);
   if (el.entries.len() != 1 || el.entries[0].value != "") {
     return test.fail("FERN_LOG= did not produce an empty-string setting");
   }
@@ -499,7 +499,7 @@ function test_the_last_entry_in_a_layer_wins(): test.TestOutcome {
     entry("k", "first"),
     entry("k", "second"), entry("k", "third"),
   ] };
-  let rs: Resolved[] = as_resolved(l);
+  let rs = as_resolved(l);
   if (rs.len() != 1) {
     return test.fail("three entries for one key produced " + rs.len().to_string()
       + " settings, want 1");
@@ -511,27 +511,27 @@ function test_the_last_entry_in_a_layer_wins(): test.TestOutcome {
 }
 
 function test_the_env_mapping_is_a_bijection(): test.TestOutcome {
-  let ns: string[] = env_names();
+  let ns = env_names();
   let keys: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < ns.len()) {
-    let m: MappedKey = env_to_key(ns[i]);
+    let m = env_to_key(ns[i]);
     if (!m.ok) {
       return test.fail("\"" + ns[i] + "\" was rejected");
     }
-    let back: MappedKey = key_to_env(m.key);
+    let back = key_to_env(m.key);
     if (!back.ok || back.key != ns[i]) {
       return test.fail("\"" + ns[i] + "\" -> \"" + m.key + "\" -> \"" + back.key + "\"");
     }
-    let j: i32 = 0;
+    let j = 0;
     while (j < keys.len()) {
       if (keys[j] == m.key) {
         return test.fail("two names both map to \"" + m.key + "\"");
       }
-      j = j + 1;
+      j += 1;
     }
     keys = keys.append(m.key);
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -541,15 +541,15 @@ function test_names_outside_the_charset_are_rejected(): test.TestOutcome {
     "DB_HOST", "FERN_", "FERN_SOME-VAR", "FERN_lower",
     "FERN_HAS SPACE", "fern_db_host", "",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < bad.len()) {
-    let m: MappedKey = env_to_key(bad[i]);
+    let m = env_to_key(bad[i]);
     if (m.ok) {
       return test.fail("\"" + bad[i] + "\" was accepted as \"" + m.key + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
-  let el: Layer = env_layer(["FERN_SOME-VAR=1", "DB_HOST=2", "FERN_OK=3"]);
+  let el = env_layer(["FERN_SOME-VAR=1", "DB_HOST=2", "FERN_OK=3"]);
   if (el.entries.len() != 1 || el.entries[0].key != "ok") {
     return test.fail("the env layer picked up a name it should have dropped");
   }
@@ -565,22 +565,22 @@ function test_an_invalid_value_is_an_error_not_the_default(): test.TestOutcome {
     ],
   }]);
 
-  let absent: IntGet = get_int(rs, "missing", 99);
+  let absent = get_int(rs, "missing", 99);
   if (!absent.ok || absent.value != 99) {
     return test.fail("an absent key should use the default");
   }
-  let good: IntGet = get_int(rs, "port", 99);
+  let good = get_int(rs, "port", 99);
   if (!good.ok || good.value != 8080) {
     return test.fail("\"port\" parsed to " + good.value.to_string());
   }
-  let negative: IntGet = get_int(rs, "neg", 99);
-  if (!negative.ok || negative.value != 0 - 7) {
+  let negative = get_int(rs, "neg", 99);
+  if (!negative.ok || negative.value != -7) {
     return test.fail("\"neg\" parsed to " + negative.value.to_string());
   }
   let invalid: string[] = ["bad", "blank", "trail"];
-  let i: i32 = 0;
+  let i = 0;
   while (i < invalid.len()) {
-    let g: IntGet = get_int(rs, invalid[i], 99);
+    let g = get_int(rs, invalid[i], 99);
     if (g.ok) {
       return test.fail("\"" + invalid[i] + "\" was accepted as "
         + g.value.to_string() + " instead of reported");
@@ -589,7 +589,7 @@ function test_an_invalid_value_is_an_error_not_the_default(): test.TestOutcome {
       return test.fail("the error for \"" + invalid[i] + "\" does not name the key: "
         + g.err);
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -610,18 +610,18 @@ function main(): i32 {
     "FERN_BAD-NAME=x",
   ]);
 
-  let merged: Resolved[] = merge_all([defaults, file, env]);
-  let i: i32 = 0;
+  let merged = merge_all([defaults, file, env]);
+  let i = 0;
   while (i < merged.len()) {
     eprint("  " + merged[i].key + " = \"" + merged[i].value + "\"   (" + merged[i].from + ")");
-    i = i + 1;
+    i += 1;
   }
-  let port: IntGet = get_int(merged, "db.port", 5432);
+  let port = get_int(merged, "db.port", 5432);
   eprint("  db.port as an integer: " + port.value.to_string());
-  let log: IntGet = get_int(merged, "log", 0);
+  let log = get_int(merged, "log", 0);
   eprint("  log as an integer: " + log.err);
 
-  let r: test.TestRunner = test.new("configmerge");
+  let r = test.new("configmerge");
   r = r.it("the merge agrees with top-down resolution", test_the_merge_agrees_with_top_down_resolution);
   r = r.it("the winning layer is the highest one that has the key", test_the_winning_layer_is_the_highest_one_that_has_the_key);
   r = r.it("overlay is associative", test_overlay_is_associative);

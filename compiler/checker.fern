@@ -23098,7 +23098,7 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
       continue;
     }
     let key = ow_receiver_ns(fn.receiver_type) + "." + fn.name;
-    if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+    if (borrows.has(key)) {
       refused = refused.append(key);
     } else {
       out = out.append(key);
@@ -23113,15 +23113,125 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
   return kept;
 }
 
+// Use the typed receiver when analysing method results. This temporary
+// module is only for the result summaries; the checked program stays intact.
+function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): parser.Module {
+  let names: string[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() > 0) {
+      names = names.append(ow_receiver_ns(fn.receiver_type) + "." + fn.name);
+    }
+  }
+  let methods = util.name_index(names);
+  let mapping = OwnResultMap { methods: methods, decls: dx };
+  let funcs: parser.FuncDecl[] = [];
+  let ofuncs = collect_own_funcs(mod);
+  for raw in mod.funcs {
+    let all = raw.all_type_params;
+    for tv in func_scope_tparams(raw) {
+      if (!util.has_str(all, tv)) {
+        all = all.append(tv);
+      }
+    }
+    let fn = parser.FuncDecl { ...raw, all_type_params: all };
+    if (ow_decl_type_is_pointer(fn, fn.ret_type, ofuncs) && ow_result_has_methods(fn.body)) {
+      fn = annotate_func(fn, env);
+      let (body, _) = astwalk.map_stmts_where(fn.body, mapping, ow_result_map_stmt, ow_result_map_expr, ow_result_is_method);
+      fn = parser.FuncDecl { ...fn, body: body };
+    }
+    if (fn.receiver_name.len() > 0) {
+      let receiver = ast.ParamDecl { name: fn.receiver_name, type_name: fn.receiver_type, own: fn.receiver_own, send: false, has_default: false, default_value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, fn_ret: "", fn_param_types: "", line: fn.line, col: fn.col };
+      let params: ast.ParamDecl[] = [receiver];
+      for p in fn.params {
+        params = params.append(p);
+      }
+      fn = parser.FuncDecl { ...fn, name: ow_receiver_ns(fn.receiver_type) + "." + fn.name, receiver_name: "", receiver_type: "", receiver_own: false, params: params };
+    }
+    funcs = funcs.append(fn);
+  }
+  return parser.Module { ...mod, funcs: funcs };
+}
+
+struct OwnResultMap { methods: util.NameIndex, decls: OwnDecls }
+
+function ow_result_map_stmt(st: ast.Stmt, ctx: OwnResultMap): (ast.Stmt, OwnResultMap, boolean) {
+  return (st, ctx, false);
+}
+
+function ow_result_is_method(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(_) = c.callee {
+      return true;
+    }
+  }
+  return false;
+}
+
+// map_expr_where stops at a replaced node. Map the method's children first,
+// so a chain or a method used as an argument keeps every receiver dependency.
+function ow_result_map_expr(e: ast.Expr, ctx: OwnResultMap): (ast.Expr, OwnResultMap, boolean) {
+  if let ast.ExprCall(c) = e {
+    let args: ast.Expr[] = [];
+    for a in c.args {
+      let (value, _, _) = astwalk.map_expr_where(a, ctx, ow_result_map_stmt, ow_result_map_expr, ow_result_is_method);
+      args = args.append(value);
+    }
+    let (callee, _, _) = astwalk.map_expr_where(c.callee, ctx, ow_result_map_stmt, ow_result_map_expr, ow_result_is_method);
+    let mapped: ast.Expr = ast.ExprCall { ...c, callee: callee, args: args };
+    return (ow_result_call(mapped, ctx.methods, ctx.decls), ctx, true);
+  }
+  return (e, ctx, false);
+}
+
+function ow_result_method_at(e: ast.Expr, own found: boolean): boolean {
+  return found || ow_result_is_method(e);
+}
+
+function ow_result_has_methods(body: ast.Stmt[]): boolean {
+  for st in body {
+    if (astwalk.fold_stmt(st, false, ow_result_method_at)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ow_result_receiver_tag(e: ast.Expr): string {
+  if let ast.ExprStructLit(lit) = e {
+    return lit.type_name;
+  }
+  return ast.expr_ty(e);
+}
+
+function ow_result_call(e: ast.Expr, methods: util.NameIndex, dx: OwnDecls): ast.Expr {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      let tag = ow_result_receiver_tag(fa.obj);
+      let key = ow_receiver_ns(tag) + "." + fa.field;
+      let cell_handle = tag == "Cell" && fa.field == "get" && !ow_holds_no_handle(c.ty, dx);
+      if (tag.len() > 0 && !util.str_has_prefix(tag, "dyn ") && !methods.has(key) && !cell_handle) {
+        return e;
+      }
+      let args: ast.Expr[] = [fa.obj];
+      for a in c.args {
+        args = args.append(a);
+      }
+      return ast.ExprCall { ...c, callee: ast.ExprIdent { name: key, line: fa.line, col: fa.col, ty: "", builtin: false }, args: args };
+    }
+  }
+  return e;
+}
+
 pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex): util.Diag[] {
   let ofuncs = collect_own_funcs(mod);
   let builtins = util.name_index(ow_fresh_builtins());
-  let borrows = ow_result_borrows(mod, ofuncs, builtins);
+  let snames = util.name_index(ow_struct_names(mod.structs));
+  let decls = ow_decls(mod, snames);
+  let result_mod = ow_result_module(mod, env, decls);
+  let borrows = ow_result_borrows(result_mod, collect_own_funcs(result_mod), builtins);
   let fresh = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let noret = lu_no_return_funcs(mod);
-  let snames = util.name_index(ow_struct_names(mod.structs));
-  let decls = ow_decls(mod, snames);
   let fresh_scrut = ow_signature_fresh_owners(mod, ofuncs, builtins, decls);
   let handle_borrows = ow_handle_borrows(mod, borrows, decls);
   let lenders = ow_lenders(mod, ofuncs, decls);

@@ -16,11 +16,11 @@ function new_trie(): Trie {
 }
 
 function edge_of(n: Node, b: i32): i32 {
-  let lo: i32 = 0;
-  let hi: i32 = n.labels.len() - 1;
+  let lo = 0;
+  let hi = n.labels.len() - 1;
   while (lo <= hi) {
     let mid: i32 = (lo + hi) / 2;
-    let v: i32 = n.labels[mid];
+    let v = n.labels[mid];
     if (v == b) {
       return n.kids[mid];
     }
@@ -36,8 +36,8 @@ function edge_of(n: Node, b: i32): i32 {
 function with_edge(n: Node, b: i32, target: i32): Node {
   let labels: i32[] = [];
   let kids: i32[] = [];
-  let placed: boolean = false;
-  let i: i32 = 0;
+  let placed = false;
+  let i = 0;
   while (i < n.labels.len()) {
     if (!placed && n.labels[i] > b) {
       labels = labels.append(b);
@@ -46,7 +46,7 @@ function with_edge(n: Node, b: i32, target: i32): Node {
     }
     labels = labels.append(n.labels[i]);
     kids = kids.append(n.kids[i]);
-    i = i + 1;
+    i += 1;
   }
   if (!placed) {
     labels = labels.append(b);
@@ -60,13 +60,13 @@ function insert(t: Trie, w: string): Trie {
     return t;
   }
 
-  let nodes: Node[] = t.nodes;
+  let nodes = t.nodes;
   let path: i32[] = [0];
-  let cur: i32 = 0;
-  let i: i32 = 0;
+  let cur = 0;
+  let i = 0;
   while (i < w.len()) {
-    let b: i32 = w[i] as i32;
-    let nxt: i32 = edge_of(nodes[cur], b);
+    let b = w[i] as i32;
+    let nxt = edge_of(nodes[cur], b);
     if (nxt < 0) {
       nxt = nodes.len();
       nodes = nodes.append(empty_node());
@@ -74,7 +74,7 @@ function insert(t: Trie, w: string): Trie {
     }
     cur = nxt;
     path = path.append(cur);
-    i = i + 1;
+    i += 1;
   }
 
   nodes = nodes.with(cur, Node {
@@ -84,36 +84,36 @@ function insert(t: Trie, w: string): Trie {
     count: nodes[cur].count,
   });
 
-  let p: i32 = 0;
+  let p = 0;
   while (p < path.len()) {
-    let at: i32 = path[p];
+    let at = path[p];
     nodes = nodes.with(at, Node {
       labels: nodes[at].labels,
       kids: nodes[at].kids,
       terminal: nodes[at].terminal,
       count: nodes[at].count + 1,
     });
-    p = p + 1;
+    p += 1;
   }
   return Trie { nodes: nodes };
 }
 
 function node_for(t: Trie, p: string): i32 {
-  let cur: i32 = 0;
-  let i: i32 = 0;
+  let cur = 0;
+  let i = 0;
   while (i < p.len()) {
-    let nxt: i32 = edge_of(t.nodes[cur], p[i] as i32);
+    let nxt = edge_of(t.nodes[cur], p[i] as i32);
     if (nxt < 0) {
       return -1;
     }
     cur = nxt;
-    i = i + 1;
+    i += 1;
   }
   return cur;
 }
 
 function contains(t: Trie, w: string): boolean {
-  let at: i32 = node_for(t, w);
+  let at = node_for(t, w);
   if (at < 0) {
     return false;
   }
@@ -125,7 +125,7 @@ function has_prefix(t: Trie, p: string): boolean {
 }
 
 function count_prefix(t: Trie, p: string): i32 {
-  let at: i32 = node_for(t, p);
+  let at = node_for(t, p);
   if (at < 0) {
     return 0;
   }
@@ -137,15 +137,15 @@ function size(t: Trie): i32 {
 }
 
 function collect(t: Trie, at: i32, prefix: string, out_in: string[]): string[] {
-  let out: string[] = out_in;
+  let out = out_in;
   if (t.nodes[at].terminal) {
     out = out.append(prefix);
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < t.nodes[at].labels.len()) {
-    let b: i32 = t.nodes[at].labels[i];
+    let b = t.nodes[at].labels[i];
     out = collect(t, t.nodes[at].kids[i], prefix + byte_str(b), out);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -160,7 +160,7 @@ function keys(t: Trie): string[] {
 }
 
 function keys_with_prefix(t: Trie, p: string): string[] {
-  let at: i32 = node_for(t, p);
+  let at = node_for(t, p);
   if (at < 0) {
     return [];
   }
@@ -171,24 +171,24 @@ function lcp(t: Trie): string {
   if (size(t) == 0) {
     return "";
   }
-  let out: string = "";
-  let cur: i32 = 0;
+  let out = "";
+  let cur = 0;
   while (!t.nodes[cur].terminal && t.nodes[cur].labels.len() == 1) {
-    out = out + byte_str(t.nodes[cur].labels[0]);
+    out += byte_str(t.nodes[cur].labels[0]);
     cur = t.nodes[cur].kids[0];
   }
   return out;
 }
 
 function longest_prefix_of(t: Trie, q: string): Option[string] {
-  let best: i32 = -1;
-  let cur: i32 = 0;
+  let best = -1;
+  let cur = 0;
   if (t.nodes[0].terminal) {
     best = 0;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < q.len()) {
-    let nxt: i32 = edge_of(t.nodes[cur], q[i] as i32);
+    let nxt = edge_of(t.nodes[cur], q[i] as i32);
     if (nxt < 0) {
       break;
     }
@@ -196,7 +196,7 @@ function longest_prefix_of(t: Trie, q: string): Option[string] {
     if (t.nodes[cur].terminal) {
       best = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (best < 0) {
     return None;
@@ -205,46 +205,46 @@ function longest_prefix_of(t: Trie, q: string): Option[string] {
 }
 
 function bf_contains(words: string[], w: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < words.len()) {
     if (words[i] == w) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function bf_count_prefix(words: string[], p: string): i32 {
   let seen: string[] = [];
-  let n: i32 = 0;
-  let i: i32 = 0;
+  let n = 0;
+  let i = 0;
   while (i < words.len()) {
     if (words[i].starts_with(p) && !bf_contains(seen, words[i])) {
       seen = seen.append(words[i]);
-      n = n + 1;
+      n += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return n;
 }
 
 function str_cmp(a: string, b: string): i32 {
-  let n: i32 = a.len();
+  let n = a.len();
   if (b.len() < n) {
     n = b.len();
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let x: i32 = a[i] as i32;
-    let y: i32 = b[i] as i32;
+    let x = a[i] as i32;
+    let y = b[i] as i32;
     if (x < y) {
       return -1;
     }
     if (x > y) {
       return 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (a.len() < b.len()) {
     return -1;
@@ -257,74 +257,74 @@ function str_cmp(a: string, b: string): i32 {
 
 function bf_sorted_unique(words: string[]): string[] {
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < words.len()) {
-    let w: string = words[i];
+    let w = words[i];
     if (!bf_contains(out, w)) {
       let next: string[] = [];
-      let placed: boolean = false;
-      let j: i32 = 0;
+      let placed = false;
+      let j = 0;
       while (j < out.len()) {
         if (!placed && str_cmp(out[j], w) > 0) {
           next = next.append(w);
           placed = true;
         }
         next = next.append(out[j]);
-        j = j + 1;
+        j += 1;
       }
       if (!placed) {
         next = next.append(w);
       }
       out = next;
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function bf_keys_with_prefix(words: string[], p: string): string[] {
-  let sorted: string[] = bf_sorted_unique(words);
+  let sorted = bf_sorted_unique(words);
   let out: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < sorted.len()) {
     if (sorted[i].starts_with(p)) {
       out = out.append(sorted[i]);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function bf_lcp(words: string[]): string {
-  let u: string[] = bf_sorted_unique(words);
+  let u = bf_sorted_unique(words);
   if (u.len() == 0) {
     return "";
   }
-  let pre: string = u[0];
-  let i: i32 = 1;
+  let pre = u[0];
+  let i = 1;
   while (i < u.len()) {
-    let n: i32 = pre.len();
+    let n = pre.len();
     if (u[i].len() < n) {
       n = u[i].len();
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < n && pre[k] == u[i][k]) {
-      k = k + 1;
+      k += 1;
     }
     pre = pre.take(k).to_owned();
-    i = i + 1;
+    i += 1;
   }
   return pre;
 }
 
 function bf_longest_prefix_of(words: string[], q: string): Option[string] {
-  let best: i32 = -1;
-  let i: i32 = 0;
+  let best = -1;
+  let i = 0;
   while (i < words.len()) {
     if (q.starts_with(words[i]) && words[i].len() > best) {
       best = words[i].len();
     }
-    i = i + 1;
+    i += 1;
   }
   if (best < 0) {
     return None;
@@ -341,89 +341,89 @@ function non_members(): string[] {
 }
 
 function build(words: string[]): Trie {
-  let t: Trie = new_trie();
-  let i: i32 = 0;
+  let t = new_trie();
+  let i = 0;
   while (i < words.len()) {
     t = insert(t, words[i]);
-    i = i + 1;
+    i += 1;
   }
   return t;
 }
 
 function all_prefixes(words: string[]): string[] {
   let out: string[] = [""];
-  let i: i32 = 0;
+  let i = 0;
   while (i < words.len()) {
-    let k: i32 = 1;
+    let k = 1;
     while (k <= words[i].len()) {
-      let p: string = words[i].take(k).to_owned();
+      let p = words[i].take(k).to_owned();
       if (!bf_contains(out, p)) {
         out = out.append(p);
       }
-      k = k + 1;
+      k += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return out.append("zz").append("carx").append("dot");
 }
 
 function join(xs: string[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < xs.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + xs[i];
-    i = i + 1;
+    out += xs[i];
+    i += 1;
   }
   return out;
 }
 
 function test_membership_agrees_with_a_scan(): test.TestOutcome {
-  let words: string[] = corpus();
-  let t: Trie = build(words);
+  let words = corpus();
+  let t = build(words);
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < words.len()) {
     if (!contains(t, words[i])) {
       return test.fail("inserted key absent: " + words[i]);
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let qs: string[] = all_prefixes(words);
-  let j: i32 = 0;
+  let qs = all_prefixes(words);
+  let j = 0;
   while (j < qs.len()) {
     if (contains(t, qs[j]) != bf_contains(words, qs[j])) {
       return test.fail("membership disagrees on \"" + qs[j] + "\": trie "
         + contains(t, qs[j]).to_string() + ", scan "
         + bf_contains(words, qs[j]).to_string());
     }
-    j = j + 1;
+    j += 1;
   }
 
-  let nm: string[] = non_members();
-  let k: i32 = 0;
+  let nm = non_members();
+  let k = 0;
   while (k < nm.len()) {
     if (contains(t, nm[k])) {
       return test.fail("non-member reads as present: \"" + nm[k] + "\"");
     }
-    k = k + 1;
+    k += 1;
   }
   return test.pass();
 }
 
 function test_prefix_queries_agree_with_a_scan(): test.TestOutcome {
-  let words: string[] = corpus();
-  let t: Trie = build(words);
-  let qs: string[] = all_prefixes(words);
+  let words = corpus();
+  let t = build(words);
+  let qs = all_prefixes(words);
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < qs.len()) {
-    let p: string = qs[i];
-    let want: i32 = bf_count_prefix(words, p);
-    let got: i32 = count_prefix(t, p);
+    let p = qs[i];
+    let want = bf_count_prefix(words, p);
+    let got = count_prefix(t, p);
     if (got != want) {
       return test.fail("count_prefix(\"" + p + "\") = " + got.to_string()
         + ", scan says " + want.to_string());
@@ -433,16 +433,16 @@ function test_prefix_queries_agree_with_a_scan(): test.TestOutcome {
         + has_prefix(t, p).to_string() + ", but " + want.to_string()
         + " keys carry it");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_keys_come_out_sorted_and_deduped(): test.TestOutcome {
-  let words: string[] = corpus();
-  let t: Trie = build(words);
-  let got: string[] = keys(t);
-  let want: string[] = bf_sorted_unique(words);
+  let words = corpus();
+  let t = build(words);
+  let got = keys(t);
+  let want = bf_sorted_unique(words);
   if (join(got) != join(want)) {
     return test.fail("keys() = [" + join(got) + "], want [" + join(want) + "]");
   }
@@ -454,15 +454,15 @@ function test_keys_come_out_sorted_and_deduped(): test.TestOutcome {
 }
 
 function test_keys_with_prefix_agrees_with_a_filter(): test.TestOutcome {
-  let words: string[] = corpus();
-  let t: Trie = build(words);
-  let qs: string[] = all_prefixes(words);
+  let words = corpus();
+  let t = build(words);
+  let qs = all_prefixes(words);
 
-  let i: i32 = 0;
+  let i = 0;
   while (i < qs.len()) {
-    let p: string = qs[i];
-    let got: string[] = keys_with_prefix(t, p);
-    let want: string[] = bf_keys_with_prefix(words, p);
+    let p = qs[i];
+    let got = keys_with_prefix(t, p);
+    let want = bf_keys_with_prefix(words, p);
     if (join(got) != join(want)) {
       return test.fail("keys_with_prefix(\"" + p + "\") = [" + join(got)
         + "], want [" + join(want) + "]");
@@ -472,13 +472,13 @@ function test_keys_with_prefix_agrees_with_a_filter(): test.TestOutcome {
         + got.len().to_string() + " but count_prefix says "
         + count_prefix(t, p).to_string());
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_a_key_that_is_a_prefix_of_another_survives(): test.TestOutcome {
-  let t: Trie = build(["card", "car"]);
+  let t = build(["card", "car"]);
   if (!contains(t, "car")) {
     return test.fail("\"car\" lost behind \"card\"");
   }
@@ -492,7 +492,7 @@ function test_a_key_that_is_a_prefix_of_another_survives(): test.TestOutcome {
     return test.fail("size = " + size(t).to_string() + ", want 2");
   }
 
-  let u: Trie = build(["car", "card"]);
+  let u = build(["car", "card"]);
   if (join(keys(t)) != join(keys(u))) {
     return test.fail("insertion order changed the key set: ["
       + join(keys(t)) + "] vs [" + join(keys(u)) + "]");
@@ -501,7 +501,7 @@ function test_a_key_that_is_a_prefix_of_another_survives(): test.TestOutcome {
 }
 
 function test_the_empty_string_is_a_key(): test.TestOutcome {
-  let t: Trie = build(["", "a", "ab"]);
+  let t = build(["", "a", "ab"]);
   if (!contains(t, "")) {
     return test.fail("\"\" not stored");
   }
@@ -518,7 +518,7 @@ function test_the_empty_string_is_a_key(): test.TestOutcome {
   if (lcp(t) != "") {
     return test.fail("lcp with \"\" present = \"" + lcp(t) + "\", want \"\"");
   }
-  let u: Trie = build(["a", "ab"]);
+  let u = build(["a", "ab"]);
   if (contains(u, "")) {
     return test.fail("\"\" reads as present when never inserted");
   }
@@ -530,17 +530,17 @@ function test_lcp_agrees_with_a_scan(): test.TestOutcome {
     "car|card|cart", "car|card|car", "dog|dodge|do",
     "a", "abc", "x|y", "same|same", "prefix|prefixed|prefixes",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < sets.len()) {
-    let words: string[] = sets[i].split("|");
-    let t: Trie = build(words);
-    let got: string = lcp(t);
-    let want: string = bf_lcp(words);
+    let words = sets[i].split("|");
+    let t = build(words);
+    let got = lcp(t);
+    let want = bf_lcp(words);
     if (got != want) {
       return test.fail("lcp of [" + sets[i] + "] = \"" + got
         + "\", scan says \"" + want + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
 
   if (lcp(new_trie()) != "") {
@@ -558,35 +558,35 @@ function test_lcp_agrees_with_a_scan(): test.TestOutcome {
 }
 
 function test_longest_prefix_match_agrees_with_a_scan(): test.TestOutcome {
-  let words: string[] = corpus();
-  let t: Trie = build(words);
+  let words = corpus();
+  let t = build(words);
   let qs: string[] = [
     "cartsx", "card", "cards", "ca", "doors", "dog", "d",
     "axes", "a", "", "zebra", "carting",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < qs.len()) {
-    let got: Option[string] = longest_prefix_of(t, qs[i]);
-    let want: Option[string] = bf_longest_prefix_of(words, qs[i]);
+    let got = longest_prefix_of(t, qs[i]);
+    let want = bf_longest_prefix_of(words, qs[i]);
     let gs: string = match (got) { Some(v) => "Some(" + v + ")", None => "None" };
     let ws: string = match (want) { Some(v) => "Some(" + v + ")", None => "None" };
     if (gs != ws) {
       return test.fail("longest_prefix_of(\"" + qs[i] + "\") = " + gs
         + ", scan says " + ws);
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_duplicate_inserts_change_nothing(): test.TestOutcome {
-  let words: string[] = corpus();
-  let t: Trie = build(words);
-  let before_keys: string = join(keys(t));
-  let before_nodes: i32 = t.nodes.len();
-  let before_size: i32 = size(t);
+  let words = corpus();
+  let t = build(words);
+  let before_keys = join(keys(t));
+  let before_nodes = t.nodes.len();
+  let before_size = size(t);
 
-  let again: Trie = build(words);
+  let again = build(words);
   again = insert(again, "car");
   again = insert(again, "car");
   again = insert(again, "a");
@@ -611,16 +611,16 @@ function test_duplicate_inserts_change_nothing(): test.TestOutcome {
 }
 
 function test_insertion_order_is_not_observable(): test.TestOutcome {
-  let words: string[] = corpus();
-  let fwd: Trie = build(words);
+  let words = corpus();
+  let fwd = build(words);
 
   let rev: string[] = [];
-  let i: i32 = words.len() - 1;
+  let i = words.len() - 1;
   while (i >= 0) {
     rev = rev.append(words[i]);
-    i = i - 1;
+    i -= 1;
   }
-  let bwd: Trie = build(rev);
+  let bwd = build(rev);
 
   if (join(keys(fwd)) != join(keys(bwd))) {
     return test.fail("reversed insertion changed keys(): [" + join(keys(fwd))
@@ -633,61 +633,61 @@ function test_insertion_order_is_not_observable(): test.TestOutcome {
     return test.fail("reversed insertion changed the node count: "
       + fwd.nodes.len().to_string() + " vs " + bwd.nodes.len().to_string());
   }
-  let qs: string[] = all_prefixes(words);
-  let j: i32 = 0;
+  let qs = all_prefixes(words);
+  let j = 0;
   while (j < qs.len()) {
     if (count_prefix(fwd, qs[j]) != count_prefix(bwd, qs[j])) {
       return test.fail("reversed insertion changed count_prefix(\""
         + qs[j] + "\")");
     }
-    j = j + 1;
+    j += 1;
   }
   return test.pass();
 }
 
 function test_edge_lists_stay_sorted(): test.TestOutcome {
-  let t: Trie = build(corpus());
-  let n: i32 = 0;
+  let t = build(corpus());
+  let n = 0;
   while (n < t.nodes.len()) {
-    let labels: i32[] = t.nodes[n].labels;
+    let labels = t.nodes[n].labels;
     if (labels.len() != t.nodes[n].kids.len()) {
       return test.fail("node " + n.to_string() + ": " + labels.len().to_string()
         + " labels but " + t.nodes[n].kids.len().to_string() + " kids");
     }
-    let i: i32 = 1;
+    let i = 1;
     while (i < labels.len()) {
       if (labels[i - 1] >= labels[i]) {
         return test.fail("node " + n.to_string() + ": labels out of order at "
           + i.to_string());
       }
-      i = i + 1;
+      i += 1;
     }
-    n = n + 1;
+    n += 1;
   }
   return test.pass();
 }
 
 function test_any_byte_is_a_valid_label(): test.TestOutcome {
   let words: string[] = ["a b", "a-b", "a/b", "A", "\t", "9"];
-  let t: Trie = build(words);
-  let i: i32 = 0;
+  let t = build(words);
+  let i = 0;
   while (i < words.len()) {
     if (!contains(t, words[i])) {
       return test.fail("byte-y key lost: \"" + words[i] + "\"");
     }
-    i = i + 1;
+    i += 1;
   }
   if (size(t) != words.len()) {
     return test.fail("size = " + size(t).to_string() + ", want "
       + words.len().to_string());
   }
-  let want: string[] = bf_sorted_unique(words);
+  let want = bf_sorted_unique(words);
   if (join(keys(t)) != join(want)) {
     return test.fail("byte ordering wrong: [" + join(keys(t)) + "], want ["
       + join(want) + "]");
   }
 
-  let hi: Trie = build(["é", "éx", "e"]);
+  let hi = build(["é", "éx", "e"]);
   if (!contains(hi, "é")) {
     return test.fail("a key with a high byte was lost");
   }
@@ -702,11 +702,11 @@ function test_any_byte_is_a_valid_label(): test.TestOutcome {
 }
 
 function churn(n: i32): i32 {
-  let t: Trie = new_trie();
-  let i: i32 = 0;
+  let t = new_trie();
+  let i = 0;
   while (i < n) {
     t = insert(t, "key" + (i % 97).to_string() + "/" + i.to_string());
-    i = i + 1;
+    i += 1;
   }
   return size(t) + t.nodes.len() + count_prefix(t, "key1");
 }
@@ -714,7 +714,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
   eprint("trie — sorted edge lists, prefix queries, longest common prefix");
 
-  let t: Trie = build(corpus());
+  let t = build(corpus());
   eprint("corpus: " + join(corpus()));
   eprint("keys:   " + join(keys(t)));
   eprint("nodes:  " + t.nodes.len().to_string() + " for " + size(t).to_string() + " keys");
@@ -722,19 +722,19 @@ function main(): i32 {
   eprint("keys under ca: " + join(keys_with_prefix(t, "ca")));
   eprint("count \"do\":    " + count_prefix(t, "do").to_string());
 
-  let lp: Option[string] = longest_prefix_of(t, "cartsx");
+  let lp = longest_prefix_of(t, "cartsx");
   eprint("longest prefix of cartsx: "
     + match (lp) { Some(v) => "\"" + v + "\"", None => "none" });
 
-  let base: i64 = __heap_bump_bytes();
-  let a: i32 = churn(200);
-  let after_n: i64 = __heap_bump_bytes();
-  let b: i32 = churn(400);
-  let after_2n: i64 = __heap_bump_bytes();
+  let base = __heap_bump_bytes();
+  let a = churn(200);
+  let after_n = __heap_bump_bytes();
+  let b = churn(400);
+  let after_2n = __heap_bump_bytes();
   eprint("churn(200) sum=" + a.to_string() + " bump=" + (after_n - base).to_string());
   eprint("churn(400) sum=" + b.to_string() + " bump=" + (after_2n - after_n).to_string());
 
-  let r: test.TestRunner = test.new("trie");
+  let r = test.new("trie");
   r = r.it("membership agrees with a scan", test_membership_agrees_with_a_scan);
   r = r.it("prefix queries agree with a scan", test_prefix_queries_agree_with_a_scan);
   r = r.it("keys come out sorted and deduped", test_keys_come_out_sorted_and_deduped);

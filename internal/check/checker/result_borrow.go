@@ -162,13 +162,11 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 		if !c.calleeResultBorrows(x) {
 			return false
 		}
-		args := x.Args
-		// The method rewrite puts the receiver first. A receiver is not an
-		// argument here, as it is not before the rewrite.
-		if x.Method != nil && len(args) > 0 {
-			args = args[1:]
+		// Dynamic methods keep the receiver on the callee, outside Args.
+		if fa, ok := x.Callee.(*ast.FieldAccess); ok && x.Method != nil && c.exprBorrows(fa.Target, b) {
+			return true
 		}
-		for _, a := range args {
+		for _, a := range x.Args {
 			if c.exprBorrows(a, b) {
 				return true
 			}
@@ -190,6 +188,11 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	}
 	if c.resultAnalysed[id.Name] {
 		return c.resultBorrows[id.Name]
+	}
+	if id.Name == "__method_Cell_get" && x.Method != nil {
+		if recv, ok := x.Method.Receiver.(ast.StructType); ok && len(recv.Args) == 1 {
+			return !c.holdsNoHandle(recv.Args[0])
+		}
 	}
 	return c.signatureResultBorrows(id.Name)
 }

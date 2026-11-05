@@ -10,7 +10,7 @@ function test_slice_basic(): test.TestOutcome {
 }
 
 function test_slice_clamped(): test.TestOutcome {
-  let s: i32[] = array.slice([1, 2, 3], 0 - 3, 100);
+  let s = array.slice([1, 2, 3], -3, 100);
   return test.assert_true(s.len() == 3 && s[0] == 1 && s[2] == 3);
 }
 

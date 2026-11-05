@@ -20,6 +20,14 @@ import (
 
 var codeRE = regexp.MustCompile(`E\d{3}`)
 
+const methodBorrowPrelude = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Box { h: Handle }
+function consume(own h: Handle): i32 { return h.close(); }
+`
+
+const methodBorrowEnd = "\nfunction main(): i32 { return 0; }\n"
+
 func goCheckerCodes(t *testing.T, dir, src string) []string {
 	t.Helper()
 	return uniqueSortedCodes(goCheckerDiagCodes(t, dir, src))
@@ -1982,6 +1990,18 @@ function main(): i32 { return 0; }
 		{"own-arg-spread-of-borrowed-param", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-spread-then-base-read", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  print(s.d);\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-spread-field-names-base", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: s.d };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-forward-borrow-chain", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.next(); }\nfunction (b: Box) next(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-fresh-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return Handle { fd: 3 }; }\nfunction fresh(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(fresh(b)); }" + methodBorrowEnd, nil},
+		{"own-method-owned-receiver-wrapper", methodBorrowPrelude + "function (own b: Box) get(): Handle { return b.h; }\nfunction take(own b: Box): Handle { return b.get(); }\nfunction f(own b: Box): i32 { return consume(take(b)); }" + methodBorrowEnd, nil},
+		{"own-method-cell-get-name-collision", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction take(slot: Cell[i32[]]): i32[] { let xs = slot.get(); slot.set([]); return xs; }\nfunction eat(own xs: i32[]): i32 { return xs.len(); }\nfunction f(slot: Cell[i32[]]): i32 { return eat(take(slot)); }" + methodBorrowEnd, nil},
+		{"own-method-cell-borrowed-handle", methodBorrowPrelude + "function read(slot: Cell[Handle]): Handle { return slot.get(); }\nfunction f(slot: Cell[Handle]): i32 { return consume(read(slot)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-generic-receiver-borrow", methodBorrowPrelude + "struct Holder[T] { value: T }\nfunction (h: Holder[T]) get(): T { return h.value; }\nfunction borrow(h: Holder[Handle]): Handle { return h.get(); }\nfunction f(h: Holder[Handle]): i32 { return consume(borrow(h)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-nested-receiver-borrow", methodBorrowPrelude + "struct Outer { box: Box }\nfunction (o: Outer) box(): Box { return o.box; }\nfunction (b: Box) get(): Handle { return b.h; }\nfunction borrow(o: Outer): Handle { return o.box().get(); }\nfunction f(o: Outer): i32 { return consume(borrow(o)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-nested-argument-borrow", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction (b: Box) choose(h: Handle): Handle { return h; }\nfunction borrow(b: Box): Handle { return b.choose(b.get()); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
+		{"own-method-dynamic-receiver-borrow", methodBorrowPrelude + "trait Access { function get(self: Self): Handle; }\nfunction (b: Box) get(): Handle { return b.h; }\nimpl Access for Box {}\nfunction borrow(b: dyn Access): Handle { return b.get(); }\nfunction f(b: dyn Access): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-arg-forward-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own ys: i32[]): i32 { return consume(ys); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cap-assign-string", "function main(): i32 { let s: string = \"x\"; let f = (): i32 => { s = \"y\"; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-array", "function main(): i32 { let a: i32[] = [1]; let f = (): i32 => { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},

@@ -41,7 +41,7 @@ function keywords(): string[] {
 }
 
 function is_keyword(w: string): boolean {
-  let ks: string[] = keywords();
+  let ks = keywords();
   for i in 0..ks.len() {
     if (ks[i] == w) {
       return true;
@@ -62,51 +62,51 @@ struct Lexed { tokens: Token[], error: string, line: i32, col: i32 }
 
 function lex(src: string): Lexed {
   let toks: Token[] = [];
-  let i: i32 = 0;
-  let line: i32 = 1;
-  let col: i32 = 1;
+  let i = 0;
+  let line = 1;
+  let col = 1;
   while (i < src.len()) {
-    let b: i32 = src[i] as i32;
+    let b = src[i] as i32;
     if (b == 10) {
-      line = line + 1;
+      line += 1;
       col = 1;
-      i = i + 1;
+      i += 1;
       continue;
     }
     if (b == 32 || b == 9 || b == 13) {
-      col = col + 1;
-      i = i + 1;
+      col += 1;
+      i += 1;
       continue;
     }
     if (b == 35) {
       while (i < src.len() && src[i] as i32 != 10) {
-        i = i + 1;
-        col = col + 1;
+        i += 1;
+        col += 1;
       }
       continue;
     }
     if (is_digit(b)) {
-      let start: i32 = i;
-      let v: i32 = 0;
+      let start = i;
+      let v = 0;
       while (i < src.len() && is_digit(src[i] as i32)) {
         v = v * 10 + (src[i] as i32 - 48);
-        i = i + 1;
+        i += 1;
       }
-      let text: string = slice_unchecked(src, start, i).to_owned();
+      let text = slice_unchecked(src, start, i).to_owned();
       toks = toks.append(Token {
         kind: tk_num(), text: text, value: v,
         line: line, col: col,
       });
-      col = col + (i - start);
+      col += i - start;
       continue;
     }
     if (is_ident_start(b)) {
-      let start2: i32 = i;
+      let start2 = i;
       while (i < src.len() && is_ident_part(src[i] as i32)) {
-        i = i + 1;
+        i += 1;
       }
-      let word: string = slice_unchecked(src, start2, i).to_owned();
-      let k: i32 = tk_ident();
+      let word = slice_unchecked(src, start2, i).to_owned();
+      let k = tk_ident();
       if (is_keyword(word)) {
         k = tk_keyword();
       }
@@ -114,34 +114,34 @@ function lex(src: string): Lexed {
         kind: k, text: word, value: 0,
         line: line, col: col,
       });
-      col = col + (i - start2);
+      col += i - start2;
       continue;
     }
-    let matched: boolean = false;
-    let twos: string[] = two_char_ops();
+    let matched = false;
+    let twos = two_char_ops();
     for k in 0..twos.len() {
       if (!matched && i + 2 <= src.len() && slice_unchecked(src, i, i + 2) == twos[k]) {
         toks = toks.append(Token {
           kind: tk_punct(), text: twos[k],
           value: 0, line: line, col: col,
         });
-        i = i + 2;
-        col = col + 2;
+        i += 2;
+        col += 2;
         matched = true;
       }
     }
     if (matched) {
       continue;
     }
-    let ones: string[] = one_char_ops();
+    let ones = one_char_ops();
     for k in 0..ones.len() {
       if (!matched && slice_unchecked(src, i, i + 1) == ones[k]) {
         toks = toks.append(Token {
           kind: tk_punct(), text: ones[k],
           value: 0, line: line, col: col,
         });
-        i = i + 1;
-        col = col + 1;
+        i += 1;
+        col += 1;
         matched = true;
       }
     }
@@ -182,7 +182,7 @@ function fail(p: P, msg: string): P {
   if (failed(p)) {
     return p;
   }
-  let t: Token = p.toks[p.pos];
+  let t = p.toks[p.pos];
   return P { ...p, error: msg, line: t.line, col: t.col };
 }
 
@@ -191,12 +191,12 @@ function peek(p: P): Token {
 }
 
 function at_punct(p: P, s: string): boolean {
-  let t: Token = peek(p);
+  let t = peek(p);
   return t.kind == tk_punct() && t.text == s;
 }
 
 function at_keyword(p: P, s: string): boolean {
-  let t: Token = peek(p);
+  let t = peek(p);
   return t.kind == tk_keyword() && t.text == s;
 }
 
@@ -250,14 +250,14 @@ function parse_next_level(p: P, level: i32): ExprResult {
 }
 
 function parse_binary_level(p: P, ops: string[], level: i32): ExprResult {
-  let r: ExprResult = parse_next_level(p, level);
+  let r = parse_next_level(p, level);
   if (failed(r.p)) {
     return r;
   }
-  let cur: P = r.p;
-  let lhs: Expr = r.e;
+  let cur = r.p;
+  let lhs = r.e;
   while (true) {
-    let op: string = "";
+    let op = "";
     for k in 0..ops.len() {
       if (op.len() == 0 && at_punct(cur, ops[k])) {
         op = ops[k];
@@ -266,7 +266,7 @@ function parse_binary_level(p: P, ops: string[], level: i32): ExprResult {
     if (op.len() == 0) {
       break;
     }
-    let rhs: ExprResult = parse_next_level(advance(cur), level);
+    let rhs = parse_next_level(advance(cur), level);
     if (failed(rhs.p)) {
       return rhs;
     }
@@ -278,7 +278,7 @@ function parse_binary_level(p: P, ops: string[], level: i32): ExprResult {
 
 function parse_unary(p: P): ExprResult {
   if (at_punct(p, "-")) {
-    let inner: ExprResult = parse_unary(advance(p));
+    let inner = parse_unary(advance(p));
     if (failed(inner.p)) {
       return inner;
     }
@@ -288,7 +288,7 @@ function parse_unary(p: P): ExprResult {
 }
 
 function parse_primary(p: P): ExprResult {
-  let t: Token = peek(p);
+  let t = peek(p);
   if (t.kind == tk_num()) {
     return ExprResult { p: advance(p), e: Num(t.value) };
   }
@@ -296,11 +296,11 @@ function parse_primary(p: P): ExprResult {
     return ExprResult { p: advance(p), e: Var(t.text) };
   }
   if (at_punct(p, "(")) {
-    let inner: ExprResult = parse_expr(advance(p));
+    let inner = parse_expr(advance(p));
     if (failed(inner.p)) {
       return inner;
     }
-    let after: P = expect_punct(inner.p, ")");
+    let after = expect_punct(inner.p, ")");
     return ExprResult { p: after, e: inner.e };
   }
   return ExprResult { p: fail(p, "expected an expression"), e: Num(0) };
@@ -311,13 +311,13 @@ struct StmtResult { p: P, s: Stmt }
 struct BlockResult { p: P, body: Stmt[] }
 
 function parse_block(p: P): BlockResult {
-  let cur: P = expect_punct(p, "{");
+  let cur = expect_punct(p, "{");
   if (failed(cur)) {
     return BlockResult { p: cur, body: [] };
   }
   let body: Stmt[] = [];
   while (!at_punct(cur, "}") && peek(cur).kind != tk_eof()) {
-    let r: StmtResult = parse_stmt(cur);
+    let r = parse_stmt(cur);
     if (failed(r.p)) {
       return BlockResult { p: r.p, body: [] };
     }
@@ -330,8 +330,8 @@ function parse_block(p: P): BlockResult {
 
 function parse_stmt(p: P): StmtResult {
   if (at_keyword(p, "var")) {
-    let cur: P = advance(p);
-    let name: Token = peek(cur);
+    let cur = advance(p);
+    let name = peek(cur);
     if (name.kind != tk_ident()) {
       return StmtResult {
         p: fail(cur, "expected a variable name"),
@@ -339,34 +339,34 @@ function parse_stmt(p: P): StmtResult {
       };
     }
     cur = expect_punct(advance(cur), "=");
-    let r: ExprResult = parse_expr(cur);
+    let r = parse_expr(cur);
     if (failed(r.p)) {
       return StmtResult { p: r.p, s: Print(Num(0)) };
     }
     return StmtResult { p: expect_punct(r.p, ";"), s: Declare(name.text, r.e) };
   }
   if (at_keyword(p, "print")) {
-    let r2: ExprResult = parse_expr(advance(p));
+    let r2 = parse_expr(advance(p));
     if (failed(r2.p)) {
       return StmtResult { p: r2.p, s: Print(Num(0)) };
     }
     return StmtResult { p: expect_punct(r2.p, ";"), s: Print(r2.e) };
   }
   if (at_keyword(p, "if")) {
-    let c: P = expect_punct(advance(p), "(");
-    let cond: ExprResult = parse_expr(c);
+    let c = expect_punct(advance(p), "(");
+    let cond = parse_expr(c);
     if (failed(cond.p)) {
       return StmtResult { p: cond.p, s: Print(Num(0)) };
     }
-    let afterc: P = expect_punct(cond.p, ")");
-    let then_b: BlockResult = parse_block(afterc);
+    let afterc = expect_punct(cond.p, ")");
+    let then_b = parse_block(afterc);
     if (failed(then_b.p)) {
       return StmtResult { p: then_b.p, s: Print(Num(0)) };
     }
     let else_body: Stmt[] = [];
-    let tail: P = then_b.p;
+    let tail = then_b.p;
     if (at_keyword(tail, "else")) {
-      let else_b: BlockResult = parse_block(advance(tail));
+      let else_b = parse_block(advance(tail));
       if (failed(else_b.p)) {
         return StmtResult { p: else_b.p, s: Print(Num(0)) };
       }
@@ -376,19 +376,19 @@ function parse_stmt(p: P): StmtResult {
     return StmtResult { p: tail, s: If(cond.e, then_b.body, else_body) };
   }
   if (at_keyword(p, "while")) {
-    let w: P = expect_punct(advance(p), "(");
-    let wc: ExprResult = parse_expr(w);
+    let w = expect_punct(advance(p), "(");
+    let wc = parse_expr(w);
     if (failed(wc.p)) {
       return StmtResult { p: wc.p, s: Print(Num(0)) };
     }
-    let afterw: P = expect_punct(wc.p, ")");
-    let wb: BlockResult = parse_block(afterw);
+    let afterw = expect_punct(wc.p, ")");
+    let wb = parse_block(afterw);
     return StmtResult { p: wb.p, s: While(wc.e, wb.body) };
   }
-  let lhs: Token = peek(p);
+  let lhs = peek(p);
   if (lhs.kind == tk_ident()) {
-    let a: P = expect_punct(advance(p), "=");
-    let rv: ExprResult = parse_expr(a);
+    let a = expect_punct(advance(p), "=");
+    let rv = parse_expr(a);
     if (failed(rv.p)) {
       return StmtResult { p: rv.p, s: Print(Num(0)) };
     }
@@ -400,14 +400,14 @@ function parse_stmt(p: P): StmtResult {
 struct Parsed { body: Stmt[], error: string, line: i32, col: i32 }
 
 function parse(src: string): Parsed {
-  let lx: Lexed = lex(src);
+  let lx = lex(src);
   if (lx.error.len() > 0) {
     return Parsed { body: [], error: lx.error, line: lx.line, col: lx.col };
   }
-  let cur: P = P { toks: lx.tokens, pos: 0, error: "", line: 0, col: 0 };
+  let cur = P { toks: lx.tokens, pos: 0, error: "", line: 0, col: 0 };
   let body: Stmt[] = [];
   while (peek(cur).kind != tk_eof()) {
-    let r: StmtResult = parse_stmt(cur);
+    let r = parse_stmt(cur);
     if (failed(r.p)) {
       return Parsed { body: [], error: r.p.error, line: r.p.line, col: r.p.col };
     }
@@ -435,23 +435,23 @@ function print_expr(e: Expr): string {
 }
 
 function indent(n: i32): string {
-  let s: string = "";
+  let s = "";
   for i in 0..n {
-    s = s + "  ";
+    s += "  ";
   }
   return s;
 }
 
 function print_block(body: Stmt[], depth: i32): string {
-  let out: string = "";
+  let out = "";
   for i in 0..body.len() {
-    out = out + print_stmt(body[i], depth);
+    out += print_stmt(body[i], depth);
   }
   return out;
 }
 
 function print_stmt(s: Stmt, depth: i32): string {
-  let pad: string = indent(depth);
+  let pad = indent(depth);
   match (s) {
     Declare(n, e) => {
       return pad + "var " + n + " = " + print_expr(e) + ";\n";
@@ -516,8 +516,8 @@ function eval_expr(env: Env, e: Expr): i32 {
       return 0 - eval_expr(env, x);
     },
     Bin(op, l, r) => {
-      let a: i32 = eval_expr(env, l);
-      let b: i32 = eval_expr(env, r);
+      let a = eval_expr(env, l);
+      let b = eval_expr(env, r);
       if (op == "+") {
         return a + b;
       }
@@ -578,7 +578,7 @@ function eval_expr(env: Env, e: Expr): i32 {
 }
 
 function exec_block(env: Env, body: Stmt[]): Env {
-  let e: Env = env;
+  let e = env;
   for i in 0..body.len() {
     e = exec_stmt(e, body[i]);
   }
@@ -589,7 +589,7 @@ function exec_stmt(env: Env, s: Stmt): Env {
   if (env.steps > 100000) {
     return env;
   }
-  let st: Env = Env { ...env, steps: env.steps + 1 };
+  let st = Env { ...env, steps: env.steps + 1 };
   match (s) {
     Declare(n, e) => {
       return env_set(st, n, eval_expr(st, e));
@@ -607,7 +607,7 @@ function exec_stmt(env: Env, s: Stmt): Env {
       return exec_block(st, f);
     },
     While(c, b) => {
-      let e2: Env = st;
+      let e2 = st;
       while (eval_expr(e2, c) != 0 && e2.steps <= 100000) {
         e2 = Env { ...e2, steps: e2.steps + 1 };
         e2 = exec_block(e2, b);
@@ -618,11 +618,11 @@ function exec_stmt(env: Env, s: Stmt): Env {
 }
 
 function run(src: string): i32[] {
-  let p: Parsed = parse(src);
+  let p = parse(src);
   if (p.error.len() > 0) {
     return [];
   }
-  let env: Env = Env { names: [], values: [], output: [], steps: 0 };
+  let env = Env { names: [], values: [], output: [], steps: 0 };
   return exec_block(env, p.body).output;
 }
 
@@ -649,22 +649,22 @@ function valid_sources(): string[] {
 }
 
 function test_printing_is_a_fixpoint(): test.TestOutcome {
-  let ss: string[] = valid_sources();
+  let ss = valid_sources();
   for i in 0..ss.len() {
-    let first: Parsed = parse(ss[i]);
+    let first = parse(ss[i]);
     if (first.error.len() > 0) {
       return test.fail("source " + i.to_string() + " did not parse: "
         + first.error + " at " + first.line.to_string() + ":"
         + first.col.to_string());
     }
-    let once: string = print_program(first);
-    let second: Parsed = parse(once);
+    let once = print_program(first);
+    let second = parse(once);
     if (second.error.len() > 0) {
       return test.fail("source " + i.to_string()
         + " printed to something unparseable: " + second.error
         + "\n" + once);
     }
-    let twice: string = print_program(second);
+    let twice = print_program(second);
     if (once != twice) {
       return test.fail("source " + i.to_string() + " is not a fixpoint:\n"
         + once + "--- vs ---\n" + twice);
@@ -674,18 +674,18 @@ function test_printing_is_a_fixpoint(): test.TestOutcome {
 }
 
 function test_the_tree_means_what_the_source_says(): test.TestOutcome {
-  let ss: string[] = valid_sources();
+  let ss = valid_sources();
   let expected: i32[][] = [
     [1], [1], [14], [5], [10], [1], [5], [20], [1],
     [120], [1], [0], [0, 1, 2], [1], [99], [2], [1],
   ];
   for i in 0..ss.len() {
-    let got: i32[] = run(ss[i]);
+    let got = run(ss[i]);
     if (!same(got, expected[i])) {
       return test.fail("source " + i.to_string() + " printed ["
         + join_ints(got) + "], wanted [" + join_ints(expected[i]) + "]");
     }
-    let reprinted: i32[] = run(print_program(parse(ss[i])));
+    let reprinted = run(print_program(parse(ss[i])));
     if (!same(reprinted, got)) {
       return test.fail("source " + i.to_string()
         + " changed meaning when reprinted: [" + join_ints(reprinted)
@@ -708,12 +708,12 @@ function same(a: i32[], b: i32[]): boolean {
 }
 
 function join_ints(xs: i32[]): string {
-  let s: string = "";
+  let s = "";
   for i in 0..xs.len() {
     if (i > 0) {
-      s = s + ", ";
+      s += ", ";
     }
-    s = s + xs[i].to_string();
+    s += xs[i].to_string();
   }
   return s;
 }
@@ -724,12 +724,12 @@ function test_layout_does_not_reach_the_tree(): test.TestOutcome {
     "var x = 1 + 2;\nprint x;\n",
     "  # lead\n  var   x\n = 1\n+ 2 ;  # trailing\n\n\tprint\tx ;  ",
   ];
-  let first: string = print_program(parse(same_program[0]));
+  let first = print_program(parse(same_program[0]));
   if (first.len() == 0) {
     return test.fail("the reference spelling did not parse");
   }
   for i in 1..same_program.len() {
-    let got: string = print_program(parse(same_program[i]));
+    let got = print_program(parse(same_program[i]));
     if (got != first) {
       return test.fail("spelling " + i.to_string() + " printed:\n" + got
         + "--- but spelling 0 printed ---\n" + first);
@@ -755,7 +755,7 @@ function test_errors_carry_a_position(): test.TestOutcome {
   let want_line: i32[] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
   let want_col: i32[] = [5, 7, 9, 10, 13, 8, 7, 12, 1, 12, 19];
   for i in 0..bad.len() {
-    let p: Parsed = parse(bad[i]);
+    let p = parse(bad[i]);
     if (p.error.len() == 0) {
       return test.fail("\"" + bad[i] + "\" parsed without error");
     }
@@ -769,7 +769,7 @@ function test_errors_carry_a_position(): test.TestOutcome {
 }
 
 function test_the_first_error_wins(): test.TestOutcome {
-  let p: Parsed = parse("var x = ; var y = ; var z = ;");
+  let p = parse("var x = ; var y = ; var z = ;");
   if (p.error.len() == 0) {
     return test.fail("expected an error");
   }
@@ -777,7 +777,7 @@ function test_the_first_error_wins(): test.TestOutcome {
     return test.fail("reported column " + p.col.to_string()
       + ", wanted the first failure at 9");
   }
-  let q: Parsed = parse("var x = 1;\nvar y = 2;\nvar z = ;");
+  let q = parse("var x = 1;\nvar y = 2;\nvar z = ;");
   if (q.line != 3 || q.col != 9) {
     return test.fail("multi-line error at " + q.line.to_string() + ":"
       + q.col.to_string() + ", wanted 3:9");
@@ -786,18 +786,18 @@ function test_the_first_error_wins(): test.TestOutcome {
 }
 
 function test_truncations_are_rejected(): test.TestOutcome {
-  let src: string = "var total = 0; while (total < 10) { total = total + 3; } print total;";
-  let accepted: i32 = 0;
+  let src = "var total = 0; while (total < 10) { total = total + 3; } print total;";
+  let accepted = 0;
   for cut in 1..src.len() {
-    let head: string = slice_unchecked(src, 0, cut).to_owned();
-    let p: Parsed = parse(head);
+    let head = slice_unchecked(src, 0, cut).to_owned();
+    let p = parse(head);
     if (p.error.len() == 0) {
-      let reprinted: string = print_program(p);
+      let reprinted = print_program(p);
       if (reprinted.len() == 0 && head.trim().len() > 0) {
         return test.fail("prefix of length " + cut.to_string()
           + " parsed to an empty program: \"" + head + "\"");
       }
-      accepted = accepted + 1;
+      accepted += 1;
     }
   }
   if (accepted > 20) {
@@ -809,10 +809,10 @@ function test_truncations_are_rejected(): test.TestOutcome {
 }
 
 function test_parsing_is_deterministic(): test.TestOutcome {
-  let ss: string[] = valid_sources();
+  let ss = valid_sources();
   for i in 0..ss.len() {
-    let a: string = print_program(parse(ss[i]));
-    let b: string = print_program(parse(ss[i]));
+    let a = print_program(parse(ss[i]));
+    let b = print_program(parse(ss[i]));
     if (a != b) {
       return test.fail("source " + i.to_string() + " parsed differently twice");
     }
@@ -822,19 +822,19 @@ function test_parsing_is_deterministic(): test.TestOutcome {
 
 function main(): i32 {
   eprint("miniparse — recursive descent, checked by round-tripping its own output");
-  let src: string = "# factorial\nvar n = 5;\nvar acc = 1;\nwhile (n > 1) {\n  acc = acc * n;\n  n = n - 1;\n}\nprint acc;";
+  let src = "# factorial\nvar n = 5;\nvar acc = 1;\nwhile (n > 1) {\n  acc = acc * n;\n  n = n - 1;\n}\nprint acc;";
   eprint("  source:");
-  let srclines: string[] = src.split("\n");
+  let srclines = src.split("\n");
   for i in 0..srclines.len() {
     eprint("    " + srclines[i]);
   }
-  let p: Parsed = parse(src);
+  let p = parse(src);
   if (p.error.len() > 0) {
     eprint("  parse error: " + p.error + " at " + p.line.to_string()
       + ":" + p.col.to_string());
   } else {
     eprint("  printed back (fully parenthesised):");
-    let out: string[] = print_program(p).split("\n");
+    let out = print_program(p).split("\n");
     for i in 0..out.len() {
       if (out[i].len() > 0) {
         eprint("    " + out[i]);
@@ -842,11 +842,11 @@ function main(): i32 {
     }
     eprint("  running it prints: " + join_ints(run(src)));
   }
-  let badp: Parsed = parse("var x = 1;\nvar y = ;");
+  let badp = parse("var x = 1;\nvar y = ;");
   eprint("  \"let y = ;\" -> " + badp.error + " at " + badp.line.to_string()
     + ":" + badp.col.to_string());
 
-  let r: test.TestRunner = test.new("miniparse");
+  let r = test.new("miniparse");
   r = r.it("printing is a fixpoint", test_printing_is_a_fixpoint);
   r = r.it("the tree means what the source says", test_the_tree_means_what_the_source_says);
   r = r.it("layout does not reach the tree", test_layout_does_not_reach_the_tree);

@@ -6,21 +6,21 @@ struct Tagged { key: string, tag: i32 }
 
 function reversed(n: i32): i32[] {
   let xs: i32[] = [];
-  let i: i32 = n;
+  let i = n;
   while (i > 0) {
     xs = xs.append(i);
-    i = i - 1;
+    i -= 1;
   }
   return xs;
 }
 
 function ascending_from(xs: i32[], first: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] != first + i) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -38,7 +38,7 @@ function tags(ts: Tagged[]): i32[] {
 }
 
 function test_sort_in_place_reversed(): test.TestOutcome {
-  let xs: i32[] = cmp.sort_in_place(reversed(100));
+  let xs = cmp.sort_in_place(reversed(100));
   return test.assert_true(xs.len() == 100 && ascending_from(xs, 1));
 }
 
@@ -48,7 +48,7 @@ function test_sort_in_place_duplicates(): test.TestOutcome {
 
 function test_sort_in_place_empty_and_single(): test.TestOutcome {
   let empty: i32[] = cmp.sort_in_place([]);
-  let one: i32[] = cmp.sort_in_place([7]);
+  let one = cmp.sort_in_place([7]);
   return test.assert_true(empty.len() == 0 && one.len() == 1 && one[0] == 7);
 }
 
@@ -57,7 +57,7 @@ function test_sort_in_place_strings(): test.TestOutcome {
 }
 
 function test_sort_desc_in_place(): test.TestOutcome {
-  let xs: i32[] = cmp.sort_desc_in_place([2, 9, 4, 7]);
+  let xs = cmp.sort_desc_in_place([2, 9, 4, 7]);
   let ys: i32[] = cmp.sort_desc_in_place([]);
   if (ys.len() != 0) {
     return test.fail("empty");
@@ -101,21 +101,21 @@ function test_is_sorted_by(): test.TestOutcome {
 }
 
 function test_cmp_ignore_ascii_case(): test.TestOutcome {
-  let lt: boolean = "Apple".cmp_ignore_ascii_case("banana") == -1;
-  let eq: boolean = "HeLLo".cmp_ignore_ascii_case("hello") == 0;
-  let gt: boolean = "zeta".cmp_ignore_ascii_case("ALPHA") == 1;
+  let lt = "Apple".cmp_ignore_ascii_case("banana") == -1;
+  let eq = "HeLLo".cmp_ignore_ascii_case("hello") == 0;
+  let gt = "zeta".cmp_ignore_ascii_case("ALPHA") == 1;
   return test.assert_true(lt && eq && gt);
 }
 
 function test_cmp_ignore_ascii_case_prefix(): test.TestOutcome {
-  let shorter: boolean = "AB".cmp_ignore_ascii_case("abc") == -1;
-  let longer: boolean = "abc".cmp_ignore_ascii_case("AB") == 1;
-  let empty: boolean = "".cmp_ignore_ascii_case("") == 0;
+  let shorter = "AB".cmp_ignore_ascii_case("abc") == -1;
+  let longer = "abc".cmp_ignore_ascii_case("AB") == 1;
+  let empty = "".cmp_ignore_ascii_case("") == 0;
   return test.assert_true(shorter && longer && empty);
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("cmp sort family");
+  let r = test.new("cmp sort family");
   r = r.it("sort_in_place reversed 100", test_sort_in_place_reversed);
   r = r.it("sort_in_place duplicates", test_sort_in_place_duplicates);
   r = r.it("sort_in_place empty and single", test_sort_in_place_empty_and_single);

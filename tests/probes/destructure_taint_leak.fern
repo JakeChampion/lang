@@ -16,11 +16,11 @@ function grab(n: i32): i32 {
 }
 
 function main(): i32 {
-  let acc: i32 = 0;
-  let i: i32 = 0;
+  let acc = 0;
+  let i = 0;
   while (i < 500) {
-    acc = acc + grab(i % 3);
-    i = i + 1;
+    acc += grab(i % 3);
+    i += 1;
   }
   return acc % 7;
 }

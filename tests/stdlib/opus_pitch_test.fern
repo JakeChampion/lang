@@ -19,9 +19,9 @@ function pulses(period: i32, n: i32): f32[] {
 // period is more than half the longest lag, so no multiple of it is a lag.
 function test_search_finds_the_period(): test.TestOutcome {
   for period in [380, 451, 613] {
-    let x: f32[] = pulses(period, 2048);
-    let lp: f32[] = pitch.pitch_downsample(x, 0, x, 0, 2048, 1);
-    let found: i32 = 720 - pitch.pitch_search(lp, 360, lp, 1328, 620);
+    let x = pulses(period, 2048);
+    let lp = pitch.pitch_downsample(x, 0, x, 0, 2048, 1);
+    let found = 720 - pitch.pitch_search(lp, 360, lp, 1328, 620);
     if (found < period - 2 || found > period + 2) {
       return test.fail("the period " + period.to_string() + " gave " + found.to_string());
     }
@@ -35,20 +35,20 @@ function test_iir_undoes_fir(): test.TestOutcome {
   for i in 0..24 {
     x = x.append(0.0f32);
   }
-  let s: f32[] = pulses(37, 240);
+  let s = pulses(37, 240);
   for v in s {
     x = x.append(v);
   }
-  let ac: f32[] = pitch.autocorr(s, 0, false, 24, 240);
-  let a: f32[] = pitch.lpc(ac, 24);
-  let err: f32[] = pitch.fir(x, 24, a, 240, 24);
+  let ac = pitch.autocorr(s, 0, false, 24, 240);
+  let a = pitch.lpc(ac, 24);
+  let err = pitch.fir(x, 24, a, 240, 24);
   let mem: f32[] = [];
   for i in 0..24 {
     mem = mem.append(0.0f32);
   }
-  let back: pitch.Iir = pitch.iir(err, 0, a, 240, 24, mem);
+  let back = pitch.iir(err, 0, a, 240, 24, mem);
   for i in 0..240 {
-    let d: f32 = back.y[i] - s[i];
+    let d = back.y[i] - s[i];
     if (d > 0.01f32 || d < -0.01f32) {
       return test.fail("sample " + i.to_string() + " is " + back.y[i].to_string() + ", not " + s[i].to_string());
     }
@@ -58,8 +58,8 @@ function test_iir_undoes_fir(): test.TestOutcome {
 
 // The prediction of a first-order process is its coefficient.
 function test_lpc_of_a_first_order_process(): test.TestOutcome {
-  let a: f32[] = pitch.lpc([1.0f32, 0.5f32, 0.25f32], 2);
-  let d0: f32 = a[0] + 0.5f32;
+  let a = pitch.lpc([1.0f32, 0.5f32, 0.25f32], 2);
+  let d0 = a[0] + 0.5f32;
   if (d0 > 0.0001f32 || d0 < -0.0001f32 || a[1] > 0.0001f32 || a[1] < -0.0001f32) {
     return test.fail("the coefficients are " + a[0].to_string() + " and " + a[1].to_string());
   }
@@ -67,7 +67,7 @@ function test_lpc_of_a_first_order_process(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.new("std/opus/pitch");
+  let r = test.new("std/opus/pitch");
   r = r.it("the search finds the period of a periodic signal", test_search_finds_the_period);
   r = r.it("the synthesis filter undoes the prediction", test_iir_undoes_fir);
   r = r.it("the prediction of a first-order process", test_lpc_of_a_first_order_process);

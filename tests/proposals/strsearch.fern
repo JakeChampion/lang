@@ -4,17 +4,17 @@ import "std/string";
 
 function naive_find(h: string, p: string): i32[] {
   let out: i32[] = [];
-  let m: i32 = p.len();
-  let i: i32 = 0;
+  let m = p.len();
+  let i = 0;
   while (i + m <= h.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < m && h[i + j] == p[j]) {
-      j = j + 1;
+      j += 1;
     }
     if (j == m) {
       out = out.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -25,33 +25,33 @@ function kmp_table(p: string): i32[] {
     return f;
   }
   f = f.append(0);
-  let k: i32 = 0;
-  let i: i32 = 1;
+  let k = 0;
+  let i = 1;
   while (i < p.len()) {
     while (k > 0 && p[i] != p[k]) {
       k = f[k - 1];
     }
     if (p[i] == p[k]) {
-      k = k + 1;
+      k += 1;
     }
     f = f.append(k);
-    i = i + 1;
+    i += 1;
   }
   return f;
 }
 
 function all_positions(n: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i <= n) {
     out = out.append(i);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function kmp_find(h: string, p: string): i32[] {
-  let m: i32 = p.len();
+  let m = p.len();
   if (m == 0) {
     return all_positions(h.len());
   }
@@ -59,43 +59,43 @@ function kmp_find(h: string, p: string): i32[] {
   if (m > h.len()) {
     return out;
   }
-  let f: i32[] = kmp_table(p);
-  let k: i32 = 0;
-  let i: i32 = 0;
+  let f = kmp_table(p);
+  let k = 0;
+  let i = 0;
   while (i < h.len()) {
     while (k > 0 && h[i] != p[k]) {
       k = f[k - 1];
     }
     if (h[i] == p[k]) {
-      k = k + 1;
+      k += 1;
     }
     if (k == m) {
       out = out.append(i - m + 1);
       k = f[k - 1];
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function bmh_table(p: string): i32[] {
-  let m: i32 = p.len();
+  let m = p.len();
   let bc: i32[] = [];
-  let c: i32 = 0;
+  let c = 0;
   while (c < 256) {
     bc = bc.append(m);
-    c = c + 1;
+    c += 1;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < m - 1) {
     bc = bc.with(p[j] as i32, m - 1 - j);
-    j = j + 1;
+    j += 1;
   }
   return bc;
 }
 
 function bmh_find(h: string, p: string): i32[] {
-  let m: i32 = p.len();
+  let m = p.len();
   if (m == 0) {
     return all_positions(h.len());
   }
@@ -103,18 +103,18 @@ function bmh_find(h: string, p: string): i32[] {
   if (m > h.len()) {
     return out;
   }
-  let bc: i32[] = bmh_table(p);
-  let i: i32 = 0;
+  let bc = bmh_table(p);
+  let i = 0;
   while (i + m <= h.len()) {
-    let j: i32 = m - 1;
+    let j = m - 1;
     while (j >= 0 && h[i + j] == p[j]) {
-      j = j - 1;
+      j -= 1;
     }
     if (j < 0) {
       out = out.append(i);
-      i = i + 1;
+      i += 1;
     } else {
-      i = i + bc[h[i + m - 1] as i32];
+      i += bc[h[i + m - 1] as i32];
     }
   }
   return out;
@@ -127,22 +127,22 @@ function count(h: string, p: string): i32 {
 function bin_strings(maxlen: i32): string[] {
   let out: string[] = [""];
   let cur: string[] = [""];
-  let len: i32 = 1;
+  let len = 1;
   while (len <= maxlen) {
     let next: string[] = [];
-    let i: i32 = 0;
+    let i = 0;
     while (i < cur.len()) {
       next = next.append(cur[i] + "a");
       next = next.append(cur[i] + "b");
-      i = i + 1;
+      i += 1;
     }
-    let k: i32 = 0;
+    let k = 0;
     while (k < next.len()) {
       out = out.append(next[k]);
-      k = k + 1;
+      k += 1;
     }
     cur = next;
-    len = len + 1;
+    len += 1;
   }
   return out;
 }
@@ -161,25 +161,25 @@ function positions_equal(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function show(xs: i32[]): string {
-  let out: string = "[";
-  let i: i32 = 0;
+  let out = "[";
+  let i = 0;
   while (i < xs.len()) {
     if (i > 0) {
-      out = out + ",";
+      out += ",";
     }
-    out = out + xs[i].to_string();
-    i = i + 1;
+    out += xs[i].to_string();
+    i += 1;
   }
   return out + "]";
 }
@@ -188,38 +188,38 @@ function occurs_at(h: string, p: string, i: i32): boolean {
   if (i + p.len() > h.len()) {
     return false;
   }
-  let j: i32 = 0;
+  let j = 0;
   while (j < p.len()) {
     if (h[i + j] != p[j]) {
       return false;
     }
-    j = j + 1;
+    j += 1;
   }
   return true;
 }
 
 function contains_pos(xs: i32[], v: i32): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == v) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function test_all_three_agree_exhaustively(): test.TestOutcome {
-  let hs: string[] = bin_strings(8);
-  let ps: string[] = bin_strings(3);
-  let checked: i32 = 0;
-  let i: i32 = 0;
+  let hs = bin_strings(8);
+  let ps = bin_strings(3);
+  let checked = 0;
+  let i = 0;
   while (i < hs.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ps.len()) {
-      let want: i32[] = naive_find(hs[i], ps[j]);
-      let k: i32[] = kmp_find(hs[i], ps[j]);
-      let b: i32[] = bmh_find(hs[i], ps[j]);
+      let want = naive_find(hs[i], ps[j]);
+      let k = kmp_find(hs[i], ps[j]);
+      let b = bmh_find(hs[i], ps[j]);
       if (!positions_equal(want, k)) {
         return test.fail("KMP disagrees on \"" + hs[i] + "\" / \"" + ps[j]
           + "\": naive " + show(want) + " vs kmp " + show(k));
@@ -228,10 +228,10 @@ function test_all_three_agree_exhaustively(): test.TestOutcome {
         return test.fail("Horspool disagrees on \"" + hs[i] + "\" / \"" + ps[j]
           + "\": naive " + show(want) + " vs bmh " + show(b));
       }
-      checked = checked + 1;
-      j = j + 1;
+      checked += 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   if (checked < 7000) {
     return test.fail("sweep only compared " + checked.to_string() + " pairs");
@@ -240,11 +240,11 @@ function test_all_three_agree_exhaustively(): test.TestOutcome {
 }
 
 function test_all_three_agree_on_the_text_pairs(): test.TestOutcome {
-  let ps: string[] = pairs();
-  let i: i32 = 0;
+  let ps = pairs();
+  let i = 0;
   while (i < ps.len()) {
-    let f: string[] = ps[i].split("|");
-    let want: i32[] = naive_find(f[0], f[1]);
+    let f = ps[i].split("|");
+    let want = naive_find(f[0], f[1]);
     if (!positions_equal(want, kmp_find(f[0], f[1]))) {
       return test.fail("KMP disagrees on \"" + f[0] + "\" / \"" + f[1]
         + "\": naive " + show(want) + " vs kmp " + show(kmp_find(f[0], f[1])));
@@ -253,44 +253,44 @@ function test_all_three_agree_on_the_text_pairs(): test.TestOutcome {
       return test.fail("Horspool disagrees on \"" + f[0] + "\" / \"" + f[1]
         + "\": naive " + show(want) + " vs bmh " + show(bmh_find(f[0], f[1])));
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_every_reported_position_really_matches(): test.TestOutcome {
-  let hs: string[] = bin_strings(7);
-  let ps: string[] = bin_strings(3);
-  let i: i32 = 0;
+  let hs = bin_strings(7);
+  let ps = bin_strings(3);
+  let i = 0;
   while (i < hs.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ps.len()) {
-      let got: i32[] = kmp_find(hs[i], ps[j]);
-      let k: i32 = 0;
+      let got = kmp_find(hs[i], ps[j]);
+      let k = 0;
       while (k < got.len()) {
         if (!occurs_at(hs[i], ps[j], got[k])) {
           return test.fail("\"" + ps[j] + "\" does not occur at "
             + got[k].to_string() + " in \"" + hs[i] + "\"");
         }
-        k = k + 1;
+        k += 1;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_no_occurrence_is_missed(): test.TestOutcome {
-  let hs: string[] = bin_strings(7);
-  let ps: string[] = bin_strings(3);
-  let i: i32 = 0;
+  let hs = bin_strings(7);
+  let ps = bin_strings(3);
+  let i = 0;
   while (i < hs.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < ps.len()) {
-      let got: i32[] = kmp_find(hs[i], ps[j]);
-      let bm: i32[] = bmh_find(hs[i], ps[j]);
-      let at: i32 = 0;
+      let got = kmp_find(hs[i], ps[j]);
+      let bm = bmh_find(hs[i], ps[j]);
+      let at = 0;
       while (at + ps[j].len() <= hs[i].len()) {
         if (occurs_at(hs[i], ps[j], at)) {
           if (!contains_pos(got, at)) {
@@ -302,82 +302,82 @@ function test_no_occurrence_is_missed(): test.TestOutcome {
               + at.to_string() + " in \"" + hs[i] + "\"");
           }
         }
-        at = at + 1;
+        at += 1;
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_failure_table_matches_its_definition(): test.TestOutcome {
-  let ps: string[] = bin_strings(8);
-  let i: i32 = 0;
+  let ps = bin_strings(8);
+  let i = 0;
   while (i < ps.len()) {
-    let p: string = ps[i];
-    let f: i32[] = kmp_table(p);
+    let p = ps[i];
+    let f = kmp_table(p);
     if (f.len() != p.len()) {
       return test.fail("table for \"" + p + "\" has " + f.len().to_string()
         + " entries, want " + p.len().to_string());
     }
-    let e: i32 = 0;
+    let e = 0;
     while (e < p.len()) {
-      let want: i32 = 0;
-      let n: i32 = e + 1;
-      let l: i32 = n - 1;
+      let want = 0;
+      let n = e + 1;
+      let l = n - 1;
       while (l > 0) {
-        let same: boolean = true;
-        let k: i32 = 0;
+        let same = true;
+        let k = 0;
         while (k < l) {
           if (p[k] != p[n - l + k]) {
             same = false;
           }
-          k = k + 1;
+          k += 1;
         }
         if (same && want == 0) {
           want = l;
         }
-        l = l - 1;
+        l -= 1;
       }
       if (f[e] != want) {
         return test.fail("\"" + p + "\" table[" + e.to_string() + "] = "
           + f[e].to_string() + ", want " + want.to_string());
       }
-      e = e + 1;
+      e += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_bad_character_table_matches_its_definition(): test.TestOutcome {
-  let ps: string[] = bin_strings(6);
-  let i: i32 = 1;
+  let ps = bin_strings(6);
+  let i = 1;
   while (i < ps.len()) {
-    let p: string = ps[i];
-    let m: i32 = p.len();
-    let bc: i32[] = bmh_table(p);
+    let p = ps[i];
+    let m = p.len();
+    let bc = bmh_table(p);
     if (bc.len() != 256) {
       return test.fail("table has " + bc.len().to_string() + " entries, want 256");
     }
-    let c: i32 = 0;
+    let c = 0;
     while (c < 256) {
-      let want: i32 = m;
-      let j: i32 = 0;
+      let want = m;
+      let j = 0;
       while (j < m - 1) {
         if (p[j] as i32 == c) {
           want = m - 1 - j;
         }
-        j = j + 1;
+        j += 1;
       }
       if (bc[c] != want) {
         return test.fail("\"" + p + "\" bc[" + c.to_string() + "] = "
           + bc[c].to_string() + ", want " + want.to_string());
       }
-      c = c + 1;
+      c += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -412,8 +412,8 @@ function test_the_empty_needle(): test.TestOutcome {
   if (count("", "a") != 0) {
     return test.fail("\"a\" in \"\" is not 0");
   }
-  let ps: string[] = bin_strings(5);
-  let i: i32 = 0;
+  let ps = bin_strings(5);
+  let i = 0;
   while (i < ps.len()) {
     if (count(ps[i], "") != ps[i].len() + 1) {
       return test.fail("\"\" in \"" + ps[i] + "\" is not len+1");
@@ -421,23 +421,23 @@ function test_the_empty_needle(): test.TestOutcome {
     if (!positions_equal(kmp_find(ps[i], ""), bmh_find(ps[i], ""))) {
       return test.fail("the two searches disagree on the empty needle");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_count_is_the_number_of_positions(): test.TestOutcome {
-  let ps: string[] = pairs();
-  let i: i32 = 0;
+  let ps = pairs();
+  let i = 0;
   while (i < ps.len()) {
-    let f: string[] = ps[i].split("|");
-    let n: i32 = naive_find(f[0], f[1]).len();
+    let f = ps[i].split("|");
+    let n = naive_find(f[0], f[1]).len();
     if (count(f[0], f[1]) != n) {
       return test.fail("count(\"" + f[0] + "\", \"" + f[1] + "\") = "
         + count(f[0], f[1]).to_string() + ", but there are "
         + n.to_string() + " positions");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
@@ -449,18 +449,18 @@ function main(): i32 {
     "abracadabra|abra", "mississippi|issi", "aaaa|aa",
     "the café is a café|café",
   ];
-  let i: i32 = 0;
+  let i = 0;
   while (i < demos.len()) {
-    let f: string[] = demos[i].split("|");
+    let f = demos[i].split("|");
     eprint("  \"" + f[1] + "\" in \"" + f[0] + "\"");
     eprint("    count " + count(f[0], f[1]).to_string()
       + "  kmp " + show(kmp_find(f[0], f[1]))
       + "  bmh " + show(bmh_find(f[0], f[1])));
-    i = i + 1;
+    i += 1;
   }
   eprint("  failure table for \"abracadabra\": " + show(kmp_table("abracadabra")));
 
-  let r: test.TestRunner = test.new("strsearch");
+  let r = test.new("strsearch");
   r = r.it("all three agree exhaustively", test_all_three_agree_exhaustively);
   r = r.it("all three agree on the text pairs", test_all_three_agree_on_the_text_pairs);
   r = r.it("every reported position really matches", test_every_reported_position_really_matches);

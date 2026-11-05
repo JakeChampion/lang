@@ -10,36 +10,36 @@ function differs_by_one(a: string, b: string): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let diff: i32 = 0;
-  let i: i32 = 0;
+  let diff = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
-      diff = diff + 1;
+      diff += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return diff == 1;
 }
 
 function neighbours(dict: string[], at: i32): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < dict.len()) {
     if (i != at && differs_by_one(dict[at], dict[i])) {
       out = out.append(i);
     }
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function index_of_word(dict: string[], w: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < dict.len()) {
     if (dict[i] == w) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -55,24 +55,24 @@ function shortest_chain(dict: string[], from: i32, to: i32): i32[] {
 
   let prev: i32[] = [];
   let seen: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < dict.len()) {
     prev = prev.append(-1);
     seen = seen.append(0);
-    i = i + 1;
+    i += 1;
   }
 
   let queue: i32[] = [from];
   seen = seen.with(from, 1);
-  let head: i32 = 0;
-  let found: boolean = false;
+  let head = 0;
+  let found = false;
   while (head < queue.len() && !found) {
-    let cur: i32 = queue[head];
-    head = head + 1;
-    let ns: i32[] = neighbours(dict, cur);
-    let j: i32 = 0;
+    let cur = queue[head];
+    head += 1;
+    let ns = neighbours(dict, cur);
+    let j = 0;
     while (j < ns.len()) {
-      let n: i32 = ns[j];
+      let n = ns[j];
       if (seen[n] == 0) {
         seen = seen.with(n, 1);
         prev = prev.with(n, cur);
@@ -81,7 +81,7 @@ function shortest_chain(dict: string[], from: i32, to: i32): i32[] {
         }
         queue = queue.append(n);
       }
-      j = j + 1;
+      j += 1;
     }
   }
   if (!found) {
@@ -89,23 +89,23 @@ function shortest_chain(dict: string[], from: i32, to: i32): i32[] {
   }
 
   let rev: i32[] = [];
-  let at: i32 = to;
+  let at = to;
   while (at != from) {
     rev = rev.append(at);
     at = prev[at];
   }
   rev = rev.append(from);
   let out: i32[] = [];
-  let k: i32 = rev.len() - 1;
+  let k = rev.len() - 1;
   while (k >= 0) {
     out = out.append(rev[k]);
-    k = k - 1;
+    k -= 1;
   }
   return out;
 }
 
 function distance(dict: string[], from: i32, to: i32): i32 {
-  let c: i32[] = shortest_chain(dict, from, to);
+  let c = shortest_chain(dict, from, to);
   if (c.len() == 0) {
     return unreachable();
   }
@@ -114,14 +114,14 @@ function distance(dict: string[], from: i32, to: i32): i32 {
 
 function distance_matrix(dict: string[]): i32[] {
   let m: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < dict.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < dict.len()) {
       m = m.append(distance(dict, i, j));
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return m;
 }
@@ -133,24 +133,24 @@ function reachable_within(dict: string[], from: i32, to: i32, budget: i32, path:
   if (budget <= 0) {
     return false;
   }
-  let ns: i32[] = neighbours(dict, from);
-  let i: i32 = 0;
+  let ns = neighbours(dict, from);
+  let i = 0;
   while (i < ns.len()) {
-    let n: i32 = ns[i];
-    let on_path: boolean = false;
-    let k: i32 = 0;
+    let n = ns[i];
+    let on_path = false;
+    let k = 0;
     while (k < path.len()) {
       if (path[k] == n) {
         on_path = true;
       }
-      k = k + 1;
+      k += 1;
     }
     if (!on_path) {
       if (reachable_within(dict, n, to, budget - 1, path.append(n))) {
         return true;
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -171,90 +171,90 @@ function island(): string[] {
 }
 
 function is_island(w: string): boolean {
-  let xs: string[] = island();
-  let i: i32 = 0;
+  let xs = island();
+  let i = 0;
   while (i < xs.len()) {
     if (xs[i] == w) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function render(dict: string[], chain: i32[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < chain.len()) {
     if (i > 0) {
-      out = out + " -> ";
+      out += " -> ";
     }
-    out = out + dict[chain[i]];
-    i = i + 1;
+    out += dict[chain[i]];
+    i += 1;
   }
   return out;
 }
 
 function test_every_chain_is_a_valid_ladder(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let i: i32 = 0;
+  let dict = dictionary();
+  let i = 0;
   while (i < dict.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < dict.len()) {
-      let c: i32[] = shortest_chain(dict, i, j);
+      let c = shortest_chain(dict, i, j);
       if (c.len() > 0) {
         if (c[0] != i || c[c.len() - 1] != j) {
           return test.fail(dict[i] + " -> " + dict[j] + ": chain runs "
             + render(dict, c));
         }
-        let k: i32 = 0;
+        let k = 0;
         while (k < c.len()) {
           if (c[k] < 0 || c[k] >= dict.len()) {
             return test.fail("chain leaves the dictionary: " + render(dict, c));
           }
-          let m: i32 = k + 1;
+          let m = k + 1;
           while (m < c.len()) {
             if (c[k] == c[m]) {
               return test.fail(dict[i] + " -> " + dict[j] + " repeats \""
                 + dict[c[k]] + "\": " + render(dict, c));
             }
-            m = m + 1;
+            m += 1;
           }
           if (k + 1 < c.len() && !differs_by_one(dict[c[k]], dict[c[k + 1]])) {
             return test.fail(dict[i] + " -> " + dict[j] + ": \"" + dict[c[k]]
               + "\" and \"" + dict[c[k + 1]] + "\" are not one letter apart");
           }
-          k = k + 1;
+          k += 1;
         }
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_the_distances_satisfy_the_bellman_condition(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let n: i32 = dict.len();
-  let d: i32[] = distance_matrix(dict);
-  let a: i32 = 0;
+  let dict = dictionary();
+  let n = dict.len();
+  let d = distance_matrix(dict);
+  let a = 0;
   while (a < n) {
     if (d[a * n + a] != 0) {
       return test.fail("d(" + dict[a] + ", itself) = " + d[a * n + a].to_string());
     }
-    let b: i32 = 0;
+    let b = 0;
     while (b < n) {
       if (a != b && d[a * n + b] != unreachable()) {
-        let best: i32 = unreachable();
-        let ns: i32[] = neighbours(dict, a);
-        let k: i32 = 0;
+        let best = unreachable();
+        let ns = neighbours(dict, a);
+        let k = 0;
         while (k < ns.len()) {
-          let via: i32 = d[ns[k] * n + b];
+          let via = d[ns[k] * n + b];
           if (via != unreachable() && via + 1 < best) {
             best = via + 1;
           }
-          k = k + 1;
+          k += 1;
         }
         if (d[a * n + b] != best) {
           return test.fail("d(" + dict[a] + ", " + dict[b] + ") = "
@@ -262,23 +262,23 @@ function test_the_distances_satisfy_the_bellman_condition(): test.TestOutcome {
             + best.to_string());
         }
       }
-      b = b + 1;
+      b += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return test.pass();
 }
 
 function test_no_shorter_chain_exists(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let n: i32 = dict.len();
-  let d: i32[] = distance_matrix(dict);
-  let checked: i32 = 0;
-  let a: i32 = 0;
+  let dict = dictionary();
+  let n = dict.len();
+  let d = distance_matrix(dict);
+  let checked = 0;
+  let a = 0;
   while (a < n) {
-    let b: i32 = 0;
+    let b = 0;
     while (b < n) {
-      let dist: i32 = d[a * n + b];
+      let dist = d[a * n + b];
       if (a != b && dist != unreachable() && dist <= 3) {
         let seed: i32[] = [a];
         if (reachable_within(dict, a, b, dist - 1, seed)) {
@@ -289,11 +289,11 @@ function test_no_shorter_chain_exists(): test.TestOutcome {
           return test.fail("the depth-limited search could not reproduce "
             + dict[a] + " -> " + dict[b] + " at " + dist.to_string() + " steps");
         }
-        checked = checked + 1;
+        checked += 1;
       }
-      b = b + 1;
+      b += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   if (checked < 100) {
     return test.fail("only " + checked.to_string() + " pairs were checked against the "
@@ -303,60 +303,60 @@ function test_no_shorter_chain_exists(): test.TestOutcome {
 }
 
 function test_distance_is_symmetric(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let n: i32 = dict.len();
-  let d: i32[] = distance_matrix(dict);
-  let a: i32 = 0;
+  let dict = dictionary();
+  let n = dict.len();
+  let d = distance_matrix(dict);
+  let a = 0;
   while (a < n) {
-    let b: i32 = 0;
+    let b = 0;
     while (b < n) {
       if (d[a * n + b] != d[b * n + a]) {
         return test.fail("d(" + dict[a] + ", " + dict[b] + ") = "
           + d[a * n + b].to_string() + " but d(" + dict[b] + ", " + dict[a]
           + ") = " + d[b * n + a].to_string());
       }
-      b = b + 1;
+      b += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return test.pass();
 }
 
 function test_the_triangle_inequality_holds(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let n: i32 = dict.len();
-  let d: i32[] = distance_matrix(dict);
-  let a: i32 = 0;
+  let dict = dictionary();
+  let n = dict.len();
+  let d = distance_matrix(dict);
+  let a = 0;
   while (a < n) {
-    let b: i32 = 0;
+    let b = 0;
     while (b < n) {
       if (d[a * n + b] != unreachable()) {
-        let c: i32 = 0;
+        let c = 0;
         while (c < n) {
           if (d[b * n + c] != unreachable()) {
-            let direct: i32 = d[a * n + c];
-            let via: i32 = d[a * n + b] + d[b * n + c];
+            let direct = d[a * n + c];
+            let via = d[a * n + b] + d[b * n + c];
             if (direct > via) {
               return test.fail(dict[a] + " -> " + dict[c] + " is "
                 + direct.to_string() + " but going via " + dict[b]
                 + " costs only " + via.to_string());
             }
           }
-          c = c + 1;
+          c += 1;
         }
       }
-      b = b + 1;
+      b += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return test.pass();
 }
 
 function test_the_island_is_unreachable(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let i: i32 = 0;
+  let dict = dictionary();
+  let i = 0;
   while (i < dict.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < dict.len()) {
       if (is_island(dict[i]) != is_island(dict[j])) {
         if (distance(dict, i, j) != unreachable()) {
@@ -368,12 +368,12 @@ function test_the_island_is_unreachable(): test.TestOutcome {
           return test.fail("a chain was returned for an unreachable pair");
         }
       }
-      j = j + 1;
+      j += 1;
     }
-    i = i + 1;
+    i += 1;
   }
-  let a: i32 = index_of_word(dict, "zzqx");
-  let b: i32 = index_of_word(dict, "zzqy");
+  let a = index_of_word(dict, "zzqx");
+  let b = index_of_word(dict, "zzqy");
   if (distance(dict, a, b) != 1) {
     return test.fail("the two island words should be one step apart");
   }
@@ -381,65 +381,65 @@ function test_the_island_is_unreachable(): test.TestOutcome {
 }
 
 function test_adjacency_matches_a_letter_count(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let i: i32 = 0;
+  let dict = dictionary();
+  let i = 0;
   while (i < dict.len()) {
-    let j: i32 = 0;
+    let j = 0;
     while (j < dict.len()) {
-      let n: i32 = 0;
-      let k: i32 = 0;
+      let n = 0;
+      let k = 0;
       while (k < dict[i].len()) {
         if (dict[i][k] != dict[j][k]) {
-          n = n + 1;
+          n += 1;
         }
-        k = k + 1;
+        k += 1;
       }
       if (differs_by_one(dict[i], dict[j]) != (n == 1)) {
         return test.fail("\"" + dict[i] + "\" / \"" + dict[j] + "\": "
           + n.to_string() + " letters differ");
       }
-      j = j + 1;
+      j += 1;
     }
     if (differs_by_one(dict[i], dict[i])) {
       return test.fail("\"" + dict[i] + "\" is adjacent to itself");
     }
-    i = i + 1;
+    i += 1;
   }
   let uneven: string[] = ["cold", "colds", "col", ""];
-  let a: i32 = 0;
+  let a = 0;
   while (a < uneven.len()) {
-    let b: i32 = 0;
+    let b = 0;
     while (b < uneven.len()) {
       if (uneven[a].len() != uneven[b].len() && differs_by_one(uneven[a], uneven[b])) {
         return test.fail("\"" + uneven[a] + "\" and \"" + uneven[b]
           + "\" have different lengths and must not be adjacent");
       }
-      b = b + 1;
+      b += 1;
     }
-    a = a + 1;
+    a += 1;
   }
   return test.pass();
 }
 
 function test_a_word_to_itself_is_a_one_word_chain(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let i: i32 = 0;
+  let dict = dictionary();
+  let i = 0;
   while (i < dict.len()) {
-    let c: i32[] = shortest_chain(dict, i, i);
+    let c = shortest_chain(dict, i, i);
     if (c.len() != 1 || c[0] != i) {
       return test.fail("\"" + dict[i] + "\" to itself gave " + render(dict, c));
     }
     if (distance(dict, i, i) != 0) {
       return test.fail("\"" + dict[i] + "\" to itself is not zero steps");
     }
-    i = i + 1;
+    i += 1;
   }
   return test.pass();
 }
 
 function test_an_unknown_word_has_no_chain(): test.TestOutcome {
-  let dict: string[] = dictionary();
-  let missing: i32 = index_of_word(dict, "qqqq");
+  let dict = dictionary();
+  let missing = index_of_word(dict, "qqqq");
   if (missing != -1) {
     return test.fail("\"qqqq\" should not be in the dictionary");
   }
@@ -455,24 +455,24 @@ function test_an_unknown_word_has_no_chain(): test.TestOutcome {
 function main(): i32 {
   eprint("wordladder — shortest chains, checked for validity and optimality");
 
-  let dict: string[] = dictionary();
+  let dict = dictionary();
   let demos: string[] = ["cold|warm", "cold|golf", "ball|bond", "cold|zzqx"];
-  let i: i32 = 0;
+  let i = 0;
   while (i < demos.len()) {
-    let f: string[] = demos[i].split("|");
-    let a: i32 = index_of_word(dict, f[0]);
-    let b: i32 = index_of_word(dict, f[1]);
-    let c: i32[] = shortest_chain(dict, a, b);
+    let f = demos[i].split("|");
+    let a = index_of_word(dict, f[0]);
+    let b = index_of_word(dict, f[1]);
+    let c = shortest_chain(dict, a, b);
     if (c.len() == 0) {
       eprint("  " + f[0] + " -> " + f[1] + ": no ladder");
     } else {
       eprint("  " + f[0] + " -> " + f[1] + " (" + (c.len() - 1).to_string() + " steps): "
         + render(dict, c));
     }
-    i = i + 1;
+    i += 1;
   }
 
-  let r: test.TestRunner = test.new("wordladder");
+  let r = test.new("wordladder");
   r = r.it("every chain is a valid ladder", test_every_chain_is_a_valid_ladder);
   r = r.it("the distances satisfy the bellman condition", test_the_distances_satisfy_the_bellman_condition);
   r = r.it("no shorter chain exists", test_no_shorter_chain_exists);
