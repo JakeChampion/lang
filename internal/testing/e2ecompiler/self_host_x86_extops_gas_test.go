@@ -718,6 +718,15 @@ func TestSelfHostX86SseFloatExtGas(t *testing.T) {
 func TestSelfHostX86AlignPadsText(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
+	checkRefusedX86(t, bin, runner, []string{
+		".text\nret\n.p2align 26\nret",
+		".text\nret\n.align 67108864\nret",
+		".text\nret\n.balign 8192\nret",
+	})
+	page := assembleSelfHostX86(t, bin, runner, ".text\nret\n.p2align 12\nret\n")
+	if len(page) != 4097 || page[0] != 0xc3 || page[4096] != 0xc3 {
+		t.Fatalf("page alignment: length %d, want two returns separated by padding to 4096", len(page))
+	}
 	src := ".text\n_start:\n" +
 		"    ret\n" +
 		"    .p2align 4\n" +

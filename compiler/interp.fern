@@ -721,6 +721,9 @@ function send_copy_value(v: Value): Value {
     VStruct(s) => {
       return VStruct { ...s, field_values: send_copy_values(s.field_values) };
     },
+    VMap(m) => {
+      return VMap { keys: send_copy_values(m.keys), values: send_copy_values(m.values) };
+    },
     _ => {
       return v;
     }
@@ -2352,7 +2355,7 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
     return v_int(-1);
   }
   if (name == "__task_until") {
-    return v_int64(0 - 1 as i64);
+    return v_int64(-1i64);
   }
   if (name == "__task_new") {
     return v_int(1);

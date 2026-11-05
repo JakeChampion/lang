@@ -1,5 +1,6 @@
 import "std/test";
 import "std/worker";
+import "core/map";
 
 struct Report { total: i32, name: string }
 
@@ -88,6 +89,53 @@ function test_nested_worker_result(): test.TestOutcome {
   return test.assert_eq(value.names[0], "worker-11");
 }
 
+function test_map_crosses_both_ways(): test.TestOutcome {
+  let prices: Map[string, i32] = map_new(4);
+  prices = prices.insert("bolt", 25);
+  prices = prices.insert("nut", 4);
+  let w = worker.spawn((): Map[string, Report] => {
+    let out: Map[string, Report] = map_new(4);
+    for name in prices.keys() {
+      out = out.insert(name, Report { total: prices.get_or(name, 0) * 2, name: name + "!" });
+    }
+    return out;
+  });
+  let doubled: Map[string, Report] = w.join();
+  if (doubled.len() != 2 || doubled.get_or("bolt", Report { total: 0, name: "" }).total != 50) {
+    return test.fail("doubled map");
+  }
+  return test.assert_eq(doubled.get_or("nut", Report { total: 0, name: "" }).name, "nut!");
+}
+
+function test_captured_map_is_read_in_the_child(): test.TestOutcome {
+  let prices: Map[string, i32] = map_new(4);
+  prices = prices.insert("bolt", 25);
+  prices = prices.insert("nut", 4);
+  let w = worker.spawn((): i32 => {
+    let total: i32 = 0;
+    for name in prices.keys() {
+      total = total + prices.get_or(name, 0);
+    }
+    return total;
+  });
+  return test.assert_eq(w.join().to_string(), "29");
+}
+
+function twice[T: worker.Send](x: T): (T, T) {
+  let w = worker.spawn((): T => x);
+  let y: T = w.join();
+  return (x, y);
+}
+
+function test_bounded_type_parameter_crosses(): test.TestOutcome {
+  let pair: (Report, Report) = twice(Report { total: 7, name: "seven" });
+  if (pair.1.total != 7) {
+    return test.fail("total");
+  }
+  let names: (string[], string[]) = twice(["ada", "rush"]);
+  return test.assert_eq(pair.1.name + ":" + names.1[1], "seven:rush");
+}
+
 function main(): i32 {
   let r = test.new("std/worker");
   r = r.it("spawn and join a scalar", test_spawn_join_scalar);
@@ -96,5 +144,8 @@ function main(): i32 {
   r = r.it("an Option of a tuple crosses the boundary", test_option_and_tuple_cross);
   r = r.it("nested results survive later joins", test_nested_results_survive_later_joins);
   r = r.it("a nested worker returns a copied result", test_nested_worker_result);
+  r = r.it("a map crosses the boundary both ways", test_map_crosses_both_ways);
+  r = r.it("a captured map is read in the child", test_captured_map_is_read_in_the_child);
+  r = r.it("a type parameter bounded by Send crosses", test_bounded_type_parameter_crosses);
   return r.finish();
 }

@@ -92,6 +92,42 @@ func TestSelfHostRawFreeOutsideHeap(t *testing.T) {
 	}
 }
 
+// A worker child adopts its region as the heap and keeps the parent's arena
+// as the image. A raw free of a block in the image does nothing, and a raw
+// free outside both ranges still aborts the child, which the parent reports.
+const rawFreeInChildSrc = `import "std/worker";
+function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_i64(p, 7i64);
+    let w = worker.spawn((): i32 => {
+      unsafe {
+        __free(p, 64);
+        print("image free is a no-op");
+        __free(4096 as usize, 64);
+        print("freed a non-heap address");
+        return 1;
+      }
+    });
+    return w.join();
+  }
+}
+`
+
+func TestSelfHostRawFreeInWorkerChild(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	_, qemu := arm64Tooling(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawFreeInChildSrc)
+			want := "image free is a no-op\n"
+			if code != 134 || stdout != want || !strings.Contains(stderr, "fern: release of memory outside the heap\n") || !strings.Contains(stderr, "worker: the worker exited with status 134") {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the out-of-heap cause and the worker report", code, stdout, stderr, want)
+			}
+		})
+	}
+}
+
 func TestSelfHostRawDoubleFree(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	_, qemu := arm64Tooling(t)

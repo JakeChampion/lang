@@ -2111,6 +2111,9 @@ function send_parts(t: typeinfo.Type, f: ssasem.Func): typeinfo.Type[] {
   if let typeinfo.TypeTuple(tup) = t {
     return tup.elements;
   }
+  if (ssasem.is_map(t)) {
+    return [ssasem.map_key(t), ssasem.map_value(t)];
+  }
   if let typeinfo.TypeStruct(_) = t {
     if (send_refused(t, f) == "") {
       for field in record_fields(t, f) {
@@ -2133,9 +2136,6 @@ function send_parts(t: typeinfo.Type, f: ssasem.Func): typeinfo.Type[] {
 function send_refused(t: typeinfo.Type, f: ssasem.Func): string {
   if (semtypes.is_cell(t)) {
     return "a Cell cannot cross a worker boundary";
-  }
-  if (ssasem.is_map(t)) {
-    return "a Map cannot cross a worker boundary in this release";
   }
   if (ssasem.is_dyn(t)) {
     return "a dyn value cannot cross a worker boundary";
@@ -2185,6 +2185,9 @@ function send_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   }
   if let typeinfo.TypeTuple(tup) = t {
     return send_tuple(r, t, tup, f);
+  }
+  if (ssasem.is_map(t)) {
+    return send_map(r, t, f);
   }
   if let typeinfo.TypeStruct(_) = t {
     r = reserve(r, 2);
@@ -2262,6 +2265,85 @@ function send_array(own r: irtables.LowerState, elem: typeinfo.Type, f: ssasem.F
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(out));
   return emit(r, ir.op_return());
+}
+
+// A map copies through its key and value columns: a fresh map of the same
+// capacity takes a copy of each pair, through the insert the map sites use.
+// The locals the insert reads are typed through a function whose values
+// are the helper's locals, and its scratch slots lie above them. A column
+// retains each box it lists, so the columns drop element by element.
+function send_map(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let kt: typeinfo.Type = ssasem.map_key(t);
+  let vt: typeinfo.Type = ssasem.map_value(t);
+  let keys_t: typeinfo.Type = typeinfo.TypeArray { elem: kt, view: false };
+  let vals_t: typeinfo.Type = typeinfo.TypeArray { elem: vt, view: false };
+  let out: i32 = 1;
+  let key: i32 = 2;
+  let val: i32 = 3;
+  let keys: i32 = 4;
+  let vals: i32 = 5;
+  let index: i32 = 6;
+  let scratch: i32 = 7;
+  r = irtables.LowerState { ...reserve(r, scratch + 6), scratch_start: scratch };
+  r = send_map_slot(r, key, kt);
+  r = send_map_slot(r, val, vt);
+  let fh: ssasem.Func = ssasem.Func { ...f, values: [t, t, kt, vt, keys_t, vals_t, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }] };
+  let put: ssa.SInst = ssa.SInst { kind_tag: ssasem.map_insert(), result: out, args: [out, key, val], imm: 0, str: "" };
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_call_direct("__map_len_impl", 1));
+  r = emit(r, ir.op_const_i32(routed_key_tag(kt)));
+  r = emit(r, ir.op_const_i32(routed_val_tag(vt)));
+  r = emit(r, ir.op_call_direct("map_new_impl", 3));
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_load_local(0));
+  r = routed_column_read(r, kt, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(keys));
+  r = emit(r, ir.op_load_local(0));
+  r = routed_column_read(r, vt, ir.op_ptr_width());
+  r = emit(r, ir.op_store_local(vals));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_load_local(keys));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_bin("ge_s", 0, false));
+  r = emit(r, ir.op_brif(1));
+  r = emit(r, ir.op_load_local(keys));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, arr_get_op(kt, true));
+  r = send_part(r, kt);
+  r = emit(r, ir.op_store_local(key));
+  r = emit(r, ir.op_load_local(vals));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, arr_get_op(vt, true));
+  r = send_part(r, vt);
+  r = emit(r, ir.op_store_local(val));
+  r = routed_insert(r, fh, put);
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_bin("add", 0, false));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_br(0));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_end());
+  r = drop_value_inline(r, keys, keys_t, scratch + 6, f);
+  r = drop_value_inline(r, vals, vals_t, scratch + 6, f);
+  r = emit(r, ir.op_load_local(out));
+  return emit(r, ir.op_return());
+}
+
+// A local that holds a wide or a float part is typed so on wasm.
+function send_map_slot(own r: irtables.LowerState, slot: i32, t: typeinfo.Type): irtables.LowerState {
+  if (ssasem.is_wide(t)) {
+    return irtables.LowerState { ...r, i64_slots: r.i64_slots.append(slot) };
+  }
+  if (ssasem.is_float(t)) {
+    return irtables.LowerState { ...r, f64_slots: r.f64_slots.append(slot) };
+  }
+  return r;
 }
 
 function send_tuple(own r: irtables.LowerState, t: typeinfo.Type, tup: typeinfo.TypeTuple, f: ssasem.Func): irtables.LowerState {
