@@ -100,26 +100,8 @@ function date_relative(text: string, sec: i64, nsec: i64, hint: i64): datetime.R
   return r;
 }
 
-function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_deref: boolean): boolean {
-  let path = file;
-  let open_err = "";
-  let open_failed = false;
-  let eisdir = false;
-  if (file == "-") {
-    path = "/proc/self/fd/1";
-  } else if (!(no_create || no_deref)) {
-    match (open_writer_with(file, 3)) {
-      Ok(w) => {
-        w.close();
-      },
-      Err(e) => {
-        open_failed = true;
-        open_err = gnu.io_error_text(e);
-        eisdir = errno.of(e) == errno.EISDIR;
-      }
-    }
-  }
-  let flags = 0;
+function touch_flags(t: Times, change: i32, no_deref: boolean): i32 {
+  let flags: i32 = 0;
   if (no_deref) {
     flags = flags | 1;
   }
@@ -131,23 +113,55 @@ function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_d
   } else if (change == ch_atime()) {
     flags = flags | 4;
   }
+  return flags;
+}
+
+function touch_handle(w: Writer, file: string, t: Times, flags: i32, no_create: boolean): boolean {
+  match (w.set_times(t.asec, t.ansec, t.msec, t.mnsec, flags)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(e) => {
+      if (no_create && errno.of(e) == errno.EBADF) {
+        return true;
+      }
+      gnu.error("setting times of " + gnu.quotea(file) + ": " + gnu.io_error_text(e));
+      return false;
+    }
+  }
+}
+
+function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_deref: boolean): boolean {
+  let flags = touch_flags(t, change, no_deref);
+  if (file == "-") {
+    return touch_handle(stdout(), file, t, flags, no_create);
+  }
+  let open_err = "";
+  let open_failed = false;
+  let eisdir = false;
+  if (!(no_create || no_deref)) {
+    match (open_writer_with(file, 3)) {
+      Ok(w) => {
+        let ok: boolean = touch_handle(w, file, t, flags, false);
+        w.close();
+        return ok;
+      },
+      Err(e) => {
+        open_failed = true;
+        open_err = gnu.io_error_text(e);
+        eisdir = errno.of(e) == errno.EISDIR;
+      }
+    }
+  }
   let utime_err = "";
   let utime_enoent = false;
-  match (set_file_times(path, t.asec, t.ansec, t.msec, t.mnsec, flags)) {
+  match (set_file_times(file, t.asec, t.ansec, t.msec, t.mnsec, flags)) {
     Ok(_) => {
       return true;
     },
     Err(e) => {
       utime_err = gnu.io_error_text(e);
       utime_enoent = errno.of(e) == errno.ENOENT;
-    }
-  }
-  if (file == "-") {
-    if (utime_enoent) {
-      if (no_create) {
-        return true;
-      }
-      utime_err = "Bad file descriptor";
     }
   }
   if (open_failed && !eisdir) {

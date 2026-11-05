@@ -228,7 +228,7 @@ x86_64/closure_call.ir	41178167
 x86_64/deflate_decode.ir	33837238
 x86_64/deflate_decode.text	12766
 x86_64/deflate_encode.ir	41579468
-x86_64/deflate_encode.text	7275
+x86_64/deflate_encode.text	7125
 x86_64/enum_match.text	886
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -252,10 +252,10 @@ x86_64/record_update.ir	36120760
 x86_64/record_update.text	1296
 x86_64/sort_inplace.text	1497
 x86_64/sort_inplace.ir	36583718
-x86_64/sort_ints.text	1964
-x86_64/sort_ints.ir	27861128
-x86_64/sort_strings.text	3096
-x86_64/sort_strings.ir	98313977
+x86_64/sort_ints.text	1735
+x86_64/sort_ints.ir	23120269
+x86_64/sort_strings.text	3054
+x86_64/sort_strings.ir	96173451
 x86_64/string_build.text	1883
 x86_64/string_build.ir	42886116
 x86_64/string_count_byte.text	1180
@@ -542,8 +542,8 @@ aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1686
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
 aarch64/sort_inplace.ir	43684079
-aarch64/sort_ints.text	2175
-aarch64/sort_ints.ir	30178876
+aarch64/sort_ints.text	2012
+aarch64/sort_ints.ir	24753301
 aarch64/sort_strings.text	3451
 aarch64/sort_strings.ir	100996546
 aarch64/string_build.text	2241
