@@ -1,5 +1,6 @@
 // The APK writer of fern -apk. An APK for a NativeActivity app has a binary
-// AndroidManifest.xml, the library of each ABI, and no Java code. The zip
+// AndroidManifest.xml, the library of each ABI, and no Java code. An app
+// with an icon also has the PNG and a resources.arsc that names it. The zip
 // archive has stored entries only, each one aligned, and an APK Signature
 // Scheme v2 block with a self-signed P-256 certificate.
 import "std/base64";
@@ -13,8 +14,9 @@ import "./util";
 // `activity` is the Java class of the activity, and `dex` holds the classes
 // of the app, or is empty.
 // `permissions` are the full names of the permissions the app uses, and
-// `min_sdk` is the lowest API level it runs on.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[] }
+// `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
+// launcher icon, or is empty.
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[] }
 
 // A service of the app: its Java class, and its foreground service types as
 // the flags of android:foregroundServiceType, or 0.
@@ -86,46 +88,48 @@ function prefixed(b: [u8]): u8[] {
 // attributes, in the order of their resource IDs, and the resource map
 // gives those IDs. The rest of the pool follows `pool_strings`.
 
-// android:theme, label, name, hasCode, exported, configChanges, value,
+// android:theme, label, icon, name, hasCode, exported, configChanges, value,
 // minSdkVersion, versionCode, versionName, targetSdkVersion and
 // foregroundServiceType.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842764, 16842768, 16842783, 16842788, 16843276, 16843291, 16843292, 16843376, 16844185];
 }
 
 const S_THEME: i32 = 0;
 
 const S_LABEL: i32 = 1;
 
-const S_NAME: i32 = 2;
+const S_ICON: i32 = 2;
 
-const S_HAS_CODE: i32 = 3;
+const S_NAME: i32 = 3;
 
-const S_EXPORTED: i32 = 4;
+const S_HAS_CODE: i32 = 4;
 
-const S_CONFIG_CHANGES: i32 = 5;
+const S_EXPORTED: i32 = 5;
 
-const S_VALUE: i32 = 6;
+const S_CONFIG_CHANGES: i32 = 6;
 
-const S_MIN_SDK: i32 = 7;
+const S_VALUE: i32 = 7;
 
-const S_VERSION_CODE: i32 = 8;
+const S_MIN_SDK: i32 = 8;
 
-const S_VERSION_NAME: i32 = 9;
+const S_VERSION_CODE: i32 = 9;
 
-const S_TARGET_SDK: i32 = 10;
+const S_VERSION_NAME: i32 = 10;
 
-const S_FOREGROUND_TYPE: i32 = 11;
+const S_TARGET_SDK: i32 = 11;
 
-const S_PREFIX: i32 = 12;
+const S_FOREGROUND_TYPE: i32 = 12;
 
-const S_URI: i32 = 13;
+const S_PREFIX: i32 = 13;
 
-const S_PACKAGE: i32 = 14;
+const S_URI: i32 = 14;
+
+const S_PACKAGE: i32 = 15;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "foregroundServiceType",
+    "theme", "label", "icon", "name", "hasCode", "exported", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "targetSdkVersion", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -272,8 +276,15 @@ pub function manifest(app: App): u8[] {
   }
   let application = at(s, "application");
   let activity = at(s, "activity");
-  body = start(body, 3, application, [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, at(s, app.label)), attr_int(S_HAS_CODE, 18, has_code)]);
-  body = start(body, 4, activity, [attr_str(S_LABEL, at(s, app.label)), attr_str(S_NAME, at(s, app.activity)), attr_int(S_EXPORTED, 18, -1), attr_int(S_CONFIG_CHANGES, 17, 1184)]);
+  let app_attrs: Attr[] = [attr_int(S_THEME, 1, 16973834), attr_str(S_LABEL, at(s, app.label))];
+  let activity_attrs: Attr[] = [attr_str(S_LABEL, at(s, app.label))];
+  if (app.icon.len() > 0) {
+    app_attrs = app_attrs.append(attr_int(S_ICON, 1, ICON_ID));
+    activity_attrs = activity_attrs.append(attr_int(S_ICON, 1, ICON_ID));
+  }
+  body = start(body, 3, application, app_attrs.append(attr_int(S_HAS_CODE, 18, has_code)));
+  activity_attrs = activity_attrs.append(attr_str(S_NAME, at(s, app.activity))).append(attr_int(S_EXPORTED, 18, -1)).append(attr_int(S_CONFIG_CHANGES, 17, 1184));
+  body = start(body, 4, activity, activity_attrs);
   body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));
   body = start(body, 6, at(s, "intent-filter"), []);
   body = end(start(body, 7, at(s, "action"), [attr_str(S_NAME, at(s, "android.intent.action.MAIN"))]), 7, at(s, "action"));
@@ -286,6 +297,53 @@ pub function manifest(app: App): u8[] {
   body = put32(put32(node(body, 257, 24, 12), S_PREFIX), S_URI);
   let rest = cat(cat(string_pool(s), resource_map()), body);
   return cat(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
+}
+
+// The resource table of the icon: one package 0x7f with one type,
+// "drawable", and one entry, "icon", in the default configuration. Its value
+// is the path of the PNG in the archive, so the ID of the icon is
+// 0x7f010000.
+
+const ICON_PATH: string = "res/drawable/icon.png";
+
+const ICON_ID: i32 = 2130771968;
+
+// A chunk: its type, the size of its header, and the header and body.
+function chunk(kind: i32, header: [u8], body: [u8]): u8[] {
+  let out = put32(put16(put16([], kind), 8 + header.len()), 8 + header.len() + body.len());
+  return cat(cat(out, header), body);
+}
+
+// The 128 UTF-16 units of a package name, padded with zeros.
+function package_name(name: string): u8[] {
+  let out: u8[] = [];
+  let units = utf16(name);
+  for k in 0..128 {
+    if (k < units.len()) {
+      out = put16(out, units[k]);
+    } else {
+      out = put16(out, 0);
+    }
+  }
+  return out;
+}
+
+function resource_table(package: string): u8[] {
+  let types = string_pool(["drawable"]);
+  let keys = string_pool(["icon"]);
+  let spec = chunk(514, put32(put16(put8(put8([], 1), 0), 0), 1), put32([], 0));
+  let config: u8[] = put32([], 64);
+  while (config.len() < 64) {
+    config = config.append(0 as u8);
+  }
+  let type_header = cat(put32(put32(put16(put8(put8([], 1), 0), 0), 1), 8 + 12 + config.len() + 4), config);
+  let entry = put32(put16(put16([], 8), 0), 0);
+  entry = put32(put8(put8(put16(entry, 8), 0), 3), 0);
+  let type_chunk = chunk(513, type_header, cat(put32([], 0), entry));
+  let pkg_header = cat(put32([], 127), package_name(package));
+  pkg_header = put32(put32(put32(put32(put32(pkg_header, 288), 1), 288 + types.len()), 1), 0);
+  let pkg = chunk(512, pkg_header, cat(cat(cat(types, keys), spec), type_chunk));
+  return chunk(2, put32([], 1), cat(string_pool([ICON_PATH]), pkg));
 }
 
 // The zip archive. Each entry is stored, and its data starts at a multiple
@@ -581,6 +639,9 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   let entries: Entry[] = [Entry { name: "AndroidManifest.xml", data: manifest(app) }];
   if (app.dex.len() > 0) {
     entries = entries.append(Entry { name: "classes.dex", data: app.dex });
+  }
+  if (app.icon.len() > 0) {
+    entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app.package) }).append(Entry { name: ICON_PATH, data: app.icon });
   }
   for l in libs {
     entries = entries.append(Entry { name: "lib/" + l.abi + "/lib" + app.lib + ".so", data: l.image });
