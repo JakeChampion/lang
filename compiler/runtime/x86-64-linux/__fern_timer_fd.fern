@@ -1,9 +1,9 @@
 function __fern_timer_fd(ms: i32): i32 {
-  let fd: i32 = __syscall3(283, 1, 0, 0) as i32;
+  let fd = __syscall3(283, 1, 0, 0) as i32;
   if (fd < 0) {
     return fd;
   }
-  let its: usize = __raw_scratch(32);
+  let its = __raw_scratch(32);
   __raw_store_ptr(its, 0, 0);
   __raw_store_ptr(its, 1, 0);
   __raw_store_ptr(its, 2, (ms / 1000) as usize);

@@ -1,13 +1,13 @@
 function __fern_sp_exec_failed(cmdz: usize, clen: i32, rc: i32): void {
-  let e: i32 = 0 - rc;
-  let ndig: i32 = 1;
-  let tt: i32 = e;
+  let e = -rc;
+  let ndig = 1;
+  let tt = e;
   while (tt >= 10) {
-    ndig = ndig + 1;
-    tt = tt / 10;
+    ndig += 1;
+    tt /= 10;
   }
-  let total: i32 = 14 + ndig;
-  let buf: usize = __raw_alloc(total);
+  let total = 14 + ndig;
+  let buf = __raw_alloc(total);
   __raw_store8(buf, 0, 85);
   __raw_store8(buf, 1, 110);
   __raw_store8(buf, 2, 107);
@@ -22,15 +22,15 @@ function __fern_sp_exec_failed(cmdz: usize, clen: i32, rc: i32): void {
   __raw_store8(buf, 11, 111);
   __raw_store8(buf, 12, 114);
   __raw_store8(buf, 13, 32);
-  let pos: i32 = total - 1;
-  let v: i32 = e;
+  let pos = total - 1;
+  let v = e;
   while (pos >= 14) {
     __raw_store8(buf, pos, 48 + v % 10);
-    v = v / 10;
-    pos = pos - 1;
+    v /= 10;
+    pos -= 1;
   }
-  let unknown: string = __raw_string(buf, total);
-  let text: string = unknown;
+  let unknown = __raw_string(buf, total);
+  let text = unknown;
   if (e == 1) {
     text = "Operation not permitted";
   }
@@ -79,7 +79,7 @@ function __fern_sp_exec_failed(cmdz: usize, clen: i32, rc: i32): void {
   if (e == 40) {
     text = "Too many levels of symbolic links";
   }
-  let tail: string = ": " + text + "\n";
+  let tail = ": " + text + "\n";
   __syscall3(64, 2, cmdz as i64, clen as i64);
   __syscall3(64, 2, __raw_data(tail) as i64, tail.len() as i64);
   __syscall3(93, 127, 0, 0);

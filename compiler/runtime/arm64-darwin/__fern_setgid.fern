@@ -5,9 +5,9 @@ function __fern_setgid(id: i64): Result[void, IoError] {
   if (id > 4294967295) {
     return Err(__fern_io_error(22, ""));
   }
-  let rc: i32 = __syscall3(181, (id as i32) as i64, 0, 0) as i32;
+  let rc = __syscall3(181, (id as i32) as i64, 0, 0) as i32;
   if (rc < 0) {
-    return Err(__fern_io_error(0 - rc, ""));
+    return Err(__fern_io_error(-rc, ""));
   }
   return Ok(());
 }

@@ -1,5 +1,5 @@
 function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] {
-  let f: i32 = __fern_open_flags(flags, write);
+  let f = __fern_open_flags(flags, write);
   if (f < 0) {
     return Err(Unsupported);
   }

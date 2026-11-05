@@ -1,8 +1,8 @@
 function __fern_open_flags(flags: i32, write: i32): i32 {
   if ((flags & 136) != 0) {
-    return 0 - 1;
+    return -1;
   }
-  let f: i32 = 0;
+  let f = 0;
   if (write != 0) {
     f = 1;
   }
