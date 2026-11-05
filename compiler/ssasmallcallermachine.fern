@@ -66,13 +66,13 @@ function initial(params: i32, register_entry: boolean, h: heap.Heap): State {
   let i = 0;
   while (i < 16) {
     regs = regs.append(initial_register(params, register_entry, i));
-    i = i + 1;
+    i += 1;
   }
   i = 0;
   while (i < 22) {
     let w = initial_word(params, register_entry, i);
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
-    i = i + 1;
+    i += 1;
   }
   return State { regs: regs, memory: memory, objects: [], heap: h, event: 0, flags: unknown_flags(), ok: true };
 }
@@ -211,7 +211,7 @@ function construct(s: State, r: flow.Relation, e: flow.Event, register_entry: bo
       return State { ...s, ok: false };
     }
     fields = fields.append(arg);
-    i = i + 1;
+    i += 1;
   }
   let n = heap.construct(r.words, s.heap);
   if (!n.ok) {
@@ -222,7 +222,7 @@ function construct(s: State, r: flow.Relation, e: flow.Event, register_entry: bo
   i = 0;
   while (i < (s.regs[4].low.identity + 56) as i32 / 4) {
     memory = memory.with(i, half(10, i as i64, false));
-    i = i + 1;
+    i += 1;
   }
   let next = State { ...s, heap: n.heap, objects: s.objects.append(object), memory: memory };
   return write(write(write(next, 0, token(3, e.allocation as i64)), 6, token(7, 0)), 7, number(r.words as i64));
@@ -417,7 +417,7 @@ function finished_memory(s: State, original: State, r: flow.Relation): boolean {
     if (!same(s.memory[i], original.memory[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   for obj in s.objects {
     if (obj.live) {
@@ -459,7 +459,7 @@ function execute(p: isa.ArrayProgram, r: flow.Relation, producer: string, origin
       if (!s.ok) {
         return false;
       }
-      pc = pc + 1;
+      pc += 1;
     }
   }
   return false;

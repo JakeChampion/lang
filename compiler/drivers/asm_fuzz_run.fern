@@ -8,12 +8,12 @@ import "../util";
 // or read error.
 
 function main(): i32 {
-  let av: string[] = args();
+  let av = args();
   if (av.len() < 3) {
     eprint("usage: asm_fuzz_run x86|arm64 FILE");
     return 2;
   }
-  let src: string = "";
+  let src = "";
   match (read_file_bytes(av[2])) {
     Ok(b) => {
       src = string_from_bytes_unchecked(b);
@@ -24,12 +24,12 @@ function main(): i32 {
     }
   }
   if (av[1] == "x86") {
-    let a: x86_native.X86Asm = x86_native.x86_gas_assemble(src);
+    let a = x86_native.x86_gas_assemble(src);
     print("x86 text " + util.i32_to_string(a.text.len()) + " unknown " + util.i32_to_string(a.unknown.len()));
     return 0;
   }
   if (av[1] == "arm64") {
-    let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
+    let p = arm64_native.arm64_gas_program(src);
     print("arm64 code_end " + util.i32_to_string(p.code_end) + " data " + util.i32_to_string(p.data.len()));
     return 0;
   }

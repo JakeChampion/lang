@@ -55,11 +55,11 @@ function hex_nibble(v: i32): string {
 }
 
 function to_hex(b: i32[]): string {
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < b.len()) {
     out = out + hex_nibble(b[i] >> 4 & 15) + hex_nibble(b[i] & 15);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -76,23 +76,23 @@ function bytes_equal(a: i32[], b: i32[]): boolean {
   if (a.len() != b.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len()) {
     if (a[i] != b[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function main(): i32 {
-  let text: i32[] = x86_exit7();
+  let text = x86_exit7();
   let no_names: string[] = [];
   let no_offs: i32[] = [];
 
-  let plain: i32[] = elf.elf_cat_u8([], elf.elf_static_executable_bss_x86_wx_at(util.to_u8(text), [], 0, 0));
-  let plain_syms: i32[] = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(false), elf.elf_wx_text_off(false), text.len(), no_names, no_offs, no_offs, "p.fern", "/work", no_names, no_offs, no_offs, no_offs, no_offs, no_offs, no_offs, elf.no_var_ranges());
+  let plain = elf.elf_cat_u8([], elf.elf_static_executable_bss_x86_wx_at(util.to_u8(text), [], 0, 0));
+  let plain_syms = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(false), elf.elf_wx_text_off(false), text.len(), no_names, no_offs, no_offs, "p.fern", "/work", no_names, no_offs, no_offs, no_offs, no_offs, no_offs, no_offs, elf.no_var_ranges());
   if (!bytes_equal(plain, plain_syms)) {
     return 1;
   }
@@ -107,7 +107,7 @@ function main(): i32 {
   let names: string[] = ["_start", "helper"];
   let offs: i32[] = [0, 5];
   let sizes: i32[] = [5, 7];
-  let img: i32[] = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(false), elf.elf_wx_text_off(false), text.len(), names, offs, sizes, "p.fern", "/work", no_names, no_offs, no_offs, no_offs, no_offs, no_offs, no_offs, elf.no_var_ranges());
+  let img = elf.elf_append_debug(plain, elf.elf_text_vaddr_wx(false), elf.elf_wx_text_off(false), text.len(), names, offs, sizes, "p.fern", "/work", no_names, no_offs, no_offs, no_offs, no_offs, no_offs, no_offs, elf.no_var_ranges());
 
   if (le32_at(img, 40) == 0) {
     return 10;
@@ -133,8 +133,8 @@ function main(): i32 {
     return 16;
   }
 
-  let sh_off: i32 = le32_at(img, 40);
-  let s1: i32 = sh_off + elf.elf_sh_size();
+  let sh_off = le32_at(img, 40);
+  let s1 = sh_off + elf.elf_sh_size();
   if (le32_at(img, s1 + 4) != 1) {
     return 20;
   }
@@ -145,7 +145,7 @@ function main(): i32 {
     return 22;
   }
 
-  let s2: i32 = sh_off + 2 * elf.elf_sh_size();
+  let s2 = sh_off + 2 * elf.elf_sh_size();
   if (le32_at(img, s2 + 4) != 2) {
     return 23;
   }
@@ -162,16 +162,16 @@ function main(): i32 {
     return 27;
   }
 
-  let s5: i32 = sh_off + 5 * elf.elf_sh_size();
+  let s5 = sh_off + 5 * elf.elf_sh_size();
   if (le32_at(img, s5 + 4) != 1 || le32_at(img, s5 + 8) != 0) {
     return 50;
   }
-  let s6: i32 = sh_off + 6 * elf.elf_sh_size();
+  let s6 = sh_off + 6 * elf.elf_sh_size();
   if (le32_at(img, s6 + 4) != 1 || le32_at(img, s6 + 8) != 0) {
     return 51;
   }
-  let info_off: i32 = le32_at(img, s6 + 24);
-  let info_size: i32 = le32_at(img, s6 + 32);
+  let info_off = le32_at(img, s6 + 24);
+  let info_size = le32_at(img, s6 + 32);
   if (le32_at(img, info_off) != info_size - 4) {
     return 52;
   }
@@ -179,7 +179,7 @@ function main(): i32 {
     return 53;
   }
 
-  let symtab_off: i32 = le32_at(img, s2 + 24);
+  let symtab_off = le32_at(img, s2 + 24);
   if (le32_at(img, symtab_off) != 0) {
     return 30;
   }
@@ -187,7 +187,7 @@ function main(): i32 {
     return 31;
   }
 
-  let e1: i32 = symtab_off + elf.elf_sym_size();
+  let e1 = symtab_off + elf.elf_sym_size();
   if (img[e1 + 4] != 18) {
     return 32;
   }
@@ -198,7 +198,7 @@ function main(): i32 {
     return 34;
   }
 
-  let e2: i32 = symtab_off + 2 * elf.elf_sym_size();
+  let e2 = symtab_off + 2 * elf.elf_sym_size();
   if (le32_at(img, e2 + 8) != elf.elf_text_vaddr_wx(false) + 5) {
     return 35;
   }
@@ -216,7 +216,7 @@ function main(): i32 {
   let ln: string[] = ["main", ".Lloop", "", "helper", "msg", "helper.r"];
   let lo: i32[] = [16, 20, 24, 4, 0, 8];
   let ls: i32[] = [0, 0, 0, 0, 1, 0];
-  let got: string[] = elf.elf_func_sym_names(ln, lo, ls, 0, 32);
+  let got = elf.elf_func_sym_names(ln, lo, ls, 0, 32);
   if (got.len() != 2) {
     return 40;
   }
@@ -227,12 +227,12 @@ function main(): i32 {
     return 42;
   }
 
-  let go2: i32[] = elf.elf_func_sym_offs(ln, lo, ls, 0, 32);
+  let go2 = elf.elf_func_sym_offs(ln, lo, ls, 0, 32);
   if (go2[0] != 4 || go2[1] != 16) {
     return 43;
   }
 
-  let gs: i32[] = elf.elf_func_sym_sizes(ln, lo, ls, 0, 32);
+  let gs = elf.elf_func_sym_sizes(ln, lo, ls, 0, 32);
   if (gs[0] != 12) {
     return 44;
   }
@@ -240,7 +240,7 @@ function main(): i32 {
     return 45;
   }
 
-  if (elf.elf_func_sym_names(ln, lo, ls, 0 - 1, 32).len() != 3) {
+  if (elf.elf_func_sym_names(ln, lo, ls, -1, 32).len() != 3) {
     return 46;
   }
 

@@ -61,20 +61,20 @@ function actual_operations(p: isa.ArrayProgram, body: text.Body): void {
     require(op.kind > 0, "actual operation: " + body.lines[i]);
     if (op.kind == 25) {
       require(op.symbol == "__fern_arr_box", "actual dependency name");
-      calls = calls + 1;
+      calls += 1;
     }
     if (op.kind == 4) {
       actual_store(op, stores);
-      stores = stores + 1;
+      stores += 1;
     }
     if (op.kind == 19) {
       require(op.width == 64 && op.destination == 6 && op.symbol == ".S0", "actual shape address");
-      shapes = shapes + 1;
+      shapes += 1;
     }
     if (op.kind == 31) {
       require(op.condition == body.lines[i], "CFI retained as data");
     }
-    i = i + 1;
+    i += 1;
   }
   require(calls == 1 && stores == 3 && shapes == 1, "actual constructor syntax");
 }
@@ -87,7 +87,7 @@ function stack_and_symbols(): void {
     let push = sample("pushq " + reg);
     let pop = sample("popq " + reg);
     require(push.kind == 6 && push.source == i && pop.kind == 7 && pop.destination == i, "stack register " + reg);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -116,7 +116,7 @@ function operands(): void {
       move_operand(reg, suffix, width, i);
       load_operand(reg, suffix, width, i);
       store_operand(reg, suffix, width, i);
-      i = i + 1;
+      i += 1;
     }
   }
   let frame = sample("leaq -16(%rbp), %rsp");

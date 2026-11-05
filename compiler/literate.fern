@@ -3,7 +3,7 @@ function is_backtick(b: u8): boolean {
 }
 
 function starts_with(s: string, prefix: string): boolean {
-  let pn: i32 = prefix.len();
+  let pn = prefix.len();
   if (pn > s.len()) {
     return false;
   }
@@ -11,8 +11,8 @@ function starts_with(s: string, prefix: string): boolean {
 }
 
 function ends_with(s: string, suffix: string): boolean {
-  let sn: i32 = suffix.len();
-  let n: i32 = s.len();
+  let sn = suffix.len();
+  let n = s.len();
   if (sn > n) {
     return false;
   }
@@ -24,30 +24,30 @@ function contains(haystack: string, needle: string): boolean {
 }
 
 function index_of_sub(haystack: string, needle: string): i32 {
-  let n: i32 = needle.len();
+  let n = needle.len();
   if (n == 0) {
     return 0;
   }
-  let last: i32 = haystack.len() - n;
-  let first: i32 = needle[0] as i32;
-  let i: i32 = __memchr(haystack, first, 0);
+  let last = haystack.len() - n;
+  let first = needle[0] as i32;
+  let i = __memchr(haystack, first, 0);
   while (i >= 0 && i <= last) {
     if (__mismatch(haystack, i, needle, 0, n) == n) {
       return i;
     }
     i = __memchr(haystack, first, i + 1);
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function trim(s: string): string {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) {
-    b = b - 1;
+    b -= 1;
   }
   if (a == 0 && b == s.len()) {
     return s;
@@ -56,51 +56,51 @@ pub function trim(s: string): string {
 }
 
 pub function leading_ws(s: string): string {
-  let k: i32 = 0;
-  let n: i32 = s.len();
+  let k = 0;
+  let n = s.len();
   while (k < n && (s[k] == b' ' || s[k] == b'\t')) {
-    k = k + 1;
+    k += 1;
   }
   return slice_unchecked(s, 0, k) + "";
 }
 
 pub function split_lines(src: string): string[] {
   let lines: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
-  let n: i32 = src.len();
+  let start = 0;
+  let i = 0;
+  let n = src.len();
   while (i < n) {
     if (src[i] == b'\n') {
       lines = lines.append(slice_unchecked(src, start, i) + "");
       start = i + 1;
     }
-    i = i + 1;
+    i += 1;
   }
   lines = lines.append(slice_unchecked(src, start, n) + "");
   return lines;
 }
 
 function join_lines(lines: string[]): string {
-  let s: string = "";
-  let i: i32 = 0;
+  let s = "";
+  let i = 0;
   while (i < lines.len()) {
     if (i > 0) {
-      s = s + "\n";
+      s += "\n";
     }
-    s = s + lines[i];
-    i = i + 1;
+    s += lines[i];
+    i += 1;
   }
   return s;
 }
 
 function fence_open_len(line: string): i32 {
-  let ws: string = leading_ws(line);
-  let i: i32 = ws.len();
-  let n: i32 = line.len();
-  let count: i32 = 0;
+  let ws = leading_ws(line);
+  let i = ws.len();
+  let n = line.len();
+  let count = 0;
   while (i < n && is_backtick(line[i])) {
-    count = count + 1;
-    i = i + 1;
+    count += 1;
+    i += 1;
   }
   if (count >= 3) {
     return count;
@@ -109,56 +109,56 @@ function fence_open_len(line: string): i32 {
 }
 
 function fence_lang(line: string): string {
-  let ws: string = leading_ws(line);
-  let i: i32 = ws.len();
-  let n: i32 = line.len();
+  let ws = leading_ws(line);
+  let i = ws.len();
+  let n = line.len();
   while (i < n && is_backtick(line[i])) {
-    i = i + 1;
+    i += 1;
   }
-  let info: string = trim(slice_unchecked(line, i, n));
-  let j: i32 = 0;
-  let m: i32 = info.len();
+  let info = trim(slice_unchecked(line, i, n));
+  let j = 0;
+  let m = info.len();
   while (j < m && info[j] != b' ' && info[j] != b'\t') {
-    j = j + 1;
+    j += 1;
   }
   return ascii_lower(slice_unchecked(info, 0, j) + "");
 }
 
 function ascii_lower(s: string): string {
   let buf: u8[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < s.len()) {
-    let c: u8 = s[i];
+    let c = s[i];
     if (c >= b'A' && c <= b'Z') {
-      c = c + 32;
+      c += 32;
     }
     buf = buf.append(c);
-    i = i + 1;
+    i += 1;
   }
   return string_from_bytes_unchecked(buf);
 }
 
 function fence_info(line: string): string {
-  let ws: string = leading_ws(line);
-  let i: i32 = ws.len();
-  let n: i32 = line.len();
+  let ws = leading_ws(line);
+  let i = ws.len();
+  let n = line.len();
   while (i < n && is_backtick(line[i])) {
-    i = i + 1;
+    i += 1;
   }
   return trim(slice_unchecked(line, i, n));
 }
 
 function split_ws(s: string): string[] {
   let words: string[] = [];
-  let n: i32 = s.len();
-  let i: i32 = 0;
+  let n = s.len();
+  let i = 0;
   while (i < n) {
     while (i < n && (s[i] == b' ' || s[i] == b'\t')) {
-      i = i + 1;
+      i += 1;
     }
-    let start: i32 = i;
+    let start = i;
     while (i < n && s[i] != b' ' && s[i] != b'\t') {
-      i = i + 1;
+      i += 1;
     }
     if (i > start) {
       words = words.append(slice_unchecked(s, start, i) + "");
@@ -170,7 +170,7 @@ function split_ws(s: string): string[] {
 struct Directives { file: string, name: string, entry: boolean, test: boolean }
 
 function directives(line: string): Directives {
-  let d: Directives = Directives { file: "", name: "", entry: false, test: false };
+  let d = Directives { file: "", name: "", entry: false, test: false };
   for w in split_ws(fence_info(line)) {
     if (starts_with(w, "file=")) {
       d = Directives { ...d, file: trim_quotes(slice_unchecked(w, 5, w.len()) + "") };
@@ -186,29 +186,29 @@ function directives(line: string): Directives {
 }
 
 function trim_quotes(s: string): string {
-  let a: i32 = 0;
-  let b: i32 = s.len();
+  let a = 0;
+  let b = s.len();
   while (a < b && s[a] == b'"') {
-    a = a + 1;
+    a += 1;
   }
   while (b > a && s[b - 1] == b'"') {
-    b = b - 1;
+    b -= 1;
   }
   return slice_unchecked(s, a, b) + "";
 }
 
 function is_fence_close(line: string, open_len: i32): boolean {
-  let t: string = trim(line);
-  let n: i32 = t.len();
+  let t = trim(line);
+  let n = t.len();
   if (n < open_len) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     if (!is_backtick(t[i])) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
@@ -217,7 +217,7 @@ function is_header(t: string): boolean {
   if (!starts_with(t, "<<") || !ends_with(t, ">>=")) {
     return false;
   }
-  let inner: str = slice_unchecked(t, 2, t.len() - 3);
+  let inner = slice_unchecked(t, 2, t.len() - 3);
   if (contains(inner, ">>")) {
     return false;
   }
@@ -232,7 +232,7 @@ pub function is_ref(t: string): boolean {
   if (!starts_with(t, "<<") || !ends_with(t, ">>")) {
     return false;
   }
-  let inner: str = slice_unchecked(t, 2, t.len() - 2);
+  let inner = slice_unchecked(t, 2, t.len() - 2);
   if (inner.len() == 0) {
     return false;
   }
@@ -247,7 +247,7 @@ pub function ref_name(t: string): string {
 }
 
 pub function de_escape(text: string): string {
-  let ws: string = leading_ws(text);
+  let ws = leading_ws(text);
   if (starts_with(slice_unchecked(text, ws.len(), text.len()) + "", "\\<<")) {
     return ws + slice_unchecked(text, ws.len() + 1, text.len());
   }
@@ -271,47 +271,47 @@ pub struct Block { kind: i32, name: string, raw: string, line: i32, is_entry: bo
 pub struct Doc { blocks: Block[], lines: string[] }
 
 function header_index(lines: string[], first: i32, count: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < count) {
-    let t: string = trim(lines[first + i]);
+    let t = trim(lines[first + i]);
     if (t.len() == 0) {
-      i = i + 1;
+      i += 1;
     } else {
       if (is_header(t)) {
         return i;
       }
-      return 0 - 1;
+      return -1;
     }
   }
-  return 0 - 1;
+  return -1;
 }
 
 pub function join_range(lines: string[], from: i32, to: i32): string {
-  let s: string = "";
-  let i: i32 = from;
+  let s = "";
+  let i = from;
   while (i < to) {
     if (i > from) {
-      s = s + "\n";
+      s += "\n";
     }
-    s = s + lines[i];
-    i = i + 1;
+    s += lines[i];
+    i += 1;
   }
   return s;
 }
 
 function fence_block(lines: string[], open: i32, count: i32, raw: string): Block {
-  let b: Block = Block { kind: PROSE, name: "", raw: raw, line: open + 1, is_entry: false, first: open + 1, count: count };
+  let b = Block { kind: PROSE, name: "", raw: raw, line: open + 1, is_entry: false, first: open + 1, count: count };
   if (fence_lang(lines[open]) != "fern") {
     return b;
   }
-  let d: Directives = directives(lines[open]);
+  let d = directives(lines[open]);
   if (d.file.len() > 0) {
     return Block { ...b, kind: FILE, name: d.file, is_entry: d.entry };
   }
   if (d.test) {
     return Block { ...b, kind: TEST, name: d.name };
   }
-  let h: i32 = header_index(lines, open + 1, count);
+  let h = header_index(lines, open + 1, count);
   if (h < 0) {
     return Block { ...b, kind: DISPLAY };
   }
@@ -319,29 +319,29 @@ function fence_block(lines: string[], open: i32, count: i32, raw: string): Block
 }
 
 pub function parse(src: string): Doc {
-  let lines: string[] = split_lines(src);
-  let n: i32 = lines.len();
-  let ends_nl: boolean = n > 1 && lines[n - 1].len() == 0;
+  let lines = split_lines(src);
+  let n = lines.len();
+  let ends_nl = n > 1 && lines[n - 1].len() == 0;
   let blocks: Block[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
-    let start: i32 = i;
-    let open_len: i32 = fence_open_len(lines[i]);
+    let start = i;
+    let open_len = fence_open_len(lines[i]);
     if (open_len > 0) {
-      i = i + 1;
+      i += 1;
       while (i < n && !is_fence_close(lines[i], open_len)) {
-        i = i + 1;
+        i += 1;
       }
-      let count: i32 = i - start - 1;
+      let count = i - start - 1;
       if (i < n) {
-        i = i + 1;
+        i += 1;
       } else if (ends_nl && count > 0) {
-        count = count - 1;
+        count -= 1;
       }
       blocks = blocks.append(fence_block(lines, start, count, join_range(lines, start, i)));
     } else {
       while (i < n && fence_open_len(lines[i]) == 0) {
-        i = i + 1;
+        i += 1;
       }
       blocks = blocks.append(Block { kind: PROSE, name: "", raw: join_range(lines, start, i), line: start + 1, is_entry: false, first: 0, count: 0 });
     }
@@ -353,10 +353,10 @@ function pieces_of(d: Doc): Piece[] {
   let pieces: Piece[] = [];
   for b in d.blocks {
     if (b.kind == CHUNK) {
-      let k: i32 = b.first;
+      let k = b.first;
       while (k < b.first + b.count) {
         pieces = pieces.append(Piece { chunk: b.name, text: d.lines[k], line: k + 1 });
-        k = k + 1;
+        k += 1;
       }
     }
   }
@@ -388,34 +388,34 @@ pub function defined_chunks(d: Doc): string[] {
 }
 
 function chunk_defined(pieces: Piece[], name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pieces.len()) {
     if (pieces[i].chunk == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function stack_has(stack: string[], name: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < stack.len()) {
     if (stack[i] == name) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function header_line(pieces: Piece[], name: string): i32 {
-  let i: i32 = 0;
+  let i = 0;
   while (i < pieces.len()) {
     if (pieces[i].chunk == name) {
       return pieces[i].line - 1;
     }
-    i = i + 1;
+    i += 1;
   }
   return 1;
 }
@@ -439,16 +439,16 @@ function no_lines(): ExpandOk {
 }
 
 function emit_line(o: ExpandOk, indent: string, text: string, line: i32): ExpandOk {
-  let de: string = de_escape(text);
+  let de = de_escape(text);
   return ExpandOk { lines: o.lines.append(indent + de), lits: o.lits.append(line), shifts: o.shifts.append(indent.len() - (text.len() - de.len())) };
 }
 
 function append_lines(o: ExpandOk, more: ExpandOk): ExpandOk {
-  let out: ExpandOk = o;
-  let k: i32 = 0;
+  let out = o;
+  let k = 0;
   while (k < more.lines.len()) {
     out = ExpandOk { lines: out.lines.append(more.lines[k]), lits: out.lits.append(more.lits[k]), shifts: out.shifts.append(more.shifts[k]) };
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
@@ -457,19 +457,19 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
   if (stack_has(active, name)) {
     return ExpandErr { msg: "literate: chunk \"<<" + name + ">>\" is defined in terms of itself (cyclic chunk reference)", line: header_line(pieces, name), col: 1 };
   }
-  let active2: string[] = active.append(name);
-  let out: ExpandOk = no_lines();
-  let i: i32 = 0;
+  let active2 = active.append(name);
+  let out = no_lines();
+  let i = 0;
   while (i < pieces.len()) {
     if (pieces[i].chunk == name) {
-      let text: string = pieces[i].text;
-      let t: string = trim(text);
+      let text = pieces[i].text;
+      let t = trim(text);
       if (is_ref(t)) {
-        let rn: string = ref_name(t);
+        let rn = ref_name(t);
         if (!chunk_defined(pieces, rn)) {
           return ExpandErr { msg: undefined_ref(rn), line: pieces[i].line, col: marker_col(text) };
         }
-        let sub: ExpandResult = expand(pieces, rn, indent + leading_ws(text), active2);
+        let sub = expand(pieces, rn, indent + leading_ws(text), active2);
         match (sub) {
           ExpandOk(o) => {
             out = append_lines(out, o);
@@ -482,7 +482,7 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
         out = emit_line(out, indent, text, pieces[i].line);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
 }
@@ -498,12 +498,12 @@ pub function is_program(src: string): boolean {
 }
 
 pub function tangle(src: string): TangleResult {
-  let pieces: Piece[] = parse_pieces(src);
+  let pieces = parse_pieces(src);
   if (!chunk_defined(pieces, "*")) {
     return TangleErr { msg: "literate: no root chunk \"<<*>>\" defined (every literate program needs a `<<*>>=` block to tangle from)", line: 1, col: 1 };
   }
   let empty: string[] = [];
-  let r: ExpandResult = expand(pieces, "*", "", empty);
+  let r = expand(pieces, "*", "", empty);
   match (r) {
     ExpandOk(o) => {
       return TangleOk { code: join_lines(o.lines), lits: o.lits, shifts: o.shifts };
@@ -515,12 +515,12 @@ pub function tangle(src: string): TangleResult {
 }
 
 pub function tangle_chunk(src: string, name: string): TangleResult {
-  let pieces: Piece[] = parse_pieces(src);
+  let pieces = parse_pieces(src);
   if (!chunk_defined(pieces, name)) {
     return TangleErr { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1, col: 1 };
   }
   let empty: string[] = [];
-  let r: ExpandResult = expand(pieces, name, "", empty);
+  let r = expand(pieces, name, "", empty);
   match (r) {
     ExpandOk(o) => {
       return TangleOk { code: join_lines(o.lines), lits: o.lits, shifts: o.shifts };
@@ -532,57 +532,57 @@ pub function tangle_chunk(src: string, name: string): TangleResult {
 }
 
 pub function unused_chunks(src: string): string[] {
-  let pieces: Piece[] = parse_pieces(src);
+  let pieces = parse_pieces(src);
   let todo: string[] = [];
   if (chunk_defined(pieces, "*")) {
     todo = todo.append("*");
   }
-  let fp: FilePiece[] = parse_file_pieces(src);
-  let i: i32 = 0;
+  let fp = parse_file_pieces(src);
+  let i = 0;
   while (i < fp.len()) {
     if (is_ref(trim(fp[i].text))) {
       todo = todo.append(ref_name(trim(fp[i].text)));
     }
-    i = i + 1;
+    i += 1;
   }
   let reached: string[] = [];
-  let qi: i32 = 0;
+  let qi = 0;
   while (qi < todo.len()) {
-    let n: string = todo[qi];
-    qi = qi + 1;
+    let n = todo[qi];
+    qi += 1;
     if (!stack_has(reached, n)) {
       reached = reached.append(n);
-      let k: i32 = 0;
+      let k = 0;
       while (k < pieces.len()) {
         if (pieces[k].chunk == n && is_ref(trim(pieces[k].text))) {
           todo = todo.append(ref_name(trim(pieces[k].text)));
         }
-        k = k + 1;
+        k += 1;
       }
     }
   }
   let out: string[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < pieces.len()) {
     if (!stack_has(reached, pieces[j].chunk) && !stack_has(out, pieces[j].chunk)) {
       out = insert_sorted(out, pieces[j].chunk);
     }
-    j = j + 1;
+    j += 1;
   }
   return out;
 }
 
 pub function insert_sorted(xs: string[], s: string): string[] {
   let out: string[] = [];
-  let placed: boolean = false;
-  let i: i32 = 0;
+  let placed = false;
+  let i = 0;
   while (i < xs.len()) {
     if (!placed && bytes_less(s, xs[i])) {
       out = out.append(s);
       placed = true;
     }
     out = out.append(xs[i]);
-    i = i + 1;
+    i += 1;
   }
   if (!placed) {
     out = out.append(s);
@@ -591,12 +591,12 @@ pub function insert_sorted(xs: string[], s: string): string[] {
 }
 
 function bytes_less(a: string, b: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < a.len() && i < b.len()) {
     if (a[i] != b[i]) {
       return a[i] as i32 < b[i] as i32;
     }
-    i = i + 1;
+    i += 1;
   }
   return a.len() < b.len();
 }
@@ -604,7 +604,7 @@ function bytes_less(a: string, b: string): boolean {
 pub struct FilePiece { path: string, text: string, line: i32, is_entry: boolean }
 
 pub function parse_file_pieces(src: string): FilePiece[] {
-  let d: Doc = parse(src);
+  let d = parse(src);
   let pieces: FilePiece[] = [];
   for b in d.blocks {
     if (b.kind == FILE) {
@@ -615,23 +615,23 @@ pub function parse_file_pieces(src: string): FilePiece[] {
 }
 
 function append_body(pieces: FilePiece[], d: Doc, b: Block): FilePiece[] {
-  let out: FilePiece[] = pieces;
-  let k: i32 = b.first;
+  let out = pieces;
+  let k = b.first;
   while (k < b.first + b.count) {
     out = out.append(FilePiece { path: b.name, text: d.lines[k], line: k + 1, is_entry: b.is_entry });
-    k = k + 1;
+    k += 1;
   }
   return out;
 }
 
 function file_paths(fp: FilePiece[]): string[] {
   let paths: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < fp.len()) {
     if (!stack_has(paths, fp[i].path)) {
       paths = paths.append(fp[i].path);
     }
-    i = i + 1;
+    i += 1;
   }
   return paths;
 }
@@ -646,30 +646,30 @@ pub function fence_line(src: string, path: string): i32 {
 }
 
 function path_is_entry(fp: FilePiece[], path: string): boolean {
-  let i: i32 = 0;
+  let i = 0;
   while (i < fp.len()) {
     if (fp[i].path == path && fp[i].is_entry) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
 
 function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResult {
-  let out: ExpandOk = no_lines();
-  let i: i32 = 0;
+  let out = no_lines();
+  let i = 0;
   while (i < fp.len()) {
     if (fp[i].path == path) {
-      let text: string = fp[i].text;
-      let t: string = trim(text);
+      let text = fp[i].text;
+      let t = trim(text);
       if (is_ref(t)) {
-        let rn: string = ref_name(t);
+        let rn = ref_name(t);
         if (!chunk_defined(chunks, rn)) {
           return ExpandErr { msg: undefined_ref(rn), line: fp[i].line, col: marker_col(text) };
         }
         let empty: string[] = [];
-        let sub: ExpandResult = expand(chunks, rn, leading_ws(text), empty);
+        let sub = expand(chunks, rn, leading_ws(text), empty);
         match (sub) {
           ExpandOk(o) => {
             out = append_lines(out, o);
@@ -682,7 +682,7 @@ function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResu
         out = emit_line(out, "", text, fp[i].line);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
 }
@@ -696,17 +696,17 @@ pub struct FileTangleErr { msg: string, line: i32, col: i32 }
 pub type FileTangleResult = FileTangleOk | FileTangleErr;
 
 pub function tangle_files(src: string): FileTangleResult {
-  let chunks: Piece[] = parse_pieces(src);
-  let fp: FilePiece[] = parse_file_pieces(src);
-  let paths: string[] = file_paths(fp);
+  let chunks = parse_pieces(src);
+  let fp = parse_file_pieces(src);
+  let paths = file_paths(fp);
   if (paths.len() == 0) {
     return FileTangleErr { msg: "literate: no `file=PATH` blocks defined (a multi-file document needs at least one ```fern file=… root)", line: 1, col: 1 };
   }
   let results: FileResult[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < paths.len()) {
-    let p: string = paths[i];
-    let r: ExpandResult = expand_file(fp, chunks, p);
+    let p = paths[i];
+    let r = expand_file(fp, chunks, p);
     match (r) {
       ExpandOk(o) => {
         results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p), lits: o.lits, shifts: o.shifts });
@@ -715,7 +715,7 @@ pub function tangle_files(src: string): FileTangleResult {
         return FileTangleErr { msg: e.msg, line: e.line, col: e.col };
       }
     }
-    i = i + 1;
+    i += 1;
   }
   return FileTangleOk { files: results };
 }
@@ -729,8 +729,8 @@ pub struct DoctestsErr { msg: string, line: i32, col: i32 }
 pub type DoctestsResult = DoctestsOk | DoctestsErr;
 
 pub function doctests(src: string): DoctestsResult {
-  let d: Doc = parse(src);
-  let chunks: Piece[] = pieces_of(d);
+  let d = parse(src);
+  let chunks = pieces_of(d);
   let tests: Doctest[] = [];
   for b in d.blocks {
     if (b.kind == TEST) {
@@ -750,12 +750,12 @@ pub function doctests(src: string): DoctestsResult {
 
 pub function entry_file(files: FileResult[]): string {
   let marked: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < files.len()) {
     if (files[i].is_entry) {
       marked = marked.append(files[i].path);
     }
-    i = i + 1;
+    i += 1;
   }
   if (marked.len() == 1) {
     return marked[0];
@@ -764,12 +764,12 @@ pub function entry_file(files: FileResult[]): string {
     return files[0].path;
   }
   let mains: string[] = [];
-  let j: i32 = 0;
+  let j = 0;
   while (j < files.len()) {
     if (defines_main(files[j].code)) {
       mains = mains.append(files[j].path);
     }
-    j = j + 1;
+    j += 1;
   }
   if (mains.len() == 1) {
     return mains[0];
@@ -778,18 +778,18 @@ pub function entry_file(files: FileResult[]): string {
 }
 
 function defines_main(code: string): boolean {
-  let lines: string[] = split_lines(code);
-  let i: i32 = 0;
+  let lines = split_lines(code);
+  let i = 0;
   while (i < lines.len()) {
-    let w: string[] = split_ws(lines[i]);
-    let k: i32 = 0;
+    let w = split_ws(lines[i]);
+    let k = 0;
     if (w.len() > 0 && w[0] == "pub") {
       k = 1;
     }
     if (w.len() > k + 1 && (w[k] == "function" || w[k] == "fn") && is_main_name(w[k + 1])) {
       return true;
     }
-    i = i + 1;
+    i += 1;
   }
   return false;
 }
@@ -801,12 +801,12 @@ function is_main_name(word: string): boolean {
   if (word.len() == 4) {
     return true;
   }
-  let c: i32 = word[4] as i32;
+  let c = word[4] as i32;
   return !(c >= 97 && c <= 122 || c >= 65 && c <= 90 || c >= 48 && c <= 57 || c == 95);
 }
 
 function tangle_code(src: string): string {
-  let r: TangleResult = tangle(src);
+  let r = tangle(src);
   match (r) {
     TangleOk(o) => {
       return o.code;
@@ -818,7 +818,7 @@ function tangle_code(src: string): string {
 }
 
 function is_err(src: string): boolean {
-  let r: TangleResult = tangle(src);
+  let r = tangle(src);
   match (r) {
     TangleOk(o) => {
       return false;
@@ -830,10 +830,10 @@ function is_err(src: string): boolean {
 }
 
 function err_line(src: string): i32 {
-  let r: TangleResult = tangle(src);
+  let r = tangle(src);
   match (r) {
     TangleOk(o) => {
-      return 0 - 1;
+      return -1;
     },
     TangleErr(e) => {
       return e.line;
@@ -842,7 +842,7 @@ function err_line(src: string): i32 {
 }
 
 function tf_files(src: string): FileResult[] {
-  let r: FileTangleResult = tangle_files(src);
+  let r = tangle_files(src);
   match (r) {
     FileTangleOk(o) => {
       return o.files;
@@ -868,29 +868,29 @@ function lines_are(got: i32[], want: i32[]): boolean {
   if (got.len() != want.len()) {
     return false;
   }
-  let i: i32 = 0;
+  let i = 0;
   while (i < got.len()) {
     if (got[i] != want[i]) {
       return false;
     }
-    i = i + 1;
+    i += 1;
   }
   return true;
 }
 
 function file_code(files: FileResult[], path: string): string {
-  let i: i32 = 0;
+  let i = 0;
   while (i < files.len()) {
     if (files[i].path == path) {
       return files[i].code;
     }
-    i = i + 1;
+    i += 1;
   }
   return "";
 }
 
 function check_chunks(): i32 {
-  let s1: string = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
+  let s1 = "# Title\n\nProse.\n\n```fern\n<<*>>=\nfn main() {}\n```\n";
   if (tangle_code(s1) != "fn main() {}") {
     return 1;
   }
@@ -928,7 +928,7 @@ function check_chunks(): i32 {
     return 7;
   }
 
-  let s7: string = "```fern\n<<*>>=\n<<nope>>\n```\n";
+  let s7 = "```fern\n<<*>>=\n<<nope>>\n```\n";
   if (!is_err(s7)) {
     return 8;
   }
@@ -943,7 +943,7 @@ function check_chunks(): i32 {
     return 10;
   }
 
-  let s9: string = "````fern\n\n<<*>>=\nfn main() {}\n````\n";
+  let s9 = "````fern\n\n<<*>>=\nfn main() {}\n````\n";
   if (tangle_code(s9) != "fn main() {}") {
     return 11;
   }
@@ -954,7 +954,7 @@ function check_files(): i32 {
   let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
     + "```fern file=u.fern\n<<g>>\n```\n"
     + "```fern\n<<g>>=\npub fn g() {}\n```\n";
-  let f1: FileResult[] = tf_files(m1);
+  let f1 = tf_files(m1);
   if (f1.len() != 2) {
     return 12;
   }
@@ -970,7 +970,7 @@ function check_files(): i32 {
 
   let m2: string = "```fern file=a.fern\nL1\n```\n"
     + "```fern file=a.fern\nL2\n```\n";
-  let f2: FileResult[] = tf_files(m2);
+  let f2 = tf_files(m2);
   if (f2.len() != 1) {
     return 16;
   }
@@ -978,12 +978,12 @@ function check_files(): i32 {
     return 17;
   }
 
-  let f3: FileResult[] = tf_files("```fern file=only.fern\nx\n```\n");
+  let f3 = tf_files("```fern file=only.fern\nx\n```\n");
   if (entry_file(f3) != "only.fern") {
     return 18;
   }
 
-  let f4: FileResult[] = tf_files("```fern file=a.fern\nx\n```\n```fern file=b.fern\ny\n```\n");
+  let f4 = tf_files("```fern file=a.fern\nx\n```\n```fern file=b.fern\ny\n```\n");
   if (entry_file(f4) != "") {
     return 19;
   }
@@ -994,7 +994,7 @@ function check_files(): i32 {
     return 20;
   }
 
-  let r6: FileTangleResult = tangle_files("```fern file=m.fern\n<<nope>>\n```\n");
+  let r6 = tangle_files("```fern file=m.fern\n<<nope>>\n```\n");
   match (r6) {
     FileTangleOk(o) => {
       return 21;
@@ -1014,17 +1014,17 @@ function check_maps(): i32 {
   let m1: string = "```fern file=main.fern entry\nimport \"./u\";\n<<g>>\n```\n"
     + "```fern file=u.fern\n<<g>>\n```\n"
     + "```fern\n<<g>>=\npub fn g() {}\n```\n";
-  let p4: TangleOk = tangled(s4);
+  let p4 = tangled(s4);
   if (!lines_are(p4.lits, [3, 9, 5]) || !lines_are(p4.shifts, [0, 4, 0])) {
     return 23;
   }
 
-  let p17: TangleOk = tangled("```fern\n<<*>>=\n  \\<<x>>\n```\n");
-  if (p17.code != "  <<x>>" || !lines_are(p17.lits, [3]) || !lines_are(p17.shifts, [0 - 1])) {
+  let p17 = tangled("```fern\n<<*>>=\n  \\<<x>>\n```\n");
+  if (p17.code != "  <<x>>" || !lines_are(p17.lits, [3]) || !lines_are(p17.shifts, [-1])) {
     return 24;
   }
 
-  let pm: FileResult[] = tf_files(m1);
+  let pm = tf_files(m1);
   if (pm.len() != 2 || pm[0].path != "main.fern" || !lines_are(pm[0].lits, [2, 10]) || !lines_are(pm[0].shifts, [0, 0])) {
     return 25;
   }
@@ -1044,7 +1044,7 @@ function check_maps(): i32 {
   let m21: string = "```fern\n<<*>>=\n<<a>>\n```\n```fern\n<<a>>=\n<<b>>\n```\n```fern\n<<b>>=\nx\n```\n"
     + "```fern\n<<zed>>=\ny\n```\n```fern\n<<c>>=\nz\n```\n"
     + "```fern file=f.fern\n<<d>>\n```\n```fern\n<<d>>=\nw\n```\n";
-  let un: string[] = unused_chunks(m21);
+  let un = unused_chunks(m21);
   if (un.len() != 2 || un[0] != "c" || un[1] != "zed") {
     return 28;
   }
@@ -1055,7 +1055,7 @@ function check_blocks(): i32 {
   if (tangle_code("```FERN\n<<*>>=\nx\n```\n") != "x") {
     return 29;
   }
-  let f22: FileResult[] = tf_files("```fern file=\"q.fern\"\nx\n```\n");
+  let f22 = tf_files("```fern file=\"q.fern\"\nx\n```\n");
   if (f22.len() != 1 || f22[0].path != "q.fern") {
     return 30;
   }
@@ -1068,7 +1068,7 @@ function check_blocks(): i32 {
     return 32;
   }
 
-  let d25: Doc = parse("# T\n\n```go\nx\n```\n```fern\nshow\n```\n");
+  let d25 = parse("# T\n\n```go\nx\n```\n```fern\nshow\n```\n");
   if (d25.blocks.len() != 4 || d25.blocks[0].raw != "# T\n" || d25.blocks[1].kind != PROSE || d25.blocks[1].raw != "```go\nx\n```"
     || d25.blocks[2].kind != DISPLAY || d25.blocks[2].line != 6 || d25.blocks[3].raw != "") {
     return 33;
@@ -1078,7 +1078,7 @@ function check_blocks(): i32 {
 }
 
 function check_doctests(): i32 {
-  let s26: string = "```fern\n<<h>>=\nfn h() {}\n```\n```fern test name=\"adds\"\n<<h>>\nfn main() {}\n```\n```fern test\nfn main() {}\n```\n";
+  let s26 = "```fern\n<<h>>=\nfn h() {}\n```\n```fern test name=\"adds\"\n<<h>>\nfn main() {}\n```\n```fern test\nfn main() {}\n```\n";
   match (doctests(s26)) {
     DoctestsOk(o) => {
       if (o.tests.len() != 2 || o.tests[0].name != "adds" || o.tests[0].code != "fn h() {}\nfn main() {}" || !lines_are(o.tests[0].lits, [3, 7])
@@ -1104,7 +1104,7 @@ function check_doctests(): i32 {
 }
 
 function main(): i32 {
-  let rc: i32 = check_chunks();
+  let rc = check_chunks();
   if (rc == 0) {
     rc = check_files();
   }

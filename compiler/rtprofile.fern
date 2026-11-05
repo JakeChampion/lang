@@ -17,7 +17,7 @@ pub function mode(): i32 {
         return 4;
       }
       if (envflag.value_on(v)) {
-        return 0 - 1;
+        return -1;
       }
     },
     None => {}
@@ -44,7 +44,7 @@ function file_error(mode: i32): string {
   if (mode <= 2) {
     return "";
   }
-  let p: string = output();
+  let p = output();
   if (p.len() == 0 || p.len() >= 4096 || p.contains("\x00")) {
     return "fern: pprof profiling requires FERN_PROFILE_FILE with a nonempty path shorter than 4096 bytes and no NUL";
   }

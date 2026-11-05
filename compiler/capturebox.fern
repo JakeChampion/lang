@@ -48,10 +48,10 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
     },
     ast.ExprArray(a) => {
       let ne: ast.Expr[] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i < a.elements.len()) {
         ne = ne.append(box_rewrite_expr(a.elements[i], boxed, btypes, bsites, bound));
-        i = i + 1;
+        i += 1;
       }
       return ast.ExprArray { ...a, elements: ne };
     },
@@ -73,7 +73,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       for fv in sl.field_values {
         nv = nv.append(box_rewrite_expr(fv, boxed, btypes, bsites, bound));
       }
-      let nbase: ast.Expr = sl.base;
+      let nbase = sl.base;
       if (sl.has_base) {
         nbase = box_rewrite_expr(sl.base, boxed, btypes, bsites, bound);
       }
@@ -83,13 +83,13 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprFieldAccess { ...fa, obj: box_rewrite_expr(fa.obj, boxed, btypes, bsites, bound) };
     },
     ast.ExprLambda(lm) => {
-      let lb: string[] = bound;
-      let lp: i32 = 0;
+      let lb = bound;
+      let lp = 0;
       while (lp < lm.params.len()) {
         lb = lb.append(lm.params[lp].name);
-        lp = lp + 1;
+        lp += 1;
       }
-      let caps: ast.TypedBinding[] = lm.captures;
+      let caps = lm.captures;
       if (lm.captures_known) {
         caps = [];
         for cap in lm.captures {
@@ -115,14 +115,14 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
     },
     ast.ExprFString(f) => {
       let exprs: ast.Expr[] = [];
-      let i: i32 = 0;
+      let i = 0;
       while (i < f.exprs.len()) {
         if (f.is_expr[i]) {
           exprs = exprs.append(box_rewrite_expr(f.exprs[i], boxed, btypes, bsites, bound));
         } else {
           exprs = exprs.append(f.exprs[i]);
         }
-        i = i + 1;
+        i += 1;
       }
       return ast.ExprFString { ...f, exprs: exprs };
     },
@@ -148,12 +148,12 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
 function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      let bxi: i32 = util.index_of_str(boxed, v.name);
+      let bxi = util.index_of_str(boxed, v.name);
       if (bxi >= 0 && site_key(v.name, v.line, v.col) != bsites[bxi]) {
-        bxi = 0 - 1;
+        bxi = -1;
       }
       if (bxi >= 0 && util.index_of_str(bound, v.name) >= 0) {
-        bxi = 0 - 1;
+        bxi = -1;
       }
       if (bxi >= 0) {
         return cell_decl(v.name, btypes[bxi], box_rewrite_expr(v.init, boxed, btypes, bsites, bound), v.line, v.col);
@@ -181,30 +181,30 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       return ast.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes, bsites, bound), body: box_rewrite_stmts(w.body, boxed, btypes, bsites, bound), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      let fb: string[] = bound;
+      let fb = bound;
       fb = astwalk.append_bound_name(fb, fr.var_name);
       return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line, col: fr.col };
     },
     ast.StmtMatch(m) => {
       let na: ast.MatchArm[] = [];
       for arm in m.arms {
-        let ab: string[] = bound;
-        let cells: string[] = scalar_pattern_cells(arm.pattern, boxed);
-        let pattern: ast.Pattern = arm.pattern;
+        let ab = bound;
+        let cells = scalar_pattern_cells(arm.pattern, boxed);
+        let pattern = arm.pattern;
         if let ast.PatVariant(pv) = pattern {
           pattern = ast.PatVariant { ...pv, scalar_cells: cells };
         }
         if let ast.PatLiteral(literal) = pattern {
           pattern = ast.PatLiteral { ...literal, scalar_cells: cells };
         }
-        let bxj: i32 = 0;
+        let bxj = 0;
         while (bxj < boxed.len()) {
           if (util.has_str(astwalk.pattern_binders(arm.pattern, []), boxed[bxj]) && !util.has_str(cells, boxed[bxj])) {
             ab = ab.append(boxed[bxj]);
           }
-          bxj = bxj + 1;
+          bxj += 1;
         }
-        let ng: ast.Expr = arm.guard;
+        let ng = arm.guard;
         if (arm.has_guard) {
           ng = box_rewrite_expr(arm.guard, boxed, btypes, bsites, ab);
         }
@@ -234,7 +234,7 @@ function scalar_pattern_cells(pattern: ast.Pattern, boxed: string[]): string[] {
 
 pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let bnd: string[] = bound;
+  let bnd = bound;
   for stmt in stmts {
     out = out.append(box_rewrite_stmt(stmt, boxed, btypes, bsites, bnd));
     bnd = shadow_after(stmt, boxed, bsites, bnd);
@@ -243,11 +243,11 @@ pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: strin
 }
 
 function shadow_after(stmt: ast.Stmt, boxed: string[], bsites: string[], bound: string[]): string[] {
-  let out: string[] = bound;
+  let out = bound;
   if let ast.StmtVar(v) = stmt {
     let names = astwalk.append_bound_name([], v.name);
     for name in names {
-      let i: i32 = util.index_of_str(boxed, name);
+      let i = util.index_of_str(boxed, name);
       if (i >= 0 && !util.has_str(out, name) && site_key(v.name, v.line, v.col) != bsites[i]) {
         out = out.append(name);
       }

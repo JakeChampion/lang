@@ -28,7 +28,7 @@ function change(text: string, old: string, replacement: string): string {
   let i = 1;
   while (i < parts.len()) {
     out = out + replacement + parts[i];
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -49,7 +49,7 @@ function indexed_paths(text: string, arch: string, f: ssa.SFunc): void {
   let prefix = jump + ".Lindexed0\n";
   let i = 65;
   while (i > 0) {
-    i = i - 1;
+    i -= 1;
     let target = if (i == 64) { ".Lindexed_end" } else { ".Lindexed" + (i + 1).to_string() };
     prefix = prefix + ".Lindexed" + i.to_string() + ":\n" + jump + target + "\n";
   }
@@ -134,7 +134,7 @@ function successors(text: string, arch: string, f: ssa.SFunc): void {
     let child = changed[i];
     let op = child.insts[0];
     changed = changed.with(i, ssa.SBlock { ...child, insts: [ssa.SInst { ...op, imm: if (op.imm == 7) { 9 } else { 7 } }] });
-    i = i + 1;
+    i += 1;
   }
   let swapped = change(change(change(text, seven, "TEMP_CONSTANT"), nine, seven), "TEMP_CONSTANT", nine);
   check(swapped, arch, ssa.SFunc { ...f, blocks: changed }, true);

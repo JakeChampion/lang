@@ -16,7 +16,7 @@ function reach_of(src: string): string[] {
 }
 
 function first_msg(src: string, target: string): string {
-  let vs: platforms.Violation[] = violations(src, target);
+  let vs = violations(src, target);
   if (vs.len() == 0) {
     return "";
   }
@@ -24,7 +24,7 @@ function first_msg(src: string, target: string): string {
 }
 
 function main(): i32 {
-  let wasm: platforms.Descriptor = platforms.for_target("wasm32-wasi");
+  let wasm = platforms.for_target("wasm32-wasi");
   if (!wasm.known) {
     return 1;
   }
@@ -32,7 +32,7 @@ function main(): i32 {
     return 2;
   }
 
-  let x86: platforms.Descriptor = platforms.for_target("x86-64-linux");
+  let x86 = platforms.for_target("x86-64-linux");
   if (x86.isa != "x86-64" || x86.environment != "linux") {
     return 3;
   }
@@ -145,16 +145,16 @@ function main(): i32 {
   if (platforms.gated_capability("exit").len() != 0) {
     return 25;
   }
-  let cores: string[] = platforms.core_builtins();
-  let ci: i32 = 0;
+  let cores = platforms.core_builtins();
+  let ci = 0;
   while (ci < cores.len()) {
     if (platforms.gated_capability(cores[ci]).len() != 0) {
       return 26;
     }
-    ci = ci + 1;
+    ci += 1;
   }
-  let gates: platforms.Gate[] = platforms.gated_builtins();
-  let gi: i32 = 0;
+  let gates = platforms.gated_builtins();
+  let gi = 0;
   while (gi < gates.len()) {
     if (gates[gi].builtin.len() == 0) {
       return 27;
@@ -162,17 +162,17 @@ function main(): i32 {
     if (platforms.targets_providing(gates[gi].capability).len() == 0) {
       return 28;
     }
-    gi = gi + 1;
+    gi += 1;
   }
 
-  let forks: string = "function f(): i32 { return proc_fork(); }\nfunction main(): i32 { return f(); }\n";
+  let forks = "function f(): i32 { return proc_fork(); }\nfunction main(): i32 { return f(); }\n";
   if (count(forks, "wasm32-wasi") != 1) {
     return 30;
   }
   if (count(forks, "x86-64-linux") != 0) {
     return 31;
   }
-  let prints: string = "function main(): i32 { print(\"hi\"); return 0; }\n";
+  let prints = "function main(): i32 { print(\"hi\"); return 0; }\n";
   if (count(forks, "arm64-freestanding") != 1) {
     return 32;
   }
@@ -186,7 +186,7 @@ function main(): i32 {
     return 34;
   }
 
-  let spawns: string = "function main(): i32 { return subprocess(\"ls\"); }\n";
+  let spawns = "function main(): i32 { return subprocess(\"ls\"); }\n";
   if (count(spawns, "wasm32-wasi") != 1) {
     return 35;
   }
@@ -194,16 +194,16 @@ function main(): i32 {
     return 36;
   }
 
-  let twice: string = "function f(): i32 { let a: i32 = proc_fork(); return a + proc_fork(); }\n";
+  let twice = "function f(): i32 { let a: i32 = proc_fork(); return a + proc_fork(); }\n";
   if (count(twice, "wasm32-wasi") != 1) {
     return 37;
   }
-  let two_fns: string = "function f(): i32 { return proc_fork(); }\nfunction g(): i32 { return proc_fork(); }\n";
+  let two_fns = "function f(): i32 { return proc_fork(); }\nfunction g(): i32 { return proc_fork(); }\n";
   if (count(two_fns, "wasm32-wasi") != 2) {
     return 38;
   }
 
-  let shadow: string = "function main(): i32 { let env: i32 = 3; return env; }\n";
+  let shadow = "function main(): i32 { let env: i32 = 3; return env; }\n";
   if (count(shadow, "wasm32-wasi") != 0) {
     return 40;
   }
@@ -213,22 +213,22 @@ function main(): i32 {
     return 41;
   }
 
-  let ungated: string = "function main(): i32 { return __heap_bump_bytes(); }\n";
+  let ungated = "function main(): i32 { return __heap_bump_bytes(); }\n";
   if (count(ungated, "wasm32-wasi") != 0) {
     return 42;
   }
 
-  let in_lambda: string = "function main(): i32 { let f: fn(): i32 = (): i32 => { return proc_fork(); }; return f(); }\n";
+  let in_lambda = "function main(): i32 { let f: fn(): i32 = (): i32 => { return proc_fork(); }; return f(); }\n";
   if (count(in_lambda, "wasm32-wasi") != 1) {
     return 50;
   }
 
-  let nested: string = "function id(x: i32): i32 { return x; }\nfunction main(): i32 { if (id(proc_fork()) > 0) { return 1; } return 0; }\n";
+  let nested = "function id(x: i32): i32 { return x; }\nfunction main(): i32 { if (id(proc_fork()) > 0) { return 1; } return 0; }\n";
   if (count(nested, "wasm32-wasi") != 1) {
     return 51;
   }
 
-  let m: string = first_msg(forks, "wasm32-wasi");
+  let m = first_msg(forks, "wasm32-wasi");
   if (!util.contains(m, "target \"wasm32-wasi\" does not provide `proc`")) {
     return 60;
   }
@@ -242,7 +242,7 @@ function main(): i32 {
     return 63;
   }
 
-  let ms: string = first_msg(spawns, "wasm32-wasi");
+  let ms = first_msg(spawns, "wasm32-wasi");
   if (!util.contains(ms, "does not provide `subprocess`")) {
     return 64;
   }
@@ -254,7 +254,7 @@ function main(): i32 {
     return 70;
   }
 
-  let r1: string[] = reach_of(forks);
+  let r1 = reach_of(forks);
   if (r1.len() != 1 || r1[0] != "proc") {
     return 71;
   }
@@ -266,7 +266,7 @@ function main(): i32 {
     + "    print(\"x\");\n"
     + "    return q + p;\n"
     + "}\n";
-  let r2: string[] = reach_of(many);
+  let r2 = reach_of(many);
   if (r2.len() != 3) {
     return 72;
   }

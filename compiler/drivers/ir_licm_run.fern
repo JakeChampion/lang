@@ -4,14 +4,14 @@ import "../irverifystack";
 import "../util";
 
 function render(ops: ir.Op[]): string {
-  let s: string = "";
-  let i: i32 = 0;
+  let s = "";
+  let i = 0;
   while (i < ops.len()) {
     if (i > 0) {
-      s = s + " ; ";
+      s += " ; ";
     }
-    s = s + ir.render_op(ops[i]);
-    i = i + 1;
+    s += ir.render_op(ops[i]);
+    i += 1;
   }
   return s;
 }
@@ -21,11 +21,11 @@ function show(r: ir.OptimizedOps): string {
 }
 
 function cat(a: ir.Op[], b: ir.Op[]): ir.Op[] {
-  let out: ir.Op[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
@@ -66,7 +66,7 @@ function same(a: ir.OptimizedOps, b: ir.OptimizedOps): boolean {
 }
 
 function stack_neutral(ops: ir.Op[]): i32 {
-  let r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
+  let r = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
   if (r.bail.len() > 0 || r.problems.len() > 0) {
     return 0;
   }
@@ -78,57 +78,57 @@ function problems(ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
 }
 
 function main(): i32 {
-  let out: string = "";
+  let out = "";
 
-  let scan: ir.Op[] = cat(while_loop([load(1), load(0), slen(), lt()], inc(1)), [load(1), ir.op_return()]);
-  let once: ir.OptimizedOps = ir.hoist_loop_invariants(scan, 3);
+  let scan = cat(while_loop([load(1), load(0), slen(), lt()], inc(1)), [load(1), ir.op_return()]);
+  let once = ir.hoist_loop_invariants(scan, 3);
   out = out + "licm_while_cond: " + show(once) + "\n";
 
-  let grow: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], inc(1)));
+  let grow = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], inc(1)));
   out = out + "licm_mutated_refused: " + show(ir.hoist_loop_invariants(grow, 3)) + "\n";
 
-  let total: ir.Op[] = while_loop([load(1), load(2), lt()], cat([load(3), load(0), slen(), add(), store(3)], inc(1)));
+  let total = while_loop([load(1), load(2), lt()], cat([load(3), load(0), slen(), add(), store(3)], inc(1)));
   out = out + "licm_body_refused: " + show(ir.hoist_loop_invariants(total, 4)) + "\n";
 
-  let twice: ir.OptimizedOps = ir.hoist_loop_invariants(once.ops, once.n_locals);
+  let twice = ir.hoist_loop_invariants(once.ops, once.n_locals);
   out = out + "licm_idempotent=" + util.i32_to_string(bool_i32(same(once, twice))) + "\n";
 
-  let two: ir.Op[] = while_loop([load(2), load(0), slen(), load(1), slen(), add(), lt()], inc(2));
-  let two_h: ir.OptimizedOps = ir.hoist_loop_invariants(two, 3);
+  let two = while_loop([load(2), load(0), slen(), load(1), slen(), add(), lt()], inc(2));
+  let two_h = ir.hoist_loop_invariants(two, 3);
   out = out + "licm_two_slots: " + show(two_h) + "\n";
   out = out + "licm_two_slots_stack_neutral=" + util.i32_to_string(stack_neutral(two_h.ops)) + "\n";
 
-  let dup: ir.Op[] = while_loop([load(1), load(0), slen(), load(0), slen(), add(), lt()], inc(1));
+  let dup = while_loop([load(1), load(0), slen(), load(0), slen(), add(), lt()], inc(1));
   out = out + "licm_same_operand_once: " + show(ir.hoist_loop_invariants(dup, 3)) + "\n";
 
   let sc_cond: ir.Op[] = [load(2), load(0), slen(), lt(), store(3), ir.op_block(0), load(3), ir.op_bin("not", 0, false), ir.op_brif(0), load(2), load(1), slen(), lt(), store(3), ir.op_end(), load(3)];
-  let sc: ir.Op[] = while_loop(sc_cond, inc(2));
-  let sc_h: ir.OptimizedOps = ir.hoist_loop_invariants(sc, 4);
+  let sc = while_loop(sc_cond, inc(2));
+  let sc_h = ir.hoist_loop_invariants(sc, 4);
   out = out + "licm_short_circuit: " + show(sc_h) + "\n";
   out = out + "licm_short_circuit_stack_neutral=" + util.i32_to_string(stack_neutral(sc_h.ops)) + "\n";
 
-  let tb: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), load(0), slen(), store(3), load(1), load(3), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
-  let tb_h: ir.OptimizedOps = ir.hoist_loop_invariants(tb, 4);
+  let tb = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), load(0), slen(), store(3), load(1), load(3), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
+  let tb_h = ir.hoist_loop_invariants(tb, 4);
   out = out + "licm_typed_block_header: " + show(tb_h) + "\n";
   out = out + "licm_typed_block_header_stack_neutral=" + util.i32_to_string(stack_neutral(tb_h.ops)) + "\n";
 
-  let tx: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), ir.op_const_i32(134), ir.op_exit(), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
+  let tx = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), ir.op_const_i32(134), ir.op_exit(), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
   out = out + "licm_exit_refused: " + show(ir.hoist_loop_invariants(tx, 3)) + "\n";
 
-  let inner: ir.Op[] = while_loop([load(3), load(1), slen(), lt()], inc(3));
-  let outer: ir.Op[] = while_loop([load(2), load(0), slen(), lt()], cat(inner, inc(2)));
+  let inner = while_loop([load(3), load(1), slen(), lt()], inc(3));
+  let outer = while_loop([load(2), load(0), slen(), lt()], cat(inner, inc(2)));
   out = out + "licm_nested: " + show(ir.hoist_loop_invariants(outer, 4)) + "\n";
 
-  let bytes_body: ir.Op[] = cat([load(2), load(0), ir.op_str_data(), load(1), ir.op_raw_load8(), add(), store(2)], inc(1));
-  let bytes: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], bytes_body);
-  let bytes_h: ir.OptimizedOps = ir.hoist_loop_invariants(bytes, 3);
+  let bytes_body = cat([load(2), load(0), ir.op_str_data(), load(1), ir.op_raw_load8(), add(), store(2)], inc(1));
+  let bytes = while_loop([load(1), load(0), slen(), lt()], bytes_body);
+  let bytes_h = ir.hoist_loop_invariants(bytes, 3);
   out = out + "licm_data_address: " + show(bytes_h) + "\n";
   out = out + "licm_data_address_stack_neutral=" + util.i32_to_string(stack_neutral(bytes_h.ops)) + "\n";
 
-  let bytes_n: ir.Op[] = while_loop([load(1), load(3), lt()], bytes_body);
+  let bytes_n = while_loop([load(1), load(3), lt()], bytes_body);
   out = out + "licm_data_unread_refused: " + show(ir.hoist_loop_invariants(bytes_n, 4)) + "\n";
 
-  let bytes_m: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], bytes_body));
+  let bytes_m = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], bytes_body));
   out = out + "licm_data_mutated_refused: " + show(ir.hoist_loop_invariants(bytes_m, 3)) + "\n";
 
   let open: ir.Op[] = [ir.op_block(0), ir.op_loop(0), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(1)];
@@ -137,41 +137,41 @@ function main(): i32 {
   let mask: ir.Op[] = [load(2), ir.op_const_i32(1), ir.op_bin("sub", 0, false), ir.op_int_cast("i32"), store(4)];
   let use_mask: ir.Op[] = [load(1), load(4), ir.op_bin("and", 0, false), store(3)];
   let pure_cond: ir.Op[] = [load(1), ir.op_const_i32(40), lt()];
-  let pure: ir.Op[] = while_loop(pure_cond, cat(cat(mask, use_mask), inc(1)));
-  let pure_h: ir.OptimizedOps = ir.hoist_loop_invariants(pure, 5);
+  let pure = while_loop(pure_cond, cat(cat(mask, use_mask), inc(1)));
+  let pure_h = ir.hoist_loop_invariants(pure, 5);
   out = out + "licm_pure: " + show(pure_h) + "\n";
   out = out + "licm_pure_stack_neutral=" + util.i32_to_string(stack_neutral(pure_h.ops)) + "\n";
 
-  let moving: ir.Op[] = while_loop(pure_cond, cat(cat(cat(mask, use_mask), [load(1), store(2)]), inc(1)));
+  let moving = while_loop(pure_cond, cat(cat(cat(mask, use_mask), [load(1), store(2)]), inc(1)));
   out = out + "licm_pure_operand_stored_refused: " + show(ir.hoist_loop_invariants(moving, 5)) + "\n";
 
-  let twice_set: ir.Op[] = cat([ir.op_const_i32(0), store(4)], pure);
+  let twice_set = cat([ir.op_const_i32(0), store(4)], pure);
   out = out + "licm_pure_target_twice_refused: " + show(ir.hoist_loop_invariants(twice_set, 5)) + "\n";
 
-  let early: ir.Op[] = while_loop(pure_cond, cat(cat(cat([load(4), store(3)], mask), use_mask), inc(1)));
+  let early = while_loop(pure_cond, cat(cat(cat([load(4), store(3)], mask), use_mask), inc(1)));
   out = out + "licm_pure_read_before_refused: " + show(ir.hoist_loop_invariants(early, 5)) + "\n";
 
   let shift: ir.Op[] = [load(4), ir.op_const_i32(3), ir.op_bin("shl", 0, false), store(5), load(5), store(3)];
-  let chain: ir.Op[] = while_loop(pure_cond, cat(cat(mask, shift), inc(1)));
-  let chain_h: ir.OptimizedOps = ir.hoist_loop_invariants(chain, 6);
+  let chain = while_loop(pure_cond, cat(cat(mask, shift), inc(1)));
+  let chain_h = ir.hoist_loop_invariants(chain, 6);
   out = out + "licm_pure_chain: " + show(chain_h) + "\n";
   out = out + "licm_pure_chain_stack_neutral=" + util.i32_to_string(stack_neutral(chain_h.ops)) + "\n";
 
-  let divide: ir.Op[] = while_loop(pure_cond, cat([load(2), ir.op_const_i32(3), ir.op_bin("div_s", 0, false), store(4), load(4), store(3)], inc(1)));
+  let divide = while_loop(pure_cond, cat([load(2), ir.op_const_i32(3), ir.op_bin("div_s", 0, false), store(4), load(4), store(3)], inc(1)));
   out = out + "licm_pure_divide_refused: " + show(ir.hoist_loop_invariants(divide, 5)) + "\n";
 
-  let inner_pure: ir.Op[] = while_loop([load(5), ir.op_const_i32(8), lt()], cat(cat(mask, use_mask), inc(5)));
-  let outer_pure: ir.Op[] = while_loop(pure_cond, cat(inner_pure, inc(1)));
+  let inner_pure = while_loop([load(5), ir.op_const_i32(8), lt()], cat(cat(mask, use_mask), inc(5)));
+  let outer_pure = while_loop(pure_cond, cat(inner_pure, inc(1)));
   out = out + "licm_pure_nested: " + show(ir.hoist_loop_invariants(outer_pure, 6)) + "\n";
 
   out = out + "licm_frame_grown: new=" + util.i32_to_string(problems(once.ops, 1, once.n_locals))
     + " old=" + util.i32_to_string(problems(once.ops, 1, 3)) + "\n";
 
-  let opt: ir.OptimizedOps = ir.optimize_ops(scan, 1, 3);
+  let opt = ir.optimize_ops(scan, 1, 3);
   out = out + "licm_in_optimize: " + show(opt) + "\n";
 
   write(out);
-  let again: ir.OptimizedOps = ir.optimize_ops(opt.ops, 1, opt.n_locals);
+  let again = ir.optimize_ops(opt.ops, 1, opt.n_locals);
   if (!same(opt, again)) {
     return 1;
   }

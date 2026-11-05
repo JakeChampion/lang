@@ -106,7 +106,7 @@ function scalar_expected(n: i32): i64 {
   }
   let step = 64;
   while (step * 8 <= n) {
-    step = step * 2;
+    step *= 2;
   }
   let rounded = ((n - 1) / step + 1) * step;
   return if (rounded > 65535) { 65535 as i64 } else { rounded as i64 };
@@ -125,7 +125,7 @@ pub function audit(limit: i32): void {
     let n = r.low;
     while (n <= r.high && n <= limit) {
       require(evaluate(expected, n) == scalar_expected(n), "exhaustive rounding");
-      n = n + 1;
+      n += 1;
     }
     next = r.high + 1;
   }

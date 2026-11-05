@@ -6,10 +6,10 @@ import "../checker";
 import "../interp";
 
 function run_pipeline(src: string): interp.Value {
-  let toks: lexer.Token[] = lexer.tokenize(src);
-  let mod: parser.Module = parser.parse_module(toks);
-  let folded: parser.Module = constfold.fold_module(mod);
-  let mt: checker.ModuleTypes = checker.check_module(folded);
+  let toks = lexer.tokenize(src);
+  let mod = parser.parse_module(toks);
+  let folded = constfold.fold_module(mod);
+  let mt = checker.check_module(folded);
   if (!mt.all_well_typed) {
     return interp.VErr { msg: "pipeline: program does not type-check", abort: false };
   }
@@ -19,7 +19,7 @@ function run_pipeline(src: string): interp.Value {
 function main(): i32 {
   let src: string = "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); }"
     + " function main(): i32 { let c = 2 + 3; return fact(c); }";
-  let r1: interp.Value = run_pipeline(src);
+  let r1 = run_pipeline(src);
   match (r1) {
     interp.VInt(i) => {
       if (i.v != 120) {
@@ -34,9 +34,9 @@ function main(): i32 {
     }
   }
 
-  let toks2: lexer.Token[] = lexer.tokenize(src);
-  let mod2: parser.Module = parser.parse_module(toks2);
-  let folded2: parser.Module = constfold.fold_module(mod2);
+  let toks2 = lexer.tokenize(src);
+  let mod2 = parser.parse_module(toks2);
+  let folded2 = constfold.fold_module(mod2);
   if (folded2.funcs.len() != 2) {
     return 20;
   }
@@ -58,8 +58,8 @@ function main(): i32 {
     }
   }
 
-  let bad: string = "function f(): i32 { return \"oops\"; } function main(): i32 { return f() + 1; }";
-  let r3: interp.Value = run_pipeline(bad);
+  let bad = "function f(): i32 { return \"oops\"; } function main(): i32 { return f() + 1; }";
+  let r3 = run_pipeline(bad);
   match (r3) {
     interp.VErr(_) => {},
     _ => {
@@ -72,7 +72,7 @@ function main(): i32 {
     + " let i = 0; let s = 0;"
     + " while (i < a.len()) { s = s + a[i]; i = i + 1; }"
     + " return s; }";
-  let r4: interp.Value = run_pipeline(arr_src);
+  let r4 = run_pipeline(arr_src);
   match (r4) {
     interp.VInt(i) => {
       if (i.v != 24) {
@@ -84,8 +84,8 @@ function main(): i32 {
     }
   }
 
-  let top_src: string = "let x = 7; let y = 11; return x + y;";
-  let r5: interp.Value = run_pipeline(top_src);
+  let top_src = "let x = 7; let y = 11; return x + y;";
+  let r5 = run_pipeline(top_src);
   match (r5) {
     interp.VInt(i) => {
       if (i.v != 18) {

@@ -79,8 +79,8 @@ function phi(c: Context, op: ssa.SInst, preds: i32[], block: i32): Context {
     return failed(c, "unsupported containment phi");
   }
   let out = c;
-  let parents: i32 = 0;
-  let i: i32 = 0;
+  let parents = 0;
+  let i = 0;
   while (i < op.args.len()) {
     let arg = op.args[i];
     if (arg < 0 || arg >= out.values.len() || out.values[arg].kind < 0) {
@@ -92,13 +92,13 @@ function phi(c: Context, op: ssa.SInst, preds: i32[], block: i32): Context {
     }
     out = equal(out, path, out.values[arg].available, 1, "unavailable physical operand");
     if (out.values[arg].kind == 1) {
-      parents = parents + 1;
+      parents += 1;
     } else if (out.values[arg].kind != 0) {
       return failed(out, "unsupported containment phi");
     }
-    i = i + 1;
+    i += 1;
   }
-  let number: i32 = 0;
+  let number = 0;
   let zero = guard.constant(out.arena, 0);
   out = Context { ...out, arena: zero.arena };
   number = zero.id;
@@ -106,7 +106,7 @@ function phi(c: Context, op: ssa.SInst, preds: i32[], block: i32): Context {
   while (i < op.args.len() && out.error == "") {
     let v = out.values[op.args[i]];
     let path = edge_path(out, preds[i], block);
-    let part: i32 = v.number;
+    let part = v.number;
     if (v.kind == 1) {
       part = 1;
     } else if (parents > 0) {
@@ -115,9 +115,9 @@ function phi(c: Context, op: ssa.SInst, preds: i32[], block: i32): Context {
     out = calc(out, 4, path, part);
     out = calc(out, 0, number, out.temp);
     number = out.temp;
-    i = i + 1;
+    i += 1;
   }
-  let kind: i32 = 0;
+  let kind = 0;
   if (parents > 0) {
     kind = 3;
   }
@@ -131,10 +131,10 @@ function compare(c: Context, op: ssa.SInst): Context {
   let a = c.values[op.args[0]];
   let b = c.values[op.args[1]];
   let out = c;
-  let left: i32 = a.number;
-  let right: i32 = b.number;
+  let left = a.number;
+  let right = b.number;
   if (a.kind == 3 && b.kind == 0 || a.kind == 0 && b.kind == 3) {
-    let scalar: i32 = b.number;
+    let scalar = b.number;
     if (a.kind == 0) {
       scalar = a.number;
     }
@@ -168,8 +168,8 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
   if (out.error != "") {
     return out;
   }
-  let kind: i32 = 0;
-  let number: i32 = 0;
+  let kind = 0;
+  let number = 0;
   if (op.kind_tag == 6 && op.imm == 0 && op.args.len() == 0) {
     kind = 1;
   } else if (op.kind_tag == 1 && op.args.len() == 0) {
@@ -227,10 +227,10 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
     } else if (op.str == "__fern_rc_dec" && subject == 1) {
       kind = -1;
       out = equal(out, out.state.path, out.unique, 1, "freeing a shared parent");
-      let k: i32 = 0;
+      let k = 0;
       while (k < out.state.rest.len()) {
         out = equal(out, out.state.path, out.state.rest[k], 0, "sibling slot left in a freed parent");
-        k = k + 1;
+        k += 1;
       }
       out = calc(out, 4, out.state.path, out.state.slot);
       let moved = out.temp;
@@ -248,12 +248,12 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
       out = calc(out, 4, dropped, out.state.slot);
       out = calc(out, 1, out.state.slot, out.temp);
       out = Context { ...out, state: State { ...out.state, slot: out.temp } };
-      let k: i32 = 0;
+      let k = 0;
       while (k < out.state.rest.len()) {
         out = equal(out, dropped, out.state.rest[k], 1, "sibling released twice");
         out = calc(out, 1, out.state.rest[k], dropped);
         out = with_rest(out, k, out.temp);
-        k = k + 1;
+        k += 1;
       }
     } else {
       return failed(out, "unsupported containment call");
@@ -268,12 +268,12 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
 }
 
 function at(f: ssa.SFunc, id: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   for b in f.blocks {
     if (b.id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -283,16 +283,16 @@ function edge(t: ssa.STerm, id: i32): boolean {
 }
 
 function input_error(f: ssa.SFunc): string {
-  let count: i32 = 0;
+  let count = 0;
   for b in f.blocks {
-    count = count + b.insts.len();
+    count += b.insts.len();
   }
   if (f.nparams != 1 || f.takes_env || f.nvals < 1 || f.nvals > count || at(f, f.entry) < 0) {
     return "invalid extraction boundary";
   }
   let ids: i32[] = [];
   let definitions: i32[] = [];
-  let parameters: i32 = 0;
+  let parameters = 0;
   for b in f.blocks {
     if (b.id < 0 || util.index_of_i32(ids, b.id) >= 0) {
       return "invalid block identity";
@@ -307,7 +307,7 @@ function input_error(f: ssa.SFunc): string {
       }
       definitions = definitions.append(op.result);
       if (op.kind_tag == 6) {
-        parameters = parameters + 1;
+        parameters += 1;
         if (b.id != f.entry) {
           return "non-entry parameter";
         }
@@ -359,12 +359,12 @@ function merged(c: Context, old: State, path: i32): Context {
   out = calc(out, 0, old.slot, out.temp);
   let slot = out.temp;
   let rest: i32[] = [];
-  let k: i32 = 0;
+  let k = 0;
   while (k < s.rest.len()) {
     out = calc(out, 4, path, s.rest[k]);
     out = calc(out, 0, old.rest[k], out.temp);
     rest = rest.append(out.temp);
-    k = k + 1;
+    k += 1;
   }
   out = calc(out, 0, old.path, path);
   let joined = out.temp;
@@ -395,10 +395,10 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
   let one = guard.constant(zero.arena, 1);
   let unique: guard.Built = match (guard.predicate(one.arena, 0)) { Ok(value) => value, Err(error) => { return helper.Proof { ok: false, function_name: f.name, message: error.message }; } };
   let values: Value[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < f.nvals) {
     values = values.append(Value { kind: -1, number: 0, available: 0 });
-    i = i + 1;
+    i += 1;
   }
   let others: i32[] = [];
   let none: i32[] = [];
@@ -424,7 +424,7 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
   let c = Context { arena: unique.arena, values: values, state: empty, unique: unique.id, temp: 0, error: "", others: others, edges: [] };
   let remaining = f.blocks.len();
   while (remaining > 0 && c.error == "") {
-    let chosen: i32 = -1;
+    let chosen = -1;
     i = 0;
     for b in f.blocks {
       let ready = !done[i] && (b.id == f.entry || b.preds.len() > 0);
@@ -436,7 +436,7 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
       if (ready && chosen < 0) {
         chosen = i;
       }
-      i = i + 1;
+      i += 1;
     }
     if (chosen < 0) {
       c = failed(c, "unsupported containment cycle or unreachable block");
@@ -487,11 +487,11 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
             incoming = incoming.with(ti, c.state);
             c = Context { ...c, state: state };
           }
-          i = i + 1;
+          i += 1;
         }
       }
       done = done.with(chosen, true);
-      remaining = remaining - 1;
+      remaining -= 1;
     }
   }
   let message = c.error;

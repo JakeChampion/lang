@@ -28,7 +28,7 @@ function check(output: string, symbol: string, expected: u8[], group: string): v
   let at = 0;
   for c in expected {
     require(literal.bytes[at] == c, group + " byte " + at.to_string());
-    at = at + 1;
+    at += 1;
   }
 }
 
@@ -48,9 +48,9 @@ function octets(): void {
   while (n < 256) {
     let escaped = octal(n);
     check(fixture(".S0: .ascii \"" + escaped + "\""), ".S0", [n as u8], "octet " + n.to_string());
-    combined = combined + escaped;
+    combined += escaped;
     expected = expected.append(n as u8);
-    n = n + 1;
+    n += 1;
   }
   check(fixture(".S0: .ascii \"" + combined + "\""), ".S0", expected, "all octets");
   check(fixture(".S0: .ascii \"\\0000\\3777\""), ".S0", [0 as u8, b'0', 255 as u8, b'7'], "bounded octal width");
@@ -63,9 +63,9 @@ function spelling(): void {
   let n = 32;
   while (n < 127) {
     if (n != 34 && n != 92) {
-      printable = printable + string_from_bytes_unchecked([n as u8]);
+      printable += string_from_bytes_unchecked([n as u8]);
     }
-    n = n + 1;
+    n += 1;
   }
   check(fixture(".S0: .ascii \"" + printable + "\""), ".S0", bytes(printable), "printable ASCII including syntax characters");
   for arg in ["\"\\0\"", "\"\\00\"", "\"\\400\"", "\"\\777\"", "\"\\078\"", "\"\\x41\"", "\"\\u0041\"", "\"\\a\"", "\"\\b\"", "\"\\f\"", "\"\\v\"", "\"\\q\"", "\"\\'\"", "\"x\" \"y\"", "\"x\",\"y\"", "\"x\"#tail", "\"x\";ret", "\"unterminated", "plain", "\"é\""] {

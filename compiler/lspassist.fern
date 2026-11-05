@@ -30,16 +30,16 @@ const CI_CONSTANT: i32 = 21;
 const CI_STRUCT: i32 = 22;
 
 pub function completion(p: lspquery.Program, line: i32, col: i32): Item[] {
-  let v: lspquery.View = lspquery.view_of(p);
-  let m: i32 = util.pos_file_index(line);
-  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
-  let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
-  let dot: i32 = member_dot(toks, line, col);
+  let v = lspquery.view_of(p);
+  let m = util.pos_file_index(line);
+  let toks = lspquery.module_toks(p, m);
+  let quals = lspquery.quals_of(v, m);
+  let dot = member_dot(toks, line, col);
   if (dot >= 0) {
     return sorted(written_items(quals, members(v.types, toks, quals, m, dot)));
   }
   let items: Item[] = [];
-  let f: i32 = lspquery.enclosing(v.types.mod, toks, m, line, col);
+  let f = lspquery.enclosing(v.types.mod, toks, m, line, col);
   if (f >= 0) {
     items = bound_items(bound_in_func(v.types, v.types.mod.funcs[f]));
   }
@@ -106,7 +106,7 @@ function offered_struct(sd: parser.StructDecl): boolean {
 }
 
 function struct_item(sd: parser.StructDecl, prefix: string): Item {
-  let shown: string = lspquery.unprefixed(sd.name, prefix);
+  let shown = lspquery.unprefixed(sd.name, prefix);
   return Item { label: shown, kind: CI_STRUCT, detail: "struct " + shown + lspquery.type_params(sd.type_params) };
 }
 
@@ -121,8 +121,8 @@ function func_item(s: checker.Scope, name: string, shown: string): Item {
 }
 
 function enum_items(s: checker.Scope, name: string, variants: string[], own: string, own acc: Item[]): Item[] {
-  let shown: string = lspquery.unprefixed(name, own);
-  let module: string = checker.union_module(s, name);
+  let shown = lspquery.unprefixed(name, own);
+  let module = checker.union_module(s, name);
   acc = acc.append(Item { label: shown, kind: CI_ENUM, detail: "enum " + shown });
   for vn in variants {
     acc = acc.append(Item { label: lspquery.unprefixed(vn, module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, name) });
@@ -139,21 +139,21 @@ function type_text(t: typeinfo.Type): string {
 }
 
 function member_dot(toks: lspquery.Tok[], line: i32, col: i32): i32 {
-  let i: i32 = lspquery.after(toks, line, col) - 1;
+  let i = lspquery.after(toks, line, col) - 1;
   if (i >= 0 && toks[i].ident && toks[i].line == line && col <= toks[i].col + toks[i].text.len()) {
-    i = i - 1;
+    i -= 1;
   }
   if (i >= 1 && !toks[i].ident && toks[i].text == ".") {
     return i;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, m: i32, dot: i32): Item[] {
-  let s: checker.Scope = checker.module_scope(v);
-  let recv: lspquery.Tok = toks[dot - 1];
+  let s = checker.module_scope(v);
+  let recv = toks[dot - 1];
   if (lspquery.names_something(recv, quals) && !lspquery.punct_before(toks, dot - 1, ".")) {
-    let a: i32 = util.index_of_str(quals.aliases, recv.text);
+    let a = util.index_of_str(quals.aliases, recv.text);
     if (a >= 0) {
       return export_items(s, v.mod, quals.prefixes[a]);
     }
@@ -177,7 +177,7 @@ function own_first(own: string, name: string): string[] {
 
 function export_items(s: checker.Scope, mod: parser.Module, prefix: string): Item[] {
   let out: Item[] = [];
-  let head: string = prefix + "__";
+  let head = prefix + "__";
   for fd in mod.funcs {
     if (exported(fd.is_pub, fd.name, head) && offered_func(fd, lspquery.unprefixed(fd.name, prefix))) {
       out = out.append(func_item(s, fd.name, lspquery.unprefixed(fd.name, prefix)));
@@ -209,24 +209,24 @@ function variant_items(s: checker.Scope, u: checker.UnionSig): Item[] {
 }
 
 function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: i32): Item[] {
-  let d: lspquery.Tok = toks[dot];
-  let f: i32 = lspquery.enclosing(v.mod, toks, m, d.line, d.col);
+  let d = toks[dot];
+  let f = lspquery.enclosing(v.mod, toks, m, d.line, d.col);
   let out: Item[] = [];
   if (f < 0) {
     return out;
   }
-  let fd: parser.FuncDecl = v.mod.funcs[f];
+  let fd = v.mod.funcs[f];
   for st in fd.body {
     for fa in astwalk.fold_stmt_nodes(st, [], skip_stmt, collect_access, astwalk.descend_all) {
       if (fa.line == d.line && fa.col == d.col) {
-        let site: lspquery.Site = lspquery.access_site(fa);
-        let s: checker.Scope = lspquery.scope_at(v, fd, site);
+        let site = lspquery.access_site(fa);
+        let s = lspquery.scope_at(v, fd, site);
         return type_members(s, checker.expr_type(fa.obj, s));
       }
     }
   }
-  let recv: lspquery.Tok = toks[dot - 1];
-  let t: typeinfo.Type = bound_type(bound_in_func(v, fd), recv, d);
+  let recv = toks[dot - 1];
+  let t = bound_type(bound_in_func(v, fd), recv, d);
   if (recv.ident && known(t)) {
     return type_members(checker.func_scope(v, fd), t);
   }
@@ -258,17 +258,17 @@ function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
   let out: Item[] = [];
   if let typeinfo.TypeStruct(st) = t {
     if let Some(sig) = checker.struct_sig(s, st.name) {
-      let i: i32 = 0;
+      let i = 0;
       while (i < sig.field_names.len()) {
         out = out.append(Item { label: sig.field_names[i], kind: CI_FIELD, detail: lspquery.label(sig.field_types[i], sig.field_type_names[i]) });
-        i = i + 1;
+        i += 1;
       }
     }
   }
   if let typeinfo.TypeArray(a) = t {
     return array_members(s, a, out);
   }
-  let recv: string = checker.receiver_key(t);
+  let recv = checker.receiver_key(t);
   if (recv.len() == 0) {
     return out;
   }
@@ -296,15 +296,15 @@ function method_item(name: string, parts: Option[lspquery.Parts]): Item {
 struct Bound { name: string, t: typeinfo.Type, param: boolean, let_line: i32, let_col: i32, annotated: boolean }
 
 function bound_in_func(v: checker.QueryView, fd: parser.FuncDecl): Bound[] {
-  let s: checker.Scope = checker.func_scope(v, fd);
+  let s = checker.func_scope(v, fd);
   return bound_in(fd.body, s, added(0, s, true, 0, 0, true, []));
 }
 
 function added(from: i32, s: checker.Scope, param: boolean, line: i32, col: i32, annotated: boolean, own acc: Bound[]): Bound[] {
-  let i: i32 = from;
+  let i = from;
   while (i < s.names.len()) {
     acc = acc.append(Bound { name: lexical.source_name(s.names[i]), t: s.types[i], param: param, let_line: line, let_col: col, annotated: annotated });
-    i = i + 1;
+    i += 1;
   }
   return acc;
 }
@@ -312,7 +312,7 @@ function added(from: i32, s: checker.Scope, param: boolean, line: i32, col: i32,
 function bound_in(stmts: ast.Stmt[], s: checker.Scope, own acc: Bound[]): Bound[] {
   for st in stmts {
     acc = bound_in_stmt(st, s, acc);
-    let next: checker.Scope = checker.bind_stmt(st, s);
+    let next = checker.bind_stmt(st, s);
     if let ast.StmtVar(vr) = st {
       acc = added(s.names.len(), next, false, vr.line, vr.col, vr.type_name.len() > 0, acc);
     } else {
@@ -332,7 +332,7 @@ function bound_in_stmt(st: ast.Stmt, s: checker.Scope, own acc: Bound[]): Bound[
       return bound_in(w.body, s, bound_in_expr(w.cond, s, acc));
     },
     ast.StmtFor(fo) => {
-      let inner: checker.Scope = checker.for_body_scope(fo, s);
+      let inner = checker.for_body_scope(fo, s);
       return bound_in(fo.body, inner, added(s.names.len(), inner, false, 0, 0, true, bound_in_expr(fo.iter, s, acc)));
     },
     ast.StmtMatch(m) => {
@@ -361,9 +361,9 @@ function bound_in_stmt(st: ast.Stmt, s: checker.Scope, own acc: Bound[]): Bound[
 }
 
 function bound_in_arms(m: ast.StmtMatch, s: checker.Scope, own acc: Bound[]): Bound[] {
-  let whole: typeinfo.Type = checker.expr_type(m.scrutinee, s);
+  let whole = checker.expr_type(m.scrutinee, s);
   for arm in m.arms {
-    let a: checker.Scope = checker.arm_scope(arm, s, whole);
+    let a = checker.arm_scope(arm, s, whole);
     acc = added(s.names.len(), a, false, 0, 0, true, acc);
     if (arm.has_guard) {
       acc = bound_in_expr(arm.guard, a, acc);
@@ -375,7 +375,7 @@ function bound_in_arms(m: ast.StmtMatch, s: checker.Scope, own acc: Bound[]): Bo
 
 function bound_in_expr(e: ast.Expr, s: checker.Scope, own acc: Bound[]): Bound[] {
   for lm in lspquery.lambdas(e) {
-    let inner: checker.Scope = checker.lambda_body_scope(lm, s);
+    let inner = checker.lambda_body_scope(lm, s);
     acc = bound_in(lm.body, inner, added(s.names.len(), inner, true, 0, 0, true, acc));
   }
   return acc;
@@ -384,41 +384,41 @@ function bound_in_expr(e: ast.Expr, s: checker.Scope, own acc: Bound[]): Bound[]
 pub struct Signature { label: string, starts: i32[], ends: i32[], active: i32 }
 
 pub function signature_help(p: lspquery.Program, line: i32, col: i32): Option[Signature] {
-  let v: lspquery.View = lspquery.view_of(p);
-  let m: i32 = util.pos_file_index(line);
-  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
-  let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
+  let v = lspquery.view_of(p);
+  let m = util.pos_file_index(line);
+  let toks = lspquery.module_toks(p, m);
+  let quals = lspquery.quals_of(v, m);
   let (callee, commas) = call_at(toks, line, col);
   if (callee < 0 || !lspquery.names_something(toks[callee], quals)) {
     return None;
   }
   let target: CalleeParts = match (callee_parts(v.types, toks, quals, callee)) { Some(value) => value, None => { return None; } };
-  let parts: lspquery.Parts = target.parts;
+  let parts = target.parts;
   return Some(signature(target.name, lspquery.Parts { ...parts, params: written_list(quals, parts.params), ret: lspquery.written(quals, parts.ret) }, commas));
 }
 
 function call_at(toks: lspquery.Tok[], line: i32, col: i32): (i32, i32) {
-  let depth: i32 = 0;
-  let commas: i32 = 0;
-  let i: i32 = lspquery.after(toks, line, col) - 1;
+  let depth = 0;
+  let commas = 0;
+  let i = lspquery.after(toks, line, col) - 1;
   while (i >= 0) {
-    let t: string = punct(toks[i]);
+    let t = punct(toks[i]);
     if (closes(t)) {
-      depth = depth + 1;
+      depth += 1;
     } else if (opens(t)) {
       if (depth == 0) {
         if (t == "(" && i > 0) {
           return (i - 1, commas);
         }
-        return (0 - 1, 0);
+        return (-1, 0);
       }
-      depth = depth - 1;
+      depth -= 1;
     } else if (t == "," && depth == 0) {
-      commas = commas + 1;
+      commas += 1;
     }
-    i = i - 1;
+    i -= 1;
   }
-  return (0 - 1, 0);
+  return (-1, 0);
 }
 
 function opens(t: string): boolean {
@@ -439,7 +439,7 @@ function punct(t: lspquery.Tok): string {
 struct CalleeParts { name: string, parts: lspquery.Parts }
 
 function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, i: i32): Option[CalleeParts] {
-  let t: lspquery.Tok = toks[i];
+  let t = toks[i];
   let site: lspquery.Site = match (lspquery.site_at(toks, quals, t.line, t.col)) { Some(value) => value, None => { return None; } };
   match (lspquery.call_parts(v, site)) {
     Some(parts) => {
@@ -447,7 +447,7 @@ function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten
     },
     None => {}
   }
-  let s: checker.Scope = checker.module_scope(v);
+  let s = checker.module_scope(v);
   if (site.qual.len() > 0) {
     let Some(sig) = checker.func_sig(s, site.target) else {
       return None;
@@ -479,21 +479,21 @@ function written_list(quals: flatten.Qualifiers, labels: string[]): string[] {
 }
 
 function signature(name: string, parts: lspquery.Parts, commas: i32): Signature {
-  let label: string = "function " + name + "(";
+  let label = "function " + name + "(";
   let starts: i32[] = [];
   let ends: i32[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < parts.params.len()) {
     if (i > 0) {
-      label = label + ", ";
+      label += ", ";
     }
-    let shown: string = util.show_type_vars(parts.params[i]);
+    let shown = util.show_type_vars(parts.params[i]);
     starts = starts.append(label.len());
-    label = label + shown;
+    label += shown;
     ends = ends.append(label.len());
-    i = i + 1;
+    i += 1;
   }
-  let active: i32 = commas;
+  let active = commas;
   if (active >= parts.params.len()) {
     active = parts.params.len() - 1;
   }
@@ -520,8 +520,8 @@ pub const SK_ENUM_MEMBER: i32 = 22;
 pub const SK_STRUCT: i32 = 23;
 
 pub function symbols(p: lspquery.Program, m: i32): Symbol[] {
-  let mod: parser.Module = lspquery.parsed_module(p, m);
-  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
+  let mod = lspquery.parsed_module(p, m);
+  let toks = lspquery.module_toks(p, m);
   return type_symbols(p, m, mod, toks, func_symbols(mod, toks));
 }
 
@@ -529,7 +529,7 @@ function func_symbols(mod: parser.Module, toks: lspquery.Tok[]): Symbol[] {
   let out: Symbol[] = [];
   for fd in mod.funcs {
     if (!fd.is_const && visible(fd.name)) {
-      let kind: i32 = SK_FUNCTION;
+      let kind = SK_FUNCTION;
       if (fd.receiver_type.len() > 0) {
         kind = SK_METHOD;
       }
@@ -559,12 +559,12 @@ function type_symbols(p: lspquery.Program, m: i32, mod: parser.Module, toks: lsp
 }
 
 function decl_symbol(toks: lspquery.Tok[], line: i32, col: i32, name: string, detail: string, kind: i32, statement: boolean): Symbol {
-  let start: i32 = lspquery.after(toks, line, col);
+  let start = lspquery.after(toks, line, col);
   if (start > 0 && toks[start - 1].text == "pub" && !toks[start - 1].ident) {
-    start = start - 1;
+    start -= 1;
   }
-  let at: i32 = lspquery.first_ident(toks, start, name);
-  let end: i32 = 0 - 1;
+  let at = lspquery.first_ident(toks, start, name);
+  let end: i32 = -1;
   if (statement) {
     end = statement_end(toks, start);
   } else {
@@ -573,7 +573,7 @@ function decl_symbol(toks: lspquery.Tok[], line: i32, col: i32, name: string, de
   if (end < 0) {
     end = statement_end(toks, start);
   }
-  let s: Symbol = Symbol { name: name, detail: detail, kind: kind, line: line, col: col, end_line: line, end_col: col + 1, name_line: line, name_col: col, children: [] };
+  let s = Symbol { name: name, detail: detail, kind: kind, line: line, col: col, end_line: line, end_col: col + 1, name_line: line, name_col: col, children: [] };
   if (start < toks.len()) {
     s = Symbol { ...s, line: toks[start].line, col: toks[start].col };
   }
@@ -594,33 +594,33 @@ function tok_len(t: lspquery.Tok): i32 {
 }
 
 function statement_end(toks: lspquery.Tok[], from: i32): i32 {
-  let depth: i32 = 0;
-  let i: i32 = from;
+  let depth = 0;
+  let i = from;
   while (i < toks.len()) {
-    let t: string = punct(toks[i]);
+    let t = punct(toks[i]);
     if (t == "(" || t == "[" || t == "{") {
-      depth = depth + 1;
+      depth += 1;
     } else if (t == ")" || t == "]" || t == "}") {
-      depth = depth - 1;
+      depth -= 1;
     } else if (t == ";" && depth == 0) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function member_symbol(toks: lspquery.Tok[], i: i32, name: string, detail: string, kind: i32): Symbol {
-  let t: lspquery.Tok = toks[i];
+  let t = toks[i];
   return Symbol { name: name, detail: detail, kind: kind, line: t.line, col: t.col, end_line: t.line, end_col: t.col + name.len(), name_line: t.line, name_col: t.col, children: [] };
 }
 
 function struct_symbol(toks: lspquery.Tok[], sd: parser.StructDecl): Symbol {
-  let s: Symbol = decl_symbol(toks, sd.line, sd.col, sd.name, "struct", SK_STRUCT, false);
-  let open: i32 = lspquery.after(toks, s.name_line, s.name_col);
+  let s = decl_symbol(toks, sd.line, sd.col, sd.name, "struct", SK_STRUCT, false);
+  let open = lspquery.after(toks, s.name_line, s.name_col);
   let fields: Symbol[] = [];
   for f in sd.fields {
-    let i: i32 = lspquery.field_tok(toks, open, f.name);
+    let i = lspquery.field_tok(toks, open, f.name);
     if (i >= 0) {
       fields = fields.append(member_symbol(toks, i, f.name, util.show_type_vars(f.type_name), SK_FIELD));
     }
@@ -629,11 +629,11 @@ function struct_symbol(toks: lspquery.Tok[], sd: parser.StructDecl): Symbol {
 }
 
 function enum_symbol(toks: lspquery.Tok[], ed: parser.EnumDecl): Symbol {
-  let s: Symbol = decl_symbol(toks, ed.line, ed.col, ed.name, "enum", SK_ENUM, false);
-  let from: i32 = lspquery.after(toks, s.name_line, s.name_col) + 1;
+  let s = decl_symbol(toks, ed.line, ed.col, ed.name, "enum", SK_ENUM, false);
+  let from = lspquery.after(toks, s.name_line, s.name_col) + 1;
   let variants: Symbol[] = [];
   for vn in ed.variant_names {
-    let i: i32 = variant_tok(toks, from, vn);
+    let i = variant_tok(toks, from, vn);
     if (i >= 0) {
       variants = variants.append(member_symbol(toks, i, vn, "", SK_ENUM_MEMBER));
     }
@@ -642,23 +642,23 @@ function enum_symbol(toks: lspquery.Tok[], ed: parser.EnumDecl): Symbol {
 }
 
 function variant_tok(toks: lspquery.Tok[], from: i32, name: string): i32 {
-  let depth: i32 = 0;
-  let i: i32 = from;
+  let depth = 0;
+  let i = from;
   while (i < toks.len()) {
-    let t: string = punct(toks[i]);
+    let t = punct(toks[i]);
     if (t == "(" || t == "{") {
-      depth = depth + 1;
+      depth += 1;
     } else if (t == ")" || t == "}") {
-      depth = depth - 1;
+      depth -= 1;
       if (depth <= 0) {
-        return 0 - 1;
+        return -1;
       }
     } else if (depth == 1 && toks[i].ident && toks[i].text == name) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
-  return 0 - 1;
+  return -1;
 }
 
 function decl_sig(fd: parser.FuncDecl): string {
@@ -666,7 +666,7 @@ function decl_sig(fd: parser.FuncDecl): string {
   for pd in fd.params {
     ps = ps.append(pd.type_name);
   }
-  let ret: string = fd.ret_type;
+  let ret = fd.ret_type;
   if (ret.len() == 0) {
     ret = "void";
   }
@@ -677,9 +677,9 @@ function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
   if (fd.ret_type.len() > 0) {
     return util.show_type_vars(fd.ret_type);
   }
-  let v: lspquery.View = lspquery.view_of(p);
-  let own: string = lspquery.quals_of(v, m).own;
-  let bundled: string = fd.name;
+  let v = lspquery.view_of(p);
+  let own = lspquery.quals_of(v, m).own;
+  let bundled = fd.name;
   if (own.len() > 0) {
     bundled = own + "__" + fd.name;
   }
@@ -692,13 +692,13 @@ function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
 pub struct Hint { line: i32, col: i32, label: string }
 
 pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] {
-  let v: lspquery.View = lspquery.view_of(p);
-  let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
-  let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
+  let v = lspquery.view_of(p);
+  let toks = lspquery.module_toks(p, m);
+  let quals = lspquery.quals_of(v, m);
   let out: Hint[] = [];
   for fd in v.types.mod.funcs {
     if (lspquery.declared_in(fd.line, m) && fd.line <= hi) {
-      let close: i32 = lspquery.body_end(toks, lspquery.after(toks, fd.line, fd.col));
+      let close = lspquery.body_end(toks, lspquery.after(toks, fd.line, fd.col));
       if (close >= 0 && toks[close].line >= lo) {
         out = func_hints(toks, quals, bound_in_func(v.types, fd), out);
       }
@@ -710,7 +710,7 @@ pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] 
 function func_hints(toks: lspquery.Tok[], quals: flatten.Qualifiers, bs: Bound[], own out: Hint[]): Hint[] {
   for b in bs {
     if (b.let_line > 0 && visible(b.name) && known(b.t)) {
-      let i: i32 = lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name);
+      let i = lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name);
       if (i >= 0 && (!b.annotated || i + 1 < toks.len() && toks[i + 1].text == "=") && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
         out = out.append(Hint { line: toks[i].line, col: toks[i].col + b.name.len(), label: ": " + lspquery.written(quals, type_text(b.t)) });
       }
@@ -739,31 +739,31 @@ function sorted(items: Item[]): Item[] {
   if (items.len() < 2) {
     return items;
   }
-  let mid: i32 = items.len() / 2;
+  let mid = items.len() / 2;
   return merged(sorted(part(items, 0, mid)), sorted(part(items, mid, items.len())));
 }
 
 function part(items: Item[], from: i32, to: i32): Item[] {
   let out: Item[] = [];
-  let i: i32 = from;
+  let i = from;
   while (i < to) {
     out = out.append(items[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function merged(a: Item[], b: Item[]): Item[] {
   let out: Item[] = [];
-  let i: i32 = 0;
-  let j: i32 = 0;
+  let i = 0;
+  let j = 0;
   while (i < a.len() || j < b.len()) {
     if (j >= b.len() || i < a.len() && !util.str_less(b[j].label, a[i].label)) {
       out = out.append(a[i]);
-      i = i + 1;
+      i += 1;
     } else {
       out = out.append(b[j]);
-      j = j + 1;
+      j += 1;
     }
   }
   return out;

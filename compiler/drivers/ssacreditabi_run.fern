@@ -14,11 +14,11 @@ function partial_sibling_controls(sub: ircore.Sub): void {
   partial_expect(sub, "partial_left", 1, false, "field differs from incoming", 198);
   let kept: semrecords.Record[] = [];
   let viewed: semrecords.Record[] = [];
-  let found: i32 = 0;
+  let found = 0;
   for record in sub.physical_records.list {
     if (semrecords.name_of(record.ty) == "Other") {
       viewed = viewed.append(semrecords.Record { ...record, views: true });
-      found = found + 1;
+      found += 1;
     } else {
       kept = kept.append(record);
       viewed = viewed.append(record);
@@ -69,14 +69,14 @@ function partial_metadata_controls(sub: ircore.Sub): void {
   partial_expect(ircore.Sub { ...sub, extra: [] }, "partial_left", 0, false, "physical binding", 193);
   let found: irtables.LowerResult[] = [];
   let changed: irtables.LowerResult[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for body in sub.bodies {
     if (body.name == "partial_left") {
       found = found.append(body);
       let ops: ir.Op[] = [];
       for op in body.ops {
         if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-          hits = hits + 1;
+          hits += 1;
         } else {
           ops = ops.append(op);
         }
@@ -96,11 +96,11 @@ function selected_schema_controls(sub: ircore.Sub): void {
   selected_expect(sub, "extract_left", 2, false, "selected child type differs", 150);
   let kept: semrecords.Record[] = [];
   let viewed: semrecords.Record[] = [];
-  let found: i32 = 0;
+  let found = 0;
   for record in sub.physical_records.list {
     if (semrecords.name_of(record.ty) == "Other") {
       viewed = viewed.append(semrecords.Record { ...record, views: true });
-      found = found + 1;
+      found += 1;
     } else {
       viewed = viewed.append(record);
       kept = kept.append(record);
@@ -113,13 +113,13 @@ function selected_schema_controls(sub: ircore.Sub): void {
 
 function selected_sibling_release_control(sub: ircore.Sub): void {
   let extra: irtables.LowerResult[] = [];
-  let releases: i32 = 0;
+  let releases = 0;
   for b in sub.extra {
     if (b.name == "__sem_drop_Parent") {
       let ops: ir.Op[] = [];
       for op in b.ops {
         if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
-          releases = releases + 1;
+          releases += 1;
           if (releases == 2) {
             ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
           } else {
@@ -140,29 +140,29 @@ function selected_sibling_release_control(sub: ircore.Sub): void {
 }
 
 function selected_body_controls(sub: ircore.Sub): void {
-  let mutation: i32 = 0;
+  let mutation = 0;
   while (mutation < 4) {
     let bodies: irtables.LowerResult[] = [];
-    let hits: i32 = 0;
+    let hits = 0;
     for b in sub.bodies {
       if (b.name == "extract_left") {
         let ops: ir.Op[] = [];
-        let i: i32 = 0;
+        let i = 0;
         for op in b.ops {
           if (mutation == 0 && i > 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && b.ops[i - 1].kind_tag == ir.kind_id("load_local") && b.ops[i - 1].i32_imm == 0) {
-            hits = hits + 1;
+            hits += 1;
           } else if (mutation == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-            hits = hits + 1;
+            hits += 1;
           } else if (mutation == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
             ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
-            hits = hits + 1;
+            hits += 1;
           } else if (mutation == 3 && op.kind_tag == ir.kind_id("struct_get") && hits == 0) {
             ops = ops.append(ir.Op { ...op, i32_imm: 1 });
-            hits = hits + 1;
+            hits += 1;
           } else {
             ops = ops.append(op);
           }
-          i = i + 1;
+          i += 1;
         }
         bodies = bodies.append(irtables.LowerResult { ...b, ops: ops });
       } else {
@@ -178,19 +178,19 @@ function selected_body_controls(sub: ircore.Sub): void {
       reason = "unsupported containment operation";
     }
     selected_expect(ircore.Sub { ...sub, bodies: bodies }, "extract_left", 0, false, reason, 143 + mutation);
-    mutation = mutation + 1;
+    mutation += 1;
   }
 }
 
 function caller_mutated_bodies(sub: ircore.Sub, name: string, mode: i32): irtables.LowerResult[] {
   let rows: irtables.LowerResult[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for body in sub.bodies {
     if (body.name == name) {
       let ops: ir.Op[] = [];
       for op in body.ops {
         if (op.kind_tag == ir.kind_id("return")) {
-          hits = hits + 1;
+          hits += 1;
           ops = caller_condition(ops, body, op, mode);
           ops = caller_invocation(ops, mode);
         }
@@ -223,7 +223,7 @@ function caller_invocation(ops: ir.Op[], mode: i32): ir.Op[] {
   } else {
     ops = ops.append(ir.op_const_i32(-2147483648));
   }
-  let arity: i32 = 2;
+  let arity = 2;
   if (mode == 10) {
     ops = ops.append(ir.op_const_i32(7));
     arity = 3;
@@ -254,7 +254,7 @@ function caller_condition(ops: ir.Op[], body: irtables.LowerResult, op: ir.Op, m
   } else if (mode == 3) {
     ops = ops.append(ir.op_load_local(1));
   } else {
-    let value: i32 = 1;
+    let value = 1;
     if (mode == 1) {
       value = 0;
     } else if (mode == 2) {
@@ -439,7 +439,7 @@ function source(mode: i32): string {
 
 function target_checks(target: string): void {
   let reasons = ["", "", "user finalizer", "user finalizer", "child is not a flat", "exactly the result child", "", "user finalizer", "", "user finalizer"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < 10) {
     let driven = semlower.driven(parser.parse_module(lexer.tokenize(source(mode))), target);
     expect(driven.sub, mode < 2 || mode == 6 || mode == 8, reasons[mode], 10 + mode);
@@ -485,7 +485,7 @@ function target_checks(target: string): void {
       expect(sub, true, "", 29);
       require(ircore.no_sub().physical_records.list.len() == 0 && ircore.no_sub().physical_finalizers.len() == 0, 30);
     }
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -533,7 +533,7 @@ function replacement_source(mode: i32): string {
 
 function replacement_checks(target: string): void {
   let reasons = ["", "user finalizer", "user finalizer", "child is not a flat", "exactly the incoming child", ""];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < 6) {
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(replacement_source(mode))), target).sub;
     expect_replace(sub, mode == 0 || mode == 5, reasons[mode], 100 + mode);
@@ -560,10 +560,10 @@ function replacement_checks(target: string): void {
         if (b.name == "replace") {
           bodies = bodies.append(b);
           let ops: ir.Op[] = [];
-          let removed: i32 = 0;
+          let removed = 0;
           for op in b.ops {
             if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
-              removed = removed + 1;
+              removed += 1;
             } else {
               ops = ops.append(op);
             }
@@ -579,7 +579,7 @@ function replacement_checks(target: string): void {
       expect_replace(ircore.Sub { ...sub, bodies: changed }, false, "unconsumed replacement credit", 118);
       expect_replace(sub, true, "proved fresh", 119);
     }
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -601,7 +601,7 @@ function selected_source(mode: i32): string {
     value = "Other { n: 8, a:8, b:8, c:8, d:8 }";
   }
   if (mode == 2) {
-    declarations = declarations + "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
+    declarations += "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
   }
   if (mode == 3) {
     declarations = "struct Other { n: string }\n";
@@ -615,7 +615,7 @@ function selected_source(mode: i32): string {
 }
 
 function selected_checks(target: string): void {
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < 4) {
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(selected_source(mode))), target).sub;
     let left_reason = "";
@@ -642,7 +642,7 @@ function selected_checks(target: string): void {
     if (mode == 1) {
       selected_schema_controls(sub);
     }
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -717,7 +717,7 @@ function partial_source(mode: i32): string {
     value = "Other { n: 8, a: 0, b: 0, c: 0, d: 0 }";
   }
   if (mode == 3) {
-    declarations = declarations + "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
+    declarations += "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
   }
   if (mode == 4) {
     declarations = "struct Other { n: string }\n";
@@ -743,19 +743,19 @@ function partial_source(mode: i32): string {
 
 function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): ircore.Sub {
   let bodies: irtables.LowerResult[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for body in sub.bodies {
     if (body.name == name) {
       let ops: ir.Op[] = [];
       for op in body.ops {
         if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
-          hits = hits + 1;
+          hits += 1;
           ops = ops.append(ir.op_store_local(body.n_locals));
           ops = ops.append(ir.op_load_local(0)).append(ir.op_const_i32(0)).append(ir.op_struct_set(field, 0));
           if (mode == 1) {
             ops = ops.append(ir.op_load_local(body.n_locals)).append(op).append(ir.op_drop());
           }
-          let index: i32 = 0;
+          let index = 0;
           if (mode == 2) {
             index = 2147483647;
           }
@@ -780,18 +780,18 @@ function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): irc
 
 function partial_checks(target: string): void {
   let reasons = ["", "", "", "sibling type or user finalizer", "sibling is not a flat", "nominal type or user finalizer", "nominal type or user finalizer", "exactly two child fields"];
-  let mode: i32 = 0;
+  let mode = 0;
   while (mode < 8) {
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(partial_source(mode))), target).sub;
     partial_expect(sub, "partial_left", 0, mode < 3, reasons[mode], 170 + mode);
     if (mode < 3) {
       partial_expect(sub, "partial_right", 1, true, "proved guarded", 180 + mode);
-      let field: i32 = 0;
+      let field = 0;
       for name in ["partial_left", "partial_right"] {
         partial_expect(partial_read(sub, name, field, 0), name, field, true, "proved guarded", 231);
         partial_expect(partial_read(sub, name, field, 1), name, field, false, "child used after final credit or anchor", 232);
         partial_expect(partial_read(sub, name, field, 2), name, field, false, "missing scalar child field layout", 233);
-        field = field + 1;
+        field += 1;
       }
     }
     if (mode == 0) {
@@ -800,7 +800,7 @@ function partial_checks(target: string): void {
     if (mode == 2) {
       partial_sibling_controls(sub);
     }
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -851,11 +851,11 @@ function assertion_checks(target: string): void {
   assertion_expect(ircore.Sub { ...sub, extra: sub.extra.append(b) }, "assertion", false, "assertion body", 222);
   assertion_expect(ircore.Sub { ...sub, bodies: [irtables.LowerResult { ...b, ok: false }], extra: [] }, "assertion", false, "assertion body", 223);
   let ops: ir.Op[] = [];
-  let hits: i32 = 0;
+  let hits = 0;
   for op in b.ops {
     if (op.kind_tag == ir.kind_id("exit")) {
       ops = ops.append(ir.Op { ...op, kind_tag: ir.kind_id("call_direct"), str: "unknown_effect", i32_imm: 1 });
-      hits = hits + 1;
+      hits += 1;
     } else {
       ops = ops.append(op);
     }
@@ -875,7 +875,7 @@ function caller_controls(target: string): void {
       name = "partial_right";
     }
     let reasons = ["proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "scalar call requires Boolean operand", "scalar call requires Boolean and narrowed i32 operands", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "ambiguous scalar call binding", "unsupported reuse operation", "invalid scalar call arguments or flags", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement"];
-    let mode: i32 = 0;
+    let mode = 0;
     while (mode < reasons.len()) {
       let rows = caller_mutated_bodies(sub, name, mode);
       let names = ["assertion"];
@@ -899,7 +899,7 @@ function caller_controls(target: string): void {
         print(p.function_name + ": " + p.message);
         exit(191 + mode);
       }
-      mode = mode + 1;
+      mode += 1;
     }
     let original = abi.check_partial(sub, name, "__sem_drop_Parent", "__sem_release_Parent", field);
     require(original.ok, 205);
@@ -955,7 +955,7 @@ function producer_source(mode: i32): string {
 
 function producer_checks(target: string): void {
   let reasons = ["", "", "", "unsupported producer result or finalizer", "unsupported producer child or finalizer", "producer child is not flat", "unsupported producer layout or ABI arity"];
-  let mode: i32 = 0;
+  let mode = 0;
   for why in reasons {
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(producer_source(mode))), target).sub;
     producer_expect(sub, "parent", if (mode < 3) { 3 } else { 0 }, why, 210 + mode);
@@ -1010,7 +1010,7 @@ function producer_checks(target: string): void {
       producer_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, name: "renamed_producer" }], bodies: [irtables.LowerResult { ...body, name: "renamed_producer" }], extra: [] }, "renamed_producer", 3, "", 232);
       producer_expect(sub, "parent", 3, "", 233);
     }
-    mode = mode + 1;
+    mode += 1;
   }
 }
 
@@ -1036,13 +1036,13 @@ function origin_caller_checks(target: string): void {
     origin_caller_expect(sub, "select_parent", "");
     origin_schema_controls(sub);
     let reasons = ["missing or ambiguous origin caller ABI", "missing or ambiguous origin caller ABI", "origin caller requires scalar and two consuming parameters", "unsupported origin caller types or finalizers", "unsupported origin caller types or finalizers", "missing or ambiguous origin callee ABI", "missing or ambiguous origin callee ABI", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "missing origin caller schema", "unsupported origin caller layout", "origin caller result field differs from child", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: unproduced producer body", "missing or ambiguous origin callee ABI", "origin callee proof refused: unsupported allocation producer effect", ""];
-    let mode: i32 = 0;
+    let mode = 0;
     for why in reasons {
       let contracts = origin_mutated_contracts(sub, mode);
       let records = origin_mutated_records(sub, mode);
       let rows = origin_mutated_bodies(sub, mode);
       origin_caller_expect(ircore.Sub { ...sub, physical_contracts: contracts, physical_records: semrecords.records_of(records), bodies: rows, extra: [] }, if (mode == 21) { "renamed_wrapper" } else { "select_parent" }, why);
-      mode = mode + 1;
+      mode += 1;
     }
     origin_caller_expect(sub, "select_parent", "");
   }

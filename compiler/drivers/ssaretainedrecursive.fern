@@ -27,7 +27,7 @@ function find(rows: ssaprepare.Emitted[], name: string): i32 {
       require(at < 0, 201);
       at = i;
     }
-    i = i + 1;
+    i += 1;
   }
   require(at >= 0, 202);
   return at;
@@ -48,7 +48,7 @@ function loaded_link(row: ssaprepare.Emitted): void {
           }
         }
         require(joined, 204);
-        calls = calls + 1;
+        calls += 1;
       }
     }
   }
@@ -64,7 +64,7 @@ function refusals(out: ssaprepare.Output, name: string): void {
     if let Some(helper) = row.body.selected.origin.helper {
       require(semtypes.equal(helper.ty, typeinfo.TypeUnion { name: name, args: [] }), 215);
       require(helper.children_only == (row.label_name == drop.label_name), 216);
-      described = described + 1;
+      described += 1;
     }
   }
   require(described == 2, 217);

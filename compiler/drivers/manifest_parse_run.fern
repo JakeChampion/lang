@@ -11,9 +11,9 @@ function str_after(a: string, b: string): boolean {
 }
 
 function data(m: fern_toml.Manifest): string {
-  let out: string = "ok " + docsummary.quote(m.name) + "|" + docsummary.quote(m.lib) + "|" + docsummary.quote(m.index);
+  let out = "ok " + docsummary.quote(m.name) + "|" + docsummary.quote(m.lib) + "|" + docsummary.quote(m.index);
   for d in util.sorted_by(m.deps, dep_after) {
-    let governed: string = "false";
+    let governed = "false";
     if (d.governed) {
       governed = "true";
     }
@@ -28,10 +28,10 @@ function data(m: fern_toml.Manifest): string {
     out = out + "|member " + docsummary.quote(member);
   }
   let excludes: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < m.excl_pkg.len()) {
     excludes = excludes.append(docsummary.quote(m.excl_pkg[i]) + "=" + docsummary.quote(m.excl_ver[i]));
-    i = i + 1;
+    i += 1;
   }
   for row in util.sorted_by(excludes, str_after) {
     out = out + "|exclude " + row;
@@ -42,7 +42,7 @@ function data(m: fern_toml.Manifest): string {
 function verdict(path: string): string {
   match (read_file(path)) {
     Ok(src) => {
-      let m: fern_toml.Manifest = fern_toml.parse(src);
+      let m = fern_toml.parse(src);
       if (m.err.len() > 0) {
         return "err " + fern_toml.diagnostic("", m);
       }
@@ -56,12 +56,12 @@ function verdict(path: string): string {
 }
 
 function main(): i32 {
-  let av: string[] = args();
-  let out: string = "";
-  let i: i32 = 1;
+  let av = args();
+  let out = "";
+  let i = 1;
   while (i < av.len()) {
     out = out + verdict(av[i]) + "\n";
-    i = i + 1;
+    i += 1;
   }
   write(out);
   return 0;

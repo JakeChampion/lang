@@ -235,6 +235,10 @@ Keep the annotation in these cases:
 - The local must stay `i32` and a later use can widen it. An integer
   literal settles from its uses: after `let b = 0;`, the shift `v >> b` with
   an `i64` value makes `b` an `i64`.
+- The local holds a variant, and the code uses it as its sum type:
+  `let e: ast.Expr = ast.ExprIdent { ... };`. Without the annotation, the
+  local has the variant type, and a later assignment of another variant is
+  an error.
 - The initializer is an empty collection: `let out: string[] = [];`.
 - The initializer is `None`, `Ok(…)` or `Err(…)` and the other half of the
   type is not clear.

@@ -18,7 +18,7 @@ function count_problems(ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
 }
 
 function first_msg(ops: ir.Op[], n_params: i32, n_locals: i32): string {
-  let ps: irverify.Problem[] = irverify.verify_fn("f", ops, n_params, n_locals, no_sigs());
+  let ps = irverify.verify_fn("f", ops, n_params, n_locals, no_sigs());
   if (ps.len() == 0) {
     return "";
   }
@@ -30,7 +30,7 @@ function sp_count(ops: ir.Op[]): i32 {
 }
 
 function sp_msg(ops: ir.Op[]): string {
-  let r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
+  let r = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
   if (r.problems.len() == 0) {
     return "";
   }
@@ -159,7 +159,7 @@ function stack_checks(): i32 {
     return 106;
   }
 
-  let cov: irverifystack.Coverage = irverifystack.coverage_new();
+  let cov = irverifystack.coverage_new();
   cov = irverifystack.coverage_add(cov, "a", "");
   cov = irverifystack.coverage_add(cov, "b", "unmodelled op load");
   cov = irverifystack.coverage_add(cov, "c", "unmodelled op load");
@@ -187,7 +187,7 @@ function fip_problems(kw: string, allowance: i32, ops: ir.Op[]): i32 {
 }
 
 function fip_msg(kw: string, allowance: i32, ops: ir.Op[]): string {
-  let r: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim(kw, allowance), ops);
+  let r = irfipverify.verify_fip_fn(fip_claim(kw, allowance), ops);
   if (r.problems.len() == 0) {
     return "";
   }
@@ -195,7 +195,7 @@ function fip_msg(kw: string, allowance: i32, ops: ir.Op[]): string {
 }
 
 function fip_checks(): i32 {
-  let fresh_struct: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_struct_make("P", 2, 0 - 1)];
+  let fresh_struct: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_struct_make("P", 2, -1)];
   let paired_struct: ir.Op[] = [ir.op_const_i32(0), ir.op_const_i32(3), ir.op_call_direct("__fern_alloc_reuse", 2)];
 
   if (fip_problems("fbip", 0, fresh_struct) != 1) {
@@ -218,7 +218,7 @@ function fip_checks(): i32 {
   if (fip_problems("fbip", 0, paired_struct) != 0) {
     return 125;
   }
-  let pr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), paired_struct);
+  let pr = irfipverify.verify_fip_fn(fip_claim("fbip", 0), paired_struct);
   if (pr.paired != 1 || pr.fresh != 0) {
     return 126;
   }
@@ -226,7 +226,7 @@ function fip_checks(): i32 {
     return 127;
   }
 
-  if (fip_problems("fbip", 0, [ir.op_struct_make("P", 2, 0 - 1)]) != 1) {
+  if (fip_problems("fbip", 0, [ir.op_struct_make("P", 2, -1)]) != 1) {
     return 130;
   }
   if (fip_problems("fbip", 0, [ir.op_tuple_make(2)]) != 1) {
@@ -255,8 +255,8 @@ function fip_checks(): i32 {
     return 139;
   }
 
-  let mixed: ir.Op[] = [ir.op_struct_make("P", 2, 0 - 1), ir.op_call_direct("__fern_alloc_reuse", 2), ir.op_tuple_make(2)];
-  let mr: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 2), mixed);
+  let mixed: ir.Op[] = [ir.op_struct_make("P", 2, -1), ir.op_call_direct("__fern_alloc_reuse", 2), ir.op_tuple_make(2)];
+  let mr = irfipverify.verify_fip_fn(fip_claim("fbip", 2), mixed);
   if (mr.fresh != 2 || mr.paired != 1) {
     return 140;
   }
@@ -264,11 +264,11 @@ function fip_checks(): i32 {
     return 141;
   }
 
-  let over: irfipverify.FipResult = irfipverify.verify_fip_fn(fip_claim("fbip", 0), mixed);
+  let over = irfipverify.verify_fip_fn(fip_claim("fbip", 0), mixed);
   if (over.problems.len() != 1) {
     return 150;
   }
-  let m: string = irverify.problem_str(over.problems[0]);
+  let m = irverify.problem_str(over.problems[0]);
   if (!util.contains(m, "`fbip` function \"f\" allocates: 2 un-reused allocation site(s)")) {
     return 151;
   }
@@ -312,7 +312,7 @@ function pv_count(ops: ir.Op[], declared: string[]): i32 {
 }
 
 function pv_msg(ops: ir.Op[], declared: string[]): string {
-  let r: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", ops, irverify.name_index(declared));
+  let r = irverifyprovided.verify_provided_fn("f", ops, irverify.name_index(declared));
   if (r.problems.len() == 0) {
     return "";
   }
@@ -388,7 +388,7 @@ function provided_checks(): i32 {
   }
 
   let mixed: ir.Op[] = [ir.op_call_direct("helper", 1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_call_direct("nope", 0)];
-  let mr: irverifyprovided.ProvidedResult = irverifyprovided.verify_provided_fn("f", mixed, irverify.name_index(decl));
+  let mr = irverifyprovided.verify_provided_fn("f", mixed, irverify.name_index(decl));
   if (mr.calls != 3) {
     return 86;
   }
@@ -397,12 +397,12 @@ function provided_checks(): i32 {
   }
 
   let big: string[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < 3000) {
     big = big.append("fn_" + util.i32_to_string(i));
-    i = i + 1;
+    i += 1;
   }
-  let ix: irverify.NameIndex = irverify.name_index(big);
+  let ix = irverify.name_index(big);
   if (!irverify.index_has(ix, "fn_0")) {
     return 88;
   }
@@ -418,13 +418,13 @@ function provided_checks(): i32 {
   if (irverify.index_has(ix, "")) {
     return 92;
   }
-  let placed: i32 = 0;
-  let pj: i32 = 0;
+  let placed = 0;
+  let pj = 0;
   while (pj < big.len()) {
     if (irverify.index_has(ix, big[pj])) {
-      placed = placed + 1;
+      placed += 1;
     }
-    pj = pj + 1;
+    pj += 1;
   }
   if (placed != 3000) {
     return 93;
@@ -438,34 +438,34 @@ function provided_checks(): i32 {
     irverify.FnSig { name: "other", n_params: 1 },
     irverify.FnSig { name: "dup", n_params: 7 },
   ];
-  let dix: irverify.NameIndex = irverify.sig_index(dsigs);
+  let dix = irverify.sig_index(dsigs);
   if (irverify.index_params(dix, "dup") != 2) {
     return 97;
   }
   if (irverify.index_params(dix, "other") != 1) {
     return 98;
   }
-  if (irverify.index_params(dix, "absent") != 0 - 1) {
+  if (irverify.index_params(dix, "absent") != -1) {
     return 99;
   }
-  let mix: irverify.NameIndex = irverify.name_index(["solo"]);
+  let mix = irverify.name_index(["solo"]);
   if (!irverify.index_has(mix, "solo")) {
     return 107;
   }
-  if (irverify.index_params(mix, "solo") != 0 - 1) {
+  if (irverify.index_params(mix, "solo") != -1) {
     return 108;
   }
 
-  let inv: string[] = irverifyprovided.provided_names();
+  let inv = irverifyprovided.provided_names();
   if (inv.len() < 30) {
     return 95;
   }
-  let vi: i32 = 0;
+  let vi = 0;
   while (vi < inv.len()) {
     if (!irverifyprovided.is_provided(inv[vi])) {
       return 96;
     }
-    vi = vi + 1;
+    vi += 1;
   }
   return 0;
 }
@@ -499,7 +499,7 @@ function gate_checks(): i32 {
   }
 
   let both: ir.Op[] = [ir.op_load_local(5), ir.op_bin("add", 0, false), ir.op_return()];
-  let bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
+  let bps = irverifygate.verify_problems("f", both, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
   if (bps.len() != 2) {
     return 175;
   }
@@ -510,9 +510,9 @@ function gate_checks(): i32 {
     return 177;
   }
 
-  let sigs: irverify.NameIndex = irverify.sig_index([irverify.FnSig { name: "takes2", n_params: 2 }]);
+  let sigs = irverify.sig_index([irverify.FnSig { name: "takes2", n_params: 2 }]);
   let arity: ir.Op[] = [ir.op_call_direct("takes2", 0), ir.op_return()];
-  let aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(sigs, ssa_lift.kind_table(), rccertify.no_abis()));
+  let aps = irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(sigs, ssa_lift.kind_table(), rccertify.no_abis()));
   if (aps.len() != 1) {
     return 178;
   }
@@ -621,19 +621,19 @@ function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
 }
 
 function rc_flow_matches(ops: ir.Op[], problems: i32): boolean {
-  let r: irverifyrc.RcResult = irverifyrc.verify_rc_fn("flow", ops);
+  let r = irverifyrc.verify_rc_fn("flow", ops);
   return r.sites == 2 && r.checked == 2 && r.problems.len() == problems;
 }
 
 function rc_branch_paths(): i32 {
-  let skipped: ir.Op[] = concat_ops([ir.op_block(0)], selfhost_reuse(1, 1));
+  let skipped = concat_ops([ir.op_block(0)], selfhost_reuse(1, 1));
   skipped = concat_ops(skipped, [ir.op_br(0)]);
   skipped = concat_ops(skipped, selfhost_reuse(1, 1));
   skipped = concat_ops(skipped, [ir.op_end()]);
   if (!rc_flow_matches(skipped, 0)) {
     return 224;
   }
-  let conditional: ir.Op[] = concat_ops([ir.op_block(0)], selfhost_reuse(1, 1));
+  let conditional = concat_ops([ir.op_block(0)], selfhost_reuse(1, 1));
   conditional = concat_ops(conditional, [ir.op_const_i32(1), ir.op_brif(0)]);
   conditional = concat_ops(conditional, selfhost_reuse(1, 1));
   conditional = concat_ops(conditional, [ir.op_end()]);
@@ -641,8 +641,8 @@ function rc_branch_paths(): i32 {
     return 225;
   }
 
-  let nested: ir.Op[] = concat_ops([ir.op_block(0), ir.op_block(0)], selfhost_reuse(1, 1));
-  let outer: ir.Op[] = concat_ops(nested, [ir.op_br(1), ir.op_end()]);
+  let nested = concat_ops([ir.op_block(0), ir.op_block(0)], selfhost_reuse(1, 1));
+  let outer = concat_ops(nested, [ir.op_br(1), ir.op_end()]);
   outer = concat_ops(outer, selfhost_reuse(1, 1));
   outer = concat_ops(outer, [ir.op_end()]);
   if (!rc_flow_matches(outer, 0)) {
@@ -655,19 +655,19 @@ function rc_branch_paths(): i32 {
     return 227;
   }
 
-  let partial: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(0), ir.op_store_local(1), ir.op_end()]);
+  let partial = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(0), ir.op_store_local(1), ir.op_end()]);
   partial = concat_ops(partial, selfhost_reuse(1, 1));
   if (!rc_flow_matches(partial, 1)) {
     return 228;
   }
-  let both: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(0), ir.op_store_local(1), ir.op_else(), ir.op_const_i32(0), ir.op_tee_local(1), ir.op_drop(), ir.op_end()]);
+  let both = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(0), ir.op_store_local(1), ir.op_else(), ir.op_const_i32(0), ir.op_tee_local(1), ir.op_drop(), ir.op_end()]);
   both = concat_ops(both, selfhost_reuse(1, 1));
   if (!rc_flow_matches(both, 0)) {
     return 229;
   }
 
-  let cycling: ir.Op[] = concat_ops([ir.op_block(0), ir.op_loop(0)], selfhost_reuse(1, 1));
-  let forever: ir.Op[] = concat_ops(cycling, [ir.op_br(0), ir.op_end(), ir.op_end()]);
+  let cycling = concat_ops([ir.op_block(0), ir.op_loop(0)], selfhost_reuse(1, 1));
+  let forever = concat_ops(cycling, [ir.op_br(0), ir.op_end(), ir.op_end()]);
   forever = concat_ops(forever, selfhost_reuse(1, 1));
   if (!rc_flow_matches(forever, 0)) {
     return 230;
@@ -678,7 +678,7 @@ function rc_branch_paths(): i32 {
     return 231;
   }
 
-  let returned: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_br(0)]);
+  let returned = concat_ops(selfhost_reuse(1, 1), [ir.op_br(0)]);
   returned = concat_ops(returned, selfhost_reuse(1, 1));
   if (!rc_flow_matches(returned, 0)) {
     return 232;
@@ -714,17 +714,17 @@ function native_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
 }
 
 function concat_ops(a: ir.Op[], b: ir.Op[]): ir.Op[] {
-  let out: ir.Op[] = a;
-  let i: i32 = 0;
+  let out = a;
+  let i = 0;
   while (i < b.len()) {
     out = out.append(b[i]);
-    i = i + 1;
+    i += 1;
   }
   return out;
 }
 
 function rc_only_skip(ops: ir.Op[], why: string): boolean {
-  let r: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", ops);
+  let r = irverifyrc.verify_rc_fn("f", ops);
   if (r.problems.len() != 0 || r.sites != 1 || r.checked != 0) {
     return false;
   }
@@ -735,7 +735,7 @@ function rc_only_skip(ops: ir.Op[], why: string): boolean {
 }
 
 function rc_checks(): i32 {
-  let sh: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 1));
+  let sh = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 1));
   if (sh.problems.len() != 0) {
     return 190;
   }
@@ -743,7 +743,7 @@ function rc_checks(): i32 {
     return 191;
   }
 
-  let na: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 1));
+  let na = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 1));
   if (na.problems.len() != 0) {
     return 192;
   }
@@ -751,7 +751,7 @@ function rc_checks(): i32 {
     return 193;
   }
 
-  let t1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 2));
+  let t1 = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 2));
   if (t1.checked != 1) {
     return 194;
   }
@@ -762,7 +762,7 @@ function rc_checks(): i32 {
     return 196;
   }
 
-  let t2: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 2, 1));
+  let t2 = irverifyrc.verify_rc_fn("f", native_reuse(1, 2, 1));
   if (t2.problems.len() != 1) {
     return 197;
   }
@@ -770,7 +770,7 @@ function rc_checks(): i32 {
     return 198;
   }
 
-  let d1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 2));
+  let d1 = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 2));
   if (d1.checked != 1) {
     return 199;
   }
@@ -781,7 +781,7 @@ function rc_checks(): i32 {
     return 201;
   }
 
-  let no_gate: ir.Op[] = selfhost_reuse(1, 1).with(1, ir.op_drop());
+  let no_gate = selfhost_reuse(1, 1).with(1, ir.op_drop());
   if (!rc_only_skip(no_gate, "no uniqueness gate before the token select")) {
     return 202;
   }
@@ -802,12 +802,12 @@ function rc_checks(): i32 {
     return 203;
   }
 
-  let const_token: ir.Op[] = selfhost_reuse(1, 1).with(10, ir.op_const_i32(0));
+  let const_token = selfhost_reuse(1, 1).with(10, ir.op_const_i32(0));
   if (!rc_only_skip(const_token, "token argument is not a local load")) {
     return 204;
   }
 
-  let cond_not_local: ir.Op[] = native_reuse(1, 1, 1).with(3, ir.op_const_i32(1));
+  let cond_not_local = native_reuse(1, 1, 1).with(3, ir.op_const_i32(1));
   if (!rc_only_skip(cond_not_local, "token select is not conditioned on a local")) {
     return 205;
   }
@@ -817,26 +817,26 @@ function rc_checks(): i32 {
   }
 
   let plain: ir.Op[] = [ir.op_load_local(1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_drop()];
-  let pr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", plain);
+  let pr = irverifyrc.verify_rc_fn("f", plain);
   if (pr.problems.len() != 0 || pr.sites != 0) {
     return 207;
   }
 
-  let gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
-  let seen: boolean = false;
-  let gi: i32 = 0;
+  let gp = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
+  let seen = false;
+  let gi = 0;
   while (gi < gp.len()) {
     if (util.contains(gp[gi].msg, "never proved unique")) {
       seen = true;
     }
-    gi = gi + 1;
+    gi += 1;
   }
   if (!seen) {
     return 208;
   }
 
-  let twice: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(1, 1));
-  let tw: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", twice);
+  let twice = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(1, 1));
+  let tw = irverifyrc.verify_rc_fn("f", twice);
   if (tw.sites != 2 || tw.checked != 2) {
     return 211;
   }
@@ -847,11 +847,11 @@ function rc_checks(): i32 {
     return 213;
   }
 
-  let arms: ir.Op[] = concat_ops([ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+  let arms = concat_ops([ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
   arms = concat_ops(arms, [ir.op_else()]);
   arms = concat_ops(arms, selfhost_reuse(1, 1));
   arms = concat_ops(arms, [ir.op_end()]);
-  let ar: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", arms);
+  let ar = irverifyrc.verify_rc_fn("f", arms);
   if (ar.checked != 2) {
     return 214;
   }
@@ -859,67 +859,67 @@ function rc_checks(): i32 {
     return 215;
   }
 
-  let rebound: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(0), ir.op_store_local(1)]);
+  let rebound = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(0), ir.op_store_local(1)]);
   rebound = concat_ops(rebound, selfhost_reuse(1, 1));
-  let rb: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", rebound);
+  let rb = irverifyrc.verify_rc_fn("f", rebound);
   if (rb.checked != 2 || rb.problems.len() != 0) {
     return 216;
   }
 
-  let distinct: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(2, 2));
-  let di: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", distinct);
+  let distinct = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(2, 2));
+  let di = irverifyrc.verify_rc_fn("f", distinct);
   if (di.checked != 2 || di.problems.len() != 0) {
     return 217;
   }
 
-  let stopped: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_return()]);
+  let stopped = concat_ops(selfhost_reuse(1, 1), [ir.op_return()]);
   stopped = concat_ops(stopped, selfhost_reuse(1, 1));
-  let sr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", stopped);
+  let sr = irverifyrc.verify_rc_fn("f", stopped);
   if (sr.checked != 2 || sr.problems.len() != 0) {
     return 221;
   }
-  let conditional: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_return(), ir.op_end()]);
+  let conditional = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_return(), ir.op_end()]);
   conditional = concat_ops(conditional, selfhost_reuse(1, 1));
-  let cr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", conditional);
+  let cr = irverifyrc.verify_rc_fn("f", conditional);
   if (cr.checked != 2 || cr.problems.len() != 1) {
     return 222;
   }
-  let unknown: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [raw_op("not_an_op_kind")]);
+  let unknown = concat_ops(selfhost_reuse(1, 1), [raw_op("not_an_op_kind")]);
   unknown = concat_ops(unknown, selfhost_reuse(1, 1));
-  let ur: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", unknown);
+  let ur = irverifyrc.verify_rc_fn("f", unknown);
   if (ur.checked != 2 || ur.problems.len() != 1) {
     return 223;
   }
-  let lc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(cleared_reuse(1), selfhost_reuse(1, 1)));
+  let lc = irverifyrc.verify_rc_fn("f", concat_ops(cleared_reuse(1), selfhost_reuse(1, 1)));
   if (lc.checked != 2 || lc.problems.len() != 0) {
     return 233;
   }
-  let oc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(cleared_reuse(5), selfhost_reuse(1, 1)));
+  let oc = irverifyrc.verify_rc_fn("f", concat_ops(cleared_reuse(5), selfhost_reuse(1, 1)));
   if (oc.checked != 2 || oc.problems.len() != 1) {
     return 234;
   }
 
-  let kc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 1));
+  let kc = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 1));
   if (kc.checked != 1 || kc.problems.len() != 0) {
     return 218;
   }
-  let kt: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 2, 1));
+  let kt = irverifyrc.verify_rc_fn("f", keep_reuse(1, 2, 1));
   if (kt.checked != 1 || kt.problems.len() != 1 || !util.contains(kt.problems[0].msg, "never proved unique")) {
     return 219;
   }
-  let kd: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 2));
+  let kd = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 2));
   if (kd.checked != 1 || kd.problems.len() != 1 || !util.contains(kd.problems[0].msg, "leaks on the decline path")) {
     return 220;
   }
 
-  let branch_paths: i32 = rc_branch_paths();
+  let branch_paths = rc_branch_paths();
   if (branch_paths != 0) {
     return branch_paths;
   }
   if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) {
     return 209;
   }
-  let skipped: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", no_gate);
+  let skipped = irverifyrc.verify_rc_fn("f", no_gate);
   if (!util.contains(irverifyrc.rc_coverage_str(skipped), "skipped 1: no uniqueness gate")) {
     return 210;
   }
@@ -928,13 +928,13 @@ function rc_checks(): i32 {
 }
 
 function main(): i32 {
-  let av: string[] = args();
-  let ai: i32 = 0;
+  let av = args();
+  let ai = 0;
   while (ai < av.len()) {
     if (av[ai] == "-refuse") {
       return refuse_probe();
     }
-    ai = ai + 1;
+    ai += 1;
   }
 
   let in_range: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_tee_local(1)];
@@ -947,12 +947,12 @@ function main(): i32 {
     return 2;
   }
 
-  let negative_idx: ir.Op[] = [ir.op_store_local(0 - 1)];
+  let negative_idx: ir.Op[] = [ir.op_store_local(-1)];
   if (count_problems(negative_idx, 1, 3) != 1) {
     return 3;
   }
 
-  let m1: string = first_msg(past_end, 1, 3);
+  let m1 = first_msg(past_end, 1, 3);
   if (!util.contains(m1, "local index 3 is outside the frame")) {
     return 4;
   }
@@ -1051,7 +1051,7 @@ function main(): i32 {
     return 37;
   }
 
-  if (count_problems([ir.op_block(0), ir.op_br(0 - 1), ir.op_end()], 0, 1) != 1) {
+  if (count_problems([ir.op_block(0), ir.op_br(-1), ir.op_end()], 0, 1) != 1) {
     return 38;
   }
 
@@ -1066,7 +1066,7 @@ function main(): i32 {
   }
 
   let call_short: ir.Op[] = [ir.op_call_direct("takes2", 1)];
-  let short_ps: irverify.Problem[] = irverify.verify_fn("f", call_short, 0, 1, sigs);
+  let short_ps = irverify.verify_fn("f", call_short, 0, 1, sigs);
   if (short_ps.len() != 1) {
     return 41;
   }
@@ -1075,7 +1075,7 @@ function main(): i32 {
   }
 
   let call_bad: ir.Op[] = [ir.op_call_direct("takes2", 0)];
-  let bad_ps: irverify.Problem[] = irverify.verify_fn("f", call_bad, 0, 1, sigs);
+  let bad_ps = irverify.verify_fn("f", call_bad, 0, 1, sigs);
   if (bad_ps.len() != 1) {
     return 42;
   }
@@ -1098,7 +1098,7 @@ function main(): i32 {
     return 47;
   }
 
-  if (count_problems([ir.op_call_direct("anything", 0 - 1)], 0, 1) != 1) {
+  if (count_problems([ir.op_call_direct("anything", -1)], 0, 1) != 1) {
     return 48;
   }
 
@@ -1109,12 +1109,12 @@ function main(): i32 {
   if (count_problems([ir.op_call_indirect(2)], 0, 1) != 0) {
     return 50;
   }
-  if (count_problems([ir.op_call_indirect(0 - 1)], 0, 1) != 1) {
+  if (count_problems([ir.op_call_indirect(-1)], 0, 1) != 1) {
     return 51;
   }
 
   let many: ir.Op[] = [ir.op_load_local(9), ir.op_end(), ir.op_br(4)];
-  let mp: irverify.Problem[] = irverify.verify_fn("g", many, 0, 1, no_sigs());
+  let mp = irverify.verify_fn("g", many, 0, 1, no_sigs());
   if (mp.len() != 3) {
     return 60;
   }
@@ -1140,27 +1140,27 @@ function main(): i32 {
     return 66;
   }
 
-  let sc: i32 = stack_checks();
+  let sc = stack_checks();
   if (sc != 0) {
     return sc;
   }
 
-  let fc: i32 = fip_checks();
+  let fc = fip_checks();
   if (fc != 0) {
     return fc;
   }
 
-  let pc: i32 = provided_checks();
+  let pc = provided_checks();
   if (pc != 0) {
     return pc;
   }
 
-  let gc: i32 = gate_checks();
+  let gc = gate_checks();
   if (gc != 0) {
     return gc;
   }
 
-  let rc: i32 = rc_checks();
+  let rc = rc_checks();
   if (rc != 0) {
     return rc;
   }

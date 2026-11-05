@@ -23,7 +23,7 @@ function count(rows: semrecords.Enum[], name: string): i32 {
   let found = 0;
   for e in rows {
     if (semrecords.union_name_of(e.ty) == name) {
-      found = found + 1;
+      found += 1;
     }
   }
   return found;
@@ -54,7 +54,7 @@ function application(target: string): void {
     require(count(app.enums, names[i]) == 1 && count(sub.physical_enums, names[i]) == 1, 223);
     box(sub.physical_enums, names[i], arg);
     box(app.enums, names[i], arg);
-    i = i + 1;
+    i += 1;
   }
   require(semrecords.verify(app.records, app.enums) == "", 208);
   let other = semlower.driven(parser.parse_module(lexer.tokenize("enum Box__i32 { Full(i64), Empty } function read(x: Box__i32): Box__i32 { return x; }")), target).sub;

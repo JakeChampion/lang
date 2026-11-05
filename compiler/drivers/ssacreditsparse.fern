@@ -9,7 +9,7 @@ function id(value: i32, size: i32, pivot: i32): i32 {
 }
 
 pub function rename(f: ssa.SFunc): ssa.SFunc {
-  let pivot: i32 = -1;
+  let pivot = -1;
   for b in f.blocks {
     for op in b.insts {
       if (pivot < 0 && op.kind_tag == 11) {

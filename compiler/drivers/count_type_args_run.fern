@@ -8,16 +8,16 @@ function main(): i32 {
     "Foo", "i32", "(a, b)", "(Map[a, b], c)",
     "Box[i32][]", "i32[]", "Foo[]", "Map[K, V][]", "",
   ];
-  let out: string = "";
-  let i: i32 = 0;
+  let out = "";
+  let i = 0;
   while (i < corpus.len()) {
-    let t: string = corpus[i];
-    let label: string = t;
+    let t = corpus[i];
+    let label = t;
     if (label.len() == 0) {
       label = "<empty>";
     }
     out = out + label + " -> " + util.i32_to_string(checker.count_type_args(t)) + "\n";
-    i = i + 1;
+    i += 1;
   }
   write(out);
   return 0;

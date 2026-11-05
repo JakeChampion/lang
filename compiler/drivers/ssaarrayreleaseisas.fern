@@ -36,7 +36,7 @@ function symbols(): void {
   for reg in regs {
     let global = sample("leaq __fern_freelist(%rip), " + reg);
     require(global.kind == 19 && global.width == 64 && global.destination == i && global.symbol == "__fern_freelist", "freelist " + reg);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -56,7 +56,7 @@ function immediate_stores(): void {
         immediate_store(reg, i, w, n);
       }
     }
-    i = i + 1;
+    i += 1;
   }
   let indexed = sample("movq $0x7fffffff, 2147483647(%r8,%r12,4)");
   require(indexed.kind == 22 && indexed.immediate == 2147483647 && indexed.base == 8 && indexed.index == 12 && indexed.scale == 4 && indexed.offset == 2147483647, "indexed store");
@@ -79,7 +79,7 @@ function index_lea(): void {
     for scale in [1, 2, 4, 8] {
       scaled_index(reg, i, scale);
     }
-    i = i + 1;
+    i += 1;
   }
   let zero = sample("leaq (,%rcx,8), %rsi");
   require(zero.kind == 15 && zero.offset == 0 && zero.index == 1 && zero.destination == 6, "zero displacement");
@@ -91,7 +91,7 @@ function flags(): void {
   for reg in regs {
     let op = sample("testl " + reg + ", " + reg);
     require(op.kind == 23 && op.width == 32 && op.source == i, "self test " + reg);
-    i = i + 1;
+    i += 1;
   }
 }
 
@@ -142,7 +142,7 @@ pub function run(output: string): void {
   for op in p.ops {
     require(op.kind == kinds[i], "actual kind " + i.to_string());
     actual_branch(op, p, body, i);
-    i = i + 1;
+    i += 1;
   }
   require(p.ops[35].symbol == "__fern_capw" && p.ops[41].symbol == "__fern_large_push", "actual calls");
   require(p.ops[40].base == -1 && p.ops[40].index == 1 && p.ops[40].scale == 8 && p.ops[40].destination == 6, "actual byte argument");

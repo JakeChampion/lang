@@ -2,12 +2,12 @@ import "./ssa";
 import "./util";
 
 pub function block_index(f: ssa.SFunc, id: i32): i32 {
-  let i: i32 = 0;
+  let i = 0;
   for b in f.blocks {
     if (b.id == id) {
       return i;
     }
-    i = i + 1;
+    i += 1;
   }
   return -1;
 }
@@ -43,7 +43,7 @@ pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): 
     return Graph { ...bad, error: error };
   }
   let values = value_ids(f);
-  let last: i32 = -1;
+  let last = -1;
   for value in values {
     if (value > last) {
       last = value;
@@ -58,10 +58,10 @@ pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): 
 function availability(f: ssa.SFunc, values: i32[]): Graph {
   let bad = Graph { order: [], values: [], error: "invalid caller origin graph" };
   let empty: boolean[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < values.len()) {
     empty = empty.append(false);
-    i = i + 1;
+    i += 1;
   }
   let rows: boolean[][] = [];
   let done: boolean[] = [];
@@ -71,7 +71,7 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
   }
   let order: i32[] = [];
   while (order.len() < f.blocks.len()) {
-    let chosen: i32 = -1;
+    let chosen = -1;
     i = 0;
     for b in f.blocks {
       let ready = !done[i];
@@ -83,7 +83,7 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
       if (ready && chosen < 0) {
         chosen = i;
       }
-      i = i + 1;
+      i += 1;
     }
     if (chosen < 0) {
       return Graph { ...bad, error: "unsupported caller origin cycle" };
@@ -96,7 +96,7 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
         i = 0;
         while (i < values.len()) {
           row = row.with(i, row[i] && rows[block_index(f, p)][i]);
-          i = i + 1;
+          i += 1;
         }
       }
     }
@@ -107,7 +107,7 @@ function availability(f: ssa.SFunc, values: i32[]): Graph {
           if (!readable(rows[block_index(f, p)], values, op.args[i])) {
             return Graph { ...bad, error: "unavailable caller origin phi" };
           }
-          i = i + 1;
+          i += 1;
         }
       } else {
         for arg in op.args {
@@ -183,10 +183,10 @@ function declarations(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32
           }
           params = params.append(op.imm);
         } else if (op.kind_tag == 1 && op.args.len() == 0 && op.str == "") {} else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {} else if (op.kind_tag == 11 && op.args.len() == 2 && ssa.plain_imm(op) == 0) {
-          let matches: i32 = 0;
+          let matches = 0;
           for p in producers {
             if (p.name == op.str) {
-              matches = matches + 1;
+              matches += 1;
             }
           }
           if (matches != 1) {

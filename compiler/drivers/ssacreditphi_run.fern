@@ -44,10 +44,10 @@ function reject(j: Result[phi.Joined, guard.BuildError], why: string, id: i32): 
 
 function blank(n: i32): phi.Value[] {
   let values: phi.Value[] = [];
-  let i: i32 = 0;
+  let i = 0;
   while (i < n) {
     values = values.append(phi.Value { kind: -1, identity: -1, available: 0 });
-    i = i + 1;
+    i += 1;
   }
   return values;
 }
@@ -79,7 +79,7 @@ function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32):
   let i = nvals - 1;
   while (i >= 0) {
     ids = ids.append(sparse_id(i, nvals));
-    i = i - 1;
+    i -= 1;
   }
   let insts: ssa.SInst[] = [];
   for op in block.insts {
@@ -95,7 +95,7 @@ function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32):
     i = e.values.len() - 1;
     while (i >= 0) {
       values = values.append(e.values[i]);
-      i = i - 1;
+      i -= 1;
     }
     mapped = mapped.append(phi.Edge { ...e, values: values });
   }
@@ -109,7 +109,7 @@ function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32):
       for binding in value.bindings {
         let mapped_binding = other.bindings[i];
         require(mapped_binding.result == sparse_id(binding.result, nvals) && mapped_binding.value.kind == binding.value.kind && mapped_binding.value.identity == binding.value.identity && mapped_binding.value.available == binding.value.available, 62);
-        i = i + 1;
+        i += 1;
       }
       return Ok(value);
     },
@@ -232,7 +232,7 @@ function actual_checks(target: string): void {
   require(graphs.len() == 1, 42);
   let graph = graphs[0];
   let blocks: ssa.SBlock[] = [];
-  let fresh_value: i32 = -1;
+  let fresh_value = -1;
   for b in graph.blocks {
     if (b.insts.len() > 0 && b.insts[0].kind_tag == 8) {
       blocks = blocks.append(b);

@@ -26,7 +26,7 @@ function register_moves(): void {
       let j = (i + 1) % regs.len();
       let op = sample(mnemonic + " " + regs[i] + ", " + regs[j]);
       require(op.kind == 2 && op.width == width && op.source == i && op.destination == j);
-      i = i + 1;
+      i += 1;
     }
   }
 }
@@ -102,12 +102,12 @@ function actual(output: string, entry: string): void {
     }
     if (body.lines[at] == "movl %ecx, -8(%rax)") {
       actual_store(op);
-      stores = stores + 1;
+      stores += 1;
     }
     if (op.kind == 0) {
-      unknown = unknown + 1;
+      unknown += 1;
     }
-    at = at + 1;
+    at += 1;
   }
   require(stores == 1 && unknown > 0);
 }

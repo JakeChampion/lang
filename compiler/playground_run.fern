@@ -30,7 +30,7 @@ function embedded_stdlib(): modloader.Overlay {
 }
 
 function embedded_stdlib_files(root: string): modloader.Buffers {
-  let b: modloader.Buffers = modloader.no_buffers();
+  let b = modloader.no_buffers();
   for a in __fern_assets() {
     b = modloader.Buffers { paths: b.paths.append(root + "/" + a.0), srcs: b.srcs.append(a.1 + "") };
   }
@@ -51,7 +51,7 @@ const EMIT_FLAG: string = "-emit";
 
 function report_diags(diags: util.Diag[], files: string[]): boolean {
   for d in util.sorted_by(diags, util.diag_after) {
-    let tag: string = "";
+    let tag = "";
     if (d.code.len() > 0) {
       tag = "error[" + d.code + "]: ";
     }
@@ -68,7 +68,7 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
   if (report_diags(asmcore.parse_errors_before_check(merged), files)) {
     return 1;
   }
-  let diags: util.Diag[] = checker.check_module(merged).diags;
+  let diags = checker.check_module(merged).diags;
   if (target_given) {
     diags = util.append_diags(diags, fern.capability_diags(merged, target));
   }
@@ -79,7 +79,7 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
 }
 
 function interpret(merged: parser.Module): i32 {
-  let v: interp.Value = interp.eval_module(merged);
+  let v = interp.eval_module(merged);
   let (is_status, status) = interp.exit_status(v);
   if (is_status) {
     return status;
@@ -102,10 +102,10 @@ function interpret(merged: parser.Module): i32 {
 struct Argv { check: boolean, interp: boolean, lsp: boolean, target: string, target_given: boolean, form: string }
 
 function parse_argv(av: string[]): Argv {
-  let o: Argv = Argv { check: false, interp: false, lsp: false, target: "wasm32-wasi", target_given: false, form: "" };
-  let ai: i32 = 0;
+  let o = Argv { check: false, interp: false, lsp: false, target: "wasm32-wasi", target_given: false, form: "" };
+  let ai = 0;
   while (ai < av.len()) {
-    let a: string = av[ai];
+    let a = av[ai];
     if (a == CHECK_FLAG) {
       o = Argv { ...o, check: true };
     }
@@ -121,17 +121,17 @@ function parse_argv(av: string[]): Argv {
       } else {
         o = Argv { ...o, form: av[ai + 1] };
       }
-      ai = ai + 1;
+      ai += 1;
     }
-    ai = ai + 1;
+    ai += 1;
   }
   return o;
 }
 
 function run(): i32 {
-  let o: Argv = parse_argv(args());
-  let target: string = o.target;
-  let bad_target: string = fern.target_refusal(target);
+  let o = parse_argv(args());
+  let target = o.target;
+  let bad_target = fern.target_refusal(target);
   if (bad_target.len() > 0) {
     eprint(bad_target);
     return 2;
@@ -139,16 +139,16 @@ function run(): i32 {
   if (o.lsp) {
     return fern.serve_lsp_in_memory(LSP_STDLIB_ROOT, embedded_stdlib_files(LSP_STDLIB_ROOT), target, o.target_given);
   }
-  let bad_emit: string = fern.emit_refusal(target, o.form);
+  let bad_emit = fern.emit_refusal(target, o.form);
   if (bad_emit.len() > 0) {
     eprint(bad_emit);
     return 2;
   }
-  let form: string = fern.core_form(o.form);
+  let form = fern.core_form(o.form);
   if (form.len() == 0 && platforms.for_target(target).isa != "wasm32") {
     form = "asm";
   }
-  let src: string = "";
+  let src = "";
   match (io.read_all_stdin()) {
     Ok(text) => {
       src = text;
@@ -158,8 +158,8 @@ function run(): i32 {
       return 1;
     }
   }
-  let entry: parser.Module = emitforms.entry_module(parser.parse_module(lexer.tokenize(src)), target);
-  let handle: util.Diag = emitforms.http_entry_refused(entry, target);
+  let entry = emitforms.entry_module(parser.parse_module(lexer.tokenize(src)), target);
+  let handle = emitforms.http_entry_refused(entry, target);
   if (handle.message.len() > 0) {
     if (handle.line > 0) {
       eprint(util.pos_str("stdin", [], handle.line, handle.col) + ": error[" + handle.code + "]: " + handle.message);
@@ -169,12 +169,12 @@ function run(): i32 {
     return 1;
   }
 
-  let ov: modloader.Overlay = embedded_stdlib();
-  let g: modloader.Graph = modloader.load_graph(ov, "stdin", entry, "");
+  let ov = embedded_stdlib();
+  let g = modloader.load_graph(ov, "stdin", entry, "");
   entry = g.entry;
-  let loaded: flatten.LoadedModule[] = g.loaded;
-  let files: string[] = g.files;
-  let missing: string[] = g.missing;
+  let loaded = g.loaded;
+  let files = g.files;
+  let missing = g.missing;
   if (modloader.report_unresolved(missing, "playground")) {
     return 1;
   }
@@ -182,7 +182,7 @@ function run(): i32 {
     return 1;
   }
 
-  let merged: parser.Module = flatten.bundle(entry, loaded, target);
+  let merged = flatten.bundle(entry, loaded, target);
   merged = parser.fill_default_args_module(merged);
   merged = parser.resolve_variant_fields_module(merged);
 
@@ -190,7 +190,7 @@ function run(): i32 {
     return check(merged, files, target, o.target_given);
   }
   if (o.interp) {
-    let checked: i32 = check(merged, files, target, false);
+    let checked = check(merged, files, target, false);
     if (checked != 0) {
       return checked;
     }
@@ -206,13 +206,13 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   if (report_diags(checker.build_gate_diags(merged), files)) {
     return 1;
   }
-  let errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
+  let errs = asmcore.check_call_arity(parser.fill_default_args_module(merged));
   errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
   errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
   if (report_diags(errs, files)) {
     return 1;
   }
-  let desc: platforms.Descriptor = platforms.for_target(target);
+  let desc = platforms.for_target(target);
   merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
   merged = constfold.prune_literal_branches(merged);
   if (report_diags(fern.capability_diags(merged, target), files)) {
@@ -224,19 +224,19 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   merged = constfold.fold_module(merged);
   merged = checker.annotate_module(merged);
   merged = treeshake.treeshake(merged);
-  let no_backend: string = fern.backend_refusal(target);
+  let no_backend = fern.backend_refusal(target);
   if (no_backend.len() > 0) {
     eprint(no_backend);
     return 2;
   }
 
-  let typed: parser.Module = parser.module_with_builtins_typed(merged);
-  let full: parser.Module = parser.erase_view_module(typed);
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(false, false, true, semarrayreport.off())), switches: asmcore.Switches { ...asmcore.env_switches(), target: target } };
+  let typed = parser.module_with_builtins_typed(merged);
+  let full = parser.erase_view_module(typed);
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(false, false, true, semarrayreport.off())), switches: asmcore.Switches { ...asmcore.env_switches(), target: target } };
   if (report_diags(sub.refused, files)) {
     return 1;
   }
-  let out: string = "";
+  let out = "";
   if (desc.isa == "x86-64") {
     out = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
   } else if (target == "arm64-linux" || target == "arm64-android") {
@@ -247,13 +247,13 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     if (form == "asm") {
       out = emitforms.wasm_http_core(full, sub);
     } else if (form == "core-module") {
-      let hwat: string = emitforms.wasm_http_core(full, sub);
+      let hwat = emitforms.wasm_http_core(full, sub);
       if (hwat.len() == 0) {
         return 2;
       }
       out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
     } else {
-      let hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
+      let hc = emitforms.wasm_http_component(full, sub);
       if (hc.bytes.len() == 0) {
         if (hc.refused.len() > 0) {
           eprint(emitforms.http_refused(hc.refused));
@@ -267,7 +267,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   } else if (form == "core-module") {
     out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub))));
   } else {
-    let comp: wit_compose.Composed = emitforms.wasm_component(full, sub);
+    let comp = emitforms.wasm_component(full, sub);
     if (comp.bytes.len() == 0) {
       if (comp.refused.len() > 0) {
         eprint(comp.refused);

@@ -11,10 +11,10 @@ struct State { ids: i32[], values: Value[], called: boolean, error: string }
 
 function initial(ids: i32[]): State {
   let values: Value[] = [];
-  let index: i32 = 0;
+  let index = 0;
   while (index < ids.len()) {
     values = values.append(Value { kind: -1, scalar: 0 });
-    index = index + 1;
+    index += 1;
   }
   return State { ids: ids, values: values, called: false, error: "" };
 }
