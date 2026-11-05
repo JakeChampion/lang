@@ -104,7 +104,8 @@ Reads return `Result` and reject offsets outside the input view.
 `std/png.encode_rgb8(width, height, pixels)` encodes consecutive RGB triples as a PNG image.
 It checks dimensions and buffer length before allocation and returns a typed encoding error.
 
-`encode_rgb8_with_options` accepts `png.Options` for filters and compression.
+`std/png.encode_rgba8` encodes RGBA quadruples, with the alpha as the fourth byte of each pixel.
+`encode_rgb8_with_options` and `encode_rgba8_with_options` accept `png.Options` for filters and compression.
 `png.options()` selects `Filter.Unfiltered` and `Compression.Balanced`, which preserve the original output.
 Available filters are `Unfiltered`, `Sub`, `Up`, `Average`, `Paeth`, and `Adaptive`.
 `Adaptive` selects a filter for each row by the sum of absolute signed residuals.
